@@ -1,68 +1,140 @@
-#!/usr/bin/env python3
-"""Backend CLI hooking into retriever for single-shot and chat modes."""
-import argparse
+from __future__ import annotations
+
+"""Wrapper functions for the user-facing agent."""
+
+import json
 import os
-from pathlib import Path
+import re
+from dataclasses import asdict
+from typing import Any, List
 
-from retriever import load_assets, search, pack_context, answer, render_citations
+from openai import OpenAI
 
-DEFAULT_INDEX = Path(os.getenv("INDEX_DIR", "text-embeder/my_book_index_aero"))
-
-
-def run_once(q: str) -> None:
-    hits = search(q)
-    ctx = pack_context(hits)
-    ans = answer(q, ctx)
-    print(ans.text)
-    print(render_citations(ans))
+from .contracts import ParsedTask, ProposedSolution, FinalAnswer, ResearchBundle
+from .solver import run_python
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Backend QA interface")
-    parser.add_argument("--q", help="Ask a single question and exit")
-    parser.add_argument("--chat", action="store_true", help="Interactive chat mode")
-    parser.add_argument(
-        "--index", default=str(DEFAULT_INDEX), help="Path to index directory"
-    )
-    args = parser.parse_args()
-
+def _client() -> OpenAI:
     if not os.getenv("OPENAI_API_KEY"):
-        raise SystemExit("Set OPENAI_API_KEY first.")
+        raise RuntimeError("OPENAI_API_KEY not set")
+    return OpenAI()
 
-    if args.q:
+
+def parse_question(user_query: str) -> ParsedTask:
+    """Use a lightweight model to parse the raw user query into a ``ParsedTask``."""
+
+    client = _client()
+    system = (
+        "Extract problem_type, asked_outputs, knowns, constraints, and figure_refs. "
+        "Return ONLY JSON with keys: problem_type, asked_outputs, knowns, constraints, figure_refs."
+    )
+    model = os.getenv("PARSER_MODEL", "gpt-4o-mini")
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user_query}],
+        temperature=0,
+        response_format={"type": "json_object"},
+    )
+    content = resp.choices[0].message.content
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError as exc:  # pragma: no cover - deterministic
+        raise RuntimeError("Parser returned non-JSON output") from exc
+    task = ParsedTask(**data)
+    task.validate()
+    return task
+
+
+def solve_with_bundle(
+    parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None
+) -> ProposedSolution:
+    """Solve the parsed task using only information from the provided bundle."""
+
+    client = _client()
+    system = (
+        "You are a strict reasoning agent. Use ONLY facts in the Research Bundle. "
+        "No browsing or outside knowledge. Every non-math statement must cite a bundle marker like [§..., p.X]. "
+        "If information is missing, reply exactly 'Not found in the approved materials.' "
+        "Any code must be pure Python using only np, sp, or ureg and must print results."
+    )
+    bundle_json = json.dumps(asdict(bundle))
+    user_base = (
+        f"Task: {json.dumps(asdict(parsed_task))}\nBundle: {bundle_json}\n"
+        "Return JSON with keys: steps, final_answers, equations_used, assumptions, code (optional)."
+    )
+    if hint:
+        user_base += f"\nHint: {hint}"
+    model = os.getenv("MAIN_MODEL", "gpt-5o")
+
+    def _chat(msgs: List[dict]) -> dict:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=msgs,
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content
+        return json.loads(content)
+
+    data = _chat([
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_base},
+    ])
+
+    code_out = None
+    code_hash = None
+    vars_created: List[str] = []
+    code = data.get("code")
+    if isinstance(code, str):
         try:
-            load_assets(Path(args.index))
-        except FileNotFoundError as e:
-            print(
-                f"Failed to load index at {args.index}: {e}. "
-                "Did you run the embedder without --no_embed?"
+            res = run_python(code)
+            code_out = res.stdout
+            code_hash = res.code_hash
+            vars_created = res.vars_created
+        except Exception as exc:
+            err = str(exc)
+            data = _chat(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_base},
+                    {"role": "assistant", "content": json.dumps(data)},
+                    {"role": "user", "content": f"Code execution error: {err}"},
+                ]
             )
-            return
-        run_once(args.q)
-        return
+            code = data.get("code")
+            if isinstance(code, str):
+                try:
+                    res = run_python(code)
+                    code_out = res.stdout
+                    code_hash = res.code_hash
+                    vars_created = res.vars_created
+                except Exception as exc2:  # pragma: no cover - best effort
+                    code_out = f"error: {exc2}"
 
-    if args.chat:
-        try:
-            load_assets(Path(args.index))
-        except FileNotFoundError as e:
-            print(
-                f"Failed to load index at {args.index}: {e}. "
-                "Did you run the embedder without --no_embed?"
-            )
-            return
-        while True:
-            try:
-                q = input("Q> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                break
-            if not q or q.lower() in {"exit", "quit"}:
-                break
-            run_once(q)
-        return
-
-    parser.print_help()
+    return ProposedSolution(
+        steps=data.get("steps", ""),
+        final_answers=data.get("final_answers", {}),
+        equations_used=data.get("equations_used", []),
+        assumptions=data.get("assumptions", []),
+        code=code,
+        code_output=code_out,
+        code_hash=code_hash,
+        vars_created=vars_created,
+    )
 
 
-if __name__ == "__main__":
-    main()
+def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAnswer:
+    """Format the final answer for the user without adding new facts."""
+
+    text = solution.steps
+    valid = {sn.citation_marker for sn in bundle.snippets}
+    seen: set[str] = set()
+    cites: List[str] = []
+    for m in re.findall(r"\[§[^\]]+\]", text):
+        if m in valid and m not in seen:
+            seen.add(m)
+            cites.append(m)
+    return FinalAnswer(text=text, citations=cites)
+
+
+__all__ = ["parse_question", "solve_with_bundle", "format_answer"]

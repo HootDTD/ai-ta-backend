@@ -1,0 +1,22 @@
+{
+  "source_pdf": "text-embeder\\P9L5e4_Fundamentals of Aerodynamics.pdf",
+  "source_pdf_sha256": "b6238cc9738934c8040bb420240b86be511e307911d62061cea71c70967b1a6f",
+  "model": "text-embedding-3-large",
+  "dimensions": 3072,
+  "num_items": 893,
+  "counts_by_type": {
+    "body": 893
+  },
+  "page_count": 910,
+  "has_faiss": true,
+  "has_ocr": true,
+  "caption_model": null,
+  "tokenizer": "cl100k_base",
+  "token_limit": 1000,
+  "overlap_tokens": 150,
+  "min_figure_area_ratio": 0.01,
+  "fitz_version": "PyMuPDF 1.26.4: Python bindings for the MuPDF 1.26.7 library (rebased implementation).\nPython 3.12 running on win32 (64-bit).\n",
+  "torch_version": null,
+  "transformers_version": null,
+  "created_at": "2025-09-09T01:38:53.044731Z"
+}
