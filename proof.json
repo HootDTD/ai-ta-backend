@@ -1,0 +1,17 @@
+{
+  "question": "For a flat-plate boundary layer with approximate profile u/Ue ≈ y/h (0≤y≤h) and u=Ue for y≥h, compute δ (boundary-layer thickness), δ* (displacement thickness), θ (momentum thickness), τ_w (wall shear stress), and drag per unit span D'. Show steps.",
+  "used_ids": [
+    "hoot:1:o0"
+  ],
+  "snippets": [
+    {
+      "id": "hoot:1:o0",
+      "type": "body",
+      "page": 1,
+      "section_path": "screenshot",
+      "text": "6. Sometimes approximate equations are used to represent the velocity in the boundary layer over a flat plate. One such equation is (2-2) fory<h ue U 1foryZ=h Using the equation above determine a) b) Cc) d) e) f) The boundary layer thickness, The displacement thickness, The momentum thickness, The shear stress on the plate, Drag on the plate per unit in/out (D’) of page, and Draw the velocity profile in the boundary layer and then locate the boundary layer thickness, the displacement thickness, and the momentum thickness on the drawing.",
+      "figure_id": null,
+      "why": "hit"
+    }
+  ]
+}

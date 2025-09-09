@@ -1,0 +1,22 @@
+{
+  "source_pdf": "C:\\Users\\ultra\\Downloads\\first problem 333 hoot.png",
+  "source_pdf_sha256": "994f237cc6abec0c63a33ad5fd198afc14ec532f927efa2d71e04b1168c1ff50",
+  "model": "text-embedding-3-large",
+  "dimensions": 3072,
+  "num_items": 1,
+  "counts_by_type": {
+    "body": 1
+  },
+  "page_count": 1,
+  "has_faiss": true,
+  "has_ocr": true,
+  "caption_model": null,
+  "tokenizer": "cl100k_base",
+  "token_limit": 1000,
+  "overlap_tokens": 150,
+  "min_figure_area_ratio": 0.01,
+  "fitz_version": "PyMuPDF 1.26.4: Python bindings for the MuPDF 1.26.7 library (rebased implementation).\nPython 3.12 running on win32 (64-bit).\n",
+  "torch_version": null,
+  "transformers_version": null,
+  "created_at": "2025-09-09T03:12:02.363514Z"
+}
