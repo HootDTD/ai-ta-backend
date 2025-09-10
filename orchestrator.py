@@ -64,7 +64,14 @@ class Orchestrator:
                 continue
             if "[§" not in para:
                 issues.append(f"missing citation in paragraph {idx}")
-        for key in parsed.asked_outputs:
+        asked_raw = getattr(parsed, "asked_outputs", [])
+        if isinstance(asked_raw, list):
+            asked_list = asked_raw
+        elif isinstance(asked_raw, str) and asked_raw.strip():
+            asked_list = [asked_raw]
+        else:
+            asked_list = []
+        for key in asked_list:
             if key not in sol.final_answers:
                 issues.append(f"answer lacks {key}")
         if ureg:
@@ -91,6 +98,22 @@ class Orchestrator:
         token_budget = int(user_task.get("token_budget", 6000))
 
         parsed: ParsedTask = parse_question(question)
+
+        def _to_list(val: object) -> List[str]:
+            if isinstance(val, list):
+                return val
+            if isinstance(val, str) and val.strip():
+                return [val]
+            return []
+
+        def _to_dict(val: object) -> Dict[str, object]:
+            return val if isinstance(val, dict) else {}
+
+        parsed.asked_outputs = _to_list(parsed.asked_outputs)
+        parsed.constraints = _to_list(parsed.constraints)
+        parsed.figure_refs = _to_list(parsed.figure_refs)
+        parsed.knowns = _to_dict(parsed.knowns)
+
         with open("parsed_task.json", "w", encoding="utf-8") as f:
             json.dump(asdict(parsed), f, indent=2, ensure_ascii=False)
         parsed_hash = self._hash(parsed)

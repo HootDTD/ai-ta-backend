@@ -558,8 +558,24 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
     k_lex = int(options.get("k_lex", 30))
 
     question = task if isinstance(task, str) else task.problem_type
+    asked_list: List[str] = []
+    known_keys: List[str] = []
+    constraint_list: List[str] = []
     if isinstance(task, ParsedTask):
-        parts = task.asked_outputs + list(task.knowns.keys()) + task.constraints
+        if isinstance(task.asked_outputs, list):
+            asked_list = task.asked_outputs
+        elif isinstance(task.asked_outputs, str) and task.asked_outputs.strip():
+            asked_list = [task.asked_outputs]
+
+        if isinstance(task.knowns, dict):
+            known_keys = list(task.knowns.keys())
+
+        if isinstance(task.constraints, list):
+            constraint_list = task.constraints
+        elif isinstance(task.constraints, str) and task.constraints.strip():
+            constraint_list = [task.constraints]
+
+        parts = asked_list + known_keys + constraint_list
         q = " ".join([p for p in parts if p])
         question = (q + f" {task.problem_type}").strip() if q else task.problem_type
 
@@ -663,7 +679,7 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
             "β": "beta",
             "μ": "mu",
         }
-        for sym in task.asked_outputs:
+        for sym in asked_list:
             variants = {sym}
             for k, v in alias_map.items():
                 if k in sym:
@@ -677,7 +693,7 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
         "loaded_indexes": loaded_indexes,
         "question": question,
         "problem_type": getattr(task, "problem_type", "unknown"),
-        "asked_outputs_len": len(task.asked_outputs) if isinstance(task, ParsedTask) else 0,
+        "asked_outputs_len": len(asked_list),
         "skipped_indexes": skipped_indexes,
         "model": _meta.get("model") if _meta else None,
         "dimensions": _meta.get("dimensions") if _meta else None,
@@ -706,11 +722,15 @@ __all__ = [
     "ContextSnippet",
     "ContextPack",
     "Answer",
+
     "load_assets",
     "load_assets_all",
+
     "search",
     "pack_context",
+
     "answer",
     "render_citations",
+
     "research",
 ]

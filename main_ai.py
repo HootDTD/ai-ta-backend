@@ -6,7 +6,7 @@ import json
 import os
 import re
 from dataclasses import asdict
-from typing import Any, List
+from typing import Any, List, Dict
 
 from openai import OpenAI
 
@@ -41,6 +41,21 @@ def parse_question(user_query: str) -> ParsedTask:
     except json.JSONDecodeError as exc:  # pragma: no cover - deterministic
         raise RuntimeError("Parser returned non-JSON output") from exc
     task = ParsedTask(**data)
+
+    def _to_list(val: Any) -> List[str]:
+        if isinstance(val, list):
+            return val
+        if isinstance(val, str) and val.strip():
+            return [val]
+        return []
+
+    def _to_dict(val: Any) -> Dict[str, Any]:
+        return val if isinstance(val, dict) else {}
+
+    task.asked_outputs = _to_list(getattr(task, "asked_outputs", []))
+    task.constraints = _to_list(getattr(task, "constraints", []))
+    task.figure_refs = _to_list(getattr(task, "figure_refs", []))
+    task.knowns = _to_dict(getattr(task, "knowns", {}))
     task.validate()
     return task
 
