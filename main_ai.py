@@ -79,15 +79,18 @@ def solve_with_bundle(
     )
     if hint:
         user_base += f"\nHint: {hint}"
-    model = os.getenv("MAIN_MODEL", "gpt-5o")
+    model = os.getenv("MAIN_MODEL", "gpt-4o")
 
     def _chat(msgs: List[dict]) -> dict:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=msgs,
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
+        kwargs = {
+            "model": model,
+            "messages": msgs,
+            "response_format": {"type": "json_object"},
+        }
+        gpt5_allow = {"gpt-5", "gpt-5-chat-latest", "gpt-5-mini"}
+        if not (model.startswith("gpt-5") or model in gpt5_allow):
+            kwargs["temperature"] = 0
+        resp = client.chat.completions.create(**kwargs)
         content = resp.choices[0].message.content
         return json.loads(content)
 
