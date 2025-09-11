@@ -34,6 +34,9 @@ class BundleSnippet:
     text: str
     figure_id: Optional[str]
     why: str
+    source_path: str
+    doc_title: Optional[str]
+    doc_short: str
     citation_marker: str
 
     def validate(self) -> None:

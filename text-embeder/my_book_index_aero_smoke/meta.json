@@ -18,5 +18,8 @@
   "fitz_version": "PyMuPDF 1.26.4: Python bindings for the MuPDF 1.26.7 library (rebased implementation).\nPython 3.12 running on win32 (64-bit).\n",
   "torch_version": null,
   "transformers_version": null,
-  "created_at": "2025-09-09T01:38:53.044731Z"
+  "created_at": "2025-09-09T01:38:53.044731Z",
+  "aliases": {
+    "P9L5e4_Fundamentals of Aerodynamics.pdf": "AeroText"
+  }
 }
