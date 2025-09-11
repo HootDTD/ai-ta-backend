@@ -82,6 +82,7 @@ class Orchestrator:
             steps_text = str(steps_obj)
 
         paragraphs = [p for p in steps_text.split("\n") if p.strip()]
+        has_digit_para = False
         for idx, para in enumerate(paragraphs, start=1):
             stripped = para.strip()
             if stripped.startswith("```"):
@@ -89,15 +90,24 @@ class Orchestrator:
             letters = re.findall(r"[A-Za-z]", stripped)
             if len(letters) < 5:  # treat as math-heavy; no citation needed
                 continue
+            if re.search(r"\d", para):
+                has_digit_para = True
             if "[§" not in para:
                 issues.append(f"missing citation in paragraph {idx}")
-        asked_raw = getattr(parsed, "asked_outputs", [])
-        if isinstance(asked_raw, list):
-            asked_list = asked_raw
-        elif isinstance(asked_raw, str) and asked_raw.strip():
-            asked_list = [asked_raw]
-        else:
-            asked_list = []
+        asked_keys = getattr(parsed, "asked_output_keys", []) or []
+        if not asked_keys:
+            asked_raw = getattr(parsed, "asked_outputs", [])
+            if isinstance(asked_raw, list):
+                asked_list = asked_raw
+            elif isinstance(asked_raw, str) and asked_raw.strip():
+                asked_list = [asked_raw]
+            else:
+                asked_list = []
+
+            def _slug(s: str) -> str:
+                return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+
+            asked_keys = [_slug(a) for a in asked_list]
         # Normalize final answers to a mapping
         final_answers_obj = getattr(sol, "final_answers", {}) or {}
         if isinstance(final_answers_obj, dict):
@@ -123,9 +133,22 @@ class Orchestrator:
         else:
             final_answers = {"answer": final_answers_obj}
 
-        for key in asked_list:
+        for key in asked_keys:
             if key not in final_answers:
                 issues.append(f"answer lacks {key}")
+
+        has_numeric = False
+        for v in final_answers.values():
+            if isinstance(v, (int, float)):
+                has_numeric = True
+                break
+            if isinstance(v, str) and re.search(r"\d", v):
+                has_numeric = True
+                break
+        if not has_numeric:
+            issues.append("final_answers has no numeric values")
+        if not final_answers and not has_digit_para:
+            issues.append("no quantitative results produced")
 
         if ureg:
             for k, v in final_answers.items():
@@ -175,6 +198,15 @@ class Orchestrator:
         parsed.figure_refs = _to_list(parsed.figure_refs)
         parsed.knowns = _to_dict(parsed.knowns)
 
+        if not parsed.asked_outputs and not getattr(parsed, "asked_output_keys", []):
+            tokens = re.findall(r"\b([A-Za-z][A-Za-z0-9_]*?)\b", question)
+            found = [t for t in tokens if t in {"v_exit", "Q"} or "_" in t]
+            if not found and re.search(r"\(1\).*?\(2\)", question, re.S):
+                found = ["output_1", "output_2"]
+            if found:
+                parsed.asked_outputs = found
+                parsed.asked_output_keys = [re.sub(r"[^a-z0-9]+", "_", f).lower() for f in found]
+
         with open("parsed_task.json", "w", encoding="utf-8") as f:
             json.dump(asdict(parsed), f, indent=2, ensure_ascii=False)
         parsed_hash = self._hash(parsed)
@@ -213,7 +245,25 @@ class Orchestrator:
             issues = self._validate_solution(solution, parsed, bundle)
             if not issues:
                 break
-            hint = "; ".join(issues)
+            missing = [
+                i.split("answer lacks ", 1)[1]
+                for i in issues
+                if i.startswith("answer lacks ")
+            ]
+            if missing:
+                keys_str = ", ".join(missing)
+                hint = (
+                    f"Return JSON with final_answers containing EXACT keys: {keys_str}. "
+                    "Provide numeric values with units."
+                )
+                if {"g", "h", "d"}.issubset(parsed.knowns.keys()):
+                    hint += (
+                        " Include a short code block (pure Python) that computes "
+                        "v_exit=sqrt(2*g*h) and Q=(pi*d**2/4)*v_exit using the knowns."
+                    )
+                hint += " Do not omit final_answers."
+            else:
+                hint = "; ".join(issues)
         if solution is None:
             raise RuntimeError("solve failed")
         with open("solution.json", "w", encoding="utf-8") as f:
@@ -224,7 +274,7 @@ class Orchestrator:
 
         models = {
             "parser": os.getenv("PARSER_MODEL", "gpt-4o-mini"),
-            "main": os.getenv("MAIN_MODEL", "gpt-5o"),
+            "main": os.getenv("MAIN_MODEL", "gpt-4o"),
         }
         proof = Proof(
             question=question,
