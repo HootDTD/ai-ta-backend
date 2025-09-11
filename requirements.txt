@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+pydantic>=2
+SQLAlchemy>=2
+weasyprint>=61
+Markdown>=3.6
+pygments>=2.18

@@ -1,23 +1,32 @@
 #!/usr/bin/env python3
-"""Backend CLI hooking into retriever for single-shot and chat modes."""
+"""Backend CLI hooking into retriever for single-shot and chat modes.
+
+Refactored to delegate core Q&A to backend.core.answer_question while keeping
+the same user-visible behavior.
+"""
 import argparse
 import os
 from pathlib import Path
 
-from .retriever import load_assets, search, pack_context, answer, render_citations
+from .core import answer_question
 
-DEFAULT_INDEX = Path(os.getenv(
-    "INDEX_DIR",
-    Path(__file__).resolve().parent / "text-embeder/my_book_index_aero",
-))
+DEFAULT_INDEX = Path(
+    os.getenv(
+        "INDEX_DIR",
+        Path(__file__).resolve().parent / "text-embeder/my_book_index_aero",
+    )
+)
 
 
-def run_once(q: str) -> None:
-    hits = search(q)
-    ctx = pack_context(hits)
-    ans = answer(q, ctx)
-    print(ans.text)
-    print(render_citations(ans))
+def run_once(q: str, index: Path | None = None) -> None:
+    # Delegate to core; stream if generator, else print once
+    result = answer_question(q, doc_sets=[str(index)] if index else None)
+    try:
+        for chunk in result:  # type: ignore
+            print(chunk, end="")
+        print()
+    except TypeError:
+        print(result)  # type: ignore
 
 
 def main() -> None:
@@ -34,25 +43,16 @@ def main() -> None:
 
     if args.q:
         try:
-            load_assets(Path(args.index))
+            run_once(args.q, index=Path(args.index))
         except FileNotFoundError as e:
             print(
                 f"Failed to load index at {args.index}: {e}. "
                 "Did you run the embedder without --no_embed?"
             )
             return
-        run_once(args.q)
         return
 
     if args.chat:
-        try:
-            load_assets(Path(args.index))
-        except FileNotFoundError as e:
-            print(
-                f"Failed to load index at {args.index}: {e}. "
-                "Did you run the embedder without --no_embed?"
-            )
-            return
         while True:
             try:
                 q = input("Q> ").strip()
@@ -61,7 +61,14 @@ def main() -> None:
                 break
             if not q or q.lower() in {"exit", "quit"}:
                 break
-            run_once(q)
+            try:
+                run_once(q, index=Path(args.index))
+            except FileNotFoundError as e:
+                print(
+                    f"Failed to load index at {args.index}: {e}. "
+                    "Did you run the embedder without --no_embed?"
+                )
+                break
         return
 
     parser.print_help()
