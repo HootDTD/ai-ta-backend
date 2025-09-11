@@ -12,6 +12,7 @@ class ParsedTask:
 
     problem_type: str
     asked_outputs: List[str] = field(default_factory=list)
+    asked_output_keys: List[str] = field(default_factory=list)
     knowns: Dict[str, Any] = field(default_factory=dict)
     constraints: List[str] = field(default_factory=list)
     figure_refs: List[str] = field(default_factory=list)
