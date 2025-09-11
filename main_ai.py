@@ -119,6 +119,62 @@ def solve_with_bundle(
         user_base += f"\nHint: {hint}"
     model = os.getenv("MAIN_MODEL", "gpt-4o")
 
+    def _maybe_debug_dump(system_prompt: str, user_payload: str, bundle: ResearchBundle) -> None:
+        def _flag_enabled() -> bool:
+            truthy = {"1", "true", "yes", "on"}
+            for name in ("QA_DEBUG", "AI_TA_DEBUG", "TRACE_IO"):
+                val = os.getenv(name)
+                if val and val.lower() in truthy:
+                    return True
+            return False
+
+        if not _flag_enabled():
+            return
+
+        os.makedirs("debug", exist_ok=True)
+        with open("debug/main_ai_system.txt", "w", encoding="utf-8") as fh:
+            fh.write(system_prompt)
+        with open("debug/main_ai_user.txt", "w", encoding="utf-8") as fh:
+            fh.write(user_payload)
+
+        lines: List[str] = []
+        meta = bundle.metadata or {}
+        meta_parts: List[str] = []
+        if meta.get("k_sem") is not None:
+            meta_parts.append(f"k_sem={meta.get('k_sem')}")
+        if meta.get("k_lex") is not None:
+            meta_parts.append(f"k_lex={meta.get('k_lex')}")
+        if meta.get("token_budget") is not None:
+            meta_parts.append(f"token_budget={meta.get('token_budget')}")
+        if meta.get("loaded_indexes") is not None:
+            meta_parts.append(f"loaded_indexes={meta.get('loaded_indexes')}")
+        if meta.get("skipped_indexes") is not None:
+            meta_parts.append(f"skipped_indexes={meta.get('skipped_indexes')}")
+        if meta_parts:
+            lines.append("meta: " + ", ".join(meta_parts))
+
+        for i, sn in enumerate(bundle.snippets, 1):
+            marker = getattr(sn, "citation_marker", None)
+            if not marker:
+                marker = f"[§{sn.doc_short} • {sn.section_path}, p.{sn.page}]"
+            lines.append(f"S{i} {marker} why={sn.why} id={sn.id}")
+            text = sn.text.replace("\n", " ")
+            if len(text) > 240:
+                text = text[:240].rstrip() + "…"
+            lines.append(text)
+
+        coverage = meta.get("coverage_gaps") or getattr(bundle, "coverage_gaps", None)
+        if coverage:
+            lines.append("coverage_gaps: " + ", ".join(coverage))
+        with open("debug/main_ai_context_preview.txt", "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines))
+
+        with open("debug/main_ai_bundle.json", "w", encoding="utf-8") as fh:
+            json.dump(asdict(bundle), fh, indent=2, ensure_ascii=False)
+
+        print("Wrote main model inputs to debug/main_ai_system.txt and debug/main_ai_user.txt")
+        print(f"Context preview: debug/main_ai_context_preview.txt (snippets={len(bundle.snippets)})")
+
     # --- NEW: tell the model the exact keys to use in final_answers ---
     def _slug(s: str) -> str:
         return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
@@ -132,6 +188,8 @@ def solve_with_bundle(
             "\nRequired final_answers keys (EXACT): "
             f"[{key_str}]. Return numeric values with SI units."
         )
+
+    _maybe_debug_dump(system, user_base, bundle)
 
     def _chat(msgs: List[dict]) -> dict:
         kwargs = {
