@@ -13,7 +13,13 @@ from typing import Dict, List
 from .contracts import FinalAnswer, ParsedTask, Proof, ProposedSolution, ResearchBundle
 from .main_ai import parse_question, solve_with_bundle, format_answer
 from .retriever import research
-from .solver import ureg
+
+try:  # optional pint dependency for unit checks
+    from pint import UnitRegistry
+
+    ureg = UnitRegistry()
+except Exception:  # pragma: no cover - pint may be absent
+    ureg = None
 
 
 class Orchestrator:
@@ -54,7 +60,28 @@ class Orchestrator:
         self, sol: ProposedSolution, parsed: ParsedTask, bundle: ResearchBundle
     ) -> List[str]:
         issues: List[str] = []
-        paragraphs = [p for p in sol.steps.split("\n") if p.strip()]
+
+        # Normalize steps into a string for downstream processing
+        steps_obj = getattr(sol, "steps", "")
+        if isinstance(steps_obj, list):
+            parts: List[str] = []
+            for part in steps_obj:
+                if isinstance(part, str):
+                    parts.append(part)
+                else:
+                    try:
+                        parts.append(json.dumps(part))
+                    except Exception:
+                        parts.append(str(part))
+            steps_text = "\n".join(parts)
+        elif isinstance(steps_obj, str):
+            steps_text = steps_obj
+        elif steps_obj is None:
+            steps_text = ""
+        else:
+            steps_text = str(steps_obj)
+
+        paragraphs = [p for p in steps_text.split("\n") if p.strip()]
         for idx, para in enumerate(paragraphs, start=1):
             stripped = para.strip()
             if stripped.startswith("```"):
@@ -71,11 +98,37 @@ class Orchestrator:
             asked_list = [asked_raw]
         else:
             asked_list = []
+        # Normalize final answers to a mapping
+        final_answers_obj = getattr(sol, "final_answers", {}) or {}
+        if isinstance(final_answers_obj, dict):
+            final_answers = final_answers_obj
+        elif isinstance(final_answers_obj, list):
+            final_answers: Dict[str, object] = {}
+            auto_idx = 0
+            for entry in final_answers_obj:
+                key = None
+                value = entry
+                if isinstance(entry, dict):
+                    if "key" in entry and "value" in entry:
+                        key = str(entry["key"])
+                        value = entry["value"]
+                    elif len(entry) == 1:
+                        k, v = next(iter(entry.items()))
+                        key = str(k)
+                        value = v
+                if key is None:
+                    key = str(auto_idx)
+                    auto_idx += 1
+                final_answers[key] = value
+        else:
+            final_answers = {"answer": final_answers_obj}
+
         for key in asked_list:
-            if key not in sol.final_answers:
+            if key not in final_answers:
                 issues.append(f"answer lacks {key}")
+
         if ureg:
-            for k, v in sol.final_answers.items():
+            for k, v in final_answers.items():
                 # Only enforce unit parsing when the model emitted a string
                 # with units. Pure numbers are treated as unitless.
                 if isinstance(v, str):
@@ -83,8 +136,16 @@ class Orchestrator:
                         ureg.Quantity(v)
                     except Exception:
                         issues.append(f"unparsable units for {k}")
+
         bundle_eqs = {self._normalize_eq(e["eq_text"]) for e in bundle.equations}
-        for eq in sol.equations_used:
+        eqs_raw = getattr(sol, "equations_used", [])
+        if isinstance(eqs_raw, list):
+            eq_list = [str(e) for e in eqs_raw]
+        elif eqs_raw:
+            eq_list = [str(eqs_raw)]
+        else:
+            eq_list = []
+        for eq in eq_list:
             if self._normalize_eq(eq) not in bundle_eqs:
                 issues.append(f"equation '{eq}' not in bundle")
         return issues
