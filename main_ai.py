@@ -143,16 +143,43 @@ def solve_with_bundle(
 
 def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAnswer:
     """Format the final answer for the user without adding new facts."""
+    text = getattr(solution, "final_text", None)
+    if text is None:
+        text = getattr(solution, "text", None)
+    if text is None:
+        text = solution.steps
 
-    text = solution.steps
-    valid = {sn.citation_marker for sn in bundle.snippets}
+    def _to_str(val: Any) -> str:
+        if val is None:
+            return ""
+        if isinstance(val, list):
+            parts: List[str] = []
+            for elem in val:
+                if isinstance(elem, str):
+                    parts.append(elem)
+                else:
+                    try:
+                        parts.append(json.dumps(elem, ensure_ascii=False))
+                    except Exception:
+                        parts.append(str(elem))
+            return "\n".join(parts)
+        return str(val)
+
+    text_str = _to_str(text)
+    allowed: set[str] = set()
+    for sn in bundle.snippets:
+        marker = getattr(sn, "citation_marker", None)
+        if marker is None:
+            marker = getattr(sn, "marker", None)
+        if marker:
+            allowed.add(marker)
     seen: set[str] = set()
     cites: List[str] = []
-    for m in re.findall(r"\[§[^\]]+\]", text):
-        if m in valid and m not in seen:
+    for m in re.findall(r"\[§[^\]]+\]", text_str):
+        if m in allowed and m not in seen:
             seen.add(m)
             cites.append(m)
-    return FinalAnswer(text=text, citations=cites)
+    return FinalAnswer(text=text_str, citations=cites)
 
 
 __all__ = ["parse_question", "solve_with_bundle", "format_answer"]
