@@ -39,6 +39,9 @@ class ContextSnippet:
     text: str
     figure_id: str | None
     why: str
+    source_path: str
+    doc_title: str | None
+    doc_short: str
 
 
 @dataclass
@@ -51,7 +54,7 @@ class ContextPack:
 @dataclass
 class Answer:
     text: str
-    citations: List[Dict[str, str]]
+    citations: List[Dict[str, Any]]
     proof: Dict[str, object]
 
 
@@ -63,6 +66,7 @@ _items_dfs: List[pd.DataFrame] = []
 _items_df: pd.DataFrame | None = None
 _id_to_row: Dict[str, pd.Series] | None = None
 _meta: Dict[str, object] | None = None
+_meta_titles: Dict[str, str] | None = None
 _client: OpenAI | None = None
 
 
@@ -94,10 +98,48 @@ def _fts_safe_query(text: str) -> str:
     return " OR ".join(tokens)
 
 
+def _norm_key(path: str) -> str:
+    if not path:
+        return ""
+    return os.path.normcase(path.replace("/", os.sep).replace("\\", os.sep))
+
+
+def _canonical_marker(sn) -> str:
+    sp = getattr(sn, "source_path", "")
+    doc_short = getattr(sn, "doc_short", None)
+    if not doc_short:
+        sp_norm = _norm_key(sp)
+        sp_base = _norm_key(os.path.basename(sp))
+        title = None
+        if _meta_titles:
+            title = _meta_titles.get(sp_norm) or _meta_titles.get(sp_base)
+        if not title:
+            title = getattr(sn, "doc_title", None)
+        if not title and sp:
+            title = Path(sp).stem
+        if not title and _meta:
+            source_pdf = _meta.get("source_pdf", "")
+            title = Path(source_pdf).stem if source_pdf else None
+        doc_short = title or "doc"
+    section_label = (
+        getattr(sn, "section_path", None)
+        or getattr(sn, "heading", None)
+        or "—"
+    )
+    page = getattr(sn, "page", None)
+    page = page if isinstance(page, int) and page > 0 else "?"
+    marker = f"[§{doc_short} • {section_label}, p.{page}"
+    fig_id = getattr(sn, "figure_id", None)
+    if fig_id:
+        marker += f"; Fig {fig_id}"
+    marker += "]"
+    return marker
+
+
 # ----------------------- Public API -----------------------
 
 
-def _load_one(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection, dict]:
+def _load_one(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection, dict, Dict[str, str]]:
     """Load FAISS, items DataFrame, SQLite, and meta from an index directory."""
     faiss_path = root / "faiss.index"
     items_path = root / "items.jsonl"
@@ -109,32 +151,65 @@ def _load_one(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection
             raise FileNotFoundError(
                 f"Missing required asset: {p.name} in index directory {root}"
             )
-
     index = faiss.read_index(str(faiss_path))
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    aliases_raw = meta.get("aliases") or {}
+    titles_raw = meta.get("doc_titles") or {}
+
+    norm_aliases: Dict[str, str] = {}
+    for k, v in aliases_raw.items():
+        nk = _norm_key(k)
+        nb = _norm_key(os.path.basename(k))
+        norm_aliases[nk] = v
+        norm_aliases[nb] = v
+
+    norm_titles: Dict[str, str] = {}
+    for k, v in titles_raw.items():
+        nk = _norm_key(k)
+        nb = _norm_key(os.path.basename(k))
+        norm_titles[nk] = v
+        norm_titles[nb] = v
+
+    meta_titles = {**norm_titles, **norm_aliases}
 
     items = []
     with open(items_path, "r", encoding="utf-8") as f:
         for line in f:
-            items.append(json.loads(line))
+            item = json.loads(line)
+            sp = item.get("source_path") or item.get("source") or item.get("id")
+            item["source_path"] = sp
+            sp_norm = _norm_key(sp)
+            sp_base = _norm_key(os.path.basename(sp))
+            title = item.get("doc_title") or norm_titles.get(sp_norm) or norm_titles.get(sp_base)
+            alias = norm_aliases.get(sp_norm) or norm_aliases.get(sp_base)
+            item["doc_title"] = title
+            item["doc_short"] = (
+                item.get("doc_short")
+                or alias
+                or title
+                or Path(sp).stem
+                or "doc"
+            )
+            items.append(item)
     df = pd.DataFrame(items)
     df.set_index("id", inplace=True)
 
     conn = sqlite3.connect(str(sqlite_path))
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
 
-    return index, df, conn, meta
+    return index, df, conn, meta, meta_titles
 
 
 def load_assets(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection, dict]:
-    index, df, conn, meta = _load_one(root)
+    index, df, conn, meta, titles = _load_one(root)
 
-    global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta
+    global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta, _meta_titles
     _faiss_list = [index]
     _sqlite_conns = [conn]
     _items_dfs = [df]
     _items_df = df
     _id_to_row = {idx: df.loc[idx] for idx in df.index}
     _meta = meta
+    _meta_titles = titles
 
     return index, df, conn, meta
 
@@ -147,11 +222,12 @@ def load_assets_all(
     conns: List[sqlite3.Connection] = []
     dfs: List[pd.DataFrame] = []
     metas: List[dict] = []
+    title_map: Dict[str, str] = {}
     skipped: List[Dict[str, str]] = []
     meta_ref: dict | None = None
     for root in roots:
         try:
-            index, df, conn, meta = _load_one(root)
+            index, df, conn, meta, titles = _load_one(root)
         except Exception as exc:  # pragma: no cover - robustness
             skipped.append({"path": str(root), "reason": str(exc)})
             continue
@@ -171,6 +247,7 @@ def load_assets_all(
         conns.append(conn)
         dfs.append(df)
         metas.append(meta)
+        title_map.update(titles)
 
     if not faiss_list:
         reason_counts: Dict[str, int] = {}
@@ -190,13 +267,14 @@ def load_assets_all(
     merged_df = pd.concat(dfs)
     id_map = {idx: merged_df.loc[idx] for idx in merged_df.index}
 
-    global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta
+    global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta, _meta_titles
     _faiss_list = faiss_list
     _sqlite_conns = conns
     _items_dfs = dfs
     _items_df = merged_df
     _id_to_row = id_map
     _meta = meta_ref
+    _meta_titles = title_map
 
     return list(zip(faiss_list, dfs, conns, metas)), skipped
 
@@ -435,6 +513,14 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
         toks = len(enc.encode(text))
         if total_tokens + toks > limit:
             return False
+        source_path = row.get("source_path") or ""
+        doc_title = row.get("doc_title")
+        doc_short = (
+            row.get("doc_short")
+            or doc_title
+            or Path(source_path).stem
+            or "doc"
+        )
         snippet = ContextSnippet(
             id=item_id,
             type=typ,
@@ -443,6 +529,9 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             text=text,
             figure_id=row.get("figure_id"),
             why=why,
+            source_path=source_path,
+            doc_title=doc_title,
+            doc_short=doc_short,
         )
         snippets.append(snippet)
         used_ids.add(item_id)
@@ -514,17 +603,10 @@ def answer(question: str, ctx: ContextPack) -> Answer:
     )
     out = resp.choices[0].message.content.strip()
 
-    citations: List[Dict[str, str]] = []
-    def build_marker(sn: ContextSnippet) -> str:
-        marker = f"[§{sn.section_path}, p.{sn.page}"
-        if sn.figure_id:
-            marker += f"; Fig {sn.figure_id}"
-        marker += "]"
-        return marker
-
+    citations: List[Dict[str, Any]] = []
     for i, sn in enumerate(ctx.snippets, start=1):
-        marker = build_marker(sn)
-        citations.append({"id": sn.id, "marker": marker})
+        marker = _canonical_marker(sn)
+        citations.append({"id": sn.id, "marker": marker, "snippet": sn})
         out = out.replace(f"[S{i}]", marker)
 
     proof = {"question": question, "used_ids": ctx.used_ids}
@@ -538,7 +620,8 @@ def render_citations(ans: Answer) -> str:
     seen: set[str] = set()
     markers: List[str] = []
     for c in ans.citations:
-        m = c["marker"]
+        sn = c.get("snippet")
+        m = _canonical_marker(sn) if sn else c.get("marker")
         if m not in seen:
             seen.add(m)
             markers.append(m)
@@ -598,12 +681,7 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
 
     snippets: List[BundleSnippet] = []
     for sn in ctx.snippets:
-        section = sn.section_path or "[unknown]"
-        page = sn.page if sn.page > 0 else "?"
-        marker = f"[§{section}, p.{page}"
-        if sn.figure_id:
-            marker += f"; Fig {sn.figure_id}"
-        marker += "]"
+        marker = _canonical_marker(sn)
         snippets.append(
             BundleSnippet(
                 id=sn.id,
@@ -613,6 +691,9 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
                 text=sn.text,
                 figure_id=sn.figure_id,
                 why=sn.why,
+                source_path=sn.source_path,
+                doc_title=sn.doc_title,
+                doc_short=sn.doc_short,
                 citation_marker=marker,
             )
         )
