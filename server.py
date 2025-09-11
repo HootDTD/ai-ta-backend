@@ -104,6 +104,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount AI-use reports router
+try:
+    from backend.reports.ai_use.routes import router as reports_router
+except Exception:
+    try:
+        from reports.ai_use.routes import router as reports_router  # type: ignore
+    except Exception:
+        reports_router = None  # type: ignore
+
+if reports_router is not None:
+    app.include_router(reports_router)
+
 
 @app.get("/healthz")
 def healthz():
@@ -145,4 +157,3 @@ if __name__ == "__main__":
 
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run("backend.server:app", host="0.0.0.0", port=port, reload=True)
-
