@@ -116,6 +116,18 @@ except Exception:
 if reports_router is not None:
     app.include_router(reports_router)
 
+# Mount chats router (simple transcript storage)
+try:
+    from backend.chats.routes import router as chats_router
+except Exception:
+    try:
+        from chats.routes import router as chats_router  # type: ignore
+    except Exception:
+        chats_router = None  # type: ignore
+
+if chats_router is not None:
+    app.include_router(chats_router)
+
 
 @app.get("/healthz")
 def healthz():

@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 
 from .models import AIUseReportORM, AIUseReport, SessionLocal
 from .service import build_evidence_pack, generate_report
-from .pdf import render_pdf_from_markdown
 from pydantic import BaseModel, Field
 
 
@@ -125,6 +124,8 @@ def get_ai_use_report_pdf(report_id: str, db: Session = Depends(get_db)):
     if not obj:
         raise HTTPException(status_code=404, detail="Report not found")
     try:
+        # Lazy import to avoid hard dependency at app startup
+        from .pdf import render_pdf_from_markdown  # type: ignore
         meta = {
             "title": "AI-use Report",
             "chat_id": obj.chat_id,
