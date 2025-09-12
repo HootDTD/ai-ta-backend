@@ -110,27 +110,20 @@ def create_ai_use_report(
     }
 
 
-@router.get("/reports/ai-use/{report_id}")
-def get_ai_use_report(report_id: str, db: Session = Depends(get_db)):
-    obj = db.get(AIUseReportORM, report_id)
-    if not obj:
-        raise HTTPException(status_code=404, detail="Report not found")
-    return AIUseReport.model_validate(obj)
-
-
 @router.get("/reports/ai-use/{report_id}.pdf")
 def get_ai_use_report_pdf(report_id: str, db: Session = Depends(get_db)):
+    # Place this BEFORE the generic /{report_id} route so it isn't shadowed
     obj = db.get(AIUseReportORM, report_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Report not found")
     try:
         # Lazy import to avoid hard dependency at app startup
         from .pdf import render_pdf_from_markdown  # type: ignore
+
         meta = {
             "title": "AI-use Report",
             "chat_id": obj.chat_id,
             "created_at": obj.created_at.isoformat() if obj.created_at else "",
-            # If JSON-LD includes the evidence, pass truncation flag forward for banner
             "truncated": bool((obj.jsonld or {}).get("evidence", {}).get("truncated")) if obj.jsonld else False,
         }
         pdf_bytes = render_pdf_from_markdown(obj.markdown or "", metadata=meta)
@@ -142,3 +135,30 @@ def get_ai_use_report_pdf(report_id: str, db: Session = Depends(get_db)):
     fname = f"ai-use-report-{report_id}.pdf"
     headers = {"Content-Disposition": f"attachment; filename=\"{fname}\""}
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+
+
+@router.get("/reports/ai-use/{report_id}")
+def get_ai_use_report(report_id: str, db: Session = Depends(get_db)):
+    obj = db.get(AIUseReportORM, report_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return AIUseReport.model_validate(obj)
+
+
+@router.get("/reports/ai-use")
+def list_ai_use_reports(limit: int = 10, db: Session = Depends(get_db)):
+    q = db.query(AIUseReportORM).order_by(AIUseReportORM.created_at.desc()).limit(max(1, min(limit, 100)))
+    rows = q.all()
+    return [
+        {
+            "id": r.id,
+            "chat_id": r.chat_id,
+            "created_at": r.created_at,
+            "style": r.style,
+            "length": r.length,
+        }
+        for r in rows
+    ]
+
+
+ 

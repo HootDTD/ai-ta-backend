@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import uuid as uuid_pkg
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -20,7 +21,19 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 # -------------------- SQLAlchemy setup --------------------
 
 def _db_url() -> str:
-    return os.getenv("DATABASE_URL", "sqlite:///./ai_ta.db")
+    """Resolve DATABASE_URL; make relative SQLite paths absolute to repo root.
+
+    This prevents surprises when the working directory differs between
+    processes (e.g., uvicorn started from another path).
+    """
+    url = os.getenv("DATABASE_URL", "sqlite:///./ai_ta.db")
+    if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
+        rel = url[len("sqlite:///") :]
+        if not rel.startswith("/"):
+            base = Path(__file__).resolve().parents[2]  # repo root
+            abs_path = (base / rel).resolve()
+            return f"sqlite:////{abs_path}"
+    return url
 
 
 engine = create_engine(_db_url(), future=True)

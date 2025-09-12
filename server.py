@@ -10,11 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-# Import the callable core entrypoint (created in backend/core.py)
-try:
-    from backend.core import answer_question
-except Exception:
-    from core import answer_question  # type: ignore
+# Import the callable core entrypoint using package‑relative import to avoid
+# path issues when running under different working directories.
+from .core import answer_question
 
 log = logging.getLogger("ai_ta_server")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -127,6 +125,14 @@ except Exception:
 
 if chats_router is not None:
     app.include_router(chats_router)
+
+# Ensure DB tables exist (dev convenience)
+try:
+    from backend.reports.ai_use.models import init_db as _init_db  # type: ignore
+
+    _init_db()
+except Exception:
+    pass
 
 
 @app.get("/healthz")

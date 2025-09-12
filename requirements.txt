@@ -5,3 +5,8 @@ SQLAlchemy>=2
 weasyprint>=61
 Markdown>=3.6
 pygments>=2.18
+openai
+numpy
+pandas
+tiktoken
+faiss-cpu==1.8.0.post1
