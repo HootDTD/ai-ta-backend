@@ -611,10 +611,9 @@ def answer(question: str, ctx: ContextPack) -> Answer:
     for i, sn in enumerate(ctx.snippets, start=1):
         marker = _canonical_marker(sn)
         if i in used_markers:
-            out = out.replace(f"[S{i}]", marker)
             citations.append({"id": sn.id, "marker": marker, "snippet": sn})
-        else:
-            out = out.replace(f"[S{i}]", "")
+        # strip placeholder regardless of usage
+        out = out.replace(f"[S{i}]", "")
 
     proof = {"question": question, "used_ids": ctx.used_ids}
     return Answer(text=out, citations=citations, proof=proof)
