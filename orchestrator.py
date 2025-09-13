@@ -284,12 +284,12 @@ class Orchestrator:
             checks={
                 "solution_valid": not issues,
                 "issues": issues,
-                "skipped_indexes": bundle.metadata.get("skipped_indexes", []),
+                "skipped_indexes": getattr(bundle.metadata, "skipped_indexes", []),
                 "models": models,
                 "retrieval_params": {
-                    "k_sem": bundle.metadata.get("k_sem"),
-                    "k_lex": bundle.metadata.get("k_lex"),
-                    "token_budget": bundle.metadata.get("token_budget"),
+                    "k_sem": getattr(bundle.metadata, "k_sem", None),
+                    "k_lex": getattr(bundle.metadata, "k_lex", None),
+                    "token_budget": getattr(bundle.metadata, "token_budget", None),
                 },
             },
             indexes_used=doc_sets,

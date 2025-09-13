@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import tiktoken
 from openai import OpenAI
-from .contracts import ResearchBundle, BundleSnippet, ParsedTask
+from .contracts import ResearchBundle, BundleSnippet, ParsedTask, ResearchMetadata
 
 # ----------------------- Data classes -----------------------
 
@@ -69,6 +69,13 @@ _meta: Dict[str, object] | None = None
 _meta_titles: Dict[str, str] | None = None
 _client: OpenAI | None = None
 
+# symbol/alias mining globals
+_alias_to_occurrences: Dict[str, List[Tuple[str, str, int, str, str]]] = {}
+_term_to_aliases: Dict[str, set[str]] = {}
+_symbol_index_stats: Dict[str, Any] = {}
+_definition_ids: set[str] = set()
+_last_expansion_plan: List[Dict[str, Any]] = []
+
 
 # ----------------------- Helpers -----------------------
 
@@ -102,6 +109,148 @@ def _norm_key(path: str) -> str:
     if not path:
         return ""
     return os.path.normcase(path.replace("/", os.sep).replace("\\", os.sep))
+
+
+def _flag(name: str, default: bool = True) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.lower() not in {"0", "off", "false", "no"}
+
+
+_GREEK = {
+    "α": "alpha",
+    "β": "beta",
+    "γ": "gamma",
+    "δ": "delta",
+    "ε": "epsilon",
+    "θ": "theta",
+    "λ": "lambda",
+    "μ": "mu",
+    "π": "pi",
+    "ρ": "rho",
+    "σ": "sigma",
+    "τ": "tau",
+    "φ": "phi",
+    "ω": "omega",
+}
+
+
+def _norm_alias(token: str) -> str:
+    token = token.strip().lower()
+    for g, name in _GREEK.items():
+        token = token.replace(g, name)
+    token = re.sub(r"[_\s]+", "", token)
+    return token
+
+
+def _looks_symbol(token: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-zα-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", token))
+
+
+def _mine_aliases(df: pd.DataFrame) -> None:
+    if not _flag("RETRIEVAL_ALIAS_MINER", True):
+        return
+    alias_occ: Dict[str, List[Tuple[str, str, int, str, str]]] = {}
+    term_map: Dict[str, set[str]] = {}
+    def_ids: set[str] = set()
+    for idx, row in df.iterrows():
+        text = row.get("text", "") or ""
+        doc = row.get("doc_short") or "doc"
+        sec = row.get("section_path", "") or ""
+        page = int(row.get("page", 0))
+        for line in text.splitlines():
+            line_stripped = line.strip()
+            # term (Alias)
+            for m in re.finditer(r"([A-Za-z][A-Za-z\s\-]+?)\(([^)]+)\)", line_stripped):
+                part1 = m.group(1).strip()
+                part2 = m.group(2).strip()
+                if _looks_symbol(part2):
+                    alias_norm = _norm_alias(part2)
+                    alias_occ.setdefault(alias_norm, []).append((doc, sec, page, line_stripped, "paren"))
+                    term_map.setdefault(part1.lower(), set()).add(alias_norm)
+                    def_ids.add(idx)
+                elif _looks_symbol(part1):
+                    alias_norm = _norm_alias(part1)
+                    alias_occ.setdefault(alias_norm, []).append((doc, sec, page, line_stripped, "paren"))
+                    term_map.setdefault(part2.lower(), set()).add(alias_norm)
+                    def_ids.add(idx)
+            # where Alias = definition
+            m = re.search(r"where\s+([A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*)\s*=", line_stripped)
+            if m:
+                alias_norm = _norm_alias(m.group(1))
+                alias_occ.setdefault(alias_norm, []).append((doc, sec, page, line_stripped, "where"))
+                def_ids.add(idx)
+            # Alias is defined as
+            m = re.search(r"([A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*)\s+(?:is\s+defined|defined\s+as|denoted\s+by)\b", line_stripped)
+            if m:
+                alias_norm = _norm_alias(m.group(1))
+                alias_occ.setdefault(alias_norm, []).append((doc, sec, page, line_stripped, "def"))
+                def_ids.add(idx)
+
+    for k, v in alias_occ.items():
+        _alias_to_occurrences.setdefault(k, []).extend(v)
+    for term, aliases in term_map.items():
+        _term_to_aliases.setdefault(term, set()).update(aliases)
+    _symbol_index_stats.update({
+        "alias_count": len(_alias_to_occurrences),
+        "term_count": len(_term_to_aliases),
+    })
+    _definition_ids.update(def_ids)
+
+
+def _fts_count(q: str) -> int:
+    total = 0
+    if not q:
+        return 0
+    for conn in _sqlite_conns:
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT count(*) FROM fts WHERE fts MATCH ?", (q,))
+            total += int(cur.fetchone()[0])
+        except sqlite3.OperationalError:
+            continue
+    return total
+
+
+_STOPWORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "from",
+    "are",
+    "was",
+    "were",
+    "have",
+    "has",
+    "into",
+    "than",
+    "such",
+    "using",
+    "use",
+    "upon",
+}
+
+
+def _prf_terms(hits: List[Hit], top_n: int = 5) -> List[str]:
+    texts: List[str] = []
+    for h in hits[:top_n]:
+        row = _id_to_row.get(h.id) if _id_to_row else None
+        if row is not None:
+            texts.append(row.get("text", ""))
+    if not texts:
+        return []
+    tokens = re.findall(r"[A-Za-z]{3,}", " ".join(texts).lower())
+    freq: Dict[str, int] = {}
+    for t in tokens:
+        if t in _STOPWORDS:
+            continue
+        freq[t] = freq.get(t, 0) + 1
+    terms = [t for t, _ in sorted(freq.items(), key=lambda kv: kv[1], reverse=True)[:2]]
+    return terms
 
 
 def _canonical_marker(sn) -> str:
@@ -194,12 +343,21 @@ def _load_one(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection
     df = pd.DataFrame(items)
     df.set_index("id", inplace=True)
 
+    _mine_aliases(df)
+    meta["symbol_index_stats"] = _symbol_index_stats
+
     conn = sqlite3.connect(str(sqlite_path))
 
     return index, df, conn, meta, meta_titles
 
 
 def load_assets(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection, dict]:
+    global _alias_to_occurrences, _term_to_aliases, _symbol_index_stats, _definition_ids
+    _alias_to_occurrences = {}
+    _term_to_aliases = {}
+    _symbol_index_stats = {}
+    _definition_ids = set()
+
     index, df, conn, meta, titles = _load_one(root)
 
     global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta, _meta_titles
@@ -218,6 +376,12 @@ def load_assets_all(
     roots: List[Path],
 ) -> Tuple[List[Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection, dict]], List[Dict[str, str]]]:
     """Load assets from multiple index directories."""
+    global _alias_to_occurrences, _term_to_aliases, _symbol_index_stats, _definition_ids
+    _alias_to_occurrences = {}
+    _term_to_aliases = {}
+    _symbol_index_stats = {}
+    _definition_ids = set()
+
     faiss_list: List[faiss.Index] = []
     conns: List[sqlite3.Connection] = []
     dfs: List[pd.DataFrame] = []
@@ -282,30 +446,59 @@ def load_assets_all(
 # ---------------------------------------------------------
 
 
-def search_multi(query: str, k_sem: int = 30, k_lex: int = 30) -> List[Hit]:
+def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[Hit]:
     _require_loaded()
     client = _get_client()
-
     model = _meta["model"]
     dim = int(_meta["dimensions"])
-    q_emb = client.embeddings.create(model=model, input=[query], dimensions=dim).data[0].embedding
-    q_vec = np.asarray(q_emb, dtype=np.float32)
-    q_vec /= max(np.linalg.norm(q_vec), 1e-12)
 
+    # alias expansion
+    tokens = re.findall(r"[A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", query)
+    aliases: set[str] = set()
+    if _flag("RETRIEVAL_ALIAS_MINER", True):
+        for t in tokens:
+            aliases.update(_term_to_aliases.get(t.lower(), set()))
+    alias_list = sorted(aliases)
+
+    _last_expansion_plan.clear()
+    base_count = _fts_count(_fts_safe_query(query))
+    _last_expansion_plan.append({"type": "query", "terms": [query], "hit_count": base_count})
+    for a in alias_list:
+        _last_expansion_plan.append({"type": "alias", "terms": [a], "hit_count": _fts_count(a)})
+
+    fts_tokens = re.findall(r"[A-Za-z0-9]+", query.lower()) + list(alias_list)
+    fts_q = " OR ".join(sorted(set(fts_tokens)))
+
+    if _flag("RETRIEVAL_PROXIMITY", True):
+        if len(tokens) >= 2:
+            window = int(os.getenv("RETRIEVAL_PROXIMITY_WINDOW", "3"))
+            prox_q = " NEAR/{} ".format(window).join([t.lower() for t in tokens])
+            if prox_q:
+                _last_expansion_plan.append({"type": "proximity", "terms": [prox_q], "hit_count": _fts_count(prox_q)})
+                if fts_q:
+                    fts_q = f"({fts_q}) OR ({prox_q})"
+                else:
+                    fts_q = prox_q
+
+    query_strings = [query] + list(alias_list)
     sem_scores: Dict[str, float] = {}
     sem_ranks: Dict[str, int] = {}
-    for df, index in zip(_items_dfs, _faiss_list):
-        scores, idxs = index.search(q_vec.reshape(1, -1), k_sem)
-        scores = scores[0]
-        idxs = idxs[0]
-        for rank, (i, s) in enumerate(zip(idxs, scores), start=1):
-            if i < 0:
-                continue
-            id_ = df.index[i]
-            sem_scores[id_] = float(s)
-            sem_ranks[id_] = rank
+    for qstr in query_strings:
+        q_emb = client.embeddings.create(model=model, input=[qstr], dimensions=dim).data[0].embedding
+        q_vec = np.asarray(q_emb, dtype=np.float32)
+        q_vec /= max(np.linalg.norm(q_vec), 1e-12)
+        for df, index in zip(_items_dfs if len(_faiss_list) > 1 else [_items_df], _faiss_list):
+            scores, idxs = index.search(q_vec.reshape(1, -1), k_sem)
+            scores = scores[0]
+            idxs = idxs[0]
+            for rank, (i, s) in enumerate(zip(idxs, scores), start=1):
+                if i < 0:
+                    continue
+                id_ = df.index[i]
+                if s > sem_scores.get(id_, -1):
+                    sem_scores[id_] = float(s)
+                    sem_ranks[id_] = rank
 
-    fts_q = _fts_safe_query(query)
     lex_scores: Dict[str, float] = {}
     lex_ranks: Dict[str, int] = {}
     if fts_q:
@@ -338,126 +531,54 @@ def search_multi(query: str, k_sem: int = 30, k_lex: int = 30) -> List[Hit]:
         rrf_scores.append(rrf)
         mix_scores.append(mix)
 
-    rrf_arr = np.asarray(rrf_scores)
-    mix_arr = np.asarray(mix_scores)
-    rrf_z = (rrf_arr - rrf_arr.mean()) / (rrf_arr.std() + 1e-12)
-    mix_z = (mix_arr - mix_arr.mean()) / (mix_arr.std() + 1e-12)
-    fused = (rrf_z + mix_z) / 2
-
-    figure_query = bool(re.search(r"figure|diagram|plot|graph|curve", query, re.I))
-    mathy_query = bool(re.search(r"mach|\bRe\b|\bCL\b|\bCD\b|\bEq\b|Δ|∂", query, re.I))
-
     hits: List[Hit] = []
-    for id_, s_fused in zip(ids, fused):
-        row = _id_to_row[id_]
-        if figure_query and row.get("type") == "figure":
-            s_fused += 0.05
-        if mathy_query:
-            text = row.get("text", "")
-            if re.search(r"mach|\bRe\b|\bCL\b|\bCD\b|\bEq\b|Δ|∂", text, re.I):
-                s_fused += 0.02
-        hits.append(
-            Hit(
-                id=id_,
-                score_sem=sem_scores.get(id_, 0.0),
-                rank_sem=sem_ranks.get(id_, k_sem + 1),
-                score_lex=lex_scores.get(id_, 0.0),
-                rank_lex=lex_ranks.get(id_, k_lex + 1),
-                score_fused=float(s_fused),
+    if ids:
+        rrf_arr = np.asarray(rrf_scores)
+        mix_arr = np.asarray(mix_scores)
+        rrf_z = (rrf_arr - rrf_arr.mean()) / (rrf_arr.std() + 1e-12)
+        mix_z = (mix_arr - mix_arr.mean()) / (mix_arr.std() + 1e-12)
+        fused = (rrf_z + mix_z) / 2
+
+        figure_query = bool(re.search(r"figure|diagram|plot|graph|curve", query, re.I))
+        mathy_query = bool(re.search(r"mach|\bRe\b|\bCL\b|\bCD\b|\bEq\b|Δ|∂", query, re.I))
+
+        for id_, s_fused in zip(ids, fused):
+            row = _id_to_row[id_]
+            if figure_query and row.get("type") == "figure":
+                s_fused += 0.05
+            if mathy_query:
+                text = row.get("text", "")
+                if re.search(r"mach|\bRe\b|\bCL\b|\bCD\b|\bEq\b|Δ|∂", text, re.I):
+                    s_fused += 0.02
+            if _flag("PACK_DEF_BIAS", True) and id_ in _definition_ids:
+                s_fused += 0.1
+            hits.append(
+                Hit(
+                    id=id_,
+                    score_sem=sem_scores.get(id_, 0.0),
+                    rank_sem=sem_ranks.get(id_, k_sem + 1),
+                    score_lex=lex_scores.get(id_, 0.0),
+                    rank_lex=lex_ranks.get(id_, k_lex + 1),
+                    score_fused=float(s_fused),
+                )
             )
-        )
 
     hits.sort(key=lambda h: h.score_fused, reverse=True)
+
+    if _flag("RETRIEVAL_PRF", True) and not _prf and len(hits) < 3:
+        terms = _prf_terms(hits)
+        if terms:
+            _last_expansion_plan.append({"type": "prf", "terms": terms, "hit_count": 0})
+            return _run_search(query + " " + " ".join(terms), k_sem, k_lex, _prf=True)
     return hits
+
+
+def search_multi(query: str, k_sem: int = 30, k_lex: int = 30) -> List[Hit]:
+    return _run_search(query, k_sem, k_lex)
 
 
 def search(query: str, k_sem: int = 30, k_lex: int = 30) -> List[Hit]:
-    if len(_faiss_list) > 1:
-        return search_multi(query, k_sem=k_sem, k_lex=k_lex)
-
-    _require_loaded()
-    client = _get_client()
-
-    model = _meta["model"]
-    dim = int(_meta["dimensions"])
-    q_emb = client.embeddings.create(model=model, input=[query], dimensions=dim).data[0].embedding
-    q_vec = np.asarray(q_emb, dtype=np.float32)
-    q_vec /= max(np.linalg.norm(q_vec), 1e-12)
-
-    scores, idxs = _faiss_list[0].search(q_vec.reshape(1, -1), k_sem)
-    scores = scores[0]
-    idxs = idxs[0]
-    sem_scores: Dict[str, float] = {}
-    sem_ranks: Dict[str, int] = {}
-    for rank, (i, s) in enumerate(zip(idxs, scores), start=1):
-        if i < 0:
-            continue
-        id_ = _items_df.index[i]
-        sem_scores[id_] = float(s)
-        sem_ranks[id_] = rank
-
-    fts_q = _fts_safe_query(query)
-    rows = []
-    if fts_q:
-        cur = _sqlite_conns[0].cursor()
-        try:
-            cur.execute(
-                "SELECT id, bm25(fts) as score FROM fts WHERE fts MATCH ? ORDER BY score LIMIT ?",
-                (fts_q, k_lex),
-            )
-            rows = cur.fetchall()
-        except sqlite3.OperationalError:
-            rows = []
-    lex_scores: Dict[str, float] = {}
-    lex_ranks: Dict[str, int] = {}
-    for rank, (id_, bm25) in enumerate(rows, start=1):
-        lex_scores[id_] = 1.0 / (1.0 + float(bm25))
-        lex_ranks[id_] = rank
-
-    ids = list({*sem_scores.keys(), *lex_scores.keys()})
-    rrf_scores = []
-    mix_scores = []
-    for id_ in ids:
-        s_sem = sem_scores.get(id_, 0.0)
-        s_lex = lex_scores.get(id_, 0.0)
-        r_sem = sem_ranks.get(id_, k_sem + 1)
-        r_lex = lex_ranks.get(id_, k_lex + 1)
-        rrf = 1 / (60 + r_sem) + 1 / (60 + r_lex)
-        mix = 0.6 * s_sem + 0.4 * s_lex
-        rrf_scores.append(rrf)
-        mix_scores.append(mix)
-
-    rrf_arr = np.asarray(rrf_scores)
-    mix_arr = np.asarray(mix_scores)
-    rrf_z = (rrf_arr - rrf_arr.mean()) / (rrf_arr.std() + 1e-12)
-    mix_z = (mix_arr - mix_arr.mean()) / (mix_arr.std() + 1e-12)
-    fused = (rrf_z + mix_z) / 2
-
-    figure_query = bool(re.search(r"figure|diagram|plot|graph|curve", query, re.I))
-    mathy_query = bool(re.search(r"mach|\bRe\b|\bCL\b|\bCD\b|\bEq\b|Δ|∂", query, re.I))
-
-    hits: List[Hit] = []
-    for id_, s_fused in zip(ids, fused):
-        row = _id_to_row[id_]
-        if figure_query and row.get("type") == "figure":
-            s_fused += 0.05
-        if mathy_query:
-            text = row.get("text", "")
-            if re.search(r"mach|\bRe\b|\bCL\b|\bCD\b|\bEq\b|Δ|∂", text, re.I):
-                s_fused += 0.02
-        hits.append(
-            Hit(
-                id=id_,
-                score_sem=sem_scores.get(id_, 0.0),
-                rank_sem=sem_ranks.get(id_, k_sem + 1),
-                score_lex=lex_scores.get(id_, 0.0),
-                rank_lex=lex_ranks.get(id_, k_lex + 1),
-                score_fused=float(s_fused),
-            )
-        )
-
-    hits.sort(key=lambda h: h.score_fused, reverse=True)
-    return hits
+    return _run_search(query, k_sem, k_lex)
 
 
 # ---------------------------------------------------------
@@ -503,7 +624,8 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
         row = _id_to_row[item_id]
         typ0 = row.get("type", "body")
         typ = "body" if typ0 == "ocr" else typ0
-        if counts.get(typ, 0) >= quotas.get(typ, 0):
+        is_def = item_id in _definition_ids if _flag("PACK_DEF_BIAS", True) else False
+        if counts.get(typ, 0) >= quotas.get(typ, 0) and not is_def:
             return False
         sec = section_str(row.get("section_path", ""))
         loc_key = (int(row.get("page", 0)), sec)
@@ -528,7 +650,7 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             section_path=sec,
             text=text,
             figure_id=row.get("figure_id"),
-            why=why,
+            why="definition" if is_def and why == "hit" else why,
             source_path=source_path,
             doc_title=doc_title,
             doc_short=doc_short,
@@ -775,6 +897,13 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
                 coverage_gaps.append(f"No snippet for {sym}")
                 refinement.append(sym)
 
+    alias_counts: Dict[str, int] = {}
+    for sn in snippets:
+        for tok in re.findall(r"[A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", sn.text):
+            norm = _norm_alias(tok)
+            if norm in _alias_to_occurrences:
+                alias_counts[norm] = alias_counts.get(norm, 0) + 1
+
     meta = {
         "doc_sets": doc_sets,
         "loaded_indexes": loaded_indexes,
@@ -787,10 +916,13 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
         "k_sem": k_sem,
         "k_lex": k_lex,
         "token_budget": token_budget,
+        "expansion_plan": list(_last_expansion_plan),
+        "aliases_used": alias_counts,
+        "symbol_index_stats": _symbol_index_stats,
     }
 
     bundle = ResearchBundle(
-        metadata=meta,
+        metadata=ResearchMetadata(**meta),
         snippets=snippets,
         equations=equations,
         glossary=glossary,

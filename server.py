@@ -3,12 +3,13 @@ import re
 import uuid
 import base64
 import logging
-from typing import List, Optional, Sequence, Iterator, Iterable, Union
+from typing import List, Optional, Sequence, Iterator, Iterable, Union, Dict
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from contextlib import contextmanager
 
 # Import the callable core entrypoint using package‑relative import to avoid
 # path issues when running under different working directories.
@@ -30,6 +31,10 @@ class AskRequest(BaseModel):
     course_id: Optional[str] = None
     doc_sets: Optional[List[str]] = None
     attachments: Optional[List[AttachmentIn]] = Field(default_factory=list)
+    alias_miner: Optional[bool] = None
+    proximity: Optional[bool] = None
+    prf: Optional[bool] = None
+    def_bias: Optional[bool] = None
 
 
 # -------- Utils --------
@@ -86,6 +91,22 @@ def _iter_text(obj: Union[str, bytes, Iterable, Iterator]) -> Iterator[str]:
             yield x.decode("utf-8", errors="ignore")
         else:
             yield str(x)
+
+
+@contextmanager
+def _temp_env(vars: Dict[str, str]):
+    old: Dict[str, Optional[str]] = {}
+    try:
+        for k, v in vars.items():
+            old[k] = os.getenv(k)
+            os.environ[k] = v
+        yield
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 # -------- App --------
@@ -152,16 +173,27 @@ def post_ask(payload: AskRequest):
         log.exception("Attachment decode failed")
         raise HTTPException(status_code=400, detail=f"Invalid attachments: {e}")
 
+    opts: Dict[str, str] = {}
+    if payload.alias_miner is not None:
+        opts["RETRIEVAL_ALIAS_MINER"] = "on" if payload.alias_miner else "off"
+    if payload.proximity is not None:
+        opts["RETRIEVAL_PROXIMITY"] = "on" if payload.proximity else "off"
+    if payload.prf is not None:
+        opts["RETRIEVAL_PRF"] = "on" if payload.prf else "off"
+    if payload.def_bias is not None:
+        opts["PACK_DEF_BIAS"] = "on" if payload.def_bias else "off"
+
     def generate():
         try:
-            result = answer_question(
-                question=payload.question.strip(),
-                image_paths=image_paths,
-                course_id=payload.course_id,
-                doc_sets=payload.doc_sets,
-            )
-            for chunk in _iter_text(result):
-                yield chunk
+            with _temp_env(opts):
+                result = answer_question(
+                    question=payload.question.strip(),
+                    image_paths=image_paths,
+                    course_id=payload.course_id,
+                    doc_sets=payload.doc_sets,
+                )
+                for chunk in _iter_text(result):
+                    yield chunk
         except Exception as e:
             log.exception("answer_question failed")
             yield f"\n[error] {e}"
