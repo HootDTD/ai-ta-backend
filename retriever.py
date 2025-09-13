@@ -603,11 +603,18 @@ def answer(question: str, ctx: ContextPack) -> Answer:
     )
     out = resp.choices[0].message.content.strip()
 
+    # Only keep citations that are actually referenced in the model output
+    marker_pattern = re.compile(r"\[S(\d+)\]")
+    used_markers = {int(m.group(1)) for m in marker_pattern.finditer(out)}
+
     citations: List[Dict[str, Any]] = []
     for i, sn in enumerate(ctx.snippets, start=1):
         marker = _canonical_marker(sn)
-        citations.append({"id": sn.id, "marker": marker, "snippet": sn})
-        out = out.replace(f"[S{i}]", marker)
+        if i in used_markers:
+            out = out.replace(f"[S{i}]", marker)
+            citations.append({"id": sn.id, "marker": marker, "snippet": sn})
+        else:
+            out = out.replace(f"[S{i}]", "")
 
     proof = {"question": question, "used_ids": ctx.used_ids}
     return Answer(text=out, citations=citations, proof=proof)
