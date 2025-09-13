@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+from typing import Dict
 
 from dataclasses import asdict
 
@@ -98,11 +99,11 @@ def cmd_research(args: argparse.Namespace) -> None:
         print(json.dumps(asdict(bundle), indent=2, ensure_ascii=False))
         return
     markers = [sn.citation_marker for sn in bundle.snippets[:5]]
-    counts = {
-        "loaded": len(bundle.metadata.get("loaded_indexes", [])),
-        "skipped": len(bundle.metadata.get("skipped_indexes", [])),
+    counts: Dict[str, int] = {
+        "loaded": len(getattr(bundle.metadata, "loaded_indexes", [])),
+        "skipped": len(getattr(bundle.metadata, "skipped_indexes", [])),
     }
-    meta = dict(bundle.metadata)
+    meta = asdict(bundle.metadata)
     meta["index_counts"] = counts
     skeleton = {
         "metadata": meta,

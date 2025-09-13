@@ -138,7 +138,8 @@ def solve_with_bundle(
             fh.write(user_payload)
 
         lines: List[str] = []
-        meta = bundle.metadata or {}
+        meta_obj = bundle.metadata
+        meta = asdict(meta_obj) if not isinstance(meta_obj, dict) else meta_obj
         meta_parts: List[str] = []
         if meta.get("k_sem") is not None:
             meta_parts.append(f"k_sem={meta.get('k_sem')}")
@@ -150,6 +151,15 @@ def solve_with_bundle(
             meta_parts.append(f"loaded_indexes={meta.get('loaded_indexes')}")
         if meta.get("skipped_indexes") is not None:
             meta_parts.append(f"skipped_indexes={meta.get('skipped_indexes')}")
+        if meta.get("expansion_plan"):
+            plan_parts = [
+                f"{p.get('type')}: {','.join(p.get('terms', []))} ({p.get('hit_count',0)})"
+                for p in meta.get("expansion_plan", [])
+            ]
+            meta_parts.append("plan=" + " | ".join(plan_parts))
+        if meta.get("aliases_used"):
+            alias_str = ", ".join(f"{k}:{v}" for k, v in meta.get("aliases_used", {}).items())
+            meta_parts.append("aliases=" + alias_str)
         if meta_parts:
             lines.append("meta: " + ", ".join(meta_parts))
 

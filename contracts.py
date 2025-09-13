@@ -46,8 +46,27 @@ class BundleSnippet:
 
 
 @dataclass
+class ResearchMetadata:
+    doc_sets: List[str] = field(default_factory=list)
+    loaded_indexes: List[str] = field(default_factory=list)
+    question: str = ""
+    problem_type: str = "unknown"
+    asked_outputs_len: int = 0
+    skipped_indexes: List[Dict[str, Any]] = field(default_factory=list)
+    model: Optional[str] = None
+    dimensions: Optional[int] = None
+    k_sem: int = 0
+    k_lex: int = 0
+    token_budget: int = 0
+    expansion_plan: List[Dict[str, Any]] = field(default_factory=list)
+    aliases_used: Dict[str, int] = field(default_factory=dict)
+    symbol_index_stats: Dict[str, Any] = field(default_factory=dict)
+    coverage_gaps: List[str] = field(default_factory=list)
+
+
+@dataclass
 class ResearchBundle:
-    metadata: Dict[str, Any]
+    metadata: ResearchMetadata
     snippets: List[BundleSnippet]
     equations: List[Dict[str, Any]] = field(default_factory=list)
     assumptions: List[Dict[str, Any]] = field(default_factory=list)
@@ -65,8 +84,8 @@ class ResearchBundle:
         if not self.snippets:
             raise ValueError("ResearchBundle.snippets must not be empty")
         # enforce snippet count for quantitative problems or multi-output tasks
-        problem_type = self.metadata.get("problem_type", "")
-        asked_len = int(self.metadata.get("asked_outputs_len", 0))
+        problem_type = getattr(self.metadata, "problem_type", "")
+        asked_len = int(getattr(self.metadata, "asked_outputs_len", 0))
         if (problem_type == "quantitative" or asked_len >= 2) and len(self.snippets) < 3:
             raise ValueError("Insufficient snippets for quantitative task")
         if not (self.equations or self.glossary):
@@ -120,6 +139,7 @@ class Violation(Exception):
 __all__ = [
     "ParsedTask",
     "BundleSnippet",
+    "ResearchMetadata",
     "ResearchBundle",
     "ProposedSolution",
     "FinalAnswer",
