@@ -17,12 +17,7 @@ import tiktoken
 from openai import OpenAI
 from .contracts import ResearchBundle, BundleSnippet, ParsedTask, ResearchMetadata
 
-WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {
-    "0",
-    "off",
-    "false",
-    "no",
-}
+WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0","off","false","no"}
 
 # ----------------------- Data classes -----------------------
 
@@ -692,21 +687,12 @@ def search(query: str, k_sem: int = 30, k_lex: int = 30) -> Tuple[List[Hit], Dic
     hit_count_lex = sum(1 for h in hits if h.score_lex > 0)
     diag.update({"hit_count_sem": hit_count_sem, "hit_count_lex": hit_count_lex})
     if WIRE:
-        print(
-            "[Indexer AI] diag="
-            + json.dumps(
-                {
-                    "hit_count_sem": diag.get("hit_count_sem", 0),
-                    "hit_count_lex": diag.get("hit_count_lex", 0),
-                    "missing_terms": diag.get("missing_terms", []),
-                    "expansion_candidates": {
-                        k: v[:3]
-                        for k, v in diag.get("expansion_candidates", {}).items()
-                    },
-                },
-                ensure_ascii=False,
-            )
-        )
+        print("[Indexer AI] diag=" + json.dumps({
+            "hit_count_sem": diag.get("hit_count_sem", 0),
+            "hit_count_lex": diag.get("hit_count_lex", 0),
+            "missing_terms": diag.get("missing_terms", []),
+            "expansion_candidates": {k: v[:3] for k, v in diag.get("expansion_candidates", {}).items()},
+        }, ensure_ascii=False), flush=True)
     return hits, diag
 
 

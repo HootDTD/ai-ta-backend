@@ -15,12 +15,7 @@ from .main_ai import parse_question, solve_with_bundle, format_answer, normalize
 from .retriever import research
 
 
-WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {
-    "0",
-    "off",
-    "false",
-    "no",
-}
+WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0","off","false","no"}
 
 
 def _bounded_replace(q: str, replacements: Dict[str, str]) -> str:
@@ -46,69 +41,33 @@ class Orchestrator:
     def _iterative_research(
         self, question: str, options: Dict[str, Any], max_iters: int
     ) -> ResearchBundle:
-        """Run retrieval with deterministic query expansion up to ``max_iters``.
-
-        The query is first normalized (unless ``RETRIEVAL_SANITIZE`` disables it)
-        and then searched. Missing terms reported by the retriever are replaced
-        with corpus-observed aliases or morphology variants and the search is
-        repeated. A trace of iterations is stored in the bundle metadata.
-        """
-
-        sanitize = os.getenv("RETRIEVAL_SANITIZE", "on").lower() not in {
-            "0",
-            "off",
-            "false",
-            "no",
-        }
+        sanitize = os.getenv("RETRIEVAL_SANITIZE", "on").lower() not in {"0","off","false","no"}
         current = normalize_query(question) if sanitize else question
         attempted = {current}
         trace: List[Dict[str, Any]] = []
+
         def_words = [
-            w.strip()
-            for w in os.getenv("RETRIEVAL_DEF_CUE_WORDS", "").split(",")
-            if w.strip()
-        ]
-        if not def_words:
-            def_words = [
-                "defined",
-                "denoted",
-                "where",
-                "is defined as",
-                "given by",
-                "expressed as",
-                "ratio",
-            ]
+            w.strip() for w in os.getenv("RETRIEVAL_DEF_CUE_WORDS", "").split(",") if w.strip()
+        ] or ["defined", "denoted", "where", "is defined as", "given by", "expressed as", "ratio"]
         def_re = re.compile("|".join(re.escape(w) for w in def_words), re.I)
 
-  for i in range(max_iters):
-    if WIRE:
-        print(f"[Main AI -> Indexer AI] query: {current}", flush=True)
+        for i in range(max_iters):
+            if WIRE:
+                print(f"[Main AI -> Indexer AI] query: {current}", flush=True)
 
-    bundle = research(current, options)
-    meta = bundle.metadata
+            bundle = research(current, options)
+            meta = bundle.metadata
 
-    if WIRE:
-        print(
-            "[Indexer AI -> Main AI] hits_sem={sem} hits_lex={lex} missing={missing}".format(
-                sem=getattr(meta, "hit_count_sem", 0),
-                lex=getattr(meta, "hit_count_lex", 0),
-                missing=list(getattr(meta, "missing_terms", [])),
-            ),
-            flush=True,
-        )
-
-    had_def = any(def_re.search(sn.text) for sn in bundle.snippets)
-    entry = {
-        "iter": i,
-        "query": current,
-        "replaced_terms": {},
-        "added_terms": [],
-        "hit_count_lex": getattr(meta, "hit_count_lex", 0),
-        "hit_count_sem": getattr(meta, "hit_count_sem", 0),
-        "had_definition": had_def,
-    }
-    trace.append(entry)
-    
+            if WIRE:
+                print(
+                    "[Indexer AI -> Main AI] "
+                    "hits_sem={sem} hits_lex={lex} missing={missing}".format(
+                        sem=getattr(meta, "hit_count_sem", 0),
+                        lex=getattr(meta, "hit_count_lex", 0),
+                        missing=list(getattr(meta, "missing_terms", [])),
+                    ),
+                    flush=True,
+                )
 
             had_def = any(def_re.search(sn.text) for sn in bundle.snippets)
             entry = {
@@ -121,27 +80,31 @@ class Orchestrator:
                 "had_definition": had_def,
             }
             trace.append(entry)
+
             missing = list(getattr(meta, "missing_terms", []))
             if (len(bundle.snippets) >= 3 and had_def) or not missing:
                 break
+
             replacements: Dict[str, str] = {}
             for term in missing:
                 cands = getattr(meta, "expansion_candidates", {}).get(term, [])
                 if cands:
                     replacements[term] = cands[0]
+
             if not replacements:
                 break
+
             new_q = _bounded_replace(current, replacements)
             entry["replaced_terms"] = replacements
+
             if new_q in attempted:
                 break
+
             attempted.add(new_q)
             current = new_q
 
-        meta = bundle.metadata
-        meta.iteration_trace = trace
-        meta.final_query = current
-        meta.original_query = question
+        # persist the trace for downstream checks/debugging
+        setattr(bundle.metadata, "iteration_trace", trace)
         return bundle
 
     def _hash(self, obj: object) -> str:
