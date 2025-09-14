@@ -62,6 +62,12 @@ class ResearchMetadata:
     aliases_used: Dict[str, int] = field(default_factory=dict)
     symbol_index_stats: Dict[str, Any] = field(default_factory=dict)
     coverage_gaps: List[str] = field(default_factory=list)
+    term_presence: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    missing_terms: List[str] = field(default_factory=list)
+    expansion_candidates: Dict[str, List[str]] = field(default_factory=dict)
+    iteration_trace: List[Dict[str, Any]] = field(default_factory=list)
+    final_query: str = ""
+    original_query: str = ""
 
 
 @dataclass
