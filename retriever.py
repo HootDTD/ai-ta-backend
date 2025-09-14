@@ -905,6 +905,9 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
         q = " ".join([p for p in parts if p])
         question = (q + f" {task.problem_type}").strip() if q else task.problem_type
 
+    if WIRE:
+        print(f"[Main AI -> Indexer AI] query: {question}", flush=True)
+
     skipped_indexes: List[Dict[str, str]] = []
     loaded_indexes: List[str] = []
     if doc_sets:
@@ -920,6 +923,14 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
             raise RuntimeError(str(exc))
 
     hits, diag = search(question, k_sem=k_sem, k_lex=k_lex)
+    if WIRE:
+        sem = diag.get("hit_count_sem", 0)
+        lex = diag.get("hit_count_lex", 0)
+        missing = list(diag.get("missing_terms", []))
+        print(
+            f"[Indexer AI -> Main AI] hits_sem={sem} hits_lex={lex} missing={missing}",
+            flush=True,
+        )
     ctx = pack_context(hits, token_budget=token_budget)
 
     snippets: List[BundleSnippet] = []
@@ -1053,6 +1064,8 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
         stats=ctx.stats,
         provenance={"source": "retriever"},
     )
+    if WIRE:
+        print(f"[Indexer AI -> Main AI] snippets={len(bundle.snippets)}", flush=True)
     return bundle
 
 
