@@ -69,8 +69,16 @@ class Orchestrator:
         def_re = re.compile("|".join(re.escape(w) for w in def_words), re.I)
 
         for i in range(max_iters):
+            print(f"[Main AI -> Indexer AI] query: {current}")
             bundle = research(current, options)
             meta = bundle.metadata
+            print(
+                "[Indexer AI -> Main AI] hits_sem={sem} hits_lex={lex} missing={missing}".format(
+                    sem=getattr(meta, "hit_count_sem", 0),
+                    lex=getattr(meta, "hit_count_lex", 0),
+                    missing=list(getattr(meta, "missing_terms", [])),
+                )
+            )
             had_def = any(def_re.search(sn.text) for sn in bundle.snippets)
             entry = {
                 "iter": i,
