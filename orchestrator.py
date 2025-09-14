@@ -15,14 +15,18 @@ from .main_ai import parse_question, solve_with_bundle, format_answer, normalize
 from .retriever import research
 
 
-def _bounded_replace(text: str, replacements: Dict[str, str]) -> str:
-    import re
+WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {
+    "0",
+    "off",
+    "false",
+    "no",
+}
 
-    out = text
+
+def _bounded_replace(q: str, replacements: Dict[str, str]) -> str:
     for t, c in replacements.items():
-        pattern = r"(?<!\w)" + re.escape(t) + r"(?!\w)"
-        out = re.sub(pattern, c, out)
-    return out
+        q = re.sub(r"\b" + re.escape(t) + r"\b", c, q)
+    return q
 
 try:  # optional pint dependency for unit checks
     from pint import UnitRegistry
@@ -65,20 +69,47 @@ class Orchestrator:
             if w.strip()
         ]
         if not def_words:
-            def_words = ["defined", "denoted", "where"]
+            def_words = [
+                "defined",
+                "denoted",
+                "where",
+                "is defined as",
+                "given by",
+                "expressed as",
+                "ratio",
+            ]
         def_re = re.compile("|".join(re.escape(w) for w in def_words), re.I)
 
-        for i in range(max_iters):
-            print(f"[Main AI -> Indexer AI] query: {current}")
-            bundle = research(current, options)
-            meta = bundle.metadata
-            print(
-                "[Indexer AI -> Main AI] hits_sem={sem} hits_lex={lex} missing={missing}".format(
-                    sem=getattr(meta, "hit_count_sem", 0),
-                    lex=getattr(meta, "hit_count_lex", 0),
-                    missing=list(getattr(meta, "missing_terms", [])),
-                )
-            )
+  for i in range(max_iters):
+    if WIRE:
+        print(f"[Main AI -> Indexer AI] query: {current}", flush=True)
+
+    bundle = research(current, options)
+    meta = bundle.metadata
+
+    if WIRE:
+        print(
+            "[Indexer AI -> Main AI] hits_sem={sem} hits_lex={lex} missing={missing}".format(
+                sem=getattr(meta, "hit_count_sem", 0),
+                lex=getattr(meta, "hit_count_lex", 0),
+                missing=list(getattr(meta, "missing_terms", [])),
+            ),
+            flush=True,
+        )
+
+    had_def = any(def_re.search(sn.text) for sn in bundle.snippets)
+    entry = {
+        "iter": i,
+        "query": current,
+        "replaced_terms": {},
+        "added_terms": [],
+        "hit_count_lex": getattr(meta, "hit_count_lex", 0),
+        "hit_count_sem": getattr(meta, "hit_count_sem", 0),
+        "had_definition": had_def,
+    }
+    trace.append(entry)
+    
+
             had_def = any(def_re.search(sn.text) for sn in bundle.snippets)
             entry = {
                 "iter": i,
@@ -308,10 +339,7 @@ class Orchestrator:
             bundle = self._iterative_research(question, retrieval_opts, max_iters)
             with open("bundle.json", "w", encoding="utf-8") as f:
                 json.dump(asdict(bundle), f, indent=2, ensure_ascii=False)
-            if not any(
-                t.get("had_definition")
-                for t in getattr(bundle.metadata, "iteration_trace", [])
-            ):
+            if not bundle.snippets:
                 return FinalAnswer(
                     text="Not found in the approved materials.", citations=[]
                 )
