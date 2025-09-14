@@ -18,6 +18,7 @@ from .retriever import (
     answer as retriever_answer,
     render_citations,
 )
+from .main_ai import normalize_query
 
 
 def _ensure_assets(doc_sets: Optional[Sequence[str]]) -> None:
@@ -65,8 +66,8 @@ def answer_question(
 
     _ensure_assets(doc_sets)
 
-    # Run the same retrieval → pack → answer steps used by the CLI
-    hits = search(question)
+    query = normalize_query(question)
+    hits, _ = search(query)
     ctx = pack_context(hits)
     ans = retriever_answer(question, ctx)
     cites = render_citations(ans)

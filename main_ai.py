@@ -14,6 +14,41 @@ from .contracts import ParsedTask, ProposedSolution, FinalAnswer, ResearchBundle
 from .solver import run_python
 
 
+def normalize_query(text: str) -> str:
+    """Normalize a raw user query for retrieval.
+
+    This step strips curly quotes/apostrophes, removes all quote characters,
+    collapses repeated whitespace, normalizes dashes to ``-`` and lowers the
+    string. The original text should be retained separately for display but the
+    sanitized form is suitable for lexical probing and full‑text search without
+    causing FTS hiccups.
+    """
+
+    if not text:
+        return ""
+
+    # Replace curly quotes/apostrophes with straight equivalents
+    replacements = {
+        "’": "'",
+        "‘": "'",
+        "“": '"',
+        "”": '"',
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+
+    # Drop any remaining quote characters which can confuse FTS
+    text = text.replace("'", "").replace('"', "")
+
+    # Unify hyphens / dashes
+    text = re.sub(r"[–—−]", "-", text)
+
+    # Collapse repeated whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text.lower()
+
+
 def _client() -> OpenAI:
     if not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY not set")
@@ -151,15 +186,29 @@ def solve_with_bundle(
             meta_parts.append(f"loaded_indexes={meta.get('loaded_indexes')}")
         if meta.get("skipped_indexes") is not None:
             meta_parts.append(f"skipped_indexes={meta.get('skipped_indexes')}")
+        trace = meta.get("iteration_trace", [])
+        if trace:
+            meta_parts.append(f"iters={len(trace)}")
+            for t in trace:
+                repl = t.get("replaced_terms") or {}
+                if repl:
+                    rep_str = ",".join(f"{k}->{v}" for k, v in repl.items())
+                    meta_parts.append(f"iter{t.get('iter')}: {rep_str}")
+        if meta.get("missing_terms"):
+            meta_parts.append("missing=" + ",".join(meta.get("missing_terms", [])))
+        if meta.get("aliases_used"):
+            alias_str = ",".join(meta.get("aliases_used", {}).keys())
+            meta_parts.append("used_aliases=" + alias_str)
         if meta.get("expansion_plan"):
             plan_parts = [
                 f"{p.get('type')}: {','.join(p.get('terms', []))} ({p.get('hit_count',0)})"
                 for p in meta.get("expansion_plan", [])
             ]
             meta_parts.append("plan=" + " | ".join(plan_parts))
-        if meta.get("aliases_used"):
-            alias_str = ", ".join(f"{k}:{v}" for k, v in meta.get("aliases_used", {}).items())
-            meta_parts.append("aliases=" + alias_str)
+        if meta.get("original_query"):
+            meta_parts.append(f"orig_q={meta['original_query']!r}")
+        if meta.get("final_query"):
+            meta_parts.append(f"final_q={meta['final_query']!r}")
         if meta_parts:
             lines.append("meta: " + ", ".join(meta_parts))
 
@@ -306,4 +355,4 @@ def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAn
     return FinalAnswer(text=text_str, citations=cites)
 
 
-__all__ = ["parse_question", "solve_with_bundle", "format_answer"]
+__all__ = ["parse_question", "solve_with_bundle", "format_answer", "normalize_query"]

@@ -8,7 +8,7 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Set
 
 import faiss
 import numpy as np
@@ -103,6 +103,104 @@ def _fts_safe_query(text: str) -> str:
     tokens = re.findall(r"[A-Za-z0-9]+", text.lower())
     tokens = [t for t in tokens if len(t) > 1]
     return " OR ".join(tokens)
+
+
+def _fts_term_count(term: str) -> int:
+    """Return total FTS hit count across loaded indexes for ``term``."""
+
+    q = _fts_safe_query(term)
+    total = 0
+    phrase = None
+    if re.search(r"[\s-]", term):
+        phrase = f'"{term}"'
+    for conn in _sqlite_conns:
+        try:
+            if phrase:
+                cur = conn.execute(
+                    "SELECT count(*) FROM items_fts WHERE items_fts MATCH ?",
+                    (phrase,),
+                )
+                row = cur.fetchone()
+                if row and int(row[0]) > 0:
+                    total += int(row[0])
+                    continue
+            cur = conn.execute(
+                "SELECT count(*) FROM items_fts WHERE items_fts MATCH ?",
+                (q,),
+            )
+            row = cur.fetchone()
+            if row:
+                total += int(row[0])
+        except Exception:
+            continue
+    return total
+
+
+_STOPWORDS: Set[str] = {
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "of",
+    "to",
+    "in",
+    "for",
+    "with",
+    "on",
+    "by",
+    "what",
+    "is",
+    "are",
+    "be",
+    "from",
+    "that",
+    "this",
+}
+
+
+def _analyze_query(q: str) -> Dict[str, Any]:
+    """Return term presence diagnostics for a sanitized query."""
+
+    tokens = [
+        t
+        for t in re.findall(r"[a-z0-9_\-]+", q.lower())
+        if t not in _STOPWORDS and not t.isdigit()
+    ]
+    term_presence: Dict[str, Dict[str, Any]] = {}
+    missing: List[str] = []
+    expansion: Dict[str, List[str]] = {}
+    for term in tokens:
+        fts = _fts_term_count(term)
+        aliases = list(_term_to_aliases.get(term, set()))
+        alias_hits = []
+        cand_scores: List[Tuple[int, str]] = []
+        for al in aliases:
+            c = _fts_term_count(al)
+            cand_scores.append((c, al))
+            if c > 0:
+                alias_hits.append(al)
+        alias_hit = bool(alias_hits)
+        # Morphology variants
+        morph: Set[str] = set()
+        if term.endswith("s"):
+            morph.add(term[:-1])
+        else:
+            morph.add(term + "s")
+        morph.add(term.replace("-", ""))
+        for m in morph:
+            c = _fts_term_count(m)
+            cand_scores.append((c, m))
+        cand_scores.sort(reverse=True)
+        expansion[term] = [v for c, v in cand_scores if v != term]
+        term_presence[term] = {"fts_count": fts, "alias_hit": alias_hit}
+        if fts == 0 and not alias_hit:
+            missing.append(term)
+    return {
+        "term_presence": term_presence,
+        "missing_terms": missing,
+        "expansion_candidates": expansion,
+    }
 
 
 def _norm_key(path: str) -> str:
@@ -574,11 +672,19 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
 
 
 def search_multi(query: str, k_sem: int = 30, k_lex: int = 30) -> List[Hit]:
-    return _run_search(query, k_sem, k_lex)
+    hits, _ = search(query, k_sem, k_lex)
+    return hits
 
 
-def search(query: str, k_sem: int = 30, k_lex: int = 30) -> List[Hit]:
-    return _run_search(query, k_sem, k_lex)
+def search(query: str, k_sem: int = 30, k_lex: int = 30) -> Tuple[List[Hit], Dict[str, Any]]:
+    """Run semantic+lexical search returning hits and diagnostics."""
+
+    diag = _analyze_query(query)
+    hits = _run_search(query, k_sem, k_lex)
+    hit_count_sem = sum(1 for h in hits if h.score_sem > 0)
+    hit_count_lex = sum(1 for h in hits if h.score_lex > 0)
+    diag.update({"hit_count_sem": hit_count_sem, "hit_count_lex": hit_count_lex})
+    return hits, diag
 
 
 # ---------------------------------------------------------
@@ -804,7 +910,7 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
         except RuntimeError as exc:
             raise RuntimeError(str(exc))
 
-    hits = search(question, k_sem=k_sem, k_lex=k_lex)
+    hits, diag = search(question, k_sem=k_sem, k_lex=k_lex)
     ctx = pack_context(hits, token_budget=token_budget)
 
     snippets: List[BundleSnippet] = []
@@ -919,6 +1025,11 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
         "expansion_plan": list(_last_expansion_plan),
         "aliases_used": alias_counts,
         "symbol_index_stats": _symbol_index_stats,
+        "term_presence": diag.get("term_presence", {}),
+        "missing_terms": diag.get("missing_terms", []),
+        "expansion_candidates": diag.get("expansion_candidates", {}),
+        "hit_count_sem": diag.get("hit_count_sem", 0),
+        "hit_count_lex": diag.get("hit_count_lex", 0),
     }
 
     bundle = ResearchBundle(

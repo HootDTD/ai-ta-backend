@@ -8,11 +8,21 @@ import os
 import re
 from dataclasses import asdict
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Any
 
 from .contracts import FinalAnswer, ParsedTask, Proof, ProposedSolution, ResearchBundle
-from .main_ai import parse_question, solve_with_bundle, format_answer
+from .main_ai import parse_question, solve_with_bundle, format_answer, normalize_query
 from .retriever import research
+
+
+def _bounded_replace(text: str, replacements: Dict[str, str]) -> str:
+    import re
+
+    out = text
+    for t, c in replacements.items():
+        pattern = r"(?<!\w)" + re.escape(t) + r"(?!\w)"
+        out = re.sub(pattern, c, out)
+    return out
 
 try:  # optional pint dependency for unit checks
     from pint import UnitRegistry
@@ -28,6 +38,72 @@ class Orchestrator:
     def __init__(self, max_retrieval_rounds: int = 2, max_solve_rounds: int = 2):
         self.max_retrieval_rounds = max_retrieval_rounds
         self.max_solve_rounds = max_solve_rounds
+
+    def _iterative_research(
+        self, question: str, options: Dict[str, Any], max_iters: int
+    ) -> ResearchBundle:
+        """Run retrieval with deterministic query expansion up to ``max_iters``.
+
+        The query is first normalized (unless ``RETRIEVAL_SANITIZE`` disables it)
+        and then searched. Missing terms reported by the retriever are replaced
+        with corpus-observed aliases or morphology variants and the search is
+        repeated. A trace of iterations is stored in the bundle metadata.
+        """
+
+        sanitize = os.getenv("RETRIEVAL_SANITIZE", "on").lower() not in {
+            "0",
+            "off",
+            "false",
+            "no",
+        }
+        current = normalize_query(question) if sanitize else question
+        attempted = {current}
+        trace: List[Dict[str, Any]] = []
+        def_words = [
+            w.strip()
+            for w in os.getenv("RETRIEVAL_DEF_CUE_WORDS", "").split(",")
+            if w.strip()
+        ]
+        if not def_words:
+            def_words = ["defined", "denoted", "where"]
+        def_re = re.compile("|".join(re.escape(w) for w in def_words), re.I)
+
+        for i in range(max_iters):
+            bundle = research(current, options)
+            meta = bundle.metadata
+            had_def = any(def_re.search(sn.text) for sn in bundle.snippets)
+            entry = {
+                "iter": i,
+                "query": current,
+                "replaced_terms": {},
+                "added_terms": [],
+                "hit_count_lex": getattr(meta, "hit_count_lex", 0),
+                "hit_count_sem": getattr(meta, "hit_count_sem", 0),
+                "had_definition": had_def,
+            }
+            trace.append(entry)
+            missing = list(getattr(meta, "missing_terms", []))
+            if (len(bundle.snippets) >= 3 and had_def) or not missing:
+                break
+            replacements: Dict[str, str] = {}
+            for term in missing:
+                cands = getattr(meta, "expansion_candidates", {}).get(term, [])
+                if cands:
+                    replacements[term] = cands[0]
+            if not replacements:
+                break
+            new_q = _bounded_replace(current, replacements)
+            entry["replaced_terms"] = replacements
+            if new_q in attempted:
+                break
+            attempted.add(new_q)
+            current = new_q
+
+        meta = bundle.metadata
+        meta.iteration_trace = trace
+        meta.final_query = current
+        meta.original_query = question
+        return bundle
 
     def _hash(self, obj: object) -> str:
         """Deterministic hash for dataclasses.
@@ -218,9 +294,19 @@ class Orchestrator:
             "k_lex": k_lex,
             "token_budget": token_budget,
         }
+        max_iters = min(int(os.getenv("RETRIEVAL_MAX_ITERS", "5")), 5)
         last_err = ""
         for _ in range(self.max_retrieval_rounds):
-            bundle = research(parsed, retrieval_opts)
+            bundle = self._iterative_research(question, retrieval_opts, max_iters)
+            with open("bundle.json", "w", encoding="utf-8") as f:
+                json.dump(asdict(bundle), f, indent=2, ensure_ascii=False)
+            if not any(
+                t.get("had_definition")
+                for t in getattr(bundle.metadata, "iteration_trace", [])
+            ):
+                return FinalAnswer(
+                    text="Not found in the approved materials.", citations=[]
+                )
             try:
                 bundle.validate()
                 break
@@ -228,13 +314,13 @@ class Orchestrator:
                 last_err = str(exc)
                 retrieval_opts["token_budget"] *= 2
                 retrieval_opts["k_sem"] = min(retrieval_opts.get("k_sem", 30) * 2, 100)
-                retrieval_opts["k_lex"] = min(retrieval_opts.get("k_lex", 30) * 2, 100)
+                retrieval_opts["k_lex"] = min(
+                    retrieval_opts.get("k_lex", 30) * 2, 100
+                )
         else:
             raise RuntimeError(f"insufficient book context: {last_err}")
         if bundle is None:
             raise RuntimeError("retrieval failed")
-        with open("bundle.json", "w", encoding="utf-8") as f:
-            json.dump(asdict(bundle), f, indent=2, ensure_ascii=False)
         bundle_hash = self._hash(bundle)
 
         hint: str | None = None
