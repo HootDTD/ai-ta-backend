@@ -80,19 +80,36 @@ class Orchestrator:
             ]
         def_re = re.compile("|".join(re.escape(w) for w in def_words), re.I)
 
-        for i in range(max_iters):
-            if WIRE:
-                print(f"[Main AI -> Indexer AI] query: {current}")
-            bundle = research(current, options)
-            meta = bundle.metadata
-            if WIRE:
-                print(
-                    "[Indexer AI -> Main AI] hits_sem={sem} hits_lex={lex} missing={missing}".format(
-                        sem=getattr(meta, "hit_count_sem", 0),
-                        lex=getattr(meta, "hit_count_lex", 0),
-                        missing=list(getattr(meta, "missing_terms", [])),
-                    )
-                )
+  for i in range(max_iters):
+    if WIRE:
+        print(f"[Main AI -> Indexer AI] query: {current}", flush=True)
+
+    bundle = research(current, options)
+    meta = bundle.metadata
+
+    if WIRE:
+        print(
+            "[Indexer AI -> Main AI] hits_sem={sem} hits_lex={lex} missing={missing}".format(
+                sem=getattr(meta, "hit_count_sem", 0),
+                lex=getattr(meta, "hit_count_lex", 0),
+                missing=list(getattr(meta, "missing_terms", [])),
+            ),
+            flush=True,
+        )
+
+    had_def = any(def_re.search(sn.text) for sn in bundle.snippets)
+    entry = {
+        "iter": i,
+        "query": current,
+        "replaced_terms": {},
+        "added_terms": [],
+        "hit_count_lex": getattr(meta, "hit_count_lex", 0),
+        "hit_count_sem": getattr(meta, "hit_count_sem", 0),
+        "had_definition": had_def,
+    }
+    trace.append(entry)
+    
+
             had_def = any(def_re.search(sn.text) for sn in bundle.snippets)
             entry = {
                 "iter": i,
