@@ -8,20 +8,32 @@ import os
 import re
 from dataclasses import asdict
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Set
 
-from .contracts import FinalAnswer, ParsedTask, Proof, ProposedSolution, ResearchBundle
-from .main_ai import parse_question, solve_with_bundle, format_answer, normalize_query
-from .retriever import research
+import tiktoken
+
+from .contracts import (
+    FinalAnswer,
+    ParsedTask,
+    Proof,
+    ProposedSolution,
+    ResearchBundle,
+    ResearchMetadata,
+    BundleSnippet,
+)
+from .config import get_subject_name
+from .main_ai import (
+    parse_question,
+    solve_with_bundle,
+    format_answer,
+    normalize_query,
+    extract_keywords,
+    propose_synonyms,
+)
+from .retriever import batch_lookup_terms, _summarize_snippets
 
 
 WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0","off","false","no"}
-
-
-def _bounded_replace(q: str, replacements: Dict[str, str]) -> str:
-    for t, c in replacements.items():
-        q = re.sub(r"\b" + re.escape(t) + r"\b", c, q)
-    return q
 
 try:  # optional pint dependency for unit checks
     from pint import UnitRegistry
@@ -41,70 +53,398 @@ class Orchestrator:
     def _iterative_research(
         self, question: str, options: Dict[str, Any], max_iters: int
     ) -> ResearchBundle:
-        sanitize = os.getenv("RETRIEVAL_SANITIZE", "on").lower() not in {"0","off","false","no"}
-        current = normalize_query(question) if sanitize else question
-        attempted = {current}
-        trace: List[Dict[str, Any]] = []
+        sanitize = os.getenv("RETRIEVAL_SANITIZE", "on").lower() not in {"0", "off", "false", "no"}
+        norm_question = normalize_query(question) if sanitize else question
+        initial_terms = extract_keywords(question)
+        if not initial_terms:
+            fallback = norm_question or question
+            initial_terms = [fallback.strip().lower()] if fallback else []
 
-        def_words = [
-            w.strip() for w in os.getenv("RETRIEVAL_DEF_CUE_WORDS", "").split(",") if w.strip()
-        ] or ["defined", "denoted", "where", "is defined as", "given by", "expressed as", "ratio"]
-        def_re = re.compile("|".join(re.escape(w) for w in def_words), re.I)
+        concept_order: List[str] = []
+        concept_display: Dict[str, str] = {}
+        term_to_concept: Dict[str, str] = {}
+        concept_index_map: Dict[str, int] = {}
+        term_origin: Dict[str, Dict[str, str]] = {}
+        for term in initial_terms:
+            key = term.lower()
+            if key not in concept_display:
+                concept_display[key] = term
+                concept_order.append(key)
+                concept_index_map[key] = len(concept_order) - 1
+            term_to_concept[key] = key
+            term_origin[key] = {"type": "seed", "source": term}
 
-        for i in range(max_iters):
-            if WIRE:
-                print(f"[Main AI -> Indexer AI] query: {current}", flush=True)
+        pending: List[str] = list(initial_terms)
+        max_rounds = min(max_iters, 5)
+        skip_synonyms = os.getenv("RETRIEVAL_SKIP_SYNONYMS", "off").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
-            bundle = research(current, options)
-            meta = bundle.metadata
+        iterations: List[Dict[str, Any]] = []
+        attempted_terms: List[str] = []
+        attempted_keys: Set[str] = set()
+        attempted_record: Set[str] = set()
+        concept_found: Set[str] = set()
+        concept_matches: Dict[str, List[str]] = {}
+        concept_match_details: Dict[str, List[Dict[str, Any]]] = {}
+        concept_first_found_iter: Dict[str, int] = {}
+
+        snippet_records: Dict[str, Dict[str, Any]] = {}
+
+        loaded_indexes: Set[str] = set()
+        skipped_entries: List[Dict[str, Any]] = []
+        term_diagnostics: Dict[str, Dict[str, Any]] = {}
+
+        for iter_idx in range(1, max_rounds + 1):
+            if not pending:
+                break
+
+            round_terms: List[str] = []
+            seen_round: Set[str] = set()
+            for term in pending:
+                candidate = (term or "").strip()
+                if not candidate:
+                    continue
+                key = candidate.lower()
+                concept_key = term_to_concept.get(key)
+                if concept_key is None:
+                    concept_key = key
+                    term_to_concept[key] = concept_key
+                    if concept_key not in concept_display:
+                        concept_display[concept_key] = candidate
+                        concept_order.append(concept_key)
+                if key in seen_round or key in attempted_keys:
+                    continue
+                seen_round.add(key)
+                round_terms.append(candidate)
+
+            if not round_terms:
+                break
+
+            for term in round_terms:
+                key = term.lower()
+                if key not in attempted_record:
+                    attempted_terms.append(term)
+                    attempted_record.add(key)
+                attempted_keys.add(key)
 
             if WIRE:
                 print(
-                    "[Indexer AI -> Main AI] "
-                    "hits_sem={sem} hits_lex={lex} missing={missing}".format(
-                        sem=getattr(meta, "hit_count_sem", 0),
-                        lex=getattr(meta, "hit_count_lex", 0),
-                        missing=list(getattr(meta, "missing_terms", [])),
-                    ),
+                    f"[Main AI -> Indexer AI] pending={json.dumps(round_terms, ensure_ascii=False)}",
                     flush=True,
                 )
 
-            had_def = any(def_re.search(sn.text) for sn in bundle.snippets)
-            entry = {
-                "iter": i,
-                "query": current,
-                "replaced_terms": {},
-                "added_terms": [],
-                "hit_count_lex": getattr(meta, "hit_count_lex", 0),
-                "hit_count_sem": getattr(meta, "hit_count_sem", 0),
-                "had_definition": had_def,
+            found_array, not_found_array, diag = batch_lookup_terms(round_terms, options)
+            loaded_indexes.update(diag.get("loaded_indexes", []))
+            skipped_entries.extend(diag.get("skipped_indexes", []))
+            per_term_diag = diag.get("per_term", {}) or {}
+            term_diagnostics.update(per_term_diag)
+
+            found_terms = [item.get("term") for item in found_array if isinstance(item, dict)]
+            if WIRE:
+                print(
+                    "[Indexer AI -> Main AI] found="
+                    + json.dumps([t for t in found_terms if t], ensure_ascii=False)
+                    + " not_found="
+                    + json.dumps(list(not_found_array), ensure_ascii=False),
+                    flush=True,
+                )
+
+            iteration_entry: Dict[str, Any] = {
+                "iter": iter_idx,
+                "sent_terms": list(round_terms),
+                "found_terms": [t for t in found_terms if t],
+                "not_found_terms": list(not_found_array),
             }
-            trace.append(entry)
+            found_details: List[Dict[str, Any]] = []
 
-            missing = list(getattr(meta, "missing_terms", []))
-            if (len(bundle.snippets) >= 3 and had_def) or not missing:
+            for result in found_array:
+                term_label = result.get("term", "")
+                key = term_label.lower()
+                concept_key = term_to_concept.get(key, key)
+                if concept_key not in concept_display:
+                    concept_display[concept_key] = term_label or concept_key
+                    concept_order.append(concept_key)
+                    concept_index_map[concept_key] = len(concept_order) - 1
+                concept_found.add(concept_key)
+                concept_matches.setdefault(concept_key, [])
+                if term_label and term_label not in concept_matches[concept_key]:
+                    concept_matches[concept_key].append(term_label)
+
+                concept_first_found_iter[concept_key] = min(
+                    concept_first_found_iter.get(concept_key, iter_idx), iter_idx
+                )
+                origin_info = term_origin.get(key, {"type": "seed", "source": term_label})
+                concept_match_details.setdefault(concept_key, []).append(
+                    {
+                        "term": term_label,
+                        "iteration": iter_idx,
+                        "origin": origin_info.get("type", "seed"),
+                        "source_term": origin_info.get("source"),
+                    }
+                )
+                diag_entry = per_term_diag.get(term_label) or per_term_diag.get(key) or {}
+                alias_hits = [
+                    a for a in diag_entry.get("alias_hits", []) if isinstance(a, str)
+                ]
+                found_details.append(
+                    {
+                        "term": term_label,
+                        "concept": concept_display.get(concept_key, term_label or concept_key),
+                        "iteration": iter_idx,
+                        "origin": origin_info.get("type", "seed"),
+                        "source_term": origin_info.get("source"),
+                    }
+                )
+
+                for sn in result.get("snippets", []):
+                    if not sn or not getattr(sn, "id", None):
+                        continue
+                    existing = snippet_records.get(sn.id)
+                    text_len = len(getattr(sn, "text", "") or "")
+                    alias_hit_for_term = False
+                    if alias_hits:
+                        text_lower = (getattr(sn, "text", "") or "").lower()
+                        for alias in alias_hits:
+                            alias_lower = alias.lower()
+                            if alias_lower and alias_lower in text_lower:
+                                alias_hit_for_term = True
+                                break
+                    if existing is None:
+                        snippet_records[sn.id] = {
+                            "snippet": sn,
+                            "concept_rank": concept_index_map.get(
+                                concept_key, len(concept_order)
+                            ),
+                            "first_iter": iter_idx,
+                            "alias_hit": alias_hit_for_term,
+                            "concepts": {concept_key},
+                        }
+                        continue
+
+                    if text_len > len(getattr(existing.get("snippet"), "text", "") or ""):
+                        existing["snippet"] = sn
+                    existing["concept_rank"] = min(
+                        existing.get("concept_rank", concept_index_map.get(concept_key, len(concept_order))),
+                        concept_index_map.get(concept_key, len(concept_order)),
+                    )
+                    existing["first_iter"] = min(existing.get("first_iter", iter_idx), iter_idx)
+                    existing.setdefault("alias_hit", False)
+                    existing["alias_hit"] = existing["alias_hit"] or alias_hit_for_term
+                    existing.setdefault("concepts", set()).add(concept_key)
+
+            iteration_entry["found_details"] = found_details
+
+            if not not_found_array:
+                iteration_entry["proposed_synonyms"] = {}
+                iterations.append(iteration_entry)
+                if WIRE:
+                    print("[Main AI] synonyms_proposed={}", flush=True)
+                pending = []
                 break
 
-            replacements: Dict[str, str] = {}
-            for term in missing:
-                cands = getattr(meta, "expansion_candidates", {}).get(term, [])
-                if cands:
-                    replacements[term] = cands[0]
-
-            if not replacements:
+            if skip_synonyms:
+                iteration_entry["proposed_synonyms"] = {}
+                iterations.append(iteration_entry)
+                if WIRE:
+                    print("[Main AI] synonyms_proposed={}", flush=True)
+                pending = []
                 break
 
-            new_q = _bounded_replace(current, replacements)
-            entry["replaced_terms"] = replacements
+            context_hint: Dict[str, Dict[str, Any]] = {}
+            for term in not_found_array:
+                diag_entry = per_term_diag.get(term)
+                if not diag_entry:
+                    diag_entry = per_term_diag.get(term.lower(), {})
+                context_hint[term] = diag_entry or {}
 
-            if new_q in attempted:
+            synonym_map = propose_synonyms(not_found_array, context_hint)
+            iteration_entry["proposed_synonyms"] = synonym_map
+            iterations.append(iteration_entry)
+
+            if WIRE:
+                print(
+                    "[Main AI] synonyms_proposed="
+                    + json.dumps(synonym_map, ensure_ascii=False),
+                    flush=True,
+                )
+
+            next_pending: List[str] = []
+            next_seen: Set[str] = set()
+            for term in not_found_array:
+                concept_key = term_to_concept.get(term.lower(), term.lower())
+                suggestions = synonym_map.get(term, []) or []
+                for candidate in suggestions:
+                    cand_clean = (candidate or "").strip()
+                    if not cand_clean:
+                        continue
+                    cand_key = cand_clean.lower()
+                    if cand_key in attempted_keys or cand_key in seen_round or cand_key in next_seen:
+                        continue
+                    term_to_concept[cand_key] = concept_key
+                    term_origin[cand_key] = {"type": "synonym", "source": term}
+                    next_seen.add(cand_key)
+                    next_pending.append(cand_clean)
+            if not next_pending:
                 break
+            pending = next_pending
 
-            attempted.add(new_q)
-            current = new_q
+        token_budget = int(options.get("token_budget", 6000))
+        enc = tiktoken.get_encoding("cl100k_base")
+        snippet_infos: List[Dict[str, Any]] = []
+        for sn_id, info in snippet_records.items():
+            snippet = info.get("snippet")
+            if not snippet:
+                continue
+            concepts = info.get("concepts", set()) or {""}
+            concept_iter = min(
+                concept_first_found_iter.get(c, max_rounds + 10) for c in concepts
+            )
+            concept_rank = min(
+                concept_index_map.get(c, len(concept_order)) for c in concepts
+            )
+            alias_priority = 0 if info.get("alias_hit") else 1
+            token_count = len(enc.encode(getattr(snippet, "text", "") or ""))
+            snippet_infos.append(
+                {
+                    "id": sn_id,
+                    "snippet": snippet,
+                    "concept_iter": concept_iter,
+                    "concept_rank": concept_rank,
+                    "alias_priority": alias_priority,
+                    "token_count": token_count,
+                }
+            )
 
-        # persist the trace for downstream checks/debugging
-        setattr(bundle.metadata, "iteration_trace", trace)
+        snippet_infos.sort(
+            key=lambda entry: (
+                entry["concept_iter"],
+                entry["alias_priority"],
+                entry["concept_rank"],
+                entry["token_count"],
+                entry["id"],
+            )
+        )
+
+        kept_snippets: List[BundleSnippet] = []
+        total_tokens = 0
+        truncated = False
+        for entry in snippet_infos:
+            snippet = entry["snippet"]
+            count = entry["token_count"]
+            if kept_snippets and total_tokens + count > token_budget:
+                truncated = True
+                continue
+            kept_snippets.append(snippet)
+            total_tokens += count
+        if not kept_snippets and snippet_infos:
+            first = snippet_infos[0]
+            kept_snippets = [first["snippet"]]
+            total_tokens = first["token_count"]
+            truncated = first["token_count"] > token_budget
+        elif len(kept_snippets) < len(snippet_infos):
+            truncated = True
+
+        equations, glossary, assumptions, alias_counts_total = _summarize_snippets(
+            kept_snippets
+        )
+        stats = {
+            "tokens": total_tokens,
+            "token_budget": token_budget,
+            "truncated": truncated,
+        }
+        doc_sets = options.get("doc_sets") or []
+        k_sem = int(options.get("k_sem", 0))
+        k_lex = int(options.get("k_lex", 0))
+
+        found_terms_meta = [
+            concept_display[key]
+            for key in concept_order
+            if key in concept_found and key in concept_display
+        ]
+        not_found_terms = [
+            concept_display[key]
+            for key in concept_order
+            if key not in concept_found and key in concept_display
+        ]
+
+        skipped_unique: List[Dict[str, Any]] = []
+        seen_paths: Set[str] = set()
+        for entry in skipped_entries:
+            if not isinstance(entry, dict):
+                continue
+            path = entry.get("path")
+            if path and path in seen_paths:
+                continue
+            if path:
+                seen_paths.add(path)
+            skipped_unique.append(entry)
+
+        term_presence = {
+            term: diag.get("term_presence", {})
+            for term, diag in term_diagnostics.items()
+            if isinstance(diag, dict)
+        }
+        expansion_candidates = {
+            term: diag.get("expansion_candidates", [])
+            for term, diag in term_diagnostics.items()
+            if isinstance(diag, dict)
+        }
+        hit_count_sem = sum(
+            int(diag.get("hit_count_sem", 0) or 0)
+            for diag in term_diagnostics.values()
+            if isinstance(diag, dict)
+        )
+        hit_count_lex = sum(
+            int(diag.get("hit_count_lex", 0) or 0)
+            for diag in term_diagnostics.values()
+            if isinstance(diag, dict)
+        )
+
+        metadata_dict = {
+            "doc_sets": doc_sets,
+            "loaded_indexes": sorted(loaded_indexes),
+            "skipped_indexes": skipped_unique,
+            "question": norm_question,
+            "original_query": question,
+            "k_sem": k_sem,
+            "k_lex": k_lex,
+            "token_budget": token_budget,
+            "term_presence": term_presence,
+            "expansion_candidates": expansion_candidates,
+            "hit_count_sem": hit_count_sem,
+            "hit_count_lex": hit_count_lex,
+            "aliases_used": alias_counts_total,
+            "iteration_trace": iterations,
+            "keyword_iterations": iterations,
+            "found_terms": found_terms_meta,
+            "not_found_terms": not_found_terms,
+            "attempted_terms": attempted_terms,
+            "missing_terms": not_found_terms,
+            "final_query": " ".join(initial_terms),
+            "concept_matches": concept_matches,
+            "concept_match_details": concept_match_details,
+            "coverage_gaps": [],
+            "refinement_queries": [],
+            "subject": get_subject_name(),
+        }
+
+        metadata = ResearchMetadata(**metadata_dict)
+        bundle = ResearchBundle(
+            metadata=metadata,
+            snippets=kept_snippets,
+            equations=equations,
+            assumptions=assumptions,
+            glossary=glossary,
+            coverage_gaps=[],
+            refinement_queries=[],
+            used_ids=[sn.id for sn in kept_snippets],
+            stats=stats,
+            provenance={"source": "keyword_loop"},
+        )
         return bundle
 
     def _hash(self, obj: object) -> str:
@@ -296,7 +636,12 @@ class Orchestrator:
             "k_lex": k_lex,
             "token_budget": token_budget,
         }
-        max_iters = min(int(os.getenv("RETRIEVAL_MAX_ITERS", "5")), 5)
+        max_iters_raw = user_task.get("max_iters", os.getenv("RETRIEVAL_MAX_ITERS", "5"))
+        try:
+            max_iters_val = int(max_iters_raw)
+        except (TypeError, ValueError):
+            max_iters_val = 5
+        max_iters = max(1, min(max_iters_val, 5))
         last_err = ""
         for _ in range(self.max_retrieval_rounds):
             bundle = self._iterative_research(question, retrieval_opts, max_iters)

@@ -62,12 +62,22 @@ class ResearchMetadata:
     aliases_used: Dict[str, int] = field(default_factory=dict)
     symbol_index_stats: Dict[str, Any] = field(default_factory=dict)
     coverage_gaps: List[str] = field(default_factory=list)
+    refinement_queries: List[str] = field(default_factory=list)
     term_presence: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     missing_terms: List[str] = field(default_factory=list)
     expansion_candidates: Dict[str, List[str]] = field(default_factory=dict)
     iteration_trace: List[Dict[str, Any]] = field(default_factory=list)
     final_query: str = ""
     original_query: str = ""
+    keyword_iterations: List[Dict[str, Any]] = field(default_factory=list)
+    found_terms: List[str] = field(default_factory=list)
+    not_found_terms: List[str] = field(default_factory=list)
+    attempted_terms: List[str] = field(default_factory=list)
+    concept_matches: Dict[str, List[str]] = field(default_factory=dict)
+    concept_match_details: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+    hit_count_sem: int = 0
+    hit_count_lex: int = 0
+    subject: str = "course/textbook"
 
 
 @dataclass

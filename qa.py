@@ -7,19 +7,28 @@ from typing import Dict
 
 from dataclasses import asdict
 
+from .config import set_subject_name
 from .retriever import (
     load_assets,
     load_assets_all,
     search,
-    pack_context,
     answer,
     render_citations,
-    research,
+    ContextPack,
+    ContextSnippet,
 )
 from .orchestrator import Orchestrator
-from .main_ai import parse_question
 
 DEFAULT_INDEX = str(Path(__file__).resolve().parent / "text-embeder/my_book_index_aero")
+
+
+def _apply_subject(subject_arg: str | None) -> None:
+    if subject_arg:
+        set_subject_name(subject_arg, "cli")
+    else:
+        env_subject = os.getenv("TEXTBOOK_SUBJECT")
+        if env_subject:
+            set_subject_name(env_subject, "env")
 
 
 def cmd_search(args: argparse.Namespace) -> None:
@@ -41,6 +50,7 @@ def cmd_search(args: argparse.Namespace) -> None:
 
 def cmd_ask(args: argparse.Namespace) -> None:
     indexes = args.index or [DEFAULT_INDEX]
+    _apply_subject(getattr(args, "subject", None))
     try:
         if len(indexes) > 1:
             _, skipped = load_assets_all([Path(p) for p in indexes])
@@ -51,21 +61,44 @@ def cmd_ask(args: argparse.Namespace) -> None:
     except (FileNotFoundError, RuntimeError) as e:
         print(str(e))
         return
-    hits, _ = search(args.question)
-    ctx = pack_context(hits)
+    orch = Orchestrator()
+    opts = {
+        "doc_sets": indexes,
+        "k_sem": args.k_sem,
+        "k_lex": args.k_lex,
+        "token_budget": args.token_budget,
+    }
+    bundle = orch._iterative_research(args.question, opts, args.max_iters)
+    ctx_snippets = [
+        ContextSnippet(
+            id=sn.id,
+            type=sn.type,
+            page=sn.page,
+            section_path=sn.section_path,
+            text=sn.text,
+            figure_id=sn.figure_id,
+            why=sn.why,
+            source_path=sn.source_path,
+            doc_title=sn.doc_title,
+            doc_short=sn.doc_short,
+        )
+        for sn in bundle.snippets
+    ]
+    ctx = ContextPack(snippets=ctx_snippets, used_ids=bundle.used_ids, stats=bundle.stats)
     ans = answer(args.question, ctx)
     print("=== Answer ===\n" + ans.text + "\n")
     print("Citations:", render_citations(ans))
     proof = {
         "question": args.question,
-        "used_ids": ctx.used_ids,
-        "snippets": [s.__dict__ for s in ctx.snippets],
+        "used_ids": bundle.used_ids,
+        "snippets": [asdict(sn) for sn in bundle.snippets],
     }
     with open("proof.json", "w", encoding="utf-8") as f:
         json.dump(proof, f, ensure_ascii=False, indent=2)
 
 
 def cmd_solve(args: argparse.Namespace) -> None:
+    _apply_subject(getattr(args, "subject", None))
     orch = Orchestrator()
     task = {
         "user_query": args.question,
@@ -73,6 +106,7 @@ def cmd_solve(args: argparse.Namespace) -> None:
         "k_sem": args.k_sem,
         "k_lex": args.k_lex,
         "token_budget": args.token_budget,
+        "max_iters": args.max_iters,
     }
     try:
         final = orch.run(task)
@@ -83,18 +117,26 @@ def cmd_solve(args: argparse.Namespace) -> None:
 
 
 def cmd_research(args: argparse.Namespace) -> None:
-    parsed = parse_question(args.query)
+    indexes = args.index or [DEFAULT_INDEX]
+    _apply_subject(getattr(args, "subject", None))
+    try:
+        if len(indexes) > 1:
+            _, skipped = load_assets_all([Path(p) for p in indexes])
+            if skipped:
+                print(f"Skipped {len(skipped)} indexes")
+        else:
+            load_assets(Path(indexes[0]))
+    except (FileNotFoundError, RuntimeError) as e:
+        print(str(e))
+        return
+    orch = Orchestrator()
     opts = {
-        "doc_sets": args.index or [DEFAULT_INDEX],
+        "doc_sets": indexes,
         "k_sem": args.k_sem,
         "k_lex": args.k_lex,
         "token_budget": args.token_budget,
     }
-    try:
-        bundle = research(parsed, opts)
-    except RuntimeError as exc:
-        print(f"{exc}")
-        return
+    bundle = orch._iterative_research(args.query, opts, args.max_iters)
     if args.full:
         print(json.dumps(asdict(bundle), indent=2, ensure_ascii=False))
         return
@@ -129,6 +171,15 @@ def main() -> None:
     p_ask.add_argument(
         "--index", action="append", help="Path to index; may be used multiple times"
     )
+    p_ask.add_argument("--k-sem", type=int, default=30, help="Semantic top-K")
+    p_ask.add_argument("--k-lex", type=int, default=30, help="Lexical top-K")
+    p_ask.add_argument(
+        "--token-budget", type=int, default=6000, help="Token budget for context packing"
+    )
+    p_ask.add_argument(
+        "--max-iters", type=int, default=5, help="Maximum keyword lookup iterations"
+    )
+    p_ask.add_argument("--subject", help="Override subject for prompts")
     p_ask.set_defaults(func=cmd_ask)
 
     p_solve = sub.add_parser("solve", help="Closed-book solve with citations")
@@ -137,6 +188,10 @@ def main() -> None:
     p_solve.add_argument("--k-sem", type=int, default=30, help="Semantic top-K")
     p_solve.add_argument("--k-lex", type=int, default=30, help="Lexical top-K")
     p_solve.add_argument("--token-budget", type=int, default=6000, help="Token budget for context packing")
+    p_solve.add_argument(
+        "--max-iters", type=int, default=5, help="Maximum keyword lookup iterations"
+    )
+    p_solve.add_argument("--subject", help="Override subject for prompts")
     p_solve.set_defaults(func=cmd_solve)
 
     p_research = sub.add_parser("research", help="Retrieve only and print bundle")
@@ -145,7 +200,11 @@ def main() -> None:
     p_research.add_argument("--k-sem", type=int, default=30, help="Semantic top-K")
     p_research.add_argument("--k-lex", type=int, default=30, help="Lexical top-K")
     p_research.add_argument("--token-budget", type=int, default=6000, help="Token budget for context packing")
+    p_research.add_argument(
+        "--max-iters", type=int, default=5, help="Maximum keyword lookup iterations"
+    )
     p_research.add_argument("--full", action="store_true", help="Dump full bundle")
+    p_research.add_argument("--subject", help="Override subject for prompts")
     p_research.set_defaults(func=cmd_research)
 
     args = parser.parse_args()
