@@ -8,13 +8,19 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Any, Set
+from typing import Dict, List, Tuple, Any, Set, Optional
 
 import faiss
 import numpy as np
 import pandas as pd
 import tiktoken
 from openai import OpenAI
+from .config import (
+    get_subject_name,
+    get_subject_priority,
+    get_subject_source,
+    set_subject_name,
+)
 from .contracts import ResearchBundle, BundleSnippet, ParsedTask, ResearchMetadata
 
 WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0","off","false","no"}
@@ -205,6 +211,27 @@ def _analyze_query(q: str) -> Dict[str, Any]:
     }
 
 
+def _prepare_indexes(doc_sets: List[str]) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """Load the requested document sets and return loaded/skipped metadata."""
+
+    if not doc_sets:
+        return [], []
+
+    paths = [Path(p) for p in doc_sets]
+    try:
+        if len(paths) > 1:
+            _, skipped = load_assets_all(paths)
+        else:
+            load_assets(paths[0])
+            skipped = []
+    except RuntimeError as exc:
+        raise RuntimeError(str(exc))
+
+    skipped_set = {s.get("path") for s in skipped if isinstance(s, dict)}
+    loaded = [str(p) for p in paths if str(p) not in skipped_set]
+    return loaded, skipped
+
+
 def _norm_key(path: str) -> str:
     if not path:
         return ""
@@ -216,6 +243,18 @@ def _flag(name: str, default: bool = True) -> bool:
     if val is None:
         return default
     return val.lower() not in {"0", "off", "false", "no"}
+
+
+def _extract_subject(meta: Dict[str, object] | None) -> str:
+    if not isinstance(meta, dict):
+        return ""
+    subject = meta.get("subject")
+    if isinstance(subject, str) and subject.strip():
+        return subject
+    discipline = meta.get("discipline")
+    if isinstance(discipline, str) and discipline.strip():
+        return discipline
+    return ""
 
 
 _GREEK = {
@@ -242,6 +281,15 @@ def _norm_alias(token: str) -> str:
         token = token.replace(g, name)
     token = re.sub(r"[_\s]+", "", token)
     return token
+
+
+def _alias_strings_from_occurrences(norm: str) -> List[str]:
+    display: Set[str] = set()
+    for _, _, _, line, _ in _alias_to_occurrences.get(norm, []):
+        for tok in re.findall(r"[A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", line):
+            if _norm_alias(tok) == norm:
+                display.add(tok)
+    return sorted(display)
 
 
 def _looks_symbol(token: str) -> bool:
@@ -385,6 +433,184 @@ def _canonical_marker(sn) -> str:
     return marker
 
 
+# ----------------------- Converters -----------------------
+
+
+def _context_to_bundle_snippets(ctx: ContextPack) -> List[BundleSnippet]:
+    snippets: List[BundleSnippet] = []
+    for sn in ctx.snippets:
+        marker = _canonical_marker(sn)
+        snippets.append(
+            BundleSnippet(
+                id=sn.id,
+                type=sn.type,
+                page=sn.page,
+                section_path=sn.section_path,
+                text=sn.text,
+                figure_id=sn.figure_id,
+                why=sn.why,
+                source_path=sn.source_path,
+                doc_title=sn.doc_title,
+                doc_short=sn.doc_short,
+                citation_marker=marker,
+            )
+        )
+    return snippets
+
+
+def _summarize_snippets(
+    snippets: List[BundleSnippet],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, int]]:
+    eq_map: Dict[str, Dict[str, Any]] = {}
+    glossary: List[Dict[str, Any]] = []
+    assumptions: List[Dict[str, Any]] = []
+    alias_counts: Dict[str, int] = {}
+
+    for sn in snippets:
+        sym_set: set[str] = set()
+        lines = sn.text.splitlines()
+        for line in lines:
+            if "=" in line or re.search(r"\(\d+-\d+\)", line):
+                norm = re.sub(r"\s+", " ", line.strip().rstrip(".;,"))
+                norm = re.sub(r"\s*\(\d+-\d+\)\s*$", "", norm)
+                if norm.startswith("(") and norm.endswith(")"):
+                    norm = norm[1:-1]
+                entry = eq_map.setdefault(
+                    norm,
+                    {
+                        "eq_text": line.strip(),
+                        "symbol_set": set(),
+                        "source_snippet_ids": set(),
+                    },
+                )
+                syms = re.findall(r"[A-Za-z]\w*", line)
+                entry["symbol_set"].update(syms)
+                entry["source_snippet_ids"].add(sn.id)
+                sym_set.update(syms)
+            match = re.search(r"where\s+([A-Za-z]\w*)\s+is\s+([^.;]+)", line)
+            if match and match.group(1) in sym_set:
+                meaning = match.group(2).strip()
+                if len(meaning) <= 140:
+                    glossary.append(
+                        {
+                            "term": match.group(1),
+                            "meaning": meaning,
+                            "source_snippet_ids": [sn.id],
+                        }
+                    )
+            if re.search(r"assum(?:e|ing)|valid for|applicable when|boundary condition", line, re.I):
+                assumptions.append(
+                    {"text": line.strip(), "source_snippet_ids": [sn.id]}
+                )
+
+        for tok in re.findall(r"[A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", sn.text):
+            norm = _norm_alias(tok)
+            if norm in _alias_to_occurrences:
+                alias_counts[norm] = alias_counts.get(norm, 0) + 1
+
+    equations: List[Dict[str, Any]] = []
+    for v in eq_map.values():
+        equations.append(
+            {
+                "eq_text": v["eq_text"],
+                "symbol_set": list(sorted(v["symbol_set"])),
+                "source_snippet_ids": list(sorted(v["source_snippet_ids"])),
+            }
+        )
+
+    return equations, glossary, assumptions, alias_counts
+
+
+def _words_within_window(text: str, words: List[str], window: int = 60) -> bool:
+    if not words:
+        return False
+    # Preserve input order but drop duplicates to avoid redundant tracking.
+    seen: List[str] = []
+    for w in words:
+        if w not in seen:
+            seen.append(w)
+    occurrences: List[Tuple[int, int]] = []
+    for idx, word in enumerate(seen):
+        pattern = rf"\b{re.escape(word)}\b"
+        for match in re.finditer(pattern, text):
+            occurrences.append((match.start(), idx))
+    if not occurrences:
+        return False
+    occurrences.sort(key=lambda item: item[0])
+    counts = [0] * len(seen)
+    have = 0
+    left = 0
+    for right, (pos, idx) in enumerate(occurrences):
+        if counts[idx] == 0:
+            have += 1
+        counts[idx] += 1
+        while have == len(seen) and left <= right:
+            span = occurrences[right][0] - occurrences[left][0]
+            if span <= window:
+                return True
+            l_idx = occurrences[left][1]
+            counts[l_idx] -= 1
+            if counts[l_idx] == 0:
+                have -= 1
+            left += 1
+    return False
+
+
+def _has_explicit_evidence(
+    snippets: List[BundleSnippet], term: str, diag_entry: Optional[Dict[str, Any]] = None
+) -> bool:
+    """Return ``True`` if snippets explicitly reference ``term`` or its aliases."""
+
+    term_lower = term.strip().lower()
+    if not term_lower:
+        return False
+
+    alias_norms: Set[str] = set(_term_to_aliases.get(term_lower, set()))
+    if diag_entry:
+        for cand in diag_entry.get("alias_hits", []):
+            alias_norms.add(_norm_alias(cand))
+
+    expansions = []
+    if diag_entry:
+        raw = diag_entry.get("expansion_candidates") or []
+        if isinstance(raw, dict):
+            expansions.extend(raw.get(term_lower, []))
+        elif isinstance(raw, list):
+            expansions.extend(raw)
+
+    term_norm = _norm_alias(term_lower.replace(" ", "")) if term_lower else ""
+    words = [w for w in re.findall(r"[a-z0-9_α-ωΑ-Ω]+", term_lower) if w]
+
+    window_chars = int(os.getenv("RETRIEVAL_PROXIMITY_CHARS", "60"))
+
+    for sn in snippets:
+        text = sn.text or ""
+        text_lower = text.lower()
+        if term_lower and term_lower in text_lower:
+            return True
+        if len(words) == 1 and words[0] in text_lower:
+            return True
+        if len(words) > 1 and _words_within_window(text_lower, words, window=window_chars):
+            return True
+
+        tokens = re.findall(r"[A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", text)
+        norm_tokens = {_norm_alias(tok) for tok in tokens}
+        if term_norm and term_norm in norm_tokens:
+            return True
+        if alias_norms.intersection(norm_tokens):
+            return True
+        for cand in expansions:
+            if not isinstance(cand, str):
+                continue
+            cand_lower = cand.lower()
+            if cand_lower and cand_lower in text_lower:
+                return True
+            cand_norm = _norm_alias(cand_lower.replace(" ", ""))
+            if cand_norm in norm_tokens:
+                return True
+    return False
+
+
 # ----------------------- Public API -----------------------
 
 
@@ -469,6 +695,10 @@ def load_assets(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connecti
     _meta = meta
     _meta_titles = titles
 
+    subject = _extract_subject(meta)
+    if subject:
+        set_subject_name(subject, "meta")
+
     return index, df, conn, meta
 
 
@@ -539,6 +769,30 @@ def load_assets_all(
     _id_to_row = id_map
     _meta = meta_ref
     _meta_titles = title_map
+
+    subjects_found: List[str] = []
+    for meta in metas:
+        subj = _extract_subject(meta)
+        if subj:
+            subjects_found.append(subj)
+    if subjects_found:
+        unique_subjects: List[str] = []
+        for subj in subjects_found:
+            if subj not in unique_subjects:
+                unique_subjects.append(subj)
+        chosen = unique_subjects[0]
+        existing_priority = get_subject_priority()
+        if existing_priority < 2:
+            if len(unique_subjects) > 1 and WIRE:
+                print(f'[Config] multiple subjects found; using "{chosen}"', flush=True)
+            set_subject_name(chosen, "meta")
+        elif len(unique_subjects) > 1 and WIRE:
+            override = get_subject_name()
+            source = get_subject_source().upper()
+            print(
+                f'[Config] multiple subjects found in indexes; keeping override "{override}" (source={source})',
+                flush=True,
+            )
 
     return list(zip(faiss_list, dfs, conns, metas)), skipped
 
@@ -694,6 +948,104 @@ def search(query: str, k_sem: int = 30, k_lex: int = 30) -> Tuple[List[Hit], Dic
             "expansion_candidates": {k: v[:3] for k, v in diag.get("expansion_candidates", {}).items()},
         }, ensure_ascii=False), flush=True)
     return hits, diag
+
+
+# ---------------------------------------------------------
+
+
+def batch_lookup_terms(
+    terms: List[str], options: Dict[str, Any] | None = None
+) -> Tuple[List[Dict[str, Any]], List[str], Dict[str, Any]]:
+    """Lookup each term individually and return found/not-found splits."""
+
+    options = options or {}
+    doc_sets = options.get("doc_sets") or []
+    token_budget = int(options.get("token_budget", 6000))
+    k_sem = int(options.get("k_sem", 30))
+    k_lex = int(options.get("k_lex", 30))
+
+    loaded_indexes, skipped_indexes = _prepare_indexes(doc_sets)
+
+    found_array: List[Dict[str, Any]] = []
+    not_found: List[str] = []
+    diag_all: Dict[str, Any] = {
+        "per_term": {},
+        "loaded_indexes": loaded_indexes,
+        "skipped_indexes": skipped_indexes,
+        "token_budget": token_budget,
+        "k_sem": k_sem,
+        "k_lex": k_lex,
+    }
+
+    for term in terms:
+        query = (term or "").strip()
+        if not query:
+            not_found.append(term)
+            continue
+
+        hits, diag = search(query, k_sem=k_sem, k_lex=k_lex)
+        ctx = pack_context(hits, token_budget=token_budget)
+        snippets = _context_to_bundle_snippets(ctx)
+        equations, glossary, assumptions, alias_counts = _summarize_snippets(snippets)
+
+        term_lower = query.lower()
+        expansion_raw = diag.get("expansion_candidates", {})
+        if isinstance(expansion_raw, dict):
+            expansions = [
+                v for v in expansion_raw.get(term_lower, []) if isinstance(v, str)
+            ]
+        elif isinstance(expansion_raw, list):
+            expansions = [v for v in expansion_raw if isinstance(v, str)]
+        else:
+            expansions = []
+
+        term_presence_raw = {}
+        diag_presence = diag.get("term_presence")
+        if isinstance(diag_presence, dict):
+            term_presence_raw = diag_presence.get(term_lower, {}) or {}
+
+        alias_hits_seen: Set[str] = set()
+        term_aliases = _term_to_aliases.get(term_lower, set())
+        if term_aliases:
+            for sn in snippets:
+                text = sn.text or ""
+                for tok in re.findall(r"[A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", text):
+                    if _norm_alias(tok) in term_aliases:
+                        alias_hits_seen.add(tok)
+            for alias_norm in term_aliases:
+                alias_hits_seen.update(_alias_strings_from_occurrences(alias_norm))
+
+        missing_terms = []
+        diag_missing = diag.get("missing_terms")
+        if isinstance(diag_missing, list):
+            missing_terms = [m for m in diag_missing if isinstance(m, str)]
+
+        term_diag = {
+            "hit_count_sem": int(diag.get("hit_count_sem", 0) or 0),
+            "hit_count_lex": int(diag.get("hit_count_lex", 0) or 0),
+            "missing_terms": missing_terms,
+            "expansion_candidates": expansions,
+            "term_presence": term_presence_raw,
+            "snippets_returned": len(snippets),
+            "alias_hits": sorted(alias_hits_seen),
+        }
+        diag_all["per_term"][term] = term_diag
+
+        if snippets and _has_explicit_evidence(snippets, query, term_diag):
+            found_array.append(
+                {
+                    "term": term,
+                    "snippets": snippets,
+                    "equations": equations,
+                    "assumptions": assumptions,
+                    "glossary": glossary,
+                    "aliases_used": alias_counts,
+                }
+            )
+        else:
+            not_found.append(term)
+
+    return found_array, not_found, diag_all
 
 
 # ---------------------------------------------------------
@@ -908,19 +1260,7 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
     if WIRE:
         print(f"[Main AI -> Indexer AI] query: {question}", flush=True)
 
-    skipped_indexes: List[Dict[str, str]] = []
-    loaded_indexes: List[str] = []
-    if doc_sets:
-        paths = [Path(p) for p in doc_sets]
-        try:
-            if len(paths) > 1:
-                _, skipped_indexes = load_assets_all(paths)
-            else:
-                load_assets(paths[0])
-            skipped_set = {s["path"] for s in skipped_indexes}
-            loaded_indexes = [str(p) for p in paths if str(p) not in skipped_set]
-        except RuntimeError as exc:
-            raise RuntimeError(str(exc))
+    loaded_indexes, skipped_indexes = _prepare_indexes(doc_sets)
 
     hits, diag = search(question, k_sem=k_sem, k_lex=k_lex)
     if WIRE:
@@ -933,74 +1273,8 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
         )
     ctx = pack_context(hits, token_budget=token_budget)
 
-    snippets: List[BundleSnippet] = []
-    for sn in ctx.snippets:
-        marker = _canonical_marker(sn)
-        snippets.append(
-            BundleSnippet(
-                id=sn.id,
-                type=sn.type,
-                page=sn.page,
-                section_path=sn.section_path,
-                text=sn.text,
-                figure_id=sn.figure_id,
-                why=sn.why,
-                source_path=sn.source_path,
-                doc_title=sn.doc_title,
-                doc_short=sn.doc_short,
-                citation_marker=marker,
-            )
-        )
-
-    eq_map: Dict[str, Dict[str, Any]] = {}
-    glossary: List[Dict[str, Any]] = []
-    assumptions: List[Dict[str, Any]] = []
-    for sn in snippets:
-        sym_set: set[str] = set()
-        lines = sn.text.splitlines()
-        for line in lines:
-            if "=" in line or re.search(r"\(\d+-\d+\)", line):
-                norm = re.sub(r"\s+", " ", line.strip().rstrip(".;,"))
-                norm = re.sub(r"\s*\(\d+-\d+\)\s*$", "", norm)  # drop trailing eq numbers like (2-2)
-                if norm.startswith("(") and norm.endswith(")"):
-                    norm = norm[1:-1]
-                entry = eq_map.setdefault(
-                    norm,
-                    {
-                        "eq_text": line.strip(),
-                        "symbol_set": set(),
-                        "source_snippet_ids": set(),
-                    },
-                )
-                syms = re.findall(r"[A-Za-z]\w*", line)
-                entry["symbol_set"].update(syms)
-                entry["source_snippet_ids"].add(sn.id)
-                sym_set.update(syms)
-            match = re.search(r"where\s+([A-Za-z]\w*)\s+is\s+([^.;]+)", line)
-            if match and match.group(1) in sym_set:
-                meaning = match.group(2).strip()
-                if len(meaning) <= 140:
-                    glossary.append(
-                        {
-                            "term": match.group(1),
-                            "meaning": meaning,
-                            "source_snippet_ids": [sn.id],
-                        }
-                    )
-            if re.search(r"assum(?:e|ing)|valid for|applicable when|boundary condition", line, re.I):
-                assumptions.append(
-                    {"text": line.strip(), "source_snippet_ids": [sn.id]}
-                )
-
-    equations: List[Dict[str, Any]] = []
-    for v in eq_map.values():
-        equations.append(
-            {
-                "eq_text": v["eq_text"],
-                "symbol_set": list(sorted(v["symbol_set"])),
-                "source_snippet_ids": list(sorted(v["source_snippet_ids"])),
-            }
-        )
+    snippets = _context_to_bundle_snippets(ctx)
+    equations, glossary, assumptions, alias_counts = _summarize_snippets(snippets)
 
     coverage_gaps: List[str] = []
     refinement: List[str] = []
@@ -1022,13 +1296,6 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
             if not any(any(v in s.text for v in variants) for s in snippets):
                 coverage_gaps.append(f"No snippet for {sym}")
                 refinement.append(sym)
-
-    alias_counts: Dict[str, int] = {}
-    for sn in snippets:
-        for tok in re.findall(r"[A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", sn.text):
-            norm = _norm_alias(tok)
-            if norm in _alias_to_occurrences:
-                alias_counts[norm] = alias_counts.get(norm, 0) + 1
 
     meta = {
         "doc_sets": doc_sets,
@@ -1079,6 +1346,7 @@ __all__ = [
     "load_assets_all",
 
     "search",
+    "batch_lookup_terms",
     "pack_context",
 
     "answer",

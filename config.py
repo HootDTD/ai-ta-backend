@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+"""Lightweight runtime configuration helpers."""
+
+import os
+from typing import Optional
+
+
+_WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0", "off", "false", "no"}
+_PRIORITY = {"default": 0, "meta": 1, "env": 2, "cli": 3}
+
+_SUBJECT_NAME: Optional[str] = None
+_SUBJECT_SOURCE: str = "default"
+_SUBJECT_PRIORITY: int = -1
+_SUBJECT_LOGGED = False
+
+
+def _sanitize_subject(name: str | None) -> str:
+    if not isinstance(name, str):
+        return ""
+    cleaned = " ".join(name.strip().split())
+    if not cleaned:
+        return ""
+    if len(cleaned) > 50:
+        cleaned = cleaned[:50].rstrip()
+    return cleaned
+
+
+def _log_subject() -> None:
+    global _SUBJECT_LOGGED
+    if not _WIRE or _SUBJECT_NAME is None or _SUBJECT_LOGGED:
+        return
+    source = _SUBJECT_SOURCE.upper() if _SUBJECT_SOURCE else "DEFAULT"
+    print(f'[Config] subject="{_SUBJECT_NAME}" (source={source})', flush=True)
+    _SUBJECT_LOGGED = True
+
+
+def _apply_default() -> None:
+    global _SUBJECT_NAME, _SUBJECT_SOURCE, _SUBJECT_PRIORITY
+    if _SUBJECT_NAME is None:
+        _SUBJECT_NAME = "course/textbook"
+        _SUBJECT_SOURCE = "default"
+        _SUBJECT_PRIORITY = _PRIORITY["default"]
+        _log_subject()
+
+
+def set_subject_name(name: str | None, source: str) -> None:
+    """Set the active subject name honoring precedence."""
+
+    global _SUBJECT_NAME, _SUBJECT_SOURCE, _SUBJECT_PRIORITY, _SUBJECT_LOGGED
+
+    src_norm = (source or "default").lower()
+    priority = _PRIORITY.get(src_norm, 0)
+    cleaned = _sanitize_subject(name)
+
+    if not cleaned:
+        if src_norm == "default":
+            _apply_default()
+        return
+
+    if priority < _SUBJECT_PRIORITY:
+        return
+
+    if priority == _SUBJECT_PRIORITY and _SUBJECT_NAME == cleaned:
+        return
+
+    _SUBJECT_NAME = cleaned
+    _SUBJECT_SOURCE = src_norm
+    _SUBJECT_PRIORITY = priority
+    _SUBJECT_LOGGED = False
+    _log_subject()
+
+
+def get_subject_name() -> str:
+    """Return the active subject, applying environment/default fallbacks."""
+
+    global _SUBJECT_NAME, _SUBJECT_PRIORITY
+
+    if _SUBJECT_NAME is None:
+        env_val = os.getenv("TEXTBOOK_SUBJECT")
+        if env_val:
+            set_subject_name(env_val, "env")
+        else:
+            _apply_default()
+    return _SUBJECT_NAME or "course/textbook"
+
+
+def get_subject_source() -> str:
+    get_subject_name()
+    return _SUBJECT_SOURCE
+
+
+def get_subject_priority() -> int:
+    get_subject_name()
+    return _SUBJECT_PRIORITY
+
+
+__all__ = ["set_subject_name", "get_subject_name", "get_subject_source", "get_subject_priority"]

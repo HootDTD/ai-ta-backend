@@ -10,6 +10,7 @@ from typing import Any, List, Dict
 
 from openai import OpenAI
 
+from .config import get_subject_name
 from .contracts import ParsedTask, ProposedSolution, FinalAnswer, ResearchBundle
 from .solver import run_python
 
@@ -55,11 +56,140 @@ def _client() -> OpenAI:
     return OpenAI()
 
 
+def extract_keywords(question: str) -> List[str]:
+    """Ask the LLM to identify 3–8 high-value textbook concepts."""
+
+    client = _client()
+    subject = get_subject_name()
+    system = (
+        f"You read {subject} textbook questions. "
+        "Identify the 3-8 most important domain concepts or symbols that require "
+        "textbook knowledge. Focus on nouns, formal terms, or symbols. "
+        "Return JSON with a single key 'keywords' whose value is an ordered array."
+    )
+    payload = {
+        "prompt": question,
+    }
+    try:
+        resp = client.chat.completions.create(
+            model=os.getenv("PARSER_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": system},
+                {
+                    "role": "user",
+                    "content": json.dumps(payload, ensure_ascii=False),
+                },
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content or "{}"
+        data = json.loads(content)
+        raw = data.get("keywords", [])
+    except Exception:
+        raw = []
+
+    keywords: List[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        cleaned = item.strip().lower()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        keywords.append(cleaned)
+        if len(keywords) >= 8:
+            break
+
+    if not keywords and question.strip():
+        keywords = [question.strip().lower()]
+    return keywords
+
+
+def propose_synonyms(
+    terms: List[str], context_hint: Dict[str, Any] | None = None
+) -> Dict[str, List[str]]:
+    """Ask the LLM to generate 1–2 plausible synonyms per term."""
+
+    if not terms:
+        return {}
+
+    client = _client()
+    subject = get_subject_name()
+    system = (
+        "You help with textbook lookup. For each concept term, propose up to two "
+        f"alternate keywords, abbreviations, or symbols that might appear in {subject} materials. "
+        "Return a JSON object mapping each input term to an array of 0-2 strings."
+    )
+    hint = context_hint or {}
+    try:
+        resp = client.chat.completions.create(
+            model=os.getenv("PARSER_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": system},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {"terms": terms, "context": hint}, ensure_ascii=False
+                    ),
+                },
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content or "{}"
+        data = json.loads(content)
+    except Exception:
+        data = {}
+
+    mapping: Dict[str, Any] = {}
+    if isinstance(data, dict):
+        if "synonyms" in data and isinstance(data["synonyms"], dict):
+            mapping = data["synonyms"]
+        else:
+            mapping = data
+
+    suggestions: Dict[str, List[str]] = {}
+    for term in terms:
+        raw_list = None
+        if isinstance(mapping, dict):
+            for key, value in mapping.items():
+                if not isinstance(value, list):
+                    continue
+                if key == term:
+                    raw_list = value
+                    break
+                if isinstance(key, str) and key.lower() == term.lower():
+                    raw_list = value
+        cleaned_list: List[str] = []
+        seen_syn: set[str] = set()
+        if raw_list:
+            for cand in raw_list:
+                if not isinstance(cand, str):
+                    continue
+                cleaned = cand.strip()
+                if not cleaned:
+                    continue
+                key_lower = cleaned.lower()
+                if key_lower in seen_syn:
+                    continue
+                seen_syn.add(key_lower)
+                cleaned_list.append(cleaned)
+                if len(cleaned_list) >= 2:
+                    break
+        if cleaned_list:
+            suggestions[term] = cleaned_list
+    return suggestions
+
+
 def parse_question(user_query: str) -> ParsedTask:
     """Use a lightweight model to parse the raw user query into a ``ParsedTask``."""
 
     client = _client()
+    subject = get_subject_name()
     system = (
+        f"You are parsing {subject} textbook problems. "
         "Extract problem_type, asked_outputs, knowns, constraints, and figure_refs. "
         "Return ONLY JSON with keys: problem_type, asked_outputs, knowns, constraints, figure_refs."
     )
@@ -352,7 +482,21 @@ def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAn
         if m in allowed and m not in seen:
             seen.add(m)
             cites.append(m)
+    missing = getattr(bundle.metadata, "not_found_terms", []) or []
+    if missing:
+        miss_str = ", ".join(missing)
+        text_str = text_str.rstrip() + (
+            "\n\nNote: The index did not contain information on "
+            f"{miss_str}; the answer uses related context where possible."
+        )
     return FinalAnswer(text=text_str, citations=cites)
 
 
-__all__ = ["parse_question", "solve_with_bundle", "format_answer", "normalize_query"]
+__all__ = [
+    "parse_question",
+    "solve_with_bundle",
+    "format_answer",
+    "normalize_query",
+    "extract_keywords",
+    "propose_synonyms",
+]
