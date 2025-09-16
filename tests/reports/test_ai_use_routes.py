@@ -54,7 +54,7 @@ def test_create_and_get_report_happy_path(client, tmp_path):
     # Include a secret to verify redaction in evidence (service-level test covers this)
     turns = [
         _mk_turn("t1", "user", "my key sk-THISISASECRETKEYANDSHOULDBEREDACTED question"),
-        _mk_turn("t2", "assistant", "Answer referencing [§ aero.pdf; p.12]", model="gpt-4o-mini"),
+        _mk_turn("t2", "assistant", "Answer referencing [Textbook, p. 12]", model="gpt-4o-mini"),
     ]
     _write_chat(chat_dir, chat_id, turns)
 

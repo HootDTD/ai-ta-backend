@@ -42,12 +42,12 @@ def _sha256_hex16(text: str) -> str:
 
 
 def extract_file_refs(answer_text: str) -> List[str]:
-    """Extract file references from common markers like [§ …] or 'Retrieved:' lists."""
+    """Extract file references from markers like ``[Textbook, p. 12]`` or 'Retrieved:' lists."""
     refs: List[str] = []
     if not answer_text:
         return refs
-    # citation markers like [§ path/to/file.pdf; p.12]
-    for m in re.findall(r"\[§[^\]]+\]", answer_text):
+    # citation markers like [Textbook, p. 12]
+    for m in re.findall(r"\[[^,\[\]]+,\s*p\.\s*[^\]]+\]", answer_text):
         refs.append(m)
     # simple fallback: lines after 'Retrieved:' comma-separated
     m = re.search(r"Retrieved:\s*(.+)$", answer_text, re.M)

@@ -13,6 +13,7 @@ _SUBJECT_NAME: Optional[str] = None
 _SUBJECT_SOURCE: str = "default"
 _SUBJECT_PRIORITY: int = -1
 _SUBJECT_LOGGED = False
+_CITATION_LABEL: Optional[str] = None
 
 
 def _sanitize_subject(name: str | None) -> str:
@@ -95,4 +96,31 @@ def get_subject_priority() -> int:
     return _SUBJECT_PRIORITY
 
 
-__all__ = ["set_subject_name", "get_subject_name", "get_subject_source", "get_subject_priority"]
+def get_citation_label() -> str:
+    """Return the configured citation label, defaulting to ``"Textbook"``."""
+
+    global _CITATION_LABEL
+
+    if _CITATION_LABEL is not None:
+        return _CITATION_LABEL
+
+    raw = os.getenv("CITATION_LABEL", "Textbook")
+    if isinstance(raw, str):
+        cleaned = " ".join(raw.strip().split())
+    else:  # pragma: no cover - defensive, env vars are strings
+        cleaned = ""
+
+    if not cleaned:
+        cleaned = "Textbook"
+
+    _CITATION_LABEL = cleaned
+    return _CITATION_LABEL
+
+
+__all__ = [
+    "set_subject_name",
+    "get_subject_name",
+    "get_subject_source",
+    "get_subject_priority",
+    "get_citation_label",
+]

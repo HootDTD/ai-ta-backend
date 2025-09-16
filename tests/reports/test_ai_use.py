@@ -38,7 +38,7 @@ def _fake_chat_loader(chat_id: str):
             {
                 "turn_id": "t3",
                 "role": "assistant",
-                "content": "See [§ aero.pdf; p.12] for displacement thickness.",
+                "content": "See [Textbook, p. 12] for displacement thickness.",
                 "created_at": now,
                 "model": "gpt-4o-mini",
             },
@@ -64,7 +64,7 @@ def test_evidence_assembly():
     # tool calls aggregated
     assert pack["tool_calls"][0]["name"] == "retriever"
     # file references extracted from assistant answer
-    assert any("[§" in r for r in pack["file_references"]) 
+    assert any("[Textbook, p." in r for r in pack["file_references"])
 
 
 def test_persistence_roundtrip(tmp_path):
