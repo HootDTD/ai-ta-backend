@@ -35,6 +35,8 @@ from .retriever import batch_lookup_terms, _summarize_snippets
 
 WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0","off","false","no"}
 
+CITATION_PATTERN = re.compile(r"\[[^,\[\]]+,\s*p\.\s*[^\]]+\]")
+
 try:  # optional pint dependency for unit checks
     from pint import UnitRegistry
 
@@ -190,6 +192,25 @@ class Orchestrator:
                 alias_hits = [
                     a for a in diag_entry.get("alias_hits", []) if isinstance(a, str)
                 ]
+                citation_markers: List[str] = []
+                seen_markers: Set[str] = set()
+                result_citations = result.get("citations") if isinstance(result, dict) else None
+                if isinstance(result_citations, list):
+                    for marker in result_citations:
+                        if isinstance(marker, str):
+                            cleaned = marker.strip()
+                            if cleaned and cleaned not in seen_markers:
+                                seen_markers.add(cleaned)
+                                citation_markers.append(cleaned)
+                if not citation_markers:
+                    for sn in result.get("snippets", []) if isinstance(result, dict) else []:
+                        marker = getattr(sn, "citation_marker", None)
+                        if isinstance(marker, str):
+                            cleaned = marker.strip()
+                            if cleaned and cleaned not in seen_markers:
+                                seen_markers.add(cleaned)
+                                citation_markers.append(cleaned)
+
                 found_details.append(
                     {
                         "term": term_label,
@@ -197,6 +218,7 @@ class Orchestrator:
                         "iteration": iter_idx,
                         "origin": origin_info.get("type", "seed"),
                         "source_term": origin_info.get("source"),
+                        "citations": citation_markers,
                     }
                 )
 
@@ -510,7 +532,7 @@ class Orchestrator:
                 continue
             if re.search(r"\d", para):
                 has_digit_para = True
-            if "[§" not in para:
+            if not CITATION_PATTERN.search(para):
                 issues.append(f"missing citation in paragraph {idx}")
         asked_keys = getattr(parsed, "asked_output_keys", []) or []
         if not asked_keys:

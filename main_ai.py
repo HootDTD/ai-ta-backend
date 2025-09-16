@@ -10,9 +10,18 @@ from typing import Any, List, Dict
 
 from openai import OpenAI
 
-from .config import get_subject_name
+from .config import get_subject_name, get_citation_label
 from .contracts import ParsedTask, ProposedSolution, FinalAnswer, ResearchBundle
 from .solver import run_python
+
+
+def _fallback_citation_marker(snippet: Any) -> str:
+    """Produce a default citation marker when one is missing."""
+
+    label = get_citation_label()
+    page_val = getattr(snippet, "page", None)
+    page = page_val if isinstance(page_val, int) and page_val > 0 else "?"
+    return f"[{label}, p. {page}]"
 
 
 def normalize_query(text: str) -> str:
@@ -268,7 +277,7 @@ def solve_with_bundle(
     client = _client()
     system = (
         "You are a strict reasoning agent. Use ONLY facts in the Research Bundle. "
-        "No browsing or outside knowledge. Every non-math statement must cite a bundle marker like [§..., p.X]. "
+        "No browsing or outside knowledge. Every non-math statement must cite a bundle marker like [Textbook, p. X]. "
         "If information is missing, reply exactly 'Not found in the approved materials.' "
         "Any code must be pure Python using only np, sp, or ureg and must print results. "
         "You must include final_answers as a JSON object whose keys exactly match the asked outputs (e.g., v_exit, Q). "
@@ -345,7 +354,7 @@ def solve_with_bundle(
         for i, sn in enumerate(bundle.snippets, 1):
             marker = getattr(sn, "citation_marker", None)
             if not marker:
-                marker = f"[§{sn.doc_short} • {sn.section_path}, p.{sn.page}]"
+                marker = _fallback_citation_marker(sn)
             lines.append(f"S{i} {marker} why={sn.why} id={sn.id}")
             text = sn.text.replace("\n", " ")
             if len(text) > 240:
@@ -471,17 +480,19 @@ def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAn
         text_str = text_str.rstrip() + "\n\nResults:\n" + "\n".join(results_lines)
     allowed: set[str] = set()
     for sn in bundle.snippets:
-        marker = getattr(sn, "citation_marker", None)
-        if marker is None:
-            marker = getattr(sn, "marker", None)
-        if marker:
-            allowed.add(marker)
+        marker = getattr(sn, "citation_marker", None) or getattr(sn, "marker", None)
+        if not marker:
+            marker = _fallback_citation_marker(sn)
+        if isinstance(marker, str) and marker.strip():
+            allowed.add(marker.strip())
     seen: set[str] = set()
     cites: List[str] = []
-    for m in re.findall(r"\[§[^\]]+\]", text_str):
-        if m in allowed and m not in seen:
-            seen.add(m)
-            cites.append(m)
+    marker_pattern = re.compile(r"\[[^,\[\]]+,\s*p\.\s*[^\]]+\]")
+    for m in marker_pattern.findall(text_str):
+        m_clean = m.strip()
+        if m_clean in allowed and m_clean not in seen:
+            seen.add(m_clean)
+            cites.append(m_clean)
     missing = getattr(bundle.metadata, "not_found_terms", []) or []
     if missing:
         miss_str = ", ".join(missing)

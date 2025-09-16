@@ -16,6 +16,7 @@ import pandas as pd
 import tiktoken
 from openai import OpenAI
 from .config import (
+    get_citation_label,
     get_subject_name,
     get_subject_priority,
     get_subject_source,
@@ -402,35 +403,13 @@ def _prf_terms(hits: List[Hit], top_n: int = 5) -> List[str]:
 
 
 def _canonical_marker(sn) -> str:
-    sp = getattr(sn, "source_path", "")
-    doc_short = getattr(sn, "doc_short", None)
-    if not doc_short:
-        sp_norm = _norm_key(sp)
-        sp_base = _norm_key(os.path.basename(sp))
-        title = None
-        if _meta_titles:
-            title = _meta_titles.get(sp_norm) or _meta_titles.get(sp_base)
-        if not title:
-            title = getattr(sn, "doc_title", None)
-        if not title and sp:
-            title = Path(sp).stem
-        if not title and _meta:
-            source_pdf = _meta.get("source_pdf", "")
-            title = Path(source_pdf).stem if source_pdf else None
-        doc_short = title or "doc"
-    section_label = (
-        getattr(sn, "section_path", None)
-        or getattr(sn, "heading", None)
-        or "—"
-    )
-    page = getattr(sn, "page", None)
-    page = page if isinstance(page, int) and page > 0 else "?"
-    marker = f"[§{doc_short} • {section_label}, p.{page}"
-    fig_id = getattr(sn, "figure_id", None)
-    if fig_id:
-        marker += f"; Fig {fig_id}"
-    marker += "]"
-    return marker
+    """Return a normalized citation marker like ``[Textbook, p. 123]``."""
+
+    label = get_citation_label()
+    page_val = getattr(sn, "page", None)
+    page = page_val if isinstance(page_val, int) and page_val > 0 else "?"
+
+    return f"[{label}, p. {page}]"
 
 
 # ----------------------- Converters -----------------------
@@ -1032,6 +1011,13 @@ def batch_lookup_terms(
         diag_all["per_term"][term] = term_diag
 
         if snippets and _has_explicit_evidence(snippets, query, term_diag):
+            citation_markers: List[str] = []
+            seen_citations: set[str] = set()
+            for sn in snippets:
+                marker = getattr(sn, "citation_marker", None)
+                if marker and marker not in seen_citations:
+                    seen_citations.add(marker)
+                    citation_markers.append(marker)
             found_array.append(
                 {
                     "term": term,
@@ -1040,6 +1026,7 @@ def batch_lookup_terms(
                     "assumptions": assumptions,
                     "glossary": glossary,
                     "aliases_used": alias_counts,
+                    "citations": citation_markers,
                 }
             )
         else:
