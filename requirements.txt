@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
+gunicorn
 pydantic>=2
 SQLAlchemy>=2
 weasyprint>=61
