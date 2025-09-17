@@ -165,12 +165,20 @@ def healthz():
 
 @app.post("/ask")
 def post_ask(payload: AskRequest):
-    """Accept a question and optional attachments, stream back plain-text answer."""
-    if not payload.question or not payload.question.strip():
-        raise HTTPException(status_code=400, detail="Missing 'question'")
+    """Accept a question and/or image attachments, stream back plain-text answer.
+
+    Now supports image-only queries. Either a non-empty `question` OR at least
+    one attachment must be provided. Image attachments are decoded and saved to
+    `tmp_uploads/` and their file paths are passed along to the core.
+    """
+    # Validate input: allow (question) OR (attachments)
+    q = (payload.question or "").strip()
+    atts = payload.attachments or []
+    if not q and not atts:
+        raise HTTPException(status_code=400, detail="Provide a question or image attachments")
 
     try:
-        image_paths = _save_attachments(payload.attachments or [])
+        image_paths = _save_attachments(atts)
     except Exception as e:
         log.exception("Attachment decode failed")
         raise HTTPException(status_code=400, detail=f"Invalid attachments: {e}")
@@ -193,7 +201,7 @@ def post_ask(payload: AskRequest):
         try:
             with _temp_env(opts):
                 result = answer_question(
-                    question=payload.question.strip(),
+                    question=q,
                     image_paths=image_paths,
                     course_id=payload.course_id,
                     doc_sets=payload.doc_sets,
