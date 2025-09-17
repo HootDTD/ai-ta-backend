@@ -78,6 +78,7 @@ class ResearchMetadata:
     hit_count_sem: int = 0
     hit_count_lex: int = 0
     subject: str = "course/textbook"
+    allowed_markers: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -95,6 +96,11 @@ class ResearchBundle:
     used_ids: List[str] = field(default_factory=list)
     stats: Dict[str, Any] = field(default_factory=dict)
     provenance: Dict[str, Any] = field(default_factory=dict)
+    allowed_markers: List[str] = field(default_factory=list)
+    found_terms: List[str] = field(default_factory=list)
+    not_found_terms: List[str] = field(default_factory=list)
+    attempted_terms: List[str] = field(default_factory=list)
+    subject: str = "course/textbook"
 
     def validate(self) -> None:
         if not self.snippets:
@@ -106,6 +112,19 @@ class ResearchBundle:
             raise ValueError("Insufficient snippets for quantitative task")
         if not (self.equations or self.glossary):
             raise ValueError("Bundle requires equations or glossary entries")
+        if not self.allowed_markers:
+            seen: List[str] = []
+            seen_set: set[str] = set()
+            for sn in self.snippets:
+                marker = getattr(sn, "citation_marker", None)
+                if isinstance(marker, str):
+                    cleaned = marker.strip()
+                    if cleaned and cleaned not in seen_set:
+                        seen.append(cleaned)
+                        seen_set.add(cleaned)
+            if not seen:
+                raise ValueError("Bundle requires allowed_markers")
+            self.allowed_markers = seen
         for sn in self.snippets:
             sn.validate()
 

@@ -15,6 +15,36 @@ from contextlib import contextmanager
 # path issues when running under different working directories.
 from .core import answer_question
 
+# Load environment variables from .env if present (python-dotenv preferred),
+# with a minimal fallback parser so local dev works without extra deps.
+try:  # pragma: no cover - convenience
+    from dotenv import load_dotenv  # type: ignore
+
+    load_dotenv()
+except Exception:
+    def _load_env_fallback() -> None:
+        try:
+            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            env_path = os.path.join(repo_root, ".env")
+            if not os.path.isfile(env_path):
+                return
+            with open(env_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    s = line.strip()
+                    if not s or s.startswith("#"):
+                        continue
+                    if "=" not in s:
+                        continue
+                    key, val = s.split("=", 1)
+                    key = key.strip()
+                    val = val.strip().strip('"').strip("'")
+                    if key and key not in os.environ:
+                        os.environ[key] = val
+        except Exception:
+            pass
+
+    _load_env_fallback()
+
 log = logging.getLogger("ai_ta_server")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 

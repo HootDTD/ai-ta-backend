@@ -478,32 +478,50 @@ def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAn
     if isinstance(fa, dict) and fa:
         results_lines = [f"- {k} = {v}" for k, v in fa.items()]
         text_str = text_str.rstrip() + "\n\nResults:\n" + "\n".join(results_lines)
+    if text_str.strip() == "Not found in the approved materials.":
+        return FinalAnswer(text="Not found in the approved materials.", citations=[])
+
+    raw_allowed = getattr(bundle, "allowed_markers", None) or []
+    allowed_markers: List[str] = []
+    allowed_seen: set[str] = set()
+    for marker in raw_allowed:
+        if not isinstance(marker, str):
+            continue
+        cleaned = marker.strip()
+        if cleaned and cleaned not in allowed_seen:
+            allowed_markers.append(cleaned)
+            allowed_seen.add(cleaned)
+    if not allowed_markers:
+        for sn in bundle.snippets:
+            marker = getattr(sn, "citation_marker", None) or getattr(sn, "marker", None)
+            if not isinstance(marker, str) or not marker.strip():
+                marker = _fallback_citation_marker(sn)
+            cleaned = marker.strip()
+            if cleaned and cleaned not in allowed_seen:
+                allowed_markers.append(cleaned)
+                allowed_seen.add(cleaned)
+    if not allowed_markers:
+        fallback = f"[{get_citation_label()}, p. ?]"
+        allowed_markers.append(fallback)
+        allowed_seen.add(fallback)
+    allowed_set: set[str] = set(allowed_markers)
+
     snippet_infos: List[tuple[str, str, str]] = []
-    allowed: set[str] = set()
-    seen_markers: set[str] = set()
+    info_seen: set[str] = set()
     for sn in bundle.snippets:
         marker = getattr(sn, "citation_marker", None) or getattr(sn, "marker", None)
-        if not marker:
+        if not isinstance(marker, str) or not marker.strip():
             marker = _fallback_citation_marker(sn)
-        marker_str = marker.strip() if isinstance(marker, str) else ""
-        if marker_str and marker_str not in seen_markers:
-            seen_markers.add(marker_str)
+        cleaned = marker.strip()
+        if cleaned and cleaned not in allowed_set:
+            allowed_markers.append(cleaned)
+            allowed_set.add(cleaned)
+        if cleaned and cleaned not in info_seen:
+            info_seen.add(cleaned)
             reason = getattr(sn, "why", "") or "context"
             snippet_text = getattr(sn, "text", "")
-            snippet_infos.append((marker_str, reason, snippet_text))
-            allowed.add(marker_str)
-    seen: set[str] = set()
-    cites: List[str] = []
-    marker_pattern = re.compile(r"\[[^,\[\]]+,\s*p\.\s*[^\]]+\]")
-    for m in marker_pattern.findall(text_str):
-        m_clean = m.strip()
-        if m_clean in allowed and m_clean not in seen:
-            seen.add(m_clean)
-            cites.append(m_clean)
-    for marker, _, _ in snippet_infos:
-        if marker not in seen:
-            seen.add(marker)
-            cites.append(marker)
+            snippet_infos.append((cleaned, reason, snippet_text))
+
     if snippet_infos:
         background_lines: List[str] = []
         for marker, reason, snippet_text in snippet_infos:
@@ -512,14 +530,69 @@ def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAn
                 f"- {marker} ({reason}): {snippet_clean}"
             )
         text_str = text_str.rstrip() + "\n\nResearch bundle background:\n" + "\n".join(background_lines)
-    missing = getattr(bundle.metadata, "not_found_terms", []) or []
-    if missing:
-        miss_str = ", ".join(missing)
+
+    missing_terms = (
+        getattr(bundle, "not_found_terms", None)
+        or getattr(bundle.metadata, "not_found_terms", None)
+        or []
+    )
+    if missing_terms:
+        miss_str = ", ".join(missing_terms)
         text_str = text_str.rstrip() + (
             "\n\nNote: The index did not contain information on "
             f"{miss_str}; the answer uses related context where possible."
         )
-    return FinalAnswer(text=text_str, citations=cites)
+
+    marker_pattern = re.compile(r"\[[^,\[\]]+,\s*p\.\s*[^\]]+\]")
+    used_markers: List[str] = []
+
+    def _record_marker(marker: str) -> None:
+        marker_clean = marker.strip()
+        if marker_clean and marker_clean in allowed_set and marker_clean not in used_markers:
+            used_markers.append(marker_clean)
+
+    def _clean_and_tag(text: str) -> str:
+        def repl(match: re.Match[str]) -> str:
+            marker = match.group(0).strip()
+            if marker in allowed_set:
+                _record_marker(marker)
+                return marker
+            return ""
+
+        cleaned = marker_pattern.sub(repl, text)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+        cleaned = re.sub(r" \n", "\n", cleaned)
+        return cleaned
+
+    paragraphs = text_str.split("\n\n")
+    rotated = 0
+    for idx, para in enumerate(paragraphs):
+        stripped = para.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("```"):
+            continue
+        cleaned_para = _clean_and_tag(para)
+        if marker_pattern.search(cleaned_para):
+            paragraphs[idx] = cleaned_para
+            continue
+        marker = allowed_markers[rotated % len(allowed_markers)]
+        rotated += 1
+        append_target = cleaned_para.rstrip()
+        if append_target:
+            append_target = append_target + f" {marker}"
+        else:
+            append_target = marker
+        _record_marker(marker)
+        paragraphs[idx] = append_target
+
+    final_text = "\n\n".join(paragraphs)
+    final_text = _clean_and_tag(final_text)
+
+    if used_markers:
+        final_text = final_text.rstrip() + "\n\nCitations: " + ", ".join(used_markers)
+
+    return FinalAnswer(text=final_text, citations=used_markers)
 
 
 __all__ = [
