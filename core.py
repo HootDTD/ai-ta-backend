@@ -21,7 +21,7 @@ from .retriever import (
     answer as retriever_answer,
     render_citations,
 )
-from .main_ai import normalize_query
+from .main_ai import normalize_query, extract_keywords
 
 
 def _ensure_assets(doc_sets: Optional[Sequence[str]]) -> None:
@@ -194,13 +194,27 @@ def answer_question(
         except Exception:
             image_text = ""
 
+    # Build a retrieval-friendly image query: prefer concise keywords over full text
+    image_query = ""
+    if image_text:
+        try:
+            terms = extract_keywords(image_text) or []
+            # Keep 3–8 concise keywords to avoid diluting search
+            if terms:
+                image_query = " ".join(terms[:8])
+        except Exception:
+            image_query = ""
+        if not image_query:
+            # Fallback: truncate image_text to a short head for semantic signal
+            image_query = " ".join(image_text.split())[:500]
+
     # Compose final question used for prompting and retrieval
-    if q and image_text:
-        combined_q = q.rstrip() + "\n\n[Image text]\n" + image_text
+    if q and image_query:
+        combined_q = q.rstrip() + " \n" + image_query
     elif q:
         combined_q = q
-    elif image_text:
-        combined_q = image_text
+    elif image_query:
+        combined_q = image_query
     else:
         # As a last resort, attempt a direct vision answer
         if image_paths:
