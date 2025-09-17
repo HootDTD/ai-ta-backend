@@ -370,6 +370,16 @@ class Orchestrator:
         elif len(kept_snippets) < len(snippet_infos):
             truncated = True
 
+        allowed_markers: List[str] = []
+        seen_markers: Set[str] = set()
+        for sn in kept_snippets:
+            marker = getattr(sn, "citation_marker", None)
+            if isinstance(marker, str):
+                cleaned = marker.strip()
+                if cleaned and cleaned not in seen_markers:
+                    seen_markers.add(cleaned)
+                    allowed_markers.append(cleaned)
+
         equations, glossary, assumptions, alias_counts_total = _summarize_snippets(
             kept_snippets
         )
@@ -452,6 +462,7 @@ class Orchestrator:
             "coverage_gaps": [],
             "refinement_queries": [],
             "subject": get_subject_name(),
+            "allowed_markers": allowed_markers,
         }
 
         metadata = ResearchMetadata(**metadata_dict)
@@ -466,6 +477,11 @@ class Orchestrator:
             used_ids=[sn.id for sn in kept_snippets],
             stats=stats,
             provenance={"source": "keyword_loop"},
+            allowed_markers=allowed_markers,
+            found_terms=found_terms_meta,
+            not_found_terms=not_found_terms,
+            attempted_terms=attempted_terms,
+            subject=get_subject_name(),
         )
         return bundle
 

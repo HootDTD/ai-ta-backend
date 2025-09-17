@@ -1263,6 +1263,16 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
     snippets = _context_to_bundle_snippets(ctx)
     equations, glossary, assumptions, alias_counts = _summarize_snippets(snippets)
 
+    allowed_markers: List[str] = []
+    allowed_seen: Set[str] = set()
+    for sn in snippets:
+        marker = getattr(sn, "citation_marker", None)
+        if isinstance(marker, str):
+            cleaned = marker.strip()
+            if cleaned and cleaned not in allowed_seen:
+                allowed_seen.add(cleaned)
+                allowed_markers.append(cleaned)
+
     coverage_gaps: List[str] = []
     refinement: List[str] = []
     if isinstance(task, ParsedTask):
@@ -1304,6 +1314,8 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
         "expansion_candidates": diag.get("expansion_candidates", {}),
         "hit_count_sem": diag.get("hit_count_sem", 0),
         "hit_count_lex": diag.get("hit_count_lex", 0),
+        "allowed_markers": allowed_markers,
+        "subject": get_subject_name(),
     }
 
     bundle = ResearchBundle(
@@ -1317,6 +1329,10 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
         used_ids=ctx.used_ids,
         stats=ctx.stats,
         provenance={"source": "retriever"},
+        allowed_markers=allowed_markers,
+        not_found_terms=list(diag.get("missing_terms", [])) if isinstance(diag, dict) else [],
+        attempted_terms=[question] if question else [],
+        subject=get_subject_name(),
     )
     if WIRE:
         print(f"[Indexer AI -> Main AI] snippets={len(bundle.snippets)}", flush=True)

@@ -92,6 +92,14 @@ def cmd_ask(args: argparse.Namespace) -> None:
         "question": args.question,
         "used_ids": bundle.used_ids,
         "snippets": [asdict(sn) for sn in bundle.snippets],
+        "allowed_markers": list(getattr(bundle, "allowed_markers", [])),
+        "subject": getattr(bundle, "subject", getattr(bundle.metadata, "subject", "")),
+        "not_found_terms": list(
+            getattr(bundle, "not_found_terms", getattr(bundle.metadata, "not_found_terms", []))
+        ),
+        "attempted_terms": list(
+            getattr(bundle, "attempted_terms", getattr(bundle.metadata, "attempted_terms", []))
+        ),
     }
     with open("proof.json", "w", encoding="utf-8") as f:
         json.dump(proof, f, ensure_ascii=False, indent=2)
