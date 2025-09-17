@@ -291,7 +291,7 @@ def solve_with_bundle(
     )
     if hint:
         user_base += f"\nHint: {hint}"
-    model = os.getenv("MAIN_MODEL", "gpt-4o")
+    model = os.getenv("MAIN_MODEL", "gpt-5")
 
     def _maybe_debug_dump(system_prompt: str, user_payload: str, bundle: ResearchBundle) -> None:
         def _flag_enabled() -> bool:
@@ -478,13 +478,20 @@ def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAn
     if isinstance(fa, dict) and fa:
         results_lines = [f"- {k} = {v}" for k, v in fa.items()]
         text_str = text_str.rstrip() + "\n\nResults:\n" + "\n".join(results_lines)
+    snippet_infos: List[tuple[str, str, str]] = []
     allowed: set[str] = set()
+    seen_markers: set[str] = set()
     for sn in bundle.snippets:
         marker = getattr(sn, "citation_marker", None) or getattr(sn, "marker", None)
         if not marker:
             marker = _fallback_citation_marker(sn)
-        if isinstance(marker, str) and marker.strip():
-            allowed.add(marker.strip())
+        marker_str = marker.strip() if isinstance(marker, str) else ""
+        if marker_str and marker_str not in seen_markers:
+            seen_markers.add(marker_str)
+            reason = getattr(sn, "why", "") or "context"
+            snippet_text = getattr(sn, "text", "")
+            snippet_infos.append((marker_str, reason, snippet_text))
+            allowed.add(marker_str)
     seen: set[str] = set()
     cites: List[str] = []
     marker_pattern = re.compile(r"\[[^,\[\]]+,\s*p\.\s*[^\]]+\]")
@@ -493,6 +500,18 @@ def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAn
         if m_clean in allowed and m_clean not in seen:
             seen.add(m_clean)
             cites.append(m_clean)
+    for marker, _, _ in snippet_infos:
+        if marker not in seen:
+            seen.add(marker)
+            cites.append(marker)
+    if snippet_infos:
+        background_lines: List[str] = []
+        for marker, reason, snippet_text in snippet_infos:
+            snippet_clean = " ".join(str(snippet_text or "").split())
+            background_lines.append(
+                f"- {marker} ({reason}): {snippet_clean}"
+            )
+        text_str = text_str.rstrip() + "\n\nResearch bundle background:\n" + "\n".join(background_lines)
     missing = getattr(bundle.metadata, "not_found_terms", []) or []
     if missing:
         miss_str = ", ".join(missing)
