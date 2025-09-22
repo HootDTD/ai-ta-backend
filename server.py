@@ -1,11 +1,15 @@
+import importlib
 import os
 import re
 import uuid
 import base64
 import logging
+import shutil
+import tempfile
+from pathlib import Path
 from typing import List, Optional, Sequence, Iterator, Iterable, Union, Dict
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -14,6 +18,13 @@ from contextlib import contextmanager
 # Import the callable core entrypoint using package‑relative import to avoid
 # path issues when running under different working directories.
 from .core import answer_question
+from .knowledge import KnowledgeManager
+
+try:  # pragma: no cover - optional dependency detection
+    importlib.import_module("python_multipart")
+    _HAS_MULTIPART = True
+except ModuleNotFoundError:  # pragma: no cover
+    _HAS_MULTIPART = False
 
 # Load environment variables from .env if present (python-dotenv preferred),
 # with a minimal fallback parser so local dev works without extra deps.
@@ -58,6 +69,7 @@ class AttachmentIn(BaseModel):
 
 class AskRequest(BaseModel):
     question: str
+    subject: str = Field(..., min_length=1, description="Subject name for knowledge routing")
     course_id: Optional[str] = None
     doc_sets: Optional[List[str]] = None
     attachments: Optional[List[AttachmentIn]] = Field(default_factory=list)
@@ -67,6 +79,27 @@ class AskRequest(BaseModel):
     def_bias: Optional[bool] = None
     max_iters: Optional[int] = None
     sanitize: Optional[bool] = None
+
+
+class KnowledgeMaterialOut(BaseModel):
+    id: str
+    subject: str
+    title: str
+    doc_id: str
+    index_dir: str
+    index_path: str
+    created_at: str
+    model: Optional[str] = None
+    dimensions: Optional[int] = None
+    page_count: Optional[int] = None
+
+
+class KnowledgeSubjectOut(BaseModel):
+    subject: str
+    slug: str
+    materials: List[KnowledgeMaterialOut]
+
+
 
 
 # -------- Utils --------
@@ -188,6 +221,82 @@ except Exception:
     pass
 
 
+# -------- Knowledge endpoints --------
+@app.get("/knowledge/subjects", response_model=List[KnowledgeSubjectOut])
+def list_knowledge_subjects() -> List[KnowledgeSubjectOut]:
+    manager = KnowledgeManager()
+    try:
+        subjects = manager.list_subjects()
+    except Exception as exc:
+        log.exception("Failed to list knowledge subjects")
+        raise HTTPException(status_code=500, detail=str(exc))
+    return subjects
+
+
+if _HAS_MULTIPART:
+
+    @app.post("/knowledge/materials", response_model=KnowledgeMaterialOut)
+    async def upload_knowledge_material(
+        subject: str = Form(...),
+        title: str = Form(""),
+        file: UploadFile = File(...),
+    ) -> KnowledgeMaterialOut:
+        subject_clean = (subject or "").strip()
+        if not subject_clean:
+            raise HTTPException(status_code=400, detail="subject is required")
+
+        filename = file.filename or "knowledge-material.pdf"
+        name_path = Path(filename)
+        if name_path.suffix.lower() != ".pdf":
+            raise HTTPException(status_code=400, detail="Only PDF knowledge materials are supported")
+
+        resolved_title = (title or name_path.stem).strip() or name_path.stem
+        tmp_dir = Path(tempfile.mkdtemp(prefix="knowledge_upload_"))
+        tmp_path = tmp_dir / name_path.name
+
+        try:
+            with tmp_path.open("wb") as dest:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    dest.write(chunk)
+            if tmp_path.stat().st_size == 0:
+                raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+            manager = KnowledgeManager()
+            material = manager.add_pdf_material(
+                subject=subject_clean,
+                pdf_path=tmp_path,
+                title=resolved_title,
+            )
+        except HTTPException:
+            raise
+        except (ValueError, RuntimeError, FileNotFoundError) as exc:
+            log.warning("Embedding knowledge material failed: %s", exc)
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:  # pragma: no cover - defensive
+            log.exception("Failed to process knowledge material upload")
+            raise HTTPException(status_code=500, detail="Failed to embed knowledge material") from exc
+        finally:
+            try:
+                await file.close()
+            except Exception:
+                pass
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        return material
+
+else:  # pragma: no cover - fallback when python-multipart missing
+
+    @app.post("/knowledge/materials")
+    async def upload_knowledge_material_unavailable() -> None:
+        raise HTTPException(
+            status_code=503,
+            detail="File upload support requires the 'python-multipart' package.",
+        )
+
+
 @app.get("/healthz")
 def healthz():
     return {"status": "ok"}
@@ -206,6 +315,10 @@ def post_ask(payload: AskRequest):
     atts = payload.attachments or []
     if not q and not atts:
         raise HTTPException(status_code=400, detail="Provide a question or image attachments")
+
+    subject = (payload.subject or "").strip()
+    if not subject:
+        raise HTTPException(status_code=400, detail="Subject is required")
 
     try:
         image_paths = _save_attachments(atts)
@@ -235,6 +348,7 @@ def post_ask(payload: AskRequest):
                     image_paths=image_paths,
                     course_id=payload.course_id,
                     doc_sets=payload.doc_sets,
+                    subject=subject,
                 )
                 for chunk in _iter_text(result):
                     yield chunk

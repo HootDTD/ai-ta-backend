@@ -131,8 +131,9 @@ def generate_ai_use_markdown(evidence_pack: dict, style: str, length: str) -> di
       "model_fingerprint": str
     }
     """
-    # Test double for CI/local tests without network
-    if os.getenv("TEST_FAKE_OPENAI") == "1":
+    # Test double / offline fallback if API key is not available
+    fake_mode = os.getenv("TEST_FAKE_OPENAI") == "1" or not os.getenv("OPENAI_API_KEY")
+    if fake_mode:
         turns = evidence_pack.get("turns") or []
         md = (
             f"# AI-use Report (fake)\n\n"
