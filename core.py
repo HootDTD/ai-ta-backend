@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Iterable, Iterator, Optional, Sequence, Union, List
+from typing import Iterable, Iterator, Optional, Sequence, Union, List, Set
 import base64
 import mimetypes
 import json
@@ -21,21 +21,47 @@ from .retriever import (
     answer as retriever_answer,
     render_citations,
 )
+from .knowledge import KnowledgeManager
 from .main_ai import normalize_query, extract_keywords
 
 
-def _ensure_assets(doc_sets: Optional[Sequence[str]]) -> None:
-    """Load retrieval assets based on doc_sets or env/DEFAULT path.
+def _ensure_assets(doc_sets: Optional[Sequence[str]], subject: Optional[str]) -> None:
+    """Load retrieval assets based on explicit doc_sets or a subject mapping."""
 
-    - If `doc_sets` is provided, attempt to load those indexes (supports multi).
-    - Else, use env INDEX_DIR or the repository default path.
-    """
     if doc_sets:
-        paths = [Path(p) for p in doc_sets]
+        paths: List[Path] = []
+        seen: Set[str] = set()
+        for raw in doc_sets:
+            resolved = Path(raw).resolve()
+            key = str(resolved)
+            if key in seen:
+                continue
+            seen.add(key)
+            paths.append(resolved)
         if len(paths) > 1:
             load_assets_all(paths)
-        else:
+        elif paths:
             load_assets(paths[0])
+        return
+
+    manager = KnowledgeManager()
+    if subject:
+        subject_paths = manager.resolve_doc_sets(subject)
+        if not subject_paths:
+            raise RuntimeError(f"No knowledge materials configured for subject '{subject}'")
+        unique: List[Path] = []
+        seen: Set[str] = set()
+        for path in subject_paths:
+            resolved = Path(path).resolve()
+            key = str(resolved)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(resolved)
+        if len(unique) > 1:
+            load_assets_all(unique)
+        else:
+            load_assets(unique[0])
         return
 
     # Fallback to single default index dir (mirrors CLI behavior)
@@ -170,12 +196,15 @@ def answer_question(
     image_paths: Optional[Sequence[str]] = None,
     course_id: Optional[str] = None,
     doc_sets: Optional[Sequence[str]] = None,
+    subject: Optional[str] = None,
 ) -> Union[str, Iterable[str], Iterator[str]]:
     """Answer a question using the existing retriever pipeline.
 
     Parameters currently accepted for future extensibility:
     - image_paths: not used yet (attachments are ignored by retriever).
     - course_id/doc_sets: optional filtering or multi-index selection.
+    - subject: logical subject name used to resolve knowledge materials when
+      ``doc_sets`` are not provided.
 
     Returns a generator yielding the final text and a second line of citations,
     matching the current CLI output format. If a single string is preferred,
@@ -223,7 +252,7 @@ def answer_question(
                 return direct
         return ""
 
-    _ensure_assets(doc_sets)
+    _ensure_assets(doc_sets, subject)
 
     query = normalize_query(combined_q)
     hits, _ = search(query)
