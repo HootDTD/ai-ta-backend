@@ -6,7 +6,8 @@ import json
 import os
 import re
 from dataclasses import asdict
-from typing import Any, List, Dict
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
 
@@ -63,6 +64,44 @@ def _client() -> OpenAI:
     if not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY not set")
     return OpenAI()
+
+
+def _load_proof_bundle() -> Optional[Dict[str, Any]]:
+    """Return the latest proof bundle if ``proof.json`` is available."""
+
+    candidates: List[Path] = []
+    env_path = os.getenv("AI_TA_PROOF_PATH")
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.append(Path("proof.json"))
+    candidates.append(Path(__file__).resolve().parent / "proof.json")
+
+    seen: set[Path] = set()
+    for raw_path in candidates:
+        path = raw_path
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if not resolved.is_file():
+            continue
+        try:
+            with resolved.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict):
+            bundle = data.get("research_bundle")
+            if isinstance(bundle, dict):
+                return bundle
+            if "snippets" in data and "metadata" in data:
+                return data
+    return None
 
 
 def extract_keywords(question: str) -> List[str]:
@@ -284,16 +323,35 @@ def solve_with_bundle(
         "Each value must be a number with SI units as a parsable string (e.g., '9.90 m/s'). "
         "If math is needed, include a code field (pure Python using np/sp/ureg) that prints the results."
     )
-    bundle_json = json.dumps(asdict(bundle))
-    user_base = (
-        f"Task: {json.dumps(asdict(parsed_task))}\nBundle: {bundle_json}\n"
+    bundle_json = json.dumps(asdict(bundle), ensure_ascii=False)
+    proof_bundle = _load_proof_bundle()
+    proof_json: Optional[str] = None
+    if proof_bundle is not None:
+        try:
+            proof_json = json.dumps(proof_bundle, ensure_ascii=False)
+        except TypeError:
+            proof_json = None
+
+    payload_lines = [
+        f"Task: {json.dumps(asdict(parsed_task), ensure_ascii=False)}",
+        f"Bundle: {bundle_json}",
+    ]
+    if proof_json:
+        payload_lines.append(f"FullProofBundle: {proof_json}")
+    payload_lines.append(
         "Return JSON with keys: steps, final_answers, equations_used, assumptions, code (optional)."
     )
+    user_base = "\n".join(payload_lines)
     if hint:
         user_base += f"\nHint: {hint}"
     model = os.getenv("MAIN_MODEL", "gpt-5")
 
-    def _maybe_debug_dump(system_prompt: str, user_payload: str, bundle: ResearchBundle) -> None:
+    def _maybe_debug_dump(
+        system_prompt: str,
+        user_payload: str,
+        bundle: ResearchBundle,
+        proof_bundle: Optional[Dict[str, Any]] = None,
+    ) -> None:
         def _flag_enabled() -> bool:
             truthy = {"1", "true", "yes", "on"}
             for name in ("QA_DEBUG", "AI_TA_DEBUG", "TRACE_IO"):
@@ -369,6 +427,9 @@ def solve_with_bundle(
 
         with open("debug/main_ai_bundle.json", "w", encoding="utf-8") as fh:
             json.dump(asdict(bundle), fh, indent=2, ensure_ascii=False)
+        if proof_bundle is not None:
+            with open("debug/main_ai_proof_bundle.json", "w", encoding="utf-8") as fh:
+                json.dump(proof_bundle, fh, indent=2, ensure_ascii=False)
 
         print("Wrote main model inputs to debug/main_ai_system.txt and debug/main_ai_user.txt")
         print(f"Context preview: debug/main_ai_context_preview.txt (snippets={len(bundle.snippets)})")
@@ -387,7 +448,7 @@ def solve_with_bundle(
             f"[{key_str}]. Return numeric values with SI units."
         )
 
-    _maybe_debug_dump(system, user_base, bundle)
+    _maybe_debug_dump(system, user_base, bundle, proof_bundle)
 
     def _chat(msgs: List[dict]) -> dict:
         kwargs = {
