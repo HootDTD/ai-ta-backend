@@ -16,7 +16,6 @@ from .contracts import (
     FinalAnswer,
     ParsedTask,
     Proof,
-    ProposedSolution,
     ResearchBundle,
     ResearchMetadata,
     BundleSnippet,
@@ -24,8 +23,6 @@ from .contracts import (
 from .config import get_subject_name
 from .main_ai import (
     parse_question,
-    solve_with_bundle,
-    format_answer,
     normalize_query,
     extract_keywords,
     propose_synonyms,
@@ -351,24 +348,9 @@ class Orchestrator:
             )
         )
 
-        kept_snippets: List[BundleSnippet] = []
-        total_tokens = 0
+        kept_snippets: List[BundleSnippet] = [entry["snippet"] for entry in snippet_infos]
+        total_tokens = sum(entry["token_count"] for entry in snippet_infos)
         truncated = False
-        for entry in snippet_infos:
-            snippet = entry["snippet"]
-            count = entry["token_count"]
-            if kept_snippets and total_tokens + count > token_budget:
-                truncated = True
-                continue
-            kept_snippets.append(snippet)
-            total_tokens += count
-        if not kept_snippets and snippet_infos:
-            first = snippet_infos[0]
-            kept_snippets = [first["snippet"]]
-            total_tokens = first["token_count"]
-            truncated = first["token_count"] > token_budget
-        elif len(kept_snippets) < len(snippet_infos):
-            truncated = True
 
         allowed_markers: List[str] = []
         seen_markers: Set[str] = set()
@@ -705,53 +687,37 @@ class Orchestrator:
             raise RuntimeError("retrieval failed")
         bundle_hash = self._hash(bundle)
 
-        hint: str | None = None
-        solution: ProposedSolution | None = None
-        issues: List[str] = []
-        for _ in range(self.max_solve_rounds):
-            solution = solve_with_bundle(parsed, bundle, hint=hint)
-            issues = self._validate_solution(solution, parsed, bundle)
-            if not issues:
-                break
-            missing = [
-                i.split("answer lacks ", 1)[1]
-                for i in issues
-                if i.startswith("answer lacks ")
-            ]
-            if missing:
-                keys_str = ", ".join(missing)
-                hint = (
-                    f"Return JSON with final_answers containing EXACT keys: {keys_str}. "
-                    "Provide numeric values with units."
-                )
-                if {"g", "h", "d"}.issubset(parsed.knowns.keys()):
-                    hint += (
-                        " Include a short code block (pure Python) that computes "
-                        "v_exit=sqrt(2*g*h) and Q=(pi*d**2/4)*v_exit using the knowns."
-                    )
-                hint += " Do not omit final_answers."
-            else:
-                hint = "; ".join(issues)
-        if solution is None:
-            raise RuntimeError("solve failed")
-        with open("solution.json", "w", encoding="utf-8") as f:
-            json.dump(asdict(solution), f, indent=2, ensure_ascii=False)
-        solution_hash = self._hash(solution)
+        payload = {
+            "question": question,
+            "parsed_task": asdict(parsed),
+            "research_bundle": asdict(bundle),
+        }
 
-        final: FinalAnswer = format_answer(solution, bundle)
+        payload_text = json.dumps(payload, indent=2, ensure_ascii=False)
+
+        citations: List[str] = []
+        seen_markers: Set[str] = set()
+        for sn in bundle.snippets:
+            marker = getattr(sn, "citation_marker", None)
+            if not isinstance(marker, str):
+                continue
+            cleaned = marker.strip()
+            if cleaned and cleaned not in seen_markers:
+                seen_markers.add(cleaned)
+                citations.append(cleaned)
 
         models = {
             "parser": os.getenv("PARSER_MODEL", "gpt-4o-mini"),
-            "main": os.getenv("MAIN_MODEL", "gpt-4o"),
+            "main": None,
         }
         proof = Proof(
             question=question,
             parsed_task=asdict(parsed),
-            research_bundle=asdict(bundle),
-            solver_output=asdict(solution),
+            research_bundle=payload["research_bundle"],
+            solver_output={},
             checks={
-                "solution_valid": not issues,
-                "issues": issues,
+                "solution_valid": False,
+                "issues": ["solver_skipped"],
                 "skipped_indexes": getattr(bundle.metadata, "skipped_indexes", []),
                 "models": models,
                 "retrieval_params": {
@@ -767,11 +733,10 @@ class Orchestrator:
         proof_data["hashes"] = {
             "parsed_task": parsed_hash,
             "bundle": bundle_hash,
-            "solution": solution_hash,
         }
         with open("proof.json", "w", encoding="utf-8") as f:
             json.dump(proof_data, f, indent=2, ensure_ascii=False)
-        return final
+        return FinalAnswer(text=payload_text, citations=citations)
 
 
 __all__ = ["Orchestrator"]
