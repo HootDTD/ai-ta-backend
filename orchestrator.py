@@ -8,7 +8,8 @@ import os
 import re
 from dataclasses import asdict
 from datetime import datetime
-from typing import Dict, List, Any, Set
+from typing import Dict, List, Any, Set, Tuple
+from difflib import SequenceMatcher
 
 import tiktoken
 
@@ -49,6 +50,98 @@ class Orchestrator:
         self.max_retrieval_rounds = max_retrieval_rounds
         self.max_solve_rounds = max_solve_rounds
 
+    def _semantic_similarity(self, seed: str, candidate: str) -> float:
+        """Return a normalized similarity score between ``seed`` and ``candidate``."""
+
+        seed_clean = (seed or "").strip().lower()
+        cand_clean = (candidate or "").strip().lower()
+        if not seed_clean or not cand_clean:
+            return 0.0
+
+        ratio = SequenceMatcher(None, seed_clean, cand_clean).ratio()
+        # Ensure a small positive floor so accepted semantic suggestions aren't zeroed out.
+        if ratio < 0.3:
+            ratio = 0.3
+        return float(max(0.0, min(ratio, 1.0)))
+
+    def _build_keyword_matrix(
+        self, seed_terms: List[str], skip_semantic: bool
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
+        """Return keyword-score pairs plus a record of semantic expansions."""
+
+        keyword_matrix: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+
+        for term in seed_terms:
+            cleaned = (term or "").strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            keyword_matrix.append(
+                {
+                    "term": cleaned,
+                    "score": 1.0,
+                    "origin": "seed",
+                    "source_term": cleaned,
+                }
+            )
+            seen.add(key)
+
+        semantic_map: Dict[str, List[str]] = {}
+        if skip_semantic or not seed_terms:
+            return keyword_matrix, semantic_map
+
+        raw_synonyms = propose_synonyms(seed_terms)
+        base_lookup: Dict[str, str] = {term.lower(): term for term in seed_terms}
+        normalized: Dict[str, List[str]] = {}
+
+        if isinstance(raw_synonyms, dict):
+            for raw_key, values in raw_synonyms.items():
+                if not isinstance(raw_key, str):
+                    continue
+                base = base_lookup.get(raw_key.lower())
+                if base is None:
+                    continue
+                if not isinstance(values, list):
+                    continue
+                normalized.setdefault(base, [])
+                for cand in values:
+                    if isinstance(cand, str):
+                        normalized[base].append(cand)
+
+        for base in seed_terms:
+            candidates = normalized.get(base, [])
+            base_seen: Set[str] = set()
+            cleaned_candidates: List[str] = []
+            for cand in candidates:
+                cleaned = cand.strip()
+                if not cleaned:
+                    continue
+                cand_key = cleaned.lower()
+                if cand_key in base_seen or cand_key in seen:
+                    continue
+                score = self._semantic_similarity(base, cleaned)
+                if score <= 0:
+                    continue
+                score = round(float(max(0.0, min(score, 1.0))), 3)
+                keyword_matrix.append(
+                    {
+                        "term": cleaned,
+                        "score": score,
+                        "origin": "semantic",
+                        "source_term": base,
+                    }
+                )
+                seen.add(cand_key)
+                base_seen.add(cand_key)
+                cleaned_candidates.append(cleaned)
+            if cleaned_candidates:
+                semantic_map[base] = cleaned_candidates
+
+        return keyword_matrix, semantic_map
+
     def _iterative_research(
         self, question: str, options: Dict[str, Any], max_iters: int
     ) -> ResearchBundle:
@@ -59,33 +152,50 @@ class Orchestrator:
             fallback = norm_question or question
             initial_terms = [fallback.strip().lower()] if fallback else []
 
-        concept_order: List[str] = []
-        concept_display: Dict[str, str] = {}
-        term_to_concept: Dict[str, str] = {}
-        concept_index_map: Dict[str, int] = {}
-        term_origin: Dict[str, Dict[str, str]] = {}
-        for term in initial_terms:
-            key = term.lower()
-            if key not in concept_display:
-                concept_display[key] = term
-                concept_order.append(key)
-                concept_index_map[key] = len(concept_order) - 1
-            term_to_concept[key] = key
-            term_origin[key] = {"type": "seed", "source": term}
-
-        pending: List[str] = list(initial_terms)
-        max_rounds = min(max_iters, 5)
-        skip_synonyms = os.getenv("RETRIEVAL_SKIP_SYNONYMS", "off").lower() in {
+        skip_semantic = os.getenv("RETRIEVAL_SKIP_SYNONYMS", "off").lower() in {
             "1",
             "true",
             "yes",
             "on",
         }
 
+        keyword_matrix, semantic_map = self._build_keyword_matrix(initial_terms, skip_semantic)
+
+        concept_order: List[str] = []
+        concept_display: Dict[str, str] = {}
+        term_to_concept: Dict[str, str] = {}
+        concept_index_map: Dict[str, int] = {}
+        term_origin: Dict[str, Dict[str, Any]] = {}
+
+        for entry in keyword_matrix:
+            term = entry.get("term", "")
+            source_term = entry.get("source_term") or term
+            concept_key = source_term.lower()
+            if concept_key not in concept_display:
+                concept_display[concept_key] = source_term
+                concept_order.append(concept_key)
+                concept_index_map[concept_key] = len(concept_order) - 1
+            term_to_concept[term.lower()] = concept_key
+            term_origin[term.lower()] = {
+                "type": entry.get("origin", "seed"),
+                "source": source_term,
+                "score": entry.get("score", 1.0),
+            }
+
+        round_terms: List[str] = []
+        seen_round: Set[str] = set()
+        for entry in keyword_matrix:
+            candidate = (entry.get("term") or "").strip()
+            if not candidate:
+                continue
+            key = candidate.lower()
+            if key in seen_round:
+                continue
+            seen_round.add(key)
+            round_terms.append(candidate)
+
         iterations: List[Dict[str, Any]] = []
-        attempted_terms: List[str] = []
-        attempted_keys: Set[str] = set()
-        attempted_record: Set[str] = set()
+        attempted_terms: List[str] = list(round_terms)
         concept_found: Set[str] = set()
         concept_matches: Dict[str, List[str]] = {}
         concept_match_details: Dict[str, List[Dict[str, Any]]] = {}
@@ -97,219 +207,147 @@ class Orchestrator:
         skipped_entries: List[Dict[str, Any]] = []
         term_diagnostics: Dict[str, Dict[str, Any]] = {}
 
-        for iter_idx in range(1, max_rounds + 1):
-            if not pending:
-                break
+        if WIRE:
+            print(
+                f"[Main AI -> Indexer AI] pending={json.dumps(round_terms, ensure_ascii=False)}",
+                flush=True,
+            )
 
-            round_terms: List[str] = []
-            seen_round: Set[str] = set()
-            for term in pending:
-                candidate = (term or "").strip()
-                if not candidate:
-                    continue
-                key = candidate.lower()
-                concept_key = term_to_concept.get(key)
-                if concept_key is None:
-                    concept_key = key
-                    term_to_concept[key] = concept_key
-                    if concept_key not in concept_display:
-                        concept_display[concept_key] = candidate
-                        concept_order.append(concept_key)
-                if key in seen_round or key in attempted_keys:
-                    continue
-                seen_round.add(key)
-                round_terms.append(candidate)
-
-            if not round_terms:
-                break
-
-            for term in round_terms:
-                key = term.lower()
-                if key not in attempted_record:
-                    attempted_terms.append(term)
-                    attempted_record.add(key)
-                attempted_keys.add(key)
-
-            if WIRE:
-                print(
-                    f"[Main AI -> Indexer AI] pending={json.dumps(round_terms, ensure_ascii=False)}",
-                    flush=True,
-                )
-
+        if round_terms:
             found_array, not_found_array, diag = batch_lookup_terms(round_terms, options)
-            loaded_indexes.update(diag.get("loaded_indexes", []))
-            skipped_entries.extend(diag.get("skipped_indexes", []))
-            per_term_diag = diag.get("per_term", {}) or {}
-            term_diagnostics.update(per_term_diag)
+        else:
+            found_array = []
+            not_found_array = []
+            diag = {"loaded_indexes": [], "skipped_indexes": [], "per_term": {}}
+        loaded_indexes.update(diag.get("loaded_indexes", []))
+        skipped_entries.extend(diag.get("skipped_indexes", []))
+        per_term_diag = diag.get("per_term", {}) or {}
+        term_diagnostics.update(per_term_diag)
 
-            found_terms = [item.get("term") for item in found_array if isinstance(item, dict)]
-            if WIRE:
-                print(
-                    "[Indexer AI -> Main AI] found="
-                    + json.dumps([t for t in found_terms if t], ensure_ascii=False)
-                    + " not_found="
-                    + json.dumps(list(not_found_array), ensure_ascii=False),
-                    flush=True,
-                )
+        found_terms = [item.get("term") for item in found_array if isinstance(item, dict)]
+        if WIRE:
+            print(
+                "[Indexer AI -> Main AI] found="
+                + json.dumps([t for t in found_terms if t], ensure_ascii=False)
+                + " not_found="
+                + json.dumps(list(not_found_array), ensure_ascii=False),
+                flush=True,
+            )
 
-            iteration_entry: Dict[str, Any] = {
-                "iter": iter_idx,
-                "sent_terms": list(round_terms),
-                "found_terms": [t for t in found_terms if t],
-                "not_found_terms": list(not_found_array),
-            }
-            found_details: List[Dict[str, Any]] = []
+        iter_idx = 1
+        max_rounds = 1
+        iteration_entry: Dict[str, Any] = {
+            "iter": iter_idx,
+            "sent_terms": list(round_terms),
+            "found_terms": [t for t in found_terms if t],
+            "not_found_terms": list(not_found_array),
+            "keyword_matrix": keyword_matrix,
+            "semantic_expansion": semantic_map,
+        }
+        found_details: List[Dict[str, Any]] = []
 
-            for result in found_array:
-                term_label = result.get("term", "")
-                key = term_label.lower()
-                concept_key = term_to_concept.get(key, key)
-                if concept_key not in concept_display:
-                    concept_display[concept_key] = term_label or concept_key
-                    concept_order.append(concept_key)
-                    concept_index_map[concept_key] = len(concept_order) - 1
-                concept_found.add(concept_key)
-                concept_matches.setdefault(concept_key, [])
-                if term_label and term_label not in concept_matches[concept_key]:
-                    concept_matches[concept_key].append(term_label)
+        for result in found_array:
+            term_label = result.get("term", "")
+            key = term_label.lower()
+            concept_key = term_to_concept.get(key, key)
+            if concept_key not in concept_display:
+                concept_display[concept_key] = term_label or concept_key
+                concept_order.append(concept_key)
+                concept_index_map[concept_key] = len(concept_order) - 1
+            concept_found.add(concept_key)
+            concept_matches.setdefault(concept_key, [])
+            if term_label and term_label not in concept_matches[concept_key]:
+                concept_matches[concept_key].append(term_label)
 
-                concept_first_found_iter[concept_key] = min(
-                    concept_first_found_iter.get(concept_key, iter_idx), iter_idx
-                )
-                origin_info = term_origin.get(key, {"type": "seed", "source": term_label})
-                concept_match_details.setdefault(concept_key, []).append(
-                    {
-                        "term": term_label,
-                        "iteration": iter_idx,
-                        "origin": origin_info.get("type", "seed"),
-                        "source_term": origin_info.get("source"),
+            concept_first_found_iter[concept_key] = min(
+                concept_first_found_iter.get(concept_key, iter_idx), iter_idx
+            )
+            origin_info = term_origin.get(
+                key,
+                {"type": "seed", "source": term_label, "score": 1.0},
+            )
+            concept_match_details.setdefault(concept_key, []).append(
+                {
+                    "term": term_label,
+                    "iteration": iter_idx,
+                    "origin": origin_info.get("type", "seed"),
+                    "source_term": origin_info.get("source"),
+                    "score": origin_info.get("score", 1.0),
+                }
+            )
+            diag_entry = per_term_diag.get(term_label) or per_term_diag.get(key) or {}
+            alias_hits = [
+                a for a in diag_entry.get("alias_hits", []) if isinstance(a, str)
+            ]
+            citation_markers: List[str] = []
+            seen_markers: Set[str] = set()
+            result_citations = result.get("citations") if isinstance(result, dict) else None
+            if isinstance(result_citations, list):
+                for marker in result_citations:
+                    if isinstance(marker, str):
+                        cleaned = marker.strip()
+                        if cleaned and cleaned not in seen_markers:
+                            seen_markers.add(cleaned)
+                            citation_markers.append(cleaned)
+            if not citation_markers:
+                for sn in result.get("snippets", []) if isinstance(result, dict) else []:
+                    marker = getattr(sn, "citation_marker", None)
+                    if isinstance(marker, str):
+                        cleaned = marker.strip()
+                        if cleaned and cleaned not in seen_markers:
+                            seen_markers.add(cleaned)
+                            citation_markers.append(cleaned)
+
+            found_details.append(
+                {
+                    "term": term_label,
+                    "concept": concept_display.get(concept_key, term_label or concept_key),
+                    "iteration": iter_idx,
+                    "origin": origin_info.get("type", "seed"),
+                    "source_term": origin_info.get("source"),
+                    "score": origin_info.get("score", 1.0),
+                    "citations": citation_markers,
+                }
+            )
+
+            for sn in result.get("snippets", []):
+                if not sn or not getattr(sn, "id", None):
+                    continue
+                existing = snippet_records.get(sn.id)
+                text_len = len(getattr(sn, "text", "") or "")
+                alias_hit_for_term = False
+                if alias_hits:
+                    text_lower = (getattr(sn, "text", "") or "").lower()
+                    for alias in alias_hits:
+                        alias_lower = alias.lower()
+                        if alias_lower and alias_lower in text_lower:
+                            alias_hit_for_term = True
+                            break
+                if existing is None:
+                    snippet_records[sn.id] = {
+                        "snippet": sn,
+                        "concept_rank": concept_index_map.get(
+                            concept_key, len(concept_order)
+                        ),
+                        "first_iter": iter_idx,
+                        "alias_hit": alias_hit_for_term,
+                        "concepts": {concept_key},
                     }
+                    continue
+
+                if text_len > len(getattr(existing.get("snippet"), "text", "") or ""):
+                    existing["snippet"] = sn
+                existing["concept_rank"] = min(
+                    existing.get("concept_rank", concept_index_map.get(concept_key, len(concept_order))),
+                    concept_index_map.get(concept_key, len(concept_order)),
                 )
-                diag_entry = per_term_diag.get(term_label) or per_term_diag.get(key) or {}
-                alias_hits = [
-                    a for a in diag_entry.get("alias_hits", []) if isinstance(a, str)
-                ]
-                citation_markers: List[str] = []
-                seen_markers: Set[str] = set()
-                result_citations = result.get("citations") if isinstance(result, dict) else None
-                if isinstance(result_citations, list):
-                    for marker in result_citations:
-                        if isinstance(marker, str):
-                            cleaned = marker.strip()
-                            if cleaned and cleaned not in seen_markers:
-                                seen_markers.add(cleaned)
-                                citation_markers.append(cleaned)
-                if not citation_markers:
-                    for sn in result.get("snippets", []) if isinstance(result, dict) else []:
-                        marker = getattr(sn, "citation_marker", None)
-                        if isinstance(marker, str):
-                            cleaned = marker.strip()
-                            if cleaned and cleaned not in seen_markers:
-                                seen_markers.add(cleaned)
-                                citation_markers.append(cleaned)
+                existing["first_iter"] = min(existing.get("first_iter", iter_idx), iter_idx)
+                existing.setdefault("alias_hit", False)
+                existing["alias_hit"] = existing["alias_hit"] or alias_hit_for_term
+                existing.setdefault("concepts", set()).add(concept_key)
 
-                found_details.append(
-                    {
-                        "term": term_label,
-                        "concept": concept_display.get(concept_key, term_label or concept_key),
-                        "iteration": iter_idx,
-                        "origin": origin_info.get("type", "seed"),
-                        "source_term": origin_info.get("source"),
-                        "citations": citation_markers,
-                    }
-                )
-
-                for sn in result.get("snippets", []):
-                    if not sn or not getattr(sn, "id", None):
-                        continue
-                    existing = snippet_records.get(sn.id)
-                    text_len = len(getattr(sn, "text", "") or "")
-                    alias_hit_for_term = False
-                    if alias_hits:
-                        text_lower = (getattr(sn, "text", "") or "").lower()
-                        for alias in alias_hits:
-                            alias_lower = alias.lower()
-                            if alias_lower and alias_lower in text_lower:
-                                alias_hit_for_term = True
-                                break
-                    if existing is None:
-                        snippet_records[sn.id] = {
-                            "snippet": sn,
-                            "concept_rank": concept_index_map.get(
-                                concept_key, len(concept_order)
-                            ),
-                            "first_iter": iter_idx,
-                            "alias_hit": alias_hit_for_term,
-                            "concepts": {concept_key},
-                        }
-                        continue
-
-                    if text_len > len(getattr(existing.get("snippet"), "text", "") or ""):
-                        existing["snippet"] = sn
-                    existing["concept_rank"] = min(
-                        existing.get("concept_rank", concept_index_map.get(concept_key, len(concept_order))),
-                        concept_index_map.get(concept_key, len(concept_order)),
-                    )
-                    existing["first_iter"] = min(existing.get("first_iter", iter_idx), iter_idx)
-                    existing.setdefault("alias_hit", False)
-                    existing["alias_hit"] = existing["alias_hit"] or alias_hit_for_term
-                    existing.setdefault("concepts", set()).add(concept_key)
-
-            iteration_entry["found_details"] = found_details
-
-            if not not_found_array:
-                iteration_entry["proposed_synonyms"] = {}
-                iterations.append(iteration_entry)
-                if WIRE:
-                    print("[Main AI] synonyms_proposed={}", flush=True)
-                pending = []
-                break
-
-            if skip_synonyms:
-                iteration_entry["proposed_synonyms"] = {}
-                iterations.append(iteration_entry)
-                if WIRE:
-                    print("[Main AI] synonyms_proposed={}", flush=True)
-                pending = []
-                break
-
-            context_hint: Dict[str, Dict[str, Any]] = {}
-            for term in not_found_array:
-                diag_entry = per_term_diag.get(term)
-                if not diag_entry:
-                    diag_entry = per_term_diag.get(term.lower(), {})
-                context_hint[term] = diag_entry or {}
-
-            synonym_map = propose_synonyms(not_found_array, context_hint)
-            iteration_entry["proposed_synonyms"] = synonym_map
-            iterations.append(iteration_entry)
-
-            if WIRE:
-                print(
-                    "[Main AI] synonyms_proposed="
-                    + json.dumps(synonym_map, ensure_ascii=False),
-                    flush=True,
-                )
-
-            next_pending: List[str] = []
-            next_seen: Set[str] = set()
-            for term in not_found_array:
-                concept_key = term_to_concept.get(term.lower(), term.lower())
-                suggestions = synonym_map.get(term, []) or []
-                for candidate in suggestions:
-                    cand_clean = (candidate or "").strip()
-                    if not cand_clean:
-                        continue
-                    cand_key = cand_clean.lower()
-                    if cand_key in attempted_keys or cand_key in seen_round or cand_key in next_seen:
-                        continue
-                    term_to_concept[cand_key] = concept_key
-                    term_origin[cand_key] = {"type": "synonym", "source": term}
-                    next_seen.add(cand_key)
-                    next_pending.append(cand_clean)
-            if not next_pending:
-                break
-            pending = next_pending
+        iteration_entry["found_details"] = found_details
+        iterations.append(iteration_entry)
 
         token_budget = int(options.get("token_budget", 6000))
         enc = tiktoken.get_encoding("cl100k_base")
@@ -438,7 +476,7 @@ class Orchestrator:
             "not_found_terms": not_found_terms,
             "attempted_terms": attempted_terms,
             "missing_terms": not_found_terms,
-            "final_query": " ".join(initial_terms),
+            "final_query": " ".join(round_terms),
             "concept_matches": concept_matches,
             "concept_match_details": concept_match_details,
             "coverage_gaps": [],
