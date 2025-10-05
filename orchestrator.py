@@ -26,6 +26,7 @@ from .main_ai import (
     parse_question,
     normalize_query,
     extract_keywords,
+    filter_keywords_by_subject,
     propose_synonyms,
 )
 from .retriever import batch_lookup_terms, _summarize_snippets
@@ -151,6 +152,10 @@ class Orchestrator:
         if not initial_terms:
             fallback = norm_question or question
             initial_terms = [fallback.strip().lower()] if fallback else []
+
+        filtered_terms = filter_keywords_by_subject(initial_terms, question)
+        if filtered_terms is not None:
+            initial_terms = filtered_terms
 
         skip_semantic = os.getenv("RETRIEVAL_SKIP_SYNONYMS", "off").lower() in {
             "1",
