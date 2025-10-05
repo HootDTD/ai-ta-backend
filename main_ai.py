@@ -108,11 +108,10 @@ def extract_keywords(question: str) -> List[str]:
     """Ask the LLM to identify 3–8 high-value textbook concepts."""
 
     client = _client()
-    subject = get_subject_name()
     system = (
-        f"You read {subject} textbook questions. "
-        "Identify the 3-8 most important domain concepts or symbols that require "
-        "textbook knowledge. Focus on nouns, formal terms, or symbols. "
+        "You read user questions. Identify the 3-8 most important domain concepts "
+        "or symbols that the prompt itself highlights. Base your choices strictly "
+        "on the user's wording without relying on external subject hints. "
         "Return JSON with a single key 'keywords' whose value is an ordered array."
     )
     payload = {
@@ -153,6 +152,66 @@ def extract_keywords(question: str) -> List[str]:
     if not keywords and question.strip():
         keywords = [question.strip().lower()]
     return keywords
+
+
+def filter_keywords_by_subject(
+    terms: List[str], question: str | None = None
+) -> List[str] | None:
+    """Filter candidate keywords so that only subject-relevant items remain."""
+
+    if not terms:
+        return []
+
+    client = _client()
+    subject = get_subject_name()
+    system = (
+        "You vet candidate search keywords for textbook retrieval. "
+        f"Keep only the terms that are genuinely relevant to {subject}. "
+        "Only select from the provided candidates and preserve their wording. "
+        "Return JSON with a single key 'accepted' containing an array of terms to keep."
+    )
+    payload = {
+        "subject": subject,
+        "question": question or "",
+        "candidates": terms,
+    }
+
+    try:
+        resp = client.chat.completions.create(
+            model=os.getenv("PARSER_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": system},
+                {
+                    "role": "user",
+                    "content": json.dumps(payload, ensure_ascii=False),
+                },
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content or "{}"
+        data = json.loads(content)
+        accepted_raw = data.get("accepted")
+        if not isinstance(accepted_raw, list):
+            accepted_raw = data.get("keywords")
+    except Exception:
+        return None
+
+    if not isinstance(accepted_raw, list):
+        return None
+
+    accepted_set = set()
+    for item in accepted_raw:
+        if not isinstance(item, str):
+            continue
+        cleaned = item.strip().lower()
+        if cleaned:
+            accepted_set.add(cleaned)
+
+    if not accepted_set:
+        return []
+
+    return [term for term in terms if term.strip().lower() in accepted_set]
 
 
 def propose_synonyms(
