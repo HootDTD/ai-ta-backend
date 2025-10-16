@@ -784,6 +784,7 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
     client = _get_client()
     model = _meta["model"]
     dim = int(_meta["dimensions"])
+    unlimited = _flag("RETRIEVAL_NO_FILTER", False)
 
     # alias expansion
     tokens = re.findall(r"[A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", query)
