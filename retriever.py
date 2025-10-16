@@ -1133,7 +1133,8 @@ def batch_lookup_terms(
 
         # Default: derive citations from the returned snippets.
         citation_markers: List[str] = []
-        seen_citations: set[str] = set()
+        seen_citation_ids: Set[str] = set()
+        seen_citation_markers: Set[str] = set()
 
         # If requested, collect citation markers from all hits (full list), not only packed snippets.
         if want_all_citations:
@@ -1144,15 +1145,20 @@ def batch_lookup_terms(
                 except Exception:
                     page = 0
                 marker = f"[{label_for_hits}, p. {page if page > 0 else '?'}]"
-                if marker not in seen_citations:
-                    seen_citations.add(marker)
+                if h.id not in seen_citation_ids:
+                    seen_citation_ids.add(h.id)
+                    seen_citation_markers.add(marker)
                     citation_markers.append(marker)
 
         # Also include markers from the packed snippets (kept for compatibility and dedupe).
         for sn in snippets:
             marker = getattr(sn, "citation_marker", None)
-            if marker and marker not in seen_citations:
-                seen_citations.add(marker)
+            sn_id = getattr(sn, "id", None)
+            if marker and (sn_id not in seen_citation_ids):
+                if sn_id:
+                    seen_citation_ids.add(sn_id)
+                if marker not in seen_citation_markers:
+                    seen_citation_markers.add(marker)
                 citation_markers.append(marker)
 
         found_array.append(

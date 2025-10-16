@@ -253,6 +253,8 @@ class Orchestrator:
             "semantic_expansion": semantic_map,
         }
         found_details: List[Dict[str, Any]] = []
+        all_citation_markers: List[str] = []
+        all_citation_seen: Set[str] = set()
 
         for result in found_array:
             term_label = result.get("term", "")
@@ -297,6 +299,9 @@ class Orchestrator:
                         if cleaned and cleaned not in seen_markers:
                             seen_markers.add(cleaned)
                             citation_markers.append(cleaned)
+                        if cleaned and cleaned not in all_citation_seen:
+                            all_citation_seen.add(cleaned)
+                            all_citation_markers.append(cleaned)
             if not citation_markers:
                 for sn in result.get("snippets", []) if isinstance(result, dict) else []:
                     marker = getattr(sn, "citation_marker", None)
@@ -305,6 +310,9 @@ class Orchestrator:
                         if cleaned and cleaned not in seen_markers:
                             seen_markers.add(cleaned)
                             citation_markers.append(cleaned)
+                        if cleaned and cleaned not in all_citation_seen:
+                            all_citation_seen.add(cleaned)
+                            all_citation_markers.append(cleaned)
 
             found_details.append(
                 {
@@ -407,6 +415,10 @@ class Orchestrator:
                 if cleaned and cleaned not in seen_markers:
                     seen_markers.add(cleaned)
                     allowed_markers.append(cleaned)
+        for marker in all_citation_markers:
+            if marker not in seen_markers:
+                seen_markers.add(marker)
+                allowed_markers.append(marker)
 
         equations, glossary, assumptions, alias_counts_total = _summarize_snippets(
             kept_snippets
