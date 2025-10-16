@@ -558,7 +558,11 @@ def _has_explicit_evidence(
             expansions.extend(raw)
 
     term_norm = _norm_alias(term_lower.replace(" ", "")) if term_lower else ""
-    words = [w for w in re.findall(r"[a-z0-9_α-ωΑ-Ω]+", term_lower) if w]
+    words = [
+        w
+        for w in re.findall(r"[a-z0-9_α-ωΑ-Ω]+", term_lower)
+        if w and len(w) > 1
+    ]
 
     window_chars = int(os.getenv("RETRIEVAL_PROXIMITY_CHARS", "60"))
 
@@ -978,13 +982,31 @@ def batch_lookup_terms(
         "k_lex": k_lex,
     }
 
+    # Option to request all citations (no truncation). Can also be enabled via env RETRIEVAL_ALL_CITATIONS=1.
+    want_all_citations = bool(
+        (options or {}).get("all_citations", True)
+        or (os.getenv("RETRIEVAL_ALL_CITATIONS", "").lower() not in {"0", "off", "false", "no"})
+    )
+
     for term in terms:
         query = (term or "").strip()
         if not query:
             not_found.append(term)
             continue
 
+        # Enable no-filter for the FAISS/FTS search phase only (to gather all hits),
+        # but keep normal packing constraints to avoid ballooning snippet payloads.
+        prev_no_filter = os.getenv("RETRIEVAL_NO_FILTER")
+        if want_all_citations:
+            os.environ["RETRIEVAL_NO_FILTER"] = "1"
         hits, diag = search(query, k_sem=k_sem, k_lex=k_lex)
+        if want_all_citations:
+            if prev_no_filter is None:
+                os.environ.pop("RETRIEVAL_NO_FILTER", None)
+            else:
+                os.environ["RETRIEVAL_NO_FILTER"] = prev_no_filter
+
+        # Build snippets as before (used by callers), but these may be large only if no-filter is on.
         ctx = pack_context(hits, token_budget=token_budget)
         snippets = _context_to_bundle_snippets(ctx)
         equations, glossary, assumptions, alias_counts = _summarize_snippets(snippets)
@@ -1021,39 +1043,129 @@ def batch_lookup_terms(
         if isinstance(diag_missing, list):
             missing_terms = [m for m in diag_missing if isinstance(m, str)]
 
-        term_diag = {
+        alias_hits_list = sorted(alias_hits_seen)
+        diag_entry = {
             "hit_count_sem": int(diag.get("hit_count_sem", 0) or 0),
             "hit_count_lex": int(diag.get("hit_count_lex", 0) or 0),
             "missing_terms": missing_terms,
             "expansion_candidates": expansions,
             "term_presence": term_presence_raw,
             "snippets_returned": len(snippets),
-            "alias_hits": sorted(alias_hits_seen),
+            "alias_hits": alias_hits_list,
         }
+
+        should_accept = bool(snippets) and _has_explicit_evidence(
+            snippets, query, diag_entry
+        )
+
+        if want_all_citations and not should_accept and hits:
+            fallback_snippets: List[BundleSnippet] = []
+            seen_ids: Set[str] = set()
+            fallback_cap_raw = os.getenv("RETRIEVAL_ALL_CITATIONS_SNIPPETS", "50")
+            try:
+                fallback_cap = max(1, int(fallback_cap_raw))
+            except (TypeError, ValueError):
+                fallback_cap = 50
+            try:
+                label_for_fallback = get_citation_label()
+            except Exception:
+                label_for_fallback = "Textbook"
+            for h in hits:
+                if h.id in seen_ids:
+                    continue
+                row = _id_to_row.get(h.id) if _id_to_row else None
+                if row is None:
+                    continue
+                text = row.get("text") or ""
+                if not text.strip():
+                    continue
+                typ0 = row.get("type", "body")
+                typ = "body" if typ0 == "ocr" else typ0
+                page = int(row.get("page", 0))
+                section_path = row.get("section_path")
+                source_path = row.get("source_path") or ""
+                doc_title = row.get("doc_title")
+                doc_short = (
+                    row.get("doc_short")
+                    or doc_title
+                    or (Path(source_path).stem if source_path else "doc")
+                    or "doc"
+                )
+                marker = f"[{label_for_fallback}, p. {page if page > 0 else '?'}]"
+                fallback_snippets.append(
+                    BundleSnippet(
+                        id=h.id,
+                        type=typ,
+                        page=page,
+                        section_path=section_path,
+                        text=text,
+                        figure_id=row.get("figure_id"),
+                        why="all-citations",
+                        source_path=source_path,
+                        doc_title=doc_title,
+                        doc_short=doc_short,
+                        citation_marker=marker,
+                    )
+                )
+                seen_ids.add(h.id)
+                if len(fallback_snippets) >= fallback_cap:
+                    break
+            if fallback_snippets:
+                snippets = fallback_snippets
+                equations, glossary, assumptions, alias_counts = _summarize_snippets(
+                    snippets
+                )
+                diag_entry["snippets_returned"] = len(snippets)
+                should_accept = True
+
+        term_diag = diag_entry
         diag_all["per_term"][term] = term_diag
 
-        if snippets and _has_explicit_evidence(snippets, query, term_diag):
-            citation_markers: List[str] = []
-            seen_citations: set[str] = set()
-            for sn in snippets:
-                marker = getattr(sn, "citation_marker", None)
-                if marker and marker not in seen_citations:
+        if not should_accept:
+            not_found.append(term)
+            continue
+
+        if want_all_citations:
+            try:
+                label_for_hits = get_citation_label()
+            except Exception:
+                label_for_hits = "Textbook"
+
+        # Default: derive citations from the returned snippets.
+        citation_markers: List[str] = []
+        seen_citations: set[str] = set()
+
+        # If requested, collect citation markers from all hits (full list), not only packed snippets.
+        if want_all_citations:
+            for h in hits:
+                try:
+                    row = _id_to_row.get(h.id) if _id_to_row else None
+                    page = int(row.get("page", 0)) if row is not None else 0
+                except Exception:
+                    page = 0
+                marker = f"[{label_for_hits}, p. {page if page > 0 else '?'}]"
+                if marker not in seen_citations:
                     seen_citations.add(marker)
                     citation_markers.append(marker)
-            found_array.append(
-                {
-                    "term": term,
-                    "snippets": snippets,
-                    "equations": equations,
-                    "assumptions": assumptions,
-                    "glossary": glossary,
-                    "aliases_used": alias_counts,
-                    "citations": citation_markers,
-                }
-            )
-        else:
-            not_found.append(term)
 
+        # Also include markers from the packed snippets (kept for compatibility and dedupe).
+        for sn in snippets:
+            marker = getattr(sn, "citation_marker", None)
+            if marker and marker not in seen_citations:
+                seen_citations.add(marker)
+                citation_markers.append(marker)
+
+        found_array.append(
+            {
+                "term": term,
+                "snippets": snippets,
+                "equations": equations,
+                "assumptions": assumptions,
+                "glossary": glossary,
+                "aliases_used": alias_counts,
+                "citations": citation_markers,
+            }
+        )
     return found_array, not_found, diag_all
 
 

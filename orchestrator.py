@@ -219,7 +219,10 @@ class Orchestrator:
             )
 
         if round_terms:
-            found_array, not_found_array, diag = batch_lookup_terms(round_terms, options)
+            # Ensure the indexer returns all citations for provided terms.
+            _opts = dict(options or {})
+            _opts["all_citations"] = True
+            found_array, not_found_array, diag = batch_lookup_terms(round_terms, _opts)
         else:
             found_array = []
             not_found_array = []
