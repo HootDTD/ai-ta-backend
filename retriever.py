@@ -821,7 +821,21 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
         q_vec = np.asarray(q_emb, dtype=np.float32)
         q_vec /= max(np.linalg.norm(q_vec), 1e-12)
         for df, index in zip(_items_dfs if len(_faiss_list) > 1 else [_items_df], _faiss_list):
-            scores, idxs = index.search(q_vec.reshape(1, -1), k_sem)
+            k_this = k_sem
+            if unlimited:
+                ntotal = None
+                try:
+                    ntotal = int(getattr(index, "ntotal"))
+                except Exception:
+                    ntotal = None
+                if not ntotal and df is not None:
+                    try:
+                        ntotal = len(df)
+                    except Exception:
+                        ntotal = None
+                if ntotal and ntotal > k_this:
+                    k_this = ntotal
+            scores, idxs = index.search(q_vec.reshape(1, -1), k_this)
             scores = scores[0]
             idxs = idxs[0]
             for rank, (i, s) in enumerate(zip(idxs, scores), start=1):
@@ -838,11 +852,18 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
         for conn in _sqlite_conns:
             cur = conn.cursor()
             try:
-                cur.execute(
-                    "SELECT id, bm25(fts) as score FROM fts WHERE fts MATCH ? ORDER BY score LIMIT ?",
-                    (fts_q, k_lex),
-                )
-                rows = cur.fetchall()
+                if unlimited:
+                    cur.execute(
+                        "SELECT id, bm25(fts) as score FROM fts WHERE fts MATCH ? ORDER BY score",
+                        (fts_q,),
+                    )
+                    rows = cur.fetchall()
+                else:
+                    cur.execute(
+                        "SELECT id, bm25(fts) as score FROM fts WHERE fts MATCH ? ORDER BY score LIMIT ?",
+                        (fts_q, k_lex),
+                    )
+                    rows = cur.fetchall()
             except sqlite3.OperationalError:
                 rows = []
             for rank, (id_, bm25) in enumerate(rows, start=1):
@@ -1057,9 +1078,11 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
         forced truncation.
     """
     _require_loaded()
+    unlimited = _flag("RETRIEVAL_NO_FILTER", False)
     enc = tiktoken.get_encoding("cl100k_base")
-    limit = int(token_budget * 0.85)
-    quotas = {"body": 6, "figure": 4, "heading": 2}
+    limit = float("inf") if unlimited else int(token_budget * 0.85)
+    base_quotas = {"body": 6, "figure": 4, "heading": 2}
+    quotas = {k: float("inf") for k in base_quotas} if unlimited else base_quotas
     counts = {"body": 0, "figure": 0, "heading": 0}
     used_ids: set[str] = set()
     used_locs: set[Tuple[int, str]] = set()
@@ -1079,11 +1102,12 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
         typ0 = row.get("type", "body")
         typ = "body" if typ0 == "ocr" else typ0
         is_def = item_id in _definition_ids if _flag("PACK_DEF_BIAS", True) else False
-        if counts.get(typ, 0) >= quotas.get(typ, 0) and not is_def:
+        quota = quotas.get(typ, float("inf"))
+        if counts.get(typ, 0) >= quota and not is_def:
             return False
         sec = section_str(row.get("section_path", ""))
         loc_key = (int(row.get("page", 0)), sec)
-        if loc_key in used_locs:
+        if not unlimited and loc_key in used_locs:
             return False
         text = row.get("text") or ""
         toks = len(enc.encode(text))
@@ -1139,7 +1163,8 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             continue
         row = _id_to_row[h.id]
         neighs = row.get("neighbors") or []
-        for nid in neighs[:2]:
+        neighbor_ids = neighs if unlimited else neighs[:2]
+        for nid in neighbor_ids:
             if total_tokens >= limit:
                 break
             add_item(nid, "neighbor")
@@ -1147,7 +1172,7 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
     stats = {
         "tokens": total_tokens,
         "token_budget": token_budget,
-        "truncated": total_tokens >= limit,
+        "truncated": (not unlimited) and total_tokens >= limit,
     }
     return ContextPack(snippets=snippets, used_ids=[s.id for s in snippets], stats=stats)
 
