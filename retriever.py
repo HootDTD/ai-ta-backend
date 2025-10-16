@@ -1095,7 +1095,7 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             return " > ".join(sec)
         return str(sec)
 
-    def add_item(item_id: str, why: str) -> bool:
+    def add_item(item_id: str, why: str, *, force: bool = False) -> bool:
         nonlocal total_tokens
         if item_id in used_ids or item_id not in _items_df.index:
             return False
@@ -1104,7 +1104,7 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
         typ = "body" if typ0 == "ocr" else typ0
         is_def = item_id in _definition_ids if _flag("PACK_DEF_BIAS", True) else False
         quota = quotas.get(typ, float("inf"))
-        if counts.get(typ, 0) >= quota and not is_def:
+        if counts.get(typ, 0) >= quota and not is_def and not force:
             return False
         sec = section_str(row.get("section_path", ""))
         loc_key = (int(row.get("page", 0)), sec)
@@ -1146,14 +1146,14 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             for nid in neighs:
                 nrow = _id_to_row.get(nid)
                 if nrow is not None and nrow.get("type") == "body":
-                    add_item(nid, "figure-body")
+                    add_item(nid, "figure-body", force=force)
                     break
             # attach most recent heading from parents
             parents = row.get("parents") or []
             for pid in reversed(parents):
                 prow = _id_to_row.get(pid)
                 if prow is not None and prow.get("type") == "heading":
-                    add_item(pid, "figure-heading")
+                    add_item(pid, "figure-heading", force=force)
                     break
         return True
 
@@ -1169,6 +1169,22 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             if total_tokens >= limit:
                 break
             add_item(nid, "neighbor")
+
+    # If quotas prevented adding useful snippets but we still have budget
+    if not unlimited and total_tokens < limit:
+        for h in hits:
+            if total_tokens >= limit:
+                break
+            add_item(h.id, "overflow", force=True)
+            if total_tokens >= limit:
+                break
+            row = _id_to_row.get(h.id)
+            if row is None:
+                continue
+            for nid in row.get("neighbors") or []:
+                if total_tokens >= limit:
+                    break
+                add_item(nid, "overflow-neighbor", force=True)
 
     stats = {
         "tokens": total_tokens,
