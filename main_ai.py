@@ -5,15 +5,26 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
 
 from .config import get_subject_name, get_citation_label
-from .contracts import ParsedTask, ProposedSolution, FinalAnswer, ResearchBundle
+from .contracts import (
+    ParsedTask,
+    ProposedSolution,
+    FinalAnswer,
+    ResearchBundle,
+    BundleSnippet,
+)
 from .solver import run_python
+
+
+_PROOF_PATH_CACHE: Optional[Path] = None
+_CITATIONS_PATH_CACHE: Optional[Path] = None
+_SNIPPET_FIELD_NAMES: set[str] = {f.name for f in fields(BundleSnippet)}
 
 
 def _fallback_citation_marker(snippet: Any) -> str:
@@ -69,6 +80,7 @@ def _client() -> OpenAI:
 def _load_proof_bundle() -> Optional[Dict[str, Any]]:
     """Return the latest proof bundle if ``proof.json`` is available."""
 
+    global _PROOF_PATH_CACHE
     candidates: List[Path] = []
     env_path = os.getenv("AI_TA_PROOF_PATH")
     if env_path:
@@ -98,10 +110,249 @@ def _load_proof_bundle() -> Optional[Dict[str, Any]]:
         if isinstance(data, dict):
             bundle = data.get("research_bundle")
             if isinstance(bundle, dict):
+                _PROOF_PATH_CACHE = resolved
                 return bundle
             if "snippets" in data and "metadata" in data:
+                _PROOF_PATH_CACHE = resolved
+                return data
+            if isinstance(data.get("allowed_markers"), list) or isinstance(
+                data.get("used_ids"), list
+            ):
+                _PROOF_PATH_CACHE = resolved
                 return data
     return None
+
+
+def _resolve_proof_path() -> Optional[Path]:
+    """Best-effort resolution of the proof.json path for persistence."""
+
+    global _PROOF_PATH_CACHE
+    if _PROOF_PATH_CACHE is not None:
+        return _PROOF_PATH_CACHE
+
+    candidates: List[Path] = []
+    env_path = os.getenv("AI_TA_PROOF_PATH")
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.append(Path("proof.json"))
+    candidates.append(Path(__file__).resolve().parent / "proof.json")
+
+    fallback: Optional[Path] = None
+    seen: set[Path] = set()
+    for raw_path in candidates:
+        path = raw_path
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if fallback is None:
+            fallback = resolved
+        if resolved.exists():
+            _PROOF_PATH_CACHE = resolved
+            return resolved
+    if fallback is not None:
+        _PROOF_PATH_CACHE = fallback
+    return fallback
+
+
+def _write_proof_citations(
+    bundle: ResearchBundle, allowed_markers: List[str], used_markers: List[str]
+) -> None:
+    """Persist the latest citation markers to proof.json for future runs."""
+
+    path = _resolve_proof_path()
+    if path is None:
+        return
+
+    try:
+        if path.exists():
+            with path.open("r", encoding="utf-8") as fh:
+                existing = json.load(fh)
+        else:
+            existing = {}
+    except (OSError, json.JSONDecodeError):
+        existing = {}
+    if not isinstance(existing, dict):
+        existing = {}
+
+    def _as_str_list(raw: Any) -> List[str]:
+        if isinstance(raw, list):
+            return [str(item) for item in raw if item is not None]
+        if raw is None:
+            return []
+        return [str(raw)]
+
+    used_ids = _as_str_list(getattr(bundle, "used_ids", []))
+    original_used_ids: List[str] = []
+    provenance = getattr(bundle, "provenance", None)
+    if isinstance(provenance, dict):
+        original_used_ids = _as_str_list(provenance.get("original_used_ids"))
+
+    def _apply(container: Dict[str, Any]) -> None:
+        if not isinstance(container, dict):
+            return
+        container["allowed_markers"] = list(allowed_markers)
+        container["used_ids"] = list(used_ids) if used_ids else list(allowed_markers)
+        if used_markers:
+            container["citations_used"] = list(used_markers)
+        else:
+            container.pop("citations_used", None)
+        if original_used_ids:
+            container["original_used_ids"] = list(original_used_ids)
+        else:
+            container.pop("original_used_ids", None)
+
+    _apply(existing)
+
+    research_bundle = existing.get("research_bundle")
+    if isinstance(research_bundle, dict):
+        _apply(research_bundle)
+        metadata = research_bundle.get("metadata")
+        if isinstance(metadata, dict):
+            metadata["allowed_markers"] = list(allowed_markers)
+
+    metadata_top = existing.get("metadata")
+    if isinstance(metadata_top, dict):
+        metadata_top["allowed_markers"] = list(allowed_markers)
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(existing, fh, indent=2, ensure_ascii=False)
+    except OSError:
+        return
+
+
+def _resolve_citations_path() -> Optional[Path]:
+    """Locate where ``citations.json`` should be stored."""
+
+    global _CITATIONS_PATH_CACHE
+    if _CITATIONS_PATH_CACHE is not None:
+        return _CITATIONS_PATH_CACHE
+
+    candidates: List[Path] = []
+    env_path = os.getenv("AI_TA_CITATIONS_PATH")
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.append(Path("citations.json"))
+    candidates.append(Path(__file__).resolve().parent / "citations.json")
+
+    fallback: Optional[Path] = None
+    seen: set[Path] = set()
+    for raw_path in candidates:
+        path = raw_path
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if fallback is None:
+            fallback = resolved
+        if resolved.exists():
+            _CITATIONS_PATH_CACHE = resolved
+            return resolved
+    if fallback is not None:
+        _CITATIONS_PATH_CACHE = fallback
+    return fallback
+
+
+def _write_citations_file(
+    bundle: ResearchBundle,
+    markers: List[str],
+    used_markers: Optional[List[str]] = None,
+) -> None:
+    """Persist all citations the indexer returned for the current query."""
+
+    path = _resolve_citations_path()
+    if path is None:
+        return
+
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for marker in markers:
+        key = marker.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(key)
+
+    used_markers = used_markers or []
+    used_deduped: List[str] = []
+    used_seen: set[str] = set()
+    for marker in used_markers:
+        key = marker.strip()
+        if not key or key in used_seen:
+            continue
+        used_seen.add(key)
+        used_deduped.append(key)
+
+    question = getattr(bundle.metadata, "question", "")
+    doc_sets = getattr(bundle.metadata, "doc_sets", [])
+    iteration_trace = getattr(bundle.metadata, "iteration_trace", [])
+
+    snippet_payload: List[Dict[str, Any]] = []
+    for sn in getattr(bundle, "snippets", []):
+        try:
+            snippet_payload.append(
+                {
+                    "id": sn.id,
+                    "marker": sn.citation_marker,
+                    "page": sn.page,
+                    "why": sn.why,
+                    "source_path": sn.source_path,
+                }
+            )
+        except AttributeError:
+            continue
+
+    payload = {
+        "question": question,
+        "doc_sets": list(doc_sets) if isinstance(doc_sets, list) else doc_sets,
+        "allowed_markers": deduped,
+        "used_markers": used_deduped,
+        "used_ids": list(getattr(bundle, "used_ids", [])),
+        "iteration_trace": iteration_trace,
+        "snippets": snippet_payload,
+    }
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, ensure_ascii=False)
+    except OSError:
+        return
+
+
+def _convert_proof_snippets(
+    proof_bundle: Dict[str, Any]
+) -> List[BundleSnippet]:
+    """Convert snippet dictionaries from ``proof.json`` into BundleSnippet objects."""
+
+    raw_snippets = proof_bundle.get("snippets")
+    if not isinstance(raw_snippets, list):
+        return []
+
+    snippets: List[BundleSnippet] = []
+    for item in raw_snippets:
+        if not isinstance(item, dict):
+            continue
+        payload = {name: item.get(name) for name in _SNIPPET_FIELD_NAMES}
+        try:
+            snippet = BundleSnippet(**payload)  # type: ignore[arg-type]
+            snippet.validate()
+        except Exception:
+            continue
+        snippets.append(snippet)
+    return snippets
 
 
 def extract_keywords(question: str) -> List[str]:
@@ -382,14 +633,106 @@ def solve_with_bundle(
         "Each value must be a number with SI units as a parsable string (e.g., '9.90 m/s'). "
         "If math is needed, include a code field (pure Python using np/sp/ureg) that prints the results."
     )
-    bundle_json = json.dumps(asdict(bundle), ensure_ascii=False)
     proof_bundle = _load_proof_bundle()
     proof_json: Optional[str] = None
+
+    def _normalize_str_list(items: List[Any]) -> List[str]:
+        results: List[str] = []
+        for item in items:
+            if isinstance(item, str):
+                results.append(item)
+            elif item is not None:
+                results.append(str(item))
+        return results
+
+    def _extract_list(source: Any, key: str) -> Optional[List[str]]:
+        if not isinstance(source, dict):
+            return None
+        stack: List[Dict[str, Any]] = [source]
+        seen_ids: set[int] = set()
+        while stack:
+            current = stack.pop()
+            current_id = id(current)
+            if current_id in seen_ids:
+                continue
+            seen_ids.add(current_id)
+            val = current.get(key)
+            if isinstance(val, list):
+                normalized = _normalize_str_list(val)
+                if normalized:
+                    return normalized
+            for nested_key in ("research_bundle", "metadata", "bundle", "proof"):
+                nested = current.get(nested_key)
+                if isinstance(nested, dict):
+                    stack.append(nested)
+        return None
+
     if proof_bundle is not None:
+        proof_allowed_raw = _extract_list(proof_bundle, "allowed_markers") or []
+        proof_used_raw = _extract_list(proof_bundle, "used_ids") or []
+        allowed_list = _normalize_str_list(proof_allowed_raw)
+        used_list = _normalize_str_list(proof_used_raw)
+        combined_markers: List[str] = []
+        if allowed_list:
+            combined_markers.extend(allowed_list)
+        if used_list:
+            combined_markers.extend(used_list)
+        if combined_markers:
+            deduped: List[str] = []
+            seen_markers: set[str] = set()
+            for marker in combined_markers:
+                key = marker.strip()
+                if not key:
+                    continue
+                if key in seen_markers:
+                    continue
+                seen_markers.add(key)
+                deduped.append(key)
+            combined_markers = deduped
+            original_used = list(getattr(bundle, "used_ids", []))
+            bundle.allowed_markers = combined_markers
+            meta_obj = getattr(bundle, "metadata", None)
+            if isinstance(meta_obj, dict):
+                meta_obj["allowed_markers"] = list(combined_markers)
+            elif meta_obj is not None:
+                setattr(meta_obj, "allowed_markers", list(combined_markers))
+            bundle.used_ids = list(combined_markers)
+            if isinstance(getattr(bundle, "provenance", None), dict):
+                bundle.provenance.setdefault("original_used_ids", original_used)
+        proof_snippets = _convert_proof_snippets(proof_bundle)
+        if proof_snippets:
+            bundle.snippets = proof_snippets
+            if combined_markers:
+                bundle.used_ids = list(combined_markers)
+            else:
+                bundle.used_ids = [
+                    sn.citation_marker
+                    for sn in proof_snippets
+                    if getattr(sn, "citation_marker", None)
+                ]
+        for attr in ("equations", "glossary", "assumptions"):
+            proof_val = proof_bundle.get(attr)
+            if isinstance(proof_val, list) and proof_val:
+                setattr(bundle, attr, proof_val)
+        proof_stats = proof_bundle.get("stats")
+        if isinstance(proof_stats, dict) and proof_stats:
+            bundle.stats.update(proof_stats)
         try:
             proof_json = json.dumps(proof_bundle, ensure_ascii=False)
         except TypeError:
             proof_json = None
+    markers_for_log = list(getattr(bundle, "allowed_markers", []))
+    if not markers_for_log:
+        markers_for_log = [
+            getattr(sn, "citation_marker", "")
+            for sn in getattr(bundle, "snippets", [])
+            if getattr(sn, "citation_marker", None)
+        ]
+    try:
+        _write_citations_file(bundle, markers_for_log)
+    except Exception:
+        pass
+    bundle_json = json.dumps(asdict(bundle), ensure_ascii=False)
 
     payload_lines = [
         f"Task: {json.dumps(asdict(parsed_task), ensure_ascii=False)}",
@@ -711,6 +1054,16 @@ def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAn
 
     if used_markers:
         final_text = final_text.rstrip() + "\n\nCitations: " + ", ".join(used_markers)
+
+    try:
+        _write_proof_citations(bundle, allowed_markers, used_markers)
+    except Exception:
+        # Persistence should not block returning an answer; ignore best-effort failures.
+        pass
+    try:
+        _write_citations_file(bundle, allowed_markers, used_markers)
+    except Exception:
+        pass
 
     return FinalAnswer(text=final_text, citations=used_markers)
 

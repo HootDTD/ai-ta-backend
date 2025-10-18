@@ -18,6 +18,7 @@ from .retriever import (
     ContextSnippet,
 )
 from .orchestrator import Orchestrator
+from .main_ai import _write_proof_citations, _write_citations_file
 
 DEFAULT_INDEX = str(Path(__file__).resolve().parent / "text-embeder/my_book_index_aero")
 
@@ -103,6 +104,26 @@ def cmd_ask(args: argparse.Namespace) -> None:
     }
     with open("proof.json", "w", encoding="utf-8") as f:
         json.dump(proof, f, ensure_ascii=False, indent=2)
+    try:
+        allowed_markers = list(proof.get("allowed_markers", []))
+        used_markers = [
+            c.get("marker")
+            for c in ans.citations
+            if isinstance(c, dict) and isinstance(c.get("marker"), str)
+        ]
+        if allowed_markers or used_markers:
+            _write_proof_citations(bundle, allowed_markers, used_markers)
+        if allowed_markers or used_markers:
+            _write_citations_file(bundle, allowed_markers or used_markers, used_markers)
+        else:
+            snippet_markers = [
+                getattr(sn, "citation_marker", "")
+                for sn in bundle.snippets
+                if getattr(sn, "citation_marker", None)
+            ]
+            _write_citations_file(bundle, snippet_markers, used_markers)
+    except Exception:
+        pass
 
 
 def cmd_solve(args: argparse.Namespace) -> None:
