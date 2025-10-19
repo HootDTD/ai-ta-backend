@@ -51,6 +51,7 @@ class ContextSnippet:
     source_path: str
     doc_title: str | None
     doc_short: str
+    final_score: Dict[str, float] | None = None
 
 
 @dataclass
@@ -257,22 +258,63 @@ def _extract_subject(meta: Dict[str, object] | None) -> str:
         return discipline
     return ""
 
+_SYMBOL_HEAD_CLASS = "[A-Za-z_\u0370-\u03FF\u1F00-\u1FFF]"
+_SYMBOL_BODY_CLASS = "[A-Za-z0-9_\u0370-\u03FF\u1F00-\u1FFF]"
+_SYMBOL_TOKEN_PATTERN = f"{_SYMBOL_HEAD_CLASS}{_SYMBOL_BODY_CLASS}*"
+_SYMBOL_TOKEN_REGEX = re.compile(_SYMBOL_TOKEN_PATTERN)
+_ALIAS_WHERE_REGEX = re.compile(rf"where\s+({_SYMBOL_TOKEN_PATTERN})\s*=")
+_ALIAS_DEFINED_REGEX = re.compile(
+    rf"({_SYMBOL_TOKEN_PATTERN})\s+(?:is\s+defined|defined\s+as|denoted\s+by)\b"
+)
+
+
+def _symbol_tokens(text: str) -> List[str]:
+    return _SYMBOL_TOKEN_REGEX.findall(text)
+
 
 _GREEK = {
     "α": "alpha",
+    "Α": "alpha",
     "β": "beta",
+    "Β": "beta",
     "γ": "gamma",
+    "Γ": "gamma",
     "δ": "delta",
+    "Δ": "delta",
     "ε": "epsilon",
+    "Ε": "epsilon",
     "θ": "theta",
+    "Θ": "theta",
     "λ": "lambda",
+    "Λ": "lambda",
     "μ": "mu",
+    "Μ": "mu",
     "π": "pi",
+    "Π": "pi",
     "ρ": "rho",
+    "Ρ": "rho",
     "σ": "sigma",
+    "Σ": "sigma",
     "τ": "tau",
+    "Τ": "tau",
     "φ": "phi",
+    "Φ": "phi",
     "ω": "omega",
+    "Ω": "omega",
+    "I?": "alpha",
+    "I?": "beta",
+    "I3": "gamma",
+    "I'": "delta",
+    "I?": "epsilon",
+    "I,": "theta",
+    "I?": "lambda",
+    "I?": "mu",
+    "I?": "pi",
+    "I?": "rho",
+    "I?": "sigma",
+    "I,": "tau",
+    "I+": "phi",
+    "I%": "omega",
 }
 
 
@@ -287,14 +329,14 @@ def _norm_alias(token: str) -> str:
 def _alias_strings_from_occurrences(norm: str) -> List[str]:
     display: Set[str] = set()
     for _, _, _, line, _ in _alias_to_occurrences.get(norm, []):
-        for tok in re.findall(r"[A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", line):
+        for tok in _SYMBOL_TOKEN_REGEX.findall(line):
             if _norm_alias(tok) == norm:
                 display.add(tok)
     return sorted(display)
 
 
 def _looks_symbol(token: str) -> bool:
-    return bool(re.fullmatch(r"[A-Za-zα-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", token))
+    return bool(_SYMBOL_TOKEN_REGEX.fullmatch(token))
 
 
 def _mine_aliases(df: pd.DataFrame) -> None:
@@ -325,13 +367,13 @@ def _mine_aliases(df: pd.DataFrame) -> None:
                     term_map.setdefault(part2.lower(), set()).add(alias_norm)
                     def_ids.add(idx)
             # where Alias = definition
-            m = re.search(r"where\s+([A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*)\s*=", line_stripped)
+            m = _ALIAS_WHERE_REGEX.search(line_stripped)
             if m:
                 alias_norm = _norm_alias(m.group(1))
                 alias_occ.setdefault(alias_norm, []).append((doc, sec, page, line_stripped, "where"))
                 def_ids.add(idx)
             # Alias is defined as
-            m = re.search(r"([A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*)\s+(?:is\s+defined|defined\s+as|denoted\s+by)\b", line_stripped)
+            m = _ALIAS_DEFINED_REGEX.search(line_stripped)
             if m:
                 alias_norm = _norm_alias(m.group(1))
                 alias_occ.setdefault(alias_norm, []).append((doc, sec, page, line_stripped, "def"))
@@ -432,6 +474,7 @@ def _context_to_bundle_snippets(ctx: ContextPack) -> List[BundleSnippet]:
                 doc_title=sn.doc_title,
                 doc_short=sn.doc_short,
                 citation_marker=marker,
+                final_score=sn.final_score,
             )
         )
     return snippets
@@ -482,7 +525,7 @@ def _summarize_snippets(
                     {"text": line.strip(), "source_snippet_ids": [sn.id]}
                 )
 
-        for tok in re.findall(r"[A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", sn.text):
+        for tok in _symbol_tokens(sn.text):
             norm = _norm_alias(tok)
             if norm in _alias_to_occurrences:
                 alias_counts[norm] = alias_counts.get(norm, 0) + 1
@@ -558,11 +601,7 @@ def _has_explicit_evidence(
             expansions.extend(raw)
 
     term_norm = _norm_alias(term_lower.replace(" ", "")) if term_lower else ""
-    words = [
-        w
-        for w in re.findall(r"[a-z0-9_α-ωΑ-Ω]+", term_lower)
-        if w and len(w) > 1
-    ]
+    words = [w for w in _symbol_tokens(term_lower) if len(w) > 1]
 
     window_chars = int(os.getenv("RETRIEVAL_PROXIMITY_CHARS", "60"))
 
@@ -576,7 +615,7 @@ def _has_explicit_evidence(
         if len(words) > 1 and _words_within_window(text_lower, words, window=window_chars):
             return True
 
-        tokens = re.findall(r"[A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", text)
+        tokens = _symbol_tokens(text)
         norm_tokens = {_norm_alias(tok) for tok in tokens}
         if term_norm and term_norm in norm_tokens:
             return True
@@ -791,7 +830,7 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
     unlimited = _flag("RETRIEVAL_NO_FILTER", False)
 
     # alias expansion
-    tokens = re.findall(r"[A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", query)
+    tokens = _symbol_tokens(query)
     aliases: set[str] = set()
     if _flag("RETRIEVAL_ALIAS_MINER", True):
         for t in tokens:
@@ -899,7 +938,7 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
         fused = (rrf_z + mix_z) / 2
 
         figure_query = bool(re.search(r"figure|diagram|plot|graph|curve", query, re.I))
-        mathy_query = bool(re.search(r"mach|\bRe\b|\bCL\b|\bCD\b|\bEq\b|Δ|∂", query, re.I))
+        mathy_query = bool(re.search(r"mach|\bRe\b|\bCL\b|\bCD\b|\bEq\b|\u0394|\u2202", query, re.I))
 
         for id_, s_fused in zip(ids, fused):
             row = _id_to_row[id_]
@@ -907,7 +946,7 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
                 s_fused += 0.05
             if mathy_query:
                 text = row.get("text", "")
-                if re.search(r"mach|\bRe\b|\bCL\b|\bCD\b|\bEq\b|Δ|∂", text, re.I):
+                if re.search(r"mach|\bRe\b|\bCL\b|\bCD\b|\bEq\b|\u0394|\u2202", text, re.I):
                     s_fused += 0.02
             if _flag("PACK_DEF_BIAS", True) and id_ in _definition_ids:
                 s_fused += 0.1
@@ -1032,7 +1071,7 @@ def batch_lookup_terms(
         if term_aliases:
             for sn in snippets:
                 text = sn.text or ""
-                for tok in re.findall(r"[A-Za-z_α-ωΑ-Ω][A-Za-z0-9_α-ωΑ-Ω]*", text):
+                for tok in _symbol_tokens(text):
                     if _norm_alias(tok) in term_aliases:
                         alias_hits_seen.add(tok)
             for alias_norm in term_aliases:
@@ -1105,6 +1144,11 @@ def batch_lookup_terms(
                         doc_title=doc_title,
                         doc_short=doc_short,
                         citation_marker=marker,
+                        final_score={
+                            "semantic": float(h.score_sem),
+                            "lexical": float(h.score_lex),
+                            "fused": float(h.score_fused),
+                        },
                     )
                 )
                 seen_ids.add(h.id)
@@ -1207,13 +1251,20 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
     used_locs: set[Tuple[int, str]] = set()
     snippets: List[ContextSnippet] = []
     total_tokens = 0
+    hit_by_id: Dict[str, Hit] = {h.id: h for h in hits}
 
     def section_str(sec):
         if isinstance(sec, list):
             return " > ".join(sec)
         return str(sec)
 
-    def add_item(item_id: str, why: str, *, force: bool = False) -> bool:
+    def add_item(
+        item_id: str,
+        why: str,
+        *,
+        force: bool = False,
+        origin_id: Optional[str] = None,
+    ) -> bool:
         nonlocal total_tokens
         if item_id in used_ids or item_id not in _items_df.index:
             return False
@@ -1240,6 +1291,15 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             or Path(source_path).stem
             or "doc"
         )
+        origin_hit_id = origin_id or item_id
+        hit = hit_by_id.get(origin_hit_id)
+        score_payload: Dict[str, float] | None = None
+        if hit is not None:
+            score_payload = {
+                "semantic": float(hit.score_sem),
+                "lexical": float(hit.score_lex),
+                "fused": float(hit.score_fused),
+            }
         snippet = ContextSnippet(
             id=item_id,
             type=typ,
@@ -1251,6 +1311,7 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             source_path=source_path,
             doc_title=doc_title,
             doc_short=doc_short,
+            final_score=score_payload,
         )
         snippets.append(snippet)
         used_ids.add(item_id)
@@ -1264,21 +1325,21 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             for nid in neighs:
                 nrow = _id_to_row.get(nid)
                 if nrow is not None and nrow.get("type") == "body":
-                    add_item(nid, "figure-body", force=force)
+                    add_item(nid, "figure-body", force=force, origin_id=origin_hit_id)
                     break
             # attach most recent heading from parents
             parents = row.get("parents") or []
             for pid in reversed(parents):
                 prow = _id_to_row.get(pid)
                 if prow is not None and prow.get("type") == "heading":
-                    add_item(pid, "figure-heading", force=force)
+                    add_item(pid, "figure-heading", force=force, origin_id=origin_hit_id)
                     break
         return True
 
     for h in hits:
         if total_tokens >= limit:
             break
-        if not add_item(h.id, "hit"):
+        if not add_item(h.id, "hit", origin_id=h.id):
             continue
         row = _id_to_row[h.id]
         neighs = row.get("neighbors") or []
@@ -1286,14 +1347,14 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
         for nid in neighbor_ids:
             if total_tokens >= limit:
                 break
-            add_item(nid, "neighbor")
+            add_item(nid, "neighbor", origin_id=h.id)
 
     # If quotas prevented adding useful snippets but we still have budget
     if not unlimited and total_tokens < limit:
         for h in hits:
             if total_tokens >= limit:
                 break
-            add_item(h.id, "overflow", force=True)
+            add_item(h.id, "overflow", force=True, origin_id=h.id)
             if total_tokens >= limit:
                 break
             row = _id_to_row.get(h.id)
@@ -1302,7 +1363,7 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             for nid in row.get("neighbors") or []:
                 if total_tokens >= limit:
                     break
-                add_item(nid, "overflow-neighbor", force=True)
+                add_item(nid, "overflow-neighbor", force=True, origin_id=h.id)
 
     stats = {
         "tokens": total_tokens,
@@ -1438,6 +1499,7 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
     if isinstance(task, ParsedTask):
         alias_map = {
             "δ": "delta",
+            "Δ": "delta",
             "θ": "theta",
             "τ": "tau",
             "τ_w": "tau_w",
@@ -1517,3 +1579,5 @@ __all__ = [
 
     "research",
 ]
+
+

@@ -39,6 +39,7 @@ class BundleSnippet:
     doc_title: Optional[str]
     doc_short: str
     citation_marker: str
+    final_score: Optional[Dict[str, float]] = None
 
     def validate(self) -> None:
         if not self.citation_marker or "p." not in self.citation_marker:
@@ -182,3 +183,4 @@ __all__ = [
     "Violation",
     "asdict",
 ]
+

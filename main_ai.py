@@ -309,6 +309,7 @@ def _write_citations_file(
                     "page": sn.page,
                     "why": sn.why,
                     "source_path": sn.source_path,
+                    "final_score": sn.final_score,
                 }
             )
         except AttributeError:
