@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 """Wrapper functions for the user-facing agent."""
 
@@ -315,10 +315,32 @@ def _write_citations_file(
         except AttributeError:
             continue
 
+    # Build a scored view of allowed markers including equal scores when present
+    marker_to_equal: Dict[str, float | None] = {}
+    for sn in getattr(bundle, "snippets", []):
+        try:
+            marker = sn.citation_marker
+            eq = None
+            fs = getattr(sn, "final_score", None) or {}
+            if isinstance(fs, dict) and "equal" in fs:
+                try:
+                    eq = float(fs.get("equal"))
+                except Exception:
+                    eq = None
+            if isinstance(marker, str):
+                marker_to_equal[marker] = eq
+        except Exception:
+            continue
+
+    allowed_markers_scored: List[Dict[str, Any]] = []
+    for m in deduped:
+        allowed_markers_scored.append({"marker": m, "equal": marker_to_equal.get(m)})
+
     payload = {
         "question": question,
         "doc_sets": list(doc_sets) if isinstance(doc_sets, list) else doc_sets,
         "allowed_markers": deduped,
+        "allowed_markers_scored": allowed_markers_scored,
         "used_markers": used_deduped,
         "used_ids": list(getattr(bundle, "used_ids", [])),
         "iteration_trace": iteration_trace,
@@ -1077,3 +1099,4 @@ __all__ = [
     "extract_keywords",
     "propose_synonyms",
 ]
+

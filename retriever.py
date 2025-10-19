@@ -1,4 +1,4 @@
-"""Retriever module for hybrid semantic+lexical search with context packing and answer generation.
+﻿"""Retriever module for hybrid semantic+lexical search with context packing and answer generation.
 """
 from __future__ import annotations
 
@@ -52,6 +52,7 @@ class ContextSnippet:
     doc_title: str | None
     doc_short: str
     final_score: Dict[str, float] | None = None
+    origin_id: str | None = None
 
 
 @dataclass
@@ -127,7 +128,7 @@ def _fts_term_count(term: str) -> int:
         try:
             if phrase:
                 cur = conn.execute(
-                    "SELECT count(*) FROM items_fts WHERE items_fts MATCH ?",
+                    "SELECT count(*) FROM items WHERE items MATCH ?",
                     (phrase,),
                 )
                 row = cur.fetchone()
@@ -135,7 +136,7 @@ def _fts_term_count(term: str) -> int:
                     total += int(row[0])
                     continue
             cur = conn.execute(
-                "SELECT count(*) FROM items_fts WHERE items_fts MATCH ?",
+                "SELECT count(*) FROM items WHERE items MATCH ?",
                 (q,),
             )
             row = cur.fetchone()
@@ -397,7 +398,7 @@ def _fts_count(q: str) -> int:
     for conn in _sqlite_conns:
         cur = conn.cursor()
         try:
-            cur.execute("SELECT count(*) FROM fts WHERE fts MATCH ?", (q,))
+            cur.execute("SELECT count(*) FROM items WHERE items MATCH ?", (q,))
             total += int(cur.fetchone()[0])
         except sqlite3.OperationalError:
             continue
@@ -843,8 +844,22 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
     for a in alias_list:
         _last_expansion_plan.append({"type": "alias", "terms": [a], "hit_count": _fts_count(a)})
 
-    fts_tokens = re.findall(r"[A-Za-z0-9]+", query.lower()) + list(alias_list)
-    fts_q = " OR ".join(sorted(set(fts_tokens)))
+    fts_tokens_base = [t for t in re.findall(r"[a-z0-9\-]+", query.lower()) if t not in _STOPWORDS and len(t) > 1]
+    fts_tokens = sorted(set(fts_tokens_base + list(alias_list)))
+    phrase_terms = [t for t in fts_tokens_base if len(t) > 1]
+    fts_augmented = list(fts_tokens)
+    for t in fts_tokens_base:
+        if len(t) > 1:
+            fts_augmented.append(f'"{t}"')
+    if phrase_terms:
+        fts_augmented.append('"' + " ".join(phrase_terms) + '"')
+    seen_parts: Set[str] = set()
+    fts_q_parts: List[str] = []
+    for part in fts_augmented:
+        if part and part not in seen_parts:
+            seen_parts.add(part)
+            fts_q_parts.append(part)
+    fts_q = " OR ".join(fts_q_parts)
 
     if _flag("RETRIEVAL_PROXIMITY", True):
         if len(tokens) >= 2:
@@ -898,20 +913,20 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
             try:
                 if unlimited:
                     cur.execute(
-                        "SELECT id, bm25(fts) as score FROM fts WHERE fts MATCH ? ORDER BY score",
+                        "SELECT id, bm25(items) as score FROM items WHERE items MATCH ? ORDER BY score",
                         (fts_q,),
                     )
                     rows = cur.fetchall()
                 else:
                     cur.execute(
-                        "SELECT id, bm25(fts) as score FROM fts WHERE fts MATCH ? ORDER BY score LIMIT ?",
+                        "SELECT id, bm25(items) as score FROM items WHERE items MATCH ? ORDER BY score LIMIT ?",
                         (fts_q, k_lex),
                     )
                     rows = cur.fetchall()
             except sqlite3.OperationalError:
                 rows = []
             for rank, (id_, bm25) in enumerate(rows, start=1):
-                score = 1.0 / (1.0 + float(bm25))
+                score = -float(bm25)
                 if id_ not in lex_scores or score > lex_scores[id_]:
                     lex_scores[id_] = score
                     lex_ranks[id_] = rank
@@ -1295,11 +1310,18 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
         hit = hit_by_id.get(origin_hit_id)
         score_payload: Dict[str, float] | None = None
         if hit is not None:
-            score_payload = {
-                "semantic": float(hit.score_sem),
-                "lexical": float(hit.score_lex),
-                "fused": float(hit.score_fused),
-            }
+            if origin_hit_id == item_id or why != "overflow-neighbor":
+                score_payload = {
+                    "semantic": float(hit.score_sem),
+                    "lexical": float(hit.score_lex),
+                    "fused": float(hit.score_fused),
+                }
+            else:
+                score_payload = {
+                    "semantic": 0.0,
+                    "lexical": 0.0,
+                    "fused": 0.0,
+                }
         snippet = ContextSnippet(
             id=item_id,
             type=typ,
@@ -1312,6 +1334,7 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             doc_title=doc_title,
             doc_short=doc_short,
             final_score=score_payload,
+            origin_id=origin_hit_id,
         )
         snippets.append(snippet)
         used_ids.add(item_id)
@@ -1364,6 +1387,97 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
                 if total_tokens >= limit:
                     break
                 add_item(nid, "overflow-neighbor", force=True, origin_id=h.id)
+
+    # Drop overflow neighbors entirely before any further scoring
+    snippets = [sn for sn in snippets if sn.why != "overflow-neighbor"]
+
+    strong_lex_hits: Set[str] = {hid for hid, hit in hit_by_id.items() if getattr(hit, "score_lex", 0.0) > 0}
+    keep_reasons = {"neighbor", "figure-body", "figure-heading"}
+    filtered_snippets: List[ContextSnippet] = []
+    for sn in snippets:
+        fs = sn.final_score or {}
+        lex_val = float(fs.get("lexical") or 0.0)
+        if lex_val > 0:
+            filtered_snippets.append(sn)
+            continue
+        if sn.origin_id and sn.origin_id in strong_lex_hits and sn.why in keep_reasons:
+            filtered_snippets.append(sn)
+    if filtered_snippets:
+        snippets = filtered_snippets
+
+    # Equal-weight normalization across semantic, lexical, and fused scores
+    sem_vals = [
+        float(sn.final_score["semantic"])
+        for sn in snippets
+        if sn.final_score and "semantic" in sn.final_score
+    ]
+    lex_vals = [
+        float(sn.final_score["lexical"])
+        for sn in snippets
+        if sn.final_score and "lexical" in sn.final_score
+    ]
+    fused_vals = [
+        float(sn.final_score["fused"])
+        for sn in snippets
+        if sn.final_score and "fused" in sn.final_score
+    ]
+
+    lex_lo = lex_hi = None
+    lex_vals_stats: List[float] = []
+    if lex_vals:
+        lex_lo = float(np.percentile(lex_vals, 5))
+        lex_hi = float(np.percentile(lex_vals, 95))
+        if lex_lo > lex_hi:
+            lex_lo, lex_hi = lex_hi, lex_lo
+        lex_vals_stats = [min(max(v, lex_lo), lex_hi) for v in lex_vals]
+
+    sem_mean = float(np.mean(sem_vals)) if sem_vals else 0.0
+    sem_std = float(np.std(sem_vals)) if sem_vals else 0.0
+    lex_mean = float(np.mean(lex_vals_stats)) if lex_vals_stats else 0.0
+    lex_std = float(np.std(lex_vals_stats)) if lex_vals_stats else 0.0
+    fused_mean = float(np.mean(fused_vals)) if fused_vals else 0.0
+    fused_std = float(np.std(fused_vals)) if fused_vals else 0.0
+
+    def _z_score(value: Optional[float], mean: float, std: float) -> Optional[float]:
+        if value is None:
+            return None
+        if std <= 1e-9:
+            return 0.0
+        return (value - mean) / std
+
+    for sn in snippets:
+        fs = sn.final_score or {}
+        sem_raw = fs.get("semantic")
+        lex_raw = fs.get("lexical")
+        fused_raw = fs.get("fused")
+        sem_z = _z_score(sem_raw, sem_mean, sem_std)
+        lex_clip = None
+        if lex_raw is not None:
+            lex_clip = float(lex_raw)
+            if lex_lo is not None and lex_hi is not None:
+                lex_clip = min(max(lex_clip, lex_lo), lex_hi)
+        lex_z = _z_score(lex_clip, lex_mean, lex_std)
+        fused_z = _z_score(fused_raw, fused_mean, fused_std)
+        components = [v for v in (sem_z, lex_z, fused_z) if v is not None]
+        equal = float(np.mean(components)) if components else -1e9
+        fs["equal"] = equal
+        sn.final_score = fs
+
+    scored_snippets = [sn for sn in snippets if (sn.final_score or {}).get("equal") is not None]
+    positive_snippets = [
+        sn for sn in scored_snippets if (sn.final_score or {}).get("equal", -1e9) > 0
+    ]
+    if positive_snippets:
+        snippets = positive_snippets
+    elif scored_snippets:
+        snippets = scored_snippets
+
+    snippets.sort(
+        key=lambda sn: (sn.final_score or {}).get("equal", float("-inf")), reverse=True
+    )
+    max_pages = 20
+    if len(snippets) > max_pages:
+        snippets = snippets[:max_pages]
 
     stats = {
         "tokens": total_tokens,
@@ -1579,5 +1693,9 @@ __all__ = [
 
     "research",
 ]
+
+
+
+
 
 
