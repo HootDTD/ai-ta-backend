@@ -6,7 +6,7 @@ import json
 import os
 import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Set, Optional
 
@@ -23,6 +23,8 @@ from .config import (
     set_subject_name,
 )
 from .contracts import ResearchBundle, BundleSnippet, ParsedTask, ResearchMetadata
+from .knowledge import KnowledgeManager
+from .citations.formatter import build_citation_info, format_citations
 
 WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0","off","false","no"}
 
@@ -67,6 +69,7 @@ class Answer:
     text: str
     citations: List[Dict[str, Any]]
     proof: Dict[str, object]
+    structured_citations: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # ----------------------- Globals -----------------------
@@ -79,6 +82,72 @@ _id_to_row: Dict[str, pd.Series] | None = None
 _meta: Dict[str, object] | None = None
 _meta_titles: Dict[str, str] | None = None
 _client: OpenAI | None = None
+_store_biases: Dict[str, float] = {}
+_store_meta: Dict[str, Dict[str, Any]] = {}
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+_STORE_WEIGHT_DEFAULTS = {
+    "textbook": 0.12,
+    "slides": 0.06,
+    "homework": 0.05,
+    "exams": 0.05,
+    "other": 0.03,
+}
+
+
+def _store_weight_for_kind(kind: str) -> float:
+    key = kind.strip().lower()
+    env_var = f"RETRIEVAL_STORE_WEIGHT_{key.upper()}"
+    val = os.getenv(env_var)
+    if val is not None:
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            pass
+    return _STORE_WEIGHT_DEFAULTS.get(key, 0.0)
+
+
+_STORE_CONF_SCALE = _float_env("RETRIEVAL_STORE_CONF_SCALE", 0.0)
+_STORE_CONF_BASE = _float_env("RETRIEVAL_STORE_CONF_BASE", 0.5)
+
+
+def _compute_store_bias(store_entry: Optional[Dict[str, Any]], meta: Optional[Dict[str, Any]]) -> float:
+    if not store_entry:
+        return 0.0
+    kind = store_entry.get("kind") or "other"
+    base = _store_weight_for_kind(str(kind))
+    if base == 0.0:
+        return 0.0
+    if _STORE_CONF_SCALE != 0.0:
+        avg_conf: Optional[float] = None
+        candidate = None
+        if meta:
+            candidate = meta.get("average_confidence") or meta.get("ocr_confidence")
+        if candidate is None:
+            candidate = store_entry.get("average_confidence")
+        if isinstance(candidate, (int, float)):
+            avg_conf = float(candidate)
+        if avg_conf is not None:
+            base *= 1.0 + _STORE_CONF_SCALE * (avg_conf - _STORE_CONF_BASE)
+    return max(base, 0.0)
+
+
+def _resolve_store_entry(root: Path) -> Optional[Dict[str, Any]]:
+    try:
+        manager = KnowledgeManager()
+        return manager.find_store_entry(root)
+    except Exception:
+        return None
 
 # symbol/alias mining globals
 _alias_to_occurrences: Dict[str, List[Tuple[str, str, int, str, str]]] = {}
@@ -644,6 +713,8 @@ def _load_one(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection
     sqlite_path = root / "sqlite.db"
     meta_path = root / "meta.json"
 
+    store_key = str(root.resolve())
+
     for p in [faiss_path, items_path, sqlite_path, meta_path]:
         if not p.exists():
             raise FileNotFoundError(
@@ -691,6 +762,8 @@ def _load_one(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection
             items.append(item)
     df = pd.DataFrame(items)
     df.set_index("id", inplace=True)
+    df["store_key"] = store_key
+    df["store_kind"] = None
 
     _mine_aliases(df)
     meta["symbol_index_stats"] = _symbol_index_stats
@@ -706,8 +779,25 @@ def load_assets(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connecti
     _term_to_aliases = {}
     _symbol_index_stats = {}
     _definition_ids = set()
+    global _store_biases, _store_meta
+    _store_biases = {}
+    _store_meta = {}
+
+    store_entry = _resolve_store_entry(root)
 
     index, df, conn, meta, titles = _load_one(root)
+
+    store_key = str(root.resolve())
+    if store_entry:
+        df["store_kind"] = store_entry.get("kind")
+    bias = _compute_store_bias(store_entry, meta)
+    _store_biases[store_key] = bias
+    meta_info = {
+        "kind": (store_entry or {}).get("kind", "textbook"),
+        "title": (store_entry or {}).get("title"),
+        "average_confidence": meta.get("average_confidence"),
+    }
+    _store_meta[store_key] = meta_info
 
     global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta, _meta_titles
     _faiss_list = [index]
@@ -734,6 +824,9 @@ def load_assets_all(
     _term_to_aliases = {}
     _symbol_index_stats = {}
     _definition_ids = set()
+    global _store_biases, _store_meta
+    _store_biases = {}
+    _store_meta = {}
 
     faiss_list: List[faiss.Index] = []
     conns: List[sqlite3.Connection] = []
@@ -742,6 +835,10 @@ def load_assets_all(
     title_map: Dict[str, str] = {}
     skipped: List[Dict[str, str]] = []
     meta_ref: dict | None = None
+    store_entries: Dict[str, Optional[Dict[str, Any]]] = {}
+    for root in roots:
+        store_key = str(root.resolve())
+        store_entries[store_key] = _resolve_store_entry(root)
     for root in roots:
         try:
             index, df, conn, meta, titles = _load_one(root)
@@ -762,6 +859,18 @@ def load_assets_all(
             continue
         faiss_list.append(index)
         conns.append(conn)
+        store_key = str(root.resolve())
+        entry = store_entries.get(store_key)
+        if entry:
+            df["store_kind"] = entry.get("kind")
+        bias = _compute_store_bias(entry, meta)
+        _store_biases[store_key] = bias
+        meta_info = {
+            "kind": (entry or {}).get("kind", "textbook"),
+            "title": (entry or {}).get("title"),
+            "average_confidence": meta.get("average_confidence"),
+        }
+        _store_meta[store_key] = meta_info
         dfs.append(df)
         metas.append(meta)
         title_map.update(titles)
@@ -965,6 +1074,9 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
                     s_fused += 0.02
             if _flag("PACK_DEF_BIAS", True) and id_ in _definition_ids:
                 s_fused += 0.1
+            store_key = row.get("store_key")
+            if store_key:
+                s_fused += _store_biases.get(str(store_key), 0.0)
             hits.append(
                 Hit(
                     id=id_,
@@ -1520,29 +1632,48 @@ def answer(question: str, ctx: ContextPack) -> Answer:
 
     citations: List[Dict[str, Any]] = []
     for i, sn in enumerate(ctx.snippets, start=1):
-        marker = _canonical_marker(sn)
+        row = _id_to_row.get(sn.id) if _id_to_row else None
+        info = build_citation_info(sn, row, _store_meta)
+        label = info.get("label", "")
         if i in used_markers:
-            citations.append({"id": sn.id, "marker": marker, "snippet": sn})
-        # strip placeholder regardless of usage
-        out = out.replace(f"[S{i}]", "")
+            citations.append({"id": sn.id, "marker": label or _canonical_marker(sn), "snippet": sn})
+            replacement = label or ""
+        else:
+            replacement = ""
+        out = out.replace(f"[S{i}]", replacement)
 
+    _, structured = format_citations(citations, _id_to_row, _store_meta)
     proof = {"question": question, "used_ids": ctx.used_ids}
-    return Answer(text=out, citations=citations, proof=proof)
+    return Answer(text=out, citations=citations, proof=proof, structured_citations=structured)
 
 
 # ---------------------------------------------------------
 
 
 def render_citations(ans: Answer) -> str:
+    structured = getattr(ans, "structured_citations", []) or []
+    labels = []
     seen: set[str] = set()
-    markers: List[str] = []
+    for entry in structured:
+        label = entry.get("label")
+        if not label:
+            continue
+        if label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+    if labels:
+        return " ".join(labels)
+    # Fallback to legacy markers if structured data missing
+    seen.clear()
+    legacy: List[str] = []
     for c in ans.citations:
         sn = c.get("snippet")
         m = _canonical_marker(sn) if sn else c.get("marker")
         if m not in seen:
             seen.add(m)
-            markers.append(m)
-    return " ".join(markers)
+            legacy.append(m)
+    return " ".join(legacy)
 
 
 # ---------------------------------------------------------

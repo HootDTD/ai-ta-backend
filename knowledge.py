@@ -39,6 +39,22 @@ def _load_layout_module():
     return module
 
 
+STORE_KINDS = {"textbook", "slides", "homework", "exams", "other"}
+
+
+def _default_store_priority(kind: str) -> int:
+    k = (kind or "").strip().lower()
+    # Keep textbook highest priority by default
+    mapping = {
+        "textbook": 100,
+        "slides": 80,
+        "exams": 70,
+        "homework": 60,
+        "other": 50,
+    }
+    return mapping.get(k, 50)
+
+
 class KnowledgeManager:
     """Manage subject knowledge materials and their embedding indexes."""
 
@@ -82,8 +98,9 @@ class KnowledgeManager:
             data.setdefault("subject", subject)
             data.setdefault("slug", slug)
             data.setdefault("materials", [])
+            data.setdefault("stores", [])
             return data
-        return {"subject": subject, "slug": slug, "materials": []}
+        return {"subject": subject, "slug": slug, "materials": [], "stores": []}
 
     def _save_manifest(self, subject: str, manifest: Dict[str, Any]) -> None:
         slug = manifest.get("slug") or self._slugify(subject)
@@ -126,6 +143,27 @@ class KnowledgeManager:
             if not path_str:
                 continue
             path = Path(path_str)
+            if path.exists():
+                doc_sets.append(path)
+
+        # Include stores if present, sorted by priority (desc) then created_at desc
+        stores = normalized.get("stores", []) or []
+        try:
+            stores_sorted = sorted(
+                stores,
+                key=lambda s: (
+                    int(s.get("priority", 0) or 0),
+                    (s.get("created_at") or ""),
+                ),
+                reverse=True,
+            )
+        except Exception:
+            stores_sorted = stores  # best effort
+        for st in stores_sorted:
+            p = st.get("index_path")
+            if not p:
+                continue
+            path = Path(p)
             if path.exists():
                 doc_sets.append(path)
         if doc_sets:
@@ -304,7 +342,14 @@ class KnowledgeManager:
             if normalized:
                 materials.append(normalized)
         materials.sort(key=lambda m: m.get("created_at", ""), reverse=True)
-        return {"subject": subject, "slug": slug, "materials": materials}
+        stores: List[Dict[str, Any]] = []
+        for entry in manifest.get("stores", []) or []:
+            normalized = self._normalize_store_entry(subject, slug, entry)
+            if normalized:
+                stores.append(normalized)
+        # Sort stores by priority desc then date desc
+        stores.sort(key=lambda s: (int(s.get("priority", 0) or 0), s.get("created_at", "")), reverse=True)
+        return {"subject": subject, "slug": slug, "materials": materials, "stores": stores}
 
     def _normalize_material_entry(self, subject: str, slug: str, entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         index_dir = entry.get("index_dir")
@@ -325,6 +370,24 @@ class KnowledgeManager:
             "dimensions": entry.get("dimensions"),
             "page_count": entry.get("page_count"),
             "source_sha256": entry.get("source_sha256"),
+        }
+
+    def _normalize_store_entry(self, subject: str, slug: str, entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        index_path = entry.get("index_path")
+        if not index_path:
+            return None
+        p = Path(index_path)
+        if not self._is_valid_index_dir(p):
+            return None
+        kind = (entry.get("kind") or "other").strip().lower()
+        return {
+            "id": entry.get("id", ""),
+            "subject": subject,
+            "kind": kind,
+            "title": entry.get("title", ""),
+            "priority": int(entry.get("priority", _default_store_priority(kind)) or _default_store_priority(kind)),
+            "index_path": str(p),
+            "created_at": entry.get("created_at", ""),
         }
 
     @staticmethod
@@ -354,6 +417,107 @@ class KnowledgeManager:
     def _safe_unlink(path: Path) -> None:
         with suppress(FileNotFoundError):
             path.unlink()
+
+    # ------------------------------------------------------------------
+    # Stores (textbook/slides/homework/exams) helpers
+    # ------------------------------------------------------------------
+    def list_stores(self, subject: str) -> List[Dict[str, Any]]:
+        """Return normalized store entries for a subject."""
+        manifest = self.load_manifest(subject)
+        norm = self._normalize_subject(manifest.get("subject", subject), manifest.get("slug") or self._slugify(subject), manifest)
+        return norm.get("stores", [])
+
+    def find_store_entry(self, index_path: Path) -> Optional[Dict[str, Any]]:
+        """Locate a store entry across subjects by absolute index path."""
+        normalized_path = str(index_path.resolve())
+        if not self.base_dir.exists():
+            return None
+        for manifest_path in sorted(self.base_dir.glob("*/manifest.json")):
+            try:
+                data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            subject_name = str(data.get("subject") or "").strip()
+            slug = data.get("slug") or manifest_path.parent.name
+            stores = data.get("stores") or []
+            if not isinstance(stores, list):
+                continue
+            for entry in stores:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("index_path") == normalized_path:
+                    subject = subject_name or slug
+                    return self._normalize_store_entry(subject, slug, entry)
+        return None
+
+    def register_store(
+        self,
+        subject: str,
+        *,
+        kind: str,
+        title: str,
+        index_path: Path,
+        priority: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Register an existing index directory as a store entry in the manifest.
+
+        Idempotent: if an identical index_path+kind+title exists, it will be updated
+        (e.g., priority) rather than duplicated.
+        """
+        subject = subject.strip()
+        if not subject:
+            raise ValueError("subject must be a non-empty string")
+        kind_norm = (kind or "other").strip().lower()
+        if kind_norm not in STORE_KINDS:
+            raise ValueError("invalid kind; must be one of: " + ", ".join(sorted(STORE_KINDS)))
+        if not index_path.exists():
+            raise FileNotFoundError("index_path not found")
+        if not self._is_valid_index_dir(index_path):
+            raise RuntimeError("index_path does not look like a valid index directory")
+
+        manifest = self.load_manifest(subject)
+        slug = manifest.get("slug") or self._slugify(subject)
+        manifest["subject"] = subject
+        manifest["slug"] = slug
+        stores = [s for s in manifest.get("stores", []) if isinstance(s, dict)]
+
+        # Match by absolute path + kind + title
+        key_path = str(index_path.resolve())
+        found = None
+        for s in stores:
+            if (s.get("index_path") == key_path) and (s.get("kind") == kind_norm) and (s.get("title") == title):
+                found = s
+                break
+
+        import uuid
+
+        if found is None:
+            entry = {
+                "id": uuid.uuid4().hex,
+                "kind": kind_norm,
+                "title": title,
+                "index_path": key_path,
+                "priority": int(priority) if priority is not None else _default_store_priority(kind_norm),
+                "created_at": datetime.utcnow().isoformat() + "Z",
+            }
+            stores.append(entry)
+        else:
+            # Update priority if provided
+            if priority is not None:
+                try:
+                    found["priority"] = int(priority)
+                except (TypeError, ValueError):
+                    pass
+
+        # Sort and persist
+        stores.sort(key=lambda s: (int(s.get("priority", 0) or 0), s.get("created_at", "")), reverse=True)
+        manifest["stores"] = stores
+        self._save_manifest(subject, manifest)
+
+        normalized = self._normalize_store_entry(subject, slug, stores[0] if found is None else found)
+        if not normalized:
+            raise RuntimeError("failed to normalize registered store entry")
+        return normalized
 
 
 __all__ = ["KnowledgeManager"]

@@ -23,6 +23,8 @@ def test_answer_strips_citation_markers(monkeypatch):
     monkeypatch.setattr(r, "_require_loaded", lambda: None)
     monkeypatch.setattr(r, "_get_client", lambda: make_dummy_client("result [S1] and [S2]"))
     r._meta = {}
+    r._id_to_row = None
+    r._store_meta = {}
     sn1 = ContextSnippet(
         id="1",
         type="text",
@@ -51,4 +53,8 @@ def test_answer_strips_citation_markers(monkeypatch):
     ans = r.answer("question", ctx)
     assert "[S1]" not in ans.text and "[S2]" not in ans.text
     assert "[§" not in ans.text
+    assert "[Textbook" in ans.text
     assert len(ans.citations) == 2
+    assert len(ans.structured_citations) == 2
+    labels = [entry["label"] for entry in ans.structured_citations]
+    assert "[Textbook, p. 1]" in labels
