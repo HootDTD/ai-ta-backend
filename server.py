@@ -1,4 +1,5 @@
 import importlib
+import io
 import os
 import re
 import uuid
@@ -11,9 +12,9 @@ from typing import List, Optional, Sequence, Iterator, Iterable, Union, Dict
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 
 # Import the callable core entrypoint using package‑relative import to avoid
 # path issues when running under different working directories.
@@ -67,9 +68,25 @@ class AttachmentIn(BaseModel):
     data_url: str = Field(..., description="data:<mime>;base64,<...>")
 
 
+def _resolve_index_path() -> str:
+    configured = os.getenv("INDEX_DIR")
+    if configured:
+        return str(Path(configured).expanduser().resolve())
+    default = Path(__file__).resolve().parent / "text-embeder/my_book_index_aero"
+    return str(default)
+
+
+CLASS_CONFIG = {
+    "AAE 33300: Introduction to Fluid Mechanics": {
+        "textbook": "Fundamentals of Aerodynamics",
+        "doc_sets": [_resolve_index_path()],
+    },
+}
+
+
 class AskRequest(BaseModel):
     question: str
-    subject: str = Field(..., min_length=1, description="Subject name for knowledge routing")
+    class_name: str = Field(..., alias="class", min_length=1, description="Class selection for knowledge routing")
     course_id: Optional[str] = None
     doc_sets: Optional[List[str]] = None
     attachments: Optional[List[AttachmentIn]] = Field(default_factory=list)
@@ -79,6 +96,9 @@ class AskRequest(BaseModel):
     def_bias: Optional[bool] = None
     max_iters: Optional[int] = None
     sanitize: Optional[bool] = None
+
+    class Config:
+        allow_population_by_field_name = True
 
 
 class KnowledgeMaterialOut(BaseModel):
@@ -316,9 +336,15 @@ def post_ask(payload: AskRequest):
     if not q and not atts:
         raise HTTPException(status_code=400, detail="Provide a question or image attachments")
 
-    subject = (payload.subject or "").strip()
-    if not subject:
-        raise HTTPException(status_code=400, detail="Subject is required")
+    class_name = payload.class_name.strip()
+    if not class_name:
+        raise HTTPException(status_code=400, detail="Class is required")
+
+    class_cfg = CLASS_CONFIG.get(class_name)
+    if not class_cfg:
+        raise HTTPException(status_code=400, detail="Unknown class selection")
+    textbook = class_cfg["textbook"]
+    doc_sets_override = class_cfg.get("doc_sets") or None
 
     try:
         image_paths = _save_attachments(atts)
@@ -340,23 +366,39 @@ def post_ask(payload: AskRequest):
     if payload.sanitize is not None:
         opts["RETRIEVAL_SANITIZE"] = "on" if payload.sanitize else "off"
 
-    def generate():
-        try:
-            with _temp_env(opts):
+    stdout_buffer = io.StringIO()
+    answer_chunks: List[str] = []
+    error_text: Optional[str] = None
+
+    try:
+        with _temp_env(opts):
+            with redirect_stdout(stdout_buffer):
                 result = answer_question(
                     question=q,
                     image_paths=image_paths,
                     course_id=payload.course_id,
-                    doc_sets=payload.doc_sets,
-                    subject=subject,
+                    doc_sets=doc_sets_override,
+                    subject=textbook,
                 )
                 for chunk in _iter_text(result):
-                    yield chunk
-        except Exception as e:
-            log.exception("answer_question failed")
-            yield f"\n[error] {e}"
+                    answer_chunks.append(chunk)
+    except Exception as e:
+        log.exception("answer_question failed")
+        error_text = f"[error] {e}"
 
-    return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
+    answer_text = "".join(answer_chunks).strip()
+    if error_text and not answer_text:
+        answer_text = error_text
+
+    raw_logs = stdout_buffer.getvalue().splitlines()
+    wire_logs = [line.strip() for line in raw_logs if line.strip().startswith("[Main AI") or line.strip().startswith("[Indexer AI")]
+
+    payload_out = {
+        "answer": answer_text,
+        "logs": wire_logs,
+    }
+
+    return JSONResponse(payload_out)
 
 
 # Optional: allow `python -m backend.server`
