@@ -259,10 +259,19 @@ def answer_question(
     ctx = pack_context(hits)
     ans = retriever_answer(combined_q, ctx)
     cites = render_citations(ans)
+    structured = getattr(ans, "structured_citations", [])
 
     def _gen() -> Iterator[str]:
         yield ans.text
         if cites:
             yield "\n" + cites
 
-    return _gen()
+    class _AnswerStream:
+        def __init__(self, iterator, citations):
+            self._it = iterator
+            self.citations = citations
+
+        def __iter__(self):
+            return self._it
+
+    return _AnswerStream(_gen(), structured)

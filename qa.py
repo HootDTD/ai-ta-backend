@@ -19,6 +19,8 @@ from .retriever import (
 )
 from .orchestrator import Orchestrator
 from .main_ai import _write_proof_citations, _write_citations_file
+from .indexers.handwriting import ingest as ingest_handwriting, IngestOptions
+from .knowledge import KnowledgeManager
 
 DEFAULT_INDEX = str(Path(__file__).resolve().parent / "text-embeder/my_book_index_aero")
 
@@ -236,6 +238,17 @@ def main() -> None:
     p_research.add_argument("--subject", help="Override subject for prompts")
     p_research.set_defaults(func=cmd_research)
 
+    p_ing = sub.add_parser("ingest-ocr", help="Render PDF pages, OCR, and build store artifacts")
+    p_ing.add_argument("subject", help="Subject name for manifest registration")
+    p_ing.add_argument("kind", help="Store kind: textbook|slides|homework|exams|other")
+    p_ing.add_argument("pdf", help="Path to PDF to ingest")
+    p_ing.add_argument("out_dir", help="Output directory for artifacts (store directory)")
+    p_ing.add_argument("--dpi", type=int, default=None, help="Rendering DPI override (e.g., 200 or 300)")
+    p_ing.add_argument("--max-pages", type=int, default=None, help="Optional page limit for ingestion")
+    p_ing.add_argument("--no-embed", action="store_true", help="Skip embeddings/FAISS/SQLite (write items/meta only)")
+    p_ing.add_argument("--workers", type=int, default=4, help="Parallel OCR workers")
+    p_ing.set_defaults(func=cmd_ingest_ocr)
+
     args = parser.parse_args()
 
     if not os.getenv("OPENAI_API_KEY"):
@@ -249,3 +262,74 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def cmd_ingest_ocr(args: argparse.Namespace) -> None:
+    """CLI entry: ingest a PDF into a target store and print JSON summary.
+
+    - Registers the store in the subject manifest after successful ingestion.
+    - Prints a summary JSON to stdout with paths and basic stats.
+    """
+    pdf_path = Path(args.pdf)
+    out_dir = Path(args.out_dir)
+    if not pdf_path.exists():
+        print(f"PDF not found: {pdf_path}")
+        return
+
+    opts = IngestOptions(
+        dpi=args.dpi,
+        max_pages=args.max_pages,
+        workers=max(1, int(args.workers or 4)),
+        do_embed=not bool(getattr(args, "no_embed", False)),
+    )
+
+    # Run ingestion
+    try:
+        items = ingest_handwriting(pdf_path, doc_id=pdf_path.stem, out_dir=out_dir, options=opts)
+    except Exception as exc:
+        print(f"ingestion failed: {exc}")
+        return
+
+    # Basic meta and counts
+    meta = {}
+    meta_path = out_dir / "meta.json"
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            meta = {}
+    item_count = 0
+    items_path = out_dir / "items.jsonl"
+    if items_path.exists():
+        with items_path.open("r", encoding="utf-8") as fh:
+            item_count = sum(1 for _ in fh)
+
+    # Register store in manifest
+    try:
+        km = KnowledgeManager()
+        store = km.register_store(
+            args.subject,
+            kind=args.kind,
+            title=pdf_path.stem,
+            index_path=out_dir,
+        )
+    except Exception:
+        store = {
+            "kind": args.kind,
+            "title": pdf_path.stem,
+            "index_path": str(out_dir.resolve()),
+        }
+
+    summary = {
+        "subject": args.subject,
+        "kind": store.get("kind", args.kind),
+        "title": store.get("title", pdf_path.stem),
+        "index_path": store.get("index_path", str(out_dir.resolve())),
+        "items": item_count,
+        "page_count": meta.get("page_count"),
+        "average_confidence": meta.get("average_confidence"),
+        "embeddings": bool((out_dir / "embeddings.npy").exists()),
+        "faiss": bool((out_dir / "faiss.index").exists()),
+        "sqlite": bool((out_dir / "sqlite.db").exists()),
+    }
+    print(json.dumps(summary, ensure_ascii=False))

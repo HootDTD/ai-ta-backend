@@ -8,7 +8,7 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Sequence, Iterator, Iterable, Union, Dict
+from typing import List, Optional, Sequence, Iterator, Iterable, Union, Dict, Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -253,6 +253,78 @@ def list_knowledge_subjects() -> List[KnowledgeSubjectOut]:
     return subjects
 
 
+class KnowledgeStoreIn(BaseModel):
+    subject: str
+    kind: str = Field(..., description="textbook|slides|homework|exams|other")
+    title: str
+    index_path: str = Field(..., description="Filesystem path to existing index directory")
+    priority: Optional[int] = None
+
+
+class KnowledgeStoreOut(BaseModel):
+    id: str
+    subject: str
+    kind: str
+    title: str
+    index_path: str
+    priority: int
+    created_at: str
+
+
+@app.get("/knowledge/stores", response_model=List[KnowledgeStoreOut])
+def list_knowledge_stores(subject: str = "") -> List[KnowledgeStoreOut]:
+    subject_clean = (subject or "").strip()
+    if not subject_clean:
+        raise HTTPException(status_code=400, detail="subject is required")
+    manager = KnowledgeManager()
+    try:
+        stores = manager.list_stores(subject_clean)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    # attach subject to each entry for response consistency
+    out: List[KnowledgeStoreOut] = []
+    for s in stores:
+        out.append(
+            KnowledgeStoreOut(
+                id=str(s.get("id", "")),
+                subject=subject_clean,
+                kind=str(s.get("kind", "")),
+                title=str(s.get("title", "")),
+                index_path=str(s.get("index_path", "")),
+                priority=int(s.get("priority", 0) or 0),
+                created_at=str(s.get("created_at", "")),
+            )
+        )
+    return out
+
+
+@app.post("/knowledge/stores", response_model=KnowledgeStoreOut)
+def register_knowledge_store(payload: KnowledgeStoreIn) -> KnowledgeStoreOut:
+    manager = KnowledgeManager()
+    try:
+        entry = manager.register_store(
+            payload.subject,
+            kind=payload.kind,
+            title=payload.title,
+            index_path=Path(payload.index_path),
+            priority=payload.priority,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return KnowledgeStoreOut(
+        id=str(entry.get("id", "")),
+        subject=str(entry.get("subject", payload.subject)),
+        kind=str(entry.get("kind", payload.kind)),
+        title=str(entry.get("title", payload.title)),
+        index_path=str(entry.get("index_path", payload.index_path)),
+        priority=int(entry.get("priority", payload.priority or 0) or 0),
+        created_at=str(entry.get("created_at", "")),
+    )
+
+
 if _HAS_MULTIPART:
 
     @app.post("/knowledge/materials", response_model=KnowledgeMaterialOut)
@@ -390,12 +462,17 @@ def post_ask(payload: AskRequest):
     if error_text and not answer_text:
         answer_text = error_text
 
+    structured_citations: List[Dict[str, Any]] = []
+    if "result" in locals():
+        structured_citations = list(getattr(result, "citations", []) or [])
+
     raw_logs = stdout_buffer.getvalue().splitlines()
     wire_logs = [line.strip() for line in raw_logs if line.strip().startswith("[Main AI") or line.strip().startswith("[Indexer AI")]
 
     payload_out = {
         "answer": answer_text,
         "logs": wire_logs,
+        "citations": structured_citations,
     }
 
     return JSONResponse(payload_out)
