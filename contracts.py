@@ -102,6 +102,7 @@ class ResearchBundle:
     not_found_terms: List[str] = field(default_factory=list)
     attempted_terms: List[str] = field(default_factory=list)
     subject: str = "course/textbook"
+    marker_equal_map: Dict[str, float] = field(default_factory=dict)
 
     def validate(self) -> None:
         if not self.snippets:

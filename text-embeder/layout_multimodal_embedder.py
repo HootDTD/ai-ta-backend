@@ -722,52 +722,93 @@ def build_faiss(embeddings: np.ndarray, out_path: Path):
 
 
 def build_sqlite(items: List[Item], db_path: Path):
+    """Persist item metadata alongside an FTS5 table compatible with the retriever."""
     conn = sqlite3.connect(str(db_path))
-    cur = conn.cursor()
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS items (
-            id TEXT PRIMARY KEY,
-            page INTEGER,
-            type TEXT,
-            text TEXT,
-            doc_id TEXT,
-            section_path TEXT,
-            bbox TEXT,
-            caption TEXT,
-            figure_id TEXT,
-            diagram_json TEXT,
-            sha256 TEXT,
-            source_pdf TEXT
-        )
-        """
-    )
-    try:  # pragma: no cover - some SQLite builds may lack FTS5
+    try:
+        cur = conn.cursor()
+        # Keep a wide, plain table for debugging/inspection purposes.
         cur.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(id, text, content='items', content_rowid='rowid')"
+            """
+            CREATE TABLE IF NOT EXISTS items_raw (
+                id TEXT PRIMARY KEY,
+                page INTEGER,
+                type TEXT,
+                text TEXT,
+                doc_id TEXT,
+                section_path TEXT,
+                bbox TEXT,
+                caption TEXT,
+                figure_id TEXT,
+                diagram_json TEXT,
+                sha256 TEXT,
+                source_pdf TEXT
+            )
+            """
+        )
+        cur.execute("DELETE FROM items_raw")
+        raw_rows = [
+            (
+                it.id,
+                it.page,
+                it.type,
+                it.text,
+                it.doc_id,
+                json.dumps(it.section_path),
+                json.dumps(it.bbox),
+                it.caption,
+                it.figure_id,
+                it.diagram_json,
+                it.sha256,
+                it.source_pdf,
+            )
+            for it in items
+        ]
+        cur.executemany(
+            "INSERT OR REPLACE INTO items_raw VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            raw_rows,
         )
         conn.commit()
-        cur.execute("DELETE FROM fts")
-        for it in items:
+
+        try:  # pragma: no cover - some SQLite builds may lack FTS5
             cur.execute(
-                "INSERT OR REPLACE INTO items VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS items USING fts5(
+                    id,
+                    doc_id,
+                    page UNINDEXED,
+                    type,
+                    section_path,
+                    text,
+                    figure_id,
+                    tokenize='porter'
+                )
+                """
+            )
+            # Drop legacy auxiliary FTS tables produced by older versions.
+            cur.execute("DROP TABLE IF EXISTS fts")
+            conn.commit()
+            cur.execute("DELETE FROM items")
+            fts_rows = [
                 (
                     it.id,
+                    it.doc_id,
                     it.page,
                     it.type,
-                    it.text,
-                    it.doc_id,
-                    json.dumps(it.section_path),
-                    json.dumps(it.bbox),
-                    it.caption,
+                    " > ".join(it.section_path or []),
+                    it.text or "",
                     it.figure_id,
-                    it.diagram_json,
-                    it.sha256,
-                    it.source_pdf,
-                ),
+                )
+                for it in items
+            ]
+            cur.executemany(
+                "INSERT INTO items VALUES (?,?,?,?,?,?,?)",
+                fts_rows,
             )
-            cur.execute("INSERT INTO fts(id, text) VALUES (?, ?)", (it.id, it.text))
-        conn.commit()
+            conn.commit()
+        except sqlite3.OperationalError as exc:  # pragma: no cover
+            # Surface the failure so index generation can alert the caller.
+            conn.rollback()
+            raise RuntimeError("SQLite build lacks FTS5 support required for lexical search") from exc
     finally:
         conn.close()
 

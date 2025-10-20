@@ -186,6 +186,71 @@ def cmd_research(args: argparse.Namespace) -> None:
     print(json.dumps(skeleton, indent=2, ensure_ascii=False))
 
 
+def cmd_ingest_ocr(args: argparse.Namespace) -> None:
+    """CLI entry: ingest a PDF into a target store and print JSON summary."""
+    pdf_path = Path(args.pdf)
+    out_dir = Path(args.out_dir)
+    if not pdf_path.exists():
+        print(f"PDF not found: {pdf_path}")
+        return
+
+    opts = IngestOptions(
+        dpi=args.dpi,
+        max_pages=args.max_pages,
+        workers=max(1, int(args.workers or 4)),
+        do_embed=not bool(getattr(args, "no_embed", False)),
+    )
+
+    try:
+        items = ingest_handwriting(pdf_path, doc_id=pdf_path.stem, out_dir=out_dir, options=opts)
+    except Exception as exc:
+        print(f"ingestion failed: {exc}")
+        return
+
+    meta = {}
+    meta_path = out_dir / "meta.json"
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            meta = {}
+
+    item_count = 0
+    items_path = out_dir / "items.jsonl"
+    if items_path.exists():
+        with items_path.open("r", encoding="utf-8") as fh:
+            item_count = sum(1 for _ in fh)
+
+    try:
+        km = KnowledgeManager()
+        store = km.register_store(
+            args.subject,
+            kind=args.kind,
+            title=pdf_path.stem,
+            index_path=out_dir,
+        )
+    except Exception:
+        store = {
+            "kind": args.kind,
+            "title": pdf_path.stem,
+            "index_path": str(out_dir.resolve()),
+        }
+
+    summary = {
+        "subject": args.subject,
+        "kind": store.get("kind", args.kind),
+        "title": store.get("title", pdf_path.stem),
+        "index_path": store.get("index_path", str(out_dir.resolve())),
+        "items": item_count,
+        "page_count": meta.get("page_count"),
+        "average_confidence": meta.get("average_confidence"),
+        "embeddings": bool((out_dir / "embeddings.npy").exists()),
+        "faiss": bool((out_dir / "faiss.index").exists()),
+        "sqlite": bool((out_dir / "sqlite.db").exists()),
+    }
+    print(json.dumps(summary, ensure_ascii=False))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Hybrid search QA")
     sub = parser.add_subparsers(dest="cmd")
@@ -262,74 +327,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-def cmd_ingest_ocr(args: argparse.Namespace) -> None:
-    """CLI entry: ingest a PDF into a target store and print JSON summary.
-
-    - Registers the store in the subject manifest after successful ingestion.
-    - Prints a summary JSON to stdout with paths and basic stats.
-    """
-    pdf_path = Path(args.pdf)
-    out_dir = Path(args.out_dir)
-    if not pdf_path.exists():
-        print(f"PDF not found: {pdf_path}")
-        return
-
-    opts = IngestOptions(
-        dpi=args.dpi,
-        max_pages=args.max_pages,
-        workers=max(1, int(args.workers or 4)),
-        do_embed=not bool(getattr(args, "no_embed", False)),
-    )
-
-    # Run ingestion
-    try:
-        items = ingest_handwriting(pdf_path, doc_id=pdf_path.stem, out_dir=out_dir, options=opts)
-    except Exception as exc:
-        print(f"ingestion failed: {exc}")
-        return
-
-    # Basic meta and counts
-    meta = {}
-    meta_path = out_dir / "meta.json"
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except Exception:
-            meta = {}
-    item_count = 0
-    items_path = out_dir / "items.jsonl"
-    if items_path.exists():
-        with items_path.open("r", encoding="utf-8") as fh:
-            item_count = sum(1 for _ in fh)
-
-    # Register store in manifest
-    try:
-        km = KnowledgeManager()
-        store = km.register_store(
-            args.subject,
-            kind=args.kind,
-            title=pdf_path.stem,
-            index_path=out_dir,
-        )
-    except Exception:
-        store = {
-            "kind": args.kind,
-            "title": pdf_path.stem,
-            "index_path": str(out_dir.resolve()),
-        }
-
-    summary = {
-        "subject": args.subject,
-        "kind": store.get("kind", args.kind),
-        "title": store.get("title", pdf_path.stem),
-        "index_path": store.get("index_path", str(out_dir.resolve())),
-        "items": item_count,
-        "page_count": meta.get("page_count"),
-        "average_confidence": meta.get("average_confidence"),
-        "embeddings": bool((out_dir / "embeddings.npy").exists()),
-        "faiss": bool((out_dir / "faiss.index").exists()),
-        "sqlite": bool((out_dir / "sqlite.db").exists()),
-    }
-    print(json.dumps(summary, ensure_ascii=False))

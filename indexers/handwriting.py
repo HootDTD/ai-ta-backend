@@ -18,6 +18,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import datetime
+import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
@@ -37,11 +38,15 @@ from importlib.util import spec_from_file_location, module_from_spec
 
 
 def _load_layout_module():
+    module_name = "backend_layout_embedder"
+    if module_name in sys.modules:
+        return sys.modules[module_name]
     path = Path(__file__).resolve().parents[1] / "text-embeder" / "layout_multimodal_embedder.py"
-    spec = spec_from_file_location("backend_layout_embedder", str(path))
+    spec = spec_from_file_location(module_name, str(path))
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to import layout embedder from {path}")
     mod = module_from_spec(spec)
+    sys.modules[module_name] = mod
     spec.loader.exec_module(mod)  # type: ignore[arg-type]
     return mod
 
@@ -98,12 +103,12 @@ def _chunk_text(lines: List[str], doc_id: str, page: int, token_limit: int, over
         text = " ".join(chunk)
         sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
         item_id = f"{doc_id}:{page}:c{idx}"
-            item = Item(
-                id=item_id,
-                doc_id=doc_id,
-                page=page,
-                type="body",
-                section_path=["ocr"],
+        item = Item(
+            id=item_id,
+            doc_id=doc_id,
+            page=page,
+            type="body",
+            section_path=["ocr"],
             bbox=None,
             text=text,
             raw_text=text,

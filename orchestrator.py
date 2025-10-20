@@ -372,6 +372,12 @@ class Orchestrator:
             snippet = info.get("snippet")
             if not snippet:
                 continue
+            scores = getattr(snippet, "final_score", {}) or {}
+            equal_raw = scores.get("equal")
+            try:
+                equal_score = float(equal_raw)
+            except Exception:
+                equal_score = float("-inf")
             concepts = info.get("concepts", set()) or {""}
             concept_iter = min(
                 concept_first_found_iter.get(c, max_rounds + 10) for c in concepts
@@ -389,22 +395,29 @@ class Orchestrator:
                     "concept_rank": concept_rank,
                     "alias_priority": alias_priority,
                     "token_count": token_count,
+                    "equal_score": equal_score,
                 }
             )
 
         snippet_infos.sort(
             key=lambda entry: (
-                entry["concept_iter"],
+                -entry["equal_score"],
                 entry["alias_priority"],
+                entry["concept_iter"],
                 entry["concept_rank"],
                 entry["token_count"],
                 entry["id"],
             )
         )
 
+        max_snippets = 20
+        truncated = len(snippet_infos) > max_snippets
+        snippet_infos = snippet_infos[:max_snippets]
+
         kept_snippets: List[BundleSnippet] = [entry["snippet"] for entry in snippet_infos]
         total_tokens = sum(entry["token_count"] for entry in snippet_infos)
-        truncated = False
+        if total_tokens > token_budget:
+            truncated = True
 
         allowed_markers: List[str] = []
         seen_markers: Set[str] = set()

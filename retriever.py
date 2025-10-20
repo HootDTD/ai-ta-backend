@@ -39,6 +39,7 @@ class Hit:
     score_lex: float
     rank_lex: int
     score_fused: float
+    score_equal: Optional[float] = None
 
 
 @dataclass
@@ -84,6 +85,7 @@ _meta_titles: Dict[str, str] | None = None
 _client: OpenAI | None = None
 _store_biases: Dict[str, float] = {}
 _store_meta: Dict[str, Dict[str, Any]] = {}
+_lex_table_map: Dict[int, Tuple[str, ...]] = {}
 
 
 def _float_env(name: str, default: float) -> float:
@@ -315,6 +317,154 @@ def _flag(name: str, default: bool = True) -> bool:
     if val is None:
         return default
     return val.lower() not in {"0", "off", "false", "no"}
+
+
+def _is_fts_table(sql: str | None) -> bool:
+    if not sql:
+        return False
+    upper = sql.upper()
+    return "VIRTUAL TABLE" in upper and "FTS5" in upper
+
+
+def _detect_lex_tables(conn: sqlite3.Connection) -> Tuple[str, ...]:
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT name, sql FROM sqlite_master WHERE type='table'")
+        rows = cur.fetchall()
+    except sqlite3.Error:
+        return ("items",)
+    info = {name: sql for name, sql in rows}
+    tables: List[str] = []
+    if _is_fts_table(info.get("items")):
+        tables.append("items")
+    for cand in ("fts", "items_fts"):
+        if _is_fts_table(info.get(cand)):
+            tables.append(cand)
+    return tuple(tables or ("items",))
+
+
+def _lex_fetch(
+    cur: sqlite3.Cursor, table: str, query: str, limit: int, unlimited: bool
+) -> List[Tuple[str, float]]:
+    sql = (
+        f"SELECT id, bm25({table}) as score FROM {table} "
+        f"WHERE {table} MATCH ? ORDER BY score"
+    )
+    if unlimited:
+        cur.execute(sql, (query,))
+    else:
+        cur.execute(sql + " LIMIT ?", (query, limit))
+    return cur.fetchall()
+
+
+def _compute_equal_scores(snippets: List[Any]) -> None:
+    """Attach equal-weight scores to snippets based on semantic, lexical, and fused values."""
+    if not snippets:
+        return
+
+    sem_vals: List[float] = []
+    lex_vals: List[float] = []
+    fused_vals: List[float] = []
+    for sn in snippets:
+        fs = getattr(sn, "final_score", None) or {}
+        try:
+            sem = fs.get("semantic")
+            if sem is not None:
+                sem_vals.append(float(sem))
+        except Exception:
+            pass
+        try:
+            lex = fs.get("lexical")
+            if lex is not None:
+                lex_vals.append(float(lex))
+        except Exception:
+            pass
+        try:
+            fused = fs.get("fused")
+            if fused is not None:
+                fused_vals.append(float(fused))
+        except Exception:
+            pass
+
+    lex_lo = lex_hi = None
+    lex_vals_stats: List[float] = []
+    if lex_vals:
+        try:
+            lex_lo = float(np.percentile(lex_vals, 5))
+            lex_hi = float(np.percentile(lex_vals, 95))
+        except Exception:
+            lex_lo = lex_hi = None
+        if lex_lo is not None and lex_hi is not None:
+            if lex_lo > lex_hi:
+                lex_lo, lex_hi = lex_hi, lex_lo
+            lex_vals_stats = [min(max(v, lex_lo), lex_hi) for v in lex_vals]
+        else:
+            lex_vals_stats = list(lex_vals)
+
+    sem_mean = float(np.mean(sem_vals)) if sem_vals else 0.0
+    sem_std = float(np.std(sem_vals)) if sem_vals else 0.0
+    lex_mean = float(np.mean(lex_vals_stats)) if lex_vals_stats else 0.0
+    lex_std = float(np.std(lex_vals_stats)) if lex_vals_stats else 0.0
+    fused_mean = float(np.mean(fused_vals)) if fused_vals else 0.0
+    fused_std = float(np.std(fused_vals)) if fused_vals else 0.0
+
+    def _z_score(value: Optional[float], mean: float, std: float) -> Optional[float]:
+        if value is None:
+            return None
+        if std <= 1e-9:
+            return 0.0
+        return (value - mean) / std
+
+    for sn in snippets:
+        fs_obj = getattr(sn, "final_score", None)
+        fs = fs_obj if isinstance(fs_obj, dict) else {}
+        sem_raw = fs.get("semantic")
+        lex_raw = fs.get("lexical")
+        fused_raw = fs.get("fused")
+        sem_z = _z_score(
+            float(sem_raw) if sem_raw is not None else None, sem_mean, sem_std
+        )
+        lex_clip = None
+        if lex_raw is not None:
+            try:
+                lex_val = float(lex_raw)
+                if lex_lo is not None and lex_hi is not None:
+                    lex_val = min(max(lex_val, lex_lo), lex_hi)
+                lex_clip = lex_val
+            except Exception:
+                lex_clip = None
+        lex_z = _z_score(lex_clip, lex_mean, lex_std)
+        fused_z = _z_score(
+            float(fused_raw) if fused_raw is not None else None, fused_mean, fused_std
+        )
+        components = [v for v in (sem_z, lex_z, fused_z) if v is not None]
+        equal = float(np.mean(components)) if components else -1e9
+        if fs.get("equal") is None:
+            fs["equal"] = equal
+        setattr(sn, "final_score", fs)
+
+
+def _compute_hit_equal_scores(hits: List[Hit]) -> None:
+    """Compute equal scores for raw hits prior to snippet trimming."""
+    if not hits:
+        return
+
+    class _HitProxy:
+        __slots__ = ("final_score",)
+
+        def __init__(self, hit: Hit):
+            self.final_score = {
+                "semantic": float(hit.score_sem),
+                "lexical": float(hit.score_lex),
+                "fused": float(hit.score_fused),
+            }
+
+    proxies: List[_HitProxy] = [_HitProxy(hit) for hit in hits]
+    _compute_equal_scores(proxies)
+    for hit, proxy in zip(hits, proxies):
+        fs = getattr(proxy, "final_score", {}) or {}
+        equal = fs.get("equal")
+        hit.score_equal = float(equal) if equal is not None else None
 
 
 def _extract_subject(meta: Dict[str, object] | None) -> str:
@@ -799,7 +949,7 @@ def load_assets(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connecti
     }
     _store_meta[store_key] = meta_info
 
-    global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta, _meta_titles
+    global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta, _meta_titles, _lex_table_map
     _faiss_list = [index]
     _sqlite_conns = [conn]
     _items_dfs = [df]
@@ -807,6 +957,7 @@ def load_assets(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connecti
     _id_to_row = {idx: df.loc[idx] for idx in df.index}
     _meta = meta
     _meta_titles = titles
+    _lex_table_map = {id(conn): _detect_lex_tables(conn)}
 
     subject = _extract_subject(meta)
     if subject:
@@ -893,7 +1044,7 @@ def load_assets_all(
     merged_df = pd.concat(dfs)
     id_map = {idx: merged_df.loc[idx] for idx in merged_df.index}
 
-    global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta, _meta_titles
+    global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta, _meta_titles, _lex_table_map
     _faiss_list = faiss_list
     _sqlite_conns = conns
     _items_dfs = dfs
@@ -901,6 +1052,7 @@ def load_assets_all(
     _id_to_row = id_map
     _meta = meta_ref
     _meta_titles = title_map
+    _lex_table_map = {id(conn): _detect_lex_tables(conn) for conn in conns}
 
     subjects_found: List[str] = []
     for meta in metas:
@@ -1019,21 +1171,16 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
     if fts_q:
         for conn in _sqlite_conns:
             cur = conn.cursor()
-            try:
-                if unlimited:
-                    cur.execute(
-                        "SELECT id, bm25(items) as score FROM items WHERE items MATCH ? ORDER BY score",
-                        (fts_q,),
-                    )
-                    rows = cur.fetchall()
-                else:
-                    cur.execute(
-                        "SELECT id, bm25(items) as score FROM items WHERE items MATCH ? ORDER BY score LIMIT ?",
-                        (fts_q, k_lex),
-                    )
-                    rows = cur.fetchall()
-            except sqlite3.OperationalError:
-                rows = []
+            tables = _lex_table_map.get(id(conn), ("items",))
+            rows: List[Tuple[str, float]] = []
+            for table in tables:
+                try:
+                    rows = _lex_fetch(cur, table, fts_q, k_lex, unlimited)
+                except sqlite3.OperationalError:
+                    rows = []
+                    continue
+                if rows:
+                    break
             for rank, (id_, bm25) in enumerate(rows, start=1):
                 score = -float(bm25)
                 if id_ not in lex_scores or score > lex_scores[id_]:
@@ -1089,6 +1236,7 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
             )
 
     hits.sort(key=lambda h: h.score_fused, reverse=True)
+    _compute_hit_equal_scores(hits)
 
     if _flag("RETRIEVAL_PRF", True) and not _prf and len(hits) < 3:
         terms = _prf_terms(hits)
@@ -1147,6 +1295,7 @@ def batch_lookup_terms(
         "k_sem": k_sem,
         "k_lex": k_lex,
     }
+    marker_equal_map: Dict[str, float] = {}
 
     # Option to request all citations (no truncation). Can also be enabled via env RETRIEVAL_ALL_CITATIONS=1.
     want_all_citations = bool(
@@ -1275,13 +1424,27 @@ def batch_lookup_terms(
                             "semantic": float(h.score_sem),
                             "lexical": float(h.score_lex),
                             "fused": float(h.score_fused),
+                            "equal": float(h.score_equal) if h.score_equal is not None else None,
                         },
                     )
                 )
+                if h.score_equal is not None:
+                    marker_equal_map.setdefault(marker, float(h.score_equal))
                 seen_ids.add(h.id)
                 if len(fallback_snippets) >= fallback_cap:
                     break
             if fallback_snippets:
+                _compute_equal_scores(fallback_snippets)
+                for sn_fb in fallback_snippets:
+                    marker_fb = getattr(sn_fb, "citation_marker", None)
+                    eq_fb = (sn_fb.final_score or {}).get("equal") if sn_fb.final_score else None
+                    if marker_fb and eq_fb is not None:
+                        marker_equal_map[marker_fb] = float(eq_fb)
+                fallback_snippets.sort(
+                    key=lambda sn: (sn.final_score or {}).get("equal", float("-inf")),
+                    reverse=True,
+                )
+                fallback_snippets = fallback_snippets[:20]
                 snippets = fallback_snippets
                 equations, glossary, assumptions, alias_counts = _summarize_snippets(
                     snippets
@@ -1320,6 +1483,8 @@ def batch_lookup_terms(
                     seen_citation_ids.add(h.id)
                     seen_citation_markers.add(marker)
                     citation_markers.append(marker)
+                if h.score_equal is not None:
+                    marker_equal_map.setdefault(marker, float(h.score_equal))
 
         # Also include markers from the packed snippets (kept for compatibility and dedupe).
         for sn in snippets:
@@ -1331,6 +1496,9 @@ def batch_lookup_terms(
                 if marker not in seen_citation_markers:
                     seen_citation_markers.add(marker)
                 citation_markers.append(marker)
+            eq_sn = (sn.final_score or {}).get("equal") if sn.final_score else None
+            if marker and eq_sn is not None:
+                marker_equal_map.setdefault(marker, float(eq_sn))
 
         found_array.append(
             {
@@ -1341,8 +1509,10 @@ def batch_lookup_terms(
                 "glossary": glossary,
                 "aliases_used": alias_counts,
                 "citations": citation_markers,
+                "marker_equal_map": marker_equal_map.copy(),
             }
         )
+    diag_all["marker_equal_map"] = marker_equal_map
     return found_array, not_found, diag_all
 
 
@@ -1428,6 +1598,8 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
                     "lexical": float(hit.score_lex),
                     "fused": float(hit.score_fused),
                 }
+                if hit.score_equal is not None:
+                    score_payload["equal"] = float(hit.score_equal)
             else:
                 score_payload = {
                     "semantic": 0.0,
@@ -1517,63 +1689,7 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
     if filtered_snippets:
         snippets = filtered_snippets
 
-    # Equal-weight normalization across semantic, lexical, and fused scores
-    sem_vals = [
-        float(sn.final_score["semantic"])
-        for sn in snippets
-        if sn.final_score and "semantic" in sn.final_score
-    ]
-    lex_vals = [
-        float(sn.final_score["lexical"])
-        for sn in snippets
-        if sn.final_score and "lexical" in sn.final_score
-    ]
-    fused_vals = [
-        float(sn.final_score["fused"])
-        for sn in snippets
-        if sn.final_score and "fused" in sn.final_score
-    ]
-
-    lex_lo = lex_hi = None
-    lex_vals_stats: List[float] = []
-    if lex_vals:
-        lex_lo = float(np.percentile(lex_vals, 5))
-        lex_hi = float(np.percentile(lex_vals, 95))
-        if lex_lo > lex_hi:
-            lex_lo, lex_hi = lex_hi, lex_lo
-        lex_vals_stats = [min(max(v, lex_lo), lex_hi) for v in lex_vals]
-
-    sem_mean = float(np.mean(sem_vals)) if sem_vals else 0.0
-    sem_std = float(np.std(sem_vals)) if sem_vals else 0.0
-    lex_mean = float(np.mean(lex_vals_stats)) if lex_vals_stats else 0.0
-    lex_std = float(np.std(lex_vals_stats)) if lex_vals_stats else 0.0
-    fused_mean = float(np.mean(fused_vals)) if fused_vals else 0.0
-    fused_std = float(np.std(fused_vals)) if fused_vals else 0.0
-
-    def _z_score(value: Optional[float], mean: float, std: float) -> Optional[float]:
-        if value is None:
-            return None
-        if std <= 1e-9:
-            return 0.0
-        return (value - mean) / std
-
-    for sn in snippets:
-        fs = sn.final_score or {}
-        sem_raw = fs.get("semantic")
-        lex_raw = fs.get("lexical")
-        fused_raw = fs.get("fused")
-        sem_z = _z_score(sem_raw, sem_mean, sem_std)
-        lex_clip = None
-        if lex_raw is not None:
-            lex_clip = float(lex_raw)
-            if lex_lo is not None and lex_hi is not None:
-                lex_clip = min(max(lex_clip, lex_lo), lex_hi)
-        lex_z = _z_score(lex_clip, lex_mean, lex_std)
-        fused_z = _z_score(fused_raw, fused_mean, fused_std)
-        components = [v for v in (sem_z, lex_z, fused_z) if v is not None]
-        equal = float(np.mean(components)) if components else -1e9
-        fs["equal"] = equal
-        sn.final_score = fs
+    _compute_equal_scores(snippets)
 
     scored_snippets = [sn for sn in snippets if (sn.final_score or {}).get("equal") is not None]
     positive_snippets = [
@@ -1716,6 +1832,29 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
     loaded_indexes, skipped_indexes = _prepare_indexes(doc_sets)
 
     hits, diag = search(question, k_sem=k_sem, k_lex=k_lex)
+
+    marker_equal_map: Dict[str, float] = {}
+    try:
+        label_for_hits = get_citation_label()
+    except Exception:
+        label_for_hits = "Textbook"
+    for hit in hits:
+        score_equal = getattr(hit, "score_equal", None)
+        if score_equal is None:
+            continue
+        try:
+            equal_val = float(score_equal)
+        except Exception:
+            continue
+        row = _id_to_row.get(hit.id) if _id_to_row else None
+        try:
+            page = int(row.get("page", 0)) if row is not None else 0
+        except Exception:
+            page = 0
+        marker = f"[{label_for_hits}, p. {page if page > 0 else '?'}]"
+        existing = marker_equal_map.get(marker)
+        if existing is None or equal_val > existing:
+            marker_equal_map[marker] = equal_val
     if WIRE:
         sem = diag.get("hit_count_sem", 0)
         lex = diag.get("hit_count_lex", 0)
@@ -1727,17 +1866,36 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
     ctx = pack_context(hits, token_budget=token_budget)
 
     snippets = _context_to_bundle_snippets(ctx)
+    for sn in snippets:
+        marker = getattr(sn, "citation_marker", None)
+        eq_val = (sn.final_score or {}).get("equal") if sn.final_score else None
+        if marker and eq_val is not None:
+            try:
+                eq_float = float(eq_val)
+            except Exception:
+                continue
+            existing = marker_equal_map.get(marker)
+            if existing is None or eq_float > existing:
+                marker_equal_map[marker] = eq_float
     equations, glossary, assumptions, alias_counts = _summarize_snippets(snippets)
 
     allowed_markers: List[str] = []
-    allowed_seen: Set[str] = set()
-    for sn in snippets:
-        marker = getattr(sn, "citation_marker", None)
-        if isinstance(marker, str):
-            cleaned = marker.strip()
-            if cleaned and cleaned not in allowed_seen:
-                allowed_seen.add(cleaned)
-                allowed_markers.append(cleaned)
+    if marker_equal_map:
+        allowed_markers = [
+            marker
+            for marker, _ in sorted(
+                marker_equal_map.items(), key=lambda item: item[1], reverse=True
+            )
+        ]
+    else:
+        allowed_seen: Set[str] = set()
+        for sn in snippets:
+            marker = getattr(sn, "citation_marker", None)
+            if isinstance(marker, str):
+                cleaned = marker.strip()
+                if cleaned and cleaned not in allowed_seen:
+                    allowed_seen.add(cleaned)
+                    allowed_markers.append(cleaned)
 
     coverage_gaps: List[str] = []
     refinement: List[str] = []
@@ -1800,6 +1958,7 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
         not_found_terms=list(diag.get("missing_terms", [])) if isinstance(diag, dict) else [],
         attempted_terms=[question] if question else [],
         subject=get_subject_name(),
+        marker_equal_map=marker_equal_map,
     )
     if WIRE:
         print(f"[Indexer AI -> Main AI] snippets={len(bundle.snippets)}", flush=True)
