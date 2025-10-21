@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sqlite3
+from difflib import SequenceMatcher
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Set, Optional
@@ -1122,6 +1123,22 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
             fts_q_parts.append(part)
     fts_q = " OR ".join(fts_q_parts)
 
+    fallback_terms: Set[str] = set()
+    for term in fts_tokens_base:
+        cleaned = term.strip().lower()
+        if len(cleaned) > 1:
+            fallback_terms.add(cleaned)
+            if len(cleaned) > 3 and cleaned.endswith("s"):
+                fallback_terms.add(cleaned[:-1])
+    if alias_list:
+        for alias in alias_list:
+            for frag in re.findall(r"[a-z0-9]+", alias.lower()):
+                if len(frag) > 1:
+                    fallback_terms.add(frag)
+                    if len(frag) > 3 and frag.endswith("s"):
+                        fallback_terms.add(frag[:-1])
+    fallback_terms = {t for t in fallback_terms if t}
+
     if _flag("RETRIEVAL_PROXIMITY", True):
         if len(tokens) >= 2:
             window = int(os.getenv("RETRIEVAL_PROXIMITY_WINDOW", "3"))
@@ -1186,6 +1203,56 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
                 if id_ not in lex_scores or score > lex_scores[id_]:
                     lex_scores[id_] = score
                     lex_ranks[id_] = rank
+
+    if fallback_terms and sem_scores:
+        fallback_term_list = sorted(fallback_terms)
+        denom = float(len(fallback_term_list)) if fallback_term_list else 1.0
+        token_cache: Dict[str, Set[str]] = {}
+        for id_ in sem_scores.keys():
+            if id_ in lex_scores:
+                continue
+            row = _id_to_row.get(id_)
+            if row is None:
+                continue
+            tokens_cached = token_cache.get(id_)
+            if tokens_cached is None:
+                text = (row.get("text") or "").lower()
+                base_tokens = set(re.findall(r"[a-z0-9]+", text))
+                expanded_tokens = set()
+                for tok in base_tokens:
+                    if not tok:
+                        continue
+                    expanded_tokens.add(tok)
+                    if len(tok) > 3 and tok.endswith("s"):
+                        expanded_tokens.add(tok[:-1])
+                token_cache[id_] = expanded_tokens
+                tokens_cached = expanded_tokens
+            direct_matches = tokens_cached & fallback_terms
+            match_count = len(direct_matches)
+            if match_count < len(fallback_term_list):
+                matched_tokens = set(direct_matches)
+                for q_term in fallback_term_list:
+                    if q_term in direct_matches:
+                        continue
+                    best_token = None
+                    best_ratio = 0.0
+                    for tok in tokens_cached:
+                        if tok in matched_tokens:
+                            continue
+                        ratio = SequenceMatcher(None, q_term, tok).ratio()
+                        if ratio > best_ratio:
+                            best_ratio = ratio
+                            best_token = tok
+                    if best_ratio >= 0.82 and best_token is not None:
+                        matched_tokens.add(best_token)
+                        match_count += 1
+            if match_count <= 0:
+                continue
+            score = match_count / denom
+            if score <= 0:
+                continue
+            lex_scores[id_] = float(score)
+            lex_ranks[id_] = k_lex + max(1, match_count)
 
     ids = list({*sem_scores.keys(), *lex_scores.keys()})
     rrf_scores = []

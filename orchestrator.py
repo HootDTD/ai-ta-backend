@@ -29,7 +29,7 @@ from .main_ai import (
     filter_keywords_by_subject,
     propose_synonyms,
 )
-from .retriever import batch_lookup_terms, _summarize_snippets
+from .retriever import batch_lookup_terms, _summarize_snippets, _compute_equal_scores
 
 
 WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0","off","false","no"}
@@ -256,6 +256,8 @@ class Orchestrator:
         all_citation_markers: List[str] = []
         all_citation_seen: Set[str] = set()
 
+        allowed_snippet_reasons = {"hit", "definition", "neighbor"}
+
         for result in found_array:
             term_label = result.get("term", "")
             key = term_label.lower()
@@ -329,6 +331,9 @@ class Orchestrator:
             for sn in result.get("snippets", []):
                 if not sn or not getattr(sn, "id", None):
                     continue
+                reason = (getattr(sn, "why", "") or "").lower()
+                if reason not in allowed_snippet_reasons:
+                    continue
                 existing = snippet_records.get(sn.id)
                 text_len = len(getattr(sn, "text", "") or "")
                 alias_hit_for_term = False
@@ -368,9 +373,18 @@ class Orchestrator:
         token_budget = int(options.get("token_budget", 6000))
         enc = tiktoken.get_encoding("cl100k_base")
         snippet_infos: List[Dict[str, Any]] = []
+        allowed_snippets = [
+            info.get("snippet")
+            for info in snippet_records.values()
+            if getattr(info.get("snippet"), "why", "").lower() in allowed_snippet_reasons
+        ]
+        if allowed_snippets:
+            _compute_equal_scores(allowed_snippets)
         for sn_id, info in snippet_records.items():
             snippet = info.get("snippet")
             if not snippet:
+                continue
+            if (getattr(snippet, "why", "") or "").lower() not in allowed_snippet_reasons:
                 continue
             scores = getattr(snippet, "final_score", {}) or {}
             equal_raw = scores.get("equal")
@@ -591,7 +605,6 @@ class Orchestrator:
             steps_text = str(steps_obj)
 
         paragraphs = [p for p in steps_text.split("\n") if p.strip()]
-        has_digit_para = False
         for idx, para in enumerate(paragraphs, start=1):
             stripped = para.strip()
             if stripped.startswith("```"):
@@ -599,8 +612,6 @@ class Orchestrator:
             letters = re.findall(r"[A-Za-z]", stripped)
             if len(letters) < 5:  # treat as math-heavy; no citation needed
                 continue
-            if re.search(r"\d", para):
-                has_digit_para = True
             if not CITATION_PATTERN.search(para):
                 issues.append(f"missing citation in paragraph {idx}")
         asked_keys = getattr(parsed, "asked_output_keys", []) or []
@@ -617,12 +628,12 @@ class Orchestrator:
                 return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
 
             asked_keys = [_slug(a) for a in asked_list]
-        # Normalize final answers to a mapping
-        final_answers_obj = getattr(sol, "final_answers", {}) or {}
+        # Normalize final answers to a mapping (conceptual mode keeps this empty)
+        final_answers_obj = getattr(sol, "final_answers", {})
         if isinstance(final_answers_obj, dict):
             final_answers = final_answers_obj
         elif isinstance(final_answers_obj, list):
-            final_answers: Dict[str, object] = {}
+            final_answers = {}
             auto_idx = 0
             for entry in final_answers_obj:
                 key = None
@@ -639,35 +650,15 @@ class Orchestrator:
                     key = str(auto_idx)
                     auto_idx += 1
                 final_answers[key] = value
-        else:
+        elif final_answers_obj:
             final_answers = {"answer": final_answers_obj}
+        else:
+            final_answers = {}
 
-        for key in asked_keys:
-            if key not in final_answers:
-                issues.append(f"answer lacks {key}")
-
-        has_numeric = False
-        for v in final_answers.values():
-            if isinstance(v, (int, float)):
-                has_numeric = True
-                break
-            if isinstance(v, str) and re.search(r"\d", v):
-                has_numeric = True
-                break
-        if not has_numeric:
-            issues.append("final_answers has no numeric values")
-        if not final_answers and not has_digit_para:
-            issues.append("no quantitative results produced")
-
-        if ureg:
-            for k, v in final_answers.items():
-                # Only enforce unit parsing when the model emitted a string
-                # with units. Pure numbers are treated as unitless.
-                if isinstance(v, str):
-                    try:
-                        ureg.Quantity(v)
-                    except Exception:
-                        issues.append(f"unparsable units for {k}")
+        if final_answers and asked_keys:
+            for key in asked_keys:
+                if key not in final_answers:
+                    issues.append(f"answer lacks {key}")
 
         bundle_eqs = {self._normalize_eq(e["eq_text"]) for e in bundle.equations}
         eqs_raw = getattr(sol, "equations_used", [])

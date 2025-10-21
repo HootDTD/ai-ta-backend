@@ -378,13 +378,12 @@ def solve_with_bundle(
 
     client = _client()
     system = (
-        "You are a strict reasoning agent. Use ONLY facts in the Research Bundle. "
-        "No browsing or outside knowledge. Every non-math statement must cite a bundle marker like [Textbook, p. X]. "
-        "If information is missing, reply exactly 'Not found in the approved materials.' "
-        "Any code must be pure Python using only np, sp, or ureg and must print results. "
-        "You must include final_answers as a JSON object whose keys exactly match the asked outputs (e.g., v_exit, Q). "
-        "Each value must be a number with SI units as a parsable string (e.g., '9.90 m/s'). "
-        "If math is needed, include a code field (pure Python using np/sp/ureg) that prints the results."
+        "You are a conceptual subject-matter tutor. Use ONLY facts in the Research Bundle. "
+        "No browsing or outside knowledge. Every substantive statement must cite a bundle marker like [Textbook, p. X]. "
+        "Do NOT perform numeric calculations, approximations, or substitutions. "
+        "Do NOT write or request executable code. "
+        "Explain theory, governing principles, assumptions, and symbolic relationships only. "
+        "If information is missing, reply exactly 'Not found in the approved materials.'"
     )
     proof_bundle = _load_proof_bundle()
     proof_json: Optional[str] = None
@@ -454,8 +453,19 @@ def solve_with_bundle(
     if proof_json:
         payload_lines.append(f"FullProofBundle: {proof_json}")
     payload_lines.append(
-        "Return JSON with keys: steps, final_answers, equations_used, assumptions, code (optional)."
+        "Return JSON with keys: steps, final_answers, equations_used, assumptions."
     )
+    payload_lines.append(
+        "- steps: conceptual explanation of the method and underlying principles. No numeric computations."
+    )
+    payload_lines.append(
+        "- final_answers: MUST be an empty object {} because you are not computing results."
+    )
+    payload_lines.append(
+        "- equations_used: list of symbolic equations (variables/constants only, no numbers substituted)."
+    )
+    payload_lines.append("- assumptions: list of textual assumptions or conditions.")
+    payload_lines.append("Do NOT include any code field; do NOT run or describe executable code.")
     user_base = "\n".join(payload_lines)
     if hint:
         user_base += f"\nHint: {hint}"
@@ -549,20 +559,6 @@ def solve_with_bundle(
         print("Wrote main model inputs to debug/main_ai_system.txt and debug/main_ai_user.txt")
         print(f"Context preview: debug/main_ai_context_preview.txt (snippets={len(bundle.snippets)})")
 
-    # --- NEW: tell the model the exact keys to use in final_answers ---
-    def _slug(s: str) -> str:
-        return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
-
-    asked_keys = list(parsed_task.asked_output_keys or [])
-    if not asked_keys:
-        asked_keys = [_slug(x) for x in (parsed_task.asked_outputs or []) if isinstance(x, str) and x.strip()]
-    if asked_keys:
-        key_str = ", ".join(asked_keys)
-        user_base += (
-            "\nRequired final_answers keys (EXACT): "
-            f"[{key_str}]. Return numeric values with SI units."
-        )
-
     _maybe_debug_dump(system, user_base, bundle, proof_bundle)
 
     def _chat(msgs: List[dict]) -> dict:
@@ -583,45 +579,33 @@ def solve_with_bundle(
         {"role": "user", "content": user_base},
     ])
 
-    code_out = None
-    code_hash = None
-    vars_created: List[str] = []
-    code = data.get("code")
-    if isinstance(code, str):
+    raw_steps = data.get("steps", "")
+    if not isinstance(raw_steps, str):
         try:
-            res = run_python(code)
-            code_out = res.stdout
-            code_hash = res.code_hash
-            vars_created = res.vars_created
-        except Exception as exc:
-            err = str(exc)
-            data = _chat(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_base},
-                    {"role": "assistant", "content": json.dumps(data)},
-                    {"role": "user", "content": f"Code execution error: {err}"},
-                ]
-            )
-            code = data.get("code")
-            if isinstance(code, str):
-                try:
-                    res = run_python(code)
-                    code_out = res.stdout
-                    code_hash = res.code_hash
-                    vars_created = res.vars_created
-                except Exception as exc2:  # pragma: no cover - best effort
-                    code_out = f"error: {exc2}"
+            raw_steps = json.dumps(raw_steps, ensure_ascii=False)
+        except Exception:
+            raw_steps = str(raw_steps)
+
+    # Enforce conceptual-only mode regardless of model output.
+    final_answers_output: Dict[str, Any] = {}
+    equations_used = data.get("equations_used", [])
+    assumptions = data.get("assumptions", [])
+
+    # Ensure structured fields are in expected shapes.
+    if not isinstance(equations_used, list):
+        equations_used = [equations_used] if equations_used else []
+    if not isinstance(assumptions, list):
+        assumptions = [assumptions] if assumptions else []
 
     return ProposedSolution(
-        steps=data.get("steps", ""),
-        final_answers=data.get("final_answers", {}),
-        equations_used=data.get("equations_used", []),
-        assumptions=data.get("assumptions", []),
-        code=code,
-        code_output=code_out,
-        code_hash=code_hash,
-        vars_created=vars_created,
+        steps=raw_steps,
+        final_answers=final_answers_output,
+        equations_used=equations_used,
+        assumptions=assumptions,
+        code=None,
+        code_output=None,
+        code_hash=None,
+        vars_created=[],
     )
 
 
@@ -769,6 +753,153 @@ def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAn
         final_text = final_text.rstrip() + "\n\nCitations: " + ", ".join(used_markers)
 
     return FinalAnswer(text=final_text, citations=used_markers)
+
+
+def _write_proof_citations(
+    bundle: ResearchBundle, allowed_markers: List[str], used_markers: List[str]
+) -> None:
+    """Persist a lightweight JSON payload for downstream proof review tooling."""
+
+    try:
+        question = getattr(bundle.metadata, "question", "")
+    except Exception:
+        question = ""
+    dedup_allowed = []
+    seen_allowed: set[str] = set()
+    for marker in allowed_markers:
+        if not isinstance(marker, str):
+            continue
+        cleaned = marker.strip()
+        if cleaned and cleaned not in seen_allowed:
+            seen_allowed.add(cleaned)
+            dedup_allowed.append(cleaned)
+    dedup_used = []
+    seen_used: set[str] = set()
+    for marker in used_markers:
+        if not isinstance(marker, str):
+            continue
+        cleaned = marker.strip()
+        if cleaned and cleaned not in seen_used:
+            seen_used.add(cleaned)
+            dedup_used.append(cleaned)
+    snippet_rows: List[Dict[str, Any]] = []
+    for sn in bundle.snippets:
+        snippet_rows.append(
+            {
+                "id": getattr(sn, "id", ""),
+                "type": getattr(sn, "type", ""),
+                "page": getattr(sn, "page", None),
+                "section_path": getattr(sn, "section_path", ""),
+                "text": getattr(sn, "text", ""),
+                "figure_id": getattr(sn, "figure_id", None),
+                "why": getattr(sn, "why", ""),
+            }
+        )
+    payload = {
+        "question": question,
+        "allowed_markers": dedup_allowed,
+        "used_markers": dedup_used,
+        "used_ids": list(getattr(bundle, "used_ids", []) or []),
+        "snippets": snippet_rows,
+    }
+    try:
+        Path("proofhoot.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        # Best-effort diagnostic file; ignore failures so core execution continues.
+        pass
+
+
+def _write_citations_file(
+    bundle: ResearchBundle, allowed_markers: List[str], used_markers: List[str]
+) -> None:
+    """Write a detailed citations snapshot for tooling or manual inspection."""
+
+    equal_map = getattr(bundle, "marker_equal_map", {}) or {}
+    marker_rows: List[Dict[str, Any]] = []
+    if isinstance(equal_map, dict) and equal_map:
+        for marker, score in sorted(equal_map.items(), key=lambda item: item[1], reverse=True):
+            if not isinstance(marker, str):
+                continue
+            cleaned = marker.strip()
+            if not cleaned:
+                continue
+            try:
+                marker_rows.append({"marker": cleaned, "equal": float(score)})
+            except Exception:
+                marker_rows.append({"marker": cleaned})
+    else:
+        seen: set[str] = set()
+        for marker in allowed_markers:
+            if not isinstance(marker, str):
+                continue
+            cleaned = marker.strip()
+            if cleaned and cleaned not in seen:
+                seen.add(cleaned)
+                marker_rows.append({"marker": cleaned})
+    dedup_used = []
+    seen_used: set[str] = set()
+    for marker in used_markers:
+        if not isinstance(marker, str):
+            continue
+        cleaned = marker.strip()
+        if cleaned and cleaned not in seen_used:
+            seen_used.add(cleaned)
+            dedup_used.append(cleaned)
+    snippets_summary: List[Dict[str, Any]] = []
+    for sn in bundle.snippets:
+        record: Dict[str, Any] = {
+            "id": getattr(sn, "id", ""),
+            "marker": getattr(sn, "citation_marker", ""),
+            "page": getattr(sn, "page", None),
+            "why": getattr(sn, "why", ""),
+            "source_path": getattr(sn, "source_path", ""),
+        }
+        final_score = getattr(sn, "final_score", None)
+        if isinstance(final_score, dict) and final_score:
+            record["final_score"] = final_score
+        snippets_summary.append(record)
+    metadata = getattr(bundle, "metadata", None)
+    doc_sets: List[str] = []
+    iteration_trace: List[Dict[str, Any]] = []
+    not_found_terms: List[str] = []
+    attempted_terms: List[str] = []
+    if metadata is not None:
+        doc_sets = list(getattr(metadata, "doc_sets", []) or [])
+        iteration_trace = list(getattr(metadata, "iteration_trace", []) or [])
+        not_found_terms = list(getattr(metadata, "not_found_terms", []) or [])
+        attempted_terms = list(getattr(metadata, "attempted_terms", []) or [])
+    bundle_not_found = list(getattr(bundle, "not_found_terms", []) or [])
+    bundle_attempted = list(getattr(bundle, "attempted_terms", []) or [])
+    if bundle_not_found:
+        for term in bundle_not_found:
+            if term not in not_found_terms:
+                not_found_terms.append(term)
+    if bundle_attempted:
+        for term in bundle_attempted:
+            if term not in attempted_terms:
+                attempted_terms.append(term)
+    question = ""
+    if metadata is not None:
+        question = getattr(metadata, "question", "") or ""
+    payload = {
+        "question": question,
+        "doc_sets": doc_sets,
+        "allowed_markers": marker_rows,
+        "used_markers": dedup_used,
+        "used_ids": list(getattr(bundle, "used_ids", []) or []),
+        "iteration_trace": iteration_trace,
+        "not_found_terms": not_found_terms,
+        "attempted_terms": attempted_terms,
+        "snippets": snippets_summary,
+    }
+    try:
+        Path("citations.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        pass
 
 
 __all__ = [
