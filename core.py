@@ -255,7 +255,7 @@ def answer_question(
     _ensure_assets(doc_sets, subject)
 
     query = normalize_query(combined_q)
-    hits, _ = search(query)
+    hits, _ = search(query, raw_query=combined_q)
     ctx = pack_context(hits)
     ans = retriever_answer(combined_q, ctx)
     cites = render_citations(ans)

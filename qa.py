@@ -46,7 +46,7 @@ def cmd_search(args: argparse.Namespace) -> None:
     except (FileNotFoundError, RuntimeError) as e:
         print(str(e))
         return
-    hits, _ = search(args.query)
+    hits, _ = search(args.query, raw_query=args.query)
     for h in hits[:12]:
         print(f"{h.id}\t{h.score_fused:.3f}\t{h.score_sem:.3f}\t{h.score_lex:.3f}")
 

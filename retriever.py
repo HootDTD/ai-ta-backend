@@ -26,6 +26,7 @@ from .config import (
 from .contracts import ResearchBundle, BundleSnippet, ParsedTask, ResearchMetadata
 from .knowledge import KnowledgeManager
 from .citations.formatter import build_citation_info, format_citations
+from .main_ai import normalize_query
 
 WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0","off","false","no"}
 
@@ -356,6 +357,14 @@ def _lex_fetch(
     else:
         cur.execute(sql + " LIMIT ?", (query, limit))
     return cur.fetchall()
+
+
+def _sanitize_lookup_term(term: Any) -> str:
+    """Normalize a lookup term so lexical/semantic search see a cleaned string."""
+    if term is None:
+        return ""
+    sanitized = normalize_query(str(term))
+    return sanitized.strip()
 
 
 def _compute_equal_scores(snippets: List[Any]) -> None:
@@ -800,15 +809,39 @@ def _words_within_window(text: str, words: List[str], window: int = 60) -> bool:
 
 
 def _has_explicit_evidence(
-    snippets: List[BundleSnippet], term: str, diag_entry: Optional[Dict[str, Any]] = None
+    snippets: List[BundleSnippet],
+    term: str,
+    diag_entry: Optional[Dict[str, Any]] = None,
+    *,
+    original_term: Optional[str] = None,
 ) -> bool:
     """Return ``True`` if snippets explicitly reference ``term`` or its aliases."""
 
-    term_lower = term.strip().lower()
-    if not term_lower:
+    def _add_variants(candidate: Optional[str], bucket: Set[str]) -> None:
+        if not candidate:
+            return
+        raw = str(candidate).strip()
+        if not raw:
+            return
+        bucket.add(raw.lower())
+        sanitized = _sanitize_lookup_term(raw)
+        if sanitized:
+            bucket.add(sanitized)
+
+    variants: Set[str] = set()
+    _add_variants(term, variants)
+    _add_variants(original_term, variants)
+    if diag_entry:
+        _add_variants(diag_entry.get("original_term"), variants)
+        _add_variants(diag_entry.get("lookup_term"), variants)
+
+    variants = {v for v in variants if v}
+    if not variants:
         return False
 
-    alias_norms: Set[str] = set(_term_to_aliases.get(term_lower, set()))
+    alias_norms: Set[str] = set()
+    for variant in variants:
+        alias_norms.update(_term_to_aliases.get(variant, set()))
     if diag_entry:
         for cand in diag_entry.get("alias_hits", []):
             alias_norms.add(_norm_alias(cand))
@@ -817,28 +850,44 @@ def _has_explicit_evidence(
     if diag_entry:
         raw = diag_entry.get("expansion_candidates") or []
         if isinstance(raw, dict):
-            expansions.extend(raw.get(term_lower, []))
+            for variant in variants:
+                expansions.extend(raw.get(variant, []))
         elif isinstance(raw, list):
             expansions.extend(raw)
 
-    term_norm = _norm_alias(term_lower.replace(" ", "")) if term_lower else ""
-    words = [w for w in _symbol_tokens(term_lower) if len(w) > 1]
+    term_norms: Set[str] = set()
+    for variant in variants:
+        stripped = variant.replace(" ", "")
+        if stripped:
+            term_norms.add(_norm_alias(stripped))
+
+    word_sets: List[List[str]] = []
+    for variant in variants:
+        tokens = [w for w in _symbol_tokens(variant) if len(w) > 1]
+        if tokens:
+            word_sets.append(tokens)
 
     window_chars = int(os.getenv("RETRIEVAL_PROXIMITY_CHARS", "60"))
 
     for sn in snippets:
         text = sn.text or ""
         text_lower = text.lower()
-        if term_lower and term_lower in text_lower:
-            return True
-        if len(words) == 1 and words[0] in text_lower:
-            return True
-        if len(words) > 1 and _words_within_window(text_lower, words, window=window_chars):
-            return True
+        text_norm = normalize_query(text)
+        text_variants = {text_lower}
+        if text_norm:
+            text_variants.add(text_norm)
+
+        for candidate in variants:
+            if candidate and any(candidate in tv for tv in text_variants):
+                return True
+
+        for words in word_sets:
+            if any(_words_within_window(tv, words, window=window_chars) for tv in text_variants):
+                return True
 
         tokens = _symbol_tokens(text)
         norm_tokens = {_norm_alias(tok) for tok in tokens}
-        if term_norm and term_norm in norm_tokens:
+        if term_norms.intersection(norm_tokens):
             return True
         if alias_norms.intersection(norm_tokens):
             return True
@@ -846,10 +895,19 @@ def _has_explicit_evidence(
             if not isinstance(cand, str):
                 continue
             cand_lower = cand.lower()
-            if cand_lower and cand_lower in text_lower:
+            cand_variants = {cand_lower}
+            cand_norm_text = normalize_query(cand_lower)
+            if cand_norm_text:
+                cand_variants.add(cand_norm_text)
+            if any(cv and any(cv in tv for tv in text_variants) for cv in cand_variants):
                 return True
-            cand_norm = _norm_alias(cand_lower.replace(" ", ""))
-            if cand_norm in norm_tokens:
+            for cv in cand_variants:
+                words_exp = [w for w in _symbol_tokens(cv) if len(w) > 1]
+                if words_exp and any(
+                    _words_within_window(tv, words_exp, window=window_chars) for tv in text_variants
+                ):
+                    return True
+            if any(_norm_alias(cv.replace(" ", "")) in norm_tokens for cv in cand_variants):
                 return True
     return False
 
@@ -1085,29 +1143,68 @@ def load_assets_all(
 # ---------------------------------------------------------
 
 
-def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[Hit]:
+def _run_search(
+    query: str,
+    k_sem: int,
+    k_lex: int,
+    _prf: bool = False,
+    *,
+    raw_query: Optional[str] = None,
+) -> List[Hit]:
     _require_loaded()
     client = _get_client()
     model = _meta["model"]
     dim = int(_meta["dimensions"])
     unlimited = _flag("RETRIEVAL_NO_FILTER", False)
 
+    # Build query variants incorporating raw and sanitized forms
+    query_variants: Set[str] = set()
+
+    def _collect_variant(value: Optional[str]) -> None:
+        if not value:
+            return
+        raw = str(value).strip()
+        if not raw:
+            return
+        query_variants.add(raw)
+        query_variants.add(raw.lower())
+        sanitized = _sanitize_lookup_term(raw)
+        if sanitized:
+            query_variants.add(sanitized)
+
+    _collect_variant(query)
+    _collect_variant(raw_query)
+    query_variants = {variant for variant in query_variants if variant}
+
     # alias expansion
-    tokens = _symbol_tokens(query)
+    alias_tokens: List[str] = []
+    for variant in query_variants:
+        alias_tokens.extend(_symbol_tokens(variant))
     aliases: set[str] = set()
     if _flag("RETRIEVAL_ALIAS_MINER", True):
-        for t in tokens:
+        for t in alias_tokens:
             aliases.update(_term_to_aliases.get(t.lower(), set()))
     alias_list = sorted(aliases)
 
+    base_variant = _sanitize_lookup_term(raw_query) if raw_query else query
+    if not base_variant:
+        base_variant = query
+    tokens = _symbol_tokens(base_variant)
+
     _last_expansion_plan.clear()
-    base_count = _fts_count(_fts_safe_query(query))
-    _last_expansion_plan.append({"type": "query", "terms": [query], "hit_count": base_count})
+    base_count = _fts_count(_fts_safe_query(base_variant))
+    _last_expansion_plan.append({"type": "query", "terms": [base_variant], "hit_count": base_count})
     for a in alias_list:
         _last_expansion_plan.append({"type": "alias", "terms": [a], "hit_count": _fts_count(a)})
 
-    fts_tokens_base = [t for t in re.findall(r"[a-z0-9\-]+", query.lower()) if t not in _STOPWORDS and len(t) > 1]
-    fts_tokens = sorted(set(fts_tokens_base + list(alias_list)))
+    fts_tokens_base: Set[str] = set()
+    for variant in query_variants:
+        fts_tokens_base.update(
+            t
+            for t in re.findall(r"[a-z0-9\-]+", variant.lower())
+            if t not in _STOPWORDS and len(t) > 1
+        )
+    fts_tokens = sorted(set(fts_tokens_base | set(alias_list)))
     phrase_terms = [t for t in fts_tokens_base if len(t) > 1]
     fts_augmented = list(fts_tokens)
     for t in fts_tokens_base:
@@ -1170,8 +1267,9 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
                         ntotal = len(df)
                     except Exception:
                         ntotal = None
-                if ntotal and ntotal > k_this:
-                    k_this = ntotal
+                max_cap = int(os.getenv("RETRIEVAL_NO_FILTER_MAX_K", "200"))
+                if ntotal:
+                    k_this = min(ntotal, max_cap if max_cap > 0 else ntotal)
             scores, idxs = index.search(q_vec.reshape(1, -1), k_this)
             scores = scores[0]
             idxs = idxs[0]
@@ -1248,10 +1346,15 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
                         match_count += 1
             if match_count <= 0:
                 continue
-            score = match_count / denom
-            if score <= 0:
+            coverage = match_count / denom
+            if coverage <= 0:
                 continue
-            lex_scores[id_] = float(score)
+            text_body = re.sub(r"\s+", " ", (row.get("text") or "").lower())
+            ratio = SequenceMatcher(None, query, text_body).ratio()
+            lexical_score = float(coverage * (0.4 + 0.6 * ratio))
+            if lexical_score <= 0:
+                continue
+            lex_scores[id_] = lexical_score
             lex_ranks[id_] = k_lex + max(1, match_count)
 
     ids = list({*sem_scores.keys(), *lex_scores.keys()})
@@ -1314,15 +1417,22 @@ def _run_search(query: str, k_sem: int, k_lex: int, _prf: bool = False) -> List[
 
 
 def search_multi(query: str, k_sem: int = 30, k_lex: int = 30) -> List[Hit]:
-    hits, _ = search(query, k_sem, k_lex)
+    hits, _ = search(query, k_sem, k_lex, raw_query=query)
     return hits
 
 
-def search(query: str, k_sem: int = 30, k_lex: int = 30) -> Tuple[List[Hit], Dict[str, Any]]:
+def search(
+    query: str,
+    k_sem: int = 30,
+    k_lex: int = 30,
+    *,
+    raw_query: Optional[str] = None,
+) -> Tuple[List[Hit], Dict[str, Any]]:
     """Run semantic+lexical search returning hits and diagnostics."""
 
-    diag = _analyze_query(query)
-    hits = _run_search(query, k_sem, k_lex)
+    base_for_diag = raw_query or query
+    diag = _analyze_query(base_for_diag)
+    hits = _run_search(query, k_sem, k_lex, raw_query=raw_query)
     hit_count_sem = sum(1 for h in hits if h.score_sem > 0)
     hit_count_lex = sum(1 for h in hits if h.score_lex > 0)
     diag.update({"hit_count_sem": hit_count_sem, "hit_count_lex": hit_count_lex})
@@ -1364,24 +1474,33 @@ def batch_lookup_terms(
     }
     marker_equal_map: Dict[str, float] = {}
 
-    # Option to request all citations (no truncation). Can also be enabled via env RETRIEVAL_ALL_CITATIONS=1.
-    want_all_citations = bool(
-        (options or {}).get("all_citations", True)
-        or (os.getenv("RETRIEVAL_ALL_CITATIONS", "").lower() not in {"0", "off", "false", "no"})
-    )
+    all_citations_opt = (options or {}).get("all_citations") if options is not None else None
+    env_all = os.getenv("RETRIEVAL_ALL_CITATIONS", "")
+    env_all_enabled = env_all.lower() in {"1", "true", "yes", "on"}
+    if all_citations_opt is None:
+        want_all_citations = env_all_enabled
+    else:
+        want_all_citations = bool(all_citations_opt)
 
     for term in terms:
-        query = (term or "").strip()
-        if not query:
-            not_found.append(term)
+        original_term = "" if term is None else str(term)
+        display_term = original_term.strip()
+        lookup_term = _sanitize_lookup_term(display_term or original_term)
+        if not lookup_term:
+            if display_term:
+                not_found.append(display_term)
+            elif original_term:
+                not_found.append(original_term)
             continue
+        query = lookup_term
+        term_label = display_term or original_term or query
 
         # Enable no-filter for the FAISS/FTS search phase only (to gather all hits),
         # but keep normal packing constraints to avoid ballooning snippet payloads.
         prev_no_filter = os.getenv("RETRIEVAL_NO_FILTER")
         if want_all_citations:
             os.environ["RETRIEVAL_NO_FILTER"] = "1"
-        hits, diag = search(query, k_sem=k_sem, k_lex=k_lex)
+        hits, diag = search(query, k_sem=k_sem, k_lex=k_lex, raw_query=term_label)
         if want_all_citations:
             if prev_no_filter is None:
                 os.environ.pop("RETRIEVAL_NO_FILTER", None)
@@ -1437,22 +1556,23 @@ def batch_lookup_terms(
         }
 
         should_accept = bool(snippets) and _has_explicit_evidence(
-            snippets, query, diag_entry
+            snippets, query, diag_entry, original_term=term_label
         )
 
         if want_all_citations and not should_accept and hits:
             fallback_snippets: List[BundleSnippet] = []
             seen_ids: Set[str] = set()
-            fallback_cap_raw = os.getenv("RETRIEVAL_ALL_CITATIONS_SNIPPETS", "50")
+            fallback_cap_raw = os.getenv("RETRIEVAL_ALL_CITATIONS_SNIPPETS", "20")
             try:
                 fallback_cap = max(1, int(fallback_cap_raw))
             except (TypeError, ValueError):
-                fallback_cap = 50
+                fallback_cap = 20
             try:
                 label_for_fallback = get_citation_label()
             except Exception:
                 label_for_fallback = "Textbook"
-            for h in hits:
+            max_inspect = max(fallback_cap * 3, fallback_cap)
+            for h in hits[:max_inspect]:
                 if h.id in seen_ids:
                     continue
                 row = _id_to_row.get(h.id) if _id_to_row else None
@@ -1511,7 +1631,7 @@ def batch_lookup_terms(
                     key=lambda sn: (sn.final_score or {}).get("equal", float("-inf")),
                     reverse=True,
                 )
-                fallback_snippets = fallback_snippets[:20]
+                fallback_snippets = fallback_snippets[:fallback_cap]
                 snippets = fallback_snippets
                 equations, glossary, assumptions, alias_counts = _summarize_snippets(
                     snippets
@@ -1519,11 +1639,12 @@ def batch_lookup_terms(
                 diag_entry["snippets_returned"] = len(snippets)
                 should_accept = True
 
-        term_diag = diag_entry
-        diag_all["per_term"][term] = term_diag
+        diag_entry["lookup_term"] = query
+        diag_entry["original_term"] = term_label
+        diag_all["per_term"][term_label] = diag_entry
 
         if not should_accept:
-            not_found.append(term)
+            not_found.append(term_label)
             continue
 
         if want_all_citations:
@@ -1539,7 +1660,12 @@ def batch_lookup_terms(
 
         # If requested, collect citation markers from all hits (full list), not only packed snippets.
         if want_all_citations:
-            for h in hits:
+            max_markers_raw = os.getenv("RETRIEVAL_ALL_CITATIONS_MAX_MARKERS", "120")
+            try:
+                max_markers = max(1, int(max_markers_raw))
+            except (TypeError, ValueError):
+                max_markers = 120
+            for h in hits[:max_markers]:
                 try:
                     row = _id_to_row.get(h.id) if _id_to_row else None
                     page = int(row.get("page", 0)) if row is not None else 0
@@ -1569,7 +1695,9 @@ def batch_lookup_terms(
 
         found_array.append(
             {
-                "term": term,
+                "term": term_label,
+                "lookup_term": query,
+                "raw_term": original_term,
                 "snippets": snippets,
                 "equations": equations,
                 "assumptions": assumptions,
@@ -1898,7 +2026,7 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
 
     loaded_indexes, skipped_indexes = _prepare_indexes(doc_sets)
 
-    hits, diag = search(question, k_sem=k_sem, k_lex=k_lex)
+    hits, diag = search(question, k_sem=k_sem, k_lex=k_lex, raw_query=question)
 
     marker_equal_map: Dict[str, float] = {}
     try:
