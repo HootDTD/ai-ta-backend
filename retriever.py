@@ -1913,15 +1913,28 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
 # ---------------------------------------------------------
 
 
-def answer(question: str, ctx: ContextPack) -> Answer:
-    _require_loaded()
+_NOT_FOUND_PHRASE = "Not found in the approved materials."
+
+
+def _call_answer_model(
+    question: str, ctx: ContextPack, *, allow_not_found: bool
+) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], str]:
     client = _get_client()
     model = _meta.get("answer_model", "gpt-4o-mini")
-    system_prompt = "Answer only from the provided context. If insufficient, say exactly: 'Not found in the approved materials.' Cite inline."
+    system_prompt = (
+        "Answer only from the provided context. Cite inline using [S#] that map to the snippets. "
+        "If information is truly missing, reply exactly 'Not found in the approved materials.'"
+    )
+    if not allow_not_found:
+        system_prompt = (
+            "Answer only from the provided context. Provide the most helpful explanation available from the passages. "
+            "If details are missing, explain what the passages do cover and note the gap, but do NOT respond with "
+            "'Not found in the approved materials.' Cite inline using [S#] for every substantive claim."
+        )
 
-    parts = []
+    parts: List[str] = []
     for i, sn in enumerate(ctx.snippets, start=1):
-        meta = f"(type={sn.type}, page={sn.page}, §{sn.section_path}"
+        meta = f"(type={sn.type}, page={sn.page}, section={sn.section_path}"
         if sn.figure_id:
             meta += f", fig {sn.figure_id}"
         meta += ")"
@@ -1935,12 +1948,12 @@ def answer(question: str, ctx: ContextPack) -> Answer:
         messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user}],
         temperature=0,
     )
-    out = resp.choices[0].message.content.strip()
+    raw_out = resp.choices[0].message.content.strip()
 
-    # Only keep citations that are actually referenced in the model output
     marker_pattern = re.compile(r"\[S(\d+)\]")
-    used_markers = {int(m.group(1)) for m in marker_pattern.finditer(out)}
+    used_markers = {int(m.group(1)) for m in marker_pattern.finditer(raw_out)}
 
+    processed = raw_out
     citations: List[Dict[str, Any]] = []
     for i, sn in enumerate(ctx.snippets, start=1):
         row = _id_to_row.get(sn.id) if _id_to_row else None
@@ -1951,11 +1964,26 @@ def answer(question: str, ctx: ContextPack) -> Answer:
             replacement = label or ""
         else:
             replacement = ""
-        out = out.replace(f"[S{i}]", replacement)
+        processed = processed.replace(f"[S{i}]", replacement)
 
     _, structured = format_citations(citations, _id_to_row, _store_meta)
+    return processed, citations, structured, raw_out
+
+
+def answer(question: str, ctx: ContextPack) -> Answer:
+    _require_loaded()
+    text, citations, structured, raw_out = _call_answer_model(question, ctx, allow_not_found=True)
+
+    should_retry = raw_out.strip().lower() == _NOT_FOUND_PHRASE.lower() and ctx.snippets
+    if should_retry:
+        retry_text, retry_citations, retry_structured, retry_raw = _call_answer_model(
+            question, ctx, allow_not_found=False
+        )
+        if retry_text.strip() and retry_raw.strip().lower() != _NOT_FOUND_PHRASE.lower():
+            text, citations, structured = retry_text, retry_citations, retry_structured
+
     proof = {"question": question, "used_ids": ctx.used_ids}
-    return Answer(text=out, citations=citations, proof=proof, structured_citations=structured)
+    return Answer(text=text, citations=citations, proof=proof, structured_citations=structured)
 
 
 # ---------------------------------------------------------
