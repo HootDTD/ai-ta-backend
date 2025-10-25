@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 DOC_TYPE_LABELS = {
     "textbook": "Textbook",
     "slides": "Slides",
+    "notes": "Notes",
     "homework": "Homework",
     "exams": "Exam",
     "exam": "Exam",
@@ -94,7 +95,20 @@ def build_citation_info(
 
     verified = doc_type == "Textbook"
 
-    label = f"[{doc_type}, p. {page_norm if isinstance(page_norm, int) else '?'}]"
+    week_info = None
+    if meta_entry:
+        raw_week = meta_entry.get("week")
+        try:
+            week_val = int(raw_week)
+            if week_val > 0:
+                week_info = week_val
+        except (TypeError, ValueError):
+            week_info = None
+
+    if doc_type in {"Notes", "Slides"} and week_info is not None:
+        label = f"[{doc_type}, Week {week_info}, p. {page_norm if isinstance(page_norm, int) else '?'}]"
+    else:
+        label = f"[{doc_type}, p. {page_norm if isinstance(page_norm, int) else '?'}]"
 
     return {
         "doc_type": doc_type,

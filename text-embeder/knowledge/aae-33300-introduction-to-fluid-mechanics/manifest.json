@@ -308,66 +308,56 @@
       }
     }
   },
+  "subject": "AAE 33300: Introduction to Fluid Mechanics",
+  "materials": [],
   "stores": [
     {
       "id": "ad2f048ae030418ca050ec08b447e0ee",
-      "subject": "AAE 33300: Introduction to Fluid Mechanics",
       "kind": "notes",
       "title": "Course Notes \u00b7 Week 6",
-      "priority": 75,
       "index_path": "/Users/ishaanbatra/Documents/GitHub/AI-TA/backend/text-embeder/teacher_weekly/indexes/aae-33300-introduction-to-fluid-mechanics-week-06-notes/km_41e0937595844c208fc7a8d3406ada28",
-      "created_at": "2025-10-25T05:46:29.194072Z",
-      "week": 6
+      "priority": 75,
+      "created_at": "2025-10-25T05:46:29.194072Z"
     },
     {
       "id": "54b7a9269e90457a992dd16fc11d0e02",
-      "subject": "AAE 33300: Introduction to Fluid Mechanics",
       "kind": "notes",
       "title": "Course Notes \u00b7 Week 5",
-      "priority": 75,
       "index_path": "/Users/ishaanbatra/Documents/GitHub/AI-TA/backend/text-embeder/teacher_weekly/indexes/aae-33300-introduction-to-fluid-mechanics-week-05-notes/km_a196c7849e1b43978f80a15ea2166625",
-      "created_at": "2025-10-25T05:46:29.193453Z",
-      "week": 5
+      "priority": 75,
+      "created_at": "2025-10-25T05:46:29.193453Z"
     },
     {
       "id": "ad2d3a5d540f4a459b0dbbc9632fa4e1",
-      "subject": "AAE 33300: Introduction to Fluid Mechanics",
       "kind": "notes",
       "title": "Course Notes \u00b7 Week 4",
-      "priority": 75,
       "index_path": "/Users/ishaanbatra/Documents/GitHub/AI-TA/backend/text-embeder/teacher_weekly/indexes/aae-33300-introduction-to-fluid-mechanics-week-04-notes/km_50fb8ec35dd44ef3984e27bd3c2a8e8c",
-      "created_at": "2025-10-25T05:46:29.192729Z",
-      "week": 4
+      "priority": 75,
+      "created_at": "2025-10-25T05:46:29.192729Z"
     },
     {
       "id": "e91db64ae74b49998c4b3463af02dedf",
-      "subject": "AAE 33300: Introduction to Fluid Mechanics",
       "kind": "notes",
       "title": "Course Notes \u00b7 Week 3",
-      "priority": 75,
       "index_path": "/Users/ishaanbatra/Documents/GitHub/AI-TA/backend/text-embeder/teacher_weekly/indexes/aae-33300-introduction-to-fluid-mechanics-week-03-notes/km_92c6e97cd91f4ef3a053128dec4b6db2",
-      "created_at": "2025-10-25T05:46:29.192009Z",
-      "week": 3
+      "priority": 75,
+      "created_at": "2025-10-25T05:46:29.192009Z"
     },
     {
       "id": "ecb31cbb5ce2416a8c533b03ae824344",
-      "subject": "AAE 33300: Introduction to Fluid Mechanics",
       "kind": "notes",
       "title": "Course Notes \u00b7 Week 2",
-      "priority": 75,
       "index_path": "/Users/ishaanbatra/Documents/GitHub/AI-TA/backend/text-embeder/teacher_weekly/indexes/aae-33300-introduction-to-fluid-mechanics-week-02-notes/km_8a9cf5ef6409433bb7d51c4be5890952",
-      "created_at": "2025-10-25T05:46:29.191315Z",
-      "week": 2
+      "priority": 75,
+      "created_at": "2025-10-25T05:46:29.191315Z"
     },
     {
       "id": "08daab13b84f43d39d41491b53af69ad",
-      "subject": "AAE 33300: Introduction to Fluid Mechanics",
       "kind": "notes",
       "title": "Course Notes \u00b7 Week 1",
-      "priority": 75,
       "index_path": "/Users/ishaanbatra/Documents/GitHub/AI-TA/backend/text-embeder/teacher_weekly/indexes/aae-33300-introduction-to-fluid-mechanics-week-01-notes/km_45cac85b8bc647678af5896e9710e131",
-      "created_at": "2025-10-25T05:46:29.190070Z",
-      "week": 1
+      "priority": 75,
+      "created_at": "2025-10-25T05:46:29.190070Z"
     }
   ]
 }

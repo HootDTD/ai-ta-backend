@@ -43,7 +43,7 @@ def _load_layout_module():
     return module
 
 
-STORE_KINDS = {"textbook", "slides", "homework", "exams", "other"}
+STORE_KINDS = {"textbook", "slides", "homework", "exams", "notes", "other"}
 
 
 def _default_store_priority(kind: str) -> int:
@@ -52,6 +52,7 @@ def _default_store_priority(kind: str) -> int:
     mapping = {
         "textbook": 100,
         "slides": 80,
+        "notes": 75,
         "exams": 70,
         "homework": 60,
         "other": 50,

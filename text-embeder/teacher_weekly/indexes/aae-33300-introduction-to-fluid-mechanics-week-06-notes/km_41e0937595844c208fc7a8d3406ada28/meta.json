@@ -16,5 +16,7 @@
   "token_limit": 1000,
   "overlap_tokens": 150,
   "created_at": "2025-10-25T00:19:18.252189Z",
-  "average_confidence": 0.2955480037267456
+  "average_confidence": 0.2955480037267456,
+  "week": 6,
+  "store_kind": "notes"
 }

@@ -103,6 +103,7 @@ def _float_env(name: str, default: float) -> float:
 _STORE_WEIGHT_DEFAULTS = {
     "textbook": 0.12,
     "slides": 0.06,
+    "notes": 0.06,
     "homework": 0.05,
     "exams": 0.05,
     "other": 0.03,
@@ -1005,6 +1006,7 @@ def load_assets(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connecti
         "kind": (store_entry or {}).get("kind", "textbook"),
         "title": (store_entry or {}).get("title"),
         "average_confidence": meta.get("average_confidence"),
+        "week": meta.get("week") or (store_entry or {}).get("week"),
     }
     _store_meta[store_key] = meta_info
 
@@ -1079,6 +1081,7 @@ def load_assets_all(
             "kind": (entry or {}).get("kind", "textbook"),
             "title": (entry or {}).get("title"),
             "average_confidence": meta.get("average_confidence"),
+            "week": meta.get("week") or (entry or {}).get("week"),
         }
         _store_meta[store_key] = meta_info
         dfs.append(df)
@@ -2206,9 +2209,6 @@ __all__ = [
 
     "research",
 ]
-
-
-
 
 
 

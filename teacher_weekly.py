@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import uuid
@@ -12,6 +13,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from backend.indexers.handwriting import ingest as handwriting_ingest, IngestOptions
+from backend.knowledge import KnowledgeManager
+
+log = logging.getLogger(__name__)
 
 TOTAL_WEEKS_DEFAULT = 16
 VALID_KINDS = {"notes", "slides"}
@@ -75,6 +79,7 @@ class TeacherWeeklyStorage:
         self.index_root.mkdir(parents=True, exist_ok=True)
         self.manifest_root = self.root / "courses"
         self.manifest_root.mkdir(parents=True, exist_ok=True)
+        self._store_manager = KnowledgeManager()
 
     # ------------------------------------------------------------------
     # Manifest helpers
@@ -226,6 +231,8 @@ class TeacherWeeklyStorage:
             material_id=str(ingestion.get("material_id", "")) if ingestion.get("material_id") else "",
         )
 
+        self._register_store_entry(course, kind_norm, week, record.title, record.index_path)
+
         week_block = manifest["weeks"].get(str(week)) or _empty_week_block()
         section = week_block.get(kind_norm) or _empty_section()
         history: List[Dict[str, Any]] = [rec for rec in section.get("history", []) if isinstance(rec, dict)]
@@ -248,20 +255,25 @@ class TeacherWeeklyStorage:
             "current_week": week,
         }
 
-    def resolve_week_doc_sets(self, course: str, *, week: Optional[int] = None) -> List[str]:
+    def resolve_week_doc_sets(self, course: str, *, week: Optional[int] = None, include_previous: bool = False) -> List[str]:
         manifest = self._load_manifest(course)
         target_week = week or int(manifest.get("current_week", 1) or 1)
-        block = manifest["weeks"].get(str(target_week)) or {}
+        target_week = max(1, min(target_week, self.total_weeks))
         paths: List[str] = []
-        for kind in VALID_KINDS:
-            section = block.get(kind) or {}
-            latest = section.get("latest") or {}
-            idx = latest.get("index_path")
-            if not idx:
-                continue
-            p = Path(idx)
-            if p.exists():
-                paths.append(str(p.resolve()))
+        weeks_to_collect = range(1, target_week + 1) if include_previous else [target_week]
+        for wk in weeks_to_collect:
+            block = manifest["weeks"].get(str(wk)) or {}
+            for kind in VALID_KINDS:
+                section = block.get(kind) or {}
+                latest = section.get("latest") or {}
+                idx = latest.get("index_path")
+                if not idx:
+                    continue
+                p = Path(idx)
+                if p.exists():
+                    resolved = str(p.resolve())
+                    if resolved not in paths:
+                        paths.append(resolved)
         return paths
 
     def _ingest_with_handwriting(self, *, slug: str, week: int, kind: str, pdf_path: Path, title: str) -> Dict[str, Any]:
@@ -290,6 +302,10 @@ class TeacherWeeklyStorage:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
             except Exception:
                 meta = {}
+        store_kind = "slides" if kind == "slides" else "notes"
+        meta["week"] = week
+        meta["store_kind"] = store_kind
+        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
         return {
             "title": title,
@@ -298,6 +314,8 @@ class TeacherWeeklyStorage:
             "material_id": material_id,
             "created_at": meta.get("created_at", _utc_now()),
             "page_count": meta.get("page_count"),
+            "store_kind": store_kind,
+            "week": week,
         }
 
     def _build_handwriting_options(self) -> IngestOptions:
@@ -343,6 +361,30 @@ class TeacherWeeklyStorage:
             if raw and raw.strip():
                 return raw.strip()
         return default
+
+    def _register_store_entry(self, course: str, kind: str, week: int, title: str, index_path: str) -> None:
+        if not index_path:
+            return
+        path = Path(index_path)
+        if not path.exists():
+            return
+        store_kind = "slides" if kind == "slides" else "notes" if kind == "notes" else "other"
+        try:
+            self._store_manager.register_store(
+                course,
+                kind=store_kind,
+                title=title,
+                index_path=path,
+            )
+            manifest = self._load_manifest(course)
+            stores = [entry for entry in manifest.get("stores", []) if isinstance(entry, dict)]
+            for entry in stores:
+                if entry.get("index_path") == str(path.resolve()):
+                    entry["week"] = week
+            manifest["stores"] = stores
+            self._save_manifest(course, manifest)
+        except Exception as exc:
+            log.debug("Failed to register store entry for %s (kind=%s): %s", title, store_kind, exc)
 
 
 __all__ = ["TeacherWeeklyStorage", "UploadRecord"]

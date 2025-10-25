@@ -598,7 +598,7 @@ def post_ask(payload: AskRequest):
     doc_sets_override = class_cfg.get("doc_sets") or None
 
     try:
-        teacher_paths = _get_teacher_storage().resolve_week_doc_sets(class_name)
+        teacher_paths = _get_teacher_storage().resolve_week_doc_sets(class_name, include_previous=True)
     except Exception:
         teacher_paths = []
     if teacher_paths:
