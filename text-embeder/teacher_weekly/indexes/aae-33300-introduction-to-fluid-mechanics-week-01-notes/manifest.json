@@ -1,0 +1,18 @@
+{
+  "subject": "aae-33300-introduction-to-fluid-mechanics-week-01-notes",
+  "slug": "aae-33300-introduction-to-fluid-mechanics-week-01-notes",
+  "materials": [
+    {
+      "id": "45cac85b8bc647678af5896e9710e131",
+      "title": "Course Notes \u00b7 Week 1",
+      "doc_id": "aae-33300-introduction-to-fluid-mechanics-week-01-notes-45cac85b",
+      "index_dir": "km_45cac85b8bc647678af5896e9710e131",
+      "created_at": "2025-10-24T23:47:02.731431Z",
+      "model": "text-embedding-3-large",
+      "dimensions": 3072,
+      "page_count": 32,
+      "source_sha256": "4509ab966dee2ccb2d26c9166e97d6b5aa53b671e5824ac6b3f93ad020275431"
+    }
+  ],
+  "stores": []
+}

@@ -1,0 +1,20 @@
+{
+  "source_pdf": "Chynoweth_Week_6_and_7_F25.pdf",
+  "source_pdf_sha256": "954c40d7b47268283eeae403d5d4f44454eac354cae35df0bfb15c64af4bb91c",
+  "model": "text-embedding-3-large",
+  "dimensions": 3072,
+  "num_items": 38,
+  "counts_by_type": {
+    "body": 37,
+    "equation": 1
+  },
+  "page_count": 36,
+  "has_faiss": true,
+  "has_ocr": true,
+  "caption_model": null,
+  "tokenizer": "cl100k_base",
+  "token_limit": 1000,
+  "overlap_tokens": 150,
+  "created_at": "2025-10-25T00:19:18.252189Z",
+  "average_confidence": 0.2955480037267456
+}

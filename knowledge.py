@@ -34,6 +34,10 @@ def _load_layout_module():
         raise RuntimeError(f"Unable to import layout embedder from {script_path}")
 
     module = module_from_spec(spec)
+    if module is None or spec.loader is None:
+        raise RuntimeError(f"Unable to create module from {script_path}")
+    import sys
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)  # type: ignore[assignment]
     _LAYOUT_MODULE = module
     return module

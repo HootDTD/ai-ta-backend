@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import List, Optional, Sequence, Iterator, Iterable, Union, Dict, Any
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -20,6 +20,7 @@ from contextlib import contextmanager, redirect_stdout
 # path issues when running under different working directories.
 from .core import answer_question
 from .knowledge import KnowledgeManager
+from .teacher_weekly import TeacherWeeklyStorage
 
 try:  # pragma: no cover - optional dependency detection
     importlib.import_module("python_multipart")
@@ -83,6 +84,20 @@ CLASS_CONFIG = {
     },
 }
 
+_teacher_storage: Optional[TeacherWeeklyStorage] = None
+try:
+    TEACHER_TOTAL_WEEKS = int(os.getenv("TEACHER_TOTAL_WEEKS", "16"))
+except ValueError:
+    TEACHER_TOTAL_WEEKS = 16
+
+
+def _get_teacher_storage() -> TeacherWeeklyStorage:
+    global _teacher_storage
+    if _teacher_storage is None:
+        base_dir = os.getenv("TEACHER_WEEKS_DIR")
+        _teacher_storage = TeacherWeeklyStorage(base_dir=base_dir, total_weeks=TEACHER_TOTAL_WEEKS)
+    return _teacher_storage
+
 
 class AskRequest(BaseModel):
     question: str
@@ -120,10 +135,87 @@ class KnowledgeSubjectOut(BaseModel):
     materials: List[KnowledgeMaterialOut]
 
 
+class TeacherUploadOut(BaseModel):
+    id: str
+    week: int
+    kind: str
+    title: str
+    uploaded_at: Optional[str] = None
+    source_name: Optional[str] = None
+    page_count: Optional[int] = None
+    index_path: Optional[str] = None
+    doc_id: Optional[str] = None
+    material_id: Optional[str] = None
+
+
+class TeacherSectionOut(BaseModel):
+    latest: Optional[TeacherUploadOut]
+    history: List[TeacherUploadOut]
+
+
+class TeacherWeekOut(BaseModel):
+    week: int
+    notes: TeacherSectionOut
+    slides: TeacherSectionOut
+
+
+class TeacherCourseOut(BaseModel):
+    course: str
+    slug: str
+    current_week: int
+    weeks: List[TeacherWeekOut]
+
+
+class TeacherCurrentWeekIn(BaseModel):
+    course: str = Field(..., alias="class")
+    current_week: int = Field(..., ge=1, le=TEACHER_TOTAL_WEEKS)
+
+    class Config:
+        allow_population_by_field_name = True
+
+
 
 
 # -------- Utils --------
 DATA_URL_RE = re.compile(r"^data:(?P<mime>[^;]+);base64,(?P<data>.+)$", re.DOTALL)
+
+
+def _serialize_upload(entry: Optional[Dict[str, Any]]) -> Optional[TeacherUploadOut]:
+    if not isinstance(entry, dict):
+        return None
+    try:
+        return TeacherUploadOut(**entry)
+    except Exception:
+        return None
+
+
+def _serialize_section(section: Optional[Dict[str, Any]]) -> TeacherSectionOut:
+    latest = _serialize_upload((section or {}).get("latest"))
+    history_raw = (section or {}).get("history") or []
+    history: List[TeacherUploadOut] = []
+    for item in history_raw:
+        serialized = _serialize_upload(item)
+        if serialized:
+            history.append(serialized)
+    return TeacherSectionOut(latest=latest, history=history)
+
+
+def _serialize_course_payload(payload: Dict[str, Any]) -> TeacherCourseOut:
+    weeks_out: List[TeacherWeekOut] = []
+    for block in payload.get("weeks", []):
+        if not isinstance(block, dict):
+            continue
+        week_num = int(block.get("week", 0) or 0)
+        notes = _serialize_section(block.get("notes"))
+        slides = _serialize_section(block.get("slides"))
+        weeks_out.append(TeacherWeekOut(week=week_num, notes=notes, slides=slides))
+    weeks_out.sort(key=lambda w: w.week)
+    return TeacherCourseOut(
+        course=str(payload.get("course", "")),
+        slug=str(payload.get("slug", "")),
+        current_week=int(payload.get("current_week", 1) or 1),
+        weeks=weeks_out,
+    )
 
 
 def _save_attachments(attachments: Sequence[AttachmentIn]) -> List[str]:
@@ -325,6 +417,29 @@ def register_knowledge_store(payload: KnowledgeStoreIn) -> KnowledgeStoreOut:
     )
 
 
+@app.get("/teacher/weeks", response_model=TeacherCourseOut)
+def get_teacher_weeks(class_name: str = Query(..., alias="class")) -> TeacherCourseOut:
+    manager = _get_teacher_storage()
+    try:
+        payload = manager.list_course(class_name)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _serialize_course_payload(payload)
+
+
+@app.post("/teacher/weeks/current", response_model=TeacherCourseOut)
+def set_teacher_current_week(payload: TeacherCurrentWeekIn) -> TeacherCourseOut:
+    manager = _get_teacher_storage()
+    try:
+        manager.set_current_week(payload.course, payload.current_week)
+        data = manager.list_course(payload.course)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return _serialize_course_payload(data)
+
+
 if _HAS_MULTIPART:
 
     @app.post("/knowledge/materials", response_model=KnowledgeMaterialOut)
@@ -379,10 +494,74 @@ if _HAS_MULTIPART:
 
         return material
 
+
+    @app.post("/teacher/upload", response_model=TeacherUploadOut)
+    async def upload_teacher_material(
+        course: str = Form(..., alias="class"),
+        week: int = Form(...),
+        kind: str = Form(...),
+        title: str = Form(""),
+        file: UploadFile = File(...),
+    ) -> TeacherUploadOut:
+        course_clean = (course or "").strip()
+        if not course_clean:
+            raise HTTPException(status_code=400, detail="class is required")
+        filename = file.filename or "teacher-upload.pdf"
+        name_path = Path(filename)
+        if name_path.suffix.lower() != ".pdf":
+            raise HTTPException(status_code=400, detail="Only PDF uploads are supported")
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="teacher_upload_"))
+        tmp_path = tmp_dir / name_path.name
+
+        try:
+            with tmp_path.open("wb") as dest:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    dest.write(chunk)
+            if tmp_path.stat().st_size == 0:
+                raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+            manager = _get_teacher_storage()
+            record = manager.record_upload(
+                course_clean,
+                week=int(week),
+                kind=kind,
+                pdf_path=tmp_path,
+                title=title or name_path.stem,
+            )
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except RuntimeError as exc:
+            log.exception("Teacher ingestion failed")
+            raise HTTPException(status_code=500, detail=str(exc) or "Failed to process upload")
+        except Exception as exc:
+            log.exception("Failed to process teacher upload")
+            raise HTTPException(status_code=500, detail=f"Failed to process upload: {exc}") from exc
+        finally:
+            try:
+                await file.close()
+            except Exception:
+                pass
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        return TeacherUploadOut(**record.to_dict())
+
 else:  # pragma: no cover - fallback when python-multipart missing
 
     @app.post("/knowledge/materials")
     async def upload_knowledge_material_unavailable() -> None:
+        raise HTTPException(
+            status_code=503,
+            detail="File upload support requires the 'python-multipart' package.",
+        )
+
+    @app.post("/teacher/upload")
+    async def upload_teacher_material_unavailable() -> None:
         raise HTTPException(
             status_code=503,
             detail="File upload support requires the 'python-multipart' package.",
@@ -417,6 +596,26 @@ def post_ask(payload: AskRequest):
         raise HTTPException(status_code=400, detail="Unknown class selection")
     textbook = class_cfg["textbook"]
     doc_sets_override = class_cfg.get("doc_sets") or None
+
+    try:
+        teacher_paths = _get_teacher_storage().resolve_week_doc_sets(class_name)
+    except Exception:
+        teacher_paths = []
+    if teacher_paths:
+        combined: List[str] = list(doc_sets_override or [])
+        combined.extend(teacher_paths)
+        deduped: List[str] = []
+        seen = set()
+        for raw in combined:
+            try:
+                resolved = str(Path(raw).resolve())
+            except Exception:
+                resolved = str(raw)
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            deduped.append(resolved)
+        doc_sets_override = deduped
 
     try:
         image_paths = _save_attachments(atts)

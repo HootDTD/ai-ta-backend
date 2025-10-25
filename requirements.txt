@@ -1,4 +1,6 @@
 fastapi
+python-multipart
+pymupdf
 uvicorn[standard]
 gunicorn
 pydantic>=2

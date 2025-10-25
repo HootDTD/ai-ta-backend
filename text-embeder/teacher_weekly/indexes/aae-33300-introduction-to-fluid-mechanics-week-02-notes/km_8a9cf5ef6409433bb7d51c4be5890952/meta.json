@@ -1,0 +1,20 @@
+{
+  "source_pdf": "Chynoweth_Week_2_F25 (1) (1).pdf",
+  "source_pdf_sha256": "82aba4b4727a7c751bc7f87293dfdd4921500ef5b682baa23735731739199af8",
+  "model": "text-embedding-3-large",
+  "dimensions": 3072,
+  "num_items": 23,
+  "counts_by_type": {
+    "body": 22,
+    "equation": 1
+  },
+  "page_count": 22,
+  "has_faiss": true,
+  "has_ocr": true,
+  "caption_model": null,
+  "tokenizer": "cl100k_base",
+  "token_limit": 1000,
+  "overlap_tokens": 150,
+  "created_at": "2025-10-25T00:14:43.301803Z",
+  "average_confidence": 0.3563579770767284
+}
