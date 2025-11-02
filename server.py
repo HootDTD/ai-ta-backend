@@ -22,6 +22,12 @@ from .core import answer_question
 from .knowledge import KnowledgeManager
 from .store_weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
 from .teacher_weekly import TeacherWeeklyStorage
+from .workspaces import (
+    WorkspaceConfigError,
+    WorkspaceNotFound,
+    WorkspaceError,
+    build_workspace_manager,
+)
 
 try:  # pragma: no cover - optional dependency detection
     importlib.import_module("python_multipart")
@@ -78,12 +84,16 @@ def _resolve_index_path() -> str:
     return str(default)
 
 
-CLASS_CONFIG = {
-    "AAE 33300: Introduction to Fluid Mechanics": {
-        "textbook": "Fundamentals of Aerodynamics",
-        "doc_sets": [_resolve_index_path()],
-    },
-}
+def _legacy_class_config() -> Dict[str, Dict[str, Any]]:
+    default_path = _resolve_index_path()
+    return {
+        "AAE 33300: Introduction to Fluid Mechanics": {
+            "subject": "Fundamentals of Aerodynamics",
+            "title": "Fundamentals of Aerodynamics",
+            "kind": "textbook",
+            "doc_sets": [default_path],
+        }
+    }
 
 _teacher_storage: Optional[TeacherWeeklyStorage] = None
 try:
@@ -100,11 +110,21 @@ def _get_teacher_storage() -> TeacherWeeklyStorage:
     return _teacher_storage
 
 
+try:
+    _workspace_manager = build_workspace_manager(_legacy_class_config())
+except WorkspaceConfigError as exc:
+    log.error("Failed to initialize workspace manager: %s", exc)
+    raise
+
+
 class AskRequest(BaseModel):
     question: str
     class_name: str = Field(..., alias="class", min_length=1, description="Class selection for knowledge routing")
     course_id: Optional[str] = None
-    doc_sets: Optional[List[str]] = None
+    doc_sets: Optional[List[str]] = Field(
+        default=None,
+        description="Deprecated: doc_sets overrides are ignored; configure materials via class workspace.",
+    )
     attachments: Optional[List[AttachmentIn]] = Field(default_factory=list)
     alias_miner: Optional[bool] = None
     proximity: Optional[bool] = None
@@ -666,11 +686,39 @@ def post_ask(payload: AskRequest):
     if not class_name:
         raise HTTPException(status_code=400, detail="Class is required")
 
-    class_cfg = CLASS_CONFIG.get(class_name)
-    if not class_cfg:
-        raise HTTPException(status_code=400, detail="Unknown class selection")
-    textbook = class_cfg["textbook"]
-    doc_sets_override = class_cfg.get("doc_sets") or None
+    if payload.doc_sets:
+        raise HTTPException(
+            status_code=400,
+            detail="doc_sets overrides are disabled; configure materials within the class workspace.",
+        )
+
+    try:
+        workspace = _workspace_manager.get(class_name)
+    except WorkspaceNotFound:
+        raise HTTPException(status_code=404, detail="Unknown class selection")
+    except WorkspaceConfigError as exc:
+        log.error("Workspace misconfiguration for %s: %s", class_name, exc)
+        raise HTTPException(status_code=500, detail="Class workspace is misconfigured")
+    except WorkspaceError as exc:  # pragma: no cover - defensive
+        log.exception("Failed to load workspace for class %s", class_name)
+        raise HTTPException(status_code=500, detail="Failed to load class workspace") from exc
+
+    subject_name = workspace.subject_name or class_name
+    doc_sets_ordered = workspace.doc_sets()
+    if not doc_sets_ordered:
+        raise HTTPException(status_code=500, detail="No knowledge materials registered for this class")
+
+    doc_sets_override: List[str] = []
+    seen_paths: set[str] = set()
+    for raw in doc_sets_ordered:
+        try:
+            resolved = str(Path(raw).resolve())
+        except Exception:
+            resolved = str(raw)
+        if resolved in seen_paths:
+            continue
+        seen_paths.add(resolved)
+        doc_sets_override.append(resolved)
 
     teacher_storage: Optional[TeacherWeeklyStorage] = None
     try:
@@ -686,7 +734,7 @@ def post_ask(payload: AskRequest):
     else:
         teacher_paths = []
     if teacher_paths:
-        combined: List[str] = list(doc_sets_override or [])
+        combined: List[str] = list(doc_sets_override)
         combined.extend(teacher_paths)
         deduped: List[str] = []
         seen = set()
@@ -708,16 +756,20 @@ def post_ask(payload: AskRequest):
         raise HTTPException(status_code=400, detail=f"Invalid attachments: {e}")
 
     opts: Dict[str, str] = {}
+    weight_overrides = dict(workspace.weight_overrides)
+    for material in workspace.materials:
+        if material.weight_override is not None:
+            weight_overrides[material.kind] = material.weight_override
     if teacher_storage is not None:
         try:
-            weight_overrides = teacher_storage.get_retrieval_weights(class_name)
+            teacher_weights = teacher_storage.get_retrieval_weights(class_name)
         except Exception:
-            weight_overrides = {}
+            teacher_weights = {}
         else:
-            for kind, value in weight_overrides.items():
-                env_key = f"RETRIEVAL_STORE_WEIGHT_{kind.upper()}"
-                # Keep four decimal places to match slider precision without noise.
-                opts[env_key] = f"{value:.4f}"
+            weight_overrides.update(teacher_weights)
+    for kind, value in weight_overrides.items():
+        env_key = f"RETRIEVAL_STORE_WEIGHT_{kind.upper()}"
+        opts[env_key] = f"{value:.4f}"
     if payload.alias_miner is not None:
         opts["RETRIEVAL_ALIAS_MINER"] = "on" if payload.alias_miner else "off"
     if payload.proximity is not None:
@@ -743,7 +795,7 @@ def post_ask(payload: AskRequest):
                     image_paths=image_paths,
                     course_id=payload.course_id,
                     doc_sets=doc_sets_override,
-                    subject=textbook,
+                    subject=subject_name,
                 )
                 for chunk in _iter_text(result):
                     answer_chunks.append(chunk)
