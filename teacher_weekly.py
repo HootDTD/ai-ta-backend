@@ -10,10 +10,17 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from backend.indexers.handwriting import ingest as handwriting_ingest, IngestOptions
 from backend.knowledge import KnowledgeManager
+from backend.store_weights import (
+    WEIGHT_KINDS,
+    WEIGHT_MIN,
+    WEIGHT_MAX,
+    get_env_weights,
+    normalize_weights,
+)
 
 log = logging.getLogger(__name__)
 
@@ -110,6 +117,13 @@ class TeacherWeeklyStorage:
         manifest["weeks"] = weeks
         return manifest
 
+    def _ensure_weights(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
+        defaults = get_env_weights()
+        weights_raw = manifest.get("weights") if isinstance(manifest.get("weights"), dict) else {}
+        manifest["weights"] = normalize_weights(weights_raw, clamp=True, base=defaults)
+        manifest.setdefault("weight_bounds", {"min": WEIGHT_MIN, "max": WEIGHT_MAX})
+        return manifest
+
     def _load_manifest(self, course: str) -> Dict[str, Any]:
         path = self._manifest_path(course)
         if path.exists():
@@ -129,6 +143,7 @@ class TeacherWeeklyStorage:
         if not isinstance(data.get("current_week"), int):
             data["current_week"] = 1
         data = self._ensure_weeks(data)
+        data = self._ensure_weights(data)
         return data
 
     def _save_manifest(self, course: str, manifest: Dict[str, Any]) -> None:
@@ -137,6 +152,21 @@ class TeacherWeeklyStorage:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         tmp.replace(path)
+
+    # ------------------------------------------------------------------
+    # Retrieval weight helpers
+    # ------------------------------------------------------------------
+    def get_retrieval_weights(self, course: str) -> Dict[str, float]:
+        manifest = self._load_manifest(course)
+        return dict(manifest.get("weights", {}))
+
+    def update_retrieval_weights(self, course: str, weights: Mapping[str, Any]) -> Dict[str, float]:
+        manifest = self._load_manifest(course)
+        updated = normalize_weights(weights, clamp=True, base=manifest.get("weights"))
+        manifest["weights"] = updated
+        manifest.setdefault("weight_bounds", {"min": WEIGHT_MIN, "max": WEIGHT_MAX})
+        self._save_manifest(course, manifest)
+        return dict(updated)
 
     # ------------------------------------------------------------------
     # Public API

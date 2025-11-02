@@ -27,6 +27,7 @@ from .contracts import ResearchBundle, BundleSnippet, ParsedTask, ResearchMetada
 from .knowledge import KnowledgeManager
 from .citations.formatter import build_citation_info, format_citations
 from .main_ai import normalize_query
+from .store_weights import get_env_weight
 
 WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0","off","false","no"}
 
@@ -100,28 +101,6 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
-_STORE_WEIGHT_DEFAULTS = {
-    "textbook": 0.12,
-    "slides": 0.06,
-    "notes": 0.06,
-    "homework": 0.05,
-    "exams": 0.05,
-    "other": 0.03,
-}
-
-
-def _store_weight_for_kind(kind: str) -> float:
-    key = kind.strip().lower()
-    env_var = f"RETRIEVAL_STORE_WEIGHT_{key.upper()}"
-    val = os.getenv(env_var)
-    if val is not None:
-        try:
-            return float(val)
-        except (TypeError, ValueError):
-            pass
-    return _STORE_WEIGHT_DEFAULTS.get(key, 0.0)
-
-
 _STORE_CONF_SCALE = _float_env("RETRIEVAL_STORE_CONF_SCALE", 0.0)
 _STORE_CONF_BASE = _float_env("RETRIEVAL_STORE_CONF_BASE", 0.5)
 
@@ -130,7 +109,7 @@ def _compute_store_bias(store_entry: Optional[Dict[str, Any]], meta: Optional[Di
     if not store_entry:
         return 0.0
     kind = store_entry.get("kind") or "other"
-    base = _store_weight_for_kind(str(kind))
+    base = get_env_weight(str(kind))
     if base == 0.0:
         return 0.0
     if _STORE_CONF_SCALE != 0.0:
@@ -2209,6 +2188,5 @@ __all__ = [
 
     "research",
 ]
-
 
 

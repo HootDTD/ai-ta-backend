@@ -20,6 +20,7 @@ from contextlib import contextmanager, redirect_stdout
 # path issues when running under different working directories.
 from .core import answer_question
 from .knowledge import KnowledgeManager
+from .store_weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
 from .teacher_weekly import TeacherWeeklyStorage
 
 try:  # pragma: no cover - optional dependency detection
@@ -157,6 +158,42 @@ class TeacherWeekOut(BaseModel):
     week: int
     notes: TeacherSectionOut
     slides: TeacherSectionOut
+
+
+class WeightBoundsOut(BaseModel):
+    min: float = Field(..., ge=0.0)
+    max: float = Field(..., gt=0.0)
+
+
+class RetrievalWeightValues(BaseModel):
+    textbook: float = Field(..., ge=WEIGHT_MIN, le=WEIGHT_MAX)
+    slides: float = Field(..., ge=WEIGHT_MIN, le=WEIGHT_MAX)
+    notes: float = Field(..., ge=WEIGHT_MIN, le=WEIGHT_MAX)
+    homework: float = Field(..., ge=WEIGHT_MIN, le=WEIGHT_MAX)
+    exams: float = Field(..., ge=WEIGHT_MIN, le=WEIGHT_MAX)
+    other: float = Field(..., ge=WEIGHT_MIN, le=WEIGHT_MAX)
+
+    def to_dict(self) -> Dict[str, float]:
+        return {
+            "textbook": self.textbook,
+            "slides": self.slides,
+            "notes": self.notes,
+            "homework": self.homework,
+            "exams": self.exams,
+            "other": self.other,
+        }
+
+
+class TeacherRetrievalWeightsOut(BaseModel):
+    course: str
+    weights: RetrievalWeightValues
+    defaults: RetrievalWeightValues
+    bounds: WeightBoundsOut
+
+
+class TeacherRetrievalWeightsUpdateIn(BaseModel):
+    course: str = Field(..., alias="class")
+    weights: RetrievalWeightValues
 
 
 class TeacherCourseOut(BaseModel):
@@ -440,6 +477,44 @@ def set_teacher_current_week(payload: TeacherCurrentWeekIn) -> TeacherCourseOut:
     return _serialize_course_payload(data)
 
 
+@app.get("/teacher/retrieval-weights", response_model=TeacherRetrievalWeightsOut)
+def get_teacher_retrieval_weights(class_name: str = Query(..., alias="class")) -> TeacherRetrievalWeightsOut:
+    manager = _get_teacher_storage()
+    try:
+        weights = manager.get_retrieval_weights(class_name)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    defaults = get_env_weights()
+    return TeacherRetrievalWeightsOut(
+        course=class_name,
+        weights=RetrievalWeightValues(**weights),
+        defaults=RetrievalWeightValues(**defaults),
+        bounds=WeightBoundsOut(min=WEIGHT_MIN, max=WEIGHT_MAX),
+    )
+
+
+@app.post("/teacher/retrieval-weights", response_model=TeacherRetrievalWeightsOut)
+def update_teacher_retrieval_weights(payload: TeacherRetrievalWeightsUpdateIn) -> TeacherRetrievalWeightsOut:
+    manager = _get_teacher_storage()
+    course = (payload.course or "").strip()
+    if not course:
+        raise HTTPException(status_code=400, detail="class is required")
+
+    try:
+        updated = manager.update_retrieval_weights(course, payload.weights.to_dict())
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    defaults = get_env_weights()
+    return TeacherRetrievalWeightsOut(
+        course=course,
+        weights=RetrievalWeightValues(**updated),
+        defaults=RetrievalWeightValues(**defaults),
+        bounds=WeightBoundsOut(min=WEIGHT_MIN, max=WEIGHT_MAX),
+    )
+
+
 if _HAS_MULTIPART:
 
     @app.post("/knowledge/materials", response_model=KnowledgeMaterialOut)
@@ -597,9 +672,18 @@ def post_ask(payload: AskRequest):
     textbook = class_cfg["textbook"]
     doc_sets_override = class_cfg.get("doc_sets") or None
 
+    teacher_storage: Optional[TeacherWeeklyStorage] = None
     try:
-        teacher_paths = _get_teacher_storage().resolve_week_doc_sets(class_name, include_previous=True)
+        teacher_storage = _get_teacher_storage()
     except Exception:
+        teacher_storage = None
+
+    if teacher_storage is not None:
+        try:
+            teacher_paths = teacher_storage.resolve_week_doc_sets(class_name, include_previous=True)
+        except Exception:
+            teacher_paths = []
+    else:
         teacher_paths = []
     if teacher_paths:
         combined: List[str] = list(doc_sets_override or [])
@@ -624,6 +708,16 @@ def post_ask(payload: AskRequest):
         raise HTTPException(status_code=400, detail=f"Invalid attachments: {e}")
 
     opts: Dict[str, str] = {}
+    if teacher_storage is not None:
+        try:
+            weight_overrides = teacher_storage.get_retrieval_weights(class_name)
+        except Exception:
+            weight_overrides = {}
+        else:
+            for kind, value in weight_overrides.items():
+                env_key = f"RETRIEVAL_STORE_WEIGHT_{kind.upper()}"
+                # Keep four decimal places to match slider precision without noise.
+                opts[env_key] = f"{value:.4f}"
     if payload.alias_miner is not None:
         opts["RETRIEVAL_ALIAS_MINER"] = "on" if payload.alias_miner else "off"
     if payload.proximity is not None:

@@ -369,5 +369,17 @@
       "created_at": "2025-10-25T05:46:29.190070Z",
       "week": 1
     }
-  ]
+  ],
+  "weights": {
+    "textbook": 0.84,
+    "slides": 0.12,
+    "notes": 0.06,
+    "homework": 0.05,
+    "exams": 0.05,
+    "other": 0.03
+  },
+  "weight_bounds": {
+    "min": 0.0,
+    "max": 1.0
+  }
 }
