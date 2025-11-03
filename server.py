@@ -18,7 +18,17 @@ from contextlib import contextmanager, redirect_stdout
 
 # Import the callable core entrypoint using package‑relative import to avoid
 # path issues when running under different working directories.
-from .core import answer_question
+from .core import answer_question, _vision_transcribe, _vision_direct_answer
+from .orchestrator import Orchestrator
+from .retriever import (
+    load_assets,
+    load_assets_all,
+    answer as retriever_answer,
+    render_citations,
+    ContextPack,
+    ContextSnippet,
+)
+from .config import set_subject_name
 from .knowledge import KnowledgeManager
 from .store_weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
 from .teacher_weekly import TeacherWeeklyStorage
@@ -672,9 +682,12 @@ def healthz():
 def post_ask(payload: AskRequest):
     """Accept a question and/or image attachments, stream back plain-text answer.
 
-    Now supports image-only queries. Either a non-empty `question` OR at least
+    This now uses the same orchestrated retrieval flow as the CLI
+    (`python -m backend.qa ask ...`) so the student UI matches CLI behavior.
+
+    Supports image-only queries. Either a non-empty `question` OR at least
     one attachment must be provided. Image attachments are decoded and saved to
-    `tmp_uploads/` and their file paths are passed along to the core.
+    `tmp_uploads/` and their file paths are leveraged for optional vision extract.
     """
     # Validate input: allow (question) OR (attachments)
     q = (payload.question or "").strip()
@@ -704,6 +717,11 @@ def post_ask(payload: AskRequest):
         raise HTTPException(status_code=500, detail="Failed to load class workspace") from exc
 
     subject_name = workspace.subject_name or class_name
+    # Align subject used by orchestrated pipeline with workspace metadata
+    try:
+        set_subject_name(subject_name, "meta")
+    except Exception:
+        pass
     doc_sets_ordered = workspace.doc_sets()
     if not doc_sets_ordered:
         raise HTTPException(status_code=500, detail="No knowledge materials registered for this class")
@@ -783,33 +801,86 @@ def post_ask(payload: AskRequest):
     if payload.sanitize is not None:
         opts["RETRIEVAL_SANITIZE"] = "on" if payload.sanitize else "off"
 
+    # Build orchestrated retrieval to mirror CLI `backend.qa ask`
     stdout_buffer = io.StringIO()
-    answer_chunks: List[str] = []
+    answer_text: str = ""
+    structured_citations: List[Dict[str, Any]] = []
     error_text: Optional[str] = None
 
+    # Compose effective question using optional vision extract (parity with core)
+    combined_q = (q or "").strip()
     try:
-        with _temp_env(opts):
-            with redirect_stdout(stdout_buffer):
-                result = answer_question(
-                    question=q,
-                    image_paths=image_paths,
-                    course_id=payload.course_id,
-                    doc_sets=doc_sets_override,
-                    subject=subject_name,
-                )
-                for chunk in _iter_text(result):
-                    answer_chunks.append(chunk)
-    except Exception as e:
-        log.exception("answer_question failed")
-        error_text = f"[error] {e}"
+        if image_paths:
+            image_text = _vision_transcribe(image_paths)
+        else:
+            image_text = ""
+    except Exception:
+        image_text = ""
+    if image_text:
+        combined_q = (combined_q + ("\n" if combined_q else "") + image_text).strip()
 
-    answer_text = "".join(answer_chunks).strip()
-    if error_text and not answer_text:
-        answer_text = error_text
+    # If no text at all, try a direct vision answer
+    if not combined_q and image_paths:
+        try:
+            direct = _vision_direct_answer(image_paths)
+            if direct:
+                answer_text = direct
+        except Exception:
+            pass
 
-    structured_citations: List[Dict[str, Any]] = []
-    if "result" in locals():
-        structured_citations = list(getattr(result, "citations", []) or [])
+    if not answer_text:
+        # Load indexes exactly like CLI before running orchestrator
+        try:
+            if len(doc_sets_override) > 1:
+                _, _ = load_assets_all([Path(p) for p in doc_sets_override])
+            else:
+                load_assets(Path(doc_sets_override[0]))
+        except Exception as e:
+            log.exception("Failed to load retrieval assets")
+            raise HTTPException(status_code=500, detail=f"Failed to load knowledge indexes: {e}")
+
+        # Orchestrated research + answer, with stdout captured for wire logs
+        try:
+            with _temp_env(opts):
+                with redirect_stdout(stdout_buffer):
+                    orch = Orchestrator()
+                    # Defaults similar to CLI
+                    token_budget = int(os.getenv("REPORTS_TOKEN_BUDGET", "6000") or "6000")
+                    k_sem = int(os.getenv("RETRIEVAL_K_SEM", "30") or "30")
+                    k_lex = int(os.getenv("RETRIEVAL_K_LEX", "30") or "30")
+                    max_iters = payload.max_iters if payload.max_iters is not None else 2
+                    options: Dict[str, Any] = {
+                        "doc_sets": doc_sets_override,
+                        "k_sem": k_sem,
+                        "k_lex": k_lex,
+                        "token_budget": token_budget,
+                    }
+                    bundle = orch._iterative_research(combined_q or q, options, max_iters)
+
+                    ctx_snippets = [
+                        ContextSnippet(
+                            id=sn.id,
+                            type=sn.type,
+                            page=sn.page,
+                            section_path=sn.section_path,
+                            text=sn.text,
+                            figure_id=sn.figure_id,
+                            why=sn.why,
+                            source_path=sn.source_path,
+                            doc_title=sn.doc_title,
+                            doc_short=sn.doc_short,
+                        )
+                        for sn in bundle.snippets
+                    ]
+                    ctx = ContextPack(snippets=ctx_snippets, used_ids=bundle.used_ids, stats=bundle.stats)
+                    ans = retriever_answer(combined_q or q, ctx)
+                    answer_text = (ans.text or "").strip()
+                    structured_citations = list(getattr(ans, "structured_citations", []) or [])
+        except Exception as e:
+            log.exception("orchestrated answer failed")
+            error_text = f"[error] {e}"
+            if not answer_text:
+                answer_text = error_text or ""
 
     raw_logs = stdout_buffer.getvalue().splitlines()
     wire_logs = [line.strip() for line in raw_logs if line.strip().startswith("[Main AI") or line.strip().startswith("[Indexer AI")]
