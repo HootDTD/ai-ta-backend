@@ -19,6 +19,15 @@ from contextlib import contextmanager, redirect_stdout
 # Import the callable core entrypoint using package‑relative import to avoid
 # path issues when running under different working directories.
 from .core import answer_question
+from .config import set_subject_name
+from .orchestrator import Orchestrator
+from .retriever import (
+    load_assets,
+    load_assets_all,
+    ContextPack,
+    ContextSnippet,
+    answer as retriever_answer,
+)
 from .knowledge import KnowledgeManager
 from .store_weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
 from .teacher_weekly import TeacherWeeklyStorage
@@ -790,17 +799,57 @@ def post_ask(payload: AskRequest):
     try:
         with _temp_env(opts):
             with redirect_stdout(stdout_buffer):
-                result = answer_question(
-                    question=q,
-                    image_paths=image_paths,
-                    course_id=payload.course_id,
-                    doc_sets=doc_sets_override,
-                    subject=subject_name,
-                )
-                for chunk in _iter_text(result):
-                    answer_chunks.append(chunk)
+                # Respect workspace subject for keyword filtering
+                try:
+                    set_subject_name(subject_name, "server")
+                except Exception:
+                    pass
+
+                # Load retrieval assets mirroring CLI behavior
+                try:
+                    paths = [Path(p).resolve() for p in (doc_sets_override or [])]
+                    if len(paths) > 1:
+                        load_assets_all(paths)
+                    elif paths:
+                        load_assets(paths[0])
+                except Exception as e:
+                    raise RuntimeError(f"failed to load indexes: {e}")
+
+                # Use the same pipeline as `python -m backend.qa ask`
+                orch = Orchestrator()
+                retrieval_opts = {
+                    "doc_sets": doc_sets_override,
+                    "k_sem": int(os.getenv("K_SEM", "30")),
+                    "k_lex": int(os.getenv("K_LEX", "30")),
+                    "token_budget": int(os.getenv("TOKEN_BUDGET", "6000")),
+                }
+                max_iters = int(os.getenv("RETRIEVAL_MAX_ITERS", str(payload.max_iters or 5)))
+
+                bundle = orch._iterative_research(q, retrieval_opts, max_iters)
+
+                ctx_snippets = [
+                    ContextSnippet(
+                        id=sn.id,
+                        type=sn.type,
+                        page=sn.page,
+                        section_path=sn.section_path,
+                        text=sn.text,
+                        figure_id=sn.figure_id,
+                        why=sn.why,
+                        source_path=sn.source_path,
+                        doc_title=sn.doc_title,
+                        doc_short=sn.doc_short,
+                    )
+                    for sn in bundle.snippets
+                ]
+                ctx = ContextPack(snippets=ctx_snippets, used_ids=bundle.used_ids, stats=bundle.stats)
+
+                ans = retriever_answer(q, ctx)
+                answer_chunks.append(ans.text)
+                # attach structured citations to local variable for response below
+                result = ans  # for compatibility with existing citation extraction
     except Exception as e:
-        log.exception("answer_question failed")
+        log.exception("qa ask pipeline failed")
         error_text = f"[error] {e}"
 
     answer_text = "".join(answer_chunks).strip()
@@ -809,7 +858,8 @@ def post_ask(payload: AskRequest):
 
     structured_citations: List[Dict[str, Any]] = []
     if "result" in locals():
-        structured_citations = list(getattr(result, "citations", []) or [])
+        # Prefer structured citations from retriever Answer if available
+        structured_citations = list(getattr(result, "structured_citations", []) or getattr(result, "citations", []) or [])
 
     raw_logs = stdout_buffer.getvalue().splitlines()
     wire_logs = [line.strip() for line in raw_logs if line.strip().startswith("[Main AI") or line.strip().startswith("[Indexer AI")]
