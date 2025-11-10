@@ -148,14 +148,44 @@ class Orchestrator:
     ) -> ResearchBundle:
         sanitize = os.getenv("RETRIEVAL_SANITIZE", "on").lower() not in {"0", "off", "false", "no"}
         norm_question = normalize_query(question) if sanitize else question
+
+        # Seed terms from parser; if empty, fall back to sanitized question.
         initial_terms = extract_keywords(question)
         if not initial_terms:
             fallback = norm_question or question
             initial_terms = [fallback.strip().lower()] if fallback else []
 
+        # Keep a copy before filtering so we can fall back if the filter is too strict
+        pre_filter_terms = list(initial_terms)
+
+        # Try subject-aware filtering; if it returns None, keep seeds. If it returns an
+        # empty list, fall back to the unfiltered seeds or tokenized question to avoid
+        # dropping everything for misspellings or grammar issues.
         filtered_terms = filter_keywords_by_subject(initial_terms, question)
-        if filtered_terms is not None:
+        if filtered_terms is None:
+            pass  # keep pre_filter_terms
+        elif filtered_terms:
             initial_terms = filtered_terms
+        else:
+            # Tokenize normalized question as a robust fallback (drops punctuation,
+            # keeps alphanumerics). This ensures we always have something to probe
+            # even when the LLM filter rejects all seeds (e.g., misspellings like
+            # "bernulis" for Bernoulli's).
+            tokens = []
+            try:
+                import re as _re
+                tokens = [t for t in _re.findall(r"[A-Za-z][A-Za-z0-9_\-]+", norm_question or question) if len(t) >= 3]
+            except Exception:
+                tokens = []
+            if pre_filter_terms:
+                initial_terms = pre_filter_terms
+            elif tokens:
+                # Take up to a handful of tokens to avoid dilution
+                initial_terms = [tok.lower() for tok in tokens[:6]]
+            else:
+                # Final guard: use the raw normalized question if everything else failed
+                if norm_question and norm_question.strip():
+                    initial_terms = [norm_question.strip().lower()]
 
         skip_semantic = os.getenv("RETRIEVAL_SKIP_SYNONYMS", "off").lower() in {
             "1",

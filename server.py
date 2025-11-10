@@ -18,7 +18,7 @@ from contextlib import contextmanager, redirect_stdout
 
 # Import the callable core entrypoint using package‑relative import to avoid
 # path issues when running under different working directories.
-from .core import answer_question
+from .core import answer_question, _vision_transcribe
 from .config import set_subject_name
 from .orchestrator import Orchestrator
 from .retriever import (
@@ -30,6 +30,7 @@ from .retriever import (
 )
 from .knowledge import KnowledgeManager
 from .store_weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
+from .main_ai import extract_keywords
 from .teacher_weekly import TeacherWeeklyStorage
 from .workspaces import (
     WorkspaceConfigError,
@@ -764,6 +765,25 @@ def post_ask(payload: AskRequest):
         log.exception("Attachment decode failed")
         raise HTTPException(status_code=400, detail=f"Invalid attachments: {e}")
 
+    # Augment question with image-derived keywords (mirrors backend.qa ask behavior)
+    q_effective = q
+    image_text = ""
+    if image_paths:
+        try:
+            image_text = _vision_transcribe(image_paths) or ""
+        except Exception:
+            image_text = ""
+    if image_text:
+        try:
+            terms = extract_keywords(image_text) or []
+        except Exception:
+            terms = []
+        image_query = " ".join(terms[:8]) if terms else " ".join(image_text.split())[:500]
+        if q_effective and image_query:
+            q_effective = q_effective.rstrip() + " \n" + image_query
+        elif image_query:
+            q_effective = image_query
+
     opts: Dict[str, str] = {}
     weight_overrides = dict(workspace.weight_overrides)
     for material in workspace.materials:
@@ -825,7 +845,7 @@ def post_ask(payload: AskRequest):
                 }
                 max_iters = int(os.getenv("RETRIEVAL_MAX_ITERS", str(payload.max_iters or 5)))
 
-                bundle = orch._iterative_research(q, retrieval_opts, max_iters)
+                bundle = orch._iterative_research(q_effective, retrieval_opts, max_iters)
 
                 ctx_snippets = [
                     ContextSnippet(
@@ -844,7 +864,7 @@ def post_ask(payload: AskRequest):
                 ]
                 ctx = ContextPack(snippets=ctx_snippets, used_ids=bundle.used_ids, stats=bundle.stats)
 
-                ans = retriever_answer(q, ctx)
+                ans = retriever_answer(q_effective, ctx)
                 answer_chunks.append(ans.text)
                 # attach structured citations to local variable for response below
                 result = ans  # for compatibility with existing citation extraction

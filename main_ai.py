@@ -855,6 +855,10 @@ def _write_citations_file(
             "page": getattr(sn, "page", None),
             "why": getattr(sn, "why", ""),
             "source_path": getattr(sn, "source_path", ""),
+            # Include document title/alias so downstream tools can distinguish
+            # citations coming from different embedded sources (textbook, slides, notes, etc.).
+            "doc_title": getattr(sn, "doc_title", None),
+            "doc_short": getattr(sn, "doc_short", ""),
         }
         final_score = getattr(sn, "final_score", None)
         if isinstance(final_score, dict) and final_score:

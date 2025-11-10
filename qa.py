@@ -7,7 +7,7 @@ from typing import Dict
 
 from dataclasses import asdict
 
-from .config import set_subject_name
+from .config import set_subject_name, get_subject_name
 from .retriever import (
     load_assets,
     load_assets_all,
@@ -21,6 +21,14 @@ from .orchestrator import Orchestrator
 from .main_ai import _write_proof_citations, _write_citations_file
 from .indexers.handwriting import ingest as ingest_handwriting, IngestOptions
 from .knowledge import KnowledgeManager
+from .main_ai import extract_keywords
+from .core import _vision_transcribe
+import base64
+import re
+import uuid
+
+
+DATA_URL_RE = re.compile(r"^data:(?P<mime>[^;]+);base64,(?P<data>.+)$", re.DOTALL)
 
 DEFAULT_INDEX = str(Path(__file__).resolve().parent / "text-embeder/my_book_index_aero")
 
@@ -52,8 +60,24 @@ def cmd_search(args: argparse.Namespace) -> None:
 
 
 def cmd_ask(args: argparse.Namespace) -> None:
-    indexes = args.index or [DEFAULT_INDEX]
+    # Resolve full set of doc sets: prefer explicit --index; otherwise subject/workspace materials
     _apply_subject(getattr(args, "subject", None))
+    indexes = args.index or None
+    if not indexes:
+        try:
+            subject = get_subject_name()
+        except Exception:
+            subject = None
+        if subject:
+            try:
+                km = KnowledgeManager()
+                paths = km.resolve_doc_sets(subject)
+            except Exception:
+                paths = []
+            if paths:
+                indexes = [str(p) for p in paths]
+    if not indexes:
+        indexes = [DEFAULT_INDEX]
     try:
         if len(indexes) > 1:
             _, skipped = load_assets_all([Path(p) for p in indexes])
@@ -64,6 +88,57 @@ def cmd_ask(args: argparse.Namespace) -> None:
     except (FileNotFoundError, RuntimeError) as e:
         print(str(e))
         return
+    # Decode optional attachments (data URLs or file paths) and augment question with image-derived keywords
+    def _save_attachments(values: list[str] | None) -> list[str]:
+        paths: list[str] = []
+        if not values:
+            return paths
+        outdir = Path.cwd() / "tmp_uploads"
+        outdir.mkdir(parents=True, exist_ok=True)
+        for raw in values:
+            if not raw:
+                continue
+            m = DATA_URL_RE.match(raw)
+            if m:
+                try:
+                    b = base64.b64decode(m.group("data").encode("utf-8"), validate=True)
+                except Exception:
+                    b = base64.b64decode(m.group("data").encode("utf-8"))
+                ext = ""
+                mime = (m.group("mime") or "").lower()
+                if "/" in mime:
+                    ext = "." + mime.split("/")[-1].split(";")[0]
+                fname = f"{uuid.uuid4().hex}_attach{ext}"
+                path = outdir / fname
+                path.write_bytes(b)
+                paths.append(str(path))
+                continue
+            # treat as filesystem path
+            p = Path(raw)
+            if p.exists():
+                paths.append(str(p.resolve()))
+        return paths
+
+    image_paths = _save_attachments(getattr(args, "attach", None))
+
+    effective_question = args.question
+    image_text = ""
+    if image_paths:
+        try:
+            image_text = _vision_transcribe(image_paths) or ""
+        except Exception:
+            image_text = ""
+    if image_text:
+        try:
+            terms = extract_keywords(image_text) or []
+        except Exception:
+            terms = []
+        image_query = " ".join(terms[:8]) if terms else " ".join(image_text.split())[:500]
+        if effective_question and image_query:
+            effective_question = effective_question.rstrip() + " \n" + image_query
+        elif image_query:
+            effective_question = image_query
+
     orch = Orchestrator()
     opts = {
         "doc_sets": indexes,
@@ -71,7 +146,7 @@ def cmd_ask(args: argparse.Namespace) -> None:
         "k_lex": args.k_lex,
         "token_budget": args.token_budget,
     }
-    bundle = orch._iterative_research(args.question, opts, args.max_iters)
+    bundle = orch._iterative_research(effective_question, opts, args.max_iters)
     ctx_snippets = [
         ContextSnippet(
             id=sn.id,
@@ -88,7 +163,7 @@ def cmd_ask(args: argparse.Namespace) -> None:
         for sn in bundle.snippets
     ]
     ctx = ContextPack(snippets=ctx_snippets, used_ids=bundle.used_ids, stats=bundle.stats)
-    ans = answer(args.question, ctx)
+    ans = answer(effective_question, ctx)
     print("=== Answer ===\n" + ans.text + "\n")
     print("Citations:", render_citations(ans))
     proof = {
@@ -266,6 +341,11 @@ def main() -> None:
     p_ask.add_argument("question")
     p_ask.add_argument(
         "--index", action="append", help="Path to index; may be used multiple times"
+    )
+    p_ask.add_argument(
+        "--attach",
+        action="append",
+        help="Image attachment as file path or data URL; may be used multiple times",
     )
     p_ask.add_argument("--k-sem", type=int, default=30, help="Semantic top-K")
     p_ask.add_argument("--k-lex", type=int, default=30, help="Lexical top-K")
