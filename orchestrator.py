@@ -312,15 +312,19 @@ class Orchestrator:
         # Keep a copy before filtering so we can fall back if the filter is too strict
         pre_filter_terms = list(initial_terms)
 
-        # Try subject-aware filtering; if it returns None, keep seeds. If it returns an
-        # empty list, fall back to the unfiltered seeds or tokenized question to avoid
-        # dropping everything for misspellings or grammar issues.
+        # Try subject-aware filtering; if it returns None, keep seeds. If it yields
+        # nothing usable, fall back to the unfiltered seeds or tokenized question.
         filtered_terms = filter_keywords_by_subject(initial_terms, question)
+        fallback_needed = False
         if filtered_terms is None:
             pass  # keep pre_filter_terms
-        elif filtered_terms:
-            initial_terms = filtered_terms
         else:
+            sanitized_filtered = self._sanitize_seed_terms(filtered_terms)
+            if sanitized_filtered:
+                initial_terms = sanitized_filtered
+            else:
+                fallback_needed = True
+        if fallback_needed:
             # Tokenize normalized question as a robust fallback (drops punctuation,
             # keeps alphanumerics). This ensures we always have something to probe
             # even when the LLM filter rejects all seeds (e.g., misspellings like

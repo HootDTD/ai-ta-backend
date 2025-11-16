@@ -161,23 +161,22 @@ def extract_keywords(question: str) -> List[str]:
 def filter_keywords_by_subject(
     terms: List[str], question: str | None = None
 ) -> List[str] | None:
-    """Filter candidate keywords so that only subject-relevant items remain."""
-
-    if not terms:
-        return []
+    """Produce subject-relevant topic terms derived from the user question."""
 
     client = _client()
     subject = get_subject_name()
     system = (
-        "You vet candidate search keywords for textbook retrieval. "
-        f"Keep only the terms that are genuinely relevant to {subject}. "
-        "Only select from the provided candidates and preserve their wording. "
-        "Return JSON with a single key 'accepted' containing an array of terms to keep."
+        "You read student questions for textbook lookup. "
+        f"Focus on {subject} terminology. "
+        "Examine the question and the provided candidate keywords, then list the most relevant "
+        "concepts, symbols, or named equations that the question revolves around. "
+        "Reuse any strong candidates but feel free to add missing topics drawn from the question itself. "
+        "Return ONLY JSON with one key 'topics' whose value is an ordered array of concise terms."
     )
     payload = {
         "subject": subject,
         "question": question or "",
-        "candidates": terms,
+        "candidates": terms or [],
     }
 
     try:
@@ -195,7 +194,9 @@ def filter_keywords_by_subject(
         )
         content = resp.choices[0].message.content or "{}"
         data = json.loads(content)
-        accepted_raw = data.get("accepted")
+        accepted_raw = data.get("topics")
+        if not isinstance(accepted_raw, list):
+            accepted_raw = data.get("accepted")
         if not isinstance(accepted_raw, list):
             accepted_raw = data.get("keywords")
     except Exception:
@@ -204,18 +205,21 @@ def filter_keywords_by_subject(
     if not isinstance(accepted_raw, list):
         return None
 
-    accepted_set = set()
+    cleaned_terms: List[str] = []
+    seen: set[str] = set()
     for item in accepted_raw:
         if not isinstance(item, str):
             continue
-        cleaned = item.strip().lower()
-        if cleaned:
-            accepted_set.add(cleaned)
+        cleaned = item.strip()
+        if not cleaned:
+            continue
+        lowered = cleaned.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        cleaned_terms.append(cleaned)
 
-    if not accepted_set:
-        return []
-
-    return [term for term in terms if term.strip().lower() in accepted_set]
+    return cleaned_terms
 
 
 def propose_synonyms(
