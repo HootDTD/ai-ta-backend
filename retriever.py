@@ -1899,19 +1899,39 @@ _NOT_FOUND_PHRASE = "Not found in the approved materials."
 
 
 def _call_answer_model(
-    question: str, ctx: ContextPack, *, allow_not_found: bool
+    question: str, ctx: ContextPack, *, allow_not_found: bool, citation_guard: bool = False
 ) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], str]:
     client = _get_client()
     model = _meta.get("answer_model", "gpt-4o-mini")
-    system_prompt = (
-        "Answer only from the provided context. Cite inline using [S#] that map to the snippets. "
-        "If information is truly missing, reply exactly 'Not found in the approved materials.'"
+    try:
+        subject = get_subject_name()
+    except Exception:
+        subject = ""
+    subject_clause = f"You are a {subject} teaching assistant." if subject else "You are a teaching assistant."
+    qualitative_rules = (
+        subject_clause
+        + " Use ONLY the provided context snippets. Provide qualitative guidance: explain governing principles,"
+        " describe which symbolic equations apply, and outline how the given scenario maps onto them."
+        " Do NOT compute or report numeric answers, do not plug the problem's numbers into equations, and do not invent"
+        " step-by-step arithmetic. Every declarative sentence or bullet must include an inline [S#] citation referencing"
+        " one of the snippets."
     )
-    if not allow_not_found:
+    if allow_not_found:
         system_prompt = (
-            "Answer only from the provided context. Provide the most helpful explanation available from the passages. "
-            "If details are missing, explain what the passages do cover and note the gap, but do NOT respond with "
-            "'Not found in the approved materials.' Cite inline using [S#] for every substantive claim."
+            qualitative_rules
+            + f" If the passages truly lack the necessary information, reply exactly '{_NOT_FOUND_PHRASE}'."
+        )
+    else:
+        system_prompt = (
+            qualitative_rules
+            + " If a requested detail is not covered, explicitly describe the gap while still summarizing what the passages provide."
+        )
+    system_prompt += (
+        " Focus on context and interpretation rather than solving for the final unknown. Highlight helpful equations in symbolic form."
+    )
+    if citation_guard:
+        system_prompt += (
+            " The previous attempt failed the policy. This time, refuse to produce any numeric result and ensure every paragraph includes at least one [S#]."
         )
 
     parts: List[str] = []
@@ -1963,6 +1983,14 @@ def answer(question: str, ctx: ContextPack) -> Answer:
         )
         if retry_text.strip() and retry_raw.strip().lower() != _NOT_FOUND_PHRASE.lower():
             text, citations, structured = retry_text, retry_citations, retry_structured
+
+    needs_citation_guard = ctx.snippets and not citations
+    if needs_citation_guard:
+        guard_text, guard_citations, guard_structured, guard_raw = _call_answer_model(
+            question, ctx, allow_not_found=False, citation_guard=True
+        )
+        if guard_citations and guard_text.strip() and guard_raw.strip().lower() != _NOT_FOUND_PHRASE.lower():
+            text, citations, structured = guard_text, guard_citations, guard_structured
 
     proof = {"question": question, "used_ids": ctx.used_ids}
     return Answer(text=text, citations=citations, proof=proof, structured_citations=structured)

@@ -36,6 +36,71 @@ WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0","off","false",
 
 CITATION_PATTERN = re.compile(r"\[[^,\[\]]+,\s*p\.\s*[^\]]+\]")
 
+VALUE_SEPARATORS = ("=", "≈", "~", "≃", "≅", ":")
+NUMERIC_PREFIX = re.compile(r"^\s*[-+]?(\d|\.\d)")
+MEASUREMENT_UNIT_TOKENS = {
+    "m",
+    "meter",
+    "meters",
+    "cm",
+    "centimeter",
+    "centimeters",
+    "mm",
+    "millimeter",
+    "millimeters",
+    "km",
+    "kilometer",
+    "kilometers",
+    "ft",
+    "foot",
+    "feet",
+    "in",
+    "inch",
+    "inches",
+    "yd",
+    "yard",
+    "yards",
+    "mi",
+    "mile",
+    "miles",
+    "kg",
+    "kilogram",
+    "kilograms",
+    "g",
+    "gram",
+    "grams",
+    "slug",
+    "lb",
+    "lbs",
+    "lbm",
+    "pa",
+    "kpa",
+    "mpa",
+    "psi",
+    "bar",
+    "atm",
+    "torr",
+    "degc",
+    "degf",
+    "w",
+    "kw",
+    "mw",
+    "j",
+    "kj",
+    "mol",
+    "mole",
+    "moles",
+    "l",
+    "liter",
+    "liters",
+    "cc",
+    "hz",
+    "rpm",
+    "cfm",
+    "gpm",
+    "lpm",
+}
+
 try:  # optional pint dependency for unit checks
     from pint import UnitRegistry
 
@@ -143,6 +208,94 @@ class Orchestrator:
 
         return keyword_matrix, semantic_map
 
+    def _sanitize_seed_terms(self, terms: List[str]) -> List[str]:
+        """Remove measurements/values so only conceptual tokens remain."""
+
+        sanitized: List[str] = []
+        seen: Set[str] = set()
+        for raw in terms or []:
+            candidate = self._trim_measurement_tokens(self._strip_value_assignments(raw))
+            if not candidate:
+                continue
+            key = candidate.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            sanitized.append(candidate)
+        return sanitized
+
+    def _strip_value_assignments(self, term: str) -> str:
+        text = (term or "").strip()
+        if not text:
+            return ""
+        for sep in VALUE_SEPARATORS:
+            if sep in text:
+                left, right = text.split(sep, 1)
+                if re.search(r"\d", right):
+                    text = left.strip(" ,;")
+                    break
+        return text
+
+    def _trim_measurement_tokens(self, term: str) -> str:
+        text = (term or "").strip(" ,;")
+        if not text:
+            return ""
+        tokens = [tok for tok in re.split(r"\s+", text) if tok]
+        tokens = self._drop_measure_tokens(tokens, from_start=True)
+        tokens = self._drop_measure_tokens(tokens, from_start=False)
+        candidate = " ".join(tokens).strip(" ,;")
+        if not candidate:
+            return ""
+        words = re.findall(r"[A-Za-zµ°Ωα-ω]+", candidate)
+        if words:
+            normalized_words = [w.lower() for w in words]
+            if all(word in MEASUREMENT_UNIT_TOKENS for word in normalized_words):
+                return ""
+        return candidate
+
+    def _drop_measure_tokens(self, tokens: List[str], from_start: bool) -> List[str]:
+        while tokens:
+            idx = 0 if from_start else -1
+            token = tokens[idx].strip(",;")
+            if not token:
+                tokens.pop(idx)
+                continue
+            if self._is_measurement_token(token):
+                tokens.pop(idx)
+                continue
+            break
+        return tokens
+
+    def _is_measurement_token(self, token: str) -> bool:
+        stripped = token.strip()
+        if not stripped:
+            return True
+        if NUMERIC_PREFIX.match(stripped):
+            return True
+        letters_only = re.sub(r"[^A-Za-zµ°Ωα-ω]", "", stripped).lower()
+        has_digits = any(ch.isdigit() for ch in stripped)
+        if any(ch in stripped for ch in "°‰µ²³"):
+            return True
+        lowered = stripped.lower()
+        if "/" in lowered or "*" in lowered or "·" in lowered or "×" in lowered:
+            pieces = re.split(r"[*/·×]", lowered)
+            cleaned = [
+                re.sub(r"[^a-z]", "", piece)
+                for piece in pieces
+                if re.sub(r"[^a-z]", "", piece)
+            ]
+            if cleaned and all(piece in MEASUREMENT_UNIT_TOKENS for piece in cleaned):
+                return True
+        if "^" in stripped and letters_only in MEASUREMENT_UNIT_TOKENS:
+            return True
+        if letters_only and letters_only in MEASUREMENT_UNIT_TOKENS and not has_digits:
+            return True
+        if has_digits and letters_only and letters_only in MEASUREMENT_UNIT_TOKENS:
+            first_char = stripped.strip()[0]
+            if first_char.isdigit() or first_char in "+-.":
+                return True
+        return False
+
     def _iterative_research(
         self, question: str, options: Dict[str, Any], max_iters: int
     ) -> ResearchBundle:
@@ -150,10 +303,11 @@ class Orchestrator:
         norm_question = normalize_query(question) if sanitize else question
 
         # Seed terms from parser; if empty, fall back to sanitized question.
-        initial_terms = extract_keywords(question)
+        initial_terms = self._sanitize_seed_terms(extract_keywords(question))
         if not initial_terms:
             fallback = norm_question or question
-            initial_terms = [fallback.strip().lower()] if fallback else []
+            fallback_terms = [fallback.strip().lower()] if fallback else []
+            initial_terms = self._sanitize_seed_terms(fallback_terms)
 
         # Keep a copy before filtering so we can fall back if the filter is too strict
         pre_filter_terms = list(initial_terms)
