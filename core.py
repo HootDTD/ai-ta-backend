@@ -227,12 +227,10 @@ def answer_question(
     image_query = ""
     if image_text:
         try:
-            terms = extract_keywords(image_text) or []
-            # Keep 3–8 concise keywords to avoid diluting search
-            if terms:
-                image_query = " ".join(terms[:8])
+            context_phrase = extract_keywords(image_text) or ""
         except Exception:
-            image_query = ""
+            context_phrase = ""
+        image_query = context_phrase.strip()
         if not image_query:
             # Fallback: truncate image_text to a short head for semantic signal
             image_query = " ".join(image_text.split())[:500]

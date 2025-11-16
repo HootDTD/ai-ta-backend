@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 from dataclasses import asdict
@@ -101,6 +102,20 @@ MEASUREMENT_UNIT_TOKENS = {
     "lpm",
 }
 
+
+def _clamp_weight(value: float, default: float = 1.0) -> float:
+    if value is None:
+        val = default
+    else:
+        try:
+            val = float(value)
+        except (TypeError, ValueError):
+            val = default
+    if not math.isfinite(val):
+        val = default
+    return float(max(0.05, min(1.0, val)))
+
+
 try:  # optional pint dependency for unit checks
     from pint import UnitRegistry
 
@@ -131,36 +146,48 @@ class Orchestrator:
         return float(max(0.0, min(ratio, 1.0)))
 
     def _build_keyword_matrix(
-        self, seed_terms: List[str], skip_semantic: bool
+        self, seed_terms: List[Any], skip_semantic: bool
     ) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
         """Return keyword-score pairs plus a record of semantic expansions."""
 
         keyword_matrix: List[Dict[str, Any]] = []
         seen: Set[str] = set()
+        base_weight_map: Dict[str, float] = {}
+        processed_terms: List[str] = []
 
-        for term in seed_terms:
-            cleaned = (term or "").strip()
+        for entry in seed_terms or []:
+            if isinstance(entry, dict):
+                raw_term = entry.get("term") or entry.get("keyword") or ""
+                base_weight = entry.get("weight", 1.0)
+            else:
+                raw_term = entry
+                base_weight = 1.0
+            cleaned = (raw_term or "").strip()
             if not cleaned:
                 continue
             key = cleaned.lower()
             if key in seen:
+                base_weight_map[key] = max(base_weight_map.get(key, 1.0), _clamp_weight(base_weight))
                 continue
+            weight_val = _clamp_weight(base_weight)
             keyword_matrix.append(
                 {
                     "term": cleaned,
-                    "score": 1.0,
+                    "score": weight_val,
                     "origin": "seed",
                     "source_term": cleaned,
                 }
             )
             seen.add(key)
+            processed_terms.append(cleaned)
+            base_weight_map[key] = weight_val
 
         semantic_map: Dict[str, List[str]] = {}
-        if skip_semantic or not seed_terms:
+        if skip_semantic or not processed_terms:
             return keyword_matrix, semantic_map
 
-        raw_synonyms = propose_synonyms(seed_terms)
-        base_lookup: Dict[str, str] = {term.lower(): term for term in seed_terms}
+        raw_synonyms = propose_synonyms(processed_terms)
+        base_lookup: Dict[str, str] = {term.lower(): term for term in processed_terms}
         normalized: Dict[str, List[str]] = {}
 
         if isinstance(raw_synonyms, dict):
@@ -177,7 +204,7 @@ class Orchestrator:
                     if isinstance(cand, str):
                         normalized[base].append(cand)
 
-        for base in seed_terms:
+        for base in processed_terms:
             candidates = normalized.get(base, [])
             base_seen: Set[str] = set()
             cleaned_candidates: List[str] = []
@@ -188,7 +215,8 @@ class Orchestrator:
                 cand_key = cleaned.lower()
                 if cand_key in base_seen or cand_key in seen:
                     continue
-                score = self._semantic_similarity(base, cleaned)
+                base_weight = base_weight_map.get(base.lower(), 1.0)
+                score = self._semantic_similarity(base, cleaned) * base_weight
                 if score <= 0:
                     continue
                 score = round(float(max(0.0, min(score, 1.0))), 3)
@@ -208,21 +236,52 @@ class Orchestrator:
 
         return keyword_matrix, semantic_map
 
-    def _sanitize_seed_terms(self, terms: List[str]) -> List[str]:
-        """Remove measurements/values so only conceptual tokens remain."""
+    def _sanitize_term(self, term: str) -> str:
+        """Normalize a single keyword candidate into a conceptual token."""
 
-        sanitized: List[str] = []
-        seen: Set[str] = set()
-        for raw in terms or []:
-            candidate = self._trim_measurement_tokens(self._strip_value_assignments(raw))
-            if not candidate:
+        return self._trim_measurement_tokens(self._strip_value_assignments(term))
+
+    def _append_weighted_term(
+        self,
+        terms: List[str],
+        weight_map: Dict[str, float],
+        raw_term: str,
+        weight: float,
+    ) -> None:
+        """Insert a sanitized term with an associated importance weight."""
+
+        candidate = self._sanitize_term(raw_term)
+        if not candidate:
+            return
+        key = candidate.lower()
+        norm_weight = _clamp_weight(weight)
+        if key in weight_map:
+            weight_map[key] = max(weight_map.get(key, norm_weight), norm_weight)
+            return
+        weight_map[key] = norm_weight
+        terms.append(candidate)
+
+    def _apply_importance_weights(self, snippet_records: Dict[str, Dict[str, Any]]) -> None:
+        """Boost snippet equal scores according to originating keyword importance."""
+
+        for info in snippet_records.values():
+            snippet = info.get("snippet")
+            if not snippet:
                 continue
-            key = candidate.lower()
-            if key in seen:
+            importance = _clamp_weight(info.get("importance", 1.0))
+            fs = getattr(snippet, "final_score", {}) or {}
+            equal_val = fs.get("equal")
+            if equal_val is None:
                 continue
-            seen.add(key)
-            sanitized.append(candidate)
-        return sanitized
+            try:
+                equal_float = float(equal_val)
+            except (TypeError, ValueError):
+                continue
+            weighted_equal = equal_float * (importance ** 2)
+            fs["equal_raw"] = equal_float
+            fs["equal"] = weighted_equal
+            fs["importance"] = importance
+            setattr(snippet, "final_score", fs)
 
     def _strip_value_assignments(self, term: str) -> str:
         text = (term or "").strip()
@@ -302,48 +361,66 @@ class Orchestrator:
         sanitize = os.getenv("RETRIEVAL_SANITIZE", "on").lower() not in {"0", "off", "false", "no"}
         norm_question = normalize_query(question) if sanitize else question
 
-        # Seed terms from parser; if empty, fall back to sanitized question.
-        initial_terms = self._sanitize_seed_terms(extract_keywords(question))
-        if not initial_terms:
-            fallback = norm_question or question
-            fallback_terms = [fallback.strip().lower()] if fallback else []
-            initial_terms = self._sanitize_seed_terms(fallback_terms)
+        context_summary = extract_keywords(question) or ""
 
-        # Keep a copy before filtering so we can fall back if the filter is too strict
-        pre_filter_terms = list(initial_terms)
-
-        # Try subject-aware filtering; if it returns None, keep seeds. If it yields
-        # nothing usable, fall back to the unfiltered seeds or tokenized question.
-        filtered_terms = filter_keywords_by_subject(initial_terms, question)
+        initial_terms: List[str] = []
+        term_weights: Dict[str, float] = {}
+        filtered_terms = filter_keywords_by_subject(context_summary, question)
         fallback_needed = False
-        if filtered_terms is None:
-            pass  # keep pre_filter_terms
-        else:
-            sanitized_filtered = self._sanitize_seed_terms(filtered_terms)
+        if filtered_terms:
+            sanitized_filtered: List[str] = []
+            sanitized_weights: Dict[str, float] = {}
+            seen_filtered: Set[str] = set()
+            for entry in filtered_terms:
+                if isinstance(entry, dict):
+                    raw_term = entry.get("term") or entry.get("keyword") or entry.get("name") or ""
+                    rel = entry.get("relevance")
+                elif isinstance(entry, str):
+                    raw_term = entry
+                    rel = 1.0
+                else:
+                    continue
+                sanitized = self._sanitize_term(raw_term)
+                if not sanitized:
+                    continue
+                key = sanitized.lower()
+                weight_val = _clamp_weight(rel if rel is not None else 0.8)
+                if key in seen_filtered:
+                    sanitized_weights[key] = max(sanitized_weights.get(key, weight_val), weight_val)
+                    continue
+                seen_filtered.add(key)
+                sanitized_filtered.append(sanitized)
+                sanitized_weights[key] = weight_val
             if sanitized_filtered:
                 initial_terms = sanitized_filtered
+                term_weights = sanitized_weights
             else:
                 fallback_needed = True
-        if fallback_needed:
-            # Tokenize normalized question as a robust fallback (drops punctuation,
-            # keeps alphanumerics). This ensures we always have something to probe
-            # even when the LLM filter rejects all seeds (e.g., misspellings like
-            # "bernulis" for Bernoulli's).
+        else:
+            fallback_needed = True
+
+        if fallback_needed or not initial_terms:
             tokens = []
             try:
                 import re as _re
                 tokens = [t for t in _re.findall(r"[A-Za-z][A-Za-z0-9_\-]+", norm_question or question) if len(t) >= 3]
             except Exception:
                 tokens = []
-            if pre_filter_terms:
-                initial_terms = pre_filter_terms
-            elif tokens:
-                # Take up to a handful of tokens to avoid dilution
-                initial_terms = [tok.lower() for tok in tokens[:6]]
+            if tokens:
+                initial_terms = []
+                term_weights = {}
+                for tok in tokens[:6]:
+                    self._append_weighted_term(initial_terms, term_weights, tok.lower(), 0.6)
             else:
-                # Final guard: use the raw normalized question if everything else failed
-                if norm_question and norm_question.strip():
-                    initial_terms = [norm_question.strip().lower()]
+                fallback_text = context_summary or norm_question or question or ""
+                initial_terms = []
+                term_weights = {}
+                if fallback_text.strip():
+                    self._append_weighted_term(
+                        initial_terms, term_weights, fallback_text.strip().lower(), 0.6
+                    )
+        if not initial_terms:
+            self._append_weighted_term(initial_terms, term_weights, "fluid mechanics", 0.5)
 
         skip_semantic = os.getenv("RETRIEVAL_SKIP_SYNONYMS", "off").lower() in {
             "1",
@@ -352,7 +429,11 @@ class Orchestrator:
             "on",
         }
 
-        keyword_matrix, semantic_map = self._build_keyword_matrix(initial_terms, skip_semantic)
+        seed_entries = [
+            {"term": term, "weight": term_weights.get(term.lower(), 1.0)}
+            for term in initial_terms
+        ]
+        keyword_matrix, semantic_map = self._build_keyword_matrix(seed_entries, skip_semantic)
 
         concept_order: List[str] = []
         concept_display: Dict[str, str] = {}
@@ -532,6 +613,7 @@ class Orchestrator:
                         if alias_lower and alias_lower in text_lower:
                             alias_hit_for_term = True
                             break
+                term_importance = _clamp_weight(origin_info.get("score", 1.0))
                 if existing is None:
                     snippet_records[sn.id] = {
                         "snippet": sn,
@@ -541,6 +623,7 @@ class Orchestrator:
                         "first_iter": iter_idx,
                         "alias_hit": alias_hit_for_term,
                         "concepts": {concept_key},
+                        "importance": term_importance,
                     }
                     continue
 
@@ -554,6 +637,7 @@ class Orchestrator:
                 existing.setdefault("alias_hit", False)
                 existing["alias_hit"] = existing["alias_hit"] or alias_hit_for_term
                 existing.setdefault("concepts", set()).add(concept_key)
+                existing["importance"] = max(existing.get("importance", term_importance), term_importance)
 
         iteration_entry["found_details"] = found_details
         iterations.append(iteration_entry)
@@ -568,6 +652,7 @@ class Orchestrator:
         ]
         if allowed_snippets:
             _compute_equal_scores(allowed_snippets)
+            self._apply_importance_weights(snippet_records)
         for sn_id, info in snippet_records.items():
             snippet = info.get("snippet")
             if not snippet:
@@ -957,7 +1042,7 @@ class Orchestrator:
                 citations.append(cleaned)
 
         models = {
-            "parser": os.getenv("PARSER_MODEL", "gpt-4o-mini"),
+            "parser": os.getenv("PARSER_MODEL", "gpt-4o"),
             "main": None,
         }
         proof = Proof(

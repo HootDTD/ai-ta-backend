@@ -1913,8 +1913,8 @@ def _call_answer_model(
         + " Use ONLY the provided context snippets. Provide qualitative guidance: explain governing principles,"
         " describe which symbolic equations apply, and outline how the given scenario maps onto them."
         " Do NOT compute or report numeric answers, do not plug the problem's numbers into equations, and do not invent"
-        " step-by-step arithmetic. Every declarative sentence or bullet must include an inline [S#] citation referencing"
-        " one of the snippets."
+        " step-by-step arithmetic. Refer to the retrieved information in the first person (e.g., 'In the passages I found...')."
+        " Every declarative sentence or bullet must include an inline [S#] citation referencing one of the snippets."
     )
     if allow_not_found:
         system_prompt = (

@@ -108,22 +108,23 @@ def _load_proof_bundle() -> Optional[Dict[str, Any]]:
     return None
 
 
-def extract_keywords(question: str) -> List[str]:
-    """Ask the LLM to identify 3–8 high-value textbook concepts."""
+def extract_keywords(question: str) -> str:
+    """Summarize the governing subject principles emphasized by the user prompt."""
 
     client = _client()
+    subject = get_subject_name()
     system = (
-        "You read user questions. Identify the most important domain concepts "
-        "or symbols that the prompt itself highlights. Base your choices strictly "
-        "on the user's wording without relying on external subject hints. "
-        "Return JSON with a single key 'keywords' whose value is an ordered array."
+        f"You analyze {subject} textbook questions. Identify the core governing principles, "
+        "laws, or canonical equations that the student's prompt is about. "
+        "Write 2-3 sentences describing those principles with enough context for another model to understand the focus."
     )
     payload = {
-        "prompt": question,
+        "subject": subject,
+        "question": question,
     }
     try:
         resp = client.chat.completions.create(
-            model=os.getenv("PARSER_MODEL", "gpt-4o-mini"),
+            model=os.getenv("PARSER_MODEL", "gpt-4o"),
             messages=[
                 {"role": "system", "content": system},
                 {
@@ -132,56 +133,39 @@ def extract_keywords(question: str) -> List[str]:
                 },
             ],
             temperature=0,
-            response_format={"type": "json_object"},
         )
-        content = resp.choices[0].message.content or "{}"
-        data = json.loads(content)
-        raw = data.get("keywords", [])
+        summary = (resp.choices[0].message.content or "").strip()
     except Exception:
-        raw = []
+        summary = ""
 
-    keywords: List[str] = []
-    seen: set[str] = set()
-    for item in raw:
-        if not isinstance(item, str):
-            continue
-        cleaned = item.strip().lower()
-        if not cleaned or cleaned in seen:
-            continue
-        seen.add(cleaned)
-        keywords.append(cleaned)
-        if len(keywords) >= 8:
-            break
-
-    if not keywords and question.strip():
-        keywords = [question.strip().lower()]
-    return keywords
+    if not summary:
+        summary = question.strip()
+    return summary
 
 
 def filter_keywords_by_subject(
-    terms: List[str], question: str | None = None
-) -> List[str] | None:
-    """Produce subject-relevant topic terms derived from the user question."""
+    context_summary: str, question: str | None = None
+) -> List[Dict[str, Any]] | None:
+    """Produce standalone keyword terms using only the provided context summary and question."""
+
+    if not (context_summary or question):
+        return []
 
     client = _client()
-    subject = get_subject_name()
     system = (
-        "You read student questions for textbook lookup. "
-        f"Focus on {subject} terminology. "
-        "Examine the question and the provided candidate keywords, then list the most relevant "
-        "concepts, symbols, or named equations that the question revolves around. "
-        "Reuse any strong candidates but feel free to add missing topics drawn from the question itself. "
-        "Return ONLY JSON with one key 'topics' whose value is an ordered array of concise terms."
+        "You extract textbook lookup keywords but you lack any subject knowledge beyond what is provided. "
+        "Read the student's raw question plus the context summary, then list the discrete concepts or symbols an indexer should search. "
+        "Return ONLY JSON with key 'topics' whose value is an ordered array of objects containing 'term' and 'relevance' (0-1). "
+        "Base relevance purely on how strongly the summary emphasizes the concept."
     )
     payload = {
-        "subject": subject,
         "question": question or "",
-        "candidates": terms or [],
+        "context_summary": context_summary or "",
     }
 
     try:
         resp = client.chat.completions.create(
-            model=os.getenv("PARSER_MODEL", "gpt-4o-mini"),
+            model=os.getenv("PARSER_MODEL", "gpt-4o"),
             messages=[
                 {"role": "system", "content": system},
                 {
@@ -196,8 +180,6 @@ def filter_keywords_by_subject(
         data = json.loads(content)
         accepted_raw = data.get("topics")
         if not isinstance(accepted_raw, list):
-            accepted_raw = data.get("accepted")
-        if not isinstance(accepted_raw, list):
             accepted_raw = data.get("keywords")
     except Exception:
         return None
@@ -205,19 +187,30 @@ def filter_keywords_by_subject(
     if not isinstance(accepted_raw, list):
         return None
 
-    cleaned_terms: List[str] = []
+    cleaned_terms: List[Dict[str, Any]] = []
     seen: set[str] = set()
     for item in accepted_raw:
-        if not isinstance(item, str):
+        if isinstance(item, dict):
+            raw_term = item.get("term") or item.get("keyword") or item.get("name") or ""
+            rel = item.get("relevance")
+        elif isinstance(item, str):
+            raw_term = item
+            rel = 0.7
+        else:
             continue
-        cleaned = item.strip()
+        cleaned = (raw_term or "").strip()
         if not cleaned:
             continue
         lowered = cleaned.lower()
         if lowered in seen:
             continue
         seen.add(lowered)
-        cleaned_terms.append(cleaned)
+        try:
+            rel_val = float(rel)
+        except (TypeError, ValueError):
+            rel_val = 0.7
+        rel_val = max(0.05, min(1.0, rel_val))
+        cleaned_terms.append({"term": cleaned, "relevance": rel_val})
 
     return cleaned_terms
 
@@ -240,7 +233,7 @@ def propose_synonyms(
     hint = context_hint or {}
     try:
         resp = client.chat.completions.create(
-            model=os.getenv("PARSER_MODEL", "gpt-4o-mini"),
+            model=os.getenv("PARSER_MODEL", "gpt-4o"),
             messages=[
                 {"role": "system", "content": system},
                 {
@@ -308,7 +301,7 @@ def parse_question(user_query: str) -> ParsedTask:
         "Extract problem_type, asked_outputs, knowns, constraints, and figure_refs. "
         "Return ONLY JSON with keys: problem_type, asked_outputs, knowns, constraints, figure_refs."
     )
-    model = os.getenv("PARSER_MODEL", "gpt-4o-mini")
+    model = os.getenv("PARSER_MODEL", "gpt-4o")
     resp = client.chat.completions.create(
         model=model,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user_query}],

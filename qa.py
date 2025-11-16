@@ -130,10 +130,11 @@ def cmd_ask(args: argparse.Namespace) -> None:
             image_text = ""
     if image_text:
         try:
-            terms = extract_keywords(image_text) or []
+            image_context = extract_keywords(image_text) or ""
         except Exception:
-            terms = []
-        image_query = " ".join(terms[:8]) if terms else " ".join(image_text.split())[:500]
+            image_context = ""
+        fallback_image_query = " ".join(image_text.split())[:500]
+        image_query = image_context.strip() if image_context.strip() else fallback_image_query
         if effective_question and image_query:
             effective_question = effective_question.rstrip() + " \n" + image_query
         elif image_query:
@@ -166,6 +167,40 @@ def cmd_ask(args: argparse.Namespace) -> None:
     ans = answer(effective_question, ctx)
     print("=== Answer ===\n" + ans.text + "\n")
     print("Citations:", render_citations(ans))
+
+    def _collect_snippet_citations() -> list[str]:
+        entries: list[str] = []
+        seen: set[tuple[str, str]] = set()
+        for sn in bundle.snippets:
+            marker = (getattr(sn, "citation_marker", "") or "").strip()
+            if not marker:
+                label = get_citation_label()
+                page = getattr(sn, "page", None)
+                page_val = f"{page}" if isinstance(page, int) and page > 0 else "?"
+                marker = f"[{label}, p. {page_val}]"
+            source = (
+                (getattr(sn, "doc_short", "") or "").strip()
+                or (getattr(sn, "doc_title", "") or "").strip()
+                or (getattr(sn, "source_path", "") or "").strip()
+            )
+            if not source:
+                source = getattr(sn, "id", "")
+            key = (marker, source)
+            if key in seen:
+                continue
+            seen.add(key)
+            if source:
+                entries.append(f"{marker} — {source}")
+            else:
+                entries.append(marker)
+        return entries
+
+    given_citations = _collect_snippet_citations()
+    if given_citations:
+        print("Given Citations:")
+        for marker in given_citations:
+            print(f"- {marker}")
+        print()
     proof = {
         "question": args.question,
         "used_ids": bundle.used_ids,

@@ -775,10 +775,11 @@ def post_ask(payload: AskRequest):
             image_text = ""
     if image_text:
         try:
-            terms = extract_keywords(image_text) or []
+            image_context = extract_keywords(image_text) or ""
         except Exception:
-            terms = []
-        image_query = " ".join(terms[:8]) if terms else " ".join(image_text.split())[:500]
+            image_context = ""
+        fallback_image_query = " ".join(image_text.split())[:500]
+        image_query = image_context.strip() if image_context.strip() else fallback_image_query
         if q_effective and image_query:
             q_effective = q_effective.rstrip() + " \n" + image_query
         elif image_query:
