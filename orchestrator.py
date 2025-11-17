@@ -26,6 +26,7 @@ from .config import get_subject_name
 from .main_ai import (
     parse_question,
     normalize_query,
+    is_question_subject_relevant,
     extract_keywords,
     filter_keywords_by_subject,
     propose_synonyms,
@@ -355,79 +356,116 @@ class Orchestrator:
                 return True
         return False
 
+    def _question_matches_subject(self, question: str) -> bool:
+        """Return True when the user question appears to reference the active subject."""
+
+        try:
+            return is_question_subject_relevant(question)
+        except Exception:
+            # Default to allowing the question so we do not block legitimate requests
+            # when the classifier (or API) fails.
+            return True
+
     def _iterative_research(
         self, question: str, options: Dict[str, Any], max_iters: int
     ) -> ResearchBundle:
         sanitize = os.getenv("RETRIEVAL_SANITIZE", "on").lower() not in {"0", "off", "false", "no"}
         norm_question = normalize_query(question) if sanitize else question
 
-        context_summary = extract_keywords(question) or ""
+        subject_relevant = self._question_matches_subject(question)
+        context_summary = ""
+        if subject_relevant:
+            context_summary = extract_keywords(question) or ""
+            if WIRE:
+                summary_for_log = context_summary.strip()
+                log_value = (
+                    json.dumps(summary_for_log, ensure_ascii=False)
+                    if summary_for_log
+                    else "null"
+                )
+                print(
+                    f"[Main AI -> Indexer AI] context_sentences={log_value}",
+                    flush=True,
+                )
+        else:
+            if WIRE:
+                print(
+                    "[Main AI -> Indexer AI] context_sentences=null (question_out_of_scope)",
+                    flush=True,
+                )
 
         initial_terms: List[str] = []
         term_weights: Dict[str, float] = {}
-        filtered_terms = filter_keywords_by_subject(context_summary, question)
-        fallback_needed = False
-        if filtered_terms:
-            sanitized_filtered: List[str] = []
-            sanitized_weights: Dict[str, float] = {}
-            seen_filtered: Set[str] = set()
-            for entry in filtered_terms:
-                if isinstance(entry, dict):
-                    raw_term = entry.get("term") or entry.get("keyword") or entry.get("name") or ""
-                    rel = entry.get("relevance")
-                elif isinstance(entry, str):
-                    raw_term = entry
-                    rel = 1.0
+        skip_semantic = True
+
+        if subject_relevant:
+            filtered_terms = filter_keywords_by_subject(context_summary, question)
+            fallback_needed = False
+            if filtered_terms:
+                sanitized_filtered: List[str] = []
+                sanitized_weights: Dict[str, float] = {}
+                seen_filtered: Set[str] = set()
+                for entry in filtered_terms:
+                    if isinstance(entry, dict):
+                        raw_term = entry.get("term") or entry.get("keyword") or entry.get("name") or ""
+                        rel = entry.get("relevance")
+                    elif isinstance(entry, str):
+                        raw_term = entry
+                        rel = 1.0
+                    else:
+                        continue
+                    sanitized = self._sanitize_term(raw_term)
+                    if not sanitized:
+                        continue
+                    key = sanitized.lower()
+                    weight_val = _clamp_weight(rel if rel is not None else 0.8)
+                    if key in seen_filtered:
+                        sanitized_weights[key] = max(sanitized_weights.get(key, weight_val), weight_val)
+                        continue
+                    seen_filtered.add(key)
+                    sanitized_filtered.append(sanitized)
+                    sanitized_weights[key] = weight_val
+                if sanitized_filtered:
+                    initial_terms = sanitized_filtered
+                    term_weights = sanitized_weights
                 else:
-                    continue
-                sanitized = self._sanitize_term(raw_term)
-                if not sanitized:
-                    continue
-                key = sanitized.lower()
-                weight_val = _clamp_weight(rel if rel is not None else 0.8)
-                if key in seen_filtered:
-                    sanitized_weights[key] = max(sanitized_weights.get(key, weight_val), weight_val)
-                    continue
-                seen_filtered.add(key)
-                sanitized_filtered.append(sanitized)
-                sanitized_weights[key] = weight_val
-            if sanitized_filtered:
-                initial_terms = sanitized_filtered
-                term_weights = sanitized_weights
+                    fallback_needed = True
             else:
                 fallback_needed = True
-        else:
-            fallback_needed = True
 
-        if fallback_needed or not initial_terms:
-            tokens = []
-            try:
-                import re as _re
-                tokens = [t for t in _re.findall(r"[A-Za-z][A-Za-z0-9_\-]+", norm_question or question) if len(t) >= 3]
-            except Exception:
+            if fallback_needed or not initial_terms:
                 tokens = []
-            if tokens:
-                initial_terms = []
-                term_weights = {}
-                for tok in tokens[:6]:
-                    self._append_weighted_term(initial_terms, term_weights, tok.lower(), 0.6)
-            else:
-                fallback_text = context_summary or norm_question or question or ""
-                initial_terms = []
-                term_weights = {}
-                if fallback_text.strip():
-                    self._append_weighted_term(
-                        initial_terms, term_weights, fallback_text.strip().lower(), 0.6
-                    )
-        if not initial_terms:
-            self._append_weighted_term(initial_terms, term_weights, "fluid mechanics", 0.5)
+                try:
+                    import re as _re
+                    tokens = [
+                        t
+                        for t in _re.findall(r"[A-Za-z][A-Za-z0-9_\-]+", norm_question or question)
+                        if len(t) >= 3
+                    ]
+                except Exception:
+                    tokens = []
+                if tokens:
+                    initial_terms = []
+                    term_weights = {}
+                    for tok in tokens[:6]:
+                        self._append_weighted_term(initial_terms, term_weights, tok.lower(), 0.6)
+                else:
+                    fallback_text = context_summary or norm_question or question or ""
+                    initial_terms = []
+                    term_weights = {}
+                    if fallback_text.strip():
+                        self._append_weighted_term(
+                            initial_terms, term_weights, fallback_text.strip().lower(), 0.6
+                        )
+            if not initial_terms:
+                self._append_weighted_term(initial_terms, term_weights, "fluid mechanics", 0.5)
 
-        skip_semantic = os.getenv("RETRIEVAL_SKIP_SYNONYMS", "off").lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+            skip_semantic = os.getenv("RETRIEVAL_SKIP_SYNONYMS", "off").lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
 
         seed_entries = [
             {"term": term, "weight": term_weights.get(term.lower(), 1.0)}

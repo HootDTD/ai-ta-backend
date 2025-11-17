@@ -427,8 +427,18 @@ def _compute_equal_scores(snippets: List[Any]) -> None:
         fused_z = _z_score(
             float(fused_raw) if fused_raw is not None else None, fused_mean, fused_std
         )
-        components = [v for v in (sem_z, lex_z, fused_z) if v is not None]
-        equal = float(np.mean(components)) if components else -1e9
+        weighted_sum = 0.0
+        weight_total = 0.0
+        for value, weight in (
+            (sem_z, 1.0),
+            (lex_z, 2.0),
+            (fused_z, 1.0),
+        ):
+            if value is None:
+                continue
+            weighted_sum += value * weight
+            weight_total += weight
+        equal = float(weighted_sum / weight_total) if weight_total > 0 else -1e9
         if fs.get("equal") is None:
             fs["equal"] = equal
         setattr(sn, "final_score", fs)

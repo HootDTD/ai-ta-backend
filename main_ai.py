@@ -60,6 +60,52 @@ def normalize_query(text: str) -> str:
     return text.lower()
 
 
+def is_question_subject_relevant(question: str) -> bool:
+    """Use the LLM to decide whether the question belongs to the active subject."""
+
+    cleaned = (question or "").strip()
+    if not cleaned:
+        return False
+
+    client = _client()
+    subject = get_subject_name()
+    system = (
+        f"You are a guard for the {subject} course materials. "
+        "Decide if the student's question requires knowledge from this subject. "
+        "Return JSON with keys 'relevant' (bool) and 'reason' (string). "
+        "Mark relevant=false if the question is primarily about another discipline or general trivia."
+    )
+    payload = {
+        "subject": subject,
+        "question": cleaned,
+    }
+    try:
+        resp = client.chat.completions.create(
+            model=os.getenv("PARSER_MODEL", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content or "{}"
+        data = json.loads(content)
+        relevant = data.get("relevant")
+        if isinstance(relevant, bool):
+            return relevant
+        if isinstance(relevant, str):
+            lowered = relevant.strip().lower()
+            if lowered in {"true", "yes", "y"}:
+                return True
+            if lowered in {"false", "no", "n"}:
+                return False
+    except Exception:
+        pass
+    # Fail open so that legitimate questions are not blocked if the guard fails.
+    return True
+
+
 def _client() -> OpenAI:
     if not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY not set")
@@ -114,9 +160,10 @@ def extract_keywords(question: str) -> str:
     client = _client()
     subject = get_subject_name()
     system = (
-        f"You analyze {subject} textbook questions. Identify the core governing principles, "
-        "laws, or canonical equations that the student's prompt is about. "
-        "Write 2-3 sentences describing those principles with enough context for another model to understand the focus."
+        f"You analyze {subject} textbook questions. Identify only the governing principles, "
+        "laws, or canonical equations that the student's prompt explicitly calls for. "
+        "Avoid adding background concepts or assumptions that are not clearly stated. "
+        "Write 2-3 very focused sentences so another model understands exactly what this question is about."
     )
     payload = {
         "subject": subject,
@@ -154,9 +201,10 @@ def filter_keywords_by_subject(
     client = _client()
     system = (
         "You extract textbook lookup keywords but you lack any subject knowledge beyond what is provided. "
-        "Read the student's raw question plus the context summary, then list the discrete concepts or symbols an indexer should search. "
+        "Use ONLY the student's raw question plus the context summary; do not invent concepts that were not clearly mentioned. "
+        "List the discrete concepts or symbols an indexer should search, keeping them as specific as the question itself. "
         "Return ONLY JSON with key 'topics' whose value is an ordered array of objects containing 'term' and 'relevance' (0-1). "
-        "Base relevance purely on how strongly the summary emphasizes the concept."
+        "Base relevance purely on the explicit emphasis within the prompt."
     )
     payload = {
         "question": question or "",
@@ -908,6 +956,7 @@ __all__ = [
     "solve_with_bundle",
     "format_answer",
     "normalize_query",
+    "is_question_subject_relevant",
     "extract_keywords",
     "propose_synonyms",
 ]
