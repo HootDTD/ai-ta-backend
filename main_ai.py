@@ -7,7 +7,7 @@ import os
 import re
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from openai import OpenAI
 
@@ -199,68 +199,103 @@ def filter_keywords_by_subject(
         return []
 
     client = _client()
-    system = (
-        "You extract textbook lookup keywords but you lack any subject knowledge beyond what is provided. "
-        "Use ONLY the student's raw question plus the context summary; do not invent concepts that were not clearly mentioned. "
-        "List the discrete concepts or symbols an indexer should search, keeping them as specific as the question itself. "
-        "Return ONLY JSON with key 'topics' whose value is an ordered array of objects containing 'term' and 'relevance' (0-1). "
-        "Base relevance purely on the explicit emphasis within the prompt."
+
+    # Step 1: generate up to 20 candidate terms using only the question + context.
+    gen_system = (
+        "Generate candidate lookup terms using ONLY the student's raw question and the context summary. "
+        "Do not add outside knowledge. "
+        "Return JSON {{\"terms\": [\"term1\", ...]}} with at most 20 short entries, each representing a discrete concept."
     )
-    payload = {
+    gen_payload = {
         "question": question or "",
         "context_summary": context_summary or "",
+        "max_terms": 20,
     }
-
+    candidates: List[str] = []
     try:
         resp = client.chat.completions.create(
             model=os.getenv("PARSER_MODEL", "gpt-4o"),
             messages=[
-                {"role": "system", "content": system},
-                {
-                    "role": "user",
-                    "content": json.dumps(payload, ensure_ascii=False),
-                },
+                {"role": "system", "content": gen_system},
+                {"role": "user", "content": json.dumps(gen_payload, ensure_ascii=False)},
             ],
             temperature=0,
             response_format={"type": "json_object"},
         )
         content = resp.choices[0].message.content or "{}"
         data = json.loads(content)
-        accepted_raw = data.get("topics")
-        if not isinstance(accepted_raw, list):
-            accepted_raw = data.get("keywords")
+        raw_terms = data.get("terms") if isinstance(data, dict) else None
+        if isinstance(raw_terms, list):
+            for term in raw_terms:
+                if not isinstance(term, str):
+                    continue
+                cleaned = term.strip()
+                if not cleaned or cleaned in candidates:
+                    continue
+                candidates.append(cleaned)
+                if len(candidates) >= 20:
+                    break
     except Exception:
-        return None
+        candidates = []
 
-    if not isinstance(accepted_raw, list):
-        return None
+    if not candidates:
+        return []
 
-    cleaned_terms: List[Dict[str, Any]] = []
-    seen: set[str] = set()
-    for item in accepted_raw:
-        if isinstance(item, dict):
-            raw_term = item.get("term") or item.get("keyword") or item.get("name") or ""
-            rel = item.get("relevance")
-        elif isinstance(item, str):
-            raw_term = item
-            rel = 0.7
-        else:
-            continue
-        cleaned = (raw_term or "").strip()
-        if not cleaned:
-            continue
-        lowered = cleaned.lower()
-        if lowered in seen:
-            continue
-        seen.add(lowered)
-        try:
-            rel_val = float(rel)
-        except (TypeError, ValueError):
-            rel_val = 0.7
-        rel_val = max(0.05, min(1.0, rel_val))
-        cleaned_terms.append({"term": cleaned, "relevance": rel_val})
+    # Step 2: score terms with subject knowledge and select the top 8.
+    subject = get_subject_name()
+    score_system = (
+        f"You rank lookup terms for the subject \"{subject}\". "
+        "Use the student's question, the concise context summary, and the list of candidate terms. "
+        "Assign each term a UNIQUE numeric score between 0.00 and 1.00 (two decimals, as numbers). "
+        "1.00 represents the most relevant term. "
+        "Return JSON {{\"ranked\": [{{\"term\": \"...\", \"score\": 0.95}}, ...]}} sorted from highest to lowest score."
+    )
+    score_payload = {
+        "subject": subject,
+        "question": question or "",
+        "context_summary": context_summary or "",
+        "candidate_terms": candidates,
+    }
+    ranked: List[Dict[str, Any]] = []
+    try:
+        resp = client.chat.completions.create(
+            model=os.getenv("PARSER_MODEL", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": score_system},
+                {"role": "user", "content": json.dumps(score_payload, ensure_ascii=False)},
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content or "{}"
+        data = json.loads(content)
+        ranked_entries = data.get("ranked") if isinstance(data, dict) else None
+        if isinstance(ranked_entries, list):
+            seen_terms: Set[str] = set()
+            for entry in ranked_entries:
+                if not isinstance(entry, dict):
+                    continue
+                term = entry.get("term")
+                score = entry.get("score")
+                if not isinstance(term, str):
+                    continue
+                cleaned = term.strip()
+                if not cleaned or cleaned.lower() in seen_terms:
+                    continue
+                try:
+                    score_val = float(score)
+                except (TypeError, ValueError):
+                    continue
+                seen_terms.add(cleaned.lower())
+                ranked.append({"term": cleaned, "relevance": score_val})
+    except Exception:
+        ranked = []
 
-    return cleaned_terms
+    if not ranked:
+        return []
+
+    ranked.sort(key=lambda item: float(item.get("relevance", 0.0)), reverse=True)
+    return ranked[:8]
 
 
 def propose_synonyms(

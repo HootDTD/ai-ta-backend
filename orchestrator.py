@@ -396,10 +396,18 @@ class Orchestrator:
 
         initial_terms: List[str] = []
         term_weights: Dict[str, float] = {}
+        limited_seed = False
+        skip_semantic_env = os.getenv("RETRIEVAL_SKIP_SYNONYMS", "off").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         skip_semantic = True
 
         if subject_relevant:
             filtered_terms = filter_keywords_by_subject(context_summary, question)
+            limited_seed = bool(filtered_terms)
             fallback_needed = False
             if filtered_terms:
                 sanitized_filtered: List[str] = []
@@ -460,12 +468,10 @@ class Orchestrator:
             if not initial_terms:
                 self._append_weighted_term(initial_terms, term_weights, "fluid mechanics", 0.5)
 
-            skip_semantic = os.getenv("RETRIEVAL_SKIP_SYNONYMS", "off").lower() in {
-                "1",
-                "true",
-                "yes",
-                "on",
-            }
+            if not limited_seed:
+                skip_semantic = skip_semantic_env
+        else:
+            skip_semantic = skip_semantic_env
 
         seed_entries = [
             {"term": term, "weight": term_weights.get(term.lower(), 1.0)}
@@ -505,6 +511,20 @@ class Orchestrator:
                 continue
             seen_round.add(key)
             round_terms.append(candidate)
+
+        if limited_seed and len(round_terms) > 8:
+            score_map: Dict[str, float] = {}
+            for entry in keyword_matrix:
+                candidate = (entry.get("term") or "").strip()
+                if not candidate:
+                    continue
+                score_map[candidate.lower()] = float(entry.get("score", term_weights.get(candidate.lower(), 0.0)))
+            ranked_terms = sorted(
+                round_terms,
+                key=lambda term: score_map.get(term.lower(), term_weights.get(term.lower(), 0.0)),
+                reverse=True,
+            )
+            round_terms = ranked_terms[:8]
 
         iterations: List[Dict[str, Any]] = []
         attempted_terms: List[str] = list(round_terms)
