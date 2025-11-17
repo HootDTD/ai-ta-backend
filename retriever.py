@@ -430,8 +430,8 @@ def _compute_equal_scores(snippets: List[Any]) -> None:
         weighted_sum = 0.0
         weight_total = 0.0
         for value, weight in (
-            (sem_z, 1.0),
-            (lex_z, 2.0),
+            (sem_z, 2.0),
+            (lex_z, 0.5),
             (fused_z, 1.0),
         ):
             if value is None:

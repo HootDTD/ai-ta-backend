@@ -732,6 +732,11 @@ class Orchestrator:
             )
             alias_priority = 0 if info.get("alias_hit") else 1
             token_count = len(enc.encode(getattr(snippet, "text", "") or ""))
+            concept_labels = [
+                concept_display.get(c, c)
+                for c in sorted(info.get("concepts", set()) or set())
+                if concept_display.get(c, c)
+            ]
             snippet_infos.append(
                 {
                     "id": sn_id,
@@ -741,6 +746,7 @@ class Orchestrator:
                     "alias_priority": alias_priority,
                     "token_count": token_count,
                     "equal_score": equal_score,
+                    "concept_terms": concept_labels,
                 }
             )
 
@@ -759,7 +765,13 @@ class Orchestrator:
         truncated = len(snippet_infos) > max_snippets
         snippet_infos = snippet_infos[:max_snippets]
 
-        kept_snippets: List[BundleSnippet] = [entry["snippet"] for entry in snippet_infos]
+        kept_snippets: List[BundleSnippet] = []
+        for entry in snippet_infos:
+            snippet = entry["snippet"]
+            concept_terms = entry.get("concept_terms") or []
+            if concept_terms:
+                setattr(snippet, "concept_terms", concept_terms)
+            kept_snippets.append(snippet)
         total_tokens = sum(entry["token_count"] for entry in snippet_infos)
         if total_tokens > token_budget:
             truncated = True

@@ -160,10 +160,9 @@ def extract_keywords(question: str) -> str:
     client = _client()
     subject = get_subject_name()
     system = (
-        f"You analyze {subject} textbook questions. Identify only the governing principles, "
-        "laws, or canonical equations that the student's prompt explicitly calls for. "
-        "Avoid adding background concepts or assumptions that are not clearly stated. "
-        "Write 2-3 very focused sentences so another model understands exactly what this question is about."
+        f"You analyze {subject} textbook questions. Identify only the core principles or equations explicitly referenced in the prompt. "
+        "List the topic names without elaborating or explaining them in detail. "
+        "Respond with a single short sentence or comma-separated list naming the relevant topics."
     )
     payload = {
         "subject": subject,
@@ -204,6 +203,10 @@ def filter_keywords_by_subject(
     gen_system = (
         "Generate candidate lookup terms using ONLY the student's raw question and the context summary. "
         "Do not add outside knowledge. "
+        "Each candidate must be a single lowercase word (no spaces, hyphens, or punctuation). " \
+        "If a necessary term needs multiple words to make sense, separate these two words with underscores. (only do this if the single word alternative could mean something else). "
+        "Focus on including discrete concepts, principles, or keywords that directly relate to the question and context."
+        "Avoid general terms, or overly broad concepts."
         "Return JSON {{\"terms\": [\"term1\", ...]}} with at most 20 short entries, each representing a discrete concept."
     )
     gen_payload = {
@@ -229,8 +232,12 @@ def filter_keywords_by_subject(
             for term in raw_terms:
                 if not isinstance(term, str):
                     continue
-                cleaned = term.strip()
+                cleaned = term.strip().lower()
                 if not cleaned or cleaned in candidates:
+                    continue
+                if any(ch in cleaned for ch in " -_/\\.'\""):
+                    continue
+                if len(cleaned.split()) > 1:
                     continue
                 candidates.append(cleaned)
                 if len(candidates) >= 20:
@@ -279,8 +286,12 @@ def filter_keywords_by_subject(
                 score = entry.get("score")
                 if not isinstance(term, str):
                     continue
-                cleaned = term.strip()
+                cleaned = term.strip().lower()
                 if not cleaned or cleaned.lower() in seen_terms:
+                    continue
+                if any(ch in cleaned for ch in " -_/\\.'\""):
+                    continue
+                if len(cleaned.split()) > 1:
                     continue
                 try:
                     score_val = float(score)
@@ -458,12 +469,17 @@ def solve_with_bundle(
 
     client = _client()
     system = (
-        "You are a conceptual subject-matter tutor. Use ONLY facts in the Research Bundle. "
-        "No browsing or outside knowledge. Every substantive statement must cite a bundle marker like [Textbook, p. X]. "
-        "Do NOT perform numeric calculations, approximations, or substitutions. "
-        "Do NOT write or request executable code. "
-        "Explain theory, governing principles, assumptions, and symbolic relationships only. "
-        "If information is missing, reply exactly 'Not found in the approved materials.'"
+        "You are a conceptual subject-matter tutor. Use ONLY facts explicitly present in the provided Research Bundle snippets. "
+        "No browsing or other knowledge. "
+        "Workflow:\n"
+        " 1. Iterate through the snippets exactly in the order they appear (page-by-page order).\n"
+        " 2. For each snippet, read it carefully and note ONLY the facts, equations, or definitions explicitly stated there.\n"
+        " 3. When you use a fact, immediately cite that snippet's marker (e.g., [Textbook, p. X]). If a snippet does not literally mention a statement, equation, or symbol, you may NOT include it.\n"
+        " 4. Copy equations exactly as written in the snippet instead of recalling them from memory.\n"
+        " 5. After reviewing all snippets, synthesize the conceptual answer referencing only the collected facts, ensuring every sentence has a supporting citation.\n"
+        "If the bundle lacks the necessary information, reply exactly 'Not found in the approved materials.' "
+        "Do not attempt to answer the question, only provide conceptual knowladge on the topics needed to answer the question IFF these topics are mentioned in the snippets provided.\n"
+        "Do NOT perform numeric calculations, approximations, substitutions, or code."
     )
     proof_bundle = _load_proof_bundle()
     proof_json: Optional[str] = None
@@ -873,6 +889,7 @@ def _write_proof_citations(
                 "text": getattr(sn, "text", ""),
                 "figure_id": getattr(sn, "figure_id", None),
                 "why": getattr(sn, "why", ""),
+                "terms": list(getattr(sn, "concept_terms", []) or []),
             }
         )
     payload = {
@@ -897,6 +914,24 @@ def _write_citations_file(
     """Write a detailed citations snapshot for tooling or manual inspection."""
 
     equal_map = getattr(bundle, "marker_equal_map", {}) or {}
+    marker_terms: Dict[str, Set[str]] = {}
+    for sn in bundle.snippets:
+        marker = getattr(sn, "citation_marker", None) or getattr(sn, "marker", None)
+        if not isinstance(marker, str):
+            continue
+        cleaned_marker = marker.strip()
+        if not cleaned_marker:
+            continue
+        terms = getattr(sn, "concept_terms", None)
+        if not terms:
+            continue
+        term_set = marker_terms.setdefault(cleaned_marker, set())
+        for term in terms:
+            if isinstance(term, str):
+                stripped = term.strip()
+                if stripped:
+                    term_set.add(stripped)
+
     marker_rows: List[Dict[str, Any]] = []
     if isinstance(equal_map, dict) and equal_map:
         for marker, score in sorted(equal_map.items(), key=lambda item: item[1], reverse=True):
@@ -906,9 +941,13 @@ def _write_citations_file(
             if not cleaned:
                 continue
             try:
-                marker_rows.append({"marker": cleaned, "equal": float(score)})
+                row: Dict[str, Any] = {"marker": cleaned, "equal": float(score)}
             except Exception:
-                marker_rows.append({"marker": cleaned})
+                row = {"marker": cleaned}
+            terms_list = sorted(marker_terms.get(cleaned, []))
+            if terms_list:
+                row["terms"] = terms_list
+            marker_rows.append(row)
     else:
         seen: set[str] = set()
         for marker in allowed_markers:
@@ -917,7 +956,11 @@ def _write_citations_file(
             cleaned = marker.strip()
             if cleaned and cleaned not in seen:
                 seen.add(cleaned)
-                marker_rows.append({"marker": cleaned})
+                row = {"marker": cleaned}
+                terms_list = sorted(marker_terms.get(cleaned, []))
+                if terms_list:
+                    row["terms"] = terms_list
+                marker_rows.append(row)
     dedup_used = []
     seen_used: set[str] = set()
     for marker in used_markers:
@@ -940,6 +983,9 @@ def _write_citations_file(
             "doc_title": getattr(sn, "doc_title", None),
             "doc_short": getattr(sn, "doc_short", ""),
         }
+        terms = getattr(sn, "concept_terms", None)
+        if terms:
+            record["terms"] = list(terms)
         final_score = getattr(sn, "final_score", None)
         if isinstance(final_score, dict) and final_score:
             record["final_score"] = final_score
