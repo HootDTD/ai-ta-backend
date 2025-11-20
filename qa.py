@@ -147,7 +147,7 @@ def cmd_ask(args: argparse.Namespace) -> None:
         "k_lex": args.k_lex,
         "token_budget": args.token_budget,
     }
-    bundle = orch._iterative_research(effective_question, opts, args.max_iters)
+    bundle = orch._iterative_research(effective_question, opts)
     ctx_snippets = [
         ContextSnippet(
             id=sn.id,
@@ -247,7 +247,6 @@ def cmd_solve(args: argparse.Namespace) -> None:
         "k_sem": args.k_sem,
         "k_lex": args.k_lex,
         "token_budget": args.token_budget,
-        "max_iters": args.max_iters,
     }
     try:
         final = orch.run(task)
@@ -277,7 +276,7 @@ def cmd_research(args: argparse.Namespace) -> None:
         "k_lex": args.k_lex,
         "token_budget": args.token_budget,
     }
-    bundle = orch._iterative_research(args.query, opts, args.max_iters)
+    bundle = orch._iterative_research(args.query, opts)
     if args.full:
         print(json.dumps(asdict(bundle), indent=2, ensure_ascii=False))
         return
@@ -387,9 +386,6 @@ def main() -> None:
     p_ask.add_argument(
         "--token-budget", type=int, default=6000, help="Token budget for context packing"
     )
-    p_ask.add_argument(
-        "--max-iters", type=int, default=5, help="Maximum keyword lookup iterations"
-    )
     p_ask.add_argument("--subject", help="Override subject for prompts")
     p_ask.set_defaults(func=cmd_ask)
 
@@ -399,9 +395,6 @@ def main() -> None:
     p_solve.add_argument("--k-sem", type=int, default=30, help="Semantic top-K")
     p_solve.add_argument("--k-lex", type=int, default=30, help="Lexical top-K")
     p_solve.add_argument("--token-budget", type=int, default=6000, help="Token budget for context packing")
-    p_solve.add_argument(
-        "--max-iters", type=int, default=5, help="Maximum keyword lookup iterations"
-    )
     p_solve.add_argument("--subject", help="Override subject for prompts")
     p_solve.set_defaults(func=cmd_solve)
 
@@ -411,9 +404,6 @@ def main() -> None:
     p_research.add_argument("--k-sem", type=int, default=30, help="Semantic top-K")
     p_research.add_argument("--k-lex", type=int, default=30, help="Lexical top-K")
     p_research.add_argument("--token-budget", type=int, default=6000, help="Token budget for context packing")
-    p_research.add_argument(
-        "--max-iters", type=int, default=5, help="Maximum keyword lookup iterations"
-    )
     p_research.add_argument("--full", action="store_true", help="Dump full bundle")
     p_research.add_argument("--subject", help="Override subject for prompts")
     p_research.set_defaults(func=cmd_research)

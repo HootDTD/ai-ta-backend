@@ -140,7 +140,6 @@ class AskRequest(BaseModel):
     proximity: Optional[bool] = None
     prf: Optional[bool] = None
     def_bias: Optional[bool] = None
-    max_iters: Optional[int] = None
     sanitize: Optional[bool] = None
 
     class Config:
@@ -808,8 +807,6 @@ def post_ask(payload: AskRequest):
         opts["RETRIEVAL_PRF"] = "on" if payload.prf else "off"
     if payload.def_bias is not None:
         opts["PACK_DEF_BIAS"] = "on" if payload.def_bias else "off"
-    if payload.max_iters is not None:
-        opts["RETRIEVAL_MAX_ITERS"] = str(payload.max_iters)
     if payload.sanitize is not None:
         opts["RETRIEVAL_SANITIZE"] = "on" if payload.sanitize else "off"
 
@@ -844,9 +841,7 @@ def post_ask(payload: AskRequest):
                     "k_lex": int(os.getenv("K_LEX", "30")),
                     "token_budget": int(os.getenv("TOKEN_BUDGET", "6000")),
                 }
-                max_iters = int(os.getenv("RETRIEVAL_MAX_ITERS", str(payload.max_iters or 5)))
-
-                bundle = orch._iterative_research(q_effective, retrieval_opts, max_iters)
+                bundle = orch._iterative_research(q_effective, retrieval_opts)
 
                 ctx_snippets = [
                     ContextSnippet(

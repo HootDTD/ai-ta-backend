@@ -103,7 +103,7 @@ def test_cmd_ask_writes_proof_metadata(monkeypatch, tmp_path):
         def __init__(self):
             pass
 
-        def _iterative_research(self, question, opts, max_iters):
+        def _iterative_research(self, question, opts):
             return bundle
 
     monkeypatch.setattr(qa_module, "Orchestrator", lambda: DummyOrchestrator())
@@ -114,7 +114,6 @@ def test_cmd_ask_writes_proof_metadata(monkeypatch, tmp_path):
         k_sem=10,
         k_lex=10,
         token_budget=1000,
-        max_iters=1,
         subject=None,
     )
 

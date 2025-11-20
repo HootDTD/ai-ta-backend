@@ -238,28 +238,28 @@ def _analyze_query(q: str) -> Dict[str, Any]:
         fts = _fts_term_count(term)
         aliases = list(_term_to_aliases.get(term, set()))
         alias_hits = []
-        cand_scores: List[Tuple[int, str]] = []
+        alias_scores: List[Tuple[int, str]] = []
         for al in aliases:
             c = _fts_term_count(al)
-            cand_scores.append((c, al))
+            alias_scores.append((c, al))
             if c > 0:
                 alias_hits.append(al)
         alias_hit = bool(alias_hits)
-        # Morphology variants
-        morph: Set[str] = set()
-        if term.endswith("s"):
-            morph.add(term[:-1])
-        else:
-            morph.add(term + "s")
-        morph.add(term.replace("-", ""))
-        for m in morph:
-            c = _fts_term_count(m)
-            cand_scores.append((c, m))
-        cand_scores.sort(reverse=True)
-        expansion[term] = [v for c, v in cand_scores if v != term]
         term_presence[term] = {"fts_count": fts, "alias_hit": alias_hit}
         if fts == 0 and not alias_hit:
             missing.append(term)
+            cand_scores: List[Tuple[int, str]] = list(alias_scores)
+            morph: Set[str] = set()
+            if term.endswith("s"):
+                morph.add(term[:-1])
+            else:
+                morph.add(term + "s")
+            morph.add(term.replace("-", ""))
+            for m in morph:
+                c = _fts_term_count(m)
+                cand_scores.append((c, m))
+            cand_scores.sort(reverse=True)
+            expansion[term] = [v for c, v in cand_scores if v != term]
     return {
         "term_presence": term_presence,
         "missing_terms": missing,

@@ -367,7 +367,7 @@ class Orchestrator:
             return True
 
     def _iterative_research(
-        self, question: str, options: Dict[str, Any], max_iters: int
+        self, question: str, options: Dict[str, Any]
     ) -> ResearchBundle:
         sanitize = os.getenv("RETRIEVAL_SANITIZE", "on").lower() not in {"0", "off", "false", "no"}
         norm_question = normalize_query(question) if sanitize else question
@@ -1061,15 +1061,9 @@ class Orchestrator:
             "k_lex": k_lex,
             "token_budget": token_budget,
         }
-        max_iters_raw = user_task.get("max_iters", os.getenv("RETRIEVAL_MAX_ITERS", "5"))
-        try:
-            max_iters_val = int(max_iters_raw)
-        except (TypeError, ValueError):
-            max_iters_val = 5
-        max_iters = max(1, min(max_iters_val, 5))
         last_err = ""
         for _ in range(self.max_retrieval_rounds):
-            bundle = self._iterative_research(question, retrieval_opts, max_iters)
+            bundle = self._iterative_research(question, retrieval_opts)
             with open("bundle.json", "w", encoding="utf-8") as f:
                 json.dump(asdict(bundle), f, indent=2, ensure_ascii=False)
             if not bundle.snippets:
