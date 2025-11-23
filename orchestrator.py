@@ -29,6 +29,7 @@ from .main_ai import (
     is_question_subject_relevant,
     extract_keywords,
     filter_keywords_by_subject,
+    filter_general_terms,
     propose_synonyms,
 )
 from .retriever import batch_lookup_terms, _summarize_snippets, _compute_equal_scores
@@ -407,6 +408,17 @@ class Orchestrator:
 
         if subject_relevant:
             filtered_terms = filter_keywords_by_subject(context_summary, question)
+            # Apply additional filter to remove overly general terms before indexing
+            if filtered_terms:
+                original_terms = [entry.get("term", "") for entry in filtered_terms if isinstance(entry, dict)]
+                if WIRE:
+                    print(f"[Main AI -> General Filter] pre_filter_terms={original_terms}")
+                filtered_terms = filter_general_terms(filtered_terms, get_subject_name())
+                final_terms = [entry.get("term", "") for entry in filtered_terms if isinstance(entry, dict)]
+                if WIRE and original_terms != final_terms:
+                    removed_terms = [t for t in original_terms if t not in final_terms]
+                    if removed_terms:
+                        print(f"[Main AI -> General Filter] removed_general_terms={removed_terms}")
             limited_seed = bool(filtered_terms)
             fallback_needed = False
             if filtered_terms:
@@ -737,6 +749,7 @@ class Orchestrator:
                 for c in sorted(info.get("concepts", set()) or set())
                 if concept_display.get(c, c)
             ]
+            concept_keys = sorted(info.get("concepts", set()) or set())
             snippet_infos.append(
                 {
                     "id": sn_id,
@@ -747,8 +760,30 @@ class Orchestrator:
                     "token_count": token_count,
                     "equal_score": equal_score,
                     "concept_terms": concept_labels,
+                    "concept_keys": concept_keys,
                 }
             )
+
+        concept_importance: Dict[str, float] = {}
+        for concept_key in concept_order:
+            scores: List[float] = []
+            for term_lower, origin in term_origin.items():
+                if term_to_concept.get(term_lower) == concept_key:
+                    try:
+                        scores.append(float(origin.get("score", 1.0)))
+                    except (TypeError, ValueError):
+                        continue
+            for detail in concept_match_details.get(concept_key, []):
+                if not isinstance(detail, dict):
+                    continue
+                try:
+                    scores.append(float(detail.get("score", 1.0)))
+                except (TypeError, ValueError):
+                    continue
+            if scores:
+                concept_importance[concept_key] = _clamp_weight(max(scores))
+            else:
+                concept_importance[concept_key] = 1.0
 
         snippet_infos.sort(
             key=lambda entry: (
@@ -761,20 +796,93 @@ class Orchestrator:
             )
         )
 
-        max_snippets = 20
-        truncated = len(snippet_infos) > max_snippets
-        snippet_infos = snippet_infos[:max_snippets]
+        concept_candidates: Dict[str, List[Dict[str, Any]]] = {}
+        for entry in snippet_infos:
+            keys = entry.get("concept_keys") or []
+            if not keys:
+                concept_candidates.setdefault("", []).append(entry)
+            for ck in keys:
+                concept_candidates.setdefault(ck, []).append(entry)
+        for ck in list(concept_candidates.keys()):
+            if ck and ck not in concept_importance:
+                concept_importance[ck] = 1.0
+
+        def _best_equal_score(concept_key: str) -> float:
+            cands = concept_candidates.get(concept_key, [])
+            if not cands:
+                return float("-inf")
+            return max(c.get("equal_score", float("-inf")) for c in cands)
+
+        token_cap = int(token_budget * 0.95) if token_budget else None
+        seen_markers: Set[str] = set()
+        kept_entries: List[Dict[str, Any]] = []
+        current_tokens = 0
+        token_limit_hit = False
+
+        def _add_entry(entry: Dict[str, Any], *, force: bool = False) -> bool:
+            nonlocal current_tokens, token_limit_hit
+            marker = getattr(entry["snippet"], "citation_marker", None)
+            marker_clean = marker.strip() if isinstance(marker, str) else ""
+            if not marker_clean or marker_clean in seen_markers:
+                return False
+            over_cap = (
+                token_cap is not None
+                and current_tokens > 0
+                and current_tokens + entry["token_count"] > token_cap
+            )
+            if over_cap and not force:
+                token_limit_hit = True
+                return False
+            kept_entries.append(entry)
+            seen_markers.add(marker_clean)
+            current_tokens += entry["token_count"]
+            return True
+
+        high_importance_concepts = [
+            ck
+            for ck, score in concept_importance.items()
+            if score >= 0.999 and concept_candidates.get(ck)
+        ]
+        high_importance_concepts.sort(key=_best_equal_score, reverse=True)
+        for ck in high_importance_concepts:
+            added = 0
+            for entry in concept_candidates.get(ck, []):
+                if _add_entry(entry, force=True):
+                    added += 1
+                if added >= 3:
+                    break
+
+        remaining_concepts = [
+            ck
+            for ck, score in concept_importance.items()
+            if ck not in high_importance_concepts and concept_candidates.get(ck)
+        ]
+        remaining_concepts.sort(
+            key=lambda ck: (concept_importance.get(ck, 0.0), _best_equal_score(ck)),
+            reverse=True,
+        )
+        half_count = math.ceil(len(remaining_concepts) / 2)
+        top_half_concepts = remaining_concepts[:half_count]
+        for ck in top_half_concepts:
+            for entry in concept_candidates.get(ck, []):
+                if _add_entry(entry, force=True):
+                    break
+
+        for entry in snippet_infos:
+            _add_entry(entry)
 
         kept_snippets: List[BundleSnippet] = []
-        for entry in snippet_infos:
+        for entry in kept_entries:
             snippet = entry["snippet"]
             concept_terms = entry.get("concept_terms") or []
             if concept_terms:
                 setattr(snippet, "concept_terms", concept_terms)
             kept_snippets.append(snippet)
-        total_tokens = sum(entry["token_count"] for entry in snippet_infos)
-        if total_tokens > token_budget:
-            truncated = True
+
+        total_tokens = sum(entry["token_count"] for entry in kept_entries)
+        truncated = token_limit_hit or (
+            token_cap is not None and total_tokens > token_cap
+        )
 
         allowed_markers: List[str] = []
         seen_markers: Set[str] = set()

@@ -206,8 +206,10 @@ def filter_keywords_by_subject(
         "Each candidate must be a single lowercase word (no spaces, hyphens, or punctuation). " \
         "If a necessary term needs multiple words to make sense, separate these two words with underscores. (only do this if the single word alternative could mean something else). "
         "Focus on including discrete concepts, principles, or keywords that directly relate to the question and context."
+        "ALWAYS include individual terms from every topic mentioned in the context summary (e.g., if context contains 'Bernoulli's Principle', include 'bernoulli', 'principle')."
         "Avoid general terms, or overly broad concepts."
         "Return JSON {{\"terms\": [\"term1\", ...]}} with at most 20 short entries, each representing a discrete concept."
+        "Be GENEROUS in proposing terms, as long as they are relevant to the question and context. Try to reach 20 terms if possible."
     )
     gen_payload = {
         "question": question or "",
@@ -307,6 +309,91 @@ def filter_keywords_by_subject(
 
     ranked.sort(key=lambda item: float(item.get("relevance", 0.0)), reverse=True)
     return ranked[:8]
+
+
+def filter_general_terms(
+    terms: List[Dict[str, Any]], subject: str | None = None
+) -> List[Dict[str, Any]]:
+    """Filter out overly general terms that could cause poor citation retrieval.
+    
+    This AI filter removes terms that are too broad or common in academic contexts
+    to be useful for precise document retrieval, focusing on specific concepts
+    and technical terms relevant to the subject.
+    """
+    
+    if not terms:
+        return []
+    
+    client = _client()
+    subject_name = subject or get_subject_name()
+    
+    # Extract just the term strings for analysis
+    term_strings = []
+    term_map = {}
+    for entry in terms:
+        if isinstance(entry, dict):
+            term = entry.get("term", "")
+            if term:
+                term_strings.append(term)
+                term_map[term] = entry
+        elif isinstance(entry, str):
+            term_strings.append(entry)
+            term_map[entry] = {"term": entry, "relevance": 1.0}
+    
+    if not term_strings:
+        return []
+    
+    system = (
+        f"You are a subject-matter expert in {subject_name}. Your task is to filter out overly general terms "
+        "that would not be useful for precise document retrieval in academic textbooks.\n\n"
+        "Remove terms that are:\n"
+        "- Too general or broad (e.g., 'principle', 'equation', 'theory', 'concept', 'law', 'method', 'process')\n"
+        "- Common academic words that appear frequently across many topics\n"
+        "- Non-specific descriptors (e.g., 'basic', 'fundamental', 'general', 'important')\n"
+        "- Overly broad categories or classifications\n\n"
+        "Keep terms that are:\n"
+        "- Specific technical concepts or phenomena\n"
+        "- Named principles, laws, or equations (proper nouns)\n"
+        "- Unique technical terminology specific to the field\n"
+        "- Measurable quantities or properties with precise definitions\n\n"
+        "Return JSON with 'filtered_terms' containing only the specific, useful terms."
+    )
+    
+    payload = {
+        "subject": subject_name,
+        "terms": term_strings,
+        "instruction": "Filter out general terms, keep specific technical concepts"
+    }
+    
+    try:
+        resp = client.chat.completions.create(
+            model=os.getenv("PARSER_MODEL", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content or "{}"
+        data = json.loads(content)
+        
+        filtered_term_strings = data.get("filtered_terms", [])
+        if not isinstance(filtered_term_strings, list):
+            # Fallback to original terms if filtering fails
+            return terms
+        
+        # Rebuild the term list with original metadata
+        filtered_terms = []
+        for term_str in filtered_term_strings:
+            if term_str in term_map:
+                filtered_terms.append(term_map[term_str])
+        
+        return filtered_terms
+        
+    except Exception:
+        # If the filter fails, return original terms to avoid breaking the pipeline
+        return terms
 
 
 def propose_synonyms(
@@ -1039,5 +1126,6 @@ __all__ = [
     "normalize_query",
     "is_question_subject_relevant",
     "extract_keywords",
+    "filter_general_terms",
     "propose_synonyms",
 ]

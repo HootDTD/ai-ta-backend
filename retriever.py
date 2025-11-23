@@ -1830,7 +1830,53 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
                     break
         return True
 
-    for h in hits:
+    # Apply new citation prioritization logic
+    def get_equal_score(hit: Hit) -> float:
+        """Extract equal score from hit."""
+        return float(hit.score_equal) if hit.score_equal is not None else 0.0
+    
+    # For now, prioritize by equal score since importance is applied later in the pipeline
+    # The importance weighting happens in the orchestrator after pack_context
+    # We'll implement a basic prioritization that can be enhanced when importance is available
+    
+    # Separate high-scoring hits (top 20%) for priority treatment
+    sorted_hits = sorted(hits, key=get_equal_score, reverse=True)
+    total_hits = len(sorted_hits)
+    high_priority_count = max(3, total_hits // 5)  # Top 20% or at least 3
+    mid_priority_count = max(1, (total_hits - high_priority_count) // 2)  # Half of remaining
+    
+    high_priority_hits = sorted_hits[:high_priority_count]
+    mid_priority_hits = sorted_hits[high_priority_count:high_priority_count + mid_priority_count]
+    low_priority_hits = sorted_hits[high_priority_count + mid_priority_count:]
+    
+    # Create prioritized list ensuring no duplicates
+    prioritized_hits: List[Hit] = []
+    used_hit_ids: Set[str] = set()
+    
+    # Phase 1: Add high-priority citations first (ensures key concepts get multiple citations)
+    for hit in high_priority_hits:
+        if hit.id not in used_hit_ids:
+            prioritized_hits.append(hit)
+            used_hit_ids.add(hit.id)
+    
+    # Phase 2: Add mid-priority citations (ensures top half gets at least one citation each)
+    for hit in mid_priority_hits:
+        if hit.id not in used_hit_ids:
+            prioritized_hits.append(hit)
+            used_hit_ids.add(hit.id)
+    
+    # Phase 3: Add remaining citations based on equal score
+    for hit in low_priority_hits:
+        if hit.id not in used_hit_ids:
+            prioritized_hits.append(hit)
+            used_hit_ids.add(hit.id)
+    
+    # Debug logging for citation prioritization
+    if WIRE:
+        print(f"[Citation Prioritization] total_hits={total_hits}, high_priority={len(high_priority_hits)}, mid_priority={len(mid_priority_hits)}, low_priority={len(low_priority_hits)}")
+    
+    # Now process the prioritized hits
+    for h in prioritized_hits:
         if total_tokens >= limit:
             break
         if not add_item(h.id, "hit", origin_id=h.id):
@@ -1845,7 +1891,7 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
 
     # If quotas prevented adding useful snippets but we still have budget
     if not unlimited and total_tokens < limit:
-        for h in hits:
+        for h in prioritized_hits:  # Use same prioritized order for overflow
             if total_tokens >= limit:
                 break
             add_item(h.id, "overflow", force=True, origin_id=h.id)
