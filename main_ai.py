@@ -300,7 +300,7 @@ def _score_citation_snippets(
 def _answer_single_snippet(
     question: str, snippet: Any, score: float | None = None
 ) -> Dict[str, Any]:
-    """Have a per-citation agent answer using ONLY that snippet; otherwise return Not Relevant."""
+    """Have a per-citation agent extract all question-relevant information from a single snippet."""
 
     client = _client()
     model = os.getenv("CITATION_ANSWER_MODEL", os.getenv("PARSER_MODEL", "gpt-4o"))
@@ -309,9 +309,20 @@ def _answer_single_snippet(
         marker = _fallback_citation_marker(snippet)
     marker = marker.strip()
     system = (
-        "You are assigned to a single citation page. Use ONLY the provided snippet text to answer the user's question. "
-        "If the snippet does not contain enough information to answer even conceptually, return exactly 'Not Relevant'. "
-        "Do not add outside knowledge. Provide a concise but detailed explanation using only this snippet."
+        "You are one member of a team of citation specialists. You are responsible for a single snippet of text taken "
+        "from an approved course resource. Use ONLY the provided snippet_text as your source of information.\n\n"
+        "Your goal is not to fully answer the user's question on your own, but to extract every piece of information in "
+        "this snippet that could help another assistant answer the question when combined with other snippets. This "
+        "includes definitions, qualitative descriptions, equations or relationships, assumptions, boundary conditions, "
+        "parameter meanings, constraints, or any contextual clues that narrow down what is going on.\n\n"
+        "Rules:\n"
+        "- Base everything strictly on snippet_text; do NOT add outside knowledge or speculate beyond what the text clearly implies.\n"
+        "- If the snippet is even partially related to the question (shares variables, concepts, or scenario features), "
+        "summarize those relevant pieces in your own words.\n"
+        "- It is acceptable if your answer is incomplete; other snippets will fill in gaps.\n"
+        "- Only return exactly 'Not Relevant' if the snippet is clearly about an unrelated topic with no overlap in "
+        "concepts, variables, or context with the question.\n\n"
+        "Return JSON with a single key 'answer' containing your explanation as a string."
     )
     payload = {
         "question": question,
