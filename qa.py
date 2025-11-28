@@ -18,7 +18,12 @@ from .retriever import (
     ContextSnippet,
 )
 from .orchestrator import Orchestrator
-from .main_ai import _write_proof_citations, _write_citations_file
+from .main_ai import (
+    _write_proof_citations,
+    _write_citations_file,
+    _answer_single_snippet,
+    _write_miniresponses,
+)
 from .indexers.handwriting import ingest as ingest_handwriting, IngestOptions
 from .knowledge import KnowledgeManager
 from .main_ai import extract_keywords
@@ -167,6 +172,16 @@ def cmd_ask(args: argparse.Namespace) -> None:
     ans = answer(effective_question, ctx)
     print("=== Answer ===\n" + ans.text + "\n")
     print("Citations:", render_citations(ans))
+
+    # Write per-citation mini responses for inspection
+    mini_answers = []
+    for sn in bundle.snippets:
+        score = None
+        fs = getattr(sn, "final_score", None) or {}
+        if isinstance(fs, dict):
+            score = fs.get("equal") or fs.get("fused") or fs.get("semantic")
+        mini_answers.append(_answer_single_snippet(effective_question, sn, score))
+    _write_miniresponses(mini_answers, effective_question)
 
     def _collect_snippet_citations() -> list[str]:
         entries: list[str] = []

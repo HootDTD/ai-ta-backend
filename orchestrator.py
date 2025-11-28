@@ -367,6 +367,164 @@ class Orchestrator:
             # when the classifier (or API) fails.
             return True
 
+    def _canonical_term(self, term: str) -> str:
+        """Return a normalized, lowercase term without possessives or extra punctuation."""
+
+        cleaned = (term or "").strip()
+        if not cleaned:
+            return ""
+        cleaned = re.sub(r"[\"“”‘’´`]", "", cleaned)
+        cleaned = re.sub(r"\b([A-Za-z]+)'s\b", r"\1", cleaned)
+        cleaned = re.sub(r"[^\w\s\-]", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned.lower()
+
+    def _tokenize_words(self, text: str) -> List[str]:
+        return [w for w in re.findall(r"[A-Za-z][A-Za-z0-9\-']+", text or "") if w]
+
+    def _candidate_compounds(self, text: str) -> List[str]:
+        """Return bigram/trigram candidates from text (lowercase, underscore joined)."""
+
+        tokens = [t.lower() for t in self._tokenize_words(text)]
+        phrases: Set[str] = set()
+        for n in (2, 3):
+            for i in range(len(tokens) - n + 1):
+                window = tokens[i : i + n]
+                if len(window) != n:
+                    continue
+                if all(len(tok) <= 2 for tok in window):
+                    continue
+                phrase = "_".join(window)
+                phrases.add(phrase)
+        return list(phrases)
+
+    def _is_standalone_valid(self, term: str) -> bool:
+        """Heuristic standalone check without subject-specific word lists."""
+
+        if not term:
+            return False
+        letters = re.findall(r"[A-Za-z]", term)
+        if len(letters) < 3:
+            return False
+        ratio = len(letters) / max(len(term), 1)
+        if ratio < 0.6:
+            return False
+        tokens = term.split("_")
+        if len(tokens) == 1:
+            if len(tokens[0]) <= 2:
+                return False
+        return True
+
+    def _semantic_normalize_terms(
+        self,
+        terms: List[Dict[str, Any]] | List[str],
+        context_summary: str,
+        question: str,
+    ) -> List[Dict[str, Any]]:
+        """Preserve meaningful compounds and drop standalone-weak tokens unless needed."""
+
+        mode = os.getenv("TERM_SEMANTIC_MODE", "hybrid").lower()
+        if mode not in {"strict", "aggressive", "hybrid"}:
+            mode = "hybrid"
+
+        # Normalize incoming entries
+        normalized: List[tuple[str, float]] = []
+        seen: Set[str] = set()
+        for entry in terms or []:
+            if isinstance(entry, dict):
+                raw_term = entry.get("term") or entry.get("keyword") or entry.get("name")
+                rel = entry.get("relevance", 1.0)
+            else:
+                raw_term = entry
+                rel = 1.0
+            if not isinstance(raw_term, str):
+                continue
+            canon = self._canonical_term(raw_term)
+            if not canon:
+                continue
+            if canon in seen:
+                continue
+            seen.add(canon)
+            try:
+                rel_val = float(rel)
+            except Exception:
+                rel_val = 1.0
+            normalized.append((canon, rel_val))
+
+        if not normalized:
+            return []
+
+        # Build compound candidates from context/question and adjacency of provided terms
+        corpus_text = " ".join([context_summary or "", question or ""])
+        corpus_compounds = set(self._candidate_compounds(corpus_text))
+        adjacency_compounds: Set[str] = set()
+        for i in range(len(normalized) - 1):
+            first, _ = normalized[i]
+            second, _ = normalized[i + 1]
+            candidate = f"{first}_{second}"
+            adjacency_compounds.add(candidate)
+        compounds = corpus_compounds | adjacency_compounds
+
+        # Score standalone validity
+        valid_standalone: Set[str] = set()
+        weak_terms: Set[str] = set()
+        for term, _ in normalized:
+            if self._is_standalone_valid(term):
+                valid_standalone.add(term)
+            else:
+                weak_terms.add(term)
+
+        preserved: List[Dict[str, Any]] = []
+        dropped: List[str] = []
+
+        # Preserve compounds if components weak but compound present
+        used_compounds: Set[str] = set()
+        for comp in compounds:
+            parts = comp.split("_")
+            if len(parts) < 2:
+                continue
+            if not any(p in weak_terms for p in parts):
+                continue
+            used_compounds.add(comp)
+
+        # Build final list
+        i = 0
+        normalized_map: Dict[str, float] = {t: w for t, w in normalized}
+        while i < len(normalized):
+            term, weight = normalized[i]
+            maybe_comp = None
+            if i + 1 < len(normalized):
+                pair = f"{term}_{normalized[i+1][0]}"
+                if pair in used_compounds or (mode == "strict" and pair in compounds):
+                    maybe_comp = pair
+                    weight = max(weight, normalized[i+1][1])
+                    i += 2
+                else:
+                    i += 1
+            else:
+                i += 1
+
+            if maybe_comp:
+                preserved.append({"term": maybe_comp, "relevance": weight})
+                continue
+
+            if term in valid_standalone:
+                preserved.append({"term": term, "relevance": weight})
+            else:
+                if mode == "aggressive":
+                    dropped.append(term)
+                elif mode == "strict":
+                    dropped.append(term)
+                else:  # hybrid: keep weak terms only if no compounds consumed them
+                    dropped.append(term)
+
+        if WIRE and dropped:
+            print(f"[Main AI -> Semantic Filter] dropped_terms={sorted(dropped)}", flush=True)
+        if WIRE and used_compounds:
+            print(f"[Main AI -> Semantic Filter] preserved_compounds={sorted(used_compounds)}", flush=True)
+
+        return preserved
+
     def _iterative_research(
         self, question: str, options: Dict[str, Any]
     ) -> ResearchBundle:
@@ -408,17 +566,61 @@ class Orchestrator:
 
         if subject_relevant:
             filtered_terms = filter_keywords_by_subject(context_summary, question)
+
+            # Semantic normalization layer: preserve compounds, drop weak standalones per mode
+            filtered_terms = self._semantic_normalize_terms(
+                filtered_terms or [],
+                context_summary=context_summary,
+                question=question,
+            )
+
+            # Ensure concepts from the context sentences are also included verbatim
+            def _context_concepts(text: str) -> List[str]:
+                parts: List[str] = []
+                for chunk in re.split(r"[;,\n]", text or ""):
+                    cleaned = chunk.strip()
+                    if cleaned:
+                        parts.append(cleaned)
+                return parts
+
+            context_concepts = _context_concepts(context_summary)
+            if context_concepts:
+                combined: List[Dict[str, Any]] = []
+                seen: Set[str] = set()
+
+                def _add_term(term: str, relevance: float = 1.0) -> None:
+                    key = term.strip().lower()
+                    if not key or key in seen:
+                        return
+                    seen.add(key)
+                    combined.append({"term": term.strip(), "relevance": relevance})
+
+                for entry in filtered_terms or []:
+                    if isinstance(entry, dict):
+                        term = entry.get("term") or entry.get("keyword") or entry.get("name")
+                        rel = entry.get("relevance", 1.0)
+                        if isinstance(term, str):
+                            try:
+                                rel_val = float(rel)
+                            except Exception:
+                                rel_val = 1.0
+                            _add_term(term, rel_val)
+                    elif isinstance(entry, str):
+                        _add_term(entry, 1.0)
+
+                for term in context_concepts:
+                    _add_term(term, 1.0)
+
+                filtered_terms = combined
+
             # Apply additional filter to remove overly general terms before indexing
             if filtered_terms:
                 original_terms = [entry.get("term", "") for entry in filtered_terms if isinstance(entry, dict)]
-                if WIRE:
-                    print(f"[Main AI -> General Filter] pre_filter_terms={original_terms}")
                 filtered_terms = filter_general_terms(filtered_terms, get_subject_name())
                 final_terms = [entry.get("term", "") for entry in filtered_terms if isinstance(entry, dict)]
-                if WIRE and original_terms != final_terms:
-                    removed_terms = [t for t in original_terms if t not in final_terms]
-                    if removed_terms:
-                        print(f"[Main AI -> General Filter] removed_general_terms={removed_terms}")
+                if WIRE:
+                    print(f"[Main AI -> General Filter] raw_terms={original_terms}")
+                    print(f"[Main AI -> General Filter] pre_filter_terms={final_terms}")
             limited_seed = bool(filtered_terms)
             fallback_needed = False
             if filtered_terms:

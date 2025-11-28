@@ -3,6 +3,7 @@ from __future__ import annotations
 """Wrapper functions for the user-facing agent."""
 
 import json
+import math
 import os
 import re
 from dataclasses import asdict
@@ -152,6 +153,200 @@ def _load_proof_bundle() -> Optional[Dict[str, Any]]:
             ):
                 return data
     return None
+
+
+def _clamp_0_1(value: Any, default: float = 0.0) -> float:
+    """Clamp a value into ``[0, 1]`` with basic type/NaN guards."""
+
+    try:
+        val = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(val):
+        return default
+    if val < 0:
+        return 0.0
+    if val > 1:
+        return 1.0
+    return val
+
+
+def _importance_from_snippet(snippet: Any) -> float:
+    """Return a normalized importance weight stored on a snippet."""
+
+    fs = getattr(snippet, "final_score", {}) or {}
+    raw_importance = fs.get("importance", fs.get("weight"))
+    if raw_importance is None:
+        return 1.0
+    try:
+        val = float(raw_importance)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(val):
+        return 1.0
+    # Preserve existing weighting convention from retrieval (_clamp_weight)
+    return float(max(0.05, min(1.0, val)))
+
+
+def _pick_concept_term(snippet: Any) -> str:
+    """Return the term already associated with this citation (no new terms)."""
+
+    terms = getattr(snippet, "concept_terms", None) or []
+    if isinstance(terms, list):
+        for term in terms:
+            if isinstance(term, str):
+                cleaned = term.strip()
+                if cleaned:
+                    return cleaned
+    keys = getattr(snippet, "concept_keys", None) or []
+    if isinstance(keys, list):
+        for term in keys:
+            if isinstance(term, str):
+                cleaned = term.strip()
+                if cleaned:
+                    return cleaned
+    return ""
+
+
+def _score_citation_snippets(
+    question: str, bundle: ResearchBundle, model: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Run per-citation mini-assessments to score snippets against the prompt."""
+
+    client = _client()
+    scorer_model = model or os.getenv("CITATION_SCORER_MODEL", os.getenv("PARSER_MODEL", "gpt-4o"))
+    system = (
+        "You are a strict citation assessor. "
+        "Given the student's question, a focus term tied to the citation, the snippet text, and its marker, "
+        "write 1-2 sentences explaining only how the snippet connects to the question. "
+        "Score 'relevance' (0-1) for how well the snippet addresses the question and 'directness' (0-1) for how on-point it is. "
+        "Blend these into 'score' (0-1) and allow the provided importance_hint to slightly boost or reduce the score when appropriate. "
+        "Use ONLY the provided snippet text; do not add facts or context not present in the snippet. "
+        "Return JSON with keys: context (string), relevance (0-1), directness (0-1), score (0-1)."
+    )
+
+    analyses: List[Dict[str, Any]] = []
+    for sn in bundle.snippets:
+        marker = getattr(sn, "citation_marker", None) or getattr(sn, "marker", None)
+        if not isinstance(marker, str) or not marker.strip():
+            marker = _fallback_citation_marker(sn)
+        marker_clean = marker.strip()
+        focus_term = _pick_concept_term(sn)
+        importance = _importance_from_snippet(sn)
+        payload = {
+            "question": question,
+            "focus_term": focus_term,
+            "importance_hint": importance,
+            "marker": marker_clean,
+            "page": getattr(sn, "page", None),
+            "why": getattr(sn, "why", ""),
+            "snippet_text": getattr(sn, "text", ""),
+            "section": getattr(sn, "section_path", ""),
+        }
+
+        try:
+            resp = client.chat.completions.create(
+                model=scorer_model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                temperature=0,
+                response_format={"type": "json_object"},
+            )
+            content = resp.choices[0].message.content or "{}"
+            data = json.loads(content)
+        except Exception:
+            data = {}
+
+        context = str(data.get("context") or data.get("summary") or "").strip()
+        if not context:
+            text_preview = " ".join(str(getattr(sn, "text", "") or "").split())[:320]
+            context = text_preview
+
+        relevance = _clamp_0_1(data.get("relevance"), 0.0)
+        directness = _clamp_0_1(data.get("directness"), relevance)
+        blended = (0.6 * relevance) + (0.4 * directness)
+        model_score = _clamp_0_1(data.get("score"), blended)
+        weighted = _clamp_0_1(model_score * importance, model_score)
+
+        analyses.append(
+            {
+                "marker": marker_clean,
+                "page": getattr(sn, "page", None),
+                "concept_term": focus_term,
+                "importance": importance,
+                "relevance": relevance,
+                "directness": directness,
+                "base_score": model_score,
+                "score": weighted,
+                "context": context,
+                "why": getattr(sn, "why", ""),
+                "snippet_id": getattr(sn, "id", ""),
+            }
+        )
+
+    analyses.sort(
+        key=lambda row: (
+            -float(row.get("score", 0.0) or 0.0),
+            -float(row.get("importance", 0.0) or 0.0),
+            -float(row.get("relevance", 0.0) or 0.0),
+            str(row.get("marker", "")),
+        )
+    )
+    return analyses
+
+
+def _answer_single_snippet(
+    question: str, snippet: Any, score: float | None = None
+) -> Dict[str, Any]:
+    """Have a per-citation agent answer using ONLY that snippet; otherwise return Not Relevant."""
+
+    client = _client()
+    model = os.getenv("CITATION_ANSWER_MODEL", os.getenv("PARSER_MODEL", "gpt-4o"))
+    marker = getattr(snippet, "citation_marker", None) or getattr(snippet, "marker", None)
+    if not isinstance(marker, str) or not marker.strip():
+        marker = _fallback_citation_marker(snippet)
+    marker = marker.strip()
+    system = (
+        "You are assigned to a single citation page. Use ONLY the provided snippet text to answer the user's question. "
+        "If the snippet does not contain enough information to answer even conceptually, return exactly 'Not Relevant'. "
+        "Do not add outside knowledge. Provide a concise but detailed explanation using only this snippet."
+    )
+    payload = {
+        "question": question,
+        "marker": marker,
+        "page": getattr(snippet, "page", None),
+        "snippet_text": getattr(snippet, "text", ""),
+        "section": getattr(snippet, "section_path", ""),
+    }
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content or "{}"
+        data = json.loads(content)
+        answer = data.get("answer")
+    except Exception:
+        answer = None
+
+    answer_str = str(answer).strip() if answer is not None else ""
+    if not answer_str:
+        answer_str = "Not Relevant"
+
+    return {
+        "marker": marker,
+        "page": getattr(snippet, "page", None),
+        "snippet_id": getattr(snippet, "id", ""),
+        "score": float(score) if score is not None else None,
+        "answer": answer_str,
+    }
 
 
 def extract_keywords(question: str) -> str:
@@ -318,45 +513,124 @@ def filter_general_terms(
     
     This AI filter removes terms that are too broad or common in academic contexts
     to be useful for precise document retrieval, focusing on specific concepts
-    and technical terms relevant to the subject.
+    and technical terms relevant to the subject. Defaults to a lenient mode to avoid
+    over-pruning subject-relevant concepts.
     """
     
     if not terms:
         return []
     
+    mode_env = os.getenv("GENERAL_FILTER_MODE", "lenient").lower()
+    if mode_env in {"off", "none"}:
+        return terms
+
+    def _canonical(term: str) -> str:
+        cleaned = (term or "").strip().lower()
+        cleaned = re.sub(r"'s\b", "", cleaned)
+        cleaned = cleaned.replace("'", "")
+        cleaned = re.sub(r"[.,;:!?]+$", "", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned
+
+    def _semantic_partition(
+        normalized_terms: List[tuple[str, float]]
+    ) -> tuple[Set[str], Set[str]]:
+        """Decide which compounds/singles to keep, operating on normalized terms only."""
+
+        generic_tails = {"equation", "principle", "law", "theorem", "formula", "effect", "effects"}
+
+        candidate_compounds: Set[str] = set()
+        candidate_singles: Set[str] = set()
+        weight_map: Dict[str, float] = {}
+        for term, weight in normalized_terms:
+            weight_map[term] = max(weight_map.get(term, 0.0), weight)
+            if " " in term:
+                candidate_compounds.add(term)
+            else:
+                candidate_singles.add(term)
+
+        preserved_compounds: Set[str] = set()
+        preserved_singles: Set[str] = set()
+
+        # Keep compounds as-is; optionally reduce trivial repetition like "bernoulli bernoulli"
+        for comp in candidate_compounds:
+            tokens = [t for t in comp.split(" ") if t]
+            if not tokens:
+                continue
+            if len(tokens) == 2 and tokens[1] in generic_tails:
+                head = tokens[0]
+                head_weight = weight_map.get(head, 0.0)
+                comp_weight = weight_map.get(comp, 0.0)
+                weight_map[head] = max(head_weight, comp_weight)
+                preserved_singles.add(head)
+                continue
+            # If all tokens identical, reduce to single token
+            if len(set(tokens)) == 1:
+                preserved_singles.add(tokens[0])
+                continue
+            preserved_compounds.add(comp)
+
+        # Singles: keep those with reasonable length/letter content; drop weak-only components
+        for single in candidate_singles:
+            letters = re.findall(r"[a-z]", single)
+            if len(letters) < 2:
+                continue
+            if len(single) <= 2:
+                # Only keep if this short token never stands alone in compounds
+                in_comp = any(f" {single} " in f" {c} " for c in preserved_compounds)
+                if in_comp:
+                    continue
+            preserved_singles.add(single)
+
+        # Remove singles that appear only as generic heads/tails of compounds and are very short
+        trimmed_singles: Set[str] = set()
+        for single in preserved_singles:
+            if len(single) <= 3 and any(
+                single in comp.split(" ") for comp in preserved_compounds
+            ):
+                continue
+            trimmed_singles.add(single)
+
+        return preserved_compounds, trimmed_singles
+
     client = _client()
     subject_name = subject or get_subject_name()
     
     # Extract just the term strings for analysis
-    term_strings = []
-    term_map = {}
+    term_strings: List[str] = []
+    term_map: Dict[str, Dict[str, Any]] = {}
+    normalized: List[tuple[str, float]] = []
     for entry in terms:
         if isinstance(entry, dict):
             term = entry.get("term", "")
             if term:
                 term_strings.append(term)
                 term_map[term] = entry
+                try:
+                    rel = float(entry.get("relevance", 1.0))
+                except Exception:
+                    rel = 1.0
+                canon = _canonical(term)
+                if canon:
+                    normalized.append((canon, rel))
         elif isinstance(entry, str):
             term_strings.append(entry)
             term_map[entry] = {"term": entry, "relevance": 1.0}
+            canon = _canonical(entry)
+            if canon:
+                normalized.append((canon, 1.0))
     
     if not term_strings:
         return []
+    if not normalized:
+        normalized = [(t, 1.0) for t in term_strings if t]
     
     system = (
-        f"You are a subject-matter expert in {subject_name}. Your task is to filter out overly general terms "
-        "that would not be useful for precise document retrieval in academic textbooks.\n\n"
-        "Remove terms that are:\n"
-        "- Too general or broad (e.g., 'principle', 'equation', 'theory', 'concept', 'law', 'method', 'process')\n"
-        "- Common academic words that appear frequently across many topics\n"
-        "- Non-specific descriptors (e.g., 'basic', 'fundamental', 'general', 'important')\n"
-        "- Overly broad categories or classifications\n\n"
-        "Keep terms that are:\n"
-        "- Specific technical concepts or phenomena\n"
-        "- Named principles, laws, or equations (proper nouns)\n"
-        "- Unique technical terminology specific to the field\n"
-        "- Measurable quantities or properties with precise definitions\n\n"
-        "Return JSON with 'filtered_terms' containing only the specific, useful terms."
+        f"You are a subject-matter expert in {subject_name}. Keep all subject-relevant terms unless they are obviously generic noise.\n\n"
+        "Remove terms only if they are purely generic academic words (e.g., 'principle', 'concept', 'equation' by themselves) "
+        "with no subject signal. KEEP multi-word phrases, named laws/equations, and domain nouns even if they look common. "
+        "Err on the side of keeping terms unless they would clearly pollute retrieval.\n\n"
+        "Return JSON with 'filtered_terms' containing the kept terms."
     )
     
     payload = {
@@ -382,15 +656,39 @@ def filter_general_terms(
         if not isinstance(filtered_term_strings, list):
             # Fallback to original terms if filtering fails
             return terms
-        
-        # Rebuild the term list with original metadata
-        filtered_terms = []
-        for term_str in filtered_term_strings:
-            if term_str in term_map:
-                filtered_terms.append(term_map[term_str])
-        
+
+        # Normalize LLM output
+        filtered_norm = [_canonical(t) for t in filtered_term_strings if isinstance(t, str)]
+        # Combine normalized originals to ensure we operate on canonical forms
+        llm_normalized = [(t, 1.0) for t in filtered_norm if t]
+        combined = normalized + llm_normalized
+
+        preserved_compounds, preserved_singles = _semantic_partition(combined)
+
+        final_terms: Set[str] = set()
+        final_terms.update(preserved_singles)
+        final_terms.update(preserved_compounds)
+
+        # Build final list with relevance (use max seen relevance)
+        relevance_lookup: Dict[str, float] = {}
+        for term, weight in combined:
+            relevance_lookup[term] = max(relevance_lookup.get(term, 0.0), weight)
+
+        filtered_terms: List[Dict[str, Any]] = []
+        for term in sorted(final_terms):
+            rel = relevance_lookup.get(term, 1.0)
+            filtered_terms.append({"term": term, "relevance": rel})
+
+        if len(filtered_terms) < 1:
+            return terms
+
+        if WIRE:
+            print(f"[Main AI -> General Filter] raw_terms={term_strings}", flush=True)
+            print(f"[Main AI -> General Filter] normalized_terms={sorted({t for t, _ in combined})}", flush=True)
+            print(f"[Main AI -> General Filter] final_terms={[t['term'] for t in filtered_terms]}", flush=True)
+
         return filtered_terms
-        
+
     except Exception:
         # If the filter fails, return original terms to avoid breaking the pipeline
         return terms
@@ -555,18 +853,54 @@ def solve_with_bundle(
     """Solve the parsed task using only information from the provided bundle."""
 
     client = _client()
+    question_text = ""
+    try:
+        question_text = getattr(bundle.metadata, "question", "") or getattr(
+            bundle.metadata, "original_query", ""
+        )
+    except Exception:
+        question_text = ""
+    citation_analyses = _score_citation_snippets(
+        question_text or parsed_task.problem_type, bundle
+    )
+    score_lookup: Dict[str, float] = {}
+    for entry in citation_analyses:
+        marker = entry.get("marker")
+        score = entry.get("score")
+        if isinstance(marker, str) and marker.strip():
+            try:
+                score_lookup[marker.strip()] = float(score)
+            except Exception:
+                continue
+    try:
+        bundle.provenance.setdefault("citation_rankings", citation_analyses)
+    except Exception:
+        pass
+
+    per_citation_answers: List[Dict[str, Any]] = []
+    for sn in bundle.snippets:
+        marker = getattr(sn, "citation_marker", None) or getattr(sn, "marker", None)
+        if not isinstance(marker, str) or not marker.strip():
+            marker = _fallback_citation_marker(sn)
+        score = score_lookup.get(marker.strip())
+        per_citation_answers.append(
+            _answer_single_snippet(question_text or parsed_task.problem_type, sn, score)
+        )
+    per_citation_answers.sort(
+        key=lambda row: (-(row.get("score") or 0.0), row.get("marker", ""))
+    )
+    _write_miniresponses(per_citation_answers, question_text or parsed_task.problem_type)
+
     system = (
-        "You are a conceptual subject-matter tutor. Use ONLY facts explicitly present in the provided Research Bundle snippets. "
-        "No browsing or other knowledge. "
-        "Workflow:\n"
-        " 1. Iterate through the snippets exactly in the order they appear (page-by-page order).\n"
-        " 2. For each snippet, read it carefully and note ONLY the facts, equations, or definitions explicitly stated there.\n"
-        " 3. When you use a fact, immediately cite that snippet's marker (e.g., [Textbook, p. X]). If a snippet does not literally mention a statement, equation, or symbol, you may NOT include it.\n"
-        " 4. Copy equations exactly as written in the snippet instead of recalling them from memory.\n"
-        " 5. After reviewing all snippets, synthesize the conceptual answer referencing only the collected facts, ensuring every sentence has a supporting citation.\n"
-        "If the bundle lacks the necessary information, reply exactly 'Not found in the approved materials.' "
-        "Do not attempt to answer the question, only provide conceptual knowladge on the topics needed to answer the question IFF these topics are mentioned in the snippets provided.\n"
-        "Do NOT perform numeric calculations, approximations, substitutions, or code."
+        "You are a conceptual subject-matter tutor. You are given pre-written answers, each derived from a single citation page. "
+        "You must combine ONLY those answers to respond to the user's question. "
+        "Rules:\n"
+        " - You do NOT have access to the original citations; rely solely on the provided per-citation answers.\n"
+        " - If a per-citation answer is exactly 'Not Relevant', ignore it.\n"
+        " - Do not add new facts or outside knowledge. Do not infer beyond what the per-citation answers state.\n"
+        " - When using a point from a per-citation answer, cite its marker (e.g., [Textbook, p. X]).\n"
+        " - If the provided answers are insufficient to address the question, reply exactly 'Not found in the approved materials.'\n"
+        " - Do NOT perform numeric calculations, approximations, substitutions, or code."
     )
     proof_bundle = _load_proof_bundle()
     proof_json: Optional[str] = None
@@ -627,23 +961,19 @@ def solve_with_bundle(
             proof_json = json.dumps(proof_bundle, ensure_ascii=False)
         except TypeError:
             proof_json = None
-    bundle_json = json.dumps(asdict(bundle), ensure_ascii=False)
-
+    per_citation_json = json.dumps(per_citation_answers, ensure_ascii=False)
     payload_lines = [
         f"Task: {json.dumps(asdict(parsed_task), ensure_ascii=False)}",
-        f"Bundle: {bundle_json}",
+        f"Question: {question_text or parsed_task.problem_type}",
+        f"PerCitationAnswers (sorted high->low score): {per_citation_json}",
     ]
     if proof_json:
         payload_lines.append(f"FullProofBundle: {proof_json}")
+    payload_lines.append("Return JSON with keys: steps, final_answers, equations_used, assumptions.")
     payload_lines.append(
-        "Return JSON with keys: steps, final_answers, equations_used, assumptions."
+        "- steps: concise synthesis combining only the provided per-citation answers, with citations on every factual sentence."
     )
-    payload_lines.append(
-        "- steps: conceptual explanation of the method and underlying principles. No numeric computations."
-    )
-    payload_lines.append(
-        "- final_answers: MUST be an empty object {} because you are not computing results."
-    )
+    payload_lines.append("- final_answers: MUST be an empty object {} because you are not computing results.")
     payload_lines.append(
         "- equations_used: list of symbolic equations (variables/constants only, no numbers substituted)."
     )
@@ -659,6 +989,7 @@ def solve_with_bundle(
         user_payload: str,
         bundle: ResearchBundle,
         proof_bundle: Optional[Dict[str, Any]] = None,
+        citation_contexts: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         def _flag_enabled() -> bool:
             truthy = {"1", "true", "yes", "on"}
@@ -717,6 +1048,18 @@ def solve_with_bundle(
         if meta_parts:
             lines.append("meta: " + ", ".join(meta_parts))
 
+        if citation_contexts:
+            try:
+                with open("debug/main_ai_citation_rankings.json", "w", encoding="utf-8") as fh:
+                    json.dump(citation_contexts, fh, indent=2, ensure_ascii=False)
+            except Exception:
+                pass
+            lines.append("citation_ranking (top to bottom):")
+            for ctx in citation_contexts[:25]:
+                lines.append(
+                    f"- score={ctx.get('score')} imp={ctx.get('importance')} marker={ctx.get('marker')} term={ctx.get('concept_term')} why={ctx.get('why')}"
+                )
+
         for i, sn in enumerate(bundle.snippets, 1):
             marker = getattr(sn, "citation_marker", None)
             if not marker:
@@ -742,7 +1085,7 @@ def solve_with_bundle(
         print("Wrote main model inputs to debug/main_ai_system.txt and debug/main_ai_user.txt")
         print(f"Context preview: debug/main_ai_context_preview.txt (snippets={len(bundle.snippets)})")
 
-    _maybe_debug_dump(system, user_base, bundle, proof_bundle)
+    _maybe_debug_dump(system, user_base, bundle, proof_bundle, citation_analyses)
 
     def _chat(msgs: List[dict]) -> dict:
         kwargs = {
@@ -1119,6 +1462,23 @@ def _write_citations_file(
         pass
 
 
+def _write_miniresponses(
+    per_citation_answers: List[Dict[str, Any]], question: str
+) -> None:
+    """Persist per-citation mini responses for inspection."""
+
+    payload = {
+        "question": question,
+        "per_citation_answers": per_citation_answers,
+    }
+    try:
+        Path("miniresponses.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
 __all__ = [
     "parse_question",
     "solve_with_bundle",
@@ -1128,4 +1488,6 @@ __all__ = [
     "extract_keywords",
     "filter_general_terms",
     "propose_synonyms",
+    "_answer_single_snippet",
+    "_write_miniresponses",
 ]
