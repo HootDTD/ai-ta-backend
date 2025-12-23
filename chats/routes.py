@@ -6,6 +6,8 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
 
+from ..config import get_runtime_dir
+
 router = APIRouter()
 
 
@@ -17,7 +19,7 @@ def save_chat(chat_id: str, payload: Dict[str, Any]):
     """
     store = os.getenv("CHAT_STORE_DIR")
     if not store:
-        raise HTTPException(status_code=400, detail="CHAT_STORE_DIR not configured")
+        store = str(get_runtime_dir() / "chats")
     os.makedirs(store, exist_ok=True)
     path = os.path.join(store, f"{chat_id}.json")
 
@@ -29,4 +31,3 @@ def save_chat(chat_id: str, payload: Dict[str, Any]):
     except Exception:
         raise HTTPException(status_code=500, detail="failed to save chat")
     return {"ok": True, "chat_id": chat_id}
-

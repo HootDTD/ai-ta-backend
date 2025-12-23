@@ -26,7 +26,7 @@ def _db_url() -> str:
     This prevents surprises when the working directory differs between
     processes (e.g., uvicorn started from another path).
     """
-    url = os.getenv("DATABASE_URL", "sqlite:///./ai_ta.db")
+    url = os.getenv("DATABASE_URL", "sqlite:///./runtime/ai_ta.db")
     if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
         rel = url[len("sqlite:///") :]
         if not rel.startswith("/"):

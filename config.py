@@ -3,6 +3,7 @@ from __future__ import annotations
 """Lightweight runtime configuration helpers."""
 
 import os
+from pathlib import Path
 from typing import Optional
 
 
@@ -14,6 +15,7 @@ _SUBJECT_SOURCE: str = "default"
 _SUBJECT_PRIORITY: int = -1
 _SUBJECT_LOGGED = False
 _CITATION_LABEL: Optional[str] = None
+_RUNTIME_DIR: Optional[Path] = None
 
 
 def _sanitize_subject(name: str | None) -> str:
@@ -117,10 +119,28 @@ def get_citation_label() -> str:
     return _CITATION_LABEL
 
 
+def get_runtime_dir() -> Path:
+    """Return the runtime directory, defaulting to repo-root ./runtime."""
+
+    global _RUNTIME_DIR
+
+    if _RUNTIME_DIR is not None:
+        return _RUNTIME_DIR
+
+    raw = os.getenv("RUNTIME_DIR", "runtime")
+    base = Path(__file__).resolve().parents[1]
+    path = Path(raw)
+    if not path.is_absolute():
+        path = (base / path).resolve()
+    _RUNTIME_DIR = path
+    return _RUNTIME_DIR
+
+
 __all__ = [
     "set_subject_name",
     "get_subject_name",
     "get_subject_source",
     "get_subject_priority",
     "get_citation_label",
+    "get_runtime_dir",
 ]

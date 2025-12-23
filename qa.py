@@ -7,7 +7,7 @@ from typing import Dict
 
 from dataclasses import asdict
 
-from .config import set_subject_name, get_subject_name
+from .config import set_subject_name, get_subject_name, get_runtime_dir
 from .retriever import (
     load_assets,
     load_assets_all,
@@ -98,7 +98,7 @@ def cmd_ask(args: argparse.Namespace) -> None:
         paths: list[str] = []
         if not values:
             return paths
-        outdir = Path.cwd() / "tmp_uploads"
+        outdir = get_runtime_dir() / "uploads"
         outdir.mkdir(parents=True, exist_ok=True)
         for raw in values:
             if not raw:

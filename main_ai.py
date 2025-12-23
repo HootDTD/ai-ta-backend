@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from openai import OpenAI
 
-from .config import get_subject_name, get_citation_label
+from .config import get_subject_name, get_citation_label, get_runtime_dir
 from .contracts import ParsedTask, ProposedSolution, FinalAnswer, ResearchBundle
 from .solver import run_python
 
@@ -1466,7 +1466,10 @@ def _write_citations_file(
         "snippets": snippets_summary,
     }
     try:
-        Path("citations.json").write_text(
+        outdir = get_runtime_dir() / "debug"
+        outdir.mkdir(parents=True, exist_ok=True)
+        path = outdir / "citations.json"
+        path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except Exception:
@@ -1483,7 +1486,10 @@ def _write_miniresponses(
         "per_citation_answers": per_citation_answers,
     }
     try:
-        Path("miniresponses.json").write_text(
+        outdir = get_runtime_dir() / "debug"
+        outdir.mkdir(parents=True, exist_ok=True)
+        path = outdir / "miniresponses.json"
+        path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except Exception:

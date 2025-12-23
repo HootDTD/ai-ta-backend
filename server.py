@@ -19,7 +19,7 @@ from contextlib import contextmanager, redirect_stdout
 # Import the callable core entrypoint using package‑relative import to avoid
 # path issues when running under different working directories.
 from .core import answer_question, _vision_transcribe
-from .config import set_subject_name
+from .config import get_runtime_dir, set_subject_name
 from .orchestrator import Orchestrator
 from .retriever import (
     load_assets,
@@ -285,13 +285,13 @@ def _serialize_course_payload(payload: Dict[str, Any]) -> TeacherCourseOut:
 
 
 def _save_attachments(attachments: Sequence[AttachmentIn]) -> List[str]:
-    """Decode data URLs and write to ./tmp_uploads. Returns list of file paths."""
+    """Decode data URLs and write to runtime/uploads. Returns list of file paths."""
     paths: List[str] = []
     if not attachments:
         return paths
 
-    outdir = os.path.abspath(os.path.join(os.getcwd(), "tmp_uploads"))
-    os.makedirs(outdir, exist_ok=True)
+    outdir = get_runtime_dir() / "uploads"
+    outdir.mkdir(parents=True, exist_ok=True)
 
     for att in attachments:
         m = DATA_URL_RE.match(att.data_url)
@@ -310,10 +310,10 @@ def _save_attachments(attachments: Sequence[AttachmentIn]) -> List[str]:
         fname = f"{uuid.uuid4().hex}_{att.name}".replace(" ", "_")
         if not os.path.splitext(fname)[1] and ext:
             fname += ext
-        path = os.path.join(outdir, fname)
+        path = outdir / fname
         with open(path, "wb") as f:
             f.write(b)
-        paths.append(path)
+        paths.append(str(path))
     return paths
 
 
@@ -683,7 +683,7 @@ def post_ask(payload: AskRequest):
 
     Now supports image-only queries. Either a non-empty `question` OR at least
     one attachment must be provided. Image attachments are decoded and saved to
-    `tmp_uploads/` and their file paths are passed along to the core.
+    `runtime/uploads/` and their file paths are passed along to the core.
     """
     # Validate input: allow (question) OR (attachments)
     q = (payload.question or "").strip()
