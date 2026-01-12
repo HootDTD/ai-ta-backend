@@ -1146,7 +1146,12 @@ def solve_with_bundle(
     )
 
 
-def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAnswer:
+def format_answer(
+    solution: ProposedSolution,
+    bundle: ResearchBundle,
+    *,
+    include_background: bool = True,
+) -> FinalAnswer:
     """Format the final answer for the user without adding new facts."""
     text = getattr(solution, "final_text", None)
     if text is None:
@@ -1219,7 +1224,7 @@ def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAn
             snippet_text = getattr(sn, "text", "")
             snippet_infos.append((cleaned, reason, snippet_text))
 
-    if snippet_infos:
+    if include_background and snippet_infos:
         background_lines: List[str] = []
         for marker, reason, snippet_text in snippet_infos:
             snippet_clean = " ".join(str(snippet_text or "").split())
@@ -1233,7 +1238,7 @@ def format_answer(solution: ProposedSolution, bundle: ResearchBundle) -> FinalAn
         or getattr(bundle.metadata, "not_found_terms", None)
         or []
     )
-    if missing_terms:
+    if include_background and missing_terms:
         miss_str = ", ".join(missing_terms)
         text_str = text_str.rstrip() + (
             "\n\nNote: The index did not contain information on "

@@ -18,19 +18,19 @@ from contextlib import contextmanager, redirect_stdout
 
 # Import the callable core entrypoint using package‑relative import to avoid
 # path issues when running under different working directories.
-from .core import answer_question, _vision_transcribe
+from .core import _vision_transcribe
 from .config import get_runtime_dir, set_subject_name
 from .orchestrator import Orchestrator
 from .retriever import (
     load_assets,
     load_assets_all,
-    ContextPack,
-    ContextSnippet,
-    answer as retriever_answer,
 )
+from . import retriever as retriever_mod
 from .knowledge import KnowledgeManager
 from .store_weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
-from .main_ai import extract_keywords
+from .main_ai import extract_keywords, parse_question, solve_with_bundle, format_answer
+from .contracts import ParsedTask
+from .citations.formatter import format_citations
 from .teacher_weekly import TeacherWeeklyStorage
 from .workspaces import (
     WorkspaceConfigError,
@@ -334,6 +334,28 @@ def _iter_text(obj: Union[str, bytes, Iterable, Iterator]) -> Iterator[str]:
             yield x.decode("utf-8", errors="ignore")
         else:
             yield str(x)
+
+
+def _structured_citations_from_bundle(
+    bundle: Any, used_markers: Optional[List[str]]
+) -> List[Dict[str, Any]]:
+    if not used_markers:
+        return []
+    used_set = {m.strip() for m in used_markers if isinstance(m, str) and m.strip()}
+    if not used_set:
+        return []
+    entries: List[Dict[str, Any]] = []
+    for sn in getattr(bundle, "snippets", []) or []:
+        marker = getattr(sn, "citation_marker", "") or ""
+        if marker not in used_set:
+            continue
+        entries.append({"id": getattr(sn, "id", None), "snippet": sn})
+    _, structured = format_citations(
+        entries,
+        getattr(retriever_mod, "_id_to_row", None),
+        getattr(retriever_mod, "_store_meta", {}) or {},
+    )
+    return structured
 
 
 @contextmanager
@@ -812,6 +834,7 @@ def post_ask(payload: AskRequest):
 
     stdout_buffer = io.StringIO()
     answer_chunks: List[str] = []
+    structured_citations: List[Dict[str, Any]] = []
     error_text: Optional[str] = None
 
     try:
@@ -843,27 +866,26 @@ def post_ask(payload: AskRequest):
                 }
                 bundle = orch._iterative_research(q_effective, retrieval_opts)
 
-                ctx_snippets = [
-                    ContextSnippet(
-                        id=sn.id,
-                        type=sn.type,
-                        page=sn.page,
-                        section_path=sn.section_path,
-                        text=sn.text,
-                        figure_id=sn.figure_id,
-                        why=sn.why,
-                        source_path=sn.source_path,
-                        doc_title=sn.doc_title,
-                        doc_short=sn.doc_short,
+                parsed_task: Optional[ParsedTask] = None
+                if q_effective.strip():
+                    try:
+                        parsed_task = parse_question(q_effective)
+                    except Exception:
+                        parsed_task = None
+                if parsed_task is None:
+                    fallback_problem = q_effective.strip() or "Question"
+                    parsed_task = ParsedTask(
+                        problem_type=fallback_problem,
+                        asked_outputs=["answer"],
+                        asked_output_keys=["answer"],
                     )
-                    for sn in bundle.snippets
-                ]
-                ctx = ContextPack(snippets=ctx_snippets, used_ids=bundle.used_ids, stats=bundle.stats)
 
-                ans = retriever_answer(q_effective, ctx)
-                answer_chunks.append(ans.text)
-                # attach structured citations to local variable for response below
-                result = ans  # for compatibility with existing citation extraction
+                solution = solve_with_bundle(parsed_task, bundle)
+                final = format_answer(solution, bundle, include_background=False)
+                answer_chunks.append(final.text)
+                structured_citations = _structured_citations_from_bundle(
+                    bundle, getattr(final, "citations", [])
+                )
     except Exception as e:
         log.exception("qa ask pipeline failed")
         error_text = f"[error] {e}"
@@ -871,11 +893,6 @@ def post_ask(payload: AskRequest):
     answer_text = "".join(answer_chunks).strip()
     if error_text and not answer_text:
         answer_text = error_text
-
-    structured_citations: List[Dict[str, Any]] = []
-    if "result" in locals():
-        # Prefer structured citations from retriever Answer if available
-        structured_citations = list(getattr(result, "structured_citations", []) or getattr(result, "citations", []) or [])
 
     raw_logs = stdout_buffer.getvalue().splitlines()
     wire_logs = [line.strip() for line in raw_logs if line.strip().startswith("[Main AI") or line.strip().startswith("[Indexer AI")]
