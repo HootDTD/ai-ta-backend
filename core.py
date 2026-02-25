@@ -20,12 +20,18 @@ from .retriever import (
     pack_context,
     answer as retriever_answer,
     render_citations,
+    RetrievalContext,
 )
+from .config import RequestConfig
 from .knowledge import KnowledgeManager
 from .main_ai import normalize_query, extract_keywords
 
 
-def _ensure_assets(doc_sets: Optional[Sequence[str]], subject: Optional[str]) -> None:
+def _ensure_assets(
+    doc_sets: Optional[Sequence[str]],
+    subject: Optional[str],
+    ctx: Optional[RetrievalContext] = None,
+) -> None:
     """Load retrieval assets based on explicit doc_sets or a subject mapping."""
 
     if doc_sets:
@@ -39,9 +45,9 @@ def _ensure_assets(doc_sets: Optional[Sequence[str]], subject: Optional[str]) ->
             seen.add(key)
             paths.append(resolved)
         if len(paths) > 1:
-            load_assets_all(paths)
+            load_assets_all(paths, ctx=ctx)
         elif paths:
-            load_assets(paths[0])
+            load_assets(paths[0], ctx=ctx)
         return
 
     manager = KnowledgeManager()
@@ -59,9 +65,9 @@ def _ensure_assets(doc_sets: Optional[Sequence[str]], subject: Optional[str]) ->
             seen.add(key)
             unique.append(resolved)
         if len(unique) > 1:
-            load_assets_all(unique)
+            load_assets_all(unique, ctx=ctx)
         else:
-            load_assets(unique[0])
+            load_assets(unique[0], ctx=ctx)
         return
 
     # Fallback to single default index dir (mirrors CLI behavior)
@@ -71,7 +77,7 @@ def _ensure_assets(doc_sets: Optional[Sequence[str]], subject: Optional[str]) ->
             Path(__file__).resolve().parent / "text-embeder/my_book_index_aero",
         )
     )
-    load_assets(default_index)
+    load_assets(default_index, ctx=ctx)
 
 
 def _file_to_data_url(path: str) -> str:
@@ -197,6 +203,8 @@ def answer_question(
     course_id: Optional[str] = None,
     doc_sets: Optional[Sequence[str]] = None,
     subject: Optional[str] = None,
+    ctx: Optional[RetrievalContext] = None,
+    cfg: Optional[RequestConfig] = None,
 ) -> Union[str, Iterable[str], Iterator[str]]:
     """Answer a question using the existing retriever pipeline.
 
@@ -250,13 +258,13 @@ def answer_question(
                 return direct
         return ""
 
-    _ensure_assets(doc_sets, subject)
+    _ensure_assets(doc_sets, subject, ctx=ctx)
 
     query = normalize_query(combined_q)
-    hits, _ = search(query, raw_query=combined_q)
-    ctx = pack_context(hits)
-    ans = retriever_answer(combined_q, ctx)
-    cites = render_citations(ans)
+    hits, _ = search(query, raw_query=combined_q, ctx=ctx)
+    ctx_pack = pack_context(hits, ctx=ctx)
+    ans = retriever_answer(combined_q, ctx_pack, ctx=ctx, cfg=cfg)
+    cites = render_citations(ans, cfg=cfg)
     structured = getattr(ans, "structured_citations", [])
 
     def _gen() -> Iterator[str]:

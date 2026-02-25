@@ -38,8 +38,9 @@ def test_mathpix_adapter_parses_blocks_and_confidence(monkeypatch):
     def _fake_urlopen(req: urllib.request.Request):  # type: ignore[override]
         # Validate request basics
         assert req.full_url.endswith("/v3/text")
-        assert req.headers.get("app_id") == "id"
-        assert req.headers.get("app_key") == "key"
+        headers_lower = {k.lower(): v for k, v in req.headers.items()}
+        assert headers_lower.get("app_id") == "id"
+        assert headers_lower.get("app_key") == "key"
         body = json.loads(req.data.decode("utf-8"))
         assert body.get("formats") == ["text", "latex_styled"]
         assert "src" in body

@@ -244,7 +244,7 @@ class SupabaseWorkspaceRepository(WorkspaceRepository):
         self._base_url = base
         self._service_key = service_key.strip()
         if not self._service_key:
-            raise WorkspaceConfigError("Supabase service role key cannot be empty")
+            raise WorkspaceConfigError("Supabase API key cannot be empty")
         self._table = (table or os.getenv("SUPABASE_CLASS_WORKSPACES_TABLE") or "class_workspaces").strip()
         self._select = (select or os.getenv("SUPABASE_CLASS_WORKSPACES_SELECT") or
                         "id,slug,name,subject,materials,weights,metadata").strip()
@@ -265,7 +265,7 @@ class SupabaseWorkspaceRepository(WorkspaceRepository):
         if response.status_code == 404:
             return []
         if response.status_code == 401:
-            raise WorkspaceConfigError("Supabase workspace request unauthorized; check service role key.")
+            raise WorkspaceConfigError("Supabase workspace request unauthorized; check API key.")
         if response.status_code == 403:
             raise WorkspaceConfigError("Supabase workspace request forbidden; verify Row Level Security policies.")
         if not response.ok:
@@ -486,22 +486,22 @@ def build_workspace_manager(static_config: Optional[Mapping[str, Mapping[str, An
     """Factory that builds a workspace manager using environment settings."""
 
     supabase_url = os.getenv("SUPABASE_URL")
-    supabase_service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    supabase_api_key = os.getenv("SUPABASE_API_KEY")
 
     fallback_repo: Optional[WorkspaceRepository] = None
     if static_config:
         fallback_repo = StaticWorkspaceRepository(static_config)
 
-    if supabase_url and supabase_service_key:
+    if supabase_url and supabase_api_key:
         primary_repo = SupabaseWorkspaceRepository(
             supabase_url=supabase_url,
-            service_key=supabase_service_key,
+            service_key=supabase_api_key,
         )
     elif fallback_repo is not None:
         primary_repo = fallback_repo
         fallback_repo = None
         log.warning(
-            "SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set; using static workspace config only."
+            "SUPABASE_URL/SUPABASE_API_KEY not set; using static workspace config only."
         )
     else:
         raise WorkspaceConfigError(

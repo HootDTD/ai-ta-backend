@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -11,6 +12,8 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Dict, List, Any, Set, Tuple
 from difflib import SequenceMatcher
+
+log = logging.getLogger(__name__)
 
 import tiktoken
 
@@ -22,17 +25,18 @@ from .contracts import (
     ResearchMetadata,
     BundleSnippet,
 )
-from .config import get_subject_name
+from .config import get_subject_name, RequestConfig
 from .main_ai import (
     parse_question,
     normalize_query,
     is_question_subject_relevant,
     extract_keywords,
+    extract_and_filter_keywords,
     filter_keywords_by_subject,
     filter_general_terms,
     propose_synonyms,
 )
-from .retriever import batch_lookup_terms, _summarize_snippets, _compute_equal_scores
+from .retriever import batch_lookup_terms, _summarize_snippets, _compute_equal_scores, RetrievalContext
 
 
 WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0","off","false","no"}
@@ -129,9 +133,11 @@ except Exception:  # pragma: no cover - pint may be absent
 class Orchestrator:
     """Sequential orchestrator with validation and retries."""
 
-    def __init__(self, max_retrieval_rounds: int = 2, max_solve_rounds: int = 2):
+    def __init__(self, max_retrieval_rounds: int = 2, max_solve_rounds: int = 2, ctx=None, cfg=None):
         self.max_retrieval_rounds = max_retrieval_rounds
         self.max_solve_rounds = max_solve_rounds
+        self.ctx = ctx
+        self.cfg = cfg
 
     def _semantic_similarity(self, seed: str, candidate: str) -> float:
         """Return a normalized similarity score between ``seed`` and ``candidate``."""
@@ -363,6 +369,7 @@ class Orchestrator:
         try:
             return is_question_subject_relevant(question)
         except Exception:
+            log.error("Subject relevance check failed, defaulting to allow", exc_info=True)
             # Default to allowing the question so we do not block legitimate requests
             # when the classifier (or API) fails.
             return True
@@ -448,6 +455,7 @@ class Orchestrator:
             try:
                 rel_val = float(rel)
             except Exception:
+                log.debug("Relevance float conversion failed, defaulting to 1.0")
                 rel_val = 1.0
             normalized.append((canon, rel_val))
 
@@ -533,25 +541,6 @@ class Orchestrator:
 
         subject_relevant = self._question_matches_subject(question)
         context_summary = ""
-        if subject_relevant:
-            context_summary = extract_keywords(question) or ""
-            if WIRE:
-                summary_for_log = context_summary.strip()
-                log_value = (
-                    json.dumps(summary_for_log, ensure_ascii=False)
-                    if summary_for_log
-                    else "null"
-                )
-                print(
-                    f"[Main AI -> Indexer AI] context_sentences={log_value}",
-                    flush=True,
-                )
-        else:
-            if WIRE:
-                print(
-                    "[Main AI -> Indexer AI] context_sentences=null (question_out_of_scope)",
-                    flush=True,
-                )
 
         initial_terms: List[str] = []
         term_weights: Dict[str, float] = {}
@@ -564,8 +553,29 @@ class Orchestrator:
         }
         skip_semantic = True
 
+        if not subject_relevant and WIRE:
+            print(
+                "[Main AI -> Indexer AI] context_sentences=null (question_out_of_scope)",
+                flush=True,
+            )
+
         if subject_relevant:
-            filtered_terms = filter_keywords_by_subject(context_summary, question)
+            # Merged keyword pipeline: extract + generate + rank + filter in 1 call
+            subject_name = self.cfg.subject_name if self.cfg else get_subject_name()
+            context_summary, filtered_terms = extract_and_filter_keywords(
+                question, subject=subject_name,
+            )
+            if WIRE:
+                summary_for_log = context_summary.strip()
+                log_value = (
+                    json.dumps(summary_for_log, ensure_ascii=False)
+                    if summary_for_log
+                    else "null"
+                )
+                print(
+                    f"[Main AI -> Indexer AI] context_sentences={log_value}",
+                    flush=True,
+                )
 
             # Semantic normalization layer: preserve compounds, drop weak standalones per mode
             filtered_terms = self._semantic_normalize_terms(
@@ -603,6 +613,7 @@ class Orchestrator:
                             try:
                                 rel_val = float(rel)
                             except Exception:
+                                log.debug("Relevance float conversion failed, defaulting to 1.0")
                                 rel_val = 1.0
                             _add_term(term, rel_val)
                     elif isinstance(entry, str):
@@ -613,14 +624,6 @@ class Orchestrator:
 
                 filtered_terms = combined
 
-            # Apply additional filter to remove overly general terms before indexing
-            if filtered_terms:
-                original_terms = [entry.get("term", "") for entry in filtered_terms if isinstance(entry, dict)]
-                filtered_terms = filter_general_terms(filtered_terms, get_subject_name())
-                final_terms = [entry.get("term", "") for entry in filtered_terms if isinstance(entry, dict)]
-                if WIRE:
-                    print(f"[Main AI -> General Filter] raw_terms={original_terms}")
-                    print(f"[Main AI -> General Filter] pre_filter_terms={final_terms}")
             limited_seed = bool(filtered_terms)
             fallback_needed = False
             if filtered_terms:
@@ -665,6 +668,7 @@ class Orchestrator:
                         if len(t) >= 3
                     ]
                 except Exception:
+                    log.warning("Regex tokenization of question failed")
                     tokens = []
                 if tokens:
                     initial_terms = []
@@ -680,7 +684,8 @@ class Orchestrator:
                             initial_terms, term_weights, fallback_text.strip().lower(), 0.6
                         )
             if not initial_terms:
-                self._append_weighted_term(initial_terms, term_weights, "fluid mechanics", 0.5)
+                _fallback_subject = self.cfg.subject_name if self.cfg else get_subject_name()
+                self._append_weighted_term(initial_terms, term_weights, _fallback_subject, 0.5)
 
             if not limited_seed:
                 skip_semantic = skip_semantic_env
@@ -763,7 +768,7 @@ class Orchestrator:
             # Ensure the indexer returns all citations for provided terms.
             _opts = dict(options or {})
             _opts["all_citations"] = True
-            found_array, not_found_array, diag = batch_lookup_terms(round_terms, _opts)
+            found_array, not_found_array, diag = batch_lookup_terms(round_terms, _opts, ctx=self.ctx, cfg=self.cfg)
         else:
             found_array = []
             not_found_array = []
@@ -936,6 +941,7 @@ class Orchestrator:
             try:
                 equal_score = float(equal_raw)
             except Exception:
+                log.debug("Equal score float conversion failed")
                 equal_score = float("-inf")
             concepts = info.get("concepts", set()) or {""}
             concept_iter = min(
@@ -1181,7 +1187,7 @@ class Orchestrator:
             "concept_match_details": concept_match_details,
             "coverage_gaps": [],
             "refinement_queries": [],
-            "subject": get_subject_name(),
+            "subject": self.cfg.subject_name if self.cfg else get_subject_name(),
             "allowed_markers": allowed_markers,
         }
 
@@ -1201,7 +1207,7 @@ class Orchestrator:
             found_terms=found_terms_meta,
             not_found_terms=not_found_terms,
             attempted_terms=attempted_terms,
-            subject=get_subject_name(),
+            subject=self.cfg.subject_name if self.cfg else get_subject_name(),
         )
         return bundle
 
@@ -1248,6 +1254,7 @@ class Orchestrator:
                     try:
                         parts.append(json.dumps(part))
                     except Exception:
+                        log.debug("Step JSON serialization failed, using str()")
                         parts.append(str(part))
             steps_text = "\n".join(parts)
         elif isinstance(steps_obj, str):
@@ -1384,6 +1391,7 @@ class Orchestrator:
                 bundle.validate()
                 break
             except Exception as exc:
+                log.warning("Bundle validation failed (attempt), retrying: %s", exc)
                 last_err = str(exc)
                 retrieval_opts["token_budget"] *= 2
                 retrieval_opts["k_sem"] = min(retrieval_opts.get("k_sem", 30) * 2, 100)

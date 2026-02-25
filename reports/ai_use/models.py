@@ -1,66 +1,12 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
 import uuid as uuid_pkg
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
-from sqlalchemy import (
-    JSON,
-    TEXT,
-    String,
-    DateTime,
-    create_engine,
-    text,
-)
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
-
-# -------------------- SQLAlchemy setup --------------------
-
-def _db_url() -> str:
-    """Resolve DATABASE_URL; make relative SQLite paths absolute to repo root.
-
-    This prevents surprises when the working directory differs between
-    processes (e.g., uvicorn started from another path).
-    """
-    url = os.getenv("DATABASE_URL", "sqlite:///./runtime/ai_ta.db")
-    if url.startswith("sqlite:///") and not url.startswith("sqlite:////"):
-        rel = url[len("sqlite:///") :]
-        if not rel.startswith("/"):
-            base = Path(__file__).resolve().parents[2]  # repo root
-            abs_path = (base / rel).resolve()
-            return f"sqlite:////{abs_path}"
-    return url
-
-
-engine = create_engine(_db_url(), future=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-# -------------------- SQLAlchemy Model --------------------
-
-class AIUseReportORM(Base):
-    __tablename__ = "ai_use_reports"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid_pkg.uuid4()))
-    chat_id: Mapped[str] = mapped_column(String(128), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    style: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
-    length: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
-
-    markdown: Mapped[Optional[str]] = mapped_column(TEXT, nullable=True)
-    # Use SQLAlchemy JSON so SQLite transparently serializes to TEXT
-    jsonld: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
-    model_fingerprint: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    tool_calls: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
-    prompt_hashes: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+from backend import supabase_client as sb
 
 
 # -------------------- Pydantic Schemas --------------------
@@ -82,10 +28,51 @@ class AIUseReport(BaseModel):
     tool_calls: list[ToolCallMeta] = Field(default_factory=list)
     prompt_hashes: list[str] = Field(default_factory=list)
 
-    class Config:
-        from_attributes = True
+
+# -------------------- Supabase CRUD --------------------
+
+TABLE = "ai_use_reports"
 
 
-def init_db() -> None:
-    """Create tables if they don't exist (dev convenience)."""
-    Base.metadata.create_all(engine)
+def create_report(
+    *,
+    chat_id: str,
+    style: Optional[str] = None,
+    length: Optional[str] = None,
+    markdown: Optional[str] = None,
+    jsonld: Optional[Any] = None,
+    model_fingerprint: Optional[str] = None,
+    tool_calls: Optional[Any] = None,
+    prompt_hashes: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Insert a new AI use report into Supabase and return it."""
+    report_id = str(uuid_pkg.uuid4())
+    data = {
+        "id": report_id,
+        "chat_id": chat_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "style": style,
+        "length": length,
+        "markdown": markdown,
+        "jsonld": jsonld,
+        "model_fingerprint": model_fingerprint,
+        "tool_calls": tool_calls,
+        "prompt_hashes": prompt_hashes,
+    }
+    rows = sb.insert(TABLE, data)
+    return rows[0] if rows else data
+
+
+def get_report(report_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch a single report by ID."""
+    return sb.select_one(TABLE, {"id": f"eq.{report_id}"})
+
+
+def list_reports(*, limit: int = 10) -> List[Dict[str, Any]]:
+    """List recent reports, newest first."""
+    clamped = max(1, min(limit, 100))
+    return sb.select(TABLE, {
+        "select": "id,chat_id,created_at,style,length",
+        "order": "created_at.desc",
+        "limit": str(clamped),
+    })

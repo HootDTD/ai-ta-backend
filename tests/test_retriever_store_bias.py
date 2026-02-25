@@ -30,7 +30,8 @@ class _FakeFaissIndex:
 
 
 def test_store_bias_prioritizes_textbook(monkeypatch):
-    monkeypatch.setattr(r, "_get_client", lambda: _FakeOpenAIClient())
+    monkeypatch.setattr(r, "_get_client", lambda ctx=None: _FakeOpenAIClient())
+    monkeypatch.setattr(r, "_require_loaded", lambda ctx=None: None)
     r._client = None
 
     df = pd.DataFrame(

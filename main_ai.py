@@ -3,12 +3,16 @@ from __future__ import annotations
 """Wrapper functions for the user-facing agent."""
 
 import json
+import logging
 import math
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+log = logging.getLogger(__name__)
 
 from openai import OpenAI
 
@@ -17,10 +21,10 @@ from .contracts import ParsedTask, ProposedSolution, FinalAnswer, ResearchBundle
 from .solver import run_python
 
 
-def _fallback_citation_marker(snippet: Any) -> str:
+def _fallback_citation_marker(snippet: Any, citation_label: str | None = None) -> str:
     """Produce a default citation marker when one is missing."""
 
-    label = get_citation_label()
+    label = citation_label or get_citation_label()
     page_val = getattr(snippet, "page", None)
     page = page_val if isinstance(page_val, int) and page_val > 0 else "?"
     return f"[{label}, p. {page}]"
@@ -61,7 +65,7 @@ def normalize_query(text: str) -> str:
     return text.lower()
 
 
-def is_question_subject_relevant(question: str) -> bool:
+def is_question_subject_relevant(question: str, subject: str | None = None) -> bool:
     """Use the LLM to decide whether the question belongs to the active subject."""
 
     cleaned = (question or "").strip()
@@ -69,7 +73,7 @@ def is_question_subject_relevant(question: str) -> bool:
         return False
 
     client = _client()
-    subject = get_subject_name()
+    subject = subject or get_subject_name()
     system = (
         f"You are a guard for the {subject} course materials. "
         "Decide if the student's question requires knowledge from this subject. "
@@ -102,15 +106,21 @@ def is_question_subject_relevant(question: str) -> bool:
             if lowered in {"false", "no", "n"}:
                 return False
     except Exception:
-        pass
+        log.error("Subject relevance guard failed", exc_info=True)
     # Fail open so that legitimate questions are not blocked if the guard fails.
     return True
 
 
+_cached_client: Optional[OpenAI] = None
+
+
 def _client() -> OpenAI:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY not set")
-    return OpenAI()
+    global _cached_client
+    if _cached_client is None:
+        if not os.getenv("OPENAI_API_KEY"):
+            raise RuntimeError("OPENAI_API_KEY not set")
+        _cached_client = OpenAI()
+    return _cached_client
 
 
 def _load_proof_bundle() -> Optional[Dict[str, Any]]:
@@ -161,6 +171,7 @@ def _clamp_0_1(value: Any, default: float = 0.0) -> float:
     try:
         val = float(value)
     except (TypeError, ValueError):
+        log.debug("_clamp_0_1 conversion failed for %r", value)
         return default
     if not math.isfinite(val):
         return default
@@ -181,6 +192,7 @@ def _importance_from_snippet(snippet: Any) -> float:
     try:
         val = float(raw_importance)
     except (TypeError, ValueError):
+        log.debug("importance conversion failed for %r", raw_importance)
         return 1.0
     if not math.isfinite(val):
         return 1.0
@@ -257,6 +269,7 @@ def _score_citation_snippets(
             content = resp.choices[0].message.content or "{}"
             data = json.loads(content)
         except Exception:
+            log.error("Citation scoring LLM call failed", exc_info=True)
             data = {}
 
         context = str(data.get("context") or data.get("summary") or "").strip()
@@ -345,6 +358,7 @@ def _answer_single_snippet(
         data = json.loads(content)
         answer = data.get("answer")
     except Exception:
+        log.error("Per-snippet answer LLM call failed", exc_info=True)
         answer = None
 
     answer_str = str(answer).strip() if answer is not None else ""
@@ -360,11 +374,113 @@ def _answer_single_snippet(
     }
 
 
-def extract_keywords(question: str) -> str:
+def _score_and_answer_snippet(
+    question: str,
+    snippet: Any,
+    importance: float,
+    focus_term: str,
+    citation_label: str | None = None,
+    model: str | None = None,
+) -> Dict[str, Any]:
+    """Score relevance AND extract answer from a single snippet in one LLM call.
+
+    Merges the work of ``_score_citation_snippets`` (per-snippet) and
+    ``_answer_single_snippet`` so that only **one** API round-trip is needed
+    per snippet instead of two.
+    """
+    client = _client()
+    model = model or os.getenv(
+        "CITATION_SCORER_MODEL", os.getenv("PARSER_MODEL", "gpt-4o")
+    )
+    marker = getattr(snippet, "citation_marker", None) or getattr(snippet, "marker", None)
+    if not isinstance(marker, str) or not marker.strip():
+        marker = _fallback_citation_marker(snippet, citation_label)
+    marker = marker.strip()
+
+    system = (
+        "You are a citation specialist. Given a student's question and a single snippet "
+        "from course materials, do TWO things:\n\n"
+        "1. SCORE the snippet:\n"
+        "   - relevance (0-1): how well the snippet addresses the question\n"
+        "   - directness (0-1): how on-point the snippet is\n"
+        "   - score (0-1): blended score; allow the provided importance_hint to slightly adjust\n"
+        "   - context: 1-2 sentences explaining only how the snippet connects to the question\n\n"
+        "2. EXTRACT every piece of information in this snippet that could help answer "
+        "the question. Include definitions, equations, relationships, assumptions, "
+        "boundary conditions, parameter meanings, constraints, or contextual clues.\n"
+        "   - Base everything strictly on snippet_text; do NOT add outside knowledge.\n"
+        "   - Only return 'Not Relevant' for the answer field if the snippet is clearly "
+        "about an unrelated topic with no overlap.\n\n"
+        "Return JSON with keys: context (string), relevance (0-1), directness (0-1), "
+        "score (0-1), answer (string)."
+    )
+
+    payload = {
+        "question": question,
+        "focus_term": focus_term,
+        "importance_hint": importance,
+        "marker": marker,
+        "page": getattr(snippet, "page", None),
+        "why": getattr(snippet, "why", ""),
+        "snippet_text": getattr(snippet, "text", ""),
+        "section": getattr(snippet, "section_path", ""),
+    }
+
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content or "{}"
+        data = json.loads(content)
+    except Exception:
+        log.error("Merged score+answer LLM call failed for snippet %s", marker, exc_info=True)
+        data = {}
+
+    # --- score fields ---
+    context = str(data.get("context") or "").strip()
+    if not context:
+        text_preview = " ".join(str(getattr(snippet, "text", "") or "").split())[:320]
+        context = text_preview
+
+    relevance = _clamp_0_1(data.get("relevance"), 0.0)
+    directness = _clamp_0_1(data.get("directness"), relevance)
+    blended = (0.6 * relevance) + (0.4 * directness)
+    model_score = _clamp_0_1(data.get("score"), blended)
+    weighted = _clamp_0_1(model_score * importance, model_score)
+
+    # --- answer field ---
+    answer_raw = data.get("answer")
+    answer_str = str(answer_raw).strip() if answer_raw is not None else ""
+    if not answer_str:
+        answer_str = "Not Relevant"
+
+    return {
+        "marker": marker,
+        "page": getattr(snippet, "page", None),
+        "snippet_id": getattr(snippet, "id", ""),
+        "concept_term": focus_term,
+        "importance": importance,
+        "relevance": relevance,
+        "directness": directness,
+        "base_score": model_score,
+        "score": weighted,
+        "context": context,
+        "why": getattr(snippet, "why", ""),
+        "answer": answer_str,
+    }
+
+
+def extract_keywords(question: str, subject: str | None = None) -> str:
     """Summarize the governing subject principles emphasized by the user prompt."""
 
     client = _client()
-    subject = get_subject_name()
+    subject = subject or get_subject_name()
     system = (
         f"You analyze {subject} textbook questions. Identify only the core principles or equations explicitly referenced in the prompt. "
         "List the topic names without elaborating or explaining them in detail. "
@@ -388,6 +504,7 @@ def extract_keywords(question: str) -> str:
         )
         summary = (resp.choices[0].message.content or "").strip()
     except Exception:
+        log.error("Keyword extraction LLM call failed", exc_info=True)
         summary = ""
 
     if not summary:
@@ -396,7 +513,7 @@ def extract_keywords(question: str) -> str:
 
 
 def filter_keywords_by_subject(
-    context_summary: str, question: str | None = None
+    context_summary: str, question: str | None = None, subject: str | None = None
 ) -> List[Dict[str, Any]] | None:
     """Produce standalone keyword terms using only the provided context summary and question."""
 
@@ -451,13 +568,14 @@ def filter_keywords_by_subject(
                 if len(candidates) >= 20:
                     break
     except Exception:
+        log.error("Keyword filtering LLM call failed (generate step)", exc_info=True)
         candidates = []
 
     if not candidates:
         return []
 
     # Step 2: score terms with subject knowledge and select the top 8.
-    subject = get_subject_name()
+    subject = subject or get_subject_name()
     score_system = (
         f"You rank lookup terms for the subject \"{subject}\". "
         "Use the student's question, the concise context summary, and the list of candidate terms. "
@@ -508,6 +626,7 @@ def filter_keywords_by_subject(
                 seen_terms.add(cleaned.lower())
                 ranked.append({"term": cleaned, "relevance": score_val})
     except Exception:
+        log.error("Keyword filtering LLM call failed (rank step)", exc_info=True)
         ranked = []
 
     if not ranked:
@@ -620,6 +739,7 @@ def filter_general_terms(
                 try:
                     rel = float(entry.get("relevance", 1.0))
                 except Exception:
+                    log.debug("Relevance float conversion failed, defaulting to 1.0")
                     rel = 1.0
                 canon = _canonical(term)
                 if canon:
@@ -701,12 +821,13 @@ def filter_general_terms(
         return filtered_terms
 
     except Exception:
+        log.error("General term filter LLM call failed", exc_info=True)
         # If the filter fails, return original terms to avoid breaking the pipeline
         return terms
 
 
 def propose_synonyms(
-    terms: List[str], context_hint: Dict[str, Any] | None = None
+    terms: List[str], context_hint: Dict[str, Any] | None = None, subject: str | None = None
 ) -> Dict[str, List[str]]:
     """Ask the LLM to generate 1–2 plausible synonyms per term."""
 
@@ -714,7 +835,7 @@ def propose_synonyms(
         return {}
 
     client = _client()
-    subject = get_subject_name()
+    subject = subject or get_subject_name()
     system = (
         "You help with textbook lookup. For each concept term, propose up to two "
         f"alternate keywords, abbreviations, or symbols that might appear in {subject} materials. "
@@ -739,6 +860,7 @@ def propose_synonyms(
         content = resp.choices[0].message.content or "{}"
         data = json.loads(content)
     except Exception:
+        log.error("Synonym proposal LLM call failed", exc_info=True)
         data = {}
 
     mapping: Dict[str, Any] = {}
@@ -781,11 +903,97 @@ def propose_synonyms(
     return suggestions
 
 
-def parse_question(user_query: str) -> ParsedTask:
+def extract_and_filter_keywords(
+    question: str, subject: str | None = None
+) -> Tuple[str, List[Dict[str, Any]]]:
+    """Extract, score, rank, and filter keywords in a single LLM call.
+
+    Merges the work of ``extract_keywords``, ``filter_keywords_by_subject``
+    (both steps), and ``filter_general_terms`` into one API round-trip.
+
+    Returns ``(context_summary, ranked_filtered_terms)`` where each term entry
+    is ``{"term": str, "relevance": float}``.
+    """
+    client = _client()
+    subject = subject or get_subject_name()
+
+    system = (
+        f"You analyze {subject} textbook questions. Perform these tasks:\n\n"
+        "1. CONTEXT SUMMARY: Identify the core principles or equations explicitly "
+        "referenced in the question. Write a single short sentence or comma-separated "
+        "list naming the relevant topics.\n\n"
+        "2. KEYWORD EXTRACTION & RANKING: Generate up to 20 candidate lookup terms "
+        "using ONLY the question. Rules for each term:\n"
+        "   - Must be a single lowercase word (no spaces, hyphens, or punctuation).\n"
+        "   - Focus on discrete concepts, principles, or technical keywords.\n"
+        "   - ALWAYS include individual terms from every topic in the context summary.\n"
+        "   - Avoid overly general or broad academic words.\n"
+        "   - Assign each term a UNIQUE numeric score between 0.00 and 1.00.\n"
+        "     1.00 = most relevant to the question.\n\n"
+        "3. FILTERING: Remove terms that are purely generic academic words "
+        "(e.g., 'principle', 'concept', 'equation' by themselves) with no subject "
+        "signal. KEEP named laws/equations and domain nouns.\n\n"
+        "Return JSON: {\"context_summary\": \"...\", "
+        "\"ranked_terms\": [{\"term\": \"...\", \"relevance\": 0.95}, ...]} "
+        "sorted highest to lowest. Return at most 8 terms after filtering."
+    )
+
+    payload = {"subject": subject, "question": question}
+
+    try:
+        resp = client.chat.completions.create(
+            model=os.getenv("PARSER_MODEL", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content or "{}"
+        data = json.loads(content)
+    except Exception:
+        log.error("Merged keyword extraction+filtering LLM call failed", exc_info=True)
+        return question.strip(), []
+
+    context_summary = str(data.get("context_summary", "")).strip()
+    if not context_summary:
+        context_summary = question.strip()
+
+    ranked_terms: List[Dict[str, Any]] = []
+    raw_ranked = data.get("ranked_terms")
+    if isinstance(raw_ranked, list):
+        seen: Set[str] = set()
+        for entry in raw_ranked:
+            if not isinstance(entry, dict):
+                continue
+            term = entry.get("term")
+            score = entry.get("relevance")
+            if not isinstance(term, str):
+                continue
+            cleaned = term.strip().lower()
+            if not cleaned or cleaned in seen:
+                continue
+            if any(ch in cleaned for ch in " -_/\\.'\""):
+                continue
+            try:
+                score_val = float(score)
+            except (TypeError, ValueError):
+                continue
+            seen.add(cleaned)
+            ranked_terms.append({"term": cleaned, "relevance": score_val})
+            if len(ranked_terms) >= 8:
+                break
+
+    ranked_terms.sort(key=lambda x: float(x.get("relevance", 0.0)), reverse=True)
+    return context_summary, ranked_terms
+
+
+def parse_question(user_query: str, subject: str | None = None) -> ParsedTask:
     """Use a lightweight model to parse the raw user query into a ``ParsedTask``."""
 
     client = _client()
-    subject = get_subject_name()
+    subject = subject or get_subject_name()
     system = (
         f"You are parsing {subject} textbook problems. "
         "Extract problem_type, asked_outputs, knowns, constraints, and figure_refs. "
@@ -859,7 +1067,8 @@ def parse_question(user_query: str) -> ParsedTask:
 
 
 def solve_with_bundle(
-    parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None
+    parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None,
+    subject: str | None = None,
 ) -> ProposedSolution:
     """Solve the parsed task using only information from the provided bundle."""
 
@@ -870,37 +1079,98 @@ def solve_with_bundle(
             bundle.metadata, "original_query", ""
         )
     except Exception:
+        log.warning("Failed to extract question from bundle metadata")
         question_text = ""
-    citation_analyses = _score_citation_snippets(
-        question_text or parsed_task.problem_type, bundle
+
+    q = question_text or parsed_task.problem_type
+    scorer_model = os.getenv(
+        "CITATION_SCORER_MODEL", os.getenv("PARSER_MODEL", "gpt-4o")
     )
-    score_lookup: Dict[str, float] = {}
-    for entry in citation_analyses:
-        marker = entry.get("marker")
-        score = entry.get("score")
-        if isinstance(marker, str) and marker.strip():
+
+    # Build per-snippet args before submitting to the pool
+    snippet_args: List[Tuple[Any, float, str]] = []
+    for sn in bundle.snippets:
+        focus_term = _pick_concept_term(sn)
+        importance = _importance_from_snippet(sn)
+        snippet_args.append((sn, importance, focus_term))
+
+    # Run merged score+answer in parallel (Phase 2+3)
+    max_workers = min(
+        int(os.getenv("CITATION_WORKERS", "6")),
+        max(len(snippet_args), 1),
+    )
+    combined_results: List[Dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = [
+            pool.submit(
+                _score_and_answer_snippet,
+                q, sn, importance, focus_term,
+                model=scorer_model,
+            )
+            for sn, importance, focus_term in snippet_args
+        ]
+        for future in futures:
             try:
-                score_lookup[marker.strip()] = float(score)
+                combined_results.append(future.result())
             except Exception:
-                continue
+                log.error("Parallel snippet processing failed", exc_info=True)
+                combined_results.append({
+                    "marker": "?",
+                    "page": None,
+                    "snippet_id": "",
+                    "concept_term": "",
+                    "importance": 0.0,
+                    "relevance": 0.0,
+                    "directness": 0.0,
+                    "base_score": 0.0,
+                    "score": 0.0,
+                    "context": "",
+                    "why": "",
+                    "answer": "Not Relevant",
+                })
+
+    # Split into citation_analyses (score fields) and per_citation_answers (answer fields)
+    citation_analyses: List[Dict[str, Any]] = []
+    per_citation_answers: List[Dict[str, Any]] = []
+    for r in combined_results:
+        citation_analyses.append({
+            "marker": r.get("marker", ""),
+            "page": r.get("page"),
+            "concept_term": r.get("concept_term", ""),
+            "importance": r.get("importance", 0.0),
+            "relevance": r.get("relevance", 0.0),
+            "directness": r.get("directness", 0.0),
+            "base_score": r.get("base_score", 0.0),
+            "score": r.get("score", 0.0),
+            "context": r.get("context", ""),
+            "why": r.get("why", ""),
+            "snippet_id": r.get("snippet_id", ""),
+        })
+        per_citation_answers.append({
+            "marker": r.get("marker", ""),
+            "page": r.get("page"),
+            "snippet_id": r.get("snippet_id", ""),
+            "score": r.get("score"),
+            "answer": r.get("answer", "Not Relevant"),
+        })
+
+    citation_analyses.sort(
+        key=lambda row: (
+            -float(row.get("score", 0.0) or 0.0),
+            -float(row.get("importance", 0.0) or 0.0),
+            -float(row.get("relevance", 0.0) or 0.0),
+            str(row.get("marker", "")),
+        )
+    )
     try:
         bundle.provenance.setdefault("citation_rankings", citation_analyses)
     except Exception:
-        pass
+        log.warning("Failed to set citation_rankings in provenance")
 
-    per_citation_answers: List[Dict[str, Any]] = []
-    for sn in bundle.snippets:
-        marker = getattr(sn, "citation_marker", None) or getattr(sn, "marker", None)
-        if not isinstance(marker, str) or not marker.strip():
-            marker = _fallback_citation_marker(sn)
-        score = score_lookup.get(marker.strip())
-        per_citation_answers.append(
-            _answer_single_snippet(question_text or parsed_task.problem_type, sn, score)
-        )
     per_citation_answers.sort(
         key=lambda row: (-(row.get("score") or 0.0), row.get("marker", ""))
     )
-    _write_miniresponses(per_citation_answers, question_text or parsed_task.problem_type)
+    _write_miniresponses(per_citation_answers, q)
 
     system = (
         "You are a conceptual subject-matter tutor. You are given pre-written answers, each derived from a single citation page. "
@@ -971,6 +1241,7 @@ def solve_with_bundle(
         try:
             proof_json = json.dumps(proof_bundle, ensure_ascii=False)
         except TypeError:
+            log.debug("Proof bundle not JSON-serializable")
             proof_json = None
     per_citation_json = json.dumps(per_citation_answers, ensure_ascii=False)
     payload_lines = [
@@ -1064,7 +1335,7 @@ def solve_with_bundle(
                 with open("debug/main_ai_citation_rankings.json", "w", encoding="utf-8") as fh:
                     json.dump(citation_contexts, fh, indent=2, ensure_ascii=False)
             except Exception:
-                pass
+                log.debug("Failed to write citation rankings debug file")
             lines.append("citation_ranking (top to bottom):")
             for ctx in citation_contexts[:25]:
                 lines.append(
@@ -1121,6 +1392,7 @@ def solve_with_bundle(
         try:
             raw_steps = json.dumps(raw_steps, ensure_ascii=False)
         except Exception:
+            log.debug("Steps JSON serialization failed, using str()")
             raw_steps = str(raw_steps)
 
     # Enforce conceptual-only mode regardless of model output.
@@ -1151,6 +1423,8 @@ def format_answer(
     bundle: ResearchBundle,
     *,
     include_background: bool = True,
+    citation_label: str | None = None,
+    subject: str | None = None,
 ) -> FinalAnswer:
     """Format the final answer for the user without adding new facts."""
     text = getattr(solution, "final_text", None)
@@ -1171,6 +1445,7 @@ def format_answer(
                     try:
                         parts.append(json.dumps(elem, ensure_ascii=False))
                     except Exception:
+                        log.debug("Element JSON serialization failed in _to_str")
                         parts.append(str(elem))
             return "\n".join(parts)
         return str(val)
@@ -1197,13 +1472,13 @@ def format_answer(
         for sn in bundle.snippets:
             marker = getattr(sn, "citation_marker", None) or getattr(sn, "marker", None)
             if not isinstance(marker, str) or not marker.strip():
-                marker = _fallback_citation_marker(sn)
+                marker = _fallback_citation_marker(sn, citation_label=citation_label)
             cleaned = marker.strip()
             if cleaned and cleaned not in allowed_seen:
                 allowed_markers.append(cleaned)
                 allowed_seen.add(cleaned)
     if not allowed_markers:
-        fallback = f"[{get_citation_label()}, p. ?]"
+        fallback = f"[{citation_label or get_citation_label()}, p. ?]"
         allowed_markers.append(fallback)
         allowed_seen.add(fallback)
     allowed_set: set[str] = set(allowed_markers)
@@ -1213,7 +1488,7 @@ def format_answer(
     for sn in bundle.snippets:
         marker = getattr(sn, "citation_marker", None) or getattr(sn, "marker", None)
         if not isinstance(marker, str) or not marker.strip():
-            marker = _fallback_citation_marker(sn)
+            marker = _fallback_citation_marker(sn, citation_label=citation_label)
         cleaned = marker.strip()
         if cleaned and cleaned not in allowed_set:
             allowed_markers.append(cleaned)
@@ -1305,6 +1580,7 @@ def _write_proof_citations(
     try:
         question = getattr(bundle.metadata, "question", "")
     except Exception:
+        log.warning("Failed to extract question for proof citations")
         question = ""
     dedup_allowed = []
     seen_allowed: set[str] = set()
@@ -1351,7 +1627,7 @@ def _write_proof_citations(
         )
     except Exception:
         # Best-effort diagnostic file; ignore failures so core execution continues.
-        pass
+        log.warning("Failed to write proofhoot.json diagnostic file")
 
 
 def _write_citations_file(
@@ -1389,6 +1665,7 @@ def _write_citations_file(
             try:
                 row: Dict[str, Any] = {"marker": cleaned, "equal": float(score)}
             except Exception:
+                log.debug("Score float conversion failed for marker %s", cleaned)
                 row = {"marker": cleaned}
             terms_list = sorted(marker_terms.get(cleaned, []))
             if terms_list:
@@ -1478,7 +1755,7 @@ def _write_citations_file(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except Exception:
-        pass
+        log.warning("Failed to write citations.json debug file")
 
 
 def _write_miniresponses(
@@ -1498,7 +1775,7 @@ def _write_miniresponses(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except Exception:
-        pass
+        log.warning("Failed to write miniresponses.json debug file")
 
 
 __all__ = [

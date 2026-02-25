@@ -31,10 +31,10 @@ def test_cli_ingest_ocr(monkeypatch, tmp_path, capsys):
 
     monkeypatch.setattr(hw, "_render_pdf_pages", _fake_render)
 
-    # Skip embeddings/FAISS
+    # Skip embeddings/FAISS — patch on _LAYOUT where the functions actually live
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setattr(hw, "embed_items", lambda items, model, dim: np.zeros((len(items), 8), dtype=np.float32))
-    monkeypatch.setattr(hw, "build_faiss", lambda embeddings, out_path: Path(out_path).write_bytes(b""))
+    monkeypatch.setattr(hw._LAYOUT, "embed_items", lambda items, model, dim: np.zeros((len(items), 8), dtype=np.float32))
+    monkeypatch.setattr(hw._LAYOUT, "build_faiss", lambda embeddings, out_path: Path(out_path).write_bytes(b""))
 
     # Prepare input PDF
     pdf = tmp_path / "input.pdf"

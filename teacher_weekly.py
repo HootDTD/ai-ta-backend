@@ -1,7 +1,6 @@
 """Teacher-facing weekly upload storage and indexing utilities."""
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shutil
@@ -21,6 +20,7 @@ from backend.store_weights import (
     get_env_weights,
     normalize_weights,
 )
+from backend import supabase_client as sb
 
 log = logging.getLogger(__name__)
 
@@ -36,14 +36,6 @@ def _slugify_course(name: str) -> str:
 
 def _utc_now() -> str:
     return datetime.utcnow().isoformat() + "Z"
-
-
-def _empty_section() -> Dict[str, Any]:
-    return {"latest": None, "history": []}
-
-
-def _empty_week_block() -> Dict[str, Any]:
-    return {"notes": _empty_section(), "slides": _empty_section()}
 
 
 @dataclass
@@ -75,7 +67,7 @@ class UploadRecord:
 
 
 class TeacherWeeklyStorage:
-    """Manage per-course weekly uploads and embedding directories."""
+    """Manage per-course weekly uploads via Supabase + local index files."""
 
     def __init__(self, base_dir: Optional[os.PathLike[str] | str] = None, *, total_weeks: Optional[int] = None):
         root = Path(base_dir) if base_dir is not None else Path(__file__).resolve().parent / "text-embeder" / "teacher_weekly"
@@ -84,140 +76,107 @@ class TeacherWeeklyStorage:
         self.root.mkdir(parents=True, exist_ok=True)
         self.index_root = self.root / "indexes"
         self.index_root.mkdir(parents=True, exist_ok=True)
-        self.manifest_root = self.root / "courses"
-        self.manifest_root.mkdir(parents=True, exist_ok=True)
         self._store_manager = KnowledgeManager()
 
     # ------------------------------------------------------------------
-    # Manifest helpers
+    # Supabase course helpers
     # ------------------------------------------------------------------
-    def _manifest_path(self, course: str) -> Path:
-        return self.manifest_root / f"{_slugify_course(course)}.json"
-
-    def _ensure_weeks(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
-        weeks = manifest.setdefault("weeks", {})
-        for week in range(1, self.total_weeks + 1):
-            key = str(week)
-            block = weeks.get(key)
-            if not isinstance(block, dict):
-                block = _empty_week_block()
-            else:
-                for kind in VALID_KINDS:
-                    section = block.get(kind)
-                    if not isinstance(section, dict):
-                        block[kind] = _empty_section()
-                        continue
-                    if not isinstance(section.get("history"), list):
-                        section["history"] = []
-                    if "latest" in section and section["latest"] is not None:
-                        section["latest"] = dict(section["latest"])
-                    else:
-                        section["latest"] = None
-            weeks[key] = block
-        manifest["weeks"] = weeks
-        return manifest
-
-    def _ensure_weights(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
+    def _get_or_create_course(self, course: str) -> Dict[str, Any]:
+        """Get or create a course row in Supabase teacher_courses."""
+        slug = _slugify_course(course)
+        row = sb.select_one("teacher_courses", {"slug": f"eq.{slug}"})
+        if row:
+            return row
         defaults = get_env_weights()
-        weights_raw = manifest.get("weights") if isinstance(manifest.get("weights"), dict) else {}
-        manifest["weights"] = normalize_weights(weights_raw, clamp=True, base=defaults)
-        manifest.setdefault("weight_bounds", {"min": WEIGHT_MIN, "max": WEIGHT_MAX})
-        return manifest
-
-    def _load_manifest(self, course: str) -> Dict[str, Any]:
-        path = self._manifest_path(course)
-        if path.exists():
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                raise RuntimeError(f"Malformed teacher manifest for {course!r}: {exc}") from exc
-        else:
-            data = {
-                "course": course,
-                "slug": _slugify_course(course),
-                "current_week": 1,
-                "weeks": {},
-            }
-        data["course"] = course
-        data["slug"] = data.get("slug") or _slugify_course(course)
-        if not isinstance(data.get("current_week"), int):
-            data["current_week"] = 1
-        data = self._ensure_weeks(data)
-        data = self._ensure_weights(data)
-        return data
-
-    def _save_manifest(self, course: str, manifest: Dict[str, Any]) -> None:
-        path = self._manifest_path(course)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        tmp.replace(path)
+        rows = sb.insert("teacher_courses", {
+            "course": course,
+            "slug": slug,
+            "current_week": 1,
+            "weights": defaults,
+            "weight_bounds": {"min": WEIGHT_MIN, "max": WEIGHT_MAX},
+        })
+        return rows[0]
 
     # ------------------------------------------------------------------
     # Retrieval weight helpers
     # ------------------------------------------------------------------
     def get_retrieval_weights(self, course: str) -> Dict[str, float]:
-        manifest = self._load_manifest(course)
-        return dict(manifest.get("weights", {}))
+        row = self._get_or_create_course(course)
+        return dict(row.get("weights", {}))
 
     def update_retrieval_weights(self, course: str, weights: Mapping[str, Any]) -> Dict[str, float]:
-        manifest = self._load_manifest(course)
-        updated = normalize_weights(weights, clamp=True, base=manifest.get("weights"))
-        manifest["weights"] = updated
-        manifest.setdefault("weight_bounds", {"min": WEIGHT_MIN, "max": WEIGHT_MAX})
-        self._save_manifest(course, manifest)
+        row = self._get_or_create_course(course)
+        current = row.get("weights", {})
+        updated = normalize_weights(weights, clamp=True, base=current)
+        sb.update("teacher_courses", {"id": f"eq.{row['id']}"}, {
+            "weights": updated,
+            "weight_bounds": {"min": WEIGHT_MIN, "max": WEIGHT_MAX},
+            "updated_at": "now()",
+        })
         return dict(updated)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
     def list_course(self, course: str) -> Dict[str, Any]:
-        manifest = self._load_manifest(course)
+        row = self._get_or_create_course(course)
+        course_id = row["id"]
+
+        # Get all uploads for this course
+        uploads = sb.select("teacher_uploads", {
+            "course_id": f"eq.{course_id}",
+            "order": "week.asc,kind.asc,uploaded_at.desc",
+        })
+
+        # Build weeks structure
         weeks_out: List[Dict[str, Any]] = []
-        for week in range(1, self.total_weeks + 1):
-            block = manifest["weeks"].get(str(week), _empty_week_block())
-            weeks_out.append(
-                {
-                    "week": week,
-                    "notes": self._serialize_section(block.get("notes")),
-                    "slides": self._serialize_section(block.get("slides")),
-                }
-            )
+        for week_num in range(1, self.total_weeks + 1):
+            week_uploads = [u for u in uploads if u.get("week") == week_num]
+            notes_section = self._build_section(week_uploads, "notes")
+            slides_section = self._build_section(week_uploads, "slides")
+            weeks_out.append({
+                "week": week_num,
+                "notes": notes_section,
+                "slides": slides_section,
+            })
+
         return {
-            "course": manifest["course"],
-            "slug": manifest["slug"],
-            "current_week": int(manifest.get("current_week", 1) or 1),
+            "course": row.get("course", course),
+            "slug": row.get("slug", _slugify_course(course)),
+            "current_week": int(row.get("current_week", 1) or 1),
             "weeks": weeks_out,
         }
 
-    def _serialize_section(self, section: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        if not isinstance(section, dict):
-            section = _empty_section()
-        latest = section.get("latest")
-        history = [self._coerce_record(rec) for rec in section.get("history", [])]
-        history = [rec for rec in history if rec is not None]
-        out = {
-            "latest": self._coerce_record(latest),
-            "history": history,
-        }
-        return out
+    def _build_section(self, uploads: List[Dict[str, Any]], kind: str) -> Dict[str, Any]:
+        """Build notes/slides section from upload records."""
+        kind_uploads = [u for u in uploads if u.get("kind") == kind]
+        latest = None
+        history = []
+        for u in kind_uploads:
+            rec = self._upload_to_record(u)
+            if rec is None:
+                continue
+            if u.get("is_latest"):
+                latest = rec
+            history.append(rec)
+        return {"latest": latest, "history": history}
 
-    def _coerce_record(self, rec: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        if not isinstance(rec, dict):
+    def _upload_to_record(self, u: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Convert a Supabase upload row to a record dict."""
+        if not u.get("index_path"):
             return None
-        out = {
-            "id": rec.get("id"),
-            "week": int(rec.get("week", 0) or 0),
-            "kind": rec.get("kind"),
-            "title": rec.get("title"),
-            "uploaded_at": rec.get("uploaded_at"),
-            "source_name": rec.get("source_name"),
-            "index_path": rec.get("index_path"),
-            "doc_id": rec.get("doc_id"),
-            "page_count": rec.get("page_count"),
-            "material_id": rec.get("material_id"),
+        return {
+            "id": u.get("id"),
+            "week": int(u.get("week", 0) or 0),
+            "kind": u.get("kind"),
+            "title": u.get("title"),
+            "uploaded_at": u.get("uploaded_at"),
+            "source_name": u.get("source_name"),
+            "index_path": u.get("index_path"),
+            "doc_id": u.get("doc_id"),
+            "page_count": u.get("page_count"),
+            "material_id": u.get("material_id"),
         }
-        return out if out.get("index_path") else None
 
     def record_upload(
         self,
@@ -234,11 +193,12 @@ class TeacherWeeklyStorage:
         if kind_norm not in VALID_KINDS:
             raise ValueError("kind must be 'notes' or 'slides'")
 
-        manifest = self._load_manifest(course)
+        course_row = self._get_or_create_course(course)
         resolved_title = (title or f"Week {week} {kind_norm.title()}").strip()
+
         try:
             ingestion = self._ingest_with_handwriting(
-                slug=manifest["slug"],
+                slug=course_row.get("slug", _slugify_course(course)),
                 week=week,
                 kind=kind_norm,
                 pdf_path=pdf_path,
@@ -261,51 +221,78 @@ class TeacherWeeklyStorage:
             material_id=str(ingestion.get("material_id", "")) if ingestion.get("material_id") else "",
         )
 
+        # Mark old latest as not-latest
+        sb.update("teacher_uploads", {
+            "course_id": f"eq.{course_row['id']}",
+            "week": f"eq.{week}",
+            "kind": f"eq.{kind_norm}",
+            "is_latest": "eq.true",
+        }, {"is_latest": False})
+
+        # Insert new upload as latest
+        sb.insert("teacher_uploads", {
+            "course_id": course_row["id"],
+            "week": week,
+            "kind": kind_norm,
+            "title": record.title,
+            "uploaded_at": record.uploaded_at,
+            "source_name": record.source_name,
+            "index_path": record.index_path,
+            "doc_id": record.doc_id,
+            "page_count": record.page_count,
+            "material_id": record.material_id,
+            "is_latest": True,
+        })
+
+        # Register in knowledge stores
         self._register_store_entry(course, kind_norm, week, record.title, record.index_path)
 
-        week_block = manifest["weeks"].get(str(week)) or _empty_week_block()
-        section = week_block.get(kind_norm) or _empty_section()
-        history: List[Dict[str, Any]] = [rec for rec in section.get("history", []) if isinstance(rec, dict)]
-        history.insert(0, record.to_dict())
-        section["history"] = history
-        section["latest"] = record.to_dict()
-        week_block[kind_norm] = section
-        manifest["weeks"][str(week)] = week_block
-        self._save_manifest(course, manifest)
         return record
 
     def set_current_week(self, course: str, week: int) -> Dict[str, Any]:
         if week < 1 or week > self.total_weeks:
             raise ValueError(f"current_week must be between 1 and {self.total_weeks}")
-        manifest = self._load_manifest(course)
-        manifest["current_week"] = week
-        self._save_manifest(course, manifest)
-        return {
-            "course": manifest["course"],
+        row = self._get_or_create_course(course)
+        sb.update("teacher_courses", {"id": f"eq.{row['id']}"}, {
             "current_week": week,
-        }
+            "updated_at": "now()",
+        })
+        return {"course": row.get("course", course), "current_week": week}
 
     def resolve_week_doc_sets(self, course: str, *, week: Optional[int] = None, include_previous: bool = False) -> List[str]:
-        manifest = self._load_manifest(course)
-        target_week = week or int(manifest.get("current_week", 1) or 1)
+        row = self._get_or_create_course(course)
+        target_week = week or int(row.get("current_week", 1) or 1)
         target_week = max(1, min(target_week, self.total_weeks))
+
+        if include_previous:
+            uploads = sb.select("teacher_uploads", {
+                "course_id": f"eq.{row['id']}",
+                "is_latest": "eq.true",
+                "week": f"lte.{target_week}",
+                "order": "week.asc",
+            })
+        else:
+            uploads = sb.select("teacher_uploads", {
+                "course_id": f"eq.{row['id']}",
+                "is_latest": "eq.true",
+                "week": f"eq.{target_week}",
+            })
+
         paths: List[str] = []
-        weeks_to_collect = range(1, target_week + 1) if include_previous else [target_week]
-        for wk in weeks_to_collect:
-            block = manifest["weeks"].get(str(wk)) or {}
-            for kind in VALID_KINDS:
-                section = block.get(kind) or {}
-                latest = section.get("latest") or {}
-                idx = latest.get("index_path")
-                if not idx:
-                    continue
-                p = Path(idx)
-                if p.exists():
-                    resolved = str(p.resolve())
-                    if resolved not in paths:
-                        paths.append(resolved)
+        for u in uploads:
+            idx = u.get("index_path")
+            if not idx:
+                continue
+            p = Path(idx)
+            if p.exists():
+                resolved = str(p.resolve())
+                if resolved not in paths:
+                    paths.append(resolved)
         return paths
 
+    # ------------------------------------------------------------------
+    # Ingestion (local FAISS pipeline — unchanged)
+    # ------------------------------------------------------------------
     def _ingest_with_handwriting(self, *, slug: str, week: int, kind: str, pdf_path: Path, title: str) -> Dict[str, Any]:
         slug = (slug or "").strip()
         slug = slug or _slugify_course(slug)
@@ -325,6 +312,7 @@ class TeacherWeeklyStorage:
             with suppress(FileNotFoundError):
                 pdf_path.unlink()
 
+        import json
         meta: Dict[str, Any] = {}
         meta_path = out_dir / "meta.json"
         if meta_path.exists():
@@ -406,13 +394,6 @@ class TeacherWeeklyStorage:
                 title=title,
                 index_path=path,
             )
-            manifest = self._load_manifest(course)
-            stores = [entry for entry in manifest.get("stores", []) if isinstance(entry, dict)]
-            for entry in stores:
-                if entry.get("index_path") == str(path.resolve()):
-                    entry["week"] = week
-            manifest["stores"] = stores
-            self._save_manifest(course, manifest)
         except Exception as exc:
             log.debug("Failed to register store entry for %s (kind=%s): %s", title, store_kind, exc)
 

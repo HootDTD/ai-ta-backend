@@ -20,8 +20,8 @@ def make_dummy_client(text: str):
 
 
 def test_answer_strips_citation_markers(monkeypatch):
-    monkeypatch.setattr(r, "_require_loaded", lambda: None)
-    monkeypatch.setattr(r, "_get_client", lambda: make_dummy_client("result [S1] and [S2]"))
+    monkeypatch.setattr(r, "_require_loaded", lambda ctx=None: None)
+    monkeypatch.setattr(r, "_get_client", lambda ctx=None: make_dummy_client("result [S1] and [S2]"))
     r._meta = {}
     r._id_to_row = None
     r._store_meta = {}

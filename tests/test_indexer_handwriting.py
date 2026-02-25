@@ -31,11 +31,15 @@ def test_ingest_builds_artifacts_with_mocked_ocr(monkeypatch, tmp_path):
     monkeypatch.setattr(hw, "_render_pdf_pages", _fake_render)
 
     # Monkeypatch embedding and FAISS build to avoid network/heavy deps
+    # These functions live on hw._LAYOUT (the dynamically loaded layout module)
     def _fake_embed(items, model, dim):
         return np.zeros((len(items), 16), dtype=np.float32)
 
-    monkeypatch.setattr(hw, "embed_items", _fake_embed)
-    monkeypatch.setattr(hw, "build_faiss", lambda embeddings, out_path: Path(out_path).write_bytes(b""))
+    monkeypatch.setattr(hw._LAYOUT, "HAVE_NUMPY", True)
+    monkeypatch.setattr(hw._LAYOUT, "embed_items", _fake_embed)
+    monkeypatch.setattr(hw._LAYOUT, "np", np)
+    monkeypatch.setattr(hw._LAYOUT, "build_faiss", lambda embeddings, out_path: Path(out_path).write_bytes(b""))
+    monkeypatch.setattr(hw._LAYOUT, "build_sqlite", lambda items, out_path: Path(out_path).write_bytes(b""))
 
     pdf_path = tmp_path / "fixture.pdf"
     pdf_path.write_bytes(b"%PDF-FAKE")

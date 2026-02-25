@@ -3,6 +3,7 @@ from __future__ import annotations
 """Lightweight runtime configuration helpers."""
 
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -136,6 +137,64 @@ def get_runtime_dir() -> Path:
     return _RUNTIME_DIR
 
 
+_REQ_PRIORITY = {"default": 0, "meta": 1, "env": 2, "cli": 3, "server": 3}
+
+
+@dataclass
+class RequestConfig:
+    """Per-request configuration. Thread-safe replacement for module globals.
+
+    The HTTP server creates one per ``/ask`` request so concurrent requests
+    never share subject state.  CLI callers can use ``from_env()`` or leave
+    the existing module-level helpers in place.
+    """
+
+    subject_name: str = "course/textbook"
+    subject_source: str = "default"
+    subject_priority: int = -1
+    citation_label: str = "Textbook"
+    runtime_dir: Optional[Path] = None
+
+    @classmethod
+    def from_env(cls) -> "RequestConfig":
+        """Create a config seeded from environment variables."""
+        cfg = cls()
+
+        env_subject = os.getenv("TEXTBOOK_SUBJECT")
+        if env_subject:
+            cfg.set_subject(env_subject, "env")
+
+        raw_label = os.getenv("CITATION_LABEL", "Textbook")
+        if isinstance(raw_label, str):
+            cleaned = " ".join(raw_label.strip().split())
+        else:
+            cleaned = ""
+        cfg.citation_label = cleaned or "Textbook"
+
+        raw_dir = os.getenv("RUNTIME_DIR", "runtime")
+        base = Path(__file__).resolve().parents[1]
+        path = Path(raw_dir)
+        if not path.is_absolute():
+            path = (base / path).resolve()
+        cfg.runtime_dir = path
+        return cfg
+
+    def set_subject(self, name: str | None, source: str) -> None:
+        """Set subject name honoring precedence (mirrors ``set_subject_name``)."""
+        src_norm = (source or "default").lower()
+        priority = _REQ_PRIORITY.get(src_norm, 0)
+        cleaned = _sanitize_subject(name)
+        if not cleaned:
+            return
+        if priority < self.subject_priority:
+            return
+        if priority == self.subject_priority and self.subject_name == cleaned:
+            return
+        self.subject_name = cleaned
+        self.subject_source = src_norm
+        self.subject_priority = priority
+
+
 __all__ = [
     "set_subject_name",
     "get_subject_name",
@@ -143,4 +202,5 @@ __all__ = [
     "get_subject_priority",
     "get_citation_label",
     "get_runtime_dir",
+    "RequestConfig",
 ]

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -22,6 +21,8 @@ def client(tmp_path, monkeypatch):
     kb = tmp_path / "knowledge"
     kb.mkdir()
     monkeypatch.setenv("KNOWLEDGE_BASE_DIR", str(kb))
+    monkeypatch.setenv("SUPABASE_URL", "http://localhost:54321")
+    monkeypatch.setenv("SUPABASE_API_KEY", "test-key")
 
     # Import app after env is set
     from backend.server import app
@@ -74,4 +75,3 @@ def test_register_and_list_stores(client, tmp_path):
     # priorities preserved
     kinds = {a["kind"]: a["priority"] for a in arr}
     assert kinds["textbook"] >= kinds["slides"]
-

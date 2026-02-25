@@ -19,11 +19,12 @@ from contextlib import contextmanager, redirect_stdout
 # Import the callable core entrypoint using package‑relative import to avoid
 # path issues when running under different working directories.
 from .core import _vision_transcribe
-from .config import get_runtime_dir, set_subject_name
+from .config import get_runtime_dir, set_subject_name, RequestConfig
 from .orchestrator import Orchestrator
 from .retriever import (
     load_assets,
     load_assets_all,
+    RetrievalContext,
 )
 from . import retriever as retriever_mod
 from .knowledge import KnowledgeManager
@@ -86,25 +87,6 @@ class AttachmentIn(BaseModel):
     data_url: str = Field(..., description="data:<mime>;base64,<...>")
 
 
-def _resolve_index_path() -> str:
-    configured = os.getenv("INDEX_DIR")
-    if configured:
-        return str(Path(configured).expanduser().resolve())
-    default = Path(__file__).resolve().parent / "text-embeder/my_book_index_aero"
-    return str(default)
-
-
-def _legacy_class_config() -> Dict[str, Dict[str, Any]]:
-    default_path = _resolve_index_path()
-    return {
-        "AAE 33300: Introduction to Fluid Mechanics": {
-            "subject": "Fundamentals of Aerodynamics",
-            "title": "Fundamentals of Aerodynamics",
-            "kind": "textbook",
-            "doc_sets": [default_path],
-        }
-    }
-
 _teacher_storage: Optional[TeacherWeeklyStorage] = None
 try:
     TEACHER_TOTAL_WEEKS = int(os.getenv("TEACHER_TOTAL_WEEKS", "16"))
@@ -120,11 +102,19 @@ def _get_teacher_storage() -> TeacherWeeklyStorage:
     return _teacher_storage
 
 
-try:
-    _workspace_manager = build_workspace_manager(_legacy_class_config())
-except WorkspaceConfigError as exc:
-    log.error("Failed to initialize workspace manager: %s", exc)
-    raise
+_workspace_manager = None
+
+
+def _get_workspace_manager():
+    """Return the workspace manager, creating it lazily on first call."""
+    global _workspace_manager
+    if _workspace_manager is None:
+        try:
+            _workspace_manager = build_workspace_manager()
+        except WorkspaceConfigError as exc:
+            log.error("Failed to initialize workspace manager: %s", exc)
+            raise
+    return _workspace_manager
 
 
 class AskRequest(BaseModel):
@@ -252,6 +242,7 @@ def _serialize_upload(entry: Optional[Dict[str, Any]]) -> Optional[TeacherUpload
     try:
         return TeacherUploadOut(**entry)
     except Exception:
+        log.warning("Failed to serialize teacher upload entry")
         return None
 
 
@@ -301,6 +292,7 @@ def _save_attachments(attachments: Sequence[AttachmentIn]) -> List[str]:
         try:
             b = base64.b64decode(m.group("data").encode("utf-8"), validate=True)
         except Exception:
+            log.debug("Strict base64 decode failed, using lenient fallback")
             # lenient decode fallback
             b = base64.b64decode(m.group("data").encode("utf-8"))
         # derive extension from mime
@@ -358,22 +350,6 @@ def _structured_citations_from_bundle(
     return structured
 
 
-@contextmanager
-def _temp_env(vars: Dict[str, str]):
-    old: Dict[str, Optional[str]] = {}
-    try:
-        for k, v in vars.items():
-            old[k] = os.getenv(k)
-            os.environ[k] = v
-        yield
-    finally:
-        for k, v in old.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-
-
 # -------- App --------
 app = FastAPI(title="AI-TA HTTP Server", version="0.1.0")
 
@@ -411,14 +387,6 @@ except Exception:
 
 if chats_router is not None:
     app.include_router(chats_router)
-
-# Ensure DB tables exist (dev convenience)
-try:
-    from backend.reports.ai_use.models import init_db as _init_db  # type: ignore
-
-    _init_db()
-except Exception:
-    pass
 
 
 # -------- Knowledge endpoints --------
@@ -569,7 +537,7 @@ def update_teacher_retrieval_weights(payload: TeacherRetrievalWeightsUpdateIn) -
 if _HAS_MULTIPART:
 
     @app.post("/knowledge/materials", response_model=KnowledgeMaterialOut)
-    async def upload_knowledge_material(
+    def upload_knowledge_material(
         subject: str = Form(...),
         title: str = Form(""),
         file: UploadFile = File(...),
@@ -590,7 +558,7 @@ if _HAS_MULTIPART:
         try:
             with tmp_path.open("wb") as dest:
                 while True:
-                    chunk = await file.read(1024 * 1024)
+                    chunk = file.file.read(1024 * 1024)
                     if not chunk:
                         break
                     dest.write(chunk)
@@ -613,7 +581,7 @@ if _HAS_MULTIPART:
             raise HTTPException(status_code=500, detail="Failed to embed knowledge material") from exc
         finally:
             try:
-                await file.close()
+                file.file.close()
             except Exception:
                 pass
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -622,7 +590,7 @@ if _HAS_MULTIPART:
 
 
     @app.post("/teacher/upload", response_model=TeacherUploadOut)
-    async def upload_teacher_material(
+    def upload_teacher_material(
         course: str = Form(..., alias="class"),
         week: int = Form(...),
         kind: str = Form(...),
@@ -643,7 +611,7 @@ if _HAS_MULTIPART:
         try:
             with tmp_path.open("wb") as dest:
                 while True:
-                    chunk = await file.read(1024 * 1024)
+                    chunk = file.file.read(1024 * 1024)
                     if not chunk:
                         break
                     dest.write(chunk)
@@ -670,7 +638,7 @@ if _HAS_MULTIPART:
             raise HTTPException(status_code=500, detail=f"Failed to process upload: {exc}") from exc
         finally:
             try:
-                await file.close()
+                file.file.close()
             except Exception:
                 pass
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -699,6 +667,8 @@ def healthz():
     return {"status": "ok"}
 
 
+# Intentionally sync `def` — FastAPI auto-threads sync endpoints.
+# Do NOT change to `async def` unless the entire pipeline is made async.
 @app.post("/ask")
 def post_ask(payload: AskRequest):
     """Accept a question and/or image attachments, stream back plain-text answer.
@@ -724,7 +694,7 @@ def post_ask(payload: AskRequest):
         )
 
     try:
-        workspace = _workspace_manager.get(class_name)
+        workspace = _get_workspace_manager().get(class_name)
     except WorkspaceNotFound:
         raise HTTPException(status_code=404, detail="Unknown class selection")
     except WorkspaceConfigError as exc:
@@ -745,6 +715,7 @@ def post_ask(payload: AskRequest):
         try:
             resolved = str(Path(raw).resolve())
         except Exception:
+            log.debug("Path resolve failed for %s, using raw string", raw)
             resolved = str(raw)
         if resolved in seen_paths:
             continue
@@ -755,12 +726,14 @@ def post_ask(payload: AskRequest):
     try:
         teacher_storage = _get_teacher_storage()
     except Exception:
+        log.warning("Failed to load teacher weekly storage")
         teacher_storage = None
 
     if teacher_storage is not None:
         try:
             teacher_paths = teacher_storage.resolve_week_doc_sets(class_name, include_previous=True)
         except Exception:
+            log.warning("Failed to resolve teacher week doc sets")
             teacher_paths = []
     else:
         teacher_paths = []
@@ -773,6 +746,7 @@ def post_ask(payload: AskRequest):
             try:
                 resolved = str(Path(raw).resolve())
             except Exception:
+                log.debug("Path resolve failed, using raw string")
                 resolved = str(raw)
             if resolved in seen:
                 continue
@@ -793,11 +767,13 @@ def post_ask(payload: AskRequest):
         try:
             image_text = _vision_transcribe(image_paths) or ""
         except Exception:
+            log.warning("Vision transcription failed for uploaded images")
             image_text = ""
     if image_text:
         try:
             image_context = extract_keywords(image_text) or ""
         except Exception:
+            log.warning("Keyword extraction from image text failed")
             image_context = ""
         fallback_image_query = " ".join(image_text.split())[:500]
         image_query = image_context.strip() if image_context.strip() else fallback_image_query
@@ -815,6 +791,7 @@ def post_ask(payload: AskRequest):
         try:
             teacher_weights = teacher_storage.get_retrieval_weights(class_name)
         except Exception:
+            log.warning("Failed to get teacher retrieval weights")
             teacher_weights = {}
         else:
             weight_overrides.update(teacher_weights)
@@ -838,54 +815,62 @@ def post_ask(payload: AskRequest):
     error_text: Optional[str] = None
 
     try:
-        with _temp_env(opts):
-            with redirect_stdout(stdout_buffer):
-                # Respect workspace subject for keyword filtering
+        # Per-request config — no global state mutation
+        cfg = RequestConfig.from_env()
+        cfg.set_subject(subject_name, "server")
+
+        # Per-request retrieval context — holds FAISS indexes, SQLite conns, etc.
+        rctx = RetrievalContext(flags=opts)
+
+        with redirect_stdout(stdout_buffer):
+            # Load retrieval assets into request-scoped context
+            try:
+                paths = [Path(p).resolve() for p in (doc_sets_override or [])]
+                if len(paths) > 1:
+                    load_assets_all(paths, ctx=rctx)
+                elif paths:
+                    load_assets(paths[0], ctx=rctx)
+            except Exception as e:
+                raise RuntimeError(f"failed to load indexes: {e}")
+
+            # Use the same pipeline as `python -m backend.qa ask`
+            orch = Orchestrator(ctx=rctx, cfg=cfg)
+            retrieval_opts = {
+                "doc_sets": doc_sets_override,
+                "k_sem": int(os.getenv("K_SEM", "30")),
+                "k_lex": int(os.getenv("K_LEX", "30")),
+                "token_budget": int(os.getenv("TOKEN_BUDGET", "6000")),
+            }
+            bundle = orch._iterative_research(q_effective, retrieval_opts)
+
+            parsed_task: Optional[ParsedTask] = None
+            if q_effective.strip():
                 try:
-                    set_subject_name(subject_name, "server")
-                except Exception:
-                    pass
-
-                # Load retrieval assets mirroring CLI behavior
-                try:
-                    paths = [Path(p).resolve() for p in (doc_sets_override or [])]
-                    if len(paths) > 1:
-                        load_assets_all(paths)
-                    elif paths:
-                        load_assets(paths[0])
-                except Exception as e:
-                    raise RuntimeError(f"failed to load indexes: {e}")
-
-                # Use the same pipeline as `python -m backend.qa ask`
-                orch = Orchestrator()
-                retrieval_opts = {
-                    "doc_sets": doc_sets_override,
-                    "k_sem": int(os.getenv("K_SEM", "30")),
-                    "k_lex": int(os.getenv("K_LEX", "30")),
-                    "token_budget": int(os.getenv("TOKEN_BUDGET", "6000")),
-                }
-                bundle = orch._iterative_research(q_effective, retrieval_opts)
-
-                parsed_task: Optional[ParsedTask] = None
-                if q_effective.strip():
-                    try:
-                        parsed_task = parse_question(q_effective)
-                    except Exception:
-                        parsed_task = None
-                if parsed_task is None:
-                    fallback_problem = q_effective.strip() or "Question"
-                    parsed_task = ParsedTask(
-                        problem_type=fallback_problem,
-                        asked_outputs=["answer"],
-                        asked_output_keys=["answer"],
+                    parsed_task = parse_question(
+                        q_effective, subject=cfg.subject_name,
                     )
-
-                solution = solve_with_bundle(parsed_task, bundle)
-                final = format_answer(solution, bundle, include_background=False)
-                answer_chunks.append(final.text)
-                structured_citations = _structured_citations_from_bundle(
-                    bundle, getattr(final, "citations", [])
+                except Exception:
+                    log.error("Question parsing failed", exc_info=True)
+                    parsed_task = None
+            if parsed_task is None:
+                fallback_problem = q_effective.strip() or "Question"
+                parsed_task = ParsedTask(
+                    problem_type=fallback_problem,
+                    asked_outputs=["answer"],
+                    asked_output_keys=["answer"],
                 )
+
+            solution = solve_with_bundle(
+                parsed_task, bundle, subject=cfg.subject_name,
+            )
+            final = format_answer(
+                solution, bundle, include_background=False,
+                subject=cfg.subject_name,
+            )
+            answer_chunks.append(final.text)
+            structured_citations = _structured_citations_from_bundle(
+                bundle, getattr(final, "citations", [])
+            )
     except Exception as e:
         log.exception("qa ask pipeline failed")
         error_text = f"[error] {e}"

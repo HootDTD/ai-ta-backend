@@ -1,9 +1,12 @@
 """Simple CLI for retrieval-based Q&A."""
 import argparse
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Dict
+
+log = logging.getLogger(__name__)
 
 from dataclasses import asdict
 
@@ -72,12 +75,14 @@ def cmd_ask(args: argparse.Namespace) -> None:
         try:
             subject = get_subject_name()
         except Exception:
+            log.warning("Subject resolution failed")
             subject = None
         if subject:
             try:
                 km = KnowledgeManager()
                 paths = km.resolve_doc_sets(subject)
             except Exception:
+                log.warning("Doc set resolution failed for subject %s", subject)
                 paths = []
             if paths:
                 indexes = [str(p) for p in paths]
@@ -250,7 +255,7 @@ def cmd_ask(args: argparse.Namespace) -> None:
             ]
             _write_citations_file(bundle, snippet_markers, used_markers)
     except Exception:
-        pass
+        log.warning("Failed to write proof citations file")
 
 
 def cmd_solve(args: argparse.Namespace) -> None:
@@ -337,6 +342,7 @@ def cmd_ingest_ocr(args: argparse.Namespace) -> None:
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
+            log.warning("Failed to read store meta.json")
             meta = {}
 
     item_count = 0
@@ -354,6 +360,7 @@ def cmd_ingest_ocr(args: argparse.Namespace) -> None:
             index_path=out_dir,
         )
     except Exception:
+        log.warning("Failed to register store in knowledge manager")
         store = {
             "kind": args.kind,
             "title": pdf_path.stem,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -10,6 +11,8 @@ from difflib import SequenceMatcher
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Set, Optional
+
+log = logging.getLogger(__name__)
 
 import faiss
 import numpy as np
@@ -76,7 +79,65 @@ class Answer:
     structured_citations: List[Dict[str, Any]] = field(default_factory=list)
 
 
-# ----------------------- Globals -----------------------
+# ----------------------- Per-request retrieval state -----------------------
+
+
+@dataclass
+class RetrievalContext:
+    """Per-request scoped retrieval state.
+
+    The HTTP server creates one per ``/ask`` request so concurrent requests
+    never share FAISS indexes, SQLite connections, or symbol-mining results.
+    When ``ctx`` is ``None`` in a function signature the legacy module-level
+    globals are used instead (single-threaded CLI path).
+    """
+
+    faiss_list: List[faiss.Index] = field(default_factory=list)
+    sqlite_conns: List[sqlite3.Connection] = field(default_factory=list)
+    items_dfs: List[pd.DataFrame] = field(default_factory=list)
+    items_df: Optional[pd.DataFrame] = None
+    id_to_row: Optional[Dict[str, pd.Series]] = None
+    meta: Optional[Dict[str, object]] = None
+    meta_titles: Optional[Dict[str, str]] = None
+    client: Optional[OpenAI] = None
+    store_biases: Dict[str, float] = field(default_factory=dict)
+    store_meta: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    lex_table_map: Dict[int, Tuple[str, ...]] = field(default_factory=dict)
+    alias_to_occurrences: Dict[str, List[Tuple[str, str, int, str, str]]] = field(default_factory=dict)
+    term_to_aliases: Dict[str, Set[str]] = field(default_factory=dict)
+    symbol_index_stats: Dict[str, Any] = field(default_factory=dict)
+    definition_ids: Set[str] = field(default_factory=set)
+    last_expansion_plan: List[Dict[str, Any]] = field(default_factory=list)
+    remote_backend: Optional[Any] = None  # RemoteSearchBackend when RETRIEVAL_BACKEND=supabase
+    flags: Dict[str, str] = field(default_factory=dict)
+
+    def get_flag(self, name: str, default: bool = True) -> bool:
+        """Check a boolean flag, preferring request-scoped value over env."""
+        val = self.flags.get(name) or os.getenv(name)
+        if val is None:
+            return default
+        return val.lower() not in {"0", "off", "false", "no"}
+
+    def get_env(self, name: str, default: str = "") -> str:
+        """Get a config value, preferring request-scoped over env."""
+        return self.flags.get(name) or os.getenv(name, default)
+
+    def get_client(self) -> OpenAI:
+        if self.client is None:
+            if not os.getenv("OPENAI_API_KEY"):
+                raise RuntimeError("OPENAI_API_KEY is not set.")
+            self.client = OpenAI()
+        return self.client
+
+    def require_loaded(self) -> None:
+        if self.remote_backend is not None and self.items_df is not None and self.meta:
+            return  # remote backend path — no FAISS/SQLite needed
+        if not (self.faiss_list and self.items_df is not None
+                and self.sqlite_conns and self.meta):
+            raise RuntimeError("Assets not loaded. Call load_assets() first.")
+
+
+# ----------------------- Legacy globals (CLI backward compat) ---------------
 
 _faiss_list: List[faiss.Index] = []
 _sqlite_conns: List[sqlite3.Connection] = []
@@ -131,20 +192,24 @@ def _resolve_store_entry(root: Path) -> Optional[Dict[str, Any]]:
         manager = KnowledgeManager()
         return manager.find_store_entry(root)
     except Exception:
+        log.warning("Store entry lookup failed for %s", root)
         return None
 
-# symbol/alias mining globals
+# symbol/alias mining globals (legacy CLI path)
 _alias_to_occurrences: Dict[str, List[Tuple[str, str, int, str, str]]] = {}
-_term_to_aliases: Dict[str, set[str]] = {}
+_term_to_aliases: Dict[str, Set[str]] = {}
 _symbol_index_stats: Dict[str, Any] = {}
-_definition_ids: set[str] = set()
+_definition_ids: Set[str] = set()
 _last_expansion_plan: List[Dict[str, Any]] = []
 
 
 # ----------------------- Helpers -----------------------
 
 
-def _require_loaded():
+def _require_loaded(ctx: Optional[RetrievalContext] = None) -> None:
+    if ctx is not None:
+        ctx.require_loaded()
+        return
     if not (
         _faiss_list
         and _items_df is not None
@@ -154,7 +219,9 @@ def _require_loaded():
         raise RuntimeError("Assets not loaded. Call load_assets() first.")
 
 
-def _get_client() -> OpenAI:
+def _get_client(ctx: Optional[RetrievalContext] = None) -> OpenAI:
+    if ctx is not None:
+        return ctx.get_client()
     global _client
     if _client is None:
         if not os.getenv("OPENAI_API_KEY"):
@@ -169,7 +236,7 @@ def _fts_safe_query(text: str) -> str:
     return " OR ".join(tokens)
 
 
-def _fts_term_count(term: str) -> int:
+def _fts_term_count(term: str, ctx: Optional[RetrievalContext] = None) -> int:
     """Return total FTS hit count across loaded indexes for ``term``."""
 
     q = _fts_safe_query(term)
@@ -177,7 +244,8 @@ def _fts_term_count(term: str) -> int:
     phrase = None
     if re.search(r"[\s-]", term):
         phrase = f'"{term}"'
-    for conn in _sqlite_conns:
+    conns = ctx.sqlite_conns if ctx else _sqlite_conns
+    for conn in conns:
         try:
             if phrase:
                 cur = conn.execute(
@@ -220,12 +288,23 @@ _STOPWORDS: Set[str] = {
     "from",
     "that",
     "this",
+    "was",
+    "were",
+    "have",
+    "has",
+    "into",
+    "than",
+    "such",
+    "using",
+    "use",
+    "upon",
 }
 
 
-def _analyze_query(q: str) -> Dict[str, Any]:
+def _analyze_query(q: str, ctx: Optional[RetrievalContext] = None) -> Dict[str, Any]:
     """Return term presence diagnostics for a sanitized query."""
 
+    t2a = ctx.term_to_aliases if ctx else _term_to_aliases
     tokens = [
         t
         for t in re.findall(r"[a-z0-9_\-]+", q.lower())
@@ -235,12 +314,12 @@ def _analyze_query(q: str) -> Dict[str, Any]:
     missing: List[str] = []
     expansion: Dict[str, List[str]] = {}
     for term in tokens:
-        fts = _fts_term_count(term)
-        aliases = list(_term_to_aliases.get(term, set()))
+        fts = _fts_term_count(term, ctx)
+        aliases = list(t2a.get(term, set()))
         alias_hits = []
         alias_scores: List[Tuple[int, str]] = []
         for al in aliases:
-            c = _fts_term_count(al)
+            c = _fts_term_count(al, ctx)
             alias_scores.append((c, al))
             if c > 0:
                 alias_hits.append(al)
@@ -256,7 +335,7 @@ def _analyze_query(q: str) -> Dict[str, Any]:
                 morph.add(term + "s")
             morph.add(term.replace("-", ""))
             for m in morph:
-                c = _fts_term_count(m)
+                c = _fts_term_count(m, ctx)
                 cand_scores.append((c, m))
             cand_scores.sort(reverse=True)
             expansion[term] = [v for c, v in cand_scores if v != term]
@@ -267,18 +346,24 @@ def _analyze_query(q: str) -> Dict[str, Any]:
     }
 
 
-def _prepare_indexes(doc_sets: List[str]) -> Tuple[List[str], List[Dict[str, Any]]]:
+def _prepare_indexes(
+    doc_sets: List[str], ctx: Optional[RetrievalContext] = None,
+) -> Tuple[List[str], List[Dict[str, Any]]]:
     """Load the requested document sets and return loaded/skipped metadata."""
 
     if not doc_sets:
         return [], []
 
+    # If a RetrievalContext was provided and already loaded, skip re-loading.
+    if ctx is not None and ctx.faiss_list:
+        return [str(p) for p in doc_sets], []
+
     paths = [Path(p) for p in doc_sets]
     try:
         if len(paths) > 1:
-            _, skipped = load_assets_all(paths)
+            _, skipped = load_assets_all(paths, ctx=ctx)
         else:
-            load_assets(paths[0])
+            load_assets(paths[0], ctx=ctx)
             skipped = []
     except RuntimeError as exc:
         raise RuntimeError(str(exc))
@@ -294,7 +379,9 @@ def _norm_key(path: str) -> str:
     return os.path.normcase(path.replace("/", os.sep).replace("\\", os.sep))
 
 
-def _flag(name: str, default: bool = True) -> bool:
+def _flag(name: str, default: bool = True, ctx: Optional[RetrievalContext] = None) -> bool:
+    if ctx is not None:
+        return ctx.get_flag(name, default)
     val = os.getenv(name)
     if val is None:
         return default
@@ -362,19 +449,19 @@ def _compute_equal_scores(snippets: List[Any]) -> None:
             if sem is not None:
                 sem_vals.append(float(sem))
         except Exception:
-            pass
+            log.debug("Score computation failed (semantic z-score)")
         try:
             lex = fs.get("lexical")
             if lex is not None:
                 lex_vals.append(float(lex))
         except Exception:
-            pass
+            log.debug("Score computation failed (lexical score)")
         try:
             fused = fs.get("fused")
             if fused is not None:
                 fused_vals.append(float(fused))
         except Exception:
-            pass
+            log.debug("Score computation failed (fused score)")
 
     lex_lo = lex_hi = None
     lex_vals_stats: List[float] = []
@@ -383,6 +470,7 @@ def _compute_equal_scores(snippets: List[Any]) -> None:
             lex_lo = float(np.percentile(lex_vals, 5))
             lex_hi = float(np.percentile(lex_vals, 95))
         except Exception:
+            log.debug("Lex range parsing failed")
             lex_lo = lex_hi = None
         if lex_lo is not None and lex_hi is not None:
             if lex_lo > lex_hi:
@@ -422,6 +510,7 @@ def _compute_equal_scores(snippets: List[Any]) -> None:
                     lex_val = min(max(lex_val, lex_lo), lex_hi)
                 lex_clip = lex_val
             except Exception:
+                log.debug("Lex clip computation failed")
                 lex_clip = None
         lex_z = _z_score(lex_clip, lex_mean, lex_std)
         fused_z = _z_score(
@@ -546,9 +635,12 @@ def _norm_alias(token: str) -> str:
     return token
 
 
-def _alias_strings_from_occurrences(norm: str) -> List[str]:
+def _alias_strings_from_occurrences(
+    norm: str, ctx: Optional[RetrievalContext] = None,
+) -> List[str]:
+    a2o = ctx.alias_to_occurrences if ctx else _alias_to_occurrences
     display: Set[str] = set()
-    for _, _, _, line, _ in _alias_to_occurrences.get(norm, []):
+    for _, _, _, line, _ in a2o.get(norm, []):
         for tok in _SYMBOL_TOKEN_REGEX.findall(line):
             if _norm_alias(tok) == norm:
                 display.add(tok)
@@ -559,8 +651,8 @@ def _looks_symbol(token: str) -> bool:
     return bool(_SYMBOL_TOKEN_REGEX.fullmatch(token))
 
 
-def _mine_aliases(df: pd.DataFrame) -> None:
-    if not _flag("RETRIEVAL_ALIAS_MINER", True):
+def _mine_aliases(df: pd.DataFrame, ctx: Optional[RetrievalContext] = None) -> None:
+    if not _flag("RETRIEVAL_ALIAS_MINER", True, ctx):
         return
     alias_occ: Dict[str, List[Tuple[str, str, int, str, str]]] = {}
     term_map: Dict[str, set[str]] = {}
@@ -599,22 +691,29 @@ def _mine_aliases(df: pd.DataFrame) -> None:
                 alias_occ.setdefault(alias_norm, []).append((doc, sec, page, line_stripped, "def"))
                 def_ids.add(idx)
 
+    a2o = ctx.alias_to_occurrences if ctx else _alias_to_occurrences
+    t2a = ctx.term_to_aliases if ctx else _term_to_aliases
+    sis = ctx.symbol_index_stats if ctx else _symbol_index_stats
+    dids = ctx.definition_ids if ctx else _definition_ids
     for k, v in alias_occ.items():
-        _alias_to_occurrences.setdefault(k, []).extend(v)
+        a2o.setdefault(k, []).extend(v)
     for term, aliases in term_map.items():
-        _term_to_aliases.setdefault(term, set()).update(aliases)
-    _symbol_index_stats.update({
-        "alias_count": len(_alias_to_occurrences),
-        "term_count": len(_term_to_aliases),
+        t2a.setdefault(term, set()).update(aliases)
+    sis.update({
+        "alias_count": len(a2o),
+        "term_count": len(t2a),
     })
-    _definition_ids.update(def_ids)
+    dids.update(def_ids)
 
 
-def _fts_count(q: str) -> int:
-    total = 0
+def _fts_count(q: str, ctx: Optional[RetrievalContext] = None) -> int:
     if not q:
         return 0
-    for conn in _sqlite_conns:
+    if ctx and ctx.remote_backend is not None:
+        return ctx.remote_backend.fts_count(q)
+    total = 0
+    conns = ctx.sqlite_conns if ctx else _sqlite_conns
+    for conn in conns:
         cur = conn.cursor()
         try:
             cur.execute("SELECT count(*) FROM items WHERE items MATCH ?", (q,))
@@ -624,32 +723,11 @@ def _fts_count(q: str) -> int:
     return total
 
 
-_STOPWORDS = {
-    "the",
-    "and",
-    "for",
-    "with",
-    "that",
-    "this",
-    "from",
-    "are",
-    "was",
-    "were",
-    "have",
-    "has",
-    "into",
-    "than",
-    "such",
-    "using",
-    "use",
-    "upon",
-}
-
-
-def _prf_terms(hits: List[Hit], top_n: int = 5) -> List[str]:
+def _prf_terms(hits: List[Hit], top_n: int = 5, ctx: Optional[RetrievalContext] = None) -> List[str]:
+    id2row = ctx.id_to_row if ctx else _id_to_row
     texts: List[str] = []
     for h in hits[:top_n]:
-        row = _id_to_row.get(h.id) if _id_to_row else None
+        row = id2row.get(h.id) if id2row else None
         if row is not None:
             texts.append(row.get("text", ""))
     if not texts:
@@ -664,10 +742,10 @@ def _prf_terms(hits: List[Hit], top_n: int = 5) -> List[str]:
     return terms
 
 
-def _canonical_marker(sn) -> str:
+def _canonical_marker(sn, cfg=None) -> str:
     """Return a normalized citation marker like ``[Textbook, p. 123]``."""
 
-    label = get_citation_label()
+    label = cfg.citation_label if cfg else get_citation_label()
     page_val = getattr(sn, "page", None)
     page = page_val if isinstance(page_val, int) and page_val > 0 else "?"
 
@@ -677,10 +755,10 @@ def _canonical_marker(sn) -> str:
 # ----------------------- Converters -----------------------
 
 
-def _context_to_bundle_snippets(ctx: ContextPack) -> List[BundleSnippet]:
+def _context_to_bundle_snippets(ctx_pack: ContextPack, cfg=None) -> List[BundleSnippet]:
     snippets: List[BundleSnippet] = []
-    for sn in ctx.snippets:
-        marker = _canonical_marker(sn)
+    for sn in ctx_pack.snippets:
+        marker = _canonical_marker(sn, cfg)
         snippets.append(
             BundleSnippet(
                 id=sn.id,
@@ -702,6 +780,7 @@ def _context_to_bundle_snippets(ctx: ContextPack) -> List[BundleSnippet]:
 
 def _summarize_snippets(
     snippets: List[BundleSnippet],
+    ctx: Optional[RetrievalContext] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, int]]:
     eq_map: Dict[str, Dict[str, Any]] = {}
     glossary: List[Dict[str, Any]] = []
@@ -745,9 +824,10 @@ def _summarize_snippets(
                     {"text": line.strip(), "source_snippet_ids": [sn.id]}
                 )
 
+        a2o = ctx.alias_to_occurrences if ctx else _alias_to_occurrences
         for tok in _symbol_tokens(sn.text):
             norm = _norm_alias(tok)
-            if norm in _alias_to_occurrences:
+            if norm in a2o:
                 alias_counts[norm] = alias_counts.get(norm, 0) + 1
 
     equations: List[Dict[str, Any]] = []
@@ -804,6 +884,7 @@ def _has_explicit_evidence(
     diag_entry: Optional[Dict[str, Any]] = None,
     *,
     original_term: Optional[str] = None,
+    ctx: Optional[RetrievalContext] = None,
 ) -> bool:
     """Return ``True`` if snippets explicitly reference ``term`` or its aliases."""
 
@@ -829,9 +910,10 @@ def _has_explicit_evidence(
     if not variants:
         return False
 
+    t2a = ctx.term_to_aliases if ctx else _term_to_aliases
     alias_norms: Set[str] = set()
     for variant in variants:
-        alias_norms.update(_term_to_aliases.get(variant, set()))
+        alias_norms.update(t2a.get(variant, set()))
     if diag_entry:
         for cand in diag_entry.get("alias_hits", []):
             alias_norms.add(_norm_alias(cand))
@@ -857,7 +939,8 @@ def _has_explicit_evidence(
         if tokens:
             word_sets.append(tokens)
 
-    window_chars = int(os.getenv("RETRIEVAL_PROXIMITY_CHARS", "60"))
+    _env = ctx.get_env if ctx else lambda n, d="": os.getenv(n, d)
+    window_chars = int(_env("RETRIEVAL_PROXIMITY_CHARS", "60"))
 
     for sn in snippets:
         text = sn.text or ""
@@ -905,7 +988,9 @@ def _has_explicit_evidence(
 # ----------------------- Public API -----------------------
 
 
-def _load_one(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection, dict, Dict[str, str]]:
+def _load_one(
+    root: Path, ctx: Optional[RetrievalContext] = None,
+) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection, dict, Dict[str, str]]:
     """Load FAISS, items DataFrame, SQLite, and meta from an index directory."""
     faiss_path = root / "faiss.index"
     items_path = root / "items.jsonl"
@@ -964,70 +1049,210 @@ def _load_one(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection
     df["store_key"] = store_key
     df["store_kind"] = None
 
-    _mine_aliases(df)
-    meta["symbol_index_stats"] = _symbol_index_stats
+    _mine_aliases(df, ctx)
+    sis = ctx.symbol_index_stats if ctx else _symbol_index_stats
+    meta["symbol_index_stats"] = sis
 
     conn = sqlite3.connect(str(sqlite_path))
 
     return index, df, conn, meta, meta_titles
 
 
-def load_assets(root: Path) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection, dict]:
-    global _alias_to_occurrences, _term_to_aliases, _symbol_index_stats, _definition_ids
-    _alias_to_occurrences = {}
-    _term_to_aliases = {}
-    _symbol_index_stats = {}
-    _definition_ids = set()
-    global _store_biases, _store_meta
-    _store_biases = {}
-    _store_meta = {}
+def load_assets(
+    root: Path, ctx: Optional[RetrievalContext] = None,
+) -> Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection, dict]:
+    # Delegate to remote backend when configured
+    if os.getenv("RETRIEVAL_BACKEND", "local") == "supabase" and ctx is not None:
+        load_assets_all([root], ctx=ctx)
+        return None, ctx.items_df, None, ctx.meta  # type: ignore[return-value]
+
+    # If a ctx was supplied, populate it; otherwise write to module globals.
+    _use_ctx = ctx is not None
+
+    if _use_ctx:
+        ctx.alias_to_occurrences = {}
+        ctx.term_to_aliases = {}
+        ctx.symbol_index_stats = {}
+        ctx.definition_ids = set()
+        ctx.store_biases = {}
+        ctx.store_meta = {}
+    else:
+        global _alias_to_occurrences, _term_to_aliases, _symbol_index_stats, _definition_ids
+        _alias_to_occurrences = {}
+        _term_to_aliases = {}
+        _symbol_index_stats = {}
+        _definition_ids = set()
+        global _store_biases, _store_meta
+        _store_biases = {}
+        _store_meta = {}
 
     store_entry = _resolve_store_entry(root)
 
-    index, df, conn, meta, titles = _load_one(root)
+    index, df, conn, meta, titles = _load_one(root, ctx)
 
     store_key = str(root.resolve())
     if store_entry:
         df["store_kind"] = store_entry.get("kind")
     bias = _compute_store_bias(store_entry, meta)
-    _store_biases[store_key] = bias
     meta_info = {
         "kind": (store_entry or {}).get("kind", "textbook"),
         "title": (store_entry or {}).get("title"),
         "average_confidence": meta.get("average_confidence"),
         "week": meta.get("week") or (store_entry or {}).get("week"),
     }
-    _store_meta[store_key] = meta_info
 
-    global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta, _meta_titles, _lex_table_map
-    _faiss_list = [index]
-    _sqlite_conns = [conn]
-    _items_dfs = [df]
-    _items_df = df
-    _id_to_row = {idx: df.loc[idx] for idx in df.index}
-    _meta = meta
-    _meta_titles = titles
-    _lex_table_map = {id(conn): _detect_lex_tables(conn)}
+    if _use_ctx:
+        ctx.store_biases[store_key] = bias
+        ctx.store_meta[store_key] = meta_info
+        ctx.faiss_list = [index]
+        ctx.sqlite_conns = [conn]
+        ctx.items_dfs = [df]
+        ctx.items_df = df
+        ctx.id_to_row = {idx: df.loc[idx] for idx in df.index}
+        ctx.meta = meta
+        ctx.meta_titles = titles
+        ctx.lex_table_map = {id(conn): _detect_lex_tables(conn)}
+    else:
+        _store_biases[store_key] = bias
+        _store_meta[store_key] = meta_info
+        global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta, _meta_titles, _lex_table_map
+        _faiss_list = [index]
+        _sqlite_conns = [conn]
+        _items_dfs = [df]
+        _items_df = df
+        _id_to_row = {idx: df.loc[idx] for idx in df.index}
+        _meta = meta
+        _meta_titles = titles
+        _lex_table_map = {id(conn): _detect_lex_tables(conn)}
 
     subject = _extract_subject(meta)
     if subject:
-        set_subject_name(subject, "meta")
+        if _use_ctx:
+            pass  # caller sets subject via RequestConfig
+        else:
+            set_subject_name(subject, "meta")
 
     return index, df, conn, meta
 
 
 def load_assets_all(
     roots: List[Path],
+    ctx: Optional[RetrievalContext] = None,
+    *,
+    store_ids: Optional[List[str]] = None,
 ) -> Tuple[List[Tuple[faiss.Index, pd.DataFrame, sqlite3.Connection, dict]], List[Dict[str, str]]]:
     """Load assets from multiple index directories."""
-    global _alias_to_occurrences, _term_to_aliases, _symbol_index_stats, _definition_ids
-    _alias_to_occurrences = {}
-    _term_to_aliases = {}
-    _symbol_index_stats = {}
-    _definition_ids = set()
-    global _store_biases, _store_meta
-    _store_biases = {}
-    _store_meta = {}
+    _use_ctx = ctx is not None
+
+    if _use_ctx:
+        ctx.alias_to_occurrences = {}
+        ctx.term_to_aliases = {}
+        ctx.symbol_index_stats = {}
+        ctx.definition_ids = set()
+        ctx.store_biases = {}
+        ctx.store_meta = {}
+    else:
+        global _alias_to_occurrences, _term_to_aliases, _symbol_index_stats, _definition_ids
+        _alias_to_occurrences = {}
+        _term_to_aliases = {}
+        _symbol_index_stats = {}
+        _definition_ids = set()
+        global _store_biases, _store_meta
+        _store_biases = {}
+        _store_meta = {}
+
+    # ── Remote backend (Supabase pgvector) ──────────────────────────
+    if os.getenv("RETRIEVAL_BACKEND", "local") == "supabase" and _use_ctx:
+        from .remote_search import RemoteSearchBackend
+        resolved_ids = store_ids or []
+        if not resolved_ids:
+            # Derive store_ids from roots via knowledge_stores table.
+            # The index_path in knowledge_stores may be relative or absolute
+            # and may use different slug casing, so we match by the last two
+            # path components (e.g. "textbook/fluidmechanics") case-insensitively.
+            from . import supabase_client as sb
+
+            def _tail2(p: str) -> str:
+                """Last 2 components of a path, normalized."""
+                parts = p.replace("\\", "/").rstrip("/").split("/")
+                return "/".join(parts[-2:]).lower() if len(parts) >= 2 else p.lower()
+
+            all_stores = sb.select("knowledge_stores", {"select": "id,index_path"})
+            for root in roots:
+                root_tail = _tail2(str(root.resolve()))
+                for store_row in all_stores:
+                    store_tail = _tail2(store_row.get("index_path", ""))
+                    if root_tail == store_tail:
+                        resolved_ids.append(store_row["id"])
+                        break
+        if not resolved_ids:
+            raise RuntimeError("No store_ids resolved for Supabase backend")
+
+        # Fetch store metadata
+        meta_rows: Dict[str, dict] = {}
+        for sid in resolved_ids:
+            row = sb.select_one("knowledge_store_meta", {"store_id": f"eq.{sid}"})
+            if row:
+                meta_rows[sid] = row
+
+        # Build backend
+        backend = RemoteSearchBackend(resolved_ids, meta_rows)
+
+        # Load all items as DataFrame (for alias mining + id_to_row)
+        items_df = backend.load_items_df()
+        if items_df.empty:
+            raise RuntimeError("No items found in Supabase for loaded stores")
+
+        # Run alias mining (same logic, different data source)
+        _mine_aliases(items_df, ctx)
+
+        # Build id_to_row map
+        id_map = {idx: items_df.loc[idx] for idx in items_df.index}
+
+        # Derive meta from first store_meta row
+        first_meta = next(iter(meta_rows.values()), {})
+        meta_ref = {
+            "model": first_meta.get("model", "text-embedding-3-large"),
+            "dimensions": first_meta.get("dimensions", 3072),
+            "doc_titles": first_meta.get("doc_titles", {}),
+            "aliases": first_meta.get("aliases", {}),
+            "symbol_index_stats": ctx.symbol_index_stats,
+        }
+
+        # Populate store biases and meta
+        from . import supabase_client as sb
+        for sid in resolved_ids:
+            store_row = sb.select_one("knowledge_stores", {"id": f"eq.{sid}"})
+            smeta = meta_rows.get(sid, {})
+            entry = {
+                "kind": (store_row or {}).get("kind", "textbook"),
+                "title": (store_row or {}).get("title"),
+                "average_confidence": smeta.get("average_confidence"),
+            }
+            bias = _compute_store_bias(entry, smeta)
+            ctx.store_biases[sid] = bias
+            ctx.store_meta[sid] = entry
+            # Tag items with store_kind
+            if "store_id" in items_df.columns:
+                mask = items_df["store_id"] if "store_id" in items_df.columns else None
+            if store_row:
+                kind = store_row.get("kind")
+                if kind and "store_kind" in items_df.columns:
+                    items_df.loc[items_df["store_key"] == sid, "store_kind"] = kind
+
+        # Set context fields
+        ctx.remote_backend = backend
+        ctx.items_df = items_df
+        ctx.items_dfs = [items_df]
+        ctx.id_to_row = id_map
+        ctx.meta = meta_ref
+        ctx.meta_titles = {
+            **(first_meta.get("doc_titles") or {}),
+            **(first_meta.get("aliases") or {}),
+        }
+
+        return [], []  # No local assets loaded
+    # ── End remote backend ──────────────────────────────────────────
 
     faiss_list: List[faiss.Index] = []
     conns: List[sqlite3.Connection] = []
@@ -1040,9 +1265,11 @@ def load_assets_all(
     for root in roots:
         store_key = str(root.resolve())
         store_entries[store_key] = _resolve_store_entry(root)
+    sb = ctx.store_biases if _use_ctx else _store_biases
+    sm = ctx.store_meta if _use_ctx else _store_meta
     for root in roots:
         try:
-            index, df, conn, meta, titles = _load_one(root)
+            index, df, conn, meta, titles = _load_one(root, ctx)
         except Exception as exc:  # pragma: no cover - robustness
             skipped.append({"path": str(root), "reason": str(exc)})
             continue
@@ -1065,14 +1292,14 @@ def load_assets_all(
         if entry:
             df["store_kind"] = entry.get("kind")
         bias = _compute_store_bias(entry, meta)
-        _store_biases[store_key] = bias
+        sb[store_key] = bias
         meta_info = {
             "kind": (entry or {}).get("kind", "textbook"),
             "title": (entry or {}).get("title"),
             "average_confidence": meta.get("average_confidence"),
             "week": meta.get("week") or (entry or {}).get("week"),
         }
-        _store_meta[store_key] = meta_info
+        sm[store_key] = meta_info
         dfs.append(df)
         metas.append(meta)
         title_map.update(titles)
@@ -1095,22 +1322,34 @@ def load_assets_all(
     merged_df = pd.concat(dfs)
     id_map = {idx: merged_df.loc[idx] for idx in merged_df.index}
 
-    global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta, _meta_titles, _lex_table_map
-    _faiss_list = faiss_list
-    _sqlite_conns = conns
-    _items_dfs = dfs
-    _items_df = merged_df
-    _id_to_row = id_map
-    _meta = meta_ref
-    _meta_titles = title_map
-    _lex_table_map = {id(conn): _detect_lex_tables(conn) for conn in conns}
+    if _use_ctx:
+        ctx.faiss_list = faiss_list
+        ctx.sqlite_conns = conns
+        ctx.items_dfs = dfs
+        ctx.items_df = merged_df
+        ctx.id_to_row = id_map
+        ctx.meta = meta_ref
+        ctx.meta_titles = title_map
+        ctx.lex_table_map = {id(conn): _detect_lex_tables(conn) for conn in conns}
+    else:
+        global _faiss_list, _sqlite_conns, _items_dfs, _items_df, _id_to_row, _meta, _meta_titles, _lex_table_map
+        _faiss_list = faiss_list
+        _sqlite_conns = conns
+        _items_dfs = dfs
+        _items_df = merged_df
+        _id_to_row = id_map
+        _meta = meta_ref
+        _meta_titles = title_map
+        _lex_table_map = {id(conn): _detect_lex_tables(conn) for conn in conns}
 
     subjects_found: List[str] = []
     for meta in metas:
         subj = _extract_subject(meta)
         if subj:
             subjects_found.append(subj)
-    if subjects_found:
+    if subjects_found and not _use_ctx:
+        # Only touch module globals for the CLI path; the HTTP server
+        # sets the subject via RequestConfig.
         unique_subjects: List[str] = []
         for subj in subjects_found:
             if subj not in unique_subjects:
@@ -1142,12 +1381,14 @@ def _run_search(
     _prf: bool = False,
     *,
     raw_query: Optional[str] = None,
+    ctx: Optional[RetrievalContext] = None,
 ) -> List[Hit]:
-    _require_loaded()
-    client = _get_client()
-    model = _meta["model"]
-    dim = int(_meta["dimensions"])
-    unlimited = _flag("RETRIEVAL_NO_FILTER", False)
+    _require_loaded(ctx)
+    client = _get_client(ctx)
+    _meta_local = ctx.meta if ctx else _meta
+    model = _meta_local["model"]
+    dim = int(_meta_local["dimensions"])
+    unlimited = _flag("RETRIEVAL_NO_FILTER", False, ctx)
 
     # Build query variants incorporating raw and sanitized forms
     query_variants: Set[str] = set()
@@ -1169,13 +1410,14 @@ def _run_search(
     query_variants = {variant for variant in query_variants if variant}
 
     # alias expansion
+    t2a = ctx.term_to_aliases if ctx else _term_to_aliases
     alias_tokens: List[str] = []
     for variant in query_variants:
         alias_tokens.extend(_symbol_tokens(variant))
     aliases: set[str] = set()
-    if _flag("RETRIEVAL_ALIAS_MINER", True):
+    if _flag("RETRIEVAL_ALIAS_MINER", True, ctx):
         for t in alias_tokens:
-            aliases.update(_term_to_aliases.get(t.lower(), set()))
+            aliases.update(t2a.get(t.lower(), set()))
     alias_list = sorted(aliases)
 
     base_variant = _sanitize_lookup_term(raw_query) if raw_query else query
@@ -1183,11 +1425,12 @@ def _run_search(
         base_variant = query
     tokens = _symbol_tokens(base_variant)
 
-    _last_expansion_plan.clear()
-    base_count = _fts_count(_fts_safe_query(base_variant))
-    _last_expansion_plan.append({"type": "query", "terms": [base_variant], "hit_count": base_count})
+    lep = ctx.last_expansion_plan if ctx else _last_expansion_plan
+    lep.clear()
+    base_count = _fts_count(_fts_safe_query(base_variant), ctx)
+    lep.append({"type": "query", "terms": [base_variant], "hit_count": base_count})
     for a in alias_list:
-        _last_expansion_plan.append({"type": "alias", "terms": [a], "hit_count": _fts_count(a)})
+        lep.append({"type": "alias", "terms": [a], "hit_count": _fts_count(a, ctx)})
 
     fts_tokens_base: Set[str] = set()
     for variant in query_variants:
@@ -1228,72 +1471,116 @@ def _run_search(
                         fallback_terms.add(frag[:-1])
     fallback_terms = {t for t in fallback_terms if t}
 
-    if _flag("RETRIEVAL_PROXIMITY", True):
+    if _flag("RETRIEVAL_PROXIMITY", True, ctx):
         if len(tokens) >= 2:
-            window = int(os.getenv("RETRIEVAL_PROXIMITY_WINDOW", "3"))
+            _env = ctx.get_env if ctx else lambda n, d="": os.getenv(n, d)
+            window = int(_env("RETRIEVAL_PROXIMITY_WINDOW", "3"))
             prox_q = " NEAR/{} ".format(window).join([t.lower() for t in tokens])
             if prox_q:
-                _last_expansion_plan.append({"type": "proximity", "terms": [prox_q], "hit_count": _fts_count(prox_q)})
+                lep.append({"type": "proximity", "terms": [prox_q], "hit_count": _fts_count(prox_q, ctx)})
                 if fts_q:
                     fts_q = f"({fts_q}) OR ({prox_q})"
                 else:
                     fts_q = prox_q
 
-    query_strings = [query] + list(alias_list)
-    sem_scores: Dict[str, float] = {}
-    sem_ranks: Dict[str, int] = {}
-    for qstr in query_strings:
-        q_emb = client.embeddings.create(model=model, input=[qstr], dimensions=dim).data[0].embedding
-        q_vec = np.asarray(q_emb, dtype=np.float32)
-        q_vec /= max(np.linalg.norm(q_vec), 1e-12)
-        for df, index in zip(_items_dfs if len(_faiss_list) > 1 else [_items_df], _faiss_list):
-            k_this = k_sem
-            if unlimited:
-                ntotal = None
-                try:
-                    ntotal = int(getattr(index, "ntotal"))
-                except Exception:
+    # ── Remote backend: hybrid search via Supabase RPC ──────────────
+    if ctx and ctx.remote_backend is not None:
+        # Embed the primary query (same OpenAI call as local path)
+        q_emb = client.embeddings.create(model=model, input=[query], dimensions=dim).data[0].embedding
+
+        # Build a text query for FTS (websearch_to_tsquery handles OR/AND)
+        fts_text = " ".join(fts_q_parts) if fts_q_parts else query
+        rpc_results = ctx.remote_backend.hybrid_search(q_emb, fts_text, k=k_sem + k_lex)
+
+        sem_scores: Dict[str, float] = {}
+        sem_ranks: Dict[str, int] = {}
+        lex_scores: Dict[str, float] = {}
+        lex_ranks: Dict[str, int] = {}
+        for row in rpc_results:
+            rid = row.get("item_id")
+            if not rid:
+                continue
+            sem_scores[rid] = float(row.get("score_sem", 0.0))
+            sem_ranks[rid] = int(row.get("rank_sem", k_sem + 1))
+            lex_val = float(row.get("score_lex", 0.0))
+            if lex_val > 0:
+                lex_scores[rid] = lex_val
+                lex_ranks[rid] = int(row.get("rank_lex", k_lex + 1))
+
+        # Pre-fetch item metadata for hits (needed by fallback + fusion)
+        hit_ids = list({*sem_scores.keys(), *lex_scores.keys()})
+        ctx.remote_backend.fetch_items(hit_ids)
+    else:
+        # ── Local backend: FAISS + SQLite ─────────────────────────────
+        _faiss = ctx.faiss_list if ctx else _faiss_list
+        _dfs = ctx.items_dfs if ctx else _items_dfs
+        _df = ctx.items_df if ctx else _items_df
+        query_strings = [query] + list(alias_list)
+        sem_scores: Dict[str, float] = {}
+        sem_ranks: Dict[str, int] = {}
+        for qstr in query_strings:
+            q_emb = client.embeddings.create(model=model, input=[qstr], dimensions=dim).data[0].embedding
+            q_vec = np.asarray(q_emb, dtype=np.float32)
+            q_vec /= max(np.linalg.norm(q_vec), 1e-12)
+            for df, index in zip(_dfs if len(_faiss) > 1 else [_df], _faiss):
+                k_this = k_sem
+                if unlimited:
                     ntotal = None
-                if not ntotal and df is not None:
                     try:
-                        ntotal = len(df)
+                        ntotal = int(getattr(index, "ntotal"))
                     except Exception:
+                        log.debug("FAISS ntotal read failed")
                         ntotal = None
-                max_cap = int(os.getenv("RETRIEVAL_NO_FILTER_MAX_K", "200"))
-                if ntotal:
-                    k_this = min(ntotal, max_cap if max_cap > 0 else ntotal)
-            scores, idxs = index.search(q_vec.reshape(1, -1), k_this)
-            scores = scores[0]
-            idxs = idxs[0]
-            for rank, (i, s) in enumerate(zip(idxs, scores), start=1):
-                if i < 0:
-                    continue
-                id_ = df.index[i]
-                if s > sem_scores.get(id_, -1):
-                    sem_scores[id_] = float(s)
-                    sem_ranks[id_] = rank
+                    if not ntotal and df is not None:
+                        try:
+                            ntotal = len(df)
+                        except Exception:
+                            log.debug("DataFrame length read failed")
+                            ntotal = None
+                    _env2 = ctx.get_env if ctx else lambda n, d="": os.getenv(n, d)
+                    max_cap = int(_env2("RETRIEVAL_NO_FILTER_MAX_K", "200"))
+                    if ntotal:
+                        k_this = min(ntotal, max_cap if max_cap > 0 else ntotal)
+                scores, idxs = index.search(q_vec.reshape(1, -1), k_this)
+                scores = scores[0]
+                idxs = idxs[0]
+                for rank, (i, s) in enumerate(zip(idxs, scores), start=1):
+                    if i < 0:
+                        continue
+                    id_ = df.index[i]
+                    if s > sem_scores.get(id_, -1):
+                        sem_scores[id_] = float(s)
+                        sem_ranks[id_] = rank
 
-    lex_scores: Dict[str, float] = {}
-    lex_ranks: Dict[str, int] = {}
-    if fts_q:
-        for conn in _sqlite_conns:
-            cur = conn.cursor()
-            tables = _lex_table_map.get(id(conn), ("items",))
-            rows: List[Tuple[str, float]] = []
-            for table in tables:
-                try:
-                    rows = _lex_fetch(cur, table, fts_q, k_lex, unlimited)
-                except sqlite3.OperationalError:
-                    rows = []
-                    continue
-                if rows:
-                    break
-            for rank, (id_, bm25) in enumerate(rows, start=1):
-                score = -float(bm25)
-                if id_ not in lex_scores or score > lex_scores[id_]:
-                    lex_scores[id_] = score
-                    lex_ranks[id_] = rank
+        _conns = ctx.sqlite_conns if ctx else _sqlite_conns
+        _ltm = ctx.lex_table_map if ctx else _lex_table_map
+        lex_scores: Dict[str, float] = {}
+        lex_ranks: Dict[str, int] = {}
+        if fts_q:
+            for conn in _conns:
+                cur = conn.cursor()
+                tables = _ltm.get(id(conn), ("items",))
+                rows: List[Tuple[str, float]] = []
+                for table in tables:
+                    try:
+                        rows = _lex_fetch(cur, table, fts_q, k_lex, unlimited)
+                    except sqlite3.OperationalError:
+                        rows = []
+                        continue
+                    if rows:
+                        break
+                for rank, (id_, bm25) in enumerate(rows, start=1):
+                    score = -float(bm25)
+                    if id_ not in lex_scores or score > lex_scores[id_]:
+                        lex_scores[id_] = score
+                        lex_ranks[id_] = rank
 
+    id2row = ctx.id_to_row if ctx else _id_to_row
+    # For remote backend, supplement id2row with freshly fetched items
+    if ctx and ctx.remote_backend is not None:
+        for rid, rdata in ctx.remote_backend._items_cache.items():
+            if rid not in id2row:
+                id2row[rid] = rdata
     if fallback_terms and sem_scores:
         fallback_term_list = sorted(fallback_terms)
         denom = float(len(fallback_term_list)) if fallback_term_list else 1.0
@@ -1301,7 +1588,7 @@ def _run_search(
         for id_ in sem_scores.keys():
             if id_ in lex_scores:
                 continue
-            row = _id_to_row.get(id_)
+            row = id2row.get(id_)
             if row is None:
                 continue
             tokens_cached = token_cache.get(id_)
@@ -1373,19 +1660,21 @@ def _run_search(
         figure_query = bool(re.search(r"figure|diagram|plot|graph|curve", query, re.I))
         mathy_query = bool(re.search(r"mach|\bRe\b|\bCL\b|\bCD\b|\bEq\b|\u0394|\u2202", query, re.I))
 
+        dids = ctx.definition_ids if ctx else _definition_ids
+        sb = ctx.store_biases if ctx else _store_biases
         for id_, s_fused in zip(ids, fused):
-            row = _id_to_row[id_]
+            row = id2row[id_]
             if figure_query and row.get("type") == "figure":
                 s_fused += 0.05
             if mathy_query:
                 text = row.get("text", "")
                 if re.search(r"mach|\bRe\b|\bCL\b|\bCD\b|\bEq\b|\u0394|\u2202", text, re.I):
                     s_fused += 0.02
-            if _flag("PACK_DEF_BIAS", True) and id_ in _definition_ids:
+            if _flag("PACK_DEF_BIAS", True, ctx) and id_ in dids:
                 s_fused += 0.1
             store_key = row.get("store_key")
             if store_key:
-                s_fused += _store_biases.get(str(store_key), 0.0)
+                s_fused += sb.get(str(store_key), 0.0)
             hits.append(
                 Hit(
                     id=id_,
@@ -1400,16 +1689,19 @@ def _run_search(
     hits.sort(key=lambda h: h.score_fused, reverse=True)
     _compute_hit_equal_scores(hits)
 
-    if _flag("RETRIEVAL_PRF", True) and not _prf and len(hits) < 3:
-        terms = _prf_terms(hits)
+    if _flag("RETRIEVAL_PRF", True, ctx) and not _prf and len(hits) < 3:
+        terms = _prf_terms(hits, ctx=ctx)
         if terms:
-            _last_expansion_plan.append({"type": "prf", "terms": terms, "hit_count": 0})
-            return _run_search(query + " " + " ".join(terms), k_sem, k_lex, _prf=True)
+            lep.append({"type": "prf", "terms": terms, "hit_count": 0})
+            return _run_search(query + " " + " ".join(terms), k_sem, k_lex, _prf=True, ctx=ctx)
     return hits
 
 
-def search_multi(query: str, k_sem: int = 30, k_lex: int = 30) -> List[Hit]:
-    hits, _ = search(query, k_sem, k_lex, raw_query=query)
+def search_multi(
+    query: str, k_sem: int = 30, k_lex: int = 30,
+    ctx: Optional[RetrievalContext] = None,
+) -> List[Hit]:
+    hits, _ = search(query, k_sem, k_lex, raw_query=query, ctx=ctx)
     return hits
 
 
@@ -1419,12 +1711,13 @@ def search(
     k_lex: int = 30,
     *,
     raw_query: Optional[str] = None,
+    ctx: Optional[RetrievalContext] = None,
 ) -> Tuple[List[Hit], Dict[str, Any]]:
     """Run semantic+lexical search returning hits and diagnostics."""
 
     base_for_diag = raw_query or query
-    diag = _analyze_query(base_for_diag)
-    hits = _run_search(query, k_sem, k_lex, raw_query=raw_query)
+    diag = _analyze_query(base_for_diag, ctx)
+    hits = _run_search(query, k_sem, k_lex, raw_query=raw_query, ctx=ctx)
     hit_count_sem = sum(1 for h in hits if h.score_sem > 0)
     hit_count_lex = sum(1 for h in hits if h.score_lex > 0)
     diag.update({"hit_count_sem": hit_count_sem, "hit_count_lex": hit_count_lex})
@@ -1442,7 +1735,10 @@ def search(
 
 
 def batch_lookup_terms(
-    terms: List[str], options: Dict[str, Any] | None = None
+    terms: List[str],
+    options: Dict[str, Any] | None = None,
+    ctx: Optional[RetrievalContext] = None,
+    cfg=None,
 ) -> Tuple[List[Dict[str, Any]], List[str], Dict[str, Any]]:
     """Lookup each term individually and return found/not-found splits."""
 
@@ -1452,7 +1748,7 @@ def batch_lookup_terms(
     k_sem = int(options.get("k_sem", 30))
     k_lex = int(options.get("k_lex", 30))
 
-    loaded_indexes, skipped_indexes = _prepare_indexes(doc_sets)
+    loaded_indexes, skipped_indexes = _prepare_indexes(doc_sets, ctx)
 
     found_array: List[Dict[str, Any]] = []
     not_found: List[str] = []
@@ -1466,8 +1762,9 @@ def batch_lookup_terms(
     }
     marker_equal_map: Dict[str, float] = {}
 
+    _env = ctx.get_env if ctx else lambda n, d="": os.getenv(n, d)
     all_citations_opt = (options or {}).get("all_citations") if options is not None else None
-    env_all = os.getenv("RETRIEVAL_ALL_CITATIONS", "")
+    env_all = _env("RETRIEVAL_ALL_CITATIONS", "")
     env_all_enabled = env_all.lower() in {"1", "true", "yes", "on"}
     if all_citations_opt is None:
         want_all_citations = env_all_enabled
@@ -1489,20 +1786,31 @@ def batch_lookup_terms(
 
         # Enable no-filter for the FAISS/FTS search phase only (to gather all hits),
         # but keep normal packing constraints to avoid ballooning snippet payloads.
-        prev_no_filter = os.getenv("RETRIEVAL_NO_FILTER")
+        if ctx is not None:
+            prev_no_filter = ctx.flags.get("RETRIEVAL_NO_FILTER")
+            if want_all_citations:
+                ctx.flags["RETRIEVAL_NO_FILTER"] = "1"
+        else:
+            prev_no_filter = os.getenv("RETRIEVAL_NO_FILTER")
+            if want_all_citations:
+                os.environ["RETRIEVAL_NO_FILTER"] = "1"
+        hits, diag = search(query, k_sem=k_sem, k_lex=k_lex, raw_query=term_label, ctx=ctx)
         if want_all_citations:
-            os.environ["RETRIEVAL_NO_FILTER"] = "1"
-        hits, diag = search(query, k_sem=k_sem, k_lex=k_lex, raw_query=term_label)
-        if want_all_citations:
-            if prev_no_filter is None:
-                os.environ.pop("RETRIEVAL_NO_FILTER", None)
+            if ctx is not None:
+                if prev_no_filter is None:
+                    ctx.flags.pop("RETRIEVAL_NO_FILTER", None)
+                else:
+                    ctx.flags["RETRIEVAL_NO_FILTER"] = prev_no_filter
             else:
-                os.environ["RETRIEVAL_NO_FILTER"] = prev_no_filter
+                if prev_no_filter is None:
+                    os.environ.pop("RETRIEVAL_NO_FILTER", None)
+                else:
+                    os.environ["RETRIEVAL_NO_FILTER"] = prev_no_filter
 
         # Build snippets as before (used by callers), but these may be large only if no-filter is on.
-        ctx = pack_context(hits, token_budget=token_budget)
-        snippets = _context_to_bundle_snippets(ctx)
-        equations, glossary, assumptions, alias_counts = _summarize_snippets(snippets)
+        ctx_pack = pack_context(hits, token_budget=token_budget, ctx=ctx)
+        snippets = _context_to_bundle_snippets(ctx_pack, cfg)
+        equations, glossary, assumptions, alias_counts = _summarize_snippets(snippets, ctx)
 
         term_lower = query.lower()
         expansion_raw = diag.get("expansion_candidates", {})
@@ -1520,8 +1828,9 @@ def batch_lookup_terms(
         if isinstance(diag_presence, dict):
             term_presence_raw = diag_presence.get(term_lower, {}) or {}
 
+        t2a = ctx.term_to_aliases if ctx else _term_to_aliases
         alias_hits_seen: Set[str] = set()
-        term_aliases = _term_to_aliases.get(term_lower, set())
+        term_aliases = t2a.get(term_lower, set())
         if term_aliases:
             for sn in snippets:
                 text = sn.text or ""
@@ -1529,7 +1838,7 @@ def batch_lookup_terms(
                     if _norm_alias(tok) in term_aliases:
                         alias_hits_seen.add(tok)
             for alias_norm in term_aliases:
-                alias_hits_seen.update(_alias_strings_from_occurrences(alias_norm))
+                alias_hits_seen.update(_alias_strings_from_occurrences(alias_norm, ctx))
 
         missing_terms = []
         diag_missing = diag.get("missing_terms")
@@ -1548,26 +1857,24 @@ def batch_lookup_terms(
         }
 
         should_accept = bool(snippets) and _has_explicit_evidence(
-            snippets, query, diag_entry, original_term=term_label
+            snippets, query, diag_entry, original_term=term_label, ctx=ctx
         )
 
+        id2row = ctx.id_to_row if ctx else _id_to_row
         if want_all_citations and not should_accept and hits:
             fallback_snippets: List[BundleSnippet] = []
             seen_ids: Set[str] = set()
-            fallback_cap_raw = os.getenv("RETRIEVAL_ALL_CITATIONS_SNIPPETS", "20")
+            fallback_cap_raw = _env("RETRIEVAL_ALL_CITATIONS_SNIPPETS", "20")
             try:
                 fallback_cap = max(1, int(fallback_cap_raw))
             except (TypeError, ValueError):
                 fallback_cap = 20
-            try:
-                label_for_fallback = get_citation_label()
-            except Exception:
-                label_for_fallback = "Textbook"
+            label_for_fallback = cfg.citation_label if cfg else get_citation_label()
             max_inspect = max(fallback_cap * 3, fallback_cap)
             for h in hits[:max_inspect]:
                 if h.id in seen_ids:
                     continue
-                row = _id_to_row.get(h.id) if _id_to_row else None
+                row = id2row.get(h.id) if id2row else None
                 if row is None:
                     continue
                 text = row.get("text") or ""
@@ -1626,7 +1933,7 @@ def batch_lookup_terms(
                 fallback_snippets = fallback_snippets[:fallback_cap]
                 snippets = fallback_snippets
                 equations, glossary, assumptions, alias_counts = _summarize_snippets(
-                    snippets
+                    snippets, ctx
                 )
                 diag_entry["snippets_returned"] = len(snippets)
                 should_accept = True
@@ -1640,10 +1947,7 @@ def batch_lookup_terms(
             continue
 
         if want_all_citations:
-            try:
-                label_for_hits = get_citation_label()
-            except Exception:
-                label_for_hits = "Textbook"
+            label_for_hits = cfg.citation_label if cfg else get_citation_label()
 
         # Default: derive citations from the returned snippets.
         citation_markers: List[str] = []
@@ -1652,16 +1956,17 @@ def batch_lookup_terms(
 
         # If requested, collect citation markers from all hits (full list), not only packed snippets.
         if want_all_citations:
-            max_markers_raw = os.getenv("RETRIEVAL_ALL_CITATIONS_MAX_MARKERS", "120")
+            max_markers_raw = _env("RETRIEVAL_ALL_CITATIONS_MAX_MARKERS", "120")
             try:
                 max_markers = max(1, int(max_markers_raw))
             except (TypeError, ValueError):
                 max_markers = 120
             for h in hits[:max_markers]:
                 try:
-                    row = _id_to_row.get(h.id) if _id_to_row else None
+                    row = id2row.get(h.id) if id2row else None
                     page = int(row.get("page", 0)) if row is not None else 0
                 except Exception:
+                    log.debug("Page number conversion failed")
                     page = 0
                 marker = f"[{label_for_hits}, p. {page if page > 0 else '?'}]"
                 if h.id not in seen_citation_ids:
@@ -1706,7 +2011,9 @@ def batch_lookup_terms(
 # ---------------------------------------------------------
 
 
-def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
+def pack_context(
+    hits: List[Hit], token_budget: int = 6000, ctx: Optional[RetrievalContext] = None,
+) -> ContextPack:
     """Select diverse snippets under a token budget.
 
     Parameters
@@ -1724,8 +2031,11 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
         include ``token_budget`` and ``truncated`` to show whether the budget
         forced truncation.
     """
-    _require_loaded()
-    unlimited = _flag("RETRIEVAL_NO_FILTER", False)
+    _require_loaded(ctx)
+    unlimited = _flag("RETRIEVAL_NO_FILTER", False, ctx)
+    _df_local = ctx.items_df if ctx else _items_df
+    id2row = ctx.id_to_row if ctx else _id_to_row
+    dids = ctx.definition_ids if ctx else _definition_ids
     enc = tiktoken.get_encoding("cl100k_base")
     limit = float("inf") if unlimited else int(token_budget * 0.85)
     base_quotas = {"body": 6, "figure": 4, "heading": 2}
@@ -1750,12 +2060,16 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
         origin_id: Optional[str] = None,
     ) -> bool:
         nonlocal total_tokens
-        if item_id in used_ids or item_id not in _items_df.index:
+        if item_id in used_ids:
             return False
-        row = _id_to_row[item_id]
+        if item_id not in _df_local.index and item_id not in id2row:
+            return False
+        row = id2row.get(item_id)
+        if row is None:
+            return False
         typ0 = row.get("type", "body")
         typ = "body" if typ0 == "ocr" else typ0
-        is_def = item_id in _definition_ids if _flag("PACK_DEF_BIAS", True) else False
+        is_def = item_id in dids if _flag("PACK_DEF_BIAS", True, ctx) else False
         quota = quotas.get(typ, float("inf"))
         if counts.get(typ, 0) >= quota and not is_def and not force:
             return False
@@ -1817,14 +2131,14 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             # attach nearest body neighbor
             neighs = row.get("neighbors") or []
             for nid in neighs:
-                nrow = _id_to_row.get(nid)
+                nrow = id2row.get(nid)
                 if nrow is not None and nrow.get("type") == "body":
                     add_item(nid, "figure-body", force=force, origin_id=origin_hit_id)
                     break
             # attach most recent heading from parents
             parents = row.get("parents") or []
             for pid in reversed(parents):
-                prow = _id_to_row.get(pid)
+                prow = id2row.get(pid)
                 if prow is not None and prow.get("type") == "heading":
                     add_item(pid, "figure-heading", force=force, origin_id=origin_hit_id)
                     break
@@ -1881,7 +2195,7 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             break
         if not add_item(h.id, "hit", origin_id=h.id):
             continue
-        row = _id_to_row[h.id]
+        row = id2row.get(h.id, {})
         neighs = row.get("neighbors") or []
         neighbor_ids = neighs if unlimited else neighs[:2]
         for nid in neighbor_ids:
@@ -1897,7 +2211,7 @@ def pack_context(hits: List[Hit], token_budget: int = 6000) -> ContextPack:
             add_item(h.id, "overflow", force=True, origin_id=h.id)
             if total_tokens >= limit:
                 break
-            row = _id_to_row.get(h.id)
+            row = id2row.get(h.id)
             if row is None:
                 continue
             for nid in row.get("neighbors") or []:
@@ -1955,13 +2269,21 @@ _NOT_FOUND_PHRASE = "Not found in the approved materials."
 
 
 def _call_answer_model(
-    question: str, ctx: ContextPack, *, allow_not_found: bool, citation_guard: bool = False
+    question: str,
+    ctx_pack: ContextPack,
+    *,
+    allow_not_found: bool,
+    citation_guard: bool = False,
+    ctx: Optional[RetrievalContext] = None,
+    cfg=None,
 ) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], str]:
-    client = _get_client()
-    model = _meta.get("answer_model", "gpt-4o-mini")
+    client = _get_client(ctx)
+    _meta_local = ctx.meta if ctx else _meta
+    model = _meta_local.get("answer_model", "gpt-4o-mini")
     try:
-        subject = get_subject_name()
+        subject = cfg.subject_name if cfg else get_subject_name()
     except Exception:
+        log.warning("Failed to retrieve subject name for answer prompt")
         subject = ""
     subject_clause = f"You are a {subject} teaching assistant." if subject else "You are a teaching assistant."
     qualitative_rules = (
@@ -1991,7 +2313,7 @@ def _call_answer_model(
         )
 
     parts: List[str] = []
-    for i, sn in enumerate(ctx.snippets, start=1):
+    for i, sn in enumerate(ctx_pack.snippets, start=1):
         meta = f"(type={sn.type}, page={sn.page}, section={sn.section_path}"
         if sn.figure_id:
             meta += f", fig {sn.figure_id}"
@@ -2012,50 +2334,59 @@ def _call_answer_model(
     used_markers = {int(m.group(1)) for m in marker_pattern.finditer(raw_out)}
 
     processed = raw_out
+    id2row = ctx.id_to_row if ctx else _id_to_row
+    sm = ctx.store_meta if ctx else _store_meta
     citations: List[Dict[str, Any]] = []
-    for i, sn in enumerate(ctx.snippets, start=1):
-        row = _id_to_row.get(sn.id) if _id_to_row else None
-        info = build_citation_info(sn, row, _store_meta)
+    for i, sn in enumerate(ctx_pack.snippets, start=1):
+        row = id2row.get(sn.id) if id2row else None
+        info = build_citation_info(sn, row, sm)
         label = info.get("label", "")
         if i in used_markers:
-            citations.append({"id": sn.id, "marker": label or _canonical_marker(sn), "snippet": sn})
+            citations.append({"id": sn.id, "marker": label or _canonical_marker(sn, cfg), "snippet": sn})
             replacement = label or ""
         else:
             replacement = ""
         processed = processed.replace(f"[S{i}]", replacement)
 
-    _, structured = format_citations(citations, _id_to_row, _store_meta)
+    _, structured = format_citations(citations, id2row, sm)
     return processed, citations, structured, raw_out
 
 
-def answer(question: str, ctx: ContextPack) -> Answer:
-    _require_loaded()
-    text, citations, structured, raw_out = _call_answer_model(question, ctx, allow_not_found=True)
+def answer(
+    question: str,
+    ctx_pack: ContextPack,
+    ctx: Optional[RetrievalContext] = None,
+    cfg=None,
+) -> Answer:
+    _require_loaded(ctx)
+    text, citations, structured, raw_out = _call_answer_model(
+        question, ctx_pack, allow_not_found=True, ctx=ctx, cfg=cfg,
+    )
 
-    should_retry = raw_out.strip().lower() == _NOT_FOUND_PHRASE.lower() and ctx.snippets
+    should_retry = raw_out.strip().lower() == _NOT_FOUND_PHRASE.lower() and ctx_pack.snippets
     if should_retry:
         retry_text, retry_citations, retry_structured, retry_raw = _call_answer_model(
-            question, ctx, allow_not_found=False
+            question, ctx_pack, allow_not_found=False, ctx=ctx, cfg=cfg,
         )
         if retry_text.strip() and retry_raw.strip().lower() != _NOT_FOUND_PHRASE.lower():
             text, citations, structured = retry_text, retry_citations, retry_structured
 
-    needs_citation_guard = ctx.snippets and not citations
+    needs_citation_guard = ctx_pack.snippets and not citations
     if needs_citation_guard:
         guard_text, guard_citations, guard_structured, guard_raw = _call_answer_model(
-            question, ctx, allow_not_found=False, citation_guard=True
+            question, ctx_pack, allow_not_found=False, citation_guard=True, ctx=ctx, cfg=cfg,
         )
         if guard_citations and guard_text.strip() and guard_raw.strip().lower() != _NOT_FOUND_PHRASE.lower():
             text, citations, structured = guard_text, guard_citations, guard_structured
 
-    proof = {"question": question, "used_ids": ctx.used_ids}
+    proof = {"question": question, "used_ids": ctx_pack.used_ids}
     return Answer(text=text, citations=citations, proof=proof, structured_citations=structured)
 
 
 # ---------------------------------------------------------
 
 
-def render_citations(ans: Answer) -> str:
+def render_citations(ans: Answer, cfg=None) -> str:
     structured = getattr(ans, "structured_citations", []) or []
     labels = []
     seen: set[str] = set()
@@ -2074,7 +2405,7 @@ def render_citations(ans: Answer) -> str:
     legacy: List[str] = []
     for c in ans.citations:
         sn = c.get("snippet")
-        m = _canonical_marker(sn) if sn else c.get("marker")
+        m = _canonical_marker(sn, cfg) if sn else c.get("marker")
         if m not in seen:
             seen.add(m)
             legacy.append(m)
@@ -2084,7 +2415,12 @@ def render_citations(ans: Answer) -> str:
 # ---------------------------------------------------------
 
 
-def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> ResearchBundle:
+def research(
+    task: ParsedTask | str,
+    options: Dict[str, Any] | None = None,
+    ctx: Optional[RetrievalContext] = None,
+    cfg=None,
+) -> ResearchBundle:
     """Run retrieval and return a structured ``ResearchBundle``."""
 
     options = options or {}
@@ -2118,15 +2454,13 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
     if WIRE:
         print(f"[Main AI -> Indexer AI] query: {question}", flush=True)
 
-    loaded_indexes, skipped_indexes = _prepare_indexes(doc_sets)
+    loaded_indexes, skipped_indexes = _prepare_indexes(doc_sets, ctx)
 
-    hits, diag = search(question, k_sem=k_sem, k_lex=k_lex, raw_query=question)
+    hits, diag = search(question, k_sem=k_sem, k_lex=k_lex, raw_query=question, ctx=ctx)
 
     marker_equal_map: Dict[str, float] = {}
-    try:
-        label_for_hits = get_citation_label()
-    except Exception:
-        label_for_hits = "Textbook"
+    label_for_hits = cfg.citation_label if cfg else get_citation_label()
+    id2row = ctx.id_to_row if ctx else _id_to_row
     for hit in hits:
         score_equal = getattr(hit, "score_equal", None)
         if score_equal is None:
@@ -2134,11 +2468,13 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
         try:
             equal_val = float(score_equal)
         except Exception:
+            log.debug("Hit score conversion failed, skipping")
             continue
-        row = _id_to_row.get(hit.id) if _id_to_row else None
+        row = id2row.get(hit.id) if id2row else None
         try:
             page = int(row.get("page", 0)) if row is not None else 0
         except Exception:
+            log.debug("Page number conversion failed")
             page = 0
         marker = f"[{label_for_hits}, p. {page if page > 0 else '?'}]"
         existing = marker_equal_map.get(marker)
@@ -2152,9 +2488,9 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
             f"[Indexer AI -> Main AI] hits_sem={sem} hits_lex={lex} missing={missing}",
             flush=True,
         )
-    ctx = pack_context(hits, token_budget=token_budget)
+    ctx_pack = pack_context(hits, token_budget=token_budget, ctx=ctx)
 
-    snippets = _context_to_bundle_snippets(ctx)
+    snippets = _context_to_bundle_snippets(ctx_pack, cfg)
     for sn in snippets:
         marker = getattr(sn, "citation_marker", None)
         eq_val = (sn.final_score or {}).get("equal") if sn.final_score else None
@@ -2162,11 +2498,12 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
             try:
                 eq_float = float(eq_val)
             except Exception:
+                log.debug("Equal score conversion failed, skipping")
                 continue
             existing = marker_equal_map.get(marker)
             if existing is None or eq_float > existing:
                 marker_equal_map[marker] = eq_float
-    equations, glossary, assumptions, alias_counts = _summarize_snippets(snippets)
+    equations, glossary, assumptions, alias_counts = _summarize_snippets(snippets, ctx)
 
     allowed_markers: List[str] = []
     if marker_equal_map:
@@ -2215,8 +2552,8 @@ def research(task: ParsedTask | str, options: Dict[str, Any] | None = None) -> R
         "problem_type": getattr(task, "problem_type", "unknown"),
         "asked_outputs_len": len(asked_list),
         "skipped_indexes": skipped_indexes,
-        "model": _meta.get("model") if _meta else None,
-        "dimensions": _meta.get("dimensions") if _meta else None,
+        "model": (ctx.meta if ctx else _meta or {}).get("model"),
+        "dimensions": (ctx.meta if ctx else _meta or {}).get("dimensions"),
         "k_sem": k_sem,
         "k_lex": k_lex,
         "token_budget": token_budget,

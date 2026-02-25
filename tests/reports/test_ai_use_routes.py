@@ -1,21 +1,9 @@
 from __future__ import annotations
 
-import json
-import os
 from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-
-
-def _write_chat(path, chat_id: str, turns: list[dict]):
-    data = {
-        "chat_id": chat_id,
-        "meta": {"course_id": "CSE101", "assignment_id": "HW1", "due_date": "2025-09-20"},
-        "turns": turns,
-    }
-    with open(os.path.join(path, f"{chat_id}.json"), "w", encoding="utf-8") as f:
-        json.dump(data, f)
 
 
 def _mk_turn(turn_id: str, role: str, content: str, *, model: str | None = None, tool: str | None = None):
@@ -29,34 +17,43 @@ def _mk_turn(turn_id: str, role: str, content: str, *, model: str | None = None,
     }
 
 
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    # Use sqlite in temp dir
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/api.db")
-    # Store chats in temp
-    chat_dir = tmp_path / "chats"
-    chat_dir.mkdir()
-    monkeypatch.setenv("CHAT_STORE_DIR", str(chat_dir))
-    # Use fake OpenAI client
-    monkeypatch.setenv("TEST_FAKE_OPENAI", "1")
+def _seed_chat(chat_id: str, turns: list[dict]):
+    """Seed a chat into the in-memory Supabase mock store via the patched client."""
+    import uuid
+    import backend.supabase_client as sb
+    session_id = str(uuid.uuid4())
+    sb.insert("chat_sessions", {
+        "id": session_id,
+        "chat_id": chat_id,
+        "meta": {"course_id": "CSE101", "assignment_id": "HW1", "due_date": "2025-09-20"},
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    for turn in turns:
+        sb.insert("chat_turns", {
+            "id": str(uuid.uuid4()),
+            "chat_session_id": session_id,
+            **turn,
+        })
 
-    # Import app after env is set
-    from backend.reports.ai_use.models import Base, engine
-    Base.metadata.create_all(engine)
+
+@pytest.fixture
+def client(monkeypatch):
+    monkeypatch.setenv("TEST_FAKE_OPENAI", "1")
+    monkeypatch.setenv("SUPABASE_URL", "http://localhost:54321")
+    monkeypatch.setenv("SUPABASE_API_KEY", "test-key")
 
     from backend.server import app
     return TestClient(app)
 
 
-def test_create_and_get_report_happy_path(client, tmp_path):
+def test_create_and_get_report_happy_path(client):
     chat_id = "demo"
-    chat_dir = os.environ["CHAT_STORE_DIR"]
-    # Include a secret to verify redaction in evidence (service-level test covers this)
     turns = [
         _mk_turn("t1", "user", "my key sk-THISISASECRETKEYANDSHOULDBEREDACTED question"),
         _mk_turn("t2", "assistant", "Answer referencing [Textbook, p. 12]", model="gpt-4o-mini"),
     ]
-    _write_chat(chat_dir, chat_id, turns)
+    _seed_chat(chat_id, turns)
 
     res = client.post(f"/reports/ai-use/{chat_id}", json={"style": "none", "length": "brief"})
     assert res.status_code == 200, res.text
@@ -73,18 +70,15 @@ def test_create_and_get_report_happy_path(client, tmp_path):
     assert got["chat_id"] == chat_id
 
 
-def test_truncation_oversized_chat_returns_413(client, tmp_path, monkeypatch):
-    # Set a tiny token budget to force dropping all turns
+def test_truncation_oversized_chat_returns_413(client, monkeypatch):
     monkeypatch.setenv("EVIDENCE_TOKEN_BUDGET", "1")
     chat_id = "big"
-    chat_dir = os.environ["CHAT_STORE_DIR"]
     big_text = "x" * 4000
     turns = [
         _mk_turn("t1", "user", big_text),
         _mk_turn("t2", "assistant", big_text, model="gpt-4o-mini"),
     ]
-    _write_chat(chat_dir, chat_id, turns)
+    _seed_chat(chat_id, turns)
 
     res = client.post(f"/reports/ai-use/{chat_id}", json={"style": "none", "length": "brief"})
     assert res.status_code == 413
-
