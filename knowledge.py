@@ -131,6 +131,94 @@ def _upload_items_to_supabase(
     log.info("Uploaded %d items to Supabase store %s", len(items), store_id)
 
 
+def _index_items_to_pgvector(
+    subject: str,
+    title: str,
+    kind: str,
+    items: list,
+    source_markdown: str,
+    page_count: Optional[int],
+    week: Optional[int],
+    metadata: Optional[Dict[str, Any]],
+) -> None:
+    """Dual-write: index Item objects into the new pgvector schema.
+
+    Called from add_pdf_material() and teacher_weekly.record_upload() when
+    USE_PGVECTOR_RETRIEVAL=true. Runs synchronously via asyncio.run() since
+    the callers are sync. Failures are logged but not re-raised so the
+    primary FAISS path still succeeds.
+    """
+    import asyncio as _asyncio
+    import hashlib as _hashlib
+
+    from .db import _get_session_factory
+    from .indexing.connector_document import AITAConnectorDocument
+    from .indexing.document_hashing import compute_unique_identifier_hash, compute_content_hash
+    from .indexing.indexing_service import AITAIndexingService
+
+    async def _run():
+        try:
+            # Look up (or infer) the search_space_id for this subject
+            from sqlalchemy import text as _text
+            factory = _get_session_factory()
+            async with factory() as session:
+                slug = re.sub(r"[^a-z0-9]+", "-", subject.strip().lower()).strip("-")
+                result = await session.execute(
+                    _text("SELECT id FROM aita_search_spaces WHERE slug = :slug"),
+                    {"slug": slug},
+                )
+                row = result.fetchone()
+                if row is None:
+                    log.warning(
+                        "pgvector dual-write: SearchSpace not found for subject '%s' (slug='%s'). "
+                        "Run migration 002_seed_from_supabase.py first.",
+                        subject, slug,
+                    )
+                    return
+                search_space_id = row[0]
+
+                unique_id = _hashlib.sha256(
+                    f"{source_markdown[:200]}:{search_space_id}".encode()
+                ).hexdigest()[:32]
+
+                connector_doc = AITAConnectorDocument(
+                    title=title,
+                    source_markdown=source_markdown or title,
+                    unique_id=unique_id,
+                    document_type="EDUCATIONAL_FILE",
+                    search_space_id=search_space_id,
+                    material_kind=kind,
+                    page_count=page_count,
+                    week=week,
+                    metadata=metadata or {},
+                )
+
+                service = AITAIndexingService(session)
+                docs = await service.prepare_for_indexing([connector_doc])
+                if not docs:
+                    log.info("pgvector dual-write: document '%s' already up-to-date.", title)
+                    return
+
+                await service.index_from_items(docs[0], connector_doc, items)
+                log.info("pgvector dual-write: indexed '%s' (%d items).", title, len(items))
+
+        except Exception as exc:
+            log.error("pgvector dual-write failed for '%s': %s", title, exc)
+
+    try:
+        loop = _asyncio.get_event_loop()
+        if loop.is_running():
+            # Running inside an async context (unlikely for sync knowledge.py but safe)
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_asyncio.run, _run())
+                future.result(timeout=300)
+        else:
+            loop.run_until_complete(_run())
+    except Exception as exc:
+        log.error("pgvector dual-write runner error for '%s': %s", title, exc)
+
+
 class KnowledgeManager:
     """Manage subject knowledge materials and their embedding indexes."""
 
@@ -369,6 +457,22 @@ class KnowledgeManager:
             if os.getenv("RETRIEVAL_BACKEND", "local") == "supabase" and store_rows:
                 store_id = store_rows[0]["id"]
                 _upload_items_to_supabase(store_id, items, embeddings, meta)
+
+            # Dual-write to new pgvector schema (when USE_PGVECTOR_RETRIEVAL=true)
+            from .config import use_pgvector_retrieval
+            if use_pgvector_retrieval():
+                _index_items_to_pgvector(
+                    subject=subject,
+                    title=title,
+                    kind="textbook",
+                    items=items,
+                    source_markdown="\n\n".join(
+                        (getattr(it, "text", "") or "") for it in items
+                    ),
+                    page_count=page_count,
+                    week=None,
+                    metadata={"source_pdf": pdf_path.name, "index_path": str(out_dir.resolve())},
+                )
 
         except Exception:
             shutil.rmtree(out_dir, ignore_errors=True)

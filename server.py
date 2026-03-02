@@ -39,6 +39,7 @@ from .workspaces import (
     WorkspaceError,
     build_workspace_manager,
 )
+from .config import use_pgvector_retrieval
 
 try:  # pragma: no cover - optional dependency detection
     importlib.import_module("python_multipart")
@@ -667,6 +668,102 @@ def healthz():
     return {"status": "ok"}
 
 
+# ---------------------------------------------------------------------------
+# pgvector retrieval helper — called from post_ask when USE_PGVECTOR_RETRIEVAL=true
+# ---------------------------------------------------------------------------
+
+def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "ResearchBundle":
+    """Run the pgvector retrieval pipeline and return a ResearchBundle.
+
+    Runs the async pipeline synchronously (FastAPI auto-threads sync handlers
+    so asyncio.run() is safe here).
+    """
+    import asyncio
+    from .contracts import ResearchBundle, ResearchMetadata
+    from .retrieval.pipeline import retrieve_for_question
+    from .retrieval.context_packer import _summarize_snippets
+    from .db import get_async_session
+    from .main_ai import extract_and_filter_keywords
+
+    search_space_id = int(workspace.metadata.get("search_space_id", 0))
+    if not search_space_id:
+        raise RuntimeError(
+            "Workspace missing search_space_id — run migrations and "
+            "set USE_PGVECTOR_RETRIEVAL=true only after seeding the DB."
+        )
+
+    token_budget = int(os.getenv("TOKEN_BUDGET", "6000"))
+
+    # Extract keywords (role: hints appended to original question, not standalone targets)
+    # extract_and_filter_keywords returns (context_summary, term_list)
+    try:
+        _ctx_summary, raw_keywords = extract_and_filter_keywords(q_effective)
+        keywords: List[str] = []
+        for entry in (raw_keywords or []):
+            if isinstance(entry, dict):
+                term = entry.get("term") or entry.get("keyword") or entry.get("name")
+                if isinstance(term, str) and term.strip():
+                    keywords.append(term.strip())
+            elif isinstance(entry, str) and entry.strip():
+                keywords.append(entry.strip())
+    except Exception:
+        keywords = []
+
+    async def _run():
+        async with get_async_session() as db_session:
+            return await retrieve_for_question(
+                query=q_effective,
+                keywords=keywords,
+                search_space_id=search_space_id,
+                db_session=db_session,
+                weight_overrides=weight_overrides or {},
+                top_k=int(os.getenv("K_SEM", "20")),
+                token_budget=token_budget,
+            )
+
+    snippets, diagnostics = asyncio.run(_run())
+
+    # Extract structured knowledge from snippet text (equations, glossary, etc.)
+    equations, glossary, assumptions, _ = _summarize_snippets(snippets)
+
+    allowed_markers = [sn.citation_marker for sn in snippets if sn.citation_marker]
+
+    metadata = ResearchMetadata(
+        keyword_iterations=[{"round": 1, "combined_query": diagnostics.get("combined_query", q_effective)}],
+        found_terms=[],
+        not_found_terms=[],
+        attempted_terms=[q_effective],
+        missing_terms=[],
+        final_query=diagnostics.get("combined_query", q_effective),
+        original_query=q_effective,
+        concept_matches={},
+        concept_match_details={},
+        coverage_gaps=[],
+        refinement_queries=[],
+        subject=cfg.subject_name if cfg else "",
+        allowed_markers=allowed_markers,
+        hit_count_sem=diagnostics.get("hit_count_sem", 0),
+    )
+
+    return ResearchBundle(
+        metadata=metadata,
+        snippets=snippets,
+        equations=equations,
+        assumptions=assumptions,
+        glossary=glossary,
+        coverage_gaps=[],
+        refinement_queries=[],
+        used_ids=[sn.id for sn in snippets],
+        stats=diagnostics,
+        provenance={"source": "pgvector", **{k: str(v) for k, v in diagnostics.items()}},
+        allowed_markers=allowed_markers,
+        found_terms=[],
+        not_found_terms=[],
+        attempted_terms=[q_effective],
+        subject=cfg.subject_name if cfg else "",
+    )
+
+
 # Intentionally sync `def` — FastAPI auto-threads sync endpoints.
 # Do NOT change to `async def` unless the entire pipeline is made async.
 @app.post("/ask")
@@ -706,7 +803,9 @@ def post_ask(payload: AskRequest):
 
     subject_name = workspace.subject_name or class_name
     doc_sets_ordered = workspace.doc_sets()
-    if not doc_sets_ordered:
+    # pgvector path: doc_sets() returns [] (no FAISS dirs) — that's fine,
+    # materials are in aita_documents and fetched at query time.
+    if not doc_sets_ordered and not use_pgvector_retrieval():
         raise HTTPException(status_code=500, detail="No knowledge materials registered for this class")
 
     doc_sets_override: List[str] = []
@@ -819,29 +918,43 @@ def post_ask(payload: AskRequest):
         cfg = RequestConfig.from_env()
         cfg.set_subject(subject_name, "server")
 
-        # Per-request retrieval context — holds FAISS indexes, SQLite conns, etc.
-        rctx = RetrievalContext(flags=opts)
-
         with redirect_stdout(stdout_buffer):
-            # Load retrieval assets into request-scoped context
-            try:
-                paths = [Path(p).resolve() for p in (doc_sets_override or [])]
-                if len(paths) > 1:
-                    load_assets_all(paths, ctx=rctx)
-                elif paths:
-                    load_assets(paths[0], ctx=rctx)
-            except Exception as e:
-                raise RuntimeError(f"failed to load indexes: {e}")
+            if use_pgvector_retrieval():
+                # -------------------------------------------------------
+                # pgvector path — no FAISS loading, no per-keyword loops
+                # -------------------------------------------------------
+                bundle = _ask_pgvector(
+                    q_effective=q_effective,
+                    workspace=workspace,
+                    weight_overrides=weight_overrides,
+                    cfg=cfg,
+                )
+            else:
+                # -------------------------------------------------------
+                # Legacy FAISS path — unchanged bridge period code
+                # -------------------------------------------------------
+                # Per-request retrieval context — holds FAISS indexes, SQLite conns, etc.
+                rctx = RetrievalContext(flags=opts)
 
-            # Use the same pipeline as `python -m backend.qa ask`
-            orch = Orchestrator(ctx=rctx, cfg=cfg)
-            retrieval_opts = {
-                "doc_sets": doc_sets_override,
-                "k_sem": int(os.getenv("K_SEM", "30")),
-                "k_lex": int(os.getenv("K_LEX", "30")),
-                "token_budget": int(os.getenv("TOKEN_BUDGET", "6000")),
-            }
-            bundle = orch._iterative_research(q_effective, retrieval_opts)
+                # Load retrieval assets into request-scoped context
+                try:
+                    paths = [Path(p).resolve() for p in (doc_sets_override or [])]
+                    if len(paths) > 1:
+                        load_assets_all(paths, ctx=rctx)
+                    elif paths:
+                        load_assets(paths[0], ctx=rctx)
+                except Exception as e:
+                    raise RuntimeError(f"failed to load indexes: {e}")
+
+                # Use the same pipeline as `python -m backend.qa ask`
+                orch = Orchestrator(ctx=rctx, cfg=cfg)
+                retrieval_opts = {
+                    "doc_sets": doc_sets_override,
+                    "k_sem": int(os.getenv("K_SEM", "30")),
+                    "k_lex": int(os.getenv("K_LEX", "30")),
+                    "token_budget": int(os.getenv("TOKEN_BUDGET", "6000")),
+                }
+                bundle = orch._iterative_research(q_effective, retrieval_opts)
 
             parsed_task: Optional[ParsedTask] = None
             if q_effective.strip():

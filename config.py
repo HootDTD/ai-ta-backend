@@ -195,6 +195,43 @@ class RequestConfig:
         self.subject_priority = priority
 
 
+# ---------------------------------------------------------------------------
+# pgvector / SurfSense integration settings
+# ---------------------------------------------------------------------------
+
+def use_pgvector_retrieval() -> bool:
+    """Return True when the new pgvector retrieval path is enabled."""
+    return os.getenv("USE_PGVECTOR_RETRIEVAL", "false").lower() not in {
+        "0", "false", "off", "no"
+    }
+
+
+def get_embedding_dim() -> int:
+    """Vector dimension for embeddings (must match the model used at index time)."""
+    return int(os.getenv("EMBEDDING_DIM", "3072"))
+
+
+def get_embedding_model() -> str:
+    """OpenAI embedding model name."""
+    return os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+
+
+def get_supabase_db_url() -> str:
+    """Async PostgreSQL connection string (asyncpg) for SQLAlchemy."""
+    return os.getenv("SUPABASE_DB_URL", "")
+
+
+def rerankers_enabled() -> bool:
+    """Return True when the optional reranking step is active."""
+    return os.getenv("RERANKERS_ENABLED", "false").lower() not in {
+        "0", "false", "off", "no"
+    }
+
+
+def get_reranker_model() -> str:
+    return os.getenv("RERANKER_MODEL", "cross-encoder")
+
+
 __all__ = [
     "set_subject_name",
     "get_subject_name",
@@ -203,4 +240,11 @@ __all__ = [
     "get_citation_label",
     "get_runtime_dir",
     "RequestConfig",
+    # pgvector settings
+    "use_pgvector_retrieval",
+    "get_embedding_dim",
+    "get_embedding_model",
+    "get_supabase_db_url",
+    "rerankers_enabled",
+    "get_reranker_model",
 ]

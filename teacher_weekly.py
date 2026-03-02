@@ -247,6 +247,18 @@ class TeacherWeeklyStorage:
         # Register in knowledge stores
         self._register_store_entry(course, kind_norm, week, record.title, record.index_path)
 
+        # Dual-write to new pgvector schema (when USE_PGVECTOR_RETRIEVAL=true)
+        from .config import use_pgvector_retrieval
+        if use_pgvector_retrieval():
+            self._dual_write_pgvector(
+                course=course,
+                kind=kind_norm,
+                week=week,
+                title=record.title,
+                index_path=record.index_path,
+                page_count=record.page_count,
+            )
+
         return record
 
     def set_current_week(self, course: str, week: int) -> Dict[str, Any]:
@@ -335,6 +347,63 @@ class TeacherWeeklyStorage:
             "store_kind": store_kind,
             "week": week,
         }
+
+    def _dual_write_pgvector(
+        self,
+        *,
+        course: str,
+        kind: str,
+        week: int,
+        title: str,
+        index_path: str,
+        page_count: Optional[int],
+    ) -> None:
+        """Dual-write teacher upload items into the pgvector schema.
+
+        Reads items.jsonl from the freshly-created index directory and indexes
+        them via AITAIndexingService. Failures are logged but not re-raised.
+        """
+        import json as _json
+        from pathlib import Path as _Path
+        from .knowledge import _index_items_to_pgvector
+
+        items_path = _Path(index_path) / "items.jsonl"
+        if not items_path.exists():
+            log.warning("pgvector dual-write: items.jsonl not found at %s", items_path)
+            return
+
+        # Load Item-like objects from JSONL as simple namespaces
+        items = []
+        try:
+            with items_path.open(encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        d = _json.loads(line)
+                        # Create a simple namespace that mimics Item attributes
+                        items.append(type("Item", (), d)())
+        except Exception as e:
+            log.error("pgvector dual-write: failed reading items.jsonl: %s", e)
+            return
+
+        if not items:
+            return
+
+        source_markdown = "\n\n".join(
+            getattr(it, "text", "") or getattr(it, "raw_text", "") or ""
+            for it in items
+        )
+
+        _index_items_to_pgvector(
+            subject=course,
+            title=title,
+            kind=kind,
+            items=items,
+            source_markdown=source_markdown,
+            page_count=page_count,
+            week=week,
+            metadata={"index_path": index_path, "week": week},
+        )
 
     def _build_handwriting_options(self) -> IngestOptions:
         token_limit = self._env_int(1000, "HANDWRITING_TOKEN_LIMIT", "KNOWLEDGE_TOKEN_LIMIT")

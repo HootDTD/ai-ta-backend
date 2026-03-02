@@ -42,8 +42,11 @@ class BundleSnippet:
     final_score: Optional[Dict[str, float]] = None
 
     def validate(self) -> None:
-        if not self.citation_marker or "p." not in self.citation_marker:
-            raise ValueError("citation_marker must include a page reference")
+        if not self.citation_marker or not self.citation_marker.strip():
+            raise ValueError("citation_marker must not be empty")
+        # Page reference (p. N) is preferred but not required — chunks without
+        # a page_number (e.g. from slide decks or web content) produce markers
+        # like "[Slides]" which are valid citations in the pgvector path.
 
 
 @dataclass

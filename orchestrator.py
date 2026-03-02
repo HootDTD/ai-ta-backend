@@ -536,6 +536,14 @@ class Orchestrator:
     def _iterative_research(
         self, question: str, options: Dict[str, Any]
     ) -> ResearchBundle:
+        # pgvector fast path — skips the entire FAISS/keyword-matrix pipeline.
+        # When USE_PGVECTOR_RETRIEVAL=true the caller (server.py or qa.py) is
+        # expected to call _ask_pgvector() directly; we guard here as a safety
+        # net in case _iterative_research() is called directly.
+        from .config import use_pgvector_retrieval
+        if use_pgvector_retrieval():
+            return self._iterative_research_pgvector(question, options)
+
         sanitize = os.getenv("RETRIEVAL_SANITIZE", "on").lower() not in {"0", "off", "false", "no"}
         norm_question = normalize_query(question) if sanitize else question
 
@@ -1210,6 +1218,152 @@ class Orchestrator:
             subject=self.cfg.subject_name if self.cfg else get_subject_name(),
         )
         return bundle
+
+    def _iterative_research_pgvector(
+        self, question: str, options: Dict[str, Any]
+    ) -> ResearchBundle:
+        """pgvector retrieval path for _iterative_research().
+
+        Replaces the FAISS/keyword-matrix pipeline when USE_PGVECTOR_RETRIEVAL=true.
+        Requires self.ctx to carry search_space_id and db_session (set by server.py).
+        Falls back to a minimal bundle on missing context (should not happen in prod).
+        """
+        import asyncio
+        from .retrieval.pipeline import retrieve_for_question
+        from .retrieval.context_packer import _summarize_snippets
+
+        subject_name = self.cfg.subject_name if self.cfg else get_subject_name()
+
+        # Relevance guard — keep AI-TA's closed-knowledge enforcement
+        subject_relevant = self._question_matches_subject(question)
+        if not subject_relevant:
+            if WIRE:
+                print(
+                    "[Main AI -> Indexer AI] context_sentences=null (question_out_of_scope)",
+                    flush=True,
+                )
+            # Return empty bundle — solve_with_bundle will handle out-of-scope gracefully
+            metadata = ResearchMetadata(
+                final_query=question,
+                original_query=question,
+                attempted_terms=[question],
+                subject=subject_name,
+            )
+            return ResearchBundle(metadata=metadata, snippets=[], subject=subject_name)
+
+        # Extract keywords as hints (not standalone search targets)
+        try:
+            _ctx_summary, filtered_terms = extract_and_filter_keywords(
+                question, subject=subject_name
+            )
+        except Exception:
+            filtered_terms = []
+
+        keywords: List[str] = []
+        for entry in (filtered_terms or []):
+            if isinstance(entry, dict):
+                term = entry.get("term") or entry.get("keyword") or entry.get("name")
+                if isinstance(term, str) and term.strip():
+                    keywords.append(term.strip())
+            elif isinstance(entry, str) and entry.strip():
+                keywords.append(entry.strip())
+
+        # Retrieve search_space_id and db_session from ctx (set by server.py)
+        ctx = self.ctx or {}
+        search_space_id = None
+        db_session = None
+        if hasattr(ctx, "search_space_id"):
+            search_space_id = ctx.search_space_id
+            db_session = getattr(ctx, "db_session", None)
+        elif isinstance(ctx, dict):
+            search_space_id = ctx.get("search_space_id")
+            db_session = ctx.get("db_session")
+
+        if not search_space_id:
+            log.error(
+                "_iterative_research_pgvector: search_space_id missing in ctx — "
+                "returning empty bundle. Set ctx on Orchestrator from server.py."
+            )
+            metadata = ResearchMetadata(
+                final_query=question, original_query=question,
+                attempted_terms=[question], subject=subject_name,
+            )
+            return ResearchBundle(metadata=metadata, snippets=[], subject=subject_name)
+
+        token_budget = int(options.get("token_budget", 6000))
+        weight_overrides = options.get("weight_overrides") or {}
+
+        async def _run():
+            from .db import get_async_session
+            if db_session is not None:
+                return await retrieve_for_question(
+                    query=question,
+                    keywords=keywords,
+                    search_space_id=search_space_id,
+                    db_session=db_session,
+                    weight_overrides=weight_overrides,
+                    top_k=int(options.get("k_sem", 20)),
+                    token_budget=token_budget,
+                )
+            async with get_async_session() as sess:
+                return await retrieve_for_question(
+                    query=question,
+                    keywords=keywords,
+                    search_space_id=search_space_id,
+                    db_session=sess,
+                    weight_overrides=weight_overrides,
+                    top_k=int(options.get("k_sem", 20)),
+                    token_budget=token_budget,
+                )
+
+        snippets, diagnostics = asyncio.run(_run())
+
+        if WIRE:
+            print(
+                f"[Indexer AI -> Main AI] found={len(snippets)} snippets via pgvector",
+                flush=True,
+            )
+
+        equations, glossary, assumptions, _ = _summarize_snippets(snippets)
+        allowed_markers = [sn.citation_marker for sn in snippets if sn.citation_marker]
+
+        metadata = ResearchMetadata(
+            keyword_iterations=[{
+                "round": 1,
+                "combined_query": diagnostics.get("combined_query", question),
+            }],
+            found_terms=keywords,
+            not_found_terms=[],
+            attempted_terms=[question],
+            missing_terms=[],
+            final_query=diagnostics.get("combined_query", question),
+            original_query=question,
+            concept_matches={},
+            concept_match_details={},
+            coverage_gaps=[],
+            refinement_queries=[],
+            subject=subject_name,
+            allowed_markers=allowed_markers,
+            hit_count_sem=diagnostics.get("hit_count_sem", 0),
+        )
+
+        return ResearchBundle(
+            metadata=metadata,
+            snippets=snippets,
+            equations=equations,
+            assumptions=assumptions,
+            glossary=glossary,
+            coverage_gaps=[],
+            refinement_queries=[],
+            used_ids=[sn.id for sn in snippets],
+            stats=diagnostics,
+            provenance={"source": "pgvector"},
+            allowed_markers=allowed_markers,
+            found_terms=keywords,
+            not_found_terms=[],
+            attempted_terms=[question],
+            subject=subject_name,
+        )
 
     def _hash(self, obj: object) -> str:
         """Deterministic hash for dataclasses.

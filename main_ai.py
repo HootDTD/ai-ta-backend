@@ -405,6 +405,19 @@ def _score_and_answer_snippet(
         "   - directness (0-1): how on-point the snippet is\n"
         "   - score (0-1): blended score; allow the provided importance_hint to slightly adjust\n"
         "   - context: 1-2 sentences explaining only how the snippet connects to the question\n\n"
+        "   INTENT-AWARE SCORING — read the question carefully to determine the student's intent:\n"
+        "   - If the question asks 'what is', 'define', 'explain', or 'why': the student wants "
+        "conceptual understanding. Score HIGHEST for snippets that define, introduce, or explain "
+        "the concept. Score LOWER for snippets that merely use the term in a worked example or "
+        "unrelated derivation without explaining it.\n"
+        "   - If the question asks 'how to', 'calculate', 'find', 'solve', or 'derive': the student "
+        "wants a procedure or formula. Score HIGHEST for snippets with relevant equations, worked "
+        "examples, or step-by-step methods.\n"
+        "   - If the snippet comes from a section whose title directly names the topic being asked "
+        "about (e.g. asking about 'boundary layer' and the section is 'Boundary Layer Theory'), "
+        "this is strong evidence the snippet is authoritative — boost its score.\n"
+        "   - A snippet that only mentions the term in passing (e.g. as a variable in an unrelated "
+        "exercise) should score significantly lower than one that substantively addresses it.\n\n"
         "2. EXTRACT every piece of information in this snippet that could help answer "
         "the question. Include definitions, equations, relationships, assumptions, "
         "boundary conditions, parameter meanings, constraints, or contextual clues.\n"
@@ -918,24 +931,37 @@ def extract_and_filter_keywords(
     subject = subject or get_subject_name()
 
     system = (
-        f"You analyze {subject} textbook questions. Perform these tasks:\n\n"
-        "1. CONTEXT SUMMARY: Identify the core principles or equations explicitly "
-        "referenced in the question. Write a single short sentence or comma-separated "
-        "list naming the relevant topics.\n\n"
-        "2. KEYWORD EXTRACTION & RANKING: Generate up to 20 candidate lookup terms "
-        "using ONLY the question. Rules for each term:\n"
-        "   - Must be a single lowercase word (no spaces, hyphens, or punctuation).\n"
-        "   - Focus on discrete concepts, principles, or technical keywords.\n"
-        "   - ALWAYS include individual terms from every topic in the context summary.\n"
-        "   - Avoid overly general or broad academic words.\n"
-        "   - Assign each term a UNIQUE numeric score between 0.00 and 1.00.\n"
-        "     1.00 = most relevant to the question.\n\n"
-        "3. FILTERING: Remove terms that are purely generic academic words "
-        "(e.g., 'principle', 'concept', 'equation' by themselves) with no subject "
-        "signal. KEEP named laws/equations and domain nouns.\n\n"
-        "Return JSON: {\"context_summary\": \"...\", "
-        "\"ranked_terms\": [{\"term\": \"...\", \"relevance\": 0.95}, ...]} "
-        "sorted highest to lowest. Return at most 8 terms after filtering."
+        f"You are a {subject} textbook index builder. A student has asked a question "
+        "and you must identify the specific concepts they need to look up.\n\n"
+        "Perform these tasks:\n\n"
+        "1. CONTEXT SUMMARY: Write a short sentence or comma-separated list naming "
+        "the core topics, principles, or equations the question is about.\n\n"
+        "2. CONCEPT EXTRACTION: Identify up to 8 lookup concepts that a student "
+        "would search for in a textbook index to answer this question.\n\n"
+        "   Rules for each concept:\n"
+        "   - Each concept is 1 to 4 lowercase words.\n"
+        "   - Phrase concepts as they would appear in a textbook index or section "
+        "heading (e.g., \"boundary layer thickness\", \"Reynolds number\", "
+        "\"conservation of momentum\").\n"
+        "   - A multi-word concept must be a single coherent idea. Do NOT split "
+        "a compound concept into its individual words as separate entries.\n"
+        "   - Order from MOST SPECIFIC to MOST GENERAL:\n"
+        "     First: the exact compound concept being asked about.\n"
+        "     Then: closely related sub-concepts or prerequisite concepts.\n"
+        "     Last: the broader topic area, only if it adds retrieval value.\n"
+        "   - Include named laws, equations, phenomena, and domain-specific "
+        "noun phrases.\n"
+        "   - OMIT generic academic words that match too broadly on their own "
+        "(e.g., \"equation\", \"method\", \"theory\" alone). These are acceptable "
+        "ONLY as part of a named concept (e.g., \"Bernoulli equation\").\n"
+        "   - Assign each concept a UNIQUE relevance score between 0.00 and 1.00 "
+        "(1.00 = most directly answers the question).\n\n"
+        "3. Think: \"If I were looking up this answer in a textbook, what section "
+        "headings or index entries would I turn to?\"\n\n"
+        "Return JSON exactly:\n"
+        "{\"context_summary\": \"...\", "
+        "\"ranked_terms\": [{\"term\": \"boundary layer thickness\", \"relevance\": 0.98}, ...]}\n"
+        "Sorted highest to lowest relevance. Return at most 8 concepts."
     )
 
     payload = {"subject": subject, "question": question}
@@ -971,10 +997,12 @@ def extract_and_filter_keywords(
             score = entry.get("relevance")
             if not isinstance(term, str):
                 continue
-            cleaned = term.strip().lower()
+            cleaned = " ".join(term.strip().lower().split())
             if not cleaned or cleaned in seen:
                 continue
-            if any(ch in cleaned for ch in " -_/\\.'\""):
+            if any(ch in cleaned for ch in "/\\.\""):
+                continue
+            if len(cleaned.split()) > 5:
                 continue
             try:
                 score_val = float(score)
@@ -1172,16 +1200,48 @@ def solve_with_bundle(
     )
     _write_miniresponses(per_citation_answers, q)
 
+    # --- Filter: drop snippets scored below threshold ---
+    score_floor = float(os.getenv("CITATION_SCORE_FLOOR", "0.3"))
+    scored_snippets: List[Dict[str, Any]] = []
+    for i, r in enumerate(combined_results):
+        score_val = float(r.get("score", 0.0) or 0.0)
+        if score_val < score_floor:
+            continue
+        sn = bundle.snippets[i]
+        scored_snippets.append({
+            "marker": r.get("marker", ""),
+            "page": r.get("page"),
+            "score": score_val,
+            "section": getattr(sn, "section_path", ""),
+            "source_text": getattr(sn, "text", ""),
+        })
+    scored_snippets.sort(key=lambda x: -x["score"])
+
     system = (
-        "You are a conceptual subject-matter tutor. You are given pre-written answers, each derived from a single citation page. "
-        "You must combine ONLY those answers to respond to the user's question. "
-        "Rules:\n"
-        " - You do NOT have access to the original citations; rely solely on the provided per-citation answers.\n"
-        " - If a per-citation answer is exactly 'Not Relevant', ignore it.\n"
-        " - Do not add new facts or outside knowledge. Do not infer beyond what the per-citation answers state.\n"
-        " - When using a point from a per-citation answer, cite its marker (e.g., [Textbook, p. X]).\n"
-        " - If the provided answers are insufficient to address the question, reply exactly 'Not found in the approved materials.'\n"
-        " - Do NOT perform numeric calculations, approximations, substitutions, or code."
+        "You are a Socratic subject-matter tutor. You are given SOURCE EXCERPTS from "
+        "course materials, each with a citation marker and relevance score. "
+        "Your job is to guide the student toward understanding using ONLY the information "
+        "in these excerpts.\n\n"
+        "TUTORING STYLE:\n"
+        " - Guide the student toward understanding rather than giving a complete, "
+        "encyclopedic answer.\n"
+        " - Ask thought-provoking questions that help the student reason through the concept. "
+        "For example, instead of stating a definition outright, lead with: "
+        "'Consider what happens at the wall vs. far from the surface — what must the "
+        "velocity do in between?'\n"
+        " - After presenting a key idea, prompt the student to think further: "
+        "'What do you think happens when...?' or 'Why do you think this matters for...?'\n"
+        " - Build concepts step by step — define fundamentals before applications.\n"
+        " - Use precise technical language. Avoid vague or anthropomorphic phrasing.\n"
+        " - Keep the response focused on what was asked. Do not introduce tangential topics.\n\n"
+        "STRICT RULES:\n"
+        " - Base your response ONLY on the provided source excerpts. Do NOT add facts, "
+        "equations, or claims from outside knowledge.\n"
+        " - Cite every factual statement with its marker (e.g., [Textbook, p. X]).\n"
+        " - If the source excerpts do not contain enough information to address the question, "
+        "say so honestly: 'The available materials cover X but do not address Y.'\n"
+        " - Do NOT perform numeric calculations, approximations, or substitutions.\n"
+        " - Do NOT fabricate specific numbers, thresholds, or criteria not present in the excerpts."
     )
     proof_bundle = _load_proof_bundle()
     proof_json: Optional[str] = None
@@ -1243,17 +1303,29 @@ def solve_with_bundle(
         except TypeError:
             log.debug("Proof bundle not JSON-serializable")
             proof_json = None
-    per_citation_json = json.dumps(per_citation_answers, ensure_ascii=False)
+    # Build source excerpts payload (original text, not mini-summaries)
+    source_excerpts: List[Dict[str, Any]] = []
+    for entry in scored_snippets:
+        source_excerpts.append({
+            "marker": entry["marker"],
+            "page": entry["page"],
+            "relevance_score": round(entry["score"], 2),
+            "section": entry["section"],
+            "text": entry["source_text"],
+        })
+    excerpts_json = json.dumps(source_excerpts, ensure_ascii=False)
+
     payload_lines = [
         f"Task: {json.dumps(asdict(parsed_task), ensure_ascii=False)}",
         f"Question: {question_text or parsed_task.problem_type}",
-        f"PerCitationAnswers (sorted high->low score): {per_citation_json}",
+        f"SourceExcerpts (sorted high->low relevance): {excerpts_json}",
     ]
     if proof_json:
         payload_lines.append(f"FullProofBundle: {proof_json}")
     payload_lines.append("Return JSON with keys: steps, final_answers, equations_used, assumptions.")
     payload_lines.append(
-        "- steps: concise synthesis combining only the provided per-citation answers, with citations on every factual sentence."
+        "- steps: a Socratic tutoring response that uses ONLY information from the source excerpts, "
+        "with citations on every factual sentence. Guide the student rather than lecturing."
     )
     payload_lines.append("- final_answers: MUST be an empty object {} because you are not computing results.")
     payload_lines.append(

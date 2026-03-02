@@ -2608,6 +2608,44 @@ __all__ = [
     "render_citations",
 
     "research",
+
+    # pgvector path entry point (USE_PGVECTOR_RETRIEVAL=true)
+    "retrieve_for_question",
 ]
+
+
+# ---------------------------------------------------------------------------
+# pgvector retrieval entry point — used by orchestrator when
+# USE_PGVECTOR_RETRIEVAL=true.  The FAISS path above is the else-branch
+# during the bridge period and can be deleted after validation.
+# ---------------------------------------------------------------------------
+
+async def retrieve_for_question(
+    query: str,
+    keywords: list,
+    search_space_id: int,
+    db_session,
+    weight_overrides=None,
+    top_k: int = 20,
+    token_budget: int = 6000,
+    citation_label=None,
+):
+    """pgvector retrieval entry point — delegates to retrieval.pipeline.
+
+    This thin shim lives here so orchestrator.py can import a single symbol
+    (``from .retriever import retrieve_for_question``) regardless of which
+    retrieval path is active.  All logic is in ``retrieval/pipeline.py``.
+    """
+    from .retrieval.pipeline import retrieve_for_question as _pgvector_retrieve
+    return await _pgvector_retrieve(
+        query=query,
+        keywords=keywords,
+        search_space_id=search_space_id,
+        db_session=db_session,
+        weight_overrides=weight_overrides,
+        top_k=top_k,
+        token_budget=token_budget,
+        citation_label=citation_label,
+    )
 
 
