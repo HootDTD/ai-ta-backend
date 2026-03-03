@@ -16,23 +16,16 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from contextlib import contextmanager, redirect_stdout
 
-# Import the callable core entrypoint using package‑relative import to avoid
-# path issues when running under different working directories.
-from .core import _vision_transcribe
-from .config import get_runtime_dir, set_subject_name
-from .orchestrator import Orchestrator
-from .retriever import (
-    load_assets,
-    load_assets_all,
-)
-from . import retriever as retriever_mod
-from .knowledge import KnowledgeManager
-from .store_weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
-from .main_ai import extract_keywords, parse_question, solve_with_bundle, format_answer
-from .contracts import ParsedTask
+from .ai.vision import vision_transcribe
+from .config.settings import get_runtime_dir, set_subject_name, RequestConfig
+from .ai.orchestrator import Orchestrator
+from .knowledge.manager import KnowledgeManager
+from .config.weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
+from .ai.main_ai import extract_keywords, parse_question, solve_with_bundle, format_answer
+from .config.contracts import ParsedTask
 from .citations.formatter import format_citations
-from .teacher_weekly import TeacherWeeklyStorage
-from .workspaces import (
+from .knowledge.teacher_weekly import TeacherWeeklyStorage
+from .workspaces.manager import (
     WorkspaceConfigError,
     WorkspaceNotFound,
     WorkspaceError,
@@ -86,25 +79,6 @@ class AttachmentIn(BaseModel):
     data_url: str = Field(..., description="data:<mime>;base64,<...>")
 
 
-def _resolve_index_path() -> str:
-    configured = os.getenv("INDEX_DIR")
-    if configured:
-        return str(Path(configured).expanduser().resolve())
-    default = Path(__file__).resolve().parent / "text-embeder/my_book_index_aero"
-    return str(default)
-
-
-def _legacy_class_config() -> Dict[str, Dict[str, Any]]:
-    default_path = _resolve_index_path()
-    return {
-        "AAE 33300: Introduction to Fluid Mechanics": {
-            "subject": "Fundamentals of Aerodynamics",
-            "title": "Fundamentals of Aerodynamics",
-            "kind": "textbook",
-            "doc_sets": [default_path],
-        }
-    }
-
 _teacher_storage: Optional[TeacherWeeklyStorage] = None
 try:
     TEACHER_TOTAL_WEEKS = int(os.getenv("TEACHER_TOTAL_WEEKS", "16"))
@@ -120,11 +94,19 @@ def _get_teacher_storage() -> TeacherWeeklyStorage:
     return _teacher_storage
 
 
-try:
-    _workspace_manager = build_workspace_manager(_legacy_class_config())
-except WorkspaceConfigError as exc:
-    log.error("Failed to initialize workspace manager: %s", exc)
-    raise
+_workspace_manager = None
+
+
+def _get_workspace_manager():
+    """Return the workspace manager, creating it lazily on first call."""
+    global _workspace_manager
+    if _workspace_manager is None:
+        try:
+            _workspace_manager = build_workspace_manager()
+        except WorkspaceConfigError as exc:
+            log.error("Failed to initialize workspace manager: %s", exc)
+            raise
+    return _workspace_manager
 
 
 class AskRequest(BaseModel):
@@ -252,6 +234,7 @@ def _serialize_upload(entry: Optional[Dict[str, Any]]) -> Optional[TeacherUpload
     try:
         return TeacherUploadOut(**entry)
     except Exception:
+        log.warning("Failed to serialize teacher upload entry")
         return None
 
 
@@ -301,6 +284,7 @@ def _save_attachments(attachments: Sequence[AttachmentIn]) -> List[str]:
         try:
             b = base64.b64decode(m.group("data").encode("utf-8"), validate=True)
         except Exception:
+            log.debug("Strict base64 decode failed, using lenient fallback")
             # lenient decode fallback
             b = base64.b64decode(m.group("data").encode("utf-8"))
         # derive extension from mime
@@ -358,22 +342,6 @@ def _structured_citations_from_bundle(
     return structured
 
 
-@contextmanager
-def _temp_env(vars: Dict[str, str]):
-    old: Dict[str, Optional[str]] = {}
-    try:
-        for k, v in vars.items():
-            old[k] = os.getenv(k)
-            os.environ[k] = v
-        yield
-    finally:
-        for k, v in old.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-
-
 # -------- App --------
 app = FastAPI(title="AI-TA HTTP Server", version="0.1.0")
 
@@ -411,14 +379,6 @@ except Exception:
 
 if chats_router is not None:
     app.include_router(chats_router)
-
-# Ensure DB tables exist (dev convenience)
-try:
-    from backend.reports.ai_use.models import init_db as _init_db  # type: ignore
-
-    _init_db()
-except Exception:
-    pass
 
 
 # -------- Knowledge endpoints --------
@@ -569,7 +529,7 @@ def update_teacher_retrieval_weights(payload: TeacherRetrievalWeightsUpdateIn) -
 if _HAS_MULTIPART:
 
     @app.post("/knowledge/materials", response_model=KnowledgeMaterialOut)
-    async def upload_knowledge_material(
+    def upload_knowledge_material(
         subject: str = Form(...),
         title: str = Form(""),
         file: UploadFile = File(...),
@@ -590,7 +550,7 @@ if _HAS_MULTIPART:
         try:
             with tmp_path.open("wb") as dest:
                 while True:
-                    chunk = await file.read(1024 * 1024)
+                    chunk = file.file.read(1024 * 1024)
                     if not chunk:
                         break
                     dest.write(chunk)
@@ -613,7 +573,7 @@ if _HAS_MULTIPART:
             raise HTTPException(status_code=500, detail="Failed to embed knowledge material") from exc
         finally:
             try:
-                await file.close()
+                file.file.close()
             except Exception:
                 pass
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -622,7 +582,7 @@ if _HAS_MULTIPART:
 
 
     @app.post("/teacher/upload", response_model=TeacherUploadOut)
-    async def upload_teacher_material(
+    def upload_teacher_material(
         course: str = Form(..., alias="class"),
         week: int = Form(...),
         kind: str = Form(...),
@@ -643,7 +603,7 @@ if _HAS_MULTIPART:
         try:
             with tmp_path.open("wb") as dest:
                 while True:
-                    chunk = await file.read(1024 * 1024)
+                    chunk = file.file.read(1024 * 1024)
                     if not chunk:
                         break
                     dest.write(chunk)
@@ -670,7 +630,7 @@ if _HAS_MULTIPART:
             raise HTTPException(status_code=500, detail=f"Failed to process upload: {exc}") from exc
         finally:
             try:
-                await file.close()
+                file.file.close()
             except Exception:
                 pass
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -699,6 +659,102 @@ def healthz():
     return {"status": "ok"}
 
 
+# ---------------------------------------------------------------------------
+# pgvector retrieval helper
+# ---------------------------------------------------------------------------
+
+def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "ResearchBundle":
+    """Run the pgvector retrieval pipeline and return a ResearchBundle.
+
+    Uses the shared background event loop so asyncpg connections stay alive.
+    """
+    from .config.contracts import ResearchBundle, ResearchMetadata
+    from .retrieval.pipeline import retrieve_for_question
+    from .retrieval.context_packer import _summarize_snippets
+    from .database.session import get_async_session, run_async
+    from .ai.main_ai import extract_and_filter_keywords
+
+    search_space_id = int(workspace.metadata.get("search_space_id", 0))
+    if not search_space_id:
+        raise RuntimeError(
+            "Workspace missing search_space_id — run migrations and "
+            "set USE_PGVECTOR_RETRIEVAL=true only after seeding the DB."
+        )
+
+    token_budget = int(os.getenv("TOKEN_BUDGET", "6000"))
+
+    # Extract keywords (role: hints appended to original question, not standalone targets)
+    # extract_and_filter_keywords returns (context_summary, term_list)
+    try:
+        _ctx_summary, raw_keywords = extract_and_filter_keywords(q_effective)
+        keywords: List[str] = []
+        for entry in (raw_keywords or []):
+            if isinstance(entry, dict):
+                term = entry.get("term") or entry.get("keyword") or entry.get("name")
+                if isinstance(term, str) and term.strip():
+                    keywords.append(term.strip())
+            elif isinstance(entry, str) and entry.strip():
+                keywords.append(entry.strip())
+    except Exception:
+        keywords = []
+
+    async def _run():
+        async with get_async_session() as db_session:
+            return await retrieve_for_question(
+                query=q_effective,
+                keywords=keywords,
+                search_space_id=search_space_id,
+                db_session=db_session,
+                weight_overrides=weight_overrides or {},
+                top_k=int(os.getenv("K_SEM", "20")),
+                token_budget=token_budget,
+            )
+
+    snippets, diagnostics = run_async(_run())
+
+    # Extract structured knowledge from snippet text (equations, glossary, etc.)
+    equations, glossary, assumptions, _ = _summarize_snippets(snippets)
+
+    allowed_markers = [sn.citation_marker for sn in snippets if sn.citation_marker]
+
+    metadata = ResearchMetadata(
+        keyword_iterations=[{"round": 1, "combined_query": diagnostics.get("combined_query", q_effective)}],
+        found_terms=[],
+        not_found_terms=[],
+        attempted_terms=[q_effective],
+        missing_terms=[],
+        final_query=diagnostics.get("combined_query", q_effective),
+        original_query=q_effective,
+        concept_matches={},
+        concept_match_details={},
+        coverage_gaps=[],
+        refinement_queries=[],
+        subject=cfg.subject_name if cfg else "",
+        allowed_markers=allowed_markers,
+        hit_count_sem=diagnostics.get("hit_count_sem", 0),
+    )
+
+    return ResearchBundle(
+        metadata=metadata,
+        snippets=snippets,
+        equations=equations,
+        assumptions=assumptions,
+        glossary=glossary,
+        coverage_gaps=[],
+        refinement_queries=[],
+        used_ids=[sn.id for sn in snippets],
+        stats=diagnostics,
+        provenance={"source": "pgvector", **{k: str(v) for k, v in diagnostics.items()}},
+        allowed_markers=allowed_markers,
+        found_terms=[],
+        not_found_terms=[],
+        attempted_terms=[q_effective],
+        subject=cfg.subject_name if cfg else "",
+    )
+
+
+# Intentionally sync `def` — FastAPI auto-threads sync endpoints.
+# Do NOT change to `async def` unless the entire pipeline is made async.
 @app.post("/ask")
 def post_ask(payload: AskRequest):
     """Accept a question and/or image attachments, stream back plain-text answer.
@@ -724,7 +780,7 @@ def post_ask(payload: AskRequest):
         )
 
     try:
-        workspace = _workspace_manager.get(class_name)
+        workspace = _get_workspace_manager().get(class_name)
     except WorkspaceNotFound:
         raise HTTPException(status_code=404, detail="Unknown class selection")
     except WorkspaceConfigError as exc:
@@ -735,50 +791,13 @@ def post_ask(payload: AskRequest):
         raise HTTPException(status_code=500, detail="Failed to load class workspace") from exc
 
     subject_name = workspace.subject_name or class_name
-    doc_sets_ordered = workspace.doc_sets()
-    if not doc_sets_ordered:
-        raise HTTPException(status_code=500, detail="No knowledge materials registered for this class")
-
-    doc_sets_override: List[str] = []
-    seen_paths: set[str] = set()
-    for raw in doc_sets_ordered:
-        try:
-            resolved = str(Path(raw).resolve())
-        except Exception:
-            resolved = str(raw)
-        if resolved in seen_paths:
-            continue
-        seen_paths.add(resolved)
-        doc_sets_override.append(resolved)
 
     teacher_storage: Optional[TeacherWeeklyStorage] = None
     try:
         teacher_storage = _get_teacher_storage()
     except Exception:
+        log.warning("Failed to load teacher weekly storage")
         teacher_storage = None
-
-    if teacher_storage is not None:
-        try:
-            teacher_paths = teacher_storage.resolve_week_doc_sets(class_name, include_previous=True)
-        except Exception:
-            teacher_paths = []
-    else:
-        teacher_paths = []
-    if teacher_paths:
-        combined: List[str] = list(doc_sets_override)
-        combined.extend(teacher_paths)
-        deduped: List[str] = []
-        seen = set()
-        for raw in combined:
-            try:
-                resolved = str(Path(raw).resolve())
-            except Exception:
-                resolved = str(raw)
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            deduped.append(resolved)
-        doc_sets_override = deduped
 
     try:
         image_paths = _save_attachments(atts)
@@ -791,13 +810,15 @@ def post_ask(payload: AskRequest):
     image_text = ""
     if image_paths:
         try:
-            image_text = _vision_transcribe(image_paths) or ""
+            image_text = vision_transcribe(image_paths) or ""
         except Exception:
+            log.warning("Vision transcription failed for uploaded images")
             image_text = ""
     if image_text:
         try:
             image_context = extract_keywords(image_text) or ""
         except Exception:
+            log.warning("Keyword extraction from image text failed")
             image_context = ""
         fallback_image_query = " ".join(image_text.split())[:500]
         image_query = image_context.strip() if image_context.strip() else fallback_image_query
@@ -806,7 +827,6 @@ def post_ask(payload: AskRequest):
         elif image_query:
             q_effective = image_query
 
-    opts: Dict[str, str] = {}
     weight_overrides = dict(workspace.weight_overrides)
     for material in workspace.materials:
         if material.weight_override is not None:
@@ -815,22 +835,10 @@ def post_ask(payload: AskRequest):
         try:
             teacher_weights = teacher_storage.get_retrieval_weights(class_name)
         except Exception:
+            log.warning("Failed to get teacher retrieval weights")
             teacher_weights = {}
         else:
             weight_overrides.update(teacher_weights)
-    for kind, value in weight_overrides.items():
-        env_key = f"RETRIEVAL_STORE_WEIGHT_{kind.upper()}"
-        opts[env_key] = f"{value:.4f}"
-    if payload.alias_miner is not None:
-        opts["RETRIEVAL_ALIAS_MINER"] = "on" if payload.alias_miner else "off"
-    if payload.proximity is not None:
-        opts["RETRIEVAL_PROXIMITY"] = "on" if payload.proximity else "off"
-    if payload.prf is not None:
-        opts["RETRIEVAL_PRF"] = "on" if payload.prf else "off"
-    if payload.def_bias is not None:
-        opts["PACK_DEF_BIAS"] = "on" if payload.def_bias else "off"
-    if payload.sanitize is not None:
-        opts["RETRIEVAL_SANITIZE"] = "on" if payload.sanitize else "off"
 
     stdout_buffer = io.StringIO()
     answer_chunks: List[str] = []
@@ -838,54 +846,45 @@ def post_ask(payload: AskRequest):
     error_text: Optional[str] = None
 
     try:
-        with _temp_env(opts):
-            with redirect_stdout(stdout_buffer):
-                # Respect workspace subject for keyword filtering
+        cfg = RequestConfig.from_env()
+        cfg.set_subject(subject_name, "server")
+
+        with redirect_stdout(stdout_buffer):
+            bundle = _ask_pgvector(
+                q_effective=q_effective,
+                workspace=workspace,
+                weight_overrides=weight_overrides,
+                cfg=cfg,
+            )
+
+            parsed_task: Optional[ParsedTask] = None
+            if q_effective.strip():
                 try:
-                    set_subject_name(subject_name, "server")
-                except Exception:
-                    pass
-
-                # Load retrieval assets mirroring CLI behavior
-                try:
-                    paths = [Path(p).resolve() for p in (doc_sets_override or [])]
-                    if len(paths) > 1:
-                        load_assets_all(paths)
-                    elif paths:
-                        load_assets(paths[0])
-                except Exception as e:
-                    raise RuntimeError(f"failed to load indexes: {e}")
-
-                # Use the same pipeline as `python -m backend.qa ask`
-                orch = Orchestrator()
-                retrieval_opts = {
-                    "doc_sets": doc_sets_override,
-                    "k_sem": int(os.getenv("K_SEM", "30")),
-                    "k_lex": int(os.getenv("K_LEX", "30")),
-                    "token_budget": int(os.getenv("TOKEN_BUDGET", "6000")),
-                }
-                bundle = orch._iterative_research(q_effective, retrieval_opts)
-
-                parsed_task: Optional[ParsedTask] = None
-                if q_effective.strip():
-                    try:
-                        parsed_task = parse_question(q_effective)
-                    except Exception:
-                        parsed_task = None
-                if parsed_task is None:
-                    fallback_problem = q_effective.strip() or "Question"
-                    parsed_task = ParsedTask(
-                        problem_type=fallback_problem,
-                        asked_outputs=["answer"],
-                        asked_output_keys=["answer"],
+                    parsed_task = parse_question(
+                        q_effective, subject=cfg.subject_name,
                     )
-
-                solution = solve_with_bundle(parsed_task, bundle)
-                final = format_answer(solution, bundle, include_background=False)
-                answer_chunks.append(final.text)
-                structured_citations = _structured_citations_from_bundle(
-                    bundle, getattr(final, "citations", [])
+                except Exception:
+                    log.error("Question parsing failed", exc_info=True)
+                    parsed_task = None
+            if parsed_task is None:
+                fallback_problem = q_effective.strip() or "Question"
+                parsed_task = ParsedTask(
+                    problem_type=fallback_problem,
+                    asked_outputs=["answer"],
+                    asked_output_keys=["answer"],
                 )
+
+            solution = solve_with_bundle(
+                parsed_task, bundle, subject=cfg.subject_name,
+            )
+            final = format_answer(
+                solution, bundle, include_background=False,
+                subject=cfg.subject_name,
+            )
+            answer_chunks.append(final.text)
+            structured_citations = _structured_citations_from_bundle(
+                bundle, getattr(final, "citations", [])
+            )
     except Exception as e:
         log.exception("qa ask pipeline failed")
         error_text = f"[error] {e}"

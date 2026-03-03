@@ -4,14 +4,14 @@ pymupdf
 uvicorn[standard]
 gunicorn
 pydantic>=2
-SQLAlchemy>=2
+SQLAlchemy[asyncio]>=2
+pgvector
+asyncpg
 weasyprint>=61
 Markdown>=3.6
 pygments>=2.18
 openai
 numpy
-pandas
 tiktoken
-faiss-cpu==1.8.0.post1
 python-dotenv
 requests

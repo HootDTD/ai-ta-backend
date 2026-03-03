@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 
-from backend.reports.ai_use.models import Base, AIUseReportORM
+from backend.reports.ai_use.models import create_report, get_report
 from backend.reports.ai_use.service import (
     build_evidence_pack,
     generate_report,
     redact,
     excerpt,
 )
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 
 def _fake_chat_loader(chat_id: str):
@@ -67,36 +64,29 @@ def test_evidence_assembly():
     assert any("[Textbook, p." in r for r in pack["file_references"])
 
 
-def test_persistence_roundtrip(tmp_path):
-    # setup in-memory or temp sqlite
-    db_url = f"sqlite:///{tmp_path}/test.db"
-    engine = create_engine(db_url, future=True)
-    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
-    Base.metadata.create_all(engine)
-
+def test_persistence_roundtrip():
+    """Test create_report and get_report via Supabase mock."""
     pack = build_evidence_pack("chat-2", style="formal", length="long", chat_loader=_fake_chat_loader)
     payload = generate_report(pack, style="formal", length="long")
 
-    with TestingSession() as db:
-        obj = AIUseReportORM(
-            chat_id="chat-2",
-            style="formal",
-            length="long",
-            markdown=payload["markdown"],
-            jsonld=payload["jsonld"],
-            model_fingerprint=payload["model_fingerprint"],
-            tool_calls=payload["tool_calls"],
-            prompt_hashes=payload["prompt_hashes"],
-        )
-        db.add(obj)
-        db.commit()
-        db.refresh(obj)
+    row = create_report(
+        chat_id="chat-2",
+        style="formal",
+        length="long",
+        markdown=payload["markdown"],
+        jsonld=payload["jsonld"],
+        model_fingerprint=payload["model_fingerprint"],
+        tool_calls=payload["tool_calls"],
+        prompt_hashes=payload["prompt_hashes"],
+    )
 
-        fetched = db.get(AIUseReportORM, obj.id)
-        assert fetched is not None
-        assert fetched.chat_id == "chat-2"
-        assert fetched.style == "formal"
-        assert isinstance(fetched.markdown, str) and len(fetched.markdown) > 0
-        # jsonld stored and retrievable
-        assert fetched.jsonld is not None
+    assert row["chat_id"] == "chat-2"
+    assert row["style"] == "formal"
+    report_id = row["id"]
 
+    fetched = get_report(report_id)
+    assert fetched is not None
+    assert fetched["chat_id"] == "chat-2"
+    assert fetched["style"] == "formal"
+    assert isinstance(fetched["markdown"], str) and len(fetched["markdown"]) > 0
+    assert fetched["jsonld"] is not None
