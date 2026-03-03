@@ -25,7 +25,7 @@ def _get_reranker():
         return _reranker_instance
 
     _reranker_loaded = True
-    from ..config import rerankers_enabled, get_reranker_model
+    from ..config.settings import rerankers_enabled, get_reranker_model
     if not rerankers_enabled():
         return None
 

@@ -16,8 +16,8 @@ log = logging.getLogger(__name__)
 
 from openai import OpenAI
 
-from .config import get_subject_name, get_citation_label, get_runtime_dir
-from .contracts import ParsedTask, ProposedSolution, FinalAnswer, ResearchBundle
+from ..config.settings import get_subject_name, get_citation_label, get_runtime_dir
+from ..config.contracts import ParsedTask, ProposedSolution, FinalAnswer, ResearchBundle
 from .solver import run_python
 
 

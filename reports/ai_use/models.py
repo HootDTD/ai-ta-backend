@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from backend import supabase_client as sb
+from backend.vendors import supabase_client as sb
 
 
 # -------------------- Pydantic Schemas --------------------

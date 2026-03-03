@@ -3,24 +3,21 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import uuid
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
-from backend.indexers.handwriting import ingest as handwriting_ingest, IngestOptions
-from backend.knowledge import KnowledgeManager
-from backend.store_weights import (
+from .manager import KnowledgeManager
+from backend.config.weights import (
     WEIGHT_KINDS,
     WEIGHT_MIN,
     WEIGHT_MAX,
     get_env_weights,
     normalize_weights,
 )
-from backend import supabase_client as sb
+from backend.vendors import supabase_client as sb
 
 log = logging.getLogger(__name__)
 
@@ -196,70 +193,13 @@ class TeacherWeeklyStorage:
         course_row = self._get_or_create_course(course)
         resolved_title = (title or f"Week {week} {kind_norm.title()}").strip()
 
-        try:
-            ingestion = self._ingest_with_handwriting(
-                slug=course_row.get("slug", _slugify_course(course)),
-                week=week,
-                kind=kind_norm,
-                pdf_path=pdf_path,
-                title=resolved_title,
-            )
-        except Exception as exc:
-            raise RuntimeError(f"Teacher ingestion failed: {exc}") from exc
-
-        index_path = ingestion.get("index_path")
-        record = UploadRecord(
-            id=uuid.uuid4().hex,
-            week=week,
-            kind=kind_norm,
-            title=ingestion.get("title", resolved_title),
-            uploaded_at=ingestion.get("created_at", _utc_now()),
-            source_name=pdf_path.name,
-            index_path=str(index_path) if index_path else "",
-            doc_id=str(ingestion.get("doc_id", "")) if ingestion.get("doc_id") else "",
-            page_count=ingestion.get("page_count"),
-            material_id=str(ingestion.get("material_id", "")) if ingestion.get("material_id") else "",
+        # TODO: wire pgvector-native ingestion via AITAIndexingService
+        #       (the old FAISS handwriting pipeline has been removed)
+        raise NotImplementedError(
+            "Teacher upload ingestion needs to be ported to the pgvector "
+            "AITAIndexingService pipeline. The old FAISS-based handwriting "
+            "ingest has been removed."
         )
-
-        # Mark old latest as not-latest
-        sb.update("teacher_uploads", {
-            "course_id": f"eq.{course_row['id']}",
-            "week": f"eq.{week}",
-            "kind": f"eq.{kind_norm}",
-            "is_latest": "eq.true",
-        }, {"is_latest": False})
-
-        # Insert new upload as latest
-        sb.insert("teacher_uploads", {
-            "course_id": course_row["id"],
-            "week": week,
-            "kind": kind_norm,
-            "title": record.title,
-            "uploaded_at": record.uploaded_at,
-            "source_name": record.source_name,
-            "index_path": record.index_path,
-            "doc_id": record.doc_id,
-            "page_count": record.page_count,
-            "material_id": record.material_id,
-            "is_latest": True,
-        })
-
-        # Register in knowledge stores
-        self._register_store_entry(course, kind_norm, week, record.title, record.index_path)
-
-        # Dual-write to new pgvector schema (when USE_PGVECTOR_RETRIEVAL=true)
-        from .config import use_pgvector_retrieval
-        if use_pgvector_retrieval():
-            self._dual_write_pgvector(
-                course=course,
-                kind=kind_norm,
-                week=week,
-                title=record.title,
-                index_path=record.index_path,
-                page_count=record.page_count,
-            )
-
-        return record
 
     def set_current_week(self, course: str, week: int) -> Dict[str, Any]:
         if week < 1 or week > self.total_weeks:
@@ -301,131 +241,6 @@ class TeacherWeeklyStorage:
                 if resolved not in paths:
                     paths.append(resolved)
         return paths
-
-    # ------------------------------------------------------------------
-    # Ingestion (local FAISS pipeline — unchanged)
-    # ------------------------------------------------------------------
-    def _ingest_with_handwriting(self, *, slug: str, week: int, kind: str, pdf_path: Path, title: str) -> Dict[str, Any]:
-        slug = (slug or "").strip()
-        slug = slug or _slugify_course(slug)
-        base_dir = self.index_root / f"{slug}-week-{week:02d}-{kind}"
-        base_dir.mkdir(parents=True, exist_ok=True)
-        material_id = uuid.uuid4().hex
-        out_dir = base_dir / f"km_{material_id}"
-        out_dir.mkdir(parents=True, exist_ok=False)
-        doc_id = f"{slug}-{kind}-{material_id[:8]}"
-        opts = self._build_handwriting_options()
-        try:
-            handwriting_ingest(pdf_path, doc_id=doc_id, out_dir=out_dir, options=opts)
-        except Exception:
-            shutil.rmtree(out_dir, ignore_errors=True)
-            raise
-        finally:
-            with suppress(FileNotFoundError):
-                pdf_path.unlink()
-
-        import json
-        meta: Dict[str, Any] = {}
-        meta_path = out_dir / "meta.json"
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            except Exception:
-                meta = {}
-        store_kind = "slides" if kind == "slides" else "notes"
-        meta["week"] = week
-        meta["store_kind"] = store_kind
-        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-
-        return {
-            "title": title,
-            "index_path": str(out_dir.resolve()),
-            "doc_id": doc_id,
-            "material_id": material_id,
-            "created_at": meta.get("created_at", _utc_now()),
-            "page_count": meta.get("page_count"),
-            "store_kind": store_kind,
-            "week": week,
-        }
-
-    def _dual_write_pgvector(
-        self,
-        *,
-        course: str,
-        kind: str,
-        week: int,
-        title: str,
-        index_path: str,
-        page_count: Optional[int],
-    ) -> None:
-        """Dual-write teacher upload items into the pgvector schema.
-
-        Reads items.jsonl from the freshly-created index directory and indexes
-        them via AITAIndexingService. Failures are logged but not re-raised.
-        """
-        import json as _json
-        from pathlib import Path as _Path
-        from .knowledge import _index_items_to_pgvector
-
-        items_path = _Path(index_path) / "items.jsonl"
-        if not items_path.exists():
-            log.warning("pgvector dual-write: items.jsonl not found at %s", items_path)
-            return
-
-        # Load Item-like objects from JSONL as simple namespaces
-        items = []
-        try:
-            with items_path.open(encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        d = _json.loads(line)
-                        # Create a simple namespace that mimics Item attributes
-                        items.append(type("Item", (), d)())
-        except Exception as e:
-            log.error("pgvector dual-write: failed reading items.jsonl: %s", e)
-            return
-
-        if not items:
-            return
-
-        source_markdown = "\n\n".join(
-            getattr(it, "text", "") or getattr(it, "raw_text", "") or ""
-            for it in items
-        )
-
-        _index_items_to_pgvector(
-            subject=course,
-            title=title,
-            kind=kind,
-            items=items,
-            source_markdown=source_markdown,
-            page_count=page_count,
-            week=week,
-            metadata={"index_path": index_path, "week": week},
-        )
-
-    def _build_handwriting_options(self) -> IngestOptions:
-        token_limit = self._env_int(1000, "HANDWRITING_TOKEN_LIMIT", "KNOWLEDGE_TOKEN_LIMIT")
-        overlap = self._env_int(150, "HANDWRITING_OVERLAP_TOKENS", "KNOWLEDGE_OVERLAP_TOKENS")
-        embed_model = self._env_str("text-embedding-3-large", "HANDWRITING_EMBED_MODEL", "KNOWLEDGE_EMBED_MODEL")
-        embed_dim = self._env_int(3072, "HANDWRITING_EMBED_DIM", "KNOWLEDGE_EMBED_DIM")
-        workers = max(1, self._env_int(4, "HANDWRITING_WORKERS"))
-        dpi_raw = self._env_str("", "HANDWRITING_DPI", "OCR_DPI")
-        dpi = None
-        if dpi_raw:
-            try:
-                dpi = int(dpi_raw)
-            except ValueError:
-                dpi = None
-        return IngestOptions(
-            token_limit=token_limit,
-            overlap_tokens=overlap,
-            embed_model=embed_model,
-            embed_dim=embed_dim,
-            workers=workers,
-            dpi=dpi,
-        )
 
     def _env_int(self, default: int, *names: str) -> int:
         for name in names:

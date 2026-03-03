@@ -15,7 +15,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from backend import supabase_client as sb
+from backend.vendors import supabase_client as sb
 
 log = logging.getLogger(__name__)
 
@@ -143,15 +143,13 @@ def _index_items_to_pgvector(
 ) -> None:
     """Dual-write: index Item objects into the new pgvector schema.
 
-    Called from add_pdf_material() and teacher_weekly.record_upload() when
-    USE_PGVECTOR_RETRIEVAL=true. Runs synchronously via asyncio.run() since
-    the callers are sync. Failures are logged but not re-raised so the
-    primary FAISS path still succeeds.
+    Called from add_pdf_material() and teacher_weekly.record_upload().
+    Bridges to the shared background event loop via run_async().
+    Failures are logged but not re-raised.
     """
-    import asyncio as _asyncio
     import hashlib as _hashlib
 
-    from .db import _get_session_factory
+    from backend.database.session import _get_session_factory, run_async
     from .indexing.connector_document import AITAConnectorDocument
     from .indexing.document_hashing import compute_unique_identifier_hash, compute_content_hash
     from .indexing.indexing_service import AITAIndexingService
@@ -206,15 +204,7 @@ def _index_items_to_pgvector(
             log.error("pgvector dual-write failed for '%s': %s", title, exc)
 
     try:
-        loop = _asyncio.get_event_loop()
-        if loop.is_running():
-            # Running inside an async context (unlikely for sync knowledge.py but safe)
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(_asyncio.run, _run())
-                future.result(timeout=300)
-        else:
-            loop.run_until_complete(_run())
+        run_async(_run())
     except Exception as exc:
         log.error("pgvector dual-write runner error for '%s': %s", title, exc)
 
@@ -458,21 +448,19 @@ class KnowledgeManager:
                 store_id = store_rows[0]["id"]
                 _upload_items_to_supabase(store_id, items, embeddings, meta)
 
-            # Dual-write to new pgvector schema (when USE_PGVECTOR_RETRIEVAL=true)
-            from .config import use_pgvector_retrieval
-            if use_pgvector_retrieval():
-                _index_items_to_pgvector(
-                    subject=subject,
-                    title=title,
-                    kind="textbook",
-                    items=items,
-                    source_markdown="\n\n".join(
-                        (getattr(it, "text", "") or "") for it in items
-                    ),
-                    page_count=page_count,
-                    week=None,
-                    metadata={"source_pdf": pdf_path.name, "index_path": str(out_dir.resolve())},
-                )
+            # Index into pgvector schema
+            _index_items_to_pgvector(
+                subject=subject,
+                title=title,
+                kind="textbook",
+                items=items,
+                source_markdown="\n\n".join(
+                    (getattr(it, "text", "") or "") for it in items
+                ),
+                page_count=page_count,
+                week=None,
+                metadata={"source_pdf": pdf_path.name, "index_path": str(out_dir.resolve())},
+            )
 
         except Exception:
             shutil.rmtree(out_dir, ignore_errors=True)

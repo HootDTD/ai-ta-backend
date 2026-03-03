@@ -16,7 +16,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from ..db import AITAChunk, AITADocument
+from ..database.models import AITAChunk, AITADocument
 from ..indexing.document_embedder import embed_text
 
 log = logging.getLogger(__name__)

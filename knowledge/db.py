@@ -11,14 +11,14 @@ Used when USE_PGVECTOR_RETRIEVAL=true.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 
-from .db import AITADocument, DocumentStatus, SearchSpace, get_async_session
-from .store_weights import WEIGHT_KINDS
+from backend.database.models import AITADocument, DocumentStatus, SearchSpace
+from backend.database.session import get_async_session, run_async
+from backend.config.weights import WEIGHT_KINDS
 
 log = logging.getLogger(__name__)
 
@@ -37,14 +37,14 @@ class DBKnowledgeManager:
     # ------------------------------------------------------------------
 
     def list_subjects(self) -> List[Dict[str, Any]]:
-        return asyncio.run(self._list_subjects_async())
+        return run_async(self._list_subjects_async())
 
     def list_stores(self, subject: str) -> List[Dict[str, Any]]:
-        return asyncio.run(self._list_stores_async(subject))
+        return run_async(self._list_stores_async(subject))
 
     def get_search_space_id(self, identifier: str) -> Optional[int]:
         """Return SearchSpace.id for slug, name, or str(id). Returns None if not found."""
-        return asyncio.run(self._get_search_space_id_async(identifier))
+        return run_async(self._get_search_space_id_async(identifier))
 
     def register_search_space(
         self,
@@ -54,7 +54,7 @@ class DBKnowledgeManager:
         weight_overrides: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Any]:
         """Create or retrieve a SearchSpace row. Returns dict with id, name, slug."""
-        return asyncio.run(
+        return run_async(
             self._register_search_space_async(name, slug, subject_name, weight_overrides)
         )
 
@@ -179,7 +179,7 @@ class DBKnowledgeManager:
 
         stores: List[Dict[str, Any]] = []
         for doc in docs:
-            meta = doc.metadata or {}
+            meta = doc.document_metadata or {}
             stores.append(
                 {
                     "id": str(doc.id),

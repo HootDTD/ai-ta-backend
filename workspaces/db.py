@@ -3,10 +3,9 @@
 Implements WorkspaceRepository by querying the aita_search_spaces and
 aita_documents tables instead of Supabase REST API or static config files.
 
-Used when USE_PGVECTOR_RETRIEVAL=true.
+This is the primary workspace repository for all retrieval.
 """
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -14,8 +13,9 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from .db import AITADocument, SearchSpace, get_async_session
-from .workspaces import ClassWorkspace, WorkspaceMaterial, WorkspaceRepository
+from ..database.models import AITADocument, SearchSpace
+from ..database.session import get_async_session, run_async
+from .manager import ClassWorkspace, WorkspaceMaterial, WorkspaceRepository
 
 log = logging.getLogger(__name__)
 
@@ -35,24 +35,8 @@ class DBWorkspaceRepository(WorkspaceRepository):
     """
 
     def load_workspace(self, identifier: str) -> ClassWorkspace:
-        """Synchronous entry point; runs async query on a new event loop."""
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # We're inside an async context — use run_coroutine_threadsafe
-                import concurrent.futures
-                future = concurrent.futures.Future()
-
-                async def _run():
-                    result = await self._load_workspace_async(identifier)
-                    future.set_result(result)
-
-                asyncio.ensure_future(_run())
-                return future.result(timeout=30)
-            else:
-                return loop.run_until_complete(self._load_workspace_async(identifier))
-        except RuntimeError:
-            return asyncio.run(self._load_workspace_async(identifier))
+        """Synchronous entry point; bridges to the shared background loop."""
+        return run_async(self._load_workspace_async(identifier))
 
     async def _load_workspace_async(self, identifier: str) -> ClassWorkspace:
         async with get_async_session() as session:
@@ -119,7 +103,7 @@ class DBWorkspaceRepository(WorkspaceRepository):
 
         materials: List[WorkspaceMaterial] = []
         for doc in docs:
-            meta = doc.metadata or {}
+            meta = doc.document_metadata or {}
             materials.append(
                 WorkspaceMaterial(
                     id=str(doc.id),

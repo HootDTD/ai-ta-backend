@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from .models import create_report, get_report, list_reports
 from .service import build_evidence_pack, generate_report as gen_report
-from backend import supabase_client as sb
+from backend.vendors import supabase_client as sb
 
 router = APIRouter()
 

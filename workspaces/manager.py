@@ -18,7 +18,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import requests
 
-from .store_weights import WEIGHT_KINDS, WEIGHT_MIN, WEIGHT_MAX, clamp_weight
+from ..config.weights import WEIGHT_KINDS, WEIGHT_MIN, WEIGHT_MAX, clamp_weight
 
 log = logging.getLogger(__name__)
 
@@ -485,11 +485,11 @@ class WorkspaceManager:
 def build_workspace_manager(static_config: Optional[Mapping[str, Mapping[str, Any]]] = None) -> WorkspaceManager:
     """Factory that builds a workspace manager using environment settings.
 
-    When USE_PGVECTOR_RETRIEVAL=true, returns a manager backed by the
-    aita_search_spaces table (DBWorkspaceRepository) with the Supabase
-    REST repo as a fallback for any workspaces not yet migrated.
+    Returns a manager backed by the aita_search_spaces table
+    (DBWorkspaceRepository) with the Supabase REST repo as a fallback
+    for any workspaces not yet migrated.
     """
-    from .config import use_pgvector_retrieval
+    from .db import DBWorkspaceRepository
 
     supabase_url = os.getenv("SUPABASE_URL")
     supabase_api_key = os.getenv("SUPABASE_API_KEY")
@@ -498,43 +498,20 @@ def build_workspace_manager(static_config: Optional[Mapping[str, Mapping[str, An
     if static_config:
         fallback_repo = StaticWorkspaceRepository(static_config)
 
-    # pgvector path: DB is primary, Supabase REST is fallback (bridge period)
-    if use_pgvector_retrieval():
-        from .workspace_db import DBWorkspaceRepository
-        db_repo = DBWorkspaceRepository()
+    db_repo = DBWorkspaceRepository()
 
-        if supabase_url and supabase_api_key:
-            supabase_fallback = SupabaseWorkspaceRepository(
-                supabase_url=supabase_url,
-                service_key=supabase_api_key,
-            )
-            # Chain: DB primary → Supabase → static
-            return WorkspaceManager(db_repo, fallback=supabase_fallback)
-
-        log.warning(
-            "USE_PGVECTOR_RETRIEVAL=true but SUPABASE_URL not set; "
-            "using DB-only workspace repository."
-        )
-        return WorkspaceManager(db_repo, fallback=fallback_repo)
-
-    # Original FAISS path (unchanged)
     if supabase_url and supabase_api_key:
-        primary_repo = SupabaseWorkspaceRepository(
+        supabase_fallback = SupabaseWorkspaceRepository(
             supabase_url=supabase_url,
             service_key=supabase_api_key,
         )
-    elif fallback_repo is not None:
-        primary_repo = fallback_repo
-        fallback_repo = None
-        log.warning(
-            "SUPABASE_URL/SUPABASE_API_KEY not set; using static workspace config only."
-        )
-    else:
-        raise WorkspaceConfigError(
-            "Supabase credentials missing and no static workspace fallback provided."
-        )
+        # Chain: DB primary -> Supabase -> static
+        return WorkspaceManager(db_repo, fallback=supabase_fallback)
 
-    return WorkspaceManager(primary_repo, fallback=fallback_repo)
+    log.warning(
+        "SUPABASE_URL not set; using DB-only workspace repository."
+    )
+    return WorkspaceManager(db_repo, fallback=fallback_repo)
 
 
 __all__ = [

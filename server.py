@@ -16,30 +16,21 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from contextlib import contextmanager, redirect_stdout
 
-# Import the callable core entrypoint using package‑relative import to avoid
-# path issues when running under different working directories.
-from .core import _vision_transcribe
-from .config import get_runtime_dir, set_subject_name, RequestConfig
-from .orchestrator import Orchestrator
-from .retriever import (
-    load_assets,
-    load_assets_all,
-    RetrievalContext,
-)
-from . import retriever as retriever_mod
-from .knowledge import KnowledgeManager
-from .store_weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
-from .main_ai import extract_keywords, parse_question, solve_with_bundle, format_answer
-from .contracts import ParsedTask
+from .ai.vision import vision_transcribe
+from .config.settings import get_runtime_dir, set_subject_name, RequestConfig
+from .ai.orchestrator import Orchestrator
+from .knowledge.manager import KnowledgeManager
+from .config.weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
+from .ai.main_ai import extract_keywords, parse_question, solve_with_bundle, format_answer
+from .config.contracts import ParsedTask
 from .citations.formatter import format_citations
-from .teacher_weekly import TeacherWeeklyStorage
-from .workspaces import (
+from .knowledge.teacher_weekly import TeacherWeeklyStorage
+from .workspaces.manager import (
     WorkspaceConfigError,
     WorkspaceNotFound,
     WorkspaceError,
     build_workspace_manager,
 )
-from .config import use_pgvector_retrieval
 
 try:  # pragma: no cover - optional dependency detection
     importlib.import_module("python_multipart")
@@ -669,21 +660,19 @@ def healthz():
 
 
 # ---------------------------------------------------------------------------
-# pgvector retrieval helper — called from post_ask when USE_PGVECTOR_RETRIEVAL=true
+# pgvector retrieval helper
 # ---------------------------------------------------------------------------
 
 def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "ResearchBundle":
     """Run the pgvector retrieval pipeline and return a ResearchBundle.
 
-    Runs the async pipeline synchronously (FastAPI auto-threads sync handlers
-    so asyncio.run() is safe here).
+    Uses the shared background event loop so asyncpg connections stay alive.
     """
-    import asyncio
-    from .contracts import ResearchBundle, ResearchMetadata
+    from .config.contracts import ResearchBundle, ResearchMetadata
     from .retrieval.pipeline import retrieve_for_question
     from .retrieval.context_packer import _summarize_snippets
-    from .db import get_async_session
-    from .main_ai import extract_and_filter_keywords
+    from .database.session import get_async_session, run_async
+    from .ai.main_ai import extract_and_filter_keywords
 
     search_space_id = int(workspace.metadata.get("search_space_id", 0))
     if not search_space_id:
@@ -721,7 +710,7 @@ def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "
                 token_budget=token_budget,
             )
 
-    snippets, diagnostics = asyncio.run(_run())
+    snippets, diagnostics = run_async(_run())
 
     # Extract structured knowledge from snippet text (equations, glossary, etc.)
     equations, glossary, assumptions, _ = _summarize_snippets(snippets)
@@ -802,24 +791,6 @@ def post_ask(payload: AskRequest):
         raise HTTPException(status_code=500, detail="Failed to load class workspace") from exc
 
     subject_name = workspace.subject_name or class_name
-    doc_sets_ordered = workspace.doc_sets()
-    # pgvector path: doc_sets() returns [] (no FAISS dirs) — that's fine,
-    # materials are in aita_documents and fetched at query time.
-    if not doc_sets_ordered and not use_pgvector_retrieval():
-        raise HTTPException(status_code=500, detail="No knowledge materials registered for this class")
-
-    doc_sets_override: List[str] = []
-    seen_paths: set[str] = set()
-    for raw in doc_sets_ordered:
-        try:
-            resolved = str(Path(raw).resolve())
-        except Exception:
-            log.debug("Path resolve failed for %s, using raw string", raw)
-            resolved = str(raw)
-        if resolved in seen_paths:
-            continue
-        seen_paths.add(resolved)
-        doc_sets_override.append(resolved)
 
     teacher_storage: Optional[TeacherWeeklyStorage] = None
     try:
@@ -827,31 +798,6 @@ def post_ask(payload: AskRequest):
     except Exception:
         log.warning("Failed to load teacher weekly storage")
         teacher_storage = None
-
-    if teacher_storage is not None:
-        try:
-            teacher_paths = teacher_storage.resolve_week_doc_sets(class_name, include_previous=True)
-        except Exception:
-            log.warning("Failed to resolve teacher week doc sets")
-            teacher_paths = []
-    else:
-        teacher_paths = []
-    if teacher_paths:
-        combined: List[str] = list(doc_sets_override)
-        combined.extend(teacher_paths)
-        deduped: List[str] = []
-        seen = set()
-        for raw in combined:
-            try:
-                resolved = str(Path(raw).resolve())
-            except Exception:
-                log.debug("Path resolve failed, using raw string")
-                resolved = str(raw)
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            deduped.append(resolved)
-        doc_sets_override = deduped
 
     try:
         image_paths = _save_attachments(atts)
@@ -864,7 +810,7 @@ def post_ask(payload: AskRequest):
     image_text = ""
     if image_paths:
         try:
-            image_text = _vision_transcribe(image_paths) or ""
+            image_text = vision_transcribe(image_paths) or ""
         except Exception:
             log.warning("Vision transcription failed for uploaded images")
             image_text = ""
@@ -881,7 +827,6 @@ def post_ask(payload: AskRequest):
         elif image_query:
             q_effective = image_query
 
-    opts: Dict[str, str] = {}
     weight_overrides = dict(workspace.weight_overrides)
     for material in workspace.materials:
         if material.weight_override is not None:
@@ -894,19 +839,6 @@ def post_ask(payload: AskRequest):
             teacher_weights = {}
         else:
             weight_overrides.update(teacher_weights)
-    for kind, value in weight_overrides.items():
-        env_key = f"RETRIEVAL_STORE_WEIGHT_{kind.upper()}"
-        opts[env_key] = f"{value:.4f}"
-    if payload.alias_miner is not None:
-        opts["RETRIEVAL_ALIAS_MINER"] = "on" if payload.alias_miner else "off"
-    if payload.proximity is not None:
-        opts["RETRIEVAL_PROXIMITY"] = "on" if payload.proximity else "off"
-    if payload.prf is not None:
-        opts["RETRIEVAL_PRF"] = "on" if payload.prf else "off"
-    if payload.def_bias is not None:
-        opts["PACK_DEF_BIAS"] = "on" if payload.def_bias else "off"
-    if payload.sanitize is not None:
-        opts["RETRIEVAL_SANITIZE"] = "on" if payload.sanitize else "off"
 
     stdout_buffer = io.StringIO()
     answer_chunks: List[str] = []
@@ -914,47 +846,16 @@ def post_ask(payload: AskRequest):
     error_text: Optional[str] = None
 
     try:
-        # Per-request config — no global state mutation
         cfg = RequestConfig.from_env()
         cfg.set_subject(subject_name, "server")
 
         with redirect_stdout(stdout_buffer):
-            if use_pgvector_retrieval():
-                # -------------------------------------------------------
-                # pgvector path — no FAISS loading, no per-keyword loops
-                # -------------------------------------------------------
-                bundle = _ask_pgvector(
-                    q_effective=q_effective,
-                    workspace=workspace,
-                    weight_overrides=weight_overrides,
-                    cfg=cfg,
-                )
-            else:
-                # -------------------------------------------------------
-                # Legacy FAISS path — unchanged bridge period code
-                # -------------------------------------------------------
-                # Per-request retrieval context — holds FAISS indexes, SQLite conns, etc.
-                rctx = RetrievalContext(flags=opts)
-
-                # Load retrieval assets into request-scoped context
-                try:
-                    paths = [Path(p).resolve() for p in (doc_sets_override or [])]
-                    if len(paths) > 1:
-                        load_assets_all(paths, ctx=rctx)
-                    elif paths:
-                        load_assets(paths[0], ctx=rctx)
-                except Exception as e:
-                    raise RuntimeError(f"failed to load indexes: {e}")
-
-                # Use the same pipeline as `python -m backend.qa ask`
-                orch = Orchestrator(ctx=rctx, cfg=cfg)
-                retrieval_opts = {
-                    "doc_sets": doc_sets_override,
-                    "k_sem": int(os.getenv("K_SEM", "30")),
-                    "k_lex": int(os.getenv("K_LEX", "30")),
-                    "token_budget": int(os.getenv("TOKEN_BUDGET", "6000")),
-                }
-                bundle = orch._iterative_research(q_effective, retrieval_opts)
+            bundle = _ask_pgvector(
+                q_effective=q_effective,
+                workspace=workspace,
+                weight_overrides=weight_overrides,
+                cfg=cfg,
+            )
 
             parsed_task: Optional[ParsedTask] = None
             if q_effective.strip():

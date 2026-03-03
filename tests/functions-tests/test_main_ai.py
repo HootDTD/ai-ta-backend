@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import types
 
-import backend.main_ai as mai
+import backend.ai.main_ai as mai
 
 
 def _make_fake_client(response_json: dict | str | None = None):

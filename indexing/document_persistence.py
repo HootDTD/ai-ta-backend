@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import object_session
 from sqlalchemy.orm.attributes import set_committed_value
 
-from ..db import AITADocument, DocumentStatus
+from ..database.models import AITADocument, DocumentStatus
 
 
 async def rollback_and_persist_failure(

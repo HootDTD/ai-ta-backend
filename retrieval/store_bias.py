@@ -13,7 +13,7 @@ Applying bias post-rerank is correct:
 
 from typing import Any, Optional
 
-from ..store_weights import get_env_weight
+from ..config.weights import get_env_weight
 
 
 def apply_store_biases(

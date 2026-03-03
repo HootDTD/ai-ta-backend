@@ -19,7 +19,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db import AITAChunk, AITADocument, DocumentStatus
+from ..database.models import AITAChunk, AITADocument, DocumentStatus
 from .connector_document import AITAConnectorDocument
 from .document_chunker import items_to_chunk_texts
 from .document_embedder import embed_text

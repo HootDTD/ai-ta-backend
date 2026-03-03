@@ -42,24 +42,6 @@ if "openai" not in sys.modules:
     openai_stub.OpenAI = _DummyOpenAI
     sys.modules["openai"] = openai_stub
 
-faiss_stub = types.ModuleType("faiss")
-
-
-class _DummyIndex:
-    def __init__(self, *args, **kwargs):
-        pass
-
-
-def _dummy_read_index(*args, **kwargs):
-    return _DummyIndex()
-
-
-if "faiss" not in sys.modules:
-    faiss_stub.Index = _DummyIndex
-    faiss_stub.IndexFlatIP = _DummyIndex
-    faiss_stub.read_index = _dummy_read_index
-    sys.modules["faiss"] = faiss_stub
-
 if "numpy" not in sys.modules:
     try:
         import numpy  # use real numpy when available
@@ -78,63 +60,6 @@ if "numpy" not in sys.modules:
         numpy_stub.int64 = "int64"
         numpy_stub.save = lambda path, arr: None
         sys.modules["numpy"] = numpy_stub
-
-if "pandas" not in sys.modules:
-    try:
-        import pandas  # use real pandas when available
-    except ImportError:
-        pandas_stub = types.ModuleType("pandas")
-
-        class _LocAccessor:
-            def __init__(self, df):
-                self._df = df
-
-            def __getitem__(self, key):
-                for row in self._df._data:
-                    if isinstance(row, dict) and row.get(self._df._index_col) == key:
-                        return types.SimpleNamespace(**row)
-                raise KeyError(key)
-
-        class _DummyDataFrame:
-            def __init__(self, data=None, **kwargs):
-                self._data = data or []
-                self._index_col = None
-                self.index = list(range(len(self._data))) if isinstance(self._data, list) else []
-                self.loc = _LocAccessor(self)
-
-            def iterrows(self):
-                return iter(())
-
-            def itertuples(self, *args, **kwargs):
-                return iter(())
-
-            def set_index(self, col=None, *args, inplace=False, **kwargs):
-                target = self if inplace else _DummyDataFrame(list(self._data))
-                if col and isinstance(target._data, list) and target._data:
-                    target._index_col = col
-                    target.index = [row.get(col, i) for i, row in enumerate(target._data) if isinstance(row, dict)]
-                    target.loc = _LocAccessor(target)
-                if inplace:
-                    return None
-                return target
-
-            def to_dict(self, *args, **kwargs):
-                return {}
-
-            def get(self, key, default=None):
-                if isinstance(self._data, dict):
-                    return self._data.get(key, default)
-                return default
-
-            def __len__(self):
-                return len(self._data) if hasattr(self._data, "__len__") else 0
-
-        class _DummySeries(dict):
-            pass
-
-        pandas_stub.DataFrame = _DummyDataFrame
-        pandas_stub.Series = _DummySeries
-        sys.modules["pandas"] = pandas_stub
 
 if "tiktoken" not in sys.modules:
     try:
@@ -321,7 +246,7 @@ def _sb_rpc(function_name, params, *, timeout=30):
 def _mock_supabase(monkeypatch):
     """Automatically mock supabase_client for all tests."""
     _sb_reset()
-    import backend.supabase_client as sb_mod
+    import backend.vendors.supabase_client as sb_mod
     monkeypatch.setattr(sb_mod, "select", _sb_select)
     monkeypatch.setattr(sb_mod, "select_one", _sb_select_one)
     monkeypatch.setattr(sb_mod, "insert", _sb_insert)
