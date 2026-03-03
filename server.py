@@ -328,17 +328,28 @@ def _structured_citations_from_bundle(
     used_set = {m.strip() for m in used_markers if isinstance(m, str) and m.strip()}
     if not used_set:
         return []
+
     entries: List[Dict[str, Any]] = []
+    id_to_row: Dict[str, Dict[str, Any]] = {}
+    store_meta: Dict[str, Dict[str, Any]] = {}
+
     for sn in getattr(bundle, "snippets", []) or []:
         marker = getattr(sn, "citation_marker", "") or ""
         if marker not in used_set:
             continue
-        entries.append({"id": getattr(sn, "id", None), "snippet": sn})
-    _, structured = format_citations(
-        entries,
-        getattr(retriever_mod, "_id_to_row", None),
-        getattr(retriever_mod, "_store_meta", {}) or {},
-    )
+        sn_id = getattr(sn, "id", None)
+        sn_type = getattr(sn, "type", "other") or "other"
+        entries.append({"id": sn_id, "snippet": sn})
+        if sn_id is not None:
+            id_to_row[sn_id] = {
+                "store_key": sn_type,
+                "store_kind": sn_type,
+                "source_path": getattr(sn, "source_path", ""),
+            }
+        if sn_type not in store_meta:
+            store_meta[sn_type] = {"kind": sn_type}
+
+    _, structured = format_citations(entries, id_to_row, store_meta)
     return structured
 
 
