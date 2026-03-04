@@ -670,6 +670,31 @@ def healthz():
     return {"status": "ok"}
 
 
+@app.get("/classes")
+def list_classes():
+    """Return available search spaces for the class dropdown."""
+    from .database.models import SearchSpace
+    from .database.session import get_async_session, run_async
+    from sqlalchemy import select as sa_select
+
+    async def _fetch():
+        async with get_async_session() as session:
+            result = await session.execute(
+                sa_select(SearchSpace).order_by(SearchSpace.name)
+            )
+            return result.scalars().all()
+
+    spaces = run_async(_fetch())
+    return [
+        {
+            "slug": s.slug,
+            "name": s.name,
+            "subject_name": s.subject_name,
+        }
+        for s in spaces
+    ]
+
+
 # ---------------------------------------------------------------------------
 # pgvector retrieval helper
 # ---------------------------------------------------------------------------
