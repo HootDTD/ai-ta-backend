@@ -1241,7 +1241,16 @@ def solve_with_bundle(
         " - If the source excerpts do not contain enough information to address the question, "
         "say so honestly: 'The available materials cover X but do not address Y.'\n"
         " - Do NOT perform numeric calculations, approximations, or substitutions.\n"
-        " - Do NOT fabricate specific numbers, thresholds, or criteria not present in the excerpts."
+        " - Do NOT fabricate specific numbers, thresholds, or criteria not present in the excerpts.\n\n"
+        "FORMATTING RULES:\n"
+        " - Use Markdown for structure: headings (##, ###), bold (**term**), bullet lists, etc.\n"
+        " - Wrap ALL mathematical expressions in LaTeX delimiters:\n"
+        "   * Inline math: $expression$ (e.g., $p + \\frac{1}{2}\\rho U^2 + \\rho g h = \\text{const}$)\n"
+        "   * Display math (standalone equations): $$expression$$ on its own line.\n"
+        " - Use display math ($$...$$) for important or standalone equations.\n"
+        " - Use inline math ($...$) when referencing variables or short expressions within a sentence.\n"
+        " - Never write raw equation text without LaTeX delimiters.\n"
+        " - The 'steps' field MUST be a single Markdown-formatted string, NOT an array."
     )
     proof_bundle = _load_proof_bundle()
     proof_json: Optional[str] = None
@@ -1324,8 +1333,10 @@ def solve_with_bundle(
         payload_lines.append(f"FullProofBundle: {proof_json}")
     payload_lines.append("Return JSON with keys: steps, final_answers, equations_used, assumptions.")
     payload_lines.append(
-        "- steps: a Socratic tutoring response that uses ONLY information from the source excerpts, "
-        "with citations on every factual sentence. Guide the student rather than lecturing."
+        "- steps: a SINGLE Markdown-formatted string (NOT an array) containing a Socratic tutoring response "
+        "that uses ONLY information from the source excerpts, with citations on every factual sentence. "
+        "Use LaTeX math ($...$ for inline, $$...$$ for display equations). "
+        "Use headings, bold, and bullet lists for clarity. Guide the student rather than lecturing."
     )
     payload_lines.append("- final_answers: MUST be an empty object {} because you are not computing results.")
     payload_lines.append(
@@ -1460,12 +1471,13 @@ def solve_with_bundle(
     ])
 
     raw_steps = data.get("steps", "")
-    if not isinstance(raw_steps, str):
-        try:
-            raw_steps = json.dumps(raw_steps, ensure_ascii=False)
-        except Exception:
-            log.debug("Steps JSON serialization failed, using str()")
-            raw_steps = str(raw_steps)
+    if isinstance(raw_steps, list):
+        # Join list elements as paragraphs instead of JSON-serialising them.
+        raw_steps = "\n\n".join(
+            elem if isinstance(elem, str) else str(elem) for elem in raw_steps
+        )
+    elif not isinstance(raw_steps, str):
+        raw_steps = str(raw_steps)
 
     # Enforce conceptual-only mode regardless of model output.
     final_answers_output: Dict[str, Any] = {}
