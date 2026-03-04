@@ -12,8 +12,11 @@ from typing import List, Optional, Sequence, Iterator, Iterable, Union, Dict, An
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+import asyncio
+import json as _json
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, redirect_stdout
 
 from .ai.vision import vision_transcribe
@@ -885,42 +888,53 @@ def post_ask(payload: AskRequest):
         cfg = RequestConfig.from_env()
         cfg.set_subject(subject_name, "server")
 
-        with redirect_stdout(stdout_buffer):
-            bundle = _ask_pgvector(
-                q_effective=q_effective,
-                workspace=workspace,
-                weight_overrides=weight_overrides,
-                cfg=cfg,
+        # Run retrieval and question parsing in parallel — parse_question
+        # only needs q_effective, no dependency on retrieval results.
+        # parse_question is submitted first (outside redirect_stdout) since
+        # it only uses logging, not print(). _ask_pgvector is the function
+        # that prints wire-log lines captured by redirect_stdout.
+        with ThreadPoolExecutor(max_workers=2) as _pool:
+            parse_future = (
+                _pool.submit(parse_question, q_effective, subject=cfg.subject_name)
+                if q_effective.strip()
+                else None
             )
 
+            with redirect_stdout(stdout_buffer):
+                bundle = _ask_pgvector(
+                    q_effective=q_effective,
+                    workspace=workspace,
+                    weight_overrides=weight_overrides,
+                    cfg=cfg,
+                )
+
             parsed_task: Optional[ParsedTask] = None
-            if q_effective.strip():
+            if parse_future is not None:
                 try:
-                    parsed_task = parse_question(
-                        q_effective, subject=cfg.subject_name,
-                    )
+                    parsed_task = parse_future.result()
                 except Exception:
                     log.error("Question parsing failed", exc_info=True)
                     parsed_task = None
-            if parsed_task is None:
-                fallback_problem = q_effective.strip() or "Question"
-                parsed_task = ParsedTask(
-                    problem_type=fallback_problem,
-                    asked_outputs=["answer"],
-                    asked_output_keys=["answer"],
-                )
 
-            solution = solve_with_bundle(
-                parsed_task, bundle, subject=cfg.subject_name,
+        if parsed_task is None:
+            fallback_problem = q_effective.strip() or "Question"
+            parsed_task = ParsedTask(
+                problem_type=fallback_problem,
+                asked_outputs=["answer"],
+                asked_output_keys=["answer"],
             )
-            final = format_answer(
-                solution, bundle, include_background=False,
-                subject=cfg.subject_name,
-            )
-            answer_chunks.append(final.text)
-            structured_citations = _structured_citations_from_bundle(
-                bundle, getattr(final, "citations", [])
-            )
+
+        solution = solve_with_bundle(
+            parsed_task, bundle, subject=cfg.subject_name,
+        )
+        final = format_answer(
+            solution, bundle, include_background=False,
+            subject=cfg.subject_name,
+        )
+        answer_chunks.append(final.text)
+        structured_citations = _structured_citations_from_bundle(
+            bundle, getattr(final, "citations", [])
+        )
     except Exception as e:
         log.exception("qa ask pipeline failed")
         error_text = f"[error] {e}"
@@ -939,6 +953,178 @@ def post_ask(payload: AskRequest):
     }
 
     return JSONResponse(payload_out)
+
+
+# ---------------------------------------------------------------------------
+# SSE streaming variant — same pipeline, but streams progress events so the
+# frontend can show real-time status updates instead of a blank wait.
+# ---------------------------------------------------------------------------
+
+def _sse_event(event: str, data: dict) -> str:
+    """Format a single Server-Sent Event."""
+    return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.post("/ask/stream")
+async def post_ask_stream(payload: AskRequest):
+    """Streaming variant of /ask — returns SSE events with progress + final answer."""
+
+    # --- Validation (identical to /ask) ------------------------------------
+    q = (payload.question or "").strip()
+    atts = payload.attachments or []
+    if not q and not atts:
+        raise HTTPException(status_code=400, detail="Provide a question or image attachments")
+
+    class_name = payload.class_name.strip()
+    if not class_name:
+        raise HTTPException(status_code=400, detail="Class is required")
+
+    if payload.doc_sets:
+        raise HTTPException(
+            status_code=400,
+            detail="doc_sets overrides are disabled; configure materials within the class workspace.",
+        )
+
+    try:
+        workspace = _get_workspace_manager().get(class_name)
+    except WorkspaceNotFound:
+        raise HTTPException(status_code=404, detail="Unknown class selection")
+    except WorkspaceConfigError as exc:
+        log.error("Workspace misconfiguration for %s: %s", class_name, exc)
+        raise HTTPException(status_code=500, detail="Class workspace is misconfigured")
+    except WorkspaceError as exc:
+        log.exception("Failed to load workspace for class %s", class_name)
+        raise HTTPException(status_code=500, detail="Failed to load class workspace") from exc
+
+    async def _generate():
+        subject_name = workspace.subject_name or class_name
+
+        teacher_storage: Optional[TeacherWeeklyStorage] = None
+        try:
+            teacher_storage = _get_teacher_storage()
+        except Exception:
+            log.warning("Failed to load teacher weekly storage")
+
+        try:
+            image_paths = _save_attachments(atts)
+        except Exception as e:
+            log.exception("Attachment decode failed")
+            yield _sse_event("error", {"message": f"Invalid attachments: {e}"})
+            return
+
+        q_effective = q
+        image_text = ""
+        if image_paths:
+            yield _sse_event("status", {"stage": "vision", "message": "Reading image attachments..."})
+            try:
+                image_text = vision_transcribe(image_paths) or ""
+            except Exception:
+                log.warning("Vision transcription failed for uploaded images")
+                image_text = ""
+        if image_text:
+            try:
+                image_context = extract_keywords(image_text) or ""
+            except Exception:
+                log.warning("Keyword extraction from image text failed")
+                image_context = ""
+            fallback_image_query = " ".join(image_text.split())[:500]
+            image_query = image_context.strip() if image_context.strip() else fallback_image_query
+            if q_effective and image_query:
+                q_effective = q_effective.rstrip() + " \n" + image_query
+            elif image_query:
+                q_effective = image_query
+
+        weight_overrides = dict(workspace.weight_overrides)
+        for material in workspace.materials:
+            if material.weight_override is not None:
+                weight_overrides[material.kind] = material.weight_override
+        if teacher_storage is not None:
+            try:
+                teacher_weights = teacher_storage.get_retrieval_weights(class_name)
+            except Exception:
+                log.warning("Failed to get teacher retrieval weights")
+                teacher_weights = {}
+            else:
+                weight_overrides.update(teacher_weights)
+
+        try:
+            cfg = RequestConfig.from_env()
+            cfg.set_subject(subject_name, "server")
+
+            # --- Stage 1: Retrieval + parse (parallel) ---------------------
+            yield _sse_event("status", {"stage": "retrieving", "message": "Searching course materials..."})
+
+            loop = asyncio.get_running_loop()
+            bundle_future = loop.run_in_executor(
+                None, lambda: _ask_pgvector(
+                    q_effective=q_effective,
+                    workspace=workspace,
+                    weight_overrides=weight_overrides,
+                    cfg=cfg,
+                )
+            )
+            parse_future = (
+                loop.run_in_executor(
+                    None, lambda: parse_question(q_effective, subject=cfg.subject_name)
+                )
+                if q_effective.strip()
+                else None
+            )
+
+            bundle = await bundle_future
+
+            parsed_task: Optional[ParsedTask] = None
+            if parse_future is not None:
+                try:
+                    parsed_task = await parse_future
+                except Exception:
+                    log.error("Question parsing failed", exc_info=True)
+            if parsed_task is None:
+                fallback_problem = q_effective.strip() or "Question"
+                parsed_task = ParsedTask(
+                    problem_type=fallback_problem,
+                    asked_outputs=["answer"],
+                    asked_output_keys=["answer"],
+                )
+
+            # --- Stage 2: Scoring + solution ------------------------------
+            n_snippets = len(bundle.snippets) if bundle.snippets else 0
+            yield _sse_event("status", {
+                "stage": "analyzing",
+                "message": f"Analyzing {n_snippets} relevant excerpt{'s' if n_snippets != 1 else ''}...",
+            })
+
+            solution = await loop.run_in_executor(
+                None, lambda: solve_with_bundle(parsed_task, bundle, subject=cfg.subject_name)
+            )
+
+            # --- Stage 3: Format ------------------------------------------
+            yield _sse_event("status", {"stage": "formatting", "message": "Preparing answer..."})
+
+            final = format_answer(
+                solution, bundle, include_background=False,
+                subject=cfg.subject_name,
+            )
+            answer_text = final.text or ""
+            structured_citations = _structured_citations_from_bundle(
+                bundle, getattr(final, "citations", [])
+            )
+
+            yield _sse_event("answer", {
+                "answer": answer_text,
+                "citations": structured_citations,
+                "logs": [],
+            })
+
+        except Exception as e:
+            log.exception("SSE ask pipeline failed")
+            yield _sse_event("error", {"message": f"[error] {e}"})
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # Optional: allow `python -m backend.server`

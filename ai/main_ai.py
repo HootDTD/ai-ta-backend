@@ -879,7 +879,7 @@ def solve_with_bundle(
 
     # Run merged score+answer in parallel (Phase 2+3)
     max_workers = min(
-        int(os.getenv("CITATION_WORKERS", "6")),
+        int(os.getenv("CITATION_WORKERS", "12")),
         max(len(snippet_args), 1),
     )
     combined_results: List[Dict[str, Any]] = []
@@ -1052,7 +1052,10 @@ def solve_with_bundle(
     ]
     if proof_json:
         payload_lines.append(f"FullProofBundle: {proof_json}")
-    payload_lines.append("Return JSON with keys: steps, final_answers, equations_used, assumptions.")
+    payload_lines.append("Return JSON with keys: not_relevant, steps, final_answers, equations_used, assumptions.")
+    payload_lines.append(
+        "- not_relevant: boolean — true if the question is outside the course scope, false otherwise."
+    )
     payload_lines.append(
         "- steps: a SINGLE Markdown-formatted string (NOT an array) with two sections: "
         "'## Simple Explanation' (intuitive ELI5, no equations) then '## Theory' (technical details "
@@ -1191,6 +1194,19 @@ def solve_with_bundle(
         {"role": "user", "content": user_base},
     ])
 
+    # Short-circuit for off-topic questions
+    if data.get("not_relevant", False):
+        return ProposedSolution(
+            steps="This question is not relevant to the course scope.",
+            final_answers={},
+            equations_used=[],
+            assumptions=[],
+            code=None,
+            code_output=None,
+            code_hash=None,
+            vars_created=[],
+        )
+
     raw_steps = data.get("steps", "")
     if isinstance(raw_steps, list):
         # Join list elements as paragraphs instead of JSON-serialising them.
@@ -1262,6 +1278,8 @@ def format_answer(
         text_str = text_str.rstrip() + "\n\nResults:\n" + "\n".join(results_lines)
     if text_str.strip() == "Not found in the approved materials.":
         return FinalAnswer(text="Not found in the approved materials.", citations=[])
+    if text_str.strip() == "This question is not relevant to the course scope.":
+        return FinalAnswer(text="This question is not relevant to the course scope.", citations=[])
 
     raw_allowed = getattr(bundle, "allowed_markers", None) or []
     allowed_markers: List[str] = []
