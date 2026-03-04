@@ -19,6 +19,18 @@ from openai import OpenAI
 from ..config.settings import get_subject_name, get_citation_label, get_runtime_dir
 from ..config.contracts import ParsedTask, ProposedSolution, FinalAnswer, ResearchBundle
 from .solver import run_python
+from .prompts import (
+    relevance_guard_prompt,
+    score_and_answer_snippet_prompt,
+    extract_keywords_prompt,
+    keyword_generation_prompt,
+    keyword_scoring_prompt,
+    general_term_filter_prompt,
+    synonyms_prompt,
+    concept_extraction_prompt,
+    parse_question_prompt,
+    tutor_prompt,
+)
 
 
 def _fallback_citation_marker(snippet: Any, citation_label: str | None = None) -> str:
@@ -74,12 +86,7 @@ def is_question_subject_relevant(question: str, subject: str | None = None) -> b
 
     client = _client()
     subject = subject or get_subject_name()
-    system = (
-        f"You are a guard for the {subject} course materials. "
-        "Decide if the student's question requires knowledge from this subject. "
-        "Return JSON with keys 'relevant' (bool) and 'reason' (string). "
-        "Mark relevant=false if the question is primarily about another discipline or general trivia."
-    )
+    system = relevance_guard_prompt(subject)
     payload = {
         "subject": subject,
         "question": cleaned,
@@ -220,158 +227,6 @@ def _pick_concept_term(snippet: Any) -> str:
     return ""
 
 
-def _score_citation_snippets(
-    question: str, bundle: ResearchBundle, model: Optional[str] = None
-) -> List[Dict[str, Any]]:
-    """Run per-citation mini-assessments to score snippets against the prompt."""
-
-    client = _client()
-    scorer_model = model or os.getenv("CITATION_SCORER_MODEL", os.getenv("PARSER_MODEL", "gpt-4o"))
-    system = (
-        "You are a strict citation assessor. "
-        "Given the student's question, a focus term tied to the citation, the snippet text, and its marker, "
-        "write 1-2 sentences explaining only how the snippet connects to the question. "
-        "Score 'relevance' (0-1) for how well the snippet addresses the question and 'directness' (0-1) for how on-point it is. "
-        "Blend these into 'score' (0-1) and allow the provided importance_hint to slightly boost or reduce the score when appropriate. "
-        "Use ONLY the provided snippet text; do not add facts or context not present in the snippet. "
-        "Return JSON with keys: context (string), relevance (0-1), directness (0-1), score (0-1)."
-    )
-
-    analyses: List[Dict[str, Any]] = []
-    for sn in bundle.snippets:
-        marker = getattr(sn, "citation_marker", None) or getattr(sn, "marker", None)
-        if not isinstance(marker, str) or not marker.strip():
-            marker = _fallback_citation_marker(sn)
-        marker_clean = marker.strip()
-        focus_term = _pick_concept_term(sn)
-        importance = _importance_from_snippet(sn)
-        payload = {
-            "question": question,
-            "focus_term": focus_term,
-            "importance_hint": importance,
-            "marker": marker_clean,
-            "page": getattr(sn, "page", None),
-            "why": getattr(sn, "why", ""),
-            "snippet_text": getattr(sn, "text", ""),
-            "section": getattr(sn, "section_path", ""),
-        }
-
-        try:
-            resp = client.chat.completions.create(
-                model=scorer_model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ],
-                temperature=0,
-                response_format={"type": "json_object"},
-            )
-            content = resp.choices[0].message.content or "{}"
-            data = json.loads(content)
-        except Exception:
-            log.error("Citation scoring LLM call failed", exc_info=True)
-            data = {}
-
-        context = str(data.get("context") or data.get("summary") or "").strip()
-        if not context:
-            text_preview = " ".join(str(getattr(sn, "text", "") or "").split())[:320]
-            context = text_preview
-
-        relevance = _clamp_0_1(data.get("relevance"), 0.0)
-        directness = _clamp_0_1(data.get("directness"), relevance)
-        blended = (0.6 * relevance) + (0.4 * directness)
-        model_score = _clamp_0_1(data.get("score"), blended)
-        weighted = _clamp_0_1(model_score * importance, model_score)
-
-        analyses.append(
-            {
-                "marker": marker_clean,
-                "page": getattr(sn, "page", None),
-                "concept_term": focus_term,
-                "importance": importance,
-                "relevance": relevance,
-                "directness": directness,
-                "base_score": model_score,
-                "score": weighted,
-                "context": context,
-                "why": getattr(sn, "why", ""),
-                "snippet_id": getattr(sn, "id", ""),
-            }
-        )
-
-    analyses.sort(
-        key=lambda row: (
-            -float(row.get("score", 0.0) or 0.0),
-            -float(row.get("importance", 0.0) or 0.0),
-            -float(row.get("relevance", 0.0) or 0.0),
-            str(row.get("marker", "")),
-        )
-    )
-    return analyses
-
-
-def _answer_single_snippet(
-    question: str, snippet: Any, score: float | None = None
-) -> Dict[str, Any]:
-    """Have a per-citation agent extract all question-relevant information from a single snippet."""
-
-    client = _client()
-    model = os.getenv("CITATION_ANSWER_MODEL", os.getenv("PARSER_MODEL", "gpt-4o"))
-    marker = getattr(snippet, "citation_marker", None) or getattr(snippet, "marker", None)
-    if not isinstance(marker, str) or not marker.strip():
-        marker = _fallback_citation_marker(snippet)
-    marker = marker.strip()
-    system = (
-        "You are one member of a team of citation specialists. You are responsible for a single snippet of text taken "
-        "from an approved course resource. Use ONLY the provided snippet_text as your source of information.\n\n"
-        "Your goal is not to fully answer the user's question on your own, but to extract every piece of information in "
-        "this snippet that could help another assistant answer the question when combined with other snippets. This "
-        "includes definitions, qualitative descriptions, equations or relationships, assumptions, boundary conditions, "
-        "parameter meanings, constraints, or any contextual clues that narrow down what is going on.\n\n"
-        "Rules:\n"
-        "- Base everything strictly on snippet_text; do NOT add outside knowledge or speculate beyond what the text clearly implies.\n"
-        "- If the snippet is even partially related to the question (shares variables, concepts, or scenario features), "
-        "summarize those relevant pieces in your own words.\n"
-        "- It is acceptable if your answer is incomplete; other snippets will fill in gaps.\n"
-        "- Only return exactly 'Not Relevant' if the snippet is clearly about an unrelated topic with no overlap in "
-        "concepts, variables, or context with the question.\n\n"
-        "Return JSON with a single key 'answer' containing your explanation as a string."
-    )
-    payload = {
-        "question": question,
-        "marker": marker,
-        "page": getattr(snippet, "page", None),
-        "snippet_text": getattr(snippet, "text", ""),
-        "section": getattr(snippet, "section_path", ""),
-    }
-    try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
-        content = resp.choices[0].message.content or "{}"
-        data = json.loads(content)
-        answer = data.get("answer")
-    except Exception:
-        log.error("Per-snippet answer LLM call failed", exc_info=True)
-        answer = None
-
-    answer_str = str(answer).strip() if answer is not None else ""
-    if not answer_str:
-        answer_str = "Not Relevant"
-
-    return {
-        "marker": marker,
-        "page": getattr(snippet, "page", None),
-        "snippet_id": getattr(snippet, "id", ""),
-        "score": float(score) if score is not None else None,
-        "answer": answer_str,
-    }
 
 
 def _score_and_answer_snippet(
@@ -382,12 +237,7 @@ def _score_and_answer_snippet(
     citation_label: str | None = None,
     model: str | None = None,
 ) -> Dict[str, Any]:
-    """Score relevance AND extract answer from a single snippet in one LLM call.
-
-    Merges the work of ``_score_citation_snippets`` (per-snippet) and
-    ``_answer_single_snippet`` so that only **one** API round-trip is needed
-    per snippet instead of two.
-    """
+    """Score relevance AND extract answer from a single snippet in one LLM call."""
     client = _client()
     model = model or os.getenv(
         "CITATION_SCORER_MODEL", os.getenv("PARSER_MODEL", "gpt-4o")
@@ -397,36 +247,7 @@ def _score_and_answer_snippet(
         marker = _fallback_citation_marker(snippet, citation_label)
     marker = marker.strip()
 
-    system = (
-        "You are a citation specialist. Given a student's question and a single snippet "
-        "from course materials, do TWO things:\n\n"
-        "1. SCORE the snippet:\n"
-        "   - relevance (0-1): how well the snippet addresses the question\n"
-        "   - directness (0-1): how on-point the snippet is\n"
-        "   - score (0-1): blended score; allow the provided importance_hint to slightly adjust\n"
-        "   - context: 1-2 sentences explaining only how the snippet connects to the question\n\n"
-        "   INTENT-AWARE SCORING — read the question carefully to determine the student's intent:\n"
-        "   - If the question asks 'what is', 'define', 'explain', or 'why': the student wants "
-        "conceptual understanding. Score HIGHEST for snippets that define, introduce, or explain "
-        "the concept. Score LOWER for snippets that merely use the term in a worked example or "
-        "unrelated derivation without explaining it.\n"
-        "   - If the question asks 'how to', 'calculate', 'find', 'solve', or 'derive': the student "
-        "wants a procedure or formula. Score HIGHEST for snippets with relevant equations, worked "
-        "examples, or step-by-step methods.\n"
-        "   - If the snippet comes from a section whose title directly names the topic being asked "
-        "about (e.g. asking about 'boundary layer' and the section is 'Boundary Layer Theory'), "
-        "this is strong evidence the snippet is authoritative — boost its score.\n"
-        "   - A snippet that only mentions the term in passing (e.g. as a variable in an unrelated "
-        "exercise) should score significantly lower than one that substantively addresses it.\n\n"
-        "2. EXTRACT every piece of information in this snippet that could help answer "
-        "the question. Include definitions, equations, relationships, assumptions, "
-        "boundary conditions, parameter meanings, constraints, or contextual clues.\n"
-        "   - Base everything strictly on snippet_text; do NOT add outside knowledge.\n"
-        "   - Only return 'Not Relevant' for the answer field if the snippet is clearly "
-        "about an unrelated topic with no overlap.\n\n"
-        "Return JSON with keys: context (string), relevance (0-1), directness (0-1), "
-        "score (0-1), answer (string)."
-    )
+    system = score_and_answer_snippet_prompt()
 
     payload = {
         "question": question,
@@ -494,11 +315,7 @@ def extract_keywords(question: str, subject: str | None = None) -> str:
 
     client = _client()
     subject = subject or get_subject_name()
-    system = (
-        f"You analyze {subject} textbook questions. Identify only the core principles or equations explicitly referenced in the prompt. "
-        "List the topic names without elaborating or explaining them in detail. "
-        "Respond with a single short sentence or comma-separated list naming the relevant topics."
-    )
+    system = extract_keywords_prompt(subject)
     payload = {
         "subject": subject,
         "question": question,
@@ -536,17 +353,7 @@ def filter_keywords_by_subject(
     client = _client()
 
     # Step 1: generate up to 20 candidate terms using only the question + context.
-    gen_system = (
-        "Generate candidate lookup terms using ONLY the student's raw question and the context summary. "
-        "Do not add outside knowledge. "
-        "Each candidate must be a single lowercase word (no spaces, hyphens, or punctuation). " \
-        "If a necessary term needs multiple words to make sense, separate these two words with underscores. (only do this if the single word alternative could mean something else). "
-        "Focus on including discrete concepts, principles, or keywords that directly relate to the question and context."
-        "ALWAYS include individual terms from every topic mentioned in the context summary (e.g., if context contains 'Bernoulli's Principle', include 'bernoulli', 'principle')."
-        "Avoid general terms, or overly broad concepts."
-        "Return JSON {{\"terms\": [\"term1\", ...]}} with at most 20 short entries, each representing a discrete concept."
-        "Be GENEROUS in proposing terms, as long as they are relevant to the question and context. Try to reach 20 terms if possible."
-    )
+    gen_system = keyword_generation_prompt()
     gen_payload = {
         "question": question or "",
         "context_summary": context_summary or "",
@@ -589,13 +396,7 @@ def filter_keywords_by_subject(
 
     # Step 2: score terms with subject knowledge and select the top 8.
     subject = subject or get_subject_name()
-    score_system = (
-        f"You rank lookup terms for the subject \"{subject}\". "
-        "Use the student's question, the concise context summary, and the list of candidate terms. "
-        "Assign each term a UNIQUE numeric score between 0.00 and 1.00 (two decimals, as numbers). "
-        "1.00 represents the most relevant term. "
-        "Return JSON {{\"ranked\": [{{\"term\": \"...\", \"score\": 0.95}}, ...]}} sorted from highest to lowest score."
-    )
+    score_system = keyword_scoring_prompt(subject)
     score_payload = {
         "subject": subject,
         "question": question or "",
@@ -769,13 +570,7 @@ def filter_general_terms(
     if not normalized:
         normalized = [(t, 1.0) for t in term_strings if t]
     
-    system = (
-        f"You are a subject-matter expert in {subject_name}. Keep all subject-relevant terms unless they are obviously generic noise.\n\n"
-        "Remove terms only if they are purely generic academic words (e.g., 'principle', 'concept', 'equation' by themselves) "
-        "with no subject signal. KEEP multi-word phrases, named laws/equations, and domain nouns even if they look common. "
-        "Err on the side of keeping terms unless they would clearly pollute retrieval.\n\n"
-        "Return JSON with 'filtered_terms' containing the kept terms."
-    )
+    system = general_term_filter_prompt(subject_name)
     
     payload = {
         "subject": subject_name,
@@ -849,11 +644,7 @@ def propose_synonyms(
 
     client = _client()
     subject = subject or get_subject_name()
-    system = (
-        "You help with textbook lookup. For each concept term, propose up to two "
-        f"alternate keywords, abbreviations, or symbols that might appear in {subject} materials. "
-        "Return a JSON object mapping each input term to an array of 0-2 strings."
-    )
+    system = synonyms_prompt(subject)
     hint = context_hint or {}
     try:
         resp = client.chat.completions.create(
@@ -930,39 +721,7 @@ def extract_and_filter_keywords(
     client = _client()
     subject = subject or get_subject_name()
 
-    system = (
-        f"You are a {subject} textbook index builder. A student has asked a question "
-        "and you must identify the specific concepts they need to look up.\n\n"
-        "Perform these tasks:\n\n"
-        "1. CONTEXT SUMMARY: Write a short sentence or comma-separated list naming "
-        "the core topics, principles, or equations the question is about.\n\n"
-        "2. CONCEPT EXTRACTION: Identify up to 8 lookup concepts that a student "
-        "would search for in a textbook index to answer this question.\n\n"
-        "   Rules for each concept:\n"
-        "   - Each concept is 1 to 4 lowercase words.\n"
-        "   - Phrase concepts as they would appear in a textbook index or section "
-        "heading (e.g., \"boundary layer thickness\", \"Reynolds number\", "
-        "\"conservation of momentum\").\n"
-        "   - A multi-word concept must be a single coherent idea. Do NOT split "
-        "a compound concept into its individual words as separate entries.\n"
-        "   - Order from MOST SPECIFIC to MOST GENERAL:\n"
-        "     First: the exact compound concept being asked about.\n"
-        "     Then: closely related sub-concepts or prerequisite concepts.\n"
-        "     Last: the broader topic area, only if it adds retrieval value.\n"
-        "   - Include named laws, equations, phenomena, and domain-specific "
-        "noun phrases.\n"
-        "   - OMIT generic academic words that match too broadly on their own "
-        "(e.g., \"equation\", \"method\", \"theory\" alone). These are acceptable "
-        "ONLY as part of a named concept (e.g., \"Bernoulli equation\").\n"
-        "   - Assign each concept a UNIQUE relevance score between 0.00 and 1.00 "
-        "(1.00 = most directly answers the question).\n\n"
-        "3. Think: \"If I were looking up this answer in a textbook, what section "
-        "headings or index entries would I turn to?\"\n\n"
-        "Return JSON exactly:\n"
-        "{\"context_summary\": \"...\", "
-        "\"ranked_terms\": [{\"term\": \"boundary layer thickness\", \"relevance\": 0.98}, ...]}\n"
-        "Sorted highest to lowest relevance. Return at most 8 concepts."
-    )
+    system = concept_extraction_prompt(subject)
 
     payload = {"subject": subject, "question": question}
 
@@ -1022,11 +781,7 @@ def parse_question(user_query: str, subject: str | None = None) -> ParsedTask:
 
     client = _client()
     subject = subject or get_subject_name()
-    system = (
-        f"You are parsing {subject} textbook problems. "
-        "Extract problem_type, asked_outputs, knowns, constraints, and figure_refs. "
-        "Return ONLY JSON with keys: problem_type, asked_outputs, knowns, constraints, figure_refs."
-    )
+    system = parse_question_prompt(subject)
     model = os.getenv("PARSER_MODEL", "gpt-4o")
     resp = client.chat.completions.create(
         model=model,
@@ -1217,41 +972,7 @@ def solve_with_bundle(
         })
     scored_snippets.sort(key=lambda x: -x["score"])
 
-    system = (
-        "You are a Socratic subject-matter tutor. You are given SOURCE EXCERPTS from "
-        "course materials, each with a citation marker and relevance score. "
-        "Your job is to guide the student toward understanding using ONLY the information "
-        "in these excerpts.\n\n"
-        "TUTORING STYLE:\n"
-        " - Guide the student toward understanding rather than giving a complete, "
-        "encyclopedic answer.\n"
-        " - Ask thought-provoking questions that help the student reason through the concept. "
-        "For example, instead of stating a definition outright, lead with: "
-        "'Consider what happens at the wall vs. far from the surface — what must the "
-        "velocity do in between?'\n"
-        " - After presenting a key idea, prompt the student to think further: "
-        "'What do you think happens when...?' or 'Why do you think this matters for...?'\n"
-        " - Build concepts step by step — define fundamentals before applications.\n"
-        " - Use precise technical language. Avoid vague or anthropomorphic phrasing.\n"
-        " - Keep the response focused on what was asked. Do not introduce tangential topics.\n\n"
-        "STRICT RULES:\n"
-        " - Base your response ONLY on the provided source excerpts. Do NOT add facts, "
-        "equations, or claims from outside knowledge.\n"
-        " - Cite every factual statement with its marker (e.g., [Textbook, p. X]).\n"
-        " - If the source excerpts do not contain enough information to address the question, "
-        "say so honestly: 'The available materials cover X but do not address Y.'\n"
-        " - Do NOT perform numeric calculations, approximations, or substitutions.\n"
-        " - Do NOT fabricate specific numbers, thresholds, or criteria not present in the excerpts.\n\n"
-        "FORMATTING RULES:\n"
-        " - Use Markdown for structure: headings (##, ###), bold (**term**), bullet lists, etc.\n"
-        " - Wrap ALL mathematical expressions in LaTeX delimiters:\n"
-        "   * Inline math: $expression$ (e.g., $p + \\frac{1}{2}\\rho U^2 + \\rho g h = \\text{const}$)\n"
-        "   * Display math (standalone equations): $$expression$$ on its own line.\n"
-        " - Use display math ($$...$$) for important or standalone equations.\n"
-        " - Use inline math ($...$) when referencing variables or short expressions within a sentence.\n"
-        " - Never write raw equation text without LaTeX delimiters.\n"
-        " - The 'steps' field MUST be a single Markdown-formatted string, NOT an array."
-    )
+    system = tutor_prompt()
     proof_bundle = _load_proof_bundle()
     proof_json: Optional[str] = None
 
@@ -1333,10 +1054,10 @@ def solve_with_bundle(
         payload_lines.append(f"FullProofBundle: {proof_json}")
     payload_lines.append("Return JSON with keys: steps, final_answers, equations_used, assumptions.")
     payload_lines.append(
-        "- steps: a SINGLE Markdown-formatted string (NOT an array) containing a Socratic tutoring response "
-        "that uses ONLY information from the source excerpts, with citations on every factual sentence. "
-        "Use LaTeX math ($...$ for inline, $$...$$ for display equations). "
-        "Use headings, bold, and bullet lists for clarity. Guide the student rather than lecturing."
+        "- steps: a SINGLE Markdown-formatted string (NOT an array) with two sections: "
+        "'## Simple Explanation' (intuitive ELI5, no equations) then '## Theory' (technical details "
+        "with equations woven in — show each equation right where it's relevant, not in a separate list). "
+        "Use LaTeX math ($...$ inline, $$...$$ display). Keep it concise (~150-250 words), no long paragraphs."
     )
     payload_lines.append("- final_answers: MUST be an empty object {} because you are not computing results.")
     payload_lines.append(
@@ -1631,7 +1352,13 @@ def format_answer(
         stripped = para.strip()
         if not stripped:
             continue
-        if stripped.startswith("```"):
+        # Skip code blocks, display math, and markdown headings.
+        if (
+            stripped.startswith("```")
+            or stripped.startswith("$$")
+            or stripped.startswith("#")
+        ):
+            paragraphs[idx] = _clean_and_tag(para)
             continue
         cleaned_para = _clean_and_tag(para)
         if marker_pattern.search(cleaned_para):
@@ -1871,6 +1598,5 @@ __all__ = [
     "extract_keywords",
     "filter_general_terms",
     "propose_synonyms",
-    "_answer_single_snippet",
     "_write_miniresponses",
 ]
