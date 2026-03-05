@@ -7,10 +7,11 @@ import base64
 import logging
 import shutil
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import List, Optional, Sequence, Iterator, Iterable, Union, Dict, Any
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import json as _json
@@ -33,6 +34,16 @@ from .workspaces.manager import (
     WorkspaceNotFound,
     WorkspaceError,
     build_workspace_manager,
+)
+from .auth import AuthContext, has_membership, resolve_auth_context, validate_required_env
+from .database.session import get_async_session, run_async
+from .chats.service import (
+    append_turn,
+    build_memory_context,
+    get_chat_session_for_user,
+    get_or_create_chat_session_for_user,
+    list_recent_turns,
+    refresh_memory_summary,
 )
 
 try:  # pragma: no cover - optional dependency detection
@@ -114,7 +125,13 @@ def _get_workspace_manager():
 
 class AskRequest(BaseModel):
     question: str
-    class_name: str = Field(..., alias="class", min_length=1, description="Class selection for knowledge routing")
+    chat_id: str = Field(..., min_length=1, max_length=200)
+    search_space_id: int = Field(..., gt=0)
+    class_name: Optional[str] = Field(
+        default=None,
+        alias="class",
+        description="Deprecated: class identifier is ignored by ask endpoints; use search_space_id.",
+    )
     course_id: Optional[str] = None
     doc_sets: Optional[List[str]] = Field(
         default=None,
@@ -199,6 +216,7 @@ class RetrievalWeightValues(BaseModel):
 
 
 class TeacherRetrievalWeightsOut(BaseModel):
+    search_space_id: int
     course: str
     weights: RetrievalWeightValues
     defaults: RetrievalWeightValues
@@ -206,11 +224,12 @@ class TeacherRetrievalWeightsOut(BaseModel):
 
 
 class TeacherRetrievalWeightsUpdateIn(BaseModel):
-    course: str = Field(..., alias="class")
+    search_space_id: int = Field(..., gt=0)
     weights: RetrievalWeightValues
 
 
 class TeacherCourseOut(BaseModel):
+    search_space_id: int
     course: str
     slug: str
     current_week: int
@@ -218,7 +237,7 @@ class TeacherCourseOut(BaseModel):
 
 
 class TeacherCurrentWeekIn(BaseModel):
-    course: str = Field(..., alias="class")
+    search_space_id: int = Field(..., gt=0)
     current_week: int = Field(..., ge=1, le=TEACHER_TOTAL_WEEKS)
 
     class Config:
@@ -263,10 +282,200 @@ def _serialize_course_payload(payload: Dict[str, Any]) -> TeacherCourseOut:
         weeks_out.append(TeacherWeekOut(week=week_num, notes=notes, slides=slides))
     weeks_out.sort(key=lambda w: w.week)
     return TeacherCourseOut(
+        search_space_id=int(payload.get("search_space_id", 0) or 0),
         course=str(payload.get("course", "")),
         slug=str(payload.get("slug", "")),
         current_week=int(payload.get("current_week", 1) or 1),
         weeks=weeks_out,
+    )
+
+
+def _resolve_request_auth(request: Request) -> AuthContext:
+    try:
+        return resolve_auth_context(request)
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        log.error("Auth config validation failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Server auth configuration error")
+
+
+def _require_course_membership(
+    request: Request,
+    *,
+    search_space_id: int,
+    role: Optional[str] = None,
+) -> AuthContext:
+    auth = _resolve_request_auth(request)
+
+    async def _run() -> bool:
+        async with get_async_session() as db_session:
+            return await has_membership(
+                db_session,
+                user_id=auth.user_id,
+                search_space_id=search_space_id,
+                role=role,
+            )
+
+    try:
+        allowed = run_async(_run())
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.error("Membership check failed for user=%s space=%s: %s", auth.user_id, search_space_id, exc)
+        raise HTTPException(status_code=500, detail="Membership validation failed")
+
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Forbidden for this course")
+    return auth
+
+
+def _attachments_for_chat_turn(attachments: Sequence[AttachmentIn]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for att in attachments:
+        out.append(
+            {
+                "name": att.name,
+                "mime": att.mime,
+            }
+        )
+    return out
+
+
+def _user_turn_content(question: str, attachments: Sequence[AttachmentIn]) -> str:
+    cleaned = (question or "").strip()
+    if cleaned:
+        return cleaned
+    if attachments:
+        return "[image-only question]"
+    return ""
+
+
+async def _load_memory_and_append_user_turn_async(
+    *,
+    auth: AuthContext,
+    chat_id: str,
+    search_space_id: int,
+    user_content: str,
+    attachments: Sequence[AttachmentIn],
+    meta: Optional[Dict[str, Any]] = None,
+) -> str:
+    async with get_async_session() as db_session:
+        existing = await get_chat_session_for_user(
+            db_session,
+            chat_id=chat_id,
+            user_id=auth.user_id,
+        )
+        if existing is not None and int(existing.search_space_id) != int(search_space_id):
+            raise HTTPException(status_code=400, detail="search_space_id mismatch for chat_id")
+
+        session = existing or await get_or_create_chat_session_for_user(
+            db_session,
+            chat_id=chat_id,
+            user_id=auth.user_id,
+            search_space_id=int(search_space_id),
+            meta=meta or {},
+        )
+        if meta:
+            session.meta = meta
+
+        recent_turns = await list_recent_turns(
+            db_session,
+            chat_session_id=int(session.id),
+        )
+        memory_context = build_memory_context(session.memory_summary or "", recent_turns)
+
+        await append_turn(
+            db_session,
+            chat_session_id=int(session.id),
+            role="user",
+            content=user_content,
+            attachments=_attachments_for_chat_turn(attachments),
+        )
+        session.updated_at = datetime.now(UTC)
+        await db_session.commit()
+        return memory_context
+
+
+def _load_memory_and_append_user_turn(
+    *,
+    auth: AuthContext,
+    chat_id: str,
+    search_space_id: int,
+    user_content: str,
+    attachments: Sequence[AttachmentIn],
+    meta: Optional[Dict[str, Any]] = None,
+) -> str:
+    return run_async(
+        _load_memory_and_append_user_turn_async(
+            auth=auth,
+            chat_id=chat_id,
+            search_space_id=search_space_id,
+            user_content=user_content,
+            attachments=attachments,
+            meta=meta,
+        )
+    )
+
+
+def _debug_error_detail(prefix: str, exc: Exception) -> str:
+    """Attach exception detail only when explicitly enabled for local debugging."""
+    if (os.getenv("DEBUG_HTTP_ERRORS", "0") or "").strip() != "1":
+        return prefix
+    return f"{prefix}: {type(exc).__name__}: {exc}"
+
+
+async def _append_assistant_turn_and_refresh_async(
+    *,
+    auth: AuthContext,
+    chat_id: str,
+    search_space_id: int,
+    assistant_content: str,
+) -> None:
+    async with get_async_session() as db_session:
+        session = await get_chat_session_for_user(
+            db_session,
+            chat_id=chat_id,
+            user_id=auth.user_id,
+        )
+        if session is None:
+            # Defensive fallback if chat row was deleted mid-request.
+            session = await get_or_create_chat_session_for_user(
+                db_session,
+                chat_id=chat_id,
+                user_id=auth.user_id,
+                search_space_id=int(search_space_id),
+                meta={},
+            )
+        elif int(session.search_space_id) != int(search_space_id):
+            raise HTTPException(status_code=400, detail="search_space_id mismatch for chat_id")
+
+        await append_turn(
+            db_session,
+            chat_session_id=int(session.id),
+            role="assistant",
+            content=assistant_content,
+            model=os.getenv("SOLVER_MODEL", "gpt-4o"),
+        )
+        await refresh_memory_summary(db_session, chat_session=session)
+        session.updated_at = datetime.now(UTC)
+        await db_session.commit()
+
+
+def _append_assistant_turn_and_refresh(
+    *,
+    auth: AuthContext,
+    chat_id: str,
+    search_space_id: int,
+    assistant_content: str,
+) -> None:
+    run_async(
+        _append_assistant_turn_and_refresh_async(
+            auth=auth,
+            chat_id=chat_id,
+            search_space_id=search_space_id,
+            assistant_content=assistant_content,
+        )
     )
 
 
@@ -358,6 +567,11 @@ def _structured_citations_from_bundle(
 
 # -------- App --------
 app = FastAPI(title="AI-TA HTTP Server", version="0.1.0")
+
+
+@app.on_event("startup")
+def _validate_startup_env() -> None:
+    validate_required_env()
 
 # CORS
 cors_origins = os.getenv("CORS_ALLOW_ORIGINS", "*")
@@ -480,21 +694,27 @@ def register_knowledge_store(payload: KnowledgeStoreIn) -> KnowledgeStoreOut:
 
 
 @app.get("/teacher/weeks", response_model=TeacherCourseOut)
-def get_teacher_weeks(class_name: str = Query(..., alias="class")) -> TeacherCourseOut:
+def get_teacher_weeks(request: Request, search_space_id: int = Query(..., gt=0)) -> TeacherCourseOut:
+    _require_course_membership(request, search_space_id=search_space_id, role="teacher")
     manager = _get_teacher_storage()
     try:
-        payload = manager.list_course(class_name)
+        payload = manager.list_course_by_search_space(search_space_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _serialize_course_payload(payload)
 
 
 @app.post("/teacher/weeks/current", response_model=TeacherCourseOut)
-def set_teacher_current_week(payload: TeacherCurrentWeekIn) -> TeacherCourseOut:
+def set_teacher_current_week(payload: TeacherCurrentWeekIn, request: Request) -> TeacherCourseOut:
+    _require_course_membership(
+        request,
+        search_space_id=int(payload.search_space_id),
+        role="teacher",
+    )
     manager = _get_teacher_storage()
     try:
-        manager.set_current_week(payload.course, payload.current_week)
-        data = manager.list_course(payload.course)
+        manager.set_current_week_by_search_space(payload.search_space_id, payload.current_week)
+        data = manager.list_course_by_search_space(payload.search_space_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -503,16 +723,22 @@ def set_teacher_current_week(payload: TeacherCurrentWeekIn) -> TeacherCourseOut:
 
 
 @app.get("/teacher/retrieval-weights", response_model=TeacherRetrievalWeightsOut)
-def get_teacher_retrieval_weights(class_name: str = Query(..., alias="class")) -> TeacherRetrievalWeightsOut:
+def get_teacher_retrieval_weights(
+    request: Request,
+    search_space_id: int = Query(..., gt=0),
+) -> TeacherRetrievalWeightsOut:
+    _require_course_membership(request, search_space_id=search_space_id, role="teacher")
     manager = _get_teacher_storage()
     try:
-        weights = manager.get_retrieval_weights(class_name)
+        weights = manager.get_retrieval_weights_by_search_space(search_space_id)
+        course_payload = manager.list_course_by_search_space(search_space_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
     defaults = get_env_weights()
     return TeacherRetrievalWeightsOut(
-        course=class_name,
+        search_space_id=search_space_id,
+        course=str(course_payload.get("course", "")),
         weights=RetrievalWeightValues(**weights),
         defaults=RetrievalWeightValues(**defaults),
         bounds=WeightBoundsOut(min=WEIGHT_MIN, max=WEIGHT_MAX),
@@ -520,20 +746,29 @@ def get_teacher_retrieval_weights(class_name: str = Query(..., alias="class")) -
 
 
 @app.post("/teacher/retrieval-weights", response_model=TeacherRetrievalWeightsOut)
-def update_teacher_retrieval_weights(payload: TeacherRetrievalWeightsUpdateIn) -> TeacherRetrievalWeightsOut:
+def update_teacher_retrieval_weights(
+    payload: TeacherRetrievalWeightsUpdateIn,
+    request: Request,
+) -> TeacherRetrievalWeightsOut:
+    _require_course_membership(
+        request,
+        search_space_id=int(payload.search_space_id),
+        role="teacher",
+    )
     manager = _get_teacher_storage()
-    course = (payload.course or "").strip()
-    if not course:
-        raise HTTPException(status_code=400, detail="class is required")
-
     try:
-        updated = manager.update_retrieval_weights(course, payload.weights.to_dict())
+        updated = manager.update_retrieval_weights_by_search_space(
+            payload.search_space_id,
+            payload.weights.to_dict(),
+        )
+        course_payload = manager.list_course_by_search_space(payload.search_space_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
     defaults = get_env_weights()
     return TeacherRetrievalWeightsOut(
-        course=course,
+        search_space_id=int(payload.search_space_id),
+        course=str(course_payload.get("course", "")),
         weights=RetrievalWeightValues(**updated),
         defaults=RetrievalWeightValues(**defaults),
         bounds=WeightBoundsOut(min=WEIGHT_MIN, max=WEIGHT_MAX),
@@ -597,15 +832,18 @@ if _HAS_MULTIPART:
 
     @app.post("/teacher/upload", response_model=TeacherUploadOut)
     def upload_teacher_material(
-        course: str = Form(..., alias="class"),
+        request: Request,
+        search_space_id: int = Form(...),
         week: int = Form(...),
         kind: str = Form(...),
         title: str = Form(""),
         file: UploadFile = File(...),
     ) -> TeacherUploadOut:
-        course_clean = (course or "").strip()
-        if not course_clean:
-            raise HTTPException(status_code=400, detail="class is required")
+        auth = _require_course_membership(
+            request,
+            search_space_id=int(search_space_id),
+            role="teacher",
+        )
         filename = file.filename or "teacher-upload.pdf"
         name_path = Path(filename)
         if name_path.suffix.lower() != ".pdf":
@@ -625,12 +863,13 @@ if _HAS_MULTIPART:
                 raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
             manager = _get_teacher_storage()
-            record = manager.record_upload(
-                course_clean,
+            record = manager.record_upload_by_search_space(
+                int(search_space_id),
                 week=int(week),
                 kind=kind,
                 pdf_path=tmp_path,
                 title=title or name_path.stem,
+                uploaded_by=auth.user_id,
             )
         except HTTPException:
             raise
@@ -687,9 +926,17 @@ def list_classes():
             )
             return result.scalars().all()
 
-    spaces = run_async(_fetch())
+    try:
+        spaces = run_async(_fetch())
+    except Exception as exc:
+        log.exception("Failed to load classes from aita_search_spaces")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load classes. Check SUPABASE_DB_URL, DB connectivity, and migrations. Error: {exc}",
+        )
     return [
         {
+            "id": s.id,
             "slug": s.slug,
             "name": s.name,
             "subject_name": s.subject_name,
@@ -795,7 +1042,7 @@ def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "
 # Intentionally sync `def` — FastAPI auto-threads sync endpoints.
 # Do NOT change to `async def` unless the entire pipeline is made async.
 @app.post("/ask")
-def post_ask(payload: AskRequest):
+def post_ask(payload: AskRequest, request: Request):
     """Accept a question and/or image attachments, stream back plain-text answer.
 
     Now supports image-only queries. Either a non-empty `question` OR at least
@@ -808,9 +1055,15 @@ def post_ask(payload: AskRequest):
     if not q and not atts:
         raise HTTPException(status_code=400, detail="Provide a question or image attachments")
 
-    class_name = payload.class_name.strip()
-    if not class_name:
-        raise HTTPException(status_code=400, detail="Class is required")
+    chat_id = (payload.chat_id or "").strip()
+    if not chat_id:
+        raise HTTPException(status_code=400, detail="chat_id is required")
+
+    search_space_id = int(payload.search_space_id)
+    auth = _require_course_membership(
+        request,
+        search_space_id=search_space_id,
+    )
 
     if payload.doc_sets:
         raise HTTPException(
@@ -819,16 +1072,17 @@ def post_ask(payload: AskRequest):
         )
 
     try:
-        workspace = _get_workspace_manager().get(class_name)
+        workspace = _get_workspace_manager().get(str(search_space_id))
     except WorkspaceNotFound:
-        raise HTTPException(status_code=404, detail="Unknown class selection")
+        raise HTTPException(status_code=404, detail="Unknown search_space_id")
     except WorkspaceConfigError as exc:
-        log.error("Workspace misconfiguration for %s: %s", class_name, exc)
+        log.error("Workspace misconfiguration for search_space_id=%s: %s", search_space_id, exc)
         raise HTTPException(status_code=500, detail="Class workspace is misconfigured")
     except WorkspaceError as exc:  # pragma: no cover - defensive
-        log.exception("Failed to load workspace for class %s", class_name)
+        log.exception("Failed to load workspace for search_space_id=%s", search_space_id)
         raise HTTPException(status_code=500, detail="Failed to load class workspace") from exc
 
+    class_name = (payload.class_name or "").strip() or workspace.class_name
     subject_name = workspace.subject_name or class_name
 
     teacher_storage: Optional[TeacherWeeklyStorage] = None
@@ -866,13 +1120,43 @@ def post_ask(payload: AskRequest):
         elif image_query:
             q_effective = image_query
 
-    weight_overrides = dict(workspace.weight_overrides)
+    chat_meta = {
+        "search_space_id": search_space_id,
+        "class_name": workspace.class_name,
+        "subject_name": subject_name,
+    }
+    user_content = _user_turn_content(q_effective or q, atts)
+    memory_context = ""
+    try:
+        memory_context = _load_memory_and_append_user_turn(
+            auth=auth,
+            chat_id=chat_id,
+            search_space_id=search_space_id,
+            user_content=user_content,
+            attachments=atts,
+            meta=chat_meta,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.error("Failed to load chat memory or append user turn: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=_debug_error_detail("Failed to persist chat turn", exc),
+        )
+
+    if memory_context:
+        current_prompt = q_effective.strip() or user_content
+        q_effective = f"{memory_context}\n\nCurrent question:\n{current_prompt}".strip()
+
+    weight_overrides = get_env_weights()
+    weight_overrides.update(workspace.weight_overrides or {})
     for material in workspace.materials:
         if material.weight_override is not None:
             weight_overrides[material.kind] = material.weight_override
     if teacher_storage is not None:
         try:
-            teacher_weights = teacher_storage.get_retrieval_weights(class_name)
+            teacher_weights = teacher_storage.get_retrieval_weights_by_search_space(search_space_id)
         except Exception:
             log.warning("Failed to get teacher retrieval weights")
             teacher_weights = {}
@@ -952,6 +1236,17 @@ def post_ask(payload: AskRequest):
         "citations": structured_citations,
     }
 
+    assistant_turn = answer_text.strip() or error_text or "[error] Unknown error"
+    try:
+        _append_assistant_turn_and_refresh(
+            auth=auth,
+            chat_id=chat_id,
+            search_space_id=search_space_id,
+            assistant_content=assistant_turn,
+        )
+    except Exception:
+        log.warning("Failed to persist assistant turn for chat_id=%s", chat_id, exc_info=True)
+
     return JSONResponse(payload_out)
 
 
@@ -966,7 +1261,7 @@ def _sse_event(event: str, data: dict) -> str:
 
 
 @app.post("/ask/stream")
-async def post_ask_stream(payload: AskRequest):
+async def post_ask_stream(payload: AskRequest, request: Request):
     """Streaming variant of /ask — returns SSE events with progress + final answer."""
 
     # --- Validation (identical to /ask) ------------------------------------
@@ -975,9 +1270,15 @@ async def post_ask_stream(payload: AskRequest):
     if not q and not atts:
         raise HTTPException(status_code=400, detail="Provide a question or image attachments")
 
-    class_name = payload.class_name.strip()
-    if not class_name:
-        raise HTTPException(status_code=400, detail="Class is required")
+    chat_id = (payload.chat_id or "").strip()
+    if not chat_id:
+        raise HTTPException(status_code=400, detail="chat_id is required")
+
+    search_space_id = int(payload.search_space_id)
+    auth = _require_course_membership(
+        request,
+        search_space_id=search_space_id,
+    )
 
     if payload.doc_sets:
         raise HTTPException(
@@ -986,17 +1287,19 @@ async def post_ask_stream(payload: AskRequest):
         )
 
     try:
-        workspace = _get_workspace_manager().get(class_name)
+        workspace = _get_workspace_manager().get(str(search_space_id))
     except WorkspaceNotFound:
-        raise HTTPException(status_code=404, detail="Unknown class selection")
+        raise HTTPException(status_code=404, detail="Unknown search_space_id")
     except WorkspaceConfigError as exc:
-        log.error("Workspace misconfiguration for %s: %s", class_name, exc)
+        log.error("Workspace misconfiguration for search_space_id=%s: %s", search_space_id, exc)
         raise HTTPException(status_code=500, detail="Class workspace is misconfigured")
     except WorkspaceError as exc:
-        log.exception("Failed to load workspace for class %s", class_name)
+        log.exception("Failed to load workspace for search_space_id=%s", search_space_id)
         raise HTTPException(status_code=500, detail="Failed to load class workspace") from exc
 
     async def _generate():
+        stream_loop = asyncio.get_running_loop()
+        class_name = (payload.class_name or "").strip() or workspace.class_name
         subject_name = workspace.subject_name or class_name
 
         teacher_storage: Optional[TeacherWeeklyStorage] = None
@@ -1034,13 +1337,47 @@ async def post_ask_stream(payload: AskRequest):
             elif image_query:
                 q_effective = image_query
 
-        weight_overrides = dict(workspace.weight_overrides)
+        chat_meta = {
+            "search_space_id": search_space_id,
+            "class_name": workspace.class_name,
+            "subject_name": subject_name,
+        }
+        user_content = _user_turn_content(q_effective or q, atts)
+        try:
+            memory_context = await stream_loop.run_in_executor(
+                None,
+                lambda: _load_memory_and_append_user_turn(
+                    auth=auth,
+                    chat_id=chat_id,
+                    search_space_id=search_space_id,
+                    user_content=user_content,
+                    attachments=atts,
+                    meta=chat_meta,
+                ),
+            )
+        except HTTPException as exc:
+            yield _sse_event("error", {"message": exc.detail})
+            return
+        except Exception as exc:
+            log.error("Failed to load chat memory or append user turn", exc_info=True)
+            yield _sse_event(
+                "error",
+                {"message": _debug_error_detail("Failed to persist chat turn", exc)},
+            )
+            return
+
+        if memory_context:
+            current_prompt = q_effective.strip() or user_content
+            q_effective = f"{memory_context}\n\nCurrent question:\n{current_prompt}".strip()
+
+        weight_overrides = get_env_weights()
+        weight_overrides.update(workspace.weight_overrides or {})
         for material in workspace.materials:
             if material.weight_override is not None:
                 weight_overrides[material.kind] = material.weight_override
         if teacher_storage is not None:
             try:
-                teacher_weights = teacher_storage.get_retrieval_weights(class_name)
+                teacher_weights = teacher_storage.get_retrieval_weights_by_search_space(search_space_id)
             except Exception:
                 log.warning("Failed to get teacher retrieval weights")
                 teacher_weights = {}
@@ -1054,8 +1391,7 @@ async def post_ask_stream(payload: AskRequest):
             # --- Stage 1: Retrieval + parse (parallel) ---------------------
             yield _sse_event("status", {"stage": "retrieving", "message": "Searching course materials..."})
 
-            loop = asyncio.get_running_loop()
-            bundle_future = loop.run_in_executor(
+            bundle_future = stream_loop.run_in_executor(
                 None, lambda: _ask_pgvector(
                     q_effective=q_effective,
                     workspace=workspace,
@@ -1064,7 +1400,7 @@ async def post_ask_stream(payload: AskRequest):
                 )
             )
             parse_future = (
-                loop.run_in_executor(
+                stream_loop.run_in_executor(
                     None, lambda: parse_question(q_effective, subject=cfg.subject_name)
                 )
                 if q_effective.strip()
@@ -1094,7 +1430,7 @@ async def post_ask_stream(payload: AskRequest):
                 "message": f"Analyzing {n_snippets} relevant excerpt{'s' if n_snippets != 1 else ''}...",
             })
 
-            solution = await loop.run_in_executor(
+            solution = await stream_loop.run_in_executor(
                 None, lambda: solve_with_bundle(parsed_task, bundle, subject=cfg.subject_name)
             )
 
@@ -1116,9 +1452,35 @@ async def post_ask_stream(payload: AskRequest):
                 "logs": [],
             })
 
+            try:
+                await stream_loop.run_in_executor(
+                    None,
+                    lambda: _append_assistant_turn_and_refresh(
+                        auth=auth,
+                        chat_id=chat_id,
+                        search_space_id=search_space_id,
+                        assistant_content=answer_text.strip() or "[empty answer]",
+                    ),
+                )
+            except Exception:
+                log.warning("Failed to persist assistant turn for chat_id=%s", chat_id, exc_info=True)
+
         except Exception as e:
             log.exception("SSE ask pipeline failed")
-            yield _sse_event("error", {"message": f"[error] {e}"})
+            error_message = f"[error] {e}"
+            yield _sse_event("error", {"message": error_message})
+            try:
+                await stream_loop.run_in_executor(
+                    None,
+                    lambda: _append_assistant_turn_and_refresh(
+                        auth=auth,
+                        chat_id=chat_id,
+                        search_space_id=search_space_id,
+                        assistant_content=error_message,
+                    ),
+                )
+            except Exception:
+                log.warning("Failed to persist assistant error turn for chat_id=%s", chat_id, exc_info=True)
 
     return StreamingResponse(
         _generate(),

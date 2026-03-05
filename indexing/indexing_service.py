@@ -9,8 +9,6 @@ Ported from SurfSense's IndexingPipelineService with AI-TA adaptations:
 - Preserves page_number, section_path, chunk_type on each Chunk for citations.
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 from datetime import UTC, datetime

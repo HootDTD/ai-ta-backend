@@ -27,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 ENV_PATH = PROJECT_ROOT / ".env"
 
 
@@ -290,4 +290,3 @@ async def run():
 
 if __name__ == "__main__":
     asyncio.run(run())
-

@@ -9,8 +9,6 @@ or figure caption extracted with bounding-box awareness), so we use a
 1:1 mapping: one Item → one Chunk. This preserves exact page numbers
 needed for citation markers like "[Textbook, p. 42]".
 """
-
-from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

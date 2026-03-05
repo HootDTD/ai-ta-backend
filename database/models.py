@@ -6,16 +6,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import (
-    TIMESTAMP,
-    Column,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-    text,
-)
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import BigInteger, Boolean, TIMESTAMP, Column, ForeignKey, Integer, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, relationship
 
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "3072"))
@@ -181,11 +173,196 @@ class AITAChunk(BaseModel, TimestampMixin):
     document = relationship("AITADocument", back_populates="chunks")
 
 
+class CourseMembership(Base):
+    """User membership to a course search space."""
+
+    __tablename__ = "course_memberships"
+
+    user_id = Column(UUID(as_uuid=False), primary_key=True)
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+        index=True,
+    )
+    role = Column(String(20), nullable=False, default="student")
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        index=True,
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class TeacherCourse(Base):
+    """Per-course teacher settings (week + retrieval weights)."""
+
+    __tablename__ = "teacher_courses"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    current_week = Column(Integer, nullable=False, default=1)
+    weights = Column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    weight_bounds = Column(
+        JSONB,
+        nullable=False,
+        default=lambda: {"min": 0.0, "max": 1.0},
+        server_default=text('\'{"min":0.0,"max":1.0}\'::jsonb'),
+    )
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        index=True,
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class TeacherUpload(Base):
+    """Teacher-uploaded weekly notes/slides metadata."""
+
+    __tablename__ = "teacher_uploads"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    week = Column(Integer, nullable=False, index=True)
+    kind = Column(String(20), nullable=False, index=True)
+    title = Column(String, nullable=False)
+    source_name = Column(String, nullable=True)
+    doc_id = Column(
+        Integer,
+        ForeignKey("aita_documents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    page_count = Column(Integer, nullable=True)
+    is_latest = Column(Boolean, nullable=False, default=True, index=True)
+    uploaded_by = Column(UUID(as_uuid=False), nullable=True, index=True)
+    metadata_ = Column("metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    uploaded_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        index=True,
+    )
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        index=True,
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class ChatSession(Base):
+    """Persisted chat session for memory + reporting."""
+
+    __tablename__ = "chat_sessions"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    chat_id = Column(String(200), nullable=False, unique=True, index=True)
+    user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    meta = Column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    memory_summary = Column(Text, nullable=False, default="", server_default=text("''"))
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        index=True,
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+    turns = relationship(
+        "ChatTurn",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="ChatTurn.turn_index",
+    )
+
+
+class ChatTurn(Base):
+    """Chat turn rows for a session."""
+
+    __tablename__ = "chat_turns"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    chat_session_id = Column(
+        BigInteger,
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    turn_index = Column(Integer, nullable=False, index=True)
+    turn_id = Column(String(100), nullable=False, index=True)
+    role = Column(String(20), nullable=False, index=True)
+    content = Column(Text, nullable=False, default="", server_default=text("''"))
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        index=True,
+    )
+    model = Column(String(100), nullable=True)
+    tool_name = Column(String(100), nullable=True)
+    tool_inputs = Column(JSONB, nullable=True)
+    attachments = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+
+    session = relationship("ChatSession", back_populates="turns")
+
+
 __all__ = [
     "Base",
     "SearchSpace",
     "AITADocument",
     "AITAChunk",
+    "CourseMembership",
+    "TeacherCourse",
+    "TeacherUpload",
+    "ChatSession",
+    "ChatTurn",
     "DocumentType",
     "DocumentStatus",
     "EMBEDDING_DIM",

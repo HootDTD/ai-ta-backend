@@ -9,8 +9,6 @@ from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-DATABASE_URL = os.getenv("SUPABASE_DB_URL", "")
-
 _engine = None
 _session_factory = None
 
@@ -58,10 +56,11 @@ def run_async(coro):
 def _get_engine():
     global _engine
     if _engine is None:
-        if not DATABASE_URL:
+        database_url = (os.getenv("SUPABASE_DB_URL") or "").strip()
+        if not database_url:
             raise RuntimeError("SUPABASE_DB_URL is not set.")
         _engine = create_async_engine(
-            DATABASE_URL,
+            database_url,
             pool_size=10,
             max_overflow=20,
             pool_pre_ping=True,

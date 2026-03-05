@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from backend.auth import resolve_auth_context
+from backend.chats.service import get_chat_session_for_user, serialize_chat_session
+from backend.database.session import get_async_session, run_async
 from .models import create_report, get_report, list_reports
 from .service import build_evidence_pack, generate_report as gen_report
-from backend.vendors import supabase_client as sb
 
 router = APIRouter()
 
@@ -15,29 +17,56 @@ class CreateReportBody(BaseModel):
     length: str = Field("brief", description="brief|full")
 
 
-def _load_chat_from_supabase(chat_id: str) -> dict:
-    """Load a chat transcript from Supabase chat_sessions + chat_turns."""
-    session = sb.select_one("chat_sessions", {"chat_id": f"eq.{chat_id}"})
-    if not session:
-        raise ValueError("chat not found")
-    session_id = session["id"]
-    turns = sb.select("chat_turns", {
-        "chat_session_id": f"eq.{session_id}",
-        "order": "created_at.asc",
-    })
-    return {
-        "chat_id": chat_id,
-        "meta": session.get("meta", {}),
-        "turns": turns,
-    }
+def _user_owns_chat(user_id: str, chat_id: str) -> bool:
+    async def _run() -> bool:
+        async with get_async_session() as db_session:
+            session = await get_chat_session_for_user(
+                db_session,
+                chat_id=chat_id,
+                user_id=user_id,
+            )
+            return session is not None
+
+    return bool(run_async(_run()))
+
+
+def _load_chat_for_user(chat_id: str, user_id: str) -> dict:
+    async def _run() -> dict:
+        async with get_async_session() as db_session:
+            return await serialize_chat_session(
+                db_session,
+                chat_id=chat_id,
+                user_id=user_id,
+            )
+
+    try:
+        return run_async(_run())
+    except ValueError as exc:
+        raise ValueError("chat not found") from exc
+
+
+def _require_owned_report(report_id: str, *, user_id: str) -> dict:
+    obj = get_report(report_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Report not found")
+    chat_id = str(obj.get("chat_id") or "").strip()
+    if not chat_id:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if not _user_owns_chat(user_id, chat_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return obj
 
 
 @router.post("/reports/ai-use/{chat_id}")
-def create_ai_use_report(chat_id: str, body: CreateReportBody):
+def create_ai_use_report(chat_id: str, body: CreateReportBody, request: Request):
+    auth = resolve_auth_context(request)
+    if not _user_owns_chat(auth.user_id, chat_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     try:
         evidence = build_evidence_pack(
             chat_id, body.style, body.length,
-            chat_loader=_load_chat_from_supabase,
+            chat_loader=lambda cid: _load_chat_for_user(cid, auth.user_id),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -69,10 +98,9 @@ def create_ai_use_report(chat_id: str, body: CreateReportBody):
 
 
 @router.get("/reports/ai-use/{report_id}.pdf")
-def get_ai_use_report_pdf(report_id: str):
-    obj = get_report(report_id)
-    if not obj:
-        raise HTTPException(status_code=404, detail="Report not found")
+def get_ai_use_report_pdf(report_id: str, request: Request):
+    auth = resolve_auth_context(request)
+    obj = _require_owned_report(report_id, user_id=auth.user_id)
     try:
         from .pdf import render_pdf_from_markdown  # type: ignore
 
@@ -94,13 +122,25 @@ def get_ai_use_report_pdf(report_id: str):
 
 
 @router.get("/reports/ai-use/{report_id}")
-def get_ai_use_report_detail(report_id: str):
-    obj = get_report(report_id)
-    if not obj:
-        raise HTTPException(status_code=404, detail="Report not found")
-    return obj
+def get_ai_use_report_detail(report_id: str, request: Request):
+    auth = resolve_auth_context(request)
+    return _require_owned_report(report_id, user_id=auth.user_id)
 
 
 @router.get("/reports/ai-use")
-def list_ai_use_reports_endpoint(limit: int = 10):
-    return list_reports(limit=limit)
+def list_ai_use_reports_endpoint(request: Request, limit: int = 10):
+    auth = resolve_auth_context(request)
+    rows = list_reports(limit=limit)
+    out = []
+    seen: dict[str, bool] = {}
+    for row in rows:
+        chat_id = str((row or {}).get("chat_id") or "").strip()
+        if not chat_id:
+            continue
+        allowed = seen.get(chat_id)
+        if allowed is None:
+            allowed = _user_owns_chat(auth.user_id, chat_id)
+            seen[chat_id] = allowed
+        if allowed:
+            out.append(row)
+    return out
