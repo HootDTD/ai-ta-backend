@@ -7,7 +7,7 @@ runtime/
 artifacts/
 .env
 .env.*
-chats/
+/chats/
 
 # Node/Next artifacts (covers both UI apps)
 node_modules/
