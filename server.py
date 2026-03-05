@@ -35,7 +35,13 @@ from .workspaces.manager import (
     WorkspaceError,
     build_workspace_manager,
 )
-from .auth import AuthContext, has_membership, resolve_auth_context, validate_required_env
+from .auth import (
+    AuthContext,
+    auto_enroll_student_membership,
+    has_membership,
+    resolve_auth_context,
+    validate_required_env,
+)
 from .database.session import get_async_session, run_async
 from .chats.service import (
     append_turn,
@@ -310,12 +316,31 @@ def _require_course_membership(
 
     async def _run() -> bool:
         async with get_async_session() as db_session:
-            return await has_membership(
+            allowed = await has_membership(
                 db_session,
                 user_id=auth.user_id,
                 search_space_id=search_space_id,
                 role=role,
             )
+            if allowed:
+                return True
+
+            # Optional convenience path: enroll authenticated users as students
+            # on first access to student endpoints (role unset or student).
+            if role in (None, "student"):
+                enrolled = await auto_enroll_student_membership(
+                    db_session,
+                    user_id=auth.user_id,
+                    search_space_id=search_space_id,
+                )
+                if enrolled:
+                    return await has_membership(
+                        db_session,
+                        user_id=auth.user_id,
+                        search_space_id=search_space_id,
+                        role=role,
+                    )
+            return False
 
     try:
         allowed = run_async(_run())

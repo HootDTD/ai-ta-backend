@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -9,12 +10,27 @@ from typing import Optional
 import requests
 from fastapi import HTTPException, Request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database.models import CourseMembership
 
 _TOKEN_CACHE: dict[str, tuple[float, str]] = {}
 _TOKEN_CACHE_TTL_SECONDS = int(os.getenv("AUTH_TOKEN_CACHE_TTL_SECONDS", "60"))
+_AUTO_ENROLL_ENABLED = (os.getenv("AUTO_ENROLL_STUDENT_MEMBERSHIP", "1") or "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_AUTO_ENROLL_IDS_RAW = (os.getenv("AUTO_ENROLL_SEARCH_SPACE_IDS") or "").strip()
+_AUTO_ENROLL_IDS = {
+    int(part.strip())
+    for part in _AUTO_ENROLL_IDS_RAW.split(",")
+    if part.strip().isdigit()
+}
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -117,3 +133,50 @@ async def has_membership(
         stmt = stmt.where(CourseMembership.role == role)
     result = await db_session.execute(stmt)
     return result.scalars().first() is not None
+
+
+def can_auto_enroll_student(search_space_id: int) -> bool:
+    if not _AUTO_ENROLL_ENABLED:
+        return False
+    if not _AUTO_ENROLL_IDS:
+        return True
+    return int(search_space_id) in _AUTO_ENROLL_IDS
+
+
+async def auto_enroll_student_membership(
+    db_session: AsyncSession,
+    *,
+    user_id: str,
+    search_space_id: int,
+) -> bool:
+    """Insert default student membership for a user/class when enabled."""
+    if not can_auto_enroll_student(search_space_id):
+        return False
+
+    membership = CourseMembership(
+        user_id=user_id,
+        search_space_id=int(search_space_id),
+        role="student",
+    )
+    db_session.add(membership)
+    try:
+        await db_session.commit()
+        log.info(
+            "Auto-enrolled student membership user=%s search_space_id=%s",
+            user_id,
+            search_space_id,
+        )
+        return True
+    except IntegrityError:
+        # Existing membership (student or teacher) already satisfies access checks.
+        await db_session.rollback()
+        return True
+    except Exception:
+        await db_session.rollback()
+        log.warning(
+            "Auto-enroll failed for user=%s search_space_id=%s",
+            user_id,
+            search_space_id,
+            exc_info=True,
+        )
+        return False
