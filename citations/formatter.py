@@ -105,6 +105,11 @@ def build_citation_info(
         except (TypeError, ValueError):
             week_info = None
 
+    ocr_provider = meta_entry.get("ocr_provider") if meta_entry else None
+    teacher_upload_id = meta_entry.get("teacher_upload_id") if meta_entry else None
+    page_asset = meta_entry.get("page_asset") if meta_entry else None
+    raw_latex = meta_entry.get("raw_latex") if meta_entry else None
+
     if doc_type in {"Notes", "Slides"} and week_info is not None:
         label = f"[{doc_type}, Week {week_info}, p. {page_norm if isinstance(page_norm, int) else '?'}]"
     else:
@@ -116,6 +121,11 @@ def build_citation_info(
         "page": page_norm,
         "bbox": bbox_norm,
         "ocr_conf": ocr_conf,
+        "ocr_provider": ocr_provider,
+        "teacher_upload_id": teacher_upload_id,
+        "week": week_info,
+        "page_asset": page_asset,
+        "raw_latex": raw_latex,
         "verified": verified,
         "label": label,
         "store_key": store_key,
@@ -145,6 +155,24 @@ def format_citations(
             continue
         seen.add(key)
         labels.append(info["label"])
-        structured.append({k: info[k] for k in ("doc_type", "file", "page", "bbox", "ocr_conf", "verified", "label")})
+        structured.append(
+            {
+                k: info[k]
+                for k in (
+                    "doc_type",
+                    "file",
+                    "page",
+                    "bbox",
+                    "ocr_conf",
+                    "ocr_provider",
+                    "teacher_upload_id",
+                    "week",
+                    "page_asset",
+                    "raw_latex",
+                    "verified",
+                    "label",
+                )
+            }
+        )
 
     return labels, structured

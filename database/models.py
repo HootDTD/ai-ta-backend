@@ -260,6 +260,26 @@ class TeacherUpload(Base):
         nullable=True,
         index=True,
     )
+    status = Column(String(20), nullable=False, default="ready", index=True)
+    storage_key = Column(String, nullable=True)
+    artifact_manifest = Column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    ocr_provider = Column(String(50), nullable=True)
+    ocr_summary = Column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    warning_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    error_message = Column(Text, nullable=True)
+    started_at = Column(TIMESTAMP(timezone=True), nullable=True, index=True)
+    completed_at = Column(TIMESTAMP(timezone=True), nullable=True, index=True)
+    attempt_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
     page_count = Column(Integer, nullable=True)
     is_latest = Column(Boolean, nullable=False, default=True, index=True)
     uploaded_by = Column(UUID(as_uuid=False), nullable=True, index=True)
@@ -270,6 +290,38 @@ class TeacherUpload(Base):
         default=lambda: datetime.now(UTC),
         index=True,
     )
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        index=True,
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
+class TeacherUploadJob(Base):
+    """Durable background work queue for teacher upload ingestion."""
+
+    __tablename__ = "teacher_upload_jobs"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    upload_id = Column(
+        BigInteger,
+        ForeignKey("teacher_uploads.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    state = Column(String(20), nullable=False, default="queued", index=True)
+    lease_owner = Column(String(200), nullable=True, index=True)
+    lease_expires_at = Column(TIMESTAMP(timezone=True), nullable=True, index=True)
+    attempt_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    last_error = Column(Text, nullable=True)
     created_at = Column(
         TIMESTAMP(timezone=True),
         nullable=False,

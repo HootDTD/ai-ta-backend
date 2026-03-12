@@ -11,10 +11,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from ..database.models import AITADocument, SearchSpace
 from ..database.session import get_async_session, run_async
+from ..retrieval.document_visibility import active_document_conditions
 from .manager import ClassWorkspace, WorkspaceMaterial, WorkspaceRepository
 
 log = logging.getLogger(__name__)
@@ -94,10 +94,7 @@ class DBWorkspaceRepository(WorkspaceRepository):
         self, session, search_space_id: int
     ) -> List[WorkspaceMaterial]:
         result = await session.execute(
-            select(AITADocument).where(
-                AITADocument.search_space_id == search_space_id,
-                AITADocument.status["state"].astext == "ready",
-            )
+            select(AITADocument).where(*active_document_conditions(search_space_id))
         )
         docs = result.scalars().all()
 
