@@ -178,12 +178,19 @@ class TeacherUploadOut(BaseModel):
     week: int
     kind: str
     title: str
+    status: Optional[str] = None
     uploaded_at: Optional[str] = None
     source_name: Optional[str] = None
     page_count: Optional[int] = None
     index_path: Optional[str] = None
     doc_id: Optional[str] = None
     material_id: Optional[str] = None
+    error_message: Optional[str] = None
+    warning_count: int = 0
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    ocr_provider: Optional[str] = None
+    ocr_summary: Dict[str, Any] = Field(default_factory=dict)
 
 
 class TeacherSectionOut(BaseModel):
@@ -374,6 +381,27 @@ def _user_turn_content(question: str, attachments: Sequence[AttachmentIn]) -> st
     if attachments:
         return "[image-only question]"
     return ""
+
+
+def _build_retrieval_weight_overrides(
+    *,
+    workspace: Any,
+    teacher_storage: Optional[TeacherWeeklyStorage],
+    search_space_id: int,
+) -> Dict[str, float]:
+    weight_overrides = get_env_weights()
+    weight_overrides.update(getattr(workspace, "weight_overrides", None) or {})
+    for material in getattr(workspace, "materials", []) or []:
+        if getattr(material, "weight_override", None) is not None:
+            weight_overrides[material.kind] = material.weight_override
+    if teacher_storage is not None:
+        try:
+            teacher_weights = teacher_storage.get_retrieval_weights_by_search_space(search_space_id)
+        except Exception:
+            log.warning("Failed to get teacher retrieval weights")
+        else:
+            weight_overrides.update(teacher_weights)
+    return weight_overrides
 
 
 async def _load_memory_and_append_user_turn_async(
@@ -575,16 +603,34 @@ def _structured_citations_from_bundle(
         if marker not in used_set:
             continue
         sn_id = getattr(sn, "id", None)
-        sn_type = getattr(sn, "type", "other") or "other"
+        sn_meta = getattr(sn, "metadata", None) or {}
+        sn_type = sn_meta.get("material_kind") or sn_meta.get("kind") or "other"
+        store_key = str(
+            sn_meta.get("teacher_upload_id")
+            or sn_meta.get("document_id")
+            or getattr(sn, "doc_title", None)
+            or sn_id
+            or sn_type
+        )
         entries.append({"id": sn_id, "snippet": sn})
         if sn_id is not None:
             id_to_row[sn_id] = {
-                "store_key": sn_type,
+                "store_key": store_key,
                 "store_kind": sn_type,
                 "source_path": getattr(sn, "source_path", ""),
+                "page": getattr(sn, "page", None),
+                "bbox": sn_meta.get("bbox"),
             }
-        if sn_type not in store_meta:
-            store_meta[sn_type] = {"kind": sn_type}
+        if store_key not in store_meta:
+            store_meta[store_key] = {
+                "kind": sn_type,
+                "week": sn_meta.get("week"),
+                "average_confidence": sn_meta.get("ocr_confidence"),
+                "ocr_provider": sn_meta.get("ocr_provider"),
+                "teacher_upload_id": sn_meta.get("teacher_upload_id"),
+                "page_asset": sn_meta.get("page_asset"),
+                "raw_latex": sn_meta.get("raw_latex"),
+            }
 
     _, structured = format_citations(entries, id_to_row, store_meta)
     return structured
@@ -800,6 +846,29 @@ def update_teacher_retrieval_weights(
     )
 
 
+@app.post("/teacher/uploads/{upload_id}/retry", response_model=TeacherUploadOut, status_code=202)
+def retry_teacher_upload(upload_id: int, request: Request) -> TeacherUploadOut:
+    manager = _get_teacher_storage()
+    try:
+        search_space_id = manager.get_upload_search_space_id(int(upload_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    _require_course_membership(request, search_space_id=search_space_id, role="teacher")
+
+    try:
+        record = manager.retry_upload(int(upload_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        log.exception("Failed to retry teacher upload %s", upload_id)
+        raise HTTPException(status_code=500, detail=str(exc) or "Failed to retry upload")
+
+    return TeacherUploadOut(**record.to_dict())
+
+
 if _HAS_MULTIPART:
 
     @app.post("/knowledge/materials", response_model=KnowledgeMaterialOut)
@@ -855,7 +924,7 @@ if _HAS_MULTIPART:
         return material
 
 
-    @app.post("/teacher/upload", response_model=TeacherUploadOut)
+    @app.post("/teacher/upload", response_model=TeacherUploadOut, status_code=202)
     def upload_teacher_material(
         request: Request,
         search_space_id: int = Form(...),
@@ -888,7 +957,7 @@ if _HAS_MULTIPART:
                 raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
             manager = _get_teacher_storage()
-            record = manager.record_upload_by_search_space(
+            record = manager.enqueue_upload_by_search_space(
                 int(search_space_id),
                 week=int(week),
                 kind=kind,
@@ -1174,19 +1243,11 @@ def post_ask(payload: AskRequest, request: Request):
         current_prompt = q_effective.strip() or user_content
         q_effective = f"{memory_context}\n\nCurrent question:\n{current_prompt}".strip()
 
-    weight_overrides = get_env_weights()
-    weight_overrides.update(workspace.weight_overrides or {})
-    for material in workspace.materials:
-        if material.weight_override is not None:
-            weight_overrides[material.kind] = material.weight_override
-    if teacher_storage is not None:
-        try:
-            teacher_weights = teacher_storage.get_retrieval_weights_by_search_space(search_space_id)
-        except Exception:
-            log.warning("Failed to get teacher retrieval weights")
-            teacher_weights = {}
-        else:
-            weight_overrides.update(teacher_weights)
+    weight_overrides = _build_retrieval_weight_overrides(
+        workspace=workspace,
+        teacher_storage=teacher_storage,
+        search_space_id=search_space_id,
+    )
 
     stdout_buffer = io.StringIO()
     answer_chunks: List[str] = []
@@ -1395,19 +1456,11 @@ async def post_ask_stream(payload: AskRequest, request: Request):
             current_prompt = q_effective.strip() or user_content
             q_effective = f"{memory_context}\n\nCurrent question:\n{current_prompt}".strip()
 
-        weight_overrides = get_env_weights()
-        weight_overrides.update(workspace.weight_overrides or {})
-        for material in workspace.materials:
-            if material.weight_override is not None:
-                weight_overrides[material.kind] = material.weight_override
-        if teacher_storage is not None:
-            try:
-                teacher_weights = teacher_storage.get_retrieval_weights_by_search_space(search_space_id)
-            except Exception:
-                log.warning("Failed to get teacher retrieval weights")
-                teacher_weights = {}
-            else:
-                weight_overrides.update(teacher_weights)
+        weight_overrides = _build_retrieval_weight_overrides(
+            workspace=workspace,
+            teacher_storage=teacher_storage,
+            search_space_id=search_space_id,
+        )
 
         try:
             cfg = RequestConfig.from_env()

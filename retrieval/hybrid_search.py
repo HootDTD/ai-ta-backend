@@ -18,6 +18,7 @@ from sqlalchemy.orm import joinedload
 
 from ..database.models import AITAChunk, AITADocument
 from ..indexing.document_embedder import embed_text
+from .document_visibility import active_document_conditions, build_chunk_metadata
 
 log = logging.getLogger(__name__)
 
@@ -53,13 +54,9 @@ class AITAHybridSearchRetriever:
         tsquery = func.plainto_tsquery("english", query_text)
 
         # Base filter conditions (search space + optional material kind)
-        base_conditions = [AITADocument.search_space_id == self.search_space_id]
+        base_conditions = active_document_conditions(self.search_space_id)
         if material_kind:
             base_conditions.append(AITADocument.material_kind == material_kind)
-        # Only return chunks from fully-indexed documents
-        base_conditions.append(
-            AITADocument.status["state"].astext == "ready"
-        )
 
         # CTE 1: Semantic search (pgvector cosine distance, ascending = closer)
         semantic_cte = (
@@ -127,6 +124,15 @@ class AITAHybridSearchRetriever:
         chunks_out = []
         for chunk, score in rows:
             doc = chunk.document
+            doc_meta = dict(getattr(doc, "document_metadata", None) or {})
+            chunk_meta = build_chunk_metadata(doc_meta, chunk.page_number)
+            chunk_meta.update(
+                {
+                    "document_id": doc.id if doc else None,
+                    "material_kind": doc.material_kind if doc else "other",
+                    "kind": chunk_meta.get("kind") or (doc.material_kind if doc else "other"),
+                }
+            )
             chunks_out.append({
                 "chunk_id": chunk.id,
                 "content": chunk.content,
@@ -138,6 +144,14 @@ class AITAHybridSearchRetriever:
                 "document_id": doc.id if doc else None,
                 "doc_title": doc.title if doc else "",
                 "material_kind": doc.material_kind if doc else "other",
+                "source_path": chunk_meta.get("source_pdf") or "",
+                "week": chunk_meta.get("week"),
+                "teacher_upload_id": chunk_meta.get("teacher_upload_id"),
+                "ocr_provider": chunk_meta.get("ocr_provider"),
+                "ocr_confidence": chunk_meta.get("ocr_confidence"),
+                "page_asset": chunk_meta.get("page_asset"),
+                "raw_latex": chunk_meta.get("raw_latex"),
+                "metadata": chunk_meta,
             })
 
         return chunks_out

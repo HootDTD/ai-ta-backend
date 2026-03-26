@@ -11,11 +11,14 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
+import shutil
+import socket
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from importlib.util import module_from_spec, spec_from_file_location
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -30,18 +33,50 @@ from ..database.models import (
     SearchSpace,
     TeacherCourse,
     TeacherUpload,
+    TeacherUploadJob,
 )
 from ..database.session import get_async_session, run_async
 from ..indexing.connector_document import AITAConnectorDocument
 from ..indexing.document_hashing import compute_content_hash, compute_unique_identifier_hash
 from ..indexing.indexing_service import AITAIndexingService
+from .teacher_pdf_ingestion import TeacherPDFIngestor, TeacherPDFIngestionResult
+from ..vendors.supabase_storage import SupabaseStorageClient
 
 log = logging.getLogger(__name__)
 
 TOTAL_WEEKS_DEFAULT = 16
 VALID_KINDS = {"notes", "slides"}
 _INACTIVE_STATUS = {"state": "inactive"}
-_LAYOUT_MODULE = None
+UPLOAD_STATUS_QUEUED = "queued"
+UPLOAD_STATUS_PROCESSING = "processing"
+UPLOAD_STATUS_READY = "ready"
+UPLOAD_STATUS_FAILED = "failed"
+UPLOAD_STATUS_SUPERSEDED = "superseded"
+JOB_STATE_QUEUED = "queued"
+JOB_STATE_PROCESSING = "processing"
+JOB_STATE_COMPLETED = "completed"
+JOB_STATE_FAILED = "failed"
+DEFAULT_UPLOAD_BUCKET = "teacher-weekly-uploads"
+DEFAULT_PAGES_BUCKET = "teacher-weekly-pages"
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_JOB_LEASE_SECONDS = 900
+DEFAULT_JOB_POLL_SECONDS = 5.0
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    try:
+        return int(raw) if raw else default
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = (os.getenv(name) or "").strip()
+    try:
+        return float(raw) if raw else default
+    except ValueError:
+        return default
 
 
 def _utc_now() -> datetime:
@@ -62,38 +97,43 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def _load_layout_module():
-    global _LAYOUT_MODULE
-    if _LAYOUT_MODULE is not None:
-        return _LAYOUT_MODULE
-
-    script_path = Path(__file__).resolve().parents[1] / "text-embeder" / "layout_multimodal_embedder.py"
-    if not script_path.is_file():
-        raise RuntimeError(f"Layout embedder script not found: {script_path}")
-
-    spec = spec_from_file_location("backend_layout_embedder", str(script_path))
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to import layout embedder from {script_path}")
-
-    module = module_from_spec(spec)
-    if module is None:
-        raise RuntimeError(f"Unable to initialize module from {script_path}")
-    import sys
-
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)  # type: ignore[assignment]
-    _LAYOUT_MODULE = module
-    return module
+def _safe_filename(name: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9._-]+", "-", (name or "").strip()).strip("-")
+    return token or "teacher-upload.pdf"
 
 
-def _build_source_markdown(items: List[Any], fallback_title: str) -> str:
-    texts: List[str] = []
-    for item in items:
-        text = (getattr(item, "text", None) or getattr(item, "raw_text", None) or "").strip()
-        if text:
-            texts.append(text)
-    merged = "\n".join(texts).strip()
-    return merged if merged else fallback_title
+def _truncate_error(message: str | None) -> Optional[str]:
+    if message is None:
+        return None
+    cleaned = " ".join(str(message).split()).strip()
+    return cleaned[:500] if cleaned else None
+
+
+# Patterns that indicate the error is permanent and retrying won't help.
+_TERMINAL_ERROR_PATTERNS: tuple[str, ...] = (
+    "No searchable chunks produced",
+    "PyMuPDF is required",
+    "invalid pdf",
+    "not a pdf",
+    "password protected",
+    "encrypted",
+    "401",
+    "403",
+    "AuthenticationError",
+    "PermissionError",
+    "InvalidFileError",
+)
+
+
+def _is_terminal_error(exc: BaseException) -> bool:
+    """Return True if the exception represents a permanent failure that should not be retried."""
+    msg = str(exc).lower()
+    for pattern in _TERMINAL_ERROR_PATTERNS:
+        if pattern.lower() in msg:
+            return True
+    if isinstance(exc, (FileNotFoundError, ValueError, TypeError, PermissionError)):
+        return True
+    return False
 
 
 @dataclass
@@ -102,12 +142,19 @@ class UploadRecord:
     week: int
     kind: str
     title: str
+    status: str
     uploaded_at: Optional[str]
     source_name: Optional[str]
     page_count: Optional[int]
     index_path: Optional[str]
     doc_id: Optional[str]
     material_id: Optional[str]
+    error_message: Optional[str] = None
+    warning_count: int = 0
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    ocr_provider: Optional[str] = None
+    ocr_summary: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -115,22 +162,53 @@ class UploadRecord:
             "week": self.week,
             "kind": self.kind,
             "title": self.title,
+            "status": self.status,
             "uploaded_at": self.uploaded_at,
             "source_name": self.source_name,
             "page_count": self.page_count,
             "index_path": self.index_path,
             "doc_id": self.doc_id,
             "material_id": self.material_id,
+            "error_message": self.error_message,
+            "warning_count": self.warning_count,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "ocr_provider": self.ocr_provider,
+            "ocr_summary": self.ocr_summary or {},
         }
+
+
+@dataclass
+class ClaimedUploadJob:
+    job_id: int
+    upload_id: int
+    search_space_id: int
+    week: int
+    kind: str
+    title: str
+    source_name: str
+    storage_key: str
 
 
 class TeacherWeeklyStorage:
     """Manage per-course weekly uploads and retrieval weights in pgvector tables."""
 
-    def __init__(self, base_dir: Optional[os.PathLike[str] | str] = None, *, total_weeks: Optional[int] = None):
+    def __init__(
+        self,
+        base_dir: Optional[os.PathLike[str] | str] = None,
+        *,
+        total_weeks: Optional[int] = None,
+        storage_client: Optional[SupabaseStorageClient] = None,
+    ):
         root = Path(base_dir) if base_dir is not None else Path(__file__).resolve().parents[1] / "runtime" / "teacher_weekly"
         self.root = root
         self.total_weeks = int(total_weeks or os.getenv("TEACHER_TOTAL_WEEKS", TOTAL_WEEKS_DEFAULT))
+        self.upload_bucket = (os.getenv("TEACHER_UPLOAD_BUCKET") or DEFAULT_UPLOAD_BUCKET).strip() or DEFAULT_UPLOAD_BUCKET
+        self.pages_bucket = (os.getenv("TEACHER_UPLOAD_PAGES_BUCKET") or DEFAULT_PAGES_BUCKET).strip() or DEFAULT_PAGES_BUCKET
+        self.max_retries = max(1, _env_int("TEACHER_UPLOAD_MAX_RETRIES", DEFAULT_MAX_RETRIES))
+        self.job_lease_seconds = max(30, _env_int("TEACHER_UPLOAD_JOB_LEASE_SECONDS", DEFAULT_JOB_LEASE_SECONDS))
+        self.job_poll_seconds = max(0.5, _env_float("TEACHER_UPLOAD_JOB_POLL_SECONDS", DEFAULT_JOB_POLL_SECONDS))
+        self.storage = storage_client or SupabaseStorageClient()
         self.root.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
@@ -154,6 +232,27 @@ class TeacherWeeklyStorage:
     ) -> Dict[str, float]:
         return run_async(self._update_retrieval_weights_by_search_space_async(int(search_space_id), weights))
 
+    def enqueue_upload_by_search_space(
+        self,
+        search_space_id: int,
+        *,
+        week: int,
+        kind: str,
+        pdf_path: Path,
+        title: Optional[str] = None,
+        uploaded_by: Optional[str] = None,
+    ) -> UploadRecord:
+        return run_async(
+            self._enqueue_upload_by_search_space_async(
+                int(search_space_id),
+                week=int(week),
+                kind=kind,
+                pdf_path=pdf_path,
+                title=title,
+                uploaded_by=uploaded_by,
+            )
+        )
+
     def record_upload_by_search_space(
         self,
         search_space_id: int,
@@ -164,80 +263,63 @@ class TeacherWeeklyStorage:
         title: Optional[str] = None,
         uploaded_by: Optional[str] = None,
     ) -> UploadRecord:
-        week_val = int(week)
-        if week_val < 1 or week_val > self.total_weeks:
-            raise ValueError(f"week must be between 1 and {self.total_weeks}")
-        kind_norm = (kind or "").strip().lower()
-        if kind_norm not in VALID_KINDS:
-            raise ValueError("kind must be 'notes' or 'slides'")
+        upload = self.enqueue_upload_by_search_space(
+            search_space_id,
+            week=week,
+            kind=kind,
+            pdf_path=pdf_path,
+            title=title,
+            uploaded_by=uploaded_by,
+        )
+        self.process_upload_by_id(int(upload.id))
+        return self.get_upload_record(int(upload.id))
 
-        pdf_resolved = Path(pdf_path).expanduser().resolve()
-        if not pdf_resolved.is_file():
-            raise FileNotFoundError(f"Teacher upload file not found: {pdf_resolved}")
+    def get_upload_record(self, upload_id: int) -> UploadRecord:
+        return run_async(self._get_upload_record_async(int(upload_id)))
 
-        resolved_title = (title or f"Week {week_val} {kind_norm.title()}").strip() or f"Week {week_val} {kind_norm.title()}"
-        source_sha256 = _sha256_file(pdf_resolved)
+    def get_upload_search_space_id(self, upload_id: int) -> int:
+        return run_async(self._get_upload_search_space_id_async(int(upload_id)))
 
-        module = _load_layout_module()
-        extract_document = getattr(module, "extract_document", None)
-        if not callable(extract_document):
-            raise RuntimeError("layout_multimodal_embedder.extract_document is unavailable")
+    def retry_upload(self, upload_id: int) -> UploadRecord:
+        return run_async(self._retry_upload_async(int(upload_id)))
 
-        ingest_id = uuid.uuid4().hex
-        temp_out = Path(tempfile.mkdtemp(prefix=f"teacher_upload_{ingest_id}_", dir=str(self.root)))
-        try:
-            items = extract_document(
-                pdf_path=pdf_resolved,
-                doc_id=f"teacher:{search_space_id}:{week_val}:{kind_norm}:{ingest_id}",
-                out_dir=temp_out,
-                do_ocr=True,
-            )
-        finally:
-            # Extracted artifacts are transient; indexed text/chunks live in Postgres.
+    def reindex_upload(self, upload_id: int) -> UploadRecord:
+        """Force re-processing of a completed upload (e.g. after OCR degradation).
+
+        Unlike retry_upload, this works on 'ready' uploads whose OCR was degraded.
+        It resets the upload to queued so the background worker re-processes it,
+        appending a reindex marker to force a new content hash.
+        """
+        return run_async(self._reindex_upload_async(int(upload_id)))
+
+    def process_upload_by_id(self, upload_id: int) -> UploadRecord:
+        claimed = run_async(self._claim_upload_job_for_upload_async(int(upload_id)))
+        if claimed is None:
+            raise ValueError(f"No queued teacher upload job found for upload {upload_id}")
+        self._process_claimed_upload_job(claimed)
+        return self.get_upload_record(int(upload_id))
+
+    def process_next_upload_job(self, *, lease_owner: Optional[str] = None) -> bool:
+        worker_id = lease_owner or f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        claimed = run_async(self._claim_next_upload_job_async(worker_id))
+        if claimed is None:
+            return False
+        self._process_claimed_upload_job(claimed)
+        return True
+
+    def run_upload_worker_loop(self, *, lease_owner: Optional[str] = None) -> None:
+        worker_id = lease_owner or f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        log.info("Teacher upload worker started as %s", worker_id)
+        while True:
+            processed = False
             try:
-                import shutil
-
-                shutil.rmtree(temp_out, ignore_errors=True)
+                processed = self.process_next_upload_job(lease_owner=worker_id)
+            except KeyboardInterrupt:  # pragma: no cover - interactive shutdown
+                raise
             except Exception:
-                pass
-
-        if not isinstance(items, list) or not items:
-            raise RuntimeError("No extractable content found in uploaded PDF")
-
-        page_count = max((int(getattr(item, "page", 0) or 0) for item in items), default=0) or None
-        source_markdown = _build_source_markdown(items, fallback_title=resolved_title)
-        unique_id = f"teacher-upload:{search_space_id}:{kind_norm}:{week_val}:{source_sha256}"
-
-        metadata = {
-            "source_pdf": str(pdf_resolved),
-            "source_name": pdf_resolved.name,
-            "source_pdf_sha256": source_sha256,
-            "kind": kind_norm,
-            "week": week_val,
-            "uploaded_via": "teacher_weekly",
-        }
-
-        connector_doc = AITAConnectorDocument(
-            title=resolved_title,
-            source_markdown=source_markdown,
-            unique_id=unique_id,
-            document_type="EDUCATIONAL_FILE",
-            search_space_id=int(search_space_id),
-            material_kind=kind_norm,
-            should_summarize=False,
-            page_count=page_count,
-            week=week_val,
-            metadata=metadata,
-        )
-
-        return run_async(
-            self._index_and_record_upload_async(
-                connector_doc=connector_doc,
-                items=items,
-                source_name=pdf_resolved.name,
-                uploaded_by=uploaded_by,
-            )
-        )
+                log.exception("Teacher upload worker iteration failed")
+            if not processed:
+                time.sleep(self.job_poll_seconds)
 
     # ------------------------------------------------------------------
     # Compatibility wrappers (class-name based) for pre-migration endpoints
@@ -288,6 +370,182 @@ class TeacherWeeklyStorage:
         _ = (course, week, include_previous)
         return []
 
+    def _validate_upload_input(
+        self,
+        *,
+        week: int,
+        kind: str,
+        pdf_path: Path,
+        title: Optional[str],
+    ) -> tuple[int, str, Path, str]:
+        week_val = int(week)
+        if week_val < 1 or week_val > self.total_weeks:
+            raise ValueError(f"week must be between 1 and {self.total_weeks}")
+
+        kind_norm = (kind or "").strip().lower()
+        if kind_norm not in VALID_KINDS:
+            raise ValueError("kind must be 'notes' or 'slides'")
+
+        pdf_resolved = Path(pdf_path).expanduser().resolve()
+        if not pdf_resolved.is_file():
+            raise FileNotFoundError(f"Teacher upload file not found: {pdf_resolved}")
+
+        resolved_title = (title or f"Week {week_val} {kind_norm.title()}").strip() or f"Week {week_val} {kind_norm.title()}"
+        return week_val, kind_norm, pdf_resolved, resolved_title
+
+    def _build_storage_key(
+        self,
+        *,
+        search_space_id: int,
+        week: int,
+        kind: str,
+        source_name: str,
+    ) -> str:
+        return (
+            f"search-space-{int(search_space_id)}/"
+            f"week-{int(week):02d}/"
+            f"{kind}/"
+            f"{uuid.uuid4().hex}/"
+            f"{_safe_filename(source_name)}"
+        )
+
+    def _store_page_asset(
+        self,
+        *,
+        upload_id: int,
+        page_number: int,
+        image_bytes: bytes,
+        width: int,
+        height: int,
+    ) -> Dict[str, Any]:
+        object_key = (
+            f"teacher-uploads/{int(upload_id)}/"
+            f"page-{int(page_number):04d}.png"
+        )
+        self.storage.upload_bytes(
+            bucket=self.pages_bucket,
+            object_key=object_key,
+            data=image_bytes,
+            content_type="image/png",
+        )
+        return {
+            "bucket": self.pages_bucket,
+            "storage_key": object_key,
+            "width": int(width),
+            "height": int(height),
+        }
+
+    def _ingest_pdf_upload(
+        self,
+        *,
+        claimed: ClaimedUploadJob,
+        pdf_path: Path,
+        reindex_marker: Optional[str] = None,
+    ) -> tuple[AITAConnectorDocument, TeacherPDFIngestionResult, str]:
+        pdf_resolved = Path(pdf_path).expanduser().resolve()
+        source_sha256 = _sha256_file(pdf_resolved)
+        ingestor = TeacherPDFIngestor()
+        ingestion = ingestor.ingest(
+            pdf_resolved,
+            doc_id=f"teacher:{claimed.search_space_id}:{claimed.week}:{claimed.kind}:{claimed.upload_id}",
+            upload_page_asset=lambda page_number, image_bytes, width, height: self._store_page_asset(
+                upload_id=claimed.upload_id,
+                page_number=page_number,
+                image_bytes=image_bytes,
+                width=width,
+                height=height,
+            ),
+        )
+        if not ingestion.items:
+            raise RuntimeError("No searchable chunks produced from upload")
+
+        # Detect OCR degradation: pages that needed Mathpix but didn't get it
+        ocr_summary = ingestion.ocr_summary or {}
+        ocr_degraded = bool(
+            ocr_summary.get("warning_pages", 0) > 0
+            and ocr_summary.get("mathpix_pages", 0) == 0
+            and ocr_summary.get("native_plus_mathpix_pages", 0) == 0
+        )
+
+        source_md = ingestion.source_markdown or claimed.title
+        if reindex_marker:
+            source_md = f"{source_md}\n<!-- reindex:{reindex_marker} -->"
+
+        connector_doc = AITAConnectorDocument(
+            title=claimed.title,
+            source_markdown=source_md,
+            unique_id=f"teacher-upload:{claimed.upload_id}",
+            document_type="EDUCATIONAL_FILE",
+            search_space_id=int(claimed.search_space_id),
+            material_kind=claimed.kind,
+            should_summarize=False,
+            page_count=ingestion.page_count,
+            week=claimed.week,
+            metadata={
+                "teacher_upload_id": str(claimed.upload_id),
+                "source_name": pdf_resolved.name,
+                "source_pdf": str(pdf_resolved),
+                "source_storage_key": claimed.storage_key,
+                "source_storage_bucket": self.upload_bucket,
+                "source_pdf_sha256": source_sha256,
+                "kind": claimed.kind,
+                "material_kind": claimed.kind,
+                "week": claimed.week,
+                "uploaded_via": "teacher_weekly_hybrid_ingestor",
+                "ocr_degraded": ocr_degraded,
+                "ocr_provider": ingestion.ocr_provider,
+                "artifact_manifest": ingestion.artifact_manifest,
+                "ocr_summary": ingestion.ocr_summary,
+                "warning_count": ingestion.warning_count,
+                "page_debug": [
+                    {
+                        "page": page.page_number,
+                        "ocr_confidence": page.ocr_confidence,
+                        "extraction_mode": page.extraction_mode,
+                        "latex_text": page.latex_text or None,
+                        "page_asset": dict(page.asset or {}),
+                        "warnings": list(page.warnings or []),
+                    }
+                    for page in ingestion.pages
+                ],
+            },
+        )
+        return connector_doc, ingestion, source_sha256
+
+    def _process_claimed_upload_job(self, claimed: ClaimedUploadJob) -> None:
+        work_dir = Path(tempfile.mkdtemp(prefix=f"teacher_worker_{claimed.upload_id}_", dir=str(self.root)))
+        pdf_path = work_dir / _safe_filename(claimed.source_name)
+        try:
+            payload = self.storage.download_bytes(bucket=self.upload_bucket, object_key=claimed.storage_key)
+            pdf_path.write_bytes(payload)
+            # Check if this is a re-index request; pass marker to bust content hash
+            reindex_marker = run_async(self._get_reindex_marker_async(claimed.upload_id))
+            connector_doc, ingestion, source_sha256 = self._ingest_pdf_upload(
+                claimed=claimed,
+                pdf_path=pdf_path,
+                reindex_marker=reindex_marker,
+            )
+            run_async(
+                self._index_existing_upload_async(
+                    claimed=claimed,
+                    connector_doc=connector_doc,
+                    items=ingestion.items,
+                    ingestion=ingestion,
+                    source_sha256=source_sha256,
+                )
+            )
+        except Exception as exc:
+            log.exception(
+                "Teacher upload job failed upload_id=%s job_id=%s",
+                claimed.upload_id,
+                claimed.job_id,
+            )
+            run_async(self._handle_job_failure_async(
+                claimed, str(exc), terminal=_is_terminal_error(exc),
+            ))
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
     # ------------------------------------------------------------------
     # Internal async helpers
     # ------------------------------------------------------------------
@@ -325,6 +583,290 @@ class TeacherWeeklyStorage:
             select(SearchSpace).where(func.lower(SearchSpace.name) == lowered)
         )
         return result.scalars().first()
+
+    async def _enqueue_upload_by_search_space_async(
+        self,
+        search_space_id: int,
+        *,
+        week: int,
+        kind: str,
+        pdf_path: Path,
+        title: Optional[str],
+        uploaded_by: Optional[str],
+    ) -> UploadRecord:
+        week_val, kind_norm, pdf_resolved, resolved_title = self._validate_upload_input(
+            week=week,
+            kind=kind,
+            pdf_path=pdf_path,
+            title=title,
+        )
+        source_name = pdf_resolved.name
+        source_sha256 = _sha256_file(pdf_resolved)
+
+        async with get_async_session() as session:
+            space = await self._load_search_space(session, int(search_space_id))
+            if space is None:
+                raise ValueError(f"Unknown search_space_id: {search_space_id}")
+            await self._get_or_create_teacher_course(session, search_space_id=int(search_space_id))
+            await session.commit()
+
+        storage_key = self._build_storage_key(
+            search_space_id=int(search_space_id),
+            week=week_val,
+            kind=kind_norm,
+            source_name=source_name,
+        )
+        self.storage.upload_bytes(
+            bucket=self.upload_bucket,
+            object_key=storage_key,
+            data=pdf_resolved.read_bytes(),
+            content_type="application/pdf",
+        )
+
+        now = _utc_now()
+        async with get_async_session() as session:
+            upload = TeacherUpload(
+                search_space_id=int(search_space_id),
+                week=week_val,
+                kind=kind_norm,
+                title=resolved_title,
+                source_name=source_name,
+                doc_id=None,
+                status=UPLOAD_STATUS_QUEUED,
+                storage_key=storage_key,
+                artifact_manifest={"bucket": self.pages_bucket, "pages": []},
+                ocr_provider=None,
+                ocr_summary={},
+                warning_count=0,
+                error_message=None,
+                started_at=None,
+                completed_at=None,
+                attempt_count=0,
+                page_count=None,
+                is_latest=False,
+                uploaded_by=uploaded_by,
+                metadata_={
+                    "search_space_id": int(search_space_id),
+                    "storage_bucket": self.upload_bucket,
+                    "pages_bucket": self.pages_bucket,
+                    "source_pdf_sha256": source_sha256,
+                },
+                uploaded_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(upload)
+            await session.flush()
+
+            job = TeacherUploadJob(
+                upload_id=int(upload.id),
+                state=JOB_STATE_QUEUED,
+                lease_owner=None,
+                lease_expires_at=None,
+                attempt_count=0,
+                last_error=None,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(job)
+            await session.commit()
+            await session.refresh(upload)
+            return self._build_upload_record(upload)
+
+    async def _get_upload_record_async(self, upload_id: int) -> UploadRecord:
+        async with get_async_session() as session:
+            row = await session.get(TeacherUpload, int(upload_id))
+            if row is None:
+                raise ValueError(f"Unknown teacher upload: {upload_id}")
+            return self._build_upload_record(row)
+
+    async def _get_upload_search_space_id_async(self, upload_id: int) -> int:
+        async with get_async_session() as session:
+            row = await session.get(TeacherUpload, int(upload_id))
+            if row is None:
+                raise ValueError(f"Unknown teacher upload: {upload_id}")
+            return int(row.search_space_id)
+
+    async def _retry_upload_async(self, upload_id: int) -> UploadRecord:
+        async with get_async_session() as session:
+            upload = await session.get(TeacherUpload, int(upload_id))
+            if upload is None:
+                raise ValueError(f"Unknown teacher upload: {upload_id}")
+            if str(upload.status or "") != UPLOAD_STATUS_FAILED:
+                raise ValueError("Only failed uploads can be retried")
+            if not upload.storage_key:
+                raise ValueError("Upload is missing stored PDF and cannot be retried")
+
+            job_result = await session.execute(
+                select(TeacherUploadJob)
+                .where(TeacherUploadJob.upload_id == int(upload.id))
+                .order_by(TeacherUploadJob.created_at.desc(), TeacherUploadJob.id.desc())
+            )
+            job = job_result.scalars().first()
+            now = _utc_now()
+
+            upload.status = UPLOAD_STATUS_QUEUED
+            upload.error_message = None
+            upload.warning_count = 0
+            upload.started_at = None
+            upload.completed_at = None
+            upload.ocr_provider = None
+            upload.ocr_summary = {}
+            upload.updated_at = now
+
+            if job is None:
+                job = TeacherUploadJob(
+                    upload_id=int(upload.id),
+                    state=JOB_STATE_QUEUED,
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    attempt_count=0,
+                    last_error=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(job)
+            else:
+                job.state = JOB_STATE_QUEUED
+                job.lease_owner = None
+                job.lease_expires_at = None
+                # Allow one more attempt instead of resetting to 0 (prevents infinite retry loops)
+                job.attempt_count = max(0, int(job.attempt_count or 0) - 1)
+                job.last_error = None
+                job.updated_at = now
+
+            await session.commit()
+            await session.refresh(upload)
+            return self._build_upload_record(upload)
+
+    async def _get_reindex_marker_async(self, upload_id: int) -> Optional[str]:
+        """Return the reindex_requested_at timestamp if set, else None."""
+        async with get_async_session() as session:
+            upload = await session.get(TeacherUpload, int(upload_id))
+            if upload is None:
+                return None
+            meta = upload.metadata_ or {}
+            return meta.get("reindex_requested_at")
+
+    async def _reindex_upload_async(self, upload_id: int) -> UploadRecord:
+        async with get_async_session() as session:
+            upload = await session.get(TeacherUpload, int(upload_id))
+            if upload is None:
+                raise ValueError(f"Unknown teacher upload: {upload_id}")
+            if str(upload.status or "") not in (UPLOAD_STATUS_READY, UPLOAD_STATUS_FAILED):
+                raise ValueError("Only ready or failed uploads can be re-indexed")
+            if not upload.storage_key:
+                raise ValueError("Upload is missing stored PDF and cannot be re-indexed")
+
+            job_result = await session.execute(
+                select(TeacherUploadJob)
+                .where(TeacherUploadJob.upload_id == int(upload.id))
+                .order_by(TeacherUploadJob.created_at.desc(), TeacherUploadJob.id.desc())
+            )
+            job = job_result.scalars().first()
+            now = _utc_now()
+
+            # Mark for re-index: stamp the metadata so content hash changes
+            meta = dict(upload.metadata_ or {})
+            meta["reindex_requested_at"] = now.isoformat()
+            meta.pop("ocr_degraded", None)
+
+            upload.status = UPLOAD_STATUS_QUEUED
+            upload.error_message = None
+            upload.warning_count = 0
+            upload.started_at = None
+            upload.completed_at = None
+            upload.ocr_provider = None
+            upload.ocr_summary = {}
+            upload.metadata_ = meta
+            upload.updated_at = now
+
+            if job is None:
+                job = TeacherUploadJob(
+                    upload_id=int(upload.id),
+                    state=JOB_STATE_QUEUED,
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    attempt_count=0,
+                    last_error=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(job)
+            else:
+                job.state = JOB_STATE_QUEUED
+                job.lease_owner = None
+                job.lease_expires_at = None
+                job.attempt_count = 0
+                job.last_error = None
+                job.updated_at = now
+
+            await session.commit()
+            await session.refresh(upload)
+            return self._build_upload_record(upload)
+
+    async def _claim_upload_job_for_upload_async(self, upload_id: int) -> Optional[ClaimedUploadJob]:
+        owner = f"sync:{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        return await self._claim_upload_job_async(owner, upload_id=int(upload_id))
+
+    async def _claim_next_upload_job_async(self, lease_owner: str) -> Optional[ClaimedUploadJob]:
+        return await self._claim_upload_job_async(lease_owner, upload_id=None)
+
+    async def _claim_upload_job_async(
+        self,
+        lease_owner: str,
+        *,
+        upload_id: Optional[int],
+    ) -> Optional[ClaimedUploadJob]:
+        now = _utc_now()
+        async with get_async_session() as session:
+            stmt = (
+                select(TeacherUploadJob, TeacherUpload)
+                .join(TeacherUpload, TeacherUpload.id == TeacherUploadJob.upload_id)
+                .where(
+                    TeacherUploadJob.state.in_((JOB_STATE_QUEUED, JOB_STATE_PROCESSING)),
+                    or_(
+                        TeacherUploadJob.lease_expires_at.is_(None),
+                        TeacherUploadJob.lease_expires_at < now,
+                    ),
+                    TeacherUpload.status.in_((UPLOAD_STATUS_QUEUED, UPLOAD_STATUS_PROCESSING)),
+                    TeacherUpload.storage_key.is_not(None),
+                )
+                .order_by(TeacherUploadJob.created_at.asc(), TeacherUploadJob.id.asc())
+                .with_for_update(skip_locked=True)
+            )
+            if upload_id is not None:
+                stmt = stmt.where(TeacherUploadJob.upload_id == int(upload_id))
+
+            row = (await session.execute(stmt)).first()
+            if row is None:
+                return None
+
+            job, upload = row
+            job.state = JOB_STATE_PROCESSING
+            job.lease_owner = lease_owner
+            job.lease_expires_at = now + timedelta(seconds=self.job_lease_seconds)
+            job.attempt_count = int(job.attempt_count or 0) + 1
+            job.updated_at = now
+
+            upload.status = UPLOAD_STATUS_PROCESSING
+            upload.started_at = upload.started_at or now
+            upload.completed_at = None
+            upload.error_message = None
+            upload.attempt_count = int(upload.attempt_count or 0) + 1
+            upload.updated_at = now
+
+            await session.commit()
+            return ClaimedUploadJob(
+                job_id=int(job.id),
+                upload_id=int(upload.id),
+                search_space_id=int(upload.search_space_id),
+                week=int(upload.week),
+                kind=str(upload.kind),
+                title=str(upload.title),
+                source_name=upload.source_name or "teacher-upload.pdf",
+                storage_key=str(upload.storage_key),
+            )
 
     async def _get_or_create_teacher_course(
         self,
@@ -374,24 +916,226 @@ class TeacherWeeklyStorage:
         scoped = AITADocument.search_space_id == search_space_id
         has_week = AITADocument.week.is_not(None)
 
-        # Future weekly notes/slides stay hidden from retrieval.
-        await session.execute(
-            update(AITADocument)
-            .where(scoped, kind_filter, has_week, AITADocument.week > current_week)
-            .values(status=_INACTIVE_STATUS, updated_at=now)
-        )
-
-        # Current/past weekly notes/slides are retrievable unless they failed ingestion.
         await session.execute(
             update(AITADocument)
             .where(
                 scoped,
                 kind_filter,
                 has_week,
-                AITADocument.week <= current_week,
                 AITADocument.status["state"].astext != DocumentStatus.FAILED,
             )
-            .values(status=DocumentStatus.ready(), updated_at=now)
+            .values(status=_INACTIVE_STATUS, updated_at=now)
+        )
+
+        active_doc_rows = await session.execute(
+            select(TeacherUpload.doc_id)
+            .where(
+                TeacherUpload.search_space_id == search_space_id,
+                TeacherUpload.is_latest.is_(True),
+                TeacherUpload.status == UPLOAD_STATUS_READY,
+                TeacherUpload.week <= current_week,
+                TeacherUpload.kind.in_(tuple(VALID_KINDS)),
+                TeacherUpload.doc_id.is_not(None),
+            )
+        )
+        active_doc_ids = [int(doc_id) for doc_id in active_doc_rows.scalars().all() if doc_id is not None]
+        if active_doc_ids:
+            await session.execute(
+                update(AITADocument)
+                .where(AITADocument.id.in_(active_doc_ids))
+                .values(status=DocumentStatus.ready(), updated_at=now)
+            )
+
+    async def _index_existing_upload_async(
+        self,
+        *,
+        claimed: ClaimedUploadJob,
+        connector_doc: AITAConnectorDocument,
+        items: List[Any],
+        ingestion: TeacherPDFIngestionResult,
+        source_sha256: str,
+    ) -> None:
+        async with get_async_session() as session:
+            upload = await session.get(TeacherUpload, int(claimed.upload_id))
+            if upload is None:
+                raise ValueError(f"Unknown teacher upload: {claimed.upload_id}")
+
+            service = AITAIndexingService(session)
+            docs = await service.prepare_for_indexing([connector_doc])
+
+            indexed_doc: Optional[AITADocument] = None
+            if docs:
+                indexed_doc = await service.index_from_items(docs[0], connector_doc, items)
+            else:
+                uid_hash = compute_unique_identifier_hash(connector_doc)
+                content_hash = compute_content_hash(connector_doc)
+                result = await session.execute(
+                    select(AITADocument)
+                    .where(
+                        or_(
+                            AITADocument.unique_identifier_hash == uid_hash,
+                            AITADocument.content_hash == content_hash,
+                        )
+                    )
+                    .order_by(AITADocument.updated_at.desc())
+                )
+                indexed_doc = result.scalars().first()
+
+            if indexed_doc is None:
+                raise RuntimeError("Failed to resolve indexed document for teacher upload")
+            if not DocumentStatus.is_state(indexed_doc.status, DocumentStatus.READY):
+                reason = DocumentStatus.get_failure_reason(indexed_doc.status) or "Indexing failed for teacher upload"
+                raise RuntimeError(reason)
+
+            course_row = await self._get_or_create_teacher_course(
+                session, search_space_id=int(upload.search_space_id)
+            )
+            now = _utc_now()
+            previous_upload_rows = await session.execute(
+                select(TeacherUpload.id, TeacherUpload.doc_id)
+                .where(
+                    TeacherUpload.search_space_id == int(upload.search_space_id),
+                    TeacherUpload.week == int(upload.week),
+                    TeacherUpload.kind == str(upload.kind),
+                    TeacherUpload.is_latest.is_(True),
+                    TeacherUpload.id != int(upload.id),
+                )
+            )
+            previous_doc_ids = [
+                int(doc_id)
+                for _, doc_id in previous_upload_rows.all()
+                if doc_id is not None
+            ]
+
+            await session.execute(
+                update(TeacherUpload)
+                .where(
+                    TeacherUpload.search_space_id == int(upload.search_space_id),
+                    TeacherUpload.week == int(upload.week),
+                    TeacherUpload.kind == str(upload.kind),
+                    TeacherUpload.is_latest.is_(True),
+                    TeacherUpload.id != int(upload.id),
+                )
+                .values(
+                    is_latest=False,
+                    status=UPLOAD_STATUS_SUPERSEDED,
+                    updated_at=now,
+                )
+            )
+            if previous_doc_ids:
+                await session.execute(
+                    update(AITADocument)
+                    .where(AITADocument.id.in_(previous_doc_ids))
+                    .values(status=_INACTIVE_STATUS, updated_at=now)
+                )
+
+            upload.doc_id = int(indexed_doc.id) if indexed_doc.id is not None else None
+            upload.page_count = ingestion.page_count or indexed_doc.page_count
+            upload.is_latest = True
+            upload.status = UPLOAD_STATUS_READY
+            upload.error_message = None
+            upload.completed_at = now
+            upload.updated_at = now
+            upload.warning_count = int(ingestion.warning_count or 0)
+            upload.ocr_provider = ingestion.ocr_provider
+            upload.ocr_summary = dict(ingestion.ocr_summary or {})
+            upload.artifact_manifest = {
+                "bucket": self.pages_bucket,
+                **(ingestion.artifact_manifest or {}),
+            }
+            ocr_summary = ingestion.ocr_summary or {}
+            is_ocr_degraded = bool(
+                ocr_summary.get("warning_pages", 0) > 0
+                and ocr_summary.get("mathpix_pages", 0) == 0
+                and ocr_summary.get("native_plus_mathpix_pages", 0) == 0
+            )
+            upload.metadata_ = {
+                **(upload.metadata_ or {}),
+                "material_id": f"doc-{indexed_doc.id}" if indexed_doc.id is not None else None,
+                "source_pdf_sha256": source_sha256,
+                "storage_bucket": self.upload_bucket,
+                "pages_bucket": self.pages_bucket,
+                "storage_key": claimed.storage_key,
+                "ocr_degraded": is_ocr_degraded,
+                "ocr_provider": ingestion.ocr_provider,
+                "ocr_summary": ingestion.ocr_summary,
+                "artifact_manifest": ingestion.artifact_manifest,
+            }
+
+            job = await session.get(TeacherUploadJob, int(claimed.job_id))
+            if job is not None:
+                job.state = JOB_STATE_COMPLETED
+                job.lease_owner = None
+                job.lease_expires_at = None
+                job.last_error = None
+                job.updated_at = now
+
+            await self._sync_week_activation(
+                session,
+                search_space_id=int(upload.search_space_id),
+                current_week=int(course_row.current_week or 1),
+            )
+            await session.commit()
+
+    async def _handle_job_failure_async(
+        self,
+        claimed: ClaimedUploadJob,
+        error_message: str,
+        *,
+        terminal: bool = False,
+    ) -> None:
+        async with get_async_session() as session:
+            upload = await session.get(TeacherUpload, int(claimed.upload_id))
+            job = await session.get(TeacherUploadJob, int(claimed.job_id))
+            now = _utc_now()
+            message = _truncate_error(error_message) or "Teacher upload processing failed"
+
+            attempts = int(job.attempt_count or 0) if job is not None else 0
+            is_terminal = terminal or attempts >= self.max_retries
+            if is_terminal and not terminal:
+                log.warning(
+                    "Teacher upload job exhausted retries upload_id=%s attempts=%d",
+                    claimed.upload_id, attempts,
+                )
+
+            if job is not None:
+                job.state = JOB_STATE_FAILED if is_terminal else JOB_STATE_QUEUED
+                job.lease_owner = None
+                job.lease_expires_at = None
+                job.last_error = message
+                job.updated_at = now
+
+            if upload is not None:
+                upload.status = UPLOAD_STATUS_FAILED if is_terminal else UPLOAD_STATUS_QUEUED
+                upload.error_message = message
+                upload.completed_at = now if is_terminal else None
+                upload.updated_at = now
+
+            await session.commit()
+
+    def _build_upload_record(self, row: TeacherUpload) -> UploadRecord:
+        meta = row.metadata_ or {}
+        material_id = meta.get("material_id")
+        if material_id is None and row.doc_id is not None:
+            material_id = f"doc-{row.doc_id}"
+        return UploadRecord(
+            id=str(row.id),
+            week=int(row.week),
+            kind=str(row.kind),
+            title=str(row.title),
+            status=str(row.status or UPLOAD_STATUS_READY),
+            uploaded_at=_iso(row.uploaded_at),
+            source_name=row.source_name,
+            page_count=row.page_count,
+            index_path=None,
+            doc_id=str(row.doc_id) if row.doc_id is not None else None,
+            material_id=material_id,
+            error_message=row.error_message,
+            warning_count=int(row.warning_count or 0),
+            started_at=_iso(row.started_at),
+            completed_at=_iso(row.completed_at),
+            ocr_provider=row.ocr_provider,
+            ocr_summary=row.ocr_summary or {},
         )
 
     async def _list_course_by_search_space_async(self, search_space_id: int) -> Dict[str, Any]:
@@ -491,104 +1235,6 @@ class TeacherWeeklyStorage:
             await session.commit()
             return updated
 
-    async def _index_and_record_upload_async(
-        self,
-        *,
-        connector_doc: AITAConnectorDocument,
-        items: List[Any],
-        source_name: str,
-        uploaded_by: Optional[str],
-    ) -> UploadRecord:
-        async with get_async_session() as session:
-            search_space_id = int(connector_doc.search_space_id)
-            space = await self._load_search_space(session, search_space_id)
-            if space is None:
-                raise ValueError(f"Unknown search_space_id: {search_space_id}")
-
-            service = AITAIndexingService(session)
-            docs = await service.prepare_for_indexing([connector_doc])
-
-            indexed_doc: Optional[AITADocument] = None
-            if docs:
-                indexed_doc = await service.index_from_items(docs[0], connector_doc, items)
-            else:
-                uid_hash = compute_unique_identifier_hash(connector_doc)
-                content_hash = compute_content_hash(connector_doc)
-                result = await session.execute(
-                    select(AITADocument)
-                    .where(
-                        or_(
-                            AITADocument.unique_identifier_hash == uid_hash,
-                            AITADocument.content_hash == content_hash,
-                        )
-                    )
-                    .order_by(AITADocument.updated_at.desc())
-                )
-                indexed_doc = result.scalars().first()
-
-            if indexed_doc is None:
-                raise RuntimeError("Failed to resolve indexed document for teacher upload")
-
-            course_row = await self._get_or_create_teacher_course(
-                session, search_space_id=search_space_id
-            )
-
-            now = _utc_now()
-            await session.execute(
-                update(TeacherUpload)
-                .where(
-                    TeacherUpload.search_space_id == search_space_id,
-                    TeacherUpload.week == int(connector_doc.week or 0),
-                    TeacherUpload.kind == str(connector_doc.material_kind),
-                    TeacherUpload.is_latest.is_(True),
-                )
-                .values(is_latest=False, updated_at=now)
-            )
-
-            upload = TeacherUpload(
-                search_space_id=search_space_id,
-                week=int(connector_doc.week or 0),
-                kind=str(connector_doc.material_kind),
-                title=str(connector_doc.title),
-                source_name=source_name,
-                doc_id=int(indexed_doc.id) if indexed_doc.id is not None else None,
-                page_count=indexed_doc.page_count,
-                is_latest=True,
-                uploaded_by=uploaded_by,
-                metadata_={
-                    "search_space_id": search_space_id,
-                    "material_id": f"doc-{indexed_doc.id}" if indexed_doc.id is not None else None,
-                    "source_pdf": (connector_doc.metadata or {}).get("source_pdf"),
-                    "source_pdf_sha256": (connector_doc.metadata or {}).get("source_pdf_sha256"),
-                },
-                uploaded_at=now,
-                created_at=now,
-                updated_at=now,
-            )
-            session.add(upload)
-
-            await self._sync_week_activation(
-                session,
-                search_space_id=search_space_id,
-                current_week=int(course_row.current_week or 1),
-            )
-
-            await session.commit()
-            await session.refresh(upload)
-
-            return UploadRecord(
-                id=str(upload.id),
-                week=int(upload.week),
-                kind=str(upload.kind),
-                title=str(upload.title),
-                uploaded_at=_iso(upload.uploaded_at),
-                source_name=upload.source_name,
-                page_count=upload.page_count,
-                index_path=None,
-                doc_id=str(upload.doc_id) if upload.doc_id is not None else None,
-                material_id=f"doc-{upload.doc_id}" if upload.doc_id is not None else None,
-            )
-
     def _build_section(self, rows: List[TeacherUpload]) -> Dict[str, Any]:
         history: List[Dict[str, Any]] = []
         latest: Optional[Dict[str, Any]] = None
@@ -600,22 +1246,7 @@ class TeacherWeeklyStorage:
         return {"latest": latest, "history": history}
 
     def _teacher_upload_to_dict(self, row: TeacherUpload) -> Dict[str, Any]:
-        meta = row.metadata_ or {}
-        material_id = meta.get("material_id")
-        if material_id is None and row.doc_id is not None:
-            material_id = f"doc-{row.doc_id}"
-        return {
-            "id": str(row.id),
-            "week": int(row.week),
-            "kind": str(row.kind),
-            "title": str(row.title),
-            "uploaded_at": _iso(row.uploaded_at),
-            "source_name": row.source_name,
-            "page_count": row.page_count,
-            "index_path": None,
-            "doc_id": str(row.doc_id) if row.doc_id is not None else None,
-            "material_id": material_id,
-        }
+        return self._build_upload_record(row).to_dict()
 
 
 __all__ = ["TeacherWeeklyStorage", "UploadRecord"]

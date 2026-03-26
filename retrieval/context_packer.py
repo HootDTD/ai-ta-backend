@@ -12,6 +12,7 @@ Also exposes _summarize_snippets() moved here from retriever.py (no FAISS depend
 import re
 from typing import Any, Optional
 
+from ..citations.formatter import DOC_TYPE_LABELS
 from ..config.contracts import BundleSnippet
 from ..config.settings import get_citation_label
 
@@ -62,17 +63,24 @@ def pack_context(
         if total_tokens + toks > limit:
             break
 
+        material_kind = str(chunk.get("material_kind") or "").strip().lower()
+        marker_label = _citation_label_for_kind(material_kind, label)
+        week = chunk.get("week")
+
         # Build citation marker: "[Label, p. N]" or "[Label]" for chunks without page
         page = chunk.get("page_number")
         if page:
-            marker = f"[{label}, p. {page}]"
+            if week and material_kind in {"notes", "slides"}:
+                marker = f"[{marker_label}, Week {week}, p. {page}]"
+            else:
+                marker = f"[{marker_label}, p. {page}]"
         else:
-            doc_title = chunk.get("doc_title") or label
+            doc_title = chunk.get("doc_title") or marker_label
             short = doc_title[:30] if len(doc_title) > 30 else doc_title
             marker = f"[{short}]"
 
         doc_title = chunk.get("doc_title") or ""
-        doc_short = doc_title[:40] if doc_title else label
+        doc_short = doc_title[:40] if doc_title else marker_label
 
         snippets.append(BundleSnippet(
             id=str(chunk_id) if chunk_id is not None else "",
@@ -82,11 +90,12 @@ def pack_context(
             text=text,
             figure_id=chunk.get("figure_id"),
             why="hit",
-            source_path="",
+            source_path=chunk.get("source_path") or "",
             doc_title=doc_title or None,
             doc_short=doc_short,
             citation_marker=marker,
             final_score={"final": chunk.get("final_score", 0.0)},
+            metadata=dict(chunk.get("metadata") or {}),
         ))
 
         if chunk_id is not None:
@@ -94,6 +103,13 @@ def pack_context(
         total_tokens += toks
 
     return snippets
+
+
+def _citation_label_for_kind(kind: str, fallback: str) -> str:
+    key = (kind or "").strip().lower()
+    if key == "textbook" or not key:
+        return fallback
+    return DOC_TYPE_LABELS.get(key, fallback)
 
 
 # ---------------------------------------------------------------------------

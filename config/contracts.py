@@ -40,6 +40,7 @@ class BundleSnippet:
     doc_short: str
     citation_marker: str
     final_score: Optional[Dict[str, float]] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def validate(self) -> None:
         if not self.citation_marker or not self.citation_marker.strip():
@@ -187,4 +188,3 @@ __all__ = [
     "Violation",
     "asdict",
 ]
-
