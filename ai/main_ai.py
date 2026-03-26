@@ -1057,10 +1057,11 @@ def solve_with_bundle(
         "- not_relevant: boolean — true if the question is outside the course scope, false otherwise."
     )
     payload_lines.append(
-        "- steps: a SINGLE Markdown-formatted string (NOT an array) with two sections: "
-        "'## Simple Explanation' (intuitive ELI5, no equations) then '## Theory' (technical details "
-        "with equations woven in — show each equation right where it's relevant, not in a separate list). "
-        "Use LaTeX math ($...$ inline, $$...$$ display). Keep it concise (~150-250 words), no long paragraphs."
+        "- steps: a SINGLE Markdown-formatted string (NOT an array). Follow the tutor system prompt "
+        "to determine which sections to include: for new questions use all three sections "
+        "(## Answer, ## Key Takeaway, ## Check Your Understanding); for CYU responses follow "
+        "the CYU RESPONSE RULES (brief affirmation if correct, corrective feedback + new CYU if incorrect). "
+        "Use LaTeX math ($...$ inline, $$...$$ display). Keep it concise (~150-250 words for new questions), no long paragraphs."
     )
     payload_lines.append("- final_answers: MUST be an empty object {} because you are not computing results.")
     payload_lines.append(

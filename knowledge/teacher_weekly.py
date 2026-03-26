@@ -109,6 +109,33 @@ def _truncate_error(message: str | None) -> Optional[str]:
     return cleaned[:500] if cleaned else None
 
 
+# Patterns that indicate the error is permanent and retrying won't help.
+_TERMINAL_ERROR_PATTERNS: tuple[str, ...] = (
+    "No searchable chunks produced",
+    "PyMuPDF is required",
+    "invalid pdf",
+    "not a pdf",
+    "password protected",
+    "encrypted",
+    "401",
+    "403",
+    "AuthenticationError",
+    "PermissionError",
+    "InvalidFileError",
+)
+
+
+def _is_terminal_error(exc: BaseException) -> bool:
+    """Return True if the exception represents a permanent failure that should not be retried."""
+    msg = str(exc).lower()
+    for pattern in _TERMINAL_ERROR_PATTERNS:
+        if pattern.lower() in msg:
+            return True
+    if isinstance(exc, (FileNotFoundError, ValueError, TypeError, PermissionError)):
+        return True
+    return False
+
+
 @dataclass
 class UploadRecord:
     id: str
@@ -255,6 +282,15 @@ class TeacherWeeklyStorage:
 
     def retry_upload(self, upload_id: int) -> UploadRecord:
         return run_async(self._retry_upload_async(int(upload_id)))
+
+    def reindex_upload(self, upload_id: int) -> UploadRecord:
+        """Force re-processing of a completed upload (e.g. after OCR degradation).
+
+        Unlike retry_upload, this works on 'ready' uploads whose OCR was degraded.
+        It resets the upload to queued so the background worker re-processes it,
+        appending a reindex marker to force a new content hash.
+        """
+        return run_async(self._reindex_upload_async(int(upload_id)))
 
     def process_upload_by_id(self, upload_id: int) -> UploadRecord:
         claimed = run_async(self._claim_upload_job_for_upload_async(int(upload_id)))
@@ -404,6 +440,7 @@ class TeacherWeeklyStorage:
         *,
         claimed: ClaimedUploadJob,
         pdf_path: Path,
+        reindex_marker: Optional[str] = None,
     ) -> tuple[AITAConnectorDocument, TeacherPDFIngestionResult, str]:
         pdf_resolved = Path(pdf_path).expanduser().resolve()
         source_sha256 = _sha256_file(pdf_resolved)
@@ -422,9 +459,21 @@ class TeacherWeeklyStorage:
         if not ingestion.items:
             raise RuntimeError("No searchable chunks produced from upload")
 
+        # Detect OCR degradation: pages that needed Mathpix but didn't get it
+        ocr_summary = ingestion.ocr_summary or {}
+        ocr_degraded = bool(
+            ocr_summary.get("warning_pages", 0) > 0
+            and ocr_summary.get("mathpix_pages", 0) == 0
+            and ocr_summary.get("native_plus_mathpix_pages", 0) == 0
+        )
+
+        source_md = ingestion.source_markdown or claimed.title
+        if reindex_marker:
+            source_md = f"{source_md}\n<!-- reindex:{reindex_marker} -->"
+
         connector_doc = AITAConnectorDocument(
             title=claimed.title,
-            source_markdown=ingestion.source_markdown or claimed.title,
+            source_markdown=source_md,
             unique_id=f"teacher-upload:{claimed.upload_id}",
             document_type="EDUCATIONAL_FILE",
             search_space_id=int(claimed.search_space_id),
@@ -443,6 +492,7 @@ class TeacherWeeklyStorage:
                 "material_kind": claimed.kind,
                 "week": claimed.week,
                 "uploaded_via": "teacher_weekly_hybrid_ingestor",
+                "ocr_degraded": ocr_degraded,
                 "ocr_provider": ingestion.ocr_provider,
                 "artifact_manifest": ingestion.artifact_manifest,
                 "ocr_summary": ingestion.ocr_summary,
@@ -468,9 +518,12 @@ class TeacherWeeklyStorage:
         try:
             payload = self.storage.download_bytes(bucket=self.upload_bucket, object_key=claimed.storage_key)
             pdf_path.write_bytes(payload)
+            # Check if this is a re-index request; pass marker to bust content hash
+            reindex_marker = run_async(self._get_reindex_marker_async(claimed.upload_id))
             connector_doc, ingestion, source_sha256 = self._ingest_pdf_upload(
                 claimed=claimed,
                 pdf_path=pdf_path,
+                reindex_marker=reindex_marker,
             )
             run_async(
                 self._index_existing_upload_async(
@@ -487,7 +540,9 @@ class TeacherWeeklyStorage:
                 claimed.upload_id,
                 claimed.job_id,
             )
-            run_async(self._handle_job_failure_async(claimed, str(exc)))
+            run_async(self._handle_job_failure_async(
+                claimed, str(exc), terminal=_is_terminal_error(exc),
+            ))
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -657,6 +712,73 @@ class TeacherWeeklyStorage:
             upload.completed_at = None
             upload.ocr_provider = None
             upload.ocr_summary = {}
+            upload.updated_at = now
+
+            if job is None:
+                job = TeacherUploadJob(
+                    upload_id=int(upload.id),
+                    state=JOB_STATE_QUEUED,
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    attempt_count=0,
+                    last_error=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(job)
+            else:
+                job.state = JOB_STATE_QUEUED
+                job.lease_owner = None
+                job.lease_expires_at = None
+                # Allow one more attempt instead of resetting to 0 (prevents infinite retry loops)
+                job.attempt_count = max(0, int(job.attempt_count or 0) - 1)
+                job.last_error = None
+                job.updated_at = now
+
+            await session.commit()
+            await session.refresh(upload)
+            return self._build_upload_record(upload)
+
+    async def _get_reindex_marker_async(self, upload_id: int) -> Optional[str]:
+        """Return the reindex_requested_at timestamp if set, else None."""
+        async with get_async_session() as session:
+            upload = await session.get(TeacherUpload, int(upload_id))
+            if upload is None:
+                return None
+            meta = upload.metadata_ or {}
+            return meta.get("reindex_requested_at")
+
+    async def _reindex_upload_async(self, upload_id: int) -> UploadRecord:
+        async with get_async_session() as session:
+            upload = await session.get(TeacherUpload, int(upload_id))
+            if upload is None:
+                raise ValueError(f"Unknown teacher upload: {upload_id}")
+            if str(upload.status or "") not in (UPLOAD_STATUS_READY, UPLOAD_STATUS_FAILED):
+                raise ValueError("Only ready or failed uploads can be re-indexed")
+            if not upload.storage_key:
+                raise ValueError("Upload is missing stored PDF and cannot be re-indexed")
+
+            job_result = await session.execute(
+                select(TeacherUploadJob)
+                .where(TeacherUploadJob.upload_id == int(upload.id))
+                .order_by(TeacherUploadJob.created_at.desc(), TeacherUploadJob.id.desc())
+            )
+            job = job_result.scalars().first()
+            now = _utc_now()
+
+            # Mark for re-index: stamp the metadata so content hash changes
+            meta = dict(upload.metadata_ or {})
+            meta["reindex_requested_at"] = now.isoformat()
+            meta.pop("ocr_degraded", None)
+
+            upload.status = UPLOAD_STATUS_QUEUED
+            upload.error_message = None
+            upload.warning_count = 0
+            upload.started_at = None
+            upload.completed_at = None
+            upload.ocr_provider = None
+            upload.ocr_summary = {}
+            upload.metadata_ = meta
             upload.updated_at = now
 
             if job is None:
@@ -921,6 +1043,12 @@ class TeacherWeeklyStorage:
                 "bucket": self.pages_bucket,
                 **(ingestion.artifact_manifest or {}),
             }
+            ocr_summary = ingestion.ocr_summary or {}
+            is_ocr_degraded = bool(
+                ocr_summary.get("warning_pages", 0) > 0
+                and ocr_summary.get("mathpix_pages", 0) == 0
+                and ocr_summary.get("native_plus_mathpix_pages", 0) == 0
+            )
             upload.metadata_ = {
                 **(upload.metadata_ or {}),
                 "material_id": f"doc-{indexed_doc.id}" if indexed_doc.id is not None else None,
@@ -928,6 +1056,7 @@ class TeacherWeeklyStorage:
                 "storage_bucket": self.upload_bucket,
                 "pages_bucket": self.pages_bucket,
                 "storage_key": claimed.storage_key,
+                "ocr_degraded": is_ocr_degraded,
                 "ocr_provider": ingestion.ocr_provider,
                 "ocr_summary": ingestion.ocr_summary,
                 "artifact_manifest": ingestion.artifact_manifest,
@@ -948,7 +1077,13 @@ class TeacherWeeklyStorage:
             )
             await session.commit()
 
-    async def _handle_job_failure_async(self, claimed: ClaimedUploadJob, error_message: str) -> None:
+    async def _handle_job_failure_async(
+        self,
+        claimed: ClaimedUploadJob,
+        error_message: str,
+        *,
+        terminal: bool = False,
+    ) -> None:
         async with get_async_session() as session:
             upload = await session.get(TeacherUpload, int(claimed.upload_id))
             job = await session.get(TeacherUploadJob, int(claimed.job_id))
@@ -956,19 +1091,24 @@ class TeacherWeeklyStorage:
             message = _truncate_error(error_message) or "Teacher upload processing failed"
 
             attempts = int(job.attempt_count or 0) if job is not None else 0
-            terminal = attempts >= self.max_retries
+            is_terminal = terminal or attempts >= self.max_retries
+            if is_terminal and not terminal:
+                log.warning(
+                    "Teacher upload job exhausted retries upload_id=%s attempts=%d",
+                    claimed.upload_id, attempts,
+                )
 
             if job is not None:
-                job.state = JOB_STATE_FAILED if terminal else JOB_STATE_QUEUED
+                job.state = JOB_STATE_FAILED if is_terminal else JOB_STATE_QUEUED
                 job.lease_owner = None
                 job.lease_expires_at = None
                 job.last_error = message
                 job.updated_at = now
 
             if upload is not None:
-                upload.status = UPLOAD_STATUS_FAILED if terminal else UPLOAD_STATUS_QUEUED
+                upload.status = UPLOAD_STATUS_FAILED if is_terminal else UPLOAD_STATUS_QUEUED
                 upload.error_message = message
-                upload.completed_at = now if terminal else None
+                upload.completed_at = now if is_terminal else None
                 upload.updated_at = now
 
             await session.commit()

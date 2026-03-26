@@ -35,6 +35,27 @@ def _dedupe_key(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", normalized)
 
 
+def _char_trigrams(text: str) -> set[str]:
+    """Return the set of character-level trigrams for a normalized string."""
+    key = re.sub(r"[^a-z0-9]+", "", _normalize_text(text).lower())
+    if len(key) < 3:
+        return {key} if key else set()
+    return {key[i : i + 3] for i in range(len(key) - 2)}
+
+
+def _fuzzy_similar(a: str, b: str, threshold: float = 0.75) -> bool:
+    """Return True if Jaccard similarity of character trigrams exceeds threshold."""
+    trigrams_a = _char_trigrams(a)
+    trigrams_b = _char_trigrams(b)
+    if not trigrams_a and not trigrams_b:
+        return True
+    if not trigrams_a or not trigrams_b:
+        return False
+    intersection = len(trigrams_a & trigrams_b)
+    union = len(trigrams_a | trigrams_b)
+    return (intersection / union) >= threshold
+
+
 def _math_symbol_ratio(text: str) -> float:
     normalized = _normalize_text(text)
     if not normalized:
@@ -105,6 +126,8 @@ class NormalizedPage:
 class TeacherPDFIngestionConfig:
     render_dpi: int = 300
     min_text_chars: int = 120
+    min_ocr_confidence: float = 0.4
+    fuzzy_dedupe_threshold: float = 0.75
 
     @classmethod
     def from_env(cls) -> "TeacherPDFIngestionConfig":
@@ -115,9 +138,18 @@ class TeacherPDFIngestionConfig:
             except ValueError:
                 return default
 
+        def _env_float(name: str, default: float) -> float:
+            raw = (os.getenv(name) or "").strip()
+            try:
+                return float(raw) if raw else default
+            except ValueError:
+                return default
+
         return cls(
             render_dpi=max(72, _env_int("TEACHER_UPLOAD_RENDER_DPI", 300)),
             min_text_chars=max(1, _env_int("TEACHER_MATHPIX_MIN_TEXT_CHARS", 120)),
+            min_ocr_confidence=max(0.0, min(1.0, _env_float("TEACHER_MIN_OCR_CONFIDENCE", 0.4))),
+            fuzzy_dedupe_threshold=max(0.0, min(1.0, _env_float("TEACHER_FUZZY_DEDUPE_THRESHOLD", 0.75))),
         )
 
 
@@ -196,6 +228,8 @@ def merge_page_models(
     mathpix_result: Optional[OCRResult],
     warnings: Optional[List[str]] = None,
     asset: Optional[Dict[str, Any]] = None,
+    min_ocr_confidence: float = 0.4,
+    fuzzy_dedupe_threshold: float = 0.75,
 ) -> NormalizedPage:
     native_regions = [
         NormalizedRegion(
@@ -211,37 +245,54 @@ def merge_page_models(
         if _searchable_text(block.text)
     ]
     native_text = "\n\n".join(region.text for region in native_regions if region.text).strip()
+    page_warnings = list(warnings or [])
 
     mathpix_plain = ""
     mathpix_latex = ""
     mathpix_conf = None
+    ocr_below_threshold = False
     if mathpix_result is not None:
-        plain_parts = []
-        latex_parts = []
-        for block in mathpix_result.blocks or []:
-            text = (block.text or "").strip()
-            if not text:
-                continue
-            if block.kind == "latex":
-                latex_parts.append(text)
-            else:
-                plain_parts.append(text)
-        mathpix_plain = "\n\n".join(plain_parts).strip()
-        mathpix_latex = "\n\n".join(latex_parts).strip()
         mathpix_conf = mathpix_result.average_confidence
+        if mathpix_conf is not None and mathpix_conf < min_ocr_confidence:
+            ocr_below_threshold = True
+            page_warnings.append(
+                f"Page {page_number}: Mathpix confidence {mathpix_conf:.2f} "
+                f"below threshold {min_ocr_confidence:.2f} — OCR result discarded"
+            )
+        else:
+            plain_parts = []
+            latex_parts = []
+            for block in mathpix_result.blocks or []:
+                text = (block.text or "").strip()
+                if not text:
+                    continue
+                if block.kind == "latex":
+                    latex_parts.append(text)
+                else:
+                    plain_parts.append(text)
+            mathpix_plain = "\n\n".join(plain_parts).strip()
+            mathpix_latex = "\n\n".join(latex_parts).strip()
 
-    plain_parts: List[str] = []
+    def _is_duplicate(a: str, b: str) -> bool:
+        """Check if two texts are duplicates using fuzzy trigram similarity."""
+        if not a or not b:
+            return False
+        key_a = _dedupe_key(a)
+        key_b = _dedupe_key(b)
+        if key_a == key_b:
+            return True
+        return _fuzzy_similar(a, b, threshold=fuzzy_dedupe_threshold)
+
+    plain_parts_out: List[str] = []
     if native_text:
-        plain_parts.append(native_text)
+        plain_parts_out.append(native_text)
     if mathpix_plain:
-        native_key = _dedupe_key(native_text)
-        mathpix_key = _dedupe_key(mathpix_plain)
-        if not native_key or mathpix_key != native_key:
-            plain_parts.append(mathpix_plain)
-    plain_text = "\n\n".join(part for part in plain_parts if part).strip()
+        if not native_text or not _is_duplicate(native_text, mathpix_plain):
+            plain_parts_out.append(mathpix_plain)
+    plain_text = "\n\n".join(part for part in plain_parts_out if part).strip()
 
     regions = list(native_regions)
-    if mathpix_plain and (not native_text or _dedupe_key(mathpix_plain) != _dedupe_key(native_text)):
+    if mathpix_plain and (not native_text or not _is_duplicate(native_text, mathpix_plain)):
         regions.append(
             NormalizedRegion(
                 kind="text",
@@ -267,6 +318,9 @@ def merge_page_models(
     if mathpix_result is None:
         extraction_mode = "native"
         ocr_confidence = 1.0 if native_text else None
+    elif ocr_below_threshold:
+        extraction_mode = "native_ocr_rejected"
+        ocr_confidence = mathpix_conf
     elif native_text:
         extraction_mode = "native_plus_mathpix"
         ocr_confidence = mathpix_conf
@@ -284,7 +338,7 @@ def merge_page_models(
         regions=regions,
         ocr_confidence=ocr_confidence,
         extraction_mode=extraction_mode,
-        warnings=list(warnings or []),
+        warnings=page_warnings,
         asset=dict(asset or {}),
     )
 
@@ -373,6 +427,8 @@ class TeacherPDFIngestor:
                     mathpix_result=mathpix_result,
                     warnings=page_warnings,
                     asset=asset_meta,
+                    min_ocr_confidence=self.config.min_ocr_confidence,
+                    fuzzy_dedupe_threshold=self.config.fuzzy_dedupe_threshold,
                 )
                 pages.append(normalized_page)
                 warnings.extend(page_warnings)
@@ -392,11 +448,13 @@ class TeacherPDFIngestor:
 
         source_markdown = "\n\n".join(page.plain_text for page in pages if _searchable_text(page.plain_text)).strip()
         mathpix_pages = sum(1 for page in pages if page.extraction_mode in {"mathpix", "native_plus_mathpix"})
+        ocr_rejected_pages = sum(1 for page in pages if page.extraction_mode == "native_ocr_rejected")
         summary = {
             "page_count": len(pages),
             "native_pages": sum(1 for page in pages if page.extraction_mode == "native"),
             "mathpix_pages": sum(1 for page in pages if page.extraction_mode == "mathpix"),
             "native_plus_mathpix_pages": sum(1 for page in pages if page.extraction_mode == "native_plus_mathpix"),
+            "ocr_rejected_pages": ocr_rejected_pages,
             "warning_pages": sum(1 for page in pages if page.warnings),
             "searchable_pages": sum(1 for page in pages if _searchable_text(page.plain_text) or page.latex_text),
             "partial_extraction": bool(warnings),
@@ -541,4 +599,6 @@ __all__ = [
     "build_teacher_mathpix_provider",
     "choose_mathpix_strategy",
     "merge_page_models",
+    "_fuzzy_similar",
+    "_char_trigrams",
 ]
