@@ -29,6 +29,7 @@ from ..config.settings import get_subject_name, RequestConfig
 from .main_ai import (
     parse_question,
     normalize_query,
+    check_question_relevance,
     is_question_subject_relevant,
     extract_keywords,
     extract_and_filter_keywords,
@@ -362,16 +363,27 @@ class Orchestrator:
                 return True
         return False
 
-    def _question_matches_subject(self, question: str) -> bool:
-        """Return True when the user question appears to reference the active subject."""
+    def _check_question_relevance(self, question: str) -> Dict[str, str]:
+        """Return graduated relevance classification for the question."""
 
         try:
-            return is_question_subject_relevant(question)
+            return check_question_relevance(question)
         except Exception:
             log.error("Subject relevance check failed, defaulting to allow", exc_info=True)
-            # Default to allowing the question so we do not block legitimate requests
-            # when the classifier (or API) fails.
-            return True
+            return {
+                "relevance": "full",
+                "on_topic_portion": question,
+                "off_topic_portion": "",
+                "reason": "guard failed — defaulting to full",
+            }
+
+    def _question_matches_subject(self, question: str) -> bool:
+        """Return True when the user question appears to reference the active subject.
+
+        Backward-compatible wrapper — returns True for both full and partial relevance.
+        """
+        result = self._check_question_relevance(question)
+        return result["relevance"] != "none"
 
     def _canonical_term(self, term: str) -> str:
         """Return a normalized, lowercase term without possessives or extra punctuation."""
@@ -548,9 +560,11 @@ class Orchestrator:
 
         subject_name = self.cfg.subject_name if self.cfg else get_subject_name()
 
-        # Relevance guard — keep AI-TA's closed-knowledge enforcement
-        subject_relevant = self._question_matches_subject(question)
-        if not subject_relevant:
+        # Relevance guard — graduated: full / partial / none
+        relevance_result = self._check_question_relevance(question)
+        relevance_level = relevance_result["relevance"]
+
+        if relevance_level == "none":
             if WIRE:
                 print(
                     "[Main AI -> Indexer AI] context_sentences=null (question_out_of_scope)",
@@ -565,10 +579,16 @@ class Orchestrator:
             )
             return ResearchBundle(metadata=metadata, snippets=[], subject=subject_name)
 
+        # For partial relevance, use the on-topic portion for keyword extraction
+        # but keep the full question for semantic search
+        keyword_query = question
+        if relevance_level == "partial" and relevance_result["on_topic_portion"]:
+            keyword_query = relevance_result["on_topic_portion"]
+
         # Extract keywords as hints (not standalone search targets)
         try:
             _ctx_summary, filtered_terms = extract_and_filter_keywords(
-                question, subject=subject_name
+                keyword_query, subject=subject_name
             )
         except Exception:
             filtered_terms = []
@@ -661,6 +681,12 @@ class Orchestrator:
             hit_count_sem=diagnostics.get("hit_count_sem", 0),
         )
 
+        provenance: Dict[str, Any] = {"source": "pgvector"}
+        if relevance_level == "partial":
+            provenance["relevance_level"] = "partial"
+            provenance["on_topic_portion"] = relevance_result.get("on_topic_portion", "")
+            provenance["off_topic_portion"] = relevance_result.get("off_topic_portion", "")
+
         return ResearchBundle(
             metadata=metadata,
             snippets=snippets,
@@ -671,7 +697,7 @@ class Orchestrator:
             refinement_queries=[],
             used_ids=[sn.id for sn in snippets],
             stats=diagnostics,
-            provenance={"source": "pgvector"},
+            provenance=provenance,
             allowed_markers=allowed_markers,
             found_terms=keywords,
             not_found_terms=[],

@@ -77,12 +77,22 @@ def normalize_query(text: str) -> str:
     return text.lower()
 
 
-def is_question_subject_relevant(question: str, subject: str | None = None) -> bool:
-    """Use the LLM to decide whether the question belongs to the active subject."""
+def check_question_relevance(
+    question: str, subject: str | None = None
+) -> Dict[str, str]:
+    """Use the LLM to classify question relevance as full, partial, or none.
+
+    Returns a dict with keys: relevance, on_topic_portion, off_topic_portion, reason.
+    """
 
     cleaned = (question or "").strip()
     if not cleaned:
-        return False
+        return {
+            "relevance": "none",
+            "on_topic_portion": "",
+            "off_topic_portion": "",
+            "reason": "empty question",
+        }
 
     client = _client()
     subject = subject or get_subject_name()
@@ -91,6 +101,14 @@ def is_question_subject_relevant(question: str, subject: str | None = None) -> b
         "subject": subject,
         "question": cleaned,
     }
+
+    fail_open: Dict[str, str] = {
+        "relevance": "full",
+        "on_topic_portion": cleaned,
+        "off_topic_portion": "",
+        "reason": "guard failed — defaulting to full",
+    }
+
     try:
         resp = client.chat.completions.create(
             model=os.getenv("PARSER_MODEL", "gpt-4o"),
@@ -103,19 +121,59 @@ def is_question_subject_relevant(question: str, subject: str | None = None) -> b
         )
         content = resp.choices[0].message.content or "{}"
         data = json.loads(content)
+
+        # Handle new graduated format
+        relevance = data.get("relevance", "")
+        if isinstance(relevance, str) and relevance in {"full", "partial", "none"}:
+            log.debug("Relevance classification: %s", relevance)
+            return {
+                "relevance": relevance,
+                "on_topic_portion": str(data.get("on_topic_portion", "")),
+                "off_topic_portion": str(data.get("off_topic_portion", "")),
+                "reason": str(data.get("reason", "")),
+            }
+
+        # Backward compatibility: old binary format {"relevant": bool}
         relevant = data.get("relevant")
         if isinstance(relevant, bool):
-            return relevant
+            mapped = "full" if relevant else "none"
+            log.debug("Relevance (legacy bool): %s -> %s", relevant, mapped)
+            return {
+                "relevance": mapped,
+                "on_topic_portion": cleaned if relevant else "",
+                "off_topic_portion": "" if relevant else cleaned,
+                "reason": str(data.get("reason", "")),
+            }
         if isinstance(relevant, str):
             lowered = relevant.strip().lower()
             if lowered in {"true", "yes", "y"}:
-                return True
+                return {
+                    "relevance": "full",
+                    "on_topic_portion": cleaned,
+                    "off_topic_portion": "",
+                    "reason": str(data.get("reason", "")),
+                }
             if lowered in {"false", "no", "n"}:
-                return False
+                return {
+                    "relevance": "none",
+                    "on_topic_portion": "",
+                    "off_topic_portion": cleaned,
+                    "reason": str(data.get("reason", "")),
+                }
     except Exception:
         log.error("Subject relevance guard failed", exc_info=True)
     # Fail open so that legitimate questions are not blocked if the guard fails.
-    return True
+    return fail_open
+
+
+def is_question_subject_relevant(question: str, subject: str | None = None) -> bool:
+    """Use the LLM to decide whether the question belongs to the active subject.
+
+    Thin backward-compatible wrapper around check_question_relevance.
+    Returns True for both 'full' and 'partial' relevance.
+    """
+    result = check_question_relevance(question, subject)
+    return result["relevance"] != "none"
 
 
 _cached_client: Optional[OpenAI] = None
@@ -1052,6 +1110,21 @@ def solve_with_bundle(
     ]
     if proof_json:
         payload_lines.append(f"FullProofBundle: {proof_json}")
+
+    # Inject RelevanceNote for partially on-topic questions
+    prov = getattr(bundle, "provenance", {}) or {}
+    if prov.get("relevance_level") == "partial":
+        on_topic = prov.get("on_topic_portion", "")
+        off_topic = prov.get("off_topic_portion", "")
+        if on_topic or off_topic:
+            payload_lines.append(
+                f"RelevanceNote: The student's question is partially on-topic. "
+                f"The on-topic portion is: '{on_topic}'. "
+                f"The off-topic portion is: '{off_topic}'. "
+                f"Answer the on-topic part thoroughly with citations, then add a brief "
+                f"redirect note acknowledging the off-topic part is outside course scope."
+            )
+
     payload_lines.append("Return JSON with keys: not_relevant, steps, final_answers, equations_used, assumptions.")
     payload_lines.append(
         "- not_relevant: boolean — true if the question is outside the course scope, false otherwise."
@@ -1061,7 +1134,8 @@ def solve_with_bundle(
         "to determine which sections to include: for new questions use all three sections "
         "(## Answer, ## Key Takeaway, ## Check Your Understanding); for CYU responses follow "
         "the CYU RESPONSE RULES (brief affirmation if correct, corrective feedback + new CYU if incorrect). "
-        "Use LaTeX math ($...$ inline, $$...$$ display). Keep it concise (~150-250 words for new questions), no long paragraphs."
+        "Use LaTeX math ($...$ inline, $$...$$ display). Follow the LENGTH RULES in the system prompt "
+        "to size the response to the question type. No long paragraphs."
     )
     payload_lines.append("- final_answers: MUST be an empty object {} because you are not computing results.")
     payload_lines.append(
