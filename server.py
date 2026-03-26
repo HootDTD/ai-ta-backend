@@ -1001,6 +1001,302 @@ else:  # pragma: no cover - fallback when python-multipart missing
         )
 
 
+# ---------------------------------------------------------------------------
+# Invite links
+# ---------------------------------------------------------------------------
+
+
+class InviteLinkCreateIn(BaseModel):
+    search_space_id: int = Field(..., gt=0)
+    role: str = Field(..., pattern="^(student|teacher)$")
+    max_uses: Optional[int] = Field(default=None, ge=1)
+    expires_at: Optional[str] = None
+
+
+class InviteLinkOut(BaseModel):
+    id: int
+    code: str
+    search_space_id: int
+    role: str
+    is_active: bool
+    max_uses: Optional[int]
+    use_count: int
+    expires_at: Optional[str]
+    created_at: str
+
+
+class InviteResolveOut(BaseModel):
+    search_space_id: int
+    course_name: str
+    role: str
+
+
+class InviteRedeemOut(BaseModel):
+    success: bool
+    search_space_id: int
+    role: str
+    course_name: str
+
+
+def _generate_invite_code() -> str:
+    import secrets
+    return secrets.token_urlsafe(16)
+
+
+@app.post("/invite-links", response_model=InviteLinkOut)
+def create_invite_link(payload: InviteLinkCreateIn, request: Request) -> InviteLinkOut:
+    """Create (or regenerate) an invite link for a course+role. Teacher only."""
+    auth = _require_course_membership(
+        request,
+        search_space_id=payload.search_space_id,
+        role="teacher",
+    )
+
+    from .database.models import CourseInviteLink
+    from sqlalchemy import select as sa_select, update as sa_update
+
+    parsed_expires = None
+    if payload.expires_at:
+        from datetime import datetime as _dt, timezone as _tz
+        try:
+            parsed_expires = _dt.fromisoformat(payload.expires_at)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid expires_at format (use ISO 8601)")
+
+    async def _run():
+        async with get_async_session() as db_session:
+            # Deactivate existing active links for this course+role
+            await db_session.execute(
+                sa_update(CourseInviteLink)
+                .where(
+                    CourseInviteLink.search_space_id == payload.search_space_id,
+                    CourseInviteLink.role == payload.role,
+                    CourseInviteLink.is_active == True,  # noqa: E712
+                )
+                .values(is_active=False)
+            )
+
+            link = CourseInviteLink(
+                code=_generate_invite_code(),
+                search_space_id=payload.search_space_id,
+                role=payload.role,
+                created_by=auth.user_id,
+                is_active=True,
+                max_uses=payload.max_uses,
+                expires_at=parsed_expires,
+            )
+            db_session.add(link)
+            await db_session.commit()
+            await db_session.refresh(link)
+            return link
+
+    link = run_async(_run())
+    return InviteLinkOut(
+        id=link.id,
+        code=link.code,
+        search_space_id=link.search_space_id,
+        role=link.role,
+        is_active=link.is_active,
+        max_uses=link.max_uses,
+        use_count=link.use_count,
+        expires_at=link.expires_at.isoformat() if link.expires_at else None,
+        created_at=link.created_at.isoformat() if link.created_at else "",
+    )
+
+
+@app.get("/invite-links", response_model=list[InviteLinkOut])
+def list_invite_links(
+    request: Request,
+    search_space_id: int = Query(..., gt=0),
+) -> list[InviteLinkOut]:
+    """List invite links for a course. Teacher only."""
+    _require_course_membership(request, search_space_id=search_space_id, role="teacher")
+
+    from .database.models import CourseInviteLink
+    from sqlalchemy import select as sa_select
+
+    async def _run():
+        async with get_async_session() as db_session:
+            result = await db_session.execute(
+                sa_select(CourseInviteLink)
+                .where(CourseInviteLink.search_space_id == search_space_id)
+                .order_by(CourseInviteLink.created_at.desc())
+            )
+            return result.scalars().all()
+
+    links = run_async(_run())
+    return [
+        InviteLinkOut(
+            id=link.id,
+            code=link.code,
+            search_space_id=link.search_space_id,
+            role=link.role,
+            is_active=link.is_active,
+            max_uses=link.max_uses,
+            use_count=link.use_count,
+            expires_at=link.expires_at.isoformat() if link.expires_at else None,
+            created_at=link.created_at.isoformat() if link.created_at else "",
+        )
+        for link in links
+    ]
+
+
+@app.delete("/invite-links/{link_id}", status_code=204)
+def revoke_invite_link(link_id: int, request: Request):
+    """Revoke an invite link. Teacher only."""
+    from .database.models import CourseInviteLink
+    from sqlalchemy import select as sa_select
+
+    async def _run():
+        async with get_async_session() as db_session:
+            result = await db_session.execute(
+                sa_select(CourseInviteLink).where(CourseInviteLink.id == link_id)
+            )
+            link = result.scalars().first()
+            if not link:
+                raise HTTPException(status_code=404, detail="Invite link not found")
+            return link.search_space_id, link
+
+    search_space_id, _ = run_async(_run())
+    _require_course_membership(request, search_space_id=search_space_id, role="teacher")
+
+    async def _revoke():
+        async with get_async_session() as db_session:
+            result = await db_session.execute(
+                sa_select(CourseInviteLink).where(CourseInviteLink.id == link_id)
+            )
+            link = result.scalars().first()
+            if link:
+                link.is_active = False
+                await db_session.commit()
+
+    run_async(_revoke())
+    return None
+
+
+@app.get("/invite-links/resolve/{code}", response_model=InviteResolveOut)
+def resolve_invite_link(code: str) -> InviteResolveOut:
+    """Public endpoint: resolve an invite code to course info."""
+    from .database.models import CourseInviteLink, SearchSpace
+    from sqlalchemy import select as sa_select
+    from datetime import datetime as _dt, timezone as _tz
+
+    async def _run():
+        async with get_async_session() as db_session:
+            result = await db_session.execute(
+                sa_select(CourseInviteLink).where(
+                    CourseInviteLink.code == code,
+                    CourseInviteLink.is_active == True,  # noqa: E712
+                )
+            )
+            link = result.scalars().first()
+            if not link:
+                raise HTTPException(status_code=404, detail="Invalid or expired invite link")
+
+            # Check expiration
+            if link.expires_at and _dt.now(_tz.utc) >= link.expires_at:
+                raise HTTPException(status_code=404, detail="Invalid or expired invite link")
+
+            # Check max uses
+            if link.max_uses is not None and link.use_count >= link.max_uses:
+                raise HTTPException(status_code=404, detail="Invalid or expired invite link")
+
+            # Get course name
+            space_result = await db_session.execute(
+                sa_select(SearchSpace).where(SearchSpace.id == link.search_space_id)
+            )
+            space = space_result.scalars().first()
+            course_name = space.name if space else "Unknown Course"
+
+            return {
+                "search_space_id": link.search_space_id,
+                "course_name": course_name,
+                "role": link.role,
+            }
+
+    data = run_async(_run())
+    return InviteResolveOut(**data)
+
+
+@app.post("/invite-links/redeem/{code}", response_model=InviteRedeemOut)
+def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
+    """Authenticated endpoint: redeem an invite code to join a course."""
+    auth = _resolve_request_auth(request)
+
+    from .database.models import CourseInviteLink, CourseMembership, SearchSpace
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.exc import IntegrityError
+    from datetime import datetime as _dt, timezone as _tz
+
+    async def _run():
+        async with get_async_session() as db_session:
+            # Look up the invite link
+            result = await db_session.execute(
+                sa_select(CourseInviteLink).where(
+                    CourseInviteLink.code == code,
+                    CourseInviteLink.is_active == True,  # noqa: E712
+                )
+            )
+            link = result.scalars().first()
+            if not link:
+                raise HTTPException(status_code=404, detail="Invalid or expired invite link")
+
+            if link.expires_at and _dt.now(_tz.utc) >= link.expires_at:
+                raise HTTPException(status_code=404, detail="Invalid or expired invite link")
+
+            if link.max_uses is not None and link.use_count >= link.max_uses:
+                raise HTTPException(status_code=404, detail="Invalid or expired invite link")
+
+            # Check existing membership
+            mem_result = await db_session.execute(
+                sa_select(CourseMembership).where(
+                    CourseMembership.user_id == auth.user_id,
+                    CourseMembership.search_space_id == link.search_space_id,
+                )
+            )
+            existing = mem_result.scalars().first()
+
+            if existing:
+                if existing.role == link.role or (existing.role == "teacher" and link.role == "student"):
+                    # Already enrolled with same or higher role — idempotent
+                    pass
+                elif existing.role == "student" and link.role == "teacher":
+                    # Upgrade student to teacher
+                    existing.role = "teacher"
+                    link.use_count += 1
+                    await db_session.commit()
+            else:
+                # Create new membership
+                membership = CourseMembership(
+                    user_id=auth.user_id,
+                    search_space_id=link.search_space_id,
+                    role=link.role,
+                )
+                db_session.add(membership)
+                link.use_count += 1
+                try:
+                    await db_session.commit()
+                except IntegrityError:
+                    await db_session.rollback()
+
+            # Get course name
+            space_result = await db_session.execute(
+                sa_select(SearchSpace).where(SearchSpace.id == link.search_space_id)
+            )
+            space = space_result.scalars().first()
+            course_name = space.name if space else "Unknown Course"
+
+            return {
+                "success": True,
+                "search_space_id": link.search_space_id,
+                "role": link.role,
+                "course_name": course_name,
+            }
+
+    data = run_async(_run())
+    return InviteRedeemOut(**data)
+
+
 @app.get("/healthz")
 def healthz():
     return {"status": "ok"}
