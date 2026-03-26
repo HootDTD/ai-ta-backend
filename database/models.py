@@ -202,6 +202,40 @@ class CourseMembership(Base):
     )
 
 
+class CourseInviteLink(Base):
+    """Shareable invite link for course enrollment."""
+
+    __tablename__ = "course_invite_links"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    code = Column(String, nullable=False, unique=True, index=True)
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role = Column(String(20), nullable=False)
+    created_by = Column(UUID(as_uuid=False), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    max_uses = Column(Integer, nullable=True)
+    use_count = Column(Integer, nullable=False, default=0)
+    expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        index=True,
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+
 class TeacherCourse(Base):
     """Per-course teacher settings (week + retrieval weights)."""
 
@@ -411,6 +445,7 @@ __all__ = [
     "AITADocument",
     "AITAChunk",
     "CourseMembership",
+    "CourseInviteLink",
     "TeacherCourse",
     "TeacherUpload",
     "ChatSession",
