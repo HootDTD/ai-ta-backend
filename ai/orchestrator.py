@@ -9,6 +9,7 @@ import math
 import os
 import re
 from dataclasses import asdict
+from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Set, Tuple
 from difflib import SequenceMatcher
@@ -896,6 +897,32 @@ class Orchestrator:
             raise RuntimeError(f"insufficient book context: {last_err}")
         if bundle is None:
             raise RuntimeError("retrieval failed")
+
+        # ── EVAL_MODE hook ────────────────────────────────────────
+        # When EVAL_MODE=true, dump the context pack and short-circuit
+        # before calling the LLM. Used by system-upgraderrrr eval system.
+        if os.getenv("EVAL_MODE", "").lower() in {"1", "true", "yes", "on"}:
+            eval_path = os.getenv(
+                "EVAL_DUMP_PATH",
+                str(Path(__file__).resolve().parents[2] / "system-upgraderrrr" / "context_packs"),
+            )
+            os.makedirs(eval_path, exist_ok=True)
+            eval_dump = {
+                "question": question,
+                "snippets": [asdict(sn) for sn in bundle.snippets],
+                "allowed_markers": getattr(bundle, "allowed_markers", []),
+                "metadata": asdict(bundle.metadata),
+            }
+            filename = hashlib.md5(question.encode()).hexdigest()[:8] + ".json"
+            dump_filepath = os.path.join(eval_path, filename)
+            with open(dump_filepath, "w", encoding="utf-8") as f:
+                json.dump(eval_dump, f, indent=2, ensure_ascii=False)
+            print(f"[EVAL] Context pack dumped for: {question[:50]}...")
+            print(f"[EVAL] Saved to: {dump_filepath}")
+            return FinalAnswer(
+                text="[EVAL_MODE] Context dumped, skipping LLM.", citations=[]
+            )
+
         bundle_hash = self._hash(bundle)
 
         payload = {

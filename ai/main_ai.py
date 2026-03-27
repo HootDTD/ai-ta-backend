@@ -1258,7 +1258,9 @@ def solve_with_bundle(
             "response_format": {"type": "json_object"},
         }
         gpt5_allow = {"gpt-5", "gpt-5-chat-latest", "gpt-5-mini"}
-        if not (model.startswith("gpt-5") or model in gpt5_allow):
+        if model.startswith("gpt-5") or model in gpt5_allow:
+            kwargs["reasoning_effort"] = os.getenv("MAIN_REASONING_EFFORT", "high")
+        else:
             kwargs["temperature"] = 0
         resp = client.chat.completions.create(**kwargs)
         content = resp.choices[0].message.content
