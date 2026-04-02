@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Class workspace resolution with Supabase-backed isolation.
+"""Class workspace resolution with DB-backed isolation.
 
 This module centralizes how the backend maps an incoming class identifier
 to the scoped retrieval configuration for that course. Each workspace owns
@@ -15,8 +15,6 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
-
-import requests
 
 from ..config.weights import WEIGHT_KINDS, WEIGHT_MIN, WEIGHT_MAX, clamp_weight
 
@@ -226,181 +224,6 @@ class StaticWorkspaceRepository(WorkspaceRepository):
         return candidate
 
 
-class SupabaseWorkspaceRepository(WorkspaceRepository):
-    """Repository fetching workspace definitions from Supabase REST."""
-
-    def __init__(
-        self,
-        *,
-        supabase_url: str,
-        service_key: str,
-        table: Optional[str] = None,
-        select: Optional[str] = None,
-        timeout: Optional[float] = None,
-    ) -> None:
-        base = supabase_url.rstrip("/")
-        if not base:
-            raise WorkspaceConfigError("Supabase URL cannot be empty")
-        self._base_url = base
-        self._service_key = service_key.strip()
-        if not self._service_key:
-            raise WorkspaceConfigError("Supabase API key cannot be empty")
-        self._table = (table or os.getenv("SUPABASE_CLASS_WORKSPACES_TABLE") or "class_workspaces").strip()
-        self._select = (select or os.getenv("SUPABASE_CLASS_WORKSPACES_SELECT") or
-                        "id,slug,name,subject,materials,weights,metadata").strip()
-        self._timeout = float(timeout or os.getenv("SUPABASE_HTTP_TIMEOUT", "20"))
-        self._session = requests.Session()
-        self._headers = {
-            "apikey": self._service_key,
-            "Authorization": f"Bearer {self._service_key}",
-            "Accept": "application/json",
-        }
-        self._index_root = _default_index_root()
-
-    # ------------------------------ HTTP helpers ------------------------------
-
-    def _request(self, params: Dict[str, str]) -> List[Dict[str, Any]]:
-        url = f"{self._base_url}/rest/v1/{self._table}"
-        response = self._session.get(url, headers=self._headers, params=params, timeout=self._timeout)
-        if response.status_code == 404:
-            return []
-        if response.status_code == 401:
-            raise WorkspaceConfigError("Supabase workspace request unauthorized; check API key.")
-        if response.status_code == 403:
-            raise WorkspaceConfigError("Supabase workspace request forbidden; verify Row Level Security policies.")
-        if not response.ok:
-            detail = response.text.strip() or f"status={response.status_code}"
-            raise WorkspaceError(f"Supabase workspace fetch failed: {detail}")
-        try:
-            payload = response.json()
-        except Exception as exc:  # pragma: no cover - defensive
-            raise WorkspaceError(f"Supabase returned non-JSON payload: {exc}") from exc
-        if not isinstance(payload, list):
-            raise WorkspaceError("Supabase workspace response must be a JSON array.")
-        return payload
-
-    def _query_variants(self, identifier: str) -> List[Dict[str, str]]:
-        ident = identifier.strip()
-        variants: List[Dict[str, str]] = []
-        if not ident:
-            return variants
-        if _is_uuid(ident):
-            variants.append({"id": f"eq.{ident}"})
-        slug = _slugify(ident)
-        variants.append({"slug": f"eq.{slug}"})
-        variants.append({"name": f"eq.{ident}"})
-        # Allow looking up legacy subject field for compatibility.
-        variants.append({"subject": f"eq.{ident}"})
-        return variants
-
-    # ----------------------------- Repo interface -----------------------------
-
-    def load_workspace(self, identifier: str) -> ClassWorkspace:
-        queries = self._query_variants(identifier)
-        if not queries:
-            raise WorkspaceNotFound("class identifier is empty")
-
-        errors: List[str] = []
-        for params in queries:
-            params = dict(params)
-            params["limit"] = "1"
-            params["select"] = self._select
-            try:
-                rows = self._request(params)
-            except WorkspaceError as exc:
-                errors.append(str(exc))
-                continue
-            if not rows:
-                continue
-            row = rows[0]
-            try:
-                return self._parse_workspace(row)
-            except WorkspaceError as exc:
-                errors.append(str(exc))
-                continue
-
-        if errors:
-            joined = "; ".join(errors[-3:])
-            raise WorkspaceNotFound(f"No workspace found for {identifier!r}: {joined}")
-        raise WorkspaceNotFound(f"No workspace found for {identifier!r}")
-
-    def _parse_workspace(self, row: Mapping[str, Any]) -> ClassWorkspace:
-        class_id = str(row.get("id") or "").strip()
-        if not class_id:
-            raise WorkspaceConfigError("Workspace row missing 'id'")
-        name = str(row.get("name") or row.get("title") or row.get("slug") or class_id).strip()
-        slug = str(row.get("slug") or _slugify(name)).strip()
-        subject = str(row.get("subject") or name).strip()
-        metadata = _ensure_mapping(row.get("metadata"))
-
-        materials_raw = _ensure_list(row.get("materials"))
-        if not materials_raw:
-            raise WorkspaceConfigError(f"Workspace {slug!r} has no materials configured.")
-
-        materials: List[WorkspaceMaterial] = []
-        for entry in materials_raw:
-            material = self._parse_material(slug, entry)
-            materials.append(material)
-
-        weights_raw = _ensure_mapping(row.get("weights"))
-        weight_overrides = _normalize_weight_map(weights_raw)
-
-        return ClassWorkspace(
-            class_id=class_id,
-            class_name=name,
-            slug=slug,
-            subject_name=subject,
-            materials=materials,
-            weight_overrides=weight_overrides,
-            metadata=metadata,
-        )
-
-    def _parse_material(self, slug: str, entry: Any) -> WorkspaceMaterial:
-        if not isinstance(entry, Mapping):
-            raise WorkspaceConfigError(f"Material entry for {slug!r} must be an object, got {type(entry)}")
-        material_id = str(entry.get("id") or uuid.uuid4())
-        kind = str(entry.get("kind") or "other").strip().lower()
-        title = str(entry.get("title") or kind.title())
-        priority = int(entry.get("priority", 0) or 0)
-
-        raw_index = entry.get("index_path") or entry.get("index") or entry.get("path")
-        if not raw_index:
-            raise WorkspaceConfigError(f"Material {material_id!r} missing index_path")
-        index_path = self._resolve_index_path(slug, str(raw_index))
-
-        weight_override = _coerce_float(entry.get("weight_override"))
-        if weight_override is not None:
-            weight_override = clamp_weight(weight_override, minimum=WEIGHT_MIN, maximum=WEIGHT_MAX)
-
-        metadata = _ensure_mapping(entry.get("metadata"))
-        material = WorkspaceMaterial(
-            id=material_id,
-            kind=kind,
-            title=title,
-            index_path=index_path,
-            priority=priority,
-            weight_override=weight_override,
-            metadata=metadata,
-        )
-        return material
-
-    def _resolve_index_path(self, slug: str, raw_path: str) -> Path:
-        candidate = Path(raw_path)
-        if not candidate.is_absolute():
-            candidate = (self._index_root / slug / candidate).resolve()
-        else:
-            candidate = candidate.resolve()
-        try:
-            candidate.relative_to(self._index_root)
-        except ValueError as exc:
-            raise WorkspaceConfigError(
-                f"Material index path {candidate} escapes index root {self._index_root}"
-            ) from exc
-        if not candidate.exists():
-            log.warning("Workspace index path missing on disk: %s", candidate)
-        return candidate
-
-
 # ---------------------------------------------------------------------------
 # Weight normalization
 # ---------------------------------------------------------------------------
@@ -486,31 +309,15 @@ def build_workspace_manager(static_config: Optional[Mapping[str, Mapping[str, An
     """Factory that builds a workspace manager using environment settings.
 
     Returns a manager backed by the aita_search_spaces table
-    (DBWorkspaceRepository) with the Supabase REST repo as a fallback
-    for any workspaces not yet migrated.
+    (DBWorkspaceRepository) with an optional static config fallback.
     """
     from .db import DBWorkspaceRepository
-
-    supabase_url = os.getenv("SUPABASE_URL")
-    supabase_api_key = os.getenv("SUPABASE_API_KEY")
 
     fallback_repo: Optional[WorkspaceRepository] = None
     if static_config:
         fallback_repo = StaticWorkspaceRepository(static_config)
 
     db_repo = DBWorkspaceRepository()
-
-    if supabase_url and supabase_api_key:
-        supabase_fallback = SupabaseWorkspaceRepository(
-            supabase_url=supabase_url,
-            service_key=supabase_api_key,
-        )
-        # Chain: DB primary -> Supabase -> static
-        return WorkspaceManager(db_repo, fallback=supabase_fallback)
-
-    log.warning(
-        "SUPABASE_URL not set; using DB-only workspace repository."
-    )
     return WorkspaceManager(db_repo, fallback=fallback_repo)
 
 

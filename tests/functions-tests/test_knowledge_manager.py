@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import types
 import uuid
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from knowledge.manager import KnowledgeManager
 
@@ -13,23 +15,26 @@ def _touch(path: Path, content: str = "") -> None:
         handle.write(content)
 
 
-def _seed_knowledge(subject: str, slug: str, stores: list[dict]) -> None:
-    """Seed knowledge_subjects and knowledge_stores via the patched Supabase client."""
-    import vendors.supabase_client as sb
+def _make_mock_space(name="Physics 101", slug="physics-101", space_id=1):
+    """Create a mock SearchSpace object."""
+    space = MagicMock()
+    space.id = space_id
+    space.name = name
+    space.slug = slug
+    space.subject_name = name
+    space.weight_overrides = {}
+    return space
 
-    subject_id = str(uuid.uuid4())
-    sb.insert("knowledge_subjects", {
-        "id": subject_id,
-        "subject": subject,
-        "slug": slug,
-        "created_at": "2025-01-01T00:00:00Z",
-    })
-    for st in stores:
-        sb.insert("knowledge_stores", {
-            "id": str(uuid.uuid4()),
-            "subject_id": subject_id,
-            **st,
-        })
+
+def _make_mock_doc(doc_id=1, title="Valid", kind="textbook", index_path="", priority=100):
+    """Create a mock AITADocument object."""
+    doc = MagicMock()
+    doc.id = doc_id
+    doc.title = title
+    doc.material_kind = kind
+    doc.document_metadata = {"index_path": index_path, "priority": priority}
+    doc.created_at = "2024-01-01T00:00:00Z"
+    return doc
 
 
 def test_resolve_doc_sets_only_returns_existing_indexes(tmp_path):
@@ -48,25 +53,42 @@ def test_resolve_doc_sets_only_returns_existing_indexes(tmp_path):
 
     missing_dir = subject_dir / "km_missing"
 
-    # Seed Supabase mock with two stores — one valid, one missing
-    _seed_knowledge(subject, slug, [
-        {
-            "kind": "textbook",
-            "title": "Valid",
-            "index_path": str(valid_dir),
-            "priority": 100,
-            "created_at": "2024-01-01T00:00:00Z",
-        },
-        {
-            "kind": "notes",
-            "title": "Missing",
-            "index_path": str(missing_dir),
-            "priority": 80,
-            "created_at": "2024-01-02T00:00:00Z",
-        },
-    ])
+    mock_space = _make_mock_space()
+    mock_docs = [
+        _make_mock_doc(doc_id=1, title="Valid", kind="textbook", index_path=str(valid_dir), priority=100),
+        _make_mock_doc(doc_id=2, title="Missing", kind="notes", index_path=str(missing_dir), priority=80),
+    ]
 
-    doc_sets = manager.resolve_doc_sets(subject)
+    # Mock the async load_manifest to return our test data
+    manifest = {
+        "subject": subject,
+        "slug": slug,
+        "materials": [],
+        "stores": [
+            {
+                "id": "1",
+                "document_id": 1,
+                "kind": "textbook",
+                "title": "Valid",
+                "index_path": str(valid_dir),
+                "priority": 100,
+                "created_at": "2024-01-01T00:00:00Z",
+            },
+            {
+                "id": "2",
+                "document_id": 2,
+                "kind": "notes",
+                "title": "Missing",
+                "index_path": str(missing_dir),
+                "priority": 80,
+                "created_at": "2024-01-02T00:00:00Z",
+            },
+        ],
+    }
+
+    with patch.object(manager, "load_manifest", return_value=manifest):
+        doc_sets = manager.resolve_doc_sets(subject)
+
     assert doc_sets == [valid_dir]
 
 
