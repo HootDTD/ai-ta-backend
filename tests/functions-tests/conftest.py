@@ -200,45 +200,7 @@ def _sb_delete(table, match_params):
 
 
 def _sb_rpc(function_name, params, *, timeout=30):
-    """Mock RPC dispatcher for Supabase functions.
-
-    Supports: hybrid_search, fts_count, fetch_items.
-    """
-    if function_name == "hybrid_search":
-        store_ids = params.get("p_store_ids", [])
-        rows = _sb_store.get("knowledge_items", [])
-        results = []
-        for i, row in enumerate(rows):
-            if row.get("store_id") in store_ids:
-                results.append({
-                    "item_id": row.get("id"),
-                    "store_id": row.get("store_id"),
-                    "score_sem": 0.9 - i * 0.01,
-                    "score_lex": 0.5 - i * 0.01,
-                    "rank_sem": i + 1,
-                    "rank_lex": i + 1,
-                })
-        limit = params.get("match_count", 60)
-        return results[:limit]
-
-    elif function_name == "fts_count":
-        store_ids = params.get("p_store_ids", [])
-        query_text = (params.get("query_text") or "").lower()
-        rows = _sb_store.get("knowledge_items", [])
-        count = 0
-        for row in rows:
-            if row.get("store_id") in store_ids:
-                text = (row.get("text") or "").lower()
-                if any(tok in text for tok in query_text.split() if len(tok) > 1):
-                    count += 1
-        return count
-
-    elif function_name == "fetch_items":
-        item_ids = params.get("p_item_ids", [])
-        store_ids = params.get("p_store_ids", [])
-        rows = _sb_store.get("knowledge_items", [])
-        return [r for r in rows if r.get("id") in item_ids and r.get("store_id") in store_ids]
-
+    """Mock RPC dispatcher for Supabase functions."""
     return []
 
 

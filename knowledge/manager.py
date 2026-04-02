@@ -15,7 +15,11 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from vendors import supabase_client as sb
+from sqlalchemy import select as sa_select
+from sqlalchemy.exc import IntegrityError
+
+from database.models import AITADocument, DocumentStatus, SearchSpace
+from database.session import get_async_session, run_async
 
 log = logging.getLogger(__name__)
 
@@ -60,77 +64,6 @@ def _default_store_priority(kind: str) -> int:
     return mapping.get(k, 50)
 
 
-def _upload_items_to_supabase(
-    store_id: str,
-    items: list,
-    embeddings,  # numpy array (N, dim)
-    meta: Dict[str, Any],
-    batch_size: int = 100,
-) -> None:
-    """Upload items + embeddings to Supabase ``knowledge_items`` + ``knowledge_store_meta``."""
-    import numpy as np
-
-    # 1. Upload store metadata
-    sb.insert("knowledge_store_meta", {
-        "store_id": store_id,
-        "source_pdf": meta.get("source_pdf"),
-        "source_pdf_sha256": meta.get("source_pdf_sha256"),
-        "model": meta.get("model", "text-embedding-3-large"),
-        "dimensions": meta.get("dimensions", 3072),
-        "num_items": meta.get("num_items"),
-        "counts_by_type": meta.get("counts_by_type"),
-        "page_count": meta.get("page_count"),
-        "has_ocr": meta.get("has_ocr", False),
-        "caption_model": meta.get("caption_model"),
-        "tokenizer": meta.get("tokenizer"),
-        "token_limit": meta.get("token_limit"),
-        "overlap_tokens": meta.get("overlap_tokens"),
-        "min_figure_area_ratio": meta.get("min_figure_area_ratio"),
-        "doc_titles": meta.get("doc_titles", {}),
-        "aliases": meta.get("aliases", {}),
-        "store_kind": meta.get("store_kind"),
-        "week": meta.get("week"),
-    })
-
-    def _clean(val):
-        """Strip null bytes that PostgreSQL TEXT columns reject."""
-        if isinstance(val, str):
-            return val.replace("\x00", "")
-        return val
-
-    # 2. Upload items in batches
-    for batch_start in range(0, len(items), batch_size):
-        batch_items = items[batch_start:batch_start + batch_size]
-        batch_embs = embeddings[batch_start:batch_start + batch_size]
-        rows = []
-        for item, emb_vec in zip(batch_items, batch_embs):
-            emb_list = emb_vec.tolist() if isinstance(emb_vec, np.ndarray) else list(emb_vec)
-            embedding_str = "[" + ",".join(f"{v:.8f}" for v in emb_list) + "]"
-            item_id = getattr(item, "id", None) or str(uuid.uuid4())
-            rows.append({
-                "id": item_id,
-                "store_id": store_id,
-                "doc_id": _clean(getattr(item, "doc_id", None)),
-                "page": getattr(item, "page", 0),
-                "type": getattr(item, "type", "body"),
-                "section_path": _clean(" > ".join(getattr(item, "section_path", []) or [])),
-                "text": _clean(getattr(item, "text", "")),
-                "raw_text": _clean(getattr(item, "raw_text", None)),
-                "caption": _clean(getattr(item, "caption", None)),
-                "figure_id": _clean(getattr(item, "figure_id", None)),
-                "neighbors": getattr(item, "neighbors", None),
-                "parents": getattr(item, "parents", None),
-                "sha256": getattr(item, "sha256", None),
-                "source_pdf": getattr(item, "source_pdf", None),
-                "source_path": getattr(item, "source_path", None),
-                "doc_title": getattr(item, "doc_title", None),
-                "doc_short": getattr(item, "doc_short", None),
-                "embedding": embedding_str,
-            })
-        sb.insert("knowledge_items", rows)
-    log.info("Uploaded %d items to Supabase store %s", len(items), store_id)
-
-
 def _index_items_to_pgvector(
     subject: str,
     title: str,
@@ -149,14 +82,13 @@ def _index_items_to_pgvector(
     """
     import hashlib as _hashlib
 
-    from database.session import _get_session_factory, run_async
-    from .indexing.connector_document import AITAConnectorDocument
-    from .indexing.document_hashing import compute_unique_identifier_hash, compute_content_hash
-    from .indexing.indexing_service import AITAIndexingService
+    from database.session import _get_session_factory, run_async as _run_async
+    from indexing.connector_document import AITAConnectorDocument
+    from indexing.document_hashing import compute_unique_identifier_hash, compute_content_hash
+    from indexing.indexing_service import AITAIndexingService
 
     async def _run():
         try:
-            # Look up (or infer) the search_space_id for this subject
             from sqlalchemy import text as _text
             factory = _get_session_factory()
             async with factory() as session:
@@ -168,8 +100,7 @@ def _index_items_to_pgvector(
                 row = result.fetchone()
                 if row is None:
                     log.warning(
-                        "pgvector dual-write: SearchSpace not found for subject '%s' (slug='%s'). "
-                        "Run migration 002_seed_from_supabase.py first.",
+                        "pgvector dual-write: SearchSpace not found for subject '%s' (slug='%s').",
                         subject, slug,
                     )
                     return
@@ -204,7 +135,7 @@ def _index_items_to_pgvector(
             log.error("pgvector dual-write failed for '%s': %s", title, exc)
 
     try:
-        run_async(_run())
+        _run_async(_run())
     except Exception as exc:
         log.error("pgvector dual-write runner error for '%s': %s", title, exc)
 
@@ -238,53 +169,120 @@ class KnowledgeManager:
         return self.base_dir / actual_slug
 
     # ------------------------------------------------------------------
-    # Supabase manifest helpers
+    # SQLAlchemy helpers (replacing Supabase REST calls)
     # ------------------------------------------------------------------
-    def _get_or_create_subject(self, subject: str) -> Dict[str, Any]:
-        """Get or create a subject row in Supabase knowledge_subjects."""
+    def _get_or_create_search_space(self, subject: str) -> Dict[str, Any]:
+        """Get or create a SearchSpace row for the given subject."""
+        return run_async(self._get_or_create_search_space_async(subject))
+
+    async def _get_or_create_search_space_async(self, subject: str) -> Dict[str, Any]:
         slug = self._slugify(subject)
-        row = sb.select_one("knowledge_subjects", {"slug": f"eq.{slug}"})
-        if row:
-            return row
-        rows = sb.insert("knowledge_subjects", {"subject": subject, "slug": slug})
-        return rows[0]
+        async with get_async_session() as session:
+            result = await session.execute(
+                sa_select(SearchSpace).where(SearchSpace.slug == slug)
+            )
+            space = result.scalars().first()
+            if space:
+                return {"id": space.id, "name": space.name, "slug": space.slug, "subject_name": space.subject_name}
+
+            space = SearchSpace(
+                name=subject,
+                slug=slug,
+                subject_name=subject,
+            )
+            session.add(space)
+            try:
+                await session.commit()
+                await session.refresh(space)
+            except IntegrityError:
+                await session.rollback()
+                result = await session.execute(
+                    sa_select(SearchSpace).where(SearchSpace.slug == slug)
+                )
+                space = result.scalars().first()
+
+            return {"id": space.id, "name": space.name, "slug": space.slug, "subject_name": space.subject_name}
 
     def load_manifest(self, subject: str) -> Dict[str, Any]:
-        """Load subject manifest from Supabase."""
+        """Load subject manifest from the database."""
+        return run_async(self._load_manifest_async(subject))
+
+    async def _load_manifest_async(self, subject: str) -> Dict[str, Any]:
         subject = subject.strip()
         slug = self._slugify(subject)
-        subj_row = sb.select_one("knowledge_subjects", {"slug": f"eq.{slug}"})
-        if not subj_row:
-            return {"subject": subject, "slug": slug, "materials": [], "stores": []}
-        subject_id = subj_row["id"]
-        stores = sb.select("knowledge_stores", {
-            "subject_id": f"eq.{subject_id}",
-            "order": "priority.desc,created_at.desc",
-        })
-        return {
-            "subject": subj_row.get("subject", subject),
-            "slug": subj_row.get("slug", slug),
-            "materials": [],
-            "stores": stores,
-        }
+        async with get_async_session() as session:
+            result = await session.execute(
+                sa_select(SearchSpace).where(SearchSpace.slug == slug)
+            )
+            space = result.scalars().first()
+            if not space:
+                return {"subject": subject, "slug": slug, "materials": [], "stores": []}
+
+            result = await session.execute(
+                sa_select(AITADocument)
+                .where(AITADocument.search_space_id == space.id)
+                .order_by(AITADocument.created_at.desc())
+            )
+            docs = result.scalars().all()
+
+            stores = []
+            for doc in docs:
+                meta = doc.document_metadata or {}
+                stores.append({
+                    "id": str(doc.id),
+                    "document_id": doc.id,
+                    "kind": doc.material_kind or "other",
+                    "title": doc.title or "",
+                    "index_path": meta.get("index_path", ""),
+                    "priority": meta.get("priority", _default_store_priority(doc.material_kind or "other")),
+                    "created_at": str(doc.created_at or ""),
+                })
+
+            return {
+                "subject": space.name or subject,
+                "slug": space.slug or slug,
+                "materials": [],
+                "stores": stores,
+            }
 
     # ------------------------------------------------------------------
     # Public queries
     # ------------------------------------------------------------------
     def list_subjects(self) -> List[Dict[str, Any]]:
+        return run_async(self._list_subjects_async())
+
+    async def _list_subjects_async(self) -> List[Dict[str, Any]]:
         subjects: List[Dict[str, Any]] = []
-        rows = sb.select("knowledge_subjects", {"order": "subject.asc"})
-        for row in rows:
-            subject_name = row.get("subject", "")
-            slug = row.get("slug", "")
-            subject_id = row["id"]
-            stores = sb.select("knowledge_stores", {
-                "subject_id": f"eq.{subject_id}",
-                "order": "priority.desc",
-            })
-            manifest = {"subject": subject_name, "slug": slug, "materials": [], "stores": stores}
-            normalized = self._normalize_subject(subject_name, slug, manifest)
-            subjects.append(normalized)
+        async with get_async_session() as session:
+            result = await session.execute(
+                sa_select(SearchSpace).order_by(SearchSpace.name)
+            )
+            spaces = result.scalars().all()
+
+            for space in spaces:
+                doc_result = await session.execute(
+                    sa_select(AITADocument)
+                    .where(AITADocument.search_space_id == space.id)
+                    .order_by(AITADocument.created_at.desc())
+                )
+                docs = doc_result.scalars().all()
+
+                stores = []
+                for doc in docs:
+                    meta = doc.document_metadata or {}
+                    stores.append({
+                        "id": str(doc.id),
+                        "document_id": doc.id,
+                        "kind": doc.material_kind or "other",
+                        "title": doc.title or "",
+                        "index_path": meta.get("index_path", ""),
+                        "priority": meta.get("priority", _default_store_priority(doc.material_kind or "other")),
+                        "created_at": str(doc.created_at or ""),
+                    })
+
+                manifest = {"subject": space.name, "slug": space.slug, "materials": [], "stores": stores}
+                normalized = self._normalize_subject(space.name, space.slug, manifest)
+                subjects.append(normalized)
         return subjects
 
     def get_subject(self, subject: str) -> Dict[str, Any]:
@@ -433,22 +431,7 @@ class KnowledgeManager:
             }
             (out_dir / "meta.json").write_text(__import__("json").dumps(meta, indent=2), encoding="utf-8")
 
-            # Register in Supabase
-            subj_row = self._get_or_create_subject(subject)
-            store_rows = sb.insert("knowledge_stores", {
-                "subject_id": subj_row["id"],
-                "kind": "textbook",
-                "title": title,
-                "index_path": str(out_dir.resolve()),
-                "priority": _default_store_priority("textbook"),
-            })
-
-            # Upload items + embeddings to Supabase pgvector (if enabled)
-            if os.getenv("RETRIEVAL_BACKEND", "local") == "supabase" and store_rows:
-                store_id = store_rows[0]["id"]
-                _upload_items_to_supabase(store_id, items, embeddings, meta)
-
-            # Index into pgvector schema
+            # Index into pgvector schema (the only write path now)
             _index_items_to_pgvector(
                 subject=subject,
                 title=title,
@@ -511,10 +494,30 @@ class KnowledgeManager:
     def _normalize_store_entry(self, subject: str, slug: str, entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         index_path = entry.get("index_path")
         if not index_path:
-            return None
+            # For pgvector-only documents, return the entry without validating index dir
+            kind = (entry.get("kind") or "other").strip().lower()
+            return {
+                "id": entry.get("id", ""),
+                "subject": subject,
+                "kind": kind,
+                "title": entry.get("title", ""),
+                "priority": int(entry.get("priority", _default_store_priority(kind)) or _default_store_priority(kind)),
+                "index_path": "",
+                "created_at": entry.get("created_at", ""),
+            }
         p = Path(index_path)
         if not self._is_valid_index_dir(p):
-            return None
+            # Still return entry for pgvector-backed documents without local index
+            kind = (entry.get("kind") or "other").strip().lower()
+            return {
+                "id": entry.get("id", ""),
+                "subject": subject,
+                "kind": kind,
+                "title": entry.get("title", ""),
+                "priority": int(entry.get("priority", _default_store_priority(kind)) or _default_store_priority(kind)),
+                "index_path": str(p),
+                "created_at": entry.get("created_at", ""),
+            }
         kind = (entry.get("kind") or "other").strip().lower()
         return {
             "id": entry.get("id", ""),
@@ -568,16 +571,39 @@ class KnowledgeManager:
 
     def find_store_entry(self, index_path: Path) -> Optional[Dict[str, Any]]:
         """Locate a store entry across subjects by absolute index path."""
+        return run_async(self._find_store_entry_async(index_path))
+
+    async def _find_store_entry_async(self, index_path: Path) -> Optional[Dict[str, Any]]:
         normalized_path = str(index_path.resolve())
-        rows = sb.select("knowledge_stores", {"index_path": f"eq.{normalized_path}"})
-        if not rows:
-            return None
-        row = rows[0]
-        # Look up the subject
-        subj = sb.select_one("knowledge_subjects", {"id": f"eq.{row['subject_id']}"})
-        subject_name = subj.get("subject", "") if subj else ""
-        slug = subj.get("slug", "") if subj else ""
-        return self._normalize_store_entry(subject_name, slug, row)
+        async with get_async_session() as session:
+            result = await session.execute(
+                sa_select(AITADocument).where(
+                    AITADocument.document_metadata["index_path"].astext == normalized_path
+                )
+            )
+            doc = result.scalars().first()
+            if not doc:
+                return None
+
+            # Look up the search space
+            space_result = await session.execute(
+                sa_select(SearchSpace).where(SearchSpace.id == doc.search_space_id)
+            )
+            space = space_result.scalars().first()
+            subject_name = space.name if space else ""
+            slug = space.slug if space else ""
+
+            meta = doc.document_metadata or {}
+            entry = {
+                "id": str(doc.id),
+                "document_id": doc.id,
+                "kind": doc.material_kind or "other",
+                "title": doc.title or "",
+                "index_path": meta.get("index_path", ""),
+                "priority": meta.get("priority", _default_store_priority(doc.material_kind or "other")),
+                "created_at": str(doc.created_at or ""),
+            }
+            return self._normalize_store_entry(subject_name, slug, entry)
 
     def register_store(
         self,
@@ -588,7 +614,7 @@ class KnowledgeManager:
         index_path: Path,
         priority: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Register an existing index directory as a store in Supabase."""
+        """Register an existing index directory as a document in the database."""
         subject = subject.strip()
         if not subject:
             raise ValueError("subject must be a non-empty string")
@@ -600,32 +626,68 @@ class KnowledgeManager:
         if not self._is_valid_index_dir(index_path):
             raise RuntimeError("index_path does not look like a valid index directory")
 
-        subj_row = self._get_or_create_subject(subject)
-        slug = subj_row.get("slug") or self._slugify(subject)
+        return run_async(self._register_store_async(subject, kind_norm, title, index_path, priority))
+
+    async def _register_store_async(
+        self,
+        subject: str,
+        kind_norm: str,
+        title: str,
+        index_path: Path,
+        priority: Optional[int],
+    ) -> Dict[str, Any]:
+        space_row = self._get_or_create_search_space(subject)
+        slug = space_row.get("slug") or self._slugify(subject)
         key_path = str(index_path.resolve())
+        computed_priority = int(priority) if priority is not None else _default_store_priority(kind_norm)
 
-        # Check if store already exists
-        existing = sb.select("knowledge_stores", {
-            "subject_id": f"eq.{subj_row['id']}",
-            "index_path": f"eq.{key_path}",
-            "kind": f"eq.{kind_norm}",
-        })
+        async with get_async_session() as session:
+            # Check if document with this index_path already exists
+            result = await session.execute(
+                sa_select(AITADocument).where(
+                    AITADocument.search_space_id == space_row["id"],
+                    AITADocument.document_metadata["index_path"].astext == key_path,
+                    AITADocument.material_kind == kind_norm,
+                )
+            )
+            existing = result.scalars().first()
 
-        if existing:
-            # Update priority if needed
-            if priority is not None:
-                sb.update("knowledge_stores", {"id": f"eq.{existing[0]['id']}"}, {"priority": int(priority)})
-                existing[0]["priority"] = int(priority)
-            entry = existing[0]
-        else:
-            rows = sb.insert("knowledge_stores", {
-                "subject_id": subj_row["id"],
-                "kind": kind_norm,
-                "title": title,
+            if existing:
+                if priority is not None:
+                    meta = dict(existing.document_metadata or {})
+                    meta["priority"] = int(priority)
+                    existing.document_metadata = meta
+                    await session.commit()
+                    await session.refresh(existing)
+                doc = existing
+            else:
+                content_hash = hashlib.sha256(f"{key_path}:{space_row['id']}".encode()).hexdigest()
+                doc = AITADocument(
+                    title=title,
+                    document_type="EDUCATIONAL_FILE",
+                    material_kind=kind_norm,
+                    content=title,
+                    content_hash=content_hash,
+                    search_space_id=space_row["id"],
+                    document_metadata={
+                        "index_path": key_path,
+                        "priority": computed_priority,
+                    },
+                    status=DocumentStatus.ready(),
+                )
+                session.add(doc)
+                await session.commit()
+                await session.refresh(doc)
+
+            entry = {
+                "id": str(doc.id),
+                "document_id": doc.id,
+                "kind": doc.material_kind or kind_norm,
+                "title": doc.title or title,
                 "index_path": key_path,
-                "priority": int(priority) if priority is not None else _default_store_priority(kind_norm),
-            })
-            entry = rows[0]
+                "priority": computed_priority,
+                "created_at": str(doc.created_at or ""),
+            }
 
         normalized = self._normalize_store_entry(subject, slug, entry)
         if not normalized:
