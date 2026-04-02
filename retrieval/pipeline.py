@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config.contracts import BundleSnippet
+from config.contracts import BundleSnippet
 from .hybrid_search import AITAHybridSearchRetriever
 from .reranker import AITARerankerService
 from .store_bias import apply_store_biases

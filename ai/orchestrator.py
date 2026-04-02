@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 import tiktoken
 
-from ..config.contracts import (
+from config.contracts import (
     FinalAnswer,
     ParsedTask,
     Proof,
@@ -26,7 +26,7 @@ from ..config.contracts import (
     ResearchMetadata,
     BundleSnippet,
 )
-from ..config.settings import get_subject_name, RequestConfig
+from config.settings import get_subject_name, RequestConfig
 from .main_ai import (
     parse_question,
     normalize_query,
@@ -555,9 +555,9 @@ class Orchestrator:
         self, question: str, options: Dict[str, Any]
     ) -> ResearchBundle:
         """Run the pgvector retrieval pipeline and return a ResearchBundle."""
-        from ..database.session import run_async
-        from ..retrieval.pipeline import retrieve_for_question
-        from ..retrieval.context_packer import _summarize_snippets
+        from database.session import run_async
+        from retrieval.pipeline import retrieve_for_question
+        from retrieval.context_packer import _summarize_snippets
 
         subject_name = self.cfg.subject_name if self.cfg else get_subject_name()
 
@@ -629,7 +629,7 @@ class Orchestrator:
         weight_overrides = options.get("weight_overrides") or {}
 
         async def _run():
-            from ..database.session import get_async_session
+            from database.session import get_async_session
             if db_session is not None:
                 return await retrieve_for_question(
                     query=question,

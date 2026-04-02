@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 from sqlalchemy import exists, func, or_, select
 
-from ..database.models import AITADocument, TeacherCourse, TeacherUpload
+from database.models import AITADocument, TeacherCourse, TeacherUpload
 
 WEEKLY_UPLOAD_KINDS: tuple[str, ...] = ("notes", "slides")
 

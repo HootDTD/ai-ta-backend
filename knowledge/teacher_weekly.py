@@ -26,8 +26,8 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config.weights import WEIGHT_MAX, WEIGHT_MIN, get_env_weights, normalize_weights
-from ..database.models import (
+from config.weights import WEIGHT_MAX, WEIGHT_MIN, get_env_weights, normalize_weights
+from database.models import (
     AITADocument,
     DocumentStatus,
     SearchSpace,
@@ -35,12 +35,12 @@ from ..database.models import (
     TeacherUpload,
     TeacherUploadJob,
 )
-from ..database.session import get_async_session, run_async
-from ..indexing.connector_document import AITAConnectorDocument
-from ..indexing.document_hashing import compute_content_hash, compute_unique_identifier_hash
-from ..indexing.indexing_service import AITAIndexingService
-from .teacher_pdf_ingestion import TeacherPDFIngestor, TeacherPDFIngestionResult
-from ..vendors.supabase_storage import SupabaseStorageClient
+from database.session import get_async_session, run_async
+from indexing.connector_document import AITAConnectorDocument
+from indexing.document_hashing import compute_content_hash, compute_unique_identifier_hash
+from indexing.indexing_service import AITAIndexingService
+from knowledge.teacher_pdf_ingestion import TeacherPDFIngestor, TeacherPDFIngestionResult
+from vendors.supabase_storage import SupabaseStorageClient
 
 log = logging.getLogger(__name__)
 
