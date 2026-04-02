@@ -12,9 +12,9 @@ Also exposes _summarize_snippets() moved here from retriever.py (no FAISS depend
 import re
 from typing import Any, Optional
 
-from ..citations.formatter import DOC_TYPE_LABELS
-from ..config.contracts import BundleSnippet
-from ..config.settings import get_citation_label
+from citations.formatter import DOC_TYPE_LABELS
+from config.contracts import BundleSnippet
+from config.settings import get_citation_label
 
 _TOKEN_BUDGET_FRACTION = 0.85  # Use 85% of budget to leave room for prompt overhead
 

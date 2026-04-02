@@ -10,8 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
-from ..ocr.mathpix import MathpixConfig, MathpixOCRProvider
-from ..ocr.provider import OCRResult
+from ocr.mathpix import MathpixConfig, MathpixOCRProvider
+from ocr.provider import OCRResult
 
 try:  # pragma: no cover - import is exercised indirectly in tests
     import fitz  # type: ignore

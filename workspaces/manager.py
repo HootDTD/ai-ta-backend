@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-from ..config.weights import WEIGHT_KINDS, WEIGHT_MIN, WEIGHT_MAX, clamp_weight
+from config.weights import WEIGHT_KINDS, WEIGHT_MIN, WEIGHT_MAX, clamp_weight
 
 log = logging.getLogger(__name__)
 

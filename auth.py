@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .database.models import CourseMembership
+from database.models import CourseMembership
 
 _TOKEN_CACHE: dict[str, tuple[float, str]] = {}
 _TOKEN_CACHE_TTL_SECONDS = int(os.getenv("AUTH_TOKEN_CACHE_TTL_SECONDS", "60"))

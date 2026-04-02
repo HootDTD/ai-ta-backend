@@ -12,9 +12,9 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 
-from ..database.models import AITADocument, SearchSpace
-from ..database.session import get_async_session, run_async
-from ..retrieval.document_visibility import active_document_conditions
+from database.models import AITADocument, SearchSpace
+from database.session import get_async_session, run_async
+from retrieval.document_visibility import active_document_conditions
 from .manager import ClassWorkspace, WorkspaceMaterial, WorkspaceRepository
 
 log = logging.getLogger(__name__)

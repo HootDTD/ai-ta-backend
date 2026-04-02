@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from .knowledge.teacher_weekly import TeacherWeeklyStorage
+from knowledge.teacher_weekly import TeacherWeeklyStorage
 
 
 log = logging.getLogger("teacher_upload_worker")

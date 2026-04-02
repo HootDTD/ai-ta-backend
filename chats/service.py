@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database.models import ChatSession, ChatTurn
+from database.models import ChatSession, ChatTurn
 
 MEMORY_WINDOW_TURNS = int(os.getenv("CHAT_MEMORY_WINDOW_TURNS", "8"))
 MEMORY_SUMMARY_MAX_CHARS = int(os.getenv("CHAT_MEMORY_SUMMARY_MAX_CHARS", "3000"))

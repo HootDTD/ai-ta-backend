@@ -20,30 +20,30 @@ from pydantic import BaseModel, Field
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, redirect_stdout
 
-from .ai.vision import vision_transcribe
-from .config.settings import get_runtime_dir, set_subject_name, RequestConfig
-from .ai.orchestrator import Orchestrator
-from .knowledge.manager import KnowledgeManager
-from .config.weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
-from .ai.main_ai import extract_keywords, parse_question, solve_with_bundle, format_answer
-from .config.contracts import ParsedTask
-from .citations.formatter import format_citations
-from .knowledge.teacher_weekly import TeacherWeeklyStorage
-from .workspaces.manager import (
+from ai.vision import vision_transcribe
+from config.settings import get_runtime_dir, set_subject_name, RequestConfig
+from ai.orchestrator import Orchestrator
+from knowledge.manager import KnowledgeManager
+from config.weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
+from ai.main_ai import extract_keywords, parse_question, solve_with_bundle, format_answer
+from config.contracts import ParsedTask
+from citations.formatter import format_citations
+from knowledge.teacher_weekly import TeacherWeeklyStorage
+from workspaces.manager import (
     WorkspaceConfigError,
     WorkspaceNotFound,
     WorkspaceError,
     build_workspace_manager,
 )
-from .auth import (
+from auth import (
     AuthContext,
     auto_enroll_student_membership,
     has_membership,
     resolve_auth_context,
     validate_required_env,
 )
-from .database.session import get_async_session, run_async
-from .chats.service import (
+from database.session import get_async_session, run_async
+from chats.service import (
     append_turn,
     build_memory_context,
     get_chat_session_for_user,
@@ -1052,7 +1052,7 @@ def create_invite_link(payload: InviteLinkCreateIn, request: Request) -> InviteL
         role="teacher",
     )
 
-    from .database.models import CourseInviteLink
+    from database.models import CourseInviteLink
     from sqlalchemy import select as sa_select, update as sa_update
 
     parsed_expires = None
@@ -1112,7 +1112,7 @@ def list_invite_links(
     """List invite links for a course. Teacher only."""
     _require_course_membership(request, search_space_id=search_space_id, role="teacher")
 
-    from .database.models import CourseInviteLink
+    from database.models import CourseInviteLink
     from sqlalchemy import select as sa_select
 
     async def _run():
@@ -1144,7 +1144,7 @@ def list_invite_links(
 @app.delete("/invite-links/{link_id}", status_code=204)
 def revoke_invite_link(link_id: int, request: Request):
     """Revoke an invite link. Teacher only."""
-    from .database.models import CourseInviteLink
+    from database.models import CourseInviteLink
     from sqlalchemy import select as sa_select
 
     async def _run():
@@ -1177,7 +1177,7 @@ def revoke_invite_link(link_id: int, request: Request):
 @app.get("/invite-links/resolve/{code}", response_model=InviteResolveOut)
 def resolve_invite_link(code: str) -> InviteResolveOut:
     """Public endpoint: resolve an invite code to course info."""
-    from .database.models import CourseInviteLink, SearchSpace
+    from database.models import CourseInviteLink, SearchSpace
     from sqlalchemy import select as sa_select
     from datetime import datetime as _dt, timezone as _tz
 
@@ -1223,7 +1223,7 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
     """Authenticated endpoint: redeem an invite code to join a course."""
     auth = _resolve_request_auth(request)
 
-    from .database.models import CourseInviteLink, CourseMembership, SearchSpace
+    from database.models import CourseInviteLink, CourseMembership, SearchSpace
     from sqlalchemy import select as sa_select
     from sqlalchemy.exc import IntegrityError
     from datetime import datetime as _dt, timezone as _tz
@@ -1305,8 +1305,8 @@ def healthz():
 @app.get("/classes")
 def list_classes():
     """Return available search spaces for the class dropdown."""
-    from .database.models import SearchSpace
-    from .database.session import get_async_session, run_async
+    from database.models import SearchSpace
+    from database.session import get_async_session, run_async
     from sqlalchemy import select as sa_select
 
     async def _fetch():
@@ -1344,11 +1344,11 @@ def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "
 
     Uses the shared background event loop so asyncpg connections stay alive.
     """
-    from .config.contracts import ResearchBundle, ResearchMetadata
-    from .retrieval.pipeline import retrieve_for_question
-    from .retrieval.context_packer import _summarize_snippets
-    from .database.session import get_async_session, run_async
-    from .ai.main_ai import extract_and_filter_keywords
+    from config.contracts import ResearchBundle, ResearchMetadata
+    from retrieval.pipeline import retrieve_for_question
+    from retrieval.context_packer import _summarize_snippets
+    from database.session import get_async_session, run_async
+    from ai.main_ai import extract_and_filter_keywords
 
     search_space_id = int(workspace.metadata.get("search_space_id", 0))
     if not search_space_id:
