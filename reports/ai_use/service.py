@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
-from backend.vendors.openai_client import generate_ai_use_markdown
+from vendors.openai_client import generate_ai_use_markdown
 
 # Local imports kept lightweight. Persistence is handled in routes.
 

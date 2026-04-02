@@ -3,9 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from backend.auth import resolve_auth_context
-from backend.chats.service import get_chat_session_for_user, serialize_chat_session
-from backend.database.session import get_async_session, run_async
+from auth import resolve_auth_context
+from chats.service import get_chat_session_for_user, serialize_chat_session
+from database.session import get_async_session, run_async
 from .models import create_report, get_report, list_reports
 from .service import build_evidence_pack, generate_report as gen_report
 

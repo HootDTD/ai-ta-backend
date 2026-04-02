@@ -246,7 +246,7 @@ def _sb_rpc(function_name, params, *, timeout=30):
 def _mock_supabase(monkeypatch):
     """Automatically mock supabase_client for all tests."""
     _sb_reset()
-    import backend.vendors.supabase_client as sb_mod
+    import vendors.supabase_client as sb_mod
     monkeypatch.setattr(sb_mod, "select", _sb_select)
     monkeypatch.setattr(sb_mod, "select_one", _sb_select_one)
     monkeypatch.setattr(sb_mod, "insert", _sb_insert)

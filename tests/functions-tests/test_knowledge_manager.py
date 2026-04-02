@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from backend.knowledge.manager import KnowledgeManager
+from knowledge.manager import KnowledgeManager
 
 
 def _touch(path: Path, content: str = "") -> None:
@@ -15,7 +15,7 @@ def _touch(path: Path, content: str = "") -> None:
 
 def _seed_knowledge(subject: str, slug: str, stores: list[dict]) -> None:
     """Seed knowledge_subjects and knowledge_stores via the patched Supabase client."""
-    import backend.vendors.supabase_client as sb
+    import vendors.supabase_client as sb
 
     subject_id = str(uuid.uuid4())
     sb.insert("knowledge_subjects", {

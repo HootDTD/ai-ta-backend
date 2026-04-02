@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.ocr.provider import OCRBlock, OCRResult
-from backend.knowledge.teacher_pdf_ingestion import (
+from ocr.provider import OCRBlock, OCRResult
+from knowledge.teacher_pdf_ingestion import (
     NativeBlock,
     NormalizedPage,
     NormalizedRegion,

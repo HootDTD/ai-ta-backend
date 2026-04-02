@@ -21,8 +21,8 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from backend.auth import AuthContext
-from backend.config.contracts import ParsedTask
+from auth import AuthContext
+from config.contracts import ParsedTask
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ def client_with_server(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.setenv("TEST_FAKE_OPENAI", "1")
 
-    import backend.server as server
+    import server as server
 
     with TestClient(server.app) as client:
         yield client, server
@@ -112,9 +112,9 @@ class TestHealthAndClasses:
     ) -> None:
         client, server = client_with_server
 
-        # /classes uses run_async imported from backend.database.session at module level;
+        # /classes uses run_async imported from database.session at module level;
         # patch it there so the endpoint resolves to an empty list.
-        import backend.database.session as db_session_mod
+        import database.session as db_session_mod
         monkeypatch.setattr(db_session_mod, "run_async", lambda coro: [])
 
         resp = client.get("/classes")
@@ -131,7 +131,7 @@ class TestHealthAndClasses:
             SimpleNamespace(id=2, slug="thermo", name="Thermodynamics", subject_name="Physics"),
         ]
 
-        import backend.database.session as db_session_mod
+        import database.session as db_session_mod
         monkeypatch.setattr(db_session_mod, "run_async", lambda coro: fake_spaces)
 
         resp = client.get("/classes")
@@ -208,7 +208,7 @@ class TestAskInputValidation:
         client, server = client_with_server
         monkeypatch.setattr(server, "_require_course_membership", _allow_student)
 
-        from backend.workspaces.manager import WorkspaceNotFound
+        from workspaces.manager import WorkspaceNotFound
 
         class _NotFoundWorkspaceManager:
             def get(self, identifier: str):
@@ -261,7 +261,7 @@ class TestAskGraduatedRelevance:
         self, monkeypatch
     ) -> None:
         """check_question_relevance returns a dict with required keys."""
-        import backend.ai.main_ai as main_ai
+        import ai.main_ai as main_ai
 
         # Patch LLM to return a full-relevance classification
         import json as _json
@@ -299,7 +299,7 @@ class TestAskGraduatedRelevance:
         self, monkeypatch
     ) -> None:
         """Partial relevance: on_topic_portion is populated, off_topic_portion is too."""
-        import backend.ai.main_ai as main_ai
+        import ai.main_ai as main_ai
         import json as _json
 
         partial_response = _json.dumps({
@@ -335,7 +335,7 @@ class TestAskGraduatedRelevance:
         self, monkeypatch
     ) -> None:
         """None relevance: on_topic_portion is empty."""
-        import backend.ai.main_ai as main_ai
+        import ai.main_ai as main_ai
         import json as _json
 
         none_response = _json.dumps({
@@ -479,7 +479,7 @@ class TestAskStreamValidation:
         client, server = client_with_server
         monkeypatch.setattr(server, "_require_course_membership", _allow_student)
 
-        from backend.workspaces.manager import WorkspaceNotFound
+        from workspaces.manager import WorkspaceNotFound
 
         class _MissingWorkspace:
             def get(self, identifier: str):
@@ -529,7 +529,7 @@ class TestKnowledgeEndpoints:
     ) -> None:
         client, server = client_with_server
 
-        from backend.knowledge.manager import KnowledgeManager
+        from knowledge.manager import KnowledgeManager
 
         monkeypatch.setattr(KnowledgeManager, "list_subjects", lambda self: [])
 
@@ -542,7 +542,7 @@ class TestKnowledgeEndpoints:
     ) -> None:
         client, server = client_with_server
 
-        from backend.knowledge.manager import KnowledgeManager
+        from knowledge.manager import KnowledgeManager
 
         fake_subjects = [
             {
@@ -579,7 +579,7 @@ class TestKnowledgeEndpoints:
     ) -> None:
         client, server = client_with_server
 
-        from backend.knowledge.manager import KnowledgeManager
+        from knowledge.manager import KnowledgeManager
 
         fake_stores = [
             {
@@ -613,7 +613,7 @@ class TestKnowledgeEndpoints:
     ) -> None:
         client, server = client_with_server
 
-        from backend.knowledge.manager import KnowledgeManager
+        from knowledge.manager import KnowledgeManager
 
         def _raise(self, subject, *, kind, title, index_path, priority):
             raise FileNotFoundError("index directory not found")
@@ -636,7 +636,7 @@ class TestKnowledgeEndpoints:
     ) -> None:
         client, server = client_with_server
 
-        from backend.knowledge.manager import KnowledgeManager
+        from knowledge.manager import KnowledgeManager
 
         fake_entry: Dict[str, Any] = {
             "id": "store-abc",

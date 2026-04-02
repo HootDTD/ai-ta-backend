@@ -25,7 +25,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("SUPABASE_API_KEY", "test-key")
 
     # Import app after env is set
-    from backend.server import app
+    from server import app
     return TestClient(app)
 
 

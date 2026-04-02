@@ -16,9 +16,9 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 
-from backend.database.models import AITADocument, DocumentStatus, SearchSpace
-from backend.database.session import get_async_session, run_async
-from backend.config.weights import WEIGHT_KINDS
+from database.models import AITADocument, DocumentStatus, SearchSpace
+from database.session import get_async_session, run_async
+from config.weights import WEIGHT_KINDS
 
 log = logging.getLogger(__name__)
 

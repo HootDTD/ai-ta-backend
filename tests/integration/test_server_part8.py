@@ -7,8 +7,8 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from backend.auth import AuthContext
-from backend.config.contracts import ParsedTask
+from auth import AuthContext
+from config.contracts import ParsedTask
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def client_with_server(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.setenv("TEST_FAKE_OPENAI", "1")
 
-    import backend.server as server
+    import server as server
 
     with TestClient(server.app) as client:
         yield client, server

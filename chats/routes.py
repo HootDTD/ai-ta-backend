@@ -7,16 +7,16 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import delete, func, select
 
-from backend.auth import resolve_auth_context
-from backend.chats.service import (
+from auth import resolve_auth_context
+from chats.service import (
     append_turn,
     get_chat_session_for_user,
     get_or_create_chat_session_for_user,
     refresh_memory_summary,
     serialize_chat_session,
 )
-from backend.database.models import ChatSession, ChatTurn
-from backend.database.session import get_async_session, run_async
+from database.models import ChatSession, ChatTurn
+from database.session import get_async_session, run_async
 
 log = logging.getLogger(__name__)
 router = APIRouter()

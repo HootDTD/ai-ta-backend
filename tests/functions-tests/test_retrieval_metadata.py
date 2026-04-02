@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from backend.retrieval.context_packer import pack_context
-from backend.retrieval.document_visibility import build_chunk_metadata
+from retrieval.context_packer import pack_context
+from retrieval.document_visibility import build_chunk_metadata
 
 
 def test_build_chunk_metadata_uses_page_specific_weekly_fields():

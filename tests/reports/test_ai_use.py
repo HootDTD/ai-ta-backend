@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from backend.reports.ai_use.models import create_report, get_report
-from backend.reports.ai_use.service import (
+from reports.ai_use.models import create_report, get_report
+from reports.ai_use.service import (
     build_evidence_pack,
     generate_report,
     redact,

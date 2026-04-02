@@ -657,7 +657,7 @@ app.add_middleware(
 
 # Mount AI-use reports router
 try:
-    from backend.reports.ai_use.routes import router as reports_router
+    from reports.ai_use.routes import router as reports_router
 except Exception:
     try:
         from reports.ai_use.routes import router as reports_router  # type: ignore
@@ -669,7 +669,7 @@ if reports_router is not None:
 
 # Mount chats router (simple transcript storage)
 try:
-    from backend.chats.routes import router as chats_router
+    from chats.routes import router as chats_router
 except Exception:
     try:
         from chats.routes import router as chats_router  # type: ignore

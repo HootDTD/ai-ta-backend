@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.auth import AuthContext
+from auth import AuthContext
 
 
 def _fake_chat_loader(chat_id: str):
@@ -39,7 +39,7 @@ def client(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.setenv("TEST_FAKE_OPENAI", "1")
 
-    import backend.reports.ai_use.routes as report_routes
+    import reports.ai_use.routes as report_routes
 
     monkeypatch.setattr(
         report_routes,
@@ -49,7 +49,7 @@ def client(monkeypatch):
     monkeypatch.setattr(report_routes, "_load_chat_for_user", lambda chat_id, _uid: _fake_chat_loader(chat_id))
     monkeypatch.setattr(report_routes, "_user_owns_chat", lambda _uid, _chat_id: True)
 
-    from backend.server import app
+    from server import app
 
     with TestClient(app) as tc:
         yield tc
@@ -73,7 +73,7 @@ def test_create_and_get_report_happy_path(client: TestClient):
 
 
 def test_create_report_forbidden_without_chat_ownership(client: TestClient, monkeypatch):
-    import backend.reports.ai_use.routes as report_routes
+    import reports.ai_use.routes as report_routes
 
     monkeypatch.setattr(report_routes, "_user_owns_chat", lambda _uid, _chat_id: False)
     res = client.post("/reports/ai-use/not-owned", json={"style": "none", "length": "brief"})

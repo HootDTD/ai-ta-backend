@@ -8,7 +8,7 @@ import urllib.request
 
 import pytest
 
-from backend.ocr.mathpix import MathpixOCRProvider, MathpixConfig
+from ocr.mathpix import MathpixOCRProvider, MathpixConfig
 
 
 class _FakeHTTPResponse:

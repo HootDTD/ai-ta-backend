@@ -3,7 +3,7 @@ from __future__ import annotations
 import types
 from typing import Any
 
-from backend.citations.formatter import format_citations
+from citations.formatter import format_citations
 
 
 def _snippet(sn_id: str, page: int, doc_short: str, source_path: str = "file.pdf") -> Any:

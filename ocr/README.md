@@ -10,7 +10,7 @@ Environment flags (no runtime wiring yet):
 Usage in code (example):
 
 ```
-from backend.ocr import get_ocr_provider_from_env
+from ocr import get_ocr_provider_from_env
 
 prov = get_ocr_provider_from_env()
 if prov:

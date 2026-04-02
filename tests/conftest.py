@@ -139,7 +139,7 @@ def _mock_supabase(monkeypatch):
     monkeypatch.setenv("SUPABASE_API_KEY", "test-key")
     monkeypatch.setenv("SUPABASE_DB_URL", "sqlite+aiosqlite:///:memory:")
     _sb_reset()
-    import backend.vendors.supabase_client as sb_mod
+    import vendors.supabase_client as sb_mod
 
     monkeypatch.setattr(sb_mod, "select", _sb_select)
     monkeypatch.setattr(sb_mod, "select_one", _sb_select_one)

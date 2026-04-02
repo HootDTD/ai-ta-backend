@@ -15,7 +15,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from backend.vendors import supabase_client as sb
+from vendors import supabase_client as sb
 
 log = logging.getLogger(__name__)
 
@@ -149,7 +149,7 @@ def _index_items_to_pgvector(
     """
     import hashlib as _hashlib
 
-    from backend.database.session import _get_session_factory, run_async
+    from database.session import _get_session_factory, run_async
     from .indexing.connector_document import AITAConnectorDocument
     from .indexing.document_hashing import compute_unique_identifier_hash, compute_content_hash
     from .indexing.indexing_service import AITAIndexingService

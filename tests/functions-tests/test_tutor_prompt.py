@@ -1,8 +1,8 @@
 """Prompt content regression tests — ensure critical rules are present in prompts."""
 from __future__ import annotations
 
-from backend.ai.prompts.tutor import tutor_prompt
-from backend.ai.prompts.relevance_guard import relevance_guard_prompt
+from ai.prompts.tutor import tutor_prompt
+from ai.prompts.relevance_guard import relevance_guard_prompt
 
 
 # ---------------------------------------------------------------------------

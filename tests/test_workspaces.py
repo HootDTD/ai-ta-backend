@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from backend.workspaces import build_local_static_workspace_config, build_workspace_manager
+from workspaces import build_local_static_workspace_config, build_workspace_manager
 
 
 def _make_index_dir(path: Path) -> Path:
