@@ -63,7 +63,7 @@ except ModuleNotFoundError:  # pragma: no cover
 try:  # pragma: no cover - convenience
     from dotenv import load_dotenv  # type: ignore
 
-    load_dotenv()
+    load_dotenv(override=True)
 except Exception:
     def _load_env_fallback() -> None:
         try:
@@ -81,8 +81,7 @@ except Exception:
                     key, val = s.split("=", 1)
                     key = key.strip()
                     val = val.strip().strip('"').strip("'")
-                    if key and key not in os.environ:
-                        os.environ[key] = val
+                    os.environ[key] = val
         except Exception:
             pass
 
@@ -1259,7 +1258,8 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
             if existing:
                 if existing.role == link.role or (existing.role == "teacher" and link.role == "student"):
                     # Already enrolled with same or higher role — idempotent
-                    pass
+                    link.use_count += 1
+                    await db_session.commit()
                 elif existing.role == "student" and link.role == "teacher":
                     # Upgrade student to teacher
                     existing.role = "teacher"
@@ -1324,6 +1324,44 @@ def list_classes():
             status_code=500,
             detail=f"Failed to load classes. Check SUPABASE_DB_URL, DB connectivity, and migrations. Error: {exc}",
         )
+    return [
+        {
+            "id": s.id,
+            "slug": s.slug,
+            "name": s.name,
+            "subject_name": s.subject_name,
+        }
+        for s in spaces
+    ]
+
+
+@app.get("/my-classes")
+def list_my_classes(request: Request):
+    """Return only classes the authenticated user is enrolled in."""
+    auth = _resolve_request_auth(request)
+    from database.models import CourseMembership, SearchSpace
+    from database.session import get_async_session, run_async
+    from sqlalchemy import select as sa_select
+
+    async def _fetch():
+        async with get_async_session() as session:
+            result = await session.execute(
+                sa_select(SearchSpace)
+                .join(
+                    CourseMembership,
+                    CourseMembership.search_space_id == SearchSpace.id,
+                )
+                .where(CourseMembership.user_id == auth.user_id)
+                .order_by(SearchSpace.name)
+            )
+            return result.scalars().all()
+
+    try:
+        spaces = run_async(_fetch())
+    except Exception as exc:
+        log.exception("Failed to load enrolled classes for user=%s", auth.user_id)
+        raise HTTPException(status_code=500, detail=f"Failed to load enrolled classes: {exc}")
+
     return [
         {
             "id": s.id,

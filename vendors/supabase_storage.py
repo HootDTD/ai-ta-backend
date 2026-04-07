@@ -13,11 +13,17 @@ class SupabaseStorageClient:
 
     def __init__(self, *, base_url: str | None = None, api_key: str | None = None) -> None:
         self._base_url = (base_url or os.getenv("SUPABASE_URL") or "").rstrip("/")
-        self._api_key = (api_key or os.getenv("SUPABASE_API_KEY") or os.getenv("SUPABASE_ANON_KEY") or "").strip()
+        self._api_key = (
+            api_key
+            or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            or os.getenv("SUPABASE_API_KEY")
+            or os.getenv("SUPABASE_ANON_KEY")
+            or ""
+        ).strip()
         if not self._base_url:
             raise RuntimeError("SUPABASE_URL is required for Supabase Storage access.")
         if not self._api_key:
-            raise RuntimeError("SUPABASE_API_KEY (or SUPABASE_ANON_KEY) is required for Supabase Storage access.")
+            raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_API_KEY) is required for Supabase Storage access.")
 
     def upload_bytes(
         self,
