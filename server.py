@@ -1335,6 +1335,52 @@ def list_classes():
     ]
 
 
+class CreateClassIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    subject_name: str = Field(default="", max_length=200)
+
+
+@app.post("/classes", status_code=201)
+def create_class(payload: CreateClassIn, request: Request):
+    """Create a new class and assign the creator as teacher."""
+    auth = _resolve_request_auth(request)
+    from database.models import CourseMembership, SearchSpace
+    from database.session import get_async_session, run_async
+    import re
+
+    name = payload.name.strip()
+    subject = (payload.subject_name or name).strip()
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+    async def _create():
+        async with get_async_session() as session:
+            space = SearchSpace(name=name, slug=slug, subject_name=subject)
+            session.add(space)
+            await session.flush()
+            membership = CourseMembership(
+                user_id=auth.user_id,
+                search_space_id=space.id,
+                role="teacher",
+            )
+            session.add(membership)
+            await session.commit()
+            await session.refresh(space)
+            return space
+
+    try:
+        space = run_async(_create())
+    except Exception as exc:
+        log.exception("Failed to create class for user=%s", auth.user_id)
+        raise HTTPException(status_code=500, detail=f"Failed to create class: {exc}")
+
+    return {
+        "id": space.id,
+        "slug": space.slug,
+        "name": space.name,
+        "subject_name": space.subject_name,
+    }
+
+
 @app.get("/my-classes")
 def list_my_classes(request: Request):
     """Return only classes the authenticated user is enrolled in."""
