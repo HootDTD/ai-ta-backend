@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Apollo Spike — Teach me Bernoulli</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.3rem; }
+  #chat { border: 1px solid #ccc; border-radius: 6px; padding: 1rem; height: 55vh; overflow-y: auto; background: #fafafa; }
+  .msg { margin: 0.4rem 0; }
+  .user { color: #0a4; }
+  .apollo { color: #024; }
+  .sys { color: #888; font-style: italic; font-size: 0.9em; }
+  #input { width: 100%; box-sizing: border-box; padding: 0.6rem; font-size: 1rem; margin-top: 0.6rem; }
+  button { margin-top: 0.6rem; padding: 0.5rem 1rem; cursor: pointer; }
+  #problem { margin-top: 1rem; padding: 1rem; background: #fff8dc; border: 1px solid #d4b800; border-radius: 6px; display: none; }
+  pre { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Apollo Spike — teach Apollo about Bernoulli's principle</h1>
+<p class="sys">Apollo knows nothing. Teach it as if it's a curious peer who's never heard of physics. When you're satisfied, click "I'm done teaching."</p>
+<div id="chat"></div>
+<textarea id="input" rows="3" placeholder="Type your explanation..."></textarea>
+<div>
+  <button id="send">Send</button>
+  <button id="done">I'm done teaching</button>
+</div>
+<div id="problem"></div>
+<script>
+  let sessionId = null;
+  const chat = document.getElementById("chat");
+  const input = document.getElementById("input");
+  const sendBtn = document.getElementById("send");
+  const doneBtn = document.getElementById("done");
+  const problemDiv = document.getElementById("problem");
+
+  function append(role, text) {
+    const div = document.createElement("div");
+    div.className = "msg " + role;
+    div.textContent = (role === "user" ? "You: " : "Apollo: ") + text;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  async function start() {
+    const r = await fetch("/session", { method: "POST" });
+    const j = await r.json();
+    sessionId = j.session_id;
+    append("apollo", j.apollo_greeting);
+  }
+
+  sendBtn.onclick = async () => {
+    const text = input.value.trim();
+    if (!text || !sessionId) return;
+    append("user", text);
+    input.value = "";
+    sendBtn.disabled = true;
+    const r = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, message: text }),
+    });
+    const j = await r.json();
+    append("apollo", j.apollo_reply);
+    sendBtn.disabled = false;
+  };
+
+  doneBtn.onclick = async () => {
+    if (!sessionId) return;
+    doneBtn.disabled = true;
+    const r = await fetch(`/session/${sessionId}/done`, { method: "POST" });
+    const j = await r.json();
+    problemDiv.style.display = "block";
+    problemDiv.innerHTML = `<strong>Problem:</strong><p>${j.problem_text}</p><strong>Solver result:</strong><pre>${JSON.stringify(j.solver_result, null, 2)}</pre>`;
+  };
+
+  start();
+</script>
+</body>
+</html>
