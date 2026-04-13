@@ -343,3 +343,45 @@ Most of the original plan's technical design. Specifically retained:
 - **Hoot integration:** deferred → Week 7, in scope, part of the product
 - **"Topic-agnostic" claim:** aspirational-general → honestly "equation-based STEM"; rubric backend for mechanism subjects is a named deferred item
 - **Success framing:** research breadth → product pilot quality with research-ready data as byproduct
+
+---
+
+## Week 1 Retro (2026-04-10 to 2026-04-16)
+
+### What got done
+
+All 16 planned tasks completed on the `beginApollo` branch:
+
+1. SymPy dependency added; `apollo/spike/` directory scaffolded
+2. Pydantic schemas defined for DAG, variable map, and problem
+3. TDD schema tests written (13 tests)
+4. Bernoulli concept DAG authored (14 nodes, 16 edges)
+5. Fluid-mechanics variable normalization map authored (23 mappings)
+6. Bernoulli problems 01–02 authored with structured reference solutions
+7. Bernoulli problems 03–05 authored
+8. Throwaway SymPy solver for problem_01 built TDD (P2=194000 Pa verified)
+9. LLM-only parser stub built for spike
+10. Apollo agent + in-memory KG built
+11. FastAPI spike server + HTML chat UI built; end-to-end smoke tested
+12. Spike A parser-accuracy dataset template drafted (seed examples included)
+13. Spike B 20-case adversarial leakage suite drafted
+14. Spike C recruitment tracker drafted; invites queued
+15. Week 2 spike report template drafted
+16. Full test suite run (16/16 pass); exit criteria verified; branch pushed; this retro written
+
+Key deliverables: `apollo/` package committed with schemas, tests, 5 Bernoulli problems, KG solver, spike server, and three spike collateral documents.
+
+### What slipped
+
+- **Spike C real-world action** (invites sent, ≥3 confirmed Week-2 bookings): this cannot be verified programmatically. Ishaan must confirm invite delivery and booking count before Week 2 Wednesday.
+
+### What was learned
+
+- The LLM parser emits equations in `LHS = RHS` form; the SymPy solver requires zero-form (`expr = 0`). A normalization layer (`spike_solver.py`) was added server-side to bridge this.
+- The spike server architecture keeps Apollo agent logic, KG, solver, and parser cleanly separated — the boundary held even in throwaway code, which validates the planned production module split.
+- 14 DAG nodes for a single topic felt right; larger topics may require sub-DAG grouping earlier than anticipated.
+
+### Changes to Week 2 plan
+
+- Parser v1 should be evaluated on whether it can emit zero-form directly, removing the server-side normalization step before the real architecture is built (Week 3).
+- Spike C recruitment confirmation is a hard gate for the Week 2 Wednesday session — add it as the first agenda item in the Week 2 kickoff.
