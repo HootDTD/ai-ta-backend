@@ -1,0 +1,37 @@
+{
+  "topic_cluster": "fluid_mechanics",
+  "nodes": [
+    {"id": "pressure", "label": "Pressure", "prerequisites": [], "scope_boundary": [], "topic_cluster": "fluid_mechanics"},
+    {"id": "fluid_density", "label": "Fluid Density", "prerequisites": [], "scope_boundary": ["compressible_flow"], "topic_cluster": "fluid_mechanics"},
+    {"id": "fluid_velocity", "label": "Fluid Velocity", "prerequisites": [], "scope_boundary": ["turbulent_flow"], "topic_cluster": "fluid_mechanics"},
+    {"id": "cross_sectional_area", "label": "Cross-sectional Area", "prerequisites": [], "scope_boundary": [], "topic_cluster": "fluid_mechanics"},
+    {"id": "elevation", "label": "Elevation / Height", "prerequisites": [], "scope_boundary": [], "topic_cluster": "fluid_mechanics"},
+    {"id": "gravitational_acceleration", "label": "Gravitational Acceleration", "prerequisites": [], "scope_boundary": [], "topic_cluster": "fluid_mechanics"},
+    {"id": "kinetic_energy_density", "label": "Kinetic Energy Density (½ρv²)", "prerequisites": ["fluid_density", "fluid_velocity"], "scope_boundary": [], "topic_cluster": "fluid_mechanics"},
+    {"id": "gravitational_potential_density", "label": "Gravitational Potential Energy Density (ρgh)", "prerequisites": ["fluid_density", "gravitational_acceleration", "elevation"], "scope_boundary": [], "topic_cluster": "fluid_mechanics"},
+    {"id": "energy_conservation_fluid", "label": "Energy Conservation (fluid context)", "prerequisites": ["kinetic_energy_density", "gravitational_potential_density", "pressure"], "scope_boundary": ["viscosity", "friction_losses"], "topic_cluster": "fluid_mechanics"},
+    {"id": "incompressibility_assumption", "label": "Incompressibility Assumption", "prerequisites": ["fluid_density"], "scope_boundary": ["gas_compressibility"], "topic_cluster": "fluid_mechanics"},
+    {"id": "continuity_equation", "label": "Continuity Equation", "prerequisites": ["fluid_velocity", "cross_sectional_area", "incompressibility_assumption"], "scope_boundary": [], "topic_cluster": "fluid_mechanics"},
+    {"id": "bernoulli_principle", "label": "Bernoulli's Principle", "prerequisites": ["energy_conservation_fluid", "incompressibility_assumption"], "scope_boundary": ["viscosity", "compressible_flow", "turbulence"], "topic_cluster": "fluid_mechanics"},
+    {"id": "horizontal_flow_simplification", "label": "Horizontal-flow simplification (h₁ = h₂)", "prerequisites": ["bernoulli_principle"], "scope_boundary": [], "topic_cluster": "fluid_mechanics"},
+    {"id": "volumetric_flow_rate", "label": "Volumetric Flow Rate (Q = Av)", "prerequisites": ["fluid_velocity", "cross_sectional_area"], "scope_boundary": [], "topic_cluster": "fluid_mechanics"}
+  ],
+  "edges": [
+    {"type": "requires", "from": "kinetic_energy_density", "to": "fluid_density"},
+    {"type": "requires", "from": "kinetic_energy_density", "to": "fluid_velocity"},
+    {"type": "requires", "from": "gravitational_potential_density", "to": "fluid_density"},
+    {"type": "requires", "from": "gravitational_potential_density", "to": "gravitational_acceleration"},
+    {"type": "requires", "from": "gravitational_potential_density", "to": "elevation"},
+    {"type": "requires", "from": "energy_conservation_fluid", "to": "kinetic_energy_density"},
+    {"type": "requires", "from": "energy_conservation_fluid", "to": "gravitational_potential_density"},
+    {"type": "requires", "from": "energy_conservation_fluid", "to": "pressure"},
+    {"type": "requires", "from": "continuity_equation", "to": "fluid_velocity"},
+    {"type": "requires", "from": "continuity_equation", "to": "cross_sectional_area"},
+    {"type": "requires", "from": "continuity_equation", "to": "incompressibility_assumption"},
+    {"type": "requires", "from": "bernoulli_principle", "to": "energy_conservation_fluid"},
+    {"type": "requires", "from": "bernoulli_principle", "to": "incompressibility_assumption"},
+    {"type": "extends", "from": "horizontal_flow_simplification", "to": "bernoulli_principle"},
+    {"type": "requires", "from": "volumetric_flow_rate", "to": "fluid_velocity"},
+    {"type": "requires", "from": "volumetric_flow_rate", "to": "cross_sectional_area"}
+  ]
+}
