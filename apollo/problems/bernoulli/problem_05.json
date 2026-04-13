@@ -1,0 +1,31 @@
+{
+  "id": "bernoulli_full_find_p2",
+  "concept_id": "bernoulli_principle",
+  "difficulty": "standard",
+  "problem_text": "Water (density 1000 kg/m³) enters a pipe at elevation 5 m with pressure 150 000 Pa, area 0.02 m², velocity 1.5 m/s. The pipe narrows to area 0.005 m² at elevation 2 m. What is the pressure at the narrow section? Use g = 9.81 m/s².",
+  "given_values": {"rho": 1000.0, "h1": 5.0, "P1": 150000.0, "A1": 0.02, "v1": 1.5, "A2": 0.005, "h2": 2.0, "g": 9.81},
+  "target_unknown": "P2",
+  "reference_solution": [
+    {
+      "step": 1,
+      "entry_type": "condition",
+      "id": "incompressibility",
+      "content": {"applies_when": "density is constant", "label": "Incompressibility assumption"},
+      "depends_on": []
+    },
+    {
+      "step": 2,
+      "entry_type": "equation",
+      "id": "continuity",
+      "content": {"symbolic": "A1*v1 - A2*v2", "label": "Continuity (for incompressible flow)", "variables": ["A1", "v1", "A2", "v2"]},
+      "depends_on": ["incompressibility"]
+    },
+    {
+      "step": 3,
+      "entry_type": "equation",
+      "id": "bernoulli",
+      "content": {"symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)", "label": "Bernoulli's equation", "variables": ["P1", "rho", "v1", "g", "h1", "P2", "v2", "h2"]},
+      "depends_on": ["incompressibility"]
+    }
+  ]
+}

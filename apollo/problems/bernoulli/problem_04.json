@@ -1,0 +1,17 @@
+{
+  "id": "volumetric_flow_rate_find_Q",
+  "concept_id": "volumetric_flow_rate",
+  "difficulty": "intro",
+  "problem_text": "Water flows through a pipe of cross-sectional area 0.015 m² at a velocity of 4.0 m/s. What is the volumetric flow rate?",
+  "given_values": {"A": 0.015, "v": 4.0},
+  "target_unknown": "Q",
+  "reference_solution": [
+    {
+      "step": 1,
+      "entry_type": "equation",
+      "id": "flow_rate_definition",
+      "content": {"symbolic": "Q - A*v", "label": "Volumetric flow rate", "variables": ["Q", "A", "v"]},
+      "depends_on": []
+    }
+  ]
+}

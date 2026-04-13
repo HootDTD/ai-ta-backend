@@ -1,0 +1,24 @@
+{
+  "id": "continuity_area_change_find_v2",
+  "concept_id": "continuity_equation",
+  "difficulty": "intro",
+  "problem_text": "Water flows through a pipe. At section 1 the area is 0.02 m² and the velocity is 3.0 m/s. At section 2 the area is 0.008 m². What is the velocity at section 2?",
+  "given_values": {"A1": 0.02, "v1": 3.0, "A2": 0.008},
+  "target_unknown": "v2",
+  "reference_solution": [
+    {
+      "step": 1,
+      "entry_type": "condition",
+      "id": "incompressibility",
+      "content": {"applies_when": "density is constant", "label": "Incompressibility assumption"},
+      "depends_on": []
+    },
+    {
+      "step": 2,
+      "entry_type": "equation",
+      "id": "continuity",
+      "content": {"symbolic": "A1*v1 - A2*v2", "label": "Continuity (for incompressible flow)", "variables": ["A1", "v1", "A2", "v2"]},
+      "depends_on": ["incompressibility"]
+    }
+  ]
+}
