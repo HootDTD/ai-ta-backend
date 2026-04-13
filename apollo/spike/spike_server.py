@@ -29,6 +29,14 @@ app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 _SESSIONS: Dict[str, Dict] = {}
 
 
+def _to_zero_form(expr: str) -> str:
+    """Convert 'LHS = RHS' to 'LHS - (RHS)'. Pass through strings without '='."""
+    if "=" not in expr:
+        return expr
+    lhs, _, rhs = expr.partition("=")
+    return f"({lhs.strip()}) - ({rhs.strip()})"
+
+
 class StartResponse(BaseModel):
     session_id: str
     apollo_greeting: str
@@ -94,7 +102,7 @@ def done(session_id: str) -> DoneResponse:
         raise HTTPException(status_code=404, detail="session not found")
     # Convert KG equations/conditions into the shape solver expects.
     kg_for_solver = {
-        "equations": [e["symbolic"] for e in sess["kg"]["equation"] if "symbolic" in e],
+        "equations": [_to_zero_form(e["symbolic"]) for e in sess["kg"]["equation"] if "symbolic" in e],
         "conditions": [c.get("applies_when", "") for c in sess["kg"]["condition"]],
     }
     result = solve_problem_01(kg_for_solver)
