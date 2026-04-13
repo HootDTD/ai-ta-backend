@@ -1,0 +1,24 @@
+{
+  "id": "bernoulli_height_change_find_v2",
+  "concept_id": "bernoulli_principle",
+  "difficulty": "intro",
+  "problem_text": "Water (density 1000 kg/m³) flows from a wide reservoir at the top of a hill (elevation 20 m, velocity ≈ 0 m/s, pressure 101 325 Pa) down a pipe to ground level (elevation 0 m, pressure 101 325 Pa). What is the water's velocity at the bottom? Assume g = 9.81 m/s².",
+  "given_values": {"rho": 1000.0, "P1": 101325.0, "v1": 0.0, "h1": 20.0, "P2": 101325.0, "h2": 0.0, "g": 9.81},
+  "target_unknown": "v2",
+  "reference_solution": [
+    {
+      "step": 1,
+      "entry_type": "equation",
+      "id": "bernoulli",
+      "content": {"symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)", "label": "Bernoulli's equation", "variables": ["P1", "rho", "v1", "g", "h1", "P2", "v2", "h2"]},
+      "depends_on": []
+    },
+    {
+      "step": 2,
+      "entry_type": "simplification",
+      "id": "equal_pressure_simplification",
+      "content": {"applies_when": "P1 == P2", "transformation": "pressure terms cancel"},
+      "depends_on": ["bernoulli"]
+    }
+  ]
+}
