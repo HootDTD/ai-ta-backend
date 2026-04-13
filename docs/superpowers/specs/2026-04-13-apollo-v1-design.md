@@ -1,16 +1,19 @@
 # Apollo v1 — Design Spec
 
-**Date:** 2026-04-13
+**Date:** 2026-04-13 (revised 2026-04-14 for Hoot-handoff reframe and repo split)
 **Status:** Approved design, ready for implementation planning
 **Hard deadline:** June 7, 2026 (product pilot target June 1)
 **Approach:** Plan A — depth-first single-topic pilot
 **Architecture:** Option 1 — symbolic-only backend (SymPy + KG)
+**Repos:** Backend `ai-ta-backend` (this repo) · Frontend `ai-ta-student-ui` (sibling Next.js repo)
 
 ---
 
 ## 1. Goal
 
-Apollo is a "Check my understanding" mode that students enter from Hoot after completing a lesson. The student teaches Apollo what they just learned as if Apollo knows nothing. Apollo asks probing questions, populates a hidden knowledge graph from the student's explanations, then reveals a problem, freezes the KG, runs a symbolic solver on what the student taught, and returns a diagnostic identifying what was understood vs. missing.
+Apollo is a "Teach Apollo" mode surfaced mid-conversation in Hoot. While a student chats with Hoot and Hoot explains course material, Hoot emits a "concept-explained" signal when a concept has been sufficiently taught in the conversation. On that signal, a **"Teach Apollo"** button appears in the assistant turn. Clicking it opens Apollo mode, where the student teaches Apollo what they just learned — as if Apollo knows nothing. Apollo asks probing questions, populates a hidden knowledge graph from the student's explanations, then reveals a problem, freezes the KG, runs a symbolic solver on what the student taught, and returns a diagnostic identifying what was understood vs. missing.
+
+**Critical:** Apollo sees nothing of the Hoot conversation. Only the Overseer (a separate LLM call) reads the transcript — to infer which concept was taught and to match a problem from Apollo's bank. Apollo's context stays pristine.
 
 The overarching product ambition is to replace widescale TA help with a Feynman-technique-based "Check Understanding" surface, starting with equation-based STEM.
 
@@ -19,7 +22,7 @@ The overarching product ambition is to replace widescale TA help with a Feynman-
 ### In scope for v1 (June 1 pilot)
 
 - One topic cluster: **Bernoulli's principle + continuity equation** (and the dependencies pressure, density, velocity, area, height).
-- **Hoot ↔ Apollo integration.** Student enters Apollo from a "Check my understanding" button at the end of a Hoot fluid-mechanics lesson; returns to Hoot after the diagnostic.
+- **Hoot ↔ Apollo integration.** Mid-conversation "Teach Apollo" button in Hoot's chat UI (`ai-ta-student-ui/app/page.tsx`), surfaced when Hoot's "concept-explained" signal fires. Click opens Apollo at a new route (`ai-ta-student-ui/app/apollo/`), proxied to the backend via new Next.js API routes (`ai-ta-student-ui/app/api/apollo/*`). Returns to Hoot after diagnostic.
 - **Symbolic-only verification spine.** KG schema (`equation | definition | condition | simplification | variable_mapping`) + SymPy solver + equation-equivalence checking for gap detection.
 - **Real student validation throughout Weeks 4–8**, not only at launch.
 - **Zero-leakage discipline.** Leakage regression suite ≥20 cases, run on every commit, 100% pass rate through pilot and beyond.
@@ -31,7 +34,8 @@ The overarching product ambition is to replace widescale TA help with a Feynman-
 |---|---|---|
 | Rubric-based backend for mechanism-heavy subjects (Option 2) | Apollo v1 is for equation-based STEM; mechanism subjects (biology, CS, orgo) need a different verification spine | When Hoot expands to a mechanism-heavy course AND v1 is shipped and stable |
 | Multi-topic validation (projectile, RC, energy, etc.) | Plan A spends breadth on quality; Bernoulli-done-beautifully beats 3–4 topics at 70% | After pilot results validate the paradigm |
-| Automatic topic detection from prior Hoot chat context | v1 passes topic ID explicitly from Hoot | After pilot |
+| Hoot's "concept-explained" signal (the Teach-Apollo button trigger) | Hoot-side product work — designed and built by the Hoot team, not Apollo's scope. Apollo consumes the signal; Apollo does not produce it. | Coordinate design with cofounder by end of Week 2; signal delivered by Week 7 |
+| Dynamic problem generation | v1 matches Hoot conversation to a pre-authored problem in Apollo's bank via the Overseer's concept-inference LLM call. If no match, the endpoint returns `409 no_problem_available`. | After pilot, if the problem bank is a friction point |
 | Persistent KGs across sessions | Session-scoped in-memory is fine for pilot | When retry-across-sessions is a real user need |
 | Authentication / multi-user | Rides on Hoot's existing auth | N/A |
 | Formal IRB + pre/post-test research study | Can't recruit + IRB + run + analyze in remaining time | Fall semester, with v1 as the instrument |
@@ -62,13 +66,17 @@ Student utters natural language → parser extracts structured KG entries → KG
 
 ### Context isolation (critical)
 
-Apollo (conversational agent) and Overseer (orchestrator) run as **separate LLM calls with separate system prompts and no shared message history**. Apollo sees only: student utterances, Apollo's own prior replies, a structured summary of the current KG (what's been taught, no concept names beyond what the student used). Overseer sees: full KG state, reference solution, coverage analysis, problem bank — never exposed in Apollo's context.
+Apollo (conversational agent) and Overseer (orchestrator) run as **separate LLM calls with separate system prompts and no shared message history**. Apollo sees only: student utterances, Apollo's own prior replies, a structured summary of the current KG (what's been taught, no concept names beyond what the student used). Overseer sees: full KG state, reference solution, coverage analysis, problem bank, and — at session init — the Hoot conversation transcript. The Overseer's concept-inference LLM call (which reads the transcript to infer what was taught) is its own isolated call; its output into Apollo is strictly the chosen `problem_id` and the private reference solution. Apollo never sees the transcript, the inferred concept name, or any Overseer intermediate reasoning.
 
 ### Module layout
 
+Apollo spans **two repos**.
+
+**Backend (`ai-ta-backend`):**
+
 ```
 apollo/
-├── overseer/           # orchestration, problem selection, coverage, steering, phase state
+├── overseer/           # orchestration, concept-inference, problem selection, coverage, steering, phase state
 ├── agent/              # Apollo's conversational layer (the "ignorant student")
 ├── knowledge_graph/    # session-scoped KG store, schema, freeze enforcement
 ├── parser/             # student utterance → structured KG entries (hybrid regex + LLM)
@@ -76,10 +84,29 @@ apollo/
 ├── concepts/           # Bernoulli/continuity DAG (data files, not code)
 ├── problems/           # fluid mechanics problem bank + reference solutions
 ├── diagnostics/        # gap analysis, student-facing report generation
-├── hoot_bridge/        # Hoot ↔ Apollo handoff: session init from Hoot, return-to-Hoot
+├── hoot_bridge/        # Hoot ↔ Apollo handoff: session init from Hoot transcript, return-to-Hoot
 ├── session_log/        # structured JSON capture of every turn, KG snapshot, coverage, trace
 └── api.py              # FastAPI router, mounted at /apollo
 ```
+
+The `overseer/` module gains a new internal concept-inference-from-transcript capability (its own LLM call with its own system prompt). The `hoot_bridge/` module's role narrows: accept the transcript payload and hand off to the Overseer.
+
+**Frontend (`ai-ta-student-ui`, Next.js App Router, TypeScript):**
+
+```
+app/
+├── page.tsx            # Hoot's existing chat UI — MODIFIED to render "Teach Apollo" button on Hoot's concept-explained signal
+├── apollo/             # NEW route: Apollo teaching chat UI (visually distinct from Hoot)
+│   └── page.tsx
+└── api/
+    └── apollo/         # NEW proxy routes forwarding to backend /apollo/* with Supabase JWT
+        ├── sessions/
+        │   └── from_hoot/route.ts
+        ├── chat/route.ts
+        └── session/[id]/done/route.ts
+```
+
+Cross-repo coordination happens in Week 7.
 
 ### KG schema
 
@@ -95,9 +122,9 @@ Schema is physics-family-generic in structure; Bernoulli-specific content lives 
 
 ### Data flow
 
-1. Student finishes Hoot fluid-mechanics lesson → clicks "Check my understanding"
-2. `hoot_bridge` receives Hoot session context → creates Apollo session with `concept_id=bernoulli`
-3. Overseer selects a problem, stores its reference solution privately, initializes Apollo with the ignorant-student system prompt
+1. Student is mid-conversation with Hoot. Hoot's "concept-explained" signal fires on an assistant turn. The frontend renders a "Teach Apollo" button inside that turn.
+2. Student clicks the button. The frontend POSTs `{student_id, hoot_conversation_transcript}` to `ai-ta-student-ui/app/api/apollo/sessions/from_hoot/route.ts`, which forwards to backend `POST /apollo/sessions/from_hoot`. The backend's `hoot_bridge` receives the transcript and hands it to the Overseer. **No topic_id, no concept_id is passed from Hoot.**
+3. The Overseer runs a concept-inference LLM call (isolated from Apollo) to determine which concept(s) the transcript most recently taught, matches the inferred concept against Apollo's problem bank, and selects a problem. If no match: respond `409 no_problem_available`; frontend shows a graceful "Apollo doesn't cover that topic yet" state. On match: store the reference solution privately, initialize Apollo with the ignorant-student system prompt, return `session_id`.
 4. Teaching loop:
    - Student utters → Parser extracts KG entries → validator → KG store
    - Coverage monitor runs silently, updates per-entry status
@@ -119,9 +146,10 @@ INIT → TEACHING → PROBLEM_REVEAL → SOLVING → REPORT
 
 ### Hoot integration surface (new)
 
-- **Entry:** Hoot shows "Check my understanding" button at end of a completed fluid-mechanics lesson. Click → Hoot backend → `POST /apollo/sessions/from_hoot` with student ID + topic ID + recent chat ID (for logging).
-- **Runtime:** Apollo has its own UI route in the Hoot frontend (or a modal over the Hoot chat — UX decided in Week 1 spike). Visually distinct from Hoot's chat to reinforce "you are teaching now, not learning."
-- **Exit:** Apollo's diagnostic report has a "Back to Hoot" button. On click, closes Apollo and returns to the Hoot chat, with the diagnostic summary optionally posted as a system message in Hoot.
+- **Entry (frontend, `ai-ta-student-ui/app/page.tsx`):** Subscribes to Hoot's "concept-explained" signal (Hoot-side product work, out of Apollo scope). When the signal fires on an assistant turn, renders a "Teach Apollo" button in that turn. On click, the frontend calls a new proxy route `POST /api/apollo/sessions/from_hoot` (`ai-ta-student-ui/app/api/apollo/sessions/from_hoot/route.ts`) which forwards to backend `POST /apollo/sessions/from_hoot` with `{student_id, hoot_conversation_transcript}`. No topic_id, no concept_id — raw transcript only.
+- **Overseer session init (backend):** (1) receive transcript; (2) run a concept-inference LLM call to identify which concept the transcript most recently taught; (3) match against the problem bank; (4) if match → pick a problem from that concept, start the session, return `session_id`; (5) if no match → return `409 no_problem_available`. The inference LLM call is fully isolated from Apollo's context.
+- **Runtime (frontend, `ai-ta-student-ui/app/apollo/page.tsx`):** New top-level Apollo route. Visually distinct from Hoot's chat (different color/header, "You are teaching now" framing). Streams the teaching conversation with Apollo.
+- **Exit:** Apollo's diagnostic report has a "Back to Hoot" button. On click, the frontend closes Apollo and returns to the Hoot chat, optionally posting a system message summarizing the diagnostic back into the Hoot conversation thread.
 
 ### Session logging (new, for research readiness)
 
@@ -307,19 +335,23 @@ The Buffer-week content authoring guide is what enables extending Apollo to addi
 | Steering hints leak concept names | Medium | Medium | >20% steering attempts leak | Disable steering; generic questions only |
 | SymPy can't handle student equation forms | Low | Medium | Basic problems unsolvable after normalization | Pre-registered equation templates |
 | Hoot integration more complex than estimated | Medium | High | Week 7 handoff not working | Defer handoff to post-pilot; ship demo-only standalone |
+| Hoot's "concept-explained" signal not ready by Week 7 | Medium | High | Signal not scoped by end of Week 5 OR not delivered by end of Week 7 | Degrade to always-visible "Teach Apollo" button during fluid-mechanics conversations; Overseer's concept-inference from full transcript still works — the signal was only the trigger heuristic |
+| Cross-repo coordination (backend `hoot_bridge` + frontend routes) slips | Medium | Medium | Backend endpoint ready but frontend route unwired, or vice versa, at Week 7 Friday | Time-box Week 7 strictly; treat both repos' PRs as one unit, merge together |
+| Overseer concept-inference mis-matches concept | Medium | Medium | >20% of pilot sessions start on wrong problem | Tighten inference prompt; add confidence threshold; fall back to letting student confirm inferred topic before starting |
 | Content authoring bottleneck | Medium | Low (single topic) | N/A — single topic, small scope | Tight, not a major risk at v1 scope |
 | 8 weeks isn't enough | Medium | High | Week 7 pilot gate fails | Use buffer as Week 9; accept demo as June 1 artifact |
 | Student recruitment collapses | Medium | High | <3 students confirmed any week | Cofounder takes recruitment as primary task; engineering slows |
 
-## 12. Open Questions (to resolve during Week 1 build)
+## 12. Open Questions (to resolve during Week 1 build or coordinate before Week 5/7)
 
-- UX: is Apollo a separate route in the Hoot frontend, or a modal over the Hoot chat? Decided during Week 1 spike UI.
-- What signal triggers the "Check my understanding" button in Hoot — end of lesson detection, user-initiated from any point, or both?
-- What's the exact data contract between Hoot and Apollo for the handoff (student ID, topic ID, recent chat ID for logging — anything else)?
-- Turn limit for teaching phase — default 20? Configurable per topic?
-- Coverage threshold for automatic phase transition — 90%? Configurable?
+- **Hoot's "concept-explained" signal** — scope, trigger heuristics, and delivery timeline from cofounder/Hoot team. Design agreement target: end of Week 2. Delivery target: end of Week 7. (Cross-team, coordinate this week.)
+- **Concept-inference LLM call details** — which model, what temperature, how aggressive about "no match" vs. forcing a near-fit, whether to show the inferred concept to the student for confirmation before starting. Tunable Week 5 when Overseer is built.
+- **Apollo frontend route** — top-level `/apollo` vs. modal over Hoot's page. Recommended: top-level route for clean visual separation and clear "leaving Hoot context" framing. Confirmed default, revisitable in Week 7 UI polish.
+- **Handoff payload details** — transcript shape (full message history vs. last N turns vs. serialized with metadata), student identity carriage (Supabase JWT proxy already used by other `app/api/*` routes), error semantics for 409 no-match.
+- **Turn limit for teaching phase** — default 20? Configurable per topic?
+- **Coverage threshold for automatic phase transition** — 90%? Configurable?
 
-These are resolved in Week 1 as part of the spike build and feed into the Week 3 real-architecture implementation.
+Technical details (turn limit, coverage threshold) resolve in Week 1 spike + Week 3 architecture. Cross-team items (signal, payload contract) require sync with the Hoot team and should be initiated this week.
 
 ---
 
@@ -343,6 +375,9 @@ Most of the original plan's technical design. Specifically retained:
 - **Hoot integration:** deferred → Week 7, in scope, part of the product
 - **"Topic-agnostic" claim:** aspirational-general → honestly "equation-based STEM"; rubric backend for mechanism subjects is a named deferred item
 - **Success framing:** research breadth → product pilot quality with research-ready data as byproduct
+- **Hoot handoff trigger:** end-of-lesson button → mid-conversation "Teach Apollo" button driven by Hoot's concept-explained signal (Hoot-side work, out of Apollo scope)
+- **Handoff payload:** `{student_id, topic_id, chat_id}` → `{student_id, hoot_conversation_transcript}`; Overseer infers concept and selects problem, rather than Hoot pre-selecting
+- **Repo split:** backend-only → spans `ai-ta-backend` (backend package) and `ai-ta-student-ui` (Next.js frontend); Week 7 coordinates cross-repo PRs
 
 ---
 
