@@ -30,10 +30,18 @@ _SESSIONS: Dict[str, Dict] = {}
 
 
 def _to_zero_form(expr: str) -> str:
-    """Convert 'LHS = RHS' to 'LHS - (RHS)'. Pass through strings without '='."""
+    """Convert 'LHS = RHS' to '(LHS) - (RHS)'. Pass through strings without '='.
+
+    Raises ValueError if the expression contains more than one '=' (e.g.,
+    chained equalities like 'a = b = c') to avoid silently producing
+    malformed output for the SymPy parser.
+    """
     if "=" not in expr:
         return expr
-    lhs, _, rhs = expr.partition("=")
+    parts = expr.split("=")
+    if len(parts) != 2:
+        raise ValueError(f"_to_zero_form: expected exactly one '=' in {expr!r}")
+    lhs, rhs = parts
     return f"({lhs.strip()}) - ({rhs.strip()})"
 
 
