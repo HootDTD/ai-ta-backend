@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from sympy import Rational, Symbol, parse_expr, solve, symbols  # noqa: F401
+from sympy import Rational, Symbol, solve
 
 
 PROBLEM_01_GIVENS = {
@@ -36,7 +36,17 @@ def solve_problem_01(kg: Dict[str, Any]) -> Dict[str, Any]:
     """Solve Bernoulli problem 01 given a KG dict.
 
     kg has keys 'equations' (list[str]) and 'conditions' (list[str]).
+    The 'conditions' key is accepted but not consumed by this spike
+    solver — horizontal simplification is enforced via PROBLEM_01_GIVENS
+    (h1=h2=0).
+
     Returns {success, value?, missing?, error?}.
+
+    Known limitation (throwaway spike): if the student teaches
+    contradictory equations that leave the system with no solution,
+    this returns {success: False, missing: [...]} rather than
+    distinguishing 'missing' from 'inconsistent'. Diagnostic quality
+    for that case is deferred to the real Week-3 architecture.
     """
     from sympy.parsing.sympy_parser import parse_expr
 
