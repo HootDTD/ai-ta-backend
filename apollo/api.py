@@ -6,8 +6,10 @@ structured JSON response — NO FALLBACK behavior, just visible failure.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import (
     ApolloError,
@@ -18,13 +20,27 @@ from apollo.errors import (
     PoolExhaustedError,
     SessionFrozenError,
 )
+from apollo.hoot_bridge.session_init import init_session_from_hoot
+from database.session import get_db_session
 
 router = APIRouter(prefix="/apollo", tags=["apollo"])
 
 
+class FromHootRequest(BaseModel):
+    student_id: str
+    hoot_transcript: str
+
+
 @router.post("/sessions/from_hoot")
-async def session_from_hoot() -> dict:
-    raise HTTPException(status_code=501, detail="not implemented")
+async def session_from_hoot(
+    body: FromHootRequest,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return await init_session_from_hoot(
+        db=db,
+        student_id=body.student_id,
+        hoot_transcript=body.hoot_transcript,
+    )
 
 
 @router.get("/sessions/{session_id}")
