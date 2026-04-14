@@ -1,8 +1,8 @@
 # Apollo v2 — Design Spec
 
 **Date:** 2026-04-14
-**Status:** Approved design, supersedes v1 spec (`2026-04-13-apollo-v1-design.md`).
-**Supersedes:** v1's prompt-engineered-ignorance, concept-first-teaching, student-pilot-testing model. Week 1 Apollo work (pydantic schemas, Bernoulli DAG, 5 problems, variable normalization map) carries forward; the throwaway spike is retired.
+**Status:** Approved design. Canonical design doc for Apollo on the `ApolloV2` branch; v1 artifacts have been removed from this branch.
+**Supersedes:** v1's prompt-engineered-ignorance, concept-first-teaching, student-pilot-testing model. Week 1 Apollo work (pydantic schemas, Bernoulli DAG, 5 problems, variable normalization map) carries forward into v2; the throwaway spike is retired. Full delta captured in Appendix B.
 **Approach:** Slice 0 (end-to-end vertical) then depth passes. No calendar timeline. No fallbacks.
 **Repos:** Backend `ai-ta-backend` · Frontend `ai-ta-student-ui` (sibling Next.js repo)
 
