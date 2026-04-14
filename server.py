@@ -51,6 +51,7 @@ from chats.service import (
     list_recent_turns,
     refresh_memory_summary,
 )
+from apollo.api import router as apollo_router, register_exception_handlers as _register_apollo_exception_handlers
 
 try:  # pragma: no cover - optional dependency detection
     importlib.import_module("python_multipart")
@@ -637,6 +638,8 @@ def _structured_citations_from_bundle(
 
 # -------- App --------
 app = FastAPI(title="AI-TA HTTP Server", version="0.1.0")
+app.include_router(apollo_router)
+_register_apollo_exception_handlers(app)
 
 
 @app.on_event("startup")
