@@ -22,6 +22,7 @@ from apollo.errors import (
 )
 from apollo.handlers.chat import handle_chat
 from apollo.handlers.done import handle_done
+from apollo.handlers.lifecycle import handle_end, handle_get_session, handle_retry
 from apollo.hoot_bridge.session_init import init_session_from_hoot
 from database.session import get_db_session
 
@@ -50,8 +51,11 @@ async def session_from_hoot(
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: int) -> dict:
-    raise HTTPException(status_code=501, detail="not implemented")
+async def get_session(
+    session_id: int,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return await handle_get_session(db=db, session_id=session_id)
 
 
 @router.post("/sessions/{session_id}/chat")
@@ -72,13 +76,19 @@ async def done(
 
 
 @router.post("/sessions/{session_id}/retry")
-async def retry(session_id: int) -> dict:
-    raise HTTPException(status_code=501, detail="not implemented")
+async def retry(
+    session_id: int,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return await handle_retry(db=db, session_id=session_id)
 
 
 @router.post("/sessions/{session_id}/end")
-async def end(session_id: int) -> dict:
-    raise HTTPException(status_code=501, detail="not implemented")
+async def end(
+    session_id: int,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return await handle_end(db=db, session_id=session_id)
 
 
 # ----------------------------------------------------------------------
