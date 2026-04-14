@@ -77,3 +77,24 @@ async def test_summarize_empty_kg_returns_placeholder(db_session, sample_session
     store = KGStore(db_session)
     summary = await store.summarize_for_apollo(sample_session.id)
     assert "hasn" in summary.lower() or "nothing" in summary.lower()
+
+
+@pytest.mark.asyncio
+async def test_freeze_then_write_raises(db_session, sample_session):
+    store = KGStore(db_session)
+    await store.freeze(sample_session.id)
+    with pytest.raises(SessionFrozenError):
+        await store.write_entries(sample_session.id, [
+            {"type": "equation", "content": {"symbolic": "x - 1", "label": "X"}},
+        ], source="parser")
+
+
+@pytest.mark.asyncio
+async def test_unfreeze_restores_writeable(db_session, sample_session):
+    store = KGStore(db_session)
+    await store.freeze(sample_session.id)
+    await store.unfreeze(sample_session.id)
+    added = await store.write_entries(sample_session.id, [
+        {"type": "equation", "content": {"symbolic": "x - 1", "label": "X"}},
+    ], source="parser")
+    assert added == 1

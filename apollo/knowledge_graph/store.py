@@ -77,3 +77,19 @@ class KGStore:
         phase = result.scalar_one_or_none()
         if phase in ("PROBLEM_REVEAL", "SOLVING", "REPORT"):
             raise SessionFrozenError(session_id=str(session_id))
+
+    async def freeze(self, session_id: int) -> None:
+        result = await self.db.execute(
+            select(ApolloSession).where(ApolloSession.id == session_id)
+        )
+        session = result.scalar_one()
+        session.phase = "PROBLEM_REVEAL"
+        await self.db.commit()
+
+    async def unfreeze(self, session_id: int) -> None:
+        result = await self.db.execute(
+            select(ApolloSession).where(ApolloSession.id == session_id)
+        )
+        session = result.scalar_one()
+        session.phase = "TEACHING"
+        await self.db.commit()
