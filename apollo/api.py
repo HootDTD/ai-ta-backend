@@ -20,6 +20,7 @@ from apollo.errors import (
     PoolExhaustedError,
     SessionFrozenError,
 )
+from apollo.handlers.chat import handle_chat
 from apollo.hoot_bridge.session_init import init_session_from_hoot
 from database.session import get_db_session
 
@@ -29,6 +30,10 @@ router = APIRouter(prefix="/apollo", tags=["apollo"])
 class FromHootRequest(BaseModel):
     student_id: str
     hoot_transcript: str
+
+
+class ChatRequest(BaseModel):
+    message: str
 
 
 @router.post("/sessions/from_hoot")
@@ -49,8 +54,12 @@ async def get_session(session_id: int) -> dict:
 
 
 @router.post("/sessions/{session_id}/chat")
-async def chat(session_id: int) -> dict:
-    raise HTTPException(status_code=501, detail="not implemented")
+async def chat(
+    session_id: int,
+    body: ChatRequest,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return await handle_chat(db=db, session_id=session_id, message=body.message)
 
 
 @router.post("/sessions/{session_id}/done")
