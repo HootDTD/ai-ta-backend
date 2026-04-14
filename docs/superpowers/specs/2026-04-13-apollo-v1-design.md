@@ -1,7 +1,11 @@
 # Apollo v1 — Design Spec
 
+> ⚠️ **SUPERSEDED on 2026-04-14 by [Apollo v2 Design](./2026-04-14-apollo-v2-design.md).**
+> v2 replaces prompt-engineered ignorance with structural filtering, switches to a problem-first teaching model with multi-problem sessions, drops the 8-week timeline in favor of Slice-0-then-depth-passes, defers all real-student testing to summer, and adopts a strict no-fallbacks failure philosophy. Week 1 code and content (schemas, Bernoulli DAG, 5 problems, variable map) carries forward. See v2's Appendix B for the full delta.
+> This document is retained for historical context only. Do not build from it.
+
 **Date:** 2026-04-13 (revised 2026-04-14 for Hoot-handoff reframe and repo split)
-**Status:** Approved design, ready for implementation planning
+**Status:** SUPERSEDED by v2. Retained for historical context.
 **Hard deadline:** June 7, 2026 (product pilot target June 1)
 **Approach:** Plan A — depth-first single-topic pilot
 **Architecture:** Option 1 — symbolic-only backend (SymPy + KG)
