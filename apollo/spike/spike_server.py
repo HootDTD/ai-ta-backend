@@ -2,12 +2,23 @@
 
 Run locally: uvicorn apollo.spike.spike_server:app --reload --port 8765
 Open in browser: http://localhost:8765/
+
+Loads .env at module import so OPENAI_API_KEY is available to OpenAI()
+clients regardless of shell state. python-dotenv is more lenient than
+`bash source` and correctly handles .env files with quote-mismatch
+warnings on unrelated lines.
 """
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Dict, List
 from uuid import uuid4
+
+from dotenv import load_dotenv
+
+# Load .env before anything constructs an OpenAI() client. No-op if
+# .env is absent or vars are already in the environment.
+load_dotenv()
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
