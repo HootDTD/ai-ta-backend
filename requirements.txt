@@ -16,3 +16,5 @@ tiktoken
 python-dotenv
 requests
 sympy>=1.12
+aiosqlite
+pytest-asyncio

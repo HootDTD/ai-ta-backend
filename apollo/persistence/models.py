@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 from sqlalchemy import (
+    JSON,
     TIMESTAMP,
     BigInteger,
     Column,
@@ -23,6 +24,9 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from database.models import Base
+
+# JSONB on Postgres, fall back to JSON on SQLite (tests use in-memory SQLite).
+_JSONType = JSONB().with_variant(JSON(), "sqlite")
 
 
 class SessionPhase(StrEnum):
@@ -43,7 +47,7 @@ class SessionStatus(StrEnum):
 class ApolloSession(Base):
     __tablename__ = "apollo_sessions"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
     student_id = Column(Text, nullable=False, index=True)
     concept_cluster_id = Column(Text, nullable=False)
     status = Column(Text, nullable=False, default=SessionStatus.active.value)
@@ -60,10 +64,10 @@ class ApolloSession(Base):
 class KGEntry(Base):
     __tablename__ = "apollo_kg_entries"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
     session_id = Column(BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     type = Column(Text, nullable=False)
-    content = Column(JSONB, nullable=False)
+    content = Column(_JSONType, nullable=False)
     source = Column(Text, nullable=False, default="parser")
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
@@ -77,7 +81,7 @@ class KGEntry(Base):
 class Message(Base):
     __tablename__ = "apollo_messages"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
     session_id = Column(BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(Text, nullable=False)
     content = Column(Text, nullable=False)
@@ -90,13 +94,13 @@ class Message(Base):
 class ProblemAttempt(Base):
     __tablename__ = "apollo_problem_attempts"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
     session_id = Column(BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     problem_id = Column(Text, nullable=False)
     difficulty = Column(Text, nullable=False)
     result = Column(Text, nullable=True)  # solved | stuck | skipped | returned_to_hoot
-    solver_trace = Column(JSONB, nullable=True)
-    diagnostic_report = Column(JSONB, nullable=True)
+    solver_trace = Column(_JSONType, nullable=True)
+    diagnostic_report = Column(_JSONType, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     session = relationship("ApolloSession", back_populates="problem_attempts")
