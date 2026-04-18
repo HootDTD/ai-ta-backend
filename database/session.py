@@ -1,4 +1,25 @@
-"""Database engine and session factory for AI-TA."""
+"""Database engine and session factory for AI-TA.
+
+IMPORTANT: The process runs *two* asyncio event loops:
+
+1. Uvicorn's main loop — where native-async FastAPI routes execute
+   (e.g. the Apollo endpoints under ``/apollo/*``).
+2. A daemon-thread background loop owned by :func:`run_async` — where
+   sync FastAPI endpoints bridge into async DB work.
+
+SQLAlchemy's async engine (via asyncpg) binds its connection pool to
+the *first* loop that opens a connection on it. If a single shared
+engine is used across both loops, later calls from the other loop
+surface as::
+
+    RuntimeError: got Future ... attached to a different loop
+
+Fix: maintain one engine + session factory **per event loop**, keyed
+by ``id(loop)``. Each loop lazily gets its own engine on first use,
+and they never cross-contaminate. This is transparent to callers —
+``get_db_session`` (async) and ``run_async`` / ``get_async_session``
+both work without changes.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -6,11 +27,15 @@ import os
 import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Dict, Tuple
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-_engine = None
-_session_factory = None
+# Per-loop engine/session_factory registry. Keyed by id(loop). Values are
+# (engine, session_factory). A threading.Lock guards registry mutations —
+# the two loops live on different threads, so dict ops must be protected.
+_engines: Dict[int, Tuple[AsyncEngine, async_sessionmaker]] = {}
+_engines_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Persistent background event loop for sync → async bridging.
@@ -53,35 +78,56 @@ def run_async(coro):
     return future.result()
 
 
-def _get_engine():
-    global _engine
-    if _engine is None:
-        database_url = (os.getenv("SUPABASE_DB_URL") or "").strip()
-        if not database_url:
-            raise RuntimeError("SUPABASE_DB_URL is not set.")
-        _engine = create_async_engine(
-            database_url,
-            pool_size=10,
-            max_overflow=20,
-            pool_pre_ping=True,
-        )
-    return _engine
+def _build_engine() -> AsyncEngine:
+    database_url = (os.getenv("SUPABASE_DB_URL") or "").strip()
+    if not database_url:
+        raise RuntimeError("SUPABASE_DB_URL is not set.")
+    return create_async_engine(
+        database_url,
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True,
+    )
 
 
-def _get_session_factory():
-    global _session_factory
-    if _session_factory is None:
-        _session_factory = async_sessionmaker(
-            _get_engine(),
+def _get_engine_and_factory_for_current_loop() -> Tuple[AsyncEngine, async_sessionmaker]:
+    """Return the (engine, session_factory) bound to the currently-running loop.
+
+    Must be called from inside a running event loop (``get_db_session`` and
+    ``get_async_session`` are the only callers, and both are async).
+    """
+    loop = asyncio.get_running_loop()
+    key = id(loop)
+    pair = _engines.get(key)
+    if pair is not None:
+        return pair
+    with _engines_lock:
+        pair = _engines.get(key)
+        if pair is not None:
+            return pair
+        engine = _build_engine()
+        factory = async_sessionmaker(
+            engine,
             expire_on_commit=False,
             class_=AsyncSession,
         )
-    return _session_factory
+        _engines[key] = (engine, factory)
+        return engine, factory
+
+
+def _get_session_factory() -> async_sessionmaker:
+    """Legacy accessor. Returns the session factory for the running loop.
+
+    Kept for backwards compatibility with existing callers that import
+    this symbol. Must be called from inside a running event loop.
+    """
+    _, factory = _get_engine_and_factory_for_current_loop()
+    return factory
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency that yields a DB session."""
-    factory = _get_session_factory()
+    _, factory = _get_engine_and_factory_for_current_loop()
     async with factory() as session:
         yield session
 
@@ -89,7 +135,7 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 @asynccontextmanager
 async def get_async_session():
     """Async context manager for a DB session (non-FastAPI callers)."""
-    factory = _get_session_factory()
+    _, factory = _get_engine_and_factory_for_current_loop()
     async with factory() as session:
         yield session
 
