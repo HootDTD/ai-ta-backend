@@ -1,9 +1,10 @@
 """Hoot → Apollo handoff initialization.
 
-1. Overseer infers concept cluster from Hoot transcript.
-2. Overseer picks the first problem at 'intro' difficulty.
-3. Session row created (phase=TEACHING), first ProblemAttempt row created.
-4. Return {session_id, problem} to the frontend.
+1. End any existing active session for this student (stale handoffs don't block new ones).
+2. Overseer infers concept cluster from Hoot transcript.
+3. Overseer picks the first problem at 'intro' difficulty.
+4. Session row created (phase=TEACHING), first ProblemAttempt row created.
+5. Return {session_id, problem} to the frontend.
 
 Raises NoMatchingConceptError or PoolExhaustedError — these are mapped
 to 409s by the FastAPI exception handlers.
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.overseer.concept_inference import infer_concept_cluster
@@ -38,6 +40,16 @@ async def init_session_from_hoot(
         difficulty=_DEFAULT_FIRST_DIFFICULTY,
         attempted_ids=[],
     )
+
+    await db.execute(
+        update(ApolloSession)
+        .where(
+            ApolloSession.student_id == student_id,
+            ApolloSession.status == SessionStatus.active.value,
+        )
+        .values(status=SessionStatus.ended.value)
+    )
+    await db.flush()
 
     session = ApolloSession(
         student_id=student_id,

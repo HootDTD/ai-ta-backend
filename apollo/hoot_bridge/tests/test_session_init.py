@@ -21,6 +21,12 @@ async def db_session():
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables))
+        # Partial unique index (postgresql_where) is Postgres-only; SQLite creates
+        # it as a full UNIQUE constraint, which breaks the "replace stale active
+        # session" path. Drop it so tests exercise the real Postgres semantics.
+        await conn.exec_driver_sql(
+            "DROP INDEX IF EXISTS ix_apollo_sessions_unique_active_per_student"
+        )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         yield s
@@ -50,6 +56,36 @@ async def test_init_session_creates_session_and_first_problem(mock_infer, db_ses
 
     pa = (await db_session.execute(select(ProblemAttempt))).scalar_one()
     assert pa.difficulty == "intro"
+
+
+@pytest.mark.asyncio
+@patch("apollo.hoot_bridge.session_init.infer_concept_cluster")
+async def test_init_session_ends_stale_active_session_for_same_student(mock_infer, db_session):
+    mock_infer.return_value = "fluid_mechanics"
+
+    first = await init_session_from_hoot(
+        db=db_session,
+        student_id="stu-1",
+        hoot_transcript="Student asked about Bernoulli in horizontal pipes.",
+    )
+
+    second = await init_session_from_hoot(
+        db=db_session,
+        student_id="stu-1",
+        hoot_transcript="Student asked about Bernoulli again after a break.",
+    )
+
+    assert second["session_id"] != first["session_id"]
+
+    from sqlalchemy import select
+    sessions = (
+        await db_session.execute(select(ApolloSession).order_by(ApolloSession.id))
+    ).scalars().all()
+    assert len(sessions) == 2
+    assert sessions[0].id == first["session_id"]
+    assert sessions[0].status == SessionStatus.ended.value
+    assert sessions[1].id == second["session_id"]
+    assert sessions[1].status == SessionStatus.active.value
 
 
 @pytest.mark.asyncio
