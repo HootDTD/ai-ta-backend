@@ -7,10 +7,30 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from sympy import Rational, Symbol, simplify, solve
+from sympy import Float, Integer, Rational, Symbol, latex, simplify, solve
 from sympy.parsing.sympy_parser import parse_expr
 
 from apollo.errors import MalformedEquationError
+
+
+def _tidy_floats(expr):
+    """Collapse whole-number SymPy Floats (e.g., 500.0) to Integer for cleaner display."""
+    try:
+        return expr.replace(
+            lambda e: isinstance(e, Float) and e == int(e),
+            lambda e: Integer(int(e)),
+        )
+    except Exception:  # noqa: BLE001
+        return expr
+
+
+def _format_value_text(val) -> str:
+    """Human-friendly rendering for a solver value: drops SymPy Float trailing zeros."""
+    try:
+        f = float(val)
+        return f"{f:.6g}"
+    except (TypeError, ValueError):
+        return str(val)
 
 _CANONICAL_SYMBOLS = [
     "rho", "A", "A1", "A2", "P", "P1", "P2",
@@ -61,7 +81,12 @@ def solve_system(equations: List[Any], givens: Dict[str, float], target: str) ->
         for name, value in givens.items():
             cur = cur.subs(Symbol(name), value)
         substituted.append(cur)
-        trace.append({"op": "substitute_givens", "expr": str(cur)})
+        tidy = _tidy_floats(cur)
+        trace.append({
+            "op": "substitute_givens",
+            "expr": str(tidy),
+            "expr_latex": latex(tidy),
+        })
 
     unknowns = set()
     for eq in substituted:
@@ -83,14 +108,24 @@ def solve_system(equations: List[Any], givens: Dict[str, float], target: str) ->
         if target_sym in sol:
             val = sol[target_sym]
             if val.is_real is True:
-                trace.append({"op": "pick_real_solution", "target": target, "value": str(val)})
+                trace.append({
+                    "op": "pick_real_solution",
+                    "target": target,
+                    "value": _format_value_text(val),
+                    "value_latex": latex(_tidy_floats(val)),
+                })
                 return {"status": "solved", "value": val, "trace": trace}
             remaining = sorted(s.name for s in val.free_symbols if s.name not in givens)
             if remaining:
+                tidy = _tidy_floats(val)
                 return {
                     "status": "stuck",
                     "missing_variables": remaining,
-                    "trace": trace + [{"op": "parameterized_solution", "expression": str(val)}],
+                    "trace": trace + [{
+                        "op": "parameterized_solution",
+                        "expression": str(tidy),
+                        "expression_latex": latex(tidy),
+                    }],
                 }
 
     missing = sorted(s.name for s in unknowns if s.name != target)

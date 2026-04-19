@@ -14,6 +14,7 @@ from apollo.persistence.models import ApolloSession, ProblemAttempt, SessionPhas
 from apollo.schemas.problem import Problem
 from apollo.solver.forward_chain import solve_kg_against_problem
 from apollo.solver.narrator import narrate_trace
+from apollo.solver.sympy_exec import _format_value_text
 
 
 def _find_problem(cluster_id: str, problem_id: str) -> Problem:
@@ -28,6 +29,12 @@ def _serializable_trace(trace: list) -> list:
     for entry in trace:
         out.append({k: (str(v) if k == "value" else v) for k, v in entry.items()})
     return out
+
+
+def _display_value(val) -> str | None:
+    if val is None:
+        return None
+    return _format_value_text(val)
 
 
 async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
@@ -88,7 +95,7 @@ async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
     attempt.result = solver_result["status"]
     attempt.solver_trace = {
         "trace": _serializable_trace(solver_result["trace"]),
-        "value": str(solver_result.get("value")) if solver_result.get("value") is not None else None,
+        "value": _display_value(solver_result.get("value")),
         "missing_variables": solver_result.get("missing_variables", []),
     }
     attempt.diagnostic_report = {"text": diagnostic, "coverage": coverage}
@@ -97,7 +104,7 @@ async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
 
     return {
         "result": solver_result["status"],
-        "value": str(solver_result.get("value")) if solver_result.get("value") is not None else None,
+        "value": _display_value(solver_result.get("value")),
         "missing_variables": solver_result.get("missing_variables", []),
         "narrated_trace": narrated,
         "diagnostic_report": diagnostic,

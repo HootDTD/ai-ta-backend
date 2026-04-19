@@ -10,12 +10,24 @@ from typing import Any, Dict, List
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sympy import latex
 
 from apollo.errors import SessionFrozenError
 from apollo.persistence.models import ApolloSession, KGEntry
+from apollo.solver.sympy_exec import _tidy_floats, parse_zero_form
 
 _KG_TYPES = ("equation", "definition", "condition", "simplification", "variable_mapping")
 _EMPTY_SUMMARY = "(the student hasn't taught me anything yet)"
+
+
+def _equation_latex(symbolic: str) -> str | None:
+    """Best-effort LaTeX render for display. Returns None on parse failure so the
+    frontend can fall back to the raw symbolic string."""
+    try:
+        expr = parse_zero_form(symbolic, entry_id="_display_only")
+        return latex(_tidy_floats(expr))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 class KGStore:
@@ -51,7 +63,12 @@ class KGStore:
         rows = result.scalars().all()
         kg: Dict[str, List[Dict[str, Any]]] = {t: [] for t in _KG_TYPES}
         for row in rows:
-            kg[row.type].append(row.content)
+            content = dict(row.content or {})
+            if row.type == "equation" and "symbolic" in content and "latex" not in content:
+                tex = _equation_latex(content["symbolic"])
+                if tex is not None:
+                    content["latex"] = tex
+            kg[row.type].append(content)
         return kg
 
     async def summarize_for_apollo(self, session_id: int) -> str:

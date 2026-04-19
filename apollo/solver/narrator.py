@@ -4,18 +4,28 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 
+def _math(entry: Dict[str, Any], text_key: str, latex_key: str) -> str:
+    """Wrap math in $...$ when a latex form is available; fall back to plain text."""
+    tex = entry.get(latex_key)
+    if tex:
+        return f"${tex}$"
+    return str(entry.get(text_key, ""))
+
+
 def _line_for(entry: Dict[str, Any]) -> Optional[str]:
     op = entry.get("op")
     if op == "substitute_givens":
-        return f"I substituted what I knew: {entry.get('expr', '')}."
+        return f"I substituted what I knew: {_math(entry, 'expr', 'expr_latex')}."
     if op == "solve_system":
         return f"I then solved the system ({entry.get('num_solutions', 0)} candidate solutions)."
     if op == "pick_real_solution":
-        return f"I picked the real solution: {entry.get('target')} = {entry.get('value')}."
+        target = entry.get("target")
+        value = _math(entry, "value", "value_latex")
+        return f"I picked the real solution: ${target}$ = {value}."
     if op == "parameterized_solution":
+        expr = _math(entry, "expression", "expression_latex")
         return (
-            f"The best I got was a solution in terms of other unknowns: "
-            f"{entry.get('expression', '')}."
+            f"The best I got was a solution in terms of other unknowns: {expr}."
         )
     if op == "target_absent":
         return (
