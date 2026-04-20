@@ -26,6 +26,30 @@
       "id": "bernoulli",
       "content": {"symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)", "label": "Bernoulli's equation", "variables": ["P1", "rho", "v1", "g", "h1", "P2", "v2", "h2"]},
       "depends_on": ["incompressibility"]
+    },
+    {
+      "step": 4,
+      "entry_type": "procedure_step",
+      "id": "plan_apply_continuity_for_v2",
+      "content": {
+        "order": 1,
+        "action": "use the continuity equation with A1 = 0.02, v1 = 1.5, and A2 = 0.005 to solve for v2",
+        "uses_equations": ["continuity"],
+        "purpose": "obtain v2 at the narrow section so it can be substituted into bernoulli"
+      },
+      "depends_on": ["continuity"]
+    },
+    {
+      "step": 5,
+      "entry_type": "procedure_step",
+      "id": "plan_substitute_into_bernoulli",
+      "content": {
+        "order": 2,
+        "action": "substitute P1, rho, v1, h1, v2, h2, and g into bernoulli's equation and solve for P2",
+        "uses_equations": ["bernoulli"],
+        "purpose": "account for both the velocity increase and the elevation drop to find the pressure at the narrow section"
+      },
+      "depends_on": ["bernoulli", "plan_apply_continuity_for_v2"]
     }
   ]
 }

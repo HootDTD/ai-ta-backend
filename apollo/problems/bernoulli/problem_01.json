@@ -33,6 +33,42 @@
       "id": "horizontal_simplification",
       "content": {"applies_when": "h1 == h2", "transformation": "rho*g*h1 and rho*g*h2 cancel"},
       "depends_on": ["bernoulli"]
+    },
+    {
+      "step": 5,
+      "entry_type": "procedure_step",
+      "id": "plan_apply_continuity",
+      "content": {
+        "order": 1,
+        "action": "use the continuity equation with the known rho, A1, v1, and A2 to solve for v2",
+        "uses_equations": ["continuity"],
+        "purpose": "obtain v2 so it can be plugged into bernoulli at section 2"
+      },
+      "depends_on": ["continuity"]
+    },
+    {
+      "step": 6,
+      "entry_type": "procedure_step",
+      "id": "plan_apply_horizontal_simplification",
+      "content": {
+        "order": 2,
+        "action": "since the pipe is horizontal, set h1 equal to h2 so the gravitational terms cancel out of bernoulli",
+        "uses_equations": ["bernoulli"],
+        "purpose": "simplify bernoulli to an equation relating only P1, P2, v1, and v2"
+      },
+      "depends_on": ["bernoulli", "horizontal_simplification"]
+    },
+    {
+      "step": 7,
+      "entry_type": "procedure_step",
+      "id": "plan_solve_bernoulli_for_p2",
+      "content": {
+        "order": 3,
+        "action": "substitute v2 and the known P1, rho, v1 into the simplified bernoulli and solve for P2",
+        "uses_equations": ["bernoulli"],
+        "purpose": "produce the numerical answer for the pressure at section 2"
+      },
+      "depends_on": ["plan_apply_continuity", "plan_apply_horizontal_simplification"]
     }
   ]
 }

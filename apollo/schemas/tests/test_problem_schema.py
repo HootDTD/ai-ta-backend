@@ -85,3 +85,23 @@ def test_problem_accepts_procedure_step_in_reference_solution():
         ],
     })
     assert p.reference_solution[0].entry_type == "procedure_step"
+
+
+def test_all_bernoulli_problems_have_procedure_steps():
+    from pathlib import Path
+    from apollo.schemas.problem import load_problem
+
+    bernoulli_dir = Path(__file__).resolve().parents[3] / "apollo" / "problems" / "bernoulli"
+    problems = sorted(bernoulli_dir.glob("problem_*.json"))
+    assert len(problems) == 5, f"expected 5 problems, found {len(problems)}"
+    for path in problems:
+        p = load_problem(path)
+        step_types = [s.entry_type for s in p.reference_solution]
+        assert "procedure_step" in step_types, (
+            f"{path.name} has no procedure_step entries in reference_solution"
+        )
+        procedure_steps = [s for s in p.reference_solution if s.entry_type == "procedure_step"]
+        orders = sorted(s.content["order"] for s in procedure_steps)
+        assert orders == list(range(1, len(orders) + 1)), (
+            f"{path.name} procedure_step orders are not a contiguous 1..N: {orders}"
+        )

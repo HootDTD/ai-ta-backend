@@ -19,6 +19,30 @@
       "id": "equal_pressure_simplification",
       "content": {"applies_when": "P1 == P2", "transformation": "pressure terms cancel"},
       "depends_on": ["bernoulli"]
+    },
+    {
+      "step": 3,
+      "entry_type": "procedure_step",
+      "id": "plan_apply_equal_pressure_simplification",
+      "content": {
+        "order": 1,
+        "action": "recognize that both ends are open to the atmosphere so P1 equals P2, causing the pressure terms in bernoulli to cancel",
+        "uses_equations": ["bernoulli"],
+        "purpose": "eliminate P1 and P2 from bernoulli, leaving only the kinetic and potential energy terms"
+      },
+      "depends_on": ["bernoulli", "equal_pressure_simplification"]
+    },
+    {
+      "step": 4,
+      "entry_type": "procedure_step",
+      "id": "plan_set_v1_zero_and_solve_bernoulli",
+      "content": {
+        "order": 2,
+        "action": "substitute v1 = 0 (wide reservoir approximation), h1 = 20, h2 = 0, and g = 9.81 into the simplified bernoulli and solve for v2",
+        "uses_equations": ["bernoulli"],
+        "purpose": "obtain the exit velocity v2 at the bottom of the pipe"
+      },
+      "depends_on": ["plan_apply_equal_pressure_simplification"]
     }
   ]
 }

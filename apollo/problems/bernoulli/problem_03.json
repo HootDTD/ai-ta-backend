@@ -19,6 +19,30 @@
       "id": "continuity",
       "content": {"symbolic": "A1*v1 - A2*v2", "label": "Continuity (for incompressible flow)", "variables": ["A1", "v1", "A2", "v2"]},
       "depends_on": ["incompressibility"]
+    },
+    {
+      "step": 3,
+      "entry_type": "procedure_step",
+      "id": "plan_invoke_incompressibility",
+      "content": {
+        "order": 1,
+        "action": "state the incompressibility assumption so that the continuity equation simplifies to A1*v1 = A2*v2 (density cancels)",
+        "uses_equations": [],
+        "purpose": "justify using the area-velocity form of continuity rather than the full mass-flux form"
+      },
+      "depends_on": ["incompressibility"]
+    },
+    {
+      "step": 4,
+      "entry_type": "procedure_step",
+      "id": "plan_solve_continuity_for_v2",
+      "content": {
+        "order": 2,
+        "action": "substitute A1 = 0.02, v1 = 3.0, and A2 = 0.008 into the continuity equation and solve for v2",
+        "uses_equations": ["continuity"],
+        "purpose": "compute the velocity at section 2 directly from mass conservation"
+      },
+      "depends_on": ["plan_invoke_incompressibility"]
     }
   ]
 }

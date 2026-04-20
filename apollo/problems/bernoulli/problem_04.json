@@ -12,6 +12,18 @@
       "id": "flow_rate_definition",
       "content": {"symbolic": "Q - A*v", "label": "Volumetric flow rate", "variables": ["Q", "A", "v"]},
       "depends_on": []
+    },
+    {
+      "step": 2,
+      "entry_type": "procedure_step",
+      "id": "plan_apply_flow_rate_definition",
+      "content": {
+        "order": 1,
+        "action": "substitute A = 0.015 m² and v = 4.0 m/s into the volumetric flow rate equation Q = A*v and evaluate",
+        "uses_equations": ["flow_rate_definition"],
+        "purpose": "directly compute the volumetric flow rate Q from the given area and velocity"
+      },
+      "depends_on": ["flow_rate_definition"]
     }
   ]
 }
