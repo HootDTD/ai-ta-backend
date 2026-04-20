@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 
 
 EntryType = Literal[
-    "equation", "definition", "condition", "simplification", "variable_mapping"
+    "equation", "definition", "condition", "simplification",
+    "variable_mapping", "procedure_step"
 ]
 Difficulty = Literal["intro", "standard", "hard"]
 

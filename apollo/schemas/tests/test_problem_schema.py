@@ -59,3 +59,29 @@ def test_load_problem_reads_file(tmp_path: Path):
     p.write_text(json.dumps(_minimal_problem_dict()))
     prob = load_problem(p)
     assert prob.id == "p1"
+
+
+def test_problem_accepts_procedure_step_in_reference_solution():
+    p = Problem.model_validate({
+        "id": "demo",
+        "concept_id": "demo_concept",
+        "difficulty": "intro",
+        "problem_text": "demo",
+        "given_values": {"x": 1.0},
+        "target_unknown": "y",
+        "reference_solution": [
+            {
+                "step": 1,
+                "entry_type": "procedure_step",
+                "id": "plan_step_1",
+                "content": {
+                    "order": 1,
+                    "action": "do x",
+                    "uses_equations": ["eq1"],
+                    "purpose": "find y",
+                },
+                "depends_on": [],
+            }
+        ],
+    })
+    assert p.reference_solution[0].entry_type == "procedure_step"
