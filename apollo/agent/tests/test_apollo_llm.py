@@ -54,3 +54,54 @@ def test_draft_reply_passes_kg_summary_to_llm(mock_client_cls):
     messages = called.kwargs["messages"]
     joined = " ".join(m["content"] for m in messages)
     assert "SENTINEL_KG_SUMMARY_12345" in joined
+
+
+def test_system_prompt_replaces_probe_with_confusion():
+    from apollo.agent.apollo_llm import APOLLO_SYSTEM_PROMPT
+    lower = APOLLO_SYSTEM_PROMPT.lower()
+    # Old probe-as-default language is gone.
+    assert "probe for clarifications" not in lower
+    # Confusion-as-default language is present.
+    assert (
+        "express genuine confusion" in lower
+        or "express confusion" in lower
+        or "don't know which one to start with" in lower
+        or "stuck student" in lower
+    )
+
+
+def test_system_prompt_keeps_ignorance_contract():
+    from apollo.agent.apollo_llm import APOLLO_SYSTEM_PROMPT
+    lower = APOLLO_SYSTEM_PROMPT.lower()
+    # Core invariants must survive the rewrite.
+    assert "know nothing" in lower
+    assert "never correct" in lower
+    assert "never volunteer" in lower or "never name" in lower
+
+
+def test_system_prompt_ungates_chain_break_behavior():
+    from apollo.agent.apollo_llm import APOLLO_SYSTEM_PROMPT
+    lower = APOLLO_SYSTEM_PROMPT.lower()
+    # The old prompt gated chain-break on "if the user asks whether you have enough".
+    # The new prompt should not condition the chain-break behavior on the student asking.
+    assert "if the user asks whether you have enough" not in lower
+
+
+def test_system_prompt_has_confusion_exit_condition():
+    from apollo.agent.apollo_llm import APOLLO_SYSTEM_PROMPT
+    lower = APOLLO_SYSTEM_PROMPT.lower()
+    # Apollo must have an explicit instruction for when to stop expressing confusion,
+    # to avoid perma-confusion after the student has fully explained the problem.
+    assert (
+        "accounted for" in lower
+        or "every symbol" in lower
+        or "trace a path" in lower
+    )
+
+
+def test_system_prompt_distinguishes_plan_from_subject_questions():
+    from apollo.agent.apollo_llm import APOLLO_SYSTEM_PROMPT
+    lower = APOLLO_SYSTEM_PROMPT.lower()
+    # Core new behavior: ask about the plan, not about the subject/physics itself.
+    assert "plan" in lower
+    assert "subject" in lower
