@@ -1,4 +1,4 @@
-"""POST /apollo/sessions/{id}/done — freeze, solve, narrate, diagnose."""
+"""POST /apollo/sessions/{id}/done — freeze, solve, grade, narrate."""
 from __future__ import annotations
 
 from typing import Any, Dict
@@ -10,10 +10,10 @@ from apollo.knowledge_graph.store import KGStore
 from apollo.overseer.coverage import compute_coverage
 from apollo.overseer.diagnostic import generate_diagnostic
 from apollo.overseer.problem_selector import list_problems_for_cluster
+from apollo.overseer.rubric import compute_rubric
 from apollo.persistence.models import ApolloSession, ProblemAttempt, SessionPhase
 from apollo.schemas.problem import Problem
 from apollo.solver.forward_chain import solve_kg_against_problem
-from apollo.solver.narrator import narrate_trace
 from apollo.solver.sympy_exec import _format_value_text
 
 
@@ -67,22 +67,26 @@ async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
         "target_unknown": problem.target_unknown,
     })
 
-    narrated = narrate_trace(
-        solver_result["trace"],
-        status=solver_result["status"],
-        target=problem.target_unknown,
-        missing_variables=solver_result.get("missing_variables"),
-    )
-
     reference_steps = [s.model_dump() for s in problem.reference_solution]
     coverage = compute_coverage(kg, reference_steps)
+    rubric = compute_rubric(coverage, reference_steps)
 
-    diagnostic = generate_diagnostic(
+    diagnostic_narrative = generate_diagnostic(
         coverage=coverage,
         solver_result=solver_result,
         reference_steps=reference_steps,
         problem_text=problem.problem_text,
+        rubric=rubric,
     )
+
+    solver_indicator: Dict[str, Any] = {
+        "reached": solver_result["status"] == "solved",
+    }
+    value_str = _display_value(solver_result.get("value"))
+    if value_str is not None:
+        solver_indicator["value"] = value_str
+    if solver_result.get("missing_variables"):
+        solver_indicator["missing"] = solver_result["missing_variables"]
 
     attempt = (
         await db.execute(
@@ -95,18 +99,20 @@ async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
     attempt.result = solver_result["status"]
     attempt.solver_trace = {
         "trace": _serializable_trace(solver_result["trace"]),
-        "value": _display_value(solver_result.get("value")),
+        "value": value_str,
         "missing_variables": solver_result.get("missing_variables", []),
     }
-    attempt.diagnostic_report = {"text": diagnostic, "coverage": coverage}
+    attempt.diagnostic_report = {
+        "narrative": diagnostic_narrative,
+        "rubric": rubric,
+        "coverage": coverage,
+    }
     sess.phase = SessionPhase.REPORT.value
     await db.commit()
 
     return {
-        "result": solver_result["status"],
-        "value": _display_value(solver_result.get("value")),
-        "missing_variables": solver_result.get("missing_variables", []),
-        "narrated_trace": narrated,
-        "diagnostic_report": diagnostic,
+        "rubric": rubric,
+        "solver_indicator": solver_indicator,
+        "diagnostic_narrative": diagnostic_narrative,
         "coverage": coverage,
     }
