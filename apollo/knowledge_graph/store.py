@@ -16,7 +16,7 @@ from apollo.errors import SessionFrozenError
 from apollo.persistence.models import ApolloSession, KGEntry
 from apollo.solver.sympy_exec import _tidy_floats, parse_zero_form
 
-_KG_TYPES = ("equation", "definition", "condition", "simplification", "variable_mapping")
+_KG_TYPES = ("equation", "definition", "condition", "simplification", "variable_mapping", "procedure_step")
 _EMPTY_SUMMARY = "(the student hasn't taught me anything yet)"
 
 
@@ -85,6 +85,10 @@ class KGStore:
             lines.append(f"- simplification: when {s.get('applies_when', '?')}, {s.get('transformation', '?')}")
         for vm in kg["variable_mapping"]:
             lines.append(f"- variable: {vm.get('term', '?')} → {vm.get('symbol', '?')}")
+        for ps in sorted(kg["procedure_step"], key=lambda p: int(p.get("order") or 0)):
+            lines.append(
+                f"- procedure step {ps.get('order', '?')}: {ps.get('action', '?')}"
+            )
         return "\n".join(lines) if lines else _EMPTY_SUMMARY
 
     async def _ensure_unfrozen(self, session_id: int) -> None:

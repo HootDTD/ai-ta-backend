@@ -56,7 +56,7 @@ async def test_write_entries_then_read(db_session, sample_session):
 async def test_read_kg_returns_all_five_types_even_when_empty(db_session, sample_session):
     store = KGStore(db_session)
     kg = await store.read_kg(sample_session.id)
-    assert set(kg.keys()) == {"equation", "definition", "condition", "simplification", "variable_mapping"}
+    assert set(kg.keys()) == {"equation", "definition", "condition", "simplification", "variable_mapping", "procedure_step"}
     for v in kg.values():
         assert v == []
 
@@ -98,3 +98,46 @@ async def test_unfreeze_restores_writeable(db_session, sample_session):
         {"type": "equation", "content": {"symbolic": "x - 1", "label": "X"}},
     ], source="parser")
     assert added == 1
+
+
+@pytest.mark.asyncio
+async def test_write_entries_accepts_procedure_step(db_session, sample_session):
+    store = KGStore(db_session)
+    added = await store.write_entries(
+        sample_session.id,
+        [{
+            "type": "procedure_step",
+            "content": {
+                "order": 1,
+                "action": "apply continuity to find v2",
+                "uses_equations": ["continuity"],
+                "purpose": "get v2 for bernoulli",
+            },
+        }],
+        source="parser",
+    )
+    assert added == 1
+    kg = await store.read_kg(sample_session.id)
+    assert "procedure_step" in kg
+    assert len(kg["procedure_step"]) == 1
+    assert kg["procedure_step"][0]["action"] == "apply continuity to find v2"
+
+
+@pytest.mark.asyncio
+async def test_summarize_for_apollo_includes_procedure_steps(db_session, sample_session):
+    store = KGStore(db_session)
+    await store.write_entries(
+        sample_session.id,
+        [{
+            "type": "procedure_step",
+            "content": {
+                "order": 1,
+                "action": "apply continuity to find v2",
+                "uses_equations": ["continuity"],
+                "purpose": "get v2 for bernoulli",
+            },
+        }],
+        source="parser",
+    )
+    summary = await store.summarize_for_apollo(sample_session.id)
+    assert "- procedure step 1: apply continuity to find v2" in summary
