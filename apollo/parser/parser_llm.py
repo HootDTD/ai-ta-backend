@@ -20,7 +20,7 @@ from apollo.errors import ParserCouldNotExtractError
 _SYSTEM_PROMPT = """You extract structured knowledge-graph entries from a student's
 explanation of a fluid-mechanics concept. Return ONLY a JSON object of the form:
 
-{"entries": [ { "type": "equation"|"definition"|"condition"|"simplification"|"variable_mapping",
+{"entries": [ { "type": "equation"|"definition"|"condition"|"simplification"|"variable_mapping"|"procedure_step",
                 "content": { ... type-specific fields ... } } ]}
 
 For type=equation: content must have "symbolic" (a SymPy-parseable string using the
@@ -32,6 +32,16 @@ For type=condition: content must have "applies_when" (natural language) and "lab
 For type=simplification: content must have "applies_when" and "transformation".
 For type=definition: content must have "concept" and "meaning".
 For type=variable_mapping: content must have "term" and "symbol".
+For type=procedure_step: content must have "order" (1-based integer), "action" (natural-
+language description of what the student does at this stage), "uses_equations" (list of
+equation labels the student referenced — may be empty), and "purpose" (why this step is
+done). Extract a procedure_step only when the student is describing what THEY (or a solver)
+would DO as part of solving — an action they are taking or prescribing — NOT when describing
+what physically happens in the system. First-person framing ("first I would...", "I'll
+apply...", "then I substitute...") or explicit step numbering ("step 1:...", "next, solve
+for...") marks plan-speak. Causal physical description ("the pressure drops, then the
+velocity rises") is NOT plan-speak and must NOT produce procedure_step entries. One
+procedure_step per planned action, in the order the student stated them.
 
 Rules:
 - Return ONLY what the student explicitly said. Do NOT add physics the student did not mention.
@@ -39,6 +49,8 @@ Rules:
 - Do not correct the student. If they said an equation wrong, extract it as stated.
 - If the student is stating Bernoulli-style equality comparing two points/states, introduce
   subscripts (P1/v1/A1/h1 vs P2/v2/A2/h2) so the solver can relate the two states.
+- If the student mixes equations and plan-speak in the same utterance, extract both equation
+  AND procedure_step entries from the utterance.
 """
 
 _EQUATION_LIKE = re.compile(r"[=*/^+\-]|\d+\.?\d*|\^|\*\*")
@@ -56,7 +68,12 @@ def _is_non_trivial(utterance: str) -> bool:
     keywords = ("pressure", "velocity", "density", "area", "height", "flow",
                 "fluid", "equation", "bernoulli", "continuity", "energy",
                 "incompressible", "horizontal", "pipe")
-    return any(k in s for k in keywords)
+    if any(k in s for k in keywords):
+        return True
+    plan_markers = ("first", "then", "next", "after that", "after this",
+                    "step 1", "step 2", "solve for",
+                    "substitute", "plug in", "plug into")
+    return any(m in s for m in plan_markers)
 
 
 def parse_utterance(utterance: str, model: str | None = None) -> List[Dict[str, Any]]:

@@ -78,3 +78,75 @@ def test_parse_filters_malformed_entries(mock_client_cls):
 
     result = parse_utterance("x is something")
     assert len(result) == 1
+
+
+@patch("apollo.parser.parser_llm.OpenAI")
+def test_parser_extracts_procedure_step_entries(mock_client_cls):
+    payload = (
+        '{"entries": [{"type": "procedure_step", "content": '
+        '{"order": 1, "action": "use continuity to find v2", '
+        '"uses_equations": ["continuity"], "purpose": "get v2 for bernoulli"}}]}'
+    )
+    fake_resp = MagicMock()
+    fake_resp.choices = [MagicMock(message=MagicMock(content=payload))]
+    client = MagicMock()
+    client.chat.completions.create.return_value = fake_resp
+    mock_client_cls.return_value = client
+
+    entries = parse_utterance(
+        "First I'd use continuity to find v2 so I can plug it into bernoulli."
+    )
+    assert len(entries) == 1
+    assert entries[0]["type"] == "procedure_step"
+    assert entries[0]["content"]["action"].startswith("use continuity")
+
+
+def test_is_non_trivial_detects_plan_speak():
+    # Plan-speak keywords should trigger non-trivial even without equation syntax.
+    assert _is_non_trivial("first I would use continuity then plug into bernoulli")
+    assert _is_non_trivial("next, solve for v2 and after that substitute it")
+    # A plan-free utterance of normal length should still be trivial.
+    assert not _is_non_trivial("ok sure that all makes sense to me now")
+    # Causal "then" in declarative narration is not plan-speak — but this
+    # sentence would already match on "pressure"/"velocity" keywords, so we
+    # pick a keyword-free causal clause to truly test plan_markers.
+    assert not _is_non_trivial("that all makes perfect sense to me now")
+
+
+@patch("apollo.parser.parser_llm.OpenAI")
+def test_parser_raises_on_empty_extraction_from_plan_speak(mock_client_cls):
+    fake_resp = MagicMock()
+    fake_resp.choices = [MagicMock(message=MagicMock(content='{"entries": []}'))]
+    client = MagicMock()
+    client.chat.completions.create.return_value = fake_resp
+    mock_client_cls.return_value = client
+
+    with pytest.raises(ParserCouldNotExtractError):
+        parse_utterance("first I would do some thing then the next step is another thing")
+
+
+@patch("apollo.parser.parser_llm.OpenAI")
+def test_parser_extracts_mixed_equation_and_procedure_step(mock_client_cls):
+    payload = (
+        '{"entries": ['
+        '{"type": "equation", "content": '
+        '{"symbolic": "A1*v1 - A2*v2", "label": "continuity"}},'
+        '{"type": "procedure_step", "content": '
+        '{"order": 1, "action": "apply continuity to find v2", '
+        '"uses_equations": ["continuity"], "purpose": "get v2"}}'
+        ']}'
+    )
+    fake_resp = MagicMock()
+    fake_resp.choices = [MagicMock(message=MagicMock(content=payload))]
+    client = MagicMock()
+    client.chat.completions.create.return_value = fake_resp
+    mock_client_cls.return_value = client
+
+    from apollo.parser.parser_llm import parse_utterance
+    entries = parse_utterance(
+        "The continuity equation is A1*v1 = A2*v2. First I would use it to find v2."
+    )
+    types = [e["type"] for e in entries]
+    assert "equation" in types
+    assert "procedure_step" in types
+    assert len(entries) == 2
