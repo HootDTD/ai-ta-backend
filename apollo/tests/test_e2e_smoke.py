@@ -55,6 +55,7 @@ def _mock_llm_response(text: str) -> MagicMock:
 
 
 @patch("apollo.overseer.diagnostic.OpenAI")
+@patch("apollo.overseer.coverage.OpenAI")
 @patch("apollo.agent.apollo_llm.OpenAI")
 @patch("apollo.parser.parser_llm.OpenAI")
 @patch("apollo.overseer.concept_inference.OpenAI")
@@ -62,6 +63,7 @@ def test_full_slice0a_happy_path(
     mock_infer_client_cls,
     mock_parser_client_cls,
     mock_apollo_client_cls,
+    mock_coverage_client_cls,
     mock_diag_client_cls,
     app,
 ):
@@ -91,6 +93,10 @@ def test_full_slice0a_happy_path(
     mock_diag.chat.completions.create.return_value = _mock_llm_response("You taught it well.")
     mock_diag_client_cls.return_value = mock_diag
 
+    mock_coverage = MagicMock()
+    mock_coverage.chat.completions.create.return_value = _mock_llm_response(json.dumps({"score": 0.9}))
+    mock_coverage_client_cls.return_value = mock_coverage
+
     client = TestClient(app)
 
     r = client.post("/apollo/sessions/from_hoot", json={
@@ -113,9 +119,24 @@ def test_full_slice0a_happy_path(
     r = client.post(f"/apollo/sessions/{session_id}/done")
     assert r.status_code == 200, r.text
     done = r.json()
-    assert done["result"] in ("solved", "stuck")
-    assert "narrated_trace" in done
-    assert "diagnostic_report" in done
+
+    # --- New Done response shape (Tasks 6-9) ---
+    assert "rubric" in done
+    for axis in ("overall", "procedure", "justification", "simplification", "variables"):
+        assert axis in done["rubric"], f"missing axis {axis!r} in rubric"
+        assert "score" in done["rubric"][axis]
+        assert "letter" in done["rubric"][axis]
+    assert done["rubric"]["overall"]["letter"] in (
+        "A+", "A", "A-", "B+", "B", "B-", "C+", "C", "D", "F",
+    )
+    assert "solver_indicator" in done
+    assert isinstance(done["solver_indicator"]["reached"], bool)
+    assert "diagnostic_narrative" in done
+    assert isinstance(done["diagnostic_narrative"], str)
+    assert "coverage" in done
+    assert "per_step" in done["coverage"]
+    assert "procedure_scores" in done["coverage"]
+    # narrated_trace moved to attempt.solver_trace in persistence; no longer in Done response
 
     r = client.get(f"/apollo/sessions/{session_id}")
     assert r.status_code == 200, r.text
