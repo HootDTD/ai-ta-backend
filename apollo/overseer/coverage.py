@@ -1,12 +1,13 @@
 """Coverage: compare a frozen KG against a problem's reference solution.
 
-For string-matchable entry types (equation, condition, simplification,
-definition, variable_mapping), coverage is binary: 'covered' or 'missing'.
+All non-procedure entry types (equation, condition, simplification, definition,
+variable_mapping) are matched via a single LLM semantic judgment per reference
+entry against the KG entries of the same type. Students phrase things in their
+own words, so string equality is not adequate — the matcher judges by meaning.
+Soft-fails to 'missing' on LLM exceptions so the report is never blocked.
 
-For procedure_step entries, coverage is a 0-1 partial-credit score per
-reference step, produced by a small LLM call asking whether any student
-procedure_step describes the same action and approximate ordering.
-Soft-fails to 0.0 on LLM exceptions so the report is never blocked.
+For procedure_step entries, coverage is a 0-1 partial-credit score per reference
+step from its own LLM call. Soft-fails to 0.0.
 
 Return shape:
   {
@@ -26,41 +27,65 @@ from openai import OpenAI
 _LOG = logging.getLogger(__name__)
 
 
-def _equation_matches(kg_entry: Dict[str, Any], ref_content: Dict[str, Any]) -> bool:
-    ref_label = (ref_content.get("label") or "").strip().lower()
-    ref_sym = (ref_content.get("symbolic") or "").replace(" ", "")
-    kg_label = (kg_entry.get("label") or "").strip().lower()
-    kg_sym = (kg_entry.get("symbolic") or "").replace(" ", "")
-    if ref_label and kg_label and ref_label == kg_label:
-        return True
-    if ref_sym and kg_sym and ref_sym == kg_sym:
-        return True
-    return False
+_BINARY_MATCHER_PROMPT = """You are grading whether any student-taught knowledge-graph
+entry semantically covers a single reference entry. Students phrase things in their own
+words, so judge by meaning, not wording.
+
+Return ONLY a JSON object of the form: {"covered": true} or {"covered": false}.
+
+Guidance by entry_type:
+- equation: two equations are equivalent if they express the same physical relationship.
+  A student equation that omits a common non-zero factor the reference keeps (e.g.
+  "A1*v1 - A2*v2" vs reference "rho*A1*v1 - rho*A2*v2") still covers the reference,
+  because rho is a non-zero constant and both express mass conservation. Sign flips
+  and algebraic rearrangements of the same equation are equivalent.
+- condition: any student condition asserting the same physical assumption covers the
+  reference (e.g. reference "density is constant" is covered by student "incompressible
+  flow" or "incompressibility").
+- simplification: any student simplification performing the same geometric or physical
+  reduction covers the reference (e.g. reference applies_when "h1 == h2" is covered by
+  student "the pipe is horizontal, so h1 = h2").
+- definition: any student definition of the same concept covers the reference.
+- variable_mapping: any student mapping of the same term to the same symbol covers the
+  reference.
+
+If no student entry expresses the reference's meaning, return {"covered": false}.
+"""
 
 
-def _condition_matches(kg_entry: Dict[str, Any], ref_content: Dict[str, Any]) -> bool:
-    ref_label = (ref_content.get("label") or "").strip().lower()
-    kg_label = (kg_entry.get("label") or "").strip().lower()
-    ref_aw = (ref_content.get("applies_when") or "").strip().lower()
-    kg_aw = (kg_entry.get("applies_when") or "").strip().lower()
-    if ref_label and kg_label and ref_label == kg_label:
-        return True
-    if ref_aw and kg_aw and ref_aw == kg_aw:
-        return True
-    return False
-
-
-def _simplification_matches(kg_entry: Dict[str, Any], ref_content: Dict[str, Any]) -> bool:
-    ref_aw = (ref_content.get("applies_when") or "").strip().lower()
-    kg_aw = (kg_entry.get("applies_when") or "").strip().lower()
-    return bool(ref_aw and kg_aw and ref_aw == kg_aw)
-
-
-_BINARY_MATCHERS = {
-    "equation": _equation_matches,
-    "condition": _condition_matches,
-    "simplification": _simplification_matches,
-}
+def _binary_match(
+    ref_entry: Dict[str, Any],
+    kg_entries: List[Dict[str, Any]],
+    *,
+    entry_type: str,
+    model: str | None = None,
+) -> bool:
+    """LLM-based semantic coverage check. Soft-fails to False on exception."""
+    if not kg_entries:
+        return False
+    model = model or os.getenv("MAIN_MODEL", "gpt-4o")
+    try:
+        client = OpenAI()
+        payload = {
+            "entry_type": entry_type,
+            "reference_entry": ref_entry,
+            "student_entries": kg_entries,
+        }
+        resp = client.chat.completions.create(
+            model=model,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": _BINARY_MATCHER_PROMPT},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            temperature=0.0,
+        )
+        raw = resp.choices[0].message.content or "{}"
+        parsed = json.loads(raw)
+        return bool(parsed.get("covered", False))
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning("binary matcher soft-fail for %s: %s", entry_type, exc)
+        return False
 
 
 _PROCEDURE_MATCHER_PROMPT = """You are grading whether a student's procedure step
@@ -129,6 +154,9 @@ def _procedure_match_score(
         return 0.0
 
 
+_BINARY_TYPES = ("equation", "condition", "simplification", "definition", "variable_mapping")
+
+
 def compute_coverage(
     kg: Dict[str, List[Dict[str, Any]]],
     reference_steps: List[Dict[str, Any]],
@@ -154,17 +182,10 @@ def compute_coverage(
             per_step[ref_id] = "covered" if score >= 0.5 else "missing"
             continue
 
-        matcher = _BINARY_MATCHERS.get(ref_type)
-        kg_entries = kg.get(ref_type, [])
-        if matcher and any(matcher(e, ref_content) for e in kg_entries):
-            per_step[ref_id] = "covered"
-        elif ref_type in ("definition", "variable_mapping") and kg_entries:
-            key = "concept" if ref_type == "definition" else "term"
-            ref_key = (ref_content.get(key) or "").strip().lower()
-            if ref_key and any((e.get(key) or "").strip().lower() == ref_key for e in kg_entries):
-                per_step[ref_id] = "covered"
-            else:
-                per_step[ref_id] = "missing"
+        if ref_type in _BINARY_TYPES:
+            kg_entries = kg.get(ref_type, [])
+            covered = _binary_match(ref_content, kg_entries, entry_type=ref_type)
+            per_step[ref_id] = "covered" if covered else "missing"
         else:
             per_step[ref_id] = "missing"
 

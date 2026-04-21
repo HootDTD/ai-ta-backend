@@ -1,13 +1,16 @@
+from unittest.mock import MagicMock, patch
+
 from apollo.overseer.coverage import compute_coverage
 
 
-def _kg(equations=(), conditions=(), simplifications=()):
+def _kg(equations=(), conditions=(), simplifications=(), definitions=(), variable_mappings=(), procedure_steps=()):
     return {
         "equation": [{"symbolic": s, "label": lab} for (s, lab) in equations],
-        "definition": [],
+        "definition": [{"concept": c, "meaning": m} for (c, m) in definitions],
         "condition": [{"label": lab, "applies_when": a} for (a, lab) in conditions],
         "simplification": [{"applies_when": a, "transformation": t} for (a, t) in simplifications],
-        "variable_mapping": [],
+        "variable_mapping": [{"term": t, "symbol": s} for (t, s) in variable_mappings],
+        "procedure_step": list(procedure_steps),
     }
 
 
@@ -22,13 +25,30 @@ REFERENCE = [
 ]
 
 
-def test_all_covered():
+def _mock_openai(side_effect_contents):
+    """Build an OpenAI client mock whose completions.create returns the given JSON strings in order."""
+    client = MagicMock()
+    it = iter(side_effect_contents)
+    client.chat.completions.create.side_effect = lambda **kw: MagicMock(
+        choices=[MagicMock(message=MagicMock(content=next(it)))]
+    )
+    return client
+
+
+@patch("apollo.overseer.coverage.OpenAI")
+def test_all_covered_when_llm_says_so(mock_client_cls):
+    # Student teaches continuity, bernoulli, and incompressibility (in their own words).
+    mock_client_cls.return_value = _mock_openai([
+        '{"covered": true}',  # continuity
+        '{"covered": true}',  # incompressibility
+        '{"covered": true}',  # bernoulli
+    ])
     kg = _kg(
         equations=[
-            ("rho*A1*v1 - rho*A2*v2", "Continuity"),
-            ("P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)", "Bernoulli"),
+            ("A1*v1 - A2*v2", "Continuity equation"),  # rho omitted — semantically equivalent
+            ("P1 + Rational(1,2)*rho*v1**2 - (P2 + Rational(1,2)*rho*v2**2)", "Bernoulli's equation"),
         ],
-        conditions=[("density is constant", "Incompressibility")],
+        conditions=[("steady incompressible flow", "Bernoulli's applicability")],
     )
     cov = compute_coverage(kg, REFERENCE)
     assert cov["per_step"]["continuity"] == "covered"
@@ -36,30 +56,43 @@ def test_all_covered():
     assert cov["per_step"]["incompressibility"] == "covered"
 
 
-def test_missing_continuity():
+@patch("apollo.overseer.coverage.OpenAI")
+def test_missing_continuity(mock_client_cls):
+    # LLM judges: continuity NOT covered, incompressibility + bernoulli covered.
+    # Reference walks the refs in order: continuity (eq), incompressibility (cond), bernoulli (eq).
+    mock_client_cls.return_value = _mock_openai([
+        '{"covered": false}',  # continuity
+        '{"covered": true}',   # incompressibility
+        '{"covered": true}',   # bernoulli
+    ])
     kg = _kg(
         equations=[
-            ("P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)", "Bernoulli"),
+            ("P1 + Rational(1,2)*rho*v1**2 - (P2 + Rational(1,2)*rho*v2**2)", "Bernoulli"),
         ],
         conditions=[("density is constant", "Incompressibility")],
     )
     cov = compute_coverage(kg, REFERENCE)
     assert cov["per_step"]["continuity"] == "missing"
     assert cov["per_step"]["bernoulli"] == "covered"
+    assert cov["per_step"]["incompressibility"] == "covered"
 
 
-def test_missing_condition():
+@patch("apollo.overseer.coverage.OpenAI")
+def test_missing_condition(mock_client_cls):
+    # KG has no condition entries → incompressibility skipped without LLM call.
+    mock_client_cls.return_value = _mock_openai([
+        '{"covered": true}',  # continuity
+        '{"covered": true}',  # bernoulli
+    ])
     kg = _kg(equations=[("rho*A1*v1 - rho*A2*v2", "Continuity")])
     cov = compute_coverage(kg, REFERENCE)
     assert cov["per_step"]["incompressibility"] == "missing"
 
 
 def test_empty_kg_all_missing():
+    # Every ref type has empty kg list → short-circuits before LLM call.
     cov = compute_coverage(_kg(), REFERENCE)
     assert all(v == "missing" for v in cov["per_step"].values())
-
-
-from unittest.mock import MagicMock, patch
 
 
 def _ref_equation(id_: str, label: str) -> dict:
@@ -76,6 +109,7 @@ def _ref_procedure(id_: str, order: int, action: str) -> dict:
 
 @patch("apollo.overseer.coverage.OpenAI")
 def test_compute_coverage_returns_enriched_shape(mock_client_cls):
+    mock_client_cls.return_value = _mock_openai(['{"covered": true}'])
     kg = {
         "equation": [{"label": "continuity", "symbolic": "x - y"}],
         "definition": [], "condition": [], "simplification": [],
@@ -87,6 +121,22 @@ def test_compute_coverage_returns_enriched_shape(mock_client_cls):
     assert result["per_step"]["continuity"] == "covered"
     assert "procedure_scores" in result
     assert result["procedure_scores"] == {}
+
+
+@patch("apollo.overseer.coverage.OpenAI")
+def test_binary_matcher_softfails_to_missing_on_llm_exception(mock_client_cls):
+    client = MagicMock()
+    client.chat.completions.create.side_effect = RuntimeError("boom")
+    mock_client_cls.return_value = client
+
+    kg = {
+        "equation": [{"label": "x", "symbolic": "x - y"}],
+        "definition": [], "condition": [], "simplification": [],
+        "variable_mapping": [], "procedure_step": [],
+    }
+    refs = [_ref_equation("eq1", "x")]
+    result = compute_coverage(kg, refs)
+    assert result["per_step"]["eq1"] == "missing"
 
 
 @patch("apollo.overseer.coverage.OpenAI")
