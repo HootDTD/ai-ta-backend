@@ -435,6 +435,7 @@ class ChatTurn(Base):
     tool_name = Column(String(100), nullable=True)
     tool_inputs = Column(JSONB, nullable=True)
     attachments = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    citations = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
 
     session = relationship("ChatSession", back_populates="turns")
 

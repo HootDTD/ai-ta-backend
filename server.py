@@ -484,6 +484,7 @@ async def _append_assistant_turn_and_refresh_async(
     chat_id: str,
     search_space_id: int,
     assistant_content: str,
+    citations: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     async with get_async_session() as db_session:
         session = await get_chat_session_for_user(
@@ -509,6 +510,7 @@ async def _append_assistant_turn_and_refresh_async(
             role="assistant",
             content=assistant_content,
             model=os.getenv("SOLVER_MODEL", "gpt-4o"),
+            citations=list(citations) if citations else None,
         )
         await refresh_memory_summary(db_session, chat_session=session)
         session.updated_at = datetime.now(UTC)
@@ -521,6 +523,7 @@ def _append_assistant_turn_and_refresh(
     chat_id: str,
     search_space_id: int,
     assistant_content: str,
+    citations: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     run_async(
         _append_assistant_turn_and_refresh_async(
@@ -528,6 +531,7 @@ def _append_assistant_turn_and_refresh(
             chat_id=chat_id,
             search_space_id=search_space_id,
             assistant_content=assistant_content,
+            citations=citations,
         )
     )
 
@@ -1712,6 +1716,7 @@ def post_ask(payload: AskRequest, request: Request):
             chat_id=chat_id,
             search_space_id=search_space_id,
             assistant_content=assistant_turn,
+            citations=structured_citations,
         )
     except Exception:
         log.warning("Failed to persist assistant turn for chat_id=%s", chat_id, exc_info=True)
@@ -1914,6 +1919,7 @@ async def post_ask_stream(payload: AskRequest, request: Request):
             })
 
             try:
+                persist_citations = list(structured_citations)
                 await stream_loop.run_in_executor(
                     None,
                     lambda: _append_assistant_turn_and_refresh(
@@ -1921,6 +1927,7 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                         chat_id=chat_id,
                         search_space_id=search_space_id,
                         assistant_content=answer_text.strip() or "[empty answer]",
+                        citations=persist_citations,
                     ),
                 )
             except Exception:
@@ -1938,6 +1945,7 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                         chat_id=chat_id,
                         search_space_id=search_space_id,
                         assistant_content=error_message,
+                        citations=[],
                     ),
                 )
             except Exception:
