@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apollo.persistence.attempt_history import has_prior_graded_attempt
@@ -22,24 +21,22 @@ async def db():
         await conn.run_sync(lambda sc: Base.metadata.create_all(
             sc, tables=[ApolloSession.__table__, ProblemAttempt.__table__]
         ))
-        # The unique-active-per-student index on ApolloSession is defined
-        # as a Postgres partial index (postgresql_where=status='active').
-        # SQLite ignores the WHERE clause and treats it as a full unique
-        # index, which breaks legitimate test setups that create multiple
-        # sessions per student. Drop the index here so SQLite behavior
-        # matches Postgres semantics for this test.
-        await conn.execute(text("DROP INDEX IF EXISTS ix_apollo_sessions_unique_active_per_student"))
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         yield s
     await engine.dispose()
 
 
-async def _mk_session(db: AsyncSession, student_id: str) -> ApolloSession:
+async def _mk_session(
+    db: AsyncSession,
+    student_id: str,
+    *,
+    status: str = SessionStatus.active.value,
+) -> ApolloSession:
     s = ApolloSession(
         student_id=student_id,
         concept_cluster_id="fluid_mechanics",
-        status=SessionStatus.active.value,
+        status=status,
         phase=SessionPhase.TEACHING.value,
         current_problem_id="p1",
     )
@@ -77,8 +74,8 @@ async def test_returns_false_when_no_prior_attempts(db):
 
 @pytest.mark.asyncio
 async def test_returns_true_when_prior_session_has_graded_attempt(db):
-    # First session/attempt: graded (solved).
-    sess_a = await _mk_session(db, "stu-2")
+    # First session/attempt: graded (solved). Prior session is ended.
+    sess_a = await _mk_session(db, "stu-2", status=SessionStatus.ended.value)
     await _mk_attempt(db, session_id=sess_a.id, problem_id="p1", result="solved")
 
     # Second session/attempt: pending grade.
@@ -113,7 +110,7 @@ async def test_ignores_other_students(db):
 
 @pytest.mark.asyncio
 async def test_ignores_other_problems(db):
-    sess = await _mk_session(db, "stu-3")
+    sess = await _mk_session(db, "stu-3", status=SessionStatus.ended.value)
     await _mk_attempt(db, session_id=sess.id, problem_id="p-other", result="solved")
 
     sess2 = await _mk_session(db, "stu-3")

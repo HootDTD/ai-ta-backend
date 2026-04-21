@@ -21,12 +21,6 @@ async def db_session():
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables))
-        # Partial unique index (postgresql_where) is Postgres-only; SQLite creates
-        # it as a full UNIQUE constraint, which breaks the "replace stale active
-        # session" path. Drop it so tests exercise the real Postgres semantics.
-        await conn.exec_driver_sql(
-            "DROP INDEX IF EXISTS ix_apollo_sessions_unique_active_per_student"
-        )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         yield s

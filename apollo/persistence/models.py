@@ -111,6 +111,7 @@ Index(
     ApolloSession.student_id,
     unique=True,
     postgresql_where=(ApolloSession.status == "active"),
+    sqlite_where=(ApolloSession.status == "active"),
 )
 
 
