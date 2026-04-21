@@ -148,6 +148,12 @@ def test_full_slice0a_happy_path(
     assert done["level_before"] == 1
     assert isinstance(done["level_after"], int)
     assert done["level_up"] is False  # Can't level-up in one shot below 300 XP.
+    assert "xp_before" in done
+    assert "xp_after" in done
+    assert isinstance(done["xp_before"], int)
+    assert isinstance(done["xp_after"], int)
+    # Arithmetic invariant: xp_after == xp_before + xp_earned.
+    assert done["xp_after"] == done["xp_before"] + done["xp_earned"]
 
     r = client.get(f"/apollo/sessions/{session_id}")
     assert r.status_code == 200, r.text
