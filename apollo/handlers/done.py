@@ -1,4 +1,4 @@
-"""POST /apollo/sessions/{id}/done — freeze, solve, grade, narrate."""
+"""POST /apollo/sessions/{id}/done — freeze, solve, grade, narrate, award XP."""
 from __future__ import annotations
 
 from typing import Any, Dict
@@ -11,7 +11,10 @@ from apollo.overseer.coverage import compute_coverage
 from apollo.overseer.diagnostic import generate_diagnostic
 from apollo.overseer.problem_selector import list_problems_for_cluster
 from apollo.overseer.rubric import compute_rubric
+from apollo.overseer.xp import compute_xp_earned
+from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import ApolloSession, ProblemAttempt, SessionPhase
+from apollo.persistence.progress_repo import apply_xp
 from apollo.schemas.problem import Problem
 from apollo.solver.forward_chain import solve_kg_against_problem
 from apollo.solver.sympy_exec import _format_value_text
@@ -49,9 +52,6 @@ async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
     sess.phase = SessionPhase.SOLVING.value
     await db.commit()
 
-    # Augment problem givens with physical constants and problem-encoded
-    # simplifications (e.g., horizontal pipe → h1 = h2 = 0). These come from
-    # the problem setup, not the student's teaching.
     augmented_givens = dict(problem.given_values)
     augmented_givens.setdefault("g", 9.81)
     for ref in problem.reference_solution:
@@ -96,6 +96,30 @@ async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
             .order_by(ProblemAttempt.id.desc())
         )
     ).scalars().first()
+
+    # ── Phase 2: award XP based on the rubric score + difficulty.
+    #
+    # Re-attempt detection covers two cases:
+    #   (a) Within-session retry: the /retry endpoint keeps the same
+    #       ProblemAttempt row, so its `result` is already set from a
+    #       previous Done call.
+    #   (b) Cross-session repeat: another graded attempt exists for the
+    #       same (student_id, problem_id).
+    is_reattempt_in_session = attempt.result is not None
+    is_reattempt_cross_session = await has_prior_graded_attempt(
+        db=db,
+        student_id=sess.student_id,
+        problem_id=problem.id,
+        exclude_attempt_id=attempt.id,
+    )
+    is_reattempt = is_reattempt_in_session or is_reattempt_cross_session
+
+    xp_earned = compute_xp_earned(
+        overall_score=rubric["overall"]["score"],
+        difficulty=attempt.difficulty,
+        is_reattempt=is_reattempt,
+    )
+
     attempt.result = solver_result["status"]
     attempt.solver_trace = {
         "trace": _serializable_trace(solver_result["trace"]),
@@ -110,9 +134,23 @@ async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
     sess.phase = SessionPhase.REPORT.value
     await db.commit()
 
+    # Apply XP after the attempt + session row updates have committed so
+    # that a progress-repo failure never leaves the attempt ungraded.
+    progress = await apply_xp(
+        db=db,
+        student_id=sess.student_id,
+        xp_delta=xp_earned,
+    )
+
     return {
         "rubric": rubric,
         "solver_indicator": solver_indicator,
         "diagnostic_narrative": diagnostic_narrative,
         "coverage": coverage,
+        "xp_earned": xp_earned,
+        "xp_before": progress["xp_before"],
+        "xp_after": progress["xp_after"],
+        "level_before": progress["level_before"],
+        "level_after": progress["level_after"],
+        "level_up": progress["level_up"],
     }

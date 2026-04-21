@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apollo.api import register_exception_handlers, router as apollo_router
-from apollo.persistence.models import ApolloSession, KGEntry, Message, ProblemAttempt
+from apollo.persistence.models import ApolloSession, KGEntry, Message, ProblemAttempt, StudentProgress
 from database.models import Base
 from database.session import get_db_session
 
@@ -26,6 +26,7 @@ async def engine_with_schema():
         KGEntry.__table__,
         Message.__table__,
         ProblemAttempt.__table__,
+        StudentProgress.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables))
