@@ -112,3 +112,12 @@ Index(
     unique=True,
     postgresql_where=(ApolloSession.status == "active"),
 )
+
+
+class StudentProgress(Base):
+    __tablename__ = "apollo_student_progress"
+
+    student_id = Column(Text, primary_key=True)
+    xp_total = Column(Integer, nullable=False, default=0)
+    level = Column(Integer, nullable=False, default=1)
+    last_level_up_at = Column(TIMESTAMP(timezone=True), nullable=True)
