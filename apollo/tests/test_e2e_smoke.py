@@ -140,6 +140,15 @@ def test_full_slice0a_happy_path(
     assert "procedure_scores" in done["coverage"]
     # narrated_trace moved to attempt.solver_trace in persistence; no longer in Done response
 
+    # Phase 2: gamification fields present and sensible on first attempt.
+    assert "xp_earned" in done
+    assert isinstance(done["xp_earned"], int)
+    assert done["xp_earned"] >= 0
+    assert done["xp_earned"] <= 200
+    assert done["level_before"] == 1
+    assert isinstance(done["level_after"], int)
+    assert done["level_up"] is False  # Can't level-up in one shot below 300 XP.
+
     r = client.get(f"/apollo/sessions/{session_id}")
     assert r.status_code == 200, r.text
     state = r.json()
