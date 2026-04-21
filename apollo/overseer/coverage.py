@@ -154,7 +154,7 @@ def _procedure_match_score(
         return 0.0
 
 
-_BINARY_TYPES = ("equation", "condition", "simplification", "definition", "variable_mapping")
+_BINARY_TYPES = ("equation", "condition", "simplification")
 
 
 def compute_coverage(
@@ -165,6 +165,9 @@ def compute_coverage(
 
     per_step:          {ref_step.id: "covered" | "missing"}
     procedure_scores:  {ref_step.id: float}  (only for procedure_step refs)
+
+    Reference entries of types not graded by the rubric (definition,
+    variable_mapping) are skipped — they don't appear in per_step.
     """
     per_step: Dict[str, str] = {}
     procedure_scores: Dict[str, float] = {}
@@ -186,7 +189,6 @@ def compute_coverage(
             kg_entries = kg.get(ref_type, [])
             covered = _binary_match(ref_content, kg_entries, entry_type=ref_type)
             per_step[ref_id] = "covered" if covered else "missing"
-        else:
-            per_step[ref_id] = "missing"
+        # Other ref types are ungraded — intentionally skipped.
 
     return {"per_step": per_step, "procedure_scores": procedure_scores}

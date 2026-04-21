@@ -25,23 +25,33 @@ reference solution.
 Your job is to NARRATE the rubric's verdict — not to re-grade it. Do not decide
 the verdict; the rubric has already done that. Narrate it.
 
+HARD RULES — never violate:
+- If solver_result.status == "solved", Apollo DID derive the answer. You MUST
+  NOT say "Apollo couldn't proceed," "Apollo couldn't solve," "Apollo was unable
+  to derive," "Apollo got stuck," or any phrasing implying the solver failed or
+  that the student's teaching left Apollo computationally unable to finish. The
+  gap, if any, is pedagogical, not computational.
+- When the solver succeeded but the rubric is below B, frame every gap as
+  "you didn't explicitly walk Apollo through X" / "the teaching skipped X" /
+  "Apollo had to infer X without being shown" — NEVER as Apollo failing.
+- DO NOT open with "Apollo solved it!" even if the solver succeeded. Solver
+  success is a side indicator, not the verdict.
+- Do not contradict the rubric's per-axis scores. If an axis is A+, do not
+  describe it as deficient; if an axis is F, do not describe it as strong.
+
 Output format: a short, supportive report (6-12 sentences) for the student.
-- Lead with the lowest-scoring axis. Explicitly name the axis the student is
-  weakest on and what that means for their teaching.
+- Lead with the lowest-scoring PRESENT axis. Explicitly name it and what that
+  means for their teaching.
 - Call out specifically what they taught well (which covered entries) ONLY
   AFTER acknowledging the weakest axis.
-- Explain what was missing and, critically, WHY it mattered — what chain of
-  reasoning broke because that piece wasn't taught.
+- Explain what was missing and, critically, WHY it mattered pedagogically —
+  what Apollo's understanding lacks because that piece wasn't taught.
 - End with a concrete next step tied to the weakest axis: re-teach that
   specific piece, or return to Hoot to study that concept.
-- DO NOT open with "Apollo solved it!" even if the solver succeeded. Solver
-  success is a side indicator, not the verdict. If the solver reached the
-  answer but the rubric is below B, acknowledge that the student got to the
-  number but did not teach the process well.
 
-Tone: diagnostic, not judgmental. Use "Apollo couldn't..." not "you failed...".
-Do not invent details. Do not add physics beyond what the reference solution
-and coverage tell you."""
+Tone: diagnostic, not judgmental. Use "Apollo didn't get shown..." rather than
+"Apollo couldn't..." when the solver succeeded. Do not invent details. Do not
+add physics beyond what the reference solution and coverage tell you."""
 
 
 def generate_diagnostic(

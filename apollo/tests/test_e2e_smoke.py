@@ -122,10 +122,11 @@ def test_full_slice0a_happy_path(
 
     # --- New Done response shape (Tasks 6-9) ---
     assert "rubric" in done
-    for axis in ("overall", "procedure", "justification", "simplification", "variables"):
+    for axis in ("overall", "procedure", "justification", "simplification"):
         assert axis in done["rubric"], f"missing axis {axis!r} in rubric"
         assert "score" in done["rubric"][axis]
         assert "letter" in done["rubric"][axis]
+    assert "variables" not in done["rubric"]
     assert done["rubric"]["overall"]["letter"] in (
         "A+", "A", "A-", "B+", "B", "B-", "C+", "C", "D", "F",
     )

@@ -25,7 +25,6 @@ def test_diagnostic_returns_string(mock_client_cls):
             "procedure": {"score": 100, "letter": "A+", "present": True},
             "justification": {"score": 100, "letter": "A+", "present": True},
             "simplification": {"score": 100, "letter": "A+", "present": True},
-            "variables": {"score": 100, "letter": "A+", "present": True},
         },
     )
     assert isinstance(text, str)
@@ -48,7 +47,6 @@ def test_diagnostic_prompt_includes_coverage_and_problem(mock_client_cls):
             "procedure": {"score": 100, "letter": "A+", "present": True},
             "justification": {"score": 100, "letter": "A+", "present": True},
             "simplification": {"score": 100, "letter": "A+", "present": True},
-            "variables": {"score": 100, "letter": "A+", "present": True},
         },
     )
     called = client.chat.completions.create.call_args
@@ -70,7 +68,6 @@ def test_generate_diagnostic_passes_rubric_into_llm(mock_client_cls):
         "procedure": {"score": 60, "letter": "C+", "present": True},
         "justification": {"score": 100, "letter": "A", "present": True},
         "simplification": {"score": 100, "letter": "A", "present": True},
-        "variables": {"score": 100, "letter": "A", "present": True},
     }
     generate_diagnostic(
         coverage={"per_step": {"p1": "missing"}, "procedure_scores": {"p1": 0.3}},
@@ -104,7 +101,6 @@ def test_generate_diagnostic_system_prompt_instructs_narrative_not_verdict(mock_
             "procedure": {"score": 0, "letter": "F", "present": False},
             "justification": {"score": 0, "letter": "F", "present": False},
             "simplification": {"score": 0, "letter": "F", "present": False},
-            "variables": {"score": 0, "letter": "F", "present": False},
         },
     )
     called = client.chat.completions.create.call_args
@@ -112,7 +108,7 @@ def test_generate_diagnostic_system_prompt_instructs_narrative_not_verdict(mock_
     sys_lower = system_msg["content"].lower()
     # The prompt must instruct narration aligned to the rubric, not grading.
     assert "rubric" in sys_lower
-    assert "lead with the lowest-scoring axis" in sys_lower or "open with the weakest" in sys_lower
+    assert "lead with the lowest-scoring" in sys_lower or "open with the weakest" in sys_lower
     assert "do not decide the verdict" in sys_lower or "do not re-grade" in sys_lower or "narrate" in sys_lower
 
 
@@ -132,7 +128,6 @@ def test_generate_diagnostic_softfails_to_placeholder_on_llm_exception(mock_clie
             "procedure": {"score": 0, "letter": "F", "present": False},
             "justification": {"score": 0, "letter": "F", "present": False},
             "simplification": {"score": 0, "letter": "F", "present": False},
-            "variables": {"score": 0, "letter": "F", "present": False},
         },
     )
     assert "unavailable" in result.lower()

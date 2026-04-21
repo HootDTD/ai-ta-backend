@@ -1,10 +1,9 @@
 """Rubric: pure-function weighted grade computation.
 
-Aggregates coverage into four axis scores:
-  Procedure       weight 0.50 (mean of procedure_scores * 100)
-  Justification   weight 0.25 (% of condition entries covered)
-  Simplification  weight 0.125 (% of simplification entries covered)
-  Variables       weight 0.125 (% of definition + variable_mapping covered)
+Aggregates coverage into three axis scores:
+  Procedure       weight 0.60  (mean of procedure_scores * 100)
+  Justification   weight 0.25  (% of condition entries covered)
+  Simplification  weight 0.15  (% of simplification entries covered)
 
 If an axis has zero reference entries (absent), its weight is redistributed
 proportionally across the remaining axes. If no axis is present, overall is 0.
@@ -27,10 +26,9 @@ def _finite_score(v: Any) -> float:
 
 
 AXIS_WEIGHTS: Dict[str, float] = {
-    "procedure": 0.50,
+    "procedure": 0.60,
     "justification": 0.25,
-    "simplification": 0.125,
-    "variables": 0.125,
+    "simplification": 0.15,
 }
 
 # (min_score_inclusive, letter) in descending order.
@@ -63,9 +61,7 @@ def _axis_for(entry_type: str) -> str | None:
         return "justification"
     if entry_type == "simplification":
         return "simplification"
-    if entry_type in ("definition", "variable_mapping"):
-        return "variables"
-    return None  # equation entries are not graded by the rubric; they feed the solver.
+    return None  # equation feeds the solver; definition/variable_mapping are not graded.
 
 
 def compute_rubric(
@@ -80,7 +76,6 @@ def compute_rubric(
         "procedure":      {"score": int, "letter": str, "present": bool},
         "justification":  {"score": int, "letter": str, "present": bool},
         "simplification": {"score": int, "letter": str, "present": bool},
-        "variables":      {"score": int, "letter": str, "present": bool},
       }
     """
     per_step = coverage.get("per_step", {})
@@ -105,7 +100,7 @@ def compute_rubric(
         axis_raw["procedure"] = None
 
     # Binary axes: % covered.
-    for axis in ("justification", "simplification", "variables"):
+    for axis in ("justification", "simplification"):
         refs = axis_refs[axis]
         if refs:
             covered = sum(1 for r in refs if per_step.get(r["id"]) == "covered")
@@ -136,5 +131,4 @@ def compute_rubric(
         "procedure": _axis_block("procedure"),
         "justification": _axis_block("justification"),
         "simplification": _axis_block("simplification"),
-        "variables": _axis_block("variables"),
     }

@@ -30,11 +30,10 @@ def test_compute_rubric_all_axes_full_coverage():
         {"id": "eq1", "entry_type": "equation", "content": {"label": "x"}, "step": 1, "depends_on": []},
         {"id": "c1", "entry_type": "condition", "content": {"label": "x"}, "step": 2, "depends_on": []},
         {"id": "s1", "entry_type": "simplification", "content": {"applies_when": "x"}, "step": 3, "depends_on": []},
-        {"id": "v1", "entry_type": "variable_mapping", "content": {"term": "x"}, "step": 4, "depends_on": []},
-        {"id": "p1", "entry_type": "procedure_step", "content": {"order": 1, "action": "x", "uses_equations": [], "purpose": "y"}, "step": 5, "depends_on": []},
+        {"id": "p1", "entry_type": "procedure_step", "content": {"order": 1, "action": "x", "uses_equations": [], "purpose": "y"}, "step": 4, "depends_on": []},
     ]
     coverage = {
-        "per_step": {"eq1": "covered", "c1": "covered", "s1": "covered", "v1": "covered", "p1": "covered"},
+        "per_step": {"eq1": "covered", "c1": "covered", "s1": "covered", "p1": "covered"},
         "procedure_scores": {"p1": 1.0},
     }
     rubric = compute_rubric(coverage, refs)
@@ -43,7 +42,7 @@ def test_compute_rubric_all_axes_full_coverage():
     assert rubric["procedure"]["score"] == 100
     assert rubric["justification"]["score"] == 100
     assert rubric["simplification"]["score"] == 100
-    assert rubric["variables"]["score"] == 100
+    assert "variables" not in rubric
 
 
 def test_compute_rubric_procedure_only_failure():
@@ -58,10 +57,10 @@ def test_compute_rubric_procedure_only_failure():
         "procedure_scores": {"p1": 0.0},
     }
     rubric = compute_rubric(coverage, refs)
-    # With simplification + variables axes absent, weights redistribute:
-    # Procedure = 0.50, Justification = 0.25; total = 0.75 -> rescale to 1.0.
-    # Proc 0.0 * (0.50/0.75) + Just 1.0 * (0.25/0.75) = 33.33...
-    assert rubric["overall"]["score"] == 33
+    # With simplification axis absent, weights redistribute:
+    # Procedure = 0.60, Justification = 0.25; total = 0.85 -> rescale to 1.0.
+    # Proc 0.0 * (0.60/0.85) + Just 1.0 * (0.25/0.85) = 29.41...
+    assert rubric["overall"]["score"] == 29
     assert rubric["procedure"]["score"] == 0
     assert rubric["justification"]["score"] == 100
 
@@ -94,10 +93,10 @@ def test_axis_weights_sum_to_one():
 
 
 def test_axis_weights_procedure_dominates():
-    assert AXIS_WEIGHTS["procedure"] == 0.50
+    assert AXIS_WEIGHTS["procedure"] == 0.60
     assert AXIS_WEIGHTS["justification"] == 0.25
-    assert AXIS_WEIGHTS["simplification"] == 0.125
-    assert AXIS_WEIGHTS["variables"] == 0.125
+    assert AXIS_WEIGHTS["simplification"] == 0.15
+    assert "variables" not in AXIS_WEIGHTS
 
 
 def test_letter_bands_structure():
@@ -106,25 +105,20 @@ def test_letter_bands_structure():
     assert LETTER_BANDS[-1] == (0, "F")
 
 
-def test_compute_rubric_variables_axis_counts_definitions():
-    # Both definition and variable_mapping entries map to the variables axis.
+def test_compute_rubric_ignores_definition_and_variable_mapping():
+    # Definition and variable_mapping are no longer graded axes.
     refs = [
         {"id": "d1", "entry_type": "definition", "content": {"concept": "pressure"}, "step": 1, "depends_on": []},
         {"id": "v1", "entry_type": "variable_mapping", "content": {"term": "rho"}, "step": 2, "depends_on": []},
     ]
-    coverage = {
-        "per_step": {"d1": "covered", "v1": "missing"},
-        "procedure_scores": {},
-    }
+    coverage = {"per_step": {}, "procedure_scores": {}}
     rubric = compute_rubric(coverage, refs)
-    # Only the variables axis is present (both entries map there).
-    # 1 of 2 covered = 50 -> D.
-    assert rubric["variables"]["score"] == 50
-    assert rubric["variables"]["present"] is True
+    # No axes present — overall degenerates to 0, and variables key is gone.
+    assert "variables" not in rubric
     assert rubric["procedure"]["present"] is False
     assert rubric["justification"]["present"] is False
     assert rubric["simplification"]["present"] is False
-    assert rubric["overall"]["score"] == 50
+    assert rubric["overall"]["score"] == 0
 
 
 def test_compute_rubric_coerces_nan_score_to_zero():

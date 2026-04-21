@@ -127,12 +127,13 @@ async def test_handle_done_returns_new_response_shape(mock_diag, db_with_session
     assert "narrated_trace" not in result
     assert "diagnostic_report" not in result
 
-    # Rubric shape — all five axes present with score + letter
+    # Rubric shape — four axes present with score + letter (variables was removed)
     rubric = result["rubric"]
-    for axis in ("overall", "procedure", "justification", "simplification", "variables"):
+    for axis in ("overall", "procedure", "justification", "simplification"):
         assert axis in rubric, f"rubric missing axis: {axis}"
         assert "score" in rubric[axis], f"rubric[{axis}] missing 'score'"
         assert "letter" in rubric[axis], f"rubric[{axis}] missing 'letter'"
+    assert "variables" not in rubric
 
     # Solver indicator
     si = result["solver_indicator"]
