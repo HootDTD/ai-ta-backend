@@ -23,6 +23,7 @@ from apollo.errors import (
 from apollo.handlers.chat import handle_chat
 from apollo.handlers.done import handle_done
 from apollo.handlers.lifecycle import handle_end, handle_get_session, handle_retry
+from apollo.handlers.progress import handle_get_progress
 from apollo.hoot_bridge.session_init import init_session_from_hoot
 from database.session import get_db_session
 
@@ -89,6 +90,14 @@ async def end(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     return await handle_end(db=db, session_id=session_id)
+
+
+@router.get("/progress/{student_id}")
+async def progress(
+    student_id: str,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return await handle_get_progress(db=db, student_id=student_id)
 
 
 # ----------------------------------------------------------------------
