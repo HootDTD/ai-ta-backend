@@ -35,10 +35,13 @@ class KGStore:
         self.db = db
 
     async def write_entries(
-        self, session_id: int, entries: List[Dict[str, Any]], *, source: str
+        self, *, attempt_id: int, entries: List[Dict[str, Any]], source: str
     ) -> int:
-        """Write KG entries. Raises SessionFrozenError if the session is frozen.
+        """Write KG entries under a ProblemAttempt.
+
+        Raises SessionFrozenError if the owning session is frozen.
         Returns the number of entries written."""
+        session_id = await self._session_id_for_attempt(attempt_id)
         await self._ensure_unfrozen(session_id)
         added = 0
         for e in entries:
@@ -47,6 +50,7 @@ class KGStore:
                 continue
             self.db.add(KGEntry(
                 session_id=session_id,
+                attempt_id=attempt_id,
                 type=t,
                 content=e.get("content", {}),
                 source=source,
@@ -55,10 +59,10 @@ class KGStore:
         await self.db.commit()
         return added
 
-    async def read_kg(self, session_id: int) -> Dict[str, List[Dict[str, Any]]]:
-        """Return the KG grouped by entry type."""
+    async def read_kg(self, *, attempt_id: int) -> Dict[str, List[Dict[str, Any]]]:
+        """Return the KG for a ProblemAttempt, grouped by entry type."""
         result = await self.db.execute(
-            select(KGEntry).where(KGEntry.session_id == session_id).order_by(KGEntry.id)
+            select(KGEntry).where(KGEntry.attempt_id == attempt_id).order_by(KGEntry.id)
         )
         rows = result.scalars().all()
         kg: Dict[str, List[Dict[str, Any]]] = {t: [] for t in _KG_TYPES}
@@ -71,9 +75,9 @@ class KGStore:
             kg[row.type].append(content)
         return kg
 
-    async def summarize_for_apollo(self, session_id: int) -> str:
+    async def summarize_for_apollo(self, *, attempt_id: int) -> str:
         """Bullet summary for Apollo's context — student-sourced labels only."""
-        kg = await self.read_kg(session_id)
+        kg = await self.read_kg(attempt_id=attempt_id)
         lines: List[str] = []
         for eq in kg["equation"]:
             lines.append(f"- equation ({eq.get('label', '(no label)')}): {eq.get('symbolic', '')}")
@@ -90,6 +94,16 @@ class KGStore:
                 f"- procedure step {ps.get('order', '?')}: {ps.get('action', '?')}"
             )
         return "\n".join(lines) if lines else _EMPTY_SUMMARY
+
+    async def _session_id_for_attempt(self, attempt_id: int) -> int:
+        from apollo.persistence.models import ProblemAttempt
+        row = await self.db.execute(
+            select(ProblemAttempt.session_id).where(ProblemAttempt.id == attempt_id)
+        )
+        sid = row.scalar_one_or_none()
+        if sid is None:
+            raise ValueError(f"attempt {attempt_id} not found")
+        return sid
 
     async def _ensure_unfrozen(self, session_id: int) -> None:
         result = await self.db.execute(
