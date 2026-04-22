@@ -43,6 +43,10 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class NextRequest(BaseModel):
+    difficulty: Literal["intro", "standard", "hard"]
+
+
 @router.post("/sessions/from_hoot")
 async def session_from_hoot(
     body: FromHootRequest,
@@ -87,6 +91,16 @@ async def retry(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     return await handle_retry(db=db, session_id=session_id)
+
+
+@router.post("/sessions/{session_id}/next")
+async def next_problem(
+    session_id: int,
+    body: NextRequest,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    from apollo.handlers.next import handle_next
+    return await handle_next(db=db, session_id=session_id, difficulty=body.difficulty)
 
 
 @router.post("/sessions/{session_id}/end")
