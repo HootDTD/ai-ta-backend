@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.errors import (
     ApolloError,
     FilterRejectedError,
+    InvalidPhaseError,
     MalformedEquationError,
     NoMatchingConceptError,
     ParserCouldNotExtractError,
@@ -180,10 +181,23 @@ async def session_frozen_handler(request: Request, exc: SessionFrozenError) -> J
     )
 
 
+async def invalid_phase_handler(request: Request, exc: InvalidPhaseError) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content=_err_payload(
+            "invalid_phase",
+            str(exc),
+            session_id=exc.session_id,
+            phase=exc.phase,
+        ),
+    )
+
+
 def register_exception_handlers(app) -> None:
     """Register all Apollo exception handlers onto the FastAPI app."""
     app.add_exception_handler(ParserCouldNotExtractError, parser_could_not_extract_handler)
     app.add_exception_handler(FilterRejectedError, filter_rejected_handler)
+    app.add_exception_handler(InvalidPhaseError, invalid_phase_handler)
     app.add_exception_handler(MalformedEquationError, malformed_equation_handler)
     app.add_exception_handler(NoMatchingConceptError, no_matching_concept_handler)
     app.add_exception_handler(PoolExhaustedError, pool_exhausted_handler)

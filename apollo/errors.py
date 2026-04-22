@@ -72,3 +72,14 @@ class SessionFrozenError(ApolloError):
     def __init__(self, session_id: str) -> None:
         self.session_id = session_id
         super().__init__(f"Session {session_id!r} is frozen; writes rejected")
+
+
+class InvalidPhaseError(ApolloError):
+    """Endpoint called while the session is in a phase that forbids it."""
+
+    def __init__(self, session_id: int, phase: str) -> None:
+        self.session_id = session_id
+        self.phase = phase
+        super().__init__(
+            f"cannot perform this action while session {session_id} is in phase {phase!r}"
+        )

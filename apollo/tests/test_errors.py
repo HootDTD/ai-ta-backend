@@ -3,6 +3,7 @@ import pytest
 from apollo.errors import (
     ApolloError,
     FilterRejectedError,
+    InvalidPhaseError,
     MalformedEquationError,
     NoMatchingConceptError,
     ParserCouldNotExtractError,
@@ -14,6 +15,7 @@ from apollo.errors import (
 def test_all_errors_subclass_apollo_error():
     for exc in (
         FilterRejectedError,
+        InvalidPhaseError,
         MalformedEquationError,
         NoMatchingConceptError,
         ParserCouldNotExtractError,
@@ -55,3 +57,10 @@ def test_pool_exhausted_carries_cluster_and_difficulty():
 def test_session_frozen_error_is_raisable():
     with pytest.raises(SessionFrozenError):
         raise SessionFrozenError(session_id="abc-123")
+
+
+def test_invalid_phase_carries_phase():
+    e = InvalidPhaseError(session_id=42, phase="INIT")
+    assert e.session_id == 42
+    assert e.phase == "INIT"
+    assert "INIT" in str(e)
