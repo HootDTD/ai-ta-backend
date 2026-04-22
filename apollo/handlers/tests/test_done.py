@@ -41,11 +41,13 @@ async def db_with_session_and_kg():
         )
         s.add(sess)
         await s.flush()
-        s.add(ProblemAttempt(
+        attempt = ProblemAttempt(
             session_id=sess.id,
             problem_id="bernoulli_horizontal_pipe_find_p2",
             difficulty="intro",
-        ))
+        )
+        s.add(attempt)
+        await s.flush()
         for entry in [
             {"type": "equation", "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "Continuity"}},
             {"type": "equation", "content": {
@@ -53,7 +55,13 @@ async def db_with_session_and_kg():
                 "label": "Bernoulli",
             }},
         ]:
-            s.add(KGEntry(session_id=sess.id, type=entry["type"], content=entry["content"], source="parser"))
+            s.add(KGEntry(
+                session_id=sess.id,
+                attempt_id=attempt.id,
+                type=entry["type"],
+                content=entry["content"],
+                source="parser",
+            ))
         await s.commit()
         await s.refresh(sess)
         yield s, sess.id
@@ -173,11 +181,13 @@ async def db_with_session_equations_only():
         )
         s.add(sess)
         await s.flush()
-        s.add(ProblemAttempt(
+        attempt = ProblemAttempt(
             session_id=sess.id,
             problem_id="bernoulli_horizontal_pipe_find_p2",
             difficulty="intro",
-        ))
+        )
+        s.add(attempt)
+        await s.flush()
         # Only equations — no procedure_step entries.
         for entry in [
             {"type": "equation", "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "Continuity"}},
@@ -186,7 +196,13 @@ async def db_with_session_equations_only():
                 "label": "Bernoulli",
             }},
         ]:
-            s.add(KGEntry(session_id=sess.id, type=entry["type"], content=entry["content"], source="parser"))
+            s.add(KGEntry(
+                session_id=sess.id,
+                attempt_id=attempt.id,
+                type=entry["type"],
+                content=entry["content"],
+                source="parser",
+            ))
         await s.commit()
         await s.refresh(sess)
         yield s, sess.id
@@ -332,3 +348,48 @@ async def test_handle_done_flags_level_up_when_threshold_crossed(
     assert result["xp_after"] >= 300  # If the handler exposes xp_after.
     assert result["level_after"] == 2
     assert result["level_up"] is True
+
+
+@pytest.mark.asyncio
+@patch("apollo.handlers.done.generate_diagnostic")
+async def test_done_grades_only_current_attempt_kg(mock_diag, db_with_session_and_kg):
+    mock_diag.return_value = "ok"
+    s, session_id = db_with_session_and_kg
+
+    # Seed a second, abandoned attempt under the same session with a
+    # distractor equation that must NOT surface in grading.
+    abandoned = ProblemAttempt(
+        session_id=session_id,
+        problem_id="bernoulli_horizontal_pipe_find_p2",
+        difficulty="intro",
+        result="abandoned",
+    )
+    s.add(abandoned)
+    await s.flush()
+    s.add(KGEntry(
+        session_id=session_id,
+        attempt_id=abandoned.id,
+        type="equation",
+        content={"symbolic": "nonsense - 0", "label": "distractor"},
+        source="parser",
+    ))
+    await s.commit()
+
+    result = await handle_done(db=s, session_id=session_id)
+    assert "rubric" in result
+
+    # Re-read KG under the current (non-abandoned) attempt and confirm no
+    # distractor leaked in. The current attempt is the FIRST attempt
+    # created by the fixture (pre-dates the abandoned one).
+    from apollo.knowledge_graph.store import KGStore
+    current = (
+        await s.execute(
+            select(ProblemAttempt)
+            .where(ProblemAttempt.session_id == session_id)
+            .where(ProblemAttempt.id != abandoned.id)
+            .order_by(ProblemAttempt.id.asc())
+        )
+    ).scalars().first()
+    assert current is not None
+    kg_for_grading = await KGStore(s).read_kg(attempt_id=current.id)
+    assert all(e.get("label") != "distractor" for e in kg_for_grading["equation"])

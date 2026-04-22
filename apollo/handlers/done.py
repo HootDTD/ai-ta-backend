@@ -46,9 +46,22 @@ async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
     sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
     problem = _find_problem(sess.concept_cluster_id, sess.current_problem_id)
 
+    attempt = (
+        await db.execute(
+            select(ProblemAttempt)
+            .where(ProblemAttempt.session_id == session_id)
+            .where(ProblemAttempt.problem_id == problem.id)
+            .order_by(ProblemAttempt.id.desc())
+        )
+    ).scalars().first()
+    if attempt is None:
+        raise RuntimeError(
+            f"no ProblemAttempt for session {session_id} / problem {problem.id}"
+        )
+
     await store.freeze(session_id)
 
-    kg = await store.read_kg(session_id)
+    kg = await store.read_kg(attempt_id=attempt.id)
     sess.phase = SessionPhase.SOLVING.value
     await db.commit()
 
@@ -87,15 +100,6 @@ async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
         solver_indicator["value"] = value_str
     if solver_result.get("missing_variables"):
         solver_indicator["missing"] = solver_result["missing_variables"]
-
-    attempt = (
-        await db.execute(
-            select(ProblemAttempt)
-            .where(ProblemAttempt.session_id == session_id)
-            .where(ProblemAttempt.problem_id == problem.id)
-            .order_by(ProblemAttempt.id.desc())
-        )
-    ).scalars().first()
 
     # ── Phase 2: award XP based on the rubric score + difficulty.
     #
