@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.knowledge_graph.store import KGStore
 from apollo.overseer.problem_selector import list_problems_for_cluster
-from apollo.persistence.models import ApolloSession, Message, SessionPhase, SessionStatus
+from apollo.persistence.models import ApolloSession, Message, ProblemAttempt, SessionPhase, SessionStatus
 
 
 async def handle_retry(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
@@ -29,12 +29,27 @@ async def handle_end(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
 
 async def handle_get_session(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
     sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
-    store = KGStore(db)
-    kg = await store.read_kg(session_id)
 
-    msgs = (await db.execute(
-        select(Message).where(Message.session_id == session_id).order_by(Message.turn_index)
-    )).scalars().all()
+    current_attempt_id: int | None = None
+    if sess.current_problem_id:
+        current_attempt_id = (await db.execute(
+            select(ProblemAttempt.id)
+            .where(ProblemAttempt.session_id == session_id)
+            .where(ProblemAttempt.problem_id == sess.current_problem_id)
+            .order_by(ProblemAttempt.id.desc())
+        )).scalars().first()
+
+    store = KGStore(db)
+    if current_attempt_id is not None:
+        kg = await store.read_kg(attempt_id=current_attempt_id)
+        msgs = (await db.execute(
+            select(Message)
+            .where(Message.attempt_id == current_attempt_id)
+            .order_by(Message.turn_index)
+        )).scalars().all()
+    else:
+        kg = {t: [] for t in ("equation", "definition", "condition", "simplification", "variable_mapping", "procedure_step")}
+        msgs = []
 
     problem = None
     if sess.current_problem_id:

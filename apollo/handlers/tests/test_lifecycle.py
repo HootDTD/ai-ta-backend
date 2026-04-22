@@ -66,10 +66,18 @@ async def test_get_session_returns_phase_kg_messages_and_current_problem(session
     from apollo.persistence.models import KGEntry, Message
 
     db, session_id = await session_in_phase(SessionPhase.TEACHING)
-    db.add(KGEntry(session_id=session_id, type="equation",
+    attempt = ProblemAttempt(
+        session_id=session_id,
+        problem_id="bernoulli_horizontal_pipe_find_p2",
+        difficulty="standard",
+    )
+    db.add(attempt)
+    await db.flush()
+
+    db.add(KGEntry(session_id=session_id, attempt_id=attempt.id, type="equation",
                    content={"symbolic": "A1*v1 - A2*v2", "label": "Continuity"},
                    source="parser"))
-    db.add(Message(session_id=session_id, role="student", content="hi", turn_index=0))
+    db.add(Message(session_id=session_id, attempt_id=attempt.id, role="student", content="hi", turn_index=0))
     await db.commit()
 
     state = await handle_get_session(db=db, session_id=session_id)
@@ -79,3 +87,33 @@ async def test_get_session_returns_phase_kg_messages_and_current_problem(session
     assert len(state["kg"]["equation"]) == 1
     assert len(state["messages"]) == 1
     assert state["problem"]["id"] == "bernoulli_horizontal_pipe_find_p2"
+
+
+@pytest.mark.asyncio
+async def test_get_session_returns_only_current_attempt_kg_and_messages(session_in_phase):
+    from apollo.handlers.lifecycle import handle_get_session
+
+    db, session_id = await session_in_phase(SessionPhase.TEACHING)
+    # Switch current_problem_id to p2 so we can seed two attempts and verify isolation.
+    sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+    sess.current_problem_id = "p2"
+    await db.flush()
+
+    a = ProblemAttempt(session_id=session_id, problem_id="p1", difficulty="intro", result="abandoned")
+    b = ProblemAttempt(session_id=session_id, problem_id="p2", difficulty="standard")
+    db.add_all([a, b])
+    await db.flush()
+
+    db.add_all([
+        KGEntry(session_id=session_id, attempt_id=a.id, type="equation",
+                content={"symbolic": "x - 1", "label": "old"}, source="parser"),
+        KGEntry(session_id=session_id, attempt_id=b.id, type="equation",
+                content={"symbolic": "y - 2", "label": "new"}, source="parser"),
+        Message(session_id=session_id, attempt_id=a.id, role="student", content="old", turn_index=0),
+        Message(session_id=session_id, attempt_id=b.id, role="student", content="new", turn_index=0),
+    ])
+    await db.commit()
+
+    state = await handle_get_session(db=db, session_id=session_id)
+    assert [e.get("label") for e in state["kg"]["equation"]] == ["new"]
+    assert [m["content"] for m in state["messages"]] == ["new"]
