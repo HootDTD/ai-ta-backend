@@ -33,7 +33,16 @@ async def db_with_session():
         s.add(sess)
         await s.commit()
         await s.refresh(sess)
-        yield s, sess.id
+        attempt = ProblemAttempt(
+            session_id=sess.id,
+            problem_id="bernoulli_horizontal_pipe_find_p2",
+            difficulty="intro",
+            result=None,
+        )
+        s.add(attempt)
+        await s.commit()
+        await s.refresh(attempt)
+        yield s, sess.id, attempt.id
     await engine.dispose()
 
 
@@ -41,7 +50,7 @@ async def db_with_session():
 @patch("apollo.handlers.chat.draft_reply")
 @patch("apollo.handlers.chat.parse_utterance")
 async def test_chat_happy_path(mock_parse, mock_draft, db_with_session):
-    db, session_id = db_with_session
+    db, session_id, _attempt_id = db_with_session
     mock_parse.return_value = [
         {"type": "equation", "content": {"symbolic": "A1*v1 - A2*v2", "label": "Continuity"}},
     ]
@@ -62,7 +71,7 @@ async def test_chat_happy_path(mock_parse, mock_draft, db_with_session):
 @pytest.mark.asyncio
 @patch("apollo.handlers.chat.parse_utterance")
 async def test_chat_propagates_parser_error(mock_parse, db_with_session):
-    db, session_id = db_with_session
+    db, session_id, _attempt_id = db_with_session
     mock_parse.side_effect = ParserCouldNotExtractError(utterance="garbled teaching attempt")
 
     with pytest.raises(ParserCouldNotExtractError):
@@ -73,7 +82,7 @@ async def test_chat_propagates_parser_error(mock_parse, db_with_session):
 @patch("apollo.handlers.chat.draft_reply")
 @patch("apollo.handlers.chat.parse_utterance")
 async def test_chat_propagates_filter_rejection(mock_parse, mock_draft, db_with_session):
-    db, session_id = db_with_session
+    db, session_id, _attempt_id = db_with_session
     mock_parse.return_value = []
     mock_draft.return_value = "That's the continuity equation at work."
 
@@ -85,7 +94,7 @@ async def test_chat_propagates_filter_rejection(mock_parse, mock_draft, db_with_
 @patch("apollo.handlers.chat.draft_reply")
 @patch("apollo.handlers.chat.parse_utterance")
 async def test_chat_persists_messages(mock_parse, mock_draft, db_with_session):
-    db, session_id = db_with_session
+    db, session_id, _attempt_id = db_with_session
     mock_parse.return_value = []
     mock_draft.return_value = "tell me more about that"
 
@@ -96,3 +105,37 @@ async def test_chat_persists_messages(mock_parse, mock_draft, db_with_session):
     assert [m.role for m in msgs] == ["student", "apollo"]
     assert msgs[0].content == "ok"
     assert msgs[1].content == "tell me more about that"
+
+
+@pytest.mark.asyncio
+@patch("apollo.handlers.chat.draft_reply")
+@patch("apollo.handlers.chat.parse_utterance")
+async def test_chat_writes_kg_entries_tagged_with_attempt_id(mock_parse, mock_draft, db_with_session):
+    db, session_id, attempt_id = db_with_session
+    mock_parse.return_value = [
+        {"type": "equation", "content": {"symbolic": "x - 1", "label": "test"}}
+    ]
+    mock_draft.return_value = "ok tell me more"
+
+    await handle_chat(db=db, session_id=session_id, message="x equals 1")
+
+    from sqlalchemy import select
+    rows = (await db.execute(select(KGEntry).where(KGEntry.attempt_id == attempt_id))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].type == "equation"
+
+
+@pytest.mark.asyncio
+@patch("apollo.handlers.chat.draft_reply")
+@patch("apollo.handlers.chat.parse_utterance")
+async def test_chat_messages_tagged_with_attempt_id(mock_parse, mock_draft, db_with_session):
+    db, session_id, attempt_id = db_with_session
+    mock_parse.return_value = []
+    mock_draft.return_value = "uh huh"
+
+    await handle_chat(db=db, session_id=session_id, message="hello")
+
+    from sqlalchemy import select
+    rows = (await db.execute(select(Message).where(Message.session_id == session_id).order_by(Message.turn_index))).scalars().all()
+    assert len(rows) == 2
+    assert all(r.attempt_id == attempt_id for r in rows)

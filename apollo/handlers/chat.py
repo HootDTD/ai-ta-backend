@@ -10,7 +10,7 @@ from apollo.agent.apollo_llm import draft_reply
 from apollo.agent.output_filter import validate_or_raise
 from apollo.knowledge_graph.store import KGStore
 from apollo.parser.parser_llm import parse_utterance
-from apollo.persistence.models import Message
+from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
 
 
 async def _next_turn_index(db: AsyncSession, session_id: int) -> int:
@@ -41,25 +41,49 @@ async def _load_history(db: AsyncSession, session_id: int) -> list[Dict[str, str
 async def handle_chat(*, db: AsyncSession, session_id: int, message: str) -> Dict[str, Any]:
     store = KGStore(db)
 
+    sess = (await db.execute(
+        select(ApolloSession).where(ApolloSession.id == session_id)
+    )).scalar_one()
+    current_attempt = (await db.execute(
+        select(ProblemAttempt)
+        .where(ProblemAttempt.session_id == session_id)
+        .where(ProblemAttempt.problem_id == sess.current_problem_id)
+        .order_by(ProblemAttempt.id.desc())
+    )).scalars().first()
+    if current_attempt is None:
+        raise RuntimeError(f"no current ProblemAttempt for session {session_id}")
+
     entries = parse_utterance(message)
-    added = await store.write_entries(session_id, entries, source="parser")
+    added = await store.write_entries(attempt_id=current_attempt.id, entries=entries, source="parser")
 
     history = await _load_history(db, session_id)
 
     next_idx = await _next_turn_index(db, session_id)
-    db.add(Message(session_id=session_id, role="student", content=message, turn_index=next_idx))
+    db.add(Message(
+        session_id=session_id,
+        attempt_id=current_attempt.id,
+        role="student",
+        content=message,
+        turn_index=next_idx,
+    ))
     await db.commit()
 
     history = history + [{"role": "user", "content": message}]
 
-    kg_summary = await store.summarize_for_apollo(session_id)
+    kg_summary = await store.summarize_for_apollo(attempt_id=current_attempt.id)
     draft = draft_reply(history=history, kg_summary=kg_summary)
 
-    kg = await store.read_kg(session_id)
+    kg = await store.read_kg(attempt_id=current_attempt.id)
     validated = validate_or_raise(draft, kg, history)
 
     next_idx = await _next_turn_index(db, session_id)
-    db.add(Message(session_id=session_id, role="apollo", content=validated, turn_index=next_idx))
+    db.add(Message(
+        session_id=session_id,
+        attempt_id=current_attempt.id,
+        role="apollo",
+        content=validated,
+        turn_index=next_idx,
+    ))
     await db.commit()
 
     return {
