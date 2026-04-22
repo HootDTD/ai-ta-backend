@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sympy import latex
 
 from apollo.errors import SessionFrozenError
-from apollo.persistence.models import ApolloSession, KGEntry
+from apollo.persistence.models import ApolloSession, KGEntry, ProblemAttempt
 from apollo.solver.sympy_exec import _tidy_floats, parse_zero_form
 
 _KG_TYPES = ("equation", "definition", "condition", "simplification", "variable_mapping", "procedure_step")
@@ -96,7 +96,6 @@ class KGStore:
         return "\n".join(lines) if lines else _EMPTY_SUMMARY
 
     async def _session_id_for_attempt(self, attempt_id: int) -> int:
-        from apollo.persistence.models import ProblemAttempt
         row = await self.db.execute(
             select(ProblemAttempt.session_id).where(ProblemAttempt.id == attempt_id)
         )
