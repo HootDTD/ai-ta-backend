@@ -103,6 +103,15 @@ async def next_problem(
     return await handle_next(db=db, session_id=session_id, difficulty=body.difficulty)
 
 
+@router.post("/sessions/{session_id}/restart_problem")
+async def restart_problem(
+    session_id: int,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    from apollo.handlers.restart_problem import handle_restart_problem
+    return await handle_restart_problem(db=db, session_id=session_id)
+
+
 @router.post("/sessions/{session_id}/end")
 async def end(
     session_id: int,
