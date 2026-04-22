@@ -139,3 +139,22 @@ async def test_excludes_current_attempt_id(db):
         problem_id="p1",
         exclude_attempt_id=current.id,
     ) is False
+
+
+@pytest.mark.asyncio
+async def test_has_prior_graded_attempt_excludes_abandoned(db):
+    # Previous attempt was abandoned (student switched problems mid-teach).
+    sess_a = await _mk_session(db, "stu-1", status=SessionStatus.ended.value)
+    await _mk_attempt(db, session_id=sess_a.id, problem_id="p1", result="abandoned")
+    # Current attempt on same problem, not yet graded.
+    sess_b = await _mk_session(db, "stu-1")
+    current = await _mk_attempt(db, session_id=sess_b.id, problem_id="p1", result=None)
+    await db.commit()
+
+    result = await has_prior_graded_attempt(
+        db=db,
+        student_id="stu-1",
+        problem_id="p1",
+        exclude_attempt_id=current.id,
+    )
+    assert result is False, "abandoned attempts must not count as prior grades"

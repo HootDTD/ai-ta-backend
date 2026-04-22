@@ -3,10 +3,12 @@
 A 're-attempt' for XP purposes is any Done event on a problem the student
 has previously been graded on — across all their sessions. We detect it
 by looking for any other ProblemAttempt row (joined through ApolloSession
-to the student_id) for the same problem_id that already has a non-null
-`result`. The current attempt id is excluded so a within-session retry —
-which overwrites the same row after Phase 1's /retry endpoint — is
-handled upstream by checking the attempt's own `result` before this call."""
+to the student_id) for the same problem_id whose `result` is a graded
+terminal value (`solved`, `stuck`, `skipped`, `returned_to_hoot`) —
+`abandoned` is excluded because it represents a mid-problem switch, not a
+completed grading. The current attempt id is excluded so a within-session
+retry — which overwrites the same row after Phase 1's /retry endpoint —
+is handled upstream by checking the attempt's own `result` before this call."""
 from __future__ import annotations
 
 from sqlalchemy import func, select
@@ -30,7 +32,9 @@ async def has_prior_graded_attempt(
         .where(
             ApolloSession.student_id == student_id,
             ProblemAttempt.problem_id == problem_id,
-            ProblemAttempt.result.is_not(None),
+            ProblemAttempt.result.in_(
+                ("solved", "stuck", "skipped", "returned_to_hoot")
+            ),
             ProblemAttempt.id != exclude_attempt_id,
         )
     )
