@@ -54,3 +54,19 @@ def test_problem_attempt_defaults():
     pa = ProblemAttempt(session_id=1, problem_id="bernoulli_horizontal_pipe_find_p2", difficulty="intro")
     assert pa.result is None  # unset until solve attempt
     assert pa.problem_id == "bernoulli_horizontal_pipe_find_p2"
+
+
+def test_kg_entry_has_attempt_id_column():
+    assert "attempt_id" in KGEntry.__table__.columns
+    col = KGEntry.__table__.columns["attempt_id"]
+    assert col.nullable is True
+    fk = next(iter(col.foreign_keys))
+    assert fk.column.table.name == "apollo_problem_attempts"
+
+
+def test_message_has_attempt_id_column():
+    assert "attempt_id" in Message.__table__.columns
+    col = Message.__table__.columns["attempt_id"]
+    assert col.nullable is True
+    fk = next(iter(col.foreign_keys))
+    assert fk.column.table.name == "apollo_problem_attempts"

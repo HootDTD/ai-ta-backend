@@ -66,6 +66,12 @@ class KGEntry(Base):
 
     id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
     session_id = Column(BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    attempt_id = Column(
+        BigInteger,
+        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     type = Column(Text, nullable=False)
     content = Column(_JSONType, nullable=False)
     source = Column(Text, nullable=False, default="parser")
@@ -83,6 +89,12 @@ class Message(Base):
 
     id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
     session_id = Column(BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    attempt_id = Column(
+        BigInteger,
+        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     role = Column(Text, nullable=False)
     content = Column(Text, nullable=False)
     turn_index = Column(Integer, nullable=False)
