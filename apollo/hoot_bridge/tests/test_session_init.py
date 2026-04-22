@@ -36,6 +36,7 @@ async def test_init_session_creates_session_and_first_problem(mock_infer, db_ses
         db=db_session,
         student_id="stu-1",
         hoot_transcript="Student asked about Bernoulli in horizontal pipes.",
+        difficulty="intro",
     )
 
     assert result["session_id"] > 0
@@ -61,12 +62,14 @@ async def test_init_session_ends_stale_active_session_for_same_student(mock_infe
         db=db_session,
         student_id="stu-1",
         hoot_transcript="Student asked about Bernoulli in horizontal pipes.",
+        difficulty="intro",
     )
 
     second = await init_session_from_hoot(
         db=db_session,
         student_id="stu-1",
         hoot_transcript="Student asked about Bernoulli again after a break.",
+        difficulty="intro",
     )
 
     assert second["session_id"] != first["session_id"]
@@ -91,4 +94,57 @@ async def test_init_session_raises_on_no_match(mock_infer, db_session):
             db=db_session,
             student_id="stu-1",
             hoot_transcript="How do I bake a cake?",
+            difficulty="intro",
         )
+
+
+@pytest.mark.asyncio
+@patch("apollo.hoot_bridge.session_init.infer_concept_cluster")
+async def test_init_session_honors_passed_difficulty(mock_infer, db_session):
+    mock_infer.return_value = "fluid_mechanics"
+    result = await init_session_from_hoot(
+        db=db_session,
+        student_id="stu-1",
+        hoot_transcript="teach me bernoulli",
+        difficulty="standard",
+    )
+    from sqlalchemy import select
+    attempt = (
+        await db_session.execute(
+            select(ProblemAttempt).where(ProblemAttempt.session_id == result["session_id"])
+        )
+    ).scalar_one()
+    assert attempt.difficulty == "standard"
+
+
+@pytest.mark.asyncio
+@patch("apollo.hoot_bridge.session_init.infer_concept_cluster")
+async def test_init_session_rejects_unknown_difficulty(mock_infer, db_session):
+    mock_infer.return_value = "fluid_mechanics"
+    with pytest.raises(ValueError):
+        await init_session_from_hoot(
+            db=db_session,
+            student_id="stu-1",
+            hoot_transcript="teach me bernoulli",
+            difficulty="impossible",
+        )
+
+
+@pytest.mark.asyncio
+@patch("apollo.hoot_bridge.session_init.infer_concept_cluster")
+async def test_init_session_returns_attempt_id(mock_infer, db_session):
+    mock_infer.return_value = "fluid_mechanics"
+    result = await init_session_from_hoot(
+        db=db_session,
+        student_id="stu-1",
+        hoot_transcript="teach me bernoulli",
+        difficulty="intro",
+    )
+    assert "attempt_id" in result
+    from sqlalchemy import select
+    attempt = (
+        await db_session.execute(
+            select(ProblemAttempt).where(ProblemAttempt.session_id == result["session_id"])
+        )
+    ).scalar_one()
+    assert result["attempt_id"] == attempt.id

@@ -6,6 +6,8 @@ structured JSON response — NO FALLBACK behavior, just visible failure.
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -34,6 +36,7 @@ router = APIRouter(prefix="/apollo", tags=["apollo"])
 class FromHootRequest(BaseModel):
     student_id: str
     hoot_transcript: str
+    difficulty: Literal["intro", "standard", "hard"]
 
 
 class ChatRequest(BaseModel):
@@ -49,6 +52,7 @@ async def session_from_hoot(
         db=db,
         student_id=body.student_id,
         hoot_transcript=body.hoot_transcript,
+        difficulty=body.difficulty,
     )
 
 

@@ -21,7 +21,7 @@ from apollo.overseer.problem_selector import select_problem
 from apollo.persistence.models import ApolloSession, ProblemAttempt, SessionPhase, SessionStatus
 
 _AVAILABLE_CLUSTERS = ["fluid_mechanics"]
-_DEFAULT_FIRST_DIFFICULTY = "intro"
+_ALLOWED_DIFFICULTIES = {"intro", "standard", "hard"}
 
 
 async def init_session_from_hoot(
@@ -29,7 +29,14 @@ async def init_session_from_hoot(
     db: AsyncSession,
     student_id: str,
     hoot_transcript: str,
+    difficulty: str,
 ) -> Dict[str, Any]:
+    if difficulty not in _ALLOWED_DIFFICULTIES:
+        raise ValueError(
+            f"unknown difficulty {difficulty!r}; "
+            f"expected one of {sorted(_ALLOWED_DIFFICULTIES)}"
+        )
+
     cluster_id = infer_concept_cluster(
         transcript=hoot_transcript,
         available_clusters=_AVAILABLE_CLUSTERS,
@@ -37,7 +44,7 @@ async def init_session_from_hoot(
 
     problem = select_problem(
         cluster_id=cluster_id,
-        difficulty=_DEFAULT_FIRST_DIFFICULTY,
+        difficulty=difficulty,
         attempted_ids=[],
     )
 
@@ -64,13 +71,16 @@ async def init_session_from_hoot(
     attempt = ProblemAttempt(
         session_id=session.id,
         problem_id=problem.id,
-        difficulty=_DEFAULT_FIRST_DIFFICULTY,
+        difficulty=difficulty,
     )
     db.add(attempt)
+    await db.flush()
+    attempt_id = attempt.id
     await db.commit()
 
     return {
         "session_id": session.id,
+        "attempt_id": attempt_id,
         "problem": {
             "id": problem.id,
             "concept_id": problem.concept_id,
