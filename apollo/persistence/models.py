@@ -1,8 +1,12 @@
-"""SQLAlchemy models for Apollo v2 Slice 0 persistence.
+"""SQLAlchemy models for Apollo persistence (Postgres only).
 
-Adds four tables to Supabase Postgres: apollo_sessions, apollo_kg_entries,
-apollo_messages, apollo_problem_attempts. Shares the Base declarative base
-from database/models.py.
+V3: KG entries moved to Neo4j (apollo.persistence.neo4j_client +
+apollo.knowledge_graph.store). Postgres now owns only:
+  apollo_sessions, apollo_messages, apollo_problem_attempts,
+  apollo_student_progress.
+
+The legacy `apollo_kg_entries` table is dropped — see migration notes in
+docs. No production data, so no backfill.
 """
 from __future__ import annotations
 
@@ -56,32 +60,8 @@ class ApolloSession(Base):
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     last_touched_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
-    kg_entries = relationship("KGEntry", back_populates="session", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="session", cascade="all, delete-orphan")
     problem_attempts = relationship("ProblemAttempt", back_populates="session", cascade="all, delete-orphan")
-
-
-class KGEntry(Base):
-    __tablename__ = "apollo_kg_entries"
-
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
-    session_id = Column(BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
-    attempt_id = Column(
-        BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
-        nullable=True,
-        index=True,
-    )
-    type = Column(Text, nullable=False)
-    content = Column(_JSONType, nullable=False)
-    source = Column(Text, nullable=False, default="parser")
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-    session = relationship("ApolloSession", back_populates="kg_entries")
-
-    def __init__(self, **kwargs):
-        kwargs.setdefault("source", "parser")
-        super().__init__(**kwargs)
 
 
 class Message(Base):

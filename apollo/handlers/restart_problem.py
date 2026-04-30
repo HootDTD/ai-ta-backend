@@ -3,6 +3,8 @@
 Same ProblemAttempt row, same problem, same difficulty. Caller gets a clean
 conversation and a clean KG on the same problem. Blocked during SOLVING.
 INIT / BETWEEN raise InvalidPhaseError.
+
+V3: KG wipe is now a Neo4j subgraph DETACH DELETE via KGStore.delete_subgraph.
 """
 from __future__ import annotations
 
@@ -12,14 +14,15 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import InvalidPhaseError, SessionFrozenError
+from apollo.knowledge_graph.store import KGStore
 from apollo.persistence.models import (
     ApolloSession,
-    KGEntry,
     Message,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
 )
+from apollo.persistence.neo4j_client import Neo4jClient
 
 
 _ALLOWED_PHASES = {
@@ -33,6 +36,7 @@ _FROZEN_PHASES = {SessionPhase.SOLVING.value}
 async def handle_restart_problem(
     *,
     db: AsyncSession,
+    neo: Neo4jClient,
     session_id: int,
 ) -> Dict[str, Any]:
     # Row lock on Postgres to serialize concurrent restart + chat writes.
@@ -57,7 +61,8 @@ async def handle_restart_problem(
     if current_attempt is None:
         raise RuntimeError(f"no current ProblemAttempt for session {session_id}")
 
-    await db.execute(delete(KGEntry).where(KGEntry.attempt_id == current_attempt.id))
+    store = KGStore(db, neo)
+    await store.delete_subgraph(attempt_id=current_attempt.id)
     await db.execute(delete(Message).where(Message.attempt_id == current_attempt.id))
 
     sess.phase = SessionPhase.TEACHING.value

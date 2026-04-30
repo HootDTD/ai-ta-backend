@@ -28,7 +28,31 @@ from apollo.handlers.done import handle_done
 from apollo.handlers.lifecycle import handle_end, handle_get_session, handle_retry
 from apollo.handlers.progress import handle_get_progress
 from apollo.hoot_bridge.session_init import init_session_from_hoot
+from apollo.persistence.neo4j_client import Neo4jClient
 from database.session import get_db_session
+
+
+# ----------------------------------------------------------------------
+# Neo4j client — process singleton, lazily constructed.
+# Used by handlers that need to read/write the per-attempt KG subgraph.
+# ----------------------------------------------------------------------
+
+_neo4j_client_singleton: Neo4jClient | None = None
+
+
+def get_neo4j_client() -> Neo4jClient:
+    global _neo4j_client_singleton
+    if _neo4j_client_singleton is None:
+        _neo4j_client_singleton = Neo4jClient.from_env()
+    return _neo4j_client_singleton
+
+
+async def close_neo4j_client() -> None:
+    """Close the process-wide Neo4j driver. Wire to FastAPI's shutdown event."""
+    global _neo4j_client_singleton
+    if _neo4j_client_singleton is not None:
+        await _neo4j_client_singleton.close()
+        _neo4j_client_singleton = None
 
 router = APIRouter(prefix="/apollo", tags=["apollo"])
 
@@ -64,8 +88,9 @@ async def session_from_hoot(
 async def get_session(
     session_id: int,
     db: AsyncSession = Depends(get_db_session),
+    neo: Neo4jClient = Depends(get_neo4j_client),
 ) -> dict:
-    return await handle_get_session(db=db, session_id=session_id)
+    return await handle_get_session(db=db, neo=neo, session_id=session_id)
 
 
 @router.post("/sessions/{session_id}/chat")
@@ -73,16 +98,18 @@ async def chat(
     session_id: int,
     body: ChatRequest,
     db: AsyncSession = Depends(get_db_session),
+    neo: Neo4jClient = Depends(get_neo4j_client),
 ) -> dict:
-    return await handle_chat(db=db, session_id=session_id, message=body.message)
+    return await handle_chat(db=db, neo=neo, session_id=session_id, message=body.message)
 
 
 @router.post("/sessions/{session_id}/done")
 async def done(
     session_id: int,
     db: AsyncSession = Depends(get_db_session),
+    neo: Neo4jClient = Depends(get_neo4j_client),
 ) -> dict:
-    return await handle_done(db=db, session_id=session_id)
+    return await handle_done(db=db, neo=neo, session_id=session_id)
 
 
 @router.post("/sessions/{session_id}/retry")
@@ -107,17 +134,19 @@ async def next_problem(
 async def restart_problem(
     session_id: int,
     db: AsyncSession = Depends(get_db_session),
+    neo: Neo4jClient = Depends(get_neo4j_client),
 ) -> dict:
     from apollo.handlers.restart_problem import handle_restart_problem
-    return await handle_restart_problem(db=db, session_id=session_id)
+    return await handle_restart_problem(db=db, neo=neo, session_id=session_id)
 
 
 @router.post("/sessions/{session_id}/end")
 async def end(
     session_id: int,
     db: AsyncSession = Depends(get_db_session),
+    neo: Neo4jClient = Depends(get_neo4j_client),
 ) -> dict:
-    return await handle_end(db=db, session_id=session_id)
+    return await handle_end(db=db, neo=neo, session_id=session_id)
 
 
 @router.get("/progress/{student_id}")

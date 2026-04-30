@@ -221,6 +221,36 @@ def get_supabase_db_url() -> str:
     return os.getenv("SUPABASE_DB_URL", "")
 
 
+# ---------------------------------------------------------------------------
+# Neo4j (ApolloV3 KG layer)
+# ---------------------------------------------------------------------------
+
+def get_neo4j_uri() -> str:
+    return os.getenv("NEO4J_URI", "")
+
+
+def get_neo4j_username() -> str:
+    return os.getenv("NEO4J_USERNAME", "")
+
+
+def get_neo4j_password() -> str:
+    return os.getenv("NEO4J_PASSWORD", "")
+
+
+def get_neo4j_database() -> str:
+    return os.getenv("NEO4J_DATABASE", "")
+
+
+def neo4j_configured() -> bool:
+    """True when all four NEO4J_* vars are present (used by health checks/tests)."""
+    return all([
+        get_neo4j_uri(),
+        get_neo4j_username(),
+        get_neo4j_password(),
+        get_neo4j_database(),
+    ])
+
+
 def rerankers_enabled() -> bool:
     """Return True when the optional reranking step is active."""
     return os.getenv("RERANKERS_ENABLED", "false").lower() not in {
@@ -247,4 +277,10 @@ __all__ = [
     "get_supabase_db_url",
     "rerankers_enabled",
     "get_reranker_model",
+    # Neo4j (ApolloV3)
+    "get_neo4j_uri",
+    "get_neo4j_username",
+    "get_neo4j_password",
+    "get_neo4j_database",
+    "neo4j_configured",
 ]

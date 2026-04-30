@@ -1,28 +1,73 @@
-"""Knowledge Graph store — CRUD, summarization, freeze enforcement.
+"""Knowledge Graph store — Neo4j-backed CRUD + freeze enforcement.
 
-One store instance per AsyncSession. All writes validate schema via the
-KGEntry ORM model plus the per-type content shapes defined in
-apollo/schemas/problem.py.
+V3 contract:
+- Per-attempt subgraphs in Neo4j, scoped by `attempt_id` property + secondary
+  `:_KGNode` label.
+- All reads/writes go through `KGGraph` (apollo.ontology.graph), the single
+  source-of-truth shape.
+- Postgres still owns session phase (freeze/unfreeze).
+- `delete_subgraph` is the cross-DB cleanup contract called by handlers in
+  try/finally on session-end. Idempotent.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+import logging
+from typing import Any, Iterable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sympy import latex
 
 from apollo.errors import SessionFrozenError
-from apollo.persistence.models import ApolloSession, KGEntry, ProblemAttempt
+from apollo.ontology import (
+    NODE_CONTENT_TYPES,
+    NODE_LABEL_TO_TYPE,
+    NODE_LABELS,
+    Edge,
+    EdgeType,
+    KGGraph,
+    Node,
+    NodeType,
+    build_node,
+)
+from apollo.persistence.models import ApolloSession, ProblemAttempt
+from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.solver.sympy_exec import _tidy_floats, parse_zero_form
 
-_KG_TYPES = ("equation", "definition", "condition", "simplification", "variable_mapping", "procedure_step")
+_LOG = logging.getLogger(__name__)
 _EMPTY_SUMMARY = "(the student hasn't taught me anything yet)"
 
 
+# ---------------------------------------------------------------------------
+# Cypher templates — one CREATE per node label (Cypher does not allow dynamic
+# labels). Templates apply both the type label AND the secondary :_KGNode
+# label so a single index covers all subgraph reads.
+# ---------------------------------------------------------------------------
+
+_NODE_CREATE_CYPHER: dict[str, str] = {
+    label: (
+        f"UNWIND $rows AS row\n"
+        f"CREATE (n:{label}:_KGNode)\n"
+        f"SET n = row\n"
+        f"RETURN count(n) AS written"
+    )
+    for label in NODE_LABELS.values()
+}
+
+_EDGE_CREATE_CYPHER: dict[str, str] = {
+    et.value: (
+        f"UNWIND $rows AS row\n"
+        f"MATCH (a:_KGNode {{attempt_id: row.attempt_id, node_id: row.from_node_id}})\n"
+        f"MATCH (b:_KGNode {{attempt_id: row.attempt_id, node_id: row.to_node_id}})\n"
+        f"CREATE (a)-[e:{et.value} {{attempt_id: row.attempt_id, source: row.source}}]->(b)\n"
+        f"RETURN count(e) AS written"
+    )
+    for et in EdgeType
+}
+
+
 def _equation_latex(symbolic: str) -> str | None:
-    """Best-effort LaTeX render for display. Returns None on parse failure so the
-    frontend can fall back to the raw symbolic string."""
+    """Best-effort LaTeX render for display. Returns None on parse failure."""
     try:
         expr = parse_zero_form(symbolic, entry_id="_display_only")
         return latex(_tidy_floats(expr))
@@ -30,70 +75,69 @@ def _equation_latex(symbolic: str) -> str | None:
         return None
 
 
+def _node_to_neo4j_props(node: Node) -> dict[str, Any]:
+    """Flatten a typed Node into a Neo4j property bag."""
+    content = node.content.model_dump()
+    return {
+        "node_id": node.node_id,
+        "attempt_id": node.attempt_id,
+        "source": node.source,
+        **content,
+    }
+
+
+def _record_to_node(props: dict[str, Any], labels: list[str]) -> Node:
+    """Reconstruct a typed Node from a Neo4j record."""
+    label_set = set(labels) - {"_KGNode"}
+    if not label_set:
+        raise ValueError(f"node has no type label: labels={labels}")
+    if len(label_set) > 1:
+        raise ValueError(f"node has multiple type labels: {labels}")
+    label = next(iter(label_set))
+    if label not in NODE_LABEL_TO_TYPE:
+        raise ValueError(f"unknown node label: {label}")
+
+    node_type: NodeType = NODE_LABEL_TO_TYPE[label]
+    bag = dict(props)
+    node_id = bag.pop("node_id")
+    attempt_id = bag.pop("attempt_id")
+    source = bag.pop("source")
+
+    if node_type == "equation" and "symbolic" in bag and "latex" not in bag:
+        tex = _equation_latex(bag["symbolic"])
+        if tex is not None:
+            bag["latex"] = tex
+
+    return build_node(
+        node_type=node_type,
+        node_id=node_id,
+        attempt_id=int(attempt_id),
+        source=source,
+        content=bag,
+    )
+
+
+def _edge_to_neo4j_row(edge: Edge) -> dict[str, Any]:
+    return {
+        "from_node_id": edge.from_node_id,
+        "to_node_id": edge.to_node_id,
+        "attempt_id": edge.attempt_id,
+        "source": edge.source,
+    }
+
+
+# ---------------------------------------------------------------------------
+# KGStore
+# ---------------------------------------------------------------------------
+
 class KGStore:
-    def __init__(self, db: AsyncSession) -> None:
+    """Per-request store. Postgres for session/freeze state, Neo4j for graph."""
+
+    def __init__(self, db: AsyncSession, neo: Neo4jClient) -> None:
         self.db = db
+        self.neo = neo
 
-    async def write_entries(
-        self, *, attempt_id: int, entries: List[Dict[str, Any]], source: str
-    ) -> int:
-        """Write KG entries under a ProblemAttempt.
-
-        Raises SessionFrozenError if the owning session is frozen.
-        Returns the number of entries written."""
-        session_id = await self._session_id_for_attempt(attempt_id)
-        await self._ensure_unfrozen(session_id)
-        added = 0
-        for e in entries:
-            t = e.get("type")
-            if t not in _KG_TYPES:
-                continue
-            self.db.add(KGEntry(
-                session_id=session_id,
-                attempt_id=attempt_id,
-                type=t,
-                content=e.get("content", {}),
-                source=source,
-            ))
-            added += 1
-        await self.db.commit()
-        return added
-
-    async def read_kg(self, *, attempt_id: int) -> Dict[str, List[Dict[str, Any]]]:
-        """Return the KG for a ProblemAttempt, grouped by entry type."""
-        result = await self.db.execute(
-            select(KGEntry).where(KGEntry.attempt_id == attempt_id).order_by(KGEntry.id)
-        )
-        rows = result.scalars().all()
-        kg: Dict[str, List[Dict[str, Any]]] = {t: [] for t in _KG_TYPES}
-        for row in rows:
-            content = dict(row.content or {})
-            if row.type == "equation" and "symbolic" in content and "latex" not in content:
-                tex = _equation_latex(content["symbolic"])
-                if tex is not None:
-                    content["latex"] = tex
-            kg[row.type].append(content)
-        return kg
-
-    async def summarize_for_apollo(self, *, attempt_id: int) -> str:
-        """Bullet summary for Apollo's context — student-sourced labels only."""
-        kg = await self.read_kg(attempt_id=attempt_id)
-        lines: List[str] = []
-        for eq in kg["equation"]:
-            lines.append(f"- equation ({eq.get('label', '(no label)')}): {eq.get('symbolic', '')}")
-        for d in kg["definition"]:
-            lines.append(f"- definition: {d.get('concept', '?')} = {d.get('meaning', '?')}")
-        for c in kg["condition"]:
-            lines.append(f"- condition: {c.get('applies_when', '?')}")
-        for s in kg["simplification"]:
-            lines.append(f"- simplification: when {s.get('applies_when', '?')}, {s.get('transformation', '?')}")
-        for vm in kg["variable_mapping"]:
-            lines.append(f"- variable: {vm.get('term', '?')} → {vm.get('symbol', '?')}")
-        for ps in sorted(kg["procedure_step"], key=lambda p: int(p.get("order") or 0)):
-            lines.append(
-                f"- procedure step {ps.get('order', '?')}: {ps.get('action', '?')}"
-            )
-        return "\n".join(lines) if lines else _EMPTY_SUMMARY
+    # ------- Postgres-backed freeze / metadata ------------------------------
 
     async def _session_id_for_attempt(self, attempt_id: int) -> int:
         row = await self.db.execute(
@@ -127,3 +171,196 @@ class KGStore:
         session = result.scalar_one()
         session.phase = "TEACHING"
         await self.db.commit()
+
+    # ------- Neo4j-backed CRUD ----------------------------------------------
+
+    async def write_nodes(
+        self,
+        *,
+        attempt_id: int,
+        nodes: list[Node],
+        source: str,
+    ) -> int:
+        """Create typed nodes in the per-attempt subgraph.
+
+        `source` is set on each node before persistence so all written nodes
+        share a provenance tag for this batch.
+        """
+        session_id = await self._session_id_for_attempt(attempt_id)
+        await self._ensure_unfrozen(session_id)
+        if not nodes:
+            return 0
+
+        # Group by label for the per-label CREATE templates.
+        rows_by_label: dict[str, list[dict[str, Any]]] = {}
+        for n in nodes:
+            label = NODE_LABELS[n.node_type]
+            row = _node_to_neo4j_props(n)
+            row["source"] = source
+            row["attempt_id"] = attempt_id
+            rows_by_label.setdefault(label, []).append(row)
+
+        total = 0
+        async with self.neo.session() as s:
+            for label, rows in rows_by_label.items():
+                cypher = _NODE_CREATE_CYPHER[label]
+                result = await s.run(cypher, rows=rows)
+                rec = await result.single()
+                total += int(rec["written"]) if rec else 0
+        return total
+
+    async def write_edges(
+        self,
+        *,
+        attempt_id: int,
+        edges: list[Edge],
+        source: str,
+    ) -> int:
+        """Create typed edges. Endpoints must already exist in the subgraph.
+
+        Edges where MATCH fails to find both endpoints are silently dropped
+        by Neo4j's `MATCH ... CREATE` semantics — the caller is responsible
+        for validating endpoint existence (typically by writing nodes first).
+        """
+        session_id = await self._session_id_for_attempt(attempt_id)
+        await self._ensure_unfrozen(session_id)
+        if not edges:
+            return 0
+
+        rows_by_type: dict[str, list[dict[str, Any]]] = {}
+        for e in edges:
+            row = _edge_to_neo4j_row(e)
+            row["attempt_id"] = attempt_id
+            row["source"] = source
+            rows_by_type.setdefault(e.edge_type.value, []).append(row)
+
+        total = 0
+        async with self.neo.session() as s:
+            for et, rows in rows_by_type.items():
+                cypher = _EDGE_CREATE_CYPHER[et]
+                result = await s.run(cypher, rows=rows)
+                rec = await result.single()
+                total += int(rec["written"]) if rec else 0
+        return total
+
+    async def read_graph(self, *, attempt_id: int) -> KGGraph:
+        """Read the full per-attempt subgraph."""
+        async with self.neo.session() as s:
+            nodes_res = await s.run(
+                "MATCH (n:_KGNode {attempt_id: $aid}) "
+                "RETURN n AS props, labels(n) AS labels",
+                aid=attempt_id,
+            )
+            nodes: list[Node] = []
+            async for record in nodes_res:
+                props = dict(record["props"])
+                labels = list(record["labels"])
+                nodes.append(_record_to_node(props, labels))
+
+            edges_res = await s.run(
+                "MATCH (a:_KGNode {attempt_id: $aid})-[e]->(b:_KGNode {attempt_id: $aid}) "
+                "RETURN type(e) AS edge_type, e.attempt_id AS attempt_id, "
+                "e.source AS source, a.node_id AS from_id, b.node_id AS to_id, "
+                "labels(a) AS from_labels, labels(b) AS to_labels",
+                aid=attempt_id,
+            )
+            edges: list[Edge] = []
+            async for record in edges_res:
+                from_label_set = set(record["from_labels"]) - {"_KGNode"}
+                to_label_set = set(record["to_labels"]) - {"_KGNode"}
+                from_type = NODE_LABEL_TO_TYPE.get(next(iter(from_label_set), ""))
+                to_type = NODE_LABEL_TO_TYPE.get(next(iter(to_label_set), ""))
+                edges.append(
+                    Edge(
+                        edge_type=EdgeType(record["edge_type"]),
+                        from_node_id=record["from_id"],
+                        to_node_id=record["to_id"],
+                        attempt_id=int(record["attempt_id"]),
+                        source=record["source"] or "parser",
+                        from_node_type=from_type,
+                        to_node_type=to_type,
+                    )
+                )
+
+        return KGGraph(nodes=nodes, edges=edges)
+
+    async def walk_chain(
+        self,
+        *,
+        attempt_id: int,
+        start_node_id: str,
+        edge_types: list[EdgeType],
+        max_depth: int = 20,
+    ) -> list[Node]:
+        """Cypher-backed traversal from a start node along the given edge types."""
+        if not edge_types:
+            return []
+        edge_pattern = "|".join(et.value for et in edge_types)
+        cypher = (
+            f"MATCH (start:_KGNode {{attempt_id: $aid, node_id: $sid}}) "
+            f"MATCH (start)-[:{edge_pattern}*1..{max_depth}]->(n:_KGNode) "
+            f"RETURN DISTINCT n AS props, labels(n) AS labels"
+        )
+        async with self.neo.session() as s:
+            result = await s.run(cypher, aid=attempt_id, sid=start_node_id)
+            out: list[Node] = []
+            async for record in result:
+                props = dict(record["props"])
+                labels = list(record["labels"])
+                out.append(_record_to_node(props, labels))
+        return out
+
+    async def delete_subgraph(self, *, attempt_id: int) -> None:
+        """Idempotent cross-DB cleanup. Removes all nodes (and their edges)
+        in the per-attempt subgraph. Safe to call when nothing exists."""
+        async with self.neo.session() as s:
+            await s.run(
+                "MATCH (n:_KGNode {attempt_id: $aid}) DETACH DELETE n",
+                aid=attempt_id,
+            )
+
+    # ------- Apollo-facing summary ------------------------------------------
+
+    async def summarize_for_apollo(self, *, attempt_id: int) -> str:
+        """Bullet summary for Apollo's context. Format unchanged from V2 so
+        Apollo's prompt does not need to relearn anything.
+
+        Leakage contract: this summary is Apollo's vocabulary mirror — it
+        deliberately exposes equation symbolics, variable mappings, and
+        student framings verbatim. See `apollo/agent/LEAKAGE_POLICY.md` for
+        the full policy. The downstream LLM-judge filter (item #3) evaluates
+        Apollo's draft against:
+          1. words the student typed (history),
+          2. symbols and terms surfaced by this summary,
+          3. concepts the student named explicitly.
+        Apollo MAY reference (1)-(3); MUST NOT name un-introduced concepts.
+        """
+        graph = await self.read_graph(attempt_id=attempt_id)
+        if not graph.nodes:
+            return _EMPTY_SUMMARY
+
+        lines: list[str] = []
+        for n in graph.by_type("equation"):
+            c = n.content
+            label = getattr(c, "label", "") or "(no label)"
+            lines.append(f"- equation ({label}): {c.symbolic}")
+        for n in graph.by_type("definition"):
+            c = n.content
+            lines.append(f"- definition: {c.concept} = {c.meaning}")
+        for n in graph.by_type("condition"):
+            c = n.content
+            lines.append(f"- condition: {c.applies_when}")
+        for n in graph.by_type("simplification"):
+            c = n.content
+            lines.append(f"- simplification: when {c.applies_when}, {c.transformation}")
+        for n in graph.by_type("variable_mapping"):
+            c = n.content
+            lines.append(f"- variable: {c.term} → {c.symbol}")
+
+        # Procedure steps — derive ordering from PRECEDES chain
+        chain = graph.precedes_chain()
+        for i, n in enumerate(chain, start=1):
+            c = n.content
+            lines.append(f"- procedure step {i}: {c.action}")
+
+        return "\n".join(lines) if lines else _EMPTY_SUMMARY

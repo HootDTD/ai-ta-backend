@@ -1,0 +1,42 @@
+{
+  "named_laws": [
+    "bernoulli",
+    "continuity",
+    "navier",
+    "stokes",
+    "pascal",
+    "torricelli"
+  ],
+  "forbidden_concepts": [
+    "viscosity",
+    "viscous",
+    "compressible",
+    "compressibility",
+    "incompressible",
+    "incompressibility",
+    "turbulence",
+    "turbulent",
+    "laminar",
+    "streamline",
+    "streamlines",
+    "kinetic",
+    "potential",
+    "enthalpy",
+    "entropy",
+    "conservation"
+  ],
+  "forbidden_domains": [
+    "physics",
+    "mechanics",
+    "hydrodynamics",
+    "aerodynamics",
+    "thermodynamics"
+  ],
+  "forbidden_units": [
+    "pascals",
+    "newton",
+    "newtons",
+    "joule",
+    "joules"
+  ]
+}

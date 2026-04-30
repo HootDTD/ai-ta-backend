@@ -1,5 +1,8 @@
 """Rubric: pure-function weighted grade computation.
 
+V3 contract: takes coverage + a list of reference Node objects (typically
+`reference_graph.nodes`) instead of the old reference_steps dict list.
+
 Aggregates coverage into three axis scores:
   Procedure       weight 0.60  (mean of procedure_scores * 100)
   Justification   weight 0.25  (% of condition entries covered)
@@ -13,6 +16,8 @@ from __future__ import annotations
 
 import math
 from typing import Any, Dict, List, Tuple
+
+from apollo.ontology import Node, NodeType
 
 def _finite_score(v: Any) -> float:
     """Coerce a score value to a finite float in [0, 1]; NaN/inf become 0."""
@@ -54,19 +59,19 @@ def score_to_letter(score: int) -> str:
     return "F"
 
 
-def _axis_for(entry_type: str) -> str | None:
-    if entry_type == "procedure_step":
+def _axis_for(node_type: str) -> str | None:
+    if node_type == "procedure_step":
         return "procedure"
-    if entry_type == "condition":
+    if node_type == "condition":
         return "justification"
-    if entry_type == "simplification":
+    if node_type == "simplification":
         return "simplification"
     return None  # equation feeds the solver; definition/variable_mapping are not graded.
 
 
 def compute_rubric(
     coverage: Dict[str, Any],
-    reference_steps: List[Dict[str, Any]],
+    reference_nodes: List[Node],
 ) -> Dict[str, Any]:
     """Return rubric dict with per-axis scores and overall letter.
 
@@ -81,10 +86,10 @@ def compute_rubric(
     per_step = coverage.get("per_step", {})
     procedure_scores = coverage.get("procedure_scores", {})
 
-    # Bucket reference steps by axis.
-    axis_refs: Dict[str, List[Dict[str, Any]]] = {a: [] for a in AXIS_WEIGHTS}
-    for ref in reference_steps:
-        axis = _axis_for(ref.get("entry_type", ""))
+    # Bucket reference nodes by axis.
+    axis_refs: Dict[str, List[Node]] = {a: [] for a in AXIS_WEIGHTS}
+    for ref in reference_nodes:
+        axis = _axis_for(ref.node_type)
         if axis is not None:
             axis_refs[axis].append(ref)
 
@@ -94,7 +99,7 @@ def compute_rubric(
     # Procedure: mean of per-step 0-1 scores * 100.
     proc_refs = axis_refs["procedure"]
     if proc_refs:
-        scores = [_finite_score(procedure_scores.get(r["id"], 0.0)) for r in proc_refs]
+        scores = [_finite_score(procedure_scores.get(r.node_id, 0.0)) for r in proc_refs]
         axis_raw["procedure"] = (sum(scores) / len(scores)) * 100.0
     else:
         axis_raw["procedure"] = None
@@ -103,7 +108,7 @@ def compute_rubric(
     for axis in ("justification", "simplification"):
         refs = axis_refs[axis]
         if refs:
-            covered = sum(1 for r in refs if per_step.get(r["id"]) == "covered")
+            covered = sum(1 for r in refs if per_step.get(r.node_id) == "covered")
             axis_raw[axis] = (covered / len(refs)) * 100.0
         else:
             axis_raw[axis] = None

@@ -1,4 +1,10 @@
-"""POST /apollo/sessions/{id}/done — freeze, solve, grade, narrate, award XP."""
+"""POST /apollo/sessions/{id}/done — freeze, solve, grade, narrate, award XP.
+
+V3: KGStore.read_graph returns a typed KGGraph; reference graph is derived
+from the problem via Problem.to_kg_graph(); coverage walks both graphs;
+rubric consumes Node objects directly. Hardcoded `g=9.81` and per-problem
+augmentations come from the concept registry, not from this file.
+"""
 from __future__ import annotations
 
 from typing import Any, Dict
@@ -9,15 +15,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.knowledge_graph.store import KGStore
 from apollo.overseer.coverage import compute_coverage
 from apollo.overseer.diagnostic import generate_diagnostic
-from apollo.overseer.problem_selector import list_problems_for_cluster
+from apollo.overseer.problem_selector import (
+    cluster_to_concept,
+    list_problems_for_cluster,
+)
 from apollo.overseer.rubric import compute_rubric
 from apollo.overseer.xp import compute_xp_earned
 from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import ApolloSession, ProblemAttempt, SessionPhase
+from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.persistence.progress_repo import apply_xp
 from apollo.schemas.problem import Problem
 from apollo.solver.forward_chain import solve_kg_against_problem
 from apollo.solver.sympy_exec import _format_value_text
+from apollo.subjects import load_concept
 
 
 def _find_problem(cluster_id: str, problem_id: str) -> Problem:
@@ -40,8 +51,13 @@ def _display_value(val) -> str | None:
     return _format_value_text(val)
 
 
-async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
-    store = KGStore(db)
+async def handle_done(
+    *,
+    db: AsyncSession,
+    neo: Neo4jClient,
+    session_id: int,
+) -> Dict[str, Any]:
+    store = KGStore(db, neo)
 
     sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
     problem = _find_problem(sess.concept_cluster_id, sess.current_problem_id)
@@ -61,12 +77,24 @@ async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
 
     await store.freeze(session_id)
 
-    kg = await store.read_kg(attempt_id=attempt.id)
+    student_graph = await store.read_graph(attempt_id=attempt.id)
+    reference_graph = problem.to_kg_graph(attempt_id=attempt.id)
+
     sess.phase = SessionPhase.SOLVING.value
     await db.commit()
 
+    # Concept-driven augmented givens (was hardcoded `g=9.81` in V2).
+    subject_id, concept_id = cluster_to_concept(sess.concept_cluster_id)
+    concept = load_concept(subject_id, concept_id)
+
     augmented_givens = dict(problem.given_values)
-    augmented_givens.setdefault("g", 9.81)
+    for k, v in concept.solver_hints.augmented_givens.items():
+        augmented_givens.setdefault(k, v)
+
+    # Per-simplification augmentation: reference simplification "h1==h2"
+    # injects h1=h2=0 if the student didn't supply them. Detection lives
+    # here because it depends on the reference solution; the constants live
+    # in the concept registry.
     for ref in problem.reference_solution:
         if ref.entry_type == "simplification":
             aw = (ref.content.get("applies_when") or "").lower().replace(" ", "")
@@ -74,20 +102,23 @@ async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
                 augmented_givens.setdefault("h1", 0.0)
                 augmented_givens.setdefault("h2", 0.0)
 
-    solver_result = solve_kg_against_problem(kg, {
+    # Solver still consumes the bag-shaped {"equation": [...]} input.
+    solver_kg = {
+        "equation": [n.content.model_dump() for n in student_graph.by_type("equation")],
+    }
+    solver_result = solve_kg_against_problem(solver_kg, {
         "id": problem.id,
         "given_values": augmented_givens,
         "target_unknown": problem.target_unknown,
     })
 
-    reference_steps = [s.model_dump() for s in problem.reference_solution]
-    coverage = compute_coverage(kg, reference_steps)
-    rubric = compute_rubric(coverage, reference_steps)
+    coverage = compute_coverage(student_graph, reference_graph)
+    rubric = compute_rubric(coverage, reference_graph.nodes)
 
     diagnostic_narrative = generate_diagnostic(
         coverage=coverage,
         solver_result=solver_result,
-        reference_steps=reference_steps,
+        reference_steps=[s.model_dump() for s in problem.reference_solution],
         problem_text=problem.problem_text,
         rubric=rubric,
     )
@@ -101,14 +132,7 @@ async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
     if solver_result.get("missing_variables"):
         solver_indicator["missing"] = solver_result["missing_variables"]
 
-    # ── Phase 2: award XP based on the rubric score + difficulty.
-    #
-    # Re-attempt detection covers two cases:
-    #   (a) Within-session retry: the /retry endpoint keeps the same
-    #       ProblemAttempt row, so its `result` is already set from a
-    #       previous Done call.
-    #   (b) Cross-session repeat: another graded attempt exists for the
-    #       same (student_id, problem_id).
+    # Re-attempt detection (unchanged from V2).
     is_reattempt_in_session = attempt.result is not None
     is_reattempt_cross_session = await has_prior_graded_attempt(
         db=db,
@@ -138,8 +162,6 @@ async def handle_done(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
     sess.phase = SessionPhase.REPORT.value
     await db.commit()
 
-    # Apply XP after the attempt + session row updates have committed so
-    # that a progress-repo failure never leaves the attempt ungraded.
     progress = await apply_xp(
         db=db,
         student_id=sess.student_id,

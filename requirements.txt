@@ -18,3 +18,4 @@ requests
 sympy>=1.12
 aiosqlite
 pytest-asyncio
+neo4j>=5.27,<6

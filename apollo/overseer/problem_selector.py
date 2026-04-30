@@ -1,32 +1,53 @@
 """Overseer.problem_selector — pick a problem from the authored bank.
 
-Loads problems from apollo/problems/<cluster_id>/*.json on-demand. No
-caching at Slice 0; refresh on every call. Deterministic: sorted by id.
+Loads problems from the V3 concept registry:
+    apollo/subjects/<subject>/concepts/<concept>/problems/*.json
+
+`cluster_id` (legacy single-string identifier) is mapped to a
+(subject_id, concept_id) pair via _CLUSTER_TO_CONCEPT.
+
+Deterministic: sorted by id. Refresh on every call (no caching).
 Raises PoolExhaustedError if no unattempted problem at the requested
-difficulty remains."""
+difficulty remains.
+"""
 from __future__ import annotations
 
-from pathlib import Path
 from typing import List, Sequence
 
 from apollo.errors import PoolExhaustedError
 from apollo.schemas.problem import Problem, load_problem
+from apollo.subjects import ConceptNotFoundError, load_concept
 
-_PROBLEMS_ROOT = Path(__file__).resolve().parent.parent / "problems"
-
-_CLUSTER_DIRS = {
-    "fluid_mechanics": "bernoulli",
+# Legacy cluster_id -> (subject_id, concept_id). Apollo handlers still pass
+# the single cluster_id; this map is the only place the mapping lives.
+_CLUSTER_TO_CONCEPT: dict[str, tuple[str, str]] = {
+    "fluid_mechanics": ("fluid_mechanics", "bernoulli_principle"),
 }
 
 
+def cluster_to_concept(cluster_id: str) -> tuple[str, str]:
+    """Resolve a legacy cluster_id to its (subject_id, concept_id) registry pair.
+
+    Raises KeyError if the cluster is not mapped.
+    """
+    return _CLUSTER_TO_CONCEPT[cluster_id]
+
+
 def list_problems_for_cluster(cluster_id: str) -> List[Problem]:
-    subdir = _CLUSTER_DIRS.get(cluster_id)
-    if subdir is None:
+    pair = _CLUSTER_TO_CONCEPT.get(cluster_id)
+    if pair is None:
         return []
-    dir_path = _PROBLEMS_ROOT / subdir
-    if not dir_path.exists():
+    subject_id, concept_id = pair
+    try:
+        concept = load_concept(subject_id, concept_id)
+    except ConceptNotFoundError:
         return []
-    return [load_problem(p) for p in sorted(dir_path.glob("problem_*.json"))]
+    if not concept.problems_dir.exists():
+        return []
+    return [
+        load_problem(p)
+        for p in sorted(concept.problems_dir.glob("problem_*.json"))
+    ]
 
 
 def select_problem(
