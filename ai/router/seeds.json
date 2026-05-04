@@ -1,0 +1,63 @@
+{
+  "conceptual_explainer": [
+    "How does a normal shock wave form?",
+    "Why does entropy increase across a shock?",
+    "What is the intuition behind the Reynolds number?",
+    "Explain how laminar flow transitions to turbulent.",
+    "Why do compressible flows behave differently from incompressible?",
+    "How does a Mach diamond form in an underexpanded nozzle?",
+    "Explain the physics of boundary layer separation.",
+    "Why is stagnation enthalpy conserved across a shock?",
+    "What is the role of viscosity in flow separation?",
+    "How does pressure gradient affect boundary layers?",
+    "Why does the speed of sound depend on temperature?"
+  ],
+  "stepwise_problem_solver": [
+    "Find the exit Mach number for a converging-diverging nozzle with...",
+    "Calculate the stagnation pressure given M=2.5 and T=300K.",
+    "Solve for the shock angle given an upstream Mach of 3.0.",
+    "Compute the entropy change across a normal shock for M1=2.",
+    "Determine the temperature ratio across an oblique shock at 30 degrees.",
+    "Walk me through deriving the Rankine-Hugoniot relations.",
+    "Show me step by step how to integrate this ODE.",
+    "Solve this momentum equation for the boundary layer.",
+    "Find the lift coefficient given the angle of attack.",
+    "Step by step, evaluate this integral over the wing surface."
+  ],
+  "factual_lookup": [
+    "What is the value of gamma for air?",
+    "What is the speed of sound at sea level?",
+    "What is the universal gas constant?",
+    "What is Avogadro's number?",
+    "What is the Mach number for supersonic flow?",
+    "What is the threshold Reynolds number for turbulence in a pipe?",
+    "What is the standard atmospheric pressure?",
+    "What is the freezing point of water in Kelvin?",
+    "What is the molecular weight of nitrogen?",
+    "What is the kinematic viscosity of air at 20C?"
+  ],
+  "definition": [
+    "Define entropy.",
+    "What is a normal shock?",
+    "What does adiabatic mean?",
+    "Define stagnation pressure.",
+    "What is laminar flow?",
+    "Define Mach number.",
+    "What is the boundary layer?",
+    "Define isentropic process.",
+    "What is a Prandtl-Meyer expansion?",
+    "Define hydrostatic pressure."
+  ],
+  "study_guide_generator": [
+    "Summarize chapter 4 for me.",
+    "Give me a study guide for the upcoming exam.",
+    "What are the key takeaways from the lecture on shocks?",
+    "Generate practice questions on compressible flow.",
+    "What should I focus on for boundary layer theory?",
+    "Make me a checklist for thermodynamics review.",
+    "Outline the main ideas in this chapter.",
+    "Quiz me on isentropic flow relations.",
+    "Give me a cheat sheet for the final.",
+    "What are the critical formulas for the midterm?"
+  ]
+}
