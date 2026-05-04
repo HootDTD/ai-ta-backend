@@ -6,7 +6,19 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, Boolean, TIMESTAMP, Column, ForeignKey, Integer, String, Text, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    TIMESTAMP,
+    Column,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, relationship
 
@@ -400,6 +412,7 @@ class ChatSession(Base):
         onupdate=lambda: datetime.now(UTC),
         index=True,
     )
+    topic_centroid_vector = Column(Vector(3072), nullable=True)
 
     turns = relationship(
         "ChatTurn",
@@ -440,6 +453,75 @@ class ChatTurn(Base):
     session = relationship("ChatSession", back_populates="turns")
 
 
+class ChatSessionSnippet(Base):
+    """Cached snippet citations across turns of one chat session.
+
+    Enables retrieval-mode NONE / AUGMENT to skip pgvector when prior
+    cited material already covers the follow-up question.
+    """
+
+    __tablename__ = "chat_session_snippets"
+
+    chat_session_id = Column(
+        BigInteger, ForeignKey("chat_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    chunk_id = Column(
+        BigInteger, ForeignKey("aita_chunks.id", ondelete="CASCADE"), primary_key=True
+    )
+    original_score = Column(Float, nullable=False)
+    first_seen_turn = Column(Integer, nullable=False)
+    last_used_turn = Column(Integer, nullable=False)
+    snippet_payload = Column(JSONB, nullable=False)
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+    )
+
+    __table_args__ = (
+        Index("ix_css_session_lru", "chat_session_id", "last_used_turn"),
+    )
+
+
+class ChatRouterDecision(Base):
+    """One row per /ask invocation.
+
+    Telemetry for tuning thresholds and eventually retiring the LLM stage
+    of the router.
+    """
+
+    __tablename__ = "chat_router_decisions"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    turn_id = Column(Text, nullable=False)
+    chat_session_id = Column(
+        BigInteger,
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    query = Column(Text, nullable=False)
+    stage1_top1 = Column(Float, nullable=True)
+    stage1_margin = Column(Float, nullable=True)
+    stage1_route = Column(String(50), nullable=True)
+    stage2_invoked = Column(Boolean, nullable=False, default=False)
+    stage2_route = Column(String(50), nullable=True)
+    stage2_confidence = Column(Float, nullable=True)
+    retrieval_mode = Column(String(20), nullable=False)
+    retrieval_top_score = Column(Float, nullable=True)
+    final_route = Column(String(50), nullable=False)
+    was_clarified = Column(Boolean, nullable=False, default=False)
+    clarify_cause = Column(String(50), nullable=True)
+    latency_router_ms = Column(Integer, nullable=True)
+    latency_retrieval_ms = Column(Integer, nullable=True)
+    latency_answer_ms = Column(Integer, nullable=True)
+    created_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+    )
+
+
 __all__ = [
     "Base",
     "SearchSpace",
@@ -451,6 +533,8 @@ __all__ = [
     "TeacherUpload",
     "ChatSession",
     "ChatTurn",
+    "ChatSessionSnippet",
+    "ChatRouterDecision",
     "DocumentType",
     "DocumentStatus",
     "EMBEDDING_DIM",
