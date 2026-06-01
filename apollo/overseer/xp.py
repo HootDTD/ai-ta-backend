@@ -97,3 +97,76 @@ def next_tier_threshold(level: int) -> Optional[int]:
     if level >= _MAX_LEVEL:
         return None
     return _TIER_BY_LEVEL[level + 1].threshold
+
+
+@dataclass(frozen=True)
+class ProgressEnvelope:
+    """Item #9: backend-only source of truth for level / progress UI.
+
+    Frontend renders these fields directly — no formula duplication. At
+    max level, `xp_to_next_level` is None and `level_progress_pct` is
+    100.0 (UI shows "MAX").
+    """
+    xp_earned: int
+    xp_before: int
+    xp_after: int
+    level_before: int
+    level_after: int
+    level_up: bool
+    title_after: str
+    level_progress_pct: float
+    xp_to_next_level: Optional[int]
+
+
+def compute_progress_envelope(
+    *,
+    xp_earned: int,
+    xp_before: int,
+    xp_after: int,
+) -> ProgressEnvelope:
+    """Build the full progress payload for the /done response.
+
+    Derives level_before/level_after/level_up from the cumulative XPs and
+    looks up the title + thresholds from LEVEL_TIERS. Pure function.
+    """
+    if xp_earned < 0:
+        raise ValueError(f"xp_earned must be non-negative; got {xp_earned}")
+    if xp_before < 0 or xp_after < 0:
+        raise ValueError("xp_before and xp_after must be non-negative")
+    if xp_after < xp_before:
+        raise ValueError(
+            f"xp_after ({xp_after}) cannot be lower than xp_before ({xp_before})"
+        )
+
+    level_before = level_from_xp(xp_before)
+    level_after = level_from_xp(xp_after)
+    level_up = level_after > level_before
+
+    current_threshold = _TIER_BY_LEVEL[level_after].threshold
+    next_threshold = next_tier_threshold(level_after)
+
+    if next_threshold is None:
+        # At max level — fully filled bar.
+        progress_pct = 100.0
+        xp_to_next = None
+    else:
+        span = next_threshold - current_threshold
+        if span <= 0:
+            progress_pct = 100.0
+            xp_to_next = 0
+        else:
+            in_tier = max(0, xp_after - current_threshold)
+            progress_pct = max(0.0, min(100.0, 100.0 * in_tier / span))
+            xp_to_next = max(0, next_threshold - xp_after)
+
+    return ProgressEnvelope(
+        xp_earned=xp_earned,
+        xp_before=xp_before,
+        xp_after=xp_after,
+        level_before=level_before,
+        level_after=level_after,
+        level_up=level_up,
+        title_after=title_for_level(level_after),
+        level_progress_pct=round(progress_pct, 2),
+        xp_to_next_level=xp_to_next,
+    )

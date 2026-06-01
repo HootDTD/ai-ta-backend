@@ -12,10 +12,16 @@ V3 contract:
 Under no-fallback policy: if the utterance LOOKS like a teaching attempt and
 the LLM extracts zero entries, raise ParserCouldNotExtractError. Short
 acknowledgements legitimately produce empty extractions and do NOT raise.
+
+V3 triviality detection (item #4): replaced the FM-only keyword/plan-marker
+scan with a cheap LLM classifier. Keeps the deterministic short-circuits
+(length floor, ACK list, math-character heuristic) so the LLM is only
+consulted on ambiguous prose.
 """
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import uuid
@@ -23,6 +29,7 @@ from typing import Any
 
 from openai import OpenAI
 
+from apollo.agent._llm import cheap_chat
 from apollo.errors import ParserCouldNotExtractError
 from apollo.ontology import (
     EDGE_ALLOWED_PAIRS,
@@ -35,18 +42,92 @@ from apollo.ontology import (
 from apollo.parser.prompt_builder import build_system_prompt
 from apollo.subjects import ConceptDefinition
 
-_EQUATION_LIKE = re.compile(r"[=*/^+\-]|\d+\.?\d*|\^|\*\*")
+_LOG = logging.getLogger(__name__)
+
+# Equation-like signals: `=`, `*`, `+`, `^`, `/`, digits. NOT `-` —
+# hyphens appear in compound words ("non-trivial") and would false-positive.
+_EQUATION_LIKE = re.compile(r"[=*/^+]|\d+\.?\d*|\^|\*\*")
 _TRIVIAL_ACKS = frozenset({
     "ok", "okay", "yes", "no", "hmm", "hi", "hey", "thanks", "thx", "ty",
 })
 
+# Confidence threshold above which the LLM classifier's "is_teaching=true"
+# decision is acted on. Below threshold => treat as trivial (return empty
+# silently). Same threshold as the leakage judge (item #3) for symmetry.
+_TEACHING_CONFIDENCE_THRESHOLD: float = 0.6
+
+_TRIVIALITY_CLASSIFIER_PROMPT = """You decide whether a student utterance
+is an attempt to TEACH a concept (explain it, write equations, describe a
+procedure, define terms) or just conversational filler / a question / an
+acknowledgement.
+
+You will be given:
+- the concept the student is supposed to be teaching about,
+- the student's utterance.
+
+Return ONLY a JSON object:
+{"is_teaching": <bool>, "confidence": <float in [0, 1]>,
+ "reason": <one short sentence>}
+
+Heuristics:
+- Equations, formulas, conditional rules, procedural steps => teaching.
+- Plain prose that describes how something works, even without symbols,
+  IS teaching when it conveys a domain claim — e.g.
+  "what comes in must equal what goes out" => teaching (continuity).
+- Greetings, "ok", "first hi there", "thanks" => not teaching.
+- Questions BACK to the assistant ("what should I do next?") => not teaching.
+"""
+
+
+def _classify_teaching(
+    utterance: str,
+    concept: ConceptDefinition,
+) -> tuple[bool, float]:
+    """LLM-driven teaching-intent classifier.
+
+    Soft-fails to (False, 0.0) on parse/network errors — i.e. errs toward
+    "treat as trivial" so a transient hiccup never produces a spurious
+    ParserCouldNotExtractError. The downstream parser still has to extract
+    real entries from genuinely teaching utterances; if the classifier
+    misses one, the parser just returns empty and Apollo proceeds.
+    """
+    payload = {
+        "concept_id": concept.concept_id,
+        "subject_id": concept.subject_id,
+        "utterance": utterance,
+    }
+    try:
+        raw = cheap_chat(
+            purpose="parser_triviality",
+            messages=[
+                {"role": "system", "content": _TRIVIALITY_CLASSIFIER_PROMPT},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+        )
+        parsed = json.loads(raw)
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning("triviality classifier soft-fail: %s", exc)
+        return False, 0.0
+
+    is_teaching = bool(parsed.get("is_teaching", False))
+    try:
+        confidence = float(parsed.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return is_teaching, max(0.0, min(1.0, confidence))
+
 
 def _is_non_trivial(utterance: str, concept: ConceptDefinition) -> bool:
-    """Concept-aware triviality check.
+    """Decide whether a parser-empty result should raise.
 
-    Keywords + plan markers come from the concept's solver_hints registry —
-    no global fluid-mechanics list. Falls back to math-character heuristic
-    for utterances with no domain keywords.
+    Order:
+    1. Length floor < 10 chars => trivial.
+    2. Exact match in _TRIVIAL_ACKS => trivial.
+    3. Math characters present => non-trivial (no LLM needed).
+    4. Otherwise: LLM classifier decides; non-trivial only if confidence
+       >= _TEACHING_CONFIDENCE_THRESHOLD.
     """
     s = utterance.strip().lower()
     if len(s) < 10:
@@ -55,11 +136,8 @@ def _is_non_trivial(utterance: str, concept: ConceptDefinition) -> bool:
         return False
     if _EQUATION_LIKE.search(utterance):
         return True
-    keywords = tuple(concept.solver_hints.non_trivial_keywords)
-    if keywords and any(k in s for k in keywords):
-        return True
-    plan_markers = tuple(concept.solver_hints.plan_markers)
-    return bool(plan_markers) and any(m in s for m in plan_markers)
+    is_teaching, confidence = _classify_teaching(utterance, concept)
+    return is_teaching and confidence >= _TEACHING_CONFIDENCE_THRESHOLD
 
 
 def _entry_to_node(
@@ -79,6 +157,16 @@ def _entry_to_node(
         content.pop("order", None)
         content.pop("uses_equations", None)
 
+    # LLM self-reported confidence for this entry. Falls back to 1.0 if the
+    # field is absent (legacy prompt) or malformed — keeps behavior identical
+    # to pre-P1 for nodes the LLM didn't tag.
+    raw_conf = entry.get("confidence", 1.0)
+    try:
+        confidence = float(raw_conf)
+    except (TypeError, ValueError):
+        confidence = 1.0
+    confidence = max(0.0, min(1.0, confidence))
+
     try:
         return build_node(
             node_type=t,  # type: ignore[arg-type]
@@ -86,6 +174,7 @@ def _entry_to_node(
             attempt_id=attempt_id,
             source="parser",
             content=content,
+            parser_confidence=confidence,
         )
     except Exception:  # noqa: BLE001 - skip malformed entries
         return None

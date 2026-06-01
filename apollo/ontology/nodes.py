@@ -26,11 +26,35 @@ NodeType = Literal[
 
 NodeSource = Literal["parser", "reference", "system"]
 
+# Node negotiation status (P3 — Negotiable OLM, migration 021).
+#   ACCEPTED  — parser-authored, student has not contested. Default for new
+#               nodes; coverage grades the parser's surface form.
+#   DISPUTED  — student has flagged the entry as wrong / misheard. Done-gate
+#               (P3.6) blocks until at least one negotiation move is logged.
+#   DUAL      — system + student each hold a belief (paraphrase or skip).
+#               Coverage uses `student_belief` if non-null; else `content`.
+NodeStatus = Literal["ACCEPTED", "DISPUTED", "DUAL"]
+
 
 class _NodeBase(BaseModel):
     node_id: str = Field(min_length=1)
     attempt_id: int
     source: NodeSource
+    # LLM-reported self-confidence in the parser's extraction of this node.
+    # Range [0, 1]. Default 1.0 — non-parser sources (reference, system) and
+    # legacy nodes without the field are treated as authoritative. The P3
+    # OLM trigger is `parser_confidence < 0.6`, so the default protects
+    # legacy data from false-firing the Done-gate.
+    parser_confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    # Negotiable OLM (P3). Default ACCEPTED — pre-P3 nodes round-trip with
+    # no behavioral change. DISPUTED / DUAL flip on student moves through
+    # apollo_kg_negotiations; coverage and the Done-gate read these fields.
+    status: NodeStatus = Field(default="ACCEPTED")
+    # The student's preferred surface form for this entry, if they have
+    # supplied a paraphrase. None until the student paraphrases. Coverage
+    # uses this for DUAL entries; ACCEPTED entries ignore it (the parser's
+    # `content` is operative).
+    student_belief: str | None = Field(default=None)
 
 
 # --- Per-type content payloads ---------------------------------------------
@@ -143,6 +167,9 @@ def build_node(
     attempt_id: int,
     source: NodeSource,
     content: dict,
+    parser_confidence: float = 1.0,
+    status: NodeStatus = "ACCEPTED",
+    student_belief: str | None = None,
 ) -> Node:
     """Construct a typed node from a (type, content_dict) pair."""
     cls_map: dict[NodeType, type[_NodeBase]] = {
@@ -158,5 +185,8 @@ def build_node(
         node_id=node_id,
         attempt_id=attempt_id,
         source=source,
+        parser_confidence=parser_confidence,
+        status=status,
+        student_belief=student_belief,
         content=content,  # type: ignore[arg-type]
     )

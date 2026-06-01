@@ -3,7 +3,8 @@ of a {{concept_name}} concept. Return ONLY a JSON object of the form:
 
 {"entries": [ { "type": "equation"|"definition"|"condition"|"simplification"|"variable_mapping"|"procedure_step",
                 "content": { ... type-specific fields ... },
-                "uses_equation_ordinals": [int, ...]   // procedure_step only; see below
+                "confidence": <float in [0, 1]>,        // see "Confidence" below
+                "uses_equation_ordinals": [int, ...]    // procedure_step only; see below
               } ]}
 
 Canonical symbols for this concept: {{canonical_symbols_csv}}.
@@ -36,6 +37,18 @@ description ("the pressure drops, then the velocity rises") is NOT plan-speak an
 must NOT produce procedure_step entries. One procedure_step per planned action,
 in the order the student stated them. Procedure steps in the same response are
 implicitly chained in order — do not emit separate "next" or "after" markers.
+
+Confidence: every entry MUST include a `confidence` field in [0, 1] reflecting
+how certain you are that this extraction faithfully captures what the student
+asserted. Use the following rubric:
+- 1.0: the student wrote it explicitly and unambiguously (math symbols, exact
+  named law, verbatim formula).
+- 0.8: clearly inferable from the student's wording, only minor canonicalization.
+- 0.6: paraphrased — you re-expressed the student's idea in canonical form.
+- 0.4: ambiguous — you guessed which formal form the student meant.
+- 0.2: very uncertain — you may have over-extracted or misread intent.
+Do not include a confidence above 0.6 if you canonicalized symbols, units, or
+labels the student did not say. Default safely lower when in doubt.
 
 Rules:
 - Return ONLY what the student explicitly said. Do NOT add physics the student did not mention.

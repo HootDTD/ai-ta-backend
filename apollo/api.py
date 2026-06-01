@@ -15,17 +15,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import (
     ApolloError,
+    CoverageGradingError,
     FilterRejectedError,
     InvalidPhaseError,
+    KGEntryNotFoundError,
     MalformedEquationError,
     NoMatchingConceptError,
     ParserCouldNotExtractError,
     PoolExhaustedError,
+    ReviewRequiredError,
     SessionFrozenError,
 )
 from apollo.handlers.chat import handle_chat
 from apollo.handlers.done import handle_done
 from apollo.handlers.lifecycle import handle_end, handle_get_session, handle_retry
+from apollo.handlers.negotiate import (
+    ChallengeRequest,
+    ParaphraseRequest,
+    SkipRequest,
+    handle_challenge,
+    handle_get_trace,
+    handle_paraphrase,
+    handle_skip,
+)
 from apollo.handlers.progress import handle_get_progress
 from apollo.hoot_bridge.session_init import init_session_from_hoot
 from apollo.persistence.neo4j_client import Neo4jClient
@@ -158,6 +170,60 @@ async def progress(
 
 
 # ----------------------------------------------------------------------
+# P3 — Negotiable OLM. Three move endpoints + trace lookup.
+# ----------------------------------------------------------------------
+
+@router.post("/sessions/{session_id}/kg/{entry_id}/challenge")
+async def negotiate_challenge(
+    session_id: int,
+    entry_id: str,
+    body: ChallengeRequest,
+    db: AsyncSession = Depends(get_db_session),
+    neo: Neo4jClient = Depends(get_neo4j_client),
+) -> dict:
+    return await handle_challenge(
+        db=db, neo=neo, session_id=session_id, entry_id=entry_id, body=body,
+    )
+
+
+@router.post("/sessions/{session_id}/kg/{entry_id}/paraphrase")
+async def negotiate_paraphrase(
+    session_id: int,
+    entry_id: str,
+    body: ParaphraseRequest,
+    db: AsyncSession = Depends(get_db_session),
+    neo: Neo4jClient = Depends(get_neo4j_client),
+) -> dict:
+    return await handle_paraphrase(
+        db=db, neo=neo, session_id=session_id, entry_id=entry_id, body=body,
+    )
+
+
+@router.post("/sessions/{session_id}/kg/{entry_id}/skip")
+async def negotiate_skip(
+    session_id: int,
+    entry_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    neo: Neo4jClient = Depends(get_neo4j_client),
+) -> dict:
+    return await handle_skip(
+        db=db, neo=neo, session_id=session_id, entry_id=entry_id,
+    )
+
+
+@router.get("/sessions/{session_id}/kg/{entry_id}/trace")
+async def negotiate_trace(
+    session_id: int,
+    entry_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    neo: Neo4jClient = Depends(get_neo4j_client),
+) -> dict:
+    return await handle_get_trace(
+        db=db, neo=neo, session_id=session_id, entry_id=entry_id,
+    )
+
+
+# ----------------------------------------------------------------------
 # Exception handlers — surface every Apollo error as a structured JSON
 # response. NO FALLBACK: each error type gets its own HTTP status + code.
 # ----------------------------------------------------------------------
@@ -249,6 +315,62 @@ async def invalid_phase_handler(request: Request, exc: InvalidPhaseError) -> JSO
     )
 
 
+async def review_required_handler(request: Request, exc: ReviewRequiredError) -> JSONResponse:
+    """P3.6 OLM Done-gate. Flagged entries need a negotiation move before
+    grading proceeds. The FE renders a review modal listing each entry."""
+    return JSONResponse(
+        status_code=422,
+        content=_err_payload(
+            "review_required",
+            str(exc),
+            review_required=exc.entries,
+        ),
+    )
+
+
+async def kg_entry_not_found_handler(request: Request, exc: KGEntryNotFoundError) -> JSONResponse:
+    """P3 — Negotiable OLM. Targeted entry doesn't exist in the per-attempt
+    subgraph (stale FE state, race with parser, or bad entry_id)."""
+    return JSONResponse(
+        status_code=404,
+        content=_err_payload(
+            "kg_entry_not_found",
+            str(exc),
+            attempt_id=exc.attempt_id,
+            node_id=exc.node_id,
+        ),
+    )
+
+
+async def coverage_grading_handler(request: Request, exc: CoverageGradingError) -> JSONResponse:
+    """Item #10: 503 surfaces the no-fallback contract — the UI shows
+    "grading unavailable, try again" instead of receiving a downgraded
+    grade silently."""
+    return JSONResponse(
+        status_code=503,
+        content=_err_payload(
+            "coverage_grading_failed",
+            "Grading is temporarily unavailable. Please try again in a moment.",
+            stage=exc.stage,
+            last_error=exc.last_error,
+        ),
+    )
+
+
+async def context_overflow_handler(request: Request, exc) -> JSONResponse:
+    """Item #2: surface token-budget overflow as 503 instead of silently
+    truncating Apollo's context."""
+    return JSONResponse(
+        status_code=503,
+        content=_err_payload(
+            "context_overflow",
+            "This session has grown too long for Apollo to keep up — please start a fresh session.",
+            tokens=getattr(exc, "tokens", None),
+            budget=getattr(exc, "budget", None),
+        ),
+    )
+
+
 def register_exception_handlers(app) -> None:
     """Register all Apollo exception handlers onto the FastAPI app."""
     app.add_exception_handler(ParserCouldNotExtractError, parser_could_not_extract_handler)
@@ -257,4 +379,11 @@ def register_exception_handlers(app) -> None:
     app.add_exception_handler(MalformedEquationError, malformed_equation_handler)
     app.add_exception_handler(NoMatchingConceptError, no_matching_concept_handler)
     app.add_exception_handler(PoolExhaustedError, pool_exhausted_handler)
+    app.add_exception_handler(CoverageGradingError, coverage_grading_handler)
+    # ContextOverflowError lives in apollo.agent.apollo_llm; import lazily
+    # to avoid a circular import in api.py's top-level module load.
+    from apollo.agent.apollo_llm import ContextOverflowError
+    app.add_exception_handler(ContextOverflowError, context_overflow_handler)
     app.add_exception_handler(SessionFrozenError, session_frozen_handler)
+    app.add_exception_handler(KGEntryNotFoundError, kg_entry_not_found_handler)
+    app.add_exception_handler(ReviewRequiredError, review_required_handler)

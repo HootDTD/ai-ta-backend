@@ -95,7 +95,78 @@ def generate_diagnostic(
             ],
             temperature=0.4,
         )
-        return resp.choices[0].message.content or ""
+        narrative = resp.choices[0].message.content or ""
     except Exception as exc:  # noqa: BLE001
         _LOG.warning("diagnostic LLM soft-fail: %s", exc)
-        return "[Diagnostic narrative unavailable — the grade above is still accurate.]"
+        narrative = (
+            "[Diagnostic narrative unavailable — the grade above is still accurate.]"
+        )
+
+    narrative = _append_misconception_line(narrative, rubric)
+    narrative = _append_negotiation_line(narrative, coverage)
+    return narrative
+
+
+def _append_negotiation_line(narrative: str, coverage: Dict[str, Any]) -> str:
+    """Append a one-line summary of how many KG entries the student
+    negotiated.
+
+    Class 2 Phase 3 (P3.11). The pedagogical signal here is metacognitive:
+    the student looked at Apollo's understanding and acted on it. We
+    surface the count so the diagnostic can credit that behavior without
+    re-litigating which entries were touched.
+
+    Source: `coverage["negotiation_counts"]` (P3.4). Tolerates legacy
+    coverage dicts (no key) by treating counts as zero.
+
+    Output is empty when nothing was negotiated. Phrased generically —
+    never names individual entries."""
+    counts = coverage.get("negotiation_counts") or {}
+    paraphrased = int(counts.get("paraphrased", 0) or 0)
+    skipped = int(counts.get("skipped", 0) or 0)
+    disputed = int(counts.get("disputed", 0) or 0)
+    total = paraphrased + skipped + disputed
+    if total == 0:
+        return narrative
+
+    parts: list[str] = []
+    if paraphrased:
+        parts.append(f"{paraphrased} paraphrased")
+    if skipped:
+        parts.append(f"{skipped} skipped")
+    if disputed:
+        parts.append(f"{disputed} disputed")
+    breakdown = ", ".join(parts)
+
+    line = (
+        f"You negotiated {total} entr{'y' if total == 1 else 'ies'} with "
+        f"Apollo: {breakdown}."
+    )
+    if narrative and not narrative.endswith("\n"):
+        narrative += "\n\n"
+    return narrative + line
+
+
+def _append_misconception_line(narrative: str, rubric: Dict[str, Any]) -> str:
+    """Append a deterministic one-liner about misconceptions navigated.
+
+    Class 2 Phase 2 (P2.9). Visible to the student only when at least
+    one misconception was detected during the attempt. Phrased to avoid
+    naming the misconception itself — the student already saw the
+    Socratic moves; this is a recap, not a re-revelation.
+
+    No-op when no misconceptions fired; narrative returned unchanged.
+    """
+    block = rubric.get("misconception_corrected") or {}
+    detected = int(block.get("detected", 0) or 0)
+    if detected <= 0:
+        return narrative
+    resolved = int(block.get("resolved", 0) or 0)
+    line = (
+        f"During the conversation, you and Apollo navigated through "
+        f"{detected} suspected misconception"
+        f"{'s' if detected != 1 else ''}; you resolved {resolved} of them."
+    )
+    if narrative and not narrative.endswith("\n"):
+        narrative += "\n\n"
+    return narrative + line

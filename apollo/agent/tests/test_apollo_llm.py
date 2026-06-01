@@ -1,6 +1,14 @@
+import os
 from unittest.mock import MagicMock, patch
 
-from apollo.agent.apollo_llm import draft_reply, APOLLO_SYSTEM_PROMPT
+import pytest
+
+from apollo.agent.apollo_llm import (
+    APOLLO_SYSTEM_PROMPT,
+    ContextOverflowError,
+    _TOKEN_BUDGET,
+    draft_reply,
+)
 
 
 def _mock_reply(text: str) -> MagicMock:
@@ -105,3 +113,90 @@ def test_system_prompt_distinguishes_plan_from_subject_questions():
     # Core new behavior: ask about the plan, not about the subject/physics itself.
     assert "plan" in lower
     assert "subject" in lower
+
+
+# ── Item #2: history summary + token budget + model env ────────────────────
+
+
+@patch("apollo.agent.apollo_llm.OpenAI")
+def test_draft_reply_includes_history_summary_when_provided(mock_client_cls):
+    client = MagicMock()
+    client.chat.completions.create.return_value = _mock_reply("ok")
+    mock_client_cls.return_value = client
+
+    draft_reply(
+        history=[{"role": "user", "content": "latest"}],
+        kg_summary="kg",
+        history_summary="EARLIER_SUMMARY_SENTINEL",
+    )
+    messages = client.chat.completions.create.call_args.kwargs["messages"]
+    joined = " ".join(m["content"] for m in messages)
+    assert "EARLIER_SUMMARY_SENTINEL" in joined
+
+
+@patch("apollo.agent.apollo_llm.OpenAI")
+def test_draft_reply_omits_history_summary_block_when_none(mock_client_cls):
+    client = MagicMock()
+    client.chat.completions.create.return_value = _mock_reply("ok")
+    mock_client_cls.return_value = client
+
+    draft_reply(history=[], kg_summary="kg", history_summary=None)
+    messages = client.chat.completions.create.call_args.kwargs["messages"]
+    contents = [m["content"] for m in messages]
+    assert not any("Earlier-conversation summary" in c for c in contents)
+
+
+@patch("apollo.agent.apollo_llm.OpenAI")
+def test_draft_reply_uses_apollo_model_env_when_set(mock_client_cls, monkeypatch):
+    client = MagicMock()
+    client.chat.completions.create.return_value = _mock_reply("ok")
+    mock_client_cls.return_value = client
+
+    monkeypatch.setenv("APOLLO_MODEL", "gpt-4o-mini")
+    monkeypatch.setenv("MAIN_MODEL", "gpt-4o")
+
+    draft_reply(history=[], kg_summary="kg")
+    used_model = client.chat.completions.create.call_args.kwargs["model"]
+    assert used_model == "gpt-4o-mini"
+
+
+@patch("apollo.agent.apollo_llm.OpenAI")
+def test_draft_reply_falls_back_to_main_model(mock_client_cls, monkeypatch):
+    client = MagicMock()
+    client.chat.completions.create.return_value = _mock_reply("ok")
+    mock_client_cls.return_value = client
+
+    monkeypatch.delenv("APOLLO_MODEL", raising=False)
+    monkeypatch.setenv("MAIN_MODEL", "gpt-4o-2024-11-20")
+
+    draft_reply(history=[], kg_summary="kg")
+    used_model = client.chat.completions.create.call_args.kwargs["model"]
+    assert used_model == "gpt-4o-2024-11-20"
+
+
+@patch("apollo.agent.apollo_llm.OpenAI")
+def test_draft_reply_explicit_model_arg_wins(mock_client_cls, monkeypatch):
+    client = MagicMock()
+    client.chat.completions.create.return_value = _mock_reply("ok")
+    mock_client_cls.return_value = client
+    monkeypatch.setenv("APOLLO_MODEL", "via-env")
+
+    draft_reply(history=[], kg_summary="kg", model="explicit")
+    used_model = client.chat.completions.create.call_args.kwargs["model"]
+    assert used_model == "explicit"
+
+
+@patch("apollo.agent.apollo_llm.OpenAI")
+def test_draft_reply_raises_on_token_overflow(mock_client_cls):
+    """Pathological prompt size raises rather than silently truncating."""
+    client = MagicMock()
+    client.chat.completions.create.return_value = _mock_reply("ok")
+    mock_client_cls.return_value = client
+
+    huge = "word " * 200_000  # ~50k tokens of "word " -> roughly _TOKEN_BUDGET
+    # Build a history big enough to push past _TOKEN_BUDGET on cl100k.
+    big_history = [{"role": "user", "content": huge}] * 6
+    with pytest.raises(ContextOverflowError) as exc_info:
+        draft_reply(history=big_history, kg_summary="kg")
+    assert exc_info.value.budget == _TOKEN_BUDGET
+    assert exc_info.value.tokens > _TOKEN_BUDGET

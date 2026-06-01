@@ -83,3 +83,49 @@ class InvalidPhaseError(ApolloError):
         super().__init__(
             f"cannot perform this action while session {session_id} is in phase {phase!r}"
         )
+
+
+class ReviewRequiredError(ApolloError):
+    """P3 OLM Done-gate (P3.6). The student tried to submit Done while the
+    KG had flagged entries (low parser_confidence or DISPUTED) that have
+    not been touched with a negotiation move. The frontend renders a
+    review modal; the student must clear each flag before re-submitting.
+
+    Surfaces as 422 with `error_code: "review_required"` and a list of
+    `entries` shaped as:
+        {entry_id, type, reason: "low_confidence" | "disputed", summary}
+    """
+
+    def __init__(self, *, entries: list[dict]) -> None:
+        self.entries = entries
+        super().__init__(
+            f"{len(entries)} KG entries need review before grading"
+        )
+
+
+class KGEntryNotFoundError(ApolloError):
+    """Negotiation move targeted a KG entry that does not exist in the
+    per-attempt subgraph. P3 — Negotiable OLM. Surfaces as 404 to the FE."""
+
+    def __init__(self, *, attempt_id: int, node_id: str) -> None:
+        self.attempt_id = attempt_id
+        self.node_id = node_id
+        super().__init__(
+            f"KG entry {node_id!r} not found in attempt {attempt_id}"
+        )
+
+
+class CoverageGradingError(ApolloError):
+    """Coverage matcher exhausted retries on a transient failure.
+
+    Item #10: replaces the V2 soft-fail to "missing" with a named error so
+    the UI can surface "grading unavailable, try again" instead of silently
+    downgrading the grade. NO FALLBACK.
+    """
+
+    def __init__(self, *, stage: str, last_error: str) -> None:
+        self.stage = stage
+        self.last_error = last_error
+        super().__init__(
+            f"Coverage grading failed at stage {stage!r}: {last_error}"
+        )

@@ -1,0 +1,20 @@
+{"utterance": "When the pipe gets narrower the speed has to go up — but I can ignore density because the fluid doesn't change.", "label": "no_density", "category": "misconception"}
+{"utterance": "Since A1 v1 = A2 v2 holds, density doesn't really matter for the flow rate calculation.", "label": "no_density", "category": "misconception"}
+{"utterance": "If the pressure drops then automatically the velocity should drop too — they always move together.", "label": "pressure_velocity_same_direction", "category": "misconception"}
+{"utterance": "Lower pressure means lower speed in pipes, that's just how it works.", "label": "pressure_velocity_same_direction", "category": "misconception"}
+{"utterance": "Conservation of mass means the flow rate is always perfectly the same in every pipe regardless of geometry.", "label": "mass_volume_flow_conflation", "category": "misconception"}
+{"utterance": "The volume per second has to be conserved no matter what so volumetric and mass flow are interchangeable here.", "label": "mass_volume_flow_conflation", "category": "misconception"}
+{"utterance": "I think Bernoulli works fine even when the fluid is highly compressible because pressure is what matters.", "label": "bernoulli_for_compressible", "category": "misconception"}
+{"utterance": "Compressibility doesn't affect Bernoulli's equation in any meaningful way for our problem.", "label": "bernoulli_for_compressible", "category": "misconception"}
+{"utterance": "There's no friction at all in real pipes — you can just ignore viscosity completely.", "label": "viscosity_negligible", "category": "misconception"}
+{"utterance": "Viscosity terms can always be dropped because they're tiny.", "label": "viscosity_negligible", "category": "misconception"}
+{"utterance": "Continuity says rho times A1 v1 equals rho times A2 v2; with constant density the rhos cancel out.", "label": null, "category": "correct"}
+{"utterance": "Bernoulli connects pressure, velocity, and elevation along a streamline for incompressible inviscid flow.", "label": null, "category": "correct"}
+{"utterance": "If A1 is twice A2 and we know v1, then v2 is 2 times v1 by mass conservation.", "label": null, "category": "correct"}
+{"utterance": "I'd start by writing the continuity equation between sections 1 and 2.", "label": null, "category": "correct"}
+{"utterance": "Pressure is force per unit area; in the pipe it pushes the fluid along.", "label": null, "category": "correct"}
+{"utterance": "Density rho is mass per unit volume — for water at room temperature it's about 1000 kg per cubic meter.", "label": null, "category": "correct"}
+{"utterance": "Once I have v2 from continuity I can plug it into Bernoulli to find P2.", "label": null, "category": "correct"}
+{"utterance": "We are assuming horizontal flow so the rho g h terms drop out from both sides.", "label": null, "category": "correct"}
+{"utterance": "I want to use the continuity equation A1 times v1 equals A2 times v2 because area and velocity are inversely related.", "label": null, "category": "correct"}
+{"utterance": "Bernoulli's equation gives me P1 plus half rho v1 squared equals P2 plus half rho v2 squared along a streamline.", "label": null, "category": "correct"}

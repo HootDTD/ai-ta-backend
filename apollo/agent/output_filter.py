@@ -30,6 +30,8 @@ from apollo.agent.leakage_judge import (
     llm_leakage_judge,
 )
 from apollo.errors import FilterRejectedError
+from apollo.overseer.misconception import MisconceptionSignal
+from apollo.solver.sufficiency import SufficiencyVerdict
 from apollo.subjects import ConceptDefinition
 
 _LOG = logging.getLogger(__name__)
@@ -78,6 +80,106 @@ def _pre_filter_offender(
     return None
 
 
+def _misconception_leak(
+    draft: str,
+    misconception: MisconceptionSignal | None,
+) -> str | None:
+    """Class 2 Phase 2: defense-in-depth against misconception payload leak.
+
+    The persona shift (P2.5) only ever serializes the authored
+    `probe_question` and `rt_steps` into Apollo's system prompt — it
+    never includes `description` or `bank_id`. This function backs that
+    contract: if those internal-only strings appear verbatim in the
+    student-visible draft, block.
+
+    Returns the offending substring (the `description` or `bank_id`),
+    or None if the draft is clean.
+
+    Notes:
+    - Match is case-insensitive on `description` (LLMs sometimes
+      lowercase or sentence-case verbatim phrases).
+    - `bank_id` is matched as a verbatim substring with simple word
+      boundaries — short numeric ids like "42" can collide with real
+      content (e.g. "set v=42 m/s"), so we only match when the bank_id
+      string is alphanumeric and >= 3 characters. The check is therefore
+      meaningful for `code`-style bank ids ("no_density") and skipped for
+      surrogate integers. The `code` channel is the durable safety net.
+    - When misconception is None or unfired, returns None.
+    """
+    if misconception is None or not misconception.fired:
+        return None
+
+    if misconception.description:
+        if misconception.description.lower() in draft.lower():
+            return misconception.description
+
+    bank_code = misconception.bank_code
+    if bank_code and len(bank_code) >= 3 and bank_code.lower() in draft.lower():
+        return bank_code
+
+    bank_id = misconception.bank_id
+    if (
+        bank_id
+        and len(bank_id) >= 3
+        and not bank_id.isdigit()
+        and bank_id.lower() in draft.lower()
+    ):
+        return bank_id
+
+    return None
+
+
+def _check_sufficiency_alignment(
+    draft: str,
+    sufficiency: SufficiencyVerdict | None,
+    concept_id: str,
+) -> None:
+    """Class 2 Phase 1: warn (don't block) if the draft ignores the
+    sufficiency hint when state is `insufficient`.
+
+    The plan deliberately keeps this warn-only on first iteration so a
+    miscalibrated hint never silently blocks a valid Apollo reply. The
+    log line lets us tune `next_premise_hint` quality on real data
+    before tightening to a hard block.
+    """
+    if sufficiency is None or sufficiency.state != "insufficient":
+        return
+    hint = sufficiency.next_premise_hint
+    if not hint:
+        return
+
+    # Two checks. Variable names like "v2", "A1", "P2" contain digits and
+    # don't survive `_tokenize` (which keeps letters only), so the
+    # variable-name check uses substring match on the lowercased draft.
+    # The hint check uses the alphabetic tokenizer because hints are
+    # English-y prose ("equation: Continuity").
+    draft_lower = draft.lower()
+    draft_tokens = set(_tokenize(draft))
+
+    references = False
+    for var in sufficiency.missing_variables:
+        if var and var.lower() in draft_lower:
+            references = True
+            break
+    if not references:
+        for token in _tokenize(hint):
+            if len(token) > 2 and token in draft_tokens:
+                references = True
+                break
+
+    if not references:
+        _LOG.info(
+            "sufficiency_signal_ignored",
+            extra={
+                "event": "sufficiency_signal_ignored",
+                "state": sufficiency.state,
+                "next_premise_hint": hint,
+                "missing_variables": list(sufficiency.missing_variables),
+                "concept_id": concept_id,
+            },
+        )
+
+
 def validate_or_raise(
     draft: str,
     *,
@@ -85,6 +187,8 @@ def validate_or_raise(
     history: list[dict[str, str]],
     kg_summary: str,
     judge: LeakageJudge | None = None,
+    sufficiency: SufficiencyVerdict | None = None,
+    misconception: MisconceptionSignal | None = None,
 ) -> str:
     """Two-stage check. Returns the draft unchanged if clean.
 
@@ -94,6 +198,12 @@ def validate_or_raise(
 
     `judge` is dependency-injected for tests. Production callers pass
     None and get the default LLM judge.
+
+    `sufficiency` (Class 2 Phase 1, optional): when provided and state is
+    `insufficient`, logs a warning if the draft ignores the
+    `next_premise_hint`. Warn-only — does not raise. Block semantics
+    can be added later once the hint quality is calibrated on
+    production data.
     """
     offender = _pre_filter_offender(draft, concept, history, kg_summary)
     if offender is not None:
@@ -107,6 +217,21 @@ def validate_or_raise(
             },
         )
         raise FilterRejectedError(rejected_term=offender, draft=draft)
+
+    misconception_offender = _misconception_leak(draft, misconception)
+    if misconception_offender is not None:
+        _LOG.info(
+            "filter_rejected_misconception",
+            extra={
+                "event": "filter_rejected",
+                "stage": "misconception_leak",
+                "rejected_term": misconception_offender,
+                "concept_id": concept.concept_id,
+            },
+        )
+        raise FilterRejectedError(
+            rejected_term=misconception_offender, draft=draft
+        )
 
     judge_fn: LeakageJudge = judge or llm_leakage_judge
     verdict = judge_fn(
@@ -141,6 +266,10 @@ def validate_or_raise(
                 "concept_id": concept.concept_id,
             },
         )
+
+    # Sufficiency-signal alignment runs last and is warn-only — it never
+    # blocks the draft, only logs for tuning. See `_check_sufficiency_alignment`.
+    _check_sufficiency_alignment(draft, sufficiency, concept.concept_id)
 
     return draft
 

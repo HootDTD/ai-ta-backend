@@ -30,10 +30,17 @@ def _finite_score(v: Any) -> float:
     return max(0.0, min(1.0, f))
 
 
+# Class 2 Phase 2 (P2.8): the misconception axis enters at 5% of the
+# overall, taken proportionally from the existing 60/25/15. The values
+# below are the post-rebalance weights. In the degenerate case where
+# the misconception axis is absent (no detections in the attempt), the
+# absent-axis redistribution restores the original 60/25/15 ratio
+# exactly — the rubric is byte-identical to the pre-P2.8 result.
 AXIS_WEIGHTS: Dict[str, float] = {
-    "procedure": 0.60,
-    "justification": 0.25,
-    "simplification": 0.15,
+    "procedure": 0.60 * 0.95,        # 0.57
+    "justification": 0.25 * 0.95,    # 0.2375
+    "simplification": 0.15 * 0.95,   # 0.1425
+    "misconception_corrected": 0.05,
 }
 
 # (min_score_inclusive, letter) in descending order.
@@ -72,15 +79,29 @@ def _axis_for(node_type: str) -> str | None:
 def compute_rubric(
     coverage: Dict[str, Any],
     reference_nodes: List[Node],
+    *,
+    misconception_scores: Dict[str, float] | None = None,
 ) -> Dict[str, Any]:
     """Return rubric dict with per-axis scores and overall letter.
 
+    `misconception_scores` (Class 2 Phase 2) is a per-bank-code score
+    map (e.g. `{"no_density": 1.0, "wrong_law": 0.5}`) where:
+      - 1.0 = detected and resolved (no further detection in the last
+        >= 2 turns of the attempt)
+      - 0.5 = detected and unresolved
+      - never-detected codes do not appear in this dict (no penalty,
+        no bonus)
+    The axis is "present" iff this dict is non-empty. When absent, the
+    overall is byte-identical to the pre-P2.8 60/25/15 rubric.
+
     Shape:
       {
-        "overall":        {"score": int, "letter": str},
-        "procedure":      {"score": int, "letter": str, "present": bool},
-        "justification":  {"score": int, "letter": str, "present": bool},
-        "simplification": {"score": int, "letter": str, "present": bool},
+        "overall":                {"score": int, "letter": str},
+        "procedure":              {"score": int, "letter": str, "present": bool},
+        "justification":          {"score": int, "letter": str, "present": bool},
+        "simplification":         {"score": int, "letter": str, "present": bool},
+        "misconception_corrected":{"score": int, "letter": str, "present": bool,
+                                   "detected": int, "resolved": int},
       }
     """
     per_step = coverage.get("per_step", {})
@@ -113,6 +134,18 @@ def compute_rubric(
         else:
             axis_raw[axis] = None
 
+    # Misconception axis: weighted average of per-code resolution scores.
+    misc_resolved = 0
+    misc_detected = 0
+    if misconception_scores:
+        misc_detected = len(misconception_scores)
+        misc_resolved = sum(1 for s in misconception_scores.values() if s >= 1.0)
+        axis_raw["misconception_corrected"] = (
+            sum(misconception_scores.values()) / misc_detected
+        ) * 100.0
+    else:
+        axis_raw["misconception_corrected"] = None
+
     # Compute overall with absent-axis redistribution.
     present_weights = {a: AXIS_WEIGHTS[a] for a, v in axis_raw.items() if v is not None}
     total_weight = sum(present_weights.values())
@@ -131,9 +164,17 @@ def compute_rubric(
         return {"score": score_int, "letter": score_to_letter(score_int), "present": True}
 
     overall_int = int(round(overall_score))
+    misc_block = _axis_block("misconception_corrected")
+    if misc_block["present"]:
+        misc_block["detected"] = misc_detected
+        misc_block["resolved"] = misc_resolved
+    else:
+        misc_block["detected"] = 0
+        misc_block["resolved"] = 0
     return {
         "overall": {"score": overall_int, "letter": score_to_letter(overall_int)},
         "procedure": _axis_block("procedure"),
         "justification": _axis_block("justification"),
         "simplification": _axis_block("simplification"),
+        "misconception_corrected": misc_block,
     }

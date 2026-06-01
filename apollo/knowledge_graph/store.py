@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sympy import latex
 
-from apollo.errors import SessionFrozenError
+from apollo.errors import KGEntryNotFoundError, SessionFrozenError
 from apollo.ontology import (
     NODE_CONTENT_TYPES,
     NODE_LABEL_TO_TYPE,
@@ -30,7 +30,12 @@ from apollo.ontology import (
     NodeType,
     build_node,
 )
-from apollo.persistence.models import ApolloSession, ProblemAttempt
+from apollo.persistence.models import (
+    ApolloSession,
+    KGNegotiation,
+    Message,
+    ProblemAttempt,
+)
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.solver.sympy_exec import _tidy_floats, parse_zero_form
 
@@ -76,12 +81,24 @@ def _equation_latex(symbolic: str) -> str | None:
 
 
 def _node_to_neo4j_props(node: Node) -> dict[str, Any]:
-    """Flatten a typed Node into a Neo4j property bag."""
+    """Flatten a typed Node into a Neo4j property bag.
+
+    Negotiable-OLM fields (status, student_belief) ride on the node bag so
+    the per-entry pill UI and the Done-gate can read them via the same
+    `read_graph` call as everything else. Default ACCEPTED + null
+    student_belief means write_nodes for parser-authored nodes is a no-op
+    behavioral change vs pre-P3.
+    """
     content = node.content.model_dump()
     return {
         "node_id": node.node_id,
         "attempt_id": node.attempt_id,
         "source": node.source,
+        "parser_confidence": node.parser_confidence,
+        "status": node.status,
+        # Neo4j has no native NULL property — omit when None so reads see
+        # a missing field rather than a literal "None" string.
+        **({"student_belief": node.student_belief} if node.student_belief is not None else {}),
         **content,
     }
 
@@ -102,11 +119,25 @@ def _record_to_node(props: dict[str, Any], labels: list[str]) -> Node:
     node_id = bag.pop("node_id")
     attempt_id = bag.pop("attempt_id")
     source = bag.pop("source")
+    # Default 1.0 keeps legacy nodes (written before P1) authoritative; the
+    # P3 OLM Done-gate flags `parser_confidence < 0.6`, so legacy data does
+    # not false-fire after the migration.
+    parser_confidence = bag.pop("parser_confidence", 1.0)
+    # P3: Negotiable OLM. Default ACCEPTED + None for nodes that pre-date
+    # the P3 migration; coverage and the Done-gate treat that as the
+    # pre-P3 baseline.
+    status_raw = bag.pop("status", "ACCEPTED")
+    student_belief = bag.pop("student_belief", None)
 
     if node_type == "equation" and "symbolic" in bag and "latex" not in bag:
         tex = _equation_latex(bag["symbolic"])
         if tex is not None:
             bag["latex"] = tex
+
+    # Defensively coerce status — Neo4j returned a string; only the three
+    # known values are meaningful. Anything else falls back to ACCEPTED so
+    # a mis-set property doesn't crash the read path.
+    status = status_raw if status_raw in ("ACCEPTED", "DISPUTED", "DUAL") else "ACCEPTED"
 
     return build_node(
         node_type=node_type,
@@ -114,6 +145,9 @@ def _record_to_node(props: dict[str, Any], labels: list[str]) -> Node:
         attempt_id=int(attempt_id),
         source=source,
         content=bag,
+        parser_confidence=float(parser_confidence),
+        status=status,
+        student_belief=student_belief,
     )
 
 
@@ -364,3 +398,174 @@ class KGStore:
             lines.append(f"- procedure step {i}: {c.action}")
 
         return "\n".join(lines) if lines else _EMPTY_SUMMARY
+
+    # ------- Negotiable OLM (P3) --------------------------------------------
+    #
+    # Three moves the student can make against any KG entry:
+    #   challenge   — flag for grader review (status -> DISPUTED)
+    #   paraphrase  — supply preferred surface form (status -> DUAL,
+    #                 student_belief = surface_form). The structural fields
+    #                 (symbolic, label, etc.) are preserved; only the
+    #                 student-facing belief is recorded.
+    #   skip        — pass through w/o edits (status -> DUAL with no belief).
+    #                 The "I'm not going to fight about it" escape hatch.
+    #
+    # Each move:
+    #   1. Verifies the session is unfrozen (Done freeze blocks late moves).
+    #   2. Updates the Neo4j node in place.
+    #   3. Logs an audit-trail row in apollo_kg_negotiations (Postgres).
+    #   4. Returns the updated typed Node.
+    #
+    # The Done-gate (P3.6) reads `status` directly from the graph and the
+    # negotiation log to decide whether the student has "touched" each
+    # flagged entry.
+
+    async def _set_node_status_neo4j(
+        self, *, attempt_id: int, node_id: str, set_clause: str, params: dict[str, Any],
+    ) -> Node:
+        """Run a parameterized SET-and-RETURN Cypher and reconstruct the
+        typed Node. Raises KGEntryNotFoundError when the node is absent.
+
+        Internal helper — the three move methods build the same SET shape
+        and read it back through here to avoid duplicating reconstruction
+        logic three times.
+        """
+        cypher = (
+            "MATCH (n:_KGNode {attempt_id: $aid, node_id: $nid}) "
+            f"SET {set_clause} "
+            "RETURN n AS props, labels(n) AS labels"
+        )
+        all_params = {"aid": attempt_id, "nid": node_id, **params}
+        async with self.neo.session() as s:
+            result = await s.run(cypher, **all_params)
+            rec = await result.single()
+        if rec is None:
+            raise KGEntryNotFoundError(attempt_id=attempt_id, node_id=node_id)
+        return _record_to_node(dict(rec["props"]), list(rec["labels"]))
+
+    async def _log_negotiation(
+        self, *, attempt_id: int, node_id: str, move: str, payload: dict[str, Any],
+    ) -> None:
+        """Append a row to apollo_kg_negotiations. The audit log is
+        append-only — every move gets its own row even on the same entry."""
+        self.db.add(KGNegotiation(
+            attempt_id=attempt_id,
+            entry_id=node_id,
+            actor="student",
+            move=move,
+            payload=payload,
+        ))
+        await self.db.commit()
+
+    async def mark_node_disputed(
+        self, *, attempt_id: int, node_id: str, reason: str,
+    ) -> Node:
+        """CHALLENGE: status -> DISPUTED. Logs the student's reason. The
+        node's structural content is preserved — only `status` changes."""
+        session_id = await self._session_id_for_attempt(attempt_id)
+        await self._ensure_unfrozen(session_id)
+
+        node = await self._set_node_status_neo4j(
+            attempt_id=attempt_id, node_id=node_id,
+            set_clause="n.status = 'DISPUTED'", params={},
+        )
+        await self._log_negotiation(
+            attempt_id=attempt_id, node_id=node_id,
+            move="challenge", payload={"reason": reason},
+        )
+        return node
+
+    async def paraphrase_node(
+        self, *, attempt_id: int, node_id: str, surface_form: str,
+    ) -> Node:
+        """SUPPLY-PARAPHRASE: status -> DUAL, student_belief = surface_form.
+
+        Preserves all structural fields (symbolic, label, variables, etc.).
+        Only the human-readable surface form is recorded as the student's
+        wording. Coverage uses student_belief for grading DUAL entries (P3.4).
+        """
+        session_id = await self._session_id_for_attempt(attempt_id)
+        await self._ensure_unfrozen(session_id)
+
+        node = await self._set_node_status_neo4j(
+            attempt_id=attempt_id, node_id=node_id,
+            set_clause="n.status = 'DUAL', n.student_belief = $belief",
+            params={"belief": surface_form},
+        )
+        await self._log_negotiation(
+            attempt_id=attempt_id, node_id=node_id,
+            move="paraphrase", payload={"surface_form": surface_form},
+        )
+        return node
+
+    async def skip_node(
+        self, *, attempt_id: int, node_id: str,
+    ) -> Node:
+        """SKIP: status -> DUAL with no edits. Flags the entry for the
+        grader without forcing the student to articulate a paraphrase."""
+        session_id = await self._session_id_for_attempt(attempt_id)
+        await self._ensure_unfrozen(session_id)
+
+        node = await self._set_node_status_neo4j(
+            attempt_id=attempt_id, node_id=node_id,
+            set_clause="n.status = 'DUAL'", params={},
+        )
+        await self._log_negotiation(
+            attempt_id=attempt_id, node_id=node_id,
+            move="skip", payload={},
+        )
+        return node
+
+    async def get_node_trace(
+        self, *, attempt_id: int, node_id: str,
+    ) -> dict[str, Any]:
+        """Ordered audit trail for one entry. Returns:
+
+            {
+              "node_id": str,
+              "moves": [
+                {"actor": str, "move": str, "payload": dict, "created_at": iso8601},
+                ...
+              ],
+              "source_utterance": str | None,  # most recent student message
+                                                # in the attempt — best-effort
+            }
+
+        The source_utterance is approximate (latest student message rather
+        than "the message that produced this node") because Neo4j nodes
+        do not currently carry a source_message_id. The common case the
+        FE renders ("you just said X and Apollo misheard") works correctly
+        because the student typically negotiates immediately after the
+        offending turn.
+        """
+        # Audit trail — chronological.
+        rows = (await self.db.execute(
+            select(KGNegotiation)
+            .where(KGNegotiation.attempt_id == attempt_id)
+            .where(KGNegotiation.entry_id == node_id)
+            .order_by(KGNegotiation.created_at.asc(), KGNegotiation.id.asc())
+        )).scalars().all()
+
+        moves: list[dict[str, Any]] = []
+        for r in rows:
+            moves.append({
+                "actor": r.actor,
+                "move": r.move,
+                "payload": r.payload or {},
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            })
+
+        # Source utterance — latest student message in the attempt.
+        last_student_msg = (await self.db.execute(
+            select(Message.content)
+            .where(Message.attempt_id == attempt_id)
+            .where(Message.role == "student")
+            .order_by(Message.turn_index.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+
+        return {
+            "node_id": node_id,
+            "moves": moves,
+            "source_utterance": last_student_msg,
+        }

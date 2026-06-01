@@ -8,6 +8,7 @@ from apollo.overseer.xp import (
     DIFFICULTY_MULTIPLIERS,
     LEVEL_TIERS,
     REATTEMPT_MULTIPLIER,
+    compute_progress_envelope,
     compute_xp_earned,
     level_from_xp,
     next_tier_threshold,
@@ -141,3 +142,83 @@ def test_next_tier_threshold_rejects_out_of_range():
         next_tier_threshold(0)
     with pytest.raises(ValueError):
         next_tier_threshold(6)
+
+
+# ── Progress envelope (item #9) ────────────────────────────────────────────
+
+
+def test_progress_envelope_basic_no_level_up():
+    e = compute_progress_envelope(
+        xp_earned=50, xp_before=100, xp_after=150,
+    )
+    assert e.xp_earned == 50
+    assert e.xp_before == 100
+    assert e.xp_after == 150
+    assert e.level_before == 1
+    assert e.level_after == 1
+    assert e.level_up is False
+    assert e.title_after == "Apollo Apprentice"
+    # Level 1 spans 0..300 → 150 in tier → 50%
+    assert e.level_progress_pct == 50.0
+    assert e.xp_to_next_level == 150
+
+
+def test_progress_envelope_signals_level_up():
+    e = compute_progress_envelope(
+        xp_earned=200, xp_before=200, xp_after=400,
+    )
+    assert e.level_before == 1
+    assert e.level_after == 2
+    assert e.level_up is True
+    assert e.title_after == "Apollo Adept"
+    # Level 2 spans 300..800 → 400 in tier (100/500)
+    assert e.level_progress_pct == 20.0
+    assert e.xp_to_next_level == 400
+
+
+def test_progress_envelope_at_max_level():
+    e = compute_progress_envelope(
+        xp_earned=100, xp_before=3000, xp_after=3100,
+    )
+    assert e.level_before == 5
+    assert e.level_after == 5
+    assert e.level_up is False
+    assert e.title_after == "Apollo Archon"
+    assert e.level_progress_pct == 100.0
+    assert e.xp_to_next_level is None
+
+
+def test_progress_envelope_exact_threshold_boundary():
+    """xp_after exactly hits a tier threshold => level up, 0% into new tier."""
+    e = compute_progress_envelope(
+        xp_earned=100, xp_before=200, xp_after=300,
+    )
+    assert e.level_after == 2
+    assert e.level_up is True
+    assert e.level_progress_pct == 0.0
+    assert e.xp_to_next_level == 500  # 800 - 300
+
+
+def test_progress_envelope_zero_xp_earned():
+    """xp_earned=0 is valid (e.g. graded re-attempt with full credit at
+    the cap). No level up when xp doesn't move."""
+    e = compute_progress_envelope(
+        xp_earned=0, xp_before=400, xp_after=400,
+    )
+    assert e.level_up is False
+    assert e.xp_earned == 0
+
+
+def test_progress_envelope_rejects_negative_xp_earned():
+    with pytest.raises(ValueError):
+        compute_progress_envelope(xp_earned=-1, xp_before=0, xp_after=0)
+
+
+def test_progress_envelope_rejects_negative_before():
+    with pytest.raises(ValueError):
+        compute_progress_envelope(xp_earned=10, xp_before=-1, xp_after=10)
+
+
+def test_progress_envelope_rejects_after_lower_than_before():
+    with pytest.raises(ValueError):
+        compute_progress_envelope(xp_earned=10, xp_before=100, xp_after=50)
