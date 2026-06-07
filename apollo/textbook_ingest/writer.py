@@ -36,6 +36,8 @@ async def write_concept(neo: Neo4jClient, entry: ConceptRegistryEntry, *,
     """Create the :Concept and its policy children. Idempotent + first-writer-wins:
     if the concept already exists its policy children are left untouched."""
     if await concept_exists(neo, entry.subject_id, entry.concept_id):
+        # check-then-act: safe under single-writer ingest; the concept_id_unique
+        # constraint is the backstop if two writers ever race.
         return
     rows = entry_to_rows(entry)
     async with neo.session() as s:
@@ -89,17 +91,30 @@ async def _write_concept_tx(tx, rows, source_document_id, scope_embedding, polic
 async def write_cluster_alias(neo: Neo4jClient, cluster_id: str,
                               subject_id: str, concept_id: str) -> None:
     async with neo.session() as s:
-        await s.run(
-            "MATCH (c:Concept {subject_id:$s, concept_id:$cid}) "
-            "MERGE (a:ClusterAlias {cluster_id:$cl}) "
-            "MERGE (a)-[:RESOLVES_TO]->(c)",
-            s=subject_id, cid=concept_id, cl=cluster_id)
+        created = await s.execute_write(_write_cluster_alias_tx,
+                                        cluster_id, subject_id, concept_id)
+    if not created:
+        raise ValueError(
+            f"cannot create cluster alias {cluster_id!r}: "
+            f"concept {subject_id}/{concept_id} does not exist")
+
+
+async def _write_cluster_alias_tx(tx, cluster_id, subject_id, concept_id) -> bool:
+    rec = await (await tx.run(
+        "MATCH (c:Concept {subject_id:$s, concept_id:$cid}) "
+        "MERGE (a:ClusterAlias {cluster_id:$cl}) "
+        "MERGE (a)-[:RESOLVES_TO]->(c) "
+        "RETURN count(c) AS n",
+        s=subject_id, cid=concept_id, cl=cluster_id)).single()
+    return rec is not None and rec["n"] > 0
 
 
 async def write_problem(neo: Neo4jClient, problem: ValidatedProblem, *,
                         authored: bool) -> None:
     """Idempotent: skips if problem_id already exists."""
     if await problem_exists(neo, problem.problem_id):
+        # check-then-act: safe under single-writer ingest; the problem_id_unique
+        # constraint is the backstop if two writers ever race.
         return
     graph = reference_steps_to_kg_graph(problem.reference_solution)
     async with neo.session() as s:

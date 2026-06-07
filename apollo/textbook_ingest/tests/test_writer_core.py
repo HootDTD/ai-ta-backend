@@ -56,3 +56,10 @@ async def test_write_concept_is_idempotent_and_frozen(neo4j_test):
             "MATCH (c:Concept {concept_id:'bernoulli_principle'})-[:HAS_SYMBOL]->(x) "
             "RETURN count(x) AS n")).single()
         assert rec["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cluster_alias_raises_when_concept_missing(neo4j_test):
+    with pytest.raises(ValueError):
+        await writer.write_cluster_alias(neo4j_test, "ghost_cluster",
+                                         "no_subject", "no_concept")
