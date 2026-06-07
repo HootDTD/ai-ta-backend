@@ -284,3 +284,20 @@ __all__ = [
     "get_neo4j_database",
     "neo4j_configured",
 ]
+
+# ---------------------------------------------------------------------------
+# Textbook problem-index ingest (apollo/textbook_ingest).
+# Module-level constants, matching this file's existing globals style
+# (settings.py is not a pydantic BaseSettings). Tune from data; see
+# docs/superpowers/specs/2026-06-02-apollo-textbook-problem-index-design.md §12.
+# ---------------------------------------------------------------------------
+TEXTBOOK_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+TEXTBOOK_EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "3072"))
+TEXTBOOK_DEDUP_EMBEDDING_CUTOFF = 0.85          # cosine >= this -> matched_existing
+TEXTBOOK_DEDUP_LLM_JUDGE_LOW = 0.75             # [LOW, HIGH) band triggers llm-judge
+TEXTBOOK_DEDUP_LLM_JUDGE_HIGH = 0.85
+TEXTBOOK_PROBLEM_DETECTOR_ACCEPT_THRESHOLD = 0.60   # detector confidence floor
+TEXTBOOK_CLASSIFIER_ACCEPT_THRESHOLD = 0.60         # extraction concept-tag floor
+TEXTBOOK_LLM_MAX_RETRIES = 2                     # per-call retries (timeout/malformed)
+TEXTBOOK_TIER2_MAX_REJECT_RATE = 0.50           # synthetic smoke reject ceiling
+TEXTBOOK_TIER3_MAX_REJECT_RATE = 0.40           # real-textbook release reject ceiling
