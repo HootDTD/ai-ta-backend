@@ -75,9 +75,11 @@ class NextRequest(BaseModel):
 async def session_from_hoot(
     body: FromHootRequest,
     db: AsyncSession = Depends(get_db_session),
+    neo: Neo4jClient = Depends(get_neo4j_client),
 ) -> dict:
     return await init_session_from_hoot(
         db=db,
+        neo=neo,
         student_id=body.student_id,
         hoot_transcript=body.hoot_transcript,
         difficulty=body.difficulty,
@@ -125,9 +127,10 @@ async def next_problem(
     session_id: int,
     body: NextRequest,
     db: AsyncSession = Depends(get_db_session),
+    neo: Neo4jClient = Depends(get_neo4j_client),
 ) -> dict:
     from apollo.handlers.next import handle_next
-    return await handle_next(db=db, session_id=session_id, difficulty=body.difficulty)
+    return await handle_next(db=db, neo=neo, session_id=session_id, difficulty=body.difficulty)
 
 
 @router.post("/sessions/{session_id}/restart_problem")

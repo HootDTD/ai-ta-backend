@@ -8,7 +8,14 @@ import pytest
 from pydantic import ValidationError
 
 from apollo.schemas.problem import Problem, load_problem
-from apollo.subjects import load_concept
+
+# Bundled Bernoulli problem bank on disk. load_concept is now Neo4j-backed and no
+# longer exposes a filesystem problems_dir, so this test reads the bank directly.
+# The bank moves into Neo4j in the bernoulli migration (task A10).
+_BERNOULLI_PROBLEMS_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "subjects" / "fluid_mechanics" / "concepts" / "bernoulli_principle" / "problems"
+)
 
 
 def _base_problem() -> dict:
@@ -80,8 +87,7 @@ def test_validator_accepts_clean_problem():
 
 def test_all_bundled_bernoulli_problems_validate():
     """Every bundled Bernoulli problem JSON must pass the V3 validator."""
-    concept = load_concept("fluid_mechanics", "bernoulli_principle")
-    bundled = sorted(concept.problems_dir.glob("problem_*.json"))
+    bundled = sorted(_BERNOULLI_PROBLEMS_DIR.glob("problem_*.json"))
     assert len(bundled) >= 1, "expected bundled problems"
     for path in bundled:
         problem = load_problem(path)

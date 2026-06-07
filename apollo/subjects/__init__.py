@@ -1,28 +1,20 @@
-"""Apollo V3 subject + concept registry.
+"""Apollo subject + concept registry (Neo4j-backed).
 
-Layout:
-    apollo/subjects/<subject_id>/concepts/<concept_id>/
-        canonical_symbols.json    # symbol vocabulary (e.g. P, rho, v, A, h, g, Q)
-        normalization_map.json    # natural-language term -> canonical symbol
-        parser_prompt_template.md # Jinja-style template; receives canonical_symbols
-        solver_hints.json         # constants + per-concept augmentations
-        concept_dag.json          # concept prerequisite DAG (optional)
-        problems/                 # problem_*.json bank for this concept
+Concept policy data lives in the Neo4j :Concept subgraph (symbols,
+normalization, solver constants, forbidden terms) written by
+`apollo.textbook_ingest.writer.write_concept`.
 
-`load_concept(subject_id, concept_id)` returns a `ConceptDefinition`. All
-hardcoded fluid-mechanics knowledge in the parser / solver / done handler
-should be replaced with reads from this registry.
+`await load_concept(subject_id, concept_id, neo)` rebuilds a
+`ConceptDefinition` from that subgraph via
+`apollo.textbook_ingest.concept_schema_map.rows_to_concept_definition`.
+All hardcoded fluid-mechanics knowledge in the parser / solver / done
+handler should be replaced with reads from this registry.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
-
-
-_SUBJECTS_ROOT = Path(__file__).resolve().parent
 
 
 class ConceptNotFoundError(LookupError):
@@ -84,55 +76,52 @@ class ConceptDefinition(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
 
-def _concept_dir(subject_id: str, concept_id: str) -> Path:
-    return _SUBJECTS_ROOT / subject_id / "concepts" / concept_id
+async def load_concept(subject_id: str, concept_id: str, neo) -> ConceptDefinition:
+    """Reconstruct a ConceptDefinition from the Neo4j concept subgraph."""
+    from apollo.textbook_ingest.concept_schema_map import rows_to_concept_definition
+
+    async with neo.session() as s:
+        crec = await (await s.run(
+            "MATCH (c:Concept {subject_id:$s, concept_id:$c}) "
+            "RETURN c.subject_id AS subject_id, c.concept_id AS concept_id, "
+            "c.scope_summary AS scope_summary, c.parser_prompt_template AS parser_prompt_template, "
+            "c.non_trivial_keywords AS non_trivial_keywords, c.plan_markers AS plan_markers",
+            s=subject_id, c=concept_id)).single()
+        if crec is None:
+            raise ConceptNotFoundError(f"{subject_id}/{concept_id}")
+        symbols = await (await s.run(
+            "MATCH (:Concept {subject_id:$s, concept_id:$c})-[:HAS_SYMBOL]->(x) "
+            "RETURN x.symbol AS symbol, x.description AS description, "
+            "x.subscript_convention AS subscript_convention "
+            "ORDER BY x.ord", s=subject_id, c=concept_id)).data()
+        normalization = await (await s.run(
+            "MATCH (:Concept {subject_id:$s, concept_id:$c})-[:HAS_NORMALIZATION]->(x) "
+            "RETURN x.natural_language AS natural_language, x.canonical_symbol AS canonical_symbol",
+            s=subject_id, c=concept_id)).data()
+        constants = await (await s.run(
+            "MATCH (:Concept {subject_id:$s, concept_id:$c})-[:HAS_CONSTANT]->(x) "
+            "RETURN x.name AS name, x.value AS value, x.kind AS kind", s=subject_id, c=concept_id)).data()
+        forbidden = await (await s.run(
+            "MATCH (:Concept {subject_id:$s, concept_id:$c})-[:FORBIDS]->(x) "
+            "RETURN x.term AS term, x.category AS category", s=subject_id, c=concept_id)).data()
+    rows = {"concept": dict(crec), "symbols": symbols, "normalization": normalization,
+            "solver_constants": constants, "forbidden_terms": forbidden}
+    return rows_to_concept_definition(rows, problems_dir=None)
 
 
-def list_subjects() -> list[str]:
-    return sorted(
-        p.name for p in _SUBJECTS_ROOT.iterdir()
-        if p.is_dir() and not p.name.startswith("_") and not p.name.startswith(".")
-    )
+async def list_subjects(neo) -> list[str]:
+    async with neo.session() as s:
+        rows = await (await s.run(
+            "MATCH (c:Concept) RETURN DISTINCT c.subject_id AS s ORDER BY s")).data()
+    return [r["s"] for r in rows]
 
 
-def list_concepts(subject_id: str) -> list[str]:
-    concepts_dir = _SUBJECTS_ROOT / subject_id / "concepts"
-    if not concepts_dir.is_dir():
-        return []
-    return sorted(
-        p.name for p in concepts_dir.iterdir()
-        if p.is_dir() and not p.name.startswith(".")
-    )
-
-
-def load_concept(subject_id: str, concept_id: str) -> ConceptDefinition:
-    cdir = _concept_dir(subject_id, concept_id)
-    if not cdir.is_dir():
-        raise ConceptNotFoundError(f"{subject_id}/{concept_id} not in registry")
-
-    sym_path = cdir / "canonical_symbols.json"
-    norm_path = cdir / "normalization_map.json"
-    prompt_path = cdir / "parser_prompt_template.md"
-    hints_path = cdir / "solver_hints.json"
-    forbidden_path = cdir / "forbidden_named_laws.json"
-    problems_dir = cdir / "problems"
-
-    forbidden = (
-        ForbiddenNamedLaws.model_validate_json(forbidden_path.read_text())
-        if forbidden_path.is_file()
-        else ForbiddenNamedLaws()
-    )
-
-    return ConceptDefinition(
-        subject_id=subject_id,
-        concept_id=concept_id,
-        canonical_symbols=CanonicalSymbols.model_validate_json(sym_path.read_text()),
-        normalization_map=json.loads(norm_path.read_text()),
-        parser_prompt_template=prompt_path.read_text(),
-        solver_hints=SolverHints.model_validate_json(hints_path.read_text()),
-        forbidden_named_laws=forbidden,
-        problems_dir=problems_dir,
-    )
+async def list_concepts(subject_id: str, neo) -> list[str]:
+    async with neo.session() as s:
+        rows = await (await s.run(
+            "MATCH (c:Concept {subject_id:$s}) RETURN c.concept_id AS c ORDER BY c",
+            s=subject_id)).data()
+    return [r["c"] for r in rows]
 
 
 __all__ = [

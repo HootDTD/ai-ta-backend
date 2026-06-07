@@ -9,16 +9,17 @@ NOT present in either the KG summary or the student's history. NO
 FALLBACK — rejection raises FilterRejectedError.
 """
 import pytest
+import pytest_asyncio
 
 from apollo.agent.leakage_judge import JudgeVerdict
 from apollo.agent.output_filter import validate_or_raise
 from apollo.errors import FilterRejectedError
-from apollo.subjects import load_concept
+from apollo.subjects.tests.seed_helpers import seed_bernoulli_concept
 
 
-@pytest.fixture(scope="module")
-def concept():
-    return load_concept("fluid_mechanics", "bernoulli_principle")
+@pytest_asyncio.fixture
+async def concept(neo4j_test):
+    return await seed_bernoulli_concept(neo4j_test)
 
 
 @pytest.fixture
@@ -45,7 +46,8 @@ KG_SUMMARY_BERNOULLI = (
 )
 
 
-def test_reply_using_only_student_vocabulary_passes(concept, stub_judge_clean):
+@pytest.mark.asyncio
+async def test_reply_using_only_student_vocabulary_passes(concept, stub_judge_clean):
     draft = "So when density is constant, A1 times v1 equals A2 times v2 — what does that tell you?"
     out = validate_or_raise(
         draft,
@@ -57,7 +59,8 @@ def test_reply_using_only_student_vocabulary_passes(concept, stub_judge_clean):
     assert out == draft
 
 
-def test_reply_using_student_label_passes(concept, stub_judge_clean):
+@pytest.mark.asyncio
+async def test_reply_using_student_label_passes(concept, stub_judge_clean):
     draft = "You mentioned Bernoulli's equation — can you remind me what each term represents?"
     out = validate_or_raise(
         draft,
@@ -69,7 +72,8 @@ def test_reply_using_student_label_passes(concept, stub_judge_clean):
     assert out == draft
 
 
-def test_reply_introducing_continuity_unprompted_rejected(concept, stub_judge_clean):
+@pytest.mark.asyncio
+async def test_reply_introducing_continuity_unprompted_rejected(concept, stub_judge_clean):
     summary_without_continuity = "- equation ((no label)): A1*v1 - A2*v2"
     history_without_the_word = [
         {"role": "user", "content": "A1*v1 = A2*v2 for incompressible."},
@@ -86,7 +90,8 @@ def test_reply_introducing_continuity_unprompted_rejected(concept, stub_judge_cl
     assert exc_info.value.rejected_term == "continuity"
 
 
-def test_reply_introducing_viscosity_rejected(concept, stub_judge_clean):
+@pytest.mark.asyncio
+async def test_reply_introducing_viscosity_rejected(concept, stub_judge_clean):
     draft = "What about viscosity — does that factor in?"
     with pytest.raises(FilterRejectedError) as exc_info:
         validate_or_raise(
@@ -99,7 +104,8 @@ def test_reply_introducing_viscosity_rejected(concept, stub_judge_clean):
     assert exc_info.value.rejected_term == "viscosity"
 
 
-def test_reply_introducing_navier_stokes_rejected(concept, stub_judge_clean):
+@pytest.mark.asyncio
+async def test_reply_introducing_navier_stokes_rejected(concept, stub_judge_clean):
     draft = "Is this related to Navier-Stokes at all?"
     with pytest.raises(FilterRejectedError) as exc_info:
         validate_or_raise(
@@ -112,7 +118,8 @@ def test_reply_introducing_navier_stokes_rejected(concept, stub_judge_clean):
     assert "navier" in exc_info.value.rejected_term.lower()
 
 
-def test_reply_introducing_compressibility_rejected(concept, stub_judge_clean):
+@pytest.mark.asyncio
+async def test_reply_introducing_compressibility_rejected(concept, stub_judge_clean):
     draft = "Does compressibility matter here?"
     with pytest.raises(FilterRejectedError):
         validate_or_raise(
@@ -124,7 +131,8 @@ def test_reply_introducing_compressibility_rejected(concept, stub_judge_clean):
         )
 
 
-def test_reply_mentioning_energy_conservation_unprompted_rejected(concept, stub_judge_clean):
+@pytest.mark.asyncio
+async def test_reply_mentioning_energy_conservation_unprompted_rejected(concept, stub_judge_clean):
     draft = "This looks like energy conservation to me."
     with pytest.raises(FilterRejectedError):
         validate_or_raise(
@@ -136,7 +144,8 @@ def test_reply_mentioning_energy_conservation_unprompted_rejected(concept, stub_
         )
 
 
-def test_common_english_words_never_trigger_rejection(concept, stub_judge_clean):
+@pytest.mark.asyncio
+async def test_common_english_words_never_trigger_rejection(concept, stub_judge_clean):
     draft = "Okay, let me make sure I understand. You said the product of area and velocity stays the same — why is that?"
     out = validate_or_raise(
         draft,
@@ -148,7 +157,8 @@ def test_common_english_words_never_trigger_rejection(concept, stub_judge_clean)
     assert out == draft
 
 
-def test_judge_high_confidence_leak_rejected(concept):
+@pytest.mark.asyncio
+async def test_judge_high_confidence_leak_rejected(concept):
     """Judge stage rejection path — paraphrase the deterministic stage misses."""
     def _judge(*, draft, concept, history, kg_summary):
         return JudgeVerdict(
@@ -169,7 +179,8 @@ def test_judge_high_confidence_leak_rejected(concept):
     assert exc_info.value.rejected_term == "speed times area is constant"
 
 
-def test_judge_low_confidence_leak_passes(concept):
+@pytest.mark.asyncio
+async def test_judge_low_confidence_leak_passes(concept):
     """Below-threshold leak is logged but does not block."""
     def _judge(*, draft, concept, history, kg_summary):
         return JudgeVerdict(

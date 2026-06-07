@@ -19,6 +19,7 @@ from apollo.persistence.models import (
     SessionPhase,
     SessionStatus,
 )
+from apollo.persistence.neo4j_client import Neo4jClient
 
 
 _ABANDON_PHASES = {SessionPhase.TEACHING.value, SessionPhase.PROBLEM_REVEAL.value}
@@ -29,6 +30,7 @@ _FROZEN_PHASES = {SessionPhase.SOLVING.value}
 async def handle_next(
     *,
     db: AsyncSession,
+    neo: Neo4jClient,
     session_id: int,
     difficulty: str,
 ) -> Dict[str, Any]:
@@ -63,10 +65,11 @@ async def handle_next(
         .where(ProblemAttempt.session_id == session_id)
     )).scalars().all())
 
-    problem = select_problem(
+    problem = await select_problem(
         cluster_id=sess.concept_cluster_id,
         difficulty=difficulty,
         attempted_ids=attempted_ids,
+        neo=neo,
     )
 
     new_attempt = ProblemAttempt(

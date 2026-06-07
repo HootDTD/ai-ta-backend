@@ -14,18 +14,19 @@ import json
 from unittest.mock import patch
 
 import pytest
+import pytest_asyncio
 
 from apollo.agent.leakage_judge import (
     CONFIDENCE_THRESHOLD,
     JudgeVerdict,
     llm_leakage_judge,
 )
-from apollo.subjects import load_concept
+from apollo.subjects.tests.seed_helpers import seed_bernoulli_concept
 
 
-@pytest.fixture(scope="module")
-def concept():
-    return load_concept("fluid_mechanics", "bernoulli_principle")
+@pytest_asyncio.fixture
+async def concept(neo4j_test):
+    return await seed_bernoulli_concept(neo4j_test)
 
 
 def _patch_cheap_chat(payload):
@@ -36,7 +37,8 @@ def _patch_cheap_chat(payload):
     )
 
 
-def test_well_formed_clean_response(concept):
+@pytest.mark.asyncio
+async def test_well_formed_clean_response(concept):
     with _patch_cheap_chat({"leaks": False, "offending_phrase": None,
                             "reason": None, "confidence": 0.1}):
         verdict = llm_leakage_judge(
@@ -49,7 +51,8 @@ def test_well_formed_clean_response(concept):
     assert verdict.confidence == 0.1
 
 
-def test_well_formed_leak_response(concept):
+@pytest.mark.asyncio
+async def test_well_formed_leak_response(concept):
     with _patch_cheap_chat({
         "leaks": True,
         "offending_phrase": "energy conservation",
@@ -67,7 +70,8 @@ def test_well_formed_leak_response(concept):
     assert verdict.offending_phrase == "energy conservation"
 
 
-def test_confidence_clamped_above_one(concept):
+@pytest.mark.asyncio
+async def test_confidence_clamped_above_one(concept):
     with _patch_cheap_chat({"leaks": False, "confidence": 5.7}):
         verdict = llm_leakage_judge(
             draft="ok", concept=concept, history=[], kg_summary="",
@@ -75,7 +79,8 @@ def test_confidence_clamped_above_one(concept):
     assert verdict.confidence == 1.0
 
 
-def test_confidence_clamped_below_zero(concept):
+@pytest.mark.asyncio
+async def test_confidence_clamped_below_zero(concept):
     with _patch_cheap_chat({"leaks": False, "confidence": -0.4}):
         verdict = llm_leakage_judge(
             draft="ok", concept=concept, history=[], kg_summary="",
@@ -83,7 +88,8 @@ def test_confidence_clamped_below_zero(concept):
     assert verdict.confidence == 0.0
 
 
-def test_malformed_json_soft_fails_open(concept):
+@pytest.mark.asyncio
+async def test_malformed_json_soft_fails_open(concept):
     """Parse error => leaks=false at confidence 0. The deterministic
     pre-filter is the safety net for unambiguous violations."""
     with patch(
@@ -98,7 +104,8 @@ def test_malformed_json_soft_fails_open(concept):
     )
 
 
-def test_missing_fields_default_to_clean(concept):
+@pytest.mark.asyncio
+async def test_missing_fields_default_to_clean(concept):
     """Empty JSON object should not crash; falls through to clean."""
     with _patch_cheap_chat({}):
         verdict = llm_leakage_judge(
@@ -108,7 +115,8 @@ def test_missing_fields_default_to_clean(concept):
     assert verdict.confidence == 0.0
 
 
-def test_non_numeric_confidence_safe(concept):
+@pytest.mark.asyncio
+async def test_non_numeric_confidence_safe(concept):
     """If the model returns confidence as a string, we coerce to 0."""
     with _patch_cheap_chat({"leaks": True, "confidence": "very high"}):
         verdict = llm_leakage_judge(
@@ -120,7 +128,8 @@ def test_non_numeric_confidence_safe(concept):
     assert verdict.confidence < CONFIDENCE_THRESHOLD
 
 
-def test_openai_exception_soft_fails_open(concept):
+@pytest.mark.asyncio
+async def test_openai_exception_soft_fails_open(concept):
     """Network/API error => leaks=false at confidence 0."""
     with patch(
         "apollo.agent.leakage_judge.cheap_chat",

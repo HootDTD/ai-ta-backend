@@ -62,8 +62,8 @@ async def handle_chat(
     if current_attempt is None:
         raise RuntimeError(f"no current ProblemAttempt for session {session_id}")
 
-    subject_id, concept_id = cluster_to_concept(sess.concept_cluster_id)
-    concept = load_concept(subject_id, concept_id)
+    subject_id, concept_id = await cluster_to_concept(sess.concept_cluster_id, neo)
+    concept = await load_concept(subject_id, concept_id, neo)
 
     nodes, edges = parse_utterance(
         message,

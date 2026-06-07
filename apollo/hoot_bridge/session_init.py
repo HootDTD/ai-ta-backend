@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.overseer.concept_inference import infer_concept_cluster
 from apollo.overseer.problem_selector import select_problem
 from apollo.persistence.models import ApolloSession, ProblemAttempt, SessionPhase, SessionStatus
+from apollo.persistence.neo4j_client import Neo4jClient
 
 _AVAILABLE_CLUSTERS = ["fluid_mechanics"]
 _ALLOWED_DIFFICULTIES = {"intro", "standard", "hard"}
@@ -27,6 +28,7 @@ _ALLOWED_DIFFICULTIES = {"intro", "standard", "hard"}
 async def init_session_from_hoot(
     *,
     db: AsyncSession,
+    neo: Neo4jClient,
     student_id: str,
     hoot_transcript: str,
     difficulty: str,
@@ -42,10 +44,11 @@ async def init_session_from_hoot(
         available_clusters=_AVAILABLE_CLUSTERS,
     )
 
-    problem = select_problem(
+    problem = await select_problem(
         cluster_id=cluster_id,
         difficulty=difficulty,
         attempted_ids=[],
+        neo=neo,
     )
 
     await db.execute(

@@ -86,7 +86,7 @@ async def handle_get_session(
 
     problem = None
     if sess.current_problem_id:
-        for p in list_problems_for_cluster(sess.concept_cluster_id):
+        for p in await list_problems_for_cluster(sess.concept_cluster_id, neo):
             if p.id == sess.current_problem_id:
                 problem = {
                     "id": p.id,

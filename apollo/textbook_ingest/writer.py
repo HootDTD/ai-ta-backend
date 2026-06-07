@@ -65,7 +65,7 @@ async def _write_concept_tx(tx, rows, source_document_id, scope_embedding, polic
             "MATCH (c:Concept {subject_id:$s, concept_id:$cid}) "
             "CREATE (c)-[:HAS_SYMBOL]->(:CanonicalSymbol:_ConceptNode "
             "{concept_id:$cid, symbol:$symbol, description:$description, "
-            "subscript_convention:$subscript_convention})",
+            "subscript_convention:$subscript_convention, ord:$ord})",
             s=c["subject_id"], cid=c["concept_id"], **r)
     for r in rows["normalization"]:
         await tx.run(

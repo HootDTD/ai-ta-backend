@@ -31,8 +31,8 @@ from apollo.solver.sympy_exec import _format_value_text
 from apollo.subjects import load_concept
 
 
-def _find_problem(cluster_id: str, problem_id: str) -> Problem:
-    for p in list_problems_for_cluster(cluster_id):
+async def _find_problem(cluster_id: str, problem_id: str, neo: Neo4jClient) -> Problem:
+    for p in await list_problems_for_cluster(cluster_id, neo):
         if p.id == problem_id:
             return p
     raise RuntimeError(f"problem {problem_id!r} not in bank for cluster {cluster_id!r}")
@@ -60,7 +60,7 @@ async def handle_done(
     store = KGStore(db, neo)
 
     sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
-    problem = _find_problem(sess.concept_cluster_id, sess.current_problem_id)
+    problem = await _find_problem(sess.concept_cluster_id, sess.current_problem_id, neo)
 
     attempt = (
         await db.execute(
@@ -84,8 +84,8 @@ async def handle_done(
     await db.commit()
 
     # Concept-driven augmented givens (was hardcoded `g=9.81` in V2).
-    subject_id, concept_id = cluster_to_concept(sess.concept_cluster_id)
-    concept = load_concept(subject_id, concept_id)
+    subject_id, concept_id = await cluster_to_concept(sess.concept_cluster_id, neo)
+    concept = await load_concept(subject_id, concept_id, neo)
 
     augmented_givens = dict(problem.given_values)
     for k, v in concept.solver_hints.augmented_givens.items():

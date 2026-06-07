@@ -34,8 +34,8 @@ def entry_to_rows(entry: ConceptRegistryEntry) -> dict[str, Any]:
     cs = entry.canonical_symbols
     symbols = [
         {"symbol": s, "description": cs.description.get(s, ""),
-         "subscript_convention": cs.subscript_convention or ""}
-        for s in cs.symbols
+         "subscript_convention": cs.subscript_convention or "", "ord": i}
+        for i, s in enumerate(cs.symbols)
     ]
     normalization = [
         {"natural_language": nl, "canonical_symbol": sym}
