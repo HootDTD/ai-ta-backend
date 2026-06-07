@@ -1,66 +1,83 @@
-"""Overseer.problem_selector — pick a problem from the authored bank.
-
-Loads problems from the V3 concept registry:
-    apollo/subjects/<subject>/concepts/<concept>/problems/*.json
-
-`cluster_id` (legacy single-string identifier) is mapped to a
-(subject_id, concept_id) pair via _CLUSTER_TO_CONCEPT.
-
-Deterministic: sorted by id. Refresh on every call (no caching).
-Raises PoolExhaustedError if no unattempted problem at the requested
-difficulty remains.
-"""
+"""Problem selection backed by Neo4j. Returns the same Problem Pydantic object
+Apollo handlers already consume. Hand-authored problems (authored=true) sort
+before extracted problems regardless of id collation."""
 from __future__ import annotations
 
+import json
 from typing import List, Sequence
 
 from apollo.errors import PoolExhaustedError
-from apollo.schemas.problem import Problem, load_problem
-from apollo.subjects import ConceptNotFoundError, load_concept
+from apollo.persistence.neo4j_client import Neo4jClient
+from apollo.schemas.problem import Problem, ReferenceStep
 
-# Legacy cluster_id -> (subject_id, concept_id). Apollo handlers still pass
-# the single cluster_id; this map is the only place the mapping lives.
-_CLUSTER_TO_CONCEPT: dict[str, tuple[str, str]] = {
-    "fluid_mechanics": ("fluid_mechanics", "bernoulli_principle"),
+_ENTRY_TYPE_BY_NODE_TYPE = {
+    "equation": "equation", "condition": "condition",
+    "simplification": "simplification", "definition": "definition",
+    "variable_mapping": "variable_mapping", "procedure_step": "procedure_step",
 }
 
 
-def cluster_to_concept(cluster_id: str) -> tuple[str, str]:
-    """Resolve a legacy cluster_id to its (subject_id, concept_id) registry pair.
+async def cluster_to_concept(cluster_id: str, neo: Neo4jClient) -> tuple[str, str]:
+    async with neo.session() as s:
+        rec = await (await s.run(
+            "MATCH (a:ClusterAlias {cluster_id:$c})-[:RESOLVES_TO]->(concept:Concept) "
+            "RETURN concept.subject_id AS s, concept.concept_id AS cid",
+            c=cluster_id)).single()
+    if rec is None:
+        raise KeyError(f"no ClusterAlias for cluster_id {cluster_id!r}")
+    return rec["s"], rec["cid"]
 
-    Raises KeyError if the cluster is not mapped.
-    """
-    return _CLUSTER_TO_CONCEPT[cluster_id]
+
+async def select_problem(*, cluster_id: str, difficulty: str,
+                         attempted_ids: Sequence[str], neo: Neo4jClient) -> Problem:
+    subject_id, concept_id = await cluster_to_concept(cluster_id, neo)
+    async with neo.session() as s:
+        rec = await (await s.run(
+            """
+            MATCH (p:Problem {subject_id:$s, concept_id:$c, difficulty:$d})
+            WHERE NOT p.problem_id IN $attempted
+            RETURN p ORDER BY p.authored DESC, p.problem_id ASC LIMIT 1
+            """,
+            s=subject_id, c=concept_id, d=difficulty,
+            attempted=list(attempted_ids))).single()
+        if rec is None:
+            raise PoolExhaustedError(concept_cluster_id=cluster_id, difficulty=difficulty)
+        return await _load_problem(rec["p"]["problem_id"], neo)
 
 
-def list_problems_for_cluster(cluster_id: str) -> List[Problem]:
-    pair = _CLUSTER_TO_CONCEPT.get(cluster_id)
-    if pair is None:
-        return []
-    subject_id, concept_id = pair
+async def list_problems_for_cluster(cluster_id: str, neo: Neo4jClient) -> List[Problem]:
     try:
-        concept = load_concept(subject_id, concept_id)
-    except ConceptNotFoundError:
+        subject_id, concept_id = await cluster_to_concept(cluster_id, neo)
+    except KeyError:
         return []
-    if not concept.problems_dir.exists():
-        return []
-    return [
-        load_problem(p)
-        for p in sorted(concept.problems_dir.glob("problem_*.json"))
-    ]
+    async with neo.session() as s:
+        rows = await (await s.run(
+            "MATCH (p:Problem {subject_id:$s, concept_id:$c}) "
+            "RETURN p.problem_id AS id ORDER BY p.authored DESC, p.problem_id ASC",
+            s=subject_id, c=concept_id)).data()
+    return [await _load_problem(r["id"], neo) for r in rows]
 
 
-def select_problem(
-    *,
-    cluster_id: str,
-    difficulty: str,
-    attempted_ids: Sequence[str],
-) -> Problem:
-    pool = list_problems_for_cluster(cluster_id)
-    candidates = [
-        p for p in pool
-        if p.difficulty == difficulty and p.id not in set(attempted_ids)
-    ]
-    if not candidates:
-        raise PoolExhaustedError(concept_cluster_id=cluster_id, difficulty=difficulty)
-    return candidates[0]
+async def _load_problem(problem_id: str, neo: Neo4jClient) -> Problem:
+    async with neo.session() as s:
+        prec = await (await s.run(
+            "MATCH (p:Problem {problem_id:$p}) RETURN p", p=problem_id)).single()
+        node_rows = await (await s.run(
+            "MATCH (p:Problem {problem_id:$p})-[:HAS_REFERENCE_NODE]->(n:_ProblemNode) "
+            "RETURN n.node_id AS id, n.node_type AS type, n.content AS content", p=problem_id)).data()
+        dep_rows = await (await s.run(
+            "MATCH (a:_ProblemNode {problem_id:$p})-[:DEPENDS_ON]->(b:_ProblemNode {problem_id:$p}) "
+            "RETURN a.node_id AS frm, b.node_id AS to", p=problem_id)).data()
+    p = prec["p"]
+    deps: dict[str, list[str]] = {}
+    for d in dep_rows:
+        deps.setdefault(d["frm"], []).append(d["to"])
+    steps = []
+    for i, n in enumerate(sorted(node_rows, key=lambda r: r["id"]), start=1):
+        steps.append(ReferenceStep(
+            step=i, entry_type=_ENTRY_TYPE_BY_NODE_TYPE[n["type"]], id=n["id"],
+            content=json.loads(n["content"]), depends_on=deps.get(n["id"], [])))
+    return Problem(
+        id=p["problem_id"], concept_id=p["concept_id"], difficulty=p["difficulty"],
+        problem_text=p["problem_text"], given_values=json.loads(p["given_values"]),
+        target_unknown=p["target_unknown"], reference_solution=steps)
