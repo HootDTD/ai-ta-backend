@@ -70,3 +70,33 @@ async def test_loaded_problem_reconstructs_reference_solution(seeded):
                              attempted_ids=[], neo=seeded)
     assert p.reference_solution[0].content["symbolic"] == "P1 - P2"
     assert p.given_values == {"P1": 1.0}
+
+
+@pytest.mark.asyncio
+async def test_multistep_reference_solution_preserves_step_order(neo4j_test):
+    from apollo.textbook_ingest.types import ConceptRegistryEntry
+    await writer.write_concept(neo4j_test, ConceptRegistryEntry(
+        subject_id="fluid_mechanics", concept_id="bernoulli_principle", scope_summary="b",
+        canonical_symbols=CanonicalSymbols(symbols=["P"]), normalization_map={},
+        parser_prompt_template="P", solver_hints=SolverHints()),
+        source_document_id="seed", scope_embedding=[0.0] * 3072, policy_frozen=True)
+    await writer.write_cluster_alias(neo4j_test, "fluid_mechanics",
+                                     "fluid_mechanics", "bernoulli_principle")
+    await writer.write_problem(neo4j_test, ValidatedProblem(
+        source_document_id="seed", source_chunk_id="multi", source_page=1,
+        problem_text="t", given_values={"P1": 1.0}, target_unknown="P2",
+        reference_solution=[
+            ReferenceStep(step=1, entry_type="equation", id="zzz_first",
+                content={"symbolic": "P1 - P2", "label": "a", "variables": ["P1", "P2"]},
+                depends_on=[]),
+            ReferenceStep(step=2, entry_type="equation", id="aaa_second",
+                content={"symbolic": "P2 - P1", "label": "b", "variables": ["P1", "P2"]},
+                depends_on=["zzz_first"]),
+        ],
+        concept_id="bernoulli_principle", subject_id="fluid_mechanics",
+        difficulty="intro", problem_id="multi"), authored=True)
+    p = await select_problem(cluster_id="fluid_mechanics", difficulty="intro",
+                             attempted_ids=[], neo=neo4j_test)
+    assert [s.id for s in p.reference_solution] == ["zzz_first", "aaa_second"]
+    assert [s.step for s in p.reference_solution] == [1, 2]
+    assert p.reference_solution[1].depends_on == ["zzz_first"]

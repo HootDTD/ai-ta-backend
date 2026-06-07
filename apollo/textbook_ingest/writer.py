@@ -135,14 +135,15 @@ async def _write_problem_tx(tx, problem, graph, authored):
         givens=json.dumps(problem.given_values), target=problem.target_unknown,
         doc=problem.source_document_id, page=problem.source_page,
         chunk=problem.source_chunk_id, authored=authored)
+    step_by_id = {rs.id: rs.step for rs in problem.reference_solution}
     for node in graph.nodes:
         label = NODE_LABELS[node.node_type]
         await tx.run(
             f"MATCH (p:Problem {{problem_id:$pid}}) "
             f"CREATE (p)-[:HAS_REFERENCE_NODE]->(n:{label}:_ProblemNode "
-            f"{{problem_id:$pid, node_id:$nid, node_type:$ntype, content:$content}})",
+            f"{{problem_id:$pid, node_id:$nid, node_type:$ntype, step_num:$step, content:$content}})",
             pid=problem.problem_id, nid=node.node_id, ntype=node.node_type,
-            content=node.content.model_dump_json())
+            step=step_by_id[node.node_id], content=node.content.model_dump_json())
     for edge in graph.edges:
         await tx.run(
             f"MATCH (a:_ProblemNode {{problem_id:$pid, node_id:$from}}), "

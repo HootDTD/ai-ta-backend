@@ -10,12 +10,6 @@ from apollo.errors import PoolExhaustedError
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.schemas.problem import Problem, ReferenceStep
 
-_ENTRY_TYPE_BY_NODE_TYPE = {
-    "equation": "equation", "condition": "condition",
-    "simplification": "simplification", "definition": "definition",
-    "variable_mapping": "variable_mapping", "procedure_step": "procedure_step",
-}
-
 
 async def cluster_to_concept(cluster_id: str, neo: Neo4jClient) -> tuple[str, str]:
     async with neo.session() as s:
@@ -55,6 +49,8 @@ async def list_problems_for_cluster(cluster_id: str, neo: Neo4jClient) -> List[P
             "MATCH (p:Problem {subject_id:$s, concept_id:$c}) "
             "RETURN p.problem_id AS id ORDER BY p.authored DESC, p.problem_id ASC",
             s=subject_id, c=concept_id)).data()
+    # Full problems are loaded (not lightweight stubs) because callers like done.py need the
+    # full reference_solution for grading, and problem banks are small; batching is a future optimization.
     return [await _load_problem(r["id"], neo) for r in rows]
 
 
@@ -64,7 +60,7 @@ async def _load_problem(problem_id: str, neo: Neo4jClient) -> Problem:
             "MATCH (p:Problem {problem_id:$p}) RETURN p", p=problem_id)).single()
         node_rows = await (await s.run(
             "MATCH (p:Problem {problem_id:$p})-[:HAS_REFERENCE_NODE]->(n:_ProblemNode) "
-            "RETURN n.node_id AS id, n.node_type AS type, n.content AS content", p=problem_id)).data()
+            "RETURN n.node_id AS id, n.node_type AS type, n.step_num AS step_num, n.content AS content", p=problem_id)).data()
         dep_rows = await (await s.run(
             "MATCH (a:_ProblemNode {problem_id:$p})-[:DEPENDS_ON]->(b:_ProblemNode {problem_id:$p}) "
             "RETURN a.node_id AS frm, b.node_id AS to", p=problem_id)).data()
@@ -73,9 +69,9 @@ async def _load_problem(problem_id: str, neo: Neo4jClient) -> Problem:
     for d in dep_rows:
         deps.setdefault(d["frm"], []).append(d["to"])
     steps = []
-    for i, n in enumerate(sorted(node_rows, key=lambda r: r["id"]), start=1):
+    for n in sorted(node_rows, key=lambda r: r["step_num"]):
         steps.append(ReferenceStep(
-            step=i, entry_type=_ENTRY_TYPE_BY_NODE_TYPE[n["type"]], id=n["id"],
+            step=n["step_num"], entry_type=n["type"], id=n["id"],
             content=json.loads(n["content"]), depends_on=deps.get(n["id"], [])))
     return Problem(
         id=p["problem_id"], concept_id=p["concept_id"], difficulty=p["difficulty"],
