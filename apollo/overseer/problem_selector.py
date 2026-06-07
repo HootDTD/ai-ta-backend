@@ -64,15 +64,50 @@ async def _load_problem(problem_id: str, neo: Neo4jClient) -> Problem:
         dep_rows = await (await s.run(
             "MATCH (a:_ProblemNode {problem_id:$p})-[:DEPENDS_ON]->(b:_ProblemNode {problem_id:$p}) "
             "RETURN a.node_id AS frm, b.node_id AS to", p=problem_id)).data()
+        # PRECEDES encodes procedure_step order; USES encodes uses_equations.
+        # Both are stripped from content on write and must be reconstructed here.
+        precedes_rows = await (await s.run(
+            "MATCH (a:_ProblemNode {problem_id:$p})-[:PRECEDES]->(b:_ProblemNode {problem_id:$p}) "
+            "RETURN a.node_id AS frm, b.node_id AS to", p=problem_id)).data()
+        uses_rows = await (await s.run(
+            "MATCH (a:_ProblemNode {problem_id:$p})-[:USES]->(b:_ProblemNode {problem_id:$p}) "
+            "RETURN a.node_id AS frm, b.node_id AS to", p=problem_id)).data()
     p = prec["p"]
     deps: dict[str, list[str]] = {}
     for d in dep_rows:
         deps.setdefault(d["frm"], []).append(d["to"])
+
+    # Reconstruct procedure_step order from PRECEDES chain (topological sort).
+    # Build adjacency: frm -> to (next step), then walk chains to assign order=1..N.
+    precedes_next: dict[str, str] = {r["frm"]: r["to"] for r in precedes_rows}
+    precedes_prev: set[str] = {r["to"] for r in precedes_rows}
+    proc_order: dict[str, int] = {}
+    # Find all procedure_step node ids
+    proc_ids = {n["id"] for n in node_rows if n["type"] == "procedure_step"}
+    # Chain heads are proc_ids not pointed to by any PRECEDES edge
+    heads = proc_ids - precedes_prev
+    for head in sorted(heads):  # sort for determinism when multiple chains exist
+        order = 1
+        cur: str | None = head
+        while cur is not None:
+            proc_order[cur] = order
+            order += 1
+            cur = precedes_next.get(cur)
+
+    # Reconstruct uses_equations from USES edges
+    uses_map: dict[str, list[str]] = {}
+    for r in uses_rows:
+        uses_map.setdefault(r["frm"], []).append(r["to"])
+
     steps = []
     for n in sorted(node_rows, key=lambda r: r["step_num"]):
+        content = json.loads(n["content"])
+        if n["type"] == "procedure_step":
+            content["order"] = proc_order.get(n["id"], 1)
+            content["uses_equations"] = sorted(uses_map.get(n["id"], []))
         steps.append(ReferenceStep(
             step=n["step_num"], entry_type=n["type"], id=n["id"],
-            content=json.loads(n["content"]), depends_on=deps.get(n["id"], [])))
+            content=content, depends_on=deps.get(n["id"], [])))
     return Problem(
         id=p["problem_id"], concept_id=p["concept_id"], difficulty=p["difficulty"],
         problem_text=p["problem_text"], given_values=json.loads(p["given_values"]),
