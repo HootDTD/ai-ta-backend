@@ -52,3 +52,33 @@ async def neo4j_client():
             )
     finally:
         await client.close()
+
+
+@pytest_asyncio.fixture
+async def neo4j_test():
+    """Ephemeral Neo4j via Testcontainers for deterministic CI.
+
+    Spins a throwaway neo4j:5 container, applies the schema file, yields a
+    Neo4jClient pointed at it, and tears the container down after the test.
+    Use for concept/problem/ingest tests that are not attempt_id-scoped and
+    so cannot rely on the negative-attempt_id cleanup of `neo4j_client`.
+    """
+    from pathlib import Path
+    from testcontainers.neo4j import Neo4jContainer
+    from apollo.persistence.neo4j_client import Neo4jClient
+
+    with Neo4jContainer("neo4j:5.20") as container:
+        uri = container.get_connection_url()
+        client = Neo4jClient(uri=uri, user=container.username,
+                             password=container.password, database="neo4j")
+        schema = Path("apollo/persistence/neo4j_schema.cypher").read_text()
+        async with client.session() as s:
+            for raw in schema.split(";"):
+                stmt = "\n".join(
+                    line for line in raw.splitlines()
+                    if line.strip() and not line.strip().startswith("//")
+                ).strip()
+                if stmt:
+                    await s.run(stmt)
+        yield client
+        await client.close()
