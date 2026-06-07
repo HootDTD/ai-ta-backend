@@ -54,6 +54,11 @@ async def migrate_bernoulli(neo: Neo4jClient, *, embed: Callable[[str], list[flo
     written = 0
     for path in sorted((_ROOT / "problems").glob("problem_*.json")):
         prob = load_problem(path)  # apollo.schemas.problem.Problem
+        # concept_id is intentionally overridden to _CONCEPT. Some on-disk problems
+        # (e.g. problem_03/04) carry their own "natural" concept_id (continuity_equation,
+        # volumetric_flow_rate) for authoring context, but every problem in the
+        # bernoulli_principle folder is served under this concept — matching the legacy
+        # filesystem selector, which loaded the whole folder under the fluid_mechanics cluster.
         extracted = ExtractedProblem(
             source_document_id="filesystem_migration", source_chunk_id=prob.id,
             source_page=0, problem_text=prob.problem_text, given_values=prob.given_values,

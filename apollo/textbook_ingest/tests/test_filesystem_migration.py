@@ -36,11 +36,13 @@ async def test_migration_round_trip_fidelity(neo4j_test):
     from apollo.overseer.problem_selector import _load_problem
 
     await migrate_bernoulli(neo4j_test, embed=_STUB_EMBED)
-    root = "apollo/subjects/fluid_mechanics/concepts/bernoulli_principle/problems"
-    paths = sorted(glob.glob(f"{root}/problem_*.json"))
+    from pathlib import Path as _Path
+    root = _Path(__file__).resolve().parents[2] / "subjects/fluid_mechanics/concepts/bernoulli_principle/problems"
+    paths = sorted(str(p) for p in root.glob("problem_*.json"))
     assert len(paths) == 5
     for path in paths:
-        disk = _json.load(open(path))
+        with open(path) as _f:
+            disk = _json.load(_f)
         loaded = await _load_problem(disk["id"], neo4j_test)
         assert loaded.id == disk["id"]
         assert loaded.target_unknown == disk["target_unknown"]
