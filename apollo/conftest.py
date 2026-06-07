@@ -63,7 +63,6 @@ async def neo4j_test():
     Use for concept/problem/ingest tests that are not attempt_id-scoped and
     so cannot rely on the negative-attempt_id cleanup of `neo4j_client`.
     """
-    from pathlib import Path
     from testcontainers.neo4j import Neo4jContainer
     from apollo.persistence.neo4j_client import Neo4jClient
 
@@ -71,7 +70,8 @@ async def neo4j_test():
         uri = container.get_connection_url()
         client = Neo4jClient(uri=uri, user=container.username,
                              password=container.password, database="neo4j")
-        schema = Path("apollo/persistence/neo4j_schema.cypher").read_text()
+        schema = (Path(__file__).resolve().parent.parent
+                  / "apollo/persistence/neo4j_schema.cypher").read_text()
         async with client.session() as s:
             for raw in schema.split(";"):
                 stmt = "\n".join(
