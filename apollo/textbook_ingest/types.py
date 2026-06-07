@@ -14,6 +14,16 @@ from pydantic import BaseModel, Field
 from apollo.schemas.problem import Difficulty, ReferenceStep
 from apollo.subjects import CanonicalSymbols, ForbiddenNamedLaws, SolverHints
 
+__all__ = [
+    "ConceptCandidate",
+    "ConceptResolution",
+    "ConceptRegistryEntry",
+    "ProblemCandidate",
+    "ExtractedProblem",
+    "ValidatedProblem",
+    "RejectedProblem",
+]
+
 
 class ConceptCandidate(BaseModel):
     proposed_subject_id: str
@@ -32,6 +42,7 @@ class ConceptResolution(BaseModel):
     similarity_score: float | None = None
 
 
+# Serializable counterpart to apollo.subjects.ConceptDefinition; omits problems_dir so it can round-trip through Neo4j.
 class ConceptRegistryEntry(BaseModel):
     subject_id: str
     concept_id: str
@@ -59,7 +70,7 @@ class ExtractedProblem(BaseModel):
     problem_text: str
     given_values: dict[str, float]
     target_unknown: str
-    reference_solution: list[ReferenceStep]
+    reference_solution: list[ReferenceStep] = Field(min_length=1)
     concept_id: str
     subject_id: str
     difficulty: Difficulty
