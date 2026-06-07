@@ -46,3 +46,7 @@ def test_round_trips_to_concept_definition():
     assert cdef.solver_hints.non_trivial_keywords == ["pressure"]
     assert "bernoulli" in cdef.forbidden_named_laws.named_laws
     assert "viscosity" in cdef.forbidden_named_laws.forbidden_concepts
+    assert cdef.solver_hints.constants == {"g": 9.81}
+    assert "physics" in cdef.forbidden_named_laws.forbidden_domains
+    assert "pascals" in cdef.forbidden_named_laws.forbidden_units
+    assert cdef.canonical_symbols.subscript_convention == "P1/P2 ..."

@@ -12,6 +12,7 @@ from apollo.subjects import (
 )
 from apollo.textbook_ingest.types import ConceptRegistryEntry
 
+# These two dicts are exact inverses; preserve the bijection if adding a category.
 _FORBIDDEN_CATEGORIES = {
     "named_law": "named_laws",
     "forbidden_concept": "forbidden_concepts",
@@ -24,6 +25,9 @@ _FORBIDDEN_FIELD_TO_CATEGORY = {
     "forbidden_domains": "forbidden_domain",
     "forbidden_units": "forbidden_unit",
 }
+
+# kind discriminator for SolverConstant rows: SolverHints field -> stored kind
+_SOLVER_KINDS = {"constants": "constant", "augmented_givens": "augmented_given"}
 
 
 def entry_to_rows(entry: ConceptRegistryEntry) -> dict[str, Any]:
@@ -38,9 +42,9 @@ def entry_to_rows(entry: ConceptRegistryEntry) -> dict[str, Any]:
         for nl, sym in entry.normalization_map.items()
     ]
     constants = (
-        [{"name": n, "value": v, "kind": "constant"}
+        [{"name": n, "value": v, "kind": _SOLVER_KINDS["constants"]}
          for n, v in entry.solver_hints.constants.items()]
-        + [{"name": n, "value": v, "kind": "augmented_given"}
+        + [{"name": n, "value": v, "kind": _SOLVER_KINDS["augmented_givens"]}
            for n, v in entry.solver_hints.augmented_givens.items()]
     )
     forbidden = entry.forbidden_named_laws
@@ -71,9 +75,10 @@ def rows_to_concept_definition(rows: dict[str, Any],
     subscript = next((r["subscript_convention"] for r in rows["symbols"]
                       if r["subscript_convention"]), None)
     normalization = {r["natural_language"]: r["canonical_symbol"] for r in rows["normalization"]}
-    constants = {r["name"]: r["value"] for r in rows["solver_constants"] if r["kind"] == "constant"}
+    constants = {r["name"]: r["value"] for r in rows["solver_constants"]
+                 if r["kind"] == _SOLVER_KINDS["constants"]}
     augmented = {r["name"]: r["value"] for r in rows["solver_constants"]
-                 if r["kind"] == "augmented_given"}
+                 if r["kind"] == _SOLVER_KINDS["augmented_givens"]}
     forbidden_lists: dict[str, list[str]] = {f: [] for f in _FORBIDDEN_CATEGORIES.values()}
     for t in rows["forbidden_terms"]:
         forbidden_lists[_FORBIDDEN_CATEGORIES[t["category"]]].append(t["term"])
