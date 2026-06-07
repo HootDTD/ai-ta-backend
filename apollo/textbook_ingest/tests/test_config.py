@@ -10,3 +10,5 @@ def test_textbook_thresholds_present_and_sane():
     assert 0.0 < settings.TEXTBOOK_PROBLEM_DETECTOR_ACCEPT_THRESHOLD < 1.0
     assert 0.0 < settings.TEXTBOOK_CLASSIFIER_ACCEPT_THRESHOLD < 1.0
     assert settings.TEXTBOOK_LLM_MAX_RETRIES >= 1
+    assert 0.0 < settings.TEXTBOOK_TIER2_MAX_REJECT_RATE <= 1.0
+    assert 0.0 < settings.TEXTBOOK_TIER3_MAX_REJECT_RATE <= 1.0

@@ -291,8 +291,9 @@ __all__ = [
 # (settings.py is not a pydantic BaseSettings). Tune from data; see
 # docs/superpowers/specs/2026-06-02-apollo-textbook-problem-index-design.md §12.
 # ---------------------------------------------------------------------------
-TEXTBOOK_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
-TEXTBOOK_EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "3072"))
+# Accessed via settings.TEXTBOOK_* attribute access; deliberately not added to __all__.
+TEXTBOOK_EMBEDDING_MODEL = get_embedding_model()
+TEXTBOOK_EMBEDDING_DIM = get_embedding_dim()
 TEXTBOOK_DEDUP_EMBEDDING_CUTOFF = 0.85          # cosine >= this -> matched_existing
 TEXTBOOK_DEDUP_LLM_JUDGE_LOW = 0.75             # [LOW, HIGH) band triggers llm-judge
 TEXTBOOK_DEDUP_LLM_JUDGE_HIGH = 0.85
