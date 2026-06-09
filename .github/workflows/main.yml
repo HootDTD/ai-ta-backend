@@ -1,38 +1,53 @@
-# .github/workflows/python-ci.yml
-name: Python CI
+# CI — Phase 0 honest gate (docs/TESTING-CI-PLAN.md).
+# This REPLACES the previous decorative workflow whose every step ended in
+# `|| true` and could never fail a PR. Phase 2 expands this into parallel
+# lint / typecheck / unit / integration jobs with a Postgres+pgvector service
+# container, coverage gating, SHA-pinned actions, and a `ci-passed` aggregation
+# check. For now: install, then run the suite as a REAL required check.
+name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main, staging, production]
   pull_request:
-    branches: [ main ]
+    branches: [main, staging, production]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  # Cancel superseded runs on PRs only — never cancel a post-merge/deploy run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4 # Phase 2: pin to SHA
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
 
-      - name: Install deps
+      # weasyprint (PDF reports) needs native pango/cairo libs to import.
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libffi-dev libcairo2
+
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio   # test runner (already in use locally)
 
-      - name: Lint (optional)
-        run: |
-          pip install flake8 || true
-          flake8 || true
-
-      - name: Run tests (adjust to your test command)
-        run: |
-          if [ -d tests ]; then python -m pytest -q || true; fi
+      # NOTE: no `|| true`. A red suite now blocks the PR.
+      # Integration tests (real Postgres+pgvector) skip cleanly here via the
+      # db_session fixture until the Phase 1/2 service container lands.
+      - name: Run tests
+        run: pytest -q

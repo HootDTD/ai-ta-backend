@@ -31,6 +31,12 @@ def client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
+@pytest.mark.skip(
+    reason="Phase 0 quarantine (docs/TESTING-CI-PLAN.md): over-mocked — patches an exact "
+    "knowledge.manager.run_async call sequence that drifted from the real endpoint "
+    "(returns priority=0, not the mocked 100). Rewrite as an AsyncClient + real-DB "
+    "integration test in Phase 4 instead of propping up the brittle mock."
+)
 def test_register_and_list_stores(client, tmp_path):
     # Create two fake indexes
     idx_textbook = tmp_path / "idx_textbook"

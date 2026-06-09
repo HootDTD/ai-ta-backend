@@ -150,3 +150,26 @@ def _mock_supabase(monkeypatch):
     monkeypatch.setattr(sb_mod, "rpc", _sb_rpc)
     yield
     _sb_reset()
+
+
+@pytest.fixture
+def db_session():
+    """Async SQLAlchemy session bound to a REAL Postgres + pgvector instance.
+
+    Phase 1 of the testing plan (docs/TESTING-CI-PLAN.md) wires this to an
+    ephemeral Testcontainers `pgvector/pgvector` engine with function-scoped
+    transactional rollback. Until then, `@pytest.mark.integration` tests that
+    require a live database skip cleanly instead of erroring on a missing
+    fixture. pgvector / HNSW cannot run on the in-memory SQLite used by the
+    other fixtures, so these tests genuinely need a real Postgres.
+    """
+    import os
+
+    if not os.environ.get("TEST_DATABASE_URL"):
+        pytest.skip(
+            "integration: requires TEST_DATABASE_URL (Postgres + pgvector). "
+            "Real fixture lands in Phase 1 (Testcontainers)."
+        )
+    raise RuntimeError(
+        "db_session real implementation is scheduled for Phase 1 of the testing plan"
+    )
