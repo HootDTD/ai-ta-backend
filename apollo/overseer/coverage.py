@@ -27,6 +27,7 @@ Return shape:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -327,18 +328,17 @@ def _student_payload(node: Node) -> dict[str, Any]:
     return payload
 
 
-def compute_coverage(
+async def compute_coverage(
     student_graph: KGGraph,
     reference_graph: KGGraph,
 ) -> dict[str, Any]:
     """Walk the reference graph; produce per-node coverage + procedure scores.
 
-    Walk order:
-    - For procedure_step refs: PRECEDES topological order.
-    - For binary types: ONE batched LLM call per type (vs N calls in V2).
-
-    Return shape adds `confidences` so callers can hedge on mid-band matches.
-    Raises CoverageGradingError when LLM retries are exhausted at any stage.
+    v1: all matcher calls (one per procedure step + one batch per binary
+    type) run CONCURRENTLY via asyncio.to_thread. The per-node verdict map
+    is order-independent, so dropping the sequential topological walk does
+    not change results — only latency. NO-FALLBACK preserved: a
+    CoverageGradingError raised inside any task propagates out of gather.
     """
     per_step: dict[str, str] = {}
     procedure_scores: dict[str, float] = {}
@@ -350,57 +350,73 @@ def compute_coverage(
         for s in student_proc
     }
 
-    # Procedure steps in topological PRECEDES order
     try:
         proc_order = reference_graph.topological_order(
             EdgeType.PRECEDES, node_type="procedure_step",
         )
     except ValueError:
-        # Cycle or disconnect — fall back to insertion order
         proc_order = reference_graph.by_type("procedure_step")
 
-    for ref_node in proc_order:
+    async def _proc_task(ref_node: Node) -> tuple[Node, float, float]:
         ref_uses = reference_graph.neighbors(ref_node.node_id, EdgeType.USES)
-        score, confidence = _procedure_match_score(
+        score, confidence = await asyncio.to_thread(
+            _procedure_match_score,
             ref_node,
             student_proc,
             ref_uses=ref_uses,
             student_uses_per_node=student_uses_per_node,
         )
-        procedure_scores[ref_node.node_id] = score
-        confidences[ref_node.node_id] = confidence
-        per_step[ref_node.node_id] = "covered" if score >= 0.5 else "missing"
+        return ref_node, score, confidence
 
-    # Binary types — one batched call per type.
-    for entry_type in _BINARY_TYPES:
-        ref_nodes = [n for n in reference_graph.nodes if n.node_type == entry_type]
-        if not ref_nodes:
-            continue
+    async def _binary_task(entry_type: str, ref_nodes: list[Node]):
         student_pool = student_graph.by_type(entry_type)
-        verdicts = _batch_binary_match(
+        verdicts = await asyncio.to_thread(
+            _batch_binary_match,
             entry_type=entry_type,
             reference_nodes=ref_nodes,
             student_nodes=student_pool,
         )
-        for ref in ref_nodes:
-            v = verdicts.get(ref.node_id, {"covered": False, "confidence": 0.0})
-            covered = bool(v["covered"])
-            conf = float(v["confidence"])
-            # Below-floor "covered=true" gets downgraded — but we keep
-            # the confidence for the diagnostic to surface uncertainty.
-            if covered and conf < _BINARY_CONFIDENCE_FLOOR:
-                _LOG.info(
-                    "coverage_uncertain",
-                    extra={
-                        "event": "coverage_uncertain",
-                        "ref_id": ref.node_id,
-                        "entry_type": entry_type,
-                        "confidence": conf,
-                    },
-                )
-                covered = False
-            per_step[ref.node_id] = "covered" if covered else "missing"
-            confidences[ref.node_id] = conf
+        return entry_type, ref_nodes, verdicts
+
+    tasks: list = [_proc_task(n) for n in proc_order]
+    binary_groups: dict[str, list[Node]] = {}
+    for entry_type in _BINARY_TYPES:
+        rn = [n for n in reference_graph.nodes if n.node_type == entry_type]
+        if rn:
+            binary_groups[entry_type] = rn
+            tasks.append(_binary_task(entry_type, rn))
+
+    # NO return_exceptions: a CoverageGradingError must propagate (no-fallback).
+    results = await asyncio.gather(*tasks)
+
+    for res in results:
+        # _binary_task returns (str, list, dict); _proc_task returns
+        # (Node, float, float). Node is a discriminated-union alias so it
+        # can't be used in isinstance — discriminate on the str entry_type.
+        if isinstance(res[0], str):
+            entry_type, ref_nodes, verdicts = res
+            for ref in ref_nodes:
+                v = verdicts.get(ref.node_id, {"covered": False, "confidence": 0.0})
+                covered = bool(v["covered"])
+                conf = float(v["confidence"])
+                if covered and conf < _BINARY_CONFIDENCE_FLOOR:
+                    _LOG.info(
+                        "coverage_uncertain",
+                        extra={
+                            "event": "coverage_uncertain",
+                            "ref_id": ref.node_id,
+                            "entry_type": entry_type,
+                            "confidence": conf,
+                        },
+                    )
+                    covered = False
+                per_step[ref.node_id] = "covered" if covered else "missing"
+                confidences[ref.node_id] = conf
+        else:
+            ref_node, score, confidence = res
+            procedure_scores[ref_node.node_id] = score
+            confidences[ref_node.node_id] = confidence
+            per_step[ref_node.node_id] = "covered" if score >= 0.5 else "missing"
 
     # P3.4: surface the negotiation state of the student graph so the
     # diagnostic narration (P3.11) and tests can attest "you negotiated

@@ -1,3 +1,4 @@
+import asyncio
 import pytest as _pytest_module
 _pytest_module.skip(
     "Legacy V2 test — needs rewrite for V3 signatures (parse_utterance(concept, attempt_id), "
@@ -58,7 +59,7 @@ def test_all_covered_when_llm_says_so(mock_client_cls):
         ],
         conditions=[("steady incompressible flow", "Bernoulli's applicability")],
     )
-    cov = compute_coverage(kg, REFERENCE)
+    cov = asyncio.run(compute_coverage(kg, REFERENCE))
     assert cov["per_step"]["continuity"] == "covered"
     assert cov["per_step"]["bernoulli"] == "covered"
     assert cov["per_step"]["incompressibility"] == "covered"
@@ -79,7 +80,7 @@ def test_missing_continuity(mock_client_cls):
         ],
         conditions=[("density is constant", "Incompressibility")],
     )
-    cov = compute_coverage(kg, REFERENCE)
+    cov = asyncio.run(compute_coverage(kg, REFERENCE))
     assert cov["per_step"]["continuity"] == "missing"
     assert cov["per_step"]["bernoulli"] == "covered"
     assert cov["per_step"]["incompressibility"] == "covered"
@@ -93,13 +94,13 @@ def test_missing_condition(mock_client_cls):
         '{"covered": true}',  # bernoulli
     ])
     kg = _kg(equations=[("rho*A1*v1 - rho*A2*v2", "Continuity")])
-    cov = compute_coverage(kg, REFERENCE)
+    cov = asyncio.run(compute_coverage(kg, REFERENCE))
     assert cov["per_step"]["incompressibility"] == "missing"
 
 
 def test_empty_kg_all_missing():
     # Every ref type has empty kg list → short-circuits before LLM call.
-    cov = compute_coverage(_kg(), REFERENCE)
+    cov = asyncio.run(compute_coverage(_kg(), REFERENCE))
     assert all(v == "missing" for v in cov["per_step"].values())
 
 
@@ -124,7 +125,7 @@ def test_compute_coverage_returns_enriched_shape(mock_client_cls):
         "variable_mapping": [], "procedure_step": [],
     }
     refs = [_ref_equation("continuity", "continuity")]
-    result = compute_coverage(kg, refs)
+    result = asyncio.run(compute_coverage(kg, refs))
     assert "per_step" in result
     assert result["per_step"]["continuity"] == "covered"
     assert "procedure_scores" in result
@@ -143,7 +144,7 @@ def test_binary_matcher_softfails_to_missing_on_llm_exception(mock_client_cls):
         "variable_mapping": [], "procedure_step": [],
     }
     refs = [_ref_equation("eq1", "x")]
-    result = compute_coverage(kg, refs)
+    result = asyncio.run(compute_coverage(kg, refs))
     assert result["per_step"]["eq1"] == "missing"
 
 
@@ -171,7 +172,7 @@ def test_procedure_matcher_returns_partial_credit_per_step(mock_client_cls):
         _ref_procedure("plan_1", 1, "apply continuity to get v2"),
         _ref_procedure("plan_2", 2, "substitute v2 into bernoulli to find P2"),
     ]
-    result = compute_coverage(kg, refs)
+    result = asyncio.run(compute_coverage(kg, refs))
     assert result["procedure_scores"]["plan_1"] == 0.9
     assert result["procedure_scores"]["plan_2"] == 0.4
     # per_step maps procedure steps to "covered" if score >= 0.5, else "missing".
@@ -190,7 +191,7 @@ def test_procedure_matcher_softfails_to_zero_on_llm_exception(mock_client_cls):
           "procedure_step": [{"order": 1, "action": "do x",
                               "uses_equations": [], "purpose": "y"}]}
     refs = [_ref_procedure("plan_1", 1, "apply continuity to get v2")]
-    result = compute_coverage(kg, refs)
+    result = asyncio.run(compute_coverage(kg, refs))
     assert result["procedure_scores"]["plan_1"] == 0.0
     assert result["per_step"]["plan_1"] == "missing"
 
@@ -208,5 +209,5 @@ def test_procedure_matcher_clamps_llm_score_to_0_1(mock_client_cls):
           "procedure_step": [{"order": 1, "action": "do x",
                               "uses_equations": [], "purpose": "y"}]}
     refs = [_ref_procedure("plan_1", 1, "ref")]
-    result = compute_coverage(kg, refs)
+    result = asyncio.run(compute_coverage(kg, refs))
     assert result["procedure_scores"]["plan_1"] == 1.0

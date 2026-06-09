@@ -15,6 +15,7 @@ The LLM call itself is patched. Mocks return deterministic verdicts so
 we can attest exactly what payload the LLM received.
 """
 from __future__ import annotations
+import asyncio
 
 from unittest.mock import patch, MagicMock
 
@@ -131,7 +132,7 @@ def test_dual_paraphrase_payload_reaches_llm(mock_client_cls):
     ])
     reference = _build_graph([_ref_eq("r1")])
 
-    cov = compute_coverage(student, reference)
+    cov = asyncio.run(compute_coverage(student, reference))
 
     body = captured["body"]
     assert body["entry_type"] == "equation"
@@ -169,7 +170,7 @@ def test_accepted_payload_byte_identical_to_pre_p3(mock_client_cls):
         ),
     ])
     reference = _build_graph([_ref_eq("r1")])
-    compute_coverage(student, reference)
+    asyncio.run(compute_coverage(student, reference))
 
     se = captured["body"]["student_entries"][0]
     assert "student_belief" not in se
@@ -210,7 +211,7 @@ def test_negotiation_counts_in_coverage_output(mock_client_cls):
     ])
     reference = _build_graph([])
 
-    cov = compute_coverage(student, reference)
+    cov = asyncio.run(compute_coverage(student, reference))
     counts = cov["negotiation_counts"]
     assert counts["disputed"] == 1
     assert counts["dual"] == 2
@@ -232,7 +233,7 @@ def test_negotiation_counts_zero_on_pre_p3_graph(mock_client_cls):
             content={"symbolic": "x", "label": ""},
         ),
     ])
-    cov = compute_coverage(student, _build_graph([]))
+    cov = asyncio.run(compute_coverage(student, _build_graph([])))
     assert cov["negotiation_counts"] == {
         "dual": 0, "disputed": 0, "paraphrased": 0, "skipped": 0,
     }
@@ -270,7 +271,7 @@ def test_dual_procedure_step_action_substitution_reaches_llm(mock_client_cls):
     )
     reference = _build_graph([ref_step])
 
-    compute_coverage(student, reference)
+    asyncio.run(compute_coverage(student, reference))
 
     body = captured["body"]
     student_steps = body["student_steps"]

@@ -1,5 +1,6 @@
 """V3 coverage tests (item #10): retry, batch, confidence, no soft-fail."""
 from __future__ import annotations
+import asyncio
 
 import json
 from unittest.mock import MagicMock, patch
@@ -89,7 +90,7 @@ def test_compute_coverage_batches_binary_calls(mock_client_cls):
     client = _mock_openai_always(payload)
     mock_client_cls.return_value = client
 
-    result = compute_coverage(student, reference)
+    result = asyncio.run(compute_coverage(student, reference))
 
     # Only ONE call (one type, one batch) — vs V2's two calls.
     assert client.chat.completions.create.call_count == 1
@@ -112,7 +113,7 @@ def test_low_confidence_covered_downgraded_to_missing(mock_client_cls):
     ]})
     mock_client_cls.return_value = _mock_openai_always(payload)
 
-    result = compute_coverage(student, reference)
+    result = asyncio.run(compute_coverage(student, reference))
     assert result["per_step"]["ref_eq1"] == "missing"
     # But the confidence is preserved so the diagnostic can hedge.
     assert result["confidences"]["ref_eq1"] == 0.2
@@ -130,7 +131,7 @@ def test_empty_student_short_circuits_without_llm(mock_client_cls):
     client = MagicMock()
     mock_client_cls.return_value = client
 
-    result = compute_coverage(student, reference)
+    result = asyncio.run(compute_coverage(student, reference))
     assert result["per_step"]["ref_eq1"] == "missing"
     assert result["per_step"]["ref_c1"] == "missing"
     # Zero LLM calls for either type.
@@ -155,7 +156,7 @@ def test_retry_on_transient_then_succeeds(mock_client_cls):
     student = KGGraph(nodes=[_eq_node("stu", "x")])
     reference = KGGraph(nodes=[_eq_node("ref_eq1", "x")])
 
-    result = compute_coverage(student, reference)
+    result = asyncio.run(compute_coverage(student, reference))
     assert result["per_step"]["ref_eq1"] == "covered"
     assert client.chat.completions.create.call_count == 2  # retry once
 
@@ -172,7 +173,7 @@ def test_retry_exhausted_raises_coverage_grading_error(mock_client_cls):
     reference = KGGraph(nodes=[_eq_node("ref", "x")])
 
     with pytest.raises(CoverageGradingError) as exc_info:
-        compute_coverage(student, reference)
+        asyncio.run(compute_coverage(student, reference))
 
     assert exc_info.value.stage.startswith("binary_match")
     # Should have tried _RETRY_ATTEMPTS times before giving up.
@@ -256,7 +257,7 @@ def test_procedure_score_with_confidence(mock_client_cls):
     student = KGGraph(nodes=[_proc_node("s1", "use continuity to find v2")])
     reference = KGGraph(nodes=[_proc_node("r1", "apply continuity to get v2")])
 
-    result = compute_coverage(student, reference)
+    result = asyncio.run(compute_coverage(student, reference))
     assert result["procedure_scores"]["r1"] == 0.8
     assert result["confidences"]["r1"] == 0.9
     assert result["per_step"]["r1"] == "covered"
@@ -273,5 +274,5 @@ def test_procedure_retry_exhausted_raises(mock_client_cls):
     reference = KGGraph(nodes=[_proc_node("r1", "y")])
 
     with pytest.raises(CoverageGradingError) as exc_info:
-        compute_coverage(student, reference)
+        asyncio.run(compute_coverage(student, reference))
     assert exc_info.value.stage == "procedure_match"
