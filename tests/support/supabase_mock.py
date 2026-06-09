@@ -11,6 +11,7 @@ preserved via the ``auto_id`` flag:
 Each test gets a fresh instance (the autouse fixtures are function-scoped), so
 state never leaks between tests.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -95,9 +96,7 @@ class SupabaseMock:
 
     def delete(self, table: str, match_params: dict) -> None:
         self.store[table] = [
-            row
-            for row in self.store.get(table, [])
-            if not self._matches(row, match_params)
+            row for row in self.store.get(table, []) if not self._matches(row, match_params)
         ]
 
     def rpc(self, function_name: str, params: dict, *, timeout: int = 30) -> list:

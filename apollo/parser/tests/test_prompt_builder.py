@@ -4,6 +4,7 @@ Lives in its own file (test_parser.py is skipped legacy-V2) so the guard
 actually runs: build_system_prompt is a pure template substitution that
 needs no Neo4j / OpenAI wiring.
 """
+
 from apollo.parser.prompt_builder import build_system_prompt
 from apollo.subjects import load_concept
 

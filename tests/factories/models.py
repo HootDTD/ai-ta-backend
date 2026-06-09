@@ -4,6 +4,7 @@ Builders only — call ``.build()`` then persist with
 :func:`tests.factories.persist`. Defaults satisfy every NOT NULL / UNIQUE
 constraint so a bare ``Factory.build()`` is insertable; override per test.
 """
+
 from __future__ import annotations
 
 import uuid
