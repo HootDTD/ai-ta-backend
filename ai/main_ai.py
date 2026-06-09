@@ -908,6 +908,56 @@ def parse_question(user_query: str, subject: str | None = None) -> ParsedTask:
     return task
 
 
+def _build_solution_from_data(data: Dict[str, Any]) -> ProposedSolution:
+    """Map a solver JSON dict to a ProposedSolution. Pure; no I/O.
+
+    Shared by the blocking solve_with_bundle and the streaming
+    solve_with_bundle_stream so both produce identical solutions.
+    """
+    if data.get("not_relevant", False):
+        return ProposedSolution(
+            steps="This question is not relevant to the course scope.",
+            final_answers={},
+            equations_used=[],
+            assumptions=[],
+            code=None,
+            code_output=None,
+            code_hash=None,
+            vars_created=[],
+        )
+
+    raw_steps = data.get("steps", "")
+    if isinstance(raw_steps, list):
+        # Join list elements as paragraphs instead of JSON-serialising them.
+        raw_steps = "\n\n".join(
+            elem if isinstance(elem, str) else str(elem) for elem in raw_steps
+        )
+    elif not isinstance(raw_steps, str):
+        raw_steps = str(raw_steps)
+
+    # Enforce conceptual-only mode regardless of model output.
+    final_answers_output: Dict[str, Any] = {}
+    equations_used = data.get("equations_used", [])
+    assumptions = data.get("assumptions", [])
+
+    # Ensure structured fields are in expected shapes.
+    if not isinstance(equations_used, list):
+        equations_used = [equations_used] if equations_used else []
+    if not isinstance(assumptions, list):
+        assumptions = [assumptions] if assumptions else []
+
+    return ProposedSolution(
+        steps=raw_steps,
+        final_answers=final_answers_output,
+        equations_used=equations_used,
+        assumptions=assumptions,
+        code=None,
+        code_output=None,
+        code_hash=None,
+        vars_created=[],
+    )
+
+
 def solve_with_bundle(
     parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None,
     subject: str | None = None,
@@ -1280,49 +1330,7 @@ def solve_with_bundle(
     ])
     log.info("[timing] solve=%.2fs model=%s", time.perf_counter() - _t_solve, model)
 
-    # Short-circuit for off-topic questions
-    if data.get("not_relevant", False):
-        return ProposedSolution(
-            steps="This question is not relevant to the course scope.",
-            final_answers={},
-            equations_used=[],
-            assumptions=[],
-            code=None,
-            code_output=None,
-            code_hash=None,
-            vars_created=[],
-        )
-
-    raw_steps = data.get("steps", "")
-    if isinstance(raw_steps, list):
-        # Join list elements as paragraphs instead of JSON-serialising them.
-        raw_steps = "\n\n".join(
-            elem if isinstance(elem, str) else str(elem) for elem in raw_steps
-        )
-    elif not isinstance(raw_steps, str):
-        raw_steps = str(raw_steps)
-
-    # Enforce conceptual-only mode regardless of model output.
-    final_answers_output: Dict[str, Any] = {}
-    equations_used = data.get("equations_used", [])
-    assumptions = data.get("assumptions", [])
-
-    # Ensure structured fields are in expected shapes.
-    if not isinstance(equations_used, list):
-        equations_used = [equations_used] if equations_used else []
-    if not isinstance(assumptions, list):
-        assumptions = [assumptions] if assumptions else []
-
-    return ProposedSolution(
-        steps=raw_steps,
-        final_answers=final_answers_output,
-        equations_used=equations_used,
-        assumptions=assumptions,
-        code=None,
-        code_output=None,
-        code_hash=None,
-        vars_created=[],
-    )
+    return _build_solution_from_data(data)
 
 
 def format_answer(
