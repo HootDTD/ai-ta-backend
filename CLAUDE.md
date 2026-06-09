@@ -29,7 +29,7 @@ Python/FastAPI backend powering Hoot's intelligent tutoring system. Combines RAG
 - Vector search: pgvector (PostgreSQL) + FAISS. Do not introduce other vector stores.
 - LLM: GPT-4o via MAIN_MODEL env var. Vision fallback: Tesseract if GPT-4V unavailable.
 - Database: Supabase PostgreSQL + pgvector, async via SQLAlchemy + asyncpg
-- Deployment: Heroku via Procfile (web + worker processes)
+- Deployment: Railway (GitHub integration, deploys `ApolloV3`; Procfile defines web + worker processes). Heroku is abandoned — do not re-wire it.
 
 ## Environment
 Config via `config/settings.py`. Copy `.env.example` to `.env` for required variables.

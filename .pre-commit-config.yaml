@@ -1,0 +1,24 @@
+# Pre-commit hooks — same ruff config as CI, so local == CI.
+# pre-commit runs only on STAGED files, which naturally matches CI's
+# changed-files-only ruff gate (new code stays clean; legacy untouched).
+#
+# Install once:  pip install pre-commit && pre-commit install
+# Run on all:    pre-commit run --all-files   (expect legacy noise — that's fine)
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.16 # keep in sync with requirements-test.txt ruff pin
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: detect-private-key # cheap secret tripwire

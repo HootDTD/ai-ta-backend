@@ -88,7 +88,6 @@ def test_generate_diagnostic_appends_line_when_detected(mock_client_cls):
 
     out = generate_diagnostic(
         coverage={"per_step": {}, "procedure_scores": {}, "confidences": {}},
-        solver_result={"status": "solved"},
         reference_steps=[],
         problem_text="x",
         rubric=_rubric(2, 1),
@@ -106,7 +105,6 @@ def test_generate_diagnostic_omits_line_when_no_detection(mock_client_cls):
 
     out = generate_diagnostic(
         coverage={"per_step": {}, "procedure_scores": {}, "confidences": {}},
-        solver_result={"status": "solved"},
         reference_steps=[],
         problem_text="x",
         rubric=_rubric(0, 0),

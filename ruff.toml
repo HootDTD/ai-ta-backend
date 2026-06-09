@@ -1,0 +1,42 @@
+# Ruff config — lint + format for the AI-TA backend.
+#
+# NOTE ON SCOPE: CI enforces ruff on CHANGED files only (ci.yml `quality` job),
+# because the legacy tree has ~360 lint findings / ~1689 format diffs. New code
+# is held to this config; legacy code is cleaned opportunistically (ratchet),
+# not in one big-bang reformat. `ruff check --fix` + `ruff format` locally before
+# committing keeps your diff green.
+
+target-version = "py311"
+line-length = 100
+
+# Exclude generated / vendored / non-source trees from any full-repo run.
+extend-exclude = [
+    ".venv",
+    "database/migrations",
+    "**/__pycache__",
+]
+
+[lint]
+# Pragmatic starter set: pyflakes (F), pycodestyle errors (E), import sorting (I),
+# bugbear (B), pyupgrade (UP). Expand in Phase 3/6 as the tree is cleaned.
+select = ["E", "F", "I", "B", "UP"]
+# E501 (line length) is owned by the formatter, not the linter.
+ignore = ["E501"]
+
+[lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom puts Depends()/Query()/etc. in argument
+# defaults by design — whitelist them so B008 doesn't flag every endpoint.
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Body",
+    "fastapi.Path", "fastapi.Cookie", "fastapi.Form", "fastapi.File",
+    "fastapi.Security",
+]
+
+[lint.per-file-ignores]
+# Tests legitimately use fixtures that shadow names and assert-heavy patterns.
+"tests/**" = ["B011"]
+"**/__init__.py" = ["F401"] # re-exports
+
+[format]
+quote-style = "double"
+indent-style = "space"

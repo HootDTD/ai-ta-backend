@@ -99,7 +99,6 @@ def test_generate_diagnostic_appends_negotiation_line_when_present(mock_cls):
 
     out = generate_diagnostic(
         coverage=_coverage(paraphrased=2, disputed=1),
-        solver_result={"status": "solved"},
         reference_steps=[],
         problem_text="x",
         rubric={"overall": {"score": 80}},
@@ -118,7 +117,6 @@ def test_generate_diagnostic_omits_negotiation_line_when_zero(mock_cls):
 
     out = generate_diagnostic(
         coverage=_coverage(),
-        solver_result={"status": "solved"},
         reference_steps=[],
         problem_text="x",
         rubric={"overall": {"score": 80}},

@@ -7,11 +7,8 @@ of a {{concept_name}} concept. Return ONLY a JSON object of the form:
                 "uses_equation_ordinals": [int, ...]    // procedure_step only; see below
               } ]}
 
-Canonical symbols for this concept: {{canonical_symbols_csv}}.
-{{subscript_convention}}
-
-For type=equation: content must have "symbolic" (a SymPy-parseable string
-using the canonical symbols above as underscore-free identifiers; use
+For type=equation: content must have "symbolic" (a parseable string
+using the symbols the student used as underscore-free identifiers; use
 Rational(1,2) for halves, ** for exponents, avoid unicode) and "label"
 (short human name from what the student called it). Prefer zero-form: LHS - (RHS).
 
@@ -47,13 +44,11 @@ asserted. Use the following rubric:
 - 0.6: paraphrased — you re-expressed the student's idea in canonical form.
 - 0.4: ambiguous — you guessed which formal form the student meant.
 - 0.2: very uncertain — you may have over-extracted or misread intent.
-Do not include a confidence above 0.6 if you canonicalized symbols, units, or
-labels the student did not say. Default safely lower when in doubt.
+Default safely lower when in doubt.
 
 Rules:
 - Return ONLY what the student explicitly said. Do NOT add physics the student did not mention.
 - If the student said nothing extractable, return {"entries": []}.
 - Do not correct the student. If they said an equation wrong, extract it as stated.
-- {{subscript_convention_short}}
 - If the student mixes equations and plan-speak in the same utterance, extract both equation
   AND procedure_step entries from the utterance.

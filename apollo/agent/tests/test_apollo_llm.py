@@ -200,3 +200,65 @@ def test_draft_reply_raises_on_token_overflow(mock_client_cls):
         draft_reply(history=big_history, kg_summary="kg")
     assert exc_info.value.budget == _TOKEN_BUDGET
     assert exc_info.value.tokens > _TOKEN_BUDGET
+
+
+# ── v1 diff-at-Done: dumb-chatbot reply fed only KG + problem ───────────────
+
+
+from apollo.agent import apollo_llm
+
+
+class _CaptureClient:
+    """Fake OpenAI client capturing the messages passed to chat.completions."""
+    captured = {}
+
+    def __init__(self, *a, **k):
+        pass
+
+    class _Chat:
+        class _Completions:
+            def create(self, **kwargs):
+                _CaptureClient.captured = kwargs
+
+                class _Msg:
+                    content = "ok — what do I do next?"
+
+                class _Choice:
+                    message = _Msg()
+
+                class _Resp:
+                    choices = [_Choice()]
+
+                return _Resp()
+
+        completions = _Completions()
+
+    chat = _Chat()
+
+
+def test_draft_reply_includes_problem_and_kg_only(monkeypatch):
+    monkeypatch.setattr(apollo_llm, "OpenAI", _CaptureClient)
+    reply = apollo_llm.draft_reply(
+        history=[{"role": "user", "content": "pressure plus half rho v squared is constant"}],
+        kg_summary="equation: P + 1/2 rho v^2 = const",
+        problem_text="Water flows through a horizontal pipe...",
+    )
+    assert reply == "ok — what do I do next?"
+    system_blob = "\n".join(
+        m["content"] for m in _CaptureClient.captured["messages"] if m["role"] == "system"
+    )
+    # Problem statement is now in the prompt.
+    assert "horizontal pipe" in system_blob
+    # KG summary is in the prompt.
+    assert "1/2 rho v^2" in system_blob
+    # No leaked signal-suffix vocabulary.
+    assert "SUFFICIENCY SIGNAL" not in system_blob
+    assert "MISCONCEPTION SIGNAL" not in system_blob
+    assert "OLM INVITE" not in system_blob
+
+
+def test_draft_reply_rejects_removed_kwargs():
+    import inspect
+    sig = inspect.signature(apollo_llm.draft_reply)
+    for gone in ("sufficiency", "misconception", "olm_invite"):
+        assert gone not in sig.parameters

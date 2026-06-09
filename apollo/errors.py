@@ -23,9 +23,13 @@ class FilterRejectedError(ApolloError):
     """Output filter rejected Apollo's draft because it contained a term
     the student has not introduced. NO FALLBACK — surfaces as UI error."""
 
-    def __init__(self, rejected_term: str, draft: str) -> None:
+    def __init__(self, rejected_term: str, draft: str, kg: dict | None = None) -> None:
         self.rejected_term = rejected_term
         self.draft = draft
+        # The live per-attempt KG at rejection time. Attached by the chat
+        # handler so the 422 carries it and the FE can refresh "Apollo's
+        # Understanding" instead of showing a stale/empty panel.
+        self.kg = kg
         super().__init__(
             f"Apollo's draft was rejected by the output filter: contained "
             f"out-of-allowlist term {rejected_term!r}"

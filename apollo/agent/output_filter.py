@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import re
+from difflib import SequenceMatcher
 from typing import Iterable
 
 from apollo.agent.leakage_judge import (
@@ -39,8 +40,57 @@ _LOG = logging.getLogger(__name__)
 _WORD_RE = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 
 
+# Spelling-tolerance for named-law matching. A student who writes "bernulis"
+# has clearly introduced Bernoulli; the canonical name should not be treated
+# as un-introduced leakage just because the surface spelling differs. The
+# threshold + min-length guard keep this scoped to genuine law-name typos and
+# prevent short forbidden words (e.g. "pascal", "stokes") from being unlocked
+# by an unrelated lookalike token.
+_FUZZY_RATIO_THRESHOLD: float = 0.8
+_FUZZY_MIN_LEN: int = 5
+
+
 def _tokenize(text: str) -> list[str]:
     return [m.group(0).lower().strip("'") for m in _WORD_RE.finditer(text)]
+
+
+def _depossess(token: str) -> str:
+    """Strip a trailing possessive ``'s`` so "bernoulli's" -> "bernoulli".
+
+    Plain trailing ``s`` is left alone — stripping it would mangle real law
+    names like "stokes" -> "stoke"."""
+    if token.endswith("'s"):
+        return token[:-2]
+    return token
+
+
+def _fuzzy_match(canonical: str, token: str) -> bool:
+    """True if ``token`` is the same word as ``canonical`` modulo a spelling
+    slip. Exact match always wins; otherwise both words must clear the
+    min-length guard and the similarity ratio threshold."""
+    if canonical == token:
+        return True
+    if len(canonical) < _FUZZY_MIN_LEN or len(token) < _FUZZY_MIN_LEN:
+        return False
+    return SequenceMatcher(None, canonical, token).ratio() >= _FUZZY_RATIO_THRESHOLD
+
+
+def _introduced_laws(allowed: set[str], named_laws: Iterable[str]) -> set[str]:
+    """Canonical named-law layer (layer 1).
+
+    Returns the set of canonical law names the student has effectively
+    introduced — by exact mention, by a parser-canonicalized KG label
+    (both already folded into `allowed`), or by a near-spelling (layer 2,
+    `_fuzzy_match`). A law in this set is one Apollo is cleared to name.
+    """
+    introduced: set[str] = set()
+    for law in named_laws:
+        law_l = law.lower()
+        for token in allowed:
+            if _fuzzy_match(law_l, token):
+                introduced.add(law_l)
+                break
+    return introduced
 
 
 def _student_vocabulary(
@@ -68,15 +118,32 @@ def _pre_filter_offender(
     kg_summary: str,
 ) -> str | None:
     """Return the first forbidden word in the draft that the student has
-    not introduced, or None if the draft is clean."""
+    not introduced, or None if the draft is clean.
+
+    A forbidden token is cleared when:
+      - it (or its possessive stem) is a word the student literally used or
+        that surfaced in the KG summary (`allowed`), OR
+      - its stem is a canonical named-law the student introduced, spelling
+        slips included (`introduced` — layers 1+2).
+    Possessive stemming also closes the inverse leak: Apollo cannot smuggle
+    an un-introduced law past the filter by writing "Bernoulli's" instead of
+    "Bernoulli"."""
     forbidden: Iterable[str] = concept.forbidden_named_laws.all_terms()
     forbidden_set = set(forbidden)
     if not forbidden_set:
         return None
     allowed = _student_vocabulary(history, kg_summary)
+    introduced = _introduced_laws(allowed, concept.forbidden_named_laws.named_laws)
     for token in _tokenize(draft):
-        if token in forbidden_set and token not in allowed:
+        stem = _depossess(token)
+        if token in allowed or stem in allowed:
+            continue
+        if stem in introduced or token in introduced:
+            continue
+        if token in forbidden_set:
             return token
+        if stem != token and stem in forbidden_set:
+            return stem
     return None
 
 

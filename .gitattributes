@@ -1,0 +1,18 @@
+# Normalize line endings. Authored partly on Windows; CI runs on Linux. Files
+# with inline shell (workflows) MUST be LF — a stray CR breaks `bash` on the
+# runner. (Handoff §9 flagged LF↔CRLF as a live risk.)
+* text=auto eol=lf
+
+# Belt-and-suspenders for the runner-critical formats.
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.sh    text eol=lf
+*.py    text eol=lf
+*.toml  text eol=lf
+*.ini   text eol=lf
+
+# Binary assets must never be normalized.
+*.png   binary
+*.jpg   binary
+*.pdf   binary
+*.ico   binary

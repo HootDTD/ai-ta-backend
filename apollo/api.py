@@ -72,7 +72,10 @@ router = APIRouter(prefix="/apollo", tags=["apollo"])
 class FromHootRequest(BaseModel):
     student_id: str
     hoot_transcript: str
-    difficulty: Literal["intro", "standard", "hard"]
+    # Hoot→Apollo handoff starts at 'intro' by default (see session_init
+    # docstring). Optional so the one-click "Teach Apollo" button need not
+    # send it; explicit callers may still override.
+    difficulty: Literal["intro", "standard", "hard"] = "intro"
 
 
 class ChatRequest(BaseModel):
@@ -252,6 +255,7 @@ async def filter_rejected_handler(request: Request, exc: FilterRejectedError) ->
             "filter_rejected",
             str(exc),
             rejected_term=exc.rejected_term,
+            kg=exc.kg,
         ),
     )
 

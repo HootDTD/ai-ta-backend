@@ -268,7 +268,7 @@ async def test_negotiable_olm_chain_done_gate_to_coverage_to_narration(
     ])
     with patch("apollo.overseer.coverage.OpenAI") as mc:
         mc.return_value.chat.completions.create.side_effect = _create
-        cov = compute_coverage(post_graph, reference_graph)
+        cov = await compute_coverage(post_graph, reference_graph)
 
     # Among the bodies sent (one per binary type), find the equation body
     # and assert the paraphrased entry's student_belief reaches it.

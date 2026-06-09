@@ -1,9 +1,8 @@
 """Apollo conversational LLM — drafts a reply given conversation + KG summary.
 
-The returned string is the DRAFT. It MUST pass through
-apollo.agent.output_filter.validate_or_raise before reaching the student.
-No fallback: if the filter rejects, FilterRejectedError is raised — this
-module does not produce a substitute.
+The reply is fed only the student's KG + the problem, so it cannot leak
+un-taught concepts (structural anti-leak; the output filter is removed in
+v1).
 
 System prompt explicitly:
 - Refuses to name concepts the student hasn't named.
@@ -27,10 +26,6 @@ import os
 from typing import Any, Dict, List
 
 from openai import OpenAI
-
-from apollo.handlers.olm_invite import OlmInviteSignal
-from apollo.overseer.misconception import MisconceptionSignal, is_enabled as misconception_is_enabled
-from apollo.solver.sufficiency import SufficiencyVerdict
 
 _LOG = logging.getLogger(__name__)
 
@@ -95,165 +90,24 @@ YOUR BEHAVIOR — you are a stuck student, not an interviewer:
 """
 
 
-# Per-state suffixes appended to the system prompt by `draft_reply` when a
-# SufficiencyVerdict is provided (Class 2, Phase 1, Apollo Gap D). The
-# suffixes never name concepts and don't leak the missing variable's role —
-# they bias Apollo's curiosity, not its knowledge.
-_SUFFICIENT_SUFFIX = (
-    "\nSUFFICIENCY SIGNAL: you now think you've got everything you need to "
-    "work this out. You are not certain — you don't lecture or claim "
-    "mastery — but the chain feels closed to you. Say something brief like "
-    "'I think I follow now — should we work it out?' or 'I think I have "
-    "what I need — want to walk it through?' Keep your tone honest, not "
-    "triumphant."
-)
-_ALMOST_SUFFIX = (
-    "\nSUFFICIENCY SIGNAL: you're close to following the plan but ONE thing "
-    "is still loose. Express mild confidence that you're nearly there, and "
-    "ask one short clarifying question that would close the gap. Do not "
-    "name the missing piece by category."
-)
-_INSUFFICIENT_SUFFIX_TEMPLATE = (
-    "\nSUFFICIENCY SIGNAL: a chain break is open in what you've been "
-    "taught. The single most-curious thing on your mind right now is: "
-    "{hint}. Bias your next ignorant question toward this — without "
-    "naming the category. Stay in confused-tutee voice."
-)
-
-
-# Per-misconception-state suffixes (Class 2, Phase 2, Apollo Gap B). The
-# persona shift is INVISIBLE — there is no UI marker, no "I think you're
-# confused about X" line. Apollo simply asks the authored probe question
-# (probe band) or walks the authored Reasoning Trajectory steps (socratic
-# band). The misconception's `description` and `bank_id` are NEVER
-# rendered into the system prompt — only the authored, student-safe
-# `probe` and `rt_steps` strings are. Output filter (P2.6) blocks any
-# accidental description leak.
-#
-# Research anchors:
-# - Reasoning Trajectories (arXiv 2511.00371): invisible diagnostic
-#   moves outperform explicit "you're wrong about X" interventions
-#   on student calibration. Validity is inversely correlated with RT
-#   length, so we keep the suffix short.
-# - Macina verify-then-generate (arXiv 2407.09136): the verifier's
-#   confidence drives the band, not the generator's free-text candidate.
-_PROBE_SUFFIX_TEMPLATE = (
-    "\nMISCONCEPTION SIGNAL (probe band): something the user said suggests "
-    "a possible confusion you'd like to test gently. In your next reply, "
-    "in addition to staying in confused-tutee voice, ask EXACTLY this "
-    "probing question (you can rephrase lightly to fit the conversation, "
-    "but keep its meaning): \"{probe}\". Do not explain why you're asking; "
-    "do not introduce new concepts; do not name the suspected confusion."
-)
-_SOCRATIC_SUFFIX_TEMPLATE = (
-    "\nMISCONCEPTION SIGNAL (socratic band): a confusion has been "
-    "corroborated across turns. Walk the user through these confused-tutee "
-    "diagnostic steps in order, one per turn (this turn: focus on step 1):\n"
-    "{steps}\n"
-    "Stay in confused-tutee voice the whole time. Do not name the "
-    "suspected confusion. Do not lecture. Keep this turn to 1-2 sentences "
-    "covering only the first step."
-)
-
-
-_OLM_INVITE_SUFFIX_TEMPLATE = (
-    "\nOLM INVITE: a recent thing the user said came through with low "
-    "confidence — you may have misheard them. Pick the single thing "
-    "that feels least clear to you (suggested: {summary}) and ask ONE "
-    "ignorant clarifying question whose answer would let you confirm "
-    "or fix it. Stay in confused-tutee voice. Do not name a category, "
-    "do not suggest you know the right answer; just ask the user to "
-    "say it again or in different words."
-)
-
-
-def _suffix_for_olm_invite(signal: "OlmInviteSignal | None") -> str:
-    """Append the invite suffix when an invite has fired this turn.
-
-    The summary is included as a soft hint — Apollo can rephrase. The
-    entry id is intentionally NOT in the suffix; the FE consumes that
-    via the response envelope to drive the pulse animation. Keeping the
-    id out of the prompt avoids any chance of Apollo echoing
-    `eq42` at the student.
-    """
-    if signal is None or not signal.fired:
-        return ""
-    summary = (signal.summary or "the most recent thing").strip() or "the most recent thing"
-    return _OLM_INVITE_SUFFIX_TEMPLATE.format(summary=summary)
-
-
-def _suffix_for_misconception(signal: MisconceptionSignal | None) -> str:
-    """Return the per-state misconception suffix.
-
-    Returns "" when:
-    - signal is None,
-    - signal.fired is False,
-    - the master env flag APOLLO_MISCONCEPTION_ENABLED is off (default).
-
-    The flag-off path returns identical bytes to the pre-P2 prompt so a
-    rollback is one env var away.
-
-    Crucially: we NEVER include `signal.description` or `signal.bank_id`
-    in the returned suffix. Output filter (P2.6) defense-in-depth blocks
-    any leak that does sneak through (e.g. an LLM that paraphrases the
-    probe in a way that names the suspected confusion).
-    """
-    if signal is None or not signal.fired:
-        return ""
-    if not misconception_is_enabled():
-        return ""
-
-    if signal.state == "probe" and signal.probe:
-        return _PROBE_SUFFIX_TEMPLATE.format(probe=signal.probe)
-    if signal.state == "socratic" and signal.rt_steps:
-        steps = "\n".join(f"  {i+1}. {step}" for i, step in enumerate(signal.rt_steps))
-        return _SOCRATIC_SUFFIX_TEMPLATE.format(steps=steps)
-    return ""
-
-
-def _suffix_for_verdict(verdict: SufficiencyVerdict | None) -> str:
-    """Return the per-state suffix to append to APOLLO_SYSTEM_PROMPT.
-
-    Returns "" when no verdict is provided so the prompt is byte-identical
-    to today (caller can opt out by passing sufficiency=None).
-    """
-    if verdict is None:
-        return ""
-    if verdict.state == "sufficient":
-        return _SUFFICIENT_SUFFIX
-    if verdict.state == "almost":
-        return _ALMOST_SUFFIX
-    # insufficient
-    hint = verdict.next_premise_hint or "(unknown — explain the chain break in your own words)"
-    return _INSUFFICIENT_SUFFIX_TEMPLATE.format(hint=hint)
-
-
 def draft_reply(
     history: List[Dict[str, str]],
     kg_summary: str,
     *,
+    problem_text: str | None = None,
     model: str | None = None,
     history_summary: str | None = None,
-    sufficiency: SufficiencyVerdict | None = None,
-    misconception: MisconceptionSignal | None = None,
-    olm_invite: OlmInviteSignal | None = None,
 ) -> str:
-    """Generate Apollo's draft reply. Caller MUST pipe through the output filter.
+    """Generate Apollo's confused-classmate reply.
 
-    `history_summary` (optional, item #2): a rolling digest of older turns
-    when the conversation is longer than the raw-window cutoff. Inserted
-    as a separate system message so Apollo treats it as background, not
-    as the latest turn.
-
-    `sufficiency` (optional, Class 2 Phase 1): per-turn signal from
-    `apollo.solver.sufficiency.check_sufficiency`. When provided, Apollo's
-    system prompt is suffixed with a per-state directive that biases the
-    confused-tutee voice toward the right kind of question. Passing None
-    makes the prompt byte-identical to pre-P1 behavior.
+    v1 (diff-at-Done): Apollo is fed ONLY the problem statement, the KG
+    summary of what the student has taught so far, and the chat history.
+    It has no other knowledge, so it cannot leak a concept it was never
+    taught — this replaces the deleted output filter with structural
+    isolation. No sufficiency / misconception / OLM signals.
 
     `model` precedence: explicit arg > APOLLO_MODEL env > MAIN_MODEL env >
-    "gpt-4o". Lets operators flip Apollo to a cheaper model without
-    affecting parser / coverage calls (which still use MAIN_MODEL directly).
+    "gpt-4o".
     """
     used_model = (
         model
@@ -261,16 +115,21 @@ def draft_reply(
         or os.getenv("MAIN_MODEL")
         or "gpt-4o"
     )
-    system_prompt = (
-        APOLLO_SYSTEM_PROMPT
-        + _suffix_for_verdict(sufficiency)
-        + _suffix_for_misconception(misconception)
-        + _suffix_for_olm_invite(olm_invite)
-    )
     messages: List[Dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "system", "content": f"KG summary (what the student has taught you so far):\n{kg_summary}"},
+        {"role": "system", "content": APOLLO_SYSTEM_PROMPT},
     ]
+    if problem_text:
+        messages.append({
+            "role": "system",
+            "content": (
+                "The problem you and your tutor are looking at:\n"
+                f"{problem_text}"
+            ),
+        })
+    messages.append({
+        "role": "system",
+        "content": f"KG summary (what the student has taught you so far):\n{kg_summary}",
+    })
     if history_summary:
         messages.append({
             "role": "system",

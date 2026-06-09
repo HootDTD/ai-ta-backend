@@ -13,13 +13,11 @@ tests are deterministic.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch, MagicMock
 
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from apollo.agent.apollo_llm import APOLLO_SYSTEM_PROMPT, draft_reply
 from apollo.handlers.olm_invite import (
     COOLDOWN_SECONDS,
     LOW_CONF_THRESHOLD,
@@ -277,61 +275,7 @@ async def test_decide_picks_lowest_confidence_node_as_entry(
     assert sig.entry_id == "b"
 
 
-# ---------------------------------------------------------------------------
-# apollo_llm suffix
-# ---------------------------------------------------------------------------
-
-def _captured_create():
-    captured: dict = {}
-    def fake(**kwargs):
-        captured["messages"] = kwargs["messages"]
-        return MagicMock(choices=[MagicMock(message=MagicMock(content="ok"))])
-    return captured, fake
-
-
-def test_draft_reply_appends_invite_suffix_when_fired():
-    captured, fake = _captured_create()
-    sig = OlmInviteSignal(
-        fired=True, entry_id="eq1", summary="A1 v1 = A2 v2",
-        low_conf_pattern_this_turn=True,
-    )
-    with patch("apollo.agent.apollo_llm.OpenAI") as mc:
-        mc.return_value.chat.completions.create.side_effect = fake
-        draft_reply(history=[{"role": "user", "content": "u"}],
-                    kg_summary="(empty)", olm_invite=sig)
-
-    sysprompt = captured["messages"][0]["content"]
-    assert "OLM INVITE" in sysprompt
-    assert "A1 v1 = A2 v2" in sysprompt
-    # Entry id is NOT in the prompt — only the FE envelope.
-    assert "eq1" not in sysprompt
-
-
-def test_draft_reply_omits_invite_suffix_when_unfired():
-    captured, fake = _captured_create()
-    sig = OlmInviteSignal(fired=False)
-    with patch("apollo.agent.apollo_llm.OpenAI") as mc:
-        mc.return_value.chat.completions.create.side_effect = fake
-        draft_reply(history=[{"role": "user", "content": "u"}],
-                    kg_summary="(empty)", olm_invite=sig)
-    sysprompt = captured["messages"][0]["content"]
-    assert "OLM INVITE" not in sysprompt
-
-
-def test_draft_reply_byte_identical_when_invite_arg_absent():
-    """Pre-P3.5 callers that don't pass `olm_invite` get the exact same
-    prompt they did before."""
-    captured_a, fake_a = _captured_create()
-    captured_b, fake_b = _captured_create()
-
-    with patch("apollo.agent.apollo_llm.OpenAI") as mc:
-        mc.return_value.chat.completions.create.side_effect = fake_a
-        draft_reply(history=[{"role": "user", "content": "u"}],
-                    kg_summary="(empty)")
-    with patch("apollo.agent.apollo_llm.OpenAI") as mc:
-        mc.return_value.chat.completions.create.side_effect = fake_b
-        draft_reply(history=[{"role": "user", "content": "u"}],
-                    kg_summary="(empty)", olm_invite=None)
-
-    assert captured_a["messages"][0]["content"] == captured_b["messages"][0]["content"]
-    assert captured_a["messages"][0]["content"] == APOLLO_SYSTEM_PROMPT
+# NOTE: the apollo_llm OLM-invite suffix tests were removed in diff-at-Done
+# v1 — draft_reply no longer accepts an olm_invite arg. The olm_invite module
+# logic below (decide_invite / find_low_conf_new_nodes / signal_to_metadata)
+# is retained: the module stays defined though it is unwired from chat.py.
