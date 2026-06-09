@@ -5,6 +5,7 @@ Proves the `Neo4jClient` connects to a real Neo4j container and that the
 Docker is available (skips cleanly otherwise). Apollo's KG behaviour is tested
 in depth in Phase 4 — this just validates the harness.
 """
+
 from __future__ import annotations
 
 import pytest

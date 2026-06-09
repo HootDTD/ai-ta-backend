@@ -1,10 +1,8 @@
 import asyncio
 import inspect
 
-import pytest
-
-from apollo.overseer import coverage
 from apollo.ontology import KGGraph
+from apollo.overseer import coverage
 from apollo.schemas.problem import load_problem
 
 
@@ -23,7 +21,8 @@ def test_compute_coverage_parallel_matches_contract(monkeypatch):
     # Stub the two private matchers so no network is hit; assert the
     # assembled return shape covers every reference node.
     monkeypatch.setattr(
-        coverage, "_procedure_match_score",
+        coverage,
+        "_procedure_match_score",
         lambda *a, **k: (1.0, 0.9),
     )
 

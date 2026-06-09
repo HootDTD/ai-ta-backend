@@ -14,6 +14,7 @@ A minimal inline app is used so the proof is deterministic and independent of
 the heavy `server.py` import graph; the fixtures and override helper are the
 reusable parts.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -35,9 +36,7 @@ def _build_app() -> FastAPI:
 
     @app.get("/doc-count")
     async def doc_count(session: AsyncSession = Depends(get_db_session)) -> dict:
-        total = (
-            await session.execute(select(func.count()).select_from(AITADocument))
-        ).scalar_one()
+        total = (await session.execute(select(func.count()).select_from(AITADocument))).scalar_one()
         return {"count": total}
 
     return app
@@ -74,7 +73,5 @@ async def test_endpoint_sees_session_writes_then_rolls_back(db_session):
 
 async def test_clean_database_starts_empty(db_session):
     """Confirms transactional isolation: the previous test's rows are gone."""
-    total = (
-        await db_session.execute(select(func.count()).select_from(AITADocument))
-    ).scalar_one()
+    total = (await db_session.execute(select(func.count()).select_from(AITADocument))).scalar_one()
     assert total == 0

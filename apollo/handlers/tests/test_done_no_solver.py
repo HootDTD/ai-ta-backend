@@ -5,6 +5,7 @@ awaits a V3 KGGraph + Neo4j fixture rewrite (claude_v3_checklist.md item 1).
 Until that lands, these module-level guards lock in the v1 contract change:
 the solver is gone, coverage is awaited, and no solver_indicator escapes.
 """
+
 import inspect
 
 from apollo.handlers import done

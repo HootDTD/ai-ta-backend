@@ -3,6 +3,7 @@
 Validates the safety rails that keep secrets out of cassettes and prevent live
 API calls in CI.
 """
+
 from __future__ import annotations
 
 import pytest

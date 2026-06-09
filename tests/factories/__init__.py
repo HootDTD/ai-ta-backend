@@ -10,6 +10,7 @@ persist explicitly via :func:`persist`, which any async test/fixture can await.
 
 Phase 1 of docs/TESTING-CI-PLAN.md.
 """
+
 from __future__ import annotations
 
 from typing import TypeVar

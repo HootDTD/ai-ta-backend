@@ -23,6 +23,15 @@ select = ["E", "F", "I", "B", "UP"]
 # E501 (line length) is owned by the formatter, not the linter.
 ignore = ["E501"]
 
+[lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom puts Depends()/Query()/etc. in argument
+# defaults by design — whitelist them so B008 doesn't flag every endpoint.
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Query", "fastapi.Header", "fastapi.Body",
+    "fastapi.Path", "fastapi.Cookie", "fastapi.Form", "fastapi.File",
+    "fastapi.Security",
+]
+
 [lint.per-file-ignores]
 # Tests legitimately use fixtures that shadow names and assert-heavy patterns.
 "tests/**" = ["B011"]

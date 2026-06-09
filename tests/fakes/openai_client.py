@@ -10,6 +10,7 @@ structured JSON from the LLM layer — never raw text). Embeddings are produced
 by :func:`tests.fakes.embeddings.fake_embedding`, so they are deterministic and
 the correct dimension for the real `Vector` columns.
 """
+
 from __future__ import annotations
 
 import types
@@ -26,11 +27,7 @@ class _FakeCompletions:
 
     def create(self, *args: Any, **kwargs: Any) -> Any:
         return types.SimpleNamespace(
-            choices=[
-                types.SimpleNamespace(
-                    message=types.SimpleNamespace(content=self._content)
-                )
-            ]
+            choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=self._content))]
         )
 
 
@@ -39,8 +36,7 @@ class _FakeEmbeddings:
         dim = int(kwargs.get("dimensions") or EMBEDDING_DIM)
         items = input if isinstance(input, (list, tuple)) else [input]
         data = [
-            types.SimpleNamespace(embedding=fake_embedding(str(text), dim=dim))
-            for text in items
+            types.SimpleNamespace(embedding=fake_embedding(str(text), dim=dim)) for text in items
         ]
         return types.SimpleNamespace(data=data)
 
