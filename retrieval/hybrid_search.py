@@ -15,9 +15,9 @@ from typing import Optional
 from sqlalchemy import cast, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
+from pgvector.sqlalchemy import HALFVEC
 
 from database.models import AITAChunk, AITADocument, EMBEDDING_DIM
-from pgvector.sqlalchemy import HALFVEC
 from indexing.document_embedder import embed_text
 from .document_visibility import active_document_conditions, build_chunk_metadata
 

@@ -6,10 +6,13 @@ Compile-only — no database required.
 """
 from __future__ import annotations
 
+import pytest
 from sqlalchemy.dialects import postgresql
 
 from database.models import EMBEDDING_DIM
 from retrieval.hybrid_search import _halfvec_cosine_distance
+
+pytestmark = pytest.mark.unit
 
 
 def _sql(expr) -> str:
@@ -21,7 +24,7 @@ def test_both_operands_cast_to_halfvec():
     sql = _sql(expr)
     assert "halfvec" in sql
     # Both the column and the query vector must be cast (matches the index expression).
-    assert sql.count("cast(") >= 2
+    assert sql.count(f"halfvec({EMBEDDING_DIM})") >= 2
     assert f"halfvec({EMBEDDING_DIM})" in sql
 
 
