@@ -1,0 +1,184 @@
+# CI — Phase 2 PR gate (docs/TESTING-CI-PLAN.md §2.4).
+#
+# Replaces the single-job main.yml with parallel jobs:
+#   quality     — ruff lint+format on CHANGED files only (blocking, in ci-passed)
+#   typecheck   — mypy (ADVISORY / non-blocking; tightened in Phase 3)
+#   unit        — fast `-m "not integration"` run, no Docker (blocking)
+#   integration — full suite on real pgvector + Neo4j Testcontainers + patch-coverage gate (blocking)
+#   ci-passed   — aggregation check; THIS is the single required status for branch protection
+#
+# Why ruff is changed-files-only: the legacy tree has 360 ruff errors / 1689
+# format diffs. A repo-wide gate would red-fail every PR on day one. New code
+# must be clean; legacy debt is paid down by a ratchet (same philosophy as the
+# patch-coverage gate). A deliberate repo-wide reformat is separate, future work.
+name: CI
+
+on:
+  pull_request:
+    branches: [main, staging, ApolloV3]
+    paths-ignore: ["**.md", "docs/**"]
+  push:
+    branches: [main, staging, ApolloV3]
+    paths-ignore: ["**.md", "docs/**"]
+  workflow_dispatch:
+
+# Least privilege by default; jobs opt back into `contents: read`.
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Cancel superseded PR runs only — never cancel a post-merge run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  quality:
+    name: quality (ruff, changed files)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0 # need base history to diff changed files
+      - uses: ./.github/actions/setup
+      # Ratchet, two tiers:
+      #   ADDED files  → ruff check + format-check are BLOCKING (new code pristine)
+      #   MODIFIED files → ruff check is ADVISORY (continue-on-error) so a 1-line
+      #     edit to a 50-finding legacy file doesn't force fixing all 50 (which
+      #     would block hotfixes). Legacy debt surfaces in logs, paid down over time.
+      - name: Ruff — added files (blocking)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          BASE="origin/${{ github.base_ref }}"
+          mapfile -t ADDED < <(git diff --name-only --diff-filter=A "$BASE"...HEAD -- '*.py')
+          if [ ${#ADDED[@]} -eq 0 ]; then
+            echo "No newly-added Python files."
+            exit 0
+          fi
+          echo "Strict-checking ${#ADDED[@]} new file(s):"
+          printf '  %s\n' "${ADDED[@]}"
+          ruff check --output-format=github "${ADDED[@]}"
+          ruff format --check "${ADDED[@]}"
+      - name: Ruff — modified files (advisory)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        shell: bash
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          BASE="origin/${{ github.base_ref }}"
+          mapfile -t MODIFIED < <(git diff --name-only --diff-filter=M "$BASE"...HEAD -- '*.py')
+          if [ ${#MODIFIED[@]} -eq 0 ]; then
+            echo "No modified Python files."
+            exit 0
+          fi
+          echo "Advisory lint on ${#MODIFIED[@]} modified file(s) — run 'ruff check --fix' + 'ruff format' to clear:"
+          ruff check --output-format=github "${MODIFIED[@]}" || true
+
+  typecheck:
+    name: typecheck (mypy, advisory)
+    runs-on: ubuntu-latest
+    # ADVISORY: the codebase is largely untyped. This job reports type findings
+    # but never blocks a merge (not listed in ci-passed `needs`, and
+    # continue-on-error keeps it from showing red). Phase 3 makes it required.
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - name: Mypy (changed Python files, non-blocking)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          BASE="origin/${{ github.base_ref }}"
+          mapfile -t FILES < <(git diff --name-only --diff-filter=ACMR "$BASE"...HEAD -- '*.py')
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No Python files changed — skipping mypy."
+            exit 0
+          fi
+          mypy --config-file mypy.ini "${FILES[@]}"
+
+  unit:
+    name: unit (fast, no Docker)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: ./.github/actions/setup
+      - name: Pytest (non-integration)
+        env:
+          CI: "true" # forces VCR record_mode=none — never call live APIs
+        run: |
+          pytest -m "not integration" -n auto -q \
+            --cov --cov-report=xml --cov-report=term-missing
+
+  integration:
+    name: integration (pgvector + Neo4j Testcontainers)
+    runs-on: ubuntu-latest
+    # First container-backed CI run pulls pgvector/pgvector:pg16 + neo4j:5.25 —
+    # give the image pulls + boot headroom.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0 # diff-cover needs base-branch history
+      - uses: ./.github/actions/setup
+      # Full suite (unit + integration) so coverage.xml is the COMPLETE picture
+      # the patch-coverage gate judges against. Single-process (no -n auto): the
+      # Testcontainers fixtures are session-scoped, so xdist would spin one
+      # container set PER worker. Docker is preinstalled on ubuntu-latest.
+      - name: Pytest (full suite, real containers)
+        env:
+          CI: "true"
+        run: |
+          pytest -q --cov --cov-report=xml --cov-report=term-missing
+      - name: Patch-coverage gate (diff-cover ≥80% on new code)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          diff-cover coverage.xml \
+            --compare-branch="origin/${{ github.base_ref }}" \
+            --fail-under=80 \
+            --markdown-report diff-cover.md
+      - name: Upload coverage + diff-cover reports
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: coverage-reports
+          path: |
+            coverage.xml
+            diff-cover.md
+          if-no-files-found: ignore
+          retention-days: 7
+
+  ci-passed:
+    name: ci-passed
+    # The SINGLE required status check for branch protection. Runs even if a
+    # dependency failed so the gate reports a definitive pass/fail.
+    if: always()
+    needs: [quality, unit, integration]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert all required jobs passed
+        shell: bash
+        run: |
+          echo "quality=${{ needs.quality.result }}"
+          echo "unit=${{ needs.unit.result }}"
+          echo "integration=${{ needs.integration.result }}"
+          if [ "${{ needs.quality.result }}" = "success" ] \
+            && [ "${{ needs.unit.result }}" = "success" ] \
+            && [ "${{ needs.integration.result }}" = "success" ]; then
+            echo "All required jobs passed."
+          else
+            echo "::error::One or more required jobs failed."
+            exit 1
+          fi
