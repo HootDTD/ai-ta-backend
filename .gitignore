@@ -9,3 +9,13 @@ artifacts/
 .env.*
 /chats/
 .DS_Store
+
+# Logs
+*.log
+uvicorn.log
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/

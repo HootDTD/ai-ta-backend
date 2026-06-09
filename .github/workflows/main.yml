@@ -8,9 +8,9 @@ name: CI
 
 on:
   push:
-    branches: [main, staging, production]
+    branches: [main, staging, ApolloV3]
   pull_request:
-    branches: [main, staging, production]
+    branches: [main, staging, ApolloV3]
   workflow_dispatch:
 
 permissions:
