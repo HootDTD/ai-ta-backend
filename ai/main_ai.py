@@ -958,12 +958,16 @@ def _build_solution_from_data(data: Dict[str, Any]) -> ProposedSolution:
     )
 
 
-def solve_with_bundle(
+def _prepare_solve_prompt(
     parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None,
     subject: str | None = None,
-) -> ProposedSolution:
-    """Solve the parsed task using only information from the provided bundle."""
+) -> Tuple[str, str, str]:
+    """Run snippet scoring and build the solver prompt.
 
+    Returns (system, user_base, model). All side effects (miniresponse files,
+    provenance 'citation_rankings', debug dumps) are preserved exactly as in the
+    original solve_with_bundle. Shared by the blocking and streaming solve paths.
+    """
     client = _client()
     question_text = ""
     try:
@@ -1307,6 +1311,17 @@ def solve_with_bundle(
         print(f"Context preview: debug/main_ai_context_preview.txt (snippets={len(bundle.snippets)})")
 
     _maybe_debug_dump(system, user_base, bundle, proof_bundle, citation_analyses)
+
+    return system, user_base, model
+
+
+def solve_with_bundle(
+    parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None,
+    subject: str | None = None,
+) -> ProposedSolution:
+    """Solve the parsed task using only information from the provided bundle."""
+    client = _client()
+    system, user_base, model = _prepare_solve_prompt(parsed_task, bundle, hint, subject)
 
     def _chat(msgs: List[dict]) -> dict:
         kwargs = {
