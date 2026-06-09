@@ -1348,6 +1348,69 @@ def solve_with_bundle(
     return _build_solution_from_data(data)
 
 
+def solve_with_bundle_stream(
+    parsed_task: "ParsedTask", bundle: "ResearchBundle", hint: str | None = None,
+    subject: str | None = None,
+):
+    """Generator: yields ("reasoning", str) summary deltas during the think
+    phase, ("token", str) decoded answer deltas, then ("solution",
+    ProposedSolution). Uses the Responses API so reasoning summaries stream.
+
+    Dispatches on event.type and ignores unknown events, so if the account does
+    not emit reasoning summaries it degrades to answer-only streaming.
+    """
+    from ai.streaming import JsonStringFieldStreamer
+
+    client = _client()
+    system, user_base, model = _prepare_solve_prompt(parsed_task, bundle, hint, subject)
+
+    kwargs: Dict[str, Any] = {
+        "model": model,
+        "instructions": system,
+        "input": user_base,
+        "text": {"format": {"type": "json_object"}},
+        "stream": True,
+    }
+    gpt5_allow = {"gpt-5", "gpt-5-chat-latest", "gpt-5-mini"}
+    if model.startswith("gpt-5") or model in gpt5_allow:
+        kwargs["reasoning"] = {
+            "effort": os.getenv("MAIN_REASONING_EFFORT", "high"),
+            "summary": "auto",
+        }
+    else:
+        kwargs["temperature"] = 0
+        kwargs["reasoning"] = {}
+
+    streamer = JsonStringFieldStreamer(field="steps")
+    json_buf: List[str] = []
+
+    _t_solve = time.perf_counter()
+    for event in client.responses.create(**kwargs):
+        etype = getattr(event, "type", "")
+        if etype == "response.reasoning_summary_text.delta":
+            delta = getattr(event, "delta", "") or ""
+            if delta:
+                yield ("reasoning", delta)
+        elif etype == "response.output_text.delta":
+            delta = getattr(event, "delta", "") or ""
+            if not delta:
+                continue
+            json_buf.append(delta)
+            text = streamer.feed(delta)
+            if text:
+                yield ("token", text)
+
+    log.info("[timing] solve_stream=%.2fs model=%s", time.perf_counter() - _t_solve, model)
+
+    full = "".join(json_buf)
+    try:
+        data = json.loads(full)
+    except Exception:
+        log.error("Streaming solve produced unparseable JSON; empty solution")
+        data = {}
+    yield ("solution", _build_solution_from_data(data))
+
+
 def format_answer(
     solution: ProposedSolution,
     bundle: ResearchBundle,
@@ -1719,6 +1782,7 @@ def _write_miniresponses(
 __all__ = [
     "parse_question",
     "solve_with_bundle",
+    "solve_with_bundle_stream",
     "format_answer",
     "normalize_query",
     "is_question_subject_relevant",
