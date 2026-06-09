@@ -10,7 +10,14 @@ import uuid
 
 import factory
 
-from database.models import AITAChunk, AITADocument, CourseMembership, SearchSpace
+from database.models import (
+    AITAChunk,
+    AITADocument,
+    ChatSession,
+    CourseMembership,
+    SearchSpace,
+    TeacherUpload,
+)
 from tests.fakes.embeddings import fake_embedding
 
 
@@ -54,4 +61,26 @@ class CourseMembershipFactory(factory.Factory):
 
     user_id = factory.LazyFunction(lambda: str(uuid.uuid4()))
     role = "student"
+    # search_space_id is required (FK) — always pass it explicitly.
+
+
+class ChatSessionFactory(factory.Factory):
+    class Meta:
+        model = ChatSession
+
+    chat_id = factory.Sequence(lambda n: f"chat-{n}")
+    user_id = factory.LazyFunction(lambda: str(uuid.uuid4()))
+    meta = factory.LazyFunction(dict)
+    memory_summary = ""
+    # search_space_id is required (FK) — always pass it explicitly.
+
+
+class TeacherUploadFactory(factory.Factory):
+    class Meta:
+        model = TeacherUpload
+
+    week = 1
+    kind = "lecture"
+    title = factory.Sequence(lambda n: f"Week {n} notes")
+    status = "ready"
     # search_space_id is required (FK) — always pass it explicitly.

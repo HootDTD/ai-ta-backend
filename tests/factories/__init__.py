@@ -19,8 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tests.factories.models import (
     AITAChunkFactory,
     AITADocumentFactory,
+    ChatSessionFactory,
     CourseMembershipFactory,
     SearchSpaceFactory,
+    TeacherUploadFactory,
 )
 
 T = TypeVar("T")
@@ -39,4 +41,6 @@ __all__ = [
     "AITADocumentFactory",
     "AITAChunkFactory",
     "CourseMembershipFactory",
+    "ChatSessionFactory",
+    "TeacherUploadFactory",
 ]
