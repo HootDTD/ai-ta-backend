@@ -1,0 +1,25 @@
+# Coverage config for the AI-TA backend test suite (Phase 1).
+# Run with: pytest --cov --cov-report=term-missing
+# Patch-coverage gating (diff-cover vs origin/staging) is wired in Phase 2.
+
+[run]
+branch = true
+# relative_files lets coverage.xml paths match across local + CI checkout roots,
+# which diff-cover and the GitHub Actions runner both depend on.
+relative_files = true
+source = .
+omit =
+    tests/*
+    */tests/*
+    .venv/*
+    */__pycache__/*
+    database/migrations/*
+
+[report]
+show_missing = true
+skip_covered = false
+exclude_lines =
+    pragma: no cover
+    raise NotImplementedError
+    if TYPE_CHECKING:
+    if __name__ == .__main__.:

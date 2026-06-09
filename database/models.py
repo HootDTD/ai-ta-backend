@@ -267,7 +267,11 @@ class TeacherCourse(Base):
         JSONB,
         nullable=False,
         default=lambda: {"min": 0.0, "max": 1.0},
-        server_default=text('\'{"min":0.0,"max":1.0}\'::jsonb'),
+        # Escape the JSON colons (\:) so SQLAlchemy's text() doesn't parse
+        # `:0` / `:1` as bind parameters — without this, create_all() emits the
+        # malformed default `{"min"NULL.0,"max"NULL.0}`. Renders as
+        # '{"min":0.0,"max":1.0}'::jsonb.
+        server_default=text(r"""'{"min"\:0.0,"max"\:1.0}'::jsonb"""),
     )
     created_at = Column(
         TIMESTAMP(timezone=True),
