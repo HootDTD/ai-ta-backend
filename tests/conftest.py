@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -152,24 +154,100 @@ def _mock_supabase(monkeypatch):
     _sb_reset()
 
 
-@pytest.fixture
-def db_session():
-    """Async SQLAlchemy session bound to a REAL Postgres + pgvector instance.
+# ---------------------------------------------------------------------------
+# Real Postgres + pgvector test harness (Phase 1, docs/TESTING-CI-PLAN.md).
+#
+# pgvector's `<=>` / `<->` operators and HNSW indexes do not exist in SQLite,
+# so the retrieval/indexing layer can only be tested against real Postgres.
+# We spin up one ephemeral `pgvector/pgvector:pg16` container per test session
+# (Testcontainers), create the schema once, then give each test a
+# transactionally-isolated session that rolls back on teardown.
+#
+# If Docker isn't running, the `_pg_url` fixture skips cleanly so the rest of
+# the suite stays green — DB tests light up automatically once Docker is up.
+# ---------------------------------------------------------------------------
 
-    Phase 1 of the testing plan (docs/TESTING-CI-PLAN.md) wires this to an
-    ephemeral Testcontainers `pgvector/pgvector` engine with function-scoped
-    transactional rollback. Until then, `@pytest.mark.integration` tests that
-    require a live database skip cleanly instead of erroring on a missing
-    fixture. pgvector / HNSW cannot run on the in-memory SQLite used by the
-    other fixtures, so these tests genuinely need a real Postgres.
+PGVECTOR_IMAGE = "pgvector/pgvector:pg16"
+
+# NOTE: we deliberately do NOT call pgvector.asyncpg.register_vector here.
+# pgvector's SQLAlchemy `Vector` type already serializes lists to the pgvector
+# text wire format (e.g. '[1.0,0.0,...]') and parses results back. Registering
+# the asyncpg binary codec on top of that double-encodes the value and asyncpg
+# raises "could not convert string to float". register_vector is only for RAW
+# asyncpg queries that bind Python lists directly, which the ORM never does.
+
+
+@pytest.fixture(scope="session")
+def _pg_url() -> str:
+    """Start a pgvector container and create the schema once per session.
+
+    Returns an asyncpg SQLAlchemy URL. Skips the whole DB-backed test set if
+    Docker is unavailable.
     """
-    import os
+    try:
+        from testcontainers.postgres import PostgresContainer
+    except ImportError:  # pragma: no cover - dependency guard
+        pytest.skip("testcontainers not installed (pip install -r requirements-test.txt)")
 
-    if not os.environ.get("TEST_DATABASE_URL"):
-        pytest.skip(
-            "integration: requires TEST_DATABASE_URL (Postgres + pgvector). "
-            "Real fixture lands in Phase 1 (Testcontainers)."
-        )
-    raise RuntimeError(
-        "db_session real implementation is scheduled for Phase 1 of the testing plan"
+    try:
+        container = PostgresContainer(PGVECTOR_IMAGE)
+        container.start()
+    except Exception as exc:  # Docker daemon down / image pull failure
+        pytest.skip(f"Docker not available for pgvector test container: {exc}")
+
+    url = container.get_connection_url(driver="asyncpg")
+
+    async def _setup() -> None:
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        from database.models import Base
+
+        # No vector codec on the setup engine: its first connection is the one
+        # that runs CREATE EXTENSION, so the `vector` type doesn't exist yet at
+        # connect time. DDL is plain text and needs no codec anyway.
+        engine = create_async_engine(url, poolclass=NullPool)
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.run_sync(Base.metadata.create_all)
+        await engine.dispose()
+
+    asyncio.run(_setup())
+    try:
+        yield url
+    finally:
+        container.stop()
+
+
+@pytest_asyncio.fixture
+async def db_session(_pg_url):
+    """Function-scoped AsyncSession on real pgvector, rolled back after each test.
+
+    Uses a per-test engine (NullPool) so the connection is created on the
+    current test's event loop — avoiding the cross-loop pool issues documented
+    in ``database/session.py``. The outer transaction is never committed:
+    ``join_transaction_mode="create_savepoint"`` lets test code call
+    ``commit()`` (it commits to a SAVEPOINT), and teardown rolls the whole
+    thing back, leaving the schema pristine for the next test.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    engine = create_async_engine(_pg_url, poolclass=NullPool)
+
+    conn = await engine.connect()
+    trans = await conn.begin()
+    session = AsyncSession(
+        bind=conn,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
     )
+    try:
+        yield session
+    finally:
+        await session.close()
+        if trans.is_active:
+            await trans.rollback()
+        await conn.close()
+        await engine.dispose()
