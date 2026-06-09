@@ -2,6 +2,7 @@ import importlib
 import io
 import os
 import re
+import time
 import uuid
 import base64
 import logging
@@ -1453,7 +1454,9 @@ def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "
     # Extract keywords (role: hints appended to original question, not standalone targets)
     # extract_and_filter_keywords returns (context_summary, term_list)
     try:
+        _t_kw = time.perf_counter()
         _ctx_summary, raw_keywords = extract_and_filter_keywords(q_effective)
+        log.info("[timing] keyword_extraction=%.2fs", time.perf_counter() - _t_kw)
         keywords: List[str] = []
         for entry in (raw_keywords or []):
             if isinstance(entry, dict):
@@ -1477,7 +1480,9 @@ def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "
                 token_budget=token_budget,
             )
 
+    _t_retr = time.perf_counter()
     snippets, diagnostics = run_async(_run())
+    log.info("[timing] retrieval_total=%.2fs", time.perf_counter() - _t_retr)
 
     # Extract structured knowledge from snippet text (equations, glossary, etc.)
     equations, glossary, assumptions, _ = _summarize_snippets(snippets)

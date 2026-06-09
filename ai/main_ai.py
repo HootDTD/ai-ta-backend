@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
@@ -941,6 +942,7 @@ def solve_with_bundle(
         max(len(snippet_args), 1),
     )
     combined_results: List[Dict[str, Any]] = []
+    _t_score = time.perf_counter()
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = [
             pool.submit(
@@ -969,6 +971,11 @@ def solve_with_bundle(
                     "why": "",
                     "answer": "Not Relevant",
                 })
+
+    log.info(
+        "[timing] snippet_scoring=%.2fs n=%d",
+        time.perf_counter() - _t_score, len(snippet_args),
+    )
 
     # Split into citation_analyses (score fields) and per_citation_answers (answer fields)
     citation_analyses: List[Dict[str, Any]] = []
@@ -1266,10 +1273,12 @@ def solve_with_bundle(
         content = resp.choices[0].message.content
         return json.loads(content)
 
+    _t_solve = time.perf_counter()
     data = _chat([
         {"role": "system", "content": system},
         {"role": "user", "content": user_base},
     ])
+    log.info("[timing] solve=%.2fs model=%s", time.perf_counter() - _t_solve, model)
 
     # Short-circuit for off-topic questions
     if data.get("not_relevant", False):

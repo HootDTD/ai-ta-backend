@@ -10,6 +10,7 @@ Ported from SurfSense's ChucksHybridSearchRetriever with AI-TA adaptations:
 """
 
 import logging
+import time
 from typing import Optional
 
 from sqlalchemy import cast, func, select, text
@@ -62,7 +63,9 @@ class AITAHybridSearchRetriever:
             chunk_id, content, score, page_number, section_path, chunk_type,
             figure_id, document_id, doc_title, material_kind
         """
+        _t_embed = time.perf_counter()
         query_embedding = embed_text(query_text)
+        log.info("[timing] embed=%.3fs", time.perf_counter() - _t_embed)
 
         # How many candidate results to pull from each search before RRF fusion
         n_results = top_k * 5
@@ -132,7 +135,9 @@ class AITAHybridSearchRetriever:
             .limit(top_k)
         )
 
+        _t_search = time.perf_counter()
         result = await self.db_session.execute(final_query)
+        log.info("[timing] hybrid_search_sql=%.3fs", time.perf_counter() - _t_search)
         rows = result.all()
 
         if not rows:
