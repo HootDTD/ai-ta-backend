@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.agent.apollo_llm import draft_reply
 from apollo.agent.output_filter import validate_or_raise
+from apollo.errors import FilterRejectedError
 from apollo.handlers.history import load_windowed_history
 from apollo.handlers.intent import (
     INTENT_CONFIDENCE_THRESHOLD,
@@ -398,23 +399,20 @@ async def handle_chat(
         new_low_conf_nodes=new_low_conf_nodes,
     )
 
-    next_idx = await _next_turn_index(db, session_id)
-    db.add(Message(
-        session_id=session_id,
-        attempt_id=current_attempt.id,
-        role="student",
-        content=message,
-        turn_index=next_idx,
-        # Persist the analytics flag so the next turn's counter sees it.
-        # `low_conf_pattern` rides on every student turn, regardless of
-        # whether the master flag is enabled — we need the data to
-        # calibrate the threshold before flipping the flag globally.
-        message_metadata=(
-            {"low_conf_pattern": True}
-            if olm_invite_signal.low_conf_pattern_this_turn else None
-        ),
-    ))
-    await db.commit()
+    # The (student, apollo) turn pair is persisted together AFTER the draft
+    # clears the output filter — see the tail of this function. Deferring the
+    # student write means a FilterRejectedError leaves no orphaned student turn
+    # (a committed student row with no Apollo reply, which would desync the
+    # history and the FE). The student turn's analytics flag is computed now
+    # (it rides on the olm_invite signal) and applied at persist time.
+    #
+    # `low_conf_pattern` rides on every student turn, regardless of whether the
+    # master flag is enabled — we need the data to calibrate the threshold
+    # before flipping the flag globally.
+    student_metadata = (
+        {"low_conf_pattern": True}
+        if olm_invite_signal.low_conf_pattern_this_turn else None
+    )
 
     # The new student message goes through the LLM as the latest turn
     # without re-loading the full history.
@@ -475,22 +473,40 @@ async def handle_chat(
     # Reuse for the filter — it consumes the same history shape.
     history = history_for_llm
 
-    validated = validate_or_raise(
-        draft,
-        concept=concept,
-        history=history,
-        kg_summary=kg_summary,
-        sufficiency=sufficiency,
-        misconception=misconception_signal,
-    )
+    try:
+        validated = validate_or_raise(
+            draft,
+            concept=concept,
+            history=history,
+            kg_summary=kg_summary,
+            sufficiency=sufficiency,
+            misconception=misconception_signal,
+        )
+    except FilterRejectedError as exc:
+        # Surface the live KG on the error so the FE refreshes "Apollo's
+        # Understanding" instead of showing a stale/empty panel on a blocked
+        # turn. The parsed nodes were already written this turn — they are
+        # real taught content even though Apollo's reply was withheld.
+        exc.kg = student_graph.model_dump(mode="json")
+        raise
 
+    # Persist the student + apollo turn pair together now that the reply has
+    # cleared the filter. Single commit, contiguous turn indices.
     next_idx = await _next_turn_index(db, session_id)
+    db.add(Message(
+        session_id=session_id,
+        attempt_id=current_attempt.id,
+        role="student",
+        content=message,
+        turn_index=next_idx,
+        message_metadata=student_metadata,
+    ))
     db.add(Message(
         session_id=session_id,
         attempt_id=current_attempt.id,
         role="apollo",
         content=validated,
-        turn_index=next_idx,
+        turn_index=next_idx + 1,
         message_metadata={
             "misconception": _signal_to_metadata(misconception_signal),
             # P3.5: persist the invite outcome so the next turn's cooldown

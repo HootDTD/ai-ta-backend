@@ -148,6 +148,64 @@ def test_common_english_words_never_trigger_rejection(concept, stub_judge_clean)
     assert out == draft
 
 
+def test_misspelled_law_name_allows_apollo_canonical(concept, stub_judge_clean):
+    """Student introduces Bernoulli by a misspelled name ("bernulis"); Apollo
+    may then use the correctly-spelled canonical name. Regression for the
+    over-strict exact-match pre-filter that blocked the typo case."""
+    history = [
+        {"role": "user", "content": (
+            "Use bernulis equation P + Rational(1,2)*v**2*rho = C. "
+            "Now we can use continuity, then sub in values."
+        )},
+    ]
+    summary = "- equation (bernulis equation): P + Rational(1,2)*v**2*rho - C"
+    draft = "Okay — so using Bernoulli's equation, what do we do after continuity?"
+    out = validate_or_raise(
+        draft,
+        concept=concept,
+        history=history,
+        kg_summary=summary,
+        judge=stub_judge_clean,
+    )
+    assert out == draft
+
+
+def test_misspelled_law_name_allows_apollo_canonical_no_apostrophe(concept, stub_judge_clean):
+    """Same as above but Apollo writes 'Bernoulli' without the possessive 's."""
+    history = [
+        {"role": "user", "content": "lets use bernulis here, P + half rho v^2 = const"},
+    ]
+    summary = "- equation (bernulis): P + Rational(1,2)*rho*v**2 - C"
+    draft = "Right, so the Bernoulli relation is what ties pressure and speed together?"
+    out = validate_or_raise(
+        draft,
+        concept=concept,
+        history=history,
+        kg_summary=summary,
+        judge=stub_judge_clean,
+    )
+    assert out == draft
+
+
+def test_typo_tolerance_does_not_allow_unintroduced_law(concept, stub_judge_clean):
+    """Fuzzy tolerance must stay scoped: introducing one law (continuity)
+    must NOT unlock an unrelated law (Torricelli) Apollo was never taught."""
+    history = [
+        {"role": "user", "content": "continuity says A1*v1 = A2*v2 for incompressible flow"},
+    ]
+    summary = "- equation (continuity): A1*v1 - A2*v2"
+    draft = "Ah, this is really Torricelli's theorem in disguise."
+    with pytest.raises(FilterRejectedError) as exc_info:
+        validate_or_raise(
+            draft,
+            concept=concept,
+            history=history,
+            kg_summary=summary,
+            judge=stub_judge_clean,
+        )
+    assert "torricelli" in exc_info.value.rejected_term.lower()
+
+
 def test_judge_high_confidence_leak_rejected(concept):
     """Judge stage rejection path — paraphrase the deterministic stage misses."""
     def _judge(*, draft, concept, history, kg_summary):

@@ -100,6 +100,35 @@ async def test_chat_propagates_filter_rejection(mock_parse, mock_draft, db_with_
 @pytest.mark.asyncio
 @patch("apollo.handlers.chat.draft_reply")
 @patch("apollo.handlers.chat.parse_utterance")
+async def test_chat_filter_rejection_leaves_no_orphan_turn(mock_parse, mock_draft, db_with_session):
+    """A blocked turn must not persist a student message without an Apollo
+    reply, and must attach the live KG to the error for the FE to refresh."""
+    from sqlalchemy import select
+
+    db, session_id, _attempt_id = db_with_session
+    mock_parse.return_value = [
+        {"type": "equation", "content": {"symbolic": "A1*v1 - A2*v2", "label": "Continuity"}},
+    ]
+    # Names an un-introduced forbidden law -> deterministic pre-filter rejects.
+    mock_draft.return_value = "That's the Navier-Stokes equations at work."
+
+    with pytest.raises(FilterRejectedError) as exc_info:
+        await handle_chat(db=db, session_id=session_id, message="x equals 1 here")
+
+    # No half-written turn: neither the student nor the apollo row persisted.
+    msgs = (await db.execute(
+        select(Message).where(Message.session_id == session_id)
+    )).scalars().all()
+    assert msgs == []
+
+    # The KG rides on the error so the FE can refresh the understanding panel.
+    assert exc_info.value.kg is not None
+    assert len(exc_info.value.kg["equation"]) == 1
+
+
+@pytest.mark.asyncio
+@patch("apollo.handlers.chat.draft_reply")
+@patch("apollo.handlers.chat.parse_utterance")
 async def test_chat_persists_messages(mock_parse, mock_draft, db_with_session):
     db, session_id, _attempt_id = db_with_session
     mock_parse.return_value = []
