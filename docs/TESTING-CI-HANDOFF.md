@@ -1,265 +1,289 @@
-# Testing & CI — Session Handoff
+# Testing & CI — Aggregate Handoff (Phases 0–1 done → Phase 2 next)
 
-> **Created:** 2026-06-09. **Repo:** `ai-ta-backend` (GitHub `HootDTD/ai-ta-backend`).
-> **Goal:** stand up a backend testing system + `staging` branch + gating CI, at "balanced"
-> ambition (~65–70% coverage gate, full pyramid + regression).
-> **Companion docs:** `docs/TESTING-CI-PLAN.md` (full phased plan + research) and
+> **Repo:** `HootDTD/ai-ta-backend`. **Updated:** 2026-06-09.
+> **Ambition:** "balanced" — full test pyramid + regression, ~65–70% coverage gate on new code.
+> **This file is the single source of truth.** It supersedes the Phase-0-era handoff and
+> aggregates everything a cold session needs to continue at **Phase 2 (CI/CD wiring)**.
+> **Companion:** `docs/TESTING-CI-PLAN.md` (full phased plan + reference configs),
 > `.feller/tasks/2026-06-09-backend-testing-ci/RESEARCH-ARCHIVE.md` (citations).
-> Pick this up cold and you have everything to continue.
 
 ---
 
 ## 1. TL;DR — where we are
 
-- **Phase 0 (stabilize the existing suite + honest CI) is DONE** and lives on branch
-  `test/phase0-stabilization` (commit `4d3cc0d`, pushed). Verified: **117 passed / 7
-  skipped / 0 failed / 0 errors**.
-- **`staging` branch exists** (local + remote, from `ApolloV3` HEAD). `ApolloV3` remains
-  the production line (a brief rename to `production` was tried and **reverted** — keep
-  `ApolloV3`).
-- **Phases 1–6 are NOT started.** Phase 1 (real Postgres+pgvector test harness) is the
-  core remaining work — it's what makes the retrieval/indexing code actually testable.
+- **Phase 0 (stabilize suite + honest CI gate): DONE & merged to `staging`.**
+- **Phase 1 (real Postgres+pgvector + Neo4j test harness): DONE.** Lives on branch
+  `test/phase1-harness`, open as **PR #3 → `staging`** (CI green).
+- **Phase 2 (full CI/CD wiring) is NEXT** — see §7. Everything below §6 is reference.
+- **Suite today:** `pytest -q` → **132 passed / 4 skipped / 0 failed** (real containers).
+  PR-gate (`-m "not integration"`) → **121 passed / 4 skipped / 11 deselected**.
 
-### ⚠️ Reconciliation needed FIRST (state mismatch on `staging`)
-The commit `296c9a2 "phase 0"` currently on `staging` is **mislabeled** — it contains the
-**apollo WIP** (`apollo/api.py`, `handlers/chat.py`, `agent/output_filter.py`, + tests)
-**plus a stray `uvicorn.log`**, NOT the test-stabilization work. So `staging` is missing
-all the real Phase 0 changes and has a log file it shouldn't.
+### Branch & PR state
+| Branch | Role | Notes |
+|---|---|---|
+| `ApolloV3` | **Production line** (keep this name; Heroku deploys here) | downstream of staging |
+| `staging` | Integration/QA | Phase 0 merged; PR #3 targets it |
+| `test/phase1-harness` | **Phase 1 work** (PR #3) | commits below |
+| `main` | stale legacy (105+ behind ApolloV3) | not the trunk |
 
-**Do this before Phase 1:**
-1. Merge `test/phase0-stabilization` → `staging` (PR base `staging`, head
-   `test/phase0-stabilization`). Brings the real Phase 0 + `docs/TESTING-CI-PLAN.md`.
-   - There will be a small overlap in `apollo/*` files (the feature branch was cut before
-     the WIP was committed). Resolve by keeping `staging`'s apollo versions — the Phase 0
-     branch only touched apollo files incidentally via the branch point, not on purpose.
-   - Safer alternative: cherry-pick only the non-apollo Phase 0 files onto `staging`
-     (`pytest.ini`, `tests/conftest.py`, `tests/functions-tests/test_tutor_prompt.py`,
-     `tests/functions-tests/test_knowledge_stores.py`, `tests/test_workspaces.py`,
-     `.github/workflows/main.yml`, `docs/TESTING-CI-PLAN.md`, `docs/TESTING-CI-HANDOFF.md`).
-2. Remove the log from version control: `git rm --cached uvicorn.log` and add to
-   `.gitignore` (see §7).
-3. Confirm green on `staging`: `pytest` → expect `117 passed / 7 skipped`.
+**Promotion flow:** `feature/* → staging → ApolloV3 (prod)`. Never merge unreviewed → ApolloV3.
+
+**Commits on `test/phase1-harness` (ahead of staging):**
+- `059157c` test: Phase 1 — real pgvector harness (Testcontainers + AsyncClient)
+- `1546bac` test(apollo): diff-at-Done test shapes — *user's apollo WIP, committed onto this
+  branch concurrently; rides along in PR #3 per author's choice* (see §9 git-race note)
+- `01da9c8` test: Phase 1 follow-ups — Neo4j harness, VCR replay, factories, conftest de-dup
+- `5cef791` ci: install requirements-test.txt; split PR (fast) vs push (full)
 
 ---
 
-## 2. Branch map
+## 2. How to run the suite (from `ai-ta-backend/`)
 
-| Branch | Local | Remote | Role |
-|---|---|---|---|
-| `ApolloV3` | ✓ | ✓ | **Production line** (keep this name; do not rename). Heroku deploy line — verify before any branch surgery. |
-| `staging` | ✓ | ✓ `296c9a2` | Integration/QA branch. Currently holds apollo WIP mislabeled "phase 0" + stray uvicorn.log; needs Phase 0 merged in (§1). |
-| `test/phase0-stabilization` | ✓ | ✓ `4d3cc0d` | The real Phase 0 commit. Merge → `staging`. |
-| `main` | ✓ | ✓ | **Stale legacy** — 105 commits *behind* `ApolloV3`. Not the trunk. |
-| `ApolloV2`, `ApolloV4`, … | — | ✓ | Older lines, ignore. |
-
-**Intended flow:** `feature/* → staging → ApolloV3 (prod)`. Downstream-only; never merge
-`staging → ApolloV3` with unreviewed work. Fast tests on PR-to-staging; full
-integration/e2e on merge-to-staging; smoke on prod.
-
----
-
-## 3. The true baseline (correct numbers)
-
-An early audit wrongly reported "49 passed / 62 errors" — that was run with the **system
-Python, no `.venv`**, so every `fastapi`/`pydantic` import looked like an error. **There is
-no `server.py` import crisis.** Real numbers (always use the venv):
-
-```
-START (pre-Phase-0):  113 passed · 5 failed · 2 skipped · 4 errors  (1 collection error aborted the run)
-AFTER Phase 0:        117 passed · 7 skipped · 0 failed · 0 errors
-```
-
-Run the suite (from `ai-ta-backend/`):
 ```bash
-.venv/Scripts/python.exe -m pytest -q          # Windows
-# or: python -m pytest -q   (if venv active)
+# Windows venv (this machine). Docker Desktop must be running for integration tests.
+.venv/Scripts/python.exe -m pytest -q                       # full suite (132 pass / 4 skip)
+.venv/Scripts/python.exe -m pytest -m "not integration" -q  # fast PR subset (no Docker)
+.venv/Scripts/python.exe -m pytest -m unit -q               # strict unit-marked only
+.venv/Scripts/python.exe -m pytest --cov --cov-report=term-missing
+.venv/Scripts/python.exe -m ruff check .                    # lint
+# docker.exe lives at: C:\Program Files\Docker\Docker\resources\bin (add to bash PATH)
 ```
 
-The 7 skips are all explicit: 3 × `test_migration_015` (need real Postgres → Phase 1),
-1 × `test_workspaces` (obsolete, code removed), 1 × `test_knowledge_stores` (quarantined
-over-mock → Phase 4 rewrite), 2 × manual smoke (`test_full_pipeline`, `test_retrieval`).
+- **Use `.venv` Python.** A no-venv run uses system Python (no fastapi/pydantic) and falsely
+  reports import "errors" — that earlier "49 passed / 62 errors" audit was this artifact.
+- **Install test deps:** `pip install -r requirements-test.txt` (test-only; never in
+  `requirements.txt` / never shipped to Heroku).
+- **Docker is installed** (Docker Desktop, daemon 29.5.3; WSL2 Ubuntu present). Integration
+  tests spin real containers; they **skip cleanly** if the daemon is down.
+
+The 4 skips are intentional: `test_workspaces` (obsolete code removed), `test_knowledge_stores`
+(over-mock quarantined → Phase 4 rewrite), `test_full_pipeline` + `test_retrieval` (manual smoke).
 
 ---
 
-## 4. What Phase 0 changed (reference)
+## 3. The Phase 1 test harness — how it works
 
-On `test/phase0-stabilization`:
-- **`pytest.ini`** — registered markers (`unit/integration/e2e/slow/llm`), `asyncio_mode=auto`
-  (async router tests were silently skipped before), `--strict-markers`.
-- **`tests/conftest.py`** — added a `db_session` fixture that **skips cleanly** when
-  `TEST_DATABASE_URL` is unset (so the integration migration tests don't error). Phase 1
-  replaces it with the real Testcontainers engine.
-- **`tests/functions-tests/test_tutor_prompt.py`** — de-brittled 4 stale assertions to check
-  rule *intent* against current prompt wording (one even contradicted its own comment).
-- **`tests/functions-tests/test_knowledge_stores.py`** — `@pytest.mark.skip` the over-mocked
-  test (it patched an exact `run_async` call sequence that drifted: `assert 0 >= 100`).
-- **`tests/test_workspaces.py`** — module-level skip; it imported
-  `build_local_static_workspace_config`, deleted in the pgvector/Supabase migration.
-- **`.github/workflows/main.yml`** — replaced the decorative `|| true` CI with a real gate
-  on `main`/`staging`/`ApolloV3` (note: update the trigger list — it currently says
-  `production`; change to `ApolloV3` since the rename was reverted), `concurrency`
-  cancel-on-PR, weasyprint apt deps, `pytest -q` with no `|| true`.
+All fixtures live in `tests/conftest.py`. They are **opt-in**: a test only triggers a container
+by requesting `db_session` / `neo4j_client`, so unit runs never start Docker.
 
-**⚠️ Action:** the CI workflow's branch triggers list `production` — since `ApolloV3` is kept,
-edit `.github/workflows/main.yml` `on.push.branches` / `on.pull_request.branches` to
-`[main, staging, ApolloV3]`.
+### pgvector (`db_session`)
+- `_pg_url` (**session-scoped**): starts `pgvector/pgvector:pg16` Testcontainer, runs
+  `CREATE EXTENSION vector` + `Base.metadata.create_all` once. `pytest.skip` if Docker is down.
+- `db_session` (**function-scoped**): per-test `AsyncSession` with **transactional rollback**
+  (`join_transaction_mode="create_savepoint"`). Uses a **per-test `NullPool` engine** so the
+  connection is created on the test's own event loop — this avoids the cross-loop asyncpg pool
+  bug documented in `database/session.py`. Every test starts with a pristine DB.
 
----
+### Async API client
+- `tests/support.override_db_session(app, session)` points an app's `get_db_session` dependency
+  at the test session. Drive endpoints with `httpx.AsyncClient` + `ASGITransport` — **never**
+  starlette `TestClient` (it breaks on asyncpg's event loop). Clear overrides in teardown.
 
-## 5. Remaining phases (full detail in `docs/TESTING-CI-PLAN.md` §4)
+### Neo4j (`neo4j_client`)
+- `_neo4j_conn` (**session-scoped**): `neo4j:5.25` Testcontainer, Docker-guarded skip.
+- `neo4j_client` (**function-scoped**): apollo `Neo4jClient` on a **wiped graph**
+  (`MATCH (n) DETACH DELETE n` on setup + teardown). For apollo KG integration.
 
-### Phase 1 — Test harness & infrastructure  ← **NEXT, the core work**
-The thing that unblocks everything: pgvector/HNSW and `<=>`/`<->` operators **do not exist
-in SQLite**, so retrieval/indexing can't be tested today. Build:
-1. **Real-Postgres fixture** — session-scoped Testcontainers `PostgresContainer("pgvector/pgvector:pg16")`;
-   async engine (`NullPool`); `CREATE EXTENSION vector` + `Base.metadata.create_all` (or
-   `alembic upgrade head` if migrations are Alembic — verify, the repo has numbered SQL + 015/021);
-   register pgvector type on asyncpg connect.
-2. **Transactional isolation** — function-scoped `db_session`: connection → outer txn →
-   session bound to it → SAVEPOINT re-open on `after_transaction_end` → rollback in teardown.
-   Replace the Phase 0 skip-stub. Keep a few non-transactional tests for HNSW recall.
-3. **Async API client** — `AsyncClient(transport=ASGITransport(app=app))` fixture (NOT
-   `TestClient` — it breaks on asyncpg's event loop); override `get_db_session`, auth, and
-   the OpenAI/embedding dependency; `app.dependency_overrides.clear()` in teardown.
-4. **Deterministic fakes** — hash-seeded `fake_embeddings(text) -> vector` (dim=`EMBEDDING_DIM`,
-   3072); fake OpenAI chat client; promote the existing conftest stubs into `tests/fakes/`.
-5. **LLM replay** — VCR.py (`record_mode="none"` in CI, filter `authorization`/`x-api-key`,
-   match on body) for integration; programmable fake server for tool-call loops.
-6. **Factories** — `tests/factories/` factory_boy builders for `SearchSpace`, `AITADocument`,
-   `ChatSession`, `CourseMembership`, `TeacherUpload`, apollo models.
-7. **Layout** — `tests/{unit,integration,e2e}/` with nested `conftest.py` so the DB
-   container doesn't spin up for unit runs; de-dup the two overlapping conftest supabase mocks.
-8. **Coverage wiring** — `[tool.coverage.run] relative_files=true, branch=true`; `diff-cover`
-   vs `origin/staging`.
-9. **Neo4j test container** — for apollo integration (prod uses Neo4j Aura).
+### Deterministic fakes (`tests/fakes/`)
+- `fake_embedding(text)` → seeded **unit-norm** vector, dim **3072** (matches `EMBEDDING_DIM`).
+- `one_hot_embedding(i)` → axis-aligned vector for hand-computable distances.
+- `FakeOpenAI` → chat returns canned JSON; embeddings via `fake_embedding`.
 
-**New test deps (⚠️ CLAUDE.md says confirm before installing packages):** `pytest-cov`,
-`pytest-mock`, `pytest-xdist`, `pytest-timeout`, `pytest-randomly`, `respx`, `vcrpy`,
-`freezegun`, `hypothesis`, `factory-boy`, `testcontainers[postgres]`, `diff-cover`, `ruff`,
-`mypy`. Put them in a new `requirements-test.txt`. **Get explicit OK first.**
+### Factories (`tests/factories/`)
+- factory_boy **builders** (`.build()` = unsaved) + async `persist(session, obj)` helper
+  (factory_boy's SQLAlchemy persistence is sync-only — keep persistence explicit & loop-safe).
+- Covers: SearchSpace, AITADocument, AITAChunk, CourseMembership, ChatSession, TeacherUpload.
 
-**Exit:** a sample integration test asserts pgvector distance ordering on known fake vectors,
-and a sample endpoint test runs via `AsyncClient` with a rolled-back DB — green locally + in CI.
+### LLM replay (`tests/support/vcr.py`)
+- `use_cassette(name)` / `build_vcr()`: secret-scrubbed cassettes (auth/api-key headers),
+  body-sensitive matching, `record_mode` forced to **`none` in CI** (a missing cassette fails
+  loudly instead of calling the live API). Cassettes in `tests/cassettes/`.
+- Record locally with `VCR_RECORD_MODE=once`.
 
-### Phase 2 — Full CI/CD wiring
-Composite `setup` action (uv); parallel `ci.yml` jobs (quality/unit/integration with
-`services: pgvector/pgvector:pg16` + `ci-passed` aggregation check); `nightly.yml`
-(full+e2e+eval+pip-audit); patch-coverage gate ≥80% + ratcheted project floor; branch
-protection rulesets on `ApolloV3`/`staging`; GitHub Environments (`staging`/`production`)
-with prod secrets scoped to the prod env; **prod deploy gate set to AUTO-APPROVE per user**;
-SHA-pin actions + Dependabot; pre-commit. ⚠️ Private-repo Environment *required reviewers*
-need GitHub Enterprise — user wants auto-approve anyway, so use a non-blocking deploy or a
-branch-policy-only gate. See PLAN §3 + §6 for the reference YAML.
+### Shared Supabase mock (`tests/support/supabase_mock.py`)
+- One PostgREST-style in-memory mock used by **both** `tests/conftest.py` (root) and
+  `tests/functions-tests/conftest.py`. `auto_id` flag preserves each suite's historical insert
+  behaviour. (De-duped ~200 lines.)
 
-### Phase 3 — Unit layer (pure logic)
-citations, config/contracts, `ai/main_ai` (failure modes), `ai/router/*`, retrieval RRF math
-+ reranker scoring + store_bias + context_packer, `indexing/document_chunker` (hypothesis),
-`apollo/parser` + `solver/forward_chain` + `overseer/misconception_bank`, `ai/vision`,
-`auth.py` parsing.
+### Test layout & markers
+- `tests/{unit,integration}/` (+ legacy `tests/router/`, `tests/database/`, `tests/functions-tests/`).
+- Markers (in `pytest.ini`, `--strict-markers`): `unit`, `integration`, `e2e`, `slow`, `llm`.
+  `asyncio_mode=auto`.
+- **Integration tests** (real containers) are marked `@pytest.mark.integration`. Everything else
+  (unit-marked + unmarked) is selected by `-m "not integration"`.
 
-### Phase 4 — Integration layer (real DB + mocked LLM)
-Revive the ~56 quarantine-worthy `test_e2e_api` cases as `AsyncClient` tests asserting
-behavior; `retrieval/pipeline`+`hybrid_search` on real pgvector; indexing round-trip;
-`knowledge/manager` CRUD; `chats/service` memory; `auth` enforcement; `database` models +
-migration 015/021 on real Postgres (revive `test_migration_015` with the real `db_session`);
-**rewrite the quarantined `test_knowledge_stores`**; apollo handlers on Testcontainers Neo4j.
+### Key files touched in Phase 1
+```
+tests/conftest.py                 # db_session + neo4j fixtures, shared-mock wiring
+tests/functions-tests/conftest.py # uses shared SupabaseMock(auto_id=True)
+tests/fakes/{__init__,embeddings,openai_client}.py
+tests/factories/{__init__,models}.py
+tests/support/{__init__,vcr,supabase_mock}.py
+tests/unit/test_vcr_config.py
+tests/integration/test_pgvector_harness.py    # exit criterion #1 (distance ordering)
+tests/integration/test_async_client_smoke.py  # exit criterion #2 (AsyncClient + rollback)
+tests/integration/test_neo4j_harness.py
+.coveragerc                       # branch + relative_files (gate is Phase 2)
+requirements-test.txt             # user-approved test-only deps
+database/models.py                # incidental fix: TeacherCourse.weight_bounds default
+.github/workflows/main.yml        # install test deps + PR/push split
+```
 
-### Phase 5 — E2E + regression + eval
-3–6 critical journeys (teacher upload→index→searchable; student ask→retrieve→answer+citations;
-apollo session lifecycle); `tests/regression/` + bug-repro convention; golden/snapshot ONLY
-for deterministic outputs (never raw LLM text); nightly RAG eval (DeepEval/RAGAS thresholds)
-off the PR path.
-
-### Phase 6 — Ratchet & harden
-Raise coverage floor; flaky quarantine policy; keep PR CI < 5 min; document flow in
-`CLAUDE.md`/`docs/DATA-FLOW.md`; revisit deferred contract tests when there are paying users.
+### Gotchas already solved (don't reintroduce)
+1. **Do NOT call `pgvector.asyncpg.register_vector`** with the SQLAlchemy `Vector` type — it
+   double-encodes (the type already serializes to the pgvector text format) → asyncpg
+   "could not convert string to float". `register_vector` is only for RAW asyncpg queries.
+2. **`create_all` setup connection must not register the vector codec** — its first connection
+   is the one running `CREATE EXTENSION`, so the `vector` type doesn't exist yet. DDL needs no codec.
+3. **Model bug fixed:** `TeacherCourse.weight_bounds` `server_default` had unescaped JSON colons;
+   SQLAlchemy `text()` parsed `:0`/`:1` as bind params → `create_all` emitted `{"min"NULL.0,...}`.
+   Escaped as `\:`. (Prod uses raw SQL migrations, so prod was unaffected.)
 
 ---
 
-## 6. Critical flows to cover (from the architecture map)
+## 4. CI today (`.github/workflows/main.yml`)
+
+Single `test` job on `ubuntu-latest`, triggers on push + PR to `[main, staging, ApolloV3]`.
+**No `|| true`** — a red suite blocks the PR.
+
+- Installs system libs for weasyprint (pango/cairo), then `requirements.txt` **and**
+  `requirements-test.txt`.
+- **Test selection (handoff split):**
+  - `pull_request` → `pytest -m "not integration"` (unit/fast, **no containers**) — the green gate.
+  - `push` / `workflow_dispatch` → `pytest -q` (**full suite**; Testcontainers spin pgvector +
+    neo4j on the Docker-enabled runner).
+- `CI=true` forces VCR replay-only.
+- `concurrency` cancels superseded PR runs only.
+
+**Do we run unit tests?** Yes — on both PR and push (PR runs unit + all non-integration).
+**Do we run pgTAP?** **No.** This project has no pgTAP / `pg_prove` / `*.sql` tests. The DB layer
+is tested in **Python** (pytest + SQLAlchemy against a real pgvector container). Adding a pgTAP
+lane for RLS/functions is an **open decision** for Phase 2/3 (see §7).
+
+---
+
+## 5. Critical flows to cover (architecture map, for Phases 3–5)
 
 - **A. Teacher upload → index:** `POST /teacher/upload` → `teacher_upload_worker` →
-  `indexing/document_chunker` → OCR (`ocr/factory`) → `indexing/document_embedder` (OpenAI) →
+  `indexing/document_chunker` → OCR (`ocr/factory`) → `indexing/document_embedder` →
   `AITADocument` (pgvector). Mock: OpenAI embeddings, OCR, file I/O.
-- **B. Student ask → answer:** `POST /ask` (+`/ask/stream`) → auth/workspace → parse →
-  keywords → relevance gate → `retrieval/pipeline` (pgvector + FTS + RRF + rerank + pack) →
-  `ai/main_ai.solve_with_bundle` (GPT) → `citations/formatter` → persist turn. Mock: OpenAI,
-  auth; real: pgvector.
+- **B. Student ask → answer:** `POST /ask` (+`/ask/stream`) → auth/workspace → parse → keywords →
+  relevance gate → `retrieval/pipeline` (pgvector + FTS + RRF + rerank + pack) →
+  `ai/main_ai.solve_with_bundle` → `citations/formatter` → persist. Mock: OpenAI, auth; real: pgvector.
 - **C. Apollo session:** `POST /apollo/sessions/from_hoot` / `/apollo/session/{id}/chat` →
-  `apollo/handlers` → `apollo/parser` (LLM) → `apollo/solver/forward_chain` →
-  `apollo/persistence` (Neo4j). Mock: Neo4j (or container), OpenAI.
+  `apollo/handlers` → `apollo/parser` (LLM) → `apollo/solver` → `apollo/persistence` (Neo4j).
+  Mock: OpenAI; real/container: Neo4j.
 
-Mocking chokepoints (good seams): `auth.py`, `vendors/supabase_client.py`,
-`database/session.py` (loop-aware engine), apollo Neo4j singleton, `indexing/document_embedder`.
-
----
-
-## 7. Key constraints & decisions — DO NOT violate
-
-- **pgvector ≠ SQLite.** Never "fix" DB tests by leaning on the SQLite mock; it hides type,
-  distance-operator, and concurrency bugs. Real Postgres (`pgvector/pgvector` image) for the
-  DB/retrieval layer. (Per `CLAUDE.md`: don't change hybrid-search fusion without running the
-  full retrieval suite.)
-- **Never call live LLM/embedding APIs in CI.** Mock (unit) / replay (integration). Real-model
-  RAG eval is nightly only. Always set sub-second timeouts on LLM-path tests.
-- **`AsyncClient` + `ASGITransport`, not `TestClient`** for the async app.
-- **Use `.venv` Python** for all local test runs.
-- **No new packages without explicit user confirmation** (`CLAUDE.md`). Phase 1 needs the deps
-  in §5 — ask first; put in `requirements-test.txt`.
-- **Never push directly to `main`/`ApolloV3`; always feature branch → PR** (`CLAUDE.md`).
-- **Keep `ApolloV3` as the prod branch name.** Heroku deploys via Procfile — confirm the
-  Heroku-connected branch before any branch surgery.
-- **Citations are non-negotiable** — never remove/bypass citation-marker generation or the
-  semantic relevance gate (`CLAUDE.md`).
-- **Coverage gate:** enforce **patch coverage (~80% on new code)**, ratchet the project floor
-  from baseline — do NOT impose a flat repo-wide floor on the current ~40–50% codebase.
-- **`.gitignore` additions needed:** `uvicorn.log`, `*.log`, `.pytest_cache/`,
-  `__pycache__/`, `.coverage`, `coverage.xml`, `.venv/` (verify which are already ignored).
+Good mocking seams: `auth.py`, `vendors/supabase_client.py`, `database/session.py`,
+apollo Neo4j singleton, `indexing/document_embedder`.
 
 ---
 
-## 8. Commands cheat sheet
+## 6. Constraints & decisions — DO NOT violate
 
-```bash
-# from ai-ta-backend/
-.venv/Scripts/python.exe -m pytest -q                 # full suite (expect 117 pass / 7 skip post-merge)
-.venv/Scripts/python.exe -m pytest -m unit -q          # unit only
-.venv/Scripts/python.exe -m pytest -m "not integration" -q
-.venv/Scripts/python.exe -m pytest tests/router -q     # a folder
+- **pgvector ≠ SQLite.** Never "fix" a DB test by leaning on the SQLite mock; use real Postgres
+  (`pgvector/pgvector` image). It hides type / distance-operator / concurrency bugs (Phase 1
+  literally caught the `weight_bounds` bug this way).
+- **Never call live LLM/embedding APIs in CI.** Mock (unit) / replay via VCR (integration). Real
+  model eval is nightly only. Sub-second timeouts on LLM-path tests (`pytest-timeout`).
+- **`AsyncClient` + `ASGITransport`, not `TestClient`.**
+- **No new packages without explicit user confirmation** (CLAUDE.md). Test deps go in
+  `requirements-test.txt`.
+- **Never push directly to `main`/`ApolloV3`; always feature branch → PR.**
+- **Keep `ApolloV3` as the prod branch name** (Heroku deploys via Procfile — confirm the
+  Heroku-connected branch before any branch surgery).
+- **Citations are non-negotiable** — never remove/bypass citation markers or the semantic
+  relevance gate.
+- **Coverage gate:** enforce **patch coverage (~80% on new code)** + ratchet the project floor
+  from baseline (~22% measured). Do NOT impose a flat repo-wide floor on the current codebase.
 
-# reconcile staging (see §1)
-git checkout staging
-git merge test/phase0-stabilization        # or cherry-pick the non-apollo files
-git rm --cached uvicorn.log && echo "uvicorn.log" >> .gitignore
+---
 
-# open the Phase 0 PR (MCP now connected, or via link)
-# base: staging  ←  head: test/phase0-stabilization
-# https://github.com/HootDTD/ai-ta-backend/pull/new/test/phase0-stabilization
-```
+## 7. NEXT: Phase 2 — Full CI/CD wiring
 
-GitHub MCP is connected (reconnected 2026-06-09) — PRs/branch ops can go through it.
-`gh` CLI is NOT installed locally.
+**Goal:** turn the single gate into a proper parallel pipeline with coverage gating, branch
+protection, and deploy gates. Full reference YAML is in `docs/TESTING-CI-PLAN.md` §3 + §6.
+
+### Build
+1. **Composite `setup` action** (`.github/actions/setup`): Python + `uv` (or pip cache) + system
+   libs, reused by all jobs. SHA-pin all third-party actions.
+2. **`ci.yml` — parallel jobs** (replaces today's single `test` job):
+   - `quality` — `ruff check` + `ruff format --check` + `mypy`.
+   - `unit` — `pytest -m "unit" -q` (or `-m "not integration"`), fast, no services.
+   - `integration` — `pytest -m integration -q` with **either** a `services: pgvector/pgvector:pg16`
+     service container **or** keep Testcontainers (decision below). Neo4j service/container for apollo.
+   - `ci-passed` — aggregation gate that depends on all three (this is the required check for
+     branch protection).
+3. **Coverage gate:** `pytest --cov` → `coverage xml` → `diff-cover --compare-branch=origin/staging
+   --fail-under=80`. Ratchet a project-floor check separately. (`.coveragerc` already set:
+   `branch=true`, `relative_files=true`.)
+4. **`nightly.yml`** (cron, off the PR path): full + e2e + RAG eval (DeepEval/RAGAS thresholds) +
+   `pip-audit`.
+5. **Branch protection rulesets** on `staging` + `ApolloV3`: require `ci-passed`, require PR,
+   linear history. ⚠️ Private-repo *required reviewers* on Environments need GitHub Enterprise —
+   user wants **prod deploy AUTO-APPROVE**, so use a non-blocking deploy or branch-policy-only gate.
+6. **GitHub Environments** (`staging` / `production`) with prod secrets scoped to the prod env.
+7. **Dependabot** + **pre-commit** (ruff/mypy/secrets).
+
+### Decisions to make at the start of Phase 2
+- **Integration DB in CI: Testcontainers vs `services:` container.** Phase 1 uses Testcontainers
+  (works locally + on GH runners). The plan's §3 suggested a `services: pgvector/pgvector:pg16`
+  container (faster startup, no Docker-in-Docker concerns). Pick one for the `integration` job and
+  set `TEST_DATABASE_URL` accordingly (the harness already supports a daemon-driven container; a
+  `services` container would need the fixtures to honor an injected URL — small adaptation).
+- **pgTAP lane?** Optional. pgTAP is strong for **RLS policies + SQL functions** (Phase 3/4 has RLS
+  work). Current plan tests the DB layer in Python. Decide: add `pg_prove` job vs keep Python-only.
+- **Strict unit lane.** Today the PR runs `-m "not integration"` (broad). Phase 2's `unit` job can
+  tighten to `-m unit` once more tests are marked.
+
+### Phase 2 exit
+- PR shows `quality`, `unit`, `integration`, `ci-passed` checks; `ci-passed` is the required gate.
+- Patch-coverage gate active (≥80% on new code) and visibly blocking under-covered PRs.
+- Branch protection live on `staging` + `ApolloV3`. Nightly job runs.
+
+---
+
+## 8. Later phases (brief — full detail in `docs/TESTING-CI-PLAN.md` §4)
+
+- **Phase 3 — Unit layer:** citations, config/contracts, `ai/main_ai` failure modes, `ai/router/*`,
+  retrieval RRF + reranker + store_bias + context_packer, `indexing/document_chunker` (hypothesis),
+  apollo `parser`/`solver`/`overseer`, `ai/vision`, `auth.py`.
+- **Phase 4 — Integration (real DB + mocked LLM):** revive ~56 `test_e2e_api` cases as `AsyncClient`
+  tests; `retrieval/pipeline` + `hybrid_search` on real pgvector; indexing round-trip; chats memory;
+  auth enforcement; **rewrite quarantined `test_knowledge_stores`**; revive `test_migration_015`
+  fully; apollo handlers on Neo4j container.
+- **Phase 5 — E2E + regression + eval:** 3–6 critical journeys; `tests/regression/` + bug-repro
+  convention; golden/snapshot only for deterministic outputs (never raw LLM text); nightly RAG eval.
+- **Phase 6 — Ratchet & harden:** raise coverage floor; flaky-quarantine policy; keep PR CI < 5 min;
+  document flow in `CLAUDE.md`/`docs/DATA-FLOW.md`.
 
 ---
 
 ## 9. Open risks / gotchas
 
-- **First CI run will likely need a tweak** — `weasyprint` native libs (apt step added) and
-  LF↔CRLF on Windows-authored files. Watch the first Actions run on the Phase 0 PR.
-- **`run_async()` "coroutine was never awaited" warnings** in the invite-link endpoints
-  (`server.py:1166/1179/1223/1303`) during `test_e2e_api` — tests pass but this is a latent
-  smell; investigate whether it's a test-mock artifact or a real bug in those endpoints.
-- **Pydantic v2 deprecations** (`class Config`, `on_event` startup) in `server.py` — tech debt,
-  not blocking; clean up opportunistically.
-- **`main` is 105 commits behind `ApolloV3`** — don't treat it as the trunk; promotion flow is
-  `feature → staging → ApolloV3`.
-- **Branch protection is NOT set yet** — `staging`/`ApolloV3` are unprotected (Phase 2).
+- **First full (push/merge) CI run** starts the pgvector + neo4j Testcontainers for the first time
+  in CI — watch for image-pull timeouts / container flakiness; tune `pytest-timeout` and container
+  wait if needed. The PR gate (no containers) is already green.
+- **Cross-platform:** harness authored on Windows/py3.12; CI runs Linux/py3.11. PR gate passed
+  there (121), so the unit/unmarked tells are clean. Watch LF↔CRLF on Windows-authored files.
+- **Concurrent-git race (resolved, noted):** the user committed apollo WIP onto `test/phase1-harness`
+  while Phase 1 was being committed; commit `059157c` absorbed one apollo file deletion
+  (`apollo/tests/test_e2e_misconception_smoke.py` — a legit deletion). Net tree correct. If working
+  this repo in parallel again, use separate worktrees to avoid index races.
+- **`run_async()` "coroutine was never awaited"** warnings in invite-link endpoints
+  (`server.py:1166/1179/1223/1303`) during `test_e2e_api` — passing but a latent smell; investigate
+  in Phase 3/4.
+- **Pydantic v2 deprecations** (`class Config`, `on_event`) in `server.py` — tech debt, non-blocking.
+- **Branch protection NOT set yet** — `staging`/`ApolloV3` unprotected until Phase 2.
 
 ---
 
-## 10. References
-- `docs/TESTING-CI-PLAN.md` — full phased plan, gap matrix, reference configs (on
-  `test/phase0-stabilization`; reaches `staging` once merged).
-- `.feller/tasks/2026-06-09-backend-testing-ci/RESEARCH-ARCHIVE.md` — cited best-practices
-  research (pytest/pgvector, GitHub Actions, git staging strategy).
-- Architecture + test-audit details are summarized in the plan doc §1 and the gap matrix §5.
+## 10. References & environment
+- `docs/TESTING-CI-PLAN.md` — full phased plan, gap matrix, reference CI/CD YAML.
+- `.feller/tasks/2026-06-09-backend-testing-ci/RESEARCH-ARCHIVE.md` — cited best-practices research.
+- **GitHub MCP** is connected (PRs/branch ops via MCP). **`gh` CLI is NOT installed.** Read Actions
+  check-runs via `GET /repos/HootDTD/ai-ta-backend/commits/<sha>/check-runs` (the
+  combined-*status* endpoint shows none — Actions report as *check runs*).
+- **Infra:** Supabase project `uduxdniieeqbljtwocxy` (prod-ish; do NOT point tests at it — use
+  ephemeral containers); Neo4j Aura for apollo prod; `EMBEDDING_DIM=3072` (text-embedding-3-large).
+- **PR #3:** https://github.com/HootDTD/ai-ta-backend/pull/3 (base `staging`, green).
