@@ -29,7 +29,6 @@ from apollo.overseer.misconception import (
     summarize_for_rubric,
 )
 from apollo.overseer.problem_selector import (
-    cluster_to_concept,
     list_problems_for_cluster,
 )
 from apollo.overseer.rubric import compute_rubric
@@ -45,9 +44,6 @@ from apollo.persistence.models import (
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.persistence.progress_repo import apply_xp
 from apollo.schemas.problem import Problem
-from apollo.solver.forward_chain import solve_kg_against_problem
-from apollo.solver.sympy_exec import _format_value_text
-from apollo.subjects import load_concept
 
 
 # P3.6 — Done-gate constants. The conf threshold (0.6) is intentionally
@@ -191,19 +187,6 @@ def _find_problem(cluster_id: str, problem_id: str) -> Problem:
     raise RuntimeError(f"problem {problem_id!r} not in bank for cluster {cluster_id!r}")
 
 
-def _serializable_trace(trace: list) -> list:
-    out = []
-    for entry in trace:
-        out.append({k: (str(v) if k == "value" else v) for k, v in entry.items()})
-    return out
-
-
-def _display_value(val) -> str | None:
-    if val is None:
-        return None
-    return _format_value_text(val)
-
-
 async def handle_done(
     *,
     db: AsyncSession,
@@ -245,36 +228,7 @@ async def handle_done(
     sess.phase = SessionPhase.SOLVING.value
     await db.commit()
 
-    # Concept-driven augmented givens (was hardcoded `g=9.81` in V2).
-    subject_id, concept_id = cluster_to_concept(sess.concept_cluster_id)
-    concept = load_concept(subject_id, concept_id)
-
-    augmented_givens = dict(problem.given_values)
-    for k, v in concept.solver_hints.augmented_givens.items():
-        augmented_givens.setdefault(k, v)
-
-    # Per-simplification augmentation: reference simplification "h1==h2"
-    # injects h1=h2=0 if the student didn't supply them. Detection lives
-    # here because it depends on the reference solution; the constants live
-    # in the concept registry.
-    for ref in problem.reference_solution:
-        if ref.entry_type == "simplification":
-            aw = (ref.content.get("applies_when") or "").lower().replace(" ", "")
-            if "h1==h2" in aw:
-                augmented_givens.setdefault("h1", 0.0)
-                augmented_givens.setdefault("h2", 0.0)
-
-    # Solver still consumes the bag-shaped {"equation": [...]} input.
-    solver_kg = {
-        "equation": [n.content.model_dump() for n in student_graph.by_type("equation")],
-    }
-    solver_result = solve_kg_against_problem(solver_kg, {
-        "id": problem.id,
-        "given_values": augmented_givens,
-        "target_unknown": problem.target_unknown,
-    })
-
-    coverage = compute_coverage(student_graph, reference_graph)
+    coverage = await compute_coverage(student_graph, reference_graph)
 
     # Class 2 Phase 2 (P2.8): pull per-attempt misconception signals from
     # apollo_messages.metadata and reduce them to the per-bank-code score
@@ -292,20 +246,10 @@ async def handle_done(
 
     diagnostic_narrative = generate_diagnostic(
         coverage=coverage,
-        solver_result=solver_result,
         reference_steps=[s.model_dump() for s in problem.reference_solution],
         problem_text=problem.problem_text,
         rubric=rubric,
     )
-
-    solver_indicator: Dict[str, Any] = {
-        "reached": solver_result["status"] == "solved",
-    }
-    value_str = _display_value(solver_result.get("value"))
-    if value_str is not None:
-        solver_indicator["value"] = value_str
-    if solver_result.get("missing_variables"):
-        solver_indicator["missing"] = solver_result["missing_variables"]
 
     # Re-attempt detection (unchanged from V2).
     is_reattempt_in_session = attempt.result is not None
@@ -323,12 +267,8 @@ async def handle_done(
         is_reattempt=is_reattempt,
     )
 
-    attempt.result = solver_result["status"]
-    attempt.solver_trace = {
-        "trace": _serializable_trace(solver_result["trace"]),
-        "value": value_str,
-        "missing_variables": solver_result.get("missing_variables", []),
-    }
+    attempt.result = "graded"
+    attempt.solver_trace = None
     attempt.diagnostic_report = {
         "narrative": diagnostic_narrative,
         "rubric": rubric,
@@ -351,7 +291,6 @@ async def handle_done(
 
     return {
         "rubric": rubric,
-        "solver_indicator": solver_indicator,
         "diagnostic_narrative": diagnostic_narrative,
         "coverage": coverage,
         # Item #9: structured progress envelope is the single source of
