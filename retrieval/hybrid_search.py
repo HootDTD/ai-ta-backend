@@ -80,12 +80,12 @@ class AITAHybridSearchRetriever:
             select(
                 AITAChunk.id,
                 func.rank()
-                .over(order_by=AITAChunk.embedding.op("<=>")(query_embedding))
+                .over(order_by=_halfvec_cosine_distance(query_embedding))
                 .label("rank"),
             )
             .join(AITADocument, AITAChunk.document_id == AITADocument.id)
             .where(*base_conditions)
-            .order_by(AITAChunk.embedding.op("<=>")(query_embedding))
+            .order_by(_halfvec_cosine_distance(query_embedding))
             .limit(n_results)
             .cte("semantic_search")
         )
