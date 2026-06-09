@@ -19,8 +19,9 @@
   2026-06-09: repo made **public**, **default branch → `staging`** (was stale `main` — nightly
   cron + Dependabot only run from the default branch and were dead before), **rulesets active**
   on `staging`+`ApolloV3` (require PR, required check `ci-passed`, block force-push/deletion;
-  0 approvals — solo; NO linear-history — promotion uses merge commits). `ci-docs.yml` no-op
-  reports `ci-passed` on docs-only PRs (else the required check would deadlock them).
+  0 approvals — solo; NO linear-history — promotion uses merge commits). ci.yml's docs
+  `paths-ignore` was REMOVED: a required `ci-passed` check must report on every PR or
+  docs-only PRs deadlock (and a same-named no-op workflow races on mixed PRs).
   **Deploy platform: Railway (pending hookup)** — Heroku is dead/abandoned (last deploy
   2026-04-07; `ApolloV3` pushes since then never deployed) → see **`docs/PHASE2-ADMIN-SETUP.md`** §3.
 - **Suite today:** `pytest -q` → **132 passed / 4 skipped / 0 failed** (real containers).

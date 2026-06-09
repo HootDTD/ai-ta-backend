@@ -13,13 +13,16 @@
 # patch-coverage gate). A deliberate repo-wide reformat is separate, future work.
 name: CI
 
+# No paths-ignore: ci-passed is a REQUIRED branch-protection check, so it must
+# report on EVERY PR — a docs-only PR would otherwise wait forever for a check
+# that never runs. (A same-named no-op companion workflow was considered, but
+# duplicate check names open a race where the no-op greenlights a mixed PR
+# before the real run finishes. Repo is public → Actions minutes are free.)
 on:
   pull_request:
     branches: [main, staging, ApolloV3]
-    paths-ignore: ["**.md", "docs/**"]
   push:
     branches: [main, staging, ApolloV3]
-    paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
 
 # Least privilege by default; jobs opt back into `contents: read`.
