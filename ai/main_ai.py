@@ -11,7 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -908,6 +908,12 @@ def parse_question(user_query: str, subject: str | None = None) -> ParsedTask:
     return task
 
 
+def _is_reasoning_model(model: str) -> bool:
+    """True if the model takes a `reasoning` param (gpt-5 family)."""
+    gpt5_allow = {"gpt-5", "gpt-5-chat-latest", "gpt-5-mini"}
+    return model.startswith("gpt-5") or model in gpt5_allow
+
+
 def _build_solution_from_data(data: Dict[str, Any]) -> ProposedSolution:
     """Map a solver JSON dict to a ProposedSolution. Pure; no I/O.
 
@@ -968,7 +974,6 @@ def _prepare_solve_prompt(
     provenance 'citation_rankings', debug dumps) are preserved exactly as in the
     original solve_with_bundle. Shared by the blocking and streaming solve paths.
     """
-    client = _client()
     question_text = ""
     try:
         question_text = getattr(bundle.metadata, "question", "") or getattr(
@@ -1329,8 +1334,7 @@ def solve_with_bundle(
             "messages": msgs,
             "response_format": {"type": "json_object"},
         }
-        gpt5_allow = {"gpt-5", "gpt-5-chat-latest", "gpt-5-mini"}
-        if model.startswith("gpt-5") or model in gpt5_allow:
+        if _is_reasoning_model(model):
             kwargs["reasoning_effort"] = os.getenv("MAIN_REASONING_EFFORT", "high")
         else:
             kwargs["temperature"] = 0
@@ -1349,9 +1353,9 @@ def solve_with_bundle(
 
 
 def solve_with_bundle_stream(
-    parsed_task: "ParsedTask", bundle: "ResearchBundle", hint: str | None = None,
+    parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None,
     subject: str | None = None,
-):
+) -> "Iterator[Tuple[str, Any]]":
     """Generator: yields ("reasoning", str) summary deltas during the think
     phase, ("token", str) decoded answer deltas, then ("solution",
     ProposedSolution). Uses the Responses API so reasoning summaries stream.
@@ -1371,22 +1375,22 @@ def solve_with_bundle_stream(
         "text": {"format": {"type": "json_object"}},
         "stream": True,
     }
-    gpt5_allow = {"gpt-5", "gpt-5-chat-latest", "gpt-5-mini"}
-    if model.startswith("gpt-5") or model in gpt5_allow:
+    if _is_reasoning_model(model):
         kwargs["reasoning"] = {
             "effort": os.getenv("MAIN_REASONING_EFFORT", "high"),
             "summary": "auto",
         }
     else:
         kwargs["temperature"] = 0
-        kwargs["reasoning"] = {}
 
     streamer = JsonStringFieldStreamer(field="steps")
     json_buf: List[str] = []
 
+    seen_types: set[str] = set()
     _t_solve = time.perf_counter()
     for event in client.responses.create(**kwargs):
         etype = getattr(event, "type", "")
+        seen_types.add(etype)
         if etype == "response.reasoning_summary_text.delta":
             delta = getattr(event, "delta", "") or ""
             if delta:
@@ -1400,6 +1404,7 @@ def solve_with_bundle_stream(
             if text:
                 yield ("token", text)
 
+    log.info("[stream] response event types seen: %s", sorted(seen_types))
     log.info("[timing] solve_stream=%.2fs model=%s", time.perf_counter() - _t_solve, model)
 
     full = "".join(json_buf)
