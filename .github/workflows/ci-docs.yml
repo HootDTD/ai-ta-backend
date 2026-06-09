@@ -1,0 +1,26 @@
+# Docs-only companion to ci.yml (required-check deadlock fix).
+#
+# ci.yml skips on `**.md` / `docs/**` (paths-ignore). With `ci-passed` as a
+# REQUIRED status check, a docs-only PR would otherwise wait forever for a
+# check that never runs. This workflow mirrors the ignored paths and reports a
+# trivially-green `ci-passed` instead — the GitHub-documented pattern for
+# combining required checks with path filtering.
+#
+# A mixed PR (code + docs) triggers BOTH workflows; both report `ci-passed`
+# and the real one still gates the code.
+name: CI (docs only)
+
+on:
+  pull_request:
+    branches: [main, staging, ApolloV3]
+    paths: ["**.md", "docs/**"]
+
+permissions: {}
+
+jobs:
+  ci-passed:
+    name: ci-passed
+    runs-on: ubuntu-latest
+    steps:
+      - name: Docs-only change — no tests required
+        run: echo "Docs-only change. ci-passed reported as success."

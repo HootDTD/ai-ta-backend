@@ -2,11 +2,17 @@
 
 > The CI/CD **code** (workflows, composite action, coverage gate, ruff/mypy
 > config, pre-commit, dependabot, `.gitattributes`) is in PR — see
-> `test/phase2-cicd`. The steps below need **repo-admin** + **Heroku-dashboard**
+> `test/phase2-cicd`. The steps below need **repo-admin** + **Railway-dashboard**
 > access and cannot be done from the workflow code. Do them in this order.
 >
-> Repo: `HootDTD/ai-ta-backend` (private). Prod branch: **`ApolloV3`** (kept — Heroku
-> deploys from it). Required status check name: **`ci-passed`**.
+> Repo: `HootDTD/ai-ta-backend` (**public** as of 2026-06-09; was private). Prod
+> branch: **`ApolloV3`**. Required status check name: **`ci-passed`**.
+>
+> **2026-06-09 status:** §0 ✅ (PR #4 merged, `ci-passed` green) · §1 ✅ (rulesets
+> active via API — 0 approvals both branches, no linear-history: the promotion
+> flow uses merge commits) · §2 moot for now (no Actions secrets exist; revisit
+> when a deploy job appears) · §3 **rewritten for Railway** (Heroku abandoned —
+> last Heroku deploy 2026-04-07, integration dead) · §4 pending Railway hookup.
 
 ---
 
@@ -101,19 +107,29 @@ workflow physically can't read them.
 
 ---
 
-## 3. Heroku deploy gate (Dashboard)
+## 3. Railway deploy gate (Dashboard)
 
-Heroku deploys from the connected branch via the GitHub integration, **not** via
-Actions. Make Heroku wait for our gate:
+> **History:** the app originally deployed via Heroku's GitHub integration
+> (app `backend-main`); its last deploy was **2026-04-07** and the integration
+> is dead/abandoned. Production hosting is moving to **Railway**. If the old
+> Heroku app still exists, delete it (or at least disconnect the GitHub repo)
+> so two platforms never deploy the same branch.
 
-1. Heroku Dashboard → your app → **Deploy** tab.
-2. **Deployment method:** confirm GitHub, connected to `HootDTD/ai-ta-backend`.
-3. **Automatic deploys:** confirm the branch is **`ApolloV3`**.
-4. ☑ **"Wait for CI to pass before deploy"** — this ties Heroku auto-deploy to the
-   `ci-passed` check on `ApolloV3`. (Auto-approve preserved: it deploys itself once
-   CI is green — no manual reviewer.)
-5. Verify there's exactly **one** prod app pointed at `ApolloV3` (no stale app on an
-   old branch name). Do this **before** any future branch rename.
+Railway deploys from a connected GitHub branch, like Heroku did. Wire it so a
+red CI can never reach prod:
+
+1. Railway Dashboard → **New Project → Deploy from GitHub repo** →
+   `HootDTD/ai-ta-backend`.
+2. Service → **Settings → Source**: set the deploy branch to **`ApolloV3`**.
+3. Service → **Settings → Deploy**: enable **"Wait for CI"** — Railway then
+   waits for the GitHub check suite (our `ci-passed`) to succeed on the commit
+   before building/deploying. (Auto-approve preserved: deploys itself once CI
+   is green — no manual step.)
+4. Set the start command (Railway reads the `Procfile` via Nixpacks, or set it
+   explicitly, e.g. `python server.py` / the `web:` line from the Procfile).
+5. Add prod env vars in Railway → service → **Variables** (`OPENAI_API_KEY`,
+   `SUPABASE_*`, `NEO4J_*`, etc. from `.env.example`). Never commit them.
+6. Verify exactly **one** service deploys `ApolloV3`.
 
 ---
 
@@ -124,17 +140,20 @@ before relying on them:
 
 ```
 feature/ci-smoke ── PR ──▶ staging   (ci-passed must be green to merge)
-        staging  ── PR ──▶ ApolloV3   (ci-passed green ▶ Heroku auto-deploys)
+        staging  ── PR ──▶ ApolloV3   (ci-passed green ▶ Railway auto-deploys)
 ```
-Confirm: PR blocked while CI runs → unblocks on green; Heroku deploy fires on the
-`ApolloV3` merge; `/healthz` returns OK post-deploy.
+Confirm: PR blocked while CI runs → unblocks on green; Railway deploy fires on the
+`ApolloV3` merge; `/healthz` returns OK post-deploy. (Until Railway is connected,
+the chain stops at the merge — no deploy side effect.)
 
 ---
 
 ## 5. Done when
 
-- [ ] Phase 2 PR merged to `staging`; `ci-passed` green once.
-- [ ] Rulesets active on `staging` + `ApolloV3`; `ci-passed` is the required check.
-- [ ] `production` Environment exists; prod secrets scoped to it; no Env reviewer.
-- [ ] Heroku "wait for CI" on; connected branch confirmed = `ApolloV3`.
-- [ ] Dry-run promotion proven; `/healthz` green post-deploy.
+- [x] Phase 2 PR merged to `staging`; `ci-passed` green once. *(2026-06-09)*
+- [x] Rulesets active on `staging` + `ApolloV3`; `ci-passed` is the required check. *(2026-06-09)*
+- [ ] ~~`production` Environment + scoped secrets~~ — deferred: no Actions secrets
+      exist yet; prod secrets will live in Railway Variables instead.
+- [ ] Railway service connected to `ApolloV3`; "Wait for CI" on; old Heroku app
+      deleted/disconnected.
+- [ ] Dry-run promotion proven; `/healthz` green post-deploy (once Railway is live).
