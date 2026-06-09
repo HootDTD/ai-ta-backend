@@ -1931,16 +1931,16 @@ async def post_ask_stream(payload: AskRequest, request: Request):
             })
 
             solution = None
-            async for kind, payload in _aiter_in_thread(
+            async for kind, value in _aiter_in_thread(
                 lambda: solve_with_bundle_stream(parsed_task, bundle, subject=cfg.subject_name),
                 stream_loop,
             ):
                 if kind == "reasoning":
-                    yield _sse_event("reasoning", {"text": payload})
+                    yield _sse_event("reasoning", {"text": value})
                 elif kind == "token":
-                    yield _sse_event("token", {"text": payload})
+                    yield _sse_event("token", {"text": value})
                 elif kind == "solution":
-                    solution = payload
+                    solution = value
             if solution is None:
                 # Defensive: stream produced no solution; fall back to blocking solve.
                 solution = await stream_loop.run_in_executor(
