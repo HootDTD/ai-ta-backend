@@ -1,6 +1,51 @@
+import inspect
 from unittest.mock import MagicMock, patch
 
+from apollo.overseer import diagnostic
 from apollo.overseer.diagnostic import generate_diagnostic
+
+
+def test_generate_diagnostic_has_no_solver_param():
+    sig = inspect.signature(diagnostic.generate_diagnostic)
+    assert "solver_result" not in sig.parameters
+
+
+def test_generate_diagnostic_narrates_without_solver(monkeypatch):
+    captured = {}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kwargs):
+                    captured.update(kwargs)
+
+                    class _M:
+                        content = "You taught the continuity step clearly. Next, walk Apollo through the pressure relationship."
+
+                    class _C:
+                        message = _M()
+
+                    class _R:
+                        choices = [_C()]
+
+                    return _R()
+
+    monkeypatch.setattr(diagnostic, "OpenAI", _Client)
+
+    out = diagnostic.generate_diagnostic(
+        coverage={"per_step": {"bernoulli": "missing"}, "procedure_scores": {}, "confidences": {}},
+        reference_steps=[{"id": "bernoulli", "entry_type": "equation", "content": {"label": "Bernoulli"}}],
+        problem_text="Water flows through a horizontal pipe...",
+        rubric={"overall": {"score": 0.5, "letter": "C"}},
+    )
+    assert "continuity" in out
+    # The solver framing must be gone from the system prompt.
+    system = captured["messages"][0]["content"]
+    assert "solver" not in system.lower()
 
 
 def _mock_reply(text: str) -> MagicMock:
@@ -17,7 +62,6 @@ def test_diagnostic_returns_string(mock_client_cls):
 
     text = generate_diagnostic(
         coverage={"per_step": {"continuity": "missing", "bernoulli": "covered", "incompressibility": "covered"}, "procedure_scores": {}},
-        solver_result={"status": "stuck", "missing_variables": ["v2"]},
         reference_steps=[],
         problem_text="water in a horizontal pipe…",
         rubric={
@@ -39,7 +83,6 @@ def test_diagnostic_prompt_includes_coverage_and_problem(mock_client_cls):
 
     generate_diagnostic(
         coverage={"per_step": {"continuity": "missing"}, "procedure_scores": {}},
-        solver_result={"status": "stuck", "missing_variables": ["v2"]},
         reference_steps=[],
         problem_text="SENTINEL_PROBLEM_TEXT",
         rubric={
@@ -71,7 +114,6 @@ def test_generate_diagnostic_passes_rubric_into_llm(mock_client_cls):
     }
     generate_diagnostic(
         coverage={"per_step": {"p1": "missing"}, "procedure_scores": {"p1": 0.3}},
-        solver_result={"status": "solved", "value": 194000, "missing_variables": []},
         reference_steps=[{"id": "p1", "entry_type": "procedure_step", "content": {"action": "x", "order": 1}}],
         problem_text="Demo problem.",
         rubric=rubric,
@@ -93,7 +135,6 @@ def test_generate_diagnostic_system_prompt_instructs_narrative_not_verdict(mock_
 
     generate_diagnostic(
         coverage={"per_step": {}, "procedure_scores": {}},
-        solver_result={"status": "stuck", "value": None, "missing_variables": []},
         reference_steps=[],
         problem_text="Demo.",
         rubric={
@@ -120,7 +161,6 @@ def test_generate_diagnostic_softfails_to_placeholder_on_llm_exception(mock_clie
 
     result = generate_diagnostic(
         coverage={"per_step": {}, "procedure_scores": {}},
-        solver_result={"status": "stuck", "value": None, "missing_variables": []},
         reference_steps=[],
         problem_text="Demo.",
         rubric={
