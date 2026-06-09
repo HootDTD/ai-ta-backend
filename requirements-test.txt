@@ -8,6 +8,7 @@
 # Approved for Phase 1 of docs/TESTING-CI-PLAN.md (full set).
 
 # --- core test runner plugins ---------------------------------------------
+pytest>=8.0              # the runner itself — was only transitive (via -asyncio/-cov); pin explicitly
 pytest-cov>=5.0          # coverage measurement + gating (diff-cover feeds off this)
 pytest-mock>=3.14        # mocker fixture (thin wrapper over unittest.mock)
 pytest-xdist>=3.6        # parallel test execution (-n auto)

@@ -1,0 +1,44 @@
+# Composite "setup" action — shared by every CI/nightly job so the Python +
+# system-deps + install steps are defined exactly once (DRY). The CALLER is
+# responsible for `actions/checkout` before invoking this (a composite action
+# cannot check out the caller's repo for it).
+#
+# All third-party actions are SHA-pinned with a trailing version comment
+# (supply-chain hardening — a tag can be re-pointed, a SHA cannot).
+name: "Setup Python + deps"
+description: "Set up Python with pip cache, install weasyprint native libs, and install runtime + test requirements."
+
+inputs:
+  python-version:
+    description: "Python version to install"
+    required: false
+    default: "3.11"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+        # Re-key the pip cache when either requirements file changes.
+        cache-dependency-path: |
+          requirements.txt
+          requirements-test.txt
+
+    # weasyprint (PDF reports) imports native pango/cairo at module load; without
+    # these libs an `import server` blows up before any test runs.
+    - name: System dependencies (weasyprint)
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libffi-dev libcairo2
+
+    - name: Install Python dependencies
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt

@@ -12,9 +12,12 @@
 ## 1. TL;DR — where we are
 
 - **Phase 0 (stabilize suite + honest CI gate): DONE & merged to `staging`.**
-- **Phase 1 (real Postgres+pgvector + Neo4j test harness): DONE.** Lives on branch
-  `test/phase1-harness`, open as **PR #3 → `staging`** (CI green).
-- **Phase 2 (full CI/CD wiring) is NEXT** — see §7. Everything below §6 is reference.
+- **Phase 1 (real Postgres+pgvector + Neo4j test harness): DONE & MERGED** to `staging`
+  (PR #3, merge commit `2bf0232`).
+- **Phase 2 (full CI/CD wiring): CODE DONE** on `test/phase2-cicd` (off `staging`) — parallel
+  `quality`/`unit`/`integration` + `ci-passed` gate, nightly, coverage gate, ruff/mypy,
+  pre-commit, dependabot. **Remaining = repo-admin only** (branch-protection rulesets,
+  Environments+secrets, Heroku CI gate, dry-run) → see **`docs/PHASE2-ADMIN-SETUP.md`**.
 - **Suite today:** `pytest -q` → **132 passed / 4 skipped / 0 failed** (real containers).
   PR-gate (`-m "not integration"`) → **121 passed / 4 skipped / 11 deselected**.
 
@@ -22,8 +25,9 @@
 | Branch | Role | Notes |
 |---|---|---|
 | `ApolloV3` | **Production line** (keep this name; Heroku deploys here) | downstream of staging |
-| `staging` | Integration/QA | Phase 0 merged; PR #3 targets it |
-| `test/phase1-harness` | **Phase 1 work** (PR #3) | commits below |
+| `staging` | Integration/QA | Phase 0 + Phase 1 (PR #3) merged |
+| `test/phase2-cicd` | **Phase 2 work** (CI/CD wiring) | off `staging`; PR open |
+| `test/phase1-harness` | Phase 1 (PR #3 — **merged**) | can be deleted |
 | `main` | stale legacy (105+ behind ApolloV3) | not the trunk |
 
 **Promotion flow:** `feature/* → staging → ApolloV3 (prod)`. Never merge unreviewed → ApolloV3.
@@ -199,12 +203,38 @@ apollo Neo4j singleton, `indexing/document_embedder`.
 
 ---
 
-## 7. NEXT: Phase 2 — Full CI/CD wiring
+## 7. Phase 2 — Full CI/CD wiring  *(CODE DONE; admin pending)*
 
 **Goal:** turn the single gate into a proper parallel pipeline with coverage gating, branch
 protection, and deploy gates. Full reference YAML is in `docs/TESTING-CI-PLAN.md` §3 + §6.
 
-### Build
+### What was built (on `test/phase2-cicd`)
+- `.github/workflows/ci.yml` — parallel `quality` (ruff, changed-files ratchet: added=blocking,
+  modified=advisory) · `typecheck` (mypy, advisory/non-blocking) · `unit` (`-m "not integration"`,
+  no Docker) · `integration` (FULL suite on pgvector+Neo4j **Testcontainers**, single-process) +
+  **`ci-passed`** aggregation (the one required check). Patch-coverage gate = `diff-cover ≥80%`
+  vs the PR base. Triggers PR+push to `[main, staging, ApolloV3]`, `paths-ignore` docs.
+- `.github/actions/setup/action.yml` — composite (setup-python+pip-cache+weasyprint libs+install),
+  reused by all jobs. **All actions SHA-pinned** (checkout 4.2.2, setup-python 5.3.0, upload-artifact 4.6.0).
+- `.github/workflows/nightly.yml` — cron 06:00 UTC: full+e2e on 3.11/3.12 matrix, **project floor**
+  `coverage --fail-under=20` (ratchet up from ~22% baseline), advisory `pip-audit`. RAG eval = Phase 5.
+- `ruff.toml` (select E/F/I/B/UP, py311, len 100) · `mypy.ini` (lenient, advisory) ·
+  `.pre-commit-config.yaml` (ruff+ruff-format+hygiene) · `.github/dependabot.yml` (actions+pip weekly) ·
+  `.gitattributes` (force LF on yml/sh/py — kills the §9 CRLF risk). `main.yml` deleted (superseded).
+
+### Decisions locked this phase
+- Integration DB in CI = **Testcontainers** (reuse Phase 1 harness; zero fixture rewrite).
+- **No `uv`** (kept pip-cache; no lockfile exists) · **pgTAP deferred** (no pgTAP tests; RLS = Phase 3/4).
+- Ruff/mypy enforced **changed-files only** (legacy tree has 360 ruff errors / 1689 format diffs;
+  repo-wide gate would red-fail every PR). New code strict; legacy on a ratchet.
+- `ApolloV3` **kept** as prod branch (no rename — Heroku risk).
+
+### Remaining = admin (needs repo-admin + Heroku) → `docs/PHASE2-ADMIN-SETUP.md`
+Branch-protection rulesets on `staging`+`ApolloV3` (required check `ci-passed`), Environments +
+prod-scoped secrets (no Env reviewer — auto-approve), Heroku "wait for CI", dry-run promotion.
+**Order:** let `ci.yml` go green on the Phase 2 PR **once**, *then* enable branch protection.
+
+### Build (reference — original task list)
 1. **Composite `setup` action** (`.github/actions/setup`): Python + `uv` (or pip cache) + system
    libs, reused by all jobs. SHA-pin all third-party actions.
 2. **`ci.yml` — parallel jobs** (replaces today's single `test` job):
