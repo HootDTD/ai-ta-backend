@@ -18,6 +18,7 @@ Usage:
         with use_cassette("openai_answer"):
             ... # the wrapped HTTP call replays from cassettes/openai_answer.yaml
 """
+
 from __future__ import annotations
 
 import os

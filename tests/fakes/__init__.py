@@ -6,6 +6,7 @@ network and always produce identical results across runs and machines.
 
 Phase 1 of docs/TESTING-CI-PLAN.md.
 """
+
 from __future__ import annotations
 
 from tests.fakes.embeddings import EMBEDDING_DIM, fake_embedding, one_hot_embedding

@@ -13,6 +13,7 @@ Dimension matches the production model (`EMBEDDING_DIM`, default 3072 for
 text-embedding-3-large) so the vectors are insertable into the real
 `Vector(EMBEDDING_DIM)` columns.
 """
+
 from __future__ import annotations
 
 import hashlib

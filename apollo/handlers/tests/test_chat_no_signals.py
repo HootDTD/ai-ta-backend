@@ -6,6 +6,7 @@ Until that lands, these module-level guards lock in the v1 contract change:
 no output filter, no sufficiency / misconception / OLM-invite machinery, and
 a slimmed response envelope.
 """
+
 import inspect
 
 from apollo.handlers import chat

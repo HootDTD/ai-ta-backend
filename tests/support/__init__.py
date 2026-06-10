@@ -1,4 +1,5 @@
 """Reusable test harness helpers (Phase 1, docs/TESTING-CI-PLAN.md)."""
+
 from __future__ import annotations
 
 from fastapi import FastAPI

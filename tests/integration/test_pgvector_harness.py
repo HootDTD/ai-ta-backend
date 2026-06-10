@@ -5,6 +5,7 @@ round-trips through asyncpg, and pgvector's distance operators order results
 the way the retrieval pipeline relies on. Runs only when Docker is available
 (skips cleanly otherwise via the `db_session` -> `_pg_url` fixture chain).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -41,12 +42,14 @@ async def test_cosine_distance_orders_nearest_first(db_session):
 
     query = one_hot_embedding(1)  # identical to the axis-1 doc
     rows = (
-        await db_session.execute(
-            select(AITADocument.title).order_by(
-                AITADocument.embedding.cosine_distance(query)
+        (
+            await db_session.execute(
+                select(AITADocument.title).order_by(AITADocument.embedding.cosine_distance(query))
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     # axis-1 is identical to the query (distance 0); the others are orthogonal.
     assert rows[0] == "axis-1"
@@ -76,9 +79,7 @@ async def test_l2_distance_orders_nearest_first(db_session):
 
     nearest = (
         await db_session.execute(
-            select(AITADocument.title)
-            .order_by(AITADocument.embedding.l2_distance(query))
-            .limit(1)
+            select(AITADocument.title).order_by(AITADocument.embedding.l2_distance(query)).limit(1)
         )
     ).scalar_one()
 

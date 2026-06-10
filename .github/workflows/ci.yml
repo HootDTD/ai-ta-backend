@@ -13,13 +13,16 @@
 # patch-coverage gate). A deliberate repo-wide reformat is separate, future work.
 name: CI
 
+# No paths-ignore: ci-passed is a REQUIRED branch-protection check, so it must
+# report on EVERY PR — a docs-only PR would otherwise wait forever for a check
+# that never runs. (A same-named no-op companion workflow was considered, but
+# duplicate check names open a race where the no-op greenlights a mixed PR
+# before the real run finishes. Repo is public → Actions minutes are free.)
 on:
   pull_request:
     branches: [main, staging, ApolloV3]
-    paths-ignore: ["**.md", "docs/**"]
   push:
     branches: [main, staging, ApolloV3]
-    paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
 
 # Least privilege by default; jobs opt back into `contents: read`.
@@ -140,8 +143,13 @@ jobs:
           CI: "true"
         run: |
           pytest -q --cov --cov-report=xml --cov-report=term-missing
+      # Skipped on promotion PRs (base = ApolloV3): the ratchet is enforced on
+      # the way INTO staging; a promotion re-judges the whole accumulated diff
+      # and would re-block code that already passed its own PR gate (or, worse,
+      # code merged before the gate existed). Promotions re-run the full test
+      # suite — they don't re-apply the patch ratchet.
       - name: Patch-coverage gate (diff-cover ≥80% on new code)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.base_ref != 'ApolloV3'
         shell: bash
         run: |
           git fetch --no-tags origin "${{ github.base_ref }}"

@@ -14,17 +14,23 @@
 - **Phase 0 (stabilize suite + honest CI gate): DONE & merged to `staging`.**
 - **Phase 1 (real Postgres+pgvector + Neo4j test harness): DONE & MERGED** to `staging`
   (PR #3, merge commit `2bf0232`).
-- **Phase 2 (full CI/CD wiring): CODE DONE** on `test/phase2-cicd` (off `staging`) — parallel
-  `quality`/`unit`/`integration` + `ci-passed` gate, nightly, coverage gate, ruff/mypy,
-  pre-commit, dependabot. **Remaining = repo-admin only** (branch-protection rulesets,
-  Environments+secrets, Heroku CI gate, dry-run) → see **`docs/PHASE2-ADMIN-SETUP.md`**.
+- **Phase 2 (full CI/CD wiring): DONE.** Code merged via **PR #4** (merge `7569cd0` to
+  `staging`); `ci-passed` green incl. the first containerized `integration` run. Admin done
+  2026-06-09: repo made **public**, **default branch → `staging`** (was stale `main` — nightly
+  cron + Dependabot only run from the default branch and were dead before), **rulesets active**
+  on `staging`+`ApolloV3` (require PR, required check `ci-passed`, block force-push/deletion;
+  0 approvals — solo; NO linear-history — promotion uses merge commits). ci.yml's docs
+  `paths-ignore` was REMOVED: a required `ci-passed` check must report on every PR or
+  docs-only PRs deadlock (and a same-named no-op workflow races on mixed PRs).
+  **Deploy platform: Railway (pending hookup)** — Heroku is dead/abandoned (last deploy
+  2026-04-07; `ApolloV3` pushes since then never deployed) → see **`docs/PHASE2-ADMIN-SETUP.md`** §3.
 - **Suite today:** `pytest -q` → **132 passed / 4 skipped / 0 failed** (real containers).
   PR-gate (`-m "not integration"`) → **121 passed / 4 skipped / 11 deselected**.
 
 ### Branch & PR state
 | Branch | Role | Notes |
 |---|---|---|
-| `ApolloV3` | **Production line** (keep this name; Heroku deploys here) | downstream of staging |
+| `ApolloV3` | **Production line** (keep this name; Railway will deploy from it — Heroku abandoned) | downstream of staging |
 | `staging` | Integration/QA | Phase 0 + Phase 1 (PR #3) merged |
 | `test/phase2-cicd` | **Phase 2 work** (CI/CD wiring) | off `staging`; PR open |
 | `test/phase1-harness` | Phase 1 (PR #3 — **merged**) | can be deleted |
@@ -56,7 +62,7 @@
 - **Use `.venv` Python.** A no-venv run uses system Python (no fastapi/pydantic) and falsely
   reports import "errors" — that earlier "49 passed / 62 errors" audit was this artifact.
 - **Install test deps:** `pip install -r requirements-test.txt` (test-only; never in
-  `requirements.txt` / never shipped to Heroku).
+  `requirements.txt` / never shipped to prod).
 - **Docker is installed** (Docker Desktop, daemon 29.5.3; WSL2 Ubuntu present). Integration
   tests spin real containers; they **skip cleanly** if the daemon is down.
 
@@ -194,8 +200,8 @@ apollo Neo4j singleton, `indexing/document_embedder`.
 - **No new packages without explicit user confirmation** (CLAUDE.md). Test deps go in
   `requirements-test.txt`.
 - **Never push directly to `main`/`ApolloV3`; always feature branch → PR.**
-- **Keep `ApolloV3` as the prod branch name** (Heroku deploys via Procfile — confirm the
-  Heroku-connected branch before any branch surgery).
+- **Keep `ApolloV3` as the prod branch name** (deploy platform is **Railway** — Heroku is
+  abandoned; confirm the Railway-connected branch before any branch surgery).
 - **Citations are non-negotiable** — never remove/bypass citation markers or the semantic
   relevance gate.
 - **Coverage gate:** enforce **patch coverage (~80% on new code)** + ratchet the project floor
@@ -229,7 +235,7 @@ protection, and deploy gates. Full reference YAML is in `docs/TESTING-CI-PLAN.md
   repo-wide gate would red-fail every PR). New code strict; legacy on a ratchet.
 - `ApolloV3` **kept** as prod branch (no rename — Heroku risk).
 
-### Remaining = admin (needs repo-admin + Heroku) → `docs/PHASE2-ADMIN-SETUP.md`
+### Remaining = admin → `docs/PHASE2-ADMIN-SETUP.md` *(DONE 2026-06-09 except Railway hookup)*
 Branch-protection rulesets on `staging`+`ApolloV3` (required check `ci-passed`), Environments +
 prod-scoped secrets (no Env reviewer — auto-approve), Heroku "wait for CI", dry-run promotion.
 **Order:** let `ci.yml` go green on the Phase 2 PR **once**, *then* enable branch protection.
@@ -304,7 +310,10 @@ prod-scoped secrets (no Env reviewer — auto-approve), Heroku "wait for CI", dr
   (`server.py:1166/1179/1223/1303`) during `test_e2e_api` — passing but a latent smell; investigate
   in Phase 3/4.
 - **Pydantic v2 deprecations** (`class Config`, `on_event`) in `server.py` — tech debt, non-blocking.
-- **Branch protection NOT set yet** — `staging`/`ApolloV3` unprotected until Phase 2.
+- ~~Branch protection NOT set yet~~ — **rulesets active since 2026-06-09** (`protect-staging`,
+  `protect-apollov3`; required check `ci-passed`).
+- **Railway not yet connected** — prod (`ApolloV3`) currently deploys NOWHERE. Old Heroku app
+  `backend-main` should be deleted/disconnected if it still exists.
 
 ---
 
