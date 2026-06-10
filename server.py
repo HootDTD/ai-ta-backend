@@ -2,6 +2,7 @@ import importlib
 import io
 import os
 import re
+import time
 import uuid
 import base64
 import logging
@@ -25,7 +26,7 @@ from config.settings import get_runtime_dir, set_subject_name, RequestConfig
 from ai.orchestrator import Orchestrator
 from knowledge.manager import KnowledgeManager
 from config.weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
-from ai.main_ai import extract_keywords, parse_question, solve_with_bundle, format_answer
+from ai.main_ai import extract_keywords, parse_question, solve_with_bundle, solve_with_bundle_stream, format_answer
 from config.contracts import ParsedTask
 from citations.formatter import format_citations
 from knowledge.teacher_weekly import TeacherWeeklyStorage
@@ -1453,7 +1454,9 @@ def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "
     # Extract keywords (role: hints appended to original question, not standalone targets)
     # extract_and_filter_keywords returns (context_summary, term_list)
     try:
+        _t_kw = time.perf_counter()
         _ctx_summary, raw_keywords = extract_and_filter_keywords(q_effective)
+        log.info("[timing] keyword_extraction=%.2fs", time.perf_counter() - _t_kw)
         keywords: List[str] = []
         for entry in (raw_keywords or []):
             if isinstance(entry, dict):
@@ -1477,7 +1480,9 @@ def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "
                 token_budget=token_budget,
             )
 
+    _t_retr = time.perf_counter()
     snippets, diagnostics = run_async(_run())
+    log.info("[timing] retrieval_total=%.2fs", time.perf_counter() - _t_retr)
 
     # Extract structured knowledge from snippet text (equations, glossary, etc.)
     equations, glossary, assumptions, _ = _summarize_snippets(snippets)
@@ -1734,6 +1739,35 @@ def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+async def _aiter_in_thread(make_gen, loop):
+    """Run a blocking generator (make_gen()) in a worker thread; async-yield its
+    items as they are produced. Exceptions propagate."""
+    queue: "asyncio.Queue" = asyncio.Queue()
+    _SENTINEL = object()
+
+    def _worker():
+        try:
+            for item in make_gen():
+                loop.call_soon_threadsafe(queue.put_nowait, ("item", item))
+        except Exception as exc:  # noqa: BLE001
+            loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, ("done", _SENTINEL))
+
+    fut = loop.run_in_executor(None, _worker)
+    try:
+        while True:
+            kind, payload = await queue.get()
+            if kind == "item":
+                yield payload
+            elif kind == "error":
+                raise payload
+            else:
+                break
+    finally:
+        await fut
+
+
 @app.post("/ask/stream")
 async def post_ask_stream(payload: AskRequest, request: Request):
     """Streaming variant of /ask — returns SSE events with progress + final answer."""
@@ -1896,9 +1930,22 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                 "message": f"Analyzing {n_snippets} relevant excerpt{'s' if n_snippets != 1 else ''}...",
             })
 
-            solution = await stream_loop.run_in_executor(
-                None, lambda: solve_with_bundle(parsed_task, bundle, subject=cfg.subject_name)
-            )
+            solution = None
+            async for kind, value in _aiter_in_thread(
+                lambda: solve_with_bundle_stream(parsed_task, bundle, subject=cfg.subject_name),
+                stream_loop,
+            ):
+                if kind == "reasoning":
+                    yield _sse_event("reasoning", {"text": value})
+                elif kind == "token":
+                    yield _sse_event("token", {"text": value})
+                elif kind == "solution":
+                    solution = value
+            if solution is None:
+                # Defensive: stream produced no solution; fall back to blocking solve.
+                solution = await stream_loop.run_in_executor(
+                    None, lambda: solve_with_bundle(parsed_task, bundle, subject=cfg.subject_name)
+                )
 
             # --- Stage 3: Format ------------------------------------------
             yield _sse_event("status", {"stage": "formatting", "message": "Preparing answer..."})

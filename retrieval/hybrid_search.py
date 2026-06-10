@@ -10,13 +10,15 @@ Ported from SurfSense's ChucksHybridSearchRetriever with AI-TA adaptations:
 """
 
 import logging
+import time
 from typing import Optional
 
-from sqlalchemy import func, select, text
+from sqlalchemy import cast, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
+from pgvector.sqlalchemy import HALFVEC
 
-from database.models import AITAChunk, AITADocument
+from database.models import AITAChunk, AITADocument, EMBEDDING_DIM
 from indexing.document_embedder import embed_text
 from .document_visibility import active_document_conditions, build_chunk_metadata
 
@@ -24,6 +26,79 @@ log = logging.getLogger(__name__)
 
 # RRF constant (same as SurfSense and standard literature)
 _RRF_K = 60
+
+
+def _halfvec_cosine_distance(query_embedding):
+    """Cosine distance computed in ``halfvec(EMBEDDING_DIM)``.
+
+    The production vector index is ``idx_aita_chunks_embedding_hnsw`` on
+    ``(embedding::halfvec(3072)) halfvec_cosine_ops``. Casting BOTH operands to
+    halfvec makes the query expression match that index and, more importantly,
+    runs the distance math in 16-bit (6 KB/vector) instead of 32-bit
+    (12 KB/vector) — measured 3,529 ms -> 107 ms on the largest class, with
+    identical ranking order. RRF fuses on rank, not raw distance, so fusion is
+    unaffected.
+    """
+    return AITAChunk.embedding.cast(HALFVEC(EMBEDDING_DIM)).op("<=>")(
+        cast(query_embedding, HALFVEC(EMBEDDING_DIM))
+    )
+
+
+def _build_semantic_cte(query_embedding, base_conditions, n_results: int):
+    """Semantic candidates CTE with the LIMIT inside an inner subquery.
+
+    The old shape computed ``rank() OVER (ORDER BY <distance>)`` in the same
+    scope as the LIMIT; window functions evaluate before LIMIT, so Postgres
+    computed the halfvec distance for every filtered chunk and could not use
+    a top-N sort (measured 3,938 ms on the largest class). With the LIMIT in
+    an inner subquery the plan becomes Limit -> Sort (exact top-N heapsort):
+    measured 113 ms, identical results.
+
+    Note: the HNSW index does NOT engage here — the document visibility
+    pre-filter blocks it without ``hnsw.iterative_scan`` (pgvector >= 0.8).
+    That is deliberate: the scan stays exact (recall 100%), and engaging the
+    index is deferred until class size demands it (see P3 in
+    docs/superpowers/specs/2026-06-09-halfvec-retrieval-speedup-design.md).
+    This inner ORDER BY <distance> LIMIT n shape is also the index-matchable
+    form, so flipping iterative_scan on later requires no query change.
+    """
+    distance = _halfvec_cosine_distance(query_embedding)
+    inner = (
+        select(AITAChunk.id.label("id"), distance.label("distance"))
+        .join(AITADocument, AITAChunk.document_id == AITADocument.id)
+        .where(*base_conditions)
+        .order_by(distance)
+        .limit(n_results)
+        .subquery("semantic_candidates")
+    )
+    return (
+        select(
+            inner.c.id,
+            func.rank().over(order_by=inner.c.distance).label("rank"),
+        )
+        .cte("semantic_search")
+    )
+
+
+def _build_keyword_cte(tsvector, tsquery, base_conditions, n_results: int):
+    """Index-friendly FTS candidates CTE (same inner-LIMIT-then-rank shape)."""
+    text_rank = func.ts_rank_cd(tsvector, tsquery)
+    inner = (
+        select(AITAChunk.id.label("id"), text_rank.label("text_rank"))
+        .join(AITADocument, AITAChunk.document_id == AITADocument.id)
+        .where(*base_conditions)
+        .where(tsvector.op("@@")(tsquery))
+        .order_by(text_rank.desc())
+        .limit(n_results)
+        .subquery("keyword_candidates")
+    )
+    return (
+        select(
+            inner.c.id,
+            func.rank().over(order_by=inner.c.text_rank.desc()).label("rank"),
+        )
+        .cte("keyword_search")
+    )
 
 
 class AITAHybridSearchRetriever:
@@ -45,7 +120,9 @@ class AITAHybridSearchRetriever:
             chunk_id, content, score, page_number, section_path, chunk_type,
             figure_id, document_id, doc_title, material_kind
         """
+        _t_embed = time.perf_counter()
         query_embedding = embed_text(query_text)
+        log.info("[timing] embed=%.3fs", time.perf_counter() - _t_embed)
 
         # How many candidate results to pull from each search before RRF fusion
         n_results = top_k * 5
@@ -58,36 +135,11 @@ class AITAHybridSearchRetriever:
         if material_kind:
             base_conditions.append(AITADocument.material_kind == material_kind)
 
-        # CTE 1: Semantic search (pgvector cosine distance, ascending = closer)
-        semantic_cte = (
-            select(
-                AITAChunk.id,
-                func.rank()
-                .over(order_by=AITAChunk.embedding.op("<=>")(query_embedding))
-                .label("rank"),
-            )
-            .join(AITADocument, AITAChunk.document_id == AITADocument.id)
-            .where(*base_conditions)
-            .order_by(AITAChunk.embedding.op("<=>")(query_embedding))
-            .limit(n_results)
-            .cte("semantic_search")
-        )
+        # CTE 1: Semantic search (HNSW-index-friendly: LIMIT inside, rank outside)
+        semantic_cte = _build_semantic_cte(query_embedding, base_conditions, n_results)
 
-        # CTE 2: Keyword search (PostgreSQL tsvector BM25-style ranking)
-        keyword_cte = (
-            select(
-                AITAChunk.id,
-                func.rank()
-                .over(order_by=func.ts_rank_cd(tsvector, tsquery).desc())
-                .label("rank"),
-            )
-            .join(AITADocument, AITAChunk.document_id == AITADocument.id)
-            .where(*base_conditions)
-            .where(tsvector.op("@@")(tsquery))
-            .order_by(func.ts_rank_cd(tsvector, tsquery).desc())
-            .limit(n_results)
-            .cte("keyword_search")
-        )
+        # CTE 2: Keyword search (PostgreSQL FTS, same shape)
+        keyword_cte = _build_keyword_cte(tsvector, tsquery, base_conditions, n_results)
 
         # Final query: FULL OUTER JOIN + RRF scoring
         # score = 1/(k + sem_rank) + 1/(k + kw_rank)
@@ -115,7 +167,9 @@ class AITAHybridSearchRetriever:
             .limit(top_k)
         )
 
+        _t_search = time.perf_counter()
         result = await self.db_session.execute(final_query)
+        log.info("[timing] hybrid_search_sql=%.3fs", time.perf_counter() - _t_search)
         rows = result.all()
 
         if not rows:

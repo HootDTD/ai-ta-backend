@@ -30,10 +30,37 @@ class _DummyEmbeddings:
         return types.SimpleNamespace(data=[types.SimpleNamespace(embedding=[0.0])])
 
 
+class _DummyResponses:
+    """Minimal Responses API stand-in for the streaming solver path.
+
+    solve_with_bundle_stream dispatches on event.type and parses the solver
+    JSON from response.output_text.delta payloads, so the stub must emit
+    valid solver JSON (steps/final_answers/equations_used/assumptions).
+    """
+
+    _SOLVER_JSON = (
+        '{"steps": "Stub answer.", "final_answers": {}, '
+        '"equations_used": [], "assumptions": [], "not_relevant": false}'
+    )
+
+    def create(self, *args, **kwargs):
+        if kwargs.get("stream"):
+            return iter(
+                [
+                    types.SimpleNamespace(
+                        type="response.output_text.delta", delta=self._SOLVER_JSON
+                    ),
+                    types.SimpleNamespace(type="response.completed"),
+                ]
+            )
+        return types.SimpleNamespace(output_text=self._SOLVER_JSON)
+
+
 class _DummyOpenAI:
     def __init__(self, *args, **kwargs):
         self.chat = types.SimpleNamespace(completions=_DummyCompletions())
         self.embeddings = _DummyEmbeddings()
+        self.responses = _DummyResponses()
 
 
 openai_stub.OpenAI = _DummyOpenAI
