@@ -1,6 +1,6 @@
 """Hoot → Apollo handoff initialization.
 
-1. End any existing active session for this student (stale handoffs don't block new ones).
+1. End any existing active session for this user (stale handoffs don't block new ones).
 2. Overseer infers concept cluster from Hoot transcript.
 3. Overseer picks the first problem at 'intro' difficulty.
 4. Session row created (phase=TEACHING), first ProblemAttempt row created.

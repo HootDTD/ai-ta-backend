@@ -7,8 +7,6 @@ the auth-scoping tests, while the legacy file is left untouched.
 """
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
@@ -18,7 +16,30 @@ from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
 from apollo.errors import NoMatchingConceptError
 from apollo.hoot_bridge.session_init import init_session_from_hoot
 from apollo.persistence.models import ApolloSession, ProblemAttempt, SessionPhase, SessionStatus
+from apollo.schemas.problem import Problem, ReferenceStep
 from database.models import Base
+
+# ---------------------------------------------------------------------------
+# Stable in-memory stub returned by the patched select_problem
+# ---------------------------------------------------------------------------
+
+_STUB_PROBLEM = Problem(
+    id="stub_p1",
+    concept_id="stub_concept",
+    difficulty="intro",
+    problem_text="Stub problem text.",
+    given_values={"v": 1.0},
+    target_unknown="x",
+    reference_solution=[
+        ReferenceStep(
+            step=1,
+            entry_type="equation",
+            id="eq1",
+            content={"expression": "x = v"},
+            depends_on=[],
+        )
+    ],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -26,10 +47,16 @@ from database.models import Base
 # ---------------------------------------------------------------------------
 
 def _mock_inference_and_selection(monkeypatch) -> None:
-    """Patch the two external I/O calls so no OpenAI key is needed."""
+    """Patch both external I/O calls (LLM inference + file-based problem selection)
+    so tests are fully hermetic — no OpenAI key or apollo/subjects/ data files needed.
+    """
     monkeypatch.setattr(
         "apollo.hoot_bridge.session_init.infer_concept_cluster",
         lambda **kwargs: "fluid_mechanics",
+    )
+    monkeypatch.setattr(
+        "apollo.hoot_bridge.session_init.select_problem",
+        lambda **kwargs: _STUB_PROBLEM,
     )
 
 
@@ -79,12 +106,8 @@ async def test_init_session_creates_session_and_first_problem(db, monkeypatch):
     )
 
     assert result["session_id"] > 0
-    assert result["problem"]["concept_id"] in (
-        "bernoulli_principle",
-        "continuity_equation",
-        "volumetric_flow_rate",
-    )
-    assert result["problem"]["target_unknown"]
+    assert result["problem"]["concept_id"] == _STUB_PROBLEM.concept_id
+    assert result["problem"]["target_unknown"] == _STUB_PROBLEM.target_unknown
 
     sess = (await db.execute(select(ApolloSession))).scalar_one()
     assert sess.user_id == TEST_USER_ID
@@ -201,7 +224,6 @@ async def test_init_session_honors_passed_difficulty(db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_init_session_rejects_unknown_difficulty(db, monkeypatch):
-    _mock_inference_and_selection(monkeypatch)
     with pytest.raises(ValueError):
         await init_session_from_hoot(
             db=db,
