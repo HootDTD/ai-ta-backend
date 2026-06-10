@@ -2,6 +2,28 @@
 
 Python/FastAPI backend powering Hoot's intelligent tutoring system. Combines RAG, hybrid search (pgvector + FTS5), and LLMs to deliver citation-backed answers grounded in course materials.
 
+> This repo is part of the Hoot AI-TA workspace. If a workspace-level
+> `CLAUDE.md` wasn't loaded (session opened inside this repo), read
+> `docs/shared-architecture/README.md` for the full cross-repo doc map.
+
+## Doc tree — navigate docs first, code second
+
+`docs/architecture/` describes this repo's code; each doc declares `owns:`
+globs in its frontmatter and is the authority on those files:
+
+- `docs/architecture/_overview.md` — bootstrap, HTTP surface, auth, config, vendors, ops entrypoints
+- `docs/architecture/rag-pipeline.md` — `ai/` + `retrieval/` (QA pipeline)
+- `docs/architecture/indexing.md` — `indexing/` + `indexers/` + `ocr/` (ingestion)
+- `docs/architecture/apollo.md` — `apollo/` (learning-by-teaching subsystem)
+- `docs/architecture/domain-data.md` — `database/` + `chats/` + `knowledge/` + `reports/`
+
+Cross-repo shared docs live in `docs/shared-architecture/` (conventions,
+security, supabase, product-context, README navigation map).
+
+**Drift contract:** before editing a source file, load its owner doc. After
+editing code, update the owner doc in the same commit and bump
+`last_verified`. Stale docs are worse than no docs.
+
 ## Architecture
 
 - **Orchestrator** (`ai/orchestrator.py`): Coordinates the QA pipeline
