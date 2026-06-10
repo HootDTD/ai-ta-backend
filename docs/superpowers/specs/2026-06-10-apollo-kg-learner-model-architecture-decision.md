@@ -70,7 +70,22 @@ LAYER 1  Curated ontology (Postgres → :Canon projection) ← NEW (seeded from
      problem selection is built.
   3. **LLM-assisted Layer-1 authoring deferred post-wedge** — v1 seeds Layer 1
      by converting the existing bernoulli files with a one-time script; the
-     RQ6 extraction + teacher-approval workflow becomes its own later phase.
+     RQ6 extraction + teacher-approval workflow becomes its own later phase,
+     reshaped as the question-bank workflow (decision 5, §7).
+  4. **Per-classroom isolation is an invariant** (user, 2026-06-10): the
+     maximum span of correlation is the classroom. Concepts, entities,
+     question banks, evidence graphs, and mastery never cross courses — the
+     entire curriculum chain is scoped by `search_space_id` (§2), not just
+     the learner-model rows. Two classrooms teaching the same physics
+     concept have fully separate entities and statistics. Relaxing this
+     (e.g., cross-class difficulty calibration) is a deliberate future
+     decision, never an accident of shared rows.
+  5. **Layer 1 is determined by the question bank, not the textbook**
+     (user, 2026-06-10): scrape questions from approved course materials
+     into a question bank, tag each question with its concepts + difficulty,
+     and let the entity inventory emerge as the union of tagged concepts
+     (plus prerequisite closure). Granularity follows evidence demand —
+     a subtopic with no questions never becomes an entity (§7).
 
 ## 2. Storage layout (RQ2, reconciled with RQ7)
 
@@ -81,24 +96,34 @@ migration-018 curriculum tables (`apollo_subjects` / `apollo_concepts` /
 `apollo_misconceptions`) — the codebase already treats curriculum as Postgres
 rows.
 
-RQ7 mandates two corrections to the original RQ2 sketch, applied below: the
-student key is a real `auth.users` UUID (not `student_id TEXT`), and
-learner-model rows carry a `search_space_id` FK (per-course mastery records).
+Three corrections to the original RQ2 sketch, applied below: the student key
+is a real `auth.users` UUID (not `student_id TEXT`); learner-model rows carry
+a `search_space_id` FK (per-course mastery records); and — per the isolation
+invariant (§1.4) — **the curriculum chain itself is course-scoped**:
+`apollo_subjects` gains `search_space_id INTEGER NOT NULL REFERENCES
+aita_search_spaces(id) ON DELETE CASCADE`, so concepts, entities, prereqs,
+and problems all inherit course ownership through existing FKs (migration-018
+tables are global today). `canonical_key` uniqueness becomes per-concept, not
+global.
 
 ### Migration 023 (target shape; exact DDL in the implementation plan)
 
 ```sql
--- LAYER 1: skill inventory
+-- apollo_subjects: + search_space_id FK (isolation invariant, §1.4)
+
+-- LAYER 1: skill inventory (course-scoped via concept → subject → search space)
 CREATE TABLE apollo_kg_entities (
   id            BIGSERIAL PRIMARY KEY,
   concept_id    BIGINT NOT NULL REFERENCES apollo_concepts(id) ON DELETE CASCADE,
-  canonical_key TEXT   NOT NULL UNIQUE,   -- 'bernoulli_principle/eq.bernoulli_full'
+  canonical_key TEXT   NOT NULL,           -- 'bernoulli_principle/eq.bernoulli_full'
   kind          TEXT   NOT NULL,          -- concept|equation|condition|definition|procedure
   display_name  TEXT   NOT NULL,
   payload       JSONB  NOT NULL DEFAULT '{}',  -- symbolic form, applies_when, …
   aliases       JSONB  NOT NULL DEFAULT '[]',  -- grows from the resolution log
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (concept_id, canonical_key)       -- unique per concept, NOT global —
+                                           -- same concept in two courses = two entities
 );
 CREATE TABLE apollo_entity_prereqs (      -- normalizes concept_dag.json
   from_entity_id BIGINT REFERENCES apollo_kg_entities(id) ON DELETE CASCADE,
@@ -155,9 +180,12 @@ deferred and backfillable by replaying `score` + ordering from this log.
 
 ### Neo4j
 
-- **`:Canon` projection of Layer 1:** idempotent seeder (MERGE on
-  `canonical_key`, uniqueness constraint), rebuildable from Postgres at any
-  time, never authored in Neo4j. Sidesteps dual-write drift.
+- **`:Canon` projection of Layer 1:** idempotent seeder (MERGE on a
+  synthesized single unique property `key = "<search_space_id>:<canonical_key>"`
+  — course-scoped, since canonical keys are only unique per course now),
+  rebuildable from Postgres at any time, never authored in Neo4j. Sidesteps
+  dual-write drift. `:Canon` nodes also carry `search_space_id` so every
+  Cypher filter can enforce the isolation invariant.
 - **Layer 2 nodes** keep today's 6 labels + `:_KGNode` + 4 edge types, and
   gain properties: `user_id` (opaque UUID), `search_space_id`, `created_at`,
   `graded_at`, and resolution fields (`resolution:
@@ -335,27 +363,62 @@ the event log live in Postgres.** Operational risk: Aura Free pauses after
 days of inactivity and may be deleted after ~30 days paused — school breaks
 are real; schedule a weekly keep-alive or budget Aura Professional.
 
-## 7. Layer-1 authoring (RQ6 — deferred workflow, v1 seed)
+## 7. Layer-1 authoring: granularity + the question-bank workflow (RQ6, revised)
 
-**v1: a one-time conversion script** turns the existing hand-authored
-bernoulli files into Layer-1 rows — `concept_dag.json` (14 nodes / 16 edges) →
+### Granularity rule
+
+Layer 1 is **not** the textbook's table of contents. An entity exists only if
+Apollo can collect evidence about it — equations, conditions, definitions,
+variables, and procedure steps that appear in reference solutions and that a
+student articulates while teaching. A subtopic with no question touching it
+would be a mastery row that never updates: dead weight that also bloats the
+resolver's candidate list and the dashboard. The determination rule (user
+decision, §1.5): **the question bank determines the ontology.** Layer 1 = the
+union of concepts/entities referenced by the course's question bank, plus
+their prerequisite closure. Granularity follows evidence demand, bottom-up.
+
+### v1 seed
+
+**A one-time conversion script** turns the existing hand-authored bernoulli
+files into Layer-1 rows — `concept_dag.json` (14 nodes / 16 edges) →
 `apollo_kg_entities` (kind=concept) + `apollo_entity_prereqs`;
 `canonical_symbols.json` (7 symbols) → entities (kind=variable);
 `normalization_map.json` (23 mappings) → `aliases`. Session machinery
 (`parser_prompt_template.md`, `solver_hints.json`, `forbidden_named_laws.json`)
-and `problems/*.json` stay hand-authored files, untouched.
+and `problems/*.json` stay hand-authored, untouched. (Bernoulli already has
+problems, so it trivially satisfies the granularity rule.)
 
-**Deferred (own phase, post-wedge, spec = the RQ6 memo):** LLM-assisted
-expansion — extraction pass over the teacher's RAG corpus drafts entities,
-aliases, and confidence-ranked prerequisite-edge candidates; a teacher
-approval queue (checklist UX, no graph editor) publishes to
-`apollo_kg_entities` and triggers the `:Canon` rebuild. Trust boundary from
-the literature: LLM drafts concept lists + aliases (high precision, cheap to
-prune) and suggests prerequisite edges (F1 ≈ 0.5–0.77; human prunes); humans
-exclusively author `reference_solution` math, `scope_boundary`,
-`forbidden_named_laws`, `solver_hints`, parser prompts. Honest economics:
-ontology authoring drops ~2.5h → ~1h review, but problems (~3–5h) remain the
-per-concept bottleneck — automating them is anti-scope.
+### Deferred workflow (own phase, post-wedge): the question bank
+
+Reshapes the RQ6 extraction workflow around questions instead of concepts:
+
+1. **Scrape questions** from the course's approved materials (the RAG corpus
+   is already chunked/embedded) into the question bank — extends the existing
+   `apollo_concept_problems` table (migration 018) with source provenance
+   (document/page) and an LLM-assigned `difficulty`.
+2. **Tag each question** with the concepts/entities it exercises (a
+   question↔entity mapping table). The entity inventory emerges as the union
+   of tags; prerequisite-edge candidates are drafted per the RQ6 trust
+   boundary (LLM suggests, teacher prunes — F1 ≈ 0.5–0.77).
+3. **Teacher approval queue** (checklist UX, no graph editor) publishes
+   entities/aliases/edges to `apollo_kg_entities` and triggers the `:Canon`
+   rebuild.
+4. **Two-tier bank — the grading trust boundary:** a scraped+tagged question
+   (Tier 1) is usable for coverage analysis and inventory, but Apollo's
+   selector only picks from **Tier 2: teachable problems**, i.e. questions
+   promoted by adding an authored or LLM-drafted-then-teacher-verified
+   `reference_solution`. Diff-at-Done grading treats `reference_solution` as
+   truth (`problem.to_kg_graph()`); one hallucinated formula silently corrupts
+   grading, so promotion is always human-gated.
+5. **Selection becomes a join:** weak entities + misconception flags from
+   `apollo_learner_state` × question→entity tags × difficulty → next problem.
+   Difficulty-tagged questions also remove most of the hand-authoring cost
+   that motivated deferring Elo (§1.2).
+
+Honest economics: ontology authoring drops ~2.5h → ~1h review per concept, but
+verified reference solutions (~3–5h per concept's problem set) remain the
+bottleneck — full problem automation stays anti-scope; the queue makes the
+drafting cheap and keeps the verification human.
 
 ## 8. Security, privacy, multi-tenancy (RQ7)
 
@@ -373,7 +436,9 @@ with no course scoping.
   defense-in-depth); teacher sees students in their own courses only
   (`_require_course_membership` before any read; `search_space_id` filters in
   both stores). Mastery records are **per-course**; cross-course aggregation
-  is out of scope for v1.
+  is out of scope for v1. The isolation invariant (§1.4) extends this beyond
+  learner data: curriculum, entities, and graphs are course-scoped too — the
+  classroom is the maximum span of any correlation in the system.
 - **Aura placement: approved with mandatory mitigations.** Backend-mediated
   access only (creds already backend-only); **every** Cypher read/write
   filters by `user_id` AND `search_space_id`, both server-injected from the
@@ -427,7 +492,8 @@ no new infrastructure.
    with graph context + strict outputs; wire SCOPES; cross-turn linking;
    `write_edges` logs instead of silently dropping. Immediately improves
    existing grading.
-3. **Layer 1 + resolution + persistence** — migration 023; bernoulli seed
+3. **Layer 1 + resolution + persistence** — migration 023 (incl. the
+   `apollo_subjects.search_space_id` scoping FK, §1.4); bernoulli seed
    script; `:Canon` projection seeder; two-stage Done-time resolution +
    `RESOLVES_TO`; stop deleting graphs at session end; new named errors.
 4. **Layer 3 learner model** — the 3-state filter in the Done transaction;
@@ -435,9 +501,10 @@ no new infrastructure.
    chat keywords).
 5. **Session personalization wedge** — session-init Q1 read; problem
    selection over weak entities; persona conditioning; difficulty.
-6. **Later, in rough order** — teacher dashboard (Q2); LLM-assisted Layer-1
-   authoring (RQ6 memo is the spec); student-facing OLM; Hoot-chat evidence
-   (RQ5 memo is the spec); Elo for difficulty matching; Layer-2 janitor.
+6. **Later, in rough order** — teacher dashboard (Q2); the question-bank
+   workflow (§7: scrape + tag + approval queue + two-tier promotion; RQ6 memo
+   + §7 are the spec); student-facing OLM; Hoot-chat evidence (RQ5 memo is
+   the spec); Elo for difficulty matching; Layer-2 janitor.
 
 Each phase is independently shippable and none requires revisiting a prior
 phase's decisions.
