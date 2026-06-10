@@ -70,3 +70,49 @@ def test_empty_stream_yields_empty_solution(monkeypatch):
     kinds = [k for k, _ in out]
     assert kinds[-1] == "solution"
     assert out[-1][1].steps == ""
+
+
+def _minimal_events():
+    return [
+        _evt("response.output_text.delta", delta='{"steps": "x", "not_relevant": false}'),
+        _evt("response.completed"),
+    ]
+
+
+def test_stream_sets_prompt_cache_key(monkeypatch):
+    monkeypatch.delenv("PROMPT_CACHE_KEY", raising=False)
+    captured: dict = {}
+    monkeypatch.setattr(mai, "_client", lambda: _fake_responses_stream(_minimal_events(), captured))
+    monkeypatch.setattr(mai, "_prepare_solve_prompt", lambda *a, **k: ("SYS", "USER", "gpt-5"))
+    list(mai.solve_with_bundle_stream(object(), object(), subject="X"))
+    assert captured.get("prompt_cache_key") == "aita-solver:gpt-5"
+
+
+def test_stream_service_tier_only_when_env_set(monkeypatch):
+    captured: dict = {}
+    monkeypatch.delenv("OPENAI_SERVICE_TIER", raising=False)
+    monkeypatch.setattr(mai, "_client", lambda: _fake_responses_stream(_minimal_events(), captured))
+    monkeypatch.setattr(mai, "_prepare_solve_prompt", lambda *a, **k: ("SYS", "USER", "gpt-5"))
+    list(mai.solve_with_bundle_stream(object(), object(), subject="X"))
+    assert "service_tier" not in captured
+
+    captured.clear()
+    monkeypatch.setenv("OPENAI_SERVICE_TIER", "priority")
+    monkeypatch.setattr(mai, "_client", lambda: _fake_responses_stream(_minimal_events(), captured))
+    list(mai.solve_with_bundle_stream(object(), object(), subject="X"))
+    assert captured.get("service_tier") == "priority"
+
+
+def test_stream_verbosity_only_when_env_set(monkeypatch):
+    captured: dict = {}
+    monkeypatch.delenv("MAIN_VERBOSITY", raising=False)
+    monkeypatch.setattr(mai, "_client", lambda: _fake_responses_stream(_minimal_events(), captured))
+    monkeypatch.setattr(mai, "_prepare_solve_prompt", lambda *a, **k: ("SYS", "USER", "gpt-5"))
+    list(mai.solve_with_bundle_stream(object(), object(), subject="X"))
+    assert "verbosity" not in captured.get("text", {})
+
+    captured.clear()
+    monkeypatch.setenv("MAIN_VERBOSITY", "low")
+    monkeypatch.setattr(mai, "_client", lambda: _fake_responses_stream(_minimal_events(), captured))
+    list(mai.solve_with_bundle_stream(object(), object(), subject="X"))
+    assert captured["text"]["verbosity"] == "low"

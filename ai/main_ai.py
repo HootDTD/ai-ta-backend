@@ -1345,6 +1345,12 @@ def solve_with_bundle(
             kwargs["reasoning_effort"] = os.getenv("MAIN_REASONING_EFFORT", "high")
         else:
             kwargs["temperature"] = 0
+        kwargs["prompt_cache_key"] = os.getenv(
+            "PROMPT_CACHE_KEY", f"aita-solver:{model}"
+        )
+        service_tier = (os.getenv("OPENAI_SERVICE_TIER") or "").strip()
+        if service_tier:
+            kwargs["service_tier"] = service_tier
         resp = client.chat.completions.create(**kwargs)
         content = resp.choices[0].message.content
         return json.loads(content)
@@ -1389,6 +1395,19 @@ def solve_with_bundle_stream(
         }
     else:
         kwargs["temperature"] = 0
+
+    # Prompt-cache routing: tutor_prompt() instructions are the static prefix;
+    # a stable cache key routes repeat requests to the same cache (per-key
+    # throughput limit ~15 RPM — fine at current traffic).
+    kwargs["prompt_cache_key"] = os.getenv(
+        "PROMPT_CACHE_KEY", f"aita-solver:{model}"
+    )
+    service_tier = (os.getenv("OPENAI_SERVICE_TIER") or "").strip()
+    if service_tier:
+        kwargs["service_tier"] = service_tier
+    verbosity = (os.getenv("MAIN_VERBOSITY") or "").strip()
+    if verbosity and _is_reasoning_model(model):
+        kwargs["text"]["verbosity"] = verbosity
 
     streamer = JsonStringFieldStreamer(field="steps")
     json_buf: List[str] = []
