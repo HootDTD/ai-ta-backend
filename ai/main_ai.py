@@ -794,7 +794,7 @@ def extract_and_filter_keywords(
 
     try:
         resp = client.chat.completions.create(
-            model=os.getenv("PARSER_MODEL", "gpt-4o"),
+            model=os.getenv("KEYWORD_MODEL", "gpt-4o-mini"),
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
