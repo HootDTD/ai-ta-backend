@@ -72,3 +72,32 @@ def test_missing_field_emits_nothing():
     text, complete = _drain([obj])
     assert text == ""
     assert complete is False
+
+
+def test_surrogate_pair_escape_single_feed():
+    # 🔥 is U+1F525, encoded as \\ud83d\\udd25 in JSON
+    obj = '{"steps": "fire \\ud83d\\udd25 ok"}'
+    text, complete = _drain([obj])
+    assert "🔥" in text
+    assert complete is True
+    # Must be UTF-8 safe (Starlette SSE encodes this)
+    text.encode("utf-8")
+
+
+def test_surrogate_pair_escape_split_across_feeds():
+    # Split so first feed ends with the high surrogate escape, second starts with the low
+    first = '{"steps": "fire \\ud83d'
+    second = '\\udd25 ok"}'
+    text, complete = _drain([first, second])
+    assert "🔥" in text
+    assert complete is True
+    text.encode("utf-8")
+
+
+def test_lone_high_surrogate_does_not_crash():
+    # High surrogate with no following low surrogate — must not raise, tokens must be UTF-8 safe
+    obj = '{"steps": "bad \\ud83d end"}'
+    s = JsonStringFieldStreamer(field="steps")
+    token = s.feed(obj)
+    # Must not raise UnicodeEncodeError
+    token.encode("utf-8")

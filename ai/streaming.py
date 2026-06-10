@@ -72,7 +72,32 @@ class JsonStringFieldStreamer:
                     if i + 6 > n:
                         break
                     seq = b[i : i + 6]
-                    out.append(json.loads('"' + seq + '"'))
+                    decoded = json.loads('"' + seq + '"')
+                    # High surrogate: attempt to pair with the next \uXXXX escape.
+                    if "\ud800" <= decoded <= "\udbff":
+                        # Need 6 more chars for the low half.
+                        if i + 12 > n:
+                            # Pair is split across feeds — stop here; will retry next feed.
+                            break
+                        low_seq = b[i + 6 : i + 12]
+                        if low_seq.startswith("\\u") or low_seq.startswith("\\U"):
+                            try:
+                                pair_char = json.loads('"' + seq + low_seq + '"')
+                                out.append(pair_char)
+                                i += 12
+                                continue
+                            except (ValueError, UnicodeDecodeError):
+                                pass
+                        # Malformed lone high surrogate — emit replacement character.
+                        out.append("�")
+                        i += 6
+                        continue
+                    # Low surrogate without a preceding high — emit replacement character.
+                    if "\udc00" <= decoded <= "\udfff":
+                        out.append("�")
+                        i += 6
+                        continue
+                    out.append(decoded)
                     i += 6
                     continue
                 out.append(json.loads('"\\' + esc + '"'))
