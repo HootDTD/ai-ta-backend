@@ -52,7 +52,7 @@ def test_semantic_cte_limits_before_window():
     `distance` column, never by the raw `<=>` expression, and the candidates
     must come from an inner `FROM (SELECT ... LIMIT n)` subquery.
     """
-    cte = _build_semantic_cte([0.1] * EMBEDDING_DIM, [], n_results=300)
+    cte = _build_semantic_cte([0.1] * EMBEDDING_DIM, [1, 2], n_results=300)
     sql = _compile_full(cte)
     # The window orders by the subquery's distance column, not the <=> expr.
     over_clause = sql.split("over (", 1)[1].split(")", 1)[0]
@@ -66,6 +66,22 @@ def test_semantic_cte_limits_before_window():
     inner_sql = sql.split("from (select", 1)[1].split("semantic_candidates", 1)[0]
     assert "<=>" in inner_sql
     assert "limit" in inner_sql, "inner candidates subquery must LIMIT"
+
+
+def test_semantic_cte_filters_by_doc_id_array_not_join():
+    """The semantic candidate filter must be a chunk-local ``= ANY(array)`` over
+    document_id, NOT a join to aita_documents. Only the materialized-array form
+    lets the HNSW index engage under hnsw.iterative_scan (verified on the live
+    DB: a join or ``IN (subquery)`` reverts to a brute-force Sort over every
+    embedding). If this regresses to a join, the iterative scan silently no-ops.
+    """
+    cte = _build_semantic_cte([0.1] * EMBEDDING_DIM, [1, 2], n_results=300)
+    sql = _compile_full(cte)
+    assert "aita_documents" not in sql, (
+        "semantic CTE must not join aita_documents — that blocks the HNSW index"
+    )
+    assert "= any(" in sql, "expected chunk-local document_id = ANY(array) filter"
+    assert "integer[]" in sql, "doc-id array must be a bound integer[] param"
 
 
 def test_keyword_cte_limits_before_window():
