@@ -4,6 +4,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from apollo.conftest import TEST_USER_ID, TEST_USER_ID_2
 from apollo.handlers.progress import handle_get_progress
 from apollo.persistence.models import StudentProgress
 from database.models import Base
@@ -36,7 +37,7 @@ async def test_get_progress_unknown_student_returns_defaults(db):
 
 @pytest.mark.asyncio
 async def test_get_progress_known_student_returns_stored(db):
-    db.add(StudentProgress(student_id="veteran", xp_total=1800, level=4))
+    db.add(StudentProgress(user_id=TEST_USER_ID, xp_total=1800, level=4))
     await db.commit()
 
     payload = await handle_get_progress(db=db, student_id="veteran")
@@ -51,7 +52,7 @@ async def test_get_progress_known_student_returns_stored(db):
 
 @pytest.mark.asyncio
 async def test_get_progress_max_level_student_has_null_next_threshold(db):
-    db.add(StudentProgress(student_id="max", xp_total=3500, level=5))
+    db.add(StudentProgress(user_id=TEST_USER_ID_2, xp_total=3500, level=5))
     await db.commit()
 
     payload = await handle_get_progress(db=db, student_id="max")

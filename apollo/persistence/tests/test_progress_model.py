@@ -5,6 +5,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from apollo.conftest import TEST_USER_ID, TEST_USER_ID_2
 from apollo.persistence.models import StudentProgress
 from database.models import Base
 
@@ -22,7 +23,7 @@ async def session():
 
 @pytest.mark.asyncio
 async def test_student_progress_defaults(session):
-    sp = StudentProgress(student_id="stu-1")
+    sp = StudentProgress(user_id=TEST_USER_ID)
     session.add(sp)
     await session.commit()
     await session.refresh(sp)
@@ -35,11 +36,11 @@ async def test_student_progress_defaults(session):
 
 @pytest.mark.asyncio
 async def test_student_progress_round_trip(session):
-    session.add(StudentProgress(student_id="stu-2", xp_total=1700, level=4))
+    session.add(StudentProgress(user_id=TEST_USER_ID_2, xp_total=1700, level=4))
     await session.commit()
 
     loaded = (await session.execute(
-        select(StudentProgress).where(StudentProgress.student_id == "stu-2")
+        select(StudentProgress).where(StudentProgress.user_id == TEST_USER_ID_2)
     )).scalar_one()
     assert loaded.xp_total == 1700
     assert loaded.level == 4
@@ -47,10 +48,10 @@ async def test_student_progress_round_trip(session):
 
 @pytest.mark.asyncio
 async def test_student_progress_student_id_is_primary_key(session):
-    session.add(StudentProgress(student_id="stu-3"))
+    session.add(StudentProgress(user_id=TEST_USER_ID))
     await session.commit()
 
-    # Inserting a second row with the same student_id should fail.
-    session.add(StudentProgress(student_id="stu-3"))
+    # Inserting a second row with the same user_id should fail.
+    session.add(StudentProgress(user_id=TEST_USER_ID))
     with pytest.raises(Exception):
         await session.commit()

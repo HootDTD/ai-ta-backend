@@ -11,6 +11,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.handlers.history import (
     RAW_WINDOW_TURNS,
     REFRESH_EVERY_K_TURNS,
@@ -37,7 +38,8 @@ async def db_with_session():
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         sess = ApolloSession(
-            student_id="stu-1",
+            user_id=TEST_USER_ID,
+            search_space_id=TEST_SPACE_ID,
             concept_cluster_id="fluid_mechanics",
             status=SessionStatus.active.value,
             phase=SessionPhase.TEACHING.value,
