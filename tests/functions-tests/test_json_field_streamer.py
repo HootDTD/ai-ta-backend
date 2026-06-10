@@ -101,3 +101,29 @@ def test_lone_high_surrogate_does_not_crash():
     token = s.feed(obj)
     # Must not raise UnicodeEncodeError
     token.encode("utf-8")
+
+
+def test_high_surrogate_followed_by_non_low_escape():
+    # High surrogate followed by a non-low \u escape (\\u0041 = 'A').
+    # json.loads is permissive and returns the lone surrogate instead of raising,
+    # so the pair-lookahead must validate the result explicitly.
+    # Expected output: U+FFFD (replacement char) then literal 'A', i.e. "x �A y".
+    obj = '{"steps": "x \\ud83d\\u0041 y"}'
+    text, complete = _drain([obj])
+    assert "�" in text, f"Expected replacement char in {text!r}"
+    assert "A" in text, f"Expected 'A' in {text!r}"
+    assert complete is True
+    # Every token must be UTF-8 encodable (no lone surrogates).
+    text.encode("utf-8")
+
+
+def test_doubled_high_surrogate_self_heals():
+    # Two high surrogates in a row, then a valid pair (🔥 = \\ud83d\\udd25).
+    # First high is malformed — must emit U+FFFD and advance only 6 chars,
+    # leaving the second high to pair with \\udd25 and emit 🔥.
+    obj = '{"steps": "x \\ud83d\\ud83d\\udd25 y"}'
+    text, complete = _drain([obj])
+    assert "�" in text, f"Expected replacement char in {text!r}"
+    assert "🔥" in text, f"Expected 🔥 in {text!r}"
+    assert complete is True
+    text.encode("utf-8")

@@ -80,15 +80,21 @@ class JsonStringFieldStreamer:
                             # Pair is split across feeds — stop here; will retry next feed.
                             break
                         low_seq = b[i + 6 : i + 12]
-                        if low_seq.startswith("\\u") or low_seq.startswith("\\U"):
+                        if low_seq.startswith("\\u"):
                             try:
                                 pair_char = json.loads('"' + seq + low_seq + '"')
-                                out.append(pair_char)
-                                i += 12
-                                continue
+                                # Accept only if json.loads produced a single non-surrogate char.
+                                # Python's json decoder is permissive with lone surrogates and
+                                # returns them instead of raising, so we must validate explicitly.
+                                if len(pair_char) == 1 and not ("\ud800" <= pair_char <= "\udfff"):
+                                    out.append(pair_char)
+                                    i += 12
+                                    continue
                             except (ValueError, UnicodeDecodeError):
                                 pass
-                        # Malformed lone high surrogate — emit replacement character.
+                        # Malformed lone high surrogate — emit replacement character and
+                        # advance past the high escape only (6 chars), so the next
+                        # escape is re-evaluated independently (self-healing for doubled highs).
                         out.append("�")
                         i += 6
                         continue
