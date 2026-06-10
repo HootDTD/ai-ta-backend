@@ -286,6 +286,14 @@ def _pick_concept_term(snippet: Any) -> str:
     return ""
 
 
+def _citation_pool_size(n_snippets: int) -> int:
+    """Thread pool width for parallel snippet scoring.
+
+    Default cap 24 > default snippet count (K_SEM=20) so all snippets score
+    in a single wave — wall time ≈ slowest single call instead of two waves.
+    """
+    cap = int(os.getenv("CITATION_WORKERS", "24"))
+    return max(1, min(cap, n_snippets))
 
 
 def _score_and_answer_snippet(
@@ -996,10 +1004,7 @@ def _prepare_solve_prompt(
         snippet_args.append((sn, importance, focus_term))
 
     # Run merged score+answer in parallel (Phase 2+3)
-    max_workers = min(
-        int(os.getenv("CITATION_WORKERS", "12")),
-        max(len(snippet_args), 1),
-    )
+    max_workers = _citation_pool_size(len(snippet_args))
     combined_results: List[Dict[str, Any]] = []
     _t_score = time.perf_counter()
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
