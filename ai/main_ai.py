@@ -306,9 +306,10 @@ def _score_and_answer_snippet(
 ) -> Dict[str, Any]:
     """Score relevance AND extract answer from a single snippet in one LLM call."""
     client = _client()
-    model = model or os.getenv(
-        "CITATION_SCORER_MODEL", os.getenv("PARSER_MODEL", "gpt-4o")
-    )
+    # Default stays gpt-4o: measured A/B showed gpt-4o-mini is ~30% slower
+    # per call with identical scores, and parallel scoring's wall time is the
+    # slowest call. CITATION_SCORER_MODEL is the single override knob.
+    model = model or os.getenv("CITATION_SCORER_MODEL", "gpt-4o")
     marker = getattr(snippet, "citation_marker", None) or getattr(snippet, "marker", None)
     if not isinstance(marker, str) or not marker.strip():
         marker = _fallback_citation_marker(snippet, citation_label)
@@ -995,9 +996,7 @@ def _prepare_solve_prompt(
         question_text = ""
 
     q = question_text or parsed_task.problem_type
-    scorer_model = os.getenv(
-        "CITATION_SCORER_MODEL", os.getenv("PARSER_MODEL", "gpt-4o")
-    )
+    scorer_model = os.getenv("CITATION_SCORER_MODEL", "gpt-4o")
 
     # Build per-snippet args before submitting to the pool
     snippet_args: List[Tuple[Any, float, str]] = []
