@@ -64,10 +64,9 @@ def test_semantic_cte_limits_before_window():
     assert "distance" in over_clause
     # Candidates come from an inner LIMITed subquery (the HNSW-matchable shape).
     assert "from (select" in sql, "expected inner candidates subquery"
-    inner_sql = sql.split("from (select", 1)[1].split("limit", 1)[0]
+    inner_sql = sql.split("from (select", 1)[1].split("semantic_candidates", 1)[0]
     assert "<=>" in inner_sql
-    inner_with_limit = sql.split("from (select", 1)[1]
-    assert "limit" in inner_with_limit, "inner candidates subquery must LIMIT"
+    assert "limit" in inner_sql, "inner candidates subquery must LIMIT"
 
 
 def test_keyword_cte_limits_before_window():
@@ -79,9 +78,9 @@ def test_keyword_cte_limits_before_window():
     assert "ts_rank_cd" not in over_clause
     assert "text_rank" in over_clause
     assert "from (select" in sql
-    inner_with_limit = sql.split("from (select", 1)[1]
-    assert "@@" in inner_with_limit  # GIN-indexable FTS match filter preserved
-    assert "limit" in inner_with_limit
+    inner_sql = sql.split("from (select", 1)[1].split("keyword_candidates", 1)[0]
+    assert "@@" in inner_sql  # GIN-indexable FTS match filter preserved
+    assert "limit" in inner_sql
 
 
 def test_semantic_cte_still_uses_halfvec_both_operands():

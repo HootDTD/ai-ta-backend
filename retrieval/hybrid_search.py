@@ -45,14 +45,22 @@ def _halfvec_cosine_distance(query_embedding):
 
 
 def _build_semantic_cte(query_embedding, base_conditions, n_results: int):
-    """Index-friendly semantic candidates CTE.
+    """Semantic candidates CTE with the LIMIT inside an inner subquery.
 
-    The inner subquery is exactly ``SELECT … ORDER BY <distance> LIMIT n`` —
-    the only query shape pgvector's HNSW scan matches. The rank() window runs
-    over the ≤n_results candidates only. Putting the window in the same scope
-    as the distance ORDER BY forces a full-table distance scan (measured
-    6.6s vs ~0.1s on the largest class) because window functions evaluate
-    before LIMIT.
+    The old shape computed ``rank() OVER (ORDER BY <distance>)`` in the same
+    scope as the LIMIT; window functions evaluate before LIMIT, so Postgres
+    computed the halfvec distance for every filtered chunk and could not use
+    a top-N sort (measured 3,938 ms on the largest class). With the LIMIT in
+    an inner subquery the plan becomes Limit -> Sort (exact top-N heapsort):
+    measured 113 ms, identical results.
+
+    Note: the HNSW index does NOT engage here — the document visibility
+    pre-filter blocks it without ``hnsw.iterative_scan`` (pgvector >= 0.8).
+    That is deliberate: the scan stays exact (recall 100%), and engaging the
+    index is deferred until class size demands it (see P3 in
+    docs/superpowers/specs/2026-06-09-halfvec-retrieval-speedup-design.md).
+    This inner ORDER BY <distance> LIMIT n shape is also the index-matchable
+    form, so flipping iterative_scan on later requires no query change.
     """
     distance = _halfvec_cosine_distance(query_embedding)
     inner = (
