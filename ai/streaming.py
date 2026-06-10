@@ -5,6 +5,7 @@ full object has arrived. Only handles a top-level string field; nested objects a
 searched. Decodes standard JSON escapes and never emits a partial escape sequence that
 straddles a chunk boundary.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,9 +23,9 @@ class JsonStringFieldStreamer:
 
     def __init__(self, field: str) -> None:
         self._needle = f'"{field}"'
-        self._buf = ""          # unconsumed raw tail (inside-value chars not yet safe to decode)
+        self._buf = ""  # unconsumed raw tail (inside-value chars not yet safe to decode)
         self._in_value = False  # have we entered the string value?
-        self._started = False   # have we located the field and its opening quote?
+        self._started = False  # have we located the field and its opening quote?
         self.complete = False
 
     def feed(self, chunk: str) -> str:
@@ -44,7 +45,7 @@ class JsonStringFieldStreamer:
             colon = rest.find(":")
             if colon == -1:
                 return ""
-            tail = rest[colon + 1:].lstrip()
+            tail = rest[colon + 1 :].lstrip()
             if not tail:
                 return ""
             if tail[0] != '"':
@@ -70,7 +71,7 @@ class JsonStringFieldStreamer:
                 if esc == "u":
                     if i + 6 > n:
                         break
-                    seq = b[i:i + 6]
+                    seq = b[i : i + 6]
                     out.append(json.loads('"' + seq + '"'))
                     i += 6
                     continue

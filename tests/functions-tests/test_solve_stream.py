@@ -1,4 +1,5 @@
 """solve_with_bundle_stream yields reasoning + token deltas, then a ProposedSolution."""
+
 from __future__ import annotations
 
 import types
@@ -17,12 +18,16 @@ def _fake_responses_stream(events, captured=None):
             if captured is not None:
                 captured.update(k)
             return iter(events)
+
     return types.SimpleNamespace(responses=_Responses())
 
 
 def test_stream_yields_reasoning_then_tokens_then_solution(monkeypatch):
-    json_pieces = ['{"steps": "Energy is ', 'conserved.", ',
-                   '"equations_used": [], "assumptions": [], "not_relevant": false}']
+    json_pieces = [
+        '{"steps": "Energy is ',
+        'conserved.", ',
+        '"equations_used": [], "assumptions": [], "not_relevant": false}',
+    ]
     events = [
         _evt("response.reasoning_summary_text.delta", delta="Identifying the concept. "),
         _evt("response.reasoning_summary_text.delta", delta="Checking S1. "),

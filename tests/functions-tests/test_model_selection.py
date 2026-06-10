@@ -1,4 +1,5 @@
 """Env-driven model selection for auxiliary LLM calls (keywords, snippet scoring)."""
+
 from __future__ import annotations
 
 import json
@@ -14,6 +15,7 @@ def _fake_chat_client(captured: dict, content: str = "{}"):
             msg = types.SimpleNamespace(content=content)
             choice = types.SimpleNamespace(message=msg)
             return types.SimpleNamespace(choices=[choice])
+
     chat = types.SimpleNamespace(completions=_Completions())
     return types.SimpleNamespace(chat=chat)
 
@@ -47,13 +49,23 @@ def test_snippet_scorer_default_model(monkeypatch):
     monkeypatch.delenv("CITATION_SCORER_MODEL", raising=False)
     monkeypatch.setenv("PARSER_MODEL", "sentinel-parser-model")
     captured: dict = {}
-    payload = json.dumps({
-        "relevance": 0.9, "directness": 0.8, "score": 0.85,
-        "context": "c", "answer": "a",
-    })
+    payload = json.dumps(
+        {
+            "relevance": 0.9,
+            "directness": 0.8,
+            "score": 0.85,
+            "context": "c",
+            "answer": "a",
+        }
+    )
     monkeypatch.setattr(mai, "_client", lambda: _fake_chat_client(captured, payload))
     snippet = types.SimpleNamespace(
-        citation_marker="[S1]", page=3, why="", text="Bernoulli", section_path="", id="s1",
+        citation_marker="[S1]",
+        page=3,
+        why="",
+        text="Bernoulli",
+        section_path="",
+        id="s1",
     )
     result = mai._score_and_answer_snippet("q?", snippet, 1.0, "bernoulli")
     assert captured["model"] == "gpt-4o"
@@ -65,7 +77,12 @@ def test_snippet_scorer_env_override(monkeypatch):
     captured: dict = {}
     monkeypatch.setattr(mai, "_client", lambda: _fake_chat_client(captured, "{}"))
     snippet = types.SimpleNamespace(
-        citation_marker="[S1]", page=None, why="", text="t", section_path="", id="s1",
+        citation_marker="[S1]",
+        page=None,
+        why="",
+        text="t",
+        section_path="",
+        id="s1",
     )
     mai._score_and_answer_snippet("q?", snippet, 1.0, "term")
     assert captured["model"] == "sentinel-scorer-model"

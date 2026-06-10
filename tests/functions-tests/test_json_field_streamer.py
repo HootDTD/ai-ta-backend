@@ -1,9 +1,8 @@
 """Tests for incremental extraction of a JSON string field from a growing buffer."""
+
 from __future__ import annotations
 
 import json
-
-import pytest
 
 from ai.streaming import JsonStringFieldStreamer
 
@@ -40,7 +39,7 @@ def test_escaped_quote_and_newline():
 
 
 def test_escape_split_across_chunk_boundary():
-    chunks = ['{"steps": "a', '\\', 'n', 'b"}']
+    chunks = ['{"steps": "a', "\\", "n", 'b"}']
     text, complete = _drain(chunks)
     assert text == "a\nb"
     assert complete is True

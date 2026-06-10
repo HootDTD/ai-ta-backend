@@ -1,4 +1,6 @@
--- 022_chunks_halfvec_hnsw.sql
+-- 023_chunks_halfvec_hnsw.sql
+-- (renumbered from 022 after merging staging, which claimed 022 for
+-- 022_enable_rls_stopgap.sql)
 -- RetrievalV2: make the chunk-level vector index reproducible from migrations.
 --
 -- 001_create_schema.py skips HNSW entirely for EMBEDDING_DIM > 2000 (it

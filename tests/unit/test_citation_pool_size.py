@@ -1,4 +1,5 @@
 """_citation_pool_size: one scoring wave by default, env-cappable."""
+
 from __future__ import annotations
 
 import pytest

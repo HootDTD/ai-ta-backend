@@ -4,17 +4,18 @@ If this ever reverts to raw `vector` distance, the query stops matching
 idx_aita_chunks_embedding_hnsw and the semantic scan goes from ~0.1s back to ~3.5s.
 Compile-only — no database required.
 """
+
 from __future__ import annotations
 
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.dialects import postgresql
 
-from database.models import AITAChunk, EMBEDDING_DIM
+from database.models import EMBEDDING_DIM, AITAChunk
 from retrieval.hybrid_search import (
-    _halfvec_cosine_distance,
-    _build_semantic_cte,
     _build_keyword_cte,
+    _build_semantic_cte,
+    _halfvec_cosine_distance,
 )
 
 pytestmark = pytest.mark.unit
@@ -25,9 +26,7 @@ def _sql(expr) -> str:
 
 
 def _compile_full(selectable) -> str:
-    return str(
-        select(selectable).compile(dialect=postgresql.dialect())
-    ).lower()
+    return str(select(selectable).compile(dialect=postgresql.dialect())).lower()
 
 
 def test_both_operands_cast_to_halfvec():
