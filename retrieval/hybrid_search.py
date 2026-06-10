@@ -44,6 +44,55 @@ def _halfvec_cosine_distance(query_embedding):
     )
 
 
+def _build_semantic_cte(query_embedding, base_conditions, n_results: int):
+    """Index-friendly semantic candidates CTE.
+
+    The inner subquery is exactly ``SELECT … ORDER BY <distance> LIMIT n`` —
+    the only query shape pgvector's HNSW scan matches. The rank() window runs
+    over the ≤n_results candidates only. Putting the window in the same scope
+    as the distance ORDER BY forces a full-table distance scan (measured
+    6.6s vs ~0.1s on the largest class) because window functions evaluate
+    before LIMIT.
+    """
+    distance = _halfvec_cosine_distance(query_embedding)
+    inner = (
+        select(AITAChunk.id.label("id"), distance.label("distance"))
+        .join(AITADocument, AITAChunk.document_id == AITADocument.id)
+        .where(*base_conditions)
+        .order_by(distance)
+        .limit(n_results)
+        .subquery("semantic_candidates")
+    )
+    return (
+        select(
+            inner.c.id,
+            func.rank().over(order_by=inner.c.distance).label("rank"),
+        )
+        .cte("semantic_search")
+    )
+
+
+def _build_keyword_cte(tsvector, tsquery, base_conditions, n_results: int):
+    """Index-friendly FTS candidates CTE (same inner-LIMIT-then-rank shape)."""
+    text_rank = func.ts_rank_cd(tsvector, tsquery)
+    inner = (
+        select(AITAChunk.id.label("id"), text_rank.label("text_rank"))
+        .join(AITADocument, AITAChunk.document_id == AITADocument.id)
+        .where(*base_conditions)
+        .where(tsvector.op("@@")(tsquery))
+        .order_by(text_rank.desc())
+        .limit(n_results)
+        .subquery("keyword_candidates")
+    )
+    return (
+        select(
+            inner.c.id,
+            func.rank().over(order_by=inner.c.text_rank.desc()).label("rank"),
+        )
+        .cte("keyword_search")
+    )
+
+
 class AITAHybridSearchRetriever:
     """Hybrid search over aita_chunks using pgvector cosine + PostgreSQL FTS, fused with RRF."""
 
@@ -78,36 +127,11 @@ class AITAHybridSearchRetriever:
         if material_kind:
             base_conditions.append(AITADocument.material_kind == material_kind)
 
-        # CTE 1: Semantic search (pgvector cosine distance, ascending = closer)
-        semantic_cte = (
-            select(
-                AITAChunk.id,
-                func.rank()
-                .over(order_by=_halfvec_cosine_distance(query_embedding))
-                .label("rank"),
-            )
-            .join(AITADocument, AITAChunk.document_id == AITADocument.id)
-            .where(*base_conditions)
-            .order_by(_halfvec_cosine_distance(query_embedding))
-            .limit(n_results)
-            .cte("semantic_search")
-        )
+        # CTE 1: Semantic search (HNSW-index-friendly: LIMIT inside, rank outside)
+        semantic_cte = _build_semantic_cte(query_embedding, base_conditions, n_results)
 
-        # CTE 2: Keyword search (PostgreSQL tsvector BM25-style ranking)
-        keyword_cte = (
-            select(
-                AITAChunk.id,
-                func.rank()
-                .over(order_by=func.ts_rank_cd(tsvector, tsquery).desc())
-                .label("rank"),
-            )
-            .join(AITADocument, AITAChunk.document_id == AITADocument.id)
-            .where(*base_conditions)
-            .where(tsvector.op("@@")(tsquery))
-            .order_by(func.ts_rank_cd(tsvector, tsquery).desc())
-            .limit(n_results)
-            .cte("keyword_search")
-        )
+        # CTE 2: Keyword search (PostgreSQL FTS, same shape)
+        keyword_cte = _build_keyword_cte(tsvector, tsquery, base_conditions, n_results)
 
         # Final query: FULL OUTER JOIN + RRF scoring
         # score = 1/(k + sem_rank) + 1/(k + kw_rank)
