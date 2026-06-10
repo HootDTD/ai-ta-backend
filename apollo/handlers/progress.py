@@ -1,4 +1,4 @@
-"""GET /apollo/progress/{student_id} — surface XP + level for the UI."""
+"""GET /apollo/progress/{user_id} — surface XP + level for the UI."""
 from __future__ import annotations
 
 from typing import Any, Dict
@@ -12,11 +12,11 @@ from apollo.persistence.progress_repo import load_progress
 async def handle_get_progress(
     *,
     db: AsyncSession,
-    student_id: str,
+    user_id: str,
 ) -> Dict[str, Any]:
-    row = await load_progress(db=db, student_id=student_id)
+    row = await load_progress(db=db, user_id=user_id)
     return {
-        "student_id": row.student_id,
+        "user_id": row.user_id,
         "xp_total": row.xp_total,
         "level": row.level,
         "title": title_for_level(row.level),

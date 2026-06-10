@@ -4,6 +4,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from apollo.conftest import TEST_SPACE_ID
 from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
     ApolloSession,
@@ -29,12 +30,13 @@ async def db():
 
 async def _mk_session(
     db: AsyncSession,
-    student_id: str,
+    user_id: str,
     *,
     status: str = SessionStatus.active.value,
 ) -> ApolloSession:
     s = ApolloSession(
-        student_id=student_id,
+        user_id=user_id,
+        search_space_id=TEST_SPACE_ID,
         concept_cluster_id="fluid_mechanics",
         status=status,
         phase=SessionPhase.TEACHING.value,
@@ -66,7 +68,7 @@ async def test_returns_false_when_no_prior_attempts(db):
 
     assert await has_prior_graded_attempt(
         db=db,
-        student_id="stu-1",
+        user_id="stu-1",
         problem_id="p1",
         exclude_attempt_id=current.id,
     ) is False
@@ -85,7 +87,7 @@ async def test_returns_true_when_prior_session_has_graded_attempt(db):
 
     assert await has_prior_graded_attempt(
         db=db,
-        student_id="stu-2",
+        user_id="stu-2",
         problem_id="p1",
         exclude_attempt_id=current.id,
     ) is True
@@ -102,7 +104,7 @@ async def test_ignores_other_students(db):
 
     assert await has_prior_graded_attempt(
         db=db,
-        student_id="stu-me",
+        user_id="stu-me",
         problem_id="p1",
         exclude_attempt_id=current.id,
     ) is False
@@ -119,7 +121,7 @@ async def test_ignores_other_problems(db):
 
     assert await has_prior_graded_attempt(
         db=db,
-        student_id="stu-3",
+        user_id="stu-3",
         problem_id="p1",
         exclude_attempt_id=current.id,
     ) is False
@@ -135,7 +137,7 @@ async def test_excludes_current_attempt_id(db):
 
     assert await has_prior_graded_attempt(
         db=db,
-        student_id="stu-4",
+        user_id="stu-4",
         problem_id="p1",
         exclude_attempt_id=current.id,
     ) is False
@@ -153,7 +155,7 @@ async def test_has_prior_graded_attempt_excludes_abandoned(db):
 
     result = await has_prior_graded_attempt(
         db=db,
-        student_id="stu-1",
+        user_id="stu-1",
         problem_id="p1",
         exclude_attempt_id=current.id,
     )

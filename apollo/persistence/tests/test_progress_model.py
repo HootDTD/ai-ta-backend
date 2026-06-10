@@ -47,7 +47,7 @@ async def test_student_progress_round_trip(session):
 
 
 @pytest.mark.asyncio
-async def test_student_progress_student_id_is_primary_key(session):
+async def test_student_progress_user_id_is_primary_key(session):
     session.add(StudentProgress(user_id=TEST_USER_ID))
     await session.commit()
 

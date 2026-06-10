@@ -20,17 +20,17 @@ from apollo.persistence.models import ApolloSession, ProblemAttempt
 async def has_prior_graded_attempt(
     *,
     db: AsyncSession,
-    student_id: str,
+    user_id: str,
     problem_id: str,
     exclude_attempt_id: int,
 ) -> bool:
-    """True iff another graded ProblemAttempt exists for this (student, problem)."""
+    """True iff another graded ProblemAttempt exists for this (user, problem)."""
     stmt = (
         select(func.count())
         .select_from(ProblemAttempt)
         .join(ApolloSession, ApolloSession.id == ProblemAttempt.session_id)
         .where(
-            ApolloSession.student_id == student_id,
+            ApolloSession.user_id == user_id,
             ProblemAttempt.problem_id == problem_id,
             ProblemAttempt.result.in_(
                 ("solved", "stuck", "skipped", "returned_to_hoot")

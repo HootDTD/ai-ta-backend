@@ -23,13 +23,13 @@ from apollo.overseer.xp import level_from_xp
 from apollo.persistence.models import StudentProgress
 
 
-async def load_progress(*, db: AsyncSession, student_id: str) -> StudentProgress:
+async def load_progress(*, db: AsyncSession, user_id: str) -> StudentProgress:
     row = (await db.execute(
-        select(StudentProgress).where(StudentProgress.student_id == student_id)
+        select(StudentProgress).where(StudentProgress.user_id == user_id)
     )).scalar_one_or_none()
     if row is not None:
         return row
-    row = StudentProgress(student_id=student_id, xp_total=0, level=1)
+    row = StudentProgress(user_id=user_id, xp_total=0, level=1)
     db.add(row)
     await db.commit()
     await db.refresh(row)
@@ -39,13 +39,13 @@ async def load_progress(*, db: AsyncSession, student_id: str) -> StudentProgress
 async def apply_xp(
     *,
     db: AsyncSession,
-    student_id: str,
+    user_id: str,
     xp_delta: int,
 ) -> Dict[str, Any]:
     if xp_delta < 0:
         raise ValueError(f"xp_delta must be non-negative; got {xp_delta}")
 
-    row = await load_progress(db=db, student_id=student_id)
+    row = await load_progress(db=db, user_id=user_id)
     xp_before = row.xp_total
     level_before = row.level
 
