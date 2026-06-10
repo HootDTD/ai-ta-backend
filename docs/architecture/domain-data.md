@@ -20,7 +20,7 @@ stub: false
 |------|------|
 | `database/models.py` | All SQLAlchemy ORM models (12 tables, pgvector `Vector(3072)` columns) plus `DocumentStatus` JSONB-state helper |
 | `database/session.py` | Async engine/session factory keyed **per event loop**, plus `run_async()` sync-to-async bridge over a daemon-thread loop |
-| `database/migrations/` | `001`–`003` are one-time Python scripts (schema create, Supabase REST seed, FAISS re-embed); `004`–`022` are raw SQL files applied manually / via Supabase MCP (NOT Alembic) |
+| `database/migrations/` | `001`–`003` are one-time Python scripts (schema create, Supabase REST seed, FAISS re-embed); `004`–`023` are raw SQL files applied manually / via Supabase MCP (NOT Alembic); `023_chunks_halfvec_hnsw.sql` codifies the HNSW expression index on `aita_chunks.embedding::halfvec(3072)` (idempotent `IF NOT EXISTS`) |
 | `chats/service.py` | Chat session/turn CRUD primitives + memory summarization (`build_memory_context`, `append_turn`, `refresh_memory_summary`, `serialize_chat_session`) |
 | `chats/routes.py` | `APIRouter` for `/chats` list/get/upsert/delete (sync endpoints bridging via `run_async`) |
 | `knowledge/manager.py` | `KnowledgeManager` — subject/store CRUD over `aita_search_spaces`/`aita_documents`, legacy FAISS index dirs under `knowledge/text-embeder/knowledge/`, and pgvector dual-write `_index_items_to_pgvector()` |
@@ -106,7 +106,7 @@ Mounted routers (in `server.py` ~line 645–686): `reports.ai_use.routes.router`
 ## Non-obvious conventions
 
 - **Two event loops, sync routes**: most endpoints are `def` (not `async def`) and wrap async DB work with `run_async()`. Never share one engine across loops — `database/session.py` keys engines by `id(loop)` to avoid "Future attached to a different loop".
-- **Migrations are not Alembic**: numbered files under `database/migrations/`; `001`–`003` are runnable Python one-offs, `004+` are raw SQL applied out-of-band (e.g. 022 was applied via Supabase MCP). No revision chain or downgrade.
+- **Migrations are not Alembic**: numbered files under `database/migrations/`; `001`–`003` are runnable Python one-offs, `004+` are raw SQL applied out-of-band (022 and 023 were applied via Supabase MCP). No revision chain or downgrade. Migration 023 (`023_chunks_halfvec_hnsw.sql`) codifies the `idx_aita_chunks_embedding_hnsw` HNSW expression index (`(embedding::halfvec(3072)) halfvec_cosine_ops`, m=16, ef_construction=64) that was previously hand-created; it is idempotent (`IF NOT EXISTS`) and safe to re-apply.
 - **RLS is enabled but unenforced for the backend** (migration 022): backend connects as table owner (exempt unless FORCE); authorization lives in app code (`_require_course_membership`, chat-ownership checks). `ai_use_reports` ownership is purely app-layer.
 - **Document status is JSONB**, not an enum column — compare with `DocumentStatus.is_state()`/`status["state"].astext`; teacher_weekly additionally uses an ad-hoc `{"state": "inactive"}` for week gating.
 - `reports/ai_use/models.py` deliberately uses Supabase REST, not the SQLAlchemy session — the only module in this domain doing so.

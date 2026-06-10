@@ -442,23 +442,29 @@ retrieve_for_question(query, keywords, search_space_id)
 +-----------------------------------------------------+
 | STEP 2: Hybrid Search (hybrid_search.py)             |
 |                                                      |
-|   CTE 1 - Semantic Search:                           |
-|   SELECT chunk.id,                                   |
-|          RANK() OVER (ORDER BY                       |
-|            chunk.embedding <=> query_vec)             |
-|   FROM aita_chunks                                   |
-|   WHERE document.search_space_id = ?                 |
-|     AND document.status->>'state' = 'ready'          |
-|   LIMIT top_k                                        |
+|   CTE 1 - Semantic Search (_build_semantic_cte):     |
+|   inner subquery semantic_candidates:                |
+|     SELECT chunk.id, distance                        |
+|     FROM aita_chunks                                 |
+|     WHERE document.search_space_id = ?               |
+|       AND document.status->>'state' = 'ready'        |
+|     ORDER BY embedding::halfvec <=> query_halfvec    |
+|     LIMIT top_k*5                                    |
+|   outer: rank() OVER (ORDER BY distance)             |
+|   (HNSW index engaged only if hnsw.iterative_scan;  |
+|    currently exact scan — recall 100%)               |
 |                                                      |
-|   CTE 2 - Keyword Search (PostgreSQL FTS):           |
-|   SELECT chunk.id,                                   |
-|          RANK() OVER (ORDER BY                       |
-|            ts_rank_cd(tsvector, tsquery))             |
-|   FROM aita_chunks                                   |
-|   WHERE to_tsvector(content) @@ plainto_tsquery(?)   |
-|     AND document.search_space_id = ?                 |
-|   LIMIT top_k                                        |
+|   CTE 2 - Keyword Search (_build_keyword_cte):       |
+|   inner subquery keyword_candidates:                 |
+|     SELECT chunk.id, ts_rank_cd(tsvec, tsquery)      |
+|     FROM aita_chunks                                 |
+|     WHERE to_tsvector(content) @@ plainto_tsquery(?) |
+|       AND document.search_space_id = ?               |
+|     ORDER BY ts_rank_cd DESC                         |
+|     LIMIT top_k*5                                    |
+|   outer: rank() OVER (ORDER BY ts_rank DESC)         |
+|   (Inner LIMIT before rank() → top-N heapsort:      |
+|    measured 3,938 ms → 113 ms on largest class)      |
 |                                                      |
 |   FUSION (Reciprocal Rank Fusion):                   |
 |   FULL OUTER JOIN semantic + keyword                  |
@@ -890,8 +896,14 @@ ADAPTIVE FORMATS:
 | Variable         | Where               | Purpose                   |
 +------------------+---------------------+---------------------------+
 | OPENAI_API_KEY   | backend .env        | All LLM & embedding calls |
-| PARSER_MODEL     | backend .env        | Question parsing (gpt-4o) |
+| PARSER_MODEL     | backend .env        | Parsing/scope/keywords (gpt-4o); does NOT drive scoring |
+| KEYWORD_MODEL    | backend .env        | Keyword extraction (gpt-4o; mini ~2x slower) |
+| CITATION_SCORER_MODEL | backend .env   | Snippet scoring (gpt-4o; no PARSER_MODEL fallback) |
+| CITATION_WORKERS | backend .env        | Scoring pool cap (24; >K_SEM → one wave) |
 | SOLVER_MODEL     | backend .env        | Answer generation (gpt-4o)|
+| PROMPT_CACHE_KEY | backend .env        | OpenAI prefix-cache key (aita-solver:<model>) |
+| OPENAI_SERVICE_TIER | backend .env     | Optional service tier for solver requests |
+| MAIN_VERBOSITY   | backend .env        | text.verbosity for streaming reasoning models |
 | VISION_MODEL     | backend .env        | Image transcription       |
 | REPORTS_MODEL    | backend .env        | Report gen (gpt-4o-mini)  |
 | EMBEDDING_MODEL  | backend .env        | text-embedding-3-large    |
