@@ -27,7 +27,8 @@ _ALLOWED_DIFFICULTIES = {"intro", "standard", "hard"}
 async def init_session_from_hoot(
     *,
     db: AsyncSession,
-    student_id: str,
+    user_id: str,
+    search_space_id: int,
     hoot_transcript: str,
     difficulty: str,
 ) -> Dict[str, Any]:
@@ -51,7 +52,7 @@ async def init_session_from_hoot(
     await db.execute(
         update(ApolloSession)
         .where(
-            ApolloSession.student_id == student_id,
+            ApolloSession.user_id == user_id,
             ApolloSession.status == SessionStatus.active.value,
         )
         .values(status=SessionStatus.ended.value)
@@ -59,7 +60,8 @@ async def init_session_from_hoot(
     await db.flush()
 
     session = ApolloSession(
-        student_id=student_id,
+        user_id=user_id,
+        search_space_id=search_space_id,
         concept_cluster_id=cluster_id,
         status=SessionStatus.active.value,
         phase=SessionPhase.TEACHING.value,
