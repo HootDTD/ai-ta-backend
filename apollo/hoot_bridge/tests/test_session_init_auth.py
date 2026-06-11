@@ -5,6 +5,7 @@ Decision note: the sibling test_session_init.py is module-level skip-marked
 without a full rewrite. Per the Task 4 spec this NEW module replaces it for
 the auth-scoping tests, while the legacy file is left untouched.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -46,6 +47,7 @@ _STUB_PROBLEM = Problem(
 # Shared mock helper
 # ---------------------------------------------------------------------------
 
+
 def _mock_inference_and_selection(monkeypatch) -> None:
     """Patch both external I/O calls (LLM inference + file-based problem selection)
     so tests are fully hermetic — no OpenAI key or apollo/subjects/ data files needed.
@@ -63,6 +65,7 @@ def _mock_inference_and_selection(monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 # DB fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest_asyncio.fixture
 async def db():
@@ -92,6 +95,7 @@ async def db():
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_init_session_creates_session_and_first_problem(db, monkeypatch):
@@ -142,9 +146,7 @@ async def test_init_session_ends_stale_active_session_for_same_user(db, monkeypa
 
     assert second["session_id"] != first["session_id"]
 
-    sessions = (
-        await db.execute(select(ApolloSession).order_by(ApolloSession.id))
-    ).scalars().all()
+    sessions = (await db.execute(select(ApolloSession).order_by(ApolloSession.id))).scalars().all()
     assert len(sessions) == 2
     assert sessions[0].id == first["session_id"]
     assert sessions[0].status == SessionStatus.ended.value

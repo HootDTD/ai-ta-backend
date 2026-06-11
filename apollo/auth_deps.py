@@ -10,6 +10,7 @@ is sync and drives its own event loop via run_async, which deadlocks inside
 async endpoints. These dependencies are natively async and reuse the same
 auth.py primitives.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -40,13 +41,9 @@ async def require_user(request: Request) -> AuthContext:
     except HTTPException:
         raise
     except RuntimeError as exc:  # missing SUPABASE_* config
-        raise HTTPException(
-            status_code=500, detail="Server auth configuration error"
-        ) from exc
+        raise HTTPException(status_code=500, detail="Server auth configuration error") from exc
     except requests.exceptions.RequestException as exc:  # GoTrue unreachable
-        raise HTTPException(
-            status_code=503, detail="Auth service unavailable"
-        ) from exc
+        raise HTTPException(status_code=503, detail="Auth service unavailable") from exc
 
 
 async def require_course_member(
@@ -68,9 +65,7 @@ async def require_course_member(
     # Defensive re-check: the return value of auto_enroll is not blindly
     # trusted; membership is re-verified from the DB to guard against future
     # drift in auto_enroll's contract.
-    if enrolled and await has_membership(
-        db, user_id=auth.user_id, search_space_id=search_space_id
-    ):
+    if enrolled and await has_membership(db, user_id=auth.user_id, search_space_id=search_space_id):
         return
     raise HTTPException(status_code=403, detail="Forbidden for this course")
 

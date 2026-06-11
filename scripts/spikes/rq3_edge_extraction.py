@@ -19,6 +19,7 @@ documented real utterance style ("Use bernulis equation ... use continuity",
 2026-06-09 handoff). Run from ai-ta-backend/:
   .venv/Scripts/python.exe scripts/spikes/rq3_edge_extraction.py
 """
+
 from __future__ import annotations
 
 import json
@@ -97,20 +98,39 @@ RESPONSE_SCHEMA = {
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["type", "confidence", "reuse_of", "symbolic",
-                                 "label", "variables", "applies_when",
-                                 "transformation", "concept", "meaning",
-                                 "term", "symbol", "action", "purpose"],
+                    "required": [
+                        "type",
+                        "confidence",
+                        "reuse_of",
+                        "symbolic",
+                        "label",
+                        "variables",
+                        "applies_when",
+                        "transformation",
+                        "concept",
+                        "meaning",
+                        "term",
+                        "symbol",
+                        "action",
+                        "purpose",
+                    ],
                     "properties": {
-                        "type": {"type": "string", "enum": [
-                            "equation", "condition", "simplification",
-                            "definition", "variable_mapping", "procedure_step"]},
+                        "type": {
+                            "type": "string",
+                            "enum": [
+                                "equation",
+                                "condition",
+                                "simplification",
+                                "definition",
+                                "variable_mapping",
+                                "procedure_step",
+                            ],
+                        },
                         "confidence": {"type": "number"},
                         "reuse_of": {"type": ["string", "null"]},
                         "symbolic": {"type": ["string", "null"]},
                         "label": {"type": ["string", "null"]},
-                        "variables": {"type": ["array", "null"],
-                                      "items": {"type": "string"}},
+                        "variables": {"type": ["array", "null"], "items": {"type": "string"}},
                         "applies_when": {"type": ["string", "null"]},
                         "transformation": {"type": ["string", "null"]},
                         "concept": {"type": ["string", "null"]},
@@ -129,8 +149,10 @@ RESPONSE_SCHEMA = {
                     "additionalProperties": False,
                     "required": ["edge_type", "from_ref", "to_ref"],
                     "properties": {
-                        "edge_type": {"type": "string", "enum": [
-                            "PRECEDES", "USES", "DEPENDS_ON", "SCOPES"]},
+                        "edge_type": {
+                            "type": "string",
+                            "enum": ["PRECEDES", "USES", "DEPENDS_ON", "SCOPES"],
+                        },
                         "from_ref": {"type": "string"},
                         "to_ref": {"type": "string"},
                     },
@@ -179,8 +201,14 @@ TRANSCRIPTS: dict[str, list[str]] = {
 
 
 def _entry_summary(entry: dict, node_id: str) -> str:
-    label = (entry.get("label") or entry.get("concept") or entry.get("term")
-             or entry.get("action") or entry.get("applies_when") or "")
+    label = (
+        entry.get("label")
+        or entry.get("concept")
+        or entry.get("term")
+        or entry.get("action")
+        or entry.get("applies_when")
+        or ""
+    )
     return f"{node_id} [{entry['type']}] {label[:60]}"
 
 
@@ -190,14 +218,23 @@ def replay_transcript(client: OpenAI, name: str, turns: list[str]) -> dict:
     node_degree: dict[str, int] = {}
     baseline_degree: dict[str, int] = {}  # only within-turn USES/PRECEDES
     stats = {
-        "transcript": name, "turns": len(turns), "calls": [],
-        "edges_total": 0, "edges_valid": 0, "edges_cross_turn": 0,
-        "edge_errors": [], "reuse_events": 0, "entries_total": 0,
+        "transcript": name,
+        "turns": len(turns),
+        "calls": [],
+        "edges_total": 0,
+        "edges_valid": 0,
+        "edges_cross_turn": 0,
+        "edge_errors": [],
+        "reuse_events": 0,
+        "entries_total": 0,
     }
 
     for ti, utterance in enumerate(turns):
-        context = ("EXISTING GRAPH:\n" + "\n".join(graph_lines)
-                   if graph_lines else "EXISTING GRAPH: (empty)")
+        context = (
+            "EXISTING GRAPH:\n" + "\n".join(graph_lines)
+            if graph_lines
+            else "EXISTING GRAPH: (empty)"
+        )
         t0 = time.perf_counter()
         resp = client.chat.completions.create(
             model=MODEL,
@@ -211,13 +248,16 @@ def replay_transcript(client: OpenAI, name: str, turns: list[str]) -> dict:
         latency = time.perf_counter() - t0
         payload = json.loads(resp.choices[0].message.content or "{}")
         usage = resp.usage
-        stats["calls"].append({
-            "turn": ti, "latency_s": round(latency, 2),
-            "prompt_tokens": usage.prompt_tokens,
-            "completion_tokens": usage.completion_tokens,
-            "entries": len(payload.get("entries", [])),
-            "edges": len(payload.get("edges", [])),
-        })
+        stats["calls"].append(
+            {
+                "turn": ti,
+                "latency_s": round(latency, 2),
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+                "entries": len(payload.get("entries", [])),
+                "edges": len(payload.get("edges", [])),
+            }
+        )
 
         # Register this turn's entries.
         turn_ids: dict[str, str] = {}  # "n0" -> node_id
@@ -243,8 +283,7 @@ def replay_transcript(client: OpenAI, name: str, turns: list[str]) -> dict:
                 refs.append(turn_ids.get(ref, ref))
             frm, to = refs
             if frm not in graph_nodes or to not in graph_nodes:
-                stats["edge_errors"].append(
-                    f"turn {ti}: unresolvable endpoint {edge}")
+                stats["edge_errors"].append(f"turn {ti}: unresolvable endpoint {edge}")
                 continue
             if frm == to:
                 stats["edge_errors"].append(f"turn {ti}: self-loop {edge}")
@@ -256,14 +295,12 @@ def replay_transcript(client: OpenAI, name: str, turns: list[str]) -> dict:
                 stats["edge_errors"].append(f"turn {ti}: bad type {edge}")
                 continue
             if pair not in EDGE_ALLOWED_PAIRS[et]:
-                stats["edge_errors"].append(
-                    f"turn {ti}: disallowed pair {et}:{pair} {edge}")
+                stats["edge_errors"].append(f"turn {ti}: disallowed pair {et}:{pair} {edge}")
                 continue
             stats["edges_valid"] += 1
             node_degree[frm] += 1
             node_degree[to] += 1
-            cross_turn = (not frm.startswith(f"t{ti}_")
-                          or not to.startswith(f"t{ti}_"))
+            cross_turn = not frm.startswith(f"t{ti}_") or not to.startswith(f"t{ti}_")
             if cross_turn:
                 stats["edges_cross_turn"] += 1
             # Baseline simulation: today's parser only creates within-turn
@@ -281,30 +318,36 @@ def replay_transcript(client: OpenAI, name: str, turns: list[str]) -> dict:
 
 def main() -> None:
     client = OpenAI()
-    results = [replay_transcript(client, name, turns)
-               for name, turns in TRANSCRIPTS.items()]
+    results = [replay_transcript(client, name, turns) for name, turns in TRANSCRIPTS.items()]
 
     out = Path(__file__).with_name("rq3_results.json")
     out.write_text(json.dumps(results, indent=2))
 
     print(f"\nmodel={MODEL}  transcripts={len(results)}")
-    print(f"{'transcript':28} {'nodes':>5} {'edges':>5} {'valid':>5} "
-          f"{'xturn':>5} {'orph(new)':>9} {'orph(base)':>10} {'reuse':>5}")
+    print(
+        f"{'transcript':28} {'nodes':>5} {'edges':>5} {'valid':>5} "
+        f"{'xturn':>5} {'orph(new)':>9} {'orph(base)':>10} {'reuse':>5}"
+    )
     for r in results:
-        print(f"{r['transcript']:28} {r['nodes_final']:>5} {r['edges_total']:>5} "
-              f"{r['edges_valid']:>5} {r['edges_cross_turn']:>5} "
-              f"{r['orphans_prototype']:>9} {r['orphans_baseline']:>10} "
-              f"{r['reuse_events']:>5}")
+        print(
+            f"{r['transcript']:28} {r['nodes_final']:>5} {r['edges_total']:>5} "
+            f"{r['edges_valid']:>5} {r['edges_cross_turn']:>5} "
+            f"{r['orphans_prototype']:>9} {r['orphans_baseline']:>10} "
+            f"{r['reuse_events']:>5}"
+        )
     all_calls = [c for r in results for c in r["calls"]]
     lat = [c["latency_s"] for c in all_calls]
     pt = sum(c["prompt_tokens"] for c in all_calls)
     ct = sum(c["completion_tokens"] for c in all_calls)
     ev = sum(r["edges_valid"] for r in results)
     et = sum(r["edges_total"] for r in results)
-    print(f"\ncalls={len(all_calls)}  latency median={statistics.median(lat):.2f}s "
-          f"p max={max(lat):.2f}s")
-    print(f"tokens prompt={pt} completion={ct} "
-          f"(~${(pt * 2.5 + ct * 10) / 1e6:.3f} at gpt-4o pricing)")
+    print(
+        f"\ncalls={len(all_calls)}  latency median={statistics.median(lat):.2f}s "
+        f"p max={max(lat):.2f}s"
+    )
+    print(
+        f"tokens prompt={pt} completion={ct} (~${(pt * 2.5 + ct * 10) / 1e6:.3f} at gpt-4o pricing)"
+    )
     print(f"edge validity: {ev}/{et} = {ev / et:.0%}" if et else "no edges")
     errs = [e for r in results for e in r["edge_errors"]]
     if errs:

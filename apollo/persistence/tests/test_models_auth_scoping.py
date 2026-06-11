@@ -1,4 +1,5 @@
 """Phase-1 auth retrofit: apollo models carry the house identity pattern."""
+
 from __future__ import annotations
 
 from apollo.persistence.models import ApolloSession, StudentProgress
