@@ -33,7 +33,7 @@ def _load_layout_module():
     if _LAYOUT_MODULE is not None:
         return _LAYOUT_MODULE
 
-    script_path = Path(__file__).resolve().parent / "text-embeder" / "layout_multimodal_embedder.py"
+    script_path = Path(__file__).resolve().parent.parent / "text-embeder" / "layout_multimodal_embedder.py"
     spec = spec_from_file_location("backend_layout_embedder", str(script_path))
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to import layout embedder from {script_path}")

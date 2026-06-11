@@ -10,7 +10,7 @@ related:
   - shared/supabase
   - shared/security
   - ai-ta-backend/rag-pipeline
-last_verified: 2026-06-10
+last_verified: 2026-06-11
 stub: false
 ---
 
@@ -95,7 +95,7 @@ Mounted routers (in `server.py` ~line 645–686): `reports.ai_use.routes.router`
 3. **Teacher upload (async job queue)** — `POST /teacher/upload` → `enqueue_upload_by_search_space`: validate (week 1..16, kind notes|slides, PDF exists), upload bytes to Supabase Storage bucket `teacher-weekly-uploads`, insert `TeacherUpload(status=queued)` + `TeacherUploadJob(state=queued)`, return 202. Worker (`teacher_upload_worker.py`) polls `_claim_upload_job_async` — `FOR UPDATE SKIP LOCKED` claim with a lease (`TEACHER_UPLOAD_JOB_LEASE_SECONDS`, default 900s) → downloads PDF → `TeacherPDFIngestor.ingest` (native PyMuPDF text; per-page heuristics — low text / image-dominant / equation-like — trigger Mathpix OCR; page PNGs stored to `teacher-weekly-pages` bucket) → `_index_existing_upload_async`: `AITAIndexingService` indexes into `aita_documents`/`aita_chunks`, prior same-week/kind uploads marked `superseded` and their docs set `inactive`, upload set `ready` with `doc_id`, then `_sync_week_activation` flips doc status so only `is_latest` ready uploads with `week <= current_week` are `ready`. Failures: terminal-error pattern match or `attempt_count >= max_retries (3)` → `failed`; else re-queued.
 4. **Week change** — `POST /teacher/weeks/current` → `set_current_week_by_search_space` → updates `TeacherCourse.current_week` and re-runs `_sync_week_activation` (bulk `UPDATE aita_documents.status` between `{"state":"inactive"}` and ready), which is how retrieval sees only released material.
 5. **AI-use report generation** — `POST /reports/ai-use/{chat_id}`: ownership check → `build_evidence_pack` (loader = `serialize_chat_session` scoped to the user; redact → excerpt → hash prompts → token-budget truncation) → `generate_report` (OpenAI; `TEST_FAKE_OPENAI=1` gives an offline double) → `create_report` persists markdown/JSON-LD to `ai_use_reports` via PostgREST. `GET .../{report_id}.pdf` re-renders markdown with WeasyPrint on each request (PDFs are not stored).
-6. **Knowledge CRUD** — `GET /knowledge/subjects|stores` read `aita_search_spaces` + `aita_documents` (store entries are synthesized from `document_metadata.index_path`/`priority`). `POST /knowledge/materials` runs the legacy layout embedder (`knowledge/text-embeder/layout_multimodal_embedder.py`, dynamically imported) producing FAISS+SQLite artifacts on disk, then dual-writes chunks into pgvector via `_index_items_to_pgvector` (failures logged, never raised). `POST /knowledge/stores` registers an existing index dir as an `AITADocument` shell row.
+6. **Knowledge CRUD** — `GET /knowledge/subjects|stores` read `aita_search_spaces` + `aita_documents` (store entries are synthesized from `document_metadata.index_path`/`priority`). `POST /knowledge/materials` runs the legacy layout embedder (repo-root `text-embeder/layout_multimodal_embedder.py`, dynamically imported by `_load_layout_module`) producing FAISS+SQLite artifacts on disk, then dual-writes chunks into pgvector via `_index_items_to_pgvector` (failures logged, never raised). `POST /knowledge/stores` registers an existing index dir as an `AITADocument` shell row.
 
 ## Key dependencies
 
