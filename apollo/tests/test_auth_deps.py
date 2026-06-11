@@ -5,6 +5,7 @@ membership logic, not GoTrue token validation (auth.py owns that).
 """
 from __future__ import annotations
 
+import requests
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException, Request
@@ -104,3 +105,56 @@ async def test_member_check_passes_with_membership(db, monkeypatch):
         auth=AuthContext(user_id=TEST_USER_ID, access_token="tok"),
         search_space_id=TEST_SPACE_ID,
     )  # no raise
+
+
+# ---------------------------------------------------------------------------
+# 401 / 500 / 503 path tests for require_user (Fix I-3 / I-4)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_require_user_propagates_401(monkeypatch):
+    """resolve_auth_context raises 401 → require_user re-raises it unchanged."""
+    def _raise_401(_request):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    monkeypatch.setattr(deps, "resolve_auth_context", _raise_401)
+    with pytest.raises(HTTPException) as exc:
+        await deps.require_user(_fake_request())
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_require_user_config_error_returns_500(monkeypatch):
+    """resolve_auth_context raises RuntimeError → require_user returns 500."""
+    def _raise_runtime(_request):
+        raise RuntimeError("missing config")
+
+    monkeypatch.setattr(deps, "resolve_auth_context", _raise_runtime)
+    with pytest.raises(HTTPException) as exc:
+        await deps.require_user(_fake_request())
+    assert exc.value.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_require_user_gotrue_outage_returns_503(monkeypatch):
+    """resolve_auth_context raises requests.ConnectionError → require_user returns 503."""
+    def _raise_conn(_request):
+        raise requests.exceptions.ConnectionError()
+
+    monkeypatch.setattr(deps, "resolve_auth_context", _raise_conn)
+    with pytest.raises(HTTPException) as exc:
+        await deps.require_user(_fake_request())
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_session_owner_unauthenticated_401_before_db(db, monkeypatch):
+    """Token gate fires (401) before ownership DB lookup."""
+    def _raise_401(_request):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    monkeypatch.setattr(deps, "resolve_auth_context", _raise_401)
+    sid = await _make_session(db, TEST_USER_ID)
+    with pytest.raises(HTTPException) as exc:
+        await deps.require_session_owner(sid, _fake_request(), db)
+    assert exc.value.status_code == 401

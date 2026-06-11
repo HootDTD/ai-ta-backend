@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 
+import requests
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +43,10 @@ async def require_user(request: Request) -> AuthContext:
         raise HTTPException(
             status_code=500, detail="Server auth configuration error"
         ) from exc
+    except requests.exceptions.RequestException as exc:  # GoTrue unreachable
+        raise HTTPException(
+            status_code=503, detail="Auth service unavailable"
+        ) from exc
 
 
 async def require_course_member(
@@ -60,6 +65,9 @@ async def require_course_member(
     enrolled = await auto_enroll_student_membership(
         db, user_id=auth.user_id, search_space_id=search_space_id
     )
+    # Defensive re-check: the return value of auto_enroll is not blindly
+    # trusted; membership is re-verified from the DB to guard against future
+    # drift in auto_enroll's contract.
     if enrolled and await has_membership(
         db, user_id=auth.user_id, search_space_id=search_space_id
     ):
