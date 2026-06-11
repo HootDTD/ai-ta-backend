@@ -94,7 +94,7 @@ async def test_returns_true_when_prior_session_has_graded_attempt(db):
 
 
 @pytest.mark.asyncio
-async def test_ignores_other_students(db):
+async def test_ignores_other_users(db):
     sess_other = await _mk_session(db, "stu-other")
     await _mk_attempt(db, session_id=sess_other.id, problem_id="p1", result="solved")
 
@@ -145,7 +145,7 @@ async def test_excludes_current_attempt_id(db):
 
 @pytest.mark.asyncio
 async def test_has_prior_graded_attempt_excludes_abandoned(db):
-    # Previous attempt was abandoned (student switched problems mid-teach).
+    # Previous attempt was abandoned (user switched problems mid-teach).
     sess_a = await _mk_session(db, "stu-1", status=SessionStatus.ended.value)
     await _mk_attempt(db, session_id=sess_a.id, problem_id="p1", result="abandoned")
     # Current attempt on same problem, not yet graded.

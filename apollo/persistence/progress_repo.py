@@ -1,7 +1,7 @@
 """Repository for apollo_student_progress rows.
 
 Two public functions:
-  - load_progress: return the student's progress row, creating a default
+  - load_progress: return the user's progress row, creating a default
     (0 XP, level 1) row if missing.
   - apply_xp: add xp_delta, recompute level, stamp last_level_up_at on
     level change, and return a before/after summary suitable for the

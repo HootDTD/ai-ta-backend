@@ -1,9 +1,9 @@
 """Attempt-history queries used by the XP awarder.
 
-A 're-attempt' for XP purposes is any Done event on a problem the student
+A 're-attempt' for XP purposes is any Done event on a problem the user
 has previously been graded on — across all their sessions. We detect it
 by looking for any other ProblemAttempt row (joined through ApolloSession
-to the student_id) for the same problem_id whose `result` is a graded
+to the user_id) for the same problem_id whose `result` is a graded
 terminal value (`solved`, `stuck`, `skipped`, `returned_to_hoot`) —
 `abandoned` is excluded because it represents a mid-problem switch, not a
 completed grading. The current attempt id is excluded so a within-session

@@ -82,9 +82,11 @@ isolation depends on handlers filtering by `search_space_id` after
 
 ## Known gaps (do not silently rely on these being safe)
 
-- **`/apollo/*` endpoints perform no auth.** `apollo/api.py` takes `student_id` from the
-  request body (`POST /apollo/sessions/from_hoot`) and never calls `resolve_auth_context`
-  or membership checks. Any caller can act as any student on the Apollo subsystem.
+- **`/apollo/*` is authenticated as of migration 023 / Phase 1.** All routes call
+  `resolve_auth_context` (run off the event loop via `asyncio.to_thread`). Session-scoped
+  routes are owner-gated via `apollo/auth_deps.require_session_owner`; session creation
+  is membership-gated via `require_course_member`. Identity never comes from the request
+  body — `student_id` was removed from all Apollo request schemas in migration 023.
 - Tokens live in `localStorage` (XSS-readable), not httpOnly cookies.
 - Token-validation cache means a revoked Supabase session stays valid backend-side for up
   to 60s.
@@ -116,7 +118,7 @@ When touching auth, RLS, schema, or any endpoint that reads course data:
       022 stopgap invariant: anon key blocked by default) and, if PostgREST access is
       intended, explicit policies.
 - [ ] No service-role key or `SUPABASE_DB_URL` in UI code, client bundles, or logs.
-- [ ] If touching `/apollo/*`, note the no-auth gap above — don't extend the
-      body-supplied-identity pattern to new endpoints.
+- [ ] If touching `/apollo/*`, preserve the auth_deps gates — identity comes from the
+      token only (`require_user` / `require_session_owner` / `require_course_member`).
 - [ ] Mirror schema/RLS changes to both test (`hjevtxdtrkxjcaaexdxt`) and prod
       (`uduxdniieeqbljtwocxy`) and commit the numbered SQL file (see shared/supabase).
