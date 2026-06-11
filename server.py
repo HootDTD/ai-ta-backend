@@ -248,6 +248,9 @@ class TeacherCourseOut(BaseModel):
     slug: str
     current_week: int
     weeks: List[TeacherWeekOut]
+    # Course-wide textbook (not pinned to a week). Always present; empty section
+    # when no textbook has been uploaded.
+    textbook: TeacherSectionOut
 
 
 class TeacherCurrentWeekIn(BaseModel):
@@ -295,12 +298,15 @@ def _serialize_course_payload(payload: Dict[str, Any]) -> TeacherCourseOut:
         slides = _serialize_section(block.get("slides"))
         weeks_out.append(TeacherWeekOut(week=week_num, notes=notes, slides=slides))
     weeks_out.sort(key=lambda w: w.week)
+    # Tolerate payloads without a textbook key — serialize to an empty section.
+    textbook = _serialize_section(payload.get("textbook"))
     return TeacherCourseOut(
         search_space_id=int(payload.get("search_space_id", 0) or 0),
         course=str(payload.get("course", "")),
         slug=str(payload.get("slug", "")),
         current_week=int(payload.get("current_week", 1) or 1),
         weeks=weeks_out,
+        textbook=textbook,
     )
 
 
