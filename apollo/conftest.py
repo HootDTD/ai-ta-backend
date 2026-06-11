@@ -11,6 +11,15 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+# Phase-1 auth retrofit: SQLite + UUID(as_uuid=False) binds must be valid
+# UUID strings. Tests use these constants instead of "stu-1"-style ids.
+# NOTE: Use UUIDs with non-zero leading hex digits so SQLite does not
+# interpret them as numeric literals (e.g. "00000000-..." could be read
+# as 0.0 in SQLite's numeric affinity).
+TEST_USER_ID = "a0000000-0000-4000-8000-000000000001"
+TEST_USER_ID_2 = "b0000000-0000-4000-8000-000000000002"
+TEST_SPACE_ID = 1  # integer FK to aita_search_spaces; SQLite tests don't enforce the FK
+
 # Load .env once so live tests see NEO4J_*. dotenv is in requirements.
 try:
     from dotenv import load_dotenv

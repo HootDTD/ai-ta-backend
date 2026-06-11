@@ -1,0 +1,225 @@
+[
+  {
+    "transcript": "T1_faithful_multiturn",
+    "turns": 4,
+    "calls": [
+      {
+        "turn": 0,
+        "latency_s": 7.29,
+        "prompt_tokens": 863,
+        "completion_tokens": 186,
+        "entries": 2,
+        "edges": 1
+      },
+      {
+        "turn": 1,
+        "latency_s": 3.56,
+        "prompt_tokens": 909,
+        "completion_tokens": 222,
+        "entries": 2,
+        "edges": 1
+      },
+      {
+        "turn": 2,
+        "latency_s": 2.82,
+        "prompt_tokens": 903,
+        "completion_tokens": 216,
+        "entries": 2,
+        "edges": 3
+      },
+      {
+        "turn": 3,
+        "latency_s": 2.88,
+        "prompt_tokens": 933,
+        "completion_tokens": 235,
+        "entries": 2,
+        "edges": 4
+      }
+    ],
+    "edges_total": 9,
+    "edges_valid": 9,
+    "edges_cross_turn": 5,
+    "edge_errors": [],
+    "reuse_events": 0,
+    "entries_total": 8,
+    "nodes_final": 8,
+    "orphans_prototype": 0,
+    "orphans_baseline": 6
+  },
+  {
+    "transcript": "T2_typos_terse",
+    "turns": 3,
+    "calls": [
+      {
+        "turn": 0,
+        "latency_s": 2.55,
+        "prompt_tokens": 850,
+        "completion_tokens": 166,
+        "entries": 2,
+        "edges": 1
+      },
+      {
+        "turn": 1,
+        "latency_s": 3.38,
+        "prompt_tokens": 896,
+        "completion_tokens": 208,
+        "entries": 2,
+        "edges": 1
+      },
+      {
+        "turn": 2,
+        "latency_s": 2.11,
+        "prompt_tokens": 888,
+        "completion_tokens": 210,
+        "entries": 2,
+        "edges": 3
+      }
+    ],
+    "edges_total": 5,
+    "edges_valid": 2,
+    "edges_cross_turn": 0,
+    "edge_errors": [
+      "turn 1: disallowed pair SCOPES:('condition', 'procedure_step') {'edge_type': 'SCOPES', 'from_ref': 'n1', 'to_ref': 't0_n0'}",
+      "turn 2: disallowed pair USES:('procedure_step', 'procedure_step') {'edge_type': 'USES', 'from_ref': 'n0', 'to_ref': 't0_n1'}",
+      "turn 2: disallowed pair USES:('procedure_step', 'procedure_step') {'edge_type': 'USES', 'from_ref': 'n1', 'to_ref': 't0_n0'}"
+    ],
+    "reuse_events": 1,
+    "entries_total": 6,
+    "nodes_final": 5,
+    "orphans_prototype": 1,
+    "orphans_baseline": 1
+  },
+  {
+    "transcript": "T3_late_conditions",
+    "turns": 4,
+    "calls": [
+      {
+        "turn": 0,
+        "latency_s": 2.08,
+        "prompt_tokens": 865,
+        "completion_tokens": 104,
+        "entries": 1,
+        "edges": 0
+      },
+      {
+        "turn": 1,
+        "latency_s": 2.57,
+        "prompt_tokens": 866,
+        "completion_tokens": 204,
+        "entries": 3,
+        "edges": 0
+      },
+      {
+        "turn": 2,
+        "latency_s": 1.44,
+        "prompt_tokens": 905,
+        "completion_tokens": 108,
+        "entries": 1,
+        "edges": 1
+      },
+      {
+        "turn": 3,
+        "latency_s": 2.34,
+        "prompt_tokens": 911,
+        "completion_tokens": 103,
+        "entries": 1,
+        "edges": 1
+      }
+    ],
+    "edges_total": 2,
+    "edges_valid": 2,
+    "edges_cross_turn": 2,
+    "edge_errors": [],
+    "reuse_events": 0,
+    "entries_total": 6,
+    "nodes_final": 6,
+    "orphans_prototype": 3,
+    "orphans_baseline": 6
+  },
+  {
+    "transcript": "T4_definitions_first",
+    "turns": 3,
+    "calls": [
+      {
+        "turn": 0,
+        "latency_s": 2.07,
+        "prompt_tokens": 857,
+        "completion_tokens": 147,
+        "entries": 2,
+        "edges": 0
+      },
+      {
+        "turn": 1,
+        "latency_s": 2.15,
+        "prompt_tokens": 877,
+        "completion_tokens": 189,
+        "entries": 2,
+        "edges": 1
+      },
+      {
+        "turn": 2,
+        "latency_s": 3.14,
+        "prompt_tokens": 926,
+        "completion_tokens": 319,
+        "entries": 3,
+        "edges": 3
+      }
+    ],
+    "edges_total": 4,
+    "edges_valid": 4,
+    "edges_cross_turn": 1,
+    "edge_errors": [],
+    "reuse_events": 0,
+    "entries_total": 7,
+    "nodes_final": 7,
+    "orphans_prototype": 2,
+    "orphans_baseline": 4
+  },
+  {
+    "transcript": "T5_duplicates_and_filler",
+    "turns": 4,
+    "calls": [
+      {
+        "turn": 0,
+        "latency_s": 2.07,
+        "prompt_tokens": 880,
+        "completion_tokens": 137,
+        "entries": 1,
+        "edges": 0
+      },
+      {
+        "turn": 1,
+        "latency_s": 1.43,
+        "prompt_tokens": 856,
+        "completion_tokens": 72,
+        "entries": 1,
+        "edges": 0
+      },
+      {
+        "turn": 2,
+        "latency_s": 2.35,
+        "prompt_tokens": 876,
+        "completion_tokens": 197,
+        "entries": 2,
+        "edges": 1
+      },
+      {
+        "turn": 3,
+        "latency_s": 2.77,
+        "prompt_tokens": 944,
+        "completion_tokens": 211,
+        "entries": 2,
+        "edges": 3
+      }
+    ],
+    "edges_total": 4,
+    "edges_valid": 4,
+    "edges_cross_turn": 3,
+    "edge_errors": [],
+    "reuse_events": 1,
+    "entries_total": 6,
+    "nodes_final": 5,
+    "orphans_prototype": 0,
+    "orphans_baseline": 3
+  }
+]

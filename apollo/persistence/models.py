@@ -24,7 +24,7 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
 from database.models import Base
@@ -126,7 +126,15 @@ class ApolloSession(Base):
     __tablename__ = "apollo_sessions"
 
     id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
-    student_id = Column(Text, nullable=False, index=True)
+    # Phase-1 auth retrofit: real Supabase identity + course scoping (the
+    # classroom-isolation invariant). Mirrors course_memberships' types.
+    user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     # Legacy (TEXT, hardcoded mapping in problem_selector). Kept during the
     # migration window for backward compatibility while seeded sessions
     # exist; new sessions populate concept_id and ignore this column.
@@ -199,8 +207,8 @@ class ProblemAttempt(Base):
 
 
 Index(
-    "ix_apollo_sessions_unique_active_per_student",
-    ApolloSession.student_id,
+    "ix_apollo_sessions_unique_active_per_user",
+    ApolloSession.user_id,
     unique=True,
     postgresql_where=(ApolloSession.status == "active"),
     sqlite_where=(ApolloSession.status == "active"),
@@ -210,7 +218,7 @@ Index(
 class StudentProgress(Base):
     __tablename__ = "apollo_student_progress"
 
-    student_id = Column(Text, primary_key=True)
+    user_id = Column(UUID(as_uuid=False), primary_key=True)
     xp_total = Column(Integer, nullable=False, default=0)
     level = Column(Integer, nullable=False, default=1)
     last_level_up_at = Column(TIMESTAMP(timezone=True), nullable=True)

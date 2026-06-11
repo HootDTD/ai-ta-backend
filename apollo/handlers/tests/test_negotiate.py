@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.errors import InvalidPhaseError, KGEntryNotFoundError
 from apollo.handlers.negotiate import (
     ChallengeRequest,
@@ -176,7 +177,7 @@ async def db():
 @pytest_asyncio.fixture
 async def session(db: AsyncSession):
     s = ApolloSession(
-        student_id="stu-1", concept_cluster_id="continuity",
+        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_cluster_id="continuity",
         status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
     )
     db.add(s)
@@ -247,7 +248,7 @@ async def test_challenge_invalid_phase_when_no_attempt(db, neo):
     """Sessions with no ProblemAttempt — student hasn't started a problem
     yet — get InvalidPhaseError. The exception handler maps to 409."""
     s = ApolloSession(
-        student_id="stu-1", concept_cluster_id="x",
+        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_cluster_id="x",
         status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
     )
     db.add(s); await db.commit(); await db.refresh(s)

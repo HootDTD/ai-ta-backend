@@ -210,7 +210,7 @@ a rolled-back DB — both green locally and in CI's Postgres service.
 | 2.3 Composite setup action | `.github/actions/setup/action.yml`: `setup-uv` (cache) + `uv sync --locked`. DRY across jobs. |
 | 2.4 `ci.yml` (PR gate) | Parallel jobs `quality` (ruff+mypy), `unit` (matrix 3.11/3.12, `pytest -m unit -n auto --cov`), `integration` (`services: pgvector/pgvector:pg16`, `alembic upgrade head`, `pytest -m integration -n auto`), then a `ci-passed` aggregation job (`if: always()`, checks all `needs.*.result`). `permissions: {}` top-level; `concurrency` with `cancel-in-progress` PR-only; `paths-ignore` for docs. |
 | 2.5 `nightly.yml` | `schedule: cron '0 6 * * *'` + `workflow_dispatch`: full suite incl. e2e, strict `--cov-fail-under`, `pip-audit`, RAG eval. |
-| 2.6 Coverage gate | Project floor **non-blocking, ratcheted** (`target: auto`, no >1% regression); **patch coverage ≥80% on new code blocking** (diff-cover or Codecov `patch.target`). Start project floor at the measured baseline, never let it drop. |
+| 2.6 Coverage gate | Project floor **non-blocking, ratcheted** (`target: auto`, no >1% regression); **patch coverage ≥95% on new code blocking** (diff-cover or Codecov `patch.target`; started at 80%, raised to 95% on 2026-06-11 as workspace-wide strict rule). Start project floor at the measured baseline, never let it drop. |
 | 2.7 Branch protection | Rulesets on `main`/`staging`/`production`: required check = `ci-passed`, reviews per §3, linear history, no force-push. Configure via `gh api .../rulesets` (IaC-friendly). |
 | 2.8 Environments + secrets | Three GH Environments; move prod secrets into `production` env scope; verify plan tier for required-reviewer support (else manual-approval fallback). |
 | 2.9 Supply-chain hygiene | SHA-pin all actions with `# vX.Y.Z` comments; `dependabot.yml` for `github-actions` + `pip`/`uv`; least-privilege `permissions:` per job. |
@@ -218,7 +218,7 @@ a rolled-back DB — both green locally and in CI's Postgres service.
 | 2.11 Dry-run | Push one trivial feature through `feature → main → staging → production` to prove the gates and promotion flow before relying on it. |
 
 **Exit criterion:** a PR to `staging` runs lint+type+unit+integration against real Postgres,
-blocks on red, blocks on <80% patch coverage, and the promotion chain works end-to-end.
+blocks on red, blocks on <95% patch coverage, and the promotion chain works end-to-end.
 
 ---
 
@@ -396,7 +396,7 @@ jobs:
       - uses: ./.github/actions/setup
       - run: uv run alembic upgrade head      # or create_all in fixture
       - run: uv run pytest -m integration -n auto --cov=. --cov-report=xml
-      - run: uv run diff-cover coverage.xml --compare-branch=origin/staging --fail-under=80
+      - run: uv run diff-cover coverage.xml --compare-branch=origin/staging --fail-under=95
   ci-passed:
     if: always()
     needs: [quality, unit, integration]
@@ -465,7 +465,7 @@ async def db_session(engine):
 - [ ] `pytest` runs clean — 0 errors, 0 silent skips; every test either runs or is
       explicitly + traceably quarantined.
 - [ ] CI gates for real: red suite blocks merge; PR CI < 5 min; integration runs on real
-      pgvector; patch coverage ≥80% enforced; project floor ratcheted from baseline.
+      pgvector; patch coverage ≥95% enforced; project floor ratcheted from baseline.
 - [ ] `staging` branch exists with its own Actions; `feature→main→staging→production`
       promotion proven end-to-end; branch protection + environments configured.
 - [ ] Every external boundary has happy-path + failure integration coverage.

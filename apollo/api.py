@@ -1,4 +1,7 @@
-"""Apollo FastAPI router. Endpoints stubbed to 501 until implementations land.
+"""Apollo FastAPI router. Every endpoint requires Supabase bearer auth (see
+apollo/auth_deps.py). Session-scoped routes are owner-gated via
+require_session_owner; session creation is membership-gated via
+require_course_member.
 
 Mounted at /apollo in server.py. Each named error class from apollo.errors
 is registered with an exception handler that surfaces the error as a
@@ -13,6 +16,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.auth_deps import require_course_member, require_session_owner, require_user
+from auth import AuthContext
 from apollo.errors import (
     ApolloError,
     CoverageGradingError,
@@ -70,7 +75,7 @@ router = APIRouter(prefix="/apollo", tags=["apollo"])
 
 
 class FromHootRequest(BaseModel):
-    student_id: str
+    search_space_id: int
     hoot_transcript: str
     # Hoot→Apollo handoff starts at 'intro' by default (see session_init
     # docstring). Optional so the one-click "Teach Apollo" button need not
@@ -89,21 +94,29 @@ class NextRequest(BaseModel):
 @router.post("/sessions/from_hoot")
 async def session_from_hoot(
     body: FromHootRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    auth = await require_user(request)
+    await require_course_member(db=db, auth=auth, search_space_id=body.search_space_id)
     return await init_session_from_hoot(
         db=db,
-        student_id=body.student_id,
+        user_id=auth.user_id,
+        search_space_id=body.search_space_id,
         hoot_transcript=body.hoot_transcript,
         difficulty=body.difficulty,
     )
 
 
+# `auth` is injected for its gate side-effect (401/403/404 via
+# require_session_owner). Handlers don't need the identity — ownership
+# is the only check required at this layer.
 @router.get("/sessions/{session_id}")
 async def get_session(
     session_id: int,
     db: AsyncSession = Depends(get_db_session),
     neo: Neo4jClient = Depends(get_neo4j_client),
+    auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_get_session(db=db, neo=neo, session_id=session_id)
 
@@ -114,6 +127,7 @@ async def chat(
     body: ChatRequest,
     db: AsyncSession = Depends(get_db_session),
     neo: Neo4jClient = Depends(get_neo4j_client),
+    auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_chat(db=db, neo=neo, session_id=session_id, message=body.message)
 
@@ -123,6 +137,7 @@ async def done(
     session_id: int,
     db: AsyncSession = Depends(get_db_session),
     neo: Neo4jClient = Depends(get_neo4j_client),
+    auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_done(db=db, neo=neo, session_id=session_id)
 
@@ -131,6 +146,7 @@ async def done(
 async def retry(
     session_id: int,
     db: AsyncSession = Depends(get_db_session),
+    auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_retry(db=db, session_id=session_id)
 
@@ -140,6 +156,7 @@ async def next_problem(
     session_id: int,
     body: NextRequest,
     db: AsyncSession = Depends(get_db_session),
+    auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     from apollo.handlers.next import handle_next
     return await handle_next(db=db, session_id=session_id, difficulty=body.difficulty)
@@ -150,6 +167,7 @@ async def restart_problem(
     session_id: int,
     db: AsyncSession = Depends(get_db_session),
     neo: Neo4jClient = Depends(get_neo4j_client),
+    auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     from apollo.handlers.restart_problem import handle_restart_problem
     return await handle_restart_problem(db=db, neo=neo, session_id=session_id)
@@ -160,16 +178,18 @@ async def end(
     session_id: int,
     db: AsyncSession = Depends(get_db_session),
     neo: Neo4jClient = Depends(get_neo4j_client),
+    auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_end(db=db, neo=neo, session_id=session_id)
 
 
-@router.get("/progress/{student_id}")
+@router.get("/progress")
 async def progress(
-    student_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    return await handle_get_progress(db=db, student_id=student_id)
+    auth = await require_user(request)
+    return await handle_get_progress(db=db, user_id=auth.user_id)
 
 
 # ----------------------------------------------------------------------
@@ -183,6 +203,7 @@ async def negotiate_challenge(
     body: ChallengeRequest,
     db: AsyncSession = Depends(get_db_session),
     neo: Neo4jClient = Depends(get_neo4j_client),
+    auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_challenge(
         db=db, neo=neo, session_id=session_id, entry_id=entry_id, body=body,
@@ -196,6 +217,7 @@ async def negotiate_paraphrase(
     body: ParaphraseRequest,
     db: AsyncSession = Depends(get_db_session),
     neo: Neo4jClient = Depends(get_neo4j_client),
+    auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_paraphrase(
         db=db, neo=neo, session_id=session_id, entry_id=entry_id, body=body,
@@ -208,6 +230,7 @@ async def negotiate_skip(
     entry_id: str,
     db: AsyncSession = Depends(get_db_session),
     neo: Neo4jClient = Depends(get_neo4j_client),
+    auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_skip(
         db=db, neo=neo, session_id=session_id, entry_id=entry_id,
@@ -220,6 +243,7 @@ async def negotiate_trace(
     entry_id: str,
     db: AsyncSession = Depends(get_db_session),
     neo: Neo4jClient = Depends(get_neo4j_client),
+    auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_get_trace(
         db=db, neo=neo, session_id=session_id, entry_id=entry_id,

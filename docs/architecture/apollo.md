@@ -26,7 +26,7 @@ unwired (code still present), and grading is the Done-time LLM semantic diff.
 
 | Subpackage | Key files | Role |
 |---|---|---|
-| `apollo/` (root) | `api.py`, `errors.py`, `conftest.py` | FastAPI router (prefix `/apollo`), per-error exception handlers, process-singleton Neo4j client (`get_neo4j_client`/`close_neo4j_client`). `errors.py`: one named exception per failure mode, NO FALLBACK policy. `conftest.py`: live Neo4j fixture (skips if `NEO4J_URI` unset; test attempt_ids must be NEGATIVE — cleanup deletes `attempt_id < 0`). |
+| `apollo/` (root) | `api.py`, `auth_deps.py`, `errors.py`, `conftest.py` | FastAPI router (prefix `/apollo`), auth dependency functions, per-error exception handlers, process-singleton Neo4j client (`get_neo4j_client`/`close_neo4j_client`). `errors.py`: one named exception per failure mode, NO FALLBACK policy. `conftest.py`: live Neo4j fixture (skips if `NEO4J_URI` unset; test attempt_ids must be NEGATIVE — cleanup deletes `attempt_id < 0`). |
 | `apollo/handlers/` | `chat.py`, `done.py`, `intent.py`, `lifecycle.py`, `negotiate.py`, `next.py`, `restart_problem.py`, `progress.py`, `history.py`, `olm_invite.py` | One module per endpoint group. `chat.py` = teaching turn + intent state machine; `done.py` = freeze→grade→XP; `intent.py` = cheap-LLM intent classifier + confirmation gate; `history.py` = bounded history (12-turn raw window + rolling LLM summary); `negotiate.py` = Negotiable-OLM moves (challenge/paraphrase/skip/trace); `olm_invite.py` = low-confidence clarification invite (env-flagged, currently not wired into the v1 chat turn). |
 | `apollo/parser/` | `parser_llm.py`, `prompt_builder.py` | `parse_utterance()`: GPT-4o JSON-mode → typed Nodes+Edges. Triviality detection (length floor, ACK list, math-char regex, then cheap-LLM classifier at threshold 0.6). `prompt_builder.py` substitutes `{{concept_name}}` into the concept's `parser_prompt_template.md` (v1: parser captures the student's own form; canonical-symbol slots removed). |
 | `apollo/ontology/` | `nodes.py`, `edges.py`, `graph.py` | The KG type system (single source of truth). 6 node types, 4 edge types, `KGGraph` aggregate with traversal helpers (`precedes_chain`, `topological_order`, `neighbors`, `merge`). |
@@ -49,16 +49,16 @@ HTTP routes (all defined in `apollo/api.py`):
 
 | Route | Handler | Notes |
 |---|---|---|
-| `POST /apollo/sessions/from_hoot` | `hoot_bridge.session_init.init_session_from_hoot` | Body `{student_id, hoot_transcript, difficulty="intro"}`. Ends any prior active session. 409 on `NoMatchingConceptError`/`PoolExhaustedError`. |
-| `GET /apollo/sessions/{id}` | `handlers.lifecycle.handle_get_session` | Session + problem + full KG + messages. |
-| `POST /apollo/sessions/{id}/chat` | `handlers.chat.handle_chat` | Body `{message}`. Returns `{apollo_reply, kg_entries_added, kg}` (+ optional `intent_pending` / `intent_executed`). |
-| `POST /apollo/sessions/{id}/done` | `handlers.done.handle_done` | Freeze → grade → XP. 422 `review_required` if Done-gate fires. |
-| `POST /apollo/sessions/{id}/retry` | `handlers.lifecycle.handle_retry` | Unfreeze, back to TEACHING. |
-| `POST /apollo/sessions/{id}/next` | `handlers.next.handle_next` | New problem at chosen difficulty; advance (REPORT) or abandon (TEACHING/PROBLEM_REVEAL); blocked during SOLVING. |
-| `POST /apollo/sessions/{id}/restart_problem` | `handlers.restart_problem` | Wipes attempt KG (Neo4j `DETACH DELETE`) + messages, same problem. |
-| `POST /apollo/sessions/{id}/end` | `handlers.lifecycle.handle_end` | Marks ended; best-effort deletes every per-attempt subgraph. |
-| `GET /apollo/progress/{student_id}` | `handlers.progress` | XP, level, title, next tier threshold. |
-| `POST /apollo/sessions/{id}/kg/{entry_id}/challenge` / `paraphrase` / `skip`, `GET .../trace` | `handlers.negotiate` | Negotiable-OLM moves (P3). 404 `kg_entry_not_found` on stale entry ids. |
+| `POST /apollo/sessions/from_hoot` | `hoot_bridge.session_init.init_session_from_hoot` | Body `{search_space_id, hoot_transcript, difficulty="intro"}`. Identity from bearer token; membership checked via `require_course_member`. Ends any prior active session. 409 on `NoMatchingConceptError`/`PoolExhaustedError`. |
+| `GET /apollo/sessions/{id}` | `handlers.lifecycle.handle_get_session` | Session + problem + full KG + messages. Owner-gated (`require_session_owner`). |
+| `POST /apollo/sessions/{id}/chat` | `handlers.chat.handle_chat` | Body `{message}`. Returns `{apollo_reply, kg_entries_added, kg}` (+ optional `intent_pending` / `intent_executed`). Owner-gated (`require_session_owner`). |
+| `POST /apollo/sessions/{id}/done` | `handlers.done.handle_done` | Freeze → grade → XP. 422 `review_required` if Done-gate fires. Owner-gated (`require_session_owner`). |
+| `POST /apollo/sessions/{id}/retry` | `handlers.lifecycle.handle_retry` | Unfreeze, back to TEACHING. Owner-gated (`require_session_owner`). |
+| `POST /apollo/sessions/{id}/next` | `handlers.next.handle_next` | New problem at chosen difficulty; advance (REPORT) or abandon (TEACHING/PROBLEM_REVEAL); blocked during SOLVING. Owner-gated (`require_session_owner`). |
+| `POST /apollo/sessions/{id}/restart_problem` | `handlers.restart_problem` | Wipes attempt KG (Neo4j `DETACH DELETE`) + messages, same problem. Owner-gated (`require_session_owner`). |
+| `POST /apollo/sessions/{id}/end` | `handlers.lifecycle.handle_end` | Marks ended; best-effort deletes every per-attempt subgraph. Owner-gated (`require_session_owner`). |
+| `GET /apollo/progress` | `handlers.progress` | XP, level, title, next tier threshold. Token-derived identity (`require_user`). |
+| `POST /apollo/sessions/{id}/kg/{entry_id}/challenge` / `paraphrase` / `skip`, `GET .../trace` | `handlers.negotiate` | Negotiable-OLM moves (P3). 404 `kg_entry_not_found` on stale entry ids. Owner-gated (`require_session_owner`). |
 
 Key service entry points:
 - `parse_utterance(utterance, *, concept: ConceptDefinition, attempt_id: int, model=None) -> tuple[list[Node], list[Edge]]` — raises `ParserCouldNotExtractError` only when a *non-trivial* utterance yields zero entries.
@@ -68,7 +68,7 @@ Key service entry points:
 - `generate_diagnostic(*, coverage, reference_steps, problem_text, rubric, model=None) -> str` (LLM).
 - `draft_reply(history, kg_summary, *, problem_text=None, model=None, history_summary=None) -> str`.
 - `Problem.to_kg_graph(attempt_id) -> KGGraph`; `load_problem(path)`; `load_concept(subject_id, concept_id)`.
-- `compute_xp_earned(*, overall_score, difficulty, is_reattempt) -> int`; `apply_xp(*, db, student_id, xp_delta)`.
+- `compute_xp_earned(*, overall_score, difficulty, is_reattempt) -> int`; `apply_xp(*, db, user_id, xp_delta)`.
 
 Core types (`apollo/ontology/`):
 - **Node types** (Pydantic discriminated union on `node_type`): `equation` (`symbolic`, `label`, `variables`), `condition` (`applies_when`), `simplification` (`applies_when`, `transformation`), `definition` (`concept`, `meaning`), `variable_mapping` (`term`, `symbol`), `procedure_step` (`action`, `purpose`). Common fields: `node_id`, `attempt_id`, `source` (`parser|reference|system`), `parser_confidence` (default 1.0), `status` (`ACCEPTED|DISPUTED|DUAL`), `student_belief` (str|None).
@@ -97,14 +97,15 @@ Core types (`apollo/ontology/`):
 7. Re-attempt detection (`attempt.result` already set, or `has_prior_graded_attempt` cross-session) → `compute_xp_earned` (score × difficulty multiplier 1.0/1.5/2.0 × 0.25 if re-attempt) → `apply_xp` updates `apollo_student_progress` and computes level (5 tiers, thresholds 0/300/800/1600/3000). Attempt gets `result="graded"`, `solver_trace=None`, `diagnostic_report={narrative, rubric, coverage}`; phase → REPORT.
 
 **(c) Hoot handoff — `POST /sessions/from_hoot` (`hoot_bridge/session_init.py`)**
-transcript → `infer_concept_cluster` (GPT-4o, must return one of `_AVAILABLE_CLUSTERS = ["fluid_mechanics"]` or 409) → `select_problem` (deterministic: sorted by id, unattempted at difficulty, else `PoolExhaustedError`) → end stale active sessions → create `ApolloSession` (phase TEACHING) + `ProblemAttempt` → return `{session_id, attempt_id, problem}`.
+Bearer token → `require_user` resolves `user_id`; `require_course_member` checks membership for the given `search_space_id`. transcript → `infer_concept_cluster` (GPT-4o, must return one of `_AVAILABLE_CLUSTERS = ["fluid_mechanics"]` or 409) → `select_problem` (deterministic: sorted by id, unattempted at difficulty, else `PoolExhaustedError`) → end stale active sessions → create `ApolloSession` (phase TEACHING, `user_id`, `search_space_id`) + `ProblemAttempt` → return `{session_id, attempt_id, problem}`.
 
 ## Key dependencies
 
 - **OpenAI** (`openai` sync client, constructed per call): models resolved per call site — parser/coverage/diagnostic/concept-inference use `MAIN_MODEL` (default `gpt-4o`); `draft_reply` uses `APOLLO_MODEL` > `MAIN_MODEL` > `gpt-4o`; cross-checks (intent, triviality, history summarizer, leakage judge) use `APOLLO_CHEAP_MODEL` (default `gpt-4o-mini`) via `agent/_llm.cheap_chat`. Every `_llm` call logs `{event: "llm_call", purpose, model, tokens}` for cost audit.
 - **Neo4j** (`neo4j` async driver): `Neo4jClient.from_env()` requires `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `NEO4J_DATABASE` (Aura instance — see project memory). One driver per process, lazily built in `api.py`; `close_neo4j_client()` should be wired to app shutdown.
 - **SymPy**: `solver/sympy_exec.py` (zero-form parsing, `solve_system`) — in v1 only the LaTeX display path in `store.py` exercises it at runtime.
-- **Supabase Postgres tables** (via the repo-wide async SQLAlchemy `database.session.get_db_session`): `apollo_sessions`, `apollo_messages` (JSONB `metadata`, migration 020), `apollo_problem_attempts`, `apollo_student_progress`, `apollo_kg_negotiations` (migration 021), plus the DB-curriculum tables `apollo_subjects`/`apollo_concepts`/`apollo_concept_problems` (018) and `apollo_misconceptions` (019, vector(3072) embeddings). Partial unique index enforces one active session per student.
+- **Authentication**: all routes require Supabase bearer auth via `auth.py` primitives (`resolve_auth_context`, run off the event loop). `apollo/auth_deps.py` provides three gate functions: `require_user` (bare auth, used by `from_hoot` and `progress`), `require_course_member` (membership check at session creation), and `require_session_owner` (FastAPI Depends gate on session-scoped routes — 401/403/404 as appropriate). Identity never comes from the request body.
+- **Supabase Postgres tables** (via the repo-wide async SQLAlchemy `database.session.get_db_session`): `apollo_sessions` (`user_id UUID`, `search_space_id`, migration 023), `apollo_messages` (JSONB `metadata`, migration 020), `apollo_problem_attempts`, `apollo_student_progress` (`user_id UUID`, migration 023), `apollo_kg_negotiations` (migration 021), plus the DB-curriculum tables `apollo_subjects`/`apollo_concepts`/`apollo_concept_problems` (018) and `apollo_misconceptions` (019, vector(3072) embeddings). Partial unique index `ix_apollo_sessions_unique_active_per_user` enforces one active session per user.
 - **tiktoken** (best-effort): token estimate for `draft_reply`'s 100k budget; falls back to chars/4.
 - **Env flags**: `APOLLO_DONE_GATE_ENABLED` (off), `APOLLO_OLM_INVITES_ENABLED` (off).
 
@@ -119,7 +120,7 @@ transcript → `infer_concept_cluster` (GPT-4o, must return one of `_AVAILABLE_C
 - **Negotiable OLM (P3)**: moves mutate the Neo4j node (`status`, `student_belief`) AND append an immutable audit row to `apollo_kg_negotiations`; the Done-gate clears once each flagged entry has ≥ 1 move. DUAL + `student_belief` redirects coverage to grade the student's wording (for procedure steps it *replaces* `action`).
 - **Freeze discipline**: writes/moves check phase via Postgres before touching Neo4j; reads are allowed while frozen. `delete_subgraph` is the idempotent cross-DB cleanup contract (session end is best-effort with logged failures; orphans swept by a future janitor).
 - **`summarize_for_apollo` format is contract**: the bullet shapes (`- equation (label): symbolic`, `- variable: term → symbol`, procedure steps ordered via the PRECEDES chain) are Apollo's vocabulary mirror — see `apollo/agent/LEAKAGE_POLICY.md`; don't change casually.
-- **Hardcoded migration-window seams**: `hoot_bridge._AVAILABLE_CLUSTERS = ["fluid_mechanics"]` and `problem_selector._CLUSTER_TO_CONCEPT = {"fluid_mechanics": ("fluid_mechanics", "bernoulli_principle")}` are the only cluster→concept mappings; `apollo_sessions.concept_cluster_id` (TEXT) is legacy, `concept_id` (FK) is the target (migration 022 will drop the former). `sympy_exec._CANONICAL_SYMBOLS` is still a fluid-mechanics list.
+- **Hardcoded migration-window seams**: `hoot_bridge._AVAILABLE_CLUSTERS = ["fluid_mechanics"]` and `problem_selector._CLUSTER_TO_CONCEPT = {"fluid_mechanics": ("fluid_mechanics", "bernoulli_principle")}` are the only cluster→concept mappings; `apollo_sessions.concept_cluster_id` (TEXT) is legacy, `concept_id` (FK) is the target (migration 024 will drop the former). `sympy_exec._CANONICAL_SYMBOLS` is still a fluid-mechanics list. `apollo_sessions.student_id` was dropped in migration 023 (replaced by `user_id UUID` referencing `auth.users`).
 - **Tests**: nearly all `*/tests/` modules are `pytest.mark.skip`-ed with "Tracked in claude_v3_checklist.md item 1; will be re-enabled in test-rewrite phase". Live Neo4j tests use negative attempt_ids (cleanup contract in `apollo/conftest.py`).
 
 ## Product context

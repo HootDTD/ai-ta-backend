@@ -100,7 +100,8 @@ async def handle_get_session(
 
     return {
         "session_id": sess.id,
-        "student_id": sess.student_id,
+        "user_id": sess.user_id,
+        "search_space_id": sess.search_space_id,
         "concept_cluster_id": sess.concept_cluster_id,
         "status": sess.status,
         "phase": sess.phase,

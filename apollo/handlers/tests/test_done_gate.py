@@ -17,6 +17,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.errors import ReviewRequiredError
 from apollo.handlers.done import (
     _DONE_GATE_LOW_CONF,
@@ -126,7 +127,7 @@ async def db():
 @pytest_asyncio.fixture
 async def attempt(db: AsyncSession):
     sess = ApolloSession(
-        student_id="stu-1", concept_cluster_id="x",
+        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_cluster_id="x",
         status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
     )
     db.add(sess); await db.flush()

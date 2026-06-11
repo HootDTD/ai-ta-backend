@@ -255,7 +255,7 @@ async def handle_done(
     is_reattempt_in_session = attempt.result is not None
     is_reattempt_cross_session = await has_prior_graded_attempt(
         db=db,
-        student_id=sess.student_id,
+        user_id=sess.user_id,
         problem_id=problem.id,
         exclude_attempt_id=attempt.id,
     )
@@ -279,7 +279,7 @@ async def handle_done(
 
     progress = await apply_xp(
         db=db,
-        student_id=sess.student_id,
+        user_id=sess.user_id,
         xp_delta=xp_earned,
     )
 
