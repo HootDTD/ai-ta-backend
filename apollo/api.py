@@ -1,4 +1,7 @@
-"""Apollo FastAPI router. Endpoints stubbed to 501 until implementations land.
+"""Apollo FastAPI router. Every endpoint requires Supabase bearer auth (see
+apollo/auth_deps.py). Session-scoped routes are owner-gated via
+require_session_owner; session creation is membership-gated via
+require_course_member.
 
 Mounted at /apollo in server.py. Each named error class from apollo.errors
 is registered with an exception handler that surfaces the error as a
@@ -105,6 +108,9 @@ async def session_from_hoot(
     )
 
 
+# `auth` is injected for its gate side-effect (401/403/404 via
+# require_session_owner). Handlers don't need the identity — ownership
+# is the only check required at this layer.
 @router.get("/sessions/{session_id}")
 async def get_session(
     session_id: int,
