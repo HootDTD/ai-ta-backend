@@ -24,6 +24,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import apollo.api as apollo_api
 import apollo.auth_deps as deps
 from apollo.api import get_neo4j_client, register_exception_handlers
 from apollo.api import router as apollo_router
@@ -141,3 +142,43 @@ def test_session_endpoint_requires_token(client_factory):
     app, _ = client_factory
     r = TestClient(app).get("/apollo/sessions/999")
     assert r.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Test 5: POST /apollo/sessions/from_hoot — valid token + membership → init runs
+# ---------------------------------------------------------------------------
+
+
+def test_from_hoot_happy_path_invokes_init(client_factory, monkeypatch):
+    """Token resolves, course membership passes → handler calls init with the
+    token-derived user_id and body search_space_id (never a body student_id)."""
+    from auth import AuthContext
+
+    app, _ = client_factory
+    monkeypatch.setattr(
+        deps,
+        "resolve_auth_context",
+        lambda _request: AuthContext(user_id=TEST_USER_ID, access_token="tok"),
+    )
+
+    async def _is_member(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(deps, "has_membership", _is_member)
+
+    captured: dict = {}
+
+    async def _fake_init(**kwargs):
+        captured.update(kwargs)
+        return {"session_id": 1, "user_id": kwargs["user_id"]}
+
+    monkeypatch.setattr(apollo_api, "init_session_from_hoot", _fake_init)
+
+    r = TestClient(app).post(
+        "/apollo/sessions/from_hoot",
+        headers={"Authorization": "Bearer tok"},
+        json={"search_space_id": TEST_SPACE_ID, "hoot_transcript": "2+2=4"},
+    )
+    assert r.status_code == 200
+    assert captured["user_id"] == TEST_USER_ID
+    assert captured["search_space_id"] == TEST_SPACE_ID

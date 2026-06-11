@@ -148,14 +148,14 @@ jobs:
       # and would re-block code that already passed its own PR gate (or, worse,
       # code merged before the gate existed). Promotions re-run the full test
       # suite — they don't re-apply the patch ratchet.
-      - name: Patch-coverage gate (diff-cover ≥80% on new code)
+      - name: Patch-coverage gate (diff-cover ≥95% on new code)
         if: github.event_name == 'pull_request' && github.base_ref != 'ApolloV3'
         shell: bash
         run: |
           git fetch --no-tags origin "${{ github.base_ref }}"
           diff-cover coverage.xml \
             --compare-branch="origin/${{ github.base_ref }}" \
-            --fail-under=80 \
+            --fail-under=95 \
             --markdown-report diff-cover.md
       - name: Upload coverage + diff-cover reports
         if: always()
