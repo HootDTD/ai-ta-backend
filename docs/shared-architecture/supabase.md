@@ -6,7 +6,7 @@ related:
   - ai-ta-backend/_overview
   - ai-ta-backend/domain-data
   - shared/security
-last_verified: 2026-06-10
+last_verified: 2026-06-11
 stub: false
 ---
 
@@ -22,10 +22,16 @@ Supabase on Neo4j Aura (instance `791f9ced`, configured via `NEO4J_*` env vars i
 | Project | Ref | Use |
 |---|---|---|
 | Prod | `uduxdniieeqbljtwocxy` | Live data; what Railway (`ApolloV3` branch; `Procfile` runs `web` uvicorn + `worker` teacher-upload worker) points at |
-| Test | `hjevtxdtrkxjcaaexdxt` | Schema rehearsal + integration testing; migrations are mirrored here (see header of `database/migrations/022_enable_rls_stopgap.sql`) |
+| Test | `hjevtxdtrkxjcaaexdxt` | Schema rehearsal + integration testing; migrations are mirrored here (see header of `database/migrations/022_enable_rls_stopgap.sql`). **Railway's `staging` environment backend/worker point HERE, not at prod** (verified 2026-06-11 by correlating staging worker/request timestamps with `pg_stat_activity`) |
 
 Two MCP servers (`supabase` = prod, `supabase-test` = test) are wired into the workspace;
 apply changes to test first, then prod.
+
+**Known drift (2026-06-11)**: the test project's `teacher_uploads` carries only
+`teacher_uploads_status_check` — the `week`/`kind` checks from migration 004 are absent
+(its schema predates the SQL file or came from `Base.metadata.create_all`, which declares
+no CHECK constraints). Migration `024_teacher_textbook.sql` re-adds both checks in their
+relaxed form on whichever project it runs against, closing the drift.
 
 ## Schema overview (public schema, 17 tables + queue/decision tables)
 
@@ -38,7 +44,7 @@ All tables created by `ai-ta-backend/database/migrations/`; ORM models for the c
   page/section/figure metadata).
 - **Membership & teacher**: `course_memberships` (user↔course, role student/teacher; FK to
   `auth.users` done in raw SQL, migration 006), `course_invite_links` (008),
-  `teacher_courses` (per-course week + retrieval weights, 004), `teacher_uploads` (004/007),
+  `teacher_courses` (per-course week + retrieval weights, 004), `teacher_uploads` (004/007/024),
   `teacher_upload_jobs` (durable lease-based work queue for the worker process, 007).
 - **Chat**: `chat_sessions` (incl. `memory_summary`, `topic_centroid_vector vector(3072)`
   from 015), `chat_turns` (011 added citations), `chat_session_snippets` +
@@ -79,9 +85,16 @@ All tables created by `ai-ta-backend/database/migrations/`; ORM models for the c
 ## Migration workflow
 
 - Migrations are **hand-numbered files** in `ai-ta-backend/database/migrations/`:
-  `001`–`003` are Python scripts (initial schema, Supabase seed, reindex), `004`–`022` are
+  `001`–`003` are Python scripts (initial schema, Supabase seed, reindex), `004`–`024` are
   plain SQL. No Alembic yet (an Alembic adoption is specced in the root `CLAUDE.md` but
-  not implemented — there is no `alembic/` directory).
+  not implemented — there is no `alembic/` directory). **Numbering collision**: two files
+  share `023` (`023_apollo_auth_scoping.sql`, `023_chunks_halfvec_hnsw.sql`) — when taking
+  a new number, check for duplicates, and don't reuse `023`.
+- `024_teacher_textbook.sql` (file committed, **applied nowhere yet** as of 2026-06-11)
+  relaxes `teacher_uploads` checks to `week BETWEEN 0 AND 16` and
+  `kind IN ('notes','slides','textbook')`. Deploy order matters: apply 024 to the target
+  DB **before** merging/deploying the textbook backend code (same migration-before-code
+  dependency PR #12 had with 023), or the first textbook upload 500s.
 - Recent migrations are applied with the **Supabase MCP `apply_migration`** tool (test
   project first, then prod), and the SQL is committed to the repo as the next numbered
   file. Prod's `supabase_migrations` history confirms this: it tracks `015`–`021` (applied
