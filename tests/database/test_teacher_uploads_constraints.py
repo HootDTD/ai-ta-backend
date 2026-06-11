@@ -96,9 +96,7 @@ async def mig_conn(_migrated_dsn: str):
 
 
 async def _new_search_space(conn: asyncpg.Connection) -> int:
-    return await conn.fetchval(
-        "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
-    )
+    return await conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
 
 
 async def _insert_upload(

@@ -201,9 +201,14 @@ def _claimed(tmp_path, *, kind, week):
     pdf = tmp_path / "src.pdf"
     pdf.write_bytes(b"%PDF-1.4 test")
     claimed = tw.ClaimedUploadJob(
-        job_id=1, upload_id=2, search_space_id=2, week=week, kind=kind,
+        job_id=1,
+        upload_id=2,
+        search_space_id=2,
+        week=week,
+        kind=kind,
         title="Fluids Textbook" if kind == "textbook" else "Week Notes",
-        source_name="src.pdf", storage_key="k",
+        source_name="src.pdf",
+        storage_key="k",
     )
     return claimed, pdf
 
@@ -274,8 +279,11 @@ def test_assemble_payload_splits_weekly_grid_and_textbook(tmp_path):
 def test_assemble_payload_empty_textbook_when_none_uploaded(tmp_path):
     storage = _make_storage(tmp_path, total_weeks=2)
     payload = storage._assemble_course_payload(
-        search_space_id=2, course="E2E Fluids", slug="e2e-fluids",
-        current_week=1, uploads=[_fake_upload_row(week=1, kind="notes")],
+        search_space_id=2,
+        course="E2E Fluids",
+        slug="e2e-fluids",
+        current_week=1,
+        uploads=[_fake_upload_row(week=1, kind="notes")],
     )
     assert payload["textbook"] == {"latest": None, "history": []}
 
@@ -283,14 +291,24 @@ def test_assemble_payload_empty_textbook_when_none_uploaded(tmp_path):
 def test_assemble_payload_textbook_replace_keeps_history(tmp_path):
     storage = _make_storage(tmp_path, total_weeks=2)
     uploads = [
-        _fake_upload_row(id=5, week=COURSE_WIDE_WEEK, kind="textbook",
-                         title="New Textbook", is_latest=True),
-        _fake_upload_row(id=4, week=COURSE_WIDE_WEEK, kind="textbook",
-                         title="Old Textbook", is_latest=False, status="superseded"),
+        _fake_upload_row(
+            id=5, week=COURSE_WIDE_WEEK, kind="textbook", title="New Textbook", is_latest=True
+        ),
+        _fake_upload_row(
+            id=4,
+            week=COURSE_WIDE_WEEK,
+            kind="textbook",
+            title="Old Textbook",
+            is_latest=False,
+            status="superseded",
+        ),
     ]
     payload = storage._assemble_course_payload(
-        search_space_id=2, course="E2E Fluids", slug="e2e-fluids",
-        current_week=1, uploads=uploads,
+        search_space_id=2,
+        course="E2E Fluids",
+        slug="e2e-fluids",
+        current_week=1,
+        uploads=uploads,
     )
     assert payload["textbook"]["latest"]["title"] == "New Textbook"
     assert len(payload["textbook"]["history"]) == 2

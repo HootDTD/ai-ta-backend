@@ -63,8 +63,13 @@ def _course_payload(*, with_textbook: bool):
         "course": "E2E Fluids",
         "slug": "e2e-fluids",
         "current_week": 1,
-        "weeks": [{"week": 1, "notes": {"latest": None, "history": []},
-                   "slides": {"latest": None, "history": []}}],
+        "weeks": [
+            {
+                "week": 1,
+                "notes": {"latest": None, "history": []},
+                "slides": {"latest": None, "history": []},
+            }
+        ],
     }
     if with_textbook:
         payload["textbook"] = {"latest": _textbook_entry(), "history": [_textbook_entry()]}
@@ -121,14 +126,26 @@ def test_upload_accepts_textbook_kind(client_with_server, monkeypatch):
             return dict(self.data)
 
     class _Storage:
-        def enqueue_upload_by_search_space(self, search_space_id, *, week, kind, pdf_path, title, uploaded_by):
-            calls.append({"search_space_id": search_space_id, "week": week, "kind": kind, "title": title})
-            return _UploadRecord({
-                "id": "upload-9", "week": 0, "kind": kind, "title": title or "Textbook",
-                "status": "queued", "uploaded_at": "2026-06-11T00:00:00Z",
-                "source_name": "white-fluids.pdf", "page_count": None, "doc_id": None,
-                "material_id": None,
-            })
+        def enqueue_upload_by_search_space(
+            self, search_space_id, *, week, kind, pdf_path, title, uploaded_by
+        ):
+            calls.append(
+                {"search_space_id": search_space_id, "week": week, "kind": kind, "title": title}
+            )
+            return _UploadRecord(
+                {
+                    "id": "upload-9",
+                    "week": 0,
+                    "kind": kind,
+                    "title": title or "Textbook",
+                    "status": "queued",
+                    "uploaded_at": "2026-06-11T00:00:00Z",
+                    "source_name": "white-fluids.pdf",
+                    "page_count": None,
+                    "doc_id": None,
+                    "material_id": None,
+                }
+            )
 
     monkeypatch.setattr(server, "_require_course_membership", _allow_teacher)
     monkeypatch.setattr(server, "_get_teacher_storage", lambda: _Storage())
