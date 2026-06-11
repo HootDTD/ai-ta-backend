@@ -45,7 +45,14 @@ from vendors.supabase_storage import SupabaseStorageClient
 log = logging.getLogger(__name__)
 
 TOTAL_WEEKS_DEFAULT = 16
-VALID_KINDS = {"notes", "slides"}
+# Weekly materials are pinned to a week (1..total_weeks). Course-wide materials
+# (e.g. a textbook) belong to the class as a whole — their tracking row uses the
+# COURSE_WIDE_WEEK sentinel and their indexed document stores week=NULL so it
+# stays visible across every week (see retrieval/document_visibility.py).
+WEEKLY_KINDS = {"notes", "slides"}
+COURSE_WIDE_KINDS = {"textbook"}
+VALID_KINDS = WEEKLY_KINDS | COURSE_WIDE_KINDS
+COURSE_WIDE_WEEK = 0
 _INACTIVE_STATUS = {"state": "inactive"}
 UPLOAD_STATUS_QUEUED = "queued"
 UPLOAD_STATUS_PROCESSING = "processing"
@@ -100,6 +107,36 @@ def _sha256_file(path: Path) -> str:
 def _safe_filename(name: str) -> str:
     token = re.sub(r"[^A-Za-z0-9._-]+", "-", (name or "").strip()).strip("-")
     return token or "teacher-upload.pdf"
+
+
+def _normalize_upload_week(kind: str, week: Any, total_weeks: int) -> int:
+    """Resolve the tracking-row week for an upload.
+
+    Course-wide kinds (e.g. ``textbook``) are not tied to a week and use the
+    ``COURSE_WIDE_WEEK`` sentinel. Weekly kinds must fall in ``1..total_weeks``.
+    Raises ``ValueError`` on an unknown kind or out-of-range weekly week.
+    """
+    kind_norm = (kind or "").strip().lower()
+    if kind_norm not in VALID_KINDS:
+        raise ValueError("kind must be 'notes', 'slides', or 'textbook'")
+    if kind_norm in COURSE_WIDE_KINDS:
+        return COURSE_WIDE_WEEK
+    week_val = int(week)
+    if week_val < 1 or week_val > total_weeks:
+        raise ValueError(f"week must be between 1 and {total_weeks}")
+    return week_val
+
+
+def _document_week(kind: str, tracking_week: int) -> Optional[int]:
+    """Week stored on the indexed ``AITADocument``.
+
+    Course-wide materials store ``NULL`` so they remain visible for every week
+    (the weekly activate/deactivate cycle only touches rows where week IS NOT
+    NULL). Weekly materials store their tracking week unchanged.
+    """
+    if (kind or "").strip().lower() in COURSE_WIDE_KINDS:
+        return None
+    return int(tracking_week)
 
 
 def _truncate_error(message: str | None) -> Optional[str]:
@@ -378,19 +415,18 @@ class TeacherWeeklyStorage:
         pdf_path: Path,
         title: Optional[str],
     ) -> tuple[int, str, Path, str]:
-        week_val = int(week)
-        if week_val < 1 or week_val > self.total_weeks:
-            raise ValueError(f"week must be between 1 and {self.total_weeks}")
-
         kind_norm = (kind or "").strip().lower()
-        if kind_norm not in VALID_KINDS:
-            raise ValueError("kind must be 'notes' or 'slides'")
+        week_val = _normalize_upload_week(kind_norm, week, self.total_weeks)
 
         pdf_resolved = Path(pdf_path).expanduser().resolve()
         if not pdf_resolved.is_file():
             raise FileNotFoundError(f"Teacher upload file not found: {pdf_resolved}")
 
-        resolved_title = (title or f"Week {week_val} {kind_norm.title()}").strip() or f"Week {week_val} {kind_norm.title()}"
+        if kind_norm in COURSE_WIDE_KINDS:
+            default_title = kind_norm.title()
+        else:
+            default_title = f"Week {week_val} {kind_norm.title()}"
+        resolved_title = (title or default_title).strip() or default_title
         return week_val, kind_norm, pdf_resolved, resolved_title
 
     def _build_storage_key(
@@ -471,6 +507,10 @@ class TeacherWeeklyStorage:
         if reindex_marker:
             source_md = f"{source_md}\n<!-- reindex:{reindex_marker} -->"
 
+        # Course-wide materials (textbook) index with week=NULL so retrieval keeps
+        # them visible for every week; weekly materials keep their week.
+        doc_week = _document_week(claimed.kind, claimed.week)
+
         connector_doc = AITAConnectorDocument(
             title=claimed.title,
             source_markdown=source_md,
@@ -480,7 +520,7 @@ class TeacherWeeklyStorage:
             material_kind=claimed.kind,
             should_summarize=False,
             page_count=ingestion.page_count,
-            week=claimed.week,
+            week=doc_week,
             metadata={
                 "teacher_upload_id": str(claimed.upload_id),
                 "source_name": pdf_resolved.name,
@@ -490,7 +530,7 @@ class TeacherWeeklyStorage:
                 "source_pdf_sha256": source_sha256,
                 "kind": claimed.kind,
                 "material_kind": claimed.kind,
-                "week": claimed.week,
+                "week": doc_week,
                 "uploaded_via": "teacher_weekly_hybrid_ingestor",
                 "ocr_degraded": ocr_degraded,
                 "ocr_provider": ingestion.ocr_provider,
@@ -1156,26 +1196,13 @@ class TeacherWeeklyStorage:
             )
             uploads = uploads_result.scalars().all()
 
-        weeks: List[Dict[str, Any]] = []
-        for week_num in range(1, self.total_weeks + 1):
-            week_rows = [row for row in uploads if int(row.week or 0) == week_num]
-            notes_rows = [row for row in week_rows if (row.kind or "").strip().lower() == "notes"]
-            slides_rows = [row for row in week_rows if (row.kind or "").strip().lower() == "slides"]
-            weeks.append(
-                {
-                    "week": week_num,
-                    "notes": self._build_section(notes_rows),
-                    "slides": self._build_section(slides_rows),
-                }
-            )
-
-        return {
-            "search_space_id": int(search_space_id),
-            "course": str(space.name),
-            "slug": str(space.slug),
-            "current_week": int(course_row.current_week or 1),
-            "weeks": weeks,
-        }
+        return self._assemble_course_payload(
+            search_space_id=int(search_space_id),
+            course=str(space.name),
+            slug=str(space.slug),
+            current_week=int(course_row.current_week or 1),
+            uploads=uploads,
+        )
 
     async def _set_current_week_by_search_space_async(self, search_space_id: int, week: int) -> Dict[str, Any]:
         async with get_async_session() as session:
@@ -1234,6 +1261,48 @@ class TeacherWeeklyStorage:
             course_row.updated_at = _utc_now()
             await session.commit()
             return updated
+
+    def _assemble_course_payload(
+        self,
+        *,
+        search_space_id: int,
+        course: str,
+        slug: str,
+        current_week: int,
+        uploads: List[TeacherUpload],
+    ) -> Dict[str, Any]:
+        """Build the teacher course payload from upload rows.
+
+        Weekly kinds (notes/slides) populate the per-week grid; course-wide
+        textbook rows populate a single course-level ``textbook`` section. Pure
+        (no I/O) so it is unit-testable without a database.
+        """
+        def _kind_of(row: TeacherUpload) -> str:
+            return (row.kind or "").strip().lower()
+
+        weeks: List[Dict[str, Any]] = []
+        for week_num in range(1, self.total_weeks + 1):
+            week_rows = [row for row in uploads if int(row.week or 0) == week_num]
+            notes_rows = [row for row in week_rows if _kind_of(row) == "notes"]
+            slides_rows = [row for row in week_rows if _kind_of(row) == "slides"]
+            weeks.append(
+                {
+                    "week": week_num,
+                    "notes": self._build_section(notes_rows),
+                    "slides": self._build_section(slides_rows),
+                }
+            )
+
+        textbook_rows = [row for row in uploads if _kind_of(row) in COURSE_WIDE_KINDS]
+
+        return {
+            "search_space_id": int(search_space_id),
+            "course": str(course),
+            "slug": str(slug),
+            "current_week": int(current_week or 1),
+            "weeks": weeks,
+            "textbook": self._build_section(textbook_rows),
+        }
 
     def _build_section(self, rows: List[TeacherUpload]) -> Dict[str, Any]:
         history: List[Dict[str, Any]] = []
