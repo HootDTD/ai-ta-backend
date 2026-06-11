@@ -25,6 +25,7 @@ Reads SUPABASE_DB_URL (and OPENAI key for query embeddings) from .env.
 The query embedding is computed once per query and reused for both arms so
 the comparison is exact-same-vector.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,6 +35,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
@@ -96,12 +98,12 @@ async def main() -> int:
     raw_embed = hs.embed_text
     cache: dict[str, list[float]] = {}
 
-    def cached_embed(q: str):
+    def cached_embed(q: str, *args: Any, **kwargs: Any) -> list[float]:
         if q not in cache:
-            cache[q] = raw_embed(q)
+            cache[q] = raw_embed(q, *args, **kwargs)
         return cache[q]
 
-    hs.embed_text = cached_embed
+    hs.embed_text = cached_embed  # type: ignore[assignment]  # intentional monkeypatch
 
     os.environ["HNSW_EF_SEARCH"] = str(args.ef)
     worst = 1.0
@@ -111,16 +113,18 @@ async def main() -> int:
     #   exact   -> force the planner OFF every index (true brute-force scan)
     #   relaxed -> the real production SET LOCALs (HNSW + iterative_scan)
     real_statements = hs._iterative_scan_statements
-    arm_statements = {
-        "exact": lambda: [
+
+    def _exact_statements() -> list[str]:
+        return [
             "SET LOCAL enable_indexscan = off",
             "SET LOCAL enable_bitmapscan = off",
-        ],
-        "relaxed": lambda: (
-            os.environ.__setitem__("HNSW_ITERATIVE_SCAN", "relaxed_order")
-            or real_statements()
-        ),
-    }
+        ]
+
+    def _relaxed_statements() -> list[str]:
+        os.environ["HNSW_ITERATIVE_SCAN"] = "relaxed_order"
+        return real_statements()
+
+    arm_statements = {"exact": _exact_statements, "relaxed": _relaxed_statements}
 
     async with get_async_session() as session:
         sid = args.sid or await _pick_largest_sid(session)
@@ -149,7 +153,12 @@ async def main() -> int:
                 rows.append((qtype, q, overlap, e_dt, r_dt))
                 log.info(
                     "[%s] overlap@%d=%.2f exact=%.2fs relaxed=%.2fs  %r",
-                    qtype, args.top, overlap, e_dt, r_dt, q[:60],
+                    qtype,
+                    args.top,
+                    overlap,
+                    e_dt,
+                    r_dt,
+                    q[:60],
                 )
                 missing = [i for i in e_ids if i not in inter]
                 if missing:

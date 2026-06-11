@@ -27,6 +27,7 @@ pytestmark = pytest.mark.unit
 # _iterative_scan_statements: env parsing + SQL safety
 # ---------------------------------------------------------------------------
 
+
 def test_default_is_relaxed_order_with_tuned_knobs(monkeypatch):
     monkeypatch.delenv("HNSW_ITERATIVE_SCAN", raising=False)
     monkeypatch.delenv("HNSW_EF_SEARCH", raising=False)
@@ -47,9 +48,7 @@ def test_kill_switch_disables_all_statements(monkeypatch, off):
 
 def test_strict_order_is_accepted(monkeypatch):
     monkeypatch.setenv("HNSW_ITERATIVE_SCAN", "strict_order")
-    assert _iterative_scan_statements()[0] == (
-        "SET LOCAL hnsw.iterative_scan = strict_order"
-    )
+    assert _iterative_scan_statements()[0] == ("SET LOCAL hnsw.iterative_scan = strict_order")
 
 
 def test_unknown_mode_disables_instead_of_injecting(monkeypatch):
@@ -78,6 +77,7 @@ def test_numeric_knobs_clamp_to_pgvector_bounds(monkeypatch):
 # ---------------------------------------------------------------------------
 # hybrid_search(): SET LOCALs precede the fused query on the same session
 # ---------------------------------------------------------------------------
+
 
 class _FakeResult:
     def __init__(self, rows):
@@ -113,9 +113,7 @@ class _FakeSession:
 def fake_embed(monkeypatch):
     from database.models import EMBEDDING_DIM
 
-    monkeypatch.setattr(
-        "retrieval.hybrid_search.embed_text", lambda _q: [0.1] * EMBEDDING_DIM
-    )
+    monkeypatch.setattr("retrieval.hybrid_search.embed_text", lambda _q: [0.1] * EMBEDDING_DIM)
 
 
 def _is_query(sql: str) -> bool:
