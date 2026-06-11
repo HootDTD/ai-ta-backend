@@ -20,3 +20,15 @@ uvicorn.log
 .coverage
 coverage.xml
 htmlcov/
+
+# Generated knowledge-store artifacts (pgvector is authoritative; km_* dirs are
+# rebuildable FAISS/SQLite/embedding outputs, far too large for git)
+subjects/**/km_*/
+
+# Raw source PDFs dropped into subjects/ (belong in Supabase Storage, not git)
+subjects/**/*.pdf
+
+# Locally installed agent skills (personal tooling)
+.agents/
+.claude/skills/
+skills-lock.json
