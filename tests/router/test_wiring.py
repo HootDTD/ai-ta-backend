@@ -502,3 +502,106 @@ def test_prepare_solve_prompt_scorer_failure_yields_placeholder(monkeypatch):
     rankings = bundle.provenance["citation_rankings"]
     assert len(rankings) == 1
     assert rankings[0]["score"] == 0.0
+
+
+@pytest.mark.integration
+async def test_memory_loader_meta_refresh_preserves_cache_fingerprint(db_session, monkeypatch):
+    """Regression: the per-turn chat-memory loader refreshes session.meta with
+    workspace info; it must MERGE (not replace) or it erases the bundle_cache
+    fingerprint and the router invalidates the session cache on every turn.
+
+    Reproduces the staging sequence: turn-1 persist writes the fingerprint →
+    turn-2 memory load refreshes meta → prepare must still find a valid cache.
+    """
+    import contextlib
+    from types import SimpleNamespace
+
+    import server
+
+    space = SearchSpace(
+        name="Meta merge test space", slug="meta-merge-test", subject_name="Calculus"
+    )
+    db_session.add(space)
+    await db_session.flush()
+    doc = AITADocument(
+        title="Calc Textbook",
+        content="content",
+        content_hash="meta-merge-hash",
+        unique_identifier_hash="meta-merge-uid",
+        search_space_id=space.id,
+        material_kind="textbook",
+        status={"state": "ready"},
+    )
+    db_session.add(doc)
+    await db_session.flush()
+    from database.models import AITAChunk
+
+    chunk = AITAChunk(content="c", document_id=doc.id, chunk_type="body", page_number=1)
+    db_session.add(chunk)
+    await db_session.flush()
+
+    user_id = "00000000-0000-0000-0000-000000000004"
+    chat = ChatSession(
+        chat_id="meta-merge-chat",
+        user_id=user_id,
+        search_space_id=space.id,
+        meta={},
+        memory_summary="",
+    )
+    db_session.add(chat)
+    await db_session.flush()
+
+    @contextlib.asynccontextmanager
+    async def _session_cm():
+        yield db_session
+
+    monkeypatch.setattr(wiring, "get_async_session", _session_cm)
+    monkeypatch.setattr(server, "get_async_session", _session_cm)
+    monkeypatch.setattr(db_session, "commit", db_session.flush)
+    monkeypatch.setattr(wiring, "_get_llm_router", lambda: _fake_router("NONE"))
+
+    # Turn 1: prepare (FRESH) + persist writes the cache fingerprint into meta
+    ctx1 = await wiring.prepare_router_context(
+        chat_id=chat.chat_id,
+        user_id=user_id,
+        search_space_id=space.id,
+        question="What is a p-series?",
+        has_attachments=False,
+    )
+    bundle1 = wiring.bundle_from_cache(
+        CachedBundle(snippets=[_snippet(chunk.id)], scoring={}, visible_docs_hash="", saved_turn=0),
+        q_effective="What is a p-series?",
+        subject="Calculus",
+        reason="",
+    )
+    bundle1.provenance["citation_rankings"] = [_scoring_row(chunk.id, 0.8)]
+    await wiring.persist_turn_outcome(
+        chat_id=chat.chat_id, user_id=user_id, ctx=ctx1, bundle=bundle1, question="q1"
+    )
+    assert "bundle_cache" in (chat.meta or {})
+
+    # Turn 2 starts: the memory loader refreshes meta with workspace info —
+    # this is the step that used to clobber the fingerprint.
+    auth = SimpleNamespace(user_id=user_id)
+    await server._load_memory_and_append_user_turn_async(
+        auth=auth,
+        chat_id=chat.chat_id,
+        search_space_id=space.id,
+        user_content="B",
+        attachments=[],
+        meta={"search_space_id": space.id, "class_name": "Calc", "subject_name": "Calculus"},
+    )
+    assert "bundle_cache" in (chat.meta or {}), "memory loader must not erase bundle_cache"
+    assert chat.meta["class_name"] == "Calc"  # refresh still applied
+
+    # Turn 2 prepare: cache must survive and route NONE
+    ctx2 = await wiring.prepare_router_context(
+        chat_id=chat.chat_id,
+        user_id=user_id,
+        search_space_id=space.id,
+        question="B",
+        has_attachments=False,
+    )
+    assert ctx2 is not None
+    assert ctx2.cached is not None, "cache must survive the meta refresh"
+    assert ctx2.decision.mode == "NONE"

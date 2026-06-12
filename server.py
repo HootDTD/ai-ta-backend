@@ -437,7 +437,10 @@ async def _load_memory_and_append_user_turn_async(
             meta=meta or {},
         )
         if meta:
-            session.meta = meta
+            # Merge, don't replace: meta also carries orchestrator state
+            # (bundle_cache fingerprint) written by persist_turn_outcome —
+            # a blind overwrite here invalidated the session cache every turn.
+            session.meta = {**(session.meta or {}), **meta}
 
         recent_turns = await list_recent_turns(
             db_session,
