@@ -8,7 +8,6 @@ artifacts/
 .env
 .env.*
 !.env.example
-/chats/
 .DS_Store
 
 # Logs
