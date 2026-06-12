@@ -8,7 +8,7 @@ owns:
 related:
   - ai-ta-backend/rag-pipeline
   - shared/supabase
-last_verified: 2026-06-10
+last_verified: 2026-06-11
 stub: false
 ---
 
@@ -18,13 +18,14 @@ How course material PDFs become searchable vectors. Ported from SurfSense's inde
 
 ## Module map and file landmarks
 
-### indexing/ — the pgvector ingestion pipeline (7 files)
+### indexing/ — the pgvector ingestion pipeline (8 files)
 
 | File | Role |
 |---|---|
 | `indexing/__init__.py` | Package marker, docstring only. |
-| `indexing/connector_document.py` | `AITAConnectorDocument` — Pydantic DTO entering the pipeline. Fields: `title`, `source_markdown`, `unique_id`, `document_type` (default `"EDUCATIONAL_FILE"`), `search_space_id` (the course), `material_kind`, `page_count`, `week` (None = permanent material), `metadata` dict. `VALID_MATERIAL_KINDS = {textbook, slides, homework, exams, notes, other}`. |
-| `indexing/document_chunker.py` | `items_to_chunk_texts(items)` — converts layout Items to `(text, metadata)` pairs, 1:1. Falls back to `item.raw_text` when `item.text` is empty; skips fully empty items. Metadata carries `page_number`, `section_path` (joined with `" > "`), `chunk_type`, `figure_id`, `source_pdf`, `item_id`. Items are duck-typed via `getattr` — accepts dataclass `Item` or `SimpleNamespace`. |
+| `indexing/connector_document.py` | `AITAConnectorDocument` — Pydantic DTO entering the pipeline. Fields: `title`, `source_markdown`, `unique_id`, `document_type` (default `"EDUCATIONAL_FILE"`), `search_space_id` (the course), `material_kind`, `page_count`, `week` (None = permanent material), `metadata` dict. `VALID_MATERIAL_KINDS = {textbook, slides, homework, exams, notes, other}`. Validators strip NUL bytes from `title`/`source_markdown`/`unique_id` and recursively from `metadata` (see `text_sanitization.py`). |
+| `indexing/document_chunker.py` | `items_to_chunk_texts(items)` — converts layout Items to `(text, metadata)` pairs, 1:1. Strips NUL bytes from chunk text and metadata strings. Falls back to `item.raw_text` when `item.text` is empty; skips fully empty items. Metadata carries `page_number`, `section_path` (joined with `" > "`), `chunk_type`, `figure_id`, `source_pdf`, `item_id`. Items are duck-typed via `getattr` — accepts dataclass `Item` or `SimpleNamespace`. |
+| `indexing/text_sanitization.py` | `strip_nul(text)` + `sanitize_jsonable(value)` — remove `\x00` from strings (recursively for JSON-able structures). Postgres TEXT/JSONB reject NUL; PyMuPDF/Mathpix extraction can emit it (a 873-page scanned textbook killed the `aita_documents` INSERT on staging). Applied at the two chokepoints: `AITAConnectorDocument` validators and `items_to_chunk_texts`. |
 | `indexing/document_embedder.py` | `embed_text(text, model=None, dim=None)` — direct OpenAI call (no chonkie/ML deps). Defaults: `OPENAI_EMBEDDING_MODEL` env or `text-embedding-3-large`, `EMBEDDING_DIM` env or 3072. LRU-cached (`EMBED_CACHE_SIZE`, default 256). Truncates input to 8000 chars. Thread-safe lazy OpenAI client singleton. |
 | `indexing/document_hashing.py` | `compute_unique_identifier_hash` = SHA-256 of `"{document_type}:{unique_id}:{search_space_id}"` (identity dedup). `compute_content_hash` = SHA-256 of `"{search_space_id}:{source_markdown}"` (revision detection). |
 | `indexing/document_persistence.py` | `rollback_and_persist_failure` (called only from except blocks; must never raise) and `attach_chunks_to_document` (uses `set_committed_value` to attach chunks without triggering SQLAlchemy async lazy loading). |
@@ -109,6 +110,7 @@ doc  = await service.index_from_items(docs[0], connector_doc, items)  # -> AITAD
 - **Embedding model/dims**: `text-embedding-3-large`, 3072 dims everywhere (`EMBEDDING_DIM` env, `database/models.py:25`). `index_from_items` embeds chunks one-at-a-time synchronously (N API calls per doc) with only a 256-entry LRU cache; `embed_text` truncates at 8000 chars; doc-level content capped at 2000 chars.
 - **Dedup/reindex semantics**: identical `unique_identifier_hash` + `content_hash` → skipped; content change → re-index in place. Forced reindex works by appending `<!-- reindex:{marker} -->` to `source_markdown` (`teacher_weekly.py:_ingest_pdf_upload`), changing the content hash.
 - **`material_kind` is silently coerced**: invalid kinds become `"other"` (validator in `connector_document.py`), not rejected. It drives retrieval store-bias weights downstream.
+- **NUL bytes are stripped, never rejected**: extraction output legitimately contains `\x00` on scanned PDFs; the pipeline silently removes it at the DTO and chunker boundaries (regression test: `tests/database/test_indexing_nul_postgres.py` on real Postgres — SQLite cannot catch this).
 - **Mathpix rejection is silent-but-flagged**: confidence < 0.4 discards OCR text; pages that needed Mathpix but didn't get it set `metadata.ocr_degraded=True` — indexing still proceeds with whatever native text exists.
 - **Failure handling**: `rollback_and_persist_failure` is deliberately swallow-everything (a raise there would mask the original indexing exception); a failed doc is retried on next upload.
 - **`attach_chunks_to_document` uses `set_committed_value`** — required to avoid async lazy-load (`MissingGreenlet`) when assigning the `chunks` relationship.

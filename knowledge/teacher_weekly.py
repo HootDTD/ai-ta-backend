@@ -246,6 +246,7 @@ class TeacherWeeklyStorage:
         self.job_lease_seconds = max(30, _env_int("TEACHER_UPLOAD_JOB_LEASE_SECONDS", DEFAULT_JOB_LEASE_SECONDS))
         self.job_poll_seconds = max(0.5, _env_float("TEACHER_UPLOAD_JOB_POLL_SECONDS", DEFAULT_JOB_POLL_SECONDS))
         self.storage = storage_client or SupabaseStorageClient()
+        self._buckets_ensured = False
         self.root.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
@@ -445,6 +446,32 @@ class TeacherWeeklyStorage:
             f"{_safe_filename(source_name)}"
         )
 
+    def _ensure_buckets(self) -> None:
+        """Create the upload/pages buckets on first storage use (memoized).
+
+        Skipped for injected clients without ``ensure_bucket`` (test doubles).
+        """
+        if self._buckets_ensured:
+            return
+        ensure = getattr(self.storage, "ensure_bucket", None)
+        if callable(ensure):
+            ensure(bucket=self.upload_bucket, public=False)
+            ensure(bucket=self.pages_bucket, public=False)
+        self._buckets_ensured = True
+
+    def _upload_source_pdf(self, *, storage_key: str, payload: bytes) -> None:
+        self._ensure_buckets()
+        self.storage.upload_bytes(
+            bucket=self.upload_bucket,
+            object_key=storage_key,
+            data=payload,
+            content_type="application/pdf",
+        )
+
+    def _download_source_pdf(self, storage_key: str) -> bytes:
+        self._ensure_buckets()
+        return self.storage.download_bytes(bucket=self.upload_bucket, object_key=storage_key)
+
     def _store_page_asset(
         self,
         *,
@@ -458,11 +485,15 @@ class TeacherWeeklyStorage:
             f"teacher-uploads/{int(upload_id)}/"
             f"page-{int(page_number):04d}.png"
         )
+        self._ensure_buckets()
+        # upsert: worker retries re-render the same pages; overwriting beats
+        # collecting hundreds of duplicate-object warnings per attempt.
         self.storage.upload_bytes(
             bucket=self.pages_bucket,
             object_key=object_key,
             data=image_bytes,
             content_type="image/png",
+            upsert=True,
         )
         return {
             "bucket": self.pages_bucket,
@@ -556,7 +587,7 @@ class TeacherWeeklyStorage:
         work_dir = Path(tempfile.mkdtemp(prefix=f"teacher_worker_{claimed.upload_id}_", dir=str(self.root)))
         pdf_path = work_dir / _safe_filename(claimed.source_name)
         try:
-            payload = self.storage.download_bytes(bucket=self.upload_bucket, object_key=claimed.storage_key)
+            payload = self._download_source_pdf(claimed.storage_key)
             pdf_path.write_bytes(payload)
             # Check if this is a re-index request; pass marker to bust content hash
             reindex_marker = run_async(self._get_reindex_marker_async(claimed.upload_id))
@@ -656,12 +687,7 @@ class TeacherWeeklyStorage:
             kind=kind_norm,
             source_name=source_name,
         )
-        self.storage.upload_bytes(
-            bucket=self.upload_bucket,
-            object_key=storage_key,
-            data=pdf_resolved.read_bytes(),
-            content_type="application/pdf",
-        )
+        self._upload_source_pdf(storage_key=storage_key, payload=pdf_resolved.read_bytes())
 
         now = _utc_now()
         async with get_async_session() as session:

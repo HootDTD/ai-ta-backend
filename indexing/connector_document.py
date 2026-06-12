@@ -11,6 +11,8 @@ Removed: should_use_code_chunker, created_by_id (not needed for AI-TA)
 
 from pydantic import BaseModel, Field, field_validator
 
+from .text_sanitization import sanitize_jsonable, strip_nul
+
 VALID_MATERIAL_KINDS = frozenset(
     {"textbook", "slides", "homework", "exams", "notes", "other"}
 )
@@ -42,12 +44,26 @@ class AITAConnectorDocument(BaseModel):
     # Arbitrary extra metadata (source_pdf path, OCR flags, legacy store ID, etc.)
     metadata: dict = {}
 
+    @field_validator("title", "source_markdown", "unique_id", mode="before")
+    @classmethod
+    def no_nul_bytes(cls, v):
+        # Postgres rejects \x00 in TEXT/VARCHAR; PDF/OCR extraction can emit it.
+        if isinstance(v, str):
+            return strip_nul(v)
+        return v
+
     @field_validator("title", "source_markdown", "unique_id")
     @classmethod
     def not_empty(cls, v: str, info) -> str:
         if not v.strip():
             raise ValueError(f"{info.field_name} must not be empty or whitespace")
         return v
+
+    @field_validator("metadata")
+    @classmethod
+    def no_nul_bytes_in_metadata(cls, v: dict) -> dict:
+        # Postgres JSONB rejects NUL in strings the same way TEXT does.
+        return sanitize_jsonable(v)
 
     @field_validator("material_kind")
     @classmethod
