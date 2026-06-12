@@ -49,8 +49,11 @@ class SupabaseStorageClient:
         )
         if resp.status_code < 400:
             return
+        if resp.status_code == 409:
+            # Conflict on create == bucket exists, regardless of body wording.
+            return
         body = (resp.text or "").lower()
-        if resp.status_code in (400, 409) and ("already exists" in body or "duplicate" in body):
+        if resp.status_code == 400 and ("already exists" in body or "duplicate" in body):
             return
         resp.raise_for_status()
 

@@ -272,6 +272,16 @@ def test_ensure_bucket_tolerates_already_existing_bucket(monkeypatch, status_cod
     _client().ensure_bucket(bucket="teacher-weekly-uploads")  # must not raise
 
 
+def test_ensure_bucket_tolerates_bare_409_without_body(monkeypatch):
+    """409 on bucket-create means the bucket exists, whatever the body says."""
+    monkeypatch.setattr(
+        "vendors.supabase_storage.requests.post",
+        lambda url, **kwargs: _response(409, ""),
+    )
+
+    _client().ensure_bucket(bucket="teacher-weekly-uploads")  # must not raise
+
+
 def test_ensure_bucket_raises_on_other_errors(monkeypatch):
     monkeypatch.setattr(
         "vendors.supabase_storage.requests.post",
