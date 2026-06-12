@@ -11,10 +11,11 @@ OpenAI call is in flight — the fix for the connection-reap failure on long job
 import os
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import delete
 
-from database.models import AITAChunk
+from database.models import AITAChunk, AITADocument, DocumentStatus
 from .document_embedder import embed_texts
 
 EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "128"))
@@ -123,3 +124,54 @@ async def embed_and_persist_chunks(
             if hasattr(result, "__await__"):
                 await result
     return last_page
+
+
+def build_doc_content(chunk_pairs: list[ChunkPair], *, fallback_title: str) -> str:
+    """Document-level text for coarse retrieval: body/heading/ocr text, capped 2000 chars."""
+    body = [
+        text for text, meta in chunk_pairs
+        if (meta.get("chunk_type") in ("body", "heading", "ocr", None))
+    ]
+    return (" ".join(body)[:2000]) or fallback_title
+
+
+async def finalize_document(
+    session,
+    *,
+    document_id: int,
+    chunk_pairs: list[ChunkPair],
+    doc_content: str,
+    doc_embedding: list[float],
+    page_count: int | None,
+    embed_fn: Callable[[list[str]], list[list[float]]] = embed_texts,
+) -> None:
+    """Terminal write: persist null-page chunks + doc-level fields; mark READY.
+
+    Runs in the caller's short-lived session. Does NOT commit (caller commits),
+    so it composes with the rest of the upload/job finalize in one transaction.
+    """
+    _page_groups, null_items = group_pages(chunk_pairs)
+    if null_items:
+        await session.execute(
+            delete(AITAChunk).where(
+                AITAChunk.document_id == document_id,
+                AITAChunk.page_number.is_(None),
+            )
+        )
+        for text, meta in null_items:
+            session.add(AITAChunk(
+                content=text,
+                embedding=embed_fn([text])[0],
+                page_number=None,
+                section_path=meta.get("section_path") or None,
+                chunk_type=meta.get("chunk_type") or "body",
+                figure_id=meta.get("figure_id"),
+                document_id=document_id,
+            ))
+    document = await session.get(AITADocument, document_id)
+    document.content = doc_content
+    document.embedding = doc_embedding
+    if page_count is not None:
+        document.page_count = page_count
+    document.updated_at = datetime.now(UTC)
+    document.status = DocumentStatus.ready()

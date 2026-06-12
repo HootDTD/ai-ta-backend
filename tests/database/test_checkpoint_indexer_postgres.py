@@ -133,3 +133,30 @@ async def test_batch_failure_rolls_back_and_resume_completes(db_session):
     )
     assert last == 3
     assert await _count_chunks(db_session, doc.id) == 3
+
+
+async def test_finalize_document_sets_ready_and_writes_null_page_chunks(db_session):
+    from indexing.checkpoint_indexer import build_doc_content, finalize_document
+    from database.models import DocumentStatus
+
+    doc = await _make_document(db_session)
+    pairs = _pairs([1, 2]) + [("intro-no-page", {"page_number": None, "chunk_type": "heading",
+                                                 "section_path": "", "figure_id": None})]
+
+    content = build_doc_content(pairs, fallback_title="Textbook")
+    assert "page-1-text" in content
+
+    async with _session_factory(db_session)() as s:
+        await finalize_document(
+            s, document_id=doc.id, chunk_pairs=pairs,
+            doc_content=content, doc_embedding=fake_embedding(content), page_count=2,
+            embed_fn=lambda t: [fake_embedding(x) for x in t],
+        )
+        await s.commit()
+
+    refreshed = await db_session.get(AITADocument, doc.id)
+    await db_session.refresh(refreshed)
+    assert DocumentStatus.is_state(refreshed.status, DocumentStatus.READY)
+    assert refreshed.page_count == 2
+    # the one null-page chunk was written in finalize
+    assert await _count_chunks(db_session, doc.id) == 1
