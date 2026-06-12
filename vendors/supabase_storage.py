@@ -25,6 +25,35 @@ class SupabaseStorageClient:
         if not self._api_key:
             raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_API_KEY) is required for Supabase Storage access.")
 
+    def ensure_bucket(
+        self,
+        *,
+        bucket: str,
+        public: bool = False,
+        timeout: int = 30,
+    ) -> None:
+        """Create the bucket if it doesn't exist; an already-existing bucket is fine.
+
+        Buckets are app-owned constants (env-configured), so auto-creation can't
+        mask user-input typos — it removes the manual per-environment setup step
+        that left the staging project with zero buckets.
+        """
+        bucket_norm = (bucket or "").strip()
+        if not bucket_norm:
+            raise ValueError("bucket is required")
+        resp = requests.post(
+            f"{self._base_url}/storage/v1/bucket",
+            headers={**self._headers(), "Content-Type": "application/json"},
+            json={"id": bucket_norm, "name": bucket_norm, "public": bool(public)},
+            timeout=timeout,
+        )
+        if resp.status_code < 400:
+            return
+        body = (resp.text or "").lower()
+        if resp.status_code in (400, 409) and ("already exists" in body or "duplicate" in body):
+            return
+        resp.raise_for_status()
+
     def upload_bytes(
         self,
         *,
