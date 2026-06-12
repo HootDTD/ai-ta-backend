@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Checkpointed embed-and-persist for long indexing jobs.
 
 Splits a document's chunks into per-page work units, embeds each page-batch with
@@ -7,6 +5,8 @@ a single batched OpenAI call, and commits each batch in its own short-lived DB
 session while advancing a resume pointer. No DB session is ever held while an
 OpenAI call is in flight — the fix for the connection-reap failure on long jobs.
 """
+
+from __future__ import annotations
 
 import os
 from collections.abc import Awaitable, Callable, Iterator
@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from sqlalchemy import delete
 
 from database.models import AITAChunk, AITADocument, DocumentStatus
+
 from .document_embedder import embed_texts
 
 EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "128"))
@@ -26,6 +27,7 @@ ChunkPair = tuple[str, dict]
 @dataclass(frozen=True)
 class PageGroup:
     """All chunks belonging to one page, in document order."""
+
     page_number: int
     items: list[ChunkPair]
 
@@ -111,16 +113,18 @@ async def embed_and_persist_chunks(
                     AITAChunk.page_number.in_(page_numbers),
                 )
             )
-            for (text, meta), vector in zip(items, vectors):
-                session.add(AITAChunk(
-                    content=text,
-                    embedding=vector,
-                    page_number=meta.get("page_number"),
-                    section_path=meta.get("section_path") or None,
-                    chunk_type=meta.get("chunk_type") or "body",
-                    figure_id=meta.get("figure_id"),
-                    document_id=document_id,
-                ))
+            for (text, meta), vector in zip(items, vectors, strict=True):
+                session.add(
+                    AITAChunk(
+                        content=text,
+                        embedding=vector,
+                        page_number=meta.get("page_number"),
+                        section_path=meta.get("section_path") or None,
+                        chunk_type=meta.get("chunk_type") or "body",
+                        figure_id=meta.get("figure_id"),
+                        document_id=document_id,
+                    )
+                )
             await session.commit()
 
         last_page = max(page_numbers)
@@ -134,7 +138,8 @@ async def embed_and_persist_chunks(
 def build_doc_content(chunk_pairs: list[ChunkPair], *, fallback_title: str) -> str:
     """Document-level text for coarse retrieval: body/heading/ocr text, capped 2000 chars."""
     body = [
-        text for text, meta in chunk_pairs
+        text
+        for text, meta in chunk_pairs
         if (meta.get("chunk_type") in ("body", "heading", "ocr", None))
     ]
     return (" ".join(body)[:2000]) or fallback_title
@@ -171,16 +176,18 @@ async def finalize_document(
                 AITAChunk.page_number.is_(None),
             )
         )
-        for (text, meta), vector in zip(null_items, null_vectors):
-            session.add(AITAChunk(
-                content=text,
-                embedding=vector,
-                page_number=None,
-                section_path=meta.get("section_path") or None,
-                chunk_type=meta.get("chunk_type") or "body",
-                figure_id=meta.get("figure_id"),
-                document_id=document_id,
-            ))
+        for (text, meta), vector in zip(null_items, null_vectors, strict=True):
+            session.add(
+                AITAChunk(
+                    content=text,
+                    embedding=vector,
+                    page_number=None,
+                    section_path=meta.get("section_path") or None,
+                    chunk_type=meta.get("chunk_type") or "body",
+                    figure_id=meta.get("figure_id"),
+                    document_id=document_id,
+                )
+            )
     document = await session.get(AITADocument, document_id)
     document.content = doc_content
     document.embedding = doc_embedding

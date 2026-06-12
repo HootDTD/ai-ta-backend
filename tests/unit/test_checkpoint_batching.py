@@ -9,8 +9,11 @@ def _pair(text, page):
 
 def test_group_pages_splits_null_and_orders_by_page():
     pairs = [
-        _pair("p2a", 2), _pair("p1a", 1), _pair("p1b", 1),
-        _pair("nopage", None), _pair("p3a", 3),
+        _pair("p2a", 2),
+        _pair("p1a", 1),
+        _pair("p1b", 1),
+        _pair("nopage", None),
+        _pair("p3a", 3),
     ]
     page_groups, null_items = group_pages(pairs)
 

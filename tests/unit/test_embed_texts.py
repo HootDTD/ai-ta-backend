@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from indexing import document_embedder as de
 
 
@@ -15,8 +13,7 @@ class _FakeEmbeddings:
     def create(self, *, model, input, dimensions):
         self.calls.append(list(input))
         items = [
-            SimpleNamespace(embedding=[float(i)] * dimensions, index=i)
-            for i in range(len(input))
+            SimpleNamespace(embedding=[float(i)] * dimensions, index=i) for i in range(len(input))
         ]
         # Simulate the API returning items out of arrival order; embed_texts must
         # re-sort by `index` so output still tracks input order.
@@ -37,9 +34,9 @@ def test_embed_texts_returns_one_vector_per_input(monkeypatch):
     out = de.embed_texts(["alpha", "beta", "gamma"], dim=4)
 
     assert len(out) == 3
-    assert out[0] == [0.0, 0.0, 0.0, 0.0]   # 'alpha' -> within-batch index 0
-    assert out[1] == [1.0, 1.0, 1.0, 1.0]   # 'beta'  -> index 1
-    assert out[2] == [2.0, 2.0, 2.0, 2.0]   # 'gamma' -> index 2
+    assert out[0] == [0.0, 0.0, 0.0, 0.0]  # 'alpha' -> within-batch index 0
+    assert out[1] == [1.0, 1.0, 1.0, 1.0]  # 'beta'  -> index 1
+    assert out[2] == [2.0, 2.0, 2.0, 2.0]  # 'gamma' -> index 2
     assert client.embeddings.calls == [["alpha", "beta", "gamma"]]
 
 
@@ -63,9 +60,9 @@ def test_embed_texts_splits_oversized_requests(monkeypatch):
 
     assert len(out) == 3
     # Two batches; within-batch index restarts at 0 each request.
-    assert out[0] == [0.0, 0.0, 0.0]   # 'a' -> batch 0, index 0
-    assert out[1] == [1.0, 1.0, 1.0]   # 'b' -> batch 0, index 1
-    assert out[2] == [0.0, 0.0, 0.0]   # 'c' -> batch 1, index 0
+    assert out[0] == [0.0, 0.0, 0.0]  # 'a' -> batch 0, index 0
+    assert out[1] == [1.0, 1.0, 1.0]  # 'b' -> batch 0, index 1
+    assert out[2] == [0.0, 0.0, 0.0]  # 'c' -> batch 1, index 0
     assert client.embeddings.calls == [["a", "b"], ["c"]]
 
 
