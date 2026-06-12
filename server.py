@@ -10,7 +10,7 @@ import shutil
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import List, Optional, Sequence, Iterator, Iterable, Union, Dict, Any
+from typing import List, Optional, Sequence, Iterator, Iterable, Tuple, Union, Dict, Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -1437,10 +1437,15 @@ def list_my_classes(request: Request):
 # pgvector retrieval helper
 # ---------------------------------------------------------------------------
 
-def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "ResearchBundle":
+def _ask_pgvector(
+    q_effective: str, workspace, weight_overrides: dict, cfg,
+    top_k: Optional[int] = None, token_budget: Optional[int] = None,
+) -> "ResearchBundle":
     """Run the pgvector retrieval pipeline and return a ResearchBundle.
 
     Uses the shared background event loop so asyncpg connections stay alive.
+    ``top_k``/``token_budget`` default to env (K_SEM/TOKEN_BUDGET); the
+    retrieval-mode orchestrator passes smaller values for AUGMENT top-ups.
     """
     from config.contracts import ResearchBundle, ResearchMetadata
     from retrieval.pipeline import retrieve_for_question
@@ -1455,7 +1460,8 @@ def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "
             "set USE_PGVECTOR_RETRIEVAL=true only after seeding the DB."
         )
 
-    token_budget = int(os.getenv("TOKEN_BUDGET", "6000"))
+    if token_budget is None:
+        token_budget = int(os.getenv("TOKEN_BUDGET", "6000"))
 
     # Extract keywords (role: hints appended to original question, not standalone targets)
     # extract_and_filter_keywords returns (context_summary, term_list)
@@ -1482,7 +1488,7 @@ def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "
                 search_space_id=search_space_id,
                 db_session=db_session,
                 weight_overrides=weight_overrides or {},
-                top_k=int(os.getenv("K_SEM", "20")),
+                top_k=top_k if top_k is not None else int(os.getenv("K_SEM", "20")),
                 token_budget=token_budget,
             )
 
@@ -1529,6 +1535,108 @@ def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "
         attempted_terms=[q_effective],
         subject=cfg.subject_name if cfg else "",
     )
+
+
+# ---------------------------------------------------------------------------
+# Retrieval-mode orchestrator hooks (ROUTER_ENABLED, default off)
+# ---------------------------------------------------------------------------
+
+def _prepare_router_context_sync(
+    *, auth, chat_id: str, search_space_id: int, question: str, has_attachments: bool,
+):
+    """Decide NONE/AUGMENT/FRESH for this turn. Returns None (= legacy FRESH
+    path) when the router is disabled or anything fails."""
+    from ai.router import wiring as router_wiring
+
+    if not router_wiring.router_enabled():
+        return None
+    try:
+        return run_async(
+            router_wiring.prepare_router_context(
+                chat_id=chat_id,
+                user_id=auth.user_id,
+                search_space_id=search_space_id,
+                question=question,
+                has_attachments=has_attachments,
+            )
+        )
+    except Exception:
+        log.warning("Router context preparation failed — legacy path", exc_info=True)
+        return None
+
+
+def _retrieve_bundle_with_router(
+    *, router_ctx, q_effective: str, workspace, weight_overrides: dict, cfg,
+) -> Tuple["ResearchBundle", int]:
+    """Pick the retrieval path from the router decision.
+
+    NONE → rebuild bundle from the session cache (no retrieval, cached
+    citation scores skip the scoring wave). AUGMENT → small top-up retrieval
+    merged with the cache. FRESH / no router → legacy path unchanged.
+    Returns (bundle, retrieval_latency_ms).
+    """
+    from ai.router import wiring as router_wiring
+
+    _t = time.perf_counter()
+    decision_mode = router_ctx.decision.mode if router_ctx else "FRESH"
+    cached = router_ctx.cached if router_ctx else None
+    subject = cfg.subject_name if cfg else ""
+
+    if decision_mode == "NONE" and cached is not None:
+        bundle = router_wiring.bundle_from_cache(
+            cached,
+            q_effective=q_effective,
+            subject=subject,
+            reason=router_ctx.decision.reason,
+        )
+    elif decision_mode == "AUGMENT" and cached is not None:
+        fresh = _ask_pgvector(
+            q_effective=q_effective,
+            workspace=workspace,
+            weight_overrides=weight_overrides,
+            cfg=cfg,
+            top_k=router_wiring.augment_top_k(),
+            token_budget=router_wiring.augment_token_budget(),
+        )
+        bundle = router_wiring.merge_augment_bundle(
+            cached,
+            fresh,
+            q_effective=q_effective,
+            subject=subject,
+            reason=router_ctx.decision.reason,
+        )
+    else:
+        bundle = _ask_pgvector(
+            q_effective=q_effective,
+            workspace=workspace,
+            weight_overrides=weight_overrides,
+            cfg=cfg,
+        )
+    return bundle, int((time.perf_counter() - _t) * 1000)
+
+
+def _persist_router_outcome_sync(
+    *, auth, chat_id: str, router_ctx, bundle, question: str,
+    retrieval_ms: Optional[int], answer_ms: Optional[int],
+) -> None:
+    """Save the answered bundle into the session cache + telemetry row.
+    Never raises."""
+    from ai.router import wiring as router_wiring
+
+    try:
+        run_async(
+            router_wiring.persist_turn_outcome(
+                chat_id=chat_id,
+                user_id=auth.user_id,
+                ctx=router_ctx,
+                bundle=bundle,
+                question=question,
+                latency_retrieval_ms=retrieval_ms,
+                latency_answer_ms=answer_ms,
+            )
+        )
+    except Exception:
+        log.warning("Router outcome persistence failed (non-fatal)", exc_info=True)
 
 
 # Intentionally sync `def` — FastAPI auto-threads sync endpoints.
@@ -1641,6 +1749,16 @@ def post_ask(payload: AskRequest, request: Request):
         current_prompt = q_effective.strip() or user_content
         q_effective = f"{memory_context}\n\nCurrent question:\n{current_prompt}".strip()
 
+    # Retrieval-mode orchestrator: decide NONE/AUGMENT/FRESH from the RAW
+    # question (memory prefix would drown the routing evidence). None = legacy.
+    router_ctx = _prepare_router_context_sync(
+        auth=auth,
+        chat_id=chat_id,
+        search_space_id=search_space_id,
+        question=q,
+        has_attachments=bool(atts),
+    )
+
     weight_overrides = _build_retrieval_weight_overrides(
         workspace=workspace,
         teacher_storage=teacher_storage,
@@ -1651,6 +1769,9 @@ def post_ask(payload: AskRequest, request: Request):
     answer_chunks: List[str] = []
     structured_citations: List[Dict[str, Any]] = []
     error_text: Optional[str] = None
+    bundle = None
+    retrieval_ms: Optional[int] = None
+    answer_ms: Optional[int] = None
 
     try:
         cfg = RequestConfig.from_env()
@@ -1669,7 +1790,8 @@ def post_ask(payload: AskRequest, request: Request):
             )
 
             with redirect_stdout(stdout_buffer):
-                bundle = _ask_pgvector(
+                bundle, retrieval_ms = _retrieve_bundle_with_router(
+                    router_ctx=router_ctx,
                     q_effective=q_effective,
                     workspace=workspace,
                     weight_overrides=weight_overrides,
@@ -1692,6 +1814,7 @@ def post_ask(payload: AskRequest, request: Request):
                 asked_output_keys=["answer"],
             )
 
+        _t_answer = time.perf_counter()
         solution = solve_with_bundle(
             parsed_task, bundle, subject=cfg.subject_name,
         )
@@ -1699,6 +1822,7 @@ def post_ask(payload: AskRequest, request: Request):
             solution, bundle, include_background=False,
             subject=cfg.subject_name,
         )
+        answer_ms = int((time.perf_counter() - _t_answer) * 1000)
         answer_chunks.append(final.text)
         structured_citations = _structured_citations_from_bundle(
             bundle, getattr(final, "citations", [])
@@ -1731,6 +1855,17 @@ def post_ask(payload: AskRequest, request: Request):
         )
     except Exception:
         log.warning("Failed to persist assistant turn for chat_id=%s", chat_id, exc_info=True)
+
+    if router_ctx is not None:
+        _persist_router_outcome_sync(
+            auth=auth,
+            chat_id=chat_id,
+            router_ctx=router_ctx,
+            bundle=bundle if not error_text else None,
+            question=q,
+            retrieval_ms=retrieval_ms,
+            answer_ms=answer_ms,
+        )
 
     return JSONResponse(payload_out)
 
@@ -1884,12 +2019,28 @@ async def post_ask_stream(payload: AskRequest, request: Request):
             current_prompt = q_effective.strip() or user_content
             q_effective = f"{memory_context}\n\nCurrent question:\n{current_prompt}".strip()
 
+        # Retrieval-mode orchestrator: decide NONE/AUGMENT/FRESH from the RAW
+        # question (memory prefix would drown the routing evidence).
+        router_ctx = await stream_loop.run_in_executor(
+            None,
+            lambda: _prepare_router_context_sync(
+                auth=auth,
+                chat_id=chat_id,
+                search_space_id=search_space_id,
+                question=q,
+                has_attachments=bool(atts),
+            ),
+        )
+
         weight_overrides = _build_retrieval_weight_overrides(
             workspace=workspace,
             teacher_storage=teacher_storage,
             search_space_id=search_space_id,
         )
 
+        bundle = None
+        retrieval_ms: Optional[int] = None
+        answer_ms: Optional[int] = None
         try:
             cfg = RequestConfig.from_env()
             cfg.set_subject(subject_name, "server")
@@ -1898,7 +2049,8 @@ async def post_ask_stream(payload: AskRequest, request: Request):
             yield _sse_event("status", {"stage": "retrieving", "message": "Searching course materials..."})
 
             bundle_future = stream_loop.run_in_executor(
-                None, lambda: _ask_pgvector(
+                None, lambda: _retrieve_bundle_with_router(
+                    router_ctx=router_ctx,
                     q_effective=q_effective,
                     workspace=workspace,
                     weight_overrides=weight_overrides,
@@ -1913,7 +2065,7 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                 else None
             )
 
-            bundle = await bundle_future
+            bundle, retrieval_ms = await bundle_future
 
             parsed_task: Optional[ParsedTask] = None
             if parse_future is not None:
@@ -1936,6 +2088,7 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                 "message": f"Analyzing {n_snippets} relevant excerpt{'s' if n_snippets != 1 else ''}...",
             })
 
+            _t_answer = time.perf_counter()
             solution = None
             async for kind, value in _aiter_in_thread(
                 lambda: solve_with_bundle_stream(parsed_task, bundle, subject=cfg.subject_name),
@@ -1960,6 +2113,7 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                 solution, bundle, include_background=False,
                 subject=cfg.subject_name,
             )
+            answer_ms = int((time.perf_counter() - _t_answer) * 1000)
             answer_text = final.text or ""
             structured_citations = _structured_citations_from_bundle(
                 bundle, getattr(final, "citations", [])
@@ -1985,6 +2139,20 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                 )
             except Exception:
                 log.warning("Failed to persist assistant turn for chat_id=%s", chat_id, exc_info=True)
+
+            if router_ctx is not None:
+                await stream_loop.run_in_executor(
+                    None,
+                    lambda: _persist_router_outcome_sync(
+                        auth=auth,
+                        chat_id=chat_id,
+                        router_ctx=router_ctx,
+                        bundle=bundle,
+                        question=q,
+                        retrieval_ms=retrieval_ms,
+                        answer_ms=answer_ms,
+                    ),
+                )
 
         except Exception as e:
             log.exception("SSE ask pipeline failed")

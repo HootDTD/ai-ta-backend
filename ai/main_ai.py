@@ -998,49 +998,73 @@ def _prepare_solve_prompt(
     q = question_text or parsed_task.problem_type
     scorer_model = os.getenv("CITATION_SCORER_MODEL", "gpt-4o")
 
+    # Cached scoring rows from the session bundle cache (retrieval-mode
+    # orchestrator). Snippets with a cached row skip the scoring pool —
+    # combined_results MUST stay index-aligned with bundle.snippets.
+    cached_scores: Dict[str, Dict[str, Any]] = {}
+    try:
+        raw_cached = (getattr(bundle, "provenance", {}) or {}).get(
+            "cached_citation_scores"
+        ) or {}
+        cached_scores = {
+            str(k): v for k, v in raw_cached.items()
+            if isinstance(v, dict) and "score" in v
+        }
+    except Exception:
+        cached_scores = {}
+
     # Build per-snippet args before submitting to the pool
-    snippet_args: List[Tuple[Any, float, str]] = []
-    for sn in bundle.snippets:
+    combined_results: List[Optional[Dict[str, Any]]] = [None] * len(bundle.snippets)
+    snippet_args: List[Tuple[int, Any, float, str]] = []
+    for i, sn in enumerate(bundle.snippets):
+        cached_row = cached_scores.get(str(getattr(sn, "id", "")))
+        if cached_row is not None:
+            combined_results[i] = {**cached_row, "answer": cached_row.get("answer", "(cached)")}
+            continue
         focus_term = _pick_concept_term(sn)
         importance = _importance_from_snippet(sn)
-        snippet_args.append((sn, importance, focus_term))
+        snippet_args.append((i, sn, importance, focus_term))
 
     # Run merged score+answer in parallel (Phase 2+3)
-    max_workers = _citation_pool_size(len(snippet_args))
-    combined_results: List[Dict[str, Any]] = []
     _t_score = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = [
-            pool.submit(
-                _score_and_answer_snippet,
-                q, sn, importance, focus_term,
-                model=scorer_model,
-            )
-            for sn, importance, focus_term in snippet_args
-        ]
-        for future in futures:
-            try:
-                combined_results.append(future.result())
-            except Exception:
-                log.error("Parallel snippet processing failed", exc_info=True)
-                combined_results.append({
-                    "marker": "?",
-                    "page": None,
-                    "snippet_id": "",
-                    "concept_term": "",
-                    "importance": 0.0,
-                    "relevance": 0.0,
-                    "directness": 0.0,
-                    "base_score": 0.0,
-                    "score": 0.0,
-                    "context": "",
-                    "why": "",
-                    "answer": "Not Relevant",
-                })
+    if snippet_args:
+        max_workers = _citation_pool_size(len(snippet_args))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = [
+                (
+                    i,
+                    pool.submit(
+                        _score_and_answer_snippet,
+                        q, sn, importance, focus_term,
+                        model=scorer_model,
+                    ),
+                )
+                for i, sn, importance, focus_term in snippet_args
+            ]
+            for i, future in futures:
+                try:
+                    combined_results[i] = future.result()
+                except Exception:
+                    log.error("Parallel snippet processing failed", exc_info=True)
+                    combined_results[i] = {
+                        "marker": "?",
+                        "page": None,
+                        "snippet_id": "",
+                        "concept_term": "",
+                        "importance": 0.0,
+                        "relevance": 0.0,
+                        "directness": 0.0,
+                        "base_score": 0.0,
+                        "score": 0.0,
+                        "context": "",
+                        "why": "",
+                        "answer": "Not Relevant",
+                    }
 
     log.info(
-        "[timing] snippet_scoring=%.2fs n=%d",
+        "[timing] snippet_scoring=%.2fs n=%d reused=%d",
         time.perf_counter() - _t_score, len(snippet_args),
+        len(bundle.snippets) - len(snippet_args),
     )
 
     # Split into citation_analyses (score fields) and per_citation_answers (answer fields)

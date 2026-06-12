@@ -6,8 +6,6 @@ full save/load/evict cycle against the real-Postgres ``db_session`` harness.
 
 from __future__ import annotations
 
-from dataclasses import asdict
-
 import pytest
 from sqlalchemy import select
 
