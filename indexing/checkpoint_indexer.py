@@ -72,3 +72,54 @@ def plan_batches(
         count += size
     if batch:
         yield batch
+
+
+async def embed_and_persist_chunks(
+    *,
+    session_factory: Callable[[], object],
+    document_id: int,
+    chunk_pairs: list[ChunkPair],
+    after_page: int = 0,
+    batch_size: int = EMBED_BATCH_SIZE,
+    on_progress: Callable[[int], object] | Callable[[int], Awaitable[None]] | None = None,
+    embed_fn: Callable[[list[str]], list[list[float]]] = embed_texts,
+) -> int:
+    """Embed and persist chunks page-batch by page-batch, each in its own session.
+
+    Returns the highest page number committed. ``on_progress(page)`` is invoked
+    after each batch commits (may be sync or async). Pages with
+    ``page_number <= after_page`` are skipped (resume). Re-running a page deletes
+    and reinserts that page's chunks (idempotent).
+    """
+    page_groups, _null_items = group_pages(chunk_pairs)
+    last_page = after_page
+    for batch in plan_batches(page_groups, batch_size=batch_size, after_page=after_page):
+        page_numbers = [pg.page_number for pg in batch]
+        items = [pair for pg in batch for pair in pg.items]
+        vectors = embed_fn([text for text, _ in items])
+
+        async with session_factory() as session:
+            await session.execute(
+                delete(AITAChunk).where(
+                    AITAChunk.document_id == document_id,
+                    AITAChunk.page_number.in_(page_numbers),
+                )
+            )
+            for (text, meta), vector in zip(items, vectors):
+                session.add(AITAChunk(
+                    content=text,
+                    embedding=vector,
+                    page_number=meta.get("page_number"),
+                    section_path=meta.get("section_path") or None,
+                    chunk_type=meta.get("chunk_type") or "body",
+                    figure_id=meta.get("figure_id"),
+                    document_id=document_id,
+                ))
+            await session.commit()
+
+        last_page = max(page_numbers)
+        if on_progress is not None:
+            result = on_progress(last_page)
+            if hasattr(result, "__await__"):
+                await result
+    return last_page
