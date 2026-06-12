@@ -76,5 +76,8 @@ def embed_texts(
     for start in range(0, len(texts), _MAX_INPUTS_PER_REQUEST):
         batch = [t[:8000] for t in texts[start:start + _MAX_INPUTS_PER_REQUEST]]
         resp = client.embeddings.create(model=model, input=batch, dimensions=dim)
-        vectors.extend(list(item.embedding) for item in resp.data)
+        vectors.extend(
+            list(item.embedding)
+            for item in sorted(resp.data, key=lambda item: item.index)
+        )
     return vectors
