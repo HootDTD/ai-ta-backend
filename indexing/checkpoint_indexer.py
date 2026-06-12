@@ -162,16 +162,19 @@ async def finalize_document(
         embed_fn = embed_texts
     _page_groups, null_items = group_pages(chunk_pairs)
     if null_items:
+        # Embed all null-page texts in ONE batched call before touching the
+        # session — never run N serial embeds while a session is open.
+        null_vectors = embed_fn([text for text, _ in null_items])
         await session.execute(
             delete(AITAChunk).where(
                 AITAChunk.document_id == document_id,
                 AITAChunk.page_number.is_(None),
             )
         )
-        for text, meta in null_items:
+        for (text, meta), vector in zip(null_items, null_vectors):
             session.add(AITAChunk(
                 content=text,
-                embedding=embed_fn([text])[0],
+                embedding=vector,
                 page_number=None,
                 section_path=meta.get("section_path") or None,
                 chunk_type=meta.get("chunk_type") or "body",
