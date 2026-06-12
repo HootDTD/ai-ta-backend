@@ -64,6 +64,10 @@ class _DummyOpenAI:
 
 
 openai_stub.OpenAI = _DummyOpenAI
+# Async client stub for the retrieval-mode router (ai/router/wiring.py).
+# Sync attributes suffice: router tests inject their own AsyncMock clients;
+# this only needs to make `from openai import AsyncOpenAI` importable.
+openai_stub.AsyncOpenAI = _DummyOpenAI
 sys.modules["openai"] = openai_stub
 
 
