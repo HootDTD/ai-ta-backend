@@ -1466,6 +1466,25 @@ def solve_with_bundle_stream(
     yield ("solution", _build_solution_from_data(data))
 
 
+# Zero-width characters and their HTML entities (decimal and hex, with or
+# without the trailing semicolon). gpt-5 models sporadically emit a literal
+# "&#8203;" (zero-width space) before citation markers — a web-text artifact
+# that renders as visible garbage since answers are plain text, not HTML.
+# Once one answer in a session contains it, chat memory feeds it back and the
+# model repeats it for the rest of the conversation.
+_ZERO_WIDTH_RE = re.compile(
+    r"&#(?:8203|8204|8205|65279);?"
+    r"|&#x(?:200b|200c|200d|feff);?"
+    r"|[\u200b\u200c\u200d\ufeff]",
+    re.IGNORECASE,
+)
+
+
+def _strip_zero_width(text: str) -> str:
+    """Remove zero-width characters/entities from model-generated text."""
+    return _ZERO_WIDTH_RE.sub("", text)
+
+
 def format_answer(
     solution: ProposedSolution,
     bundle: ResearchBundle,
@@ -1498,7 +1517,7 @@ def format_answer(
             return "\n".join(parts)
         return str(val)
 
-    text_str = _to_str(text)
+    text_str = _strip_zero_width(_to_str(text))
     fa = getattr(solution, "final_answers", {}) or {}
     if isinstance(fa, dict) and fa:
         results_lines = [f"- {k} = {v}" for k, v in fa.items()]
