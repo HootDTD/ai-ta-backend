@@ -87,6 +87,11 @@ def _build_engine() -> AsyncEngine:
         pool_size=10,
         max_overflow=20,
         pool_pre_ping=True,
+        # Proactively refresh connections older than 30 min so a long-idle
+        # connection is never reused. Backstop only — the real fix is that
+        # indexing no longer holds a connection across the embedding loop
+        # (see indexing/checkpoint_indexer.py).
+        pool_recycle=1800,
     )
 
 
