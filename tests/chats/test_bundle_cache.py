@@ -81,6 +81,7 @@ def test_cached_bundle_titles_dedupe_and_include_sections():
 # Integration: real Postgres via the pgvector test container
 # ---------------------------------------------------------------------------
 
+
 async def _seed_session_with_chunks(db_session, n_chunks: int):
     space = SearchSpace(
         name="Bundle cache test space",
@@ -170,13 +171,23 @@ async def test_replace_drops_previous_cache(db_session):
     second_half = [_snippet(cid) for cid in chunk_ids[2:]]
 
     await save_bundle_cache(
-        db_session, chat_session=session, turn_index=1,
-        snippets=first_half, scoring={}, visible_docs_hash="h1", replace=True,
+        db_session,
+        chat_session=session,
+        turn_index=1,
+        snippets=first_half,
+        scoring={},
+        visible_docs_hash="h1",
+        replace=True,
     )
     await db_session.flush()
     await save_bundle_cache(
-        db_session, chat_session=session, turn_index=2,
-        snippets=second_half, scoring={}, visible_docs_hash="h2", replace=True,
+        db_session,
+        chat_session=session,
+        turn_index=2,
+        snippets=second_half,
+        scoring={},
+        visible_docs_hash="h2",
+        replace=True,
     )
     await db_session.flush()
 
@@ -192,23 +203,31 @@ async def test_merge_updates_last_used_turn(db_session):
     snippets = [_snippet(cid) for cid in chunk_ids]
 
     await save_bundle_cache(
-        db_session, chat_session=session, turn_index=1,
-        snippets=snippets, scoring={}, visible_docs_hash="h1", replace=True,
+        db_session,
+        chat_session=session,
+        turn_index=1,
+        snippets=snippets,
+        scoring={},
+        visible_docs_hash="h1",
+        replace=True,
     )
     await db_session.flush()
     # AUGMENT-style merge on turn 3 reuses two of three chunks
     await save_bundle_cache(
-        db_session, chat_session=session, turn_index=3,
-        snippets=snippets[:2], scoring={}, visible_docs_hash="h1", replace=False,
+        db_session,
+        chat_session=session,
+        turn_index=3,
+        snippets=snippets[:2],
+        scoring={},
+        visible_docs_hash="h1",
+        replace=False,
     )
     await db_session.flush()
 
     rows = (
         (
             await db_session.execute(
-                select(ChatSessionSnippet).where(
-                    ChatSessionSnippet.chat_session_id == session.id
-                )
+                select(ChatSessionSnippet).where(ChatSessionSnippet.chat_session_id == session.id)
             )
         )
         .scalars()
@@ -226,25 +245,32 @@ async def test_lru_eviction_respects_cap(db_session):
     session, chunk_ids = await _seed_session_with_chunks(db_session, n)
 
     await save_bundle_cache(
-        db_session, chat_session=session, turn_index=1,
-        snippets=[_snippet(chunk_ids[0], score=0.1)], scoring={},
-        visible_docs_hash="h1", replace=True,
+        db_session,
+        chat_session=session,
+        turn_index=1,
+        snippets=[_snippet(chunk_ids[0], score=0.1)],
+        scoring={},
+        visible_docs_hash="h1",
+        replace=True,
     )
     await db_session.flush()
     rest = [_snippet(cid, score=0.9) for cid in chunk_ids[1:]]
     scoring = {str(cid): _scoring_row(cid, 0.9) for cid in chunk_ids[1:]}
     await save_bundle_cache(
-        db_session, chat_session=session, turn_index=2,
-        snippets=rest, scoring=scoring, visible_docs_hash="h1", replace=False,
+        db_session,
+        chat_session=session,
+        turn_index=2,
+        snippets=rest,
+        scoring=scoring,
+        visible_docs_hash="h1",
+        replace=False,
     )
     await db_session.flush()
 
     rows = (
         (
             await db_session.execute(
-                select(ChatSessionSnippet).where(
-                    ChatSessionSnippet.chat_session_id == session.id
-                )
+                select(ChatSessionSnippet).where(ChatSessionSnippet.chat_session_id == session.id)
             )
         )
         .scalars()
@@ -270,3 +296,54 @@ async def test_corrupt_payload_degrades_to_cache_miss(db_session):
     )
     await db_session.flush()
     assert await load_bundle_cache(db_session, chat_session=session) is None
+
+
+@pytest.mark.integration
+async def test_non_dict_snippet_payload_is_skipped(db_session):
+    session, chunk_ids = await _seed_session_with_chunks(db_session, 1)
+    db_session.add(
+        ChatSessionSnippet(
+            chat_session_id=session.id,
+            chunk_id=chunk_ids[0],
+            original_score=0.5,
+            first_seen_turn=1,
+            last_used_turn=1,
+            snippet_payload={"snippet": "not-a-dict"},
+        )
+    )
+    await db_session.flush()
+    assert await load_bundle_cache(db_session, chat_session=session) is None
+
+
+@pytest.mark.integration
+async def test_save_skips_non_integer_snippet_ids_and_bad_scores(db_session):
+    session, chunk_ids = await _seed_session_with_chunks(db_session, 1)
+    good = _snippet(chunk_ids[0])
+    bad_id = _snippet(chunk_ids[0])
+    bad_id.id = "not-an-int"
+
+    await save_bundle_cache(
+        db_session,
+        chat_session=session,
+        turn_index=1,
+        snippets=[bad_id, good],
+        scoring={str(chunk_ids[0]): {"score": "unparseable"}},
+        visible_docs_hash="h1",
+        replace=True,
+    )
+    await db_session.flush()
+
+    cached = await load_bundle_cache(db_session, chat_session=session)
+    assert cached is not None
+    assert [sn.id for sn in cached.snippets] == [str(chunk_ids[0])]
+    # Unparseable score degraded to 0.0 on the stored row
+    rows = (
+        (
+            await db_session.execute(
+                select(ChatSessionSnippet).where(ChatSessionSnippet.chat_session_id == session.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert rows[0].original_score == 0.0

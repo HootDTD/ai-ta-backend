@@ -23,7 +23,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 from ai.router.llm_router import LLMRouter
 
@@ -41,8 +41,8 @@ def _min_confidence() -> float:
 
 @dataclass(frozen=True)
 class ModeDecision:
-    mode: str                # NONE | AUGMENT | FRESH
-    route: str               # specialist route from the LLM — telemetry only in v1
+    mode: str  # NONE | AUGMENT | FRESH
+    route: str  # specialist route from the LLM — telemetry only in v1
     confidence: float
     reason: str
     llm_invoked: bool
@@ -64,8 +64,8 @@ async def decide_retrieval_mode(
     *,
     question: str,
     has_cache: bool,
-    recent_turns: List[Dict[str, Any]],
-    cached_titles: List[str],
+    recent_turns: list[dict[str, Any]],
+    cached_titles: list[str],
     llm_router: LLMRouter,
 ) -> ModeDecision:
     """Classify the current turn's retrieval mode.

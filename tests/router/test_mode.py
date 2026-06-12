@@ -1,9 +1,9 @@
 """Tests for ai/router/mode.py — the LLM-only retrieval-mode decision."""
 
 import json
+from unittest.mock import AsyncMock
 
 import pytest
-from unittest.mock import AsyncMock
 
 from ai.router.llm_router import LLMRouter
 from ai.router.mode import ModeDecision, decide_retrieval_mode
@@ -11,16 +11,28 @@ from ai.router.mode import ModeDecision, decide_retrieval_mode
 
 def _fake_client(route: str, mode: str, confidence: float, reason: str = "r") -> AsyncMock:
     fake = AsyncMock()
-    fake.chat.completions.create.return_value.choices = [type("C", (), {
-        "message": type("M", (), {
-            "content": json.dumps({
-                "route": route,
-                "retrieval_mode": mode,
-                "confidence": confidence,
-                "reason": reason,
-            })
-        })()
-    })()]
+    fake.chat.completions.create.return_value.choices = [
+        type(
+            "C",
+            (),
+            {
+                "message": type(
+                    "M",
+                    (),
+                    {
+                        "content": json.dumps(
+                            {
+                                "route": route,
+                                "retrieval_mode": mode,
+                                "confidence": confidence,
+                                "reason": reason,
+                            }
+                        )
+                    },
+                )()
+            },
+        )()
+    ]
     return fake
 
 
@@ -52,7 +64,10 @@ async def test_cyu_reply_routes_none_via_llm():
         question="B",
         has_cache=True,
         recent_turns=[
-            {"role": "assistant", "content": "Check your understanding: which test applies? A) ratio B) p-series"},
+            {
+                "role": "assistant",
+                "content": "Check your understanding: which test applies? A) ratio B) p-series",
+            },
             {"role": "user", "content": "B"},
         ],
         cached_titles=["Calc Textbook — 7.3 Series"],
@@ -123,3 +138,11 @@ async def test_augment_passes_through_with_confidence():
     assert decision.mode == "AUGMENT"
     assert decision.confidence == pytest.approx(0.7)
     assert isinstance(decision, ModeDecision)
+
+
+@pytest.mark.unit
+def test_min_confidence_falls_back_on_bad_env(monkeypatch):
+    from ai.router.mode import _min_confidence
+
+    monkeypatch.setenv("ROUTER_MIN_CONFIDENCE", "not-a-float")
+    assert _min_confidence() == 0.5

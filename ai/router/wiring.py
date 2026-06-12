@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from sqlalchemy import func, select
 
@@ -46,7 +46,7 @@ CACHED_SCORES_KEY = "cached_citation_scores"
 _ROUTER_RECENT_TURNS = int(os.getenv("ROUTER_RECENT_TURNS", "6"))
 _ROUTER_TURN_CONTENT_CHARS = 300
 
-_llm_router: Optional[LLMRouter] = None
+_llm_router: LLMRouter | None = None
 
 
 def router_enabled() -> bool:
@@ -78,7 +78,7 @@ def _get_llm_router() -> LLMRouter:
 class RouterTurnContext:
     chat_session_id: int
     decision: ModeDecision
-    cached: Optional[CachedBundle]
+    cached: CachedBundle | None
     visible_docs_hash: str
 
 
@@ -89,7 +89,7 @@ async def prepare_router_context(
     search_space_id: int,
     question: str,
     has_attachments: bool,
-) -> Optional[RouterTurnContext]:
+) -> RouterTurnContext | None:
     """Load cache state and decide the retrieval mode for this turn.
 
     Must run AFTER the user turn is persisted (the chat session is guaranteed
@@ -98,17 +98,13 @@ async def prepare_router_context(
     """
     try:
         async with get_async_session() as db_session:
-            session = await get_chat_session_for_user(
-                db_session, chat_id=chat_id, user_id=user_id
-            )
+            session = await get_chat_session_for_user(db_session, chat_id=chat_id, user_id=user_id)
             if session is None:
                 return None
             chat_session_id = int(session.id)
 
             cached = await load_bundle_cache(db_session, chat_session=session)
-            visible_hash = await compute_visible_docs_hash(
-                db_session, int(search_space_id)
-            )
+            visible_hash = await compute_visible_docs_hash(db_session, int(search_space_id))
             if cached is not None and cached.visible_docs_hash != visible_hash:
                 log.info(
                     "router: visible docs changed for session=%s — cache invalidated",
@@ -149,8 +145,11 @@ async def prepare_router_context(
 
         log.info(
             "router: mode=%s llm=%s conf=%.2f latency=%dms reason=%s",
-            decision.mode, decision.llm_invoked, decision.confidence,
-            decision.latency_ms, decision.reason,
+            decision.mode,
+            decision.llm_invoked,
+            decision.confidence,
+            decision.latency_ms,
+            decision.reason,
         )
         return RouterTurnContext(
             chat_session_id=chat_session_id,
@@ -164,12 +163,12 @@ async def prepare_router_context(
 
 
 def _assemble_bundle(
-    snippets: List[BundleSnippet],
+    snippets: list[BundleSnippet],
     *,
     q_effective: str,
     subject: str,
-    provenance: Dict[str, Any],
-    cached_scores: Dict[str, Dict[str, Any]],
+    provenance: dict[str, Any],
+    cached_scores: dict[str, dict[str, Any]],
 ) -> ResearchBundle:
     from retrieval.context_packer import _summarize_snippets
 
@@ -232,7 +231,7 @@ def merge_augment_bundle(
     ROUTER_MAX_SNIPPETS so the merged excerpt set stays within the same order
     of prompt size as a FRESH bundle.
     """
-    merged: List[BundleSnippet] = list(fresh_bundle.snippets)
+    merged: list[BundleSnippet] = list(fresh_bundle.snippets)
     seen_ids = {sn.id for sn in merged}
 
     def _cached_score(sn: BundleSnippet) -> float:
@@ -251,11 +250,7 @@ def merge_augment_bundle(
         merged.append(sn)
         seen_ids.add(sn.id)
 
-    cached_scores = {
-        sn.id: cached.scoring[sn.id]
-        for sn in merged
-        if sn.id in cached.scoring
-    }
+    cached_scores = {sn.id: cached.scoring[sn.id] for sn in merged if sn.id in cached.scoring}
     return _assemble_bundle(
         merged,
         q_effective=q_effective,
@@ -269,10 +264,10 @@ def merge_augment_bundle(
     )
 
 
-def scoring_rows_from_bundle(bundle: ResearchBundle) -> Dict[str, Dict[str, Any]]:
+def scoring_rows_from_bundle(bundle: ResearchBundle) -> dict[str, dict[str, Any]]:
     """Extract per-snippet citation-scoring rows (set by _prepare_solver_inputs)
     keyed by snippet id, for persisting into the session cache."""
-    rows: Dict[str, Dict[str, Any]] = {}
+    rows: dict[str, dict[str, Any]] = {}
     try:
         rankings = (bundle.provenance or {}).get("citation_rankings") or []
         for row in rankings:
@@ -288,10 +283,10 @@ async def persist_turn_outcome(
     chat_id: str,
     user_id: str,
     ctx: RouterTurnContext,
-    bundle: Optional[ResearchBundle],
+    bundle: ResearchBundle | None,
     question: str = "",
-    latency_retrieval_ms: Optional[int] = None,
-    latency_answer_ms: Optional[int] = None,
+    latency_retrieval_ms: int | None = None,
+    latency_answer_ms: int | None = None,
 ) -> None:
     """Save the answered bundle into the session cache + write telemetry.
 
@@ -299,9 +294,7 @@ async def persist_turn_outcome(
     """
     try:
         async with get_async_session() as db_session:
-            session = await get_chat_session_for_user(
-                db_session, chat_id=chat_id, user_id=user_id
-            )
+            session = await get_chat_session_for_user(db_session, chat_id=chat_id, user_id=user_id)
             if session is None:
                 return
 

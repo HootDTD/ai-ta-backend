@@ -17,9 +17,10 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,17 +40,17 @@ _META_KEY = "bundle_cache"
 class CachedBundle:
     """Rehydrated cache contents for one chat session."""
 
-    snippets: List[BundleSnippet]
+    snippets: list[BundleSnippet]
     # snippet.id -> citation-scoring row from bundle.provenance["citation_rankings"]
-    scoring: Dict[str, Dict[str, Any]]
+    scoring: dict[str, dict[str, Any]]
     visible_docs_hash: str
     saved_turn: int
 
     @property
-    def titles(self) -> List[str]:
+    def titles(self) -> list[str]:
         """Distinct doc titles + sections, for the router's cached-context evidence."""
         seen: set[str] = set()
-        titles: List[str] = []
+        titles: list[str] = []
         for sn in self.snippets:
             label = sn.doc_title or sn.doc_short or ""
             if sn.section_path:
@@ -65,9 +66,7 @@ def visible_docs_fingerprint(doc_ids: Iterable[int]) -> str:
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:16]
 
 
-async def compute_visible_docs_hash(
-    db_session: AsyncSession, search_space_id: int
-) -> str:
+async def compute_visible_docs_hash(db_session: AsyncSession, search_space_id: int) -> str:
     """Fingerprint the currently searchable document set (same visibility rules
     as hybrid retrieval: ready status + week gating)."""
     result = await db_session.execute(
@@ -78,7 +77,7 @@ async def compute_visible_docs_hash(
 
 async def load_bundle_cache(
     db_session: AsyncSession, *, chat_session: ChatSession
-) -> Optional[CachedBundle]:
+) -> CachedBundle | None:
     """Return the cached bundle for a session, or None when absent/corrupt."""
     rows = (
         (
@@ -94,8 +93,8 @@ async def load_bundle_cache(
     if not rows:
         return None
 
-    snippets: List[BundleSnippet] = []
-    scoring: Dict[str, Dict[str, Any]] = {}
+    snippets: list[BundleSnippet] = []
+    scoring: dict[str, dict[str, Any]] = {}
     for row in rows:
         payload = row.snippet_payload or {}
         snippet_dict = payload.get("snippet")
@@ -108,7 +107,8 @@ async def load_bundle_cache(
             # Contract drift since the payload was written — drop the row.
             log.warning(
                 "bundle_cache: unreadable snippet payload for session=%s chunk=%s",
-                chat_session.id, row.chunk_id,
+                chat_session.id,
+                row.chunk_id,
             )
             continue
         snippets.append(snippet)
@@ -133,8 +133,8 @@ async def save_bundle_cache(
     *,
     chat_session: ChatSession,
     turn_index: int,
-    snippets: List[BundleSnippet],
-    scoring: Dict[str, Dict[str, Any]],
+    snippets: list[BundleSnippet],
+    scoring: dict[str, dict[str, Any]],
     visible_docs_hash: str,
     replace: bool,
 ) -> None:
@@ -146,11 +146,9 @@ async def save_bundle_cache(
     """
     if replace:
         await db_session.execute(
-            delete(ChatSessionSnippet).where(
-                ChatSessionSnippet.chat_session_id == chat_session.id
-            )
+            delete(ChatSessionSnippet).where(ChatSessionSnippet.chat_session_id == chat_session.id)
         )
-        existing: Dict[int, ChatSessionSnippet] = {}
+        existing: dict[int, ChatSessionSnippet] = {}
     else:
         rows = (
             (
