@@ -83,7 +83,7 @@ async def embed_and_persist_chunks(
     after_page: int = 0,
     batch_size: int = EMBED_BATCH_SIZE,
     on_progress: Callable[[int], object] | Callable[[int], Awaitable[None]] | None = None,
-    embed_fn: Callable[[list[str]], list[list[float]]] = embed_texts,
+    embed_fn: Callable[[list[str]], list[list[float]]] | None = None,
 ) -> int:
     """Embed and persist chunks page-batch by page-batch, each in its own session.
 
@@ -91,7 +91,12 @@ async def embed_and_persist_chunks(
     after each batch commits (may be sync or async). Pages with
     ``page_number <= after_page`` are skipped (resume). Re-running a page deletes
     and reinserts that page's chunks (idempotent).
+
+    ``embed_fn`` defaults to the module-level :func:`embed_texts`, resolved at
+    call time so tests can monkeypatch ``checkpoint_indexer.embed_texts``.
     """
+    if embed_fn is None:
+        embed_fn = embed_texts
     page_groups, _null_items = group_pages(chunk_pairs)
     last_page = after_page
     for batch in plan_batches(page_groups, batch_size=batch_size, after_page=after_page):
@@ -143,13 +148,18 @@ async def finalize_document(
     doc_content: str,
     doc_embedding: list[float],
     page_count: int | None,
-    embed_fn: Callable[[list[str]], list[list[float]]] = embed_texts,
+    embed_fn: Callable[[list[str]], list[list[float]]] | None = None,
 ) -> None:
     """Terminal write: persist null-page chunks + doc-level fields; mark READY.
 
     Runs in the caller's short-lived session. Does NOT commit (caller commits),
     so it composes with the rest of the upload/job finalize in one transaction.
+
+    ``embed_fn`` defaults to the module-level :func:`embed_texts`, resolved at
+    call time so tests can monkeypatch ``checkpoint_indexer.embed_texts``.
     """
+    if embed_fn is None:
+        embed_fn = embed_texts
     _page_groups, null_items = group_pages(chunk_pairs)
     if null_items:
         await session.execute(

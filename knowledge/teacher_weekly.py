@@ -1021,45 +1021,91 @@ class TeacherWeeklyStorage:
         ingestion: TeacherPDFIngestionResult,
         source_sha256: str,
     ) -> None:
+        from indexing.checkpoint_indexer import (
+            embed_and_persist_chunks, build_doc_content, finalize_document,
+        )
+        from indexing.document_chunker import items_to_chunk_texts
+        from indexing.document_embedder import embed_text
+
+        # --- Phase 1: document upsert (short session) ---
         async with get_async_session() as session:
             upload = await session.get(TeacherUpload, int(claimed.upload_id))
             if upload is None:
                 raise ValueError(f"Unknown teacher upload: {claimed.upload_id}")
-
             service = AITAIndexingService(session)
             docs = await service.prepare_for_indexing([connector_doc])
-
-            indexed_doc: Optional[AITADocument] = None
             if docs:
-                indexed_doc = await service.index_from_items(docs[0], connector_doc, items)
+                document_id = int(docs[0].id)
             else:
                 uid_hash = compute_unique_identifier_hash(connector_doc)
                 content_hash = compute_content_hash(connector_doc)
                 result = await session.execute(
-                    select(AITADocument)
-                    .where(
+                    select(AITADocument).where(
                         or_(
                             AITADocument.unique_identifier_hash == uid_hash,
                             AITADocument.content_hash == content_hash,
                         )
-                    )
-                    .order_by(AITADocument.updated_at.desc())
+                    ).order_by(AITADocument.updated_at.desc())
                 )
-                indexed_doc = result.scalars().first()
+                existing = result.scalars().first()
+                if existing is None:
+                    raise RuntimeError("Failed to resolve indexed document for teacher upload")
+                document_id = int(existing.id)
+                existing.status = DocumentStatus.processing()
+                await session.commit()
+            manifest = dict(upload.artifact_manifest or {})
 
-            if indexed_doc is None:
-                raise RuntimeError("Failed to resolve indexed document for teacher upload")
-            if not DocumentStatus.is_state(indexed_doc.status, DocumentStatus.READY):
-                reason = DocumentStatus.get_failure_reason(indexed_doc.status) or "Indexing failed for teacher upload"
-                raise RuntimeError(reason)
+        after_page = int(
+            (manifest.get("embed_progress") or {}).get("last_completed_page", 0) or 0
+        )
+        chunk_pairs = items_to_chunk_texts(items)
+        if not chunk_pairs:
+            raise ValueError("No chunk texts extracted from items — document may be empty.")
 
+        # --- Phase 2: checkpointed embed + persist (short session per batch) ---
+        async def _on_progress(last_page: int) -> None:
+            async with get_async_session() as s:
+                up = await s.get(TeacherUpload, int(claimed.upload_id))
+                if up is not None:
+                    m = dict(up.artifact_manifest or {})
+                    m["embed_progress"] = {"last_completed_page": int(last_page)}
+                    up.artifact_manifest = m
+                    up.updated_at = _utc_now()
+                job = await s.get(TeacherUploadJob, int(claimed.job_id))
+                if job is not None:
+                    job.lease_expires_at = _utc_now() + timedelta(seconds=self.job_lease_seconds)
+                    job.attempt_count = 0
+                    job.updated_at = _utc_now()
+                await s.commit()
+
+        await embed_and_persist_chunks(
+            session_factory=get_async_session,
+            document_id=document_id,
+            chunk_pairs=chunk_pairs,
+            after_page=after_page,
+            on_progress=_on_progress,
+        )
+
+        # --- Phase 3: finalize (fresh short session) ---
+        doc_content = build_doc_content(chunk_pairs, fallback_title=connector_doc.title)
+        doc_embedding = embed_text(doc_content)
+        async with get_async_session() as session:
+            upload = await session.get(TeacherUpload, int(claimed.upload_id))
+            await finalize_document(
+                session,
+                document_id=document_id,
+                chunk_pairs=chunk_pairs,
+                doc_content=doc_content,
+                doc_embedding=doc_embedding,
+                page_count=ingestion.page_count,
+            )
+            indexed_doc = await session.get(AITADocument, document_id)
             course_row = await self._get_or_create_teacher_course(
                 session, search_space_id=int(upload.search_space_id)
             )
             now = _utc_now()
             previous_upload_rows = await session.execute(
-                select(TeacherUpload.id, TeacherUpload.doc_id)
-                .where(
+                select(TeacherUpload.id, TeacherUpload.doc_id).where(
                     TeacherUpload.search_space_id == int(upload.search_space_id),
                     TeacherUpload.week == int(upload.week),
                     TeacherUpload.kind == str(upload.kind),
@@ -1067,35 +1113,22 @@ class TeacherWeeklyStorage:
                     TeacherUpload.id != int(upload.id),
                 )
             )
-            previous_doc_ids = [
-                int(doc_id)
-                for _, doc_id in previous_upload_rows.all()
-                if doc_id is not None
-            ]
-
+            previous_doc_ids = [int(d) for _, d in previous_upload_rows.all() if d is not None]
             await session.execute(
-                update(TeacherUpload)
-                .where(
+                update(TeacherUpload).where(
                     TeacherUpload.search_space_id == int(upload.search_space_id),
                     TeacherUpload.week == int(upload.week),
                     TeacherUpload.kind == str(upload.kind),
                     TeacherUpload.is_latest.is_(True),
                     TeacherUpload.id != int(upload.id),
-                )
-                .values(
-                    is_latest=False,
-                    status=UPLOAD_STATUS_SUPERSEDED,
-                    updated_at=now,
-                )
+                ).values(is_latest=False, status=UPLOAD_STATUS_SUPERSEDED, updated_at=now)
             )
             if previous_doc_ids:
                 await session.execute(
-                    update(AITADocument)
-                    .where(AITADocument.id.in_(previous_doc_ids))
+                    update(AITADocument).where(AITADocument.id.in_(previous_doc_ids))
                     .values(status=_INACTIVE_STATUS, updated_at=now)
                 )
-
-            upload.doc_id = int(indexed_doc.id) if indexed_doc.id is not None else None
+            upload.doc_id = document_id
             upload.page_count = ingestion.page_count or indexed_doc.page_count
             upload.is_latest = True
             upload.status = UPLOAD_STATUS_READY
@@ -1117,7 +1150,7 @@ class TeacherWeeklyStorage:
             )
             upload.metadata_ = {
                 **(upload.metadata_ or {}),
-                "material_id": f"doc-{indexed_doc.id}" if indexed_doc.id is not None else None,
+                "material_id": f"doc-{document_id}",
                 "source_pdf_sha256": source_sha256,
                 "storage_bucket": self.upload_bucket,
                 "pages_bucket": self.pages_bucket,
@@ -1127,7 +1160,6 @@ class TeacherWeeklyStorage:
                 "ocr_summary": ingestion.ocr_summary,
                 "artifact_manifest": ingestion.artifact_manifest,
             }
-
             job = await session.get(TeacherUploadJob, int(claimed.job_id))
             if job is not None:
                 job.state = JOB_STATE_COMPLETED
@@ -1135,10 +1167,8 @@ class TeacherWeeklyStorage:
                 job.lease_expires_at = None
                 job.last_error = None
                 job.updated_at = now
-
             await self._sync_week_activation(
-                session,
-                search_space_id=int(upload.search_space_id),
+                session, search_space_id=int(upload.search_space_id),
                 current_week=int(course_row.current_week or 1),
             )
             await session.commit()
