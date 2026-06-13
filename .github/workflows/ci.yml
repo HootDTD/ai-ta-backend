@@ -2,7 +2,7 @@
 #
 # Replaces the single-job main.yml with parallel jobs:
 #   quality     — ruff lint+format on CHANGED files only (blocking, in ci-passed)
-#   typecheck   — mypy (ADVISORY / non-blocking; tightened in Phase 3)
+#   typecheck   — mypy ratchet: ADDED files blocking, modified advisory (in ci-passed)
 #   unit        — fast `-m "not integration"` run, no Docker (blocking)
 #   integration — full suite on real pgvector + Neo4j Testcontainers + patch-coverage gate (blocking)
 #   ci-passed   — aggregation check; THIS is the single required status for branch protection
@@ -80,12 +80,14 @@ jobs:
           ruff check --output-format=github "${MODIFIED[@]}" || true
 
   typecheck:
-    name: typecheck (mypy, advisory)
+    name: typecheck (mypy, ratchet)
     runs-on: ubuntu-latest
-    # ADVISORY: the codebase is largely untyped. This job reports type findings
-    # but never blocks a merge (not listed in ci-passed `needs`, and
-    # continue-on-error keeps it from showing red). Phase 3 makes it required.
-    continue-on-error: true
+    # Ratchet, same two tiers as the ruff job (mypy.ini follow_imports=silent
+    # keeps errors scoped to the listed files, so this is actually passable):
+    #   ADDED files    → mypy is BLOCKING (new code type-checks clean)
+    #   MODIFIED files → mypy is ADVISORY (legacy debt surfaces in logs only)
+    # tests/ and database/migrations/ are excluded to match mypy.ini —
+    # mypy checks explicitly-passed paths even when `exclude` matches them.
     permissions:
       contents: read
     steps:
@@ -93,18 +95,36 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup
-      - name: Mypy (changed Python files, non-blocking)
+      - name: Mypy — added files (blocking)
         if: github.event_name == 'pull_request'
         shell: bash
         run: |
           git fetch --no-tags origin "${{ github.base_ref }}"
           BASE="origin/${{ github.base_ref }}"
-          mapfile -t FILES < <(git diff --name-only --diff-filter=ACMR "$BASE"...HEAD -- '*.py')
-          if [ ${#FILES[@]} -eq 0 ]; then
-            echo "No Python files changed — skipping mypy."
+          mapfile -t ADDED < <(git diff --name-only --diff-filter=A "$BASE"...HEAD -- '*.py' \
+            | grep -vE '^(tests/|database/migrations/)' || true)
+          if [ ${#ADDED[@]} -eq 0 ]; then
+            echo "No newly-added Python files."
             exit 0
           fi
-          mypy --config-file mypy.ini "${FILES[@]}"
+          echo "Strict-checking ${#ADDED[@]} new file(s):"
+          printf '  %s\n' "${ADDED[@]}"
+          mypy --config-file mypy.ini "${ADDED[@]}"
+      - name: Mypy — modified files (advisory)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        shell: bash
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          BASE="origin/${{ github.base_ref }}"
+          mapfile -t MODIFIED < <(git diff --name-only --diff-filter=M "$BASE"...HEAD -- '*.py' \
+            | grep -vE '^(tests/|database/migrations/)' || true)
+          if [ ${#MODIFIED[@]} -eq 0 ]; then
+            echo "No modified Python files."
+            exit 0
+          fi
+          echo "Advisory mypy on ${#MODIFIED[@]} modified file(s) — legacy debt, fix opportunistically:"
+          mypy --config-file mypy.ini "${MODIFIED[@]}" || true
 
   unit:
     name: unit (fast, no Docker)
@@ -173,16 +193,18 @@ jobs:
     # The SINGLE required status check for branch protection. Runs even if a
     # dependency failed so the gate reports a definitive pass/fail.
     if: always()
-    needs: [quality, unit, integration]
+    needs: [quality, typecheck, unit, integration]
     runs-on: ubuntu-latest
     steps:
       - name: Assert all required jobs passed
         shell: bash
         run: |
           echo "quality=${{ needs.quality.result }}"
+          echo "typecheck=${{ needs.typecheck.result }}"
           echo "unit=${{ needs.unit.result }}"
           echo "integration=${{ needs.integration.result }}"
           if [ "${{ needs.quality.result }}" = "success" ] \
+            && [ "${{ needs.typecheck.result }}" = "success" ] \
             && [ "${{ needs.unit.result }}" = "success" ] \
             && [ "${{ needs.integration.result }}" = "success" ]; then
             echo "All required jobs passed."

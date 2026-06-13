@@ -20,7 +20,7 @@ import os
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,7 +96,7 @@ async def load_bundle_cache(
     snippets: list[BundleSnippet] = []
     scoring: dict[str, dict[str, Any]] = {}
     for row in rows:
-        payload = row.snippet_payload or {}
+        payload = cast(dict[str, Any], row.snippet_payload) or {}
         snippet_dict = payload.get("snippet")
         if not isinstance(snippet_dict, dict):
             continue
@@ -119,7 +119,8 @@ async def load_bundle_cache(
     if not snippets:
         return None
 
-    meta = (chat_session.meta or {}).get(_META_KEY) or {}
+    raw_meta = cast(dict[str, Any], chat_session.meta) or {}
+    meta = raw_meta.get(_META_KEY) or {}
     return CachedBundle(
         snippets=snippets,
         scoring=scoring,
@@ -161,7 +162,7 @@ async def save_bundle_cache(
             .scalars()
             .all()
         )
-        existing = {row.chunk_id: row for row in rows}
+        existing = {cast(int, row.chunk_id): row for row in rows}
 
     for snippet in snippets:
         try:
@@ -179,9 +180,11 @@ async def save_bundle_cache(
 
         row = existing.get(chunk_id)
         if row is not None:
-            row.last_used_turn = turn_index
-            row.original_score = score
-            row.snippet_payload = payload
+            # Old-style Column() models: instance writes are untyped without
+            # a working SQLAlchemy mypy plugin.
+            row.last_used_turn = turn_index  # type: ignore[assignment]
+            row.original_score = score  # type: ignore[assignment]
+            row.snippet_payload = payload  # type: ignore[assignment]
         else:
             new_row = ChatSessionSnippet(
                 chat_session_id=chat_session.id,
@@ -208,11 +211,11 @@ async def save_bundle_cache(
             await db_session.delete(row)
 
     # JSONB column: assign a new dict so SQLAlchemy detects the change.
-    chat_session.meta = {
+    chat_session.meta = {  # type: ignore[assignment]
         **(chat_session.meta or {}),
         _META_KEY: {
             "visible_docs_hash": visible_docs_hash,
             "turn_index": turn_index,
         },
     }
-    chat_session.updated_at = datetime.now(UTC)
+    chat_session.updated_at = datetime.now(UTC)  # type: ignore[assignment]
