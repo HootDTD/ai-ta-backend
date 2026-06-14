@@ -41,11 +41,16 @@ editing code, update the owner doc in the same commit and bump
 1. Student submits question + optional images
 2. Vision module transcribes images; keywords extracted
 3. Semantic filter removes out-of-scope questions
-4. Hybrid retrieval: pgvector semantic + SQLite FTS5 lexical + query expansion
-5. Reranking: importance scoring, relevance thresholding, duplicate removal
-6. Context packing: snippet assembly, citation markers, token budget management
-7. LLM generates answer with citation markers [S1], [S2], etc.
-8. Citations formatted and returned
+4. Retrieval-mode orchestrator (`ROUTER_ENABLED`, default off): classifies each turn
+   NONE / AUGMENT / FRESH against the session's cached bundle — NONE answers from
+   cache (skips steps 5–7 and snippet scoring), AUGMENT runs a reduced top-up merged
+   with the cache, FRESH is the full pipeline. Fails open to FRESH.
+   Details: `docs/architecture/rag-pipeline.md` (step 3a).
+5. Hybrid retrieval: pgvector semantic + PostgreSQL FTS lexical + query expansion
+6. Reranking: importance scoring, relevance thresholding, duplicate removal
+7. Context packing: snippet assembly, citation markers, token budget management
+8. LLM generates answer with citation markers like [Textbook, p. 123]
+9. Citations formatted and returned
 
 ## Key Tech Decisions
 - Vector search: pgvector (PostgreSQL) + FAISS. Do not introduce other vector stores.
