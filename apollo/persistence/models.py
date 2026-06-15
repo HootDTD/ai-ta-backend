@@ -21,7 +21,6 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    String,
     Text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -31,6 +30,31 @@ from database.models import Base
 
 # JSONB on Postgres, fall back to JSON on SQLite (tests use in-memory SQLite).
 _JSONType = JSONB().with_variant(JSON(), "sqlite")
+
+# Allowed values for apollo_problem_attempts.result. The DB CHECK constraint is
+# the schema authority (migration 009 created it, 025 widened it) — following
+# this repo's convention, the ORM declares no CHECK constraints. This tuple is
+# the APP-LAYER mirror of that allowlist; it MUST stay equal to the migration's
+# set (asserted by apollo/persistence/tests/test_attempt_result_values.py) so
+# code that reasons about result values can't drift from what the DB accepts.
+#
+#   solved/stuck/skipped/returned_to_hoot — legacy solver-era outcomes (kept so
+#     historical rows stay valid and re-attempt detection still sees them).
+#   abandoned — handle_next: prior attempt when the student switches problems.
+#   graded    — handle_done: a completed diff+rubric grade (post commit 21b42e1).
+ATTEMPT_RESULTS = (
+    "solved",
+    "stuck",
+    "skipped",
+    "returned_to_hoot",
+    "abandoned",
+    "graded",
+)
+
+# Subset of ATTEMPT_RESULTS that counts as a completed (graded) attempt for
+# re-attempt detection. 'abandoned' is a mid-problem switch, not a grade, so it
+# is excluded. See apollo.persistence.attempt_history.has_prior_graded_attempt.
+GRADED_ATTEMPT_RESULTS = tuple(r for r in ATTEMPT_RESULTS if r != "abandoned")
 
 
 class SessionPhase(StrEnum):
@@ -198,7 +222,8 @@ class ProblemAttempt(Base):
     session_id = Column(BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     problem_id = Column(Text, nullable=False)
     difficulty = Column(Text, nullable=False)
-    result = Column(Text, nullable=True)  # solved | stuck | skipped | returned_to_hoot
+    # DB CHECK (migration 009 + 025) restricts this to ATTEMPT_RESULTS or NULL.
+    result = Column(Text, nullable=True)
     solver_trace = Column(_JSONType, nullable=True)
     diagnostic_report = Column(_JSONType, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))

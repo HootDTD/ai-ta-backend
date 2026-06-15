@@ -160,3 +160,23 @@ async def test_has_prior_graded_attempt_excludes_abandoned(db):
         exclude_attempt_id=current.id,
     )
     assert result is False, "abandoned attempts must not count as prior grades"
+
+
+@pytest.mark.asyncio
+async def test_counts_graded_result(db):
+    # Since the solver was dropped (commit 21b42e1), a completed grade is stored
+    # as result='graded'. A prior 'graded' attempt MUST count as a prior grade,
+    # otherwise the re-attempt XP multiplier silently never fires.
+    sess_a = await _mk_session(db, "stu-5", status=SessionStatus.ended.value)
+    await _mk_attempt(db, session_id=sess_a.id, problem_id="p1", result="graded")
+    sess_b = await _mk_session(db, "stu-5")
+    current = await _mk_attempt(db, session_id=sess_b.id, problem_id="p1", result=None)
+    await db.commit()
+
+    result = await has_prior_graded_attempt(
+        db=db,
+        user_id="stu-5",
+        problem_id="p1",
+        exclude_attempt_id=current.id,
+    )
+    assert result is True, "a prior graded attempt must count as a prior grade"
