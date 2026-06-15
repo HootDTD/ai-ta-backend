@@ -7,7 +7,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-06-10
+last_verified: 2026-06-15
 stub: false
 ---
 
@@ -94,7 +94,7 @@ Core types (`apollo/ontology/`):
 4. `compute_coverage`: all matcher calls run concurrently (`asyncio.to_thread` + `gather`, no `return_exceptions`). Binary types (equation/condition/simplification) are batched one LLM call per type; procedure steps get one partial-credit call each (score ≥ 0.5 → "covered"). DUAL nodes with `student_belief` are graded against the student's wording. Transient failures retry 3x with backoff then raise `CoverageGradingError` (503 — grading unavailable, never a silent downgrade).
 5. `compute_rubric` (pure): procedure 0.57 / justification 0.2375 / simplification 0.1425 / misconception_corrected 0.05; absent axes redistribute weight proportionally (no misconceptions → exact pre-P2.8 60/25/15). Misconception scores are read from `apollo_messages.metadata` — since the v1 chat path no longer writes per-turn metadata, this axis is normally absent.
 6. `generate_diagnostic` (LLM) narrates the rubric verdict — hard-ruled not to contradict per-axis scores, formative tone.
-7. Re-attempt detection (`attempt.result` already set, or `has_prior_graded_attempt` cross-session) → `compute_xp_earned` (score × difficulty multiplier 1.0/1.5/2.0 × 0.25 if re-attempt) → `apply_xp` updates `apollo_student_progress` and computes level (5 tiers, thresholds 0/300/800/1600/3000). Attempt gets `result="graded"`, `solver_trace=None`, `diagnostic_report={narrative, rubric, coverage}`; phase → REPORT.
+7. Re-attempt detection (`attempt.result` already set, or `has_prior_graded_attempt` cross-session) → `compute_xp_earned` (score × difficulty multiplier 1.0/1.5/2.0 × 0.25 if re-attempt) → `apply_xp` updates `apollo_student_progress` and computes level (5 tiers, thresholds 0/300/800/1600/3000). Attempt gets `result="graded"`, `solver_trace=None`, `diagnostic_report={narrative, rubric, coverage}`; phase → REPORT. The `result` allowlist (`models.ATTEMPT_RESULTS`, enforced by the DB CHECK from migration 009+025: `solved/stuck/skipped/returned_to_hoot/abandoned/graded`) must include every value handlers write — `done.py` writes `graded`, `next.py` writes `abandoned` on a mid-problem switch. `has_prior_graded_attempt` counts `GRADED_ATTEMPT_RESULTS` (all of them except `abandoned`, which is a switch, not a grade).
 
 **(c) Hoot handoff — `POST /sessions/from_hoot` (`hoot_bridge/session_init.py`)**
 Bearer token → `require_user` resolves `user_id`; `require_course_member` checks membership for the given `search_space_id`. transcript → `infer_concept_cluster` (GPT-4o, must return one of `_AVAILABLE_CLUSTERS = ["fluid_mechanics"]` or 409) → `select_problem` (deterministic: sorted by id, unattempted at difficulty, else `PoolExhaustedError`) → end stale active sessions → create `ApolloSession` (phase TEACHING, `user_id`, `search_space_id`) + `ProblemAttempt` → return `{session_id, attempt_id, problem}`.
