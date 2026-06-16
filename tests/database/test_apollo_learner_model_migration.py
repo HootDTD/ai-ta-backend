@@ -130,6 +130,29 @@ async def mig_conn(_migrated_dsn: str):
         await conn.close()
 
 
+async def _expect_violation(conn: asyncpg.Connection, error_type, coro) -> None:
+    """Assert ``coro`` raises ``error_type`` WITHOUT poisoning ``conn``.
+
+    In Postgres a failed statement aborts the whole transaction: every
+    subsequent command raises ``InFailedSQLTransactionError`` until rollback.
+    ``mig_conn`` wraps each test in ONE transaction, so a bare
+    ``with pytest.raises(...): await <violating insert>`` would leave the
+    connection unusable for the rest of the test (the exact cascade that broke
+    the multi-assertion tests here). Wrapping the violation in a SAVEPOINT
+    (asyncpg nested transaction) and rolling back TO that savepoint clears the
+    error state, so the test can keep issuing SQL on the same connection.
+    """
+    sp = conn.transaction()
+    await sp.start()
+    try:
+        with pytest.raises(error_type):
+            await coro
+    finally:
+        # ROLLBACK TO SAVEPOINT clears the aborted-statement state whether the
+        # violation fired (expected) or not (re-raises the pytest failure).
+        await sp.rollback()
+
+
 # ---- seed helpers (one course -> subject -> concept -> entity to hang rows off)
 
 
@@ -193,13 +216,19 @@ async def _seed_attempt(conn: asyncpg.Connection, session_id: int) -> int:
     )
 
 
-async def _seed_chain(conn: asyncpg.Connection):
-    """Return (space_id, user_id, concept_id, entity_id) for a single course."""
+async def _seed_chain(conn: asyncpg.Connection, marker: int = 1):
+    """Return (space_id, user_id, concept_id, entity_id) for a single course.
+
+    ``marker`` disambiguates every UNIQUE/PK value (user UUID, subject slug,
+    concept slug, entity canonical_key) so multiple chains can coexist inside
+    ONE ``mig_conn`` transaction. apollo_subjects.slug and auth.users.id are
+    unique, so two default chains in the same test would otherwise collide.
+    """
     space = await _seed_space(conn)
-    user = await _seed_user(conn)
-    subject = await _seed_subject(conn, space)
-    concept = await _seed_concept(conn, subject)
-    entity = await _seed_entity(conn, concept)
+    user = await _seed_user(conn, marker=marker)
+    subject = await _seed_subject(conn, space, slug=f"s{marker}")
+    concept = await _seed_concept(conn, subject, slug=f"c{marker}")
+    entity = await _seed_entity(conn, concept, canonical_key=f"k{marker}")
     return space, user, concept, entity
 
 
@@ -475,8 +504,11 @@ async def test_kg_entities_unique_is_per_concept_not_global(mig_conn):
     )
     assert rows == 2
 
-    with pytest.raises(asyncpg.UniqueViolationError):
-        await _seed_entity(mig_conn, concept_a, "shared_key")
+    await _expect_violation(
+        mig_conn,
+        asyncpg.UniqueViolationError,
+        _seed_entity(mig_conn, concept_a, "shared_key"),
+    )
 
 
 async def test_kg_entities_kind_check_rejects_bad_accepts_good(mig_conn):
@@ -489,8 +521,11 @@ async def test_kg_entities_kind_check_rejects_bad_accepts_good(mig_conn):
     for i, kind in enumerate(ENTITY_KINDS):
         await _seed_entity(mig_conn, concept, f"k{i}", kind)
 
-    with pytest.raises(asyncpg.CheckViolationError):
-        await _seed_entity(mig_conn, concept, "kbad", "banana")
+    await _expect_violation(
+        mig_conn,
+        asyncpg.CheckViolationError,
+        _seed_entity(mig_conn, concept, "kbad", "banana"),
+    )
 
 
 async def test_kg_entities_fk_concept_cascade(mig_conn):
@@ -519,13 +554,16 @@ async def test_entity_prereqs_composite_pk_and_cascade(mig_conn):
         e_to,
     )
     # Duplicate composite PK raises.
-    with pytest.raises(asyncpg.UniqueViolationError):
-        await mig_conn.execute(
+    await _expect_violation(
+        mig_conn,
+        asyncpg.UniqueViolationError,
+        mig_conn.execute(
             "INSERT INTO apollo_entity_prereqs (from_entity_id, to_entity_id) "
             "VALUES ($1,$2)",
             e_from,
             e_to,
-        )
+        ),
+    )
     # Deleting an entity cascades the edge (to_entity_id direction).
     await mig_conn.execute("DELETE FROM apollo_kg_entities WHERE id=$1", e_to)
     edges = await mig_conn.fetchval("SELECT count(*) FROM apollo_entity_prereqs")
@@ -540,52 +578,66 @@ async def test_entity_prereqs_composite_pk_and_cascade(mig_conn):
 async def test_learner_state_pk_blocks_duplicate_tuple(mig_conn):
     space, user, _concept, entity = await _seed_chain(mig_conn)
     await _insert_learner_state(mig_conn, user, space, entity)
-    with pytest.raises(asyncpg.UniqueViolationError):
-        await _insert_learner_state(mig_conn, user, space, entity)
+    await _expect_violation(
+        mig_conn,
+        asyncpg.UniqueViolationError,
+        _insert_learner_state(mig_conn, user, space, entity),
+    )
 
 
 async def test_learner_state_belief_array_check(mig_conn):
     space, user, _concept, entity = await _seed_chain(mig_conn)
     # length 3 ok
     await _insert_learner_state(mig_conn, user, space, entity, belief=(0.2, 0.3, 0.5))
-    # length 2 and length 4 both raise
-    space2 = await _seed_space(mig_conn)
-    with pytest.raises(asyncpg.CheckViolationError):
-        await _insert_learner_state(mig_conn, user, space2, entity, belief=(0.5, 0.5))
-    space3 = await _seed_space(mig_conn)
-    with pytest.raises(asyncpg.CheckViolationError):
-        await _insert_learner_state(
-            mig_conn, user, space3, entity, belief=(0.1, 0.2, 0.3, 0.4)
-        )
+    # length 2 and length 4 both raise (each in its own savepoint, so the
+    # CHECK failure does not abort the surrounding test transaction).
+    await _expect_violation(
+        mig_conn,
+        asyncpg.CheckViolationError,
+        _insert_learner_state(mig_conn, user, space, entity, belief=(0.5, 0.5)),
+    )
+    await _expect_violation(
+        mig_conn,
+        asyncpg.CheckViolationError,
+        _insert_learner_state(
+            mig_conn, user, space, entity, belief=(0.1, 0.2, 0.3, 0.4)
+        ),
+    )
 
 
 async def test_learner_state_mastery_confidence_range_checks(mig_conn):
     space, user, _concept, entity = await _seed_chain(mig_conn)
     await _insert_learner_state(mig_conn, user, space, entity, mastery=0.0, confidence=1.0)
-    space2 = await _seed_space(mig_conn)
-    with pytest.raises(asyncpg.CheckViolationError):
-        await _insert_learner_state(mig_conn, user, space2, entity, mastery=-0.1)
-    space3 = await _seed_space(mig_conn)
-    with pytest.raises(asyncpg.CheckViolationError):
-        await _insert_learner_state(mig_conn, user, space3, entity, confidence=1.1)
+    await _expect_violation(
+        mig_conn,
+        asyncpg.CheckViolationError,
+        _insert_learner_state(mig_conn, user, space, entity, mastery=-0.1),
+    )
+    await _expect_violation(
+        mig_conn,
+        asyncpg.CheckViolationError,
+        _insert_learner_state(mig_conn, user, space, entity, confidence=1.1),
+    )
 
 
 async def test_learner_state_fk_cascades(mig_conn):
-    # Each of the three FKs cascades the learner_state row away.
+    # Each of the three FKs cascades the learner_state row away. Distinct markers
+    # keep the three chains from colliding on subject.slug / auth.users.id inside
+    # this single transaction; each DELETE drives the row count back to 0.
     # user delete
-    space, user, _concept, entity = await _seed_chain(mig_conn)
+    space, user, _concept, entity = await _seed_chain(mig_conn, marker=1)
     await _insert_learner_state(mig_conn, user, space, entity)
     await mig_conn.execute("DELETE FROM auth.users WHERE id=$1", user)
     assert await mig_conn.fetchval("SELECT count(*) FROM apollo_learner_state") == 0
 
     # search_space delete
-    space, user, _concept, entity = await _seed_chain(mig_conn)
+    space, user, _concept, entity = await _seed_chain(mig_conn, marker=2)
     await _insert_learner_state(mig_conn, user, space, entity)
     await mig_conn.execute("DELETE FROM aita_search_spaces WHERE id=$1", space)
     assert await mig_conn.fetchval("SELECT count(*) FROM apollo_learner_state") == 0
 
     # entity delete
-    space, user, _concept, entity = await _seed_chain(mig_conn)
+    space, user, _concept, entity = await _seed_chain(mig_conn, marker=3)
     await _insert_learner_state(mig_conn, user, space, entity)
     await mig_conn.execute("DELETE FROM apollo_kg_entities WHERE id=$1", entity)
     assert await mig_conn.fetchval("SELECT count(*) FROM apollo_learner_state") == 0
@@ -599,12 +651,18 @@ async def test_learner_state_fk_cascades(mig_conn):
 async def test_mastery_events_belief_checks(mig_conn):
     space, user, _concept, entity = await _seed_chain(mig_conn)
     await _insert_mastery_event(mig_conn, user, space, entity)
-    with pytest.raises(asyncpg.CheckViolationError):
-        await _insert_mastery_event(mig_conn, user, space, entity, prior=(0.5, 0.5))
-    with pytest.raises(asyncpg.CheckViolationError):
-        await _insert_mastery_event(
+    await _expect_violation(
+        mig_conn,
+        asyncpg.CheckViolationError,
+        _insert_mastery_event(mig_conn, user, space, entity, prior=(0.5, 0.5)),
+    )
+    await _expect_violation(
+        mig_conn,
+        asyncpg.CheckViolationError,
+        _insert_mastery_event(
             mig_conn, user, space, entity, posterior=(0.1, 0.2, 0.3, 0.4)
-        )
+        ),
+    )
 
 
 async def test_mastery_events_score_confidence_range_checks(mig_conn):
@@ -614,18 +672,26 @@ async def test_mastery_events_score_confidence_range_checks(mig_conn):
         mig_conn, user, space, entity, score=None, parser_confidence=0.0,
         grader_confidence=1.0, mastery_after=0.5,
     )
-    with pytest.raises(asyncpg.CheckViolationError):
-        await _insert_mastery_event(mig_conn, user, space, entity, score=1.5)
-    with pytest.raises(asyncpg.CheckViolationError):
-        await _insert_mastery_event(
-            mig_conn, user, space, entity, parser_confidence=-0.1
-        )
-    with pytest.raises(asyncpg.CheckViolationError):
-        await _insert_mastery_event(
-            mig_conn, user, space, entity, grader_confidence=2.0
-        )
-    with pytest.raises(asyncpg.CheckViolationError):
-        await _insert_mastery_event(mig_conn, user, space, entity, mastery_after=-0.5)
+    await _expect_violation(
+        mig_conn,
+        asyncpg.CheckViolationError,
+        _insert_mastery_event(mig_conn, user, space, entity, score=1.5),
+    )
+    await _expect_violation(
+        mig_conn,
+        asyncpg.CheckViolationError,
+        _insert_mastery_event(mig_conn, user, space, entity, parser_confidence=-0.1),
+    )
+    await _expect_violation(
+        mig_conn,
+        asyncpg.CheckViolationError,
+        _insert_mastery_event(mig_conn, user, space, entity, grader_confidence=2.0),
+    )
+    await _expect_violation(
+        mig_conn,
+        asyncpg.CheckViolationError,
+        _insert_mastery_event(mig_conn, user, space, entity, mastery_after=-0.5),
+    )
 
 
 async def test_mastery_events_nulls_not_distinct_dedup(mig_conn):
@@ -637,10 +703,13 @@ async def test_mastery_events_nulls_not_distinct_dedup(mig_conn):
     await _insert_mastery_event(
         mig_conn, user, space, entity, attempt_id=None, event_kind="covered"
     )
-    with pytest.raises(asyncpg.UniqueViolationError):
-        await _insert_mastery_event(
+    await _expect_violation(
+        mig_conn,
+        asyncpg.UniqueViolationError,
+        _insert_mastery_event(
             mig_conn, user, space, entity, attempt_id=None, event_kind="covered"
-        )
+        ),
+    )
 
     # Control: distinct non-null attempt_ids both insert.
     sess = await _seed_session(mig_conn)
@@ -692,8 +761,11 @@ async def test_comparison_runs_unique_attempt_version(mig_conn):
     sess = await _seed_session(mig_conn)
     attempt = await _seed_attempt(mig_conn, sess)
     await _insert_run(mig_conn, attempt, user, space, comparison_version="v1")
-    with pytest.raises(asyncpg.UniqueViolationError):
-        await _insert_run(mig_conn, attempt, user, space, comparison_version="v1")
+    await _expect_violation(
+        mig_conn,
+        asyncpg.UniqueViolationError,
+        _insert_run(mig_conn, attempt, user, space, comparison_version="v1"),
+    )
     # Different version inserts.
     await _insert_run(mig_conn, attempt, user, space, comparison_version="v2")
     n = await mig_conn.fetchval(
