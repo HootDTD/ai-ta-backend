@@ -12,6 +12,7 @@ V3 contract:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Iterable
 
 from sqlalchemy import select
@@ -20,6 +21,7 @@ from sympy import latex
 
 from apollo.errors import KGEntryNotFoundError, SessionFrozenError
 from apollo.ontology import (
+    EDGE_ALLOWED_PAIRS,
     NODE_CONTENT_TYPES,
     NODE_LABEL_TO_TYPE,
     NODE_LABELS,
@@ -160,6 +162,35 @@ def _edge_to_neo4j_row(edge: Edge) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class WriteEdgesResult:
+    """Structured outcome of `KGStore.write_edges` (WU-2B).
+
+    Replaces the bare `int` so the store distinguishes the two no-silent-drop
+    cases: an endpoint absent from the subgraph (`dropped`) vs an edge whose
+    endpoint types violate EDGE_ALLOWED_PAIRS (`invalid`). `reasons` carries
+    `(edge_repr, reason)` for every rejected edge. `__int__` keeps the old
+    contract loose for any caller that did `int(result)` (the sole non-test
+    caller, `chat.py`, ignores the return).
+    """
+
+    written: int = 0
+    dropped: int = 0          # endpoint(s) absent in the subgraph
+    invalid: int = 0          # EDGE_ALLOWED_PAIRS / unknown-type violation
+    reasons: tuple[tuple[str, str], ...] = ()  # (edge_repr, reason) per rejection
+
+    def __int__(self) -> int:
+        return self.written
+
+
+def _edge_repr(edge: Edge) -> str:
+    """Compact, log-safe edge identifier for rejection reasons."""
+    return (
+        f"{edge.edge_type.value}:{edge.from_node_id}->{edge.to_node_id}"
+        f"({edge.from_node_type}->{edge.to_node_type})"
+    )
+
+
 # ---------------------------------------------------------------------------
 # KGStore
 # ---------------------------------------------------------------------------
@@ -219,29 +250,69 @@ class KGStore:
 
         `source` is set on each node before persistence so all written nodes
         share a provenance tag for this batch.
+
+        Cross-turn de-dup (WU-2B): nodes whose id already exists in the
+        subgraph are REUSED, not re-minted — re-CREATEing would clone a Neo4j
+        node and unfairly inflate coverage. The existing ids are fetched once;
+        only the genuinely new subset is CREATEd. The return value is the count
+        of nodes ACTUALLY created (reused nodes are not counted as added — the
+        `kg_entries_added` fair-coverage contract).
         """
         session_id = await self._session_id_for_attempt(attempt_id)
         await self._ensure_unfrozen(session_id)
         if not nodes:
             return 0
 
-        # Group by label for the per-label CREATE templates.
-        rows_by_label: dict[str, list[dict[str, Any]]] = {}
-        for n in nodes:
-            label = NODE_LABELS[n.node_type]
-            row = _node_to_neo4j_props(n)
-            row["source"] = source
-            row["attempt_id"] = attempt_id
-            rows_by_label.setdefault(label, []).append(row)
-
         total = 0
         async with self.neo.session() as s:
+            present = await self._existing_node_ids(
+                s, attempt_id, [n.node_id for n in nodes],
+            )
+            to_create = [n for n in nodes if n.node_id not in present]
+            reused = len(nodes) - len(to_create)
+
+            # Group the survivors by label for the per-label CREATE templates.
+            rows_by_label: dict[str, list[dict[str, Any]]] = {}
+            for n in to_create:
+                label = NODE_LABELS[n.node_type]
+                row = _node_to_neo4j_props(n)
+                row["source"] = source
+                row["attempt_id"] = attempt_id
+                rows_by_label.setdefault(label, []).append(row)
+
             for label, rows in rows_by_label.items():
                 cypher = _NODE_CREATE_CYPHER[label]
                 result = await s.run(cypher, rows=rows)
                 rec = await result.single()
                 total += int(rec["written"]) if rec else 0
+
+        _LOG.info(
+            "write_nodes attempt_id=%s created=%s reused=%s",
+            attempt_id, total, reused,
+        )
         return total
+
+    async def _existing_node_ids(
+        self, s: Any, attempt_id: int, ids: Iterable[str],
+    ) -> set[str]:
+        """Return the subset of `ids` that already exist in the subgraph.
+
+        One scoped read; safe (and Neo4j-free) on an empty id list. Runs inside
+        the caller's `async with self.neo.session()` block so it shares the
+        session with the surrounding write.
+        """
+        id_list = list(dict.fromkeys(ids))  # de-dup, preserve order
+        if not id_list:
+            return set()
+        result = await s.run(
+            "MATCH (n:_KGNode {attempt_id: $aid}) "
+            "WHERE n.node_id IN $ids RETURN n.node_id AS id",
+            aid=attempt_id, ids=id_list,
+        )
+        present: set[str] = set()
+        async for record in result:
+            present.add(record["id"])
+        return present
 
     async def write_edges(
         self,
@@ -249,33 +320,73 @@ class KGStore:
         attempt_id: int,
         edges: list[Edge],
         source: str,
-    ) -> int:
-        """Create typed edges. Endpoints must already exist in the subgraph.
+    ) -> WriteEdgesResult:
+        """Create typed edges, validating BEFORE issuing any CREATE.
 
-        Edges where MATCH fails to find both endpoints are silently dropped
-        by Neo4j's `MATCH ... CREATE` semantics — the caller is responsible
-        for validating endpoint existence (typically by writing nodes first).
+        Each edge is classified in one pass: an edge whose endpoint is absent
+        from the subgraph is DROPPED (`endpoint_absent`); an edge whose
+        endpoint types are unknown or violate EDGE_ALLOWED_PAIRS is INVALID
+        (`unknown_endpoint_type` / `disallowed_pair`). Both are LOGGED with a
+        reason (`write_edge_rejected`) and never silently lost — the store-side
+        mirror of the parser boundary's `parser_edge_rejected`. Surviving edges
+        are grouped by type and CREATEd. Endpoint existence is checked in ONE
+        scoped read shared with the writes. Returns a `WriteEdgesResult`
+        (written/dropped/invalid + per-rejection reasons; `int()`-coercible to
+        `written` for back-compat). Rejections are data, not exceptions.
         """
         session_id = await self._session_id_for_attempt(attempt_id)
         await self._ensure_unfrozen(session_id)
         if not edges:
-            return 0
+            return WriteEdgesResult()
 
-        rows_by_type: dict[str, list[dict[str, Any]]] = {}
-        for e in edges:
-            row = _edge_to_neo4j_row(e)
-            row["attempt_id"] = attempt_id
-            row["source"] = source
-            rows_by_type.setdefault(e.edge_type.value, []).append(row)
+        endpoint_ids = {e.from_node_id for e in edges} | {e.to_node_id for e in edges}
 
-        total = 0
+        written = 0
+        dropped = 0
+        invalid = 0
+        reasons: list[tuple[str, str]] = []
+
         async with self.neo.session() as s:
+            present = await self._existing_node_ids(s, attempt_id, endpoint_ids)
+
+            rows_by_type: dict[str, list[dict[str, Any]]] = {}
+            for e in edges:
+                repr_ = _edge_repr(e)
+                if e.from_node_id not in present or e.to_node_id not in present:
+                    dropped += 1
+                    reasons.append((repr_, "endpoint_absent"))
+                    _LOG.info("write_edge_rejected reason=endpoint_absent edge=%s", repr_)
+                    continue
+                if e.from_node_type is None or e.to_node_type is None:
+                    invalid += 1
+                    reasons.append((repr_, "unknown_endpoint_type"))
+                    _LOG.info("write_edge_rejected reason=unknown_endpoint_type edge=%s", repr_)
+                    continue
+                pair = (e.from_node_type, e.to_node_type)
+                if pair not in EDGE_ALLOWED_PAIRS[e.edge_type]:
+                    invalid += 1
+                    reasons.append((repr_, "disallowed_pair"))
+                    _LOG.info("write_edge_rejected reason=disallowed_pair edge=%s", repr_)
+                    continue
+                row = _edge_to_neo4j_row(e)
+                row["attempt_id"] = attempt_id
+                row["source"] = source
+                rows_by_type.setdefault(e.edge_type.value, []).append(row)
+
             for et, rows in rows_by_type.items():
                 cypher = _EDGE_CREATE_CYPHER[et]
                 result = await s.run(cypher, rows=rows)
                 rec = await result.single()
-                total += int(rec["written"]) if rec else 0
-        return total
+                written += int(rec["written"]) if rec else 0
+
+        _LOG.info(
+            "write_edges attempt_id=%s written=%s dropped=%s invalid=%s reasons=%r",
+            attempt_id, written, dropped, invalid, tuple(reasons),
+        )
+        return WriteEdgesResult(
+            written=written, dropped=dropped, invalid=invalid,
+            reasons=tuple(reasons),
+        )
 
     async def read_graph(self, *, attempt_id: int) -> KGGraph:
         """Read the full per-attempt subgraph."""
