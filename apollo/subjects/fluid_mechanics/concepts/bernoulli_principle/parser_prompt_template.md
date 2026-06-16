@@ -3,33 +3,44 @@ student's explanation of a {{concept_name}} concept. Return ONLY a JSON object
 of the form:
 
 {"entries": [ { "type": "equation"|"definition"|"condition"|"simplification"|"variable_mapping"|"procedure_step",
-                "content": { ... type-specific fields ... },
-                "confidence": <float in [0, 1]>,        // see "Confidence" below
-                "uses_equation_ordinals": [int, ...]    // procedure_step only; see below
+                "confidence": <float in [0, 1]>,           // see "Confidence" below
+                "reuse_of": <existing-graph id>|null,       // see "EXISTING GRAPH" below
+                "symbolic": <string>|null, "label": <string>|null,
+                "variables": [<string>, ...]|null,
+                "applies_when": <string>|null, "transformation": <string>|null,
+                "concept": <string>|null, "meaning": <string>|null,
+                "term": <string>|null, "symbol": <string>|null,
+                "action": <string>|null, "purpose": <string>|null,
+                "uses_equation_ordinals": [<int>, ...]|null // procedure_step only; see below
               } ],
  "edges":   [ { "edge_type": "PRECEDES"|"USES"|"SCOPES"|"DEPENDS_ON",
-                "from_ref": "n<i>"|"<existing-graph id>",  // see "Edges" below
+                "from_ref": "n<i>"|"<existing-graph id>",   // see "Edges" below
                 "to_ref":   "n<i>"|"<existing-graph id>",
-                "provenance": "explicit"|"inferred"        // see "Provenance" below
+                "provenance": "explicit"|"inferred"         // see "Provenance" below
               } ]}
 
-For type=equation: content must have "symbolic" (a parseable string
-using the symbols the student used as underscore-free identifiers; use
-Rational(1,2) for halves, ** for exponents, avoid unicode) and "label"
-(short human name from what the student called it). Prefer zero-form: LHS - (RHS).
+Every entry carries ALL of the fields above as a FLAT object (no nested
+"content"). Fill in the fields that belong to the entry's "type" and set every
+other field to null. Field meanings by type:
 
-For type=condition: content must have "applies_when" (natural language) and "label".
-For type=simplification: content must have "applies_when" and "transformation".
-For type=definition: content must have "concept" and "meaning".
-For type=variable_mapping: content must have "term" and "symbol".
-For type=procedure_step: content must have "action" (natural-language description
-of what the student does at this stage) and "purpose" (why this step is done).
+For type=equation: set "symbolic" (a parseable string using the symbols the
+student used as underscore-free identifiers; use Rational(1,2) for halves, **
+for exponents, avoid unicode; prefer zero-form LHS - (RHS)), "label" (short
+human name from what the student called it), and optionally "variables" (the
+list of symbols). Leave the rest null.
 
-For procedure_step, instead of free-text equation labels, set
-"uses_equation_ordinals" to a list of zero-based indices into the SAME response's
-"entries" array, identifying the equation entries this step uses. Example: if your
-entries[0] and entries[2] are equations and this step uses both, set
-"uses_equation_ordinals": [0, 2]. Use [] if the step uses no equations.
+For type=condition: set "applies_when" (natural language) and "label".
+For type=simplification: set "applies_when" and "transformation".
+For type=definition: set "concept" and "meaning".
+For type=variable_mapping: set "term" and "symbol".
+For type=procedure_step: set "action" (natural-language description of what the
+student does at this stage) and "purpose" (why this step is done).
+
+For procedure_step, set "uses_equation_ordinals" to a list of zero-based indices
+into the SAME response's "entries" array, identifying the equation entries this
+step uses. Example: if your entries[0] and entries[2] are equations and this step
+uses both, set "uses_equation_ordinals": [0, 2]. Use [] if the step uses no
+equations. Set "uses_equation_ordinals" to null on every non-procedure_step entry.
 
 Extract a procedure_step only when the student is describing what THEY (or a
 solver) would DO as part of solving — an action they are taking or prescribing —
@@ -59,7 +70,9 @@ label. When the current message refers to something already in EXISTING GRAPH
 duplicate entry — reference the existing id directly in `from_ref`/`to_ref`.
 This is how late conditions/simplifications get SCOPES-linked to an equation
 the student stated in an earlier turn (a cross-turn edge). If EXISTING GRAPH is
-"(empty)", there are no prior nodes to reference.
+"(empty)", there are no prior nodes to reference. Set "reuse_of" to null on
+every entry — prefer referencing an existing id directly in an edge over
+emitting a stub entry.
 
 Provenance: tag every edge `explicit` or `inferred`.
 - explicit: the student's wording directly states the relation ("use Bernoulli

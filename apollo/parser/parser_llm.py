@@ -32,9 +32,11 @@ from openai import OpenAI
 from apollo.agent._llm import cheap_chat
 from apollo.errors import ParserCouldNotExtractError
 from apollo.ontology import (
+    NODE_CONTENT_TYPES,
     Edge,
     EdgeType,
     Node,
+    NodeType,
     build_node,
 )
 from apollo.parser.edge_resolver import resolve_typed_edges
@@ -141,22 +143,44 @@ def _is_non_trivial(utterance: str, concept: ConceptDefinition) -> bool:
     return is_teaching and confidence >= _TEACHING_CONFIDENCE_THRESHOLD
 
 
+# Per-type content field names, derived from the Pydantic content models so
+# the flat->nested adapter stays in lock-step with the ontology (one source of
+# truth — no hand-maintained second list). Each strict-schema entry carries
+# these fields FLAT (present-and-nullable); `_flat_content` lifts the ones that
+# belong to the entry's type into the nested `content` dict `build_node` wants.
+_CONTENT_FIELDS: dict[NodeType, tuple[str, ...]] = {
+    t: tuple(model.model_fields.keys())
+    for t, model in NODE_CONTENT_TYPES.items()
+}
+
+
+def _flat_content(entry: dict, node_type: NodeType) -> dict:
+    """Lift the FLAT type-specific fields for `node_type` into a content dict.
+
+    The strict schema is flat (every node field sits directly on the entry,
+    present-and-nullable), but the ontology's `build_node` expects a nested
+    per-type `content` payload. This adapter selects only the fields the type's
+    content model declares and drops null values so the content model's own
+    defaults/required-field validation applies unchanged.
+    """
+    return {
+        key: entry[key]
+        for key in _CONTENT_FIELDS[node_type]
+        if entry.get(key) is not None
+    }
+
+
 def _entry_to_node(
     entry: dict,
     *,
     attempt_id: int,
     fallback_node_id: str,
 ) -> Node | None:
-    """Convert a single LLM entry to a typed Node, or return None if invalid."""
+    """Convert a single FLAT LLM entry to a typed Node, or None if invalid."""
     t = entry.get("type")
-    if t not in {"equation", "condition", "simplification",
-                 "definition", "variable_mapping", "procedure_step"}:
+    if t not in NODE_CONTENT_TYPES:
         return None
-    content = dict(entry.get("content") or {})
-    # Drop legacy fields the V3 parser shouldn't emit anymore.
-    if t == "procedure_step":
-        content.pop("order", None)
-        content.pop("uses_equations", None)
+    content = _flat_content(entry, t)
 
     # LLM self-reported confidence for this entry. Falls back to 1.0 if the
     # field is absent (legacy prompt) or malformed — keeps behavior identical
@@ -300,7 +324,7 @@ def _build_nodes(
     kept_raw: list[dict] = []
     index_to_node: dict[int, Node] = {}
     for i, e in enumerate(raw_entries):
-        if not isinstance(e, dict) or "type" not in e or "content" not in e:
+        if not isinstance(e, dict) or "type" not in e:
             continue
         node = _entry_to_node(
             e, attempt_id=attempt_id, fallback_node_id=f"stu_{uuid.uuid4().hex[:12]}",

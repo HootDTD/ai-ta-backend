@@ -64,6 +64,17 @@ def build_extraction_schema() -> dict:
         # procedure_step
         "action": {"type": ["string", "null"]},
         "purpose": {"type": ["string", "null"]},
+        # procedure_step USES self-reference: 0-based indices into THIS
+        # response's `entries` naming the equation entries the step applies.
+        # Nullable int-array (use [] for none, null when not a step). The
+        # deterministic within-turn USES fallback (`_resolve_uses_edges`)
+        # reads it when the model emits no typed `edges` and no graph_context
+        # is supplied, so it MUST be part of the strict schema (a field absent
+        # from the schema can never arrive under additionalProperties:false).
+        "uses_equation_ordinals": {
+            "type": ["array", "null"],
+            "items": {"type": "integer"},
+        },
     }
 
     edge_properties: dict = {
