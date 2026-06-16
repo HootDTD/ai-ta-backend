@@ -64,11 +64,23 @@ async def _upsert_subject(session: AsyncSession, slug: str) -> int:
     row = (
         await session.execute(select(Subject).where(Subject.slug == slug))
     ).scalar_one_or_none()
+    # Subject.search_space_id is NOT NULL (migration 026, isolation invariant
+    # §1.4). The filesystem seeder has no per-course context, so it attributes
+    # subjects to the bootstrap course — MIN(aita_search_spaces.id) — matching
+    # the migration backfill default.
+    # TODO(WU-3B): the per-course seeder sets the real search_space_id mapping.
+    bootstrap_space_id = (
+        await session.execute(text("SELECT MIN(id) FROM aita_search_spaces"))
+    ).scalar_one_or_none()
     if row is not None:
         row.display_name = _human_name(slug)
         return row.id
 
-    new = Subject(slug=slug, display_name=_human_name(slug))
+    new = Subject(
+        slug=slug,
+        display_name=_human_name(slug),
+        search_space_id=bootstrap_space_id,
+    )
     session.add(new)
     await session.flush()
     return new.id
