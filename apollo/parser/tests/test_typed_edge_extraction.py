@@ -57,13 +57,29 @@ def _mock_client(entries: list, edges: list | None = None) -> MagicMock:
     return client
 
 
-# Reusable entry literals (long prose so the triviality gate never fires).
-_EQ = {"type": "equation", "content": {"symbolic": "A1*v1 - A2*v2", "label": "continuity"}}
-_STEP = {"type": "procedure_step", "content": {"action": "apply continuity", "purpose": "find v2"}}
-_STEP2 = {"type": "procedure_step", "content": {"action": "apply bernoulli", "purpose": "find P2"}}
-_COND = {"type": "condition", "content": {"applies_when": "incompressible flow", "label": "incompr"}}
-_SIMP = {"type": "simplification", "content": {"applies_when": "horizontal pipe", "transformation": "drop rho*g*h"}}
-_DEF = {"type": "definition", "content": {"concept": "density", "meaning": "mass per volume"}}
+# Reusable entry literals — FLAT (every node field sits directly on the entry,
+# per the strict json_schema; NO nested "content"). Helpers fill the rest of
+# the strict-required fields with null so each literal is schema-conformant.
+def _flat_entry(**fields) -> dict:
+    """A FLAT, strict-schema-conformant entry: all 15 entry fields present,
+    the ones not supplied set to null (the strict schema requires every key)."""
+    base = {
+        "type": None, "confidence": 1.0, "reuse_of": None,
+        "symbolic": None, "label": None, "variables": None,
+        "applies_when": None, "transformation": None,
+        "concept": None, "meaning": None, "term": None, "symbol": None,
+        "action": None, "purpose": None, "uses_equation_ordinals": None,
+    }
+    base.update(fields)
+    return base
+
+
+_EQ = _flat_entry(type="equation", symbolic="A1*v1 - A2*v2", label="continuity")
+_STEP = _flat_entry(type="procedure_step", action="apply continuity", purpose="find v2")
+_STEP2 = _flat_entry(type="procedure_step", action="apply bernoulli", purpose="find P2")
+_COND = _flat_entry(type="condition", applies_when="incompressible flow", label="incompr")
+_SIMP = _flat_entry(type="simplification", applies_when="horizontal pipe", transformation="drop rho*g*h")
+_DEF = _flat_entry(type="definition", concept="density", meaning="mass per volume")
 
 _LONG = "the student writes a long teaching explanation A1*v1 = A2*v2 here"
 
@@ -193,6 +209,97 @@ def _iter_objects(obj: dict):
         yield from _iter_objects(obj["items"])
 
 
+def _json_type(value: object) -> str:
+    """Map a Python value to its JSON-schema primitive type name."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    raise AssertionError(f"unmappable value type: {value!r}")
+
+
+def _assert_conforms(value: object, schema: dict, path: str = "") -> None:
+    """Minimal OpenAI-strict json_schema validator (no external dependency).
+
+    Enforces exactly the invariants the production call relies on: declared
+    type(s)/nullability, enum membership, `required` completeness, and
+    `additionalProperties: false`. Recurses into object properties and array
+    items. Used to prove every mock payload is what a strict GPT-4o call could
+    actually return (review-required: payloads must validate against
+    build_extraction_schema())."""
+    allowed = schema.get("type")
+    if allowed is not None:
+        allowed_set = {allowed} if isinstance(allowed, str) else set(allowed)
+        actual = _json_type(value)
+        # JSON-schema: an integer is a valid `number`.
+        ok = actual in allowed_set or (actual == "integer" and "number" in allowed_set)
+        assert ok, f"{path or '<root>'}: type {actual} not in {sorted(allowed_set)}"
+    if "enum" in schema and value is not None:
+        assert value in schema["enum"], f"{path}: {value!r} not in enum {schema['enum']}"
+    if isinstance(value, dict):
+        props = schema.get("properties", {})
+        if schema.get("additionalProperties") is False:
+            extra = set(value) - set(props)
+            assert not extra, f"{path}: additional properties {extra}"
+        for key in schema.get("required", []):
+            assert key in value, f"{path}: missing required key {key!r}"
+        for key, sub in props.items():
+            if key in value:
+                _assert_conforms(value[key], sub, f"{path}.{key}" if path else key)
+    if isinstance(value, list) and "items" in schema:
+        for i, item in enumerate(value):
+            _assert_conforms(item, schema["items"], f"{path}[{i}]")
+
+
+def test_fixture_entries_conform_to_strict_schema(concept):
+    """Every reusable FLAT fixture entry validates against the strict
+    json_schema the production call enforces. Guards against the prior bug
+    where fixtures used a nested `content` shape the schema forbids, so a
+    schema-conformant LLM response could never produce nodes."""
+    from apollo.parser.extraction_schema import build_extraction_schema
+
+    schema = build_extraction_schema()["schema"]
+    payload = {
+        "entries": [_EQ, _STEP, _STEP2, _COND, _SIMP, _DEF],
+        "edges": [_edge("USES", "n1", "n0", "explicit")],
+    }
+    _assert_conforms(payload, schema)
+
+
+@patch("apollo.parser.parser_llm.OpenAI")
+def test_schema_conformant_payload_yields_nodes(mock_cls, concept):
+    """A payload that validates against build_extraction_schema() (FLAT shape)
+    must produce nodes through parse_utterance. This is the regression guard
+    for the dead-node-path bug: the prior `"content" in e` gate dropped every
+    strict-conformant entry, yielding zero nodes in production."""
+    from apollo.parser.extraction_schema import build_extraction_schema
+    from apollo.parser.parser_llm import parse_utterance
+
+    schema = build_extraction_schema()["schema"]
+    payload_edges = [_edge("USES", "n1", "n0", "explicit")]
+    _assert_conforms({"entries": [_EQ, _STEP], "edges": payload_edges}, schema)
+
+    client = _mock_client(entries=[_EQ, _STEP], edges=payload_edges)
+    mock_cls.return_value = client
+    nodes, edges = parse_utterance(_LONG, concept=concept, attempt_id=1)
+    assert len(nodes) == 2
+    assert {n.node_type for n in nodes} == {"equation", "procedure_step"}
+    # The flat fields reached the typed content payloads (adapter works).
+    eq_node = next(n for n in nodes if n.node_type == "equation")
+    assert eq_node.content.symbolic == "A1*v1 - A2*v2"
+    assert len(edges) == 1
+
+
 def _edge(edge_type, from_ref, to_ref, provenance=None):
     e = {"edge_type": edge_type, "from_ref": from_ref, "to_ref": to_ref}
     if provenance is not None:
@@ -254,15 +361,13 @@ def test_parse_no_model_edges_falls_back_to_deterministic(mock_cls, concept):
     within-turn USES (from uses_equation_ordinals) + PRECEDES chain."""
     from apollo.parser.parser_llm import parse_utterance
 
-    step_a = {
-        "type": "procedure_step",
-        "content": {"action": "apply continuity", "purpose": "find v2"},
-        "uses_equation_ordinals": [2],
-    }
-    step_b = {
-        "type": "procedure_step",
-        "content": {"action": "apply bernoulli", "purpose": "find P2"},
-    }
+    step_a = _flat_entry(
+        type="procedure_step", action="apply continuity", purpose="find v2",
+        uses_equation_ordinals=[2],
+    )
+    step_b = _flat_entry(
+        type="procedure_step", action="apply bernoulli", purpose="find P2",
+    )
     client = _mock_client(entries=[step_a, step_b, _EQ], edges=[])
     mock_cls.return_value = client
 
@@ -386,10 +491,9 @@ def test_parse_cross_turn_late_condition_scopes_earlier_equation(mock_cls, conce
     ctx = GraphContext(
         nodes=(ContextNode(node_id="t0_n0", node_type="equation", label="bernoulli P+..."),)
     )
-    late_cond = {
-        "type": "condition",
-        "content": {"applies_when": "flow is steady and incompressible", "label": "steady"},
-    }
+    late_cond = _flat_entry(
+        type="condition", applies_when="flow is steady and incompressible", label="steady",
+    )
     client = _mock_client(
         entries=[late_cond],
         edges=[_edge("SCOPES", "n0", "t0_n0", "inferred")],
@@ -652,12 +756,59 @@ def test_build_typed_edge_validator_rejected_defensive(caplog, monkeypatch):
 
 
 @patch("apollo.parser.parser_llm.OpenAI")
+def test_parse_skips_non_dict_and_typeless_entries(mock_cls, concept):
+    """`_build_nodes` skips entries that are not dicts or lack a `type` key
+    (defensive guard) while keeping the valid ones."""
+    from apollo.parser.parser_llm import parse_utterance
+
+    typeless = _flat_entry()  # type=None -> not a recognized node type
+    del typeless["type"]      # drop the key entirely to hit the `"type" not in e` guard
+    client = MagicMock()
+    payload = {
+        "entries": ["not-a-dict", typeless, _EQ],  # bad(0), bad(1), good(2)
+        "edges": [],
+    }
+    client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=json.dumps(payload)))]
+    )
+    mock_cls.return_value = client
+    nodes, _ = parse_utterance(_LONG, concept=concept, attempt_id=1)
+    assert len(nodes) == 1
+    assert nodes[0].node_type == "equation"
+
+
+def test_build_precedes_chain_skips_validator_rejection(monkeypatch, concept):
+    """Defensive: if `Edge` construction raises ValueError inside the PRECEDES
+    chain, that pair is skipped (no abort). Mirrors the edge-resolver
+    belt-and-braces guard."""
+    from apollo.parser import parser_llm
+    from apollo.parser.parser_llm import _build_precedes_chain
+    from apollo.ontology import build_node
+
+    steps = [
+        build_node(
+            node_type="procedure_step", node_id=f"s{i}", attempt_id=1,
+            source="parser", content={"action": f"step {i}", "purpose": "p"},
+        )
+        for i in range(2)
+    ]
+
+    class _BoomEdge:
+        def __init__(self, *a, **k):
+            raise ValueError("forced validator failure")
+
+    monkeypatch.setattr(parser_llm, "Edge", _BoomEdge)
+    edges = _build_precedes_chain(steps, attempt_id=1)
+    assert edges == []
+
+
+@patch("apollo.parser.parser_llm.OpenAI")
 def test_parse_ref_index_survives_skipped_entry(mock_cls, concept):
     """Risk #1: a malformed entry between two good ones must NOT shift the
     "n<i>" ref mapping. Ref keys on the ORIGINAL entry index."""
     from apollo.parser.parser_llm import parse_utterance
 
-    malformed = {"type": "equation", "content": {}}  # missing required `symbolic`
+    malformed = _flat_entry(type="equation")  # missing required `symbolic` -> skipped
     client = _mock_client(
         entries=[_STEP, malformed, _EQ],   # good(0), bad(1 -> skipped), good(2)
         edges=[_edge("USES", "n0", "n2", "explicit")],
@@ -767,11 +918,9 @@ def test_node_parser_confidence_still_propagates(mock_cls, concept):
     """The P1 confidence contract still holds under the strict-schema path."""
     from apollo.parser.parser_llm import parse_utterance
 
-    eq = {
-        "type": "equation",
-        "content": {"symbolic": "A1*v1 - A2*v2", "label": "continuity"},
-        "confidence": 0.45,
-    }
+    eq = _flat_entry(
+        type="equation", symbolic="A1*v1 - A2*v2", label="continuity", confidence=0.45,
+    )
     client = _mock_client(entries=[eq], edges=[])
     mock_cls.return_value = client
     nodes, _ = parse_utterance(_LONG, concept=concept, attempt_id=1)
