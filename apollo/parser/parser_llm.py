@@ -25,7 +25,6 @@ import logging
 import os
 import re
 import uuid
-from typing import Any
 
 from openai import OpenAI
 
@@ -207,26 +206,34 @@ def _entry_to_node(
 
 def _resolve_uses_edges(
     raw_entries: list[dict],
-    nodes: list[Node],
+    index_to_node: dict[int, Node],
     *,
     attempt_id: int,
 ) -> list[Edge]:
     """Resolve `uses_equation_ordinals` ints into USES edges by node_id.
 
-    Drops edges with out-of-range ordinals or non-equation targets.
+    Both the procedure-step source and its equation target are resolved
+    through `index_to_node` (ORIGINAL entry index -> built node), exactly like
+    the typed-edge path (`edge_resolver`). This keeps the fallback robust to
+    malformed entries dropped by `_build_nodes`: a skipped entry never shifts
+    the ordinal mapping (WU-2B nit-1; pre-WU-2B indexed the COMPACTED nodes
+    list, which mis-targeted on a skip).
+
+    Drops edges with unresolvable/non-equation ordinals.
     """
     edges: list[Edge] = []
-    for raw, node in zip(raw_entries, nodes):
-        if node.node_type != "procedure_step":
+    for i, raw in enumerate(raw_entries):
+        node = index_to_node.get(i)
+        if node is None or node.node_type != "procedure_step":
             continue
         ordinals = raw.get("uses_equation_ordinals") or []
         if not isinstance(ordinals, list):
             continue
         for o in ordinals:
-            if not isinstance(o, int) or o < 0 or o >= len(nodes):
+            if not isinstance(o, int):
                 continue
-            target = nodes[o]
-            if target.node_type != "equation":
+            target = index_to_node.get(o)
+            if target is None or target.node_type != "equation":
                 continue
             try:
                 edges.append(Edge(
@@ -365,8 +372,9 @@ def parse_utterance(
             raise ParserCouldNotExtractError(utterance=utterance)
         return [], []
 
-    nodes, kept_raw, index_to_node = _build_nodes(
-        _as_list(payload.get("entries")), attempt_id=attempt_id,
+    raw_entries = _as_list(payload.get("entries"))
+    nodes, _kept_raw, index_to_node = _build_nodes(
+        raw_entries, attempt_id=attempt_id,
     )
     if not nodes and _is_non_trivial(utterance, concept):
         raise ParserCouldNotExtractError(utterance=utterance)
@@ -376,9 +384,13 @@ def parse_utterance(
         graph_context=graph_context, attempt_id=attempt_id,
     )
     # No-context fallback: today's deterministic within-turn edges, only when
-    # no context was supplied AND the model emitted no usable edges.
+    # no context was supplied AND the model emitted no usable edges. The USES
+    # fallback resolves ordinals through `index_to_node` (ORIGINAL entry index)
+    # so it must receive the ORIGINAL entries list, not the compacted one.
     if not edges and graph_context is None:
-        edges.extend(_resolve_uses_edges(kept_raw, nodes, attempt_id=attempt_id))
+        edges.extend(_resolve_uses_edges(
+            raw_entries, index_to_node, attempt_id=attempt_id,
+        ))
         edges.extend(_build_precedes_chain(nodes, attempt_id=attempt_id))
 
     return nodes, edges
