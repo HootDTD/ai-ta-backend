@@ -29,7 +29,7 @@ import pytest_asyncio
 from sqlalchemy.engine import make_url
 
 from apollo.persistence.learner_model_seed import SeedError, validate_reference_graph
-from scripts.seed_apollo_learner_model import seed
+from scripts.seed_apollo_learner_model import main, seed
 
 pytestmark = pytest.mark.integration
 
@@ -541,4 +541,85 @@ async def test_seed_errors_when_concept_missing(seeded_db):
     sa_dsn, _plain = await seeded_db(_space_only)
     with pytest.raises(SeedError):
         await seed(sa_dsn)
+
+
+async def test_seed_errors_when_no_courses(seeded_db):
+    """Default search_space_id resolution against an empty aita_search_spaces
+    raises SeedError (no course to attribute the seed to)."""
+
+    async def _nothing(conn):  # no space, no curriculum
+        return None
+
+    sa_dsn, _plain = await seeded_db(_nothing)
+    with pytest.raises(SeedError):
+        await seed(sa_dsn)
+
+
+async def test_seed_dry_run_rolls_back(seeded_db):
+    """A dry run computes the same stats but writes nothing to the DB."""
+    sa_dsn, plain = await seeded_db(_seed_one_course)
+    stats = await seed(sa_dsn, dry_run=True, write_disk=False)
+    assert stats["entities_inserted"] > 0  # would-be inserts counted
+    concept_id = await _fetchval(
+        plain, "SELECT id FROM apollo_concepts WHERE slug='bernoulli_principle'"
+    )
+    rows = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_kg_entities WHERE concept_id=$1",
+        concept_id,
+    )
+    assert rows == 0  # rolled back
+
+
+def test_main_dry_run_happy_path(_pg_url, capsys):
+    """main() with --dry-run + --no-write-disk against a seeded DB returns 0 and
+    prints the stats dict (covers the CLI happy path without mutating rows).
+
+    This test is SYNCHRONOUS on purpose: main() calls asyncio.run internally, so
+    it must run with NO event loop already running. A sync test gives main its
+    own clean loop (no nested loop / worker thread). The DB is built + asserted
+    via asyncio.run on a self-contained coroutine."""
+    base_db = make_url(_pg_url).database
+    admin_dsn = _plain_dsn(_pg_url, base_db)
+    name = "wu3b_main_dry_run"
+    plain = _plain_dsn(_pg_url, name)
+    sa_dsn = _asyncpg_dsn_to_sqlalchemy(plain)
+
+    async def _build_and_count() -> int:
+        await _create_db(admin_dsn, name)
+        await _apply_chain(plain)
+        conn = await asyncpg.connect(plain)
+        try:
+            await _seed_one_course(conn)
+        finally:
+            await conn.close()
+        return 0
+
+    async def _count_entities() -> int:
+        concept_id = await _fetchval(
+            plain, "SELECT id FROM apollo_concepts WHERE slug='bernoulli_principle'"
+        )
+        return await _fetchval(
+            plain,
+            "SELECT count(*) FROM apollo_kg_entities WHERE concept_id=$1",
+            concept_id,
+        )
+
+    async def _drop() -> None:
+        admin = await asyncpg.connect(admin_dsn)
+        try:
+            await admin.execute(f'DROP DATABASE IF EXISTS "{name}"')
+        finally:
+            await admin.close()
+
+    try:
+        asyncio.run(_build_and_count())
+        rc = main(["--database-url", sa_dsn, "--dry-run", "--no-write-disk"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "seeded:" in out
+        # Dry run -> no rows written.
+        assert asyncio.run(_count_entities()) == 0
+    finally:
+        asyncio.run(_drop())
 

@@ -52,6 +52,22 @@ def _load_problem(n: int) -> dict:
     )
 
 
+def _strip_annotation(problem: dict) -> dict:
+    """Return a deep copy of a problem with the seed annotation removed.
+
+    The seeder writes the entity-link + declared-path annotation back to the
+    on-disk problem_*.json by design (D2/R1), so the source files may already
+    carry ``entity_key`` / ``declared_paths`` / ``layer1_seeded``. Tests that
+    exercise the BEFORE-annotation shape strip these so they are independent of
+    whether the seed has run on disk."""
+    clean = copy.deepcopy(problem)
+    clean.pop("declared_paths", None)
+    clean.pop("layer1_seeded", None)
+    for step in clean.get("reference_solution", []):
+        step.pop("entity_key", None)
+    return clean
+
+
 def _by_key(specs: list[EntitySpec]) -> dict[str, EntitySpec]:
     return {s.canonical_key: s for s in specs}
 
@@ -275,7 +291,9 @@ def test_annotate_reference_solution_adds_entity_keys_and_path():
 
 
 def test_annotate_is_immutable():
-    problem = _load_problem(2)
+    # Start from the un-annotated shape so the BEFORE assertions hold regardless
+    # of whether the seeder has written the annotation to the on-disk source.
+    problem = _strip_annotation(_load_problem(2))
     before = copy.deepcopy(problem)
     annotated = annotate_reference_solution(problem, _key_for_node(problem))
 
@@ -307,3 +325,19 @@ def test_entityspec_is_frozen():
     spec = concept_dag_to_entities(_load("concept_dag.json"))[0]
     with pytest.raises(Exception):
         spec.kind = "mutated"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# CLI arg-parsing (fast, no DB) — the missing-URL branch
+# ---------------------------------------------------------------------------
+
+
+def test_main_requires_database_url(monkeypatch, capsys):
+    """main() with no --database-url and no DATABASE_URL env returns code 2."""
+    from scripts.seed_apollo_learner_model import main
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    rc = main([])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "database-url" in err.lower() or "database_url" in err.lower()
