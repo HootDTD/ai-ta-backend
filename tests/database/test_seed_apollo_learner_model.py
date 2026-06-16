@@ -1,0 +1,544 @@
+"""Real-Postgres seed tests for WU-3B (``scripts.seed_apollo_learner_model``).
+
+The seeder converts the hand-authored bernoulli source files into migration-026
+Layer-1 rows (entities + prereqs + aliases + ``misc.*`` entities with an
+opposes-link) and annotates the bernoulli problems' reference solutions with
+entity links + a declared path so the §6.1 validation contract passes.
+
+Harness mirrors ``tests/database/test_apollo_learner_model_migration.py``: the
+session ``_pg_url`` pgvector container, a content-scoped migration chain + 026
+applied to a fresh database, with ``auth.users`` / ``aita_search_spaces`` stubs.
+UNLIKE WU-3A this seeds REAL bernoulli ``apollo_subjects`` / ``apollo_concepts``
+/ ``apollo_concept_problems`` rows (the seeder reads them), then runs ``seed``
+through SQLAlchemy and asserts on the resulting rows.
+
+Each test builds its OWN fresh database so the seeder's commit + idempotency
+second-run can be observed without per-test transaction rollback interfering.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+from pathlib import Path
+
+import asyncpg
+import pytest
+import pytest_asyncio
+from sqlalchemy.engine import make_url
+
+from apollo.persistence.learner_model_seed import SeedError, validate_reference_graph
+from scripts.seed_apollo_learner_model import seed
+
+pytestmark = pytest.mark.integration
+
+_REPO = Path(__file__).resolve().parents[2]
+MIGRATIONS_DIR = _REPO / "database" / "migrations"
+_BERNOULLI = (
+    _REPO / "apollo" / "subjects" / "fluid_mechanics" / "concepts" / "bernoulli_principle"
+)
+
+# Same FK stubs + content-scoped chain selection as the WU-3A harness.
+_STUB_DDL = """
+CREATE SCHEMA IF NOT EXISTS auth;
+CREATE TABLE auth.users (id UUID PRIMARY KEY);
+CREATE TABLE aita_search_spaces (id SERIAL PRIMARY KEY);
+"""
+_TOUCHES_TARGETS = re.compile(
+    r"(CREATE TABLE IF NOT EXISTS|CREATE TABLE|ALTER TABLE)\s+"
+    r"apollo_(subjects|concepts|problem_attempts)\b"
+)
+_MIGRATION_026 = MIGRATIONS_DIR / "026_apollo_learner_model.sql"
+
+
+def _chain_migrations() -> list[Path]:
+    return [
+        path
+        for path in sorted(MIGRATIONS_DIR.glob("*.sql"))
+        if path.name != _MIGRATION_026.name
+        and _TOUCHES_TARGETS.search(path.read_text(encoding="utf-8"))
+    ]
+
+
+def _plain_dsn(sqlalchemy_url: str, database: str) -> str:
+    url = make_url(sqlalchemy_url).set(drivername="postgresql", database=database)
+    return url.render_as_string(hide_password=False)
+
+
+def _asyncpg_dsn_to_sqlalchemy(plain_dsn: str) -> str:
+    return make_url(plain_dsn).set(drivername="postgresql+asyncpg").render_as_string(
+        hide_password=False
+    )
+
+
+async def _create_db(admin_dsn: str, name: str) -> None:
+    admin = await asyncpg.connect(admin_dsn)
+    try:
+        await admin.execute(f'DROP DATABASE IF EXISTS "{name}"')
+        await admin.execute(f'CREATE DATABASE "{name}"')
+    finally:
+        await admin.close()
+
+
+async def _apply_chain(dsn: str) -> None:
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute(_STUB_DDL)
+        for migration in _chain_migrations():
+            await conn.execute(migration.read_text(encoding="utf-8"))
+        await conn.execute(_MIGRATION_026.read_text(encoding="utf-8"))
+    finally:
+        await conn.close()
+
+
+def _load_problem(n: int) -> dict:
+    return json.loads(
+        (_BERNOULLI / "problems" / f"problem_{n:02d}.json").read_text(encoding="utf-8")
+    )
+
+
+async def _seed_space(conn: asyncpg.Connection) -> int:
+    return await conn.fetchval(
+        "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
+    )
+
+
+async def _seed_one_course(conn: asyncpg.Connection) -> int:
+    """Create one bootstrap course + its bernoulli curriculum. Returns concept_id."""
+    space_id = await _seed_space(conn)
+    return await _seed_bernoulli_curriculum(conn, space_id)
+
+
+async def _seed_bernoulli_curriculum(
+    conn: asyncpg.Connection, space_id: int, *, subject_slug: str = "fluid_mechanics"
+) -> int:
+    """Insert the bernoulli subject/concept/problems the seeder reads. Returns
+    the bernoulli concept_id. All 5 problems are attached to the bernoulli
+    concept (the WU-3B reference fixture set).
+
+    ``subject_slug`` is parametrized because ``apollo_subjects.slug`` carries a
+    GLOBAL UNIQUE constraint (migration 018), so a two-course test cannot give
+    both courses a subject named ``fluid_mechanics``. The seeder resolves the
+    concept by (search_space_id, concept.slug='bernoulli_principle') regardless
+    of the subject slug, so distinct subject slugs do not change its behavior;
+    the bernoulli CONCEPT slug stays the same under each course (concept slug
+    uniqueness is per-subject, not global)."""
+    subject_id = await conn.fetchval(
+        "INSERT INTO apollo_subjects (slug, display_name, search_space_id) "
+        "VALUES ($1, 'Fluid Mechanics', $2) RETURNING id",
+        subject_slug,
+        space_id,
+    )
+    concept_id = await conn.fetchval(
+        "INSERT INTO apollo_concepts (subject_id, slug, display_name) "
+        "VALUES ($1, 'bernoulli_principle', 'Bernoulli''s Principle') RETURNING id",
+        subject_id,
+    )
+    for n in range(1, 6):
+        payload = _load_problem(n)
+        await conn.execute(
+            "INSERT INTO apollo_concept_problems "
+            "(concept_id, problem_code, difficulty, payload) VALUES ($1,$2,$3,$4)",
+            concept_id,
+            payload["id"],
+            payload.get("difficulty", "intro"),
+            json.dumps(payload),
+        )
+    return concept_id
+
+
+@pytest_asyncio.fixture
+async def seeded_db(_pg_url: str):
+    """Async builder: create a fresh migrated DB, seed bernoulli curriculum via
+    the supplied coroutine, and return (sqlalchemy_dsn, plain_dsn). Cleans up the
+    created databases afterwards."""
+    base_db = make_url(_pg_url).database
+    admin_dsn = _plain_dsn(_pg_url, base_db)
+    created: list[str] = []
+
+    async def _build(seed_curriculum) -> tuple[str, str]:
+        name = f"wu3b_seed_{len(created)}"
+        created.append(name)
+        plain = _plain_dsn(_pg_url, name)
+        await _create_db(admin_dsn, name)
+        await _apply_chain(plain)
+        conn = await asyncpg.connect(plain)
+        try:
+            await seed_curriculum(conn)
+        finally:
+            await conn.close()
+        return _asyncpg_dsn_to_sqlalchemy(plain), plain
+
+    try:
+        yield _build
+    finally:
+        admin = await asyncpg.connect(admin_dsn)
+        try:
+            for name in created:
+                await admin.execute(f'DROP DATABASE IF EXISTS "{name}"')
+        finally:
+            await admin.close()
+
+
+async def _fetch(plain_dsn: str, query: str, *args):
+    conn = await asyncpg.connect(plain_dsn)
+    try:
+        return await conn.fetch(query, *args)
+    finally:
+        await conn.close()
+
+
+async def _fetchval(plain_dsn: str, query: str, *args):
+    conn = await asyncpg.connect(plain_dsn)
+    try:
+        return await conn.fetchval(query, *args)
+    finally:
+        await conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Entities / prereqs / aliases
+# ---------------------------------------------------------------------------
+
+
+async def test_seed_creates_concept_entities_one_per_dag_node(seeded_db):
+    sa_dsn, plain = await seeded_db(_seed_one_course)
+    await seed(sa_dsn)
+
+    concept_id = await _fetchval(
+        plain, "SELECT id FROM apollo_concepts WHERE slug='bernoulli_principle'"
+    )
+    n = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_kg_entities WHERE concept_id=$1 AND kind='concept'",
+        concept_id,
+    )
+    assert n == 14
+    present = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_kg_entities "
+        "WHERE concept_id=$1 AND canonical_key='concept.bernoulli_principle'",
+        concept_id,
+    )
+    assert present == 1
+
+
+async def test_seed_creates_variable_entities_from_symbols(seeded_db):
+    sa_dsn, plain = await seeded_db(_seed_one_course)
+    await seed(sa_dsn)
+    concept_id = await _fetchval(
+        plain, "SELECT id FROM apollo_concepts WHERE slug='bernoulli_principle'"
+    )
+    n = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_kg_entities WHERE concept_id=$1 AND kind='variable'",
+        concept_id,
+    )
+    assert n == 8  # 7 canonical + var.q
+    display = await _fetchval(
+        plain,
+        "SELECT display_name FROM apollo_kg_entities "
+        "WHERE concept_id=$1 AND canonical_key='var.P'",
+        concept_id,
+    )
+    assert display == "pressure"
+
+
+async def test_seed_creates_prereq_edges_one_per_dag_edge(seeded_db):
+    sa_dsn, plain = await seeded_db(_seed_one_course)
+    await seed(sa_dsn)
+    concept_id = await _fetchval(
+        plain, "SELECT id FROM apollo_concepts WHERE slug='bernoulli_principle'"
+    )
+    n = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_entity_prereqs p "
+        "JOIN apollo_kg_entities e ON e.id = p.from_entity_id "
+        "WHERE e.concept_id=$1",
+        concept_id,
+    )
+    assert n == 16
+    # The bernoulli -> energy_conservation edge resolves to real entity ids.
+    edge = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_entity_prereqs p "
+        "JOIN apollo_kg_entities ef ON ef.id = p.from_entity_id "
+        "JOIN apollo_kg_entities et ON et.id = p.to_entity_id "
+        "WHERE ef.canonical_key='concept.bernoulli_principle' "
+        "AND et.canonical_key='concept.energy_conservation_fluid' "
+        "AND ef.concept_id=$1",
+        concept_id,
+    )
+    assert edge == 1
+
+
+async def test_seed_populates_aliases_from_normalization_map(seeded_db):
+    sa_dsn, plain = await seeded_db(_seed_one_course)
+    await seed(sa_dsn)
+    concept_id = await _fetchval(
+        plain, "SELECT id FROM apollo_concepts WHERE slug='bernoulli_principle'"
+    )
+    p_aliases = await _fetchval(
+        plain,
+        "SELECT aliases FROM apollo_kg_entities "
+        "WHERE concept_id=$1 AND canonical_key='var.P'",
+        concept_id,
+    )
+    assert "static pressure" in json.loads(p_aliases)
+    rows = await _fetch(
+        plain,
+        "SELECT aliases FROM apollo_kg_entities "
+        "WHERE concept_id=$1 AND kind='variable'",
+        concept_id,
+    )
+    total = sum(len(json.loads(r["aliases"])) for r in rows)
+    assert total == 23
+
+
+# ---------------------------------------------------------------------------
+# Misconceptions + opposes-link
+# ---------------------------------------------------------------------------
+
+
+async def test_seed_creates_misconception_entities_with_opposes_id(seeded_db):
+    sa_dsn, plain = await seeded_db(_seed_one_course)
+    await seed(sa_dsn)
+    concept_id = await _fetchval(
+        plain, "SELECT id FROM apollo_concepts WHERE slug='bernoulli_principle'"
+    )
+    rows = await _fetch(
+        plain,
+        "SELECT canonical_key, payload FROM apollo_kg_entities "
+        "WHERE concept_id=$1 AND kind='misconception'",
+        concept_id,
+    )
+    assert len(rows) >= 2
+    for row in rows:
+        payload = json.loads(row["payload"])
+        opposes_id = payload.get("opposes_entity_id")
+        assert opposes_id is not None, f"{row['canonical_key']} has no opposes_entity_id"
+        # The id points at a real entity whose key equals the authored opposes key.
+        target_key = await _fetchval(
+            plain,
+            "SELECT canonical_key FROM apollo_kg_entities WHERE id=$1",
+            opposes_id,
+        )
+        assert target_key == payload["opposes_entity_key"]
+
+    # density_ignored opposes cond.incompressibility specifically.
+    dens = await _fetchval(
+        plain,
+        "SELECT payload FROM apollo_kg_entities "
+        "WHERE concept_id=$1 AND canonical_key='misc.density_ignored'",
+        concept_id,
+    )
+    assert json.loads(dens)["opposes_entity_key"] == "cond.incompressibility"
+
+
+# ---------------------------------------------------------------------------
+# Reference-node links + declared paths + §6.1 validation
+# ---------------------------------------------------------------------------
+
+
+async def test_seed_links_every_reference_node_to_an_entity(seeded_db):
+    sa_dsn, plain = await seeded_db(_seed_one_course)
+    await seed(sa_dsn)
+    concept_id = await _fetchval(
+        plain, "SELECT id FROM apollo_concepts WHERE slug='bernoulli_principle'"
+    )
+    keys = {
+        r["canonical_key"]
+        for r in await _fetch(
+            plain,
+            "SELECT canonical_key FROM apollo_kg_entities WHERE concept_id=$1",
+            concept_id,
+        )
+    }
+    rows = await _fetch(
+        plain,
+        "SELECT payload FROM apollo_concept_problems WHERE concept_id=$1",
+        concept_id,
+    )
+    assert len(rows) == 5
+    for row in rows:
+        payload = json.loads(row["payload"])
+        for step in payload["reference_solution"]:
+            assert step.get("entity_key"), f"unlinked step {step.get('id')}"
+            assert step["entity_key"] in keys
+
+
+async def test_seed_declares_one_path_per_problem(seeded_db):
+    sa_dsn, plain = await seeded_db(_seed_one_course)
+    await seed(sa_dsn)
+    concept_id = await _fetchval(
+        plain, "SELECT id FROM apollo_concepts WHERE slug='bernoulli_principle'"
+    )
+    rows = await _fetch(
+        plain,
+        "SELECT payload FROM apollo_concept_problems WHERE concept_id=$1",
+        concept_id,
+    )
+    for row in rows:
+        payload = json.loads(row["payload"])
+        paths = payload["declared_paths"]
+        assert len(paths) >= 1
+        assert len(paths[0]) >= 1
+        node_ids = {s["id"] for s in payload["reference_solution"]}
+        assert set(paths[0]) == node_ids
+
+
+async def test_seeded_problem_passes_reference_graph_validation(seeded_db):
+    """The binding WU-4A gate: every seeded problem passes §6.1 validation."""
+    sa_dsn, plain = await seeded_db(_seed_one_course)
+    await seed(sa_dsn)
+    concept_id = await _fetchval(
+        plain, "SELECT id FROM apollo_concepts WHERE slug='bernoulli_principle'"
+    )
+    rows = await _fetch(
+        plain,
+        "SELECT payload FROM apollo_concept_problems WHERE concept_id=$1",
+        concept_id,
+    )
+    assert len(rows) == 5
+    for row in rows:
+        payload = json.loads(row["payload"])
+        result = validate_reference_graph(payload)
+        assert result.ok is True, f"{payload['id']} failed §6.1: {result.errors}"
+
+
+# ---------------------------------------------------------------------------
+# Idempotency + dedup
+# ---------------------------------------------------------------------------
+
+
+async def test_seed_is_idempotent_second_run_inserts_nothing(seeded_db):
+    sa_dsn, plain = await seeded_db(_seed_one_course)
+    first = await seed(sa_dsn)
+    assert first["entities_inserted"] > 0
+
+    concept_id = await _fetchval(
+        plain, "SELECT id FROM apollo_concepts WHERE slug='bernoulli_principle'"
+    )
+    entities_before = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_kg_entities WHERE concept_id=$1",
+        concept_id,
+    )
+    prereqs_before = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_entity_prereqs p "
+        "JOIN apollo_kg_entities e ON e.id=p.from_entity_id WHERE e.concept_id=$1",
+        concept_id,
+    )
+
+    second = await seed(sa_dsn)  # must raise nothing
+    assert second["entities_inserted"] == 0
+    assert second["prereqs_inserted"] == 0
+
+    entities_after = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_kg_entities WHERE concept_id=$1",
+        concept_id,
+    )
+    prereqs_after = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_entity_prereqs p "
+        "JOIN apollo_kg_entities e ON e.id=p.from_entity_id WHERE e.concept_id=$1",
+        concept_id,
+    )
+    assert entities_after == entities_before
+    assert prereqs_after == prereqs_before
+
+
+async def test_dedup_shared_reference_entities_single_row(seeded_db):
+    sa_dsn, plain = await seeded_db(_seed_one_course)
+    await seed(sa_dsn)
+    concept_id = await _fetchval(
+        plain, "SELECT id FROM apollo_concepts WHERE slug='bernoulli_principle'"
+    )
+    # continuity appears in problems 01/03/05 but mints ONE entity.
+    n = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_kg_entities "
+        "WHERE concept_id=$1 AND canonical_key='eq.continuity'",
+        concept_id,
+    )
+    assert n == 1
+
+
+# ---------------------------------------------------------------------------
+# Course-scoping + error path
+# ---------------------------------------------------------------------------
+
+
+async def test_seed_is_course_scoped_two_courses_do_not_collide(seeded_db):
+    async def _two_courses(conn):
+        s1 = await _seed_space(conn)
+        await _seed_bernoulli_curriculum(conn, s1, subject_slug="fluid_mechanics_c1")
+        s2 = await _seed_space(conn)
+        await _seed_bernoulli_curriculum(conn, s2, subject_slug="fluid_mechanics_c2")
+
+    sa_dsn, plain = await seeded_db(_two_courses)
+    # Resolve the two spaces + their bernoulli concepts.
+    spaces = [
+        r["id"] for r in await _fetch(plain, "SELECT id FROM aita_search_spaces ORDER BY id")
+    ]
+    assert len(spaces) == 2
+    await seed(sa_dsn, search_space_id=spaces[0])
+    await seed(sa_dsn, search_space_id=spaces[1])
+
+    for space_id in spaces:
+        concept_id = await _fetchval(
+            plain,
+            "SELECT c.id FROM apollo_concepts c JOIN apollo_subjects s ON s.id=c.subject_id "
+            "WHERE s.search_space_id=$1 AND c.slug='bernoulli_principle'",
+            space_id,
+        )
+        n = await _fetchval(
+            plain,
+            "SELECT count(*) FROM apollo_kg_entities WHERE concept_id=$1 AND kind='concept'",
+            concept_id,
+        )
+        assert n == 14
+
+    # Deleting course-1 cascades only course-1's entities.
+    c2_concept = await _fetchval(
+        plain,
+        "SELECT c.id FROM apollo_concepts c JOIN apollo_subjects s ON s.id=c.subject_id "
+        "WHERE s.search_space_id=$1 AND c.slug='bernoulli_principle'",
+        spaces[1],
+    )
+    c2_before = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_kg_entities WHERE concept_id=$1",
+        c2_concept,
+    )
+    conn = await asyncpg.connect(plain)
+    try:
+        await conn.execute("DELETE FROM aita_search_spaces WHERE id=$1", spaces[0])
+    finally:
+        await conn.close()
+    c2_after = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_kg_entities WHERE concept_id=$1",
+        c2_concept,
+    )
+    assert c2_after == c2_before and c2_after > 0
+    # course-1's subject (and thus its entity chain) is gone.
+    c1_subjects = await _fetchval(
+        plain,
+        "SELECT count(*) FROM apollo_subjects WHERE search_space_id=$1",
+        spaces[0],
+    )
+    assert c1_subjects == 0
+
+
+async def test_seed_errors_when_concept_missing(seeded_db):
+    async def _space_only(conn):
+        await _seed_space(conn)  # a course but NO bernoulli concept
+
+    sa_dsn, _plain = await seeded_db(_space_only)
+    with pytest.raises(SeedError):
+        await seed(sa_dsn)
+
