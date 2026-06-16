@@ -10,6 +10,7 @@ subgraph's nodes also removes their edges, and so per-attempt indexes work.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -21,6 +22,16 @@ class EdgeType(StrEnum):
     USES = "USES"
     DEPENDS_ON = "DEPENDS_ON"
     SCOPES = "SCOPES"
+
+
+# Provenance of a parser edge (WU-2A). "explicit" = directly supported by the
+# student's wording/sequence; "inferred" = the model is connecting two things
+# the student mentioned separately without explicitly relating them. Consumed
+# by the §6 edge weighting (out of scope here). Default "explicit" so every
+# existing construction site (deterministic fallback, Problem.to_kg_graph,
+# WU-2B's store) round-trips unchanged — only the LLM may downgrade to
+# "inferred".
+EdgeProvenance = Literal["explicit", "inferred"]
 
 
 # Allowed (from_node_type, to_node_type) per edge type. Used by the Edge
@@ -52,6 +63,10 @@ class Edge(BaseModel):
     # Required for the pair validator to enforce edge-type constraints.
     from_node_type: NodeType | None = None
     to_node_type: NodeType | None = None
+
+    # WU-2A: how the parser justified this edge. Default "explicit" preserves
+    # all existing callers (only the LLM emits "inferred").
+    provenance: EdgeProvenance = "explicit"
 
     @model_validator(mode="after")
     def _check_pair(self) -> "Edge":

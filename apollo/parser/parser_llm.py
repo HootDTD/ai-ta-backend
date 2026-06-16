@@ -32,13 +32,14 @@ from openai import OpenAI
 from apollo.agent._llm import cheap_chat
 from apollo.errors import ParserCouldNotExtractError
 from apollo.ontology import (
-    EDGE_ALLOWED_PAIRS,
     Edge,
     EdgeType,
     Node,
-    NodeType,
     build_node,
 )
+from apollo.parser.edge_resolver import resolve_typed_edges
+from apollo.parser.extraction_schema import build_extraction_schema
+from apollo.parser.graph_context import GraphContext
 from apollo.parser.prompt_builder import build_system_prompt
 from apollo.subjects import ConceptDefinition
 
@@ -242,32 +243,97 @@ def _build_precedes_chain(
     return edges
 
 
+def _as_list(value: object) -> list:
+    """Return `value` if it is a list, else `[]` (defensive payload coercion)."""
+    return value if isinstance(value, list) else []
+
+
+def _render_graph_context(graph_context: GraphContext | None) -> str:
+    """Render the EXISTING GRAPH block for the user message.
+
+    None or empty context yields a single "(empty)" line so the call is
+    byte-identical to the no-context path. A populated context yields one
+    line per node: `<id> [<type>] <label>` (the spike's `_entry_summary`
+    shape), so the model can reference prior-turn ids in cross-turn edges.
+    """
+    if graph_context is None or graph_context.is_empty():
+        return "EXISTING GRAPH: (empty)"
+    lines = [
+        f"{n.node_id} [{n.node_type}] {n.label[:60]}"
+        for n in graph_context.nodes
+    ]
+    return "EXISTING GRAPH:\n" + "\n".join(lines)
+
+
+def _call_extraction(
+    utterance: str,
+    *,
+    concept: ConceptDefinition,
+    graph_context: GraphContext | None,
+    model: str,
+) -> str:
+    """Make the one strict-`json_schema` GPT-4o call; return the raw content."""
+    context_block = _render_graph_context(graph_context)
+    client = OpenAI()
+    resp = client.chat.completions.create(
+        model=model,
+        response_format={"type": "json_schema", "json_schema": build_extraction_schema()},
+        messages=[
+            {"role": "system", "content": build_system_prompt(concept)},
+            {"role": "user", "content": f"{context_block}\n\nCURRENT MESSAGE:\n{utterance}"},
+        ],
+        temperature=0.0,
+    )
+    return resp.choices[0].message.content or "{}"
+
+
+def _build_nodes(
+    raw_entries: list, *, attempt_id: int,
+) -> tuple[list[Node], list[dict], dict[int, Node]]:
+    """Build typed nodes from LLM entries.
+
+    Returns (nodes, kept_raw, index_to_node) where `index_to_node` maps the
+    ORIGINAL entry index -> built node so "n<i>" edge refs survive skipped
+    (malformed) entries — the LLM numbers refs against its own entry list.
+    """
+    nodes: list[Node] = []
+    kept_raw: list[dict] = []
+    index_to_node: dict[int, Node] = {}
+    for i, e in enumerate(raw_entries):
+        if not isinstance(e, dict) or "type" not in e or "content" not in e:
+            continue
+        node = _entry_to_node(
+            e, attempt_id=attempt_id, fallback_node_id=f"stu_{uuid.uuid4().hex[:12]}",
+        )
+        if node is None:
+            continue
+        nodes.append(node)
+        kept_raw.append(e)
+        index_to_node[i] = node
+    return nodes, kept_raw, index_to_node
+
+
 def parse_utterance(
     utterance: str,
     *,
     concept: ConceptDefinition,
     attempt_id: int,
+    graph_context: GraphContext | None = None,
     model: str | None = None,
 ) -> tuple[list[Node], list[Edge]]:
     """Return (nodes, edges) for a student utterance.
 
-    Raises ParserCouldNotExtractError when a non-trivial utterance yields
-    zero extractions.
+    One strict-`json_schema` GPT-4o call emits typed nodes AND all four typed
+    edges with explicit/inferred provenance. Optional `graph_context` links
+    edges across turns; when omitted (default) the call behaves like today's
+    within-turn-only parser, and if the model emits no edges the deterministic
+    USES/PRECEDES fallback runs. Raises ParserCouldNotExtractError when a
+    non-trivial utterance yields zero extractions.
     """
     model = model or os.getenv("MAIN_MODEL", "gpt-4o")
-    system_prompt = build_system_prompt(concept)
-
-    client = OpenAI()
-    resp = client.chat.completions.create(
-        model=model,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": utterance},
-        ],
-        temperature=0.0,
+    raw = _call_extraction(
+        utterance, concept=concept, graph_context=graph_context, model=model,
     )
-    raw = resp.choices[0].message.content or "{}"
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -275,30 +341,20 @@ def parse_utterance(
             raise ParserCouldNotExtractError(utterance=utterance)
         return [], []
 
-    raw_entries = payload.get("entries", [])
-    if not isinstance(raw_entries, list):
-        raw_entries = []
-
-    nodes: list[Node] = []
-    kept_raw: list[dict] = []
-    for e in raw_entries:
-        if not isinstance(e, dict) or "type" not in e or "content" not in e:
-            continue
-        node = _entry_to_node(
-            e,
-            attempt_id=attempt_id,
-            fallback_node_id=f"stu_{uuid.uuid4().hex[:12]}",
-        )
-        if node is None:
-            continue
-        nodes.append(node)
-        kept_raw.append(e)
-
+    nodes, kept_raw, index_to_node = _build_nodes(
+        _as_list(payload.get("entries")), attempt_id=attempt_id,
+    )
     if not nodes and _is_non_trivial(utterance, concept):
         raise ParserCouldNotExtractError(utterance=utterance)
 
-    edges: list[Edge] = []
-    edges.extend(_resolve_uses_edges(kept_raw, nodes, attempt_id=attempt_id))
-    edges.extend(_build_precedes_chain(nodes, attempt_id=attempt_id))
+    edges = resolve_typed_edges(
+        _as_list(payload.get("edges")), index_to_node=index_to_node,
+        graph_context=graph_context, attempt_id=attempt_id,
+    )
+    # No-context fallback: today's deterministic within-turn edges, only when
+    # no context was supplied AND the model emitted no usable edges.
+    if not edges and graph_context is None:
+        edges.extend(_resolve_uses_edges(kept_raw, nodes, attempt_id=attempt_id))
+        edges.extend(_build_precedes_chain(nodes, attempt_id=attempt_id))
 
     return nodes, edges
