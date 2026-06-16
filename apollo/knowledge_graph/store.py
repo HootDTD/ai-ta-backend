@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Iterable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sympy import latex
 
-from apollo.errors import KGEntryNotFoundError, SessionFrozenError
+from apollo.errors import KGEntryNotFoundError, RetentionError, SessionFrozenError
 from apollo.ontology import (
     EDGE_ALLOWED_PAIRS,
     NODE_CONTENT_TYPES,
@@ -43,6 +44,13 @@ from apollo.solver.sympy_exec import _tidy_floats, parse_zero_form
 
 _LOG = logging.getLogger(__name__)
 _EMPTY_SUMMARY = "(the student hasn't taught me anything yet)"
+
+
+def _utc_now_iso() -> str:
+    """ISO-8601 UTC timestamp string for Layer-2 node metadata (created_at /
+    graded_at). Neo4j has no native datetime in the existing string-prop
+    convention; Δt-anchoring (§3) reads the stored value, never now()."""
+    return datetime.now(UTC).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +138,14 @@ def _record_to_node(props: dict[str, Any], labels: list[str]) -> Node:
     # pre-P3 baseline.
     status_raw = bag.pop("status", "ACCEPTED")
     student_belief = bag.pop("student_belief", None)
+    # WU-3C1 Layer-2 scoping/timestamp metadata. These are NODE METADATA, not
+    # node content — strip them before content reconstruction so read_graph
+    # (and the FE-visible KG payload) round-trips byte-identically for scoped
+    # nodes. Defaults None so pre-WU-3C1 nodes are unaffected.
+    bag.pop("user_id", None)
+    bag.pop("search_space_id", None)
+    bag.pop("created_at", None)
+    bag.pop("graded_at", None)
 
     if node_type == "equation" and "symbolic" in bag and "latex" not in bag:
         tex = _equation_latex(bag["symbolic"])
@@ -245,6 +261,8 @@ class KGStore:
         attempt_id: int,
         nodes: list[Node],
         source: str,
+        user_id: str | None = None,
+        search_space_id: int | None = None,
     ) -> int:
         """Create typed nodes in the per-attempt subgraph.
 
@@ -257,6 +275,13 @@ class KGStore:
         only the genuinely new subset is CREATEd. The return value is the count
         of nodes ACTUALLY created (reused nodes are not counted as added — the
         `kg_entries_added` fair-coverage contract).
+
+        WU-3C1 Layer-2 scoping (backward-compatible): the optional, keyword-only
+        `user_id` (opaque UUID) and `search_space_id` are server-injected onto
+        every created node's property bag; a `created_at` ISO-8601 UTC timestamp
+        is ALWAYS stamped. Both scoping kwargs default `None` and follow the
+        `None`-omission convention — omitted when None rather than written as a
+        literal "None" — so existing callers are unchanged.
         """
         session_id = await self._session_id_for_attempt(attempt_id)
         await self._ensure_unfrozen(session_id)
@@ -273,11 +298,19 @@ class KGStore:
 
             # Group the survivors by label for the per-label CREATE templates.
             rows_by_label: dict[str, list[dict[str, Any]]] = {}
+            created_at = _utc_now_iso()
             for n in to_create:
                 label = NODE_LABELS[n.node_type]
                 row = _node_to_neo4j_props(n)
                 row["source"] = source
                 row["attempt_id"] = attempt_id
+                # WU-3C1 Layer-2 scoping/timestamp metadata. None-omission for
+                # the scoping props; created_at is always present.
+                if user_id is not None:
+                    row["user_id"] = user_id
+                if search_space_id is not None:
+                    row["search_space_id"] = search_space_id
+                row["created_at"] = created_at
                 rows_by_label.setdefault(label, []).append(row)
 
             for label, rows in rows_by_label.items():
@@ -457,12 +490,46 @@ class KGStore:
 
     async def delete_subgraph(self, *, attempt_id: int) -> None:
         """Idempotent cross-DB cleanup. Removes all nodes (and their edges)
-        in the per-attempt subgraph. Safe to call when nothing exists."""
+        in the per-attempt subgraph. Safe to call when nothing exists.
+
+        WU-3C1 retention (§7): `handle_end` NO LONGER calls this — per-attempt
+        subgraphs now PERSIST. This stays as the future janitor's pruning
+        primitive AND `restart_problem`'s explicit student wipe.
+        """
         async with self.neo.session() as s:
             await s.run(
                 "MATCH (n:_KGNode {attempt_id: $aid}) DETACH DELETE n",
                 aid=attempt_id,
             )
+
+    async def stamp_graded_at(self, *, attempt_id: int) -> int:
+        """Stamp `graded_at` (ISO-8601 UTC) on every node of the frozen
+        per-attempt subgraph at Done (§7 / §6.4). Returns the count stamped.
+
+        Idempotent — re-running overwrites the same field, never duplicates.
+        Δt-anchoring in Layer-3 (§3) reads the STORED value, never now(). Does
+        NOT touch Postgres. Any Neo4j failure surfaces as a NO-FALLBACK
+        `RetentionError` (the grade is already committed when this runs, so the
+        failure is loud but never voids the grade; the next Done / retry /
+        janitor re-stamps idempotently).
+        """
+        ts = _utc_now_iso()
+        try:
+            async with self.neo.session() as s:
+                result = await s.run(
+                    "MATCH (n:_KGNode {attempt_id: $aid}) "
+                    "SET n.graded_at = $ts "
+                    "RETURN count(n) AS stamped",
+                    aid=attempt_id, ts=ts,
+                )
+                rec = await result.single()
+                return int(rec["stamped"]) if rec else 0
+        except RetentionError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - surface as a named error
+            raise RetentionError(
+                attempt_id=attempt_id, last_error=str(exc)
+            ) from exc
 
     # ------- Apollo-facing summary ------------------------------------------
 

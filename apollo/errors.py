@@ -133,3 +133,34 @@ class CoverageGradingError(ApolloError):
         super().__init__(
             f"Coverage grading failed at stage {stage!r}: {last_error}"
         )
+
+
+class CanonProjectionError(ApolloError):
+    """The :Canon projection seeder hit an infrastructure failure (Neo4j
+    unreachable / write failed, or the Postgres entity read failed
+    mid-projection). NO FALLBACK: a failed projection must surface, never
+    silently leave a partial :Canon graph that grading would later read as
+    authoritative. `stage` is "load_entities" | "merge_canon" (WU-3C1)."""
+
+    def __init__(self, *, stage: str, last_error: str) -> None:
+        self.stage = stage
+        self.last_error = last_error
+        super().__init__(
+            f"Canon projection failed at stage {stage!r}: {last_error}"
+        )
+
+
+class RetentionError(ApolloError):
+    """A retention-critical Neo4j write failed in a way that must NOT be
+    swallowed — specifically `stamp_graded_at` failing at Done. The frozen
+    graph must carry `graded_at` or the janitor / Layer-3 Δt timeline is
+    wrong. The grade itself is already committed when this raises, so it
+    surfaces (NO FALLBACK) without voiding the student's grade; the next
+    Done / retry / janitor re-stamps idempotently (WU-3C1)."""
+
+    def __init__(self, *, attempt_id: int, last_error: str) -> None:
+        self.attempt_id = attempt_id
+        self.last_error = last_error
+        super().__init__(
+            f"Retention operation failed for attempt {attempt_id}: {last_error}"
+        )
