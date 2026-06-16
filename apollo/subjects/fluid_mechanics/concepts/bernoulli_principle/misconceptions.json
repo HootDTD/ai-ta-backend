@@ -1,0 +1,26 @@
+{
+  "misconceptions": [
+    {
+      "key": "misc.pressure_velocity_same_direction",
+      "display_name": "Pressure and velocity move together",
+      "description": "Believes pressure rises when velocity rises (Bernoulli inverts this: faster flow means lower static pressure).",
+      "opposes": "def.pressure_velocity_tradeoff",
+      "trigger_phrases": [
+        "pressure goes up when it speeds up",
+        "they move together",
+        "faster flow means higher pressure"
+      ]
+    },
+    {
+      "key": "misc.density_ignored",
+      "display_name": "Density can be ignored",
+      "description": "Drops rho from the flow relations, treating the fluid as massless and breaking incompressibility.",
+      "opposes": "cond.incompressibility",
+      "trigger_phrases": [
+        "ignore density",
+        "density doesn't matter",
+        "leave out rho"
+      ]
+    }
+  ]
+}
