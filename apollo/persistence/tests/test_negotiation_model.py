@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.persistence.models import (
@@ -28,7 +28,6 @@ from apollo.persistence.models import (
     SessionStatus,
 )
 from database.models import Base
-
 
 _MIGRATION_PATH = (
     Path(__file__).resolve().parents[3]
@@ -55,7 +54,7 @@ async def db():
 @pytest_asyncio.fixture
 async def attempt(db: AsyncSession):
     sess = ApolloSession(
-        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_cluster_id="continuity",
+        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_id=1,
         status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
     )
     db.add(sess)

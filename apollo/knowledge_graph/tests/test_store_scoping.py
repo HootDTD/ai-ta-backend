@@ -151,7 +151,7 @@ async def attempt(db: AsyncSession):
     sess = ApolloSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
-        concept_cluster_id="continuity",
+        concept_id=1,
         status=SessionStatus.active.value,
         phase=SessionPhase.TEACHING.value,
     )

@@ -18,7 +18,11 @@ from apollo.handlers.history import (
     load_windowed_history,
 )
 from apollo.persistence.models import (
-    ApolloSession, Message, ProblemAttempt, SessionPhase, SessionStatus,
+    ApolloSession,
+    Message,
+    ProblemAttempt,
+    SessionPhase,
+    SessionStatus,
 )
 from database.models import Base
 
@@ -40,7 +44,7 @@ async def db_with_session():
         sess = ApolloSession(
             user_id=TEST_USER_ID,
             search_space_id=TEST_SPACE_ID,
-            concept_cluster_id="fluid_mechanics",
+            concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.TEACHING.value,
             current_problem_id="p1",

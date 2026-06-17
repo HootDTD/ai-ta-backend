@@ -21,10 +21,10 @@ from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.errors import ReviewRequiredError
 from apollo.handlers.done import (
     _DONE_GATE_LOW_CONF,
-    _enforce_done_gate,
-    _flagged_entries,
-    _entries_with_moves,
     _done_gate_enabled,
+    _enforce_done_gate,
+    _entries_with_moves,
+    _flagged_entries,
 )
 from apollo.ontology import KGGraph, build_node
 from apollo.persistence.models import (
@@ -35,7 +35,6 @@ from apollo.persistence.models import (
     SessionStatus,
 )
 from database.models import Base
-
 
 # ---------------------------------------------------------------------------
 # _flagged_entries — pure
@@ -127,7 +126,7 @@ async def db():
 @pytest_asyncio.fixture
 async def attempt(db: AsyncSession):
     sess = ApolloSession(
-        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_cluster_id="x",
+        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_id=1,
         status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
     )
     db.add(sess); await db.flush()

@@ -34,7 +34,6 @@ from apollo.persistence.models import (
 )
 from database.models import Base
 
-
 # ---------------------------------------------------------------------------
 # Fake Neo4j — endpoint-existence read + node CREATE counting.
 # ---------------------------------------------------------------------------
@@ -65,7 +64,7 @@ class _FakeResult:
 
 
 class _FakeSession:
-    def __init__(self, store: "_FakeNeo4jClient") -> None:
+    def __init__(self, store: _FakeNeo4jClient) -> None:
         self._store = store
 
     async def run(self, cypher: str, **params: Any) -> _FakeResult:
@@ -137,7 +136,7 @@ async def db():
 async def attempt(db: AsyncSession):
     sess = ApolloSession(
         user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID,
-        concept_cluster_id="continuity",
+        concept_id=1,
         status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
     )
     db.add(sess)
