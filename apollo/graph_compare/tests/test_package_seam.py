@@ -27,6 +27,13 @@ _EXPECTED = {
     # problem_inputs.py
     "ProblemInputs",
     "build_problem_candidates",
+    # core.py (WU-4A2)
+    "grade_attempt",
+    "GradeResult",
+    "COMPARISON_VERSION",
+    # findings.py (WU-4A2)
+    "Finding",
+    "FindingKind",
 }
 
 
@@ -44,7 +51,7 @@ def test_all_matches_exports():
 def test_each_export_is_the_module_object():
     """The re-exported names are the SAME objects as the module-level defs (a
     re-export, not a shadow)."""
-    from apollo.graph_compare import canonical, problem_inputs, validator
+    from apollo.graph_compare import canonical, core, findings, problem_inputs, validator
 
     assert gc.CanonicalNode is canonical.CanonicalNode
     assert gc.build_student_canonical is canonical.build_student_canonical
@@ -55,3 +62,9 @@ def test_each_export_is_the_module_object():
     assert gc.ReferenceGraphInvalidError is validator.ReferenceGraphInvalidError
     assert gc.ProblemInputs is problem_inputs.ProblemInputs
     assert gc.build_problem_candidates is problem_inputs.build_problem_candidates
+    # WU-4A2 — re-exports are the SAME objects as the module-level defs.
+    assert gc.grade_attempt is core.grade_attempt
+    assert gc.GradeResult is core.GradeResult
+    assert gc.COMPARISON_VERSION is core.COMPARISON_VERSION
+    assert gc.Finding is findings.Finding
+    assert gc.FindingKind is findings.FindingKind
