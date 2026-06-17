@@ -23,6 +23,9 @@
     ]
   ],
   "target_unknown": "P2",
+  "symbolic_mappings": {
+    "d": "2*r"
+  },
   "reference_solution": [
     {
       "id": "continuity",
