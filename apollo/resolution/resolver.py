@@ -95,18 +95,35 @@ def _content_match(
     # so misconceptions can compete, screen polarity per winning alias, then pick
     # the winner. score = RAW proximity (NOT the flat method cap) — the cap is the
     # reported confidence, re-applied in _resolved; the raw score ranks competition.
+    #
+    # One entry PER CANDIDATE: a candidate that exact-alias-matches (raw 1.0) also
+    # fuzzy-matches itself (token_set_ratio of identical strings == 1.0), so it
+    # would otherwise be enqueued TWICE. We dedupe by candidate and keep the
+    # higher tier EXPLICITLY (alias 0.92 > fuzzy 0.80) so the reported method does
+    # not depend on enqueue order or max()'s tie-stability — same input, same
+    # method, every run.
     surface = student_surface_text(node)
-    lexical: list[ScoredMatch] = []
+    by_candidate: dict[str, ScoredMatch] = {}
     for hit in match_alias_all(node, type_ok):
-        lexical.append(ScoredMatch(node.node_id, hit.candidate, "alias", hit.score))
+        by_candidate[hit.candidate.canonical_key] = ScoredMatch(
+            node.node_id, hit.candidate, "alias", hit.score
+        )
     for hit in match_fuzzy_all(node, type_ok, threshold=fuzzy_threshold):
         # Polarity screen ONLY the alias that produced this fuzzy hit — an
         # UNRELATED inverted alias on the same candidate must not false-reject a
         # valid match. A misconception is SUPPOSED to be polar, so it is exempt.
         keep = hit.candidate.is_misconception or polarity_screen(surface, hit.winning_alias)
-        if keep:
-            lexical.append(ScoredMatch(node.node_id, hit.candidate, "fuzzy", hit.score))
+        if not keep:
+            continue
+        # Prefer the alias tier when this candidate already produced an alias hit
+        # (alias > fuzzy); only register the fuzzy hit for candidates with no
+        # alias hit. Never downgrade an alias entry to fuzzy.
+        if hit.candidate.canonical_key not in by_candidate:
+            by_candidate[hit.candidate.canonical_key] = ScoredMatch(
+                node.node_id, hit.candidate, "fuzzy", hit.score
+            )
 
+    lexical = list(by_candidate.values())
     if not lexical:
         return None
     return apply_misconception_competition(surface, lexical)
