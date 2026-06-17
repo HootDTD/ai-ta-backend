@@ -1,11 +1,17 @@
 """WU-3C2 — resolve_attempt: the §5 resolver orchestration.
 
 Maps every student evidence node onto the closed candidate set with content
-tiers (exact -> SymPy-symbolic -> alias -> fuzzy >= 0.9), structural type-compat
-veto + neighborhood corroboration, misconception competition + polarity screen,
-bounded greedy global assignment, and ONE LLM adjudication for the remainder.
-Produces a :class:`ResolutionResult` with per-node ``{resolution, resolved_key,
-method, confidence}`` and confidence caps by method.
+tiers (exact -> SymPy-symbolic -> alias -> fuzzy >= 0.9), the structural
+type-compat HARD constraint, misconception competition (on RAW lexical
+proximity) + a per-winning-alias polarity screen, bounded greedy global
+assignment, and ONE LLM adjudication for the remainder. Produces a
+:class:`ResolutionResult` with per-node ``{resolution, resolved_key, method,
+confidence}`` and confidence caps by method.
+
+v1 wires the type-compat HARD constraint + misconception competition as the
+structural / anti-over-normalization signals. Neighborhood corroboration (§5
+steps 2-3 — boosting confidence from agreeing graph-neighbors) is DEFERRED to a
+WU-4A-era refinement; the live resolver performs NO neighborhood corroboration.
 
 Pure + synchronous + deterministic given a deterministic ``llm_adjudicator``:
 re-running on the same ``(student_graph, candidates)`` yields the same result.
@@ -40,19 +46,14 @@ from apollo.resolution.competition import (
 from apollo.resolution.result import ResolutionResult, ResolvedNode
 from apollo.resolution.structural import ScoredMatch, type_compatible
 from apollo.resolution.tiers import (
-    match_alias,
+    match_alias_all,
     match_exact,
-    match_fuzzy,
+    match_fuzzy_all,
     match_symbolic,
     student_surface_text,
 )
 
 _LOG = logging.getLogger(__name__)
-
-# The §6.9 declared variable mapping (circle radius/diameter) the symbolic tier
-# applies before the sign-exact comparison. Authored once here so the solver
-# (sympy_exec.py) is never edited.
-_DEFAULT_SYMBOLIC_MAPPINGS: dict[str, str] = {"d": "2*r"}
 
 
 def _content_match(
@@ -64,11 +65,17 @@ def _content_match(
 ) -> ScoredMatch | None:
     """Run the content tiers in priority order for one node and return the
     winning :class:`ScoredMatch`, applying the type-compat HARD constraint, the
-    polarity screen (fuzzy only), and misconception competition.
+    per-winning-alias polarity screen (lexical only), and misconception
+    competition.
 
     Tier precedence: exact -> symbolic -> alias -> fuzzy. Within the lexical
     (alias/fuzzy) tiers a misconception may out-compete a lexically-close
-    reference node (§5)."""
+    reference node (§5 / §6.11): ALL above-threshold alias + fuzzy hits compete,
+    ranked on their RAW lexical proximity (1.0 for an exact alias hit, the
+    ``token_set_ratio`` for a fuzzy hit). The winner's reported confidence is
+    re-derived from ``METHOD_CONFIDENCE_CAP[method]`` downstream in
+    :func:`_resolved` (the §3 cap is the confidence; the raw score is only the
+    competition/assignment ranking signal)."""
     type_ok = tuple(c for c in candidates if type_compatible(node.node_type, c))
     if not type_ok:
         return None
@@ -84,26 +91,21 @@ def _content_match(
         cand, method, _ = symbolic
         return ScoredMatch(node.node_id, cand, method, METHOD_CONFIDENCE_CAP[method])
 
-    # Lexical tiers: collect alias + fuzzy candidate matches so misconceptions
-    # can compete, then screen polarity and pick the winner.
-    lexical: list[ScoredMatch] = []
+    # Lexical tiers: collect EVERY above-threshold alias + fuzzy hit (raw scores)
+    # so misconceptions can compete, screen polarity per winning alias, then pick
+    # the winner. score = RAW proximity (NOT the flat method cap) — the cap is the
+    # reported confidence, re-applied in _resolved; the raw score ranks competition.
     surface = student_surface_text(node)
-    alias = match_alias(node, type_ok)
-    if alias is not None:
-        cand, _method, _ = alias
-        lexical.append(ScoredMatch(node.node_id, cand, "alias", METHOD_CONFIDENCE_CAP["alias"]))
-    fuzzy = match_fuzzy(node, type_ok, threshold=fuzzy_threshold)
-    if fuzzy is not None:
-        cand, _method, raw = fuzzy
-        # Polarity screen: reject a direction-inverted fuzzy match against a
-        # non-misconception target (a misconception is SUPPOSED to be polar).
-        keep = cand.is_misconception or all(
-            polarity_screen(surface, a) for a in cand.aliases
-        )
+    lexical: list[ScoredMatch] = []
+    for hit in match_alias_all(node, type_ok):
+        lexical.append(ScoredMatch(node.node_id, hit.candidate, "alias", hit.score))
+    for hit in match_fuzzy_all(node, type_ok, threshold=fuzzy_threshold):
+        # Polarity screen ONLY the alias that produced this fuzzy hit — an
+        # UNRELATED inverted alias on the same candidate must not false-reject a
+        # valid match. A misconception is SUPPOSED to be polar, so it is exempt.
+        keep = hit.candidate.is_misconception or polarity_screen(surface, hit.winning_alias)
         if keep:
-            lexical.append(
-                ScoredMatch(node.node_id, cand, "fuzzy", METHOD_CONFIDENCE_CAP["fuzzy"])
-            )
+            lexical.append(ScoredMatch(node.node_id, hit.candidate, "fuzzy", hit.score))
 
     if not lexical:
         return None
@@ -125,7 +127,11 @@ def resolve_attempt(
     (CI-safe). A caller wanting the real one-call path passes
     :func:`apollo.resolution.adjudication.main_chat_adjudicator`."""
     nodes = list(student_graph.nodes)
-    maps = symbolic_mappings if symbolic_mappings is not None else dict(_DEFAULT_SYMBOLIC_MAPPINGS)
+    # Symbolic mappings are PER-PROBLEM declared data (§5), never a global
+    # default: with none supplied the symbolic tier applies NO substitution (a
+    # global d=2r default produced false symbolic matches). WU-4A passes the
+    # per-problem table.
+    maps = symbolic_mappings if symbolic_mappings is not None else {}
 
     # Over the cap -> the whole attempt abstains (no unbounded solve, no LLM).
     if len(nodes) > MAX_STUDENT_NODES:

@@ -22,6 +22,7 @@ discriminating disjoint phrases below the 0.9 threshold.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from rapidfuzz import fuzz
 from sympy import Symbol, simplify
@@ -33,6 +34,23 @@ from apollo.solver.sympy_exec import _local_dict
 
 # Tier result type: (winning candidate, method, raw 0..1 score) or None.
 TierHit = tuple[Candidate, str, float]
+
+
+@dataclass(frozen=True)
+class TierHitAll:
+    """One above-threshold lexical (alias/fuzzy) hit, carrying the RAW 0..1
+    proximity AND the specific alias that produced it. Immutable.
+
+    The ``_all`` tiers return EVERY type-compatible above-threshold candidate
+    (not just a global best) so a competing misconception is never discarded
+    before :func:`apply_misconception_competition` runs (§5 / §6.11). The raw
+    score is the competition signal; the §3 method cap is the reported
+    confidence (re-applied downstream)."""
+
+    candidate: Candidate
+    method: str
+    score: float
+    winning_alias: str
 
 
 # ---------------------------------------------------------------------------
@@ -186,25 +204,39 @@ def match_symbolic(
 # Tier 3 — normalized alias match.
 # ---------------------------------------------------------------------------
 
-def match_alias(node: Node, candidates: tuple[Candidate, ...]) -> TierHit | None:
-    """Alias tier: the node's normalized surface text equals one of a
-    type-compatible candidate's normalized aliases (WU-3B converted the
-    ``normalization_map`` + ``trigger_phrases`` into ``entity.aliases``)."""
+def match_alias_all(node: Node, candidates: tuple[Candidate, ...]) -> list[TierHitAll]:
+    """EVERY type-compatible candidate with an exact normalized-alias hit.
+
+    Returns one :class:`TierHitAll` per matching candidate (raw score 1.0,
+    carrying the winning alias), so a misconception sharing the student's exact
+    phrase is never discarded before competition (§5). Order: candidate, then
+    alias."""
     surface = _normalize(student_surface_text(node))
     if not surface:  # pragma: no cover - defensive: valid nodes always have surface text
-        return None
+        return []
+    hits: list[TierHitAll] = []
     for cand in candidates:
         if cand.node_type != node.node_type:
             continue
         for alias in cand.aliases:
             if surface == _normalize(alias):
-                return (cand, "alias", 1.0)
-    return None
+                hits.append(TierHitAll(cand, "alias", 1.0, alias))
+                break  # one hit per candidate (the first matching alias)
+    return hits
 
 
-# ---------------------------------------------------------------------------
+def match_alias(node: Node, candidates: tuple[Candidate, ...]) -> TierHit | None:
+    """Single-best alias tier (back-compat wrapper over :func:`match_alias_all`):
+    the node's normalized surface text equals one of a type-compatible
+    candidate's normalized aliases (WU-3B converted the ``normalization_map`` +
+    ``trigger_phrases`` into ``entity.aliases``). Returns the FIRST hit."""
+    hits = match_alias_all(node, candidates)
+    if not hits:
+        return None
+    return (hits[0].candidate, "alias", 1.0)
+
+
 # Tier 4 — RapidFuzz >= 0.9 (the only RapidFuzz site).
-# ---------------------------------------------------------------------------
 
 def _fuzzy_ratio(a: str, b: str) -> float:
     """Order-insensitive token-set similarity, normalized to 0..1."""
@@ -217,26 +249,50 @@ def match_fuzzy(
     *,
     threshold: float = 0.9,
 ) -> TierHit | None:
-    """Fuzzy tier: the best alias whose ``_fuzzy_ratio`` >= ``threshold``.
+    """Single-best fuzzy tier (back-compat wrapper over :func:`match_fuzzy_all`):
+    the best alias whose ``_fuzzy_ratio`` >= ``threshold``.
 
     Below the threshold returns None — never snaps (§5 below-threshold ->
     unresolved). Among above-threshold candidates the highest score wins;
     deterministic tie-break on ``canonical_key`` so re-runs are identical."""
+    hits = match_fuzzy_all(node, candidates, threshold=threshold)
+    if not hits:
+        return None
+    best = hits[0]  # sorted descending score, then canonical_key
+    return (best.candidate, "fuzzy", best.score)
+
+
+def match_fuzzy_all(
+    node: Node,
+    candidates: tuple[Candidate, ...],
+    *,
+    threshold: float = 0.9,
+) -> list[TierHitAll]:
+    """EVERY type-compatible candidate whose best alias ``_fuzzy_ratio`` >=
+    ``threshold``, each carrying that RAW score AND the specific alias that
+    produced it.
+
+    One :class:`TierHitAll` per qualifying candidate (its highest-scoring above-
+    threshold alias). Returning ALL of them — not just a global best — lets a
+    competing misconception reach :func:`apply_misconception_competition` even
+    when a reference is the lexically closer match (§5 / §6.11). Below threshold
+    a candidate is omitted (no snap, §5). Order: descending score, then key."""
     surface = student_surface_text(node)
     if not surface:  # pragma: no cover - defensive: valid nodes always have surface text
-        return None
-    best: TierHit | None = None
+        return []
+    hits: list[TierHitAll] = []
     for cand in candidates:
         if cand.node_type != node.node_type:
             continue
+        best_alias: str | None = None
+        best_score = threshold
         for alias in cand.aliases:
             score = _fuzzy_ratio(surface, alias)
             if score < threshold:
                 continue
-            if (
-                best is None
-                or score > best[2]
-                or (score == best[2] and cand.canonical_key < best[0].canonical_key)
-            ):
-                best = (cand, "fuzzy", score)
-    return best
+            if best_alias is None or score > best_score:
+                best_alias, best_score = alias, score
+        if best_alias is not None:
+            hits.append(TierHitAll(cand, "fuzzy", best_score, best_alias))
+    hits.sort(key=lambda h: (-h.score, h.candidate.canonical_key))
+    return hits
