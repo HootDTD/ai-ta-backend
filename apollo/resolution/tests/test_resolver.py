@@ -73,8 +73,11 @@ def _worked_example_graph():
 
 
 def test_worked_example_6_9_end_to_end():
+    # §6.9 declares the per-problem d=2r mapping; the resolver applies it only
+    # when the problem table supplies it (no global default — Defect C).
     result = resolve_attempt(
-        _worked_example_graph(), _worked_example_candidates()
+        _worked_example_graph(), _worked_example_candidates(),
+        symbolic_mappings={"d": "2*r"},
     )
     keyed = {rn.node_id: rn.resolved_key for rn in result.resolved}
     assert keyed["d1"] == "cond.incompressibility"
@@ -87,7 +90,8 @@ def test_worked_example_6_9_end_to_end():
 
 def test_confidence_equals_method_cap_per_node():
     result = resolve_attempt(
-        _worked_example_graph(), _worked_example_candidates()
+        _worked_example_graph(), _worked_example_candidates(),
+        symbolic_mappings={"d": "2*r"},
     )
     for rn in result.resolved:
         if rn.resolution == "resolved":
@@ -127,8 +131,9 @@ def test_result_llm_calls_at_most_one():
 def test_resolver_is_pure_same_input_same_output():
     g = _worked_example_graph()
     c = _worked_example_candidates()
-    a = resolve_attempt(g, c)
-    b = resolve_attempt(g, c)
+    maps = {"d": "2*r"}
+    a = resolve_attempt(g, c, symbolic_mappings=maps)
+    b = resolve_attempt(g, c, symbolic_mappings=maps)
     assert [(r.node_id, r.resolved_key, r.method, r.confidence) for r in a.resolved] == \
            [(r.node_id, r.resolved_key, r.method, r.confidence) for r in b.resolved]
 
@@ -180,3 +185,136 @@ def test_unprojected_candidate_resolves_without_canon_key():
     assert rn.resolution == "resolved"
     assert rn.resolved_canon_key is None
     assert result.resolved_edges() == ()
+
+
+# ---------------------------------------------------------------------------
+# DEFECT A (§6.11) — a polar near-miss resolves to the misconception ON THE
+# WIRED resolve_attempt PATH, even when a lexically-CLOSER reference is the
+# global-best fuzzy hit. This is the genuine §6.11 proof the unit tests missed
+# (the unit competition test fed hand-built ScoredMatches; this drives the real
+# tier->competition pipeline).
+# ---------------------------------------------------------------------------
+
+def test_polar_near_miss_resolves_to_misconception_through_resolve_attempt():
+    """Student states the WRONG polar claim. The reference alias is lexically
+    CLOSER (higher raw token_set_ratio) than the misconception alias, but the
+    misconception is within the 0.05 competition margin -> it WINS, and the
+    polarity screen does NOT false-reject the misconception."""
+    # ref raw ~0.91, misc raw ~0.90 -> within margin; misconception must win.
+    student = "faster flow gives higher pressure here"
+    graph = KGGraph(nodes=[
+        _node("s1", "definition",
+              {"concept": "pressure", "meaning": student}),
+    ])
+    cands = (
+        _cand("def.pressure_velocity_tradeoff", node_type="definition",
+              aliases=("faster flow gives lower pressure here",)),
+        _cand("misc.pressure_velocity_same_direction", node_type="definition",
+              is_misc=True, aliases=("faster flow means higher pressure",),
+              opposes="def.pressure_velocity_tradeoff"),
+    )
+    result = resolve_attempt(graph, cands)
+    rn = result.resolved[0]
+    assert rn.resolved_key == "misc.pressure_velocity_same_direction"
+    assert rn.method == "fuzzy"
+    assert rn.confidence == METHOD_CONFIDENCE_CAP["fuzzy"]
+
+
+def test_polarity_screen_only_rejects_the_winning_alias_not_unrelated_aliases():
+    """A valid same-direction reference match is KEPT even when the SAME
+    candidate carries an UNRELATED, direction-inverted alias. Screening every
+    alias (old bug) false-rejected the match; per-winning-alias screening keeps
+    it."""
+    # Student phrase aligns (same direction) with the FIRST alias; the candidate
+    # also carries an unrelated alias with the opposite direction word.
+    student = "the pressure drops at the narrow section of pipe"
+    graph = KGGraph(nodes=[
+        _node("s1", "definition", {"concept": "pressure", "meaning": student}),
+    ])
+    cand = _cand(
+        "def.pressure_velocity_tradeoff", node_type="definition",
+        aliases=(
+            "the pressure drops at the narrow section of pipe",  # winning, same dir
+            "temperature increases downstream",                  # unrelated, inverted word
+        ),
+    )
+    result = resolve_attempt(graph, (cand,))
+    rn = result.resolved[0]
+    assert rn.resolved_key == "def.pressure_velocity_tradeoff"
+    assert rn.method in ("alias", "fuzzy")
+
+
+# ---------------------------------------------------------------------------
+# DEFECT C (§5) — symbolic mappings are per-problem declared data, NOT a global
+# default. With NO mappings passed, a d=2r-dependent equivalence must NOT match;
+# with the per-problem mapping passed explicitly, the §6.9 case DOES match.
+# ---------------------------------------------------------------------------
+
+def test_default_no_symbolic_mapping_does_not_false_match_diameter_cube():
+    """resolve_attempt with the DEFAULT (no symbolic_mappings) must NOT treat
+    'V = d**3' as equivalent to 'V = 8*r**3' — the global d=2r default that
+    produced that false symbolic match is gone."""
+    graph = KGGraph(nodes=[
+        _node("v1", "equation", {"symbolic": "V = d**3", "label": "", "variables": []}),
+    ])
+    cands = (_cand("eq.sphere_ish", node_type="equation", symbolic="V = 8*r**3"),)
+    result = resolve_attempt(graph, cands)
+    rn = result.resolved[0]
+    # No mapping -> d and r are independent symbols -> not equivalent -> unresolved.
+    assert rn.resolution == "unresolved"
+    assert rn.resolved_key is None
+
+
+def test_explicit_per_problem_mapping_resolves_circular_area():
+    """With the per-problem mapping {'d': '2*r'} passed explicitly, the §6.9
+    circular-area case (A = pi*r**2 <-> A = pi*d**2/4) resolves via symbolic."""
+    graph = KGGraph(nodes=[
+        _node("a1", "equation", {"symbolic": "A = pi*r**2", "label": "", "variables": []}),
+    ])
+    cands = (_cand("eq.circular_area", node_type="equation", symbolic="A = pi*d**2/4"),)
+    result = resolve_attempt(graph, cands, symbolic_mappings={"d": "2*r"})
+    rn = result.resolved[0]
+    assert rn.resolved_key == "eq.circular_area"
+    assert rn.method == "symbolic"
+
+
+def test_default_no_mapping_circular_area_stays_unresolved():
+    """Without the explicit mapping the circular-area pair does NOT symbolically
+    match (d/r independent) — confirms the §6.9 match depended on the per-problem
+    mapping, not a global default."""
+    graph = KGGraph(nodes=[
+        _node("a1", "equation", {"symbolic": "A = pi*r**2", "label": "", "variables": []}),
+    ])
+    cands = (_cand("eq.circular_area", node_type="equation", symbolic="A = pi*d**2/4"),)
+    result = resolve_attempt(graph, cands)
+    assert result.resolved[0].resolution == "unresolved"
+
+
+def test_worked_example_6_9_requires_explicit_mapping_for_area():
+    """The §6.9 worked example resolves end-to-end ONLY when the per-problem
+    d=2r mapping is supplied; the circular-area node is the mapping-dependent
+    one."""
+    result = resolve_attempt(
+        _worked_example_graph(), _worked_example_candidates(),
+        symbolic_mappings={"d": "2*r"},
+    )
+    keyed = {rn.node_id: rn.resolved_key for rn in result.resolved}
+    assert keyed["d1"] == "cond.incompressibility"
+    assert keyed["a1"] == "eq.circular_area"
+    assert keyed["b1"] == "eq.bernoulli"
+    assert keyed["p1"] == "proc.compute_v2"
+    assert keyed["t1"] == "def.pressure_velocity_tradeoff"
+    assert result.llm_calls == 0
+
+
+def test_tier_counts_pinned_on_real_6_9_output():
+    """NIT (test-honesty): pin _histogram's REAL output on the §6.9 graph — the
+    per-method histogram from actual resolution, not a hand-built dict."""
+    result = resolve_attempt(
+        _worked_example_graph(), _worked_example_candidates(),
+        symbolic_mappings={"d": "2*r"},
+    )
+    # Real per-method histogram (pinned, not hand-built): d1 alias, b1 alias,
+    # p1 alias (3 exact-alias hits), a1 symbolic (d=2r), t1 fuzzy (the
+    # definition's concept+meaning surface paraphrases the bare alias).
+    assert dict(result.tier_counts) == {"alias": 3, "symbolic": 1, "fuzzy": 1}

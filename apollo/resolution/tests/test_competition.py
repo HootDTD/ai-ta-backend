@@ -33,7 +33,11 @@ def _cand(key, *, is_misc=False, aliases=()):
 def test_polar_near_miss_resolves_to_misconception_not_reference():
     """'pressure increases with speed' competes against both the tradeoff
     definition and the same-direction misconception; the misconception wins
-    because the wrong claim is out-competed, not merely thresholded."""
+    because the wrong claim is out-competed, not merely thresholded.
+
+    The scores here are RAW lexical proximities (what the wired path now feeds —
+    Defect A): the reference is the lexically CLOSER match (higher raw score),
+    yet the misconception within the 0.05 margin still wins."""
     definition = _cand("def.pressure_velocity_tradeoff")
     misconception = _cand(
         "misc.pressure_velocity_same_direction",
@@ -42,8 +46,8 @@ def test_polar_near_miss_resolves_to_misconception_not_reference():
     )
     student_text = "pressure increases with speed"
     candidate_matches = [
-        ScoredMatch("s1", definition, method="fuzzy", score=0.91),
-        ScoredMatch("s1", misconception, method="fuzzy", score=0.93),
+        ScoredMatch("s1", definition, method="fuzzy", score=0.93),    # raw: closer
+        ScoredMatch("s1", misconception, method="fuzzy", score=0.90),  # within margin
     ]
     winner = apply_misconception_competition(student_text, candidate_matches)
     assert winner is not None

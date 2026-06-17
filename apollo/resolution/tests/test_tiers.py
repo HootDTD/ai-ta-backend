@@ -15,8 +15,10 @@ from apollo.resolution.candidates import Candidate
 from apollo.resolution.tiers import (
     _fuzzy_ratio,
     match_alias,
+    match_alias_all,
     match_exact,
     match_fuzzy,
+    match_fuzzy_all,
     match_symbolic,
     student_surface_text,
 )
@@ -289,3 +291,87 @@ def test_exact_tier_scans_past_non_matching_first_candidate():
     )
     hit = match_exact(node, cands)
     assert hit is not None and hit[0].canonical_key == "eq.b"
+
+
+# ---------------------------------------------------------------------------
+# WU-3C2 fix — the "_all" lexical tiers that feed misconception competition.
+# These return EVERY type-compatible above-threshold match with its RAW score
+# and the specific winning alias, so a competing misconception is never
+# discarded before competition runs (§5 / §6.11).
+# ---------------------------------------------------------------------------
+
+def test_match_alias_all_returns_every_type_compatible_exact_alias_hit():
+    """Two distinct candidates both carry the student's exact alias -> BOTH are
+    returned (raw score 1.0, each with the winning alias), not just one."""
+    node = _condition_node("s1", "density is constant")
+    cands = (
+        _cand("cond.a", node_type="condition", aliases=("density is constant",)),
+        _cand("cond.b", node_type="condition",
+              aliases=("incompressible", "density is constant")),
+        _cand("cond.other", node_type="condition", aliases=("totally different",)),
+    )
+    hits = match_alias_all(node, cands)
+    keys = {h.candidate.canonical_key for h in hits}
+    assert keys == {"cond.a", "cond.b"}  # cond.other excluded (no alias hit)
+    for h in hits:
+        assert h.method == "alias"
+        assert h.score == 1.0
+        assert _normalize_for_test(h.winning_alias) == "density is constant"
+
+
+def test_match_alias_returns_single_best_still_works_for_callers():
+    """The single-best match_alias wrapper still returns ONE TierHit (back-compat
+    for the exact-tier callers/tests that consume the old shape)."""
+    node = _condition_node("s1", "density is constant")
+    cands = (_cand("cond.a", node_type="condition", aliases=("density is constant",)),)
+    hit = match_alias(node, cands)
+    assert hit is not None
+    assert hit[0].canonical_key == "cond.a" and hit[1] == "alias"
+
+
+def test_match_fuzzy_all_returns_every_above_threshold_with_raw_score():
+    """A reference and a misconception are BOTH above the fuzzy threshold for a
+    polar-near-miss student claim -> BOTH appear with their RAW token_set_ratio
+    and the alias that produced the hit (the misconception is not discarded as
+    'not the global best')."""
+    node = _node("s1", "definition",
+                 {"concept": "pressure", "meaning": "faster flow gives higher pressure here"})
+    ref_alias = "faster flow gives lower pressure here"
+    misc_alias = "faster flow means higher pressure"
+    cands = (
+        _cand("def.tradeoff", node_type="definition", aliases=(ref_alias,)),
+        _cand("misc.same_dir", node_type="definition", is_misc=True, aliases=(misc_alias,)),
+        _cand("def.unrelated", node_type="definition", aliases=("the pipe is red",)),
+    )
+    hits = match_fuzzy_all(node, cands, threshold=0.9)
+    by_key = {h.candidate.canonical_key: h for h in hits}
+    assert set(by_key) == {"def.tradeoff", "misc.same_dir"}  # unrelated below threshold
+    # Raw scores, NOT the flat fuzzy cap (0.80).
+    assert by_key["def.tradeoff"].score > 0.9 and by_key["def.tradeoff"].score != 0.80
+    assert by_key["misc.same_dir"].score >= 0.9
+    assert by_key["def.tradeoff"].winning_alias == ref_alias
+    assert by_key["misc.same_dir"].winning_alias == misc_alias
+
+
+def test_match_fuzzy_all_below_threshold_is_excluded():
+    """Below-threshold candidates never appear (no snap, §5)."""
+    node = _condition_node("s1", "the pipe is painted bright red")
+    cands = (_cand("cond.x", node_type="condition", aliases=("density is constant",)),)
+    assert match_fuzzy_all(node, cands, threshold=0.9) == []
+
+
+def test_match_fuzzy_all_picks_best_alias_per_candidate():
+    """When a candidate has several above-threshold aliases, the hit carries the
+    HIGHEST-scoring alias as winning_alias (deterministic)."""
+    node = _condition_node("s1", "density is constant throughout")
+    cands = (
+        _cand("cond.a", node_type="condition",
+              aliases=("density is constant throughout", "density is constant")),
+    )
+    hits = match_fuzzy_all(node, cands, threshold=0.9)
+    assert len(hits) == 1
+    assert hits[0].winning_alias == "density is constant throughout"  # exact paraphrase
+
+
+def _normalize_for_test(text: str) -> str:
+    return text.strip().lower()
