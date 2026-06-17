@@ -23,10 +23,9 @@ many small pure modules, frozen dataclasses, tuple (immutable) fields.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from apollo.graph_compare.validator import (
-    ReferenceGraphInvalidError,
     validate_reference,
 )
 from apollo.ontology.edges import EdgeProvenance, EdgeType
