@@ -4,9 +4,10 @@ Unified endpoint: handles both post-Done advance (phase=REPORT) and mid-problem
 abandon (phase=TEACHING or PROBLEM_REVEAL). Blocked with SessionFrozenError
 during SOLVING. INIT / BETWEEN raise InvalidPhaseError.
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +21,6 @@ from apollo.persistence.models import (
     SessionStatus,
 )
 
-
 _ABANDON_PHASES = {SessionPhase.TEACHING.value, SessionPhase.PROBLEM_REVEAL.value}
 _ADVANCE_PHASES = {SessionPhase.REPORT.value}
 _FROZEN_PHASES = {SessionPhase.SOLVING.value}
@@ -31,12 +31,14 @@ async def handle_next(
     db: AsyncSession,
     session_id: int,
     difficulty: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     # with_for_update() takes a row lock on Postgres so a double-clicked
     # /next can't race into two ProblemAttempt rows. SQLite ignores it.
-    sess = (await db.execute(
-        select(ApolloSession).where(ApolloSession.id == session_id).with_for_update()
-    )).scalar_one()
+    sess = (
+        await db.execute(
+            select(ApolloSession).where(ApolloSession.id == session_id).with_for_update()
+        )
+    ).scalar_one()
 
     if sess.status != SessionStatus.active.value:
         raise InvalidPhaseError(session_id=session_id, phase=f"status={sess.status}")
@@ -47,24 +49,36 @@ async def handle_next(
     if phase not in _ABANDON_PHASES and phase not in _ADVANCE_PHASES:
         raise InvalidPhaseError(session_id=session_id, phase=phase)
 
-    current_attempt = (await db.execute(
-        select(ProblemAttempt)
-        .where(ProblemAttempt.session_id == session_id)
-        .where(ProblemAttempt.problem_id == sess.current_problem_id)
-        .order_by(ProblemAttempt.id.desc())
-    )).scalars().first()
+    current_attempt = (
+        (
+            await db.execute(
+                select(ProblemAttempt)
+                .where(ProblemAttempt.session_id == session_id)
+                .where(ProblemAttempt.problem_id == sess.current_problem_id)
+                .order_by(ProblemAttempt.id.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
 
     if phase in _ABANDON_PHASES and current_attempt is not None and current_attempt.result is None:
         current_attempt.result = "abandoned"
         await db.flush()
 
-    attempted_ids = list((await db.execute(
-        select(ProblemAttempt.problem_id)
-        .where(ProblemAttempt.session_id == session_id)
-    )).scalars().all())
+    attempted_ids = list(
+        (
+            await db.execute(
+                select(ProblemAttempt.problem_id).where(ProblemAttempt.session_id == session_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
-    problem = select_problem(
-        cluster_id=sess.concept_cluster_id,
+    problem = await select_problem(
+        db,
+        concept_id=sess.concept_id,
         difficulty=difficulty,
         attempted_ids=attempted_ids,
     )

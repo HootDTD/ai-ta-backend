@@ -28,27 +28,24 @@ from apollo.handlers.intent import (
     detect_confirmation,
 )
 from apollo.knowledge_graph.store import KGStore
-from apollo.overseer.problem_selector import (
-    cluster_to_concept,
-    list_problems_for_cluster,
-)
+from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.parser.graph_context import build_graph_context
 from apollo.parser.parser_llm import parse_utterance
 from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.schemas.problem import Problem
-from apollo.subjects import load_concept
+from apollo.subjects.curriculum_db import load_concept_definition
 
 
-def _find_problem(cluster_id: str, problem_id: str) -> Problem:
-    """Locate a problem in the bank by cluster + id. Mirrors done.py's helper.
-    Kept inline rather than hoisted into problem_selector to keep that
-    module's contract (problem listing) narrow."""
-    for p in list_problems_for_cluster(cluster_id):
-        if p.id == problem_id:
+async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) -> Problem:
+    """Locate a problem in the DB bank by concept_id + problem_code. Mirrors
+    done.py's helper. Kept inline rather than hoisted into problem_selector to
+    keep that module's contract (problem listing) narrow."""
+    for p in await list_problems_for_concept(db, concept_id=concept_id):
+        if p.id == problem_code:
             return p
     raise RuntimeError(
-        f"problem {problem_id!r} not in bank for cluster {cluster_id!r}"
+        f"problem {problem_code!r} not in bank for cluster {concept_id!r}"
     )
 
 
@@ -221,8 +218,7 @@ async def handle_chat(
     if current_attempt is None:
         raise RuntimeError(f"no current ProblemAttempt for session {session_id}")
 
-    subject_id, concept_id = cluster_to_concept(sess.concept_cluster_id)
-    concept = load_concept(subject_id, concept_id)
+    concept = await load_concept_definition(db, concept_id=sess.concept_id)
 
     # ---- Intent state machine (item #5) -------------------------------
     # Step 1: if a pending intent exists, see if this turn confirms it.
@@ -286,7 +282,7 @@ async def handle_chat(
     # student's own KG + the problem, so it cannot leak an un-taught concept
     # (structural anti-leak replaces the deleted filter).
     student_graph = await store.read_graph(attempt_id=current_attempt.id)
-    problem = _find_problem(sess.concept_cluster_id, sess.current_problem_id)
+    problem = await _find_problem(db, sess.concept_id, sess.current_problem_id)
     kg_summary = await store.summarize_for_apollo(attempt_id=current_attempt.id)
     history_for_llm = raw_window + [{"role": "user", "content": message}]
 
