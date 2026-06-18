@@ -32,7 +32,23 @@ from apollo.grading.events import (
     PARTIAL_EDGE_GAP_ENABLED,
     convert_findings_to_events,
 )
+from apollo.grading.normalization_confidence import (
+    NORMALIZATION_CONFIDENCE_FLOOR_WHEN_NO_SCORED_NODES,
+    compute_normalization_confidence,
+)
 from apollo.grading.opposes import build_opposes_map
+from apollo.grading.persistence import (
+    FindingRowSpec,
+    RunRowSpec,
+    finding_to_row_spec,
+    findings_to_row_specs,
+    grade_to_run_spec,
+    persist_comparison_run,
+)
+from apollo.grading.reference_hash import (
+    REFERENCE_HASH_VERSION,
+    reference_graph_hash,
+)
 from apollo.grading.transcript_audit import (
     TRANSCRIPT_AUDIT_CONFIDENCE_CAP,
     TRANSCRIPT_AUDIT_METHOD,
@@ -62,4 +78,16 @@ __all__ = [
     "EVENT_CONVERSION_VERSION",
     "build_opposes_map",
     "PARTIAL_EDGE_GAP_ENABLED",
+    # WU-4B3 — runs/findings persistence (supersede) + the §3 damper input +
+    # the reference-graph fingerprint.
+    "persist_comparison_run",
+    "RunRowSpec",
+    "FindingRowSpec",
+    "grade_to_run_spec",
+    "finding_to_row_spec",
+    "findings_to_row_specs",
+    "compute_normalization_confidence",
+    "NORMALIZATION_CONFIDENCE_FLOOR_WHEN_NO_SCORED_NODES",
+    "reference_graph_hash",
+    "REFERENCE_HASH_VERSION",
 ]
