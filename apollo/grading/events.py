@@ -159,27 +159,49 @@ def _resolve_conflicts(
     opposes_map: Mapping[str, str],
     turn_order: Mapping[str, int],
 ) -> tuple[set[str], list[LearnerEvent]]:
-    """For each opposed pair (a contradiction on ``misc_key`` + a covered on
-    ``opposes_map[misc_key]``), emit ONE conflict event and CONSUME both keys so
-    their standalone findings are skipped downstream."""
-    consumed: set[str] = set()
-    events: list[LearnerEvent] = []
+    """For each covered entity opposed by >= 1 contradiction, emit EXACTLY ONE
+    conflict event and CONSUME the covered key + ALL its opposing misconception
+    keys (so no standalone event double-fires on the same entity).
+
+    The §6.5 table is written single-opposer; the MULTI-opposer case (two
+    misconceptions opposing the SAME covered entity) is generalized here to
+    last-position-wins against the LATEST opposing contradiction. This guarantees
+    ONE event per covered entity — without it two opposers would emit two events
+    on the same ``canonical_key``, breaking the one-event-per-entity contract and
+    colliding with the WU-5A ``UNIQUE NULLS NOT DISTINCT (attempt_id, entity_id,
+    event_kind)`` on ``apollo_mastery_events``. Single-opposer behavior is
+    unchanged (one opposer -> the representative IS that opposer)."""
+    # Group opposing contradictions by the covered entity they oppose.
+    opposers_by_covered: dict[str, list[tuple[str, Finding]]] = {}
     for misc_key, contradiction in contradictions.items():
         covered_key = opposes_map.get(misc_key)
         if covered_key is None or covered_key not in covered:
             continue
+        opposers_by_covered.setdefault(covered_key, []).append((misc_key, contradiction))
+
+    consumed: set[str] = set()
+    events: list[LearnerEvent] = []
+    for covered_key in sorted(opposers_by_covered):  # deterministic
+        opposers = opposers_by_covered[covered_key]
         covered_finding = covered[covered_key]
+        # Representative opposer = the contradiction asserted LAST (max turn
+        # position; ties + unknown-order broken by misc_key) — last-position-wins
+        # compares the covered against the most-recent misconception.
+        rep_misc_key, rep_contradiction = max(
+            opposers, key=lambda mc: (_turn_position(mc[1], turn_order), mc[0])
+        )
         events.append(
             _conflict_event(
-                misc_key,
+                rep_misc_key,
                 covered_key,
-                contradiction,
+                rep_contradiction,
                 covered_finding,
                 turn_order,
             )
         )
-        consumed.add(misc_key)
         consumed.add(covered_key)
+        for misc_key, _ in opposers:
+            consumed.add(misc_key)
     return consumed, events
 
 

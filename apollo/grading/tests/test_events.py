@@ -202,6 +202,75 @@ def test_conflict_covered_earlier_contradiction_later_emits_misconception():
     assert event.misconception_code == "misc.x"
 
 
+def test_multiple_opposers_same_covered_emits_single_event():
+    """Regression (review MEDIUM): TWO misconceptions opposing the SAME covered
+    entity must emit EXACTLY ONE event on that entity — not one per opposer. Two
+    `corrected` events on the same canonical_key would break one-event-per-entity
+    and collide with the WU-5A UNIQUE (attempt_id, entity_id, event_kind)."""
+    grade = audited(
+        (
+            contradiction_finding("misc.x", student_node_ids=("c1",)),
+            contradiction_finding("misc.z", student_node_ids=("c2",)),
+            covered_finding_with_nodes("eq.y", ("v1",), confidence=0.92),
+        )
+    )
+
+    events = convert_findings_to_events(
+        grade,
+        opposes_map={"misc.x": "eq.y", "misc.z": "eq.y"},  # both oppose eq.y
+        turn_order=turn_order_of(c1=1, c2=2, v1=3),  # both contradictions earlier
+    )
+
+    # EXACTLY ONE event on eq.y (corrected), never two.
+    assert len(events) == 1
+    (event,) = events
+    assert event.canonical_key == "eq.y"
+    assert event.event_kind is LearnerEventKind.CORRECTED
+
+
+def test_multiple_opposers_mixed_order_last_position_wins():
+    """Two opposers of eq.y, one BEFORE and one AFTER the covered: the LATEST
+    contradiction (misc.z) is the representative -> last-position-wins emits ONE
+    `misconception` on misc.z; eq.y + misc.x are consumed (no extra events)."""
+    grade = audited(
+        (
+            contradiction_finding("misc.x", student_node_ids=("c1",)),  # before
+            contradiction_finding("misc.z", student_node_ids=("c2",)),  # after
+            covered_finding_with_nodes("eq.y", ("v1",), confidence=0.92),
+        )
+    )
+
+    events = convert_findings_to_events(
+        grade,
+        opposes_map={"misc.x": "eq.y", "misc.z": "eq.y"},
+        turn_order=turn_order_of(c1=1, v1=2, c2=3),  # misc.x < covered < misc.z
+    )
+
+    assert len(events) == 1
+    (event,) = events
+    assert event.event_kind is LearnerEventKind.MISCONCEPTION
+    assert event.misconception_code == "misc.z"  # the LATEST opposer wins
+
+
+def test_opposes_map_target_absent_from_covered_emits_standalone_misconception():
+    """Condition-coverage (review test-honesty nit): an opposes_map entry whose
+    covered target is ABSENT from the grade exercises the `covered_key not in
+    covered` operand -> NOT a conflict -> the contradiction emits a standalone
+    misconception (not consumed)."""
+    grade = audited((contradiction_finding("misc.x", student_node_ids=("c1",)),))
+
+    events = convert_findings_to_events(
+        grade,
+        opposes_map={"misc.x": "eq.absent"},  # eq.absent is NOT a covered finding
+        turn_order=turn_order_of(c1=1),
+    )
+
+    assert len(events) == 1
+    (event,) = events
+    assert event.canonical_key == "misc.x"
+    assert event.event_kind is LearnerEventKind.MISCONCEPTION
+
+
 def test_conflict_ambiguous_order_emits_partial_with_mixed_flag():
     """Row 8: equal turn positions (ambiguous) -> ONE ``partial`` at low
     confidence + the mixed-understanding diagnostic flag."""
