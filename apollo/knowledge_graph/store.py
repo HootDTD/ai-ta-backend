@@ -469,6 +469,31 @@ class KGStore:
 
         return KGGraph(nodes=nodes, edges=edges)
 
+    async def read_node_created_at(self, *, attempt_id: int) -> dict[str, str]:
+        """node_id -> ``created_at`` ISO string for every ``:_KGNode`` in the
+        per-attempt subgraph (WU-4C1 turn_order source).
+
+        ``read_graph`` STRIPS ``created_at`` (it is node metadata, not content),
+        so the per-turn temporal signal is invisible through it. ``build_turn_order``
+        needs it to group nodes by write-batch (one ``created_at`` per turn). This
+        is a read-only helper — NOT a schema change. A node whose ``created_at`` is
+        absent (pre-WU-3C1 legacy) is OMITTED from the map so the caller's group
+        logic treats it as an absent key (events.py tolerates via ``_SENTINEL_TURN``).
+        """
+        async with self.neo.session() as s:
+            result = await s.run(
+                "MATCH (n:_KGNode {attempt_id: $aid}) "
+                "RETURN n.node_id AS node_id, n.created_at AS created_at",
+                aid=attempt_id,
+            )
+            out: dict[str, str] = {}
+            async for record in result:
+                created_at = record["created_at"]
+                if created_at is None:
+                    continue
+                out[record["node_id"]] = created_at
+        return out
+
     async def walk_chain(
         self,
         *,
