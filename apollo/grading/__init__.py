@@ -23,6 +23,16 @@ from apollo.grading.abstention import (
     apply_abstention,
 )
 from apollo.grading.audited_grade import AuditedGrade, build_audited_grade
+from apollo.grading.event_model import (
+    EVENT_CONVERSION_VERSION,
+    LearnerEvent,
+    LearnerEventKind,
+)
+from apollo.grading.events import (
+    PARTIAL_EDGE_GAP_ENABLED,
+    convert_findings_to_events,
+)
+from apollo.grading.opposes import build_opposes_map
 from apollo.grading.transcript_audit import (
     TRANSCRIPT_AUDIT_CONFIDENCE_CAP,
     TRANSCRIPT_AUDIT_METHOD,
@@ -45,4 +55,11 @@ __all__ = [
     "ABSTENTION_THRESHOLDS",
     "build_audited_grade",
     "AuditedGrade",
+    # WU-4B2 — finding->event conversion (§6.5 decision table)
+    "convert_findings_to_events",
+    "LearnerEvent",
+    "LearnerEventKind",
+    "EVENT_CONVERSION_VERSION",
+    "build_opposes_map",
+    "PARTIAL_EDGE_GAP_ENABLED",
 ]
