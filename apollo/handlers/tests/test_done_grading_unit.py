@@ -86,6 +86,12 @@ def _all_callee_patches(*, persist_return=4321):
         "persist_comparison_run": AsyncMock(return_value=persist_return),
         "build_opposes_map": MagicMock(return_value={"misc.k": "eq.k"}),
         "build_turn_order": AsyncMock(return_value={"n1": 0, "n2": 1}),
+        # WU-4C2 — the three new graph-sim candidate-grade callees.
+        "build_graph_sim_rubric": MagicMock(return_value={"overall": {"score": 88, "letter": "B+"}}),
+        "compute_calibration_metrics": MagicMock(return_value=MagicMock(
+            name="calibration", letter_agreement=True, overall_score_delta=5, divergent=False,
+        )),
+        "generate_constrained_diagnostic": MagicMock(return_value=MagicMock(name="diagnostic")),
     }
     patches = [patch.object(dg, name, new=m) for name, m in mocks.items()]
     return patches, mocks
@@ -95,7 +101,11 @@ def _read_transcript_patch():
     return patch.object(dg, "_read_transcript", new=AsyncMock(return_value="t1\nt2"))
 
 
-async def _run(db, mocks_payload=None):
+# The OLD student-facing rubric dict threaded in from done.py for calibration.
+_OLD_RUBRIC = {"overall": {"score": 83, "letter": "B"}}
+
+
+async def _run(db, mocks_payload=None, *, old_rubric=None):
     sess = _Sess()
     attempt = _Attempt()
     graph = KGGraph()
@@ -103,6 +113,7 @@ async def _run(db, mocks_payload=None):
         db, MagicMock(name="neo"),
         attempt=attempt, sess=sess, student_graph=graph,
         problem_payload=mocks_payload if mocks_payload is not None else _payload(),
+        old_rubric=old_rubric if old_rubric is not None else _OLD_RUBRIC,
     ), sess, attempt
 
 
@@ -216,6 +227,7 @@ async def test_resolution_unavailable_marks_attempt_pending():
                 await run_graph_simulation(
                     db, MagicMock(), attempt=attempt, sess=sess,
                     student_graph=KGGraph(), problem_payload=_payload(),
+                    old_rubric=_OLD_RUBRIC,
                 )
         finally:
             for p in reversed(patches):
@@ -240,6 +252,7 @@ async def test_resolution_invalid_output_sets_pending_and_reraises():
                 await run_graph_simulation(
                     db, MagicMock(), attempt=attempt, sess=sess,
                     student_graph=KGGraph(), problem_payload=_payload(),
+                    old_rubric=_OLD_RUBRIC,
                 )
         finally:
             for p in reversed(patches):
@@ -264,6 +277,7 @@ async def test_student_graph_invalid_does_not_set_pending():
                 await run_graph_simulation(
                     db, MagicMock(), attempt=attempt, sess=sess,
                     student_graph=KGGraph(), problem_payload=_payload(),
+                    old_rubric=_OLD_RUBRIC,
                 )
         finally:
             for p in reversed(patches):
@@ -288,6 +302,7 @@ async def test_reference_graph_invalid_does_not_set_pending():
                 await run_graph_simulation(
                     db, MagicMock(), attempt=attempt, sess=sess,
                     student_graph=KGGraph(), problem_payload=_payload(),
+                    old_rubric=_OLD_RUBRIC,
                 )
         finally:
             for p in reversed(patches):
@@ -329,6 +344,7 @@ async def test_unexpected_exception_in_window_sets_pending_and_reraises():
                 await run_graph_simulation(
                     db, MagicMock(), attempt=attempt, sess=sess,
                     student_graph=KGGraph(), problem_payload=_payload(),
+                    old_rubric=_OLD_RUBRIC,
                 )
         finally:
             for p in reversed(patches):
@@ -356,11 +372,102 @@ async def test_student_graph_invalid_inside_window_does_not_set_pending():
                 await run_graph_simulation(
                     db, MagicMock(), attempt=attempt, sess=sess,
                     student_graph=KGGraph(), problem_payload=_payload(),
+                    old_rubric=_OLD_RUBRIC,
                 )
         finally:
             for p in reversed(patches):
                 p.stop()
     assert attempt.learner_update_pending is False
+
+
+async def test_shadow_result_carries_calibration_fields():
+    """WU-4C2: the happy-path ShadowGradeResult gains graph_sim_rubric /
+    calibration / diagnostic, each computed from the right forwarded inputs."""
+    db = _db()
+    patches, mocks = _all_callee_patches()
+    with _read_transcript_patch():
+        for p in patches:
+            p.start()
+        try:
+            result, _sess, _attempt = await _run(db)
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    assert result.graph_sim_rubric == {"overall": {"score": 88, "letter": "B+"}}
+    assert result.calibration is mocks["compute_calibration_metrics"].return_value
+    assert result.diagnostic is mocks["generate_constrained_diagnostic"].return_value
+
+    # build_graph_sim_rubric got the raw pieces (audited / reference_graph /
+    # opposes_map / turn_order) — keyword-only, no half-built ShadowGradeResult.
+    rkwargs = mocks["build_graph_sim_rubric"].call_args.kwargs
+    assert rkwargs["audited"] is mocks["build_audited_grade"].return_value
+    assert rkwargs["reference_graph"] is mocks["build_reference_canonical"].return_value
+    assert rkwargs["opposes_map"] == {"misc.k": "eq.k"}
+    assert rkwargs["turn_order"] == {"n1": 0, "n2": 1}
+
+
+async def test_old_rubric_threaded_to_calibration():
+    """compute_calibration_metrics gets old_rubric=<the dict passed in> +
+    shadow_rubric=<build_graph_sim_rubric's output>."""
+    db = _db()
+    patches, mocks = _all_callee_patches()
+    with _read_transcript_patch():
+        for p in patches:
+            p.start()
+        try:
+            await _run(db, old_rubric={"overall": {"score": 70, "letter": "B-"}})
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    ckwargs = mocks["compute_calibration_metrics"].call_args.kwargs
+    assert ckwargs["old_rubric"] == {"overall": {"score": 70, "letter": "B-"}}
+    assert ckwargs["shadow_rubric"] == {"overall": {"score": 88, "letter": "B+"}}
+
+
+async def test_diagnostic_llm_injected():
+    """generate_constrained_diagnostic gets the audited grade + the live
+    llm=dg.main_chat_diagnostic_llm injected callable."""
+    db = _db()
+    patches, mocks = _all_callee_patches()
+    with _read_transcript_patch():
+        for p in patches:
+            p.start()
+        try:
+            await _run(db)
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    call = mocks["generate_constrained_diagnostic"].call_args
+    assert call.args[0] is mocks["build_audited_grade"].return_value
+    assert call.kwargs["llm"] is dg.main_chat_diagnostic_llm
+
+
+async def test_calibration_logged(caplog):
+    """The §6.7 tracked metrics (letter_agreement / overall_score_delta /
+    divergent) are logged on the happy path."""
+    import logging
+
+    db = _db()
+    patches, _mocks = _all_callee_patches()
+    with _read_transcript_patch():
+        for p in patches:
+            p.start()
+        try:
+            with caplog.at_level(logging.INFO, logger="apollo.handlers.done_grading"):
+                await _run(db)
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    records = [r for r in caplog.records if "graph_sim_calibration" in r.getMessage()]
+    assert records, "expected a graph_sim_calibration log line"
+    rec = records[0]
+    assert rec.letter_agreement is True
+    assert rec.overall_score_delta == 5
+    assert rec.divergent is False
 
 
 async def test_no_mastery_events_written():
