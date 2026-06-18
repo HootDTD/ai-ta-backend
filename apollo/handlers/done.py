@@ -62,6 +62,13 @@ _DONE_GATE_FLAG: str = "APOLLO_DONE_GATE_ENABLED"
 # NOT the promote-to-live flag (that is WU-4C2's APOLLO_GRAPH_SIM_LIVE_ENABLED).
 _GRAPH_SIM_SHADOW_FLAG: str = "APOLLO_GRAPH_SIM_SHADOW_ENABLED"
 
+# WU-4C2 — the PROMOTE-to-live flag (default OFF EVERYWHERE incl. test; flipped
+# only after human calibration review, NEVER in this build). When OFF, the
+# student-facing rubric/diagnostic are the OLD-path values (byte-identical to
+# WU-4C1). When ON, the graph-sim rubric + constrained diagnostic from the shadow
+# chain REPLACE them. This gates only PROMOTION, NOT the shadow computation.
+_GRAPH_SIM_LIVE_FLAG: str = "APOLLO_GRAPH_SIM_LIVE_ENABLED"
+
 
 def _done_gate_enabled() -> bool:
     return os.environ.get(_DONE_GATE_FLAG, "").lower() in ("1", "true", "yes")
@@ -69,6 +76,10 @@ def _done_gate_enabled() -> bool:
 
 def _graph_sim_shadow_enabled() -> bool:
     return os.environ.get(_GRAPH_SIM_SHADOW_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _graph_sim_live_enabled() -> bool:
+    return os.environ.get(_GRAPH_SIM_LIVE_FLAG, "").lower() in ("1", "true", "yes")
 
 
 def _flagged_entries(graph: KGGraph) -> list[tuple[Node, str]]:
@@ -365,17 +376,27 @@ async def handle_done(
     # WU-4C1 — SHADOW graph-simulation chain. Runs AFTER the OLD grade/XP/retention
     # are fully durable, so any failure here surfaces a named error (the right HTTP
     # status) WITHOUT voiding the already-committed student grade (NO-FALLBACK,
-    # mirrors RetentionError). The student_response above is NOT modified by it.
+    # mirrors RetentionError). When LIVE is off (the only build state) the
+    # student_response above is NOT modified by it.
     if _graph_sim_shadow_enabled():
         problem_payload = await _find_problem_payload(
             db, concept_id=sess.concept_id, problem_code=problem.id,
         )
-        await run_graph_simulation(
+        shadow = await run_graph_simulation(
             db, neo,
             attempt=attempt,
             sess=sess,
             student_graph=student_graph,
             problem_payload=problem_payload,
+            old_rubric=rubric,  # the OLD student-facing rubric, for §6.7 calibration
         )
+        # WU-4C2 — LIVE promotion (DORMANT; flag OFF in this build). Built + tested,
+        # never active. When ON, the graph-sim rubric + constrained-diagnostic
+        # narrative REPLACE the two student-facing keys; coverage/progress/XP stay
+        # OLD-path. Reached only AFTER a successful shadow chain (a raised shadow —
+        # e.g. pending — never reaches here, so the OLD grade stands; §6.4).
+        if shadow is not None and _graph_sim_live_enabled():
+            student_response["rubric"] = shadow.graph_sim_rubric
+            student_response["diagnostic_narrative"] = shadow.diagnostic.narrative
 
     return student_response
