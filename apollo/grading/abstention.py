@@ -1,0 +1,131 @@
+"""WU-4B1 §6.6 — the hard abstention gates.
+
+:func:`apply_abstention` turns the per-attempt signals (``unresolved_rate``,
+the MIN parser confidence over turns, misconception resolution confidences, the
+upstream reference-validation failure, and the transcript-audit failure) into a
+deterministic abstention outcome: a reason list, the ``abstained`` flag, and a
+per-event-kind suppression set (the kinds WU-4B2 must withhold).
+
+Binding semantics (§6.6):
+- ``abstained=True`` is RESERVED for the *no-Layer-3-update* run — only the
+  ``unresolved_rate`` gate sets it. The ``missing`` / ``misconception``
+  suppressions are *partial*: they withhold specific event kinds (and record a
+  reason) but the run still updates Layer-3 for the rest, so they do NOT set
+  ``abstained``.
+- Reason ordering is deterministic (gate-declaration order) so two calls with
+  the same inputs return an identical ``abstention_reasons`` tuple.
+
+Pure: no IO, no mutation of inputs.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import dataclass
+
+from apollo.ontology.nodes import Node
+from apollo.resolution.result import ResolutionResult
+
+# §6.6 gate thresholds. Named so WU-4B2/4B3 match against the symbol, not a
+# magic literal.
+ABSTENTION_THRESHOLDS: dict[str, float] = {
+    "unresolved_rate": 0.35,  # > 0.35 -> no Layer-3 update (diagnostic-only run)
+    "min_parser_confidence": 0.6,  # MIN over turns < 0.6 -> suppress 'missing'
+    "misconception_confidence": 0.8,  # < 0.8 -> withhold 'misconception'
+}
+
+# Reason strings persisted verbatim into apollo_graph_comparison_runs
+# .abstention_reasons (WU-4B3). Named constants so WU-4B2/4B3 match symbols.
+REASON_HIGH_UNRESOLVED = "unresolved_rate_above_threshold"
+REASON_LOW_PARSER_CONFIDENCE = "min_parser_confidence_below_threshold"
+REASON_LOW_MISCONCEPTION_CONFIDENCE = "misconception_confidence_below_threshold"
+REASON_REFERENCE_INVALID = "reference_graph_invalid"
+REASON_TRANSCRIPT_AUDIT_FAILED = "transcript_audit_unavailable"
+
+# Event kinds (subset) WU-4B2 may be told to withhold.
+_SUPPRESS_MISSING = "missing"
+_SUPPRESS_MISCONCEPTION = "misconception"
+
+
+@dataclass(frozen=True)
+class Abstention:
+    """The §6.6 abstention outcome (frozen, persisted by WU-4B3)."""
+
+    abstention_reasons: tuple[str, ...]
+    abstained: bool
+    suppressed_event_kinds: frozenset[str]
+
+
+def unresolved_rate_of(resolution: ResolutionResult) -> float:
+    """``unresolved_count / total`` over ``resolution.resolved`` (count every
+    node whose ``resolution != 'resolved'``). ``0.0`` for an empty attempt (an
+    empty attempt never false-trips the gate)."""
+    total = len(resolution.resolved)
+    if total == 0:
+        return 0.0
+    unresolved = sum(1 for rn in resolution.resolved if rn.resolution != "resolved")
+    return unresolved / total
+
+
+def min_parser_confidence_of(nodes: Iterable[Node]) -> float:
+    """``min(n.parser_confidence ...)``; ``1.0`` for an empty iterable so an
+    empty attempt never false-trips the gate. MIN, NEVER mean (§6.6 binding)."""
+    confidences = [n.parser_confidence for n in nodes]
+    if not confidences:
+        return 1.0
+    return min(confidences)
+
+
+def apply_abstention(
+    *,
+    unresolved_rate: float,
+    min_parser_confidence: float,
+    misconception_confidences: tuple[float, ...] = (),
+    transcript_audit_failed: bool = False,
+    reference_invalid: bool = False,
+) -> Abstention:
+    """Apply the §6.6 gates and return the reasons + flags + suppression set.
+
+    - ``unresolved_rate > 0.35``      -> ``abstained=True``, REASON_HIGH_UNRESOLVED
+                                         (no Layer-3 update; diagnostic-only run)
+    - ``min_parser_confidence < 0.6`` -> suppress ``missing``,
+                                         REASON_LOW_PARSER_CONFIDENCE
+    - ``transcript_audit_failed``     -> suppress ``missing``,
+                                         REASON_TRANSCRIPT_AUDIT_FAILED
+    - any ``misconception_confidence < 0.8`` -> suppress ``misconception``,
+                                         REASON_LOW_MISCONCEPTION_CONFIDENCE
+                                         (the finding still persists for review)
+    - ``reference_invalid``           -> REASON_REFERENCE_INVALID (grading already
+                                         blocked upstream; surfaced here, not
+                                         re-raised)
+
+    Pure + deterministic reason ordering (gate-declaration order)."""
+    reasons: list[str] = []
+    suppressed: set[str] = set()
+
+    abstained = unresolved_rate > ABSTENTION_THRESHOLDS["unresolved_rate"]
+    if abstained:
+        reasons.append(REASON_HIGH_UNRESOLVED)
+
+    if min_parser_confidence < ABSTENTION_THRESHOLDS["min_parser_confidence"]:
+        reasons.append(REASON_LOW_PARSER_CONFIDENCE)
+        suppressed.add(_SUPPRESS_MISSING)
+
+    if transcript_audit_failed:
+        reasons.append(REASON_TRANSCRIPT_AUDIT_FAILED)
+        suppressed.add(_SUPPRESS_MISSING)
+
+    if any(
+        c < ABSTENTION_THRESHOLDS["misconception_confidence"] for c in misconception_confidences
+    ):
+        reasons.append(REASON_LOW_MISCONCEPTION_CONFIDENCE)
+        suppressed.add(_SUPPRESS_MISCONCEPTION)
+
+    if reference_invalid:
+        reasons.append(REASON_REFERENCE_INVALID)
+
+    return Abstention(
+        abstention_reasons=tuple(reasons),
+        abstained=abstained,
+        suppressed_event_kinds=frozenset(suppressed),
+    )

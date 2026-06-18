@@ -186,6 +186,27 @@ class ResolutionUnavailableError(ApolloError):
         )
 
 
+class TranscriptAuditUnavailableError(ApolloError):
+    """Transcript-audit INFRASTRUCTURE failure (the one batched Done-time audit
+    ``main_chat`` call failed / timed out, returned malformed JSON, or returned
+    an empty payload when entities were asked).
+
+    NO FALLBACK and — critically — the auditor NEVER degrades to "skip the audit
+    and emit the missing finding". The orchestrator (WU-4B1
+    ``build_audited_grade``) catches this at the audit boundary and converts it
+    into the suppress-ALL-``missing`` abstention reason, so a ``missing`` event
+    can never survive a failed audit. Mirrors :class:`ResolutionUnavailableError`
+    (named-but-not-HTTP-registered here; WU-4C registers the handler). ``stage``
+    is ``"transcript_audit"`` for symmetry with the other infra errors."""
+
+    def __init__(self, *, last_error: str) -> None:
+        self.stage = "transcript_audit"
+        self.last_error = last_error
+        super().__init__(
+            f"Transcript audit unavailable at stage {self.stage!r}: {last_error}"
+        )
+
+
 class ResolutionInvalidOutputError(ApolloError):
     """The one LLM adjudication call returned a key that is NOT in the closed
     candidate set (a hallucination).
