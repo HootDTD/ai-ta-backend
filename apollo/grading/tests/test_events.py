@@ -252,6 +252,31 @@ def test_multiple_opposers_mixed_order_last_position_wins():
     assert event.misconception_code == "misc.z"  # the LATEST opposer wins
 
 
+def test_multiple_opposers_equal_turn_tie_break_is_deterministic():
+    """Two opposers of eq.y at the SAME turn position: the representative is the
+    deterministic `max` tie-break on misc_key (misc.b > misc.a), so the single
+    `corrected` event's misconception_code is stable run-to-run."""
+    grade = audited(
+        (
+            contradiction_finding("misc.a", student_node_ids=("c1",)),
+            contradiction_finding("misc.b", student_node_ids=("c2",)),
+            covered_finding_with_nodes("eq.y", ("v1",), confidence=0.92),
+        )
+    )
+
+    events = convert_findings_to_events(
+        grade,
+        opposes_map={"misc.a": "eq.y", "misc.b": "eq.y"},
+        turn_order=turn_order_of(c1=1, c2=1, v1=2),  # both opposers at turn 1 (tie)
+    )
+
+    assert len(events) == 1
+    (event,) = events
+    assert event.canonical_key == "eq.y"
+    assert event.event_kind is LearnerEventKind.CORRECTED
+    assert event.misconception_code == "misc.b"  # deterministic misc_key tie-break
+
+
 def test_opposes_map_target_absent_from_covered_emits_standalone_misconception():
     """Condition-coverage (review test-honesty nit): an opposes_map entry whose
     covered target is ABSENT from the grade exercises the `covered_key not in
