@@ -41,6 +41,25 @@ def test_public_api_exports():
         assert hasattr(grading, name), f"apollo.grading is missing {name}"
 
 
+def test_public_api_exports_wu4b2():
+    """WU-4B2 GAINS the finding->event names; the existing 12 stay (backward-
+    compat). New: convert_findings_to_events, LearnerEvent, LearnerEventKind,
+    EVENT_CONVERSION_VERSION, build_opposes_map, PARTIAL_EDGE_GAP_ENABLED."""
+    import apollo.grading as grading
+
+    new_names = {
+        "convert_findings_to_events",
+        "LearnerEvent",
+        "LearnerEventKind",
+        "EVENT_CONVERSION_VERSION",
+        "build_opposes_map",
+        "PARTIAL_EDGE_GAP_ENABLED",
+    }
+    assert new_names.issubset(set(grading.__all__))
+    for name in new_names:
+        assert hasattr(grading, name), f"apollo.grading is missing {name}"
+
+
 def test_finding_kind_unchanged():
     """grading imports the frozen FindingKind; it does NOT redefine it, and the
     value-set still mirrors models.FINDING_KINDS 1:1."""

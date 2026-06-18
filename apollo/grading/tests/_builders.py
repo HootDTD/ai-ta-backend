@@ -9,6 +9,7 @@ frozen object, and the three deterministic ``audit_fn`` stubs (found / not-found
 from __future__ import annotations
 
 from apollo.errors import TranscriptAuditUnavailableError
+from apollo.grading.audited_grade import AuditedGrade
 from apollo.grading.transcript_audit import AuditReply, AuditRequest
 from apollo.graph_compare.core import COMPARISON_VERSION, GradeResult
 from apollo.graph_compare.findings import Finding, FindingKind
@@ -176,3 +177,61 @@ def raising_audit_fn():
         raise TranscriptAuditUnavailableError(last_error="boom")
 
     return _fn
+
+
+# --- WU-4B2 finding->event builders -----------------------------------------
+
+
+def covered_finding_with_nodes(
+    key: str, nids: tuple[str, ...], *, confidence: float = 0.92
+) -> Finding:
+    """A ``covered_node`` finding carrying explicit ``student_node_ids`` (the
+    §6.5 covered/conflict rows need the node ids to read turn positions)."""
+    return Finding(
+        kind=FindingKind.COVERED_NODE,
+        canonical_key=key,
+        student_node_ids=nids,
+        confidence=confidence,
+    )
+
+
+def misc_candidate(key: str, opposes: str | None) -> Candidate:
+    """A MISCONCEPTION ``Candidate`` whose ``opposes_key`` is ``opposes`` (None
+    for the negative path that contributes nothing to the opposes map)."""
+    return Candidate(
+        canonical_key=key,
+        canon_key=1,
+        node_type="definition",
+        is_misconception=True,
+        symbolic=None,
+        aliases=(),
+        display_name=key,
+        opposes_key=opposes,
+    )
+
+
+def audited(
+    findings: tuple[Finding, ...],
+    *,
+    abstained: bool = False,
+    suppressed: frozenset[str] | tuple[str, ...] = (),
+) -> AuditedGrade:
+    """A frozen :class:`AuditedGrade` LITERAL for the pure §6.5 table rows.
+
+    ``grade`` carries a valid stub :class:`GradeResult` (4B2 never re-grades —
+    it reads ``.findings``/``.abstained``/``.suppressed_event_kinds`` only).
+    ``suppressed`` is coerced to a ``frozenset`` so a test may pass a tuple."""
+    return AuditedGrade(
+        grade=missing_grade(),
+        findings=findings,
+        abstention_reasons=(),
+        abstained=abstained,
+        suppressed_event_kinds=frozenset(suppressed),
+        alias_candidates=(),
+    )
+
+
+def turn_order_of(**positions: int) -> dict[str, int]:
+    """A ``turn_order`` mapping (node_id -> turn position) from kwargs, e.g.
+    ``turn_order_of(c1=1, v1=2)``."""
+    return dict(positions)
