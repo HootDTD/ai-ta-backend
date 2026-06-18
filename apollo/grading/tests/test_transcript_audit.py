@@ -162,6 +162,17 @@ def test_main_chat_auditor_null_span_parsed_as_not_found():
     assert result.upgraded_keys == frozenset()
 
 
+def test_main_chat_auditor_empty_spans_is_all_not_found_no_raise():
+    # A VALID but empty {"spans": {}} reply = "taught none of them": all
+    # not-found, NO raise (only transient/parse failures raise). Pins the
+    # docstring-corrected behavior the review flagged.
+    payload = json.dumps({"spans": {}})
+    with patch("apollo.grading.transcript_audit.main_chat", return_value=payload):
+        result = audit_missing((_entity("eq.x"),), "t", audit_fn=main_chat_auditor)
+    assert result.upgraded_keys == frozenset()
+    assert result.alias_candidates == ()
+
+
 # --- chunking ---------------------------------------------------------------
 
 

@@ -22,12 +22,16 @@ def missing_finding(key: str) -> Finding:
     return Finding(kind=FindingKind.MISSING_NODE, canonical_key=key, score=0.0)
 
 
-def contradiction_finding(key: str, *, confidence: float) -> Finding:
-    """A contradiction (misconception) finding at the given confidence."""
+def contradiction_finding(key: str, *, student_node_ids: tuple[str, ...] = ()) -> Finding:
+    """A contradiction (misconception) finding shaped EXACTLY as the real
+    ``graph_compare.contradiction_finding`` factory emits it: ``confidence`` is
+    None (that factory never sets it) and the evidence rides in
+    ``student_node_ids``. The §6.6 misconception gate therefore sources its
+    confidence from the resolution (keyed by these ids), NOT from this finding."""
     return Finding(
         kind=FindingKind.CONTRADICTION,
         canonical_key=key,
-        confidence=confidence,
+        student_node_ids=student_node_ids,
         score=0.0,
     )
 
@@ -39,16 +43,18 @@ def covered_finding(key: str, *, confidence: float = 0.92) -> Finding:
 def missing_grade(
     keys: tuple[str, ...] = (),
     *,
-    contradictions: tuple[tuple[str, float], ...] = (),
+    contradictions: tuple[tuple[str, tuple[str, ...]], ...] = (),
     covered: tuple[str, ...] = (),
 ) -> GradeResult:
     """A :class:`GradeResult` with ``missing_node`` findings for ``keys`` (+
     optional contradiction / covered findings). All 10 score fields stubbed
-    valid (non-NaN); ``comparison_confidence == 1.0`` (v1)."""
+    valid (non-NaN); ``comparison_confidence == 1.0`` (v1). Each contradiction is
+    ``(misc_key, student_node_ids)`` — the §6.6 gate reads each id's confidence
+    off the resolution (see :func:`resolution_with`'s ``resolved_nodes``)."""
     findings = (
         tuple(covered_finding(k) for k in covered)
         + tuple(missing_finding(k) for k in keys)
-        + tuple(contradiction_finding(k, confidence=c) for k, c in contradictions)
+        + tuple(contradiction_finding(k, student_node_ids=nids) for k, nids in contradictions)
     )
     return GradeResult(
         coverage_score=0.5,
@@ -78,12 +84,34 @@ def _resolved_node(node_id: str, resolution: str) -> ResolvedNode:
     )
 
 
-def resolution_with(*, unresolved: int = 0, resolved: int = 0) -> ResolutionResult:
+def _resolved_node_at(node_id: str, confidence: float) -> ResolvedNode:
+    """A resolved node at an EXPLICIT confidence (the §6.6 misconception-gate
+    input — the gate reads ``ResolvedNode.confidence`` by node_id)."""
+    return ResolvedNode(
+        node_id=node_id,
+        resolution="resolved",
+        resolved_key="k",
+        resolved_canon_key=None,
+        method="fuzzy",
+        confidence=confidence,
+    )
+
+
+def resolution_with(
+    *,
+    unresolved: int = 0,
+    resolved: int = 0,
+    resolved_nodes: tuple[tuple[str, float], ...] = (),
+) -> ResolutionResult:
     """A :class:`ResolutionResult` with the chosen tier mix (``resolved`` +
-    ``unresolved`` nodes). ``unresolved_rate`` = unresolved / (unresolved +
-    resolved)."""
-    nodes = tuple(_resolved_node(f"r{i}", "resolved") for i in range(resolved)) + tuple(
-        _resolved_node(f"u{i}", "unresolved") for i in range(unresolved)
+    ``unresolved`` nodes). ``unresolved_rate`` = unresolved / total. Pass
+    ``resolved_nodes`` = ``((node_id, confidence), ...)`` to add explicitly-keyed
+    resolved nodes at chosen confidences (so a contradiction finding's
+    ``student_node_ids`` map onto a known misconception-resolution confidence)."""
+    nodes = (
+        tuple(_resolved_node(f"r{i}", "resolved") for i in range(resolved))
+        + tuple(_resolved_node(f"u{i}", "unresolved") for i in range(unresolved))
+        + tuple(_resolved_node_at(nid, conf) for nid, conf in resolved_nodes)
     )
     return ResolutionResult(resolved=nodes, tier_counts={}, llm_calls=0)
 

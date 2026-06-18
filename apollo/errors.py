@@ -188,8 +188,9 @@ class ResolutionUnavailableError(ApolloError):
 
 class TranscriptAuditUnavailableError(ApolloError):
     """Transcript-audit INFRASTRUCTURE failure (the one batched Done-time audit
-    ``main_chat`` call failed / timed out, returned malformed JSON, or returned
-    an empty payload when entities were asked).
+    ``main_chat`` call failed / timed out or returned malformed JSON). A VALID
+    but empty ``{"spans": {}}`` reply is "the student taught none of them" (all
+    not-found) — it does NOT raise; only a transient/parse failure does.
 
     NO FALLBACK and — critically — the auditor NEVER degrades to "skip the audit
     and emit the missing finding". The orchestrator (WU-4B1

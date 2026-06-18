@@ -8,10 +8,11 @@ to a covered-grade finding at confidence ``<= 0.75`` (the same cap as the
 emits an :class:`AliasCandidate` value object. A ``null`` leaves the
 ``missing_node`` finding intact.
 
-Any audit-infrastructure failure (timeout / error / JSON-parse failure / empty
-payload when entities were asked) surfaces as
-:class:`apollo.errors.TranscriptAuditUnavailableError` — **never** "skip the
-audit and emit the missing finding". This module does NOT catch that error; the
+Any audit-infrastructure failure (timeout / error / JSON-parse failure) surfaces
+as :class:`apollo.errors.TranscriptAuditUnavailableError` — **never** "skip the
+audit and emit the missing finding". A VALID but empty ``{"spans": {}}`` reply is
+"the student taught none of them" (all not-found), NOT a failure — it does not
+raise. This module does NOT catch that error; the
 orchestrator (:func:`apollo.grading.audited_grade.build_audited_grade`) catches
 it at the audit boundary and routes it to the suppress-ALL-``missing``
 abstention gate.

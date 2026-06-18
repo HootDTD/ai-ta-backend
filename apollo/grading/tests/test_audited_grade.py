@@ -140,11 +140,13 @@ def test_high_unresolved_run_abstains_findings_preserved():
 
 
 def test_misconception_low_confidence_withheld_in_grade():
-    grade = missing_grade((), contradictions=(("misc.density_ignored", 0.7),))
+    # Real-shaped contradiction: Finding.confidence is None (as graph_compare's
+    # factory emits); the §6.6 gate MUST source confidence from the RESOLUTION.
+    grade = missing_grade((), contradictions=(("misc.density_ignored", ("s1",)),))
     out = build_audited_grade(
         grade,
         transcript="t",
-        resolution=resolution_with(resolved=2),
+        resolution=resolution_with(resolved=2, resolved_nodes=(("s1", 0.7),)),
         student_nodes=(),
         audit_fn=notfound_audit_fn(),
     )
@@ -155,11 +157,49 @@ def test_misconception_low_confidence_withheld_in_grade():
 
 
 def test_misconception_high_confidence_not_withheld():
-    grade = missing_grade((), contradictions=(("misc.x", 0.9),))
+    grade = missing_grade((), contradictions=(("misc.x", ("s1",)),))
     out = build_audited_grade(
         grade,
         transcript="t",
-        resolution=resolution_with(resolved=2),
+        resolution=resolution_with(resolved=2, resolved_nodes=(("s1", 0.9),)),
+        student_nodes=(),
+        audit_fn=notfound_audit_fn(),
+    )
+    assert "misconception" not in out.suppressed_event_kinds
+
+
+def test_misconception_gate_reads_resolution_not_finding_confidence():
+    """Regression for the review-FAIL defect: the contradiction Finding carries
+    confidence=None (real factory), so the §6.6 gate MUST read the misconception
+    confidence off the resolution. If it read Finding.confidence (None -> 1.0) the
+    gate would be permanently inert and never withhold here."""
+    grade = missing_grade((), contradictions=(("misc.y", ("s1",)),))
+    assert grade.findings[0].confidence is None  # real-shaped: no injected confidence
+    out = build_audited_grade(
+        grade,
+        transcript="t",
+        # ONLY the resolution carries the (low) confidence — 0.5 < 0.8.
+        resolution=resolution_with(resolved=2, resolved_nodes=(("s1", 0.5),)),
+        student_nodes=(),
+        audit_fn=notfound_audit_fn(),
+    )
+    assert "misconception" in out.suppressed_event_kinds
+
+
+def test_misconception_confidence_is_max_over_evidence_and_skips_unresolved():
+    """Per-finding confidence = MAX over its resolved evidence nodes (mirrors
+    S_norm's highest-cap-wins merge), and a contradiction whose evidence is
+    unresolved contributes nothing. misc.a: max(0.6, 0.95)=0.95 (>=0.8 -> NOT
+    withheld; min would be 0.6 and would wrongly withhold). misc.b: its evidence
+    node is absent from the resolution -> contributes nothing."""
+    grade = missing_grade(
+        (),
+        contradictions=(("misc.a", ("a1", "a2")), ("misc.b", ("ghost",))),
+    )
+    out = build_audited_grade(
+        grade,
+        transcript="t",
+        resolution=resolution_with(resolved=2, resolved_nodes=(("a1", 0.6), ("a2", 0.95))),
         student_nodes=(),
         audit_fn=notfound_audit_fn(),
     )

@@ -13,7 +13,7 @@
 ### 1.1 What this unit IS
 The downstream **grading orchestration layer** that imports the pure, IO-free `apollo/graph_compare/` score core and turns its `GradeResult` into an `AuditedGrade`:
 
-1. **Transcript audit (§6.4 step 12 / §6.3 `transcript_audit.py`):** ONE batched Done-time LLM call over the simulator-flagged `missing_node` reference entities + the raw transcript. Each entity comes back with a supporting span or null. A found span upgrades the `missing_node` finding to a `covered`/`partial`-grade finding at confidence `≤ 0.75` and emits an `AliasCandidate`. A null leaves the `missing_node` finding intact. Any audit-infrastructure failure (timeout / error / JSON-parse failure / empty payload when entities were asked) raises `TranscriptAuditUnavailableError` — **never** "skip audit and emit the missing finding".
+1. **Transcript audit (§6.4 step 12 / §6.3 `transcript_audit.py`):** ONE batched Done-time LLM call over the simulator-flagged `missing_node` reference entities + the raw transcript. Each entity comes back with a supporting span or null. A found span upgrades the `missing_node` finding to a `covered`/`partial`-grade finding at confidence `≤ 0.75` and emits an `AliasCandidate`. A null leaves the `missing_node` finding intact. Any audit-infrastructure failure (timeout / error / JSON-parse failure) raises `TranscriptAuditUnavailableError` — **never** "skip audit and emit the missing finding". A VALID but empty `{"spans": {}}` reply is "the student taught none of them" (all not-found), NOT a failure — it does not raise.
 2. **Abstention gates (§6.6):** compute the abstention reason list + `abstained` flag + a per-event-kind **suppression set** (the kinds WU-4B2 must withhold) from `unresolved_rate`, `min` parser-confidence, misconception resolution confidence, the upstream reference-validation failure, and the transcript-audit failure.
 3. **Handoff assembly:** `build_audited_grade(...)` runs the audit, applies the gates, rewrites the findings tuple with the audit upgrades, and returns one frozen `AuditedGrade`.
 
@@ -224,8 +224,11 @@ def build_audited_grade(
        ALL missing, NEVER emits them).
     3. Compute gate inputs: unresolved_rate_of(resolution),
        min_parser_confidence_of(student_nodes), misconception_confidences from
-       the contradiction findings' confidence, transcript_audit_failed,
-       reference_invalid. apply_abstention(...).
+       the RESOLUTION (per contradiction finding, the MAX ResolvedNode.confidence
+       over its student_node_ids — NOT Finding.confidence, which the frozen
+       graph_compare contradiction_finding factory leaves None, so reading it
+       would make the §6.6 misconception gate permanently inert),
+       transcript_audit_failed, reference_invalid. apply_abstention(...).
     4. Rewrite findings: for each missing_node whose key is in
        audit_result.upgraded_keys, REPLACE it with a NEW upgraded finding
        (kind stays MISSING_NODE? -> NO: emit an upgraded COVERED_NODE-shaped
@@ -325,7 +328,7 @@ Each test asserts a real behaviour; external deps (LLM/network) are mocked by **
 - `test_audit_not_found_key_stays_missing` — `audit_fn` returns `None` for the key → `missing_node` finding survives unchanged, no alias candidate.
 - `test_audit_infra_failure_suppresses_all_missing_and_records_reason` — `audit_fn` raises `TranscriptAuditUnavailableError`; two `missing_node` findings present. Asserts: NO upgrade; `"missing" in suppressed_event_kinds`; `REASON_TRANSCRIPT_AUDIT_FAILED in abstention_reasons`; the named error was caught (the call returns an `AuditedGrade`, does NOT raise) AND was NOT silently swallowed (its reason is recorded — proof it was surfaced). **(§6.11 fixture #3 — full binding.)**
 - `test_high_unresolved_run_abstains_findings_preserved` — `resolution` with `unresolved_rate > 0.35` → `abstained is True`, `REASON_HIGH_UNRESOLVED` present, and `findings` are still fully populated (an abstained run still carries its findings for the diagnostic + WU-4B3 persistence). **(§6.11 fixture #2 end-to-end.)**
-- `test_misconception_low_confidence_withheld_in_grade` — a contradiction finding at `confidence=0.7` → `"misconception" in suppressed_event_kinds`; the contradiction finding still present in `findings` (persists for diagnostic review).
+- `test_misconception_low_confidence_withheld_in_grade` — a real-shaped contradiction finding (`Finding.confidence` is None) whose evidence node resolved at `0.7` in the `resolution` → `"misconception" in suppressed_event_kinds`; the contradiction finding still present in `findings` (persists for diagnostic review). Plus `test_misconception_gate_reads_resolution_not_finding_confidence` (regression: confidence sourced from the resolution, not the always-None `Finding.confidence`) and `test_misconception_confidence_is_max_over_evidence_and_skips_unresolved` (MAX over evidence nodes; a contradiction with no resolved evidence contributes nothing).
 - `test_build_audited_grade_is_immutable` — the input `GradeResult` and its `Finding` objects are unchanged (identity-compared) after the call (no in-place mutation); the rewritten findings are a NEW tuple.
 - `test_build_audited_grade_no_missing_nodes_noop` — a `GradeResult` with zero `missing_node` findings → `audit_fn` never called (no entities), clean abstention, findings unchanged.
 - `test_audited_grade_carries_score_math_unchanged` — `audited.grade is grade` and the 10 `*_score` fields are untouched (WU-4B1 never re-grades).

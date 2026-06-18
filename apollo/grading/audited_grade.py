@@ -129,15 +129,37 @@ def _rewrite_findings(findings: tuple[Finding, ...], audit: AuditResult) -> tupl
     return tuple(out)
 
 
-def _misconception_confidences(findings: tuple[Finding, ...]) -> tuple[float, ...]:
-    """The confidences of the contradiction findings (the misconception gate
-    input). A contradiction with no confidence is treated as ``1.0`` (the §6.6
-    gate only withholds on a LOW confidence; a None confidence never withholds)."""
-    return tuple(
-        f.confidence if f.confidence is not None else 1.0
-        for f in findings
-        if f.kind == FindingKind.CONTRADICTION
-    )
+def _misconception_confidences(
+    findings: tuple[Finding, ...], resolution: ResolutionResult
+) -> tuple[float, ...]:
+    """The §6.6 misconception-gate input: per contradiction finding, the
+    confidence at which the student's evidence RESOLVED to the misconception key,
+    sourced from ``resolution`` (the method-capped ``ResolvedNode.confidence``).
+
+    NOT ``Finding.confidence``: the frozen ``graph_compare.contradiction_finding``
+    factory leaves that ``None`` (only ``covered_finding`` populates it), so a
+    ``None -> 1.0`` coalesce would make the §6.6 gate permanently inert — it could
+    never withhold on a real ``GradeResult``. Per finding we take the MAX over its
+    resolved evidence nodes, matching how S_norm assigns a merged node's
+    confidence (highest method-cap wins, ``canonical._winning_method``), so the
+    gate sees the SAME confidence the contradiction node actually carries. A
+    finding with no resolved evidence node contributes nothing (defensive — a real
+    contradiction always carries a misc resolution)."""
+    conf_by_node = {
+        rn.node_id: rn.confidence
+        for rn in resolution.resolved
+        if rn.resolution == "resolved" and rn.confidence is not None
+    }
+    out: list[float] = []
+    for finding in findings:
+        if finding.kind != FindingKind.CONTRADICTION:
+            continue
+        node_confs = [
+            conf_by_node[nid] for nid in finding.student_node_ids if nid in conf_by_node
+        ]
+        if node_confs:
+            out.append(max(node_confs))
+    return tuple(out)
 
 
 def build_audited_grade(
@@ -169,7 +191,7 @@ def build_audited_grade(
     abstention = apply_abstention(
         unresolved_rate=unresolved_rate_of(resolution),
         min_parser_confidence=min_parser_confidence_of(student_nodes),
-        misconception_confidences=_misconception_confidences(grade.findings),
+        misconception_confidences=_misconception_confidences(grade.findings, resolution),
         transcript_audit_failed=transcript_audit_failed,
         reference_invalid=reference_invalid,
     )
