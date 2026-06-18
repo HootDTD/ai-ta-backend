@@ -19,17 +19,11 @@ from apollo.grading.audited_grade import (
     build_audited_grade,
 )
 from apollo.grading.persistence import (
-    FindingRowSpec,
-    RunRowSpec,
     finding_to_row_spec,
     findings_to_row_specs,
     grade_to_run_spec,
 )
-from apollo.graph_compare.core import COMPARISON_VERSION
-from apollo.graph_compare.findings import Finding, FindingKind
-
 from apollo.grading.tests._builders import (
-    audited,
     candidate,
     covered_finding,
     found_audit_fn,
@@ -37,6 +31,8 @@ from apollo.grading.tests._builders import (
     nodes_with_confidences,
     resolution_with,
 )
+from apollo.graph_compare.core import COMPARISON_VERSION
+from apollo.graph_compare.findings import Finding, FindingKind
 
 _ATTEMPT_ID = 7
 _USER_ID = "11111111-1111-1111-1111-111111111111"

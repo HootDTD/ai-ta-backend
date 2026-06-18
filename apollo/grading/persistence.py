@@ -55,17 +55,17 @@ class RunRowSpec:
     attempt_id: int
     user_id: str
     search_space_id: int
-    coverage_score: float
+    coverage_score: float  # top-line 3 are NOT NULL (§2 schema)
     soundness_score: float
     bisimilarity_score: float
-    node_coverage_score: float
-    edge_coverage_score: float
-    scoping_score: float
-    usage_score: float
-    procedure_order_score: float
-    dependency_score: float
-    contradiction_score: float
-    normalization_confidence: float
+    node_coverage_score: float | None  # the 7 sub-scores are nullable (§2 schema)
+    edge_coverage_score: float | None
+    scoping_score: float | None
+    usage_score: float | None
+    procedure_order_score: float | None
+    dependency_score: float | None
+    contradiction_score: float | None
+    normalization_confidence: float  # NOT NULL (§2 schema)
     abstained: bool
     abstention_reasons: tuple[str, ...]
     comparison_version: str

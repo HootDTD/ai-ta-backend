@@ -44,11 +44,25 @@ def test_corpus_has_thirteen_fixtures():
 
 
 def test_bernoulli_capstone_events():
-    """The §6.9 row explicitly: covered ×3 (2 plain + 1 audit-upgraded) + missing."""
+    """The §6.9 row in v1: covered ×3 (2 plain + 1 audit-upgraded) + missing.
+
+    The spec's §6.9 NARRATIVE (line 877) lists 'partial (velocity)', but v1's
+    frozen §6.5 table has NO standalone-partial path for a shaky covered (the
+    edge-gap partial is calibration-gated OFF, §6.2), so the would-be-partial
+    surfaces as an audit-upgraded COVERED at <=0.75. Pin that deviation: EXACTLY
+    ONE covered event is the shaky <=0.75 would-be-partial (cond.assumptions),
+    the other two are full-confidence — so the corpus does not silently relabel a
+    partial as an indistinct third covered."""
     fixture = _BY_NAME["bernoulli_capstone"]
     audited, events = fixture.run_chain()
     assert _event_kinds(events) == ("covered", "covered", "covered", "missing")
     assert audited.abstained is False
+    covered = [e for e in events if e.event_kind.value == "covered"]
+    shaky = [e for e in covered if e.confidence is not None and e.confidence <= 0.75]
+    full = [e for e in covered if e.confidence is not None and e.confidence > 0.75]
+    assert len(shaky) == 1  # the would-be-partial (audit-upgraded velocity/assumptions)
+    assert shaky[0].canonical_key == "cond.assumptions"
+    assert len(full) == 2  # the two plain full-confidence covered
 
 
 def test_high_unresolved_abstains_no_events():

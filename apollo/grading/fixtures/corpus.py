@@ -425,13 +425,21 @@ def _f_high_unresolved_abstains() -> CorpusFixture:
 
 
 def _f_bernoulli_capstone() -> CorpusFixture:
-    """§6.9 Bernoulli capstone: covered ×2 + partial (velocity) + missing
-    (assumptions/solve). Events: covered ×2, partial, missing. PERSISTS.
+    """§6.9 Bernoulli capstone. v1 events: covered ×3 + missing. PERSISTS.
 
-    The 'partial' here is the audit-upgraded covered at <=0.75 (the §3 covered
-    s∈[0,1] mid-band row), produced by the audit upgrading a missing key; the two
-    plain covered are full covered; one missing key survives the audit (negative)
-    -> a missing event."""
+    DELIBERATE DEVIATION from the §6.9 NARRATIVE (spec line 877 lists
+    'covered ×2, partial (velocity), missing'): v1's frozen §6.5 table (WU-4B2)
+    has NO standalone-``partial`` path for a shaky covered — the edge-gap
+    ``partial`` variant is calibration-gated OFF (``PARTIAL_EDGE_GAP_ENABLED =
+    False``, §6.2: an edge gap must never halve a score), and an audited span
+    upgrades to COVERED ≤0.75, not ``partial``. So the narrative's
+    ``partial (velocity)`` surfaces in v1 as an audit-upgraded COVERED at ≤0.75 —
+    a low-confidence ("shaky") covered (the §3 covered s∈[0,1] mid-band), i.e. a
+    THIRD covered, not a partial. The two plain covered are full-confidence; one
+    missing key survives the audit (negative) -> a missing event.
+    ``test_bernoulli_capstone_events`` pins the deviation (exactly ONE covered at
+    ≤0.75 — the would-be-partial). Flipping ``PARTIAL_EDGE_GAP_ENABLED`` on after
+    calibration is what would realize the narrative's standalone partial."""
     grade = missing_grade(
         covered=("eq.bernoulli", "eq.continuity"),
         keys=("cond.assumptions", "proc.solve"),

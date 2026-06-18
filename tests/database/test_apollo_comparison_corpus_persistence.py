@@ -16,7 +16,6 @@ import uuid
 import pytest
 from sqlalchemy import func, select
 
-from apollo.grading.events import convert_findings_to_events
 from apollo.grading.fixtures.corpus import PERSISTING_CORPUS
 from apollo.grading.normalization_confidence import compute_normalization_confidence
 from apollo.grading.persistence import persist_comparison_run

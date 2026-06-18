@@ -14,14 +14,13 @@ from apollo.grading.normalization_confidence import (
     NORMALIZATION_CONFIDENCE_FLOOR_WHEN_NO_SCORED_NODES,
     compute_normalization_confidence,
 )
-from apollo.graph_compare.findings import Finding, FindingKind
-
 from apollo.grading.tests._builders import (
     audited,
     contradiction_finding,
     covered_finding_with_nodes,
     resolution_with,
 )
+from apollo.graph_compare.findings import Finding, FindingKind
 
 
 def _missing_finding(key: str) -> Finding:

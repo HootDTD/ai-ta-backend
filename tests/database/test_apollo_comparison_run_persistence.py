@@ -18,6 +18,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from apollo.grading.persistence import persist_comparison_run
+from apollo.grading.tests._builders import (
+    audited,
+    missing_finding,
+    missing_grade,
+)
+from apollo.graph_compare.findings import Finding, FindingKind
 from apollo.persistence.models import (
     ApolloSession,
     GraphComparisonFinding,
@@ -25,14 +31,6 @@ from apollo.persistence.models import (
     ProblemAttempt,
 )
 from database.models import SearchSpace
-
-from apollo.grading.tests._builders import (
-    audited,
-    covered_finding_with_nodes,
-    missing_finding,
-    missing_grade,
-)
-from apollo.graph_compare.findings import Finding, FindingKind
 
 pytestmark = pytest.mark.integration
 
