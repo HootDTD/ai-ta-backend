@@ -266,6 +266,45 @@ async def test_prereq_edges_and_id_key_maps_round_trip(db_session):
 
 
 # ---------------------------------------------------------------------------
+# 4b. Cross-concept prereq edges are EXCLUDED — prereq_edges stays self-contained.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cross_concept_prereq_edge_is_excluded(db_session):
+    """A prereq edge with one endpoint in ANOTHER concept is dropped: prereq_edges
+    stays within-concept so every endpoint resolves through key_by_entity_id. Under
+    a from-OR-to filter these edges would leak a foreign entity_id (failing the
+    'endpoint in key_by_entity_id' invariant); the within-concept from-AND-to filter
+    excludes them. The wedge does not gate on out-of-concept prerequisites."""
+    sid, cid = await _seed_course(db_session, course_slug="xconcept")
+    e1 = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.continuity")
+    e2 = await _seed_entity(
+        db_session, concept_id=cid, canonical_key="cond.incompressibility"
+    )
+    # A different concept with its own entity (the foreign endpoint).
+    _, other_cid = await _seed_course(db_session, course_slug="xconcept_other")
+    foreign = await _seed_entity(
+        db_session, concept_id=other_cid, canonical_key="eq.foreign"
+    )
+
+    await _seed_prereq(db_session, from_id=e1, to_id=e2)  # within-concept: KEPT
+    await _seed_prereq(db_session, from_id=e1, to_id=foreign)  # cross-concept: DROPPED
+    await _seed_prereq(db_session, from_id=foreign, to_id=e2)  # cross-concept: DROPPED
+
+    profile = await read_learner_profile(
+        db_session, user_id=TEST_USER_ID, search_space_id=sid, concept_id=cid
+    )
+
+    # Only the within-concept edge survives; the foreign id never appears.
+    assert profile.prereq_edges == ((e1, e2),)
+    for f, t in profile.prereq_edges:
+        assert f in profile.key_by_entity_id
+        assert t in profile.key_by_entity_id
+    assert foreign not in profile.key_by_entity_id
+
+
+# ---------------------------------------------------------------------------
 # 5. Unknown concept (zero entities) short-circuits before the state query.
 # ---------------------------------------------------------------------------
 

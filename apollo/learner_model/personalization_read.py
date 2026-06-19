@@ -10,7 +10,9 @@ reused here. ``read_learner_profile`` is a pure, no-lock, course-scoped read:
   ``user_id`` AND ``search_space_id`` AND ``entity_id IN (concept entities)`` —
   the spec §1.4 per-classroom isolation invariant: mastery never crosses
   courses.
-* It loads the RAW ``apollo_entity_prereqs`` edges for those entities.
+* It loads the WITHIN-CONCEPT ``apollo_entity_prereqs`` edges (BOTH endpoints
+  among this concept's entities), so ``prereq_edges`` only ever references
+  entities present in the id<->key maps — a cross-concept edge is excluded.
 
 Columns are returned VERBATIM (no belief recompute — ``belief.py`` is NOT
 imported). ``is_empty`` reflects the PROD cold-start path: ``apollo_learner_state``
@@ -29,7 +31,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.persistence.models import EntityPrereq, KGEntity, LearnerState
@@ -57,7 +59,9 @@ class LearnerProfile:
 
     ``by_canonical_key`` holds ONLY the entities with a present learner_state row
     (absence means "cold", never zero-filled). ``prereq_edges`` are RAW
-    ``(from_entity_id, to_entity_id)`` tuples, deterministically sorted. The two
+    ``(from_entity_id, to_entity_id)`` tuples, deterministically sorted, and
+    WITHIN-CONCEPT — every endpoint is one of this concept's entities, so each
+    resolves through the id<->key maps (a cross-concept edge is excluded). The two
     id<->key maps cover this concept's full entity inventory. ``is_empty`` is True
     iff ZERO learner_state rows matched (the PROD cold-start path).
     """
@@ -135,16 +139,19 @@ async def read_learner_profile(
             misconception_code=misconception_code,
         )
 
-    # 3. RAW prereq edges touching this concept's entities (1 query).
+    # 3. WITHIN-CONCEPT prereq edges (1 query): BOTH endpoints among this concept's
+    #    entities, so ``prereq_edges`` is self-contained — every id resolves through
+    #    the id<->key maps. A cross-concept edge (one foreign endpoint) is excluded:
+    #    the within-concept wedge does not gate on out-of-concept prerequisites, and
+    #    the consumer (WU-6A2) can resolve every endpoint it receives. The two
+    #    ``.in_`` predicates are ANDed by the multi-arg ``.where``.
     prereq_rows = (
         await db.execute(
             select(
                 EntityPrereq.from_entity_id, EntityPrereq.to_entity_id
             ).where(
-                or_(
-                    EntityPrereq.from_entity_id.in_(concept_entity_ids),
-                    EntityPrereq.to_entity_id.in_(concept_entity_ids),
-                )
+                EntityPrereq.from_entity_id.in_(concept_entity_ids),
+                EntityPrereq.to_entity_id.in_(concept_entity_ids),
             )
         )
     ).all()
