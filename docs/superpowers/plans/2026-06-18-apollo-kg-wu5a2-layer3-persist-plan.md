@@ -244,12 +244,15 @@ These are the acceptance-blocking invariants. Each maps to a pinned test below.
    `convert_findings_to_events(shadow.audited, opposes_map=shadow.opposes_map, turn_order=shadow.turn_order)`.
    `() ` (abstained / empty / fully-suppressed) -> write NOTHING, return `LearnerUpdateResult(0, 0, (), abstained=True)`.
 
-5. **q sourcing (§3 line 430, finding #8).** `q = parser_confidence * grader_confidence` ONLY,
-   formed INSIDE WU-5A1's frozen `apply_event`. `parser_confidence = min_parser_confidence_of(student_graph.nodes)`
-   (computed in `done.py`); `grader_confidence = shadow.normalization_confidence * 1.0`
-   (computed in `persist_learner_update`). The COVERED `event.score` is already resolution-scaled;
-   `event.confidence` is NOT re-multiplied into q (WU-5A1 already guarantees this — WU-5A2 must
-   pass `parser_confidence`/`grader_confidence` and NOT `event.confidence`).
+5. **q sourcing (§3 line 430, finding #8).** `q = parser_confidence * grader_confidence` ONLY.
+   **[AMENDED post-build — see "Post-build amendment" at the end.]** q is formed inside the
+   per-entity **combined-likelihood fold** `_combined_belief_update` (multiply every event's
+   `likelihood_for_event` into one `L`, `damp` once, one `bayes_update`), NOT a per-event
+   `apply_event` chain — the §3.1 affine damper is not multiplicative-homomorphic, so chaining
+   would diverge for `q < 1`. For a single event the two are identical. `parser_confidence =
+   min_parser_confidence_of(student_graph.nodes)` (computed in `done.py`); `grader_confidence =
+   shadow.normalization_confidence * 1.0` (computed in `persist_learner_update`). The COVERED
+   `event.score` is already resolution-scaled; `event.confidence` is NOT re-multiplied into q.
 
 6. **canonical_key -> entity_id JOIN, unmapped => SKIP.** `LearnerEvent.canonical_key` is the
    resolved reference-node key (e.g. `eq.continuity`), which equals `apollo_kg_entities.canonical_key`.
@@ -470,3 +473,37 @@ Acceptance: Gate 1 zero failures; Gate 2 the new PG file + the existing shadow P
 
 A MEDIUM+ deviation (changing a behavioral contract 1–12, touching a frozen unit, or skipping the
 real-PG gate) is NOT allowed — ESCALATE to the orchestrator instead.
+
+## Post-build amendment (2026-06-18) — combined-likelihood fold supersedes the per-event chain
+
+**What shipped differs from this plan's per-event `apply_event` mechanism, and the difference is
+the correct one (the plan carried a latent spec-divergence; the code is spec-faithful).**
+
+The executor implemented the multi-event-per-entity belief update as a **single combined-likelihood
+update** (`apollo/learner_model/persistence.py::_combined_belief_update`): for one entity in one
+Done, start `L = [1,1,1]`, multiply in every event's frozen `likelihood_for_event(event)`, `damp`
+the combined `L` ONCE with `q = parser·grader`, then ONE `bayes_update` over the event-log base.
+This deliberately does NOT chain WU-5A1's `apply_event` per event.
+
+**Why it is correct (spec §3 lines 393/420/433/454).** §3 says the belief is "updated once per
+entity per [Done]", you "start `[1,1,1]`, multiply per evidence item", apply the confidence damper
+`q` as a single Step 2, and the whole update "fires once per Done episode (never per turn)."
+Chaining `apply_event` would apply the §3.1 affine damper `q·L + (1−q)·[1,1,1]` once PER event —
+and because that damper is not multiplicatively homomorphic
+(`[q·L₁+(1−q)]·[q·L₂+(1−q)] ≠ q·(L₁·L₂)+(1−q)` for `q<1`), the chained result diverges from the
+spec whenever an entity has ≥2 events and `q<1`. For the common single-event-per-entity case the
+two are byte-identical.
+
+**No reimplementation of the math.** `_combined_belief_update` composes only the FROZEN WU-5A1
+exports (`likelihood_for_event`, `damp`, `bayes_update`, `mastery_of`, `confidence_of`,
+`misconception_code_of`). WU-5A1's `apply_event` remains the correct one-event primitive (used by
+the single-event tests and available to WU-5B); the episode-level fold lives in WU-5A2. Each event
+still appends its OWN `apollo_mastery_events` row (per-event detail preserved) but all rows of one
+entity carry the SAME combined base→posterior transition, and the entity gets ONE
+`apollo_learner_state` upsert. The misconception code surfaces against the COMBINED posterior
+(last clearing event wins, deterministic converter order).
+
+This amendment supersedes the "formed INSIDE `apply_event`" wording in contract 5 and the
+`apply_event`-chain framing in the frozen-signature block / TDD step 8. Confirmed spec-faithful by
+the orchestrator (independent §3 read + `_combined_belief_update` review) and by all three cold-eyes
+lenses (correctness PASS, drift PASS-WITH-NITS, test-honesty PASS-WITH-NITS, 0 blocking).
