@@ -129,12 +129,12 @@ def test_keywords_skip_blank_and_malformed_entries(monkeypatch):
     """Whitespace-only strings and dicts with no usable term key are dropped;
     only clean term strings reach found_terms."""
     raw = [
-        {"term": "  energy  "},   # stripped
-        {"term": ""},             # empty → dropped
-        "   ",                    # blank str → dropped
-        {"keyword": "work"},      # alt key honored
-        {"nope": "x"},            # no term key → dropped
-        "heat",                   # bare str kept
+        {"term": "  energy  "},  # stripped
+        {"term": ""},  # empty → dropped
+        "   ",  # blank str → dropped
+        {"keyword": "work"},  # alt key honored
+        {"nope": "x"},  # no term key → dropped
+        "heat",  # bare str kept
     ]
     orch = _make_orchestrator(monkeypatch, terms=raw)
     bundle = orch._iterative_research("q", {})

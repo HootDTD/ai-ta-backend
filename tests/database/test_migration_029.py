@@ -161,9 +161,7 @@ async def test_existing_rows_default_to_empty_array(mig_conn):
     # Seed the FK chain: auth.users → aita_search_spaces → chat_sessions.
     uid = "a0000000-0000-4000-8000-0000000000aa"
     await mig_conn.execute("INSERT INTO auth.users (id) VALUES ($1)", uid)
-    ssid = await mig_conn.fetchval(
-        "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
-    )
+    ssid = await mig_conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
     sess_id = await mig_conn.fetchval(
         "INSERT INTO chat_sessions (chat_id, user_id, search_space_id) "
         "VALUES ('c-legacy', $1, $2) RETURNING id",
@@ -176,9 +174,7 @@ async def test_existing_rows_default_to_empty_array(mig_conn):
         "VALUES ($1, 1, '1', 'assistant', 'x') RETURNING id",
         sess_id,
     )
-    raw = await mig_conn.fetchval(
-        "SELECT keywords FROM chat_turns WHERE id=$1", turn_id
-    )
+    raw = await mig_conn.fetchval("SELECT keywords FROM chat_turns WHERE id=$1", turn_id)
     # asyncpg returns jsonb as a JSON text string.
     import json
 

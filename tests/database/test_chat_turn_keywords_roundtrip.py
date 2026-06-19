@@ -41,9 +41,7 @@ async def _seed_session(db_session) -> ChatSession:
 async def _read_turn(db_session, turn_id: int) -> ChatTurn:
     return (
         await db_session.execute(
-            select(ChatTurn)
-            .where(ChatTurn.id == turn_id)
-            .execution_options(populate_existing=True)
+            select(ChatTurn).where(ChatTurn.id == turn_id).execution_options(populate_existing=True)
         )
     ).scalar_one()
 

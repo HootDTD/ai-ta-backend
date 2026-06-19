@@ -88,9 +88,7 @@ async def _apply_chain(dsn: str) -> None:
         await conn.execute(_GRANT_TENANT)
         # Seed: user A owns a session + a turn carrying keywords=["x"].
         await conn.execute("INSERT INTO auth.users (id) VALUES ($1), ($2)", USER_A, USER_B)
-        ssid = await conn.fetchval(
-            "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
-        )
+        ssid = await conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
         sess_id = await conn.fetchval(
             "INSERT INTO chat_sessions (chat_id, user_id, search_space_id) "
             "VALUES ('a-chat', $1, $2) RETURNING id",
