@@ -58,7 +58,7 @@ Builds NEW value objects, never mutates inputs.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from sqlalchemy import delete, desc, select
@@ -97,6 +97,20 @@ _COMPARISON_CONFIDENCE: float = 1.0
 # the integer ``dt_days_since_last`` (or ``None`` -> the transform returns the
 # prior unchanged). Default ``None`` = identity = byte-identical to WU-5A2.
 PriorTransform = Callable[[tuple[float, float, float], int | None], tuple[float, float, float]]
+
+# WU-5B2 §3 negotiation multiplier seam (adjudication #4). Two identity-default
+# keyword-only callables threaded through the fold (alongside ``prior_transform``):
+#   - ``likelihood_multiplier_for_entity(entity_events) -> (m_misc, m_shaky, m_mastered)``
+#       multiplies the COMBINED likelihood ONCE per entity BEFORE damp; identity
+#       (1,1,1) when no qualifying move OR when the entity carries a misconception
+#       (the RATIFIED suppression). Default ``None`` = no-op (NO_OP_LIKELIHOOD).
+#   - ``negotiation_move_for_entity(entity_events) -> str | None``
+#       the representative move string persisted onto each event row (OVERRIDES the
+#       frozen ``MasteryEventRowSpec.negotiation_move=None``). Default ``None``.
+# DECOUPLED on purpose: suppression mutes the MULTIPLIER but the move STRING is
+# still persisted (so the refit corpus can later re-fit the sign).
+LikelihoodMultiplierForEntity = Callable[[list], tuple[float, float, float]]
+NegotiationMoveForEntity = Callable[[list], "str | None"]
 
 
 @dataclass(frozen=True)
@@ -241,6 +255,8 @@ async def persist_learner_update(
     parser_confidence: float,
     canon_key_by_canonical_key: Mapping[str, int],
     prior_transform: PriorTransform | None = None,
+    likelihood_multiplier_for_entity: LikelihoodMultiplierForEntity | None = None,
+    negotiation_move_for_entity: NegotiationMoveForEntity | None = None,
 ) -> LearnerUpdateResult:
     """Persist the §3 belief update for this attempt, FLUSH-ONLY (the caller owns
     the txn boundary). Steps (§6.4 step 16 + step 17):
@@ -309,6 +325,8 @@ async def persist_learner_update(
             parser_confidence=parser_confidence,
             grader_confidence=grader_confidence,
             prior_transform=prior_transform,
+            likelihood_multiplier_for_entity=likelihood_multiplier_for_entity,
+            negotiation_move_for_entity=negotiation_move_for_entity,
         )
 
     await db.flush()
@@ -330,6 +348,7 @@ def _combined_belief_update(
     grader_confidence: float,
     done_ts: datetime,
     prior_transform: PriorTransform | None = None,
+    likelihood_multiplier: tuple[float, float, float] = NO_OP_LIKELIHOOD,
 ) -> BeliefUpdate:
     """The §3 SINGLE combined-likelihood update for ALL of one entity's events in
     one Done (steps 1-3). Step 0 (WU-5B1, when ``prior_transform`` is provided):
@@ -370,6 +389,14 @@ def _combined_belief_update(
         combined_likelihood = tuple(
             a * b for a, b in zip(combined_likelihood, likelihood, strict=True)
         )
+    # WU-5B2 §3 L428 — fold the negotiation multiplier into the COMBINED
+    # likelihood ONCE per entity, AFTER the per-event product and BEFORE damp (so
+    # a low-q attempt mutes the metacognitive bump; ``q`` stays parser·grader).
+    # The default ``NO_OP_LIKELIHOOD`` makes this an identity multiply (a*1.0=a) ->
+    # byte-identical to WU-5B1.
+    combined_likelihood = tuple(
+        a * m for a, m in zip(combined_likelihood, likelihood_multiplier, strict=True)
+    )
     damped = damp(combined_likelihood, q)
     posterior = bayes_update(prior, damped)
     misconception_code = None
@@ -400,6 +427,8 @@ async def _persist_entity_group(
     parser_confidence: float,
     grader_confidence: float,
     prior_transform: PriorTransform | None = None,
+    likelihood_multiplier_for_entity: LikelihoodMultiplierForEntity | None = None,
+    negotiation_move_for_entity: NegotiationMoveForEntity | None = None,
 ) -> int:
     """Fold ALL of one entity's events for this Done into ONE belief update and
     a SINGLE ``LearnerState`` upsert (§3 steps 1-3 / 'fires once per Done
@@ -427,6 +456,23 @@ async def _persist_entity_group(
         prior_state.last_evidence_at if prior_state is not None else None
     )
 
+    # WU-5B2 §3 — resolve the per-entity negotiation multiplier + representative
+    # move from the injected maps (identity-default when not provided). The
+    # multiplier folds into the COMBINED likelihood BEFORE damp; ``move`` overrides
+    # the frozen MasteryEventRowSpec.negotiation_move at the ORM-build site. The two
+    # are DECOUPLED — the caller applies the suppression inside the multiplier
+    # closure, but the move string is recorded unconditionally.
+    entity_multiplier = (
+        likelihood_multiplier_for_entity(entity_events)
+        if likelihood_multiplier_for_entity is not None
+        else NO_OP_LIKELIHOOD
+    )
+    negotiation_move = (
+        negotiation_move_for_entity(entity_events)
+        if negotiation_move_for_entity is not None
+        else None
+    )
+
     update = _combined_belief_update(
         entity_events,
         prior_belief=base_belief,
@@ -435,6 +481,7 @@ async def _persist_entity_group(
         grader_confidence=grader_confidence,
         done_ts=done_ts,
         prior_transform=prior_transform,
+        likelihood_multiplier=entity_multiplier,
     )
 
     state_spec = None
@@ -450,6 +497,10 @@ async def _persist_entity_group(
             entity_id=entity_id,
             attempt_id=attempt.id,
         )
+        # OVERRIDE the frozen spec's negotiation_move (None in v1) at the ORM-build
+        # site — immutable via dataclasses.replace. ``None`` reproduces the
+        # existing None -> byte-identical to WU-5B1.
+        mastery_spec = replace(mastery_spec, negotiation_move=negotiation_move)
         db.add(_mastery_event_orm_from_spec(mastery_spec))
 
     # state_spec carries the combined posterior — upsert the state ONCE.
