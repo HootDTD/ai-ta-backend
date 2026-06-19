@@ -15,6 +15,7 @@ Locks (§10 RQ5 hedge, live path):
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -22,6 +23,22 @@ from fastapi.testclient import TestClient
 
 from auth import AuthContext
 from config.contracts import ParsedTask
+
+
+def _wait_for(predicate, *, timeout=5.0, interval=0.01):
+    """Poll ``predicate`` until truthy or ``timeout`` elapses.
+
+    The streaming /ask persist runs in a background executor (``server.py``:2151)
+    *after* the SSE stream is yielded, so draining ``iter_text()`` can return before
+    the spy fires. Polling removes that teardown race without weakening the
+    assertion — a persist that never happens still fails the caller's assert.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return bool(predicate())
 
 
 @pytest.fixture
@@ -274,5 +291,47 @@ def test_ask_streaming_happy_path_persists_found_terms(client_with_server, monke
         body = "".join(resp.iter_text())
 
     assert "Streamed answer" in body
-    assert assistant_turns, "streaming assistant turn should be persisted"
+    # The persist runs in a background executor after the SSE drains; poll for it
+    # so the assertion is deterministic (no event-loop teardown race).
+    assert _wait_for(lambda: bool(assistant_turns)), "streaming assistant turn should be persisted"
     assert assistant_turns[0]["keywords"] == ["momentum", "impulse"]
+
+
+@pytest.mark.integration
+def test_ask_streaming_error_path_persists_no_keywords(client_with_server, monkeypatch):
+    """The SSE except-branch (server.py:2179) persists an error turn with NO
+    keywords kwarg -> the spy captures a dict with no 'keywords' key. This drives
+    the live error path end-to-end (previously covered only by the unit proxy)."""
+    client, server = client_with_server
+    assistant_turns: list[dict] = []
+    _wire_stream_pipeline(
+        server,
+        monkeypatch,
+        bundle=_bundle_with(["momentum", "impulse"]),
+        assistant_turns=assistant_turns,
+    )
+
+    # Force a failure AFTER the bundle is built so the except-branch error-turn
+    # persist runs; it must NOT thread any keywords (not even stale bundle terms).
+    def _boom(*args, **kwargs):
+        raise ValueError("solver exploded")
+
+    monkeypatch.setattr(server, "format_answer", _boom)
+
+    with client.stream(
+        "POST",
+        "/ask/stream",
+        json={
+            "question": "Explain momentum.",
+            "chat_id": "chat-stream-err-1",
+            "search_space_id": 1,
+            "attachments": [],
+        },
+    ) as resp:
+        assert resp.status_code == 200
+        body = "".join(resp.iter_text())
+
+    assert "[error]" in body
+    assert _wait_for(lambda: bool(assistant_turns)), "error turn should be persisted"
+    # The error-path call site omits keywords entirely (-> append_turn coalesces []).
+    assert "keywords" not in assistant_turns[0]
