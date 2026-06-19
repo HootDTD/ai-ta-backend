@@ -24,12 +24,27 @@ commit). The load-bearing differences vs the runs/findings persist:
     ``posterior_belief`` of the latest event row from a DIFFERENT attempt (else
     cold-start). Reading the base off ``LearnerState.belief`` would double-count
     this attempt's first-run mutation.
+  * **ONE belief update per entity per Done (§3 step 1 'multiply per evidence
+    item').** Events are GROUPED by ``entity_id`` first; within a group
+    ``apply_event`` is CHAINED (posterior -> prior) across the entity's events so
+    the per-evidence likelihoods are multiplied into a SINGLE posterior. Each
+    event still appends its OWN ``apollo_mastery_events`` row (the event log, each
+    carrying its own prior->posterior segment of the chain), but
+    ``apollo_learner_state`` is upserted ONCE per entity — the §3 "fires once per
+    Done episode, never per turn" invariant. (Reachable today: with the
+    structurally-empty ``opposes_map`` a CONTRADICTION + a COVERED on the same
+    ``canonical_key`` both surface as standalone events for one entity.)
   * **SELECT ... FOR UPDATE** the prior learner-state rows before the
     read-modify-write (a janitor retry racing a live Done must not clobber a
     posterior).
-  * **evidence_count INCREMENTS on upsert; 1 only on a fresh insert.**
+  * **evidence_count INCREMENTS once per Done; 1 only on a fresh insert** (the
+    increment is per entity per Done, NOT per event).
   * **last_evidence_at / updated_at = done_ts** (the SAME instant Neo4j
     ``graded_at`` carries via ``stamp_graded_at(ts=done_ts)``).
+  * **prior_last_evidence_at** anchors the recorded-but-not-applied
+    ``dt_days_since_last`` only; v1 applies NO decay (deferred to WU-5B), so the
+    posterior is independent of this anchor — it is read off the locked prior
+    state row for the v1 record.
 
 Builds NEW value objects, never mutates inputs.
 """
@@ -209,13 +224,17 @@ async def persist_learner_update(
     2. Attempt-wide supersede: ``DELETE FROM apollo_mastery_events WHERE
        attempt_id = :attempt_id`` (covers a misconception->corrected kind change
        across runs). Same txn.
-    3. Per event: resolve ``canonical_key -> entity_id`` (unmapped -> SKIP,
-       recorded in ``skipped_unmapped``); ``SELECT ... FOR UPDATE`` the prior
-       state; recompute the base from the EVENT LOG (NOT the state row); WU-5A1
-       ``apply_event``; ``event_to_row_specs`` with the resolved ids; append the
-       ``MasteryEvent`` row + upsert the ``LearnerState`` (evidence_count
-       INCREMENT, last_evidence_at = done_ts).
-    4. ``db.flush()`` (no commit).
+    3. Resolve each event's ``canonical_key -> entity_id`` (unmapped -> SKIP,
+       recorded in ``skipped_unmapped``) and GROUP the events by ``entity_id``
+       (preserving the converter's deterministic order).
+    4. Per entity group: ``SELECT ... FOR UPDATE`` the prior state ONCE; recompute
+       the base from the EVENT LOG (NOT the state row); CHAIN WU-5A1
+       ``apply_event`` across the group's events (each posterior feeds the next
+       prior — the §3 step 1 per-evidence product); append one ``MasteryEvent``
+       row per event; upsert the ``LearnerState`` ONCE with the final chained
+       posterior (evidence_count INCREMENT once per Done, last_evidence_at =
+       done_ts).
+    5. ``db.flush()`` (no commit).
     """
     events = convert_findings_to_events(
         shadow.audited,
@@ -236,10 +255,12 @@ async def persist_learner_update(
         delete(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
     )
 
+    # Resolve canonical_key -> entity_id and GROUP events by entity (preserving
+    # the converter's deterministic order). One entity may carry >1 event in a
+    # single Done (e.g. a CONTRADICTION + a COVERED on the same key with the
+    # empty opposes_map) — §3 step 1 folds them into ONE belief update.
     skipped_unmapped: list[str] = []
-    states_upserted = 0
-    events_written = 0
-
+    events_by_entity: dict[int, list] = {}
     for event in events:
         entity_id = canon_key_by_canonical_key.get(event.canonical_key)
         if entity_id is None:
@@ -247,27 +268,73 @@ async def persist_learner_update(
             # columns are NOT NULL FKs, never insert a stub.
             skipped_unmapped.append(event.canonical_key)
             continue
+        events_by_entity.setdefault(entity_id, []).append(event)
 
-        prior_state = await _lock_prior_state(
+    events_written = 0
+    for entity_id, entity_events in events_by_entity.items():
+        events_written += await _persist_entity_group(
             db,
-            user_id=sess.user_id,
-            search_space_id=sess.search_space_id,
+            sess=sess,
+            attempt=attempt,
             entity_id=entity_id,
-        )
-        prior_belief = await _recompute_base_for_entity(
-            db,
-            user_id=sess.user_id,
-            search_space_id=sess.search_space_id,
-            entity_id=entity_id,
-            attempt_id=attempt.id,
-        )
-        prior_last_evidence_at = (
-            prior_state.last_evidence_at if prior_state is not None else None
+            entity_events=entity_events,
+            done_ts=done_ts,
+            parser_confidence=parser_confidence,
+            grader_confidence=grader_confidence,
         )
 
+    await db.flush()
+
+    return LearnerUpdateResult(
+        events_written=events_written,
+        states_upserted=len(events_by_entity),
+        skipped_unmapped=tuple(skipped_unmapped),
+        abstained=False,
+    )
+
+
+async def _persist_entity_group(
+    db: AsyncSession,
+    *,
+    sess: ApolloSession,
+    attempt: ProblemAttempt,
+    entity_id: int,
+    entity_events: list,
+    done_ts: datetime,
+    parser_confidence: float,
+    grader_confidence: float,
+) -> int:
+    """Fold ALL of one entity's events for this Done into ONE belief update and
+    a SINGLE ``LearnerState`` upsert (§3 step 1 'multiply per evidence item' /
+    'fires once per Done episode'). ``apply_event`` is CHAINED — each posterior
+    becomes the next event's prior — so the per-evidence likelihoods multiply.
+    Each event still appends its OWN ``apollo_mastery_events`` row (the event log).
+    Returns the count of event rows appended (for ``events_written``)."""
+    prior_state = await _lock_prior_state(
+        db,
+        user_id=sess.user_id,
+        search_space_id=sess.search_space_id,
+        entity_id=entity_id,
+    )
+    # Recompute base = the EVENT LOG (prior-ATTEMPT posterior), never the
+    # self-mutated state row. prior_last_evidence_at anchors the recorded-only
+    # dt_days_since_last (no v1 decay) and is read off the locked prior state.
+    chained_belief = await _recompute_base_for_entity(
+        db,
+        user_id=sess.user_id,
+        search_space_id=sess.search_space_id,
+        entity_id=entity_id,
+        attempt_id=attempt.id,
+    )
+    prior_last_evidence_at = (
+        prior_state.last_evidence_at if prior_state is not None else None
+    )
+
+    state_spec = None
+    for event in entity_events:
         update = apply_event(
             event,
-            prior_belief=prior_belief,
+            prior_belief=chained_belief,
             prior_last_evidence_at=prior_last_evidence_at,
             parser_confidence=parser_confidence,
             grader_confidence=grader_confidence,
@@ -281,26 +348,18 @@ async def persist_learner_update(
             entity_id=entity_id,
             attempt_id=attempt.id,
         )
-
         db.add(_mastery_event_orm_from_spec(mastery_spec))
-        events_written += 1
+        # Chain: this posterior is the prior for the next event in the group.
+        chained_belief = update.posterior_belief
 
-        _upsert_learner_state(
-            db,
-            prior_state=prior_state,
-            state_spec=state_spec,
-            user_id=sess.user_id,
-            search_space_id=sess.search_space_id,
-            entity_id=entity_id,
-            done_ts=done_ts,
-        )
-        states_upserted += 1
-
-    await db.flush()
-
-    return LearnerUpdateResult(
-        events_written=events_written,
-        states_upserted=states_upserted,
-        skipped_unmapped=tuple(skipped_unmapped),
-        abstained=False,
+    # state_spec carries the FINAL chained posterior — upsert the state ONCE.
+    _upsert_learner_state(
+        db,
+        prior_state=prior_state,
+        state_spec=state_spec,
+        user_id=sess.user_id,
+        search_space_id=sess.search_space_id,
+        entity_id=entity_id,
+        done_ts=done_ts,
     )
+    return len(entity_events)
