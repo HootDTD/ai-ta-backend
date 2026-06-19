@@ -28,6 +28,13 @@ from apollo.graph_compare.findings import Finding, FindingKind
 from apollo.handlers.done import handle_done
 from apollo.handlers.done_grading import ShadowGradeResult
 from apollo.handlers.learner_update import run_learner_update
+from apollo.learner_model.belief import (
+    COLD_START_PRIOR,
+    bayes_update,
+    damp,
+    likelihood_for_event,
+    mastery_of,
+)
 from apollo.learner_model.persistence import (
     LearnerUpdateResult,
     persist_learner_update,
@@ -537,8 +544,11 @@ async def test_same_entity_multi_event_folds_once(db_session):
     Asserts: (a) each event still gets its OWN apollo_mastery_events row (the event
     log), (b) EXACTLY ONE apollo_learner_state row with evidence_count == 1 (the
     update 'fires once per Done episode' — NOT once per event), (c) the persisted
-    posterior equals apply_event CHAINED (posterior -> prior) over the two events
-    in deterministic sort order, NOT the last event's standalone posterior.
+    posterior equals the SPEC §3 single combined-likelihood update — multiply the
+    per-evidence RAW likelihoods into ONE L (step 1), damp the COMBINED L ONCE
+    (step 2), then ONE bayes_update (step 3) — NOT a per-event apply_event chain.
+    The affine damper is NOT multiplicative-homomorphic, so chaining (damp+bayes
+    per event) diverges from the spec when q < 1; this asserts the combined result.
     """
     sid, cid, by_key = await _seed_course_with_entity(db_session)
     sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
@@ -583,18 +593,73 @@ async def test_same_entity_multi_event_folds_once(db_session):
     assert state.evidence_count == 1
     assert state.last_evidence_at == done_ts
 
-    # the posterior is the CHAINED product over both events in deterministic sort
-    # order (covered, then misconception), each apply_event feeding the next prior.
+    # the posterior is the SPEC §3 single combined-likelihood update over both
+    # events (covered, then misconception): multiply the RAW per-evidence
+    # likelihoods into ONE L (step 1), damp the COMBINED L ONCE (step 2), then ONE
+    # bayes_update over the cold-start base (step 3). NOT a per-event apply_event
+    # chain (which would damp + renormalize each event separately and diverge for
+    # q = parser*grader < 1).
     ordered = convert_findings_to_events(audited, opposes_map={}, turn_order={})
     assert [e.event_kind.value for e in ordered] == ["covered", "misconception"]
-    prior = None
+    q = 0.9 * (0.8 * 1.0)  # parser_confidence * grader_confidence (comparison=1.0)
+    combined_l = (1.0, 1.0, 1.0)
     for ev in ordered:
-        upd = _expected_update(
-            ev, parser_confidence=0.9, normalization_confidence=0.8,
-            prior_belief=prior, done_ts=done_ts,
-        )
-        prior = upd.posterior_belief
-    assert _belief_close(state.belief, prior)
+        L = likelihood_for_event(ev)
+        combined_l = tuple(a * b for a, b in zip(combined_l, L, strict=True))
+    expected_belief = bayes_update(COLD_START_PRIOR, damp(combined_l, q))
+    assert _belief_close(state.belief, expected_belief)
+    assert round(state.mastery, 9) == round(mastery_of(expected_belief), 9)
+
+
+# ---------------------------------------------------------------------------
+# 8c. misconception code surfaces on the COMBINED posterior (§3 two-step flag)
+# ---------------------------------------------------------------------------
+
+
+async def test_misconception_code_surfaces_on_second_attempt(db_session):
+    """The §3 two-step misconception flag surfaces a code only once p_misc is the
+    argmax AND >= 0.5 — 'typically only on the 2nd misconception'. A first attempt
+    emits a misconception (code withheld, p_misc below threshold); a SECOND distinct
+    attempt emits a misconception again over the prior-ATTEMPT event-log base, where
+    the combined posterior clears the flag, so misconception_code is recorded on the
+    learner_state AND on the new mastery_event row (drives _combined_belief_update's
+    code-surfacing branch)."""
+    sid, cid, by_key = await _seed_course_with_entity(db_session)
+    sess, attempt1 = await _seed_session_attempt(db_session, sid=sid, cid=cid, problem_code="p_m1")
+    done_ts = datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
+
+    misc_audited = _audited([_misconception_finding(key=_CONTINUITY)])
+
+    await run_learner_update(
+        db_session, sess=sess, attempt=attempt1, shadow=_shadow(misc_audited),
+        done_ts=done_ts, parser_confidence=0.9,
+    )
+    state1 = (await db_session.execute(
+        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+    )).scalar_one()
+    # 1st misconception from cold-start: p_misc not yet argmax -> code withheld.
+    assert state1.misconception_code is None
+
+    # 2nd distinct attempt: a misconception over the misc-leaning prior-attempt base.
+    attempt2 = ProblemAttempt(
+        session_id=sess.id, problem_id="p_m2", difficulty="intro", result="graded"
+    )
+    db_session.add(attempt2)
+    await db_session.flush()
+    await run_learner_update(
+        db_session, sess=sess, attempt=attempt2, shadow=_shadow(misc_audited),
+        done_ts=done_ts, parser_confidence=0.9,
+    )
+
+    state2 = (await db_session.execute(
+        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+    )).scalar_one()
+    # combined posterior clears the §3 two-step flag -> the code is now recorded.
+    assert state2.misconception_code == _CONTINUITY
+    me2 = (await db_session.execute(
+        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt2.id)
+    )).scalar_one()
+    assert me2.misconception_code == _CONTINUITY
 
 
 # ---------------------------------------------------------------------------
