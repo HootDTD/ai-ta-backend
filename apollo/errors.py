@@ -166,6 +166,35 @@ class RetentionError(ApolloError):
         )
 
 
+# Closed reason set for LearnerUpdateUnreconstructableError. The janitor's
+# pre-flight (WU-5B3a build_rerun_inputs) raises with exactly one of these.
+LEARNER_UPDATE_UNRECONSTRUCTABLE_REASONS = (
+    "diagnostic_report_missing",  # attempt.diagnostic_report is None
+    "rubric_missing",             # "rubric" absent, or rubric lacks "overall"
+    "graded_at_missing",          # Neo4j read_node_graded_at returned {} (empty subgraph)
+)
+
+
+class LearnerUpdateUnreconstructableError(ApolloError):
+    """The Done-time re-run inputs cannot be reconstructed from durable state,
+    so the learner-model retry can NEVER succeed — a TERMINAL dead-letter, not a
+    transient failure. Raised by `build_rerun_inputs`'s pre-flight BEFORE any LLM
+    call when `attempt.diagnostic_report` is None / lacks `rubric` / the rubric
+    lacks `overall` (calibration.py:88,93 dereference it unconditionally) OR the
+    frozen Neo4j subgraph has no `graded_at` (empty/never-stamped → no done_ts to
+    anchor the belief Δt). The janitor (WU-5B3a-1) catches this and marks the row
+    `learner_update_failed_permanently` (no backoff, no LLM, never crash-loops).
+    Mirrors RetentionError's shape. `reason` is one of
+    LEARNER_UPDATE_UNRECONSTRUCTABLE_REASONS."""
+
+    def __init__(self, *, attempt_id: int, reason: str) -> None:
+        self.attempt_id = attempt_id
+        self.reason = reason
+        super().__init__(
+            f"learner update unreconstructable for attempt {attempt_id}: {reason}"
+        )
+
+
 class ResolutionUnavailableError(ApolloError):
     """Resolver INFRASTRUCTURE failure (the one LLM adjudication call failed /
     timed out, or a Neo4j ``RESOLVES_TO`` / resolution-field write failed).

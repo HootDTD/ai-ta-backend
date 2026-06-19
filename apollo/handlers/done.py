@@ -23,6 +23,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.errors import ReviewRequiredError
 from apollo.grading.abstention import min_parser_confidence_of
 from apollo.handlers.done_grading import run_graph_simulation
+from apollo.handlers.done_inputs import (
+    _find_problem_payload,  # noqa: F401 — re-export (relocated to done_inputs, WU-5B3a-0)
+    build_rerun_inputs,
+)
 from apollo.handlers.learner_update import run_learner_update
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph, Node
@@ -38,8 +42,6 @@ from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
 from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
     ApolloSession,
-    Concept,
-    ConceptProblem,
     KGNegotiation,
     Message,
     ProblemAttempt,
@@ -226,30 +228,6 @@ async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) ->
     raise RuntimeError(f"problem {problem_code!r} not in bank for cluster {concept_id!r}")
 
 
-async def _find_problem_payload(
-    db: AsyncSession, *, concept_id: int, problem_code: str,
-) -> dict:
-    """Read the RAW ``ConceptProblem.payload`` dict for the chosen problem.
-
-    WU-4C1: the parsed :class:`Problem` schema (``schemas/problem.py``) DROPS the
-    ``declared_paths`` / ``symbolic_mappings`` / per-step ``entity_key`` fields the
-    graph-simulation chain needs (``Problem.model_validate`` silently discards
-    them). So the shadow chain reads the raw payload directly here, while the OLD
-    path keeps the parsed :class:`Problem` (``to_kg_graph`` / ``reference_solution``
-    / ``problem_text``). ``problem_code`` is the ``ConceptProblem.problem_code``
-    join key (same code ``_find_problem`` matches as ``Problem.id``).
-    """
-    payload = (
-        await db.execute(
-            select(ConceptProblem.payload)
-            .join(Concept, Concept.id == ConceptProblem.concept_id)
-            .where(Concept.id == concept_id)
-            .where(ConceptProblem.problem_code == problem_code)
-        )
-    ).scalar_one()
-    return payload
-
-
 async def handle_done(
     *,
     db: AsyncSession,
@@ -400,15 +378,19 @@ async def handle_done(
     # mirrors RetentionError). When LIVE is off (the only build state) the
     # student_response above is NOT modified by it.
     if _graph_sim_shadow_enabled():
-        problem_payload = await _find_problem_payload(
-            db, concept_id=sess.concept_id, problem_code=problem.id,
-        )
+        # WU-5B3a-0: source the shadow problem_payload through the SHARED builder
+        # (single source of truth with the future retry janitor). The builder keys
+        # on attempt.problem_id (== problem.id at LIVE Done, since `attempt` was
+        # found by ProblemAttempt.problem_id == problem.id), so this is
+        # behavior-preserving here while the janitor reconstructs the OLD problem
+        # later. student_graph + old_rubric stay the LIVE values (unchanged grade).
+        rerun = await build_rerun_inputs(db, neo, attempt=attempt, sess=sess)
         shadow = await run_graph_simulation(
             db, neo,
             attempt=attempt,
             sess=sess,
             student_graph=student_graph,
-            problem_payload=problem_payload,
+            problem_payload=rerun.problem_payload,
             old_rubric=rubric,  # the OLD student-facing rubric, for §6.7 calibration
         )
         # WU-4C2 — LIVE promotion (DORMANT; flag OFF in this build). Built + tested,
