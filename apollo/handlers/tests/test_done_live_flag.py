@@ -20,7 +20,7 @@ import pytest
 
 from apollo.handlers import done as done_mod
 from apollo.handlers.done import _graph_sim_live_enabled, handle_done
-from apollo.handlers.tests.test_done_shadow_flag import _old_path_patches
+from apollo.handlers.tests.test_done_shadow_flag import _old_path_patches, _rerun_inputs
 
 pytestmark = pytest.mark.unit
 
@@ -52,9 +52,13 @@ async def _run_with_flags(monkeypatch, *, shadow: bool, live, shadow_return):
     payload = {"declared_paths": [["a"]], "symbolic_mappings": {"d": "2*r"}}
     shadow_mock = AsyncMock(return_value=shadow_return)
 
+    # WU-5B3a-0: shadow chain sources problem_payload via build_rerun_inputs; stub
+    # the builder at the done seam (keeps this a pure unit test, MagicMock db).
+    rerun = _rerun_inputs(problem_payload=payload)
+
     with (
         patch("apollo.handlers.done.run_graph_simulation", new=shadow_mock),
-        patch("apollo.handlers.done._find_problem_payload", new=AsyncMock(return_value=payload)),
+        patch("apollo.handlers.done.build_rerun_inputs", new=AsyncMock(return_value=rerun)),
     ):
         for p in patches:
             p.start()

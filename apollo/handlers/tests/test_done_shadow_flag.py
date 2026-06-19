@@ -19,12 +19,26 @@ import pytest
 
 from apollo.handlers import done as done_mod
 from apollo.handlers.done import _graph_sim_shadow_enabled, handle_done
+from apollo.handlers.done_inputs import RerunInputs
 from apollo.ontology import KGGraph
 
 pytestmark = pytest.mark.unit
 
 
 _USER_ID = "a0000000-0000-4000-8000-000000000001"
+
+
+def _rerun_inputs(*, problem_payload: dict) -> RerunInputs:
+    """A RerunInputs sentinel for the unit flag tests: only ``problem_payload`` is
+    asserted (it flows into ``run_graph_simulation``); the other fields are
+    deterministic stand-ins (the builder's real sourcing is tested separately)."""
+    return RerunInputs(
+        problem_payload=problem_payload,
+        old_rubric={"overall": {"score": 0.5}},
+        student_graph=KGGraph(),
+        parser_confidence=1.0,
+        graded_at_iso="2026-06-18T00:00:02+00:00",
+    )
 
 
 class _Sess:
@@ -173,9 +187,15 @@ async def test_shadow_flag_on_invokes_chain(monkeypatch):
     shadow = AsyncMock(return_value=sentinel)
     payload = {"declared_paths": [["a"]], "symbolic_mappings": {"d": "2*r"}}
 
+    # WU-5B3a-0: the shadow chain now sources problem_payload via build_rerun_inputs
+    # (single source of truth with the janitor). Stub the builder at the done seam
+    # so this pure unit test keeps a MagicMock db (no Neo4j / real query). The
+    # builder's own keying/dead-letter logic is covered by test_build_rerun_inputs.
+    rerun = _rerun_inputs(problem_payload=payload)
+
     with (
         patch("apollo.handlers.done.run_graph_simulation", new=shadow),
-        patch("apollo.handlers.done._find_problem_payload", new=AsyncMock(return_value=payload)),
+        patch("apollo.handlers.done.build_rerun_inputs", new=AsyncMock(return_value=rerun)),
     ):
         for p in patches:
             p.start()

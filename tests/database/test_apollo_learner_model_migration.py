@@ -56,15 +56,26 @@ _TOUCHES_TARGETS = re.compile(
     r"apollo_(subjects|concepts|problem_attempts)\b"
 )
 _MIGRATION_026 = MIGRATIONS_DIR / "026_apollo_learner_model.sql"
+# Later migrations that ALTER apollo_problem_attempts but DEPEND on 026's columns
+# must be excluded from this chain: the harness applies 026 LAST (separately), so a
+# migration that references 026's additions would run before 026 here and fail.
+# 028 (WU-5B3a-0) adds a partial index whose predicate references
+# `learner_update_pending` — a column 026 creates — so it is excluded here. 028
+# has its own forward-chain test (test_apollo_learner_janitor_migration.py).
+_EXCLUDE_FROM_CHAIN = frozenset({
+    _MIGRATION_026.name,
+    "028_apollo_learner_janitor.sql",
+})
 
 
 def _chain_migrations() -> list[Path]:
     """Every migration defining/altering apollo_subjects/concepts/problem_attempts,
-    in filename order. Excludes 026 itself (applied separately)."""
+    in filename order. Excludes 026 itself (applied separately) and any later
+    migration that depends on 026's columns (see _EXCLUDE_FROM_CHAIN)."""
     return [
         path
         for path in sorted(MIGRATIONS_DIR.glob("*.sql"))
-        if path.name != _MIGRATION_026.name
+        if path.name not in _EXCLUDE_FROM_CHAIN
         and _TOUCHES_TARGETS.search(path.read_text(encoding="utf-8"))
     ]
 
