@@ -23,6 +23,8 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
+    SmallInteger,
     Text,
     UniqueConstraint,
     text,
@@ -156,7 +158,10 @@ class Concept(Base):
 
 
 class ConceptProblem(Base):
-    """Per-concept problem bank. See migration 018."""
+    """Per-concept problem bank. See migration 018 (base table) + migration 030
+    (WU-3B2a §8B auto-provisioning columns). Following the repo convention these
+    declare NO DB CHECK constraints — the migration SQL is the authority for
+    tier/solution_source; the ORM is the typed Python access layer."""
 
     __tablename__ = "apollo_concept_problems"
 
@@ -166,6 +171,21 @@ class ConceptProblem(Base):
     problem_code = Column(Text, nullable=False)
     difficulty = Column(Text, nullable=False)
     payload = Column(_JSONType, nullable=False)
+    # WU-3B2a / migration 030 (§8B auto-provisioning). tier gates selectability:
+    # 1 = inventory (auto-scraped, NOT teachable), 2 = teachable. The DB CHECK
+    # (tier IN (1,2)) is the authority; the ORM declares none (repo convention).
+    # server_default so raw-SQL/migration/legacy inserts see 1; default=2 for ORM
+    # (the seed-helper/runtime reality is that authored curriculum is teachable —
+    # mirroring migration 030's backfill of existing §8-seeded rows to tier=2).
+    tier = Column(SmallInteger, nullable=False, server_default=text("1"), default=2)
+    solution_source = Column(Text, nullable=True)  # extracted|generated|authored (CHECK in SQL)
+    provenance = Column(_JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
+    quarantined_at = Column(TIMESTAMP(timezone=True), nullable=True)  # WU-3B2h filter; NULL = live
+    # Denormalized course scope (migration 030). NULLABLE in v1 (backfilled
+    # in-migration; a later two-step migration tightens it). No ORM FK declared
+    # to keep create_all/SQLite parity simple — the migration SQL is the FK
+    # authority where it exists.
+    search_space_id = Column(Integer, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 
@@ -379,6 +399,10 @@ class KGEntity(Base):
     display_name = Column(Text, nullable=False)
     payload = Column(_JSONType, nullable=False, default=dict)
     aliases = Column(_JSONType, nullable=False, default=list)
+    # WU-3B2a / migration 030: the dedup ladder's embedding SOURCE (authored at
+    # mint from display_name + canonical symbols; embedded ON THE FLY by 3B2c).
+    # Nullable; NO persisted vector column (no pgvector-on-entities migration).
+    scope_summary = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
@@ -565,4 +589,172 @@ class GraphComparisonFinding(Base):
     reference_edge_ids = Column(_JSONType, nullable=False, default=list)
     evidence_spans = Column(_JSONType, nullable=False, default=list)
     message = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
+# ===========================================================================
+# WU-3B2a auto-provisioning substrate (migration 030). §8B materials->Apollo
+# observability + work-queue tables. Following the repo convention these declare
+# NO DB CHECK constraints — the migration SQL is the authority (status/state/
+# method/verdict CHECKs live in SQL only); the ORM is the typed Python access
+# layer. The schema EXISTS as of WU-3B2a but the pipeline that reads/writes these
+# tables lands in 3B2b-3B2h (jobs drained by 3B2f; runs/rejected/dedup/errors
+# written by 3B2g). The course-isolation invariant (§1.4) is carried by the
+# NOT NULL search_space_id FK on every table (a course delete cascades its rows).
+# ===========================================================================
+
+
+class IngestRun(Base):
+    """Per-document auto-provisioning run: scrape/promote/reject/merge counts plus
+    LLM call/token/cost aggregates (migration 030, §8B). ``content_hash`` lets an
+    unchanged re-upload short-circuit (3B2g). ``status`` vocabulary is
+    queued/running/succeeded/failed — DISTINCT from the job ``state`` vocabulary
+    (the CHECK is in SQL only; the ORM declares none, repo convention)."""
+
+    __tablename__ = "apollo_ingest_runs"
+
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    document_id = Column(BigInteger, nullable=False)
+    content_hash = Column(Text, nullable=True)
+    status = Column(Text, nullable=False, server_default=text("'queued'"), default="queued")
+    n_questions_scraped = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    n_promoted = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    n_rejected = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    n_dedup_merged = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    llm_calls = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    llm_tokens_in = Column(BigInteger, nullable=False, server_default=text("0"), default=0)
+    llm_tokens_out = Column(BigInteger, nullable=False, server_default=text("0"), default=0)
+    llm_cost_usd = Column(Numeric(12, 6), nullable=False, server_default=text("0"), default=0)
+    started_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    finished_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
+class ProvisioningJob(Base):
+    """The SKIP-LOCKED auto-provisioning work queue (migration 030, §8B), mirroring
+    the TeacherUploadJob lease shape. ``state`` vocabulary is
+    pending/running/completed/failed — DISTINCT from the run ``status`` (CHECK in
+    SQL only). The partial-unique-index that collapses two OPEN jobs per document
+    is migration-only (NOT declared in the ORM, same as 028's partial index)."""
+
+    __tablename__ = "apollo_provisioning_jobs"
+
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    document_id = Column(BigInteger, nullable=False)
+    state = Column(Text, nullable=False, server_default=text("'pending'"), default="pending")
+    ingest_run_id = Column(
+        BigInteger,
+        ForeignKey("apollo_ingest_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    lease_owner = Column(Text, nullable=True)
+    lease_expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    attempt_count = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
+class RejectedProblem(Base):
+    """A gate failure + diagnostic + the rejected payload (migration 030, §8B).
+    ``concept_id`` ON DELETE SET NULL: a pruned concept must not delete the audit
+    row. ``rejected_stage`` / ``failed_gate`` vocabularies are open (no SQL CHECK);
+    the ORM declares no DB CHECK (repo convention)."""
+
+    __tablename__ = "apollo_rejected_problems"
+
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    ingest_run_id = Column(
+        BigInteger,
+        ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    concept_id = Column(
+        BigInteger,
+        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    failed_gate = Column(SmallInteger, nullable=True)
+    rejected_stage = Column(Text, nullable=False)
+    diagnostic = Column(Text, nullable=False)
+    payload = Column(_JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
+class DedupDecision(Base):
+    """method + similarity + verdict for every dedup resolution (migration 030,
+    §8B). ``similarity`` is NULL for the slug exact-match tier. ``method`` /
+    ``verdict`` CHECKs live in SQL only; the ORM declares none (repo convention)."""
+
+    __tablename__ = "apollo_dedup_decisions"
+
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    ingest_run_id = Column(
+        BigInteger,
+        ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    concept_id = Column(
+        BigInteger,
+        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    candidate_key = Column(Text, nullable=False)
+    method = Column(Text, nullable=False)
+    similarity = Column(Float, nullable=True)  # REAL on Postgres
+    verdict = Column(Text, nullable=False)
+    matched_entity_id = Column(
+        BigInteger,
+        ForeignKey("apollo_kg_entities.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
+class IngestError(Base):
+    """stage + class + context for any non-terminal pipeline error (migration 030,
+    §8B). ``stage`` / ``error_class`` vocabularies are open (no SQL CHECK); the ORM
+    declares no DB CHECK (repo convention)."""
+
+    __tablename__ = "apollo_ingest_errors"
+
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    ingest_run_id = Column(
+        BigInteger,
+        ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    stage = Column(Text, nullable=False)
+    error_class = Column(Text, nullable=False)
+    context = Column(_JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
