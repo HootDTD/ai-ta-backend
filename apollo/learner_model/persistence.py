@@ -24,16 +24,22 @@ commit). The load-bearing differences vs the runs/findings persist:
     ``posterior_belief`` of the latest event row from a DIFFERENT attempt (else
     cold-start). Reading the base off ``LearnerState.belief`` would double-count
     this attempt's first-run mutation.
-  * **ONE belief update per entity per Done (§3 step 1 'multiply per evidence
-    item').** Events are GROUPED by ``entity_id`` first; within a group
-    ``apply_event`` is CHAINED (posterior -> prior) across the entity's events so
-    the per-evidence likelihoods are multiplied into a SINGLE posterior. Each
-    event still appends its OWN ``apollo_mastery_events`` row (the event log, each
-    carrying its own prior->posterior segment of the chain), but
-    ``apollo_learner_state`` is upserted ONCE per entity — the §3 "fires once per
-    Done episode, never per turn" invariant. (Reachable today: with the
-    structurally-empty ``opposes_map`` a CONTRADICTION + a COVERED on the same
-    ``canonical_key`` both surface as standalone events for one entity.)
+  * **ONE belief update per entity per Done (§3 steps 1-3, the SINGLE
+    combined-likelihood update).** Events are GROUPED by ``entity_id`` first;
+    within a group the §3 update is computed ONCE: (step 1) multiply the per-event
+    RAW ``likelihood_for_event`` vectors into ONE combined ``L``; (step 2) ``damp``
+    the COMBINED ``L`` ONCE with ``q = parser_confidence · grader_confidence``;
+    (step 3) ONE ``bayes_update`` over the recompute base. This is NOT a per-event
+    ``apply_event`` chain: the §3.1 affine damper (``q·L + (1-q)·[1,1,1]``) is NOT a
+    multiplicative homomorphism, so ``damp(L1)·damp(L2) ≠ damp(L1·L2)`` for ``q<1``
+    — chaining ``apply_event`` (which damps + renormalizes per event) would diverge
+    from the spec. Each event still appends its OWN ``apollo_mastery_events`` row
+    (the event log; the belief columns record the single base->combined transition
+    that actually occurred), but ``apollo_learner_state`` is upserted ONCE per
+    entity — the §3 "fires once per Done episode, never per turn" invariant.
+    (Reachable today: with the structurally-empty ``opposes_map`` a CONTRADICTION +
+    a COVERED on the same ``canonical_key`` both surface as standalone events for
+    one entity.) The single-event case is numerically identical to ``apply_event``.
   * **SELECT ... FOR UPDATE** the prior learner-state rows before the
     read-modify-write (a janitor retry racing a live Done must not clobber a
     posterior).
@@ -60,7 +66,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.grading.events import convert_findings_to_events
 from apollo.handlers.done_grading import ShadowGradeResult
-from apollo.learner_model.update import apply_event, event_to_row_specs
+from apollo.learner_model.belief import (
+    COLD_START_PRIOR,
+    NO_OP_LIKELIHOOD,
+    bayes_update,
+    confidence_of,
+    damp,
+    likelihood_for_event,
+    mastery_of,
+    misconception_code_of,
+)
+from apollo.learner_model.state_model import BeliefUpdate
+from apollo.learner_model.update import event_to_row_specs
 from apollo.persistence.models import (
     ApolloSession,
     LearnerState,
@@ -228,12 +245,13 @@ async def persist_learner_update(
        recorded in ``skipped_unmapped``) and GROUP the events by ``entity_id``
        (preserving the converter's deterministic order).
     4. Per entity group: ``SELECT ... FOR UPDATE`` the prior state ONCE; recompute
-       the base from the EVENT LOG (NOT the state row); CHAIN WU-5A1
-       ``apply_event`` across the group's events (each posterior feeds the next
-       prior — the §3 step 1 per-evidence product); append one ``MasteryEvent``
-       row per event; upsert the ``LearnerState`` ONCE with the final chained
-       posterior (evidence_count INCREMENT once per Done, last_evidence_at =
-       done_ts).
+       the base from the EVENT LOG (NOT the state row); compute the §3 SINGLE
+       combined-likelihood update (multiply the per-event raw likelihoods -> damp
+       the COMBINED L ONCE -> one ``bayes_update`` over the base); append one
+       ``MasteryEvent`` row per event (the event log records the single
+       base->combined transition); upsert the ``LearnerState`` ONCE with the
+       combined posterior (evidence_count INCREMENT once per Done,
+       last_evidence_at = done_ts).
     5. ``db.flush()`` (no commit).
     """
     events = convert_findings_to_events(
@@ -293,6 +311,61 @@ async def persist_learner_update(
     )
 
 
+def _combined_belief_update(
+    entity_events: list,
+    *,
+    prior_belief: tuple[float, float, float] | None,
+    prior_last_evidence_at: datetime | None,
+    parser_confidence: float,
+    grader_confidence: float,
+    done_ts: datetime,
+) -> BeliefUpdate:
+    """The §3 SINGLE combined-likelihood update for ALL of one entity's events in
+    one Done (steps 1-3). Step 1: multiply the per-event RAW
+    ``likelihood_for_event`` vectors into ONE ``L`` (start ``[1,1,1]``). Step 2:
+    ``damp`` the COMBINED ``L`` ONCE with ``q = parser_confidence ·
+    grader_confidence``. Step 3: ONE ``bayes_update`` over the (cold-start-defaulted)
+    base. Returns a frozen :class:`BeliefUpdate` carrying the single transition.
+
+    This deliberately does NOT chain ``apply_event``: the §3.1 affine damper is not
+    multiplicative-homomorphic, so per-event damp+bayes diverges from the spec for
+    ``q < 1``. For a single event the result is identical to ``apply_event``.
+
+    The misconception code surfaces against the COMBINED posterior — the last event
+    (deterministic converter order) whose code clears the §3 two-step flag wins
+    (``None`` when none do)."""
+    prior = prior_belief if prior_belief is not None else COLD_START_PRIOR
+    q = parser_confidence * grader_confidence
+    combined_likelihood = NO_OP_LIKELIHOOD
+    for event in entity_events:
+        likelihood = likelihood_for_event(event)
+        combined_likelihood = tuple(
+            a * b for a, b in zip(combined_likelihood, likelihood, strict=True)
+        )
+    damped = damp(combined_likelihood, q)
+    posterior = bayes_update(prior, damped)
+    misconception_code = None
+    for event in entity_events:
+        code = misconception_code_of(posterior, event)
+        if code is not None:
+            misconception_code = code
+    dt_days_since_last = (
+        (done_ts - prior_last_evidence_at).days
+        if prior_last_evidence_at is not None
+        else None
+    )
+    return BeliefUpdate(
+        prior_belief=prior,
+        posterior_belief=posterior,
+        mastery_after=mastery_of(posterior),
+        confidence_after=confidence_of(posterior),
+        misconception_code=misconception_code,
+        parser_confidence=parser_confidence,
+        grader_confidence=grader_confidence,
+        dt_days_since_last=dt_days_since_last,
+    )
+
+
 async def _persist_entity_group(
     db: AsyncSession,
     *,
@@ -305,11 +378,11 @@ async def _persist_entity_group(
     grader_confidence: float,
 ) -> int:
     """Fold ALL of one entity's events for this Done into ONE belief update and
-    a SINGLE ``LearnerState`` upsert (§3 step 1 'multiply per evidence item' /
-    'fires once per Done episode'). ``apply_event`` is CHAINED — each posterior
-    becomes the next event's prior — so the per-evidence likelihoods multiply.
-    Each event still appends its OWN ``apollo_mastery_events`` row (the event log).
-    Returns the count of event rows appended (for ``events_written``)."""
+    a SINGLE ``LearnerState`` upsert (§3 steps 1-3 / 'fires once per Done
+    episode'). The combined-likelihood update is computed ONCE
+    (:func:`_combined_belief_update`); each event still appends its OWN
+    ``apollo_mastery_events`` row (the event log records the single
+    base->combined transition). Returns the count of event rows appended."""
     prior_state = await _lock_prior_state(
         db,
         user_id=sess.user_id,
@@ -319,7 +392,7 @@ async def _persist_entity_group(
     # Recompute base = the EVENT LOG (prior-ATTEMPT posterior), never the
     # self-mutated state row. prior_last_evidence_at anchors the recorded-only
     # dt_days_since_last (no v1 decay) and is read off the locked prior state.
-    chained_belief = await _recompute_base_for_entity(
+    base_belief = await _recompute_base_for_entity(
         db,
         user_id=sess.user_id,
         search_space_id=sess.search_space_id,
@@ -330,16 +403,20 @@ async def _persist_entity_group(
         prior_state.last_evidence_at if prior_state is not None else None
     )
 
+    update = _combined_belief_update(
+        entity_events,
+        prior_belief=base_belief,
+        prior_last_evidence_at=prior_last_evidence_at,
+        parser_confidence=parser_confidence,
+        grader_confidence=grader_confidence,
+        done_ts=done_ts,
+    )
+
     state_spec = None
     for event in entity_events:
-        update = apply_event(
-            event,
-            prior_belief=chained_belief,
-            prior_last_evidence_at=prior_last_evidence_at,
-            parser_confidence=parser_confidence,
-            grader_confidence=grader_confidence,
-            done_ts=done_ts,
-        )
+        # Each event-log row carries its OWN per-event detail (kind/score/
+        # confidences/reference_step_id/node_ids) but the SAME single belief
+        # transition (base -> combined posterior) that actually occurred.
         mastery_spec, state_spec = event_to_row_specs(
             event,
             update,
@@ -349,10 +426,8 @@ async def _persist_entity_group(
             attempt_id=attempt.id,
         )
         db.add(_mastery_event_orm_from_spec(mastery_spec))
-        # Chain: this posterior is the prior for the next event in the group.
-        chained_belief = update.posterior_belief
 
-    # state_spec carries the FINAL chained posterior — upsert the state ONCE.
+    # state_spec carries the combined posterior — upsert the state ONCE.
     _upsert_learner_state(
         db,
         prior_state=prior_state,
