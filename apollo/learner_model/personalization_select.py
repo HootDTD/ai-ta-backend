@@ -98,6 +98,9 @@ def prereqs_mastered(profile: LearnerProfile, key: str) -> bool:
     if entity_id is None:
         return True
     prereq_ids = [to for (frm, to) in profile.prereq_edges if frm == entity_id]
+    # Every prereq endpoint resolves: WU-6A1 emits only WITHIN-CONCEPT edges (both
+    # endpoints among this concept's entities), so a missing pid would mean a broken
+    # 6A1 contract — let the subscript raise loudly rather than silently mask it.
     prereq_keys = [profile.key_by_entity_id[pid] for pid in prereq_ids]
     return all(
         _mastery_of_key(profile, pk) >= MASTERED_THRESHOLD for pk in prereq_keys

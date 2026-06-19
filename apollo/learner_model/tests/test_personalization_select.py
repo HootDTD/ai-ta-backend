@@ -125,11 +125,8 @@ def _problem(pid: str, difficulty: str, keys: set[str]) -> Problem:
     sorted_keys = sorted(keys, key=lambda k: (order_rank[k.split(".", 1)[0]], k))
 
     eq_ids = [k.split(".", 1)[1] for k in sorted_keys if k.startswith("eq.")]
-    if not eq_ids:
-        # Problem.model_validate needs a procedure_step to reference a real equation
-        # id; synthesise nothing — every test key set here that has procs also has an
-        # equation. (Asserted at construction time below.)
-        pass
+    # Every test key set that includes a procedure_step also includes an equation
+    # (asserted at construction time below where uses_equations references eq_ids[0]).
 
     steps: list[dict] = []
     step_no = 1
