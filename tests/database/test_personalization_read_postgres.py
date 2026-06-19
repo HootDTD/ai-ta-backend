@@ -160,6 +160,36 @@ async def test_course_isolation_mastery_never_crosses_courses(db_session):
     assert profile.is_empty is False
 
 
+@pytest.mark.asyncio
+async def test_course_isolation_search_space_predicate_discriminates(db_session):
+    """The ``search_space_id`` predicate is load-bearing, not merely redundant: a
+    CROSS-WIRED state row (this concept's ``entity_id`` but a DIFFERENT course's
+    ``search_space_id`` — the PK ``(user, search_space, entity)`` permits it, no FK
+    forbids it) must be excluded. Without the ``search_space_id`` predicate this row
+    leaks into the course-A read. The canonical_key-collision test above cannot prove
+    this (distinct per-concept entity_ids already isolate that case), so this is the
+    discriminating witness for the §1.4 predicate itself."""
+    sid_a, cid_a = await _seed_course(db_session, course_slug="iso_a")
+    sid_b, _cid_b = await _seed_course(db_session, course_slug="iso_b")
+    e_a = await _seed_entity(db_session, concept_id=cid_a, canonical_key="eq.continuity")
+
+    # Legitimate course-A row + a cross-wired row: SAME user+entity, course B's sid.
+    await _seed_state(db_session, sid=sid_a, entity_id=e_a, mastery=0.42, confidence=0.6)
+    await _seed_state(db_session, sid=sid_b, entity_id=e_a, mastery=0.91, confidence=0.9)
+
+    profile = await read_learner_profile(
+        db_session, user_id=TEST_USER_ID, search_space_id=sid_a, concept_id=cid_a
+    )
+
+    # Only the sid_a row is returned; the cross-wired sid_b row never leaks in.
+    assert profile.by_canonical_key["eq.continuity"].mastery == pytest.approx(
+        0.42, abs=1e-6
+    )
+    for ep in profile.by_canonical_key.values():
+        assert ep.mastery != pytest.approx(0.91, abs=1e-6)
+    assert profile.is_empty is False
+
+
 # ---------------------------------------------------------------------------
 # 2. Cold-start — the PROD path (RECON test 2).
 # ---------------------------------------------------------------------------
