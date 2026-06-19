@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import InvalidPhaseError, SessionFrozenError
-from apollo.overseer.problem_selector import select_problem
+from apollo.overseer.problem_selector import select_problem_personalized
 from apollo.persistence.models import (
     ApolloSession,
     ProblemAttempt,
@@ -76,8 +76,10 @@ async def handle_next(
         .all()
     )
 
-    problem = await select_problem(
+    problem = await select_problem_personalized(
         db,
+        user_id=sess.user_id,
+        search_space_id=sess.search_space_id,
         concept_id=sess.concept_id,
         difficulty=difficulty,
         attempted_ids=attempted_ids,

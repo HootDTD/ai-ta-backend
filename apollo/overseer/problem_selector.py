@@ -12,14 +12,23 @@ unattempted problem at the requested difficulty remains.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import PoolExhaustedError
+from apollo.learner_model.personalization_read import read_learner_profile
+from apollo.learner_model.personalization_select import (
+    personalize_selection,
+    weak_teachable,
+)
+from apollo.overseer import personalization_flag
 from apollo.persistence.models import ConceptProblem
 from apollo.schemas.problem import Problem
+
+_LOG = logging.getLogger(__name__)
 
 
 async def list_problems_for_concept(db: AsyncSession, *, concept_id: int) -> list[Problem]:
@@ -57,3 +66,68 @@ async def select_problem(
     if not candidates:
         raise PoolExhaustedError(concept_cluster_id=str(concept_id), difficulty=difficulty)
     return candidates[0]
+
+
+async def select_problem_personalized(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    search_space_id: int,
+    concept_id: int,
+    difficulty: str,
+    attempted_ids: Sequence[str],
+) -> Problem:
+    """The v1 session-personalization wedge (WU-6A3) wrapped around the untouched
+    ``select_problem``.
+
+    FLAG-OFF (default, incl. prod): the EXACT old path — delegates to
+    ``select_problem`` with NO profile read and NO log, byte-identical to today.
+
+    FLAG-ON: reads the candidate pool once AND the learner profile once at the
+    selection seam (not per-turn, not in a candidate loop — no N+1), delegates the
+    scoring + cold-start branch to the frozen WU-6A2 ``personalize_selection``, and
+    emits exactly ONE structured ``event=personalized_selection`` observability log
+    (the only runtime signal the wedge engaged vs degraded). On the prod cold-start
+    path (empty ``apollo_learner_state``) the profile is empty and the choice is
+    byte-identical to flag-OFF (``candidates[0]``). A ``PoolExhaustedError`` is
+    raised byte-identically BEFORE the log (the raise precedes it).
+    """
+    if not personalization_flag.is_enabled():
+        return await select_problem(
+            db,
+            concept_id=concept_id,
+            difficulty=difficulty,
+            attempted_ids=attempted_ids,
+        )
+
+    pool = await list_problems_for_concept(db, concept_id=concept_id)
+    profile = await read_learner_profile(
+        db,
+        user_id=user_id,
+        search_space_id=search_space_id,
+        concept_id=concept_id,
+    )
+    chosen = personalize_selection(
+        profile,
+        pool,
+        concept_id=concept_id,
+        difficulty=difficulty,
+        attempted_ids=attempted_ids,
+    )
+
+    # ONE structured observability log. ``weak_teachable`` is recomputed here PURELY
+    # for the log's n_weak_entities + fallback_fired fields; it is the same pure,
+    # in-memory function ``personalize_selection`` used internally (cheap, no IO).
+    weak = weak_teachable(profile)
+    _LOG.info(
+        "apollo_select_problem_personalized",
+        extra={
+            "event": "personalized_selection",
+            "personalization_enabled": True,
+            "profile_is_empty": profile.is_empty,
+            "n_weak_entities": len(weak),
+            "chosen_problem_id": chosen.id,
+            "fallback_fired": profile.is_empty or not weak,
+        },
+    )
+    return chosen

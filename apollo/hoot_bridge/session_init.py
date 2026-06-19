@@ -24,7 +24,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.overseer.concept_inference import infer_concept_id
-from apollo.overseer.problem_selector import select_problem
+from apollo.overseer.problem_selector import select_problem_personalized
 from apollo.persistence.models import (
     ApolloSession,
     ProblemAttempt,
@@ -55,8 +55,10 @@ async def init_session_from_hoot(
         candidates=candidates,
     )
 
-    problem = await select_problem(
+    problem = await select_problem_personalized(
         db,
+        user_id=user_id,
+        search_space_id=search_space_id,
         concept_id=concept_id,
         difficulty=difficulty,
         attempted_ids=[],
