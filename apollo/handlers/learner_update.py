@@ -16,17 +16,32 @@ txn, and RE-RAISE the original error. The student grade (``attempt.result ==
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.handlers.done_grading import ShadowGradeResult
 from apollo.knowledge_graph.canon_projection import load_entity_specs
+from apollo.learner_model.belief import COLD_START_PRIOR
+from apollo.learner_model.decay import decay_toward_prior
 from apollo.learner_model.persistence import (
     LearnerUpdateResult,
     persist_learner_update,
 )
 from apollo.persistence.models import ApolloSession, ProblemAttempt
+
+# WU-5B1 §3 Step 0 — the between-session decay gate. Default OFF EVERYWHERE
+# (mirrors done.py's flag-helper shape). When ON, run_learner_update builds the
+# decay prior_transform closure and threads it into persist_learner_update; when
+# OFF it passes None (byte-identical to WU-5A2). The flag is read INTERNALLY so
+# run_learner_update's public signature stays unchanged (the done.py call site is
+# byte-identical).
+_LEARNER_DECAY_FLAG: str = "APOLLO_LEARNER_DECAY_ENABLED"
+
+
+def _learner_decay_enabled() -> bool:
+    return os.environ.get(_LEARNER_DECAY_FLAG, "").lower() in ("1", "true", "yes")
 
 
 async def _set_pending_and_commit(
@@ -62,6 +77,20 @@ async def run_learner_update(
         )
         canon_key_by_canonical_key = {spec.canonical_key: spec.key for spec in specs}
 
+        # WU-5B1 §3 Step 0: when the decay flag is ON, build the prior_transform
+        # closure that decays the recompute-base prior toward COLD_START_PRIOR by
+        # the integer dt_days_since_last (the dt is supplied by the persistence
+        # fold — anchored to the frozen done_ts, NEVER now()). A None dt
+        # (cold-start / no prior anchor) returns the prior unchanged (defensive
+        # symmetry with the decay_weight clamp). OFF -> None -> byte-identical 5A2.
+        prior_transform = None
+        if _learner_decay_enabled():
+
+            def prior_transform(belief, dt_days):
+                if dt_days is None:
+                    return belief
+                return decay_toward_prior(belief, COLD_START_PRIOR, dt_days)
+
         result = await persist_learner_update(
             db,
             sess=sess,
@@ -70,6 +99,7 @@ async def run_learner_update(
             done_ts=done_ts,
             parser_confidence=parser_confidence,
             canon_key_by_canonical_key=canon_key_by_canonical_key,
+            prior_transform=prior_transform,
         )
         await db.commit()  # the single all-or-nothing boundary
         return result

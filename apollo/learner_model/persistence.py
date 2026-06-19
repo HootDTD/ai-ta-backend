@@ -57,7 +57,7 @@ Builds NEW value objects, never mutates inputs.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -89,6 +89,14 @@ from apollo.persistence.models import (
 # normalization_confidence scaled by 1.0 (the per-comparison confidence is a
 # later refinement; folding it now would double-discount the §3 damper).
 _COMPARISON_CONFIDENCE: float = 1.0
+
+# WU-5B1 §3 Step 0 — the between-session decay seam (adjudication #1). A
+# keyword-only ``prior_transform`` threaded through the fold; when provided it
+# decays the recompute-base prior toward COLD_START_PRIOR BEFORE damp/bayes.
+# Signature: ``(base_belief, dt_days) -> decayed_belief`` where ``dt_days`` is
+# the integer ``dt_days_since_last`` (or ``None`` -> the transform returns the
+# prior unchanged). Default ``None`` = identity = byte-identical to WU-5A2.
+PriorTransform = Callable[[tuple[float, float, float], int | None], tuple[float, float, float]]
 
 
 @dataclass(frozen=True)
@@ -232,6 +240,7 @@ async def persist_learner_update(
     done_ts: datetime,
     parser_confidence: float,
     canon_key_by_canonical_key: Mapping[str, int],
+    prior_transform: PriorTransform | None = None,
 ) -> LearnerUpdateResult:
     """Persist the §3 belief update for this attempt, FLUSH-ONLY (the caller owns
     the txn boundary). Steps (§6.4 step 16 + step 17):
@@ -299,6 +308,7 @@ async def persist_learner_update(
             done_ts=done_ts,
             parser_confidence=parser_confidence,
             grader_confidence=grader_confidence,
+            prior_transform=prior_transform,
         )
 
     await db.flush()
@@ -319,13 +329,17 @@ def _combined_belief_update(
     parser_confidence: float,
     grader_confidence: float,
     done_ts: datetime,
+    prior_transform: PriorTransform | None = None,
 ) -> BeliefUpdate:
     """The §3 SINGLE combined-likelihood update for ALL of one entity's events in
-    one Done (steps 1-3). Step 1: multiply the per-event RAW
+    one Done (steps 1-3). Step 0 (WU-5B1, when ``prior_transform`` is provided):
+    decay the recompute-base prior toward COLD_START_PRIOR by the integer
+    ``dt_days_since_last`` BEFORE damp/bayes. Step 1: multiply the per-event RAW
     ``likelihood_for_event`` vectors into ONE ``L`` (start ``[1,1,1]``). Step 2:
     ``damp`` the COMBINED ``L`` ONCE with ``q = parser_confidence ·
-    grader_confidence``. Step 3: ONE ``bayes_update`` over the (cold-start-defaulted)
-    base. Returns a frozen :class:`BeliefUpdate` carrying the single transition.
+    grader_confidence``. Step 3: ONE ``bayes_update`` over the (cold-start-defaulted,
+    optionally decayed) base. Returns a frozen :class:`BeliefUpdate` carrying the
+    single transition.
 
     This deliberately does NOT chain ``apply_event``: the §3.1 affine damper is not
     multiplicative-homomorphic, so per-event damp+bayes diverges from the spec for
@@ -334,7 +348,21 @@ def _combined_belief_update(
     The misconception code surfaces against the COMBINED posterior — the last event
     (deterministic converter order) whose code clears the §3 two-step flag wins
     (``None`` when none do)."""
+    # WU-5B1 hoist (adjudication #1): ``dt_days_since_last`` is computed at the TOP
+    # (it feeds only the readout AND the Step-0 decay transform). A pure reordering
+    # — both inputs are immutable + unmutated, so the VALUE is unchanged vs WU-5A2.
+    dt_days_since_last = (
+        (done_ts - prior_last_evidence_at).days
+        if prior_last_evidence_at is not None
+        else None
+    )
     prior = prior_belief if prior_belief is not None else COLD_START_PRIOR
+    if prior_transform is not None:
+        # §3 Step 0 — decay the base toward COLD_START_PRIOR BEFORE damp/bayes.
+        # ``BeliefUpdate.prior_belief`` then records the DECAYED prior (the
+        # intended Step-0 -> Step-3 chain). With ``None`` this line is skipped ->
+        # byte-identical to WU-5A2.
+        prior = prior_transform(prior, dt_days_since_last)
     q = parser_confidence * grader_confidence
     combined_likelihood = NO_OP_LIKELIHOOD
     for event in entity_events:
@@ -349,11 +377,6 @@ def _combined_belief_update(
         code = misconception_code_of(posterior, event)
         if code is not None:
             misconception_code = code
-    dt_days_since_last = (
-        (done_ts - prior_last_evidence_at).days
-        if prior_last_evidence_at is not None
-        else None
-    )
     return BeliefUpdate(
         prior_belief=prior,
         posterior_belief=posterior,
@@ -376,6 +399,7 @@ async def _persist_entity_group(
     done_ts: datetime,
     parser_confidence: float,
     grader_confidence: float,
+    prior_transform: PriorTransform | None = None,
 ) -> int:
     """Fold ALL of one entity's events for this Done into ONE belief update and
     a SINGLE ``LearnerState`` upsert (§3 steps 1-3 / 'fires once per Done
@@ -410,6 +434,7 @@ async def _persist_entity_group(
         parser_confidence=parser_confidence,
         grader_confidence=grader_confidence,
         done_ts=done_ts,
+        prior_transform=prior_transform,
     )
 
     state_spec = None
