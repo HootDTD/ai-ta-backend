@@ -50,14 +50,24 @@ _TOUCHES_TARGETS = re.compile(
     r"apollo_(subjects|concepts|problem_attempts)\b"
 )
 _MIGRATION_026 = MIGRATIONS_DIR / "026_apollo_learner_model.sql"
+# Migration 030 (WU-3B2a) ALTERs apollo_concept_problems with tier/solution_source/
+# provenance/quarantined_at/search_space_id. The learner-model seeder selects through
+# the ConceptProblem ORM, which now declares those columns, so the seeder's
+# `SELECT ... tier ...` errors unless the harness table carries them. 030 depends on
+# 026 (its concept->subject backfill-join reads apollo_subjects.search_space_id, added
+# by 026) so it is applied AFTER 026, not in the auto-built chain.
+_MIGRATION_030 = MIGRATIONS_DIR / "030_apollo_autoprovisioning.sql"
 # Later migrations that ALTER apollo_problem_attempts but DEPEND on 026's columns
 # must be excluded: this harness applies 026 LAST (separately), so a migration that
 # references 026's additions would run before 026 here and fail. 028 (WU-5B3a-0)
 # adds a partial index whose predicate references `learner_update_pending` — a
 # column 026 creates — so it is excluded here. 028 has its own forward-chain test
 # (test_apollo_learner_janitor_migration.py); the seeder does not need its columns.
+# 030 is applied separately after 026 (see _apply_chain), so it too is excluded from
+# the auto-built chain.
 _EXCLUDE_FROM_CHAIN = frozenset({
     _MIGRATION_026.name,
+    _MIGRATION_030.name,
     "028_apollo_learner_janitor.sql",
 })
 
@@ -98,6 +108,9 @@ async def _apply_chain(dsn: str) -> None:
         for migration in _chain_migrations():
             await conn.execute(migration.read_text(encoding="utf-8"))
         await conn.execute(_MIGRATION_026.read_text(encoding="utf-8"))
+        # 030 (WU-3B2a) adds the tier/* columns the ConceptProblem ORM now selects;
+        # it must apply after 026 (its backfill-join reads apollo_subjects.search_space_id).
+        await conn.execute(_MIGRATION_030.read_text(encoding="utf-8"))
     finally:
         await conn.close()
 
