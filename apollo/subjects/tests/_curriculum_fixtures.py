@@ -140,6 +140,10 @@ async def seed_problems(
     *,
     concept_id: int,
     payloads: Sequence[dict[str, Any]],
+    tier: int = 2,  # WU-3B2a: seeded curriculum problems are teachable (Tier-2),
+                    # mirroring migration 030's backfill of existing §8-seeded rows.
+                    # The param lets the selector tests seed an explicit tier=1 row
+                    # to prove the Tier-1 exclusion.
 ) -> list[str]:
     """Insert one apollo_concept_problems row per payload; return the problem_codes."""
     codes: list[str] = []
@@ -151,6 +155,7 @@ async def seed_problems(
                 problem_code=code,
                 difficulty=payload["difficulty"],
                 payload=payload,
+                tier=tier,
             )
         )
         codes.append(code)
