@@ -524,6 +524,80 @@ async def test_retry_changed_kind_recomputes(db_session):
 
 
 # ---------------------------------------------------------------------------
+# 8b. same-entity multi-event folds into ONE belief update (§3 step 1 product)
+# ---------------------------------------------------------------------------
+
+
+async def test_same_entity_multi_event_folds_once(db_session):
+    """Two events for the SAME entity within ONE Done (a contradiction + a covered
+    on the same canonical_key, reachable today via the structurally-empty
+    opposes_map -> _emit_standalone fires BOTH) must fold into ONE belief update:
+    the per-entity likelihood PRODUCT (§3 step 1 'multiply per evidence item').
+
+    Asserts: (a) each event still gets its OWN apollo_mastery_events row (the event
+    log), (b) EXACTLY ONE apollo_learner_state row with evidence_count == 1 (the
+    update 'fires once per Done episode' — NOT once per event), (c) the persisted
+    posterior equals apply_event CHAINED (posterior -> prior) over the two events
+    in deterministic sort order, NOT the last event's standalone posterior.
+    """
+    sid, cid, by_key = await _seed_course_with_entity(db_session)
+    sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
+    done_ts = datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
+
+    # Both a contradiction AND a covered on the SAME entity (empty opposes_map ->
+    # no conflict resolution -> both emitted standalone for eq.continuity).
+    audited = _audited(
+        [
+            _misconception_finding(key=_CONTINUITY),
+            _covered_finding(key=_CONTINUITY, score=1.0),
+        ]
+    )
+    shadow = _shadow(audited, normalization_confidence=0.8)
+
+    result = await persist_learner_update(
+        db_session,
+        sess=sess,
+        attempt=attempt,
+        shadow=shadow,
+        done_ts=done_ts,
+        parser_confidence=0.9,
+        canon_key_by_canonical_key=by_key,
+    )
+    await db_session.commit()
+
+    # Both events are logged, but only ONE entity is upserted.
+    assert result.events_written == 2
+    assert result.states_upserted == 1
+
+    events = (await db_session.execute(
+        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
+    )).scalars().all()
+    assert len(events) == 2  # both event-log rows present
+
+    states = (await db_session.execute(
+        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+    )).scalars().all()
+    assert len(states) == 1  # ONE upsert, not two
+    state = states[0]
+    # fires ONCE per Done episode -> evidence_count is 1, not 2
+    assert state.evidence_count == 1
+    assert state.last_evidence_at == done_ts
+
+    # the posterior is the CHAINED product over both events in deterministic sort
+    # order (covered, then misconception), each apply_event feeding the next prior.
+    ordered = convert_findings_to_events(audited, opposes_map={}, turn_order={})
+    assert [e.event_kind.value for e in ordered] == ["covered", "misconception"]
+    prior = None
+    for ev in ordered:
+        upd = _expected_update(
+            ev, parser_confidence=0.9, normalization_confidence=0.8,
+            prior_belief=prior, done_ts=done_ts,
+        )
+        prior = upd.posterior_belief
+    assert _belief_close(state.belief, prior)
+
+
+# ---------------------------------------------------------------------------
 # 9. evidence_count increments across DISTINCT attempts (contract 10)
 # ---------------------------------------------------------------------------
 
@@ -600,7 +674,7 @@ async def test_belief_length_3_check(db_session):
         await db_session.flush()
 
 
-async def test_score_mastery_range_checks(db_session):
+async def test_mastery_range_check(db_session):
     sid, cid, by_key = await _seed_course_with_entity(db_session)
     sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
     await _apply_learner_state_checks(db_session)
