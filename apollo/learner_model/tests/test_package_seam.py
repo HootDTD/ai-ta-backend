@@ -14,16 +14,16 @@ import apollo.learner_model.belief as belief_mod
 import apollo.learner_model.state_model as state_mod
 import apollo.learner_model.update as update_mod
 from apollo.learner_model import (
-    CORRECTED_LIKELIHOOD,
-    NO_OP_LIKELIHOOD,
-    BeliefUpdate,
     COLD_START_PRIOR,
+    CORRECTED_LIKELIHOOD,
     GAMMA,
     LIKELIHOOD_FLOOR,
-    LearnerStateRowSpec,
     MISCONCEPTION_FLAG_THRESHOLD,
     MISCONCEPTION_LIKELIHOOD,
     MISSING_LIKELIHOOD,
+    NO_OP_LIKELIHOOD,
+    BeliefUpdate,
+    LearnerStateRowSpec,
     MasteryEventRowSpec,
     apply_event,
     bayes_update,

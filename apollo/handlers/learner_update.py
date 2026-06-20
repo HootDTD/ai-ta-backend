@@ -62,12 +62,10 @@ def _learner_negotiation_enabled() -> bool:
     return os.environ.get(_LEARNER_NEGOTIATION_FLAG, "").lower() in ("1", "true", "yes")
 
 
-async def _set_pending_and_commit(
-    db: AsyncSession, attempt: ProblemAttempt
-) -> None:
+async def _set_pending_and_commit(db: AsyncSession, attempt: ProblemAttempt) -> None:
     """NO-FALLBACK: flag the attempt for a Layer-3 retry and commit ONLY that
     flag (the grade/XP + shadow run are already durable)."""
-    attempt.learner_update_pending = True
+    attempt.learner_update_pending = True  # type: ignore[assignment]
     await db.commit()
 
 
@@ -90,8 +88,8 @@ async def run_learner_update(
         # falls back to search_space_id-only when concept_id is None (pre-cutover).
         specs = await load_entity_specs(
             db,
-            search_space_id=sess.search_space_id,
-            concept_id=sess.concept_id,
+            search_space_id=int(sess.search_space_id),
+            concept_id=sess.concept_id,  # type: ignore[arg-type]  # nullable col
         )
         canon_key_by_canonical_key = {spec.canonical_key: spec.key for spec in specs}
 
@@ -117,7 +115,7 @@ async def run_learner_update(
         likelihood_multiplier_for_entity = None
         negotiation_move_for_entity = None
         if _learner_negotiation_enabled():
-            moves = await load_student_moves(db, attempt_id=attempt.id)
+            moves = await load_student_moves(db, attempt_id=int(attempt.id))
 
             def negotiation_move_for_entity(entity_events):
                 return entity_negotiation_move(entity_events, moves)

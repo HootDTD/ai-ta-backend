@@ -168,9 +168,7 @@ async def _expect_violation(conn: asyncpg.Connection, error_type, coro) -> None:
 
 
 async def _seed_space(conn: asyncpg.Connection) -> int:
-    return await conn.fetchval(
-        "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
-    )
+    return await conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
 
 
 async def _seed_user(conn: asyncpg.Connection, marker: int = 1) -> str:
@@ -339,15 +337,11 @@ _NEW_TABLES = (
 async def test_all_eight_tables_created(mig_conn):
     """All 6 new tables + the 2 altered tables exist after chain+026."""
     for table in _NEW_TABLES:
-        regclass = await mig_conn.fetchval(
-            "SELECT to_regclass($1)", f"public.{table}"
-        )
+        regclass = await mig_conn.fetchval("SELECT to_regclass($1)", f"public.{table}")
         assert regclass is not None, f"{table} missing"
     # The two altered tables and their new columns also exist.
     assert await mig_conn.fetchval("SELECT to_regclass('public.apollo_subjects')")
-    assert await mig_conn.fetchval(
-        "SELECT to_regclass('public.apollo_problem_attempts')"
-    )
+    assert await mig_conn.fetchval("SELECT to_regclass('public.apollo_problem_attempts')")
 
 
 async def test_subjects_search_space_id_not_null_and_fk(mig_conn):
@@ -433,9 +427,7 @@ async def test_subjects_backfill_populates_existing_global_rows(pre026_factory):
     to MIN(spaces.id) and tightens to NOT NULL. Proves a populated DB survives."""
 
     async def _seed(conn):
-        space = await conn.fetchval(
-            "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
-        )
+        space = await conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
         # pre-026 apollo_subjects has no search_space_id column.
         await conn.execute(
             "INSERT INTO apollo_subjects (slug, display_name) VALUES ('legacy', 'Legacy')"
@@ -569,8 +561,7 @@ async def test_entity_prereqs_composite_pk_and_cascade(mig_conn):
         mig_conn,
         asyncpg.UniqueViolationError,
         mig_conn.execute(
-            "INSERT INTO apollo_entity_prereqs (from_entity_id, to_entity_id) "
-            "VALUES ($1,$2)",
+            "INSERT INTO apollo_entity_prereqs (from_entity_id, to_entity_id) VALUES ($1,$2)",
             e_from,
             e_to,
         ),
@@ -610,9 +601,7 @@ async def test_learner_state_belief_array_check(mig_conn):
     await _expect_violation(
         mig_conn,
         asyncpg.CheckViolationError,
-        _insert_learner_state(
-            mig_conn, user, space, entity, belief=(0.1, 0.2, 0.3, 0.4)
-        ),
+        _insert_learner_state(mig_conn, user, space, entity, belief=(0.1, 0.2, 0.3, 0.4)),
     )
 
 
@@ -670,9 +659,7 @@ async def test_mastery_events_belief_checks(mig_conn):
     await _expect_violation(
         mig_conn,
         asyncpg.CheckViolationError,
-        _insert_mastery_event(
-            mig_conn, user, space, entity, posterior=(0.1, 0.2, 0.3, 0.4)
-        ),
+        _insert_mastery_event(mig_conn, user, space, entity, posterior=(0.1, 0.2, 0.3, 0.4)),
     )
 
 
@@ -680,8 +667,14 @@ async def test_mastery_events_score_confidence_range_checks(mig_conn):
     space, user, _concept, entity = await _seed_chain(mig_conn)
     # null + in-range all accepted
     await _insert_mastery_event(
-        mig_conn, user, space, entity, score=None, parser_confidence=0.0,
-        grader_confidence=1.0, mastery_after=0.5,
+        mig_conn,
+        user,
+        space,
+        entity,
+        score=None,
+        parser_confidence=0.0,
+        grader_confidence=1.0,
+        mastery_after=0.5,
     )
     await _expect_violation(
         mig_conn,
@@ -717,21 +710,15 @@ async def test_mastery_events_nulls_not_distinct_dedup(mig_conn):
     await _expect_violation(
         mig_conn,
         asyncpg.UniqueViolationError,
-        _insert_mastery_event(
-            mig_conn, user, space, entity, attempt_id=None, event_kind="covered"
-        ),
+        _insert_mastery_event(mig_conn, user, space, entity, attempt_id=None, event_kind="covered"),
     )
 
     # Control: distinct non-null attempt_ids both insert.
     sess = await _seed_session(mig_conn)
     a1 = await _seed_attempt(mig_conn, sess)
     a2 = await _seed_attempt(mig_conn, sess)
-    await _insert_mastery_event(
-        mig_conn, user, space, entity, attempt_id=a1, event_kind="partial"
-    )
-    await _insert_mastery_event(
-        mig_conn, user, space, entity, attempt_id=a2, event_kind="partial"
-    )
+    await _insert_mastery_event(mig_conn, user, space, entity, attempt_id=a1, event_kind="partial")
+    await _insert_mastery_event(mig_conn, user, space, entity, attempt_id=a2, event_kind="partial")
     n = await mig_conn.fetchval(
         "SELECT count(*) FROM apollo_mastery_events WHERE event_kind='partial'"
     )
@@ -797,13 +784,8 @@ async def test_comparison_runs_attempt_cascade(mig_conn):
         entity,
     )
     await mig_conn.execute("DELETE FROM apollo_problem_attempts WHERE id=$1", attempt)
-    assert (
-        await mig_conn.fetchval("SELECT count(*) FROM apollo_graph_comparison_runs") == 0
-    )
-    assert (
-        await mig_conn.fetchval("SELECT count(*) FROM apollo_graph_comparison_findings")
-        == 0
-    )
+    assert await mig_conn.fetchval("SELECT count(*) FROM apollo_graph_comparison_runs") == 0
+    assert await mig_conn.fetchval("SELECT count(*) FROM apollo_graph_comparison_findings") == 0
 
 
 async def test_comparison_findings_entity_set_null_on_delete(mig_conn):
@@ -838,10 +820,7 @@ async def test_comparison_findings_run_cascade(mig_conn):
         run,
     )
     await mig_conn.execute("DELETE FROM apollo_graph_comparison_runs WHERE id=$1", run)
-    assert (
-        await mig_conn.fetchval("SELECT count(*) FROM apollo_graph_comparison_findings")
-        == 0
-    )
+    assert await mig_conn.fetchval("SELECT count(*) FROM apollo_graph_comparison_findings") == 0
 
 
 # ---------------------------------------------------------------------------
@@ -886,8 +865,7 @@ async def _seed_two_courses(conn: asyncpg.Connection):
 async def test_learner_state_scoped_select_returns_rows(mig_conn):
     (s1, u1, _e1), _course2 = await _seed_two_courses(mig_conn)
     rows = await mig_conn.fetch(
-        "SELECT * FROM apollo_learner_state "
-        "WHERE search_space_id=$1 AND user_id=$2",
+        "SELECT * FROM apollo_learner_state WHERE search_space_id=$1 AND user_id=$2",
         s1,
         u1,
     )
@@ -898,15 +876,13 @@ async def test_learner_state_other_tenant_returns_zero_rows(mig_conn):
     (s1, u1, _e1), (s2, u2, _e2) = await _seed_two_courses(mig_conn)
     # A different course id and a different user each return zero for course-1's data.
     other_course = await mig_conn.fetch(
-        "SELECT * FROM apollo_learner_state "
-        "WHERE search_space_id=$1 AND user_id=$2",
+        "SELECT * FROM apollo_learner_state WHERE search_space_id=$1 AND user_id=$2",
         s2,
         u1,
     )
     assert other_course == []
     other_user = await mig_conn.fetch(
-        "SELECT * FROM apollo_learner_state "
-        "WHERE search_space_id=$1 AND user_id=$2",
+        "SELECT * FROM apollo_learner_state WHERE search_space_id=$1 AND user_id=$2",
         s1,
         u2,
     )
@@ -924,9 +900,7 @@ async def test_course_delete_cascades_only_its_curriculum(mig_conn):
         == 0
     )
     assert (
-        await mig_conn.fetchval(
-            "SELECT count(*) FROM apollo_subjects WHERE search_space_id=$1", s1
-        )
+        await mig_conn.fetchval("SELECT count(*) FROM apollo_subjects WHERE search_space_id=$1", s1)
         == 0
     )
     assert (
@@ -936,8 +910,6 @@ async def test_course_delete_cascades_only_its_curriculum(mig_conn):
         == 1
     )
     assert (
-        await mig_conn.fetchval(
-            "SELECT count(*) FROM apollo_subjects WHERE search_space_id=$1", s2
-        )
+        await mig_conn.fetchval("SELECT count(*) FROM apollo_subjects WHERE search_space_id=$1", s2)
         == 1
     )
