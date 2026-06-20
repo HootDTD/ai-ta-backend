@@ -35,9 +35,7 @@ pytestmark = pytest.mark.integration
 
 _REPO = Path(__file__).resolve().parents[2]
 MIGRATIONS_DIR = _REPO / "database" / "migrations"
-_BERNOULLI = (
-    _REPO / "apollo" / "subjects" / "fluid_mechanics" / "concepts" / "bernoulli_principle"
-)
+_BERNOULLI = _REPO / "apollo" / "subjects" / "fluid_mechanics" / "concepts" / "bernoulli_principle"
 
 # Same FK stubs + content-scoped chain selection as the WU-3A harness.
 _STUB_DDL = """
@@ -87,8 +85,10 @@ def _plain_dsn(sqlalchemy_url: str, database: str) -> str:
 
 
 def _asyncpg_dsn_to_sqlalchemy(plain_dsn: str) -> str:
-    return make_url(plain_dsn).set(drivername="postgresql+asyncpg").render_as_string(
-        hide_password=False
+    return (
+        make_url(plain_dsn)
+        .set(drivername="postgresql+asyncpg")
+        .render_as_string(hide_password=False)
     )
 
 
@@ -122,9 +122,7 @@ def _load_problem(n: int) -> dict:
 
 
 async def _seed_space(conn: asyncpg.Connection) -> int:
-    return await conn.fetchval(
-        "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
-    )
+    return await conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
 
 
 async def _seed_one_course(conn: asyncpg.Connection) -> int:
@@ -261,8 +259,7 @@ async def test_seed_creates_variable_entities_from_symbols(seeded_db):
     assert n == 8  # 7 canonical + var.q
     display = await _fetchval(
         plain,
-        "SELECT display_name FROM apollo_kg_entities "
-        "WHERE concept_id=$1 AND canonical_key='var.P'",
+        "SELECT display_name FROM apollo_kg_entities WHERE concept_id=$1 AND canonical_key='var.P'",
         concept_id,
     )
     assert display == "pressure"
@@ -304,15 +301,13 @@ async def test_seed_populates_aliases_from_normalization_map(seeded_db):
     )
     p_aliases = await _fetchval(
         plain,
-        "SELECT aliases FROM apollo_kg_entities "
-        "WHERE concept_id=$1 AND canonical_key='var.P'",
+        "SELECT aliases FROM apollo_kg_entities WHERE concept_id=$1 AND canonical_key='var.P'",
         concept_id,
     )
     assert "static pressure" in json.loads(p_aliases)
     rows = await _fetch(
         plain,
-        "SELECT aliases FROM apollo_kg_entities "
-        "WHERE concept_id=$1 AND kind='variable'",
+        "SELECT aliases FROM apollo_kg_entities WHERE concept_id=$1 AND kind='variable'",
         concept_id,
     )
     total = sum(len(json.loads(r["aliases"])) for r in rows)
@@ -504,9 +499,7 @@ async def test_seed_is_course_scoped_two_courses_do_not_collide(seeded_db):
 
     sa_dsn, plain = await seeded_db(_two_courses)
     # Resolve the two spaces + their bernoulli concepts.
-    spaces = [
-        r["id"] for r in await _fetch(plain, "SELECT id FROM aita_search_spaces ORDER BY id")
-    ]
+    spaces = [r["id"] for r in await _fetch(plain, "SELECT id FROM aita_search_spaces ORDER BY id")]
     assert len(spaces) == 2
     await seed(sa_dsn, search_space_id=spaces[0])
     await seed(sa_dsn, search_space_id=spaces[1])
@@ -645,4 +638,3 @@ def test_main_dry_run_happy_path(_pg_url, capsys):
         assert asyncio.run(_count_entities()) == 0
     finally:
         asyncio.run(_drop())
-
