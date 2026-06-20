@@ -404,8 +404,11 @@ with node/edge IDs and (where applicable) quoted transcript spans.
 
 ### Update rule (the actual math)
 
-- **Cold start:** `belief = [0.20, 0.60, 0.20]` (mastery 0.40 — "assume
-  nothing, slightly pessimistic"; BKT-analogue P(L0)≈0.3–0.4).
+- **Cold start:** `belief = [0.20, 0.60, 0.20]` (mastery 0.50 — "assume
+  nothing, slightly pessimistic"; BKT-analogue P(L0)≈0.3–0.4). NOTE: the mastery
+  FORMULA `0.5·p_shaky + p_mastered` is authoritative (= `0.5·0.60 + 0.20 = 0.50`
+  here); the earlier `0.40` prose was an arithmetic error (orchestrator-confirmed
+  2026-06-18). The belief vector `[0.20, 0.60, 0.20]` is unchanged.
 - **Step 0 — between-session decay toward the prior:**
   `belief ← (1−w)·belief + w·prior` where `w = 1 − e^(−k·Δt_days)`, `k = 0.05`
   (≈14-day half-life; Pelánek's k≈0.1 halved because Apollo evidence is
