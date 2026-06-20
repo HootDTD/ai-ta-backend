@@ -224,9 +224,7 @@ def test_variable_mapping_in_mint_map():
 
 def test_approvedpair_and_mintplan_shapes():
     """Pydantic round-trip of ApprovedPair / MintPlan; required fields enforced."""
-    pair = ApprovedPair(
-        problem={"id": "p"}, search_space_id=1, solution_source="extracted"
-    )
+    pair = ApprovedPair(problem={"id": "p"}, search_space_id=1, solution_source="extracted")
     assert pair.misconceptions == []
     plan = MintPlan(
         concept_id=5,
@@ -238,7 +236,7 @@ def test_approvedpair_and_mintplan_shapes():
         misconception_keys=[],
     )
     assert plan.minted_entity_ids["eq.bernoulli"] == 9
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         ApprovedPair(problem={"id": "p"})  # missing required fields
 
 
@@ -299,9 +297,7 @@ async def test_tag_and_mint_authors_canonical_symbols(db_session):
     )
     assert plan.authored_symbols  # non-empty this call
     concept = (
-        await db_session.execute(
-            select(Concept).where(Concept.id == plan.concept_id)
-        )
+        await db_session.execute(select(Concept).where(Concept.id == plan.concept_id))
     ).scalar_one()
     assert concept.canonical_symbols  # non-empty dict
     # Stored in the CanonicalSymbols shape ({"symbols": [...]}), NOT a flat
@@ -352,9 +348,7 @@ async def test_author_symbols_first_writer_wins_union(db_session):
         embed_fn=_embed_distinct,
     )
     concept = (
-        await db_session.execute(
-            select(Concept).where(Concept.id == plan1.concept_id)
-        )
+        await db_session.execute(select(Concept).where(Concept.id == plan1.concept_id))
     ).scalar_one()
     # canonical_symbols is the CanonicalSymbols shape ({"symbols": [...]}); the
     # union operates over that LIST, not over dict keys.
@@ -404,10 +398,10 @@ async def test_tag_and_mint_mints_reference_entities(db_session):
     assert "eq.bernoulli" in plan.minted_entity_ids
     assert "proc.solve_p2" in plan.minted_entity_ids
     rows = (
-        await db_session.execute(
-            select(KGEntity).where(KGEntity.concept_id == plan.concept_id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(KGEntity).where(KGEntity.concept_id == plan.concept_id)))
+        .scalars()
+        .all()
+    )
     by_key = {r.canonical_key: r for r in rows}
     assert by_key["eq.bernoulli"].kind == "equation"
     assert by_key["proc.solve_p2"].kind == "procedure"
@@ -438,12 +432,16 @@ async def test_minted_misconception_is_kg_entity(db_session):
     )
     assert "misc.pressure_follows_speed" in plan.misconception_keys
     rows = (
-        await db_session.execute(
-            select(KGEntity)
-            .where(KGEntity.concept_id == plan.concept_id)
-            .where(KGEntity.kind == "misconception")
+        (
+            await db_session.execute(
+                select(KGEntity)
+                .where(KGEntity.concept_id == plan.concept_id)
+                .where(KGEntity.kind == "misconception")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     payload = rows[0].payload
     assert payload["opposes_entity_key"] == "eq.bernoulli"
@@ -451,9 +449,7 @@ async def test_minted_misconception_is_kg_entity(db_session):
     assert "opposes_entity_id" in payload
 
     # NO write to apollo_misconceptions (the DEVIATION — entities ONLY).
-    misc_rows = (
-        await db_session.execute(select(Misconception))
-    ).scalars().all()
+    misc_rows = (await db_session.execute(select(Misconception))).scalars().all()
     assert misc_rows == []
 
 
@@ -464,9 +460,7 @@ async def test_tag_and_mint_dedups_via_resolve_candidate(db_session):
     ss_id, subj_id = await _seed_course(db_session, slug="c-dedup")
     # Pre-seed a concept + an entity whose canonical_key EXACTLY matches one the
     # mint will produce (eq.bernoulli) so the slug tier merges it deterministically.
-    concept = Concept(
-        subject_id=subj_id, slug="bernoulli_principle", display_name="Bernoulli"
-    )
+    concept = Concept(subject_id=subj_id, slug="bernoulli_principle", display_name="Bernoulli")
     db_session.add(concept)
     await db_session.flush()
     existing = KGEntity(
@@ -493,12 +487,16 @@ async def test_tag_and_mint_dedups_via_resolve_candidate(db_session):
     assert "eq.bernoulli" in plan.merged_entity_keys
     assert "eq.bernoulli" not in plan.minted_entity_ids
     rows = (
-        await db_session.execute(
-            select(KGEntity)
-            .where(KGEntity.concept_id == concept.id)
-            .where(KGEntity.canonical_key == "eq.bernoulli")
+        (
+            await db_session.execute(
+                select(KGEntity)
+                .where(KGEntity.concept_id == concept.id)
+                .where(KGEntity.canonical_key == "eq.bernoulli")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1  # no duplicate row
     assert rows[0].id == existing_id
 
@@ -518,12 +516,16 @@ async def test_tag_and_mint_prereqs_inserted(db_session):
     from_id = plan.minted_entity_ids["proc.solve_p2"]
     to_id = plan.minted_entity_ids["eq.bernoulli"]
     edges = (
-        await db_session.execute(
-            select(EntityPrereq)
-            .where(EntityPrereq.from_entity_id == from_id)
-            .where(EntityPrereq.to_entity_id == to_id)
+        (
+            await db_session.execute(
+                select(EntityPrereq)
+                .where(EntityPrereq.from_entity_id == from_id)
+                .where(EntityPrereq.to_entity_id == to_id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(edges) == 1
 
 
@@ -544,14 +546,14 @@ async def test_tag_and_mint_idempotent(db_session):
         return stmt
 
     rows1 = (
-        await db_session.execute(_count(KGEntity, concept_id=plan1.concept_id))
-    ).scalars().all()
+        (await db_session.execute(_count(KGEntity, concept_id=plan1.concept_id))).scalars().all()
+    )
     edges1 = (await db_session.execute(select(EntityPrereq))).scalars().all()
 
     plan2 = await tag_and_mint(db_session, pair, chat_fn=chat, embed_fn=_embed_distinct)
     rows2 = (
-        await db_session.execute(_count(KGEntity, concept_id=plan2.concept_id))
-    ).scalars().all()
+        (await db_session.execute(_count(KGEntity, concept_id=plan2.concept_id))).scalars().all()
+    )
     edges2 = (await db_session.execute(select(EntityPrereq))).scalars().all()
 
     assert plan2.concept_id == plan1.concept_id
@@ -603,9 +605,7 @@ async def test_tag_and_mint_bad_prereq_entry_raises(db_session):
     pair = _approved_pair(search_space_id=ss_id)
     tag = _tag_payload(prereqs=[["only-one-element"]])
     with pytest.raises(TagMintError):
-        await tag_and_mint(
-            db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct
-        )
+        await tag_and_mint(db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct)
 
 
 async def test_tag_and_mint_non_json_tag_raises(db_session):
@@ -652,9 +652,7 @@ async def test_tag_and_mint_prereq_unminted_key_raises(db_session):
     pair = _approved_pair(search_space_id=ss_id)
     tag = _tag_payload(prereqs=[["eq.bernoulli", "eq.nonexistent"]])
     with pytest.raises(TagMintError):
-        await tag_and_mint(
-            db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct
-        )
+        await tag_and_mint(db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct)
 
 
 async def test_tag_and_mint_escalates_to_judge(db_session):
@@ -664,9 +662,7 @@ async def test_tag_and_mint_escalates_to_judge(db_session):
     callable. The pre-seeded entity uses the 'BANDSEED' scope_summary that
     ``_embed_in_band`` places at cosine 0.87."""
     ss_id, subj_id = await _seed_course(db_session, slug="c-band")
-    concept = Concept(
-        subject_id=subj_id, slug="bernoulli_principle", display_name="Bernoulli"
-    )
+    concept = Concept(subject_id=subj_id, slug="bernoulli_principle", display_name="Bernoulli")
     db_session.add(concept)
     await db_session.flush()
     seed_entity = KGEntity(
@@ -730,11 +726,7 @@ async def test_tag_and_mint_re_update_existing_entity(db_session):
     )
     assert inserted is False  # the RE-UPDATE branch
     assert entity_id == plan1.minted_entity_ids["eq.bernoulli"]
-    row = (
-        await db_session.execute(
-            select(KGEntity).where(KGEntity.id == entity_id)
-        )
-    ).scalar_one()
+    row = (await db_session.execute(select(KGEntity).where(KGEntity.id == entity_id))).scalar_one()
     assert row.display_name == "Bernoulli (renamed)"
     assert row.scope_summary == "updated summary"
 
@@ -754,9 +746,7 @@ async def test_resolve_or_create_concept_creates_subject_when_absent(db_session)
         display_name="New Concept",
     )
     assert isinstance(cid, int)
-    concept = (
-        await db_session.execute(select(Concept).where(Concept.id == cid))
-    ).scalar_one()
+    concept = (await db_session.execute(select(Concept).where(Concept.id == cid))).scalar_one()
     assert concept.slug == "newconcept"
 
 
@@ -769,9 +759,7 @@ async def test_link_opposes_skips_empty_opposes(db_session):
     from apollo.provisioning.tag_mint_persist import link_opposes
 
     ss_id, subj_id = await _seed_course(db_session, slug="c-noopp")
-    concept = Concept(
-        subject_id=subj_id, slug="bernoulli_principle", display_name="Bernoulli"
-    )
+    concept = Concept(subject_id=subj_id, slug="bernoulli_principle", display_name="Bernoulli")
     db_session.add(concept)
     await db_session.flush()
     # A misconception entity carrying NO opposes_entity_key in its payload.
@@ -896,7 +884,6 @@ def test_variable_mapping_passes_gate1_mintmap_subcheck():
     assert result.failed_gate != 1, result.diagnostic
 
 
-
 # --------------------------------------------------------------------------- #
 # Public-API re-export surface (the package-level import paths apollo.md advertises)
 # --------------------------------------------------------------------------- #
@@ -909,8 +896,14 @@ def test_tag_mint_public_api_reexport():
     re-export from ``apollo/provisioning/__init__.py`` and this REDs."""
     from apollo.provisioning import (
         ApprovedPair as ReexportApprovedPair,
+    )
+    from apollo.provisioning import (
         MintPlan as ReexportMintPlan,
+    )
+    from apollo.provisioning import (
         TagMintError as ReexportTagMintError,
+    )
+    from apollo.provisioning import (
         tag_and_mint as reexport_tag_and_mint,
     )
     from apollo.provisioning import tag_mint as tag_mint_mod

@@ -24,14 +24,11 @@ infra failure of the one LLM call raises ``ResolutionUnavailableError``.
 from __future__ import annotations
 
 import logging
-from typing import Callable
 
 from apollo.ontology.graph import KGGraph
 from apollo.ontology.nodes import Node
 from apollo.resolution.adjudication import (
     Adjudicator,
-    ResolutionLLMReply,
-    ResolutionLLMRequest,
     adjudicate,
 )
 from apollo.resolution.assignment import (
@@ -163,7 +160,8 @@ def resolve_attempt(
     matches_by_node: dict[str, list[ScoredMatch]] = {}
     for n in nodes:
         hit = _content_match(
-            n, candidates,
+            n,
+            candidates,
             fuzzy_threshold=fuzzy_threshold,
             symbolic_mappings=maps,
         )
@@ -174,9 +172,7 @@ def resolve_attempt(
     outcome = greedy_global_assignment(matches_by_node)
     if outcome.abstained:  # pragma: no cover - cap already short-circuited above
         resolved = tuple(_unresolved(n) for n in nodes)
-        return ResolutionResult(
-            resolved=resolved, tier_counts=_histogram(resolved), llm_calls=0
-        )
+        return ResolutionResult(resolved=resolved, tier_counts=_histogram(resolved), llm_calls=0)
     assigned = outcome.assignment
 
     # 3) ONE LLM adjudication for the remainder (only if an adjudicator is given).

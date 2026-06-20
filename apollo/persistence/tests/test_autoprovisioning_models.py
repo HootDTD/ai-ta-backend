@@ -102,9 +102,7 @@ async def test_orm_kg_entity_scope_summary_roundtrip(db_session):
     await db_session.flush()
     db_session.expire(ent)
     reloaded = (
-        await db_session.execute(
-            select(KGEntity).where(KGEntity.canonical_key == "k_scope")
-        )
+        await db_session.execute(select(KGEntity).where(KGEntity.canonical_key == "k_scope"))
     ).scalar_one()
     assert reloaded.scope_summary == "pressure-velocity relation"
 
@@ -118,9 +116,7 @@ async def test_orm_kg_entity_scope_summary_roundtrip(db_session):
     await db_session.flush()
     db_session.expire(ent2)
     reloaded2 = (
-        await db_session.execute(
-            select(KGEntity).where(KGEntity.canonical_key == "k_noscope")
-        )
+        await db_session.execute(select(KGEntity).where(KGEntity.canonical_key == "k_noscope"))
     ).scalar_one()
     assert reloaded2.scope_summary is None
 
@@ -158,9 +154,7 @@ async def test_orm_provisioning_job_roundtrip(db_session):
     job_id = job.id
     db_session.expire(job)
     reloaded = (
-        await db_session.execute(
-            select(ProvisioningJob).where(ProvisioningJob.id == job_id)
-        )
+        await db_session.execute(select(ProvisioningJob).where(ProvisioningJob.id == job_id))
     ).scalar_one()
     assert reloaded.state == "pending"
     assert reloaded.attempt_count == 0
@@ -181,9 +175,7 @@ async def test_orm_provisioning_job_roundtrip(db_session):
     leased_id = leased.id
     db_session.expire(leased)
     reloaded2 = (
-        await db_session.execute(
-            select(ProvisioningJob).where(ProvisioningJob.id == leased_id)
-        )
+        await db_session.execute(select(ProvisioningJob).where(ProvisioningJob.id == leased_id))
     ).scalar_one()
     assert reloaded2.lease_owner == "worker-1"
     assert reloaded2.ingest_run_id == run_id
@@ -231,18 +223,14 @@ async def test_orm_rejected_dedup_error_roundtrip(db_session):
     db_session.expire(error)
 
     r = (
-        await db_session.execute(
-            select(RejectedProblem).where(RejectedProblem.id == rejected_id)
-        )
+        await db_session.execute(select(RejectedProblem).where(RejectedProblem.id == rejected_id))
     ).scalar_one()
     assert r.failed_gate == 3
     assert r.rejected_stage == "promotion_lint"
     assert r.payload == {"q": "x"}
 
     d = (
-        await db_session.execute(
-            select(DedupDecision).where(DedupDecision.id == dedup_id)
-        )
+        await db_session.execute(select(DedupDecision).where(DedupDecision.id == dedup_id))
     ).scalar_one()
     assert d.method == "embedding"
     assert d.verdict == "merged"

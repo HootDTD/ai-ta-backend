@@ -34,7 +34,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from apollo.provisioning.cost_constants import (
     PER_DOCUMENT_TOKEN_CEILING,
@@ -52,15 +53,12 @@ class CostBudgetExceeded(Exception):
     ceiling. Carries the cumulative ``tokens``, the ``ceiling``, and the
     ``document_id`` (when known) — never prompt content or the API key."""
 
-    def __init__(
-        self, *, tokens: int, ceiling: int, document_id: int | None = None
-    ) -> None:
+    def __init__(self, *, tokens: int, ceiling: int, document_id: int | None = None) -> None:
         self.tokens = tokens
         self.ceiling = ceiling
         self.document_id = document_id
         super().__init__(
-            f"per-document token ceiling exceeded: {tokens} > {ceiling} "
-            f"(document_id={document_id})"
+            f"per-document token ceiling exceeded: {tokens} > {ceiling} (document_id={document_id})"
         )
 
 
@@ -172,9 +170,7 @@ class MeteredChat:
                 "purpose": purpose,
                 "model": model,
                 "tokens_in": getattr(getattr(resp, "usage", None), "prompt_tokens", 0),
-                "tokens_out": getattr(
-                    getattr(resp, "usage", None), "completion_tokens", 0
-                ),
+                "tokens_out": getattr(getattr(resp, "usage", None), "completion_tokens", 0),
             },
         )
         return resp.choices[0].message.content or ""
@@ -190,9 +186,7 @@ class MeteredChat:
         self._run.llm_calls += 1
         self._run.llm_tokens_in += tokens_in
         self._run.llm_tokens_out += tokens_out
-        self._run.llm_cost_usd += cost_usd_for(
-            model, tokens_in=tokens_in, tokens_out=tokens_out
-        )
+        self._run.llm_cost_usd += cost_usd_for(model, tokens_in=tokens_in, tokens_out=tokens_out)
 
         cumulative = self._run.llm_tokens_in + self._run.llm_tokens_out
         if cumulative > self._ceiling:

@@ -137,7 +137,8 @@ async def test_read_node_created_at_skips_null_created_at(tc_neo4j):
         await s.run(
             "CREATE (n:Equation:_KGNode {attempt_id: $aid, node_id: $nid, "
             "source: 'parser', symbolic: 'x-y', label: 'legacy', variables: []})",
-            aid=aid, nid="no_ts",
+            aid=aid,
+            nid="no_ts",
         )
     out = await store.read_node_created_at(attempt_id=aid)
     assert "with_ts" in out

@@ -47,12 +47,16 @@ async def resolve_or_create_concept(
         return concept_id
 
     subject_id = (
-        await db.execute(
-            select(Subject.id)
-            .where(Subject.search_space_id == search_space_id)
-            .order_by(Subject.id.asc())
+        (
+            await db.execute(
+                select(Subject.id)
+                .where(Subject.search_space_id == search_space_id)
+                .order_by(Subject.id.asc())
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if subject_id is None:
         subject = Subject(
             slug=f"auto-{search_space_id}",
@@ -61,12 +65,12 @@ async def resolve_or_create_concept(
         )
         db.add(subject)
         await db.flush()
-        subject_id = subject.id
+        subject_id = int(subject.id)
 
     concept = Concept(subject_id=subject_id, slug=slug, display_name=display_name)
     db.add(concept)
     await db.flush()
-    return concept.id
+    return int(concept.id)
 
 
 async def author_concept_symbols(
@@ -91,9 +95,7 @@ async def author_concept_symbols(
     other ``CanonicalSymbols`` keys already authored (``description``,
     ``subscript_convention``) are preserved untouched. ``normalization_map`` is a
     flat ``{alias: canonical}`` dict; existing keys are NEVER overwritten."""
-    concept = (
-        await db.execute(select(Concept).where(Concept.id == concept_id))
-    ).scalar_one()
+    concept = (await db.execute(select(Concept).where(Concept.id == concept_id))).scalar_one()
 
     existing_canon = dict(concept.canonical_symbols or {})
     existing_norm = dict(concept.normalization_map or {})
@@ -115,8 +117,8 @@ async def author_concept_symbols(
     new_canon = dict(existing_canon)
     new_canon["symbols"] = sorted(existing_symbols + newly_authored)
     new_canon.setdefault("description", {})
-    concept.canonical_symbols = new_canon
-    concept.normalization_map = existing_norm
+    concept.canonical_symbols = new_canon  # type: ignore[assignment]
+    concept.normalization_map = existing_norm  # type: ignore[assignment]
     await db.flush()
     return newly_authored
 
@@ -152,16 +154,16 @@ async def upsert_entity(
         )
         db.add(row)
         await db.flush()
-        return row.id, True
+        return int(row.id), True
 
-    row.kind = spec.kind
-    row.display_name = spec.display_name
-    row.payload = dict(spec.payload)
-    row.aliases = list(spec.aliases)
+    row.kind = spec.kind  # type: ignore[assignment]
+    row.display_name = spec.display_name  # type: ignore[assignment]
+    row.payload = dict(spec.payload)  # type: ignore[assignment]
+    row.aliases = list(spec.aliases)  # type: ignore[assignment]
     if scope_summary is not None:
-        row.scope_summary = scope_summary
+        row.scope_summary = scope_summary  # type: ignore[assignment]
     await db.flush()
-    return row.id, False
+    return int(row.id), False
 
 
 async def link_opposes(
@@ -175,12 +177,16 @@ async def link_opposes(
     linked. Raises ``KeyError`` via the caller's lookup when an opposes key
     resolves to no entity (the caller maps that to a fail-closed TagMintError)."""
     rows = (
-        await db.execute(
-            select(KGEntity)
-            .where(KGEntity.concept_id == concept_id)
-            .where(KGEntity.kind == "misconception")
+        (
+            await db.execute(
+                select(KGEntity)
+                .where(KGEntity.concept_id == concept_id)
+                .where(KGEntity.kind == "misconception")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     linked = 0
     for row in rows:
@@ -190,7 +196,7 @@ async def link_opposes(
             continue
         target_id = key_to_id[opposes_key]  # KeyError → caller raises TagMintError
         payload["opposes_entity_id"] = target_id
-        row.payload = payload
+        row.payload = payload  # type: ignore[assignment]
         linked += 1
     await db.flush()
     return linked

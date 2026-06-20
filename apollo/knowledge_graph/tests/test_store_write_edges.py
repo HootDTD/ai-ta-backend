@@ -10,6 +10,7 @@ NEO4J_URI) and do NOT count toward the patch gate.
 
 Test attempt_ids are NEGATIVE (cleanup contract in `apollo/conftest.py`).
 """
+
 from __future__ import annotations
 
 import logging
@@ -56,8 +57,9 @@ class _FakeRecord:
 class _FakeResult:
     """Supports both `.single()` (count reads) and async iteration (id reads)."""
 
-    def __init__(self, *, single: _FakeRecord | None = None,
-                 rows: list[_FakeRecord] | None = None) -> None:
+    def __init__(
+        self, *, single: _FakeRecord | None = None, rows: list[_FakeRecord] | None = None
+    ) -> None:
         self._single = single
         self._rows = rows or []
 
@@ -68,6 +70,7 @@ class _FakeResult:
         async def gen():
             for r in self._rows:
                 yield r
+
         return gen()
 
 
@@ -93,8 +96,10 @@ class _FakeSession:
             written = 0
             for row in rows:
                 aid = int(row["attempt_id"])
-                if (aid, row["from_node_id"]) in self._store.nodes and \
-                        (aid, row["to_node_id"]) in self._store.nodes:
+                if (aid, row["from_node_id"]) in self._store.nodes and (
+                    aid,
+                    row["to_node_id"],
+                ) in self._store.nodes:
                     written += 1
             self._store.created_edges.append((cypher, rows))
             return _FakeResult(single=_FakeRecord({"written": written}))
@@ -172,30 +177,43 @@ def store(db, neo):
 
 def _step(node_id, attempt_id):
     return build_node(
-        node_type="procedure_step", node_id=node_id, attempt_id=attempt_id,
-        source="parser", content={"action": "apply continuity", "purpose": "find v2"},
+        node_type="procedure_step",
+        node_id=node_id,
+        attempt_id=attempt_id,
+        source="parser",
+        content={"action": "apply continuity", "purpose": "find v2"},
     )
 
 
 def _equation(node_id, attempt_id):
     return build_node(
-        node_type="equation", node_id=node_id, attempt_id=attempt_id,
-        source="parser", content={"symbolic": "A1*v1 - A2*v2", "label": "continuity"},
+        node_type="equation",
+        node_id=node_id,
+        attempt_id=attempt_id,
+        source="parser",
+        content={"symbolic": "A1*v1 - A2*v2", "label": "continuity"},
     )
 
 
 def _condition(node_id, attempt_id):
     return build_node(
-        node_type="condition", node_id=node_id, attempt_id=attempt_id,
-        source="parser", content={"applies_when": "incompressible flow"},
+        node_type="condition",
+        node_id=node_id,
+        attempt_id=attempt_id,
+        source="parser",
+        content={"applies_when": "incompressible flow"},
     )
 
 
 def _edge(edge_type, from_id, to_id, attempt_id, from_t, to_t):
     return Edge(
-        edge_type=edge_type, from_node_id=from_id, to_node_id=to_id,
-        attempt_id=attempt_id, source="parser",
-        from_node_type=from_t, to_node_type=to_t,
+        edge_type=edge_type,
+        from_node_id=from_id,
+        to_node_id=to_id,
+        attempt_id=attempt_id,
+        source="parser",
+        from_node_type=from_t,
+        to_node_type=to_t,
     )
 
 
@@ -265,10 +283,14 @@ async def test_write_edges_rejects_disallowed_pair_and_logs(store, neo, attempt,
     # simulate an edge that reaches the store with a disallowed pair (e.g. a
     # reference-graph edge whose types were resolved after construction).
     edge = _edge(EdgeType.SCOPES, "c0", "e0", aid, "condition", "equation")
-    edge = edge.model_copy(update={
-        "from_node_id": "e0", "to_node_id": "c0",
-        "from_node_type": "equation", "to_node_type": "condition",
-    })
+    edge = edge.model_copy(
+        update={
+            "from_node_id": "e0",
+            "to_node_id": "c0",
+            "from_node_type": "equation",
+            "to_node_type": "condition",
+        }
+    )
 
     with caplog.at_level(logging.INFO, logger="apollo.knowledge_graph.store"):
         result = await store.write_edges(attempt_id=aid, edges=[edge], source="parser")
@@ -302,20 +324,22 @@ async def test_write_edges_unknown_endpoint_type_is_invalid(store, neo, attempt,
 @pytest.mark.asyncio
 async def test_write_edges_mixed_batch_writes_valid_drops_rest(store, neo, attempt):
     aid = attempt.id
-    _seed(neo, aid,
-          _step("s0", aid), _equation("e0", aid),
-          _condition("c0", aid))
+    _seed(neo, aid, _step("s0", aid), _equation("e0", aid), _condition("c0", aid))
     good = _edge(EdgeType.USES, "s0", "e0", aid, "procedure_step", "equation")
     absent = _edge(EdgeType.USES, "s0", "GONE", aid, "procedure_step", "equation")
     disallowed = _edge(EdgeType.SCOPES, "c0", "e0", aid, "condition", "equation").model_copy(
         update={
-            "from_node_id": "e0", "to_node_id": "c0",
-            "from_node_type": "equation", "to_node_type": "condition",
+            "from_node_id": "e0",
+            "to_node_id": "c0",
+            "from_node_type": "equation",
+            "to_node_type": "condition",
         }
     )
 
     result = await store.write_edges(
-        attempt_id=aid, edges=[good, absent, disallowed], source="parser",
+        attempt_id=aid,
+        edges=[good, absent, disallowed],
+        source="parser",
     )
 
     assert result.written == 1
@@ -358,9 +382,9 @@ def test_write_edges_result_int_coercion():
 async def test_write_edges_respects_freeze(store, neo, db, attempt):
     aid = attempt.id
     _seed(neo, aid, _step("s0", aid), _equation("e0", aid))
-    sess = (await db.execute(
-        select(ApolloSession).where(ApolloSession.id == attempt.session_id)
-    )).scalar_one()
+    sess = (
+        await db.execute(select(ApolloSession).where(ApolloSession.id == attempt.session_id))
+    ).scalar_one()
     sess.phase = SessionPhase.SOLVING.value
     await db.commit()
 
