@@ -304,7 +304,39 @@ async def test_tag_and_mint_authors_canonical_symbols(db_session):
         )
     ).scalar_one()
     assert concept.canonical_symbols  # non-empty dict
+    # Stored in the CanonicalSymbols shape ({"symbols": [...]}), NOT a flat
+    # {symbol: True} map — the runtime reader requires the list form.
+    assert isinstance(concept.canonical_symbols.get("symbols"), list)
+    assert concept.canonical_symbols["symbols"]  # non-empty symbol list
     assert concept.normalization_map  # non-empty (P1/P2 → P)
+
+
+async def test_authored_canonical_symbols_round_trip_through_reader(db_session):
+    """REGRESSION (HIGH): a tag_and_mint-authored concept MUST load through the
+    real runtime reader ``load_concept_definition`` →
+    ``CanonicalSymbols.model_validate`` (apollo/subjects/curriculum_db.py:101),
+    which is hit on every Apollo teaching session. The authored
+    ``canonical_symbols`` therefore has to be a CanonicalSymbols-validatable dict
+    ({"symbols": [...], ...}), NOT a flat {symbol: True} map. DISCRIMINATING:
+    reverting the author shape to {symbol: True} REDs this with a pydantic
+    ValidationError (symbols Field required)."""
+    from apollo.subjects.curriculum_db import load_concept_definition
+
+    ss_id, _subj = await _seed_course(db_session, slug="c-roundtrip")
+    pair = _approved_pair(search_space_id=ss_id)
+    plan = await tag_and_mint(
+        db_session,
+        pair,
+        chat_fn=_chat_returning(_tag_payload()),
+        embed_fn=_embed_distinct,
+    )
+
+    # The real teaching-session reader must accept the authored columns.
+    definition = await load_concept_definition(db_session, concept_id=plan.concept_id)
+    assert definition.canonical_symbols.symbols  # list[str], non-empty
+    # the authored symbols survive the round-trip (base symbols P/v/rho present).
+    for sym in plan.authored_symbols:
+        assert sym in definition.canonical_symbols.symbols
 
 
 async def test_author_symbols_first_writer_wins_union(db_session):
@@ -324,7 +356,9 @@ async def test_author_symbols_first_writer_wins_union(db_session):
             select(Concept).where(Concept.id == plan1.concept_id)
         )
     ).scalar_one()
-    first_symbols = dict(concept.canonical_symbols)
+    # canonical_symbols is the CanonicalSymbols shape ({"symbols": [...]}); the
+    # union operates over that LIST, not over dict keys.
+    first_symbols = list(concept.canonical_symbols["symbols"])
 
     # second problem: introduces a NEW symbol Q (different given/target).
     problem2 = _problem_dict(
@@ -341,7 +375,7 @@ async def test_author_symbols_first_writer_wins_union(db_session):
         embed_fn=_embed_distinct,
     )
     await db_session.refresh(concept)
-    union_symbols = dict(concept.canonical_symbols)
+    union_symbols = list(concept.canonical_symbols["symbols"])
     # the first writer's symbols all survive (never rewritten)...
     for sym in first_symbols:
         assert sym in union_symbols
@@ -861,3 +895,27 @@ def test_variable_mapping_passes_gate1_mintmap_subcheck():
     # gate 1 must NOT be the failing gate (variable_mapping is now in the map).
     assert result.failed_gate != 1, result.diagnostic
 
+
+
+# --------------------------------------------------------------------------- #
+# Public-API re-export surface (the package-level import paths apollo.md advertises)
+# --------------------------------------------------------------------------- #
+
+
+def test_tag_mint_public_api_reexport():
+    """``from apollo.provisioning import tag_and_mint, ApprovedPair, MintPlan,
+    TagMintError`` returns the SAME objects as the ``tag_mint`` module — the
+    package-level paths apollo.md documents must resolve. DISCRIMINATING: drop a
+    re-export from ``apollo/provisioning/__init__.py`` and this REDs."""
+    from apollo.provisioning import (
+        ApprovedPair as ReexportApprovedPair,
+        MintPlan as ReexportMintPlan,
+        TagMintError as ReexportTagMintError,
+        tag_and_mint as reexport_tag_and_mint,
+    )
+    from apollo.provisioning import tag_mint as tag_mint_mod
+
+    assert ReexportApprovedPair is tag_mint_mod.ApprovedPair
+    assert ReexportMintPlan is tag_mint_mod.MintPlan
+    assert ReexportTagMintError is tag_mint_mod.TagMintError
+    assert reexport_tag_and_mint is tag_mint_mod.tag_and_mint

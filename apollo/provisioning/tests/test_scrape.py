@@ -437,3 +437,28 @@ def _run(coro):
     import asyncio
 
     return asyncio.run(coro)
+
+
+# --------------------------------------------------------------------------- #
+# Public-API re-export surface (the package-level import paths apollo.md advertises)
+# --------------------------------------------------------------------------- #
+
+
+def test_scrape_public_api_reexport():
+    """``from apollo.provisioning import scrape_questions, write_tier1_problems,
+    CandidateQuestion, ScrapeResult`` returns the SAME objects as the ``scrape``
+    module — the package-level paths apollo.md documents must resolve.
+    DISCRIMINATING: drop a re-export from ``apollo/provisioning/__init__.py`` and
+    this REDs."""
+    from apollo.provisioning import (
+        CandidateQuestion as ReexportCandidateQuestion,
+        ScrapeResult as ReexportScrapeResult,
+        scrape_questions as reexport_scrape_questions,
+        write_tier1_problems as reexport_write_tier1_problems,
+    )
+    from apollo.provisioning import scrape as scrape_mod
+
+    assert ReexportCandidateQuestion is scrape_mod.CandidateQuestion
+    assert ReexportScrapeResult is scrape_mod.ScrapeResult
+    assert reexport_scrape_questions is scrape_mod.scrape_questions
+    assert reexport_write_tier1_problems is scrape_mod.write_tier1_problems
