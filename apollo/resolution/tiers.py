@@ -57,6 +57,7 @@ class TierHitAll:
 # Student surface text — the comparable string for each node type.
 # ---------------------------------------------------------------------------
 
+
 def student_surface_text(node: Node) -> str:
     """The text the alias/fuzzy tiers compare for a student node.
 
@@ -94,6 +95,7 @@ def _normalize(text: str) -> str:
 # ---------------------------------------------------------------------------
 # Tier 1 — exact key / identical content.
 # ---------------------------------------------------------------------------
+
 
 def match_exact(node: Node, candidates: tuple[Candidate, ...]) -> TierHit | None:
     """Exact match: the node's display label OR normalized surface text equals
@@ -204,6 +206,7 @@ def match_symbolic(
 # Tier 3 — normalized alias match.
 # ---------------------------------------------------------------------------
 
+
 def match_alias_all(node: Node, candidates: tuple[Candidate, ...]) -> list[TierHitAll]:
     """EVERY type-compatible candidate with an exact normalized-alias hit.
 
@@ -237,6 +240,7 @@ def match_alias(node: Node, candidates: tuple[Candidate, ...]) -> TierHit | None
 
 
 # Tier 4 — RapidFuzz >= 0.9 (the only RapidFuzz site).
+
 
 def _fuzzy_ratio(a: str, b: str) -> float:
     """Order-insensitive token-set similarity, normalized to 0..1."""
