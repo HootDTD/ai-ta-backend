@@ -666,3 +666,179 @@ async def test_intra_job_rerun_skips_scraped_chunks(committed_engine, monkeypatc
         plain_dsn, "SELECT n_rejected FROM apollo_ingest_runs WHERE id=$1", run_id
     )
     assert run_rejected == 1  # NOT 2
+
+
+# ===========================================================================
+# T-DB10 — full promote spine on committed PG through the REAL tag_and_mint +
+# REAL promote (project_canon mocked). Proves: (1) the tag_and_mint chat_fn
+# positional-string adapter works against a shape-faithful keyword-only
+# MeteredChat.cheap (the drift bug would TypeError here); (2) the promoted row is
+# RE-HOMED from the provisional concept onto the tagged concept and is selectable
+# via list_problems_for_concept; (3) gate-8 dedup is non-vacuous (a second
+# identical-content candidate is rejected at gate 8).
+# ===========================================================================
+import json as _json  # noqa: E402
+
+_BERNOULLI_GIVENS = {
+    "A1": 0.01, "A2": 0.005, "P1": 200000.0, "v1": 2.0, "rho": 1000.0,
+}
+_BERNOULLI_REFERENCE_SOLUTION = [
+    {"id": "continuity", "step": 1, "entry_type": "equation",
+     "content": {"label": "Continuity", "symbolic": "rho*A1*v1 - rho*A2*v2",
+                 "variables": ["rho", "A1", "v1", "A2", "v2"]}, "depends_on": []},
+    {"id": "incompressibility", "step": 2, "entry_type": "condition",
+     "content": {"label": "Incompressibility", "applies_when": "density constant"},
+     "depends_on": []},
+    {"id": "bernoulli", "step": 3, "entry_type": "equation",
+     "content": {"label": "Bernoulli", "symbolic":
+                 "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 "
+                 "- (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
+                 "variables": ["P1", "rho", "v1", "g", "h1", "P2", "v2", "h2"]},
+     "depends_on": ["incompressibility"]},
+    {"id": "horizontal_simplification", "step": 4, "entry_type": "simplification",
+     "content": {"applies_when": "h1 == h2",
+                 "transformation": "rho*g*h1 and rho*g*h2 cancel"},
+     "depends_on": ["bernoulli"]},
+    {"id": "plan_apply_continuity", "step": 5, "entry_type": "procedure_step",
+     "content": {"order": 1, "action": "use continuity to solve for v2",
+                 "purpose": "obtain v2", "uses_equations": ["continuity"]},
+     "depends_on": ["continuity"]},
+    {"id": "plan_apply_horizontal_simplification", "step": 6,
+     "entry_type": "procedure_step",
+     "content": {"order": 2, "action": "set h1 == h2", "purpose": "simplify",
+                 "uses_equations": ["bernoulli"]},
+     "depends_on": ["bernoulli", "horizontal_simplification"]},
+    {"id": "plan_solve_bernoulli_for_p2", "step": 7, "entry_type": "procedure_step",
+     "content": {"order": 3, "action": "solve for P2", "purpose": "answer",
+                 "uses_equations": ["bernoulli"]},
+     "depends_on": ["plan_apply_continuity",
+                    "plan_apply_horizontal_simplification"]},
+]
+
+
+def _bernoulli_candidate(*, document_id, chash):
+    return CandidateQuestion(
+        problem_text="Water flows through a horizontal pipe. Find the pressure P2.",
+        given_values=dict(_BERNOULLI_GIVENS),
+        target_unknown="P2",
+        difficulty="intro",
+        document_id=document_id,
+        page=1,
+        chunk_content_hash=chash,
+        concept_slug="provisional.inventory",
+    )
+
+
+class _ShapeFaithfulMeteredChat:
+    """Keyword-only ``.cheap``/``.main`` (mirrors the real ``MeteredChat``). The
+    tag/mint stage calls its chat_fn POSITIONALLY, so the orchestrator's
+    positional-string adapter is exercised; a regression would TypeError here."""
+
+    def scrape_chat_fn(self, _system_prompt):  # noqa: ANN001
+        return lambda _chunk: "[]"
+
+    def cheap(self, *, purpose, messages, response_format=None, temperature=0.0, model=None):  # noqa: ANN001
+        return _json.dumps(
+            {"concept_slug": "bernoulli_principle",
+             "display_name": "Bernoulli Principle", "prereqs": []}
+        )
+
+    def main(self, *, purpose, messages, response_format=None, temperature=0.0, model=None):  # noqa: ANN001
+        return "{}"
+
+
+async def test_full_promote_spine_rehomes_and_dedups_real_pg(
+    committed_engine, monkeypatch
+):
+    from apollo.overseer.problem_selector import list_problems_for_concept
+    from apollo.provisioning.pairing_gate import PairingVerdict
+    from apollo.provisioning.solution import ReferenceSolutionDraft
+
+    plain_dsn, factory = committed_engine
+    space = await _seed_space(plain_dsn)
+    doc = await _seed_document(plain_dsn, space_id=space, content_hash="h1")
+    # TWO chunks -> two candidates with identical problem content (gate-8 collide).
+    await _seed_chunk(plain_dsn, document_id=doc, content="chunk one")
+    await _seed_chunk(plain_dsn, document_id=doc, content="chunk two")
+    run_id = await _seed_run(
+        plain_dsn, space, document_id=doc, content_hash="h1", status="queued"
+    )
+    job_id = await _seed_job(
+        plain_dsn, space_id=space, document_id=doc, state="running",
+        ingest_run_id=run_id, attempt_count=1,
+    )
+
+    cand_a = _bernoulli_candidate(document_id=doc, chash="bern-a")
+    cand_b = _bernoulli_candidate(document_id=doc, chash="bern-b")
+
+    async def _scrape(chunks, *, chat_fn):  # noqa: ANN001
+        return ScrapeResult(candidates=(cand_a, cand_b), scraped_count=1,
+                            parse_failures=0)
+
+    async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
+        return ReferenceSolutionDraft(
+            solution_source="generated",
+            reference_solution=[dict(s) for s in _BERNOULLI_REFERENCE_SOLUTION],
+            grounding=(), provenance={},
+        )
+
+    async def _vp(q, draft, *, retrieve_fn, judge_fn):  # noqa: ANN001
+        return PairingVerdict(paired=True, faithful=True, confidence=1.0)
+
+    async def _noop_canon(db, neo, *, search_space_id, concept_id):  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr(orch, "scrape_questions", _scrape)
+    monkeypatch.setattr(orch, "find_or_generate", _fog)
+    monkeypatch.setattr(orch, "validate_pair", _vp)
+    # Mock project_canon on the promote module surface (the frozen 3C1 MERGE).
+    promote_mod = sys.modules["apollo.provisioning.promote"]
+    monkeypatch.setattr(promote_mod, "project_canon", _noop_canon)
+
+    claimed = ClaimedJob(
+        job_id=job_id, search_space_id=space, document_id=doc,
+        ingest_run_id=run_id, attempt_count=1,
+    )
+
+    async with factory() as session:
+        outcome = await run_provisioning(
+            session, AsyncMock(), job=claimed,
+            metered_chat=_ShapeFaithfulMeteredChat(),
+            retrieve_fn=AsyncMock(return_value=()),
+            embed_fn=lambda _t: [0.0] * 8,
+        )
+
+    # One promotes (re-homed to the tagged concept); the duplicate hits gate 8.
+    assert outcome.status == "succeeded"
+    assert outcome.n_promoted == 1
+    assert outcome.n_rejected == 1
+
+    # The promoted row was RE-HOMED off the provisional concept onto the tagged one
+    # and is teachable (tier=2, selectable). Resolve the tagged concept id.
+    tagged_id = await _count(
+        plain_dsn,
+        "SELECT c.id FROM apollo_concepts c JOIN apollo_subjects s "
+        "ON c.subject_id = s.id WHERE s.search_space_id=$1 AND c.slug=$2",
+        space, "bernoulli_principle",
+    )
+    assert tagged_id is not None
+    n_tier2_on_tagged = await _count(
+        plain_dsn,
+        "SELECT count(*) FROM apollo_concept_problems WHERE concept_id=$1 AND tier=2",
+        tagged_id,
+    )
+    assert n_tier2_on_tagged == 1  # the re-homed promoted row
+
+    # The student selector can reach it under the tagged concept.
+    async with factory() as session:
+        teachable = await list_problems_for_concept(session, concept_id=tagged_id)
+    assert len(teachable) == 1
+
+    # The gate-8 rejection is recorded with failed_gate=8 (non-vacuous dedup).
+    failed_gate = await _count(
+        plain_dsn,
+        "SELECT failed_gate FROM apollo_rejected_problems "
+        "WHERE ingest_run_id=$1 AND rejected_stage='promotion_lint'",
+        run_id,
+    )
+    assert failed_gate == 8

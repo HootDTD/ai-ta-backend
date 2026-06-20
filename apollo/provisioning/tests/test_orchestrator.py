@@ -13,6 +13,7 @@ WU-3B2g gate requires GREEN-not-skipped.
 
 from __future__ import annotations
 
+import json
 import sys
 from unittest.mock import AsyncMock
 
@@ -35,7 +36,7 @@ from apollo.provisioning.promote import PromoteResult
 from apollo.provisioning.queue import ClaimedJob
 from apollo.provisioning.scrape import CandidateQuestion, ScrapeResult
 from apollo.provisioning.solution import ReferenceSolutionDraft
-from apollo.provisioning.tag_mint import MintPlan
+from apollo.provisioning.tag_mint import ApprovedPair, MintPlan
 from database.models import AITAChunk, AITADocument, SearchSpace
 
 orch = sys.modules["apollo.provisioning.orchestrator"]
@@ -770,3 +771,479 @@ async def test_run_provisioning_canon_error_fails_run(db_session, monkeypatch):
     assert len(errors) == 1
     assert errors[0].stage == "promotion"
     assert errors[0].error_class == "CanonProjectionError"
+
+
+# --------------------------------------------------------------------------- #
+# End-to-end through the REAL tag_and_mint + promote (the wiring proof).
+# --------------------------------------------------------------------------- #
+# A bernoulli reference solution that passes all 8 promotion gates (same shape as
+# test_promote._bernoulli_problem()'s reference_solution). The candidate carries
+# the matching given_values/target; build_approved_pair re-assembles the full
+# Problem from (candidate, draft.reference_solution).
+_BERNOULLI_GIVENS = {
+    "A1": 0.01,
+    "A2": 0.005,
+    "P1": 200000.0,
+    "v1": 2.0,
+    "rho": 1000.0,
+}
+_BERNOULLI_REFERENCE_SOLUTION = [
+    {
+        "id": "continuity",
+        "step": 1,
+        "entry_type": "equation",
+        "content": {
+            "label": "Continuity (mass conservation)",
+            "symbolic": "rho*A1*v1 - rho*A2*v2",
+            "variables": ["rho", "A1", "v1", "A2", "v2"],
+        },
+        "depends_on": [],
+    },
+    {
+        "id": "incompressibility",
+        "step": 2,
+        "entry_type": "condition",
+        "content": {
+            "label": "Incompressibility assumption",
+            "applies_when": "density is constant",
+        },
+        "depends_on": [],
+    },
+    {
+        "id": "bernoulli",
+        "step": 3,
+        "entry_type": "equation",
+        "content": {
+            "label": "Bernoulli's equation",
+            "symbolic": (
+                "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 "
+                "- (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)"
+            ),
+            "variables": ["P1", "rho", "v1", "g", "h1", "P2", "v2", "h2"],
+        },
+        "depends_on": ["incompressibility"],
+    },
+    {
+        "id": "horizontal_simplification",
+        "step": 4,
+        "entry_type": "simplification",
+        "content": {
+            "applies_when": "h1 == h2",
+            "transformation": "rho*g*h1 and rho*g*h2 cancel",
+        },
+        "depends_on": ["bernoulli"],
+    },
+    {
+        "id": "plan_apply_continuity",
+        "step": 5,
+        "entry_type": "procedure_step",
+        "content": {
+            "order": 1,
+            "action": "use continuity with rho, A1, v1, A2 to solve for v2",
+            "purpose": "obtain v2 to plug into bernoulli at section 2",
+            "uses_equations": ["continuity"],
+        },
+        "depends_on": ["continuity"],
+    },
+    {
+        "id": "plan_apply_horizontal_simplification",
+        "step": 6,
+        "entry_type": "procedure_step",
+        "content": {
+            "order": 2,
+            "action": "set h1 == h2 so the gravitational terms cancel",
+            "purpose": "simplify bernoulli to relate P1, P2, v1, v2",
+            "uses_equations": ["bernoulli"],
+        },
+        "depends_on": ["bernoulli", "horizontal_simplification"],
+    },
+    {
+        "id": "plan_solve_bernoulli_for_p2",
+        "step": 7,
+        "entry_type": "procedure_step",
+        "content": {
+            "order": 3,
+            "action": "substitute v2 and known P1, rho, v1 and solve for P2",
+            "purpose": "produce the numerical answer for P2",
+            "uses_equations": ["bernoulli"],
+        },
+        "depends_on": [
+            "plan_apply_continuity",
+            "plan_apply_horizontal_simplification",
+        ],
+    },
+]
+_BERNOULLI_AUTHORED_SYMBOLS = ["A", "P", "Q", "g", "h", "rho", "v"]
+
+
+def _bernoulli_candidate(*, document_id: int = 1, chash: str) -> CandidateQuestion:
+    return CandidateQuestion(
+        problem_text="Water flows through a horizontal pipe. Find the pressure P2.",
+        given_values=dict(_BERNOULLI_GIVENS),
+        target_unknown="P2",
+        difficulty="intro",
+        document_id=document_id,
+        page=1,
+        chunk_content_hash=chash,
+        concept_slug="provisional.inventory",
+    )
+
+
+def _bernoulli_draft() -> ReferenceSolutionDraft:
+    return ReferenceSolutionDraft(
+        solution_source="generated",
+        reference_solution=[dict(s) for s in _BERNOULLI_REFERENCE_SOLUTION],
+        grounding=(),
+        provenance={},
+    )
+
+
+def _patch_project_canon(monkeypatch):
+    """No-op ``project_canon`` on the promote module surface (the frozen 3C1 MERGE
+    has its own WU-3C1 Neo4j tests; promote/orchestrator tests mock it)."""
+    promote_mod = sys.modules["apollo.provisioning.promote"]
+
+    async def _noop(db, neo, *, search_space_id, concept_id):  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr(promote_mod, "project_canon", _noop)
+
+
+class _ShapeFaithfulMeteredChat:
+    """A fake MeteredChat whose ``.cheap``/``.main`` are KEYWORD-ONLY, exactly
+    mirroring the real ``MeteredChat`` contract (``def cheap(self, *, purpose,
+    messages, ...)``). ``tag_and_mint`` calls its ``chat_fn`` POSITIONALLY
+    (``chat_fn(json.dumps(problem))``); the orchestrator MUST wrap ``.cheap`` in a
+    positional-string adapter or that call raises ``TypeError`` here — which is the
+    drift bug this test guards. ``scrape_chat_fn`` is the positional adapter."""
+
+    def __init__(self, *, concept_slug: str = "bernoulli_principle") -> None:
+        self._concept_slug = concept_slug
+
+    def scrape_chat_fn(self, system_prompt):  # noqa: ANN001
+        return lambda _chunk: "[]"
+
+    def cheap(self, *, purpose, messages, response_format=None, temperature=0.0, model=None):  # noqa: ANN001
+        # tag_and_mint routes its concept-tag call through .cheap; return a valid tag.
+        return json.dumps(
+            {
+                "concept_slug": self._concept_slug,
+                "display_name": "Bernoulli Principle",
+                "prereqs": [],
+            }
+        )
+
+    def main(self, *, purpose, messages, response_format=None, temperature=0.0, model=None):  # noqa: ANN001
+        return "{}"
+
+
+# --------------------------------------------------------------------------- #
+# T-OR15 — run_provisioning drives the REAL tag_and_mint with a shape-faithful
+# keyword-only MeteredChat.cheap, end-to-end through promote. The drift bug
+# (passing the keyword-only .cheap as tag_and_mint's positional chat_fn) would
+# raise TypeError here, fail the run, and promote nothing.
+# --------------------------------------------------------------------------- #
+async def test_run_provisioning_real_tag_mint_end_to_end_promotes(
+    db_session, monkeypatch
+):
+    space, run_id, claimed = await _seed(db_session, slug="or15")
+    # The Tier-1 row lives under the PROVISIONAL concept (scrape's home); the real
+    # tagged concept is minted by tag_and_mint at runtime.
+    provisional_id = await _seed_concept(
+        db_session, search_space_id=space, slug="provisional.inventory"
+    )
+    chash = "bernoulli-c1"
+    pid = await _seed_tier1_row(
+        db_session, concept_id=provisional_id, chash=chash, search_space_id=space
+    )
+
+    async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
+        return _bernoulli_draft()
+
+    async def _vp(q, draft, *, retrieve_fn, judge_fn):  # noqa: ANN001
+        return PairingVerdict(paired=True, faithful=True, confidence=1.0)
+
+    # tag_and_mint + promote are REAL (NOT patched). Only scrape/fog/vp/resolve-prov
+    # are stubbed so the candidate reaches stage 4 deterministically. project_canon
+    # (the frozen 3C1 Neo4j MERGE, with its own WU-3C1 tests) is a no-op here.
+    _patch_stages(
+        monkeypatch,
+        scrape_candidates=(_bernoulli_candidate(chash=chash),),
+        find_or_generate=_fog,
+        validate_pair=_vp,
+        concept_id=provisional_id,
+    )
+    _patch_project_canon(monkeypatch)
+
+    outcome = await run_provisioning(
+        db_session,
+        AsyncMock(),  # neo is a no-op; project_canon is patched out
+        job=claimed,
+        metered_chat=_ShapeFaithfulMeteredChat(),
+        retrieve_fn=AsyncMock(return_value=()),
+        embed_fn=lambda _t: [0.0] * 8,
+    )
+
+    # The run promotes end-to-end through the REAL tag_and_mint (no TypeError).
+    assert outcome.status == "succeeded"
+    assert outcome.n_promoted == 1
+    assert outcome.n_rejected == 0
+    errors = (
+        await db_session.execute(
+            IngestError.__table__.select().where(IngestError.ingest_run_id == run_id)
+        )
+    ).all()
+    assert not errors  # NO TypeError ingest_error from a mis-wired chat_fn
+
+
+# --------------------------------------------------------------------------- #
+# T-OR16 — gate-8 dedup is plumbed: a second candidate with the SAME dup hash on
+# the SAME tagged concept is rejected at gate 8 (the orchestrator computes the
+# concept-scoped existing_problem_hashes from already-promoted rows).
+# --------------------------------------------------------------------------- #
+async def test_run_provisioning_gate8_rejects_duplicate_on_concept(
+    db_session, monkeypatch
+):
+    space, run_id, claimed = await _seed(db_session, slug="or16", n_chunks=2)
+    provisional_id = await _seed_concept(
+        db_session, search_space_id=space, slug="provisional.inventory"
+    )
+    chash_a, chash_b = "dup-a", "dup-b"
+    # TWO Tier-1 rows (distinct chunk hashes) carrying the SAME problem content, so
+    # their gate-8 dup hash collides once both tag to the same real concept.
+    await _seed_tier1_row(
+        db_session, concept_id=provisional_id, chash=chash_a, search_space_id=space
+    )
+    await _seed_tier1_row(
+        db_session, concept_id=provisional_id, chash=chash_b, search_space_id=space
+    )
+
+    async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
+        return _bernoulli_draft()
+
+    async def _vp(q, draft, *, retrieve_fn, judge_fn):  # noqa: ANN001
+        return PairingVerdict(paired=True, faithful=True, confidence=1.0)
+
+    # Both candidates carry IDENTICAL problem content (same dup hash) but distinct
+    # chunk hashes (so write_tier1 keeps both rows). They tag to the same concept.
+    cand_a = _bernoulli_candidate(chash=chash_a)
+    cand_b = _bernoulli_candidate(chash=chash_b)
+    _patch_stages(
+        monkeypatch,
+        scrape_candidates=(cand_a, cand_b),
+        find_or_generate=_fog,
+        validate_pair=_vp,
+        concept_id=provisional_id,
+    )
+    _patch_project_canon(monkeypatch)
+
+    outcome = await run_provisioning(
+        db_session,
+        AsyncMock(),
+        job=claimed,
+        metered_chat=_ShapeFaithfulMeteredChat(),
+        retrieve_fn=AsyncMock(return_value=()),
+        embed_fn=lambda _t: [0.0] * 8,
+    )
+
+    # First promotes; the second is a gate-8 duplicate (concept-scoped set non-vacuous).
+    assert outcome.status == "succeeded"
+    assert outcome.n_promoted == 1
+    assert outcome.n_rejected == 1
+    rejects = (
+        await db_session.execute(
+            RejectedProblem.__table__.select().where(
+                RejectedProblem.ingest_run_id == run_id
+            )
+        )
+    ).all()
+    assert len(rejects) == 1
+    assert rejects[0].rejected_stage == "promotion_lint"
+    assert rejects[0].failed_gate == 8  # the dup-hash gate fired (non-vacuous)
+
+
+# --------------------------------------------------------------------------- #
+# T-OR17 — run_provisioning injects the DEFAULT embed_fn/retrieve_fn when the
+# caller omits them (the worker calls it without those kwargs). Exercises the
+# default-wiring branches (no longer pragma'd).
+# --------------------------------------------------------------------------- #
+async def test_run_provisioning_default_embed_and_retrieve_fn(db_session, monkeypatch):
+    space, run_id, claimed = await _seed(db_session, slug="or17")
+    concept_id = await _seed_concept(db_session, search_space_id=space)
+
+    captured: dict = {}
+
+    async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
+        # The orchestrator injected its default retrieve_fn (the worker omits it);
+        # call it to prove it is the real _default_retrieve_fn (returns ()).
+        captured["spans"] = tuple(await retrieve_fn(q))
+        return _draft()
+
+    async def _vp(q, draft, *, retrieve_fn, judge_fn):  # noqa: ANN001
+        return PairingVerdict(paired=False, faithful=False, confidence=0.0)
+
+    chash = "c1"
+    await _seed_tier1_row(
+        db_session, concept_id=concept_id, chash=chash, search_space_id=space
+    )
+    _patch_stages(
+        monkeypatch,
+        scrape_candidates=(_candidate(chash=chash),),
+        find_or_generate=_fog,
+        validate_pair=_vp,
+        concept_id=concept_id,
+    )
+    # Patch the default embedder import target so no real model loads.
+    import indexing.document_embedder as _emb
+
+    monkeypatch.setattr(_emb, "embed_text", lambda _t: [0.0], raising=False)
+
+    # NOTE: no embed_fn / retrieve_fn kwargs -> the orchestrator wires its defaults.
+    outcome = await run_provisioning(
+        db_session, AsyncMock(), job=claimed, metered_chat=_FakeMeteredChat()
+    )
+
+    assert outcome.status == "succeeded"
+    assert captured["spans"] == ()  # _default_retrieve_fn returned no spans
+
+
+# --------------------------------------------------------------------------- #
+# T-OR18 — a candidate whose Tier-1 row is absent (defensive MissingTier1Row) fails
+# the run terminally rather than promoting a non-existent row.
+# --------------------------------------------------------------------------- #
+async def test_run_provisioning_missing_tier1_row_fails_run(db_session, monkeypatch):
+    space, run_id, claimed = await _seed(db_session, slug="or18")
+    concept_id = await _seed_concept(db_session, search_space_id=space)
+    chash = "no-such-row"
+    # Deliberately DO NOT seed a Tier-1 row, and stub write_tier1 to write nothing,
+    # so _find_tier1_row_id returns None at promote time.
+
+    async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
+        return _draft()
+
+    async def _vp(q, draft, *, retrieve_fn, judge_fn):  # noqa: ANN001
+        return PairingVerdict(paired=True, faithful=True, confidence=1.0)
+
+    async def _tm(db, pair, *, chat_fn, embed_fn):  # noqa: ANN001
+        return _mint_plan(concept_id)
+
+    _patch_stages(
+        monkeypatch,
+        scrape_candidates=(_candidate(chash=chash),),
+        find_or_generate=_fog,
+        validate_pair=_vp,
+        tag_and_mint=_tm,
+        concept_id=concept_id,
+    )
+
+    outcome = await _run(db_session, claimed)
+
+    assert outcome.status == "failed"
+    errors = (
+        await db_session.execute(
+            IngestError.__table__.select().where(IngestError.ingest_run_id == run_id)
+        )
+    ).all()
+    assert len(errors) == 1
+    assert errors[0].stage == "promote"
+    assert errors[0].error_class == "MissingTier1Row"
+
+
+# --------------------------------------------------------------------------- #
+# T-OR19 — n_dedup_merged reflects the mint plan's real merged_entity_keys.
+# --------------------------------------------------------------------------- #
+async def test_run_provisioning_counts_dedup_merges(db_session, monkeypatch):
+    space, run_id, claimed = await _seed(db_session, slug="or19")
+    concept_id = await _seed_concept(db_session, search_space_id=space)
+    chash = "c1"
+    await _seed_tier1_row(
+        db_session, concept_id=concept_id, chash=chash, search_space_id=space
+    )
+
+    async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
+        return _draft()
+
+    async def _vp(q, draft, *, retrieve_fn, judge_fn):  # noqa: ANN001
+        return PairingVerdict(paired=True, faithful=True, confidence=1.0)
+
+    async def _tm(db, pair, *, chat_fn, embed_fn):  # noqa: ANN001
+        plan = _mint_plan(concept_id)
+        # Two entities were de-duplicated/merged inside tag_and_mint.
+        return plan.model_copy(update={"merged_entity_keys": ["e1", "e2"]})
+
+    async def _promote(db, neo, **kwargs):  # noqa: ANN001
+        return PromoteResult(promoted=True)
+
+    _patch_stages(
+        monkeypatch,
+        scrape_candidates=(_candidate(chash=chash),),
+        find_or_generate=_fog,
+        validate_pair=_vp,
+        tag_and_mint=_tm,
+        promote=_promote,
+        concept_id=concept_id,
+    )
+
+    outcome = await _run(db_session, claimed)
+
+    assert outcome.status == "succeeded"
+    assert outcome.n_promoted == 1
+    assert outcome.n_dedup_merged == 2  # NOT 0 (the real merged-key count)
+    run = await db_session.get(IngestRun, run_id)
+    assert run.n_dedup_merged == 2
+
+
+# --------------------------------------------------------------------------- #
+# T-OR20 — _concept_dup_hashes skips a tier=2 payload that is not Problem-valid
+# (defensive: a malformed promoted payload contributes no dup hash, never crashes).
+# --------------------------------------------------------------------------- #
+async def test_concept_dup_hashes_skips_non_problem_payload(db_session):
+    space, _run_id, _claimed = await _seed(db_session, slug="or20")
+    concept_id = await _seed_concept(db_session, search_space_id=space)
+    # A tier=2 row whose payload is NOT a valid Problem (missing required fields).
+    db_session.add(
+        ConceptProblem(
+            concept_id=concept_id,
+            problem_code="scrape.bad",
+            difficulty="intro",
+            payload={"id": "scrape.bad"},  # not Problem-valid
+            tier=2,
+            solution_source="generated",
+            provenance={},
+            search_space_id=space,
+        )
+    )
+    # A tier=2 row that IS a valid Problem -> contributes its dup hash.
+    valid = {
+        "id": "scrape.good",
+        "concept_id": "c",
+        "difficulty": "intro",
+        "problem_text": "Find P2.",
+        "given_values": {"P1": 1.0},
+        "target_unknown": "P2",
+        "reference_solution": [
+            {"id": "s1", "step": 1, "entry_type": "equation",
+             "content": {"label": "eq", "symbolic": "P1 - P2"}, "depends_on": []}
+        ],
+    }
+    db_session.add(
+        ConceptProblem(
+            concept_id=concept_id,
+            problem_code="scrape.good",
+            difficulty="intro",
+            payload=valid,
+            tier=2,
+            solution_source="generated",
+            provenance={},
+            search_space_id=space,
+        )
+    )
+    await db_session.flush()
+
+    hashes = await orch._concept_dup_hashes(db_session, concept_id=concept_id)
+
+    # The malformed row was SKIPPED (no crash); the valid row contributed one hash.
+    from apollo.provisioning import problem_dup_hash
+    from apollo.schemas.problem import Problem
+
+    assert hashes == {problem_dup_hash(Problem.model_validate(valid))}

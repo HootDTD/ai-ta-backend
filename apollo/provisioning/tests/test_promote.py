@@ -427,3 +427,83 @@ async def test_promote_canon_error_propagates(db_session, monkeypatch):
     # caller's session owns rollback) — the row is tier=2 in this session.
     row = await db_session.get(ConceptProblem, problem_id)
     assert row.tier == 2
+
+
+# --------------------------------------------------------------------------- #
+# T-PR7 — promote RE-HOMES the Tier-1 row from the provisional concept onto the
+# mint plan's REAL tagged concept (so list_problems_for_concept can select it).
+# --------------------------------------------------------------------------- #
+async def test_promote_rehomes_row_to_tagged_concept(db_session):
+    """The scraped Tier-1 row is written under the provisional-inventory concept
+    (scrape.py); stage-4 tag_and_mint resolves the REAL tagged concept. On promote
+    the row must be RE-HOMED to ``mint_plan.concept_id`` AND flipped tier=2 — else
+    the student selector (concept_id == session concept AND tier == 2) can never
+    reach it. Dropping the re-home assignment REDs this test."""
+    from apollo.overseer.problem_selector import list_problems_for_concept
+
+    space = SearchSpace(name="Course pr7", slug="pr7", subject_name="Physics")
+    db_session.add(space)
+    await db_session.flush()
+    subj = Subject(slug="s-pr7", display_name="Sub", search_space_id=space.id)
+    db_session.add(subj)
+    await db_session.flush()
+
+    # The PROVISIONAL inventory concept the scraped row hangs off (never teachable).
+    provisional = Concept(
+        subject_id=subj.id,
+        slug="provisional.inventory",
+        display_name="Provisional inventory",
+        canonical_symbols={"symbols": []},
+        normalization_map={},
+    )
+    db_session.add(provisional)
+    # The REAL tagged concept (authored canonical_symbols) tag_and_mint resolved.
+    tagged = Concept(
+        subject_id=subj.id,
+        slug="concept-pr7",
+        display_name="Concept",
+        canonical_symbols={"symbols": list(_AUTHORED_SYMBOLS), "description": {}},
+        normalization_map=dict(_NORMALIZATION),
+    )
+    db_session.add(tagged)
+    await db_session.flush()
+
+    # The Tier-1 row is homed on the PROVISIONAL concept (not the tagged one).
+    row = ConceptProblem(
+        concept_id=provisional.id,
+        problem_code="scrape.rehome",
+        difficulty="intro",
+        payload=_bernoulli_problem(),
+        tier=1,
+        solution_source=None,
+        provenance={},
+        search_space_id=space.id,
+    )
+    db_session.add(row)
+    await db_session.flush()
+    assert row.concept_id == provisional.id  # precondition: homed on provisional
+
+    result = await promote(
+        db_session,
+        AsyncMock(),
+        problem=_bernoulli_problem(),
+        mint_plan=_mint_plan(tagged.id),  # the REAL tagged concept
+        search_space_id=space.id,
+        concept_problem_id=row.id,
+        existing_problem_hashes=set(),
+    )
+    assert result.promoted is True
+
+    refreshed = await db_session.get(ConceptProblem, row.id)
+    assert refreshed.tier == 2
+    # RE-HOMED: the promoted row now lives under the tagged concept, NOT provisional.
+    assert refreshed.concept_id == tagged.id
+
+    # The student selector (tier==2 + concept filter) can now reach it.
+    teachable = await list_problems_for_concept(db_session, concept_id=tagged.id)
+    assert any(p.id == _bernoulli_problem()["id"] for p in teachable)
+    # ...and it is NOT reachable under the provisional concept.
+    provisional_pool = await list_problems_for_concept(
+        db_session, concept_id=provisional.id
+    )
+    assert provisional_pool == []
