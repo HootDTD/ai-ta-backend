@@ -93,14 +93,14 @@ async def load_concept_definition(db: AsyncSession, *, concept_id: int) -> Conce
     subject = (
         await db.execute(select(Subject).where(Subject.id == concept.subject_id))
     ).scalar_one_or_none()
-    subject_slug = subject.slug if subject is not None else str(concept.subject_id)
+    subject_slug = str(subject.slug) if subject is not None else str(concept.subject_id)
 
     return ConceptDefinition(
         subject_id=subject_slug,
-        concept_id=concept.slug,
+        concept_id=str(concept.slug),
         canonical_symbols=CanonicalSymbols.model_validate(concept.canonical_symbols),
         normalization_map=dict(concept.normalization_map),
-        parser_prompt_template=concept.parser_prompt_template,
+        parser_prompt_template=str(concept.parser_prompt_template),
         solver_hints=SolverHints.model_validate(concept.solver_hints),
         forbidden_named_laws=ForbiddenNamedLaws.model_validate(concept.forbidden_named_laws),
         problems_dir=_NO_FILESYSTEM_PROBLEMS_DIR,

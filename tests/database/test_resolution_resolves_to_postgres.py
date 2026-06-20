@@ -21,10 +21,10 @@ from apollo.knowledge_graph.canon_projection import project_canon
 from apollo.knowledge_graph.resolution_store import write_resolution
 from apollo.knowledge_graph.store import _NODE_CREATE_CYPHER, _node_to_neo4j_props
 from apollo.ontology import NODE_LABELS, build_node
+from apollo.ontology.graph import KGGraph
 from apollo.persistence.models import Concept, KGEntity, Subject
 from apollo.resolution import resolve_attempt
 from apollo.resolution.candidates import Candidate
-from apollo.ontology.graph import KGGraph
 from database.models import SearchSpace
 
 pytestmark = pytest.mark.integration

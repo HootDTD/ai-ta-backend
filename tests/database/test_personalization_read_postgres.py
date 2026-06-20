@@ -53,14 +53,10 @@ async def _seed_course(db, *, course_slug) -> tuple[int, int]:
     space = SearchSpace(name=course_slug, slug=course_slug, subject_name="Physics")
     db.add(space)
     await db.flush()
-    subj = Subject(
-        slug=f"s_{course_slug}", display_name="Fluids", search_space_id=space.id
-    )
+    subj = Subject(slug=f"s_{course_slug}", display_name="Fluids", search_space_id=space.id)
     db.add(subj)
     await db.flush()
-    concept = Concept(
-        subject_id=subj.id, slug=f"k_{course_slug}", display_name="Continuity"
-    )
+    concept = Concept(subject_id=subj.id, slug=f"k_{course_slug}", display_name="Continuity")
     db.add(concept)
     await db.flush()
     return space.id, concept.id
@@ -151,9 +147,7 @@ async def test_course_isolation_mastery_never_crosses_courses(db_session):
         concept_id=cid_a,
     )
 
-    assert profile.by_canonical_key["eq.continuity"].mastery == pytest.approx(
-        0.42, abs=1e-6
-    )
+    assert profile.by_canonical_key["eq.continuity"].mastery == pytest.approx(0.42, abs=1e-6)
     # Course B's value (0.91) must never appear anywhere in the result.
     for ep in profile.by_canonical_key.values():
         assert ep.mastery != pytest.approx(0.91, abs=1e-6)
@@ -182,9 +176,7 @@ async def test_course_isolation_search_space_predicate_discriminates(db_session)
     )
 
     # Only the sid_a row is returned; the cross-wired sid_b row never leaks in.
-    assert profile.by_canonical_key["eq.continuity"].mastery == pytest.approx(
-        0.42, abs=1e-6
-    )
+    assert profile.by_canonical_key["eq.continuity"].mastery == pytest.approx(0.42, abs=1e-6)
     for ep in profile.by_canonical_key.values():
         assert ep.mastery != pytest.approx(0.91, abs=1e-6)
     assert profile.is_empty is False
@@ -201,9 +193,7 @@ async def test_cold_start_empty_state_returns_well_formed_empty_profile(db_sessi
     maps/edges STILL populate from kg_entities/prereqs."""
     sid, cid = await _seed_course(db_session, course_slug="cold")
     e1 = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.continuity")
-    e2 = await _seed_entity(
-        db_session, concept_id=cid, canonical_key="cond.incompressibility"
-    )
+    e2 = await _seed_entity(db_session, concept_id=cid, canonical_key="cond.incompressibility")
     await _seed_prereq(db_session, from_id=e1, to_id=e2)  # e1 depends on e2
 
     profile = await read_learner_profile(
@@ -269,9 +259,7 @@ async def test_prereq_edges_and_id_key_maps_round_trip(db_session):
     the id<->key maps are exact inverses; endpoints resolve through key_by_entity_id."""
     sid, cid = await _seed_course(db_session, course_slug="dag")
     a = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.continuity")
-    b = await _seed_entity(
-        db_session, concept_id=cid, canonical_key="cond.incompressibility"
-    )
+    b = await _seed_entity(db_session, concept_id=cid, canonical_key="cond.incompressibility")
     c = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.bernoulli")
 
     await _seed_prereq(db_session, from_id=a, to_id=b)  # a depends on b
@@ -309,14 +297,10 @@ async def test_cross_concept_prereq_edge_is_excluded(db_session):
     excludes them. The wedge does not gate on out-of-concept prerequisites."""
     sid, cid = await _seed_course(db_session, course_slug="xconcept")
     e1 = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.continuity")
-    e2 = await _seed_entity(
-        db_session, concept_id=cid, canonical_key="cond.incompressibility"
-    )
+    e2 = await _seed_entity(db_session, concept_id=cid, canonical_key="cond.incompressibility")
     # A different concept with its own entity (the foreign endpoint).
     _, other_cid = await _seed_course(db_session, course_slug="xconcept_other")
-    foreign = await _seed_entity(
-        db_session, concept_id=other_cid, canonical_key="eq.foreign"
-    )
+    foreign = await _seed_entity(db_session, concept_id=other_cid, canonical_key="eq.foreign")
 
     await _seed_prereq(db_session, from_id=e1, to_id=e2)  # within-concept: KEPT
     await _seed_prereq(db_session, from_id=e1, to_id=foreign)  # cross-concept: DROPPED
@@ -347,9 +331,7 @@ async def test_unknown_concept_returns_empty_without_state_query(db_session):
 
     # Stray state/entity under a DIFFERENT concept must not leak in.
     _, other_cid = await _seed_course(db_session, course_slug="other")
-    stray = await _seed_entity(
-        db_session, concept_id=other_cid, canonical_key="eq.stray"
-    )
+    stray = await _seed_entity(db_session, concept_id=other_cid, canonical_key="eq.stray")
     await _seed_state(db_session, sid=sid, entity_id=stray, mastery=0.99, confidence=0.5)
 
     profile = await read_learner_profile(

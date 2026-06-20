@@ -53,8 +53,15 @@ class _Attempt:
 
 def _payload() -> dict:
     return {
-        "reference_solution": [{"id": "s1", "entity_key": "eq.k", "entry_type": "equation",
-                                "content": {"symbolic": "a-b"}, "depends_on": []}],
+        "reference_solution": [
+            {
+                "id": "s1",
+                "entity_key": "eq.k",
+                "entry_type": "equation",
+                "content": {"symbolic": "a-b"},
+                "depends_on": [],
+            }
+        ],
         "declared_paths": [["s1"]],
         "symbolic_mappings": {"d": "2*r"},
     }
@@ -264,9 +271,7 @@ async def test_resolution_invalid_output_sets_pending_and_reraises():
 async def test_student_graph_invalid_does_not_set_pending():
     db = _db()
     patches, mocks = _all_callee_patches()
-    mocks["validate_student_graph"].side_effect = StudentGraphInvalidError(
-        reasons=("bad edge",)
-    )
+    mocks["validate_student_graph"].side_effect = StudentGraphInvalidError(reasons=("bad edge",))
     sess = _Sess()
     attempt = _Attempt()
     with _read_transcript_patch():

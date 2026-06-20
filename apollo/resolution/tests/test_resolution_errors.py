@@ -15,9 +15,7 @@ from apollo.errors import (
 
 
 def test_resolution_unavailable_error_is_apollo_error_and_carries_stage():
-    err = ResolutionUnavailableError(
-        stage="llm_adjudication", last_error="openai timeout"
-    )
+    err = ResolutionUnavailableError(stage="llm_adjudication", last_error="openai timeout")
     assert isinstance(err, ApolloError)
     assert err.stage == "llm_adjudication"
     assert err.last_error == "openai timeout"
