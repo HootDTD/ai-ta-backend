@@ -71,8 +71,15 @@ async def _seed_session(db, *, current_code: str, sid: int, cid: int):
     db.add(attempt)
     await db.flush()
     # one student message so the turn_order PG read has a real row
-    db.add(Message(session_id=sess.id, attempt_id=attempt.id, role="student",
-                   content="continuity says rho A1 v1 equals rho A2 v2", turn_index=0))
+    db.add(
+        Message(
+            session_id=sess.id,
+            attempt_id=attempt.id,
+            role="student",
+            content="continuity says rho A1 v1 equals rho A2 v2",
+            turn_index=0,
+        )
+    )
     await db.flush()
     return sess, attempt
 
@@ -93,8 +100,10 @@ def _neo_stubs(attempt_id: int):
     PG gate (the Neo4j gate is a separate file). read_graph returns the student
     graph; write_resolution / read_node_created_at are no-op stubs."""
     return [
-        patch("apollo.handlers.done.KGStore.read_graph",
-              new=AsyncMock(return_value=_student_graph(attempt_id))),
+        patch(
+            "apollo.handlers.done.KGStore.read_graph",
+            new=AsyncMock(return_value=_student_graph(attempt_id)),
+        ),
         patch("apollo.handlers.done.KGStore.freeze", new=AsyncMock()),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=AsyncMock()),
         # WU-5B3a-0: the shadow chain now sources problem_payload via
@@ -136,8 +145,10 @@ async def test_shadow_on_persists_run_and_findings_old_grade_unchanged(db_sessio
     the attempt; the returned dict's rubric/coverage are OLD-path values; and the
     4C/5A boundary holds: apollo_mastery_events + apollo_learner_state are EMPTY."""
     sid, cid, codes = await seed_course(
-        db_session, subject_slug="fluid_mechanics",
-        concept_slug="bernoulli_principle", problems=_INTRO,
+        db_session,
+        subject_slug="fluid_mechanics",
+        concept_slug="bernoulli_principle",
+        problems=_INTRO,
     )
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
 
@@ -147,28 +158,37 @@ async def test_shadow_on_persists_run_and_findings_old_grade_unchanged(db_sessio
     assert "rubric" in out and "coverage" in out and "xp_earned" in out
 
     # a comparison run row exists for this attempt (the shadow persist)
-    run_count = (await db_session.execute(
-        select(func.count()).select_from(GraphComparisonRun)
-        .where(GraphComparisonRun.attempt_id == attempt.id)
-    )).scalar_one()
+    run_count = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(GraphComparisonRun)
+            .where(GraphComparisonRun.attempt_id == attempt.id)
+        )
+    ).scalar_one()
     assert run_count == 1
 
     # the 4C/5A boundary: NO mastery events / learner state written
-    me = (await db_session.execute(
-        select(func.count()).select_from(MasteryEvent)
-        .where(MasteryEvent.user_id == TEST_USER_ID)
-    )).scalar_one()
-    ls = (await db_session.execute(
-        select(func.count()).select_from(LearnerState)
-        .where(LearnerState.user_id == TEST_USER_ID)
-    )).scalar_one()
+    me = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(MasteryEvent)
+            .where(MasteryEvent.user_id == TEST_USER_ID)
+        )
+    ).scalar_one()
+    ls = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(LearnerState)
+            .where(LearnerState.user_id == TEST_USER_ID)
+        )
+    ).scalar_one()
     assert me == 0
     assert ls == 0
 
     # the OLD grade is committed, not voided
-    refreshed = (await db_session.execute(
-        select(ProblemAttempt).where(ProblemAttempt.id == attempt.id)
-    )).scalar_one()
+    refreshed = (
+        await db_session.execute(select(ProblemAttempt).where(ProblemAttempt.id == attempt.id))
+    ).scalar_one()
     assert refreshed.result == "graded"
     assert refreshed.learner_update_pending is False
 
@@ -181,8 +201,10 @@ async def test_reference_invalid_returns_409_old_grade_committed(db_session, mon
     broken = [dict(p) for p in _INTRO]
     broken[0] = {k: v for k, v in broken[0].items() if k != "declared_paths"}
     sid, cid, codes = await seed_course(
-        db_session, subject_slug="fluid_mechanics",
-        concept_slug="bernoulli_principle", problems=broken,
+        db_session,
+        subject_slug="fluid_mechanics",
+        concept_slug="bernoulli_principle",
+        problems=broken,
     )
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
 
@@ -191,16 +213,19 @@ async def test_reference_invalid_returns_409_old_grade_committed(db_session, mon
     with pytest.raises(ReferenceGraphInvalidError):
         await _run_done(db_session, sess.id, monkeypatch, neo_patches=_neo_stubs(attempt.id))
 
-    refreshed = (await db_session.execute(
-        select(ProblemAttempt).where(ProblemAttempt.id == attempt.id)
-    )).scalar_one()
+    refreshed = (
+        await db_session.execute(select(ProblemAttempt).where(ProblemAttempt.id == attempt.id))
+    ).scalar_one()
     assert refreshed.result == "graded"
     # reference-invalid is raised BEFORE any cross-store write -> pending NOT set
     assert refreshed.learner_update_pending is False
-    run_count = (await db_session.execute(
-        select(func.count()).select_from(GraphComparisonRun)
-        .where(GraphComparisonRun.attempt_id == attempt.id)
-    )).scalar_one()
+    run_count = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(GraphComparisonRun)
+            .where(GraphComparisonRun.attempt_id == attempt.id)
+        )
+    ).scalar_one()
     assert run_count == 0
 
 
@@ -211,8 +236,10 @@ async def test_resolution_unavailable_503_pending_grade_committed(db_session, mo
     from apollo.errors import ResolutionUnavailableError
 
     sid, cid, codes = await seed_course(
-        db_session, subject_slug="fluid_mechanics",
-        concept_slug="bernoulli_principle", problems=_INTRO,
+        db_session,
+        subject_slug="fluid_mechanics",
+        concept_slug="bernoulli_principle",
+        problems=_INTRO,
     )
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
 
@@ -220,17 +247,22 @@ async def test_resolution_unavailable_503_pending_grade_committed(db_session, mo
     # override write_resolution to raise the infra error
     patches = [p for p in patches if "write_resolution" not in str(p)]
     patches.append(
-        patch("apollo.handlers.done_grading.write_resolution",
-              new=AsyncMock(side_effect=ResolutionUnavailableError(
-                  stage="write_resolves_to", last_error="neo4j down")))
+        patch(
+            "apollo.handlers.done_grading.write_resolution",
+            new=AsyncMock(
+                side_effect=ResolutionUnavailableError(
+                    stage="write_resolves_to", last_error="neo4j down"
+                )
+            ),
+        )
     )
 
     with pytest.raises(ResolutionUnavailableError):
         await _run_done(db_session, sess.id, monkeypatch, neo_patches=patches)
 
-    refreshed = (await db_session.execute(
-        select(ProblemAttempt).where(ProblemAttempt.id == attempt.id)
-    )).scalar_one()
+    refreshed = (
+        await db_session.execute(select(ProblemAttempt).where(ProblemAttempt.id == attempt.id))
+    ).scalar_one()
     assert refreshed.result == "graded"
     assert refreshed.learner_update_pending is True
 
@@ -240,8 +272,10 @@ async def test_retry_supersedes_run_idempotent(db_session, monkeypatch):
     attempt leaves exactly ONE comparison run row (persist supersede; no UNIQUE
     crash)."""
     sid, cid, codes = await seed_course(
-        db_session, subject_slug="fluid_mechanics",
-        concept_slug="bernoulli_principle", problems=_INTRO,
+        db_session,
+        subject_slug="fluid_mechanics",
+        concept_slug="bernoulli_principle",
+        problems=_INTRO,
     )
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
 
@@ -249,10 +283,13 @@ async def test_retry_supersedes_run_idempotent(db_session, monkeypatch):
     # second Done on the same attempt (re-grade) -> supersede
     await _run_done(db_session, sess.id, monkeypatch, neo_patches=_neo_stubs(attempt.id))
 
-    run_count = (await db_session.execute(
-        select(func.count()).select_from(GraphComparisonRun)
-        .where(GraphComparisonRun.attempt_id == attempt.id)
-    )).scalar_one()
+    run_count = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(GraphComparisonRun)
+            .where(GraphComparisonRun.attempt_id == attempt.id)
+        )
+    ).scalar_one()
     assert run_count == 1
 
 
@@ -263,13 +300,22 @@ async def test_turn_order_query_runs_on_real_pg(db_session, monkeypatch):
     from apollo.handlers.done_turn_order import build_turn_order
 
     sid, cid, codes = await seed_course(
-        db_session, subject_slug="fluid_mechanics",
-        concept_slug="bernoulli_principle", problems=_INTRO,
+        db_session,
+        subject_slug="fluid_mechanics",
+        concept_slug="bernoulli_principle",
+        problems=_INTRO,
     )
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
     # add a second, later student message (turn 1)
-    db_session.add(Message(session_id=sess.id, attempt_id=attempt.id, role="student",
-                           content="and bernoulli relates the pressures", turn_index=1))
+    db_session.add(
+        Message(
+            session_id=sess.id,
+            attempt_id=attempt.id,
+            role="student",
+            content="and bernoulli relates the pressures",
+            turn_index=1,
+        )
+    )
     await db_session.flush()
 
     # two node created_at values: one early (turn 0 window), one late (turn 1)
@@ -277,8 +323,10 @@ async def test_turn_order_query_runs_on_real_pg(db_session, monkeypatch):
         "n_early": "2026-06-18T00:00:05+00:00",
         "n_late": "2026-06-18T00:30:00+00:00",
     }
-    with patch("apollo.handlers.done_turn_order.KGStore.read_node_created_at",
-               new=AsyncMock(return_value=node_created)):
+    with patch(
+        "apollo.handlers.done_turn_order.KGStore.read_node_created_at",
+        new=AsyncMock(return_value=node_created),
+    ):
         out = await build_turn_order(
             db_session, object(), attempt_id=attempt.id, student_graph=KGGraph()
         )

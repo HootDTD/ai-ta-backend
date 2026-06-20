@@ -26,7 +26,6 @@ from apollo.persistence.models import (
 )
 from database.models import Base
 
-
 # ---------------------------------------------------------------------------
 # Table-name mapping
 # ---------------------------------------------------------------------------
@@ -193,9 +192,7 @@ async def test_insert_read_back_learner_state_sqlite(db: AsyncSession):
     db.add(row)
     await db.commit()
     fetched = (
-        await db.execute(
-            select(LearnerState).where(LearnerState.entity_id == 1)
-        )
+        await db.execute(select(LearnerState).where(LearnerState.entity_id == 1))
     ).scalar_one()
     assert fetched.belief == [0.2, 0.3, 0.5]
     assert fetched.mastery == 0.5
@@ -235,8 +232,6 @@ async def test_problem_attempt_has_learner_update_pending_default_false(db: Asyn
     db.add(sess_attempt)
     await db.commit()
     fetched = (
-        await db.execute(
-            select(ProblemAttempt).where(ProblemAttempt.problem_id == "p1")
-        )
+        await db.execute(select(ProblemAttempt).where(ProblemAttempt.problem_id == "p1"))
     ).scalar_one()
     assert fetched.learner_update_pending is False

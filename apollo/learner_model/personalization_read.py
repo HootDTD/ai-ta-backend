@@ -90,9 +90,7 @@ async def read_learner_profile(
     # 1. This concept's entity inventory (1 query) -> id<->key maps.
     entity_rows = (
         await db.execute(
-            select(KGEntity.id, KGEntity.canonical_key).where(
-                KGEntity.concept_id == concept_id
-            )
+            select(KGEntity.id, KGEntity.canonical_key).where(KGEntity.concept_id == concept_id)
         )
     ).all()
 
@@ -147,9 +145,7 @@ async def read_learner_profile(
     #    ``.in_`` predicates are ANDed by the multi-arg ``.where``.
     prereq_rows = (
         await db.execute(
-            select(
-                EntityPrereq.from_entity_id, EntityPrereq.to_entity_id
-            ).where(
+            select(EntityPrereq.from_entity_id, EntityPrereq.to_entity_id).where(
                 EntityPrereq.from_entity_id.in_(concept_entity_ids),
                 EntityPrereq.to_entity_id.in_(concept_entity_ids),
             )

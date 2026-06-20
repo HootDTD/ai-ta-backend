@@ -60,9 +60,7 @@ def _app() -> FastAPI:
 
 
 def test_resolution_unavailable_503():
-    r = TestClient(_app(), raise_server_exceptions=False).get(
-        "/raise/resolution_unavailable"
-    )
+    r = TestClient(_app(), raise_server_exceptions=False).get("/raise/resolution_unavailable")
     assert r.status_code == 503
     body = r.json()
     assert body["error_code"] == "resolution_unavailable"
@@ -72,9 +70,7 @@ def test_resolution_unavailable_503():
 
 
 def test_transcript_audit_unavailable_503():
-    r = TestClient(_app(), raise_server_exceptions=False).get(
-        "/raise/transcript_audit_unavailable"
-    )
+    r = TestClient(_app(), raise_server_exceptions=False).get("/raise/transcript_audit_unavailable")
     assert r.status_code == 503
     body = r.json()
     assert body["error_code"] == "transcript_audit_unavailable"
@@ -83,9 +79,7 @@ def test_transcript_audit_unavailable_503():
 
 
 def test_resolution_invalid_output_500():
-    r = TestClient(_app(), raise_server_exceptions=False).get(
-        "/raise/resolution_invalid_output"
-    )
+    r = TestClient(_app(), raise_server_exceptions=False).get("/raise/resolution_invalid_output")
     assert r.status_code == 500
     body = r.json()
     assert body["error_code"] == "resolution_invalid_output"
@@ -96,9 +90,7 @@ def test_resolution_invalid_output_500():
 
 
 def test_student_graph_invalid_422():
-    r = TestClient(_app(), raise_server_exceptions=False).get(
-        "/raise/student_graph_invalid"
-    )
+    r = TestClient(_app(), raise_server_exceptions=False).get("/raise/student_graph_invalid")
     assert r.status_code == 422
     body = r.json()
     assert body["error_code"] == "student_graph_invalid"
@@ -106,9 +98,7 @@ def test_student_graph_invalid_422():
 
 
 def test_reference_graph_invalid_409():
-    r = TestClient(_app(), raise_server_exceptions=False).get(
-        "/raise/reference_graph_invalid"
-    )
+    r = TestClient(_app(), raise_server_exceptions=False).get("/raise/reference_graph_invalid")
     assert r.status_code == 409
     body = r.json()
     assert body["error_code"] == "reference_graph_invalid"

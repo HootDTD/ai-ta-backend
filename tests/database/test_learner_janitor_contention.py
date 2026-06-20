@@ -179,9 +179,7 @@ def _patch_janitor_session(monkeypatch, factory):
 # ---------------------------------------------------------------------------
 
 
-async def test_two_concurrent_drainers_one_claims_via_skip_locked(
-    committed_engine, monkeypatch
-):
+async def test_two_concurrent_drainers_one_claims_via_skip_locked(committed_engine, monkeypatch):
     plain_dsn, factory = committed_engine
     attempt_id = await _seed_committed_due_attempt(plain_dsn)
     _patch_janitor_session(monkeypatch, factory)
@@ -256,9 +254,7 @@ async def test_claim_lease_prevents_reclaim_during_work(committed_engine, monkey
 # ---------------------------------------------------------------------------
 
 
-async def test_committed_claim_is_visible_to_independent_connection(
-    committed_engine, monkeypatch
-):
+async def test_committed_claim_is_visible_to_independent_connection(committed_engine, monkeypatch):
     plain_dsn, factory = committed_engine
     attempt_id = await _seed_committed_due_attempt(plain_dsn)
     _patch_janitor_session(monkeypatch, factory)

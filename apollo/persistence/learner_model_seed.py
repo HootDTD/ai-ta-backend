@@ -141,10 +141,7 @@ def concept_dag_to_prereqs(dag: dict) -> list[tuple[str, str]]:
     """One ``(concept.<from>, concept.<to>)`` prereq pair per edge (16),
     independent of edge ``type`` (requires/extends both encode a dependency
     direction in Layer 1 — R6)."""
-    return [
-        (f"concept.{edge['from']}", f"concept.{edge['to']}")
-        for edge in dag.get("edges", [])
-    ]
+    return [(f"concept.{edge['from']}", f"concept.{edge['to']}") for edge in dag.get("edges", [])]
 
 
 # ---------------------------------------------------------------------------
@@ -172,9 +169,7 @@ def symbols_to_entities(symbols: dict, normalization: dict) -> list[EntitySpec]:
     # symbol still gets an entity (so its aliases are not lost). Preserve a
     # stable order: canonical symbols first, then extra targets in first-seen
     # order from the normalization map.
-    extra_targets = [
-        t for t in aliases_by_target if t not in canonical
-    ]
+    extra_targets = [t for t in aliases_by_target if t not in canonical]
     ordered_targets = canonical + extra_targets
 
     # Minimal human-readable fallback names for non-canonical targets.
@@ -276,9 +271,7 @@ def authored_definitions() -> list[EntitySpec]:
 # ---------------------------------------------------------------------------
 
 
-def annotate_reference_solution(
-    problem: dict, key_for_node: Callable[[str], str]
-) -> dict:
+def annotate_reference_solution(problem: dict, key_for_node: Callable[[str], str]) -> dict:
     """Return a NEW problem dict with each reference-solution step carrying an
     ``entity_key`` and the problem carrying ``declared_paths`` (one complete
     ordered path, D6) + ``layer1_seeded: True``.
@@ -335,16 +328,14 @@ def validate_reference_graph(problem: dict) -> ReferenceGraphValidation:
         if not step.get("entity_key"):
             missing_links.append(step.get("id", "<unknown>"))
     if missing_links:
-        errors.append(
-            f"reference nodes missing an entity link: {sorted(missing_links)}"
-        )
+        errors.append(f"reference nodes missing an entity link: {sorted(missing_links)}")
 
     # (b) declared paths present + non-empty
-    declared_paths = problem.get("declared_paths")
-    undeclared = not isinstance(declared_paths, list) or len(declared_paths) == 0
+    raw_declared = problem.get("declared_paths")
+    declared_paths: list = raw_declared if isinstance(raw_declared, list) else []
+    undeclared = len(declared_paths) == 0
     if undeclared:
         errors.append("declared_paths is empty or absent (blocks grading at step 3)")
-        declared_paths = []
 
     # (c) paths reference only real nodes
     covered: set[str] = set()
@@ -358,9 +349,7 @@ def validate_reference_graph(problem: dict) -> ReferenceGraphValidation:
     if not undeclared:
         uncovered = node_id_set - covered
         if uncovered:
-            errors.append(
-                f"reference nodes absent from every declared path: {sorted(uncovered)}"
-            )
+            errors.append(f"reference nodes absent from every declared path: {sorted(uncovered)}")
 
     ok = not errors
     return ReferenceGraphValidation(

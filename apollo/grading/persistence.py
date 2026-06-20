@@ -240,7 +240,7 @@ async def persist_comparison_run(
     await db.flush()  # materialize run.id within the open transaction
 
     for spec in finding_specs:
-        db.add(_finding_orm_from_spec(spec, run_id=run.id))
+        db.add(_finding_orm_from_spec(spec, run_id=int(run.id)))
     await db.flush()
 
-    return run.id
+    return int(run.id)

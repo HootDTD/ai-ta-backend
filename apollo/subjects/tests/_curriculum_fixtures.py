@@ -132,7 +132,7 @@ async def seed_concept(
     )
     db.add(concept)
     await db.flush()
-    return concept.id
+    return int(concept.id)
 
 
 async def seed_problems(

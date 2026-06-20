@@ -24,8 +24,9 @@ import math
 from dataclasses import FrozenInstanceError, dataclass
 
 import pytest
+from sqlalchemy import select
 
-from apollo.persistence.models import Concept, KGEntity, Subject
+from apollo.persistence.models import Concept, DedupDecision, KGEntity, Subject
 from apollo.provisioning.dedup import (
     DedupVerdict,
     _cosine,
@@ -35,9 +36,7 @@ from apollo.provisioning.dedup_constants import (
     EMBED_JUDGE_BAND,
     EMBED_MERGE_THRESHOLD,
 )
-from apollo.persistence.models import DedupDecision
 from database.models import SearchSpace
-from sqlalchemy import select
 
 # NOTE: no module-level ``pytest.mark.asyncio`` — pytest.ini sets
 # ``asyncio_mode = auto`` so the async ``resolve_candidate`` tests run without a
@@ -151,12 +150,14 @@ async def _seed_course(db, *, slug, entities):
 
 async def _decisions_for(db, *, search_space_id):
     rows = (
-        await db.execute(
-            select(DedupDecision).where(
-                DedupDecision.search_space_id == search_space_id
+        (
+            await db.execute(
+                select(DedupDecision).where(DedupDecision.search_space_id == search_space_id)
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return rows
 
 
@@ -199,9 +200,7 @@ def test_unit_at_cosine_helper_is_exact():
 
 
 def test_dedupverdict_is_frozen():
-    v = DedupVerdict(
-        verdict="merged", method="slug", similarity=None, matched_entity_id=7
-    )
+    v = DedupVerdict(verdict="merged", method="slug", similarity=None, matched_entity_id=7)
     assert (v.verdict, v.method, v.similarity, v.matched_entity_id) == (
         "merged",
         "slug",
@@ -375,9 +374,7 @@ async def test_judge_distinct_path(db_session):
 async def test_empty_inventory_is_distinct(db_session):
     """A course with NO scope_summary entity (here: none at all) and no slug
     match -> distinct, method='embedding', similarity None."""
-    ss_id, concept_id, _ids = await _seed_course(
-        db_session, slug="c-empty", entities=[]
-    )
+    ss_id, concept_id, _ids = await _seed_course(db_session, slug="c-empty", entities=[])
     cand = _Candidate(canonical_key="cand.new", scope_summary="BASE")
     verdict = await resolve_candidate(
         db_session,
@@ -450,9 +447,7 @@ async def test_cross_course_identical_embeddings_stay_distinct(db_session):
         db_session, slug="course-a", entities=[("ent.a", "INCOMPRESSIBLE")]
     )
     # course-b: a DIFFERENT course holding the byte-identical summary text.
-    await _seed_course(
-        db_session, slug="course-b", entities=[("ent.b", "INCOMPRESSIBLE")]
-    )
+    await _seed_course(db_session, slug="course-b", entities=[("ent.b", "INCOMPRESSIBLE")])
     cand = _Candidate(canonical_key="cand.shared", scope_summary="INCOMPRESSIBLE")
     verdict = await resolve_candidate(
         db_session,
@@ -483,9 +478,7 @@ async def test_cross_course_no_local_match_stays_distinct(db_session):
     ss_a, concept_a, _ids_a = await _seed_course(
         db_session, slug="course-a2", entities=[("ent.a2", "BASE")]
     )
-    await _seed_course(
-        db_session, slug="course-b2", entities=[("ent.b2", "INCOMPRESSIBLE")]
-    )
+    await _seed_course(db_session, slug="course-b2", entities=[("ent.b2", "INCOMPRESSIBLE")])
     cand = _Candidate(canonical_key="cand.shared2", scope_summary="INCOMPRESSIBLE")
     verdict = await resolve_candidate(
         db_session,
@@ -593,9 +586,11 @@ def test_public_api_reexport():
     the same objects as the dedup module (3B2d's import surface)."""
     from apollo.provisioning import (
         DedupVerdict as ReexportVerdict,
-        resolve_candidate as reexport_resolve,
     )
     from apollo.provisioning import dedup as dedup_mod
+    from apollo.provisioning import (
+        resolve_candidate as reexport_resolve,
+    )
 
     assert ReexportVerdict is dedup_mod.DedupVerdict
     assert reexport_resolve is dedup_mod.resolve_candidate

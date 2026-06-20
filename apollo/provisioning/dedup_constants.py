@@ -18,9 +18,7 @@ from __future__ import annotations
 import os
 
 # >= this cosine merges outright on the embedding tier (inclusive boundary).
-EMBED_MERGE_THRESHOLD: float = float(
-    os.getenv("APOLLO_DEDUP_MERGE_THRESHOLD", "0.92")
-)
+EMBED_MERGE_THRESHOLD: float = float(os.getenv("APOLLO_DEDUP_MERGE_THRESHOLD", "0.92"))
 
 # Lower bound of the escalate-to-judge band (== band lower bound, named for
 # readability at the call site). A cosine strictly below this is distinct.

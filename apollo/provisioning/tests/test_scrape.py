@@ -25,7 +25,7 @@ import pytest
 from sqlalchemy import select
 
 from apollo.overseer.problem_selector import list_problems_for_concept
-from apollo.persistence.models import Concept, ConceptProblem
+from apollo.persistence.models import Concept, ConceptProblem, Subject
 from apollo.provisioning.scrape import (
     CandidateQuestion,
     ScrapeResult,
@@ -35,7 +35,6 @@ from apollo.provisioning.scrape import (
     scrape_questions,
     write_tier1_problems,
 )
-from apollo.persistence.models import Subject
 from database.models import SearchSpace
 
 # pytest.ini sets asyncio_mode = auto.
@@ -159,9 +158,7 @@ def test_scrape_difficulty_validated():
     """An LLM difficulty outside {intro,standard,hard} drops that candidate
     (counted in parse_failures), never writing an invalid Tier-1 row."""
     chunk = _Chunk(content="bad difficulty chunk", document_id=2)
-    chat = _chat_per_chunk(
-        {chunk.content: json.dumps([_well_formed_record(difficulty="trivial")])}
-    )
+    chat = _chat_per_chunk({chunk.content: json.dumps([_well_formed_record(difficulty="trivial")])})
     result = _run(scrape_questions([chunk], chat_fn=chat))
     assert result.candidates == ()
     assert result.parse_failures == 1
@@ -189,9 +186,7 @@ def test_scrape_non_dict_record_is_failsoft():
     """An array element that is not an object (a bare string) drops fail-soft —
     ``_coerce_candidate`` returns None (covers the non-dict guard)."""
     chunk = _Chunk(content="non-dict element chunk", document_id=3)
-    chat = _chat_per_chunk(
-        {chunk.content: json.dumps(["this is a string, not a record"])}
-    )
+    chat = _chat_per_chunk({chunk.content: json.dumps(["this is a string, not a record"])})
     result = _run(scrape_questions([chunk], chat_fn=chat))
     assert result.candidates == ()
     assert result.parse_failures == 1
@@ -200,7 +195,7 @@ def test_scrape_non_dict_record_is_failsoft():
 
 def test_candidate_question_requires_fields():
     """CandidateQuestion validates its LLM-sourced fields (min_length etc.)."""
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         CandidateQuestion(
             problem_text="",  # min_length=1 → invalid
             given_values={},
@@ -230,7 +225,7 @@ def _candidate(
         problem_text="Find the downstream pressure P2.",
         given_values={"P1": 200000.0, "v1": 2.0},
         target_unknown="P2",
-        difficulty=difficulty,
+        difficulty=difficulty,  # type: ignore[arg-type]
         document_id=document_id,
         page=page,
         chunk_content_hash=content_hash,
@@ -252,11 +247,7 @@ async def _seed_course(db, *, slug: str):
 
 async def _rows_for(db, *, concept_id: int):
     return (
-        (
-            await db.execute(
-                select(ConceptProblem).where(ConceptProblem.concept_id == concept_id)
-            )
-        )
+        (await db.execute(select(ConceptProblem).where(ConceptProblem.concept_id == concept_id)))
         .scalars()
         .all()
     )
@@ -271,17 +262,11 @@ async def test_provisional_concept_resolved_and_notnull(db_session):
     """The provisional-inventory concept is a real BIGINT, created once;
     re-resolving returns the SAME id."""
     ss_id = await _seed_course(db_session, slug="c-prov")
-    cid1 = await resolve_or_create_provisional_concept(
-        db_session, search_space_id=ss_id
-    )
-    cid2 = await resolve_or_create_provisional_concept(
-        db_session, search_space_id=ss_id
-    )
+    cid1 = await resolve_or_create_provisional_concept(db_session, search_space_id=ss_id)
+    cid2 = await resolve_or_create_provisional_concept(db_session, search_space_id=ss_id)
     assert isinstance(cid1, int)
     assert cid1 == cid2
-    concept = (
-        await db_session.execute(select(Concept).where(Concept.id == cid1))
-    ).scalar_one()
+    concept = (await db_session.execute(select(Concept).where(Concept.id == cid1))).scalar_one()
     assert concept.slug == "provisional.inventory"
     # provisional concept carries EMPTY canonical symbols (never teachable signal).
     assert concept.canonical_symbols in (None, {}, {})
@@ -293,17 +278,11 @@ async def test_provisional_concept_creates_subject_when_absent(db_session):
     space = SearchSpace(name="No-subject course", slug="c-nosubj", subject_name="X")
     db_session.add(space)
     await db_session.flush()
-    cid = await resolve_or_create_provisional_concept(
-        db_session, search_space_id=space.id
-    )
+    cid = await resolve_or_create_provisional_concept(db_session, search_space_id=space.id)
     assert isinstance(cid, int)
-    concept = (
-        await db_session.execute(select(Concept).where(Concept.id == cid))
-    ).scalar_one()
+    concept = (await db_session.execute(select(Concept).where(Concept.id == cid))).scalar_one()
     subj = (
-        await db_session.execute(
-            select(Subject).where(Subject.id == concept.subject_id)
-        )
+        await db_session.execute(select(Subject).where(Subject.id == concept.subject_id))
     ).scalar_one()
     assert subj.search_space_id == space.id
 
@@ -316,9 +295,7 @@ async def test_scrape_writes_tier1_rows_explicit(db_session):
     ss_id = await _seed_course(db_session, slug="c-write")
     cid = await resolve_or_create_provisional_concept(db_session, search_space_id=ss_id)
     cand = _candidate(content_hash="hash-write-1")
-    inserted = await write_tier1_problems(
-        db_session, [cand], concept_id=cid, search_space_id=ss_id
-    )
+    inserted = await write_tier1_problems(db_session, [cand], concept_id=cid, search_space_id=ss_id)
     assert inserted == 1
     rows = await _rows_for(db_session, concept_id=cid)
     assert len(rows) == 1
@@ -383,12 +360,8 @@ async def test_scrape_rerun_is_noop(db_session):
     ss_id = await _seed_course(db_session, slug="c-rerun")
     cid = await resolve_or_create_provisional_concept(db_session, search_space_id=ss_id)
     cand = _candidate(content_hash="hash-rerun-1")
-    first = await write_tier1_problems(
-        db_session, [cand], concept_id=cid, search_space_id=ss_id
-    )
-    second = await write_tier1_problems(
-        db_session, [cand], concept_id=cid, search_space_id=ss_id
-    )
+    first = await write_tier1_problems(db_session, [cand], concept_id=cid, search_space_id=ss_id)
+    second = await write_tier1_problems(db_session, [cand], concept_id=cid, search_space_id=ss_id)
     assert first == 1
     assert second == 0
     rows = await _rows_for(db_session, concept_id=cid)
@@ -403,9 +376,7 @@ async def test_scrape_rerun_after_reindex_is_noop(db_session):
     cand_a = _candidate(document_id=100, content_hash="hash-shared")
     cand_b = _candidate(document_id=999, content_hash="hash-shared")  # re-indexed
     await write_tier1_problems(db_session, [cand_a], concept_id=cid, search_space_id=ss_id)
-    second = await write_tier1_problems(
-        db_session, [cand_b], concept_id=cid, search_space_id=ss_id
-    )
+    second = await write_tier1_problems(db_session, [cand_b], concept_id=cid, search_space_id=ss_id)
     assert second == 0
     rows = await _rows_for(db_session, concept_id=cid)
     assert len(rows) == 1
@@ -419,9 +390,7 @@ async def test_scrape_writes_multiple_distinct(db_session):
         _candidate(content_hash="hash-m1"),
         _candidate(content_hash="hash-m2"),
     ]
-    inserted = await write_tier1_problems(
-        db_session, cands, concept_id=cid, search_space_id=ss_id
-    )
+    inserted = await write_tier1_problems(db_session, cands, concept_id=cid, search_space_id=ss_id)
     assert inserted == 2
     rows = await _rows_for(db_session, concept_id=cid)
     assert len(rows) == 2
@@ -452,11 +421,17 @@ def test_scrape_public_api_reexport():
     this REDs."""
     from apollo.provisioning import (
         CandidateQuestion as ReexportCandidateQuestion,
+    )
+    from apollo.provisioning import (
         ScrapeResult as ReexportScrapeResult,
-        scrape_questions as reexport_scrape_questions,
-        write_tier1_problems as reexport_write_tier1_problems,
     )
     from apollo.provisioning import scrape as scrape_mod
+    from apollo.provisioning import (
+        scrape_questions as reexport_scrape_questions,
+    )
+    from apollo.provisioning import (
+        write_tier1_problems as reexport_write_tier1_problems,
+    )
 
     assert ReexportCandidateQuestion is scrape_mod.CandidateQuestion
     assert ReexportScrapeResult is scrape_mod.ScrapeResult

@@ -46,4 +46,5 @@ def decay_toward_prior(
     inputs.
     """
     w = decay_weight(dt_days, k)
-    return tuple((1.0 - w) * b + w * p for b, p in zip(belief, prior, strict=True))
+    d0, d1, d2 = ((1.0 - w) * b + w * p for b, p in zip(belief, prior, strict=True))
+    return d0, d1, d2
