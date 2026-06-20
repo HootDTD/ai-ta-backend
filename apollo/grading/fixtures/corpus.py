@@ -44,6 +44,7 @@ from apollo.graph_compare.canonical import (
     ReferencePathView,
 )
 from apollo.graph_compare.findings import Finding, FindingKind
+from apollo.ontology.edges import EdgeType
 from apollo.ontology.nodes import Node
 from apollo.resolution.candidates import Candidate
 from apollo.resolution.result import ResolutionResult
@@ -109,7 +110,12 @@ def _ref_node(key: str, node_type: str = "condition", symbolic: str | None = Non
 def _ref(*keys: str) -> ReferenceGraph:
     nodes = tuple(_ref_node(k) for k in keys)
     edges: tuple[CanonicalEdge, ...] = tuple(
-        CanonicalEdge(edge_type="DEPENDS_ON", from_key=keys[i - 1], to_key=keys[i], provenance="explicit")  # type: ignore[arg-type]
+        CanonicalEdge(
+            edge_type=EdgeType.DEPENDS_ON,
+            from_key=keys[i - 1],
+            to_key=keys[i],
+            provenance="explicit",
+        )
         for i in range(1, len(keys))
     )
     paths = (ReferencePathView(canonical_keys=tuple(keys)),)
@@ -290,7 +296,11 @@ def _f_vague_pronouns() -> CorpusFixture:
     grade = missing_grade()
     grade = _with_extra(
         grade,
-        Finding(kind=FindingKind.UNRESOLVED, student_node_ids=("u1",), evidence_spans=("it increases there",)),
+        Finding(
+            kind=FindingKind.UNRESOLVED,
+            student_node_ids=("u1",),
+            evidence_spans=("it increases there",),
+        ),
     )
     return CorpusFixture(
         name="vague_pronouns",
@@ -356,7 +366,11 @@ def _f_reference_omits_valid_assumption() -> CorpusFixture:
     grade = missing_grade()
     grade = _with_extra(
         grade,
-        Finding(kind=FindingKind.UNSUPPORTED_EXTRA, canonical_key="cond.extra_valid", student_node_ids=("x1",)),
+        Finding(
+            kind=FindingKind.UNSUPPORTED_EXTRA,
+            canonical_key="cond.extra_valid",
+            student_node_ids=("x1",),
+        ),
     )
     return CorpusFixture(
         name="reference_omits_valid_assumption",
@@ -380,7 +394,11 @@ def _f_misconception_not_in_bank() -> CorpusFixture:
     grade = missing_grade()
     grade = _with_extra(
         grade,
-        Finding(kind=FindingKind.UNSUPPORTED_EXTRA, canonical_key="cond.unknown_belief", student_node_ids=("x1",)),
+        Finding(
+            kind=FindingKind.UNSUPPORTED_EXTRA,
+            canonical_key="cond.unknown_belief",
+            student_node_ids=("x1",),
+        ),
     )
     return CorpusFixture(
         name="misconception_not_in_bank",
@@ -446,7 +464,9 @@ def _f_bernoulli_capstone() -> CorpusFixture:
     )
     # audit upgrades cond.assumptions -> covered <=0.75 ('partial' band); proc.solve
     # stays missing (audit negative).
-    audit_fn = found_audit_fn({"cond.assumptions": "the student stated the steady inviscid assumptions"})
+    audit_fn = found_audit_fn(
+        {"cond.assumptions": "the student stated the steady inviscid assumptions"}
+    )
     return CorpusFixture(
         name="bernoulli_capstone",
         grade=grade,
