@@ -18,6 +18,7 @@ Covers (plan "Full test list"):
 - I. Triviality + no-fallback contract UNCHANGED.
 - J. Prompt template + context rendering.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -30,10 +31,10 @@ from apollo.errors import ParserCouldNotExtractError
 from apollo.ontology import Edge, EdgeType
 from apollo.subjects import load_concept
 
-
 # ---------------------------------------------------------------------------
 # Fixtures + mock helpers (mirror test_parser_confidence.py / test_triviality.py)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def concept():
@@ -64,11 +65,21 @@ def _flat_entry(**fields) -> dict:
     """A FLAT, strict-schema-conformant entry: all 15 entry fields present,
     the ones not supplied set to null (the strict schema requires every key)."""
     base = {
-        "type": None, "confidence": 1.0, "reuse_of": None,
-        "symbolic": None, "label": None, "variables": None,
-        "applies_when": None, "transformation": None,
-        "concept": None, "meaning": None, "term": None, "symbol": None,
-        "action": None, "purpose": None, "uses_equation_ordinals": None,
+        "type": None,
+        "confidence": 1.0,
+        "reuse_of": None,
+        "symbolic": None,
+        "label": None,
+        "variables": None,
+        "applies_when": None,
+        "transformation": None,
+        "concept": None,
+        "meaning": None,
+        "term": None,
+        "symbol": None,
+        "action": None,
+        "purpose": None,
+        "uses_equation_ordinals": None,
     }
     base.update(fields)
     return base
@@ -78,7 +89,9 @@ _EQ = _flat_entry(type="equation", symbolic="A1*v1 - A2*v2", label="continuity")
 _STEP = _flat_entry(type="procedure_step", action="apply continuity", purpose="find v2")
 _STEP2 = _flat_entry(type="procedure_step", action="apply bernoulli", purpose="find P2")
 _COND = _flat_entry(type="condition", applies_when="incompressible flow", label="incompr")
-_SIMP = _flat_entry(type="simplification", applies_when="horizontal pipe", transformation="drop rho*g*h")
+_SIMP = _flat_entry(
+    type="simplification", applies_when="horizontal pipe", transformation="drop rho*g*h"
+)
 _DEF = _flat_entry(type="definition", concept="density", meaning="mass per volume")
 
 _LONG = "the student writes a long teaching explanation A1*v1 = A2*v2 here"
@@ -87,6 +100,7 @@ _LONG = "the student writes a long teaching explanation A1*v1 = A2*v2 here"
 # ===========================================================================
 # A. Edge model — provenance
 # ===========================================================================
+
 
 def test_edge_provenance_defaults_explicit():
     edge = Edge(
@@ -118,6 +132,7 @@ def test_edge_provenance_accepts_inferred():
 # ===========================================================================
 # B. GraphContext
 # ===========================================================================
+
 
 def test_graph_context_is_empty():
     from apollo.parser.graph_context import ContextNode, GraphContext
@@ -160,6 +175,7 @@ def test_graph_context_is_frozen():
 # C. Strict json_schema
 # ===========================================================================
 
+
 def test_extraction_schema_is_strict():
     from apollo.parser.extraction_schema import build_extraction_schema
 
@@ -193,7 +209,10 @@ def test_extraction_schema_is_strict():
     assert edge_item["properties"]["provenance"]["enum"] == ["explicit", "inferred"]
     # edge_type enum is exactly the four EdgeType values.
     assert set(edge_item["properties"]["edge_type"]["enum"]) == {
-        "PRECEDES", "USES", "DEPENDS_ON", "SCOPES",
+        "PRECEDES",
+        "USES",
+        "DEPENDS_ON",
+        "SCOPES",
     }
     assert set(edge_item["properties"]["edge_type"]["enum"]) == {e.value for e in EdgeType}
 
@@ -315,6 +334,7 @@ def _find(edges, edge_type):
 # D. One-call extraction, backward-compatible (no graph_context)
 # ===========================================================================
 
+
 @patch("apollo.parser.parser_llm.OpenAI")
 def test_parse_backward_compat_no_graph_context(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
@@ -351,7 +371,7 @@ def test_parse_emits_typed_edges_from_strict_payload(mock_cls, concept):
     e = edges[0]
     assert e.edge_type == EdgeType.USES
     assert e.from_node_id == nodes[0].node_id  # n0 -> first entry's node
-    assert e.to_node_id == nodes[1].node_id    # n1 -> second entry's node
+    assert e.to_node_id == nodes[1].node_id  # n1 -> second entry's node
     assert e.provenance == "explicit"
 
 
@@ -362,11 +382,15 @@ def test_parse_no_model_edges_falls_back_to_deterministic(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
 
     step_a = _flat_entry(
-        type="procedure_step", action="apply continuity", purpose="find v2",
+        type="procedure_step",
+        action="apply continuity",
+        purpose="find v2",
         uses_equation_ordinals=[2],
     )
     step_b = _flat_entry(
-        type="procedure_step", action="apply bernoulli", purpose="find P2",
+        type="procedure_step",
+        action="apply bernoulli",
+        purpose="find P2",
     )
     client = _mock_client(entries=[step_a, step_b, _EQ], edges=[])
     mock_cls.return_value = client
@@ -382,6 +406,7 @@ def test_parse_no_model_edges_falls_back_to_deterministic(mock_cls, concept):
 # ===========================================================================
 # E. All four edge types
 # ===========================================================================
+
 
 @patch("apollo.parser.parser_llm.OpenAI")
 def test_parse_emits_precedes_step_to_step(mock_cls, concept):
@@ -461,6 +486,7 @@ def test_parse_emits_depends_on_any_to_any(mock_cls, concept):
 # F. Cross-turn linking via injected graph_context
 # ===========================================================================
 
+
 @patch("apollo.parser.parser_llm.OpenAI")
 def test_parse_links_to_existing_graph_node(mock_cls, concept):
     from apollo.parser.graph_context import ContextNode, GraphContext
@@ -492,7 +518,9 @@ def test_parse_cross_turn_late_condition_scopes_earlier_equation(mock_cls, conce
         nodes=(ContextNode(node_id="t0_n0", node_type="equation", label="bernoulli P+..."),)
     )
     late_cond = _flat_entry(
-        type="condition", applies_when="flow is steady and incompressible", label="steady",
+        type="condition",
+        applies_when="flow is steady and incompressible",
+        label="steady",
     )
     client = _mock_client(
         entries=[late_cond],
@@ -534,6 +562,7 @@ def test_parse_cross_turn_endpoint_type_from_context(mock_cls, concept):
 # G. Provenance tagging
 # ===========================================================================
 
+
 @patch("apollo.parser.parser_llm.OpenAI")
 def test_parse_tags_explicit_edge(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
@@ -570,9 +599,7 @@ def test_parse_invalid_provenance_coerces_explicit(mock_cls, concept):
     """An out-of-vocabulary provenance value coerces to the safe default."""
     from apollo.parser.parser_llm import parse_utterance
 
-    client = _mock_client(
-        entries=[_STEP, _EQ], edges=[_edge("USES", "n0", "n1", "garbage")]
-    )
+    client = _mock_client(entries=[_STEP, _EQ], edges=[_edge("USES", "n0", "n1", "garbage")])
     mock_cls.return_value = client
     _, edges = parse_utterance(_LONG, concept=concept, attempt_id=1)
     assert edges[0].provenance == "explicit"
@@ -581,6 +608,7 @@ def test_parse_invalid_provenance_coerces_explicit(mock_cls, concept):
 # ===========================================================================
 # H. Invalid-edge rejection against EDGE_ALLOWED_PAIRS (no silent drop)
 # ===========================================================================
+
 
 @patch("apollo.parser.parser_llm.OpenAI")
 def test_parse_rejects_disallowed_pair(mock_cls, concept, caplog):
@@ -641,7 +669,9 @@ def test_parse_rejects_unknown_endpoint_type(mock_cls, concept, caplog):
 def test_parse_rejects_bad_edge_type(mock_cls, concept, caplog):
     from apollo.parser.parser_llm import parse_utterance
 
-    client = _mock_client(entries=[_STEP, _EQ], edges=[_edge("RESOLVES_TO", "n0", "n1", "explicit")])
+    client = _mock_client(
+        entries=[_STEP, _EQ], edges=[_edge("RESOLVES_TO", "n0", "n1", "explicit")]
+    )
     mock_cls.return_value = client
     with caplog.at_level("INFO"):
         _, edges = parse_utterance(_LONG, concept=concept, attempt_id=1)
@@ -657,8 +687,8 @@ def test_parse_one_bad_edge_does_not_drop_valid_edges(mock_cls, concept, caplog)
     client = _mock_client(
         entries=[_STEP, _EQ, _COND],
         edges=[
-            _edge("USES", "n0", "n1", "explicit"),       # valid
-            _edge("SCOPES", "n1", "n2", "explicit"),     # equation->condition: bad
+            _edge("USES", "n0", "n1", "explicit"),  # valid
+            _edge("SCOPES", "n1", "n2", "explicit"),  # equation->condition: bad
         ],
     )
     mock_cls.return_value = client
@@ -728,16 +758,22 @@ def test_parse_rejects_known_id_unknown_type(mock_cls, concept, caplog):
 def test_build_typed_edge_validator_rejected_defensive(caplog, monkeypatch):
     """Defensive belt-and-braces: if the Edge validator raises despite the pair
     pre-check passing, the edge is dropped + logged `validator_rejected`."""
+    from apollo.ontology import build_node
     from apollo.parser import edge_resolver
     from apollo.parser.edge_resolver import _build_typed_edge
-    from apollo.ontology import build_node
 
     step = build_node(
-        node_type="procedure_step", node_id="s0", attempt_id=1, source="parser",
+        node_type="procedure_step",
+        node_id="s0",
+        attempt_id=1,
+        source="parser",
         content={"action": "do x", "purpose": "y"},
     )
     eq = build_node(
-        node_type="equation", node_id="e0", attempt_id=1, source="parser",
+        node_type="equation",
+        node_id="e0",
+        attempt_id=1,
+        source="parser",
         content={"symbolic": "x", "label": "x"},
     )
 
@@ -749,7 +785,10 @@ def test_build_typed_edge_validator_rejected_defensive(caplog, monkeypatch):
     raw = {"edge_type": "USES", "from_ref": "n0", "to_ref": "n1", "provenance": "explicit"}
     with caplog.at_level("INFO"):
         out = _build_typed_edge(
-            raw, index_to_node={0: step, 1: eq}, graph_context=None, attempt_id=1,
+            raw,
+            index_to_node={0: step, 1: eq},
+            graph_context=None,
+            attempt_id=1,
         )
     assert out is None
     assert "validator_rejected" in caplog.text
@@ -762,7 +801,7 @@ def test_parse_skips_non_dict_and_typeless_entries(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
 
     typeless = _flat_entry()  # type=None -> not a recognized node type
-    del typeless["type"]      # drop the key entirely to hit the `"type" not in e` guard
+    del typeless["type"]  # drop the key entirely to hit the `"type" not in e` guard
     client = MagicMock()
     payload = {
         "entries": ["not-a-dict", typeless, _EQ],  # bad(0), bad(1), good(2)
@@ -781,14 +820,17 @@ def test_build_precedes_chain_skips_validator_rejection(monkeypatch, concept):
     """Defensive: if `Edge` construction raises ValueError inside the PRECEDES
     chain, that pair is skipped (no abort). Mirrors the edge-resolver
     belt-and-braces guard."""
+    from apollo.ontology import build_node
     from apollo.parser import parser_llm
     from apollo.parser.parser_llm import _build_precedes_chain
-    from apollo.ontology import build_node
 
     steps = [
         build_node(
-            node_type="procedure_step", node_id=f"s{i}", attempt_id=1,
-            source="parser", content={"action": f"step {i}", "purpose": "p"},
+            node_type="procedure_step",
+            node_id=f"s{i}",
+            attempt_id=1,
+            source="parser",
+            content={"action": f"step {i}", "purpose": "p"},
         )
         for i in range(2)
     ]
@@ -810,7 +852,7 @@ def test_parse_ref_index_survives_skipped_entry(mock_cls, concept):
 
     malformed = _flat_entry(type="equation")  # missing required `symbolic` -> skipped
     client = _mock_client(
-        entries=[_STEP, malformed, _EQ],   # good(0), bad(1 -> skipped), good(2)
+        entries=[_STEP, malformed, _EQ],  # good(0), bad(1 -> skipped), good(2)
         edges=[_edge("USES", "n0", "n2", "explicit")],
     )
     mock_cls.return_value = client
@@ -829,6 +871,7 @@ def test_parse_ref_index_survives_skipped_entry(mock_cls, concept):
 # ===========================================================================
 # I. Triviality + no-fallback contract UNCHANGED
 # ===========================================================================
+
 
 @patch("apollo.parser.parser_llm.OpenAI")
 def test_triviality_short_circuit_unchanged(mock_cls, concept):
@@ -919,7 +962,10 @@ def test_node_parser_confidence_still_propagates(mock_cls, concept):
     from apollo.parser.parser_llm import parse_utterance
 
     eq = _flat_entry(
-        type="equation", symbolic="A1*v1 - A2*v2", label="continuity", confidence=0.45,
+        type="equation",
+        symbolic="A1*v1 - A2*v2",
+        label="continuity",
+        confidence=0.45,
     )
     client = _mock_client(entries=[eq], edges=[])
     mock_cls.return_value = client
@@ -938,8 +984,7 @@ def test_parse_is_pure_function_replay(mock_cls, concept):
         return (
             [n.node_type for n in nodes],
             sorted(
-                (e.edge_type, idx[e.from_node_id], idx[e.to_node_id], e.provenance)
-                for e in edges
+                (e.edge_type, idx[e.from_node_id], idx[e.to_node_id], e.provenance) for e in edges
             ),
         )
 
@@ -956,6 +1001,7 @@ def test_parse_is_pure_function_replay(mock_cls, concept):
 # ===========================================================================
 # J. Prompt template + context rendering
 # ===========================================================================
+
 
 def test_prompt_includes_edge_vocabulary(concept):
     from apollo.parser.prompt_builder import build_system_prompt
