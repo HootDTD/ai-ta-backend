@@ -102,9 +102,8 @@ class ResolutionWriteResult:
 # Pure mapping seams (DB-free).
 # ---------------------------------------------------------------------------
 
-def resolved_node_to_edge_spec(
-    rn: ResolvedNode, *, resolved_at: str
-) -> ResolvesToEdgeSpec | None:
+
+def resolved_node_to_edge_spec(rn: ResolvedNode, *, resolved_at: str) -> ResolvesToEdgeSpec | None:
     """A ``RESOLVES_TO`` edge spec for a resolved node that carries a ``:Canon``
     key, else None (unresolved nodes and resolved-but-unprojected candidates
     emit no edge — a non-edge is DATA)."""
@@ -155,6 +154,7 @@ def _field_spec_to_row(spec: ResolutionFieldSpec) -> dict:
 # Async write seams.
 # ---------------------------------------------------------------------------
 
+
 async def write_resolves_to(
     neo: Neo4jClient, attempt_id: int, specs: list[ResolvesToEdgeSpec]
 ) -> int:
@@ -172,9 +172,7 @@ async def write_resolves_to(
     except ResolutionUnavailableError:
         raise
     except Exception as exc:  # noqa: BLE001 - surface as a named error
-        raise ResolutionUnavailableError(
-            stage="write_resolves_to", last_error=str(exc)
-        ) from exc
+        raise ResolutionUnavailableError(stage="write_resolves_to", last_error=str(exc)) from exc
 
 
 async def persist_resolution_fields(
@@ -194,9 +192,7 @@ async def persist_resolution_fields(
     except ResolutionUnavailableError:
         raise
     except Exception as exc:  # noqa: BLE001 - surface as a named error
-        raise ResolutionUnavailableError(
-            stage="persist_fields", last_error=str(exc)
-        ) from exc
+        raise ResolutionUnavailableError(stage="persist_fields", last_error=str(exc)) from exc
 
 
 async def write_resolution(

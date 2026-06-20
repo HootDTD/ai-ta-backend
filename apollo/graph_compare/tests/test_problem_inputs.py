@@ -37,9 +37,7 @@ _BERNOULLI = (
 
 def _load(name: str) -> dict:
     if name == "problem_01":
-        return json.loads(
-            (_BERNOULLI / "problems" / "problem_01.json").read_text(encoding="utf-8")
-        )
+        return json.loads((_BERNOULLI / "problems" / "problem_01.json").read_text(encoding="utf-8"))
     return json.loads((_BERNOULLI / f"{name}.json").read_text(encoding="utf-8"))
 
 
@@ -97,7 +95,9 @@ def test_symbolic_mappings_default_empty_when_absent():
     """A problem with NO symbolic_mappings key -> {} (a NEW dict, not aliasing
     the problem's)."""
     problem = {"reference_solution": [], "declared_paths": [[]]}
-    inputs = build_problem_candidates(problem, {"misconceptions": []}, canon_key_by_canonical_key={})
+    inputs = build_problem_candidates(
+        problem, {"misconceptions": []}, canon_key_by_canonical_key={}
+    )
     assert inputs.symbolic_mappings == {}
     # A NEW dict — mutating it must not affect the problem dict.
     inputs.symbolic_mappings["x"] = "y"
@@ -112,7 +112,9 @@ def test_symbolic_mappings_returns_new_dict_not_alias():
         "declared_paths": [[]],
         "symbolic_mappings": {"d": "2*r"},
     }
-    inputs = build_problem_candidates(problem, {"misconceptions": []}, canon_key_by_canonical_key={})
+    inputs = build_problem_candidates(
+        problem, {"misconceptions": []}, canon_key_by_canonical_key={}
+    )
     assert inputs.symbolic_mappings == {"d": "2*r"}
     assert inputs.symbolic_mappings is not problem["symbolic_mappings"]
 
