@@ -38,9 +38,7 @@ def _judge_returning(*phase_payloads):
     """A cheap_chat-shaped sync judge_fn returning successive JSON strings per
     call (Phase A then Phase B). A raw (non-dict) string is returned verbatim for
     the fail-closed cases. Mirrors test_tag_mint.py:58-65 (one-per-call)."""
-    rendered = [
-        p if isinstance(p, str) else json.dumps(p) for p in phase_payloads
-    ]
+    rendered = [p if isinstance(p, str) else json.dumps(p) for p in phase_payloads]
     state = {"i": 0}
 
     def _judge(*_a, **_k) -> str:
@@ -57,9 +55,7 @@ def _judge_returning(*phase_payloads):
 def _recording_judge(*phase_payloads):
     """A judge_fn that records every (args, kwargs) it was handed (for the
     span-grounding assertion)."""
-    rendered = [
-        p if isinstance(p, str) else json.dumps(p) for p in phase_payloads
-    ]
+    rendered = [p if isinstance(p, str) else json.dumps(p) for p in phase_payloads]
     calls: list[dict] = []
 
     def _judge(*a, **k) -> str:
@@ -144,29 +140,21 @@ def _draft(*, grounding=None) -> ReferenceSolutionDraft:
 def test_pairing_verdict_shape():
     """PairingVerdict round-trips; confidence clamped to [0,1]; failed_claims is a
     tuple."""
-    v = PairingVerdict(
-        paired=True, faithful=True, failed_claims=(), confidence=0.9
-    )
+    v = PairingVerdict(paired=True, faithful=True, failed_claims=(), confidence=0.9)
     assert v.failed_claims == ()
     again = PairingVerdict.model_validate(v.model_dump())
     assert again.paired is True
     # clamp on construction
-    high = PairingVerdict(
-        paired=True, faithful=True, failed_claims=(), confidence=5.7
-    )
+    high = PairingVerdict(paired=True, faithful=True, failed_claims=(), confidence=5.7)
     assert high.confidence == 1.0
-    low = PairingVerdict(
-        paired=False, faithful=False, failed_claims=("x",), confidence=-0.4
-    )
+    low = PairingVerdict(paired=False, faithful=False, failed_claims=("x",), confidence=-0.4)
     assert low.confidence == 0.0
 
 
 def test_pairing_verdict_coerces_list_failed_claims():
     """failed_claims accepts a LIST (coerced to a tuple) — the field-validator
     list branch on PairingVerdict."""
-    v = PairingVerdict(
-        paired=True, faithful=False, failed_claims=["a", "b"], confidence=0.5
-    )
+    v = PairingVerdict(paired=True, faithful=False, failed_claims=["a", "b"], confidence=0.5)
     assert v.failed_claims == ("a", "b")
 
 
@@ -183,9 +171,7 @@ def test_rejection_coerces_list_failed_claims():
 
 def test_rejection_from_verdict_none_on_approved():
     """rejection_from_verdict(paired&faithful verdict) is None."""
-    approved = PairingVerdict(
-        paired=True, faithful=True, failed_claims=(), confidence=0.8
-    )
+    approved = PairingVerdict(paired=True, faithful=True, failed_claims=(), confidence=0.8)
     assert rejection_from_verdict(approved) is None
 
 
@@ -193,9 +179,7 @@ def test_rejection_from_verdict_typed_on_fail():
     """A not-paired verdict → Rejection(reason='not_paired'); an unfaithful →
     reason='unfaithful_claims' carrying failed_claims; an unparseable marker →
     reason='unparseable_judge'."""
-    not_paired = PairingVerdict(
-        paired=False, faithful=False, failed_claims=(), confidence=0.3
-    )
+    not_paired = PairingVerdict(paired=False, faithful=False, failed_claims=(), confidence=0.3)
     rej = rejection_from_verdict(not_paired)
     assert isinstance(rej, Rejection)
     assert rej.stage == "pairing_gate"

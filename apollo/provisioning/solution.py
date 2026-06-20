@@ -139,9 +139,7 @@ def _parse_reference_solution(raw: str) -> list[dict] | None:
     return steps
 
 
-def _validate_problem_shape(
-    question: Any, reference_solution: list[dict]
-) -> None:
+def _validate_problem_shape(question: Any, reference_solution: list[dict]) -> None:
     """Validate the (question + ``reference_solution``) against the ``Problem``
     schema BEFORE returning a draft. A malformed/empty solution raises
     ``SolutionDraftError`` (fail-closed) — never a half-built draft reaches the
@@ -172,9 +170,7 @@ def _problem_dict(question: Any, reference_solution: list[dict]) -> dict:
     }
 
 
-def _provenance(
-    question: Any, *, retrieval_hits: int
-) -> dict:
+def _provenance(question: Any, *, retrieval_hits: int) -> dict:
     """Build the draft provenance from the question's content key + the retrieval
     hit count (the idempotency key threads through unchanged)."""
     return {
@@ -257,12 +253,8 @@ async def find_or_generate(
                     "content": _canonical_json(
                         {
                             "problem_text": getattr(question, "problem_text", ""),
-                            "given_values": dict(
-                                getattr(question, "given_values", {}) or {}
-                            ),
-                            "target_unknown": getattr(
-                                question, "target_unknown", ""
-                            ),
+                            "given_values": dict(getattr(question, "given_values", {}) or {}),
+                            "target_unknown": getattr(question, "target_unknown", ""),
                             "context": context,
                         }
                     ),
