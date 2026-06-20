@@ -6,10 +6,9 @@ INIT / BETWEEN raise InvalidPhaseError.
 
 V3: KG wipe is now a Neo4j subgraph DETACH DELETE via KGStore.delete_subgraph.
 """
-
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +24,7 @@ from apollo.persistence.models import (
 )
 from apollo.persistence.neo4j_client import Neo4jClient
 
+
 _ALLOWED_PHASES = {
     SessionPhase.TEACHING.value,
     SessionPhase.PROBLEM_REVEAL.value,
@@ -38,14 +38,12 @@ async def handle_restart_problem(
     db: AsyncSession,
     neo: Neo4jClient,
     session_id: int,
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     # Row lock on Postgres to serialize concurrent restart + chat writes.
     # SQLite silently ignores it.
-    sess = (
-        await db.execute(
-            select(ApolloSession).where(ApolloSession.id == session_id).with_for_update()
-        )
-    ).scalar_one()
+    sess = (await db.execute(
+        select(ApolloSession).where(ApolloSession.id == session_id).with_for_update()
+    )).scalar_one()
 
     if sess.status != SessionStatus.active.value:
         raise InvalidPhaseError(session_id=session_id, phase=f"status={sess.status}")
@@ -54,18 +52,12 @@ async def handle_restart_problem(
     if sess.phase not in _ALLOWED_PHASES:
         raise InvalidPhaseError(session_id=session_id, phase=sess.phase)
 
-    current_attempt = (
-        (
-            await db.execute(
-                select(ProblemAttempt)
-                .where(ProblemAttempt.session_id == session_id)
-                .where(ProblemAttempt.problem_id == sess.current_problem_id)
-                .order_by(ProblemAttempt.id.desc())
-            )
-        )
-        .scalars()
-        .first()
-    )
+    current_attempt = (await db.execute(
+        select(ProblemAttempt)
+        .where(ProblemAttempt.session_id == session_id)
+        .where(ProblemAttempt.problem_id == sess.current_problem_id)
+        .order_by(ProblemAttempt.id.desc())
+    )).scalars().first()
     if current_attempt is None:
         raise RuntimeError(f"no current ProblemAttempt for session {session_id}")
 

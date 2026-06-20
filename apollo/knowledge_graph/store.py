@@ -9,14 +9,12 @@ V3 contract:
 - `delete_subgraph` is the cross-DB cleanup contract called by handlers in
   try/finally on session-end. Idempotent.
 """
-
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Iterable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +23,7 @@ from sympy import latex
 from apollo.errors import KGEntryNotFoundError, RetentionError, SessionFrozenError
 from apollo.ontology import (
     EDGE_ALLOWED_PAIRS,
+    NODE_CONTENT_TYPES,
     NODE_LABEL_TO_TYPE,
     NODE_LABELS,
     Edge,
@@ -62,7 +61,10 @@ def _utc_now_iso() -> str:
 
 _NODE_CREATE_CYPHER: dict[str, str] = {
     label: (
-        f"UNWIND $rows AS row\nCREATE (n:{label}:_KGNode)\nSET n = row\nRETURN count(n) AS written"
+        f"UNWIND $rows AS row\n"
+        f"CREATE (n:{label}:_KGNode)\n"
+        f"SET n = row\n"
+        f"RETURN count(n) AS written"
     )
     for label in NODE_LABELS.values()
 }
@@ -189,8 +191,8 @@ class WriteEdgesResult:
     """
 
     written: int = 0
-    dropped: int = 0  # endpoint(s) absent in the subgraph
-    invalid: int = 0  # EDGE_ALLOWED_PAIRS / unknown-type violation
+    dropped: int = 0          # endpoint(s) absent in the subgraph
+    invalid: int = 0          # EDGE_ALLOWED_PAIRS / unknown-type violation
     reasons: tuple[tuple[str, str], ...] = ()  # (edge_repr, reason) per rejection
 
     def __int__(self) -> int:
@@ -208,7 +210,6 @@ def _edge_repr(edge: Edge) -> str:
 # ---------------------------------------------------------------------------
 # KGStore
 # ---------------------------------------------------------------------------
-
 
 class KGStore:
     """Per-request store. Postgres for session/freeze state, Neo4j for graph."""
@@ -237,13 +238,17 @@ class KGStore:
             raise SessionFrozenError(session_id=str(session_id))
 
     async def freeze(self, session_id: int) -> None:
-        result = await self.db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        result = await self.db.execute(
+            select(ApolloSession).where(ApolloSession.id == session_id)
+        )
         session = result.scalar_one()
         session.phase = "PROBLEM_REVEAL"
         await self.db.commit()
 
     async def unfreeze(self, session_id: int) -> None:
-        result = await self.db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        result = await self.db.execute(
+            select(ApolloSession).where(ApolloSession.id == session_id)
+        )
         session = result.scalar_one()
         session.phase = "TEACHING"
         await self.db.commit()
@@ -286,9 +291,7 @@ class KGStore:
         total = 0
         async with self.neo.session() as s:
             present = await self._existing_node_ids(
-                s,
-                attempt_id,
-                [n.node_id for n in nodes],
+                s, attempt_id, [n.node_id for n in nodes],
             )
             to_create = [n for n in nodes if n.node_id not in present]
             reused = len(nodes) - len(to_create)
@@ -318,17 +321,12 @@ class KGStore:
 
         _LOG.info(
             "write_nodes attempt_id=%s created=%s reused=%s",
-            attempt_id,
-            total,
-            reused,
+            attempt_id, total, reused,
         )
         return total
 
     async def _existing_node_ids(
-        self,
-        s: Any,
-        attempt_id: int,
-        ids: Iterable[str],
+        self, s: Any, attempt_id: int, ids: Iterable[str],
     ) -> set[str]:
         """Return the subset of `ids` that already exist in the subgraph.
 
@@ -340,9 +338,9 @@ class KGStore:
         if not id_list:
             return set()
         result = await s.run(
-            "MATCH (n:_KGNode {attempt_id: $aid}) WHERE n.node_id IN $ids RETURN n.node_id AS id",
-            aid=attempt_id,
-            ids=id_list,
+            "MATCH (n:_KGNode {attempt_id: $aid}) "
+            "WHERE n.node_id IN $ids RETURN n.node_id AS id",
+            aid=attempt_id, ids=id_list,
         )
         present: set[str] = set()
         async for record in result:
@@ -416,16 +414,10 @@ class KGStore:
 
         _LOG.info(
             "write_edges attempt_id=%s written=%s dropped=%s invalid=%s reasons=%r",
-            attempt_id,
-            written,
-            dropped,
-            invalid,
-            tuple(reasons),
+            attempt_id, written, dropped, invalid, tuple(reasons),
         )
         return WriteEdgesResult(
-            written=written,
-            dropped=dropped,
-            invalid=invalid,
+            written=written, dropped=dropped, invalid=invalid,
             reasons=tuple(reasons),
         )
 
@@ -433,7 +425,8 @@ class KGStore:
         """Read the full per-attempt subgraph."""
         async with self.neo.session() as s:
             nodes_res = await s.run(
-                "MATCH (n:_KGNode {attempt_id: $aid}) RETURN n AS props, labels(n) AS labels",
+                "MATCH (n:_KGNode {attempt_id: $aid}) "
+                "RETURN n AS props, labels(n) AS labels",
                 aid=attempt_id,
             )
             nodes: list[Node] = []
@@ -527,15 +520,16 @@ class KGStore:
                     "MATCH (n:_KGNode {attempt_id: $aid}) "
                     "SET n.graded_at = $ts "
                     "RETURN count(n) AS stamped",
-                    aid=attempt_id,
-                    ts=ts,
+                    aid=attempt_id, ts=ts,
                 )
                 rec = await result.single()
                 return int(rec["stamped"]) if rec else 0
         except RetentionError:
             raise
         except Exception as exc:  # noqa: BLE001 - surface as a named error
-            raise RetentionError(attempt_id=attempt_id, last_error=str(exc)) from exc
+            raise RetentionError(
+                attempt_id=attempt_id, last_error=str(exc)
+            ) from exc
 
     # ------- Apollo-facing summary ------------------------------------------
 
@@ -605,12 +599,7 @@ class KGStore:
     # flagged entry.
 
     async def _set_node_status_neo4j(
-        self,
-        *,
-        attempt_id: int,
-        node_id: str,
-        set_clause: str,
-        params: dict[str, Any],
+        self, *, attempt_id: int, node_id: str, set_clause: str, params: dict[str, Any],
     ) -> Node:
         """Run a parameterized SET-and-RETURN Cypher and reconstruct the
         typed Node. Raises KGEntryNotFoundError when the node is absent.
@@ -633,32 +622,21 @@ class KGStore:
         return _record_to_node(dict(rec["props"]), list(rec["labels"]))
 
     async def _log_negotiation(
-        self,
-        *,
-        attempt_id: int,
-        node_id: str,
-        move: str,
-        payload: dict[str, Any],
+        self, *, attempt_id: int, node_id: str, move: str, payload: dict[str, Any],
     ) -> None:
         """Append a row to apollo_kg_negotiations. The audit log is
         append-only — every move gets its own row even on the same entry."""
-        self.db.add(
-            KGNegotiation(
-                attempt_id=attempt_id,
-                entry_id=node_id,
-                actor="student",
-                move=move,
-                payload=payload,
-            )
-        )
+        self.db.add(KGNegotiation(
+            attempt_id=attempt_id,
+            entry_id=node_id,
+            actor="student",
+            move=move,
+            payload=payload,
+        ))
         await self.db.commit()
 
     async def mark_node_disputed(
-        self,
-        *,
-        attempt_id: int,
-        node_id: str,
-        reason: str,
+        self, *, attempt_id: int, node_id: str, reason: str,
     ) -> Node:
         """CHALLENGE: status -> DISPUTED. Logs the student's reason. The
         node's structural content is preserved — only `status` changes."""
@@ -666,25 +644,17 @@ class KGStore:
         await self._ensure_unfrozen(session_id)
 
         node = await self._set_node_status_neo4j(
-            attempt_id=attempt_id,
-            node_id=node_id,
-            set_clause="n.status = 'DISPUTED'",
-            params={},
+            attempt_id=attempt_id, node_id=node_id,
+            set_clause="n.status = 'DISPUTED'", params={},
         )
         await self._log_negotiation(
-            attempt_id=attempt_id,
-            node_id=node_id,
-            move="challenge",
-            payload={"reason": reason},
+            attempt_id=attempt_id, node_id=node_id,
+            move="challenge", payload={"reason": reason},
         )
         return node
 
     async def paraphrase_node(
-        self,
-        *,
-        attempt_id: int,
-        node_id: str,
-        surface_form: str,
+        self, *, attempt_id: int, node_id: str, surface_form: str,
     ) -> Node:
         """SUPPLY-PARAPHRASE: status -> DUAL, student_belief = surface_form.
 
@@ -696,24 +666,18 @@ class KGStore:
         await self._ensure_unfrozen(session_id)
 
         node = await self._set_node_status_neo4j(
-            attempt_id=attempt_id,
-            node_id=node_id,
+            attempt_id=attempt_id, node_id=node_id,
             set_clause="n.status = 'DUAL', n.student_belief = $belief",
             params={"belief": surface_form},
         )
         await self._log_negotiation(
-            attempt_id=attempt_id,
-            node_id=node_id,
-            move="paraphrase",
-            payload={"surface_form": surface_form},
+            attempt_id=attempt_id, node_id=node_id,
+            move="paraphrase", payload={"surface_form": surface_form},
         )
         return node
 
     async def skip_node(
-        self,
-        *,
-        attempt_id: int,
-        node_id: str,
+        self, *, attempt_id: int, node_id: str,
     ) -> Node:
         """SKIP: status -> DUAL with no edits. Flags the entry for the
         grader without forcing the student to articulate a paraphrase."""
@@ -721,24 +685,17 @@ class KGStore:
         await self._ensure_unfrozen(session_id)
 
         node = await self._set_node_status_neo4j(
-            attempt_id=attempt_id,
-            node_id=node_id,
-            set_clause="n.status = 'DUAL'",
-            params={},
+            attempt_id=attempt_id, node_id=node_id,
+            set_clause="n.status = 'DUAL'", params={},
         )
         await self._log_negotiation(
-            attempt_id=attempt_id,
-            node_id=node_id,
-            move="skip",
-            payload={},
+            attempt_id=attempt_id, node_id=node_id,
+            move="skip", payload={},
         )
         return node
 
     async def get_node_trace(
-        self,
-        *,
-        attempt_id: int,
-        node_id: str,
+        self, *, attempt_id: int, node_id: str,
     ) -> dict[str, Any]:
         """Ordered audit trail for one entry. Returns:
 
@@ -760,40 +717,30 @@ class KGStore:
         offending turn.
         """
         # Audit trail — chronological.
-        rows = (
-            (
-                await self.db.execute(
-                    select(KGNegotiation)
-                    .where(KGNegotiation.attempt_id == attempt_id)
-                    .where(KGNegotiation.entry_id == node_id)
-                    .order_by(KGNegotiation.created_at.asc(), KGNegotiation.id.asc())
-                )
-            )
-            .scalars()
-            .all()
-        )
+        rows = (await self.db.execute(
+            select(KGNegotiation)
+            .where(KGNegotiation.attempt_id == attempt_id)
+            .where(KGNegotiation.entry_id == node_id)
+            .order_by(KGNegotiation.created_at.asc(), KGNegotiation.id.asc())
+        )).scalars().all()
 
         moves: list[dict[str, Any]] = []
         for r in rows:
-            moves.append(
-                {
-                    "actor": r.actor,
-                    "move": r.move,
-                    "payload": r.payload or {},
-                    "created_at": r.created_at.isoformat() if r.created_at else None,
-                }
-            )
+            moves.append({
+                "actor": r.actor,
+                "move": r.move,
+                "payload": r.payload or {},
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            })
 
         # Source utterance — latest student message in the attempt.
-        last_student_msg = (
-            await self.db.execute(
-                select(Message.content)
-                .where(Message.attempt_id == attempt_id)
-                .where(Message.role == "student")
-                .order_by(Message.turn_index.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
+        last_student_msg = (await self.db.execute(
+            select(Message.content)
+            .where(Message.attempt_id == attempt_id)
+            .where(Message.role == "student")
+            .order_by(Message.turn_index.desc())
+            .limit(1)
+        )).scalar_one_or_none()
 
         return {
             "node_id": node_id,

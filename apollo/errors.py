@@ -4,7 +4,6 @@ Every failure mode gets its own exception class. No fallbacks — every
 raised exception surfaces as a visible error in the UI via the FastAPI
 exception handlers registered in apollo/api.py.
 """
-
 from __future__ import annotations
 
 
@@ -103,7 +102,9 @@ class ReviewRequiredError(ApolloError):
 
     def __init__(self, *, entries: list[dict]) -> None:
         self.entries = entries
-        super().__init__(f"{len(entries)} KG entries need review before grading")
+        super().__init__(
+            f"{len(entries)} KG entries need review before grading"
+        )
 
 
 class KGEntryNotFoundError(ApolloError):
@@ -113,7 +114,9 @@ class KGEntryNotFoundError(ApolloError):
     def __init__(self, *, attempt_id: int, node_id: str) -> None:
         self.attempt_id = attempt_id
         self.node_id = node_id
-        super().__init__(f"KG entry {node_id!r} not found in attempt {attempt_id}")
+        super().__init__(
+            f"KG entry {node_id!r} not found in attempt {attempt_id}"
+        )
 
 
 class CoverageGradingError(ApolloError):
@@ -127,7 +130,9 @@ class CoverageGradingError(ApolloError):
     def __init__(self, *, stage: str, last_error: str) -> None:
         self.stage = stage
         self.last_error = last_error
-        super().__init__(f"Coverage grading failed at stage {stage!r}: {last_error}")
+        super().__init__(
+            f"Coverage grading failed at stage {stage!r}: {last_error}"
+        )
 
 
 class CanonProjectionError(ApolloError):
@@ -140,7 +145,9 @@ class CanonProjectionError(ApolloError):
     def __init__(self, *, stage: str, last_error: str) -> None:
         self.stage = stage
         self.last_error = last_error
-        super().__init__(f"Canon projection failed at stage {stage!r}: {last_error}")
+        super().__init__(
+            f"Canon projection failed at stage {stage!r}: {last_error}"
+        )
 
 
 class RetentionError(ApolloError):
@@ -154,4 +161,6 @@ class RetentionError(ApolloError):
     def __init__(self, *, attempt_id: int, last_error: str) -> None:
         self.attempt_id = attempt_id
         self.last_error = last_error
-        super().__init__(f"Retention operation failed for attempt {attempt_id}: {last_error}")
+        super().__init__(
+            f"Retention operation failed for attempt {attempt_id}: {last_error}"
+        )
