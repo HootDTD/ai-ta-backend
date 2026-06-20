@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from typing import Iterable, Mapping
 
 from pydantic import ValidationError
+from sympy.core.cache import clear_cache
 
 from apollo.errors import MalformedEquationError
 from apollo.ontology.edges import EdgeType
@@ -120,10 +121,22 @@ def _proc_order(step) -> int:
 
 def _equation_free_symbols(step) -> set[str]:
     """Free-symbol names of an equation step's ``symbolic``. Returns () when the
-    equation is malformed (gate 6 owns that verdict) or has no ``symbolic``."""
+    equation is malformed (gate 6 owns that verdict) or has no ``symbolic``.
+
+    DETERMINISM PIN (load-bearing for the sole foreign-symbol guard, gate 4):
+    ``parse_zero_form`` -> ``sympy.parse_expr`` auto-creates any symbol not in the
+    local dict (e.g. a foreign ``x``) from SymPy's PROCESS-GLOBAL symbol cache. If
+    another test (or any earlier parse in the same process) cached that name with
+    different assumptions (``zero=True``, ``positive=True``, ...), assumption-driven
+    simplification can drop the symbol from ``free_symbols`` — making gate 4's
+    verdict order-dependent (a foreign ``x`` could slip through). Clearing the cache
+    here forces every symbol to be reconstructed with default assumptions, so the
+    free-symbol set depends ONLY on the equation text — never on global cache state.
+    Cost is negligible at fixture/lint scale and the cache simply repopulates."""
     symbolic = step.content.get("symbolic")
     if not symbolic:
         return set()
+    clear_cache()
     try:
         expr = parse_zero_form(symbolic, entry_id=step.id)
     except MalformedEquationError:
@@ -238,7 +251,14 @@ def _gate_7(problem: Problem) -> str | None:
     via continuity and consumed by bernoulli), or cancelled (named in a
     simplification's ``transformation`` / ``content.variables``). A symbol that
     lives in a single equation and is neither given/target/cancelled is UNCLOSED.
-    NOT an end-to-end solve (honest v1 paper check, §8B.4:1347)."""
+    NOT an end-to-end solve (honest v1 paper check, §8B.4:1347).
+
+    DIRECTION (for 3B2d/3B2g, which author the symbols this gate consumes): the
+    ``appears_in >= 2`` conjunct on the intermediate rule makes gate 7
+    INTENTIONALLY CONSERVATIVE — it rejects-on-doubt. A legitimately-closed system
+    whose intermediate is consumed by a SIMPLIFICATION (not a second equation)
+    could be flagged unclosed; that errs toward rejection, the safe direction for a
+    promotion gate (a false-RED quarantines a good problem; never a false-GREEN)."""
     eq_steps = _equation_steps(problem)
     free_by_eq: dict[str, set[str]] = {
         s.id: _equation_free_symbols(s) for s in eq_steps
@@ -330,7 +350,16 @@ def run_promotion_lint(
 
     try:
         kg = problem.to_kg_graph(attempt_id=_LINT_ATTEMPT_ID)
-    except (ValidationError, ValueError) as exc:
+    except (ValidationError, ValueError) as exc:  # pragma: no cover
+        # DEFENSE-IN-DEPTH, currently unreachable: a Problem that already passed
+        # ``model_validate`` above cannot produce a forbidden edge here. The only
+        # edge types ``to_kg_graph`` emits are DEPENDS_ON (generic — every pair is
+        # allowed), USES (hardcoded procedure_step->equation), and PRECEDES
+        # (hardcoded procedure_step->procedure_step); a procedure_step pointing
+        # ``uses_equations`` at a non-equation is rejected by ``_resolve_references``
+        # at ``model_validate`` (the earlier try), never reaching this call. This
+        # guard stays so a FUTURE ``to_kg_graph`` change that emits a typed edge for
+        # a forbidden pair still fails CLOSED at gate 1 rather than crashing the lint.
         return PromotionResult(
             ok=False, failed_gate=1, diagnostic=f"gate 1: forbidden edge: {exc}"
         )
