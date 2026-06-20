@@ -15,6 +15,7 @@ from apollo.errors import PoolExhaustedError
 from apollo.overseer.problem_selector import (
     list_problems_for_concept,
     select_problem,
+    select_problem_personalized,
 )
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_problem_payloads,
@@ -117,3 +118,77 @@ async def test_db_problem_payload_carries_reference_solution(db_session):
     assert problem.reference_solution  # non-empty
     graph = problem.to_kg_graph(attempt_id=-1)
     assert graph.nodes  # non-empty node set
+
+
+# ---------------------------------------------------------------------------
+# WU-3B2a — Tier-2 selection gate (only teachable problems are returned).
+# ---------------------------------------------------------------------------
+
+
+async def test_list_problems_excludes_tier1(db_session):
+    """Two problems under one concept, one Tier-1 (auto-provisioned inventory),
+    one Tier-2 (teachable): the call returns ONLY the Tier-2 problem.
+
+    MUTATION-PROOF: reverting the ``tier == 2`` WHERE clause in
+    ``list_problems_for_concept`` makes the Tier-1 row leak -> this test REDs.
+    """
+    payloads = load_bernoulli_problem_payloads()
+    tier1_payload, tier2_payload = payloads[0], payloads[1]
+    sid = await seed_search_space(db_session)
+    cid = await seed_concept(
+        db_session, search_space_id=sid, subject_slug="s_tier", concept_slug="c_tier"
+    )
+    # One inventory (Tier-1) row and one teachable (Tier-2) row under ONE concept.
+    await seed_problems(db_session, concept_id=cid, payloads=[tier1_payload], tier=1)
+    await seed_problems(db_session, concept_id=cid, payloads=[tier2_payload], tier=2)
+
+    problems = await list_problems_for_concept(db_session, concept_id=cid)
+    returned_ids = {p.id for p in problems}
+    assert tier2_payload["id"] in returned_ids
+    assert tier1_payload["id"] not in returned_ids, "Tier-1 inventory must NOT leak"
+
+
+async def test_list_problems_includes_tier2(db_session):
+    """A Tier-2 problem is returned (positive control; proves the filter does not
+    over-exclude). With #28, reverting the WHERE either leaks Tier-1 (#28 RED) or,
+    if mis-written as ``tier == 1``, drops Tier-2 (#29 RED)."""
+    payload = load_bernoulli_problem_payloads()[0]
+    sid = await seed_search_space(db_session)
+    cid = await seed_concept(
+        db_session, search_space_id=sid, subject_slug="s_t2", concept_slug="c_t2"
+    )
+    await seed_problems(db_session, concept_id=cid, payloads=[payload], tier=2)
+
+    problems = await list_problems_for_concept(db_session, concept_id=cid)
+    assert [p.id for p in problems] == [payload["id"]]
+
+
+async def test_select_problem_personalized_also_tier_gated(db_session):
+    """With the personalization flag OFF (default), ``select_problem_personalized``
+    delegates to ``select_problem`` -> ``list_problems_for_concept``, so the single
+    tier predicate gates the personalized caller too (no separate selector edit).
+
+    Seed one Tier-1 + one Tier-2 intro problem; the personalized selector returns
+    the Tier-2 problem.
+    """
+    intro_payloads = [
+        p for p in load_bernoulli_problem_payloads() if p["difficulty"] == "intro"
+    ]
+    assert len(intro_payloads) >= 2
+    tier1_payload, tier2_payload = intro_payloads[0], intro_payloads[1]
+    sid = await seed_search_space(db_session)
+    cid = await seed_concept(
+        db_session, search_space_id=sid, subject_slug="s_pers", concept_slug="c_pers"
+    )
+    await seed_problems(db_session, concept_id=cid, payloads=[tier1_payload], tier=1)
+    await seed_problems(db_session, concept_id=cid, payloads=[tier2_payload], tier=2)
+
+    chosen = await select_problem_personalized(
+        db_session,
+        user_id="00000000-0000-4000-8000-000000000001",
+        search_space_id=sid,
+        concept_id=cid,
+        difficulty="intro",
+        attempted_ids=[],
+    )
+    assert chosen.id == tier2_payload["id"]
