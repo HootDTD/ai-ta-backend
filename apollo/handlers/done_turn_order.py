@@ -32,9 +32,7 @@ from apollo.persistence.models import Message
 from apollo.persistence.neo4j_client import Neo4jClient
 
 
-async def _read_student_turn_points(
-    db: AsyncSession, *, attempt_id: int
-) -> list[tuple[int, str]]:
+async def _read_student_turn_points(db: AsyncSession, *, attempt_id: int) -> list[tuple[int, str]]:
     """Return ``(turn_index, created_at_iso)`` for each student message of the
     attempt, ordered by ``turn_index``. ``created_at`` is normalized to an ISO
     string so it compares against the node ``created_at`` ISO strings."""

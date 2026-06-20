@@ -53,8 +53,15 @@ class _Attempt:
 
 def _payload() -> dict:
     return {
-        "reference_solution": [{"id": "s1", "entity_key": "eq.k", "entry_type": "equation",
-                                "content": {"symbolic": "a-b"}, "depends_on": []}],
+        "reference_solution": [
+            {
+                "id": "s1",
+                "entity_key": "eq.k",
+                "entry_type": "equation",
+                "content": {"symbolic": "a-b"},
+                "depends_on": [],
+            }
+        ],
         "declared_paths": [["s1"]],
         "symbolic_mappings": {"d": "2*r"},
     }
@@ -99,11 +106,18 @@ async def _run(db, mocks_payload=None):
     sess = _Sess()
     attempt = _Attempt()
     graph = KGGraph()
-    return await run_graph_simulation(
-        db, MagicMock(name="neo"),
-        attempt=attempt, sess=sess, student_graph=graph,
-        problem_payload=mocks_payload if mocks_payload is not None else _payload(),
-    ), sess, attempt
+    return (
+        await run_graph_simulation(
+            db,
+            MagicMock(name="neo"),
+            attempt=attempt,
+            sess=sess,
+            student_graph=graph,
+            problem_payload=mocks_payload if mocks_payload is not None else _payload(),
+        ),
+        sess,
+        attempt,
+    )
 
 
 def _db() -> MagicMock:
@@ -214,8 +228,12 @@ async def test_resolution_unavailable_marks_attempt_pending():
         try:
             with pytest.raises(ResolutionUnavailableError):
                 await run_graph_simulation(
-                    db, MagicMock(), attempt=attempt, sess=sess,
-                    student_graph=KGGraph(), problem_payload=_payload(),
+                    db,
+                    MagicMock(),
+                    attempt=attempt,
+                    sess=sess,
+                    student_graph=KGGraph(),
+                    problem_payload=_payload(),
                 )
         finally:
             for p in reversed(patches):
@@ -238,8 +256,12 @@ async def test_resolution_invalid_output_sets_pending_and_reraises():
         try:
             with pytest.raises(ResolutionInvalidOutputError):
                 await run_graph_simulation(
-                    db, MagicMock(), attempt=attempt, sess=sess,
-                    student_graph=KGGraph(), problem_payload=_payload(),
+                    db,
+                    MagicMock(),
+                    attempt=attempt,
+                    sess=sess,
+                    student_graph=KGGraph(),
+                    problem_payload=_payload(),
                 )
         finally:
             for p in reversed(patches):
@@ -251,9 +273,7 @@ async def test_resolution_invalid_output_sets_pending_and_reraises():
 async def test_student_graph_invalid_does_not_set_pending():
     db = _db()
     patches, mocks = _all_callee_patches()
-    mocks["validate_student_graph"].side_effect = StudentGraphInvalidError(
-        reasons=("bad edge",)
-    )
+    mocks["validate_student_graph"].side_effect = StudentGraphInvalidError(reasons=("bad edge",))
     sess = _Sess()
     attempt = _Attempt()
     with _read_transcript_patch():
@@ -262,8 +282,12 @@ async def test_student_graph_invalid_does_not_set_pending():
         try:
             with pytest.raises(StudentGraphInvalidError):
                 await run_graph_simulation(
-                    db, MagicMock(), attempt=attempt, sess=sess,
-                    student_graph=KGGraph(), problem_payload=_payload(),
+                    db,
+                    MagicMock(),
+                    attempt=attempt,
+                    sess=sess,
+                    student_graph=KGGraph(),
+                    problem_payload=_payload(),
                 )
         finally:
             for p in reversed(patches):
@@ -286,8 +310,12 @@ async def test_reference_graph_invalid_does_not_set_pending():
         try:
             with pytest.raises(ReferenceGraphInvalidError):
                 await run_graph_simulation(
-                    db, MagicMock(), attempt=attempt, sess=sess,
-                    student_graph=KGGraph(), problem_payload=_payload(),
+                    db,
+                    MagicMock(),
+                    attempt=attempt,
+                    sess=sess,
+                    student_graph=KGGraph(),
+                    problem_payload=_payload(),
                 )
         finally:
             for p in reversed(patches):
@@ -327,8 +355,12 @@ async def test_unexpected_exception_in_window_sets_pending_and_reraises():
         try:
             with pytest.raises(RuntimeError, match="canon projection"):
                 await run_graph_simulation(
-                    db, MagicMock(), attempt=attempt, sess=sess,
-                    student_graph=KGGraph(), problem_payload=_payload(),
+                    db,
+                    MagicMock(),
+                    attempt=attempt,
+                    sess=sess,
+                    student_graph=KGGraph(),
+                    problem_payload=_payload(),
                 )
         finally:
             for p in reversed(patches):
@@ -354,8 +386,12 @@ async def test_student_graph_invalid_inside_window_does_not_set_pending():
         try:
             with pytest.raises(StudentGraphInvalidError):
                 await run_graph_simulation(
-                    db, MagicMock(), attempt=attempt, sess=sess,
-                    student_graph=KGGraph(), problem_payload=_payload(),
+                    db,
+                    MagicMock(),
+                    attempt=attempt,
+                    sess=sess,
+                    student_graph=KGGraph(),
+                    problem_payload=_payload(),
                 )
         finally:
             for p in reversed(patches):
