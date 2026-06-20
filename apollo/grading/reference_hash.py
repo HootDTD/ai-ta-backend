@@ -43,12 +43,9 @@ def reference_graph_hash(reference_graph: ReferenceGraph) -> str:
     ``f"{REFERENCE_HASH_VERSION}:{hexdigest}"``."""
     payload = {
         "nodes": sorted(
-            [n.canonical_key, str(n.node_type), n.symbolic or ""]
-            for n in reference_graph.nodes
+            [n.canonical_key, str(n.node_type), n.symbolic or ""] for n in reference_graph.nodes
         ),
-        "edges": sorted(
-            [str(e.edge_type), e.from_key, e.to_key] for e in reference_graph.edges
-        ),
+        "edges": sorted([str(e.edge_type), e.from_key, e.to_key] for e in reference_graph.edges),
         "paths": sorted(list(p.canonical_keys) for p in reference_graph.paths),
     }
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))

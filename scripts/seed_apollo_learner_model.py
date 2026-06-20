@@ -142,9 +142,7 @@ async def _resolve_concept(session: AsyncSession, search_space_id: int | None) -
             await session.execute(text("SELECT MIN(id) FROM aita_search_spaces"))
         ).scalar_one_or_none()
         if search_space_id is None:
-            raise SeedError(
-                "no aita_search_spaces rows — seed a course before the learner model"
-            )
+            raise SeedError("no aita_search_spaces rows — seed a course before the learner model")
 
     concept_id = (
         await session.execute(
@@ -186,30 +184,32 @@ async def _upsert_entity(
         )
         session.add(row)
         await session.flush()
-        return row.id, True
+        return row.id, True  # type: ignore[return-value]
 
     # Idempotent update in place (same values on a re-run -> no semantic change).
-    row.kind = spec.kind
-    row.display_name = spec.display_name
-    row.payload = dict(spec.payload)
-    row.aliases = list(spec.aliases)
+    row.kind = spec.kind  # type: ignore[assignment]
+    row.display_name = spec.display_name  # type: ignore[assignment]
+    row.payload = dict(spec.payload)  # type: ignore[assignment]
+    row.aliases = list(spec.aliases)  # type: ignore[assignment]
     await session.flush()
-    return row.id, False
+    return row.id, False  # type: ignore[return-value]
 
 
-async def _link_opposes(
-    session: AsyncSession, concept_id: int, key_to_id: dict[str, int]
-) -> int:
+async def _link_opposes(session: AsyncSession, concept_id: int, key_to_id: dict[str, int]) -> int:
     """Second pass: resolve each misconception's payload.opposes_entity_key to
     opposes_entity_id (now that every entity row exists). Returns the count
     linked. Idempotent (re-resolves to the same id)."""
     rows = (
-        await session.execute(
-            select(KGEntity)
-            .where(KGEntity.concept_id == concept_id)
-            .where(KGEntity.kind == "misconception")
+        (
+            await session.execute(
+                select(KGEntity)
+                .where(KGEntity.concept_id == concept_id)
+                .where(KGEntity.kind == "misconception")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     linked = 0
     for row in rows:
@@ -223,7 +223,7 @@ async def _link_opposes(
                 f"misconception {row.canonical_key} opposes unknown key {opposes_key!r}"
             )
         payload["opposes_entity_id"] = target_id
-        row.payload = payload
+        row.payload = payload  # type: ignore[assignment]
         linked += 1
     await session.flush()
     return linked
@@ -267,26 +267,30 @@ async def _annotate_problems(
     declared path + layer1_seeded (idempotent). Optionally mirror the annotated
     payload back to the on-disk problem_*.json (additive keys only)."""
     rows = (
-        await session.execute(
-            select(ConceptProblem).where(ConceptProblem.concept_id == concept_id)
+        (
+            await session.execute(
+                select(ConceptProblem).where(ConceptProblem.concept_id == concept_id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     annotated_count = 0
     disk_by_code = _disk_problem_paths()
     for row in rows:
         payload = dict(row.payload or {})
-        mapping = node_key_by_problem.get(payload.get("id"))
+        mapping = node_key_by_problem.get(str(payload.get("id")))
         if mapping is None:
             # A problem whose reference nodes we have no mapping for is unexpected
             # for the bernoulli fixture set; skip rather than mislink.
             continue
-        annotated = annotate_reference_solution(payload, lambda nid: mapping[nid])
-        row.payload = annotated
+        annotated = annotate_reference_solution(payload, lambda nid: mapping[nid])  # noqa: B023
+        row.payload = annotated  # type: ignore[assignment]
         annotated_count += 1
 
         if write_disk:
-            disk_path = disk_by_code.get(payload.get("id"))
+            disk_path = disk_by_code.get(str(payload.get("id")))
             if disk_path is not None:
                 disk_path.write_text(
                     json.dumps(annotated, indent=2, ensure_ascii=False) + "\n",
@@ -345,12 +349,14 @@ async def seed(
             # Load the bernoulli problems from the DB (the registry seeder wrote
             # them); these drive reference-entity minting + annotation.
             problem_rows = (
-                await session.execute(
-                    select(ConceptProblem).where(
-                        ConceptProblem.concept_id == concept_id
+                (
+                    await session.execute(
+                        select(ConceptProblem).where(ConceptProblem.concept_id == concept_id)
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             problems = _load_problems_from_db_rows(problem_rows)
 
             specs = _collect_entity_specs(problems)
@@ -363,16 +369,14 @@ async def seed(
                 else:
                     stats["entities_updated"] += 1
 
-            stats["misconceptions_linked"] = await _link_opposes(
-                session, concept_id, key_to_id
-            )
+            stats["misconceptions_linked"] = await _link_opposes(session, concept_id, key_to_id)
 
             dag = _read_json(_BERNOULLI_DIR / "concept_dag.json")
-            inserted, skipped = await _insert_prereqs(
+            prereqs_inserted, prereqs_skipped = await _insert_prereqs(
                 session, key_to_id, concept_dag_to_prereqs(dag)
             )
-            stats["prereqs_inserted"] = inserted
-            stats["prereqs_skipped"] = skipped
+            stats["prereqs_inserted"] = prereqs_inserted
+            stats["prereqs_skipped"] = prereqs_skipped
 
             node_key_by_problem = _node_key_index(problems)
             stats["problems_annotated"] = await _annotate_problems(
@@ -394,22 +398,28 @@ async def seed(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--database-url", default=None,
+        "--database-url",
+        default=None,
         help="async PostgreSQL URL (defaults to env DATABASE_URL)",
     )
     parser.add_argument(
-        "--search-space-id", type=int, default=None,
+        "--search-space-id",
+        type=int,
+        default=None,
         help="course id (defaults to MIN(aita_search_spaces.id))",
     )
+    parser.add_argument("--dry-run", action="store_true", help="seed but rollback the transaction")
     parser.add_argument(
-        "--dry-run", action="store_true", help="seed but rollback the transaction"
-    )
-    parser.add_argument(
-        "--write-disk", dest="write_disk", action="store_true", default=True,
+        "--write-disk",
+        dest="write_disk",
+        action="store_true",
+        default=True,
         help="mirror annotated reference solutions back to problem_*.json (default)",
     )
     parser.add_argument(
-        "--no-write-disk", dest="write_disk", action="store_false",
+        "--no-write-disk",
+        dest="write_disk",
+        action="store_false",
         help="annotate the DB payload only; leave on-disk JSON untouched",
     )
     parser.add_argument("--verbose", "-v", action="store_true")

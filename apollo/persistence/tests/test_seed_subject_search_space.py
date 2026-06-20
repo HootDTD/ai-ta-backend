@@ -47,9 +47,7 @@ async def test_upsert_subject_create_uses_bootstrap_min_space(db: AsyncSession):
     subject_id = await _upsert_subject(db, "fluid_mechanics")
     await db.commit()
 
-    row = (
-        await db.execute(select(Subject).where(Subject.id == subject_id))
-    ).scalar_one()
+    row = (await db.execute(select(Subject).where(Subject.id == subject_id))).scalar_one()
     assert row.slug == "fluid_mechanics"
     assert row.display_name == "Fluid Mechanics"
     # MIN(id) over {7, 3} -> 3 (the bootstrap/pilot course).
@@ -64,7 +62,5 @@ async def test_upsert_subject_update_path_keeps_id(db: AsyncSession):
     again_id = await _upsert_subject(db, "thermo")
     await db.commit()
     assert again_id == first_id
-    rows = (
-        await db.execute(select(Subject).where(Subject.slug == "thermo"))
-    ).scalars().all()
+    rows = (await db.execute(select(Subject).where(Subject.slug == "thermo"))).scalars().all()
     assert len(rows) == 1

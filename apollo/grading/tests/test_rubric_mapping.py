@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from apollo.grading.audited_grade import AUDIT_UPGRADE_MESSAGE
 from apollo.grading.rubric_mapping import (
-    RubricMappingInput,
     RubricRefNode,
     build_graph_sim_rubric,
     findings_to_rubric_input,
@@ -60,27 +59,21 @@ def _audit_upgraded_covered(key: str) -> Finding:
 def test_covered_finding_maps_per_step_covered():
     ref = _ref_graph(_ref_node("c1", "condition"))
     aud = audited((covered_finding("c1"),))
-    out = findings_to_rubric_input(
-        audited=aud, reference_graph=ref, opposes_map={}, turn_order={}
-    )
+    out = findings_to_rubric_input(audited=aud, reference_graph=ref, opposes_map={}, turn_order={})
     assert out.coverage["per_step"]["c1"] == "covered"
 
 
 def test_missing_finding_maps_per_step_missing():
     ref = _ref_graph(_ref_node("c1", "condition"))
     aud = audited((missing_finding("c1"),))
-    out = findings_to_rubric_input(
-        audited=aud, reference_graph=ref, opposes_map={}, turn_order={}
-    )
+    out = findings_to_rubric_input(audited=aud, reference_graph=ref, opposes_map={}, turn_order={})
     assert out.coverage["per_step"]["c1"] == "missing"
 
 
 def test_reference_key_with_no_finding_defaults_missing():
     ref = _ref_graph(_ref_node("c1", "condition"))
     aud = audited(())  # no findings at all
-    out = findings_to_rubric_input(
-        audited=aud, reference_graph=ref, opposes_map={}, turn_order={}
-    )
+    out = findings_to_rubric_input(audited=aud, reference_graph=ref, opposes_map={}, turn_order={})
     assert out.coverage["per_step"]["c1"] == "missing"
 
 
@@ -92,9 +85,7 @@ def test_procedure_score_covered_uses_confidence():
             Finding(kind=FindingKind.COVERED_NODE, canonical_key="p2", confidence=None),
         )
     )
-    out = findings_to_rubric_input(
-        audited=aud, reference_graph=ref, opposes_map={}, turn_order={}
-    )
+    out = findings_to_rubric_input(audited=aud, reference_graph=ref, opposes_map={}, turn_order={})
     assert out.coverage["procedure_scores"]["p1"] == 0.92
     assert out.coverage["procedure_scores"]["p2"] == 1.0
 
@@ -102,9 +93,7 @@ def test_procedure_score_covered_uses_confidence():
 def test_procedure_score_missing_is_zero():
     ref = _ref_graph(_ref_node("p1", "procedure_step"))
     aud = audited((missing_finding("p1"),))
-    out = findings_to_rubric_input(
-        audited=aud, reference_graph=ref, opposes_map={}, turn_order={}
-    )
+    out = findings_to_rubric_input(audited=aud, reference_graph=ref, opposes_map={}, turn_order={})
     assert out.coverage["procedure_scores"]["p1"] == 0.0
 
 
@@ -114,9 +103,7 @@ def test_reference_nodes_are_rubricrefnodes_keyed_on_canonical_key():
         _ref_node("c1", "condition"),
     )
     aud = audited((covered_finding("p1"), covered_finding("c1")))
-    out = findings_to_rubric_input(
-        audited=aud, reference_graph=ref, opposes_map={}, turn_order={}
-    )
+    out = findings_to_rubric_input(audited=aud, reference_graph=ref, opposes_map={}, turn_order={})
     assert all(isinstance(r, RubricRefNode) for r in out.reference_nodes)
     by_key = {r.node_id: r for r in out.reference_nodes}
     assert by_key["p1"].node_type == "procedure_step"
@@ -124,7 +111,8 @@ def test_reference_nodes_are_rubricrefnodes_keyed_on_canonical_key():
     # The duck-type passes the REAL frozen compute_rubric (reads only
     # .node_id / .node_type) without raising.
     rubric = compute_rubric(
-        out.coverage, list(out.reference_nodes),
+        out.coverage,
+        list(out.reference_nodes),
         misconception_scores=out.misconception_scores,
     )
     assert rubric["procedure"]["present"] is True
@@ -182,9 +170,7 @@ def test_synthetic_opposes_but_covered_earlier_scores_half():
 def test_never_detected_misconception_absent():
     ref = _ref_graph(_ref_node("c1", "condition"))
     aud = audited((covered_finding("c1"),))
-    out = findings_to_rubric_input(
-        audited=aud, reference_graph=ref, opposes_map={}, turn_order={}
-    )
+    out = findings_to_rubric_input(audited=aud, reference_graph=ref, opposes_map={}, turn_order={})
     assert out.misconception_scores == {}
 
 
@@ -206,7 +192,8 @@ def test_build_graph_sim_rubric_matches_compute_rubric():
         audited=aud, reference_graph=ref, opposes_map={}, turn_order={"n1": 1}
     )
     expected = compute_rubric(
-        inp.coverage, list(inp.reference_nodes),
+        inp.coverage,
+        list(inp.reference_nodes),
         misconception_scores=inp.misconception_scores,
     )
     got = build_graph_sim_rubric(
@@ -218,9 +205,7 @@ def test_build_graph_sim_rubric_matches_compute_rubric():
 def test_audit_upgraded_covered_counts_as_covered():
     ref = _ref_graph(_ref_node("c1", "condition"))
     aud = audited((_audit_upgraded_covered("c1"),))
-    out = findings_to_rubric_input(
-        audited=aud, reference_graph=ref, opposes_map={}, turn_order={}
-    )
+    out = findings_to_rubric_input(audited=aud, reference_graph=ref, opposes_map={}, turn_order={})
     assert out.coverage["per_step"]["c1"] == "covered"
 
 
@@ -230,14 +215,13 @@ def test_empty_findings_yield_valid_input():
         _ref_node("c1", "condition"),
     )
     aud = audited(())
-    out = findings_to_rubric_input(
-        audited=aud, reference_graph=ref, opposes_map={}, turn_order={}
-    )
+    out = findings_to_rubric_input(audited=aud, reference_graph=ref, opposes_map={}, turn_order={})
     assert out.coverage["per_step"] == {"p1": "missing", "c1": "missing"}
     assert out.misconception_scores == {}
     # compute_rubric does not crash on the all-missing input.
     rubric = compute_rubric(
-        out.coverage, list(out.reference_nodes),
+        out.coverage,
+        list(out.reference_nodes),
         misconception_scores=out.misconception_scores,
     )
     assert rubric["overall"]["score"] == 0
@@ -255,9 +239,7 @@ def test_diagnostic_only_findings_are_ignored():
             covered_finding("c1"),
         )
     )
-    out = findings_to_rubric_input(
-        audited=aud, reference_graph=ref, opposes_map={}, turn_order={}
-    )
+    out = findings_to_rubric_input(audited=aud, reference_graph=ref, opposes_map={}, turn_order={})
     assert out.coverage["per_step"] == {"c1": "covered"}
     assert "x1" not in out.coverage["per_step"]
     assert out.misconception_scores == {}
@@ -273,9 +255,7 @@ def test_contradiction_with_none_key_is_skipped():
             covered_finding("c1"),
         )
     )
-    out = findings_to_rubric_input(
-        audited=aud, reference_graph=ref, opposes_map={}, turn_order={}
-    )
+    out = findings_to_rubric_input(audited=aud, reference_graph=ref, opposes_map={}, turn_order={})
     assert out.misconception_scores == {}
 
 
@@ -287,7 +267,7 @@ def test_resolution_uses_sentinel_when_no_turn_ids():
     aud = audited(
         (
             contradiction_finding("misc.x"),  # no student_node_ids
-            covered_finding("cond.y"),         # covered_finding sets none either
+            covered_finding("cond.y"),  # covered_finding sets none either
         )
     )
     out = findings_to_rubric_input(
@@ -304,8 +284,6 @@ def test_inputs_not_mutated():
     aud = audited((covered_finding("c1"),))
     ref_before = (ref.nodes, ref.edges, ref.paths)
     findings_before = aud.findings
-    findings_to_rubric_input(
-        audited=aud, reference_graph=ref, opposes_map={}, turn_order={}
-    )
+    findings_to_rubric_input(audited=aud, reference_graph=ref, opposes_map={}, turn_order={})
     assert (ref.nodes, ref.edges, ref.paths) == ref_before
     assert aud.findings is findings_before

@@ -209,8 +209,12 @@ async def test_merge_specs_reraises_canon_projection_error_unwrapped():
             raise inner
 
     spec = entity_to_canon_spec(
-        1, concept_id=1, search_space_id=1,
-        canonical_key="eq.x", kind="equation", display_name="X",
+        1,
+        concept_id=1,
+        search_space_id=1,
+        canonical_key="eq.x",
+        kind="equation",
+        display_name="X",
     )
     with pytest.raises(CanonProjectionError) as exc:
         await merge_specs(_NamedFailNeo(), [spec])  # type: ignore[arg-type]

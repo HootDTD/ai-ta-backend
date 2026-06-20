@@ -70,12 +70,10 @@ def test_apply_event_q_no_double_count():
     q = 0.9 * 0.95
     expected = bayes_update(COLD_START_PRIOR, damp(likelihood_for_event(event), q))
     assert q == 0.855  # event.confidence (0.5) is NOT in q
-    for got, want in zip(update.posterior_belief, expected):
+    for got, want in zip(update.posterior_belief, expected, strict=True):
         assert math.isclose(got, want, abs_tol=1e-4)
     # And the exact golden 6-dp vector.
-    for got, want in zip(
-        update.posterior_belief, (0.079491, 0.648885, 0.271624)
-    ):
+    for got, want in zip(update.posterior_belief, (0.079491, 0.648885, 0.271624), strict=True):
         assert math.isclose(got, want, abs_tol=1e-4)
 
 
@@ -121,7 +119,7 @@ def test_absorbing_zero_rescue_perfect_then_misconception():
         grader_confidence=1.0,
         done_ts=_DONE_TS,
     )
-    for got, want in zip(first.posterior_belief, (0.0185, 0.0556, 0.9259)):
+    for got, want in zip(first.posterior_belief, (0.0185, 0.0556, 0.9259), strict=True):
         assert math.isclose(got, want, abs_tol=1e-3)
     assert first.posterior_belief[0] > 0
     second = apply_event(

@@ -240,7 +240,9 @@ def test_every_misconception_opposes_target_is_minted():
     minted.update(s.canonical_key for s in concept_dag_to_entities(_load("concept_dag.json")))
     minted.update(
         s.canonical_key
-        for s in symbols_to_entities(_load("canonical_symbols.json"), _load("normalization_map.json"))
+        for s in symbols_to_entities(
+            _load("canonical_symbols.json"), _load("normalization_map.json")
+        )
     )
     for n in range(1, 6):
         minted.update(s.canonical_key for s in reference_solution_to_entities(_load_problem(n)))
@@ -260,10 +262,7 @@ def test_every_misconception_opposes_target_is_minted():
 def _key_for_node(problem: dict):
     """Map each reference-node id to its minted canonical_key (mirrors the
     seed-flow node->key resolution)."""
-    by_id = {
-        s.canonical_key.split(".", 1)[1] if False else node_id: spec_key
-        for node_id, spec_key in _node_key_pairs(problem)
-    }
+    by_id = {node_id: spec_key for node_id, spec_key in _node_key_pairs(problem)}
     return lambda node_id: by_id[node_id]
 
 
@@ -323,7 +322,7 @@ def test_annotate_all_five_problems_cover_every_node():
 
 def test_entityspec_is_frozen():
     spec = concept_dag_to_entities(_load("concept_dag.json"))[0]
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017 - any error proves the frozen spec rejects mutation
         spec.kind = "mutated"  # type: ignore[misc]
 
 
