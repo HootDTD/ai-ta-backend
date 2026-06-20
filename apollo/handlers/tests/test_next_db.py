@@ -97,10 +97,13 @@ async def test_next_pool_exhausted_uses_concept_id(db_session, monkeypatch):
         current_problem_id=codes[0],
     )
 
-    async def _boom(db, *, concept_id, difficulty, attempted_ids):
+    # WU-6A3: the route now calls select_problem_personalized (flag-OFF delegates
+    # byte-identically to select_problem); stub that entry point. Its signature adds
+    # user_id + search_space_id, so the stub must accept them.
+    async def _boom(db, *, user_id, search_space_id, concept_id, difficulty, attempted_ids):
         raise PoolExhaustedError(concept_cluster_id=str(concept_id), difficulty=difficulty)
 
-    monkeypatch.setattr("apollo.handlers.next.select_problem", _boom)
+    monkeypatch.setattr("apollo.handlers.next.select_problem_personalized", _boom)
 
     with pytest.raises(PoolExhaustedError) as exc:
         await handle_next(db=db_session, session_id=session_id, difficulty="hard")

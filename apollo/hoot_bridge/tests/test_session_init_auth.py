@@ -61,8 +61,8 @@ def _mock_inference_and_selection(monkeypatch) -> None:
     hermetic — no OpenAI key and no apollo_concepts rows needed.
 
     The candidate-list read (``list_course_concepts``) and the DB problem
-    selection (``select_problem``) are async; ``infer_concept_id`` is the sync
-    LLM hop returning the chosen concept_id.
+    selection (``select_problem_personalized``) are async; ``infer_concept_id`` is
+    the sync LLM hop returning the chosen concept_id.
     """
     monkeypatch.setattr(
         "apollo.hoot_bridge.session_init.list_course_concepts",
@@ -72,8 +72,10 @@ def _mock_inference_and_selection(monkeypatch) -> None:
         "apollo.hoot_bridge.session_init.infer_concept_id",
         lambda **kwargs: _STUB_CONCEPT_ID,
     )
+    # WU-6A3: the route now calls the flag-gated select_problem_personalized
+    # (flag-OFF delegates byte-identically to select_problem); stub that entry point.
     monkeypatch.setattr(
-        "apollo.hoot_bridge.session_init.select_problem",
+        "apollo.hoot_bridge.session_init.select_problem_personalized",
         AsyncMock(return_value=_STUB_PROBLEM),
     )
 
