@@ -35,6 +35,7 @@ from apollo.learner_model.belief import (
     likelihood_for_event,
     mastery_of,
 )
+from apollo.learner_model.decay import decay_toward_prior
 from apollo.learner_model.persistence import (
     LearnerUpdateResult,
     persist_learner_update,
@@ -1078,3 +1079,86 @@ async def test_layer3_flag_off_no_write(db_session, monkeypatch):
     ).scalar_one()
     assert refreshed.result == "graded"
     assert refreshed.learner_update_pending is False
+
+
+# ---------------------------------------------------------------------------
+# 13. WU-5B1 — APOLLO_LEARNER_DECAY_ENABLED ON decays the recompute-base prior
+# ---------------------------------------------------------------------------
+
+
+async def test_decay_flag_on_decays_base_prior(db_session, monkeypatch):
+    """Flag ON: a SECOND attempt whose recompute-base prior is the FIRST attempt's
+    event-log posterior, separated by a dt gap, persists a posterior that reflects
+    the DECAYED base (and is numerically DISTINCT from the no-decay posterior).
+
+    Independent oracle: the expected posterior is recomputed INLINE from the frozen
+    WU-5A1 primitives + ``decay_toward_prior`` (the §3 Step-0 -> Step-3 chain), NOT
+    by calling the production fold. Also asserts the closure's ``dt_days is None``
+    cold-start branch is identity (attempt1 from cold-start, no prior anchor)."""
+    monkeypatch.setenv("APOLLO_LEARNER_DECAY_ENABLED", "1")
+
+    sid, cid, by_key = await _seed_course_with_entity(db_session)
+    entity_id = by_key[_CONTINUITY]
+
+    # --- attempt1: cold-start (prior_last_evidence_at is None -> closure dt=None) ---
+    sess, attempt1 = await _seed_session_attempt(
+        db_session, sid=sid, cid=cid, problem_code="p_decay1"
+    )
+    done_ts1 = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
+    covered_audited = _audited([_covered_finding(score=1.0)])
+
+    await run_learner_update(
+        db_session, sess=sess, attempt=attempt1, shadow=_shadow(covered_audited),
+        done_ts=done_ts1, parser_confidence=0.9,
+    )
+
+    # The closure's dt_days-is-None guard: from cold-start the flag-ON posterior is
+    # IDENTICAL to the no-decay cold-start posterior (no anchor -> transform identity).
+    state1 = (await db_session.execute(
+        select(LearnerState).where(LearnerState.entity_id == entity_id)
+    )).scalar_one()
+    covered_event = convert_findings_to_events(
+        covered_audited, opposes_map={}, turn_order={}
+    )[0]
+    q1 = 0.9 * (0.8 * 1.0)  # parser * (normalization * comparison)
+    base = bayes_update(
+        COLD_START_PRIOR, damp(likelihood_for_event(covered_event), q1)
+    )
+    assert _belief_close(state1.belief, base)  # cold-start: dt=None -> identity
+    assert state1.last_evidence_at == done_ts1
+
+    # --- attempt2: a 7-day gap -> integer dt_days_since_last = 7 -> w ~ 0.295 ---
+    attempt2 = ProblemAttempt(
+        session_id=sess.id, problem_id="p_decay2", difficulty="intro", result="graded"
+    )
+    db_session.add(attempt2)
+    await db_session.flush()
+    done_ts2 = datetime(2026, 6, 8, 12, 0, 0, tzinfo=UTC)  # (done_ts2 - done_ts1).days == 7
+
+    await run_learner_update(
+        db_session, sess=sess, attempt=attempt2, shadow=_shadow(covered_audited),
+        done_ts=done_ts2, parser_confidence=0.9,
+    )
+
+    state2 = (await db_session.execute(
+        select(LearnerState).where(LearnerState.entity_id == entity_id)
+    )).scalar_one()
+
+    # Independent oracle (§3 Step 0 -> Step 3): the recompute base is attempt1's
+    # event-log posterior (== `base`); decay it toward COLD_START_PRIOR by dt=7,
+    # THEN the same single-event damp/bayes.
+    q2 = 0.9 * (0.8 * 1.0)
+    combined_l = likelihood_for_event(covered_event)
+    decayed_base = decay_toward_prior(base, COLD_START_PRIOR, 7)
+    expected = bayes_update(decayed_base, damp(combined_l, q2))
+    assert _belief_close(state2.belief, expected)
+
+    # Distinctness: the NO-decay posterior (over the raw base) is numerically
+    # DISTINCT from the persisted decayed posterior (proves decay actually fired).
+    no_decay_expected = bayes_update(base, damp(combined_l, q2))
+    assert not _belief_close(state2.belief, no_decay_expected)
+    # And the recorded event row carries dt_days_since_last == 7 (the hoisted dt).
+    me2 = (await db_session.execute(
+        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt2.id)
+    )).scalar_one()
+    assert me2.dt_days_since_last == 7
