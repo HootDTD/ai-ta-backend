@@ -162,9 +162,7 @@ def _resolution_state(
     if opposed_key is None or opposed_key not in covered:
         return _MISCONCEPTION_UNRESOLVED_SCORE
     covered_finding = covered[opposed_key]
-    if _turn_position(covered_finding, turn_order) > _turn_position(
-        contradiction, turn_order
-    ):
+    if _turn_position(covered_finding, turn_order) > _turn_position(contradiction, turn_order):
         return _MISCONCEPTION_RESOLVED_SCORE
     return _MISCONCEPTION_UNRESOLVED_SCORE
 
@@ -191,14 +189,10 @@ def findings_to_rubric_input(
         per_step[canonical_key] = status
         if proc_score is not None:
             procedure_scores[canonical_key] = proc_score
-        reference_nodes.append(
-            RubricRefNode(node_id=canonical_key, node_type=node_type)
-        )
+        reference_nodes.append(RubricRefNode(node_id=canonical_key, node_type=node_type))
 
     coverage = {"per_step": per_step, "procedure_scores": procedure_scores}
-    misconception_scores = _misconception_scores(
-        covered, contradictions, opposes_map, turn_order
-    )
+    misconception_scores = _misconception_scores(covered, contradictions, opposes_map, turn_order)
 
     return RubricMappingInput(
         coverage=coverage,
@@ -226,6 +220,6 @@ def build_graph_sim_rubric(
     )
     return compute_rubric(
         mapped.coverage,
-        list(mapped.reference_nodes),
+        list(mapped.reference_nodes),  # type: ignore[arg-type]  # RubricRefNode is structurally compatible (node_id/node_type)
         misconception_scores=mapped.misconception_scores,
     )
