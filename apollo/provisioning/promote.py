@@ -76,9 +76,7 @@ def _annotate(problem: dict, mint_plan: MintPlan) -> dict:
     (identical to what ``reference_solution_to_entities`` minted), so the lint's
     gate-2 closure sees the SAME keys that were written to the graph.
     """
-    steps_by_id = {
-        step["id"]: step for step in problem.get("reference_solution", [])
-    }
+    steps_by_id = {step["id"]: step for step in problem.get("reference_solution", [])}
 
     def _key_for_node(node_id: str) -> str:
         return _entity_key_for_step(steps_by_id[node_id])
@@ -110,7 +108,9 @@ async def promote(
     # {"symbols": [...], ...} (author_concept_symbols, 3B2d); a vacuous set makes
     # gate 4 reject every foreign symbol.
     concept = await db.get(Concept, mint_plan.concept_id)
-    canonical_symbols = set((concept.canonical_symbols or {}).get("symbols") or [])
+    if concept is None:
+        raise RuntimeError(f"promote: concept {mint_plan.concept_id} not found")
+    canonical_symbols = set(dict(concept.canonical_symbols or {}).get("symbols") or [])
     normalization_map = dict(concept.normalization_map or {})
 
     result = run_promotion_lint(
@@ -136,6 +136,8 @@ async def promote(
 
     # --- PASS: flip tier 1->2, RE-HOME to the tagged concept, store solution --- #
     row = await db.get(ConceptProblem, concept_problem_id)
+    if row is None:
+        raise RuntimeError(f"promote: concept_problem {concept_problem_id} not found")
     # Store the COMPLETE annotated problem as the payload: the student selector
     # (``list_problems_for_concept``) and the gate-8 dup-hash both validate the
     # payload through ``Problem.model_validate``, so the promoted row's payload MUST
@@ -147,23 +149,21 @@ async def promote(
     # content-derived ``id``) are preserved where the annotated dict does not set
     # them. Immutable assign (a NEW dict — never an in-place mutate).
     new_payload = {**(row.payload or {}), **annotated}
-    row.payload = new_payload
+    row.payload = new_payload  # type: ignore[assignment]
     # RE-HOME the row from the provisional-inventory concept (scrape.py's seam home)
     # onto the REAL tagged concept (``tag_and_mint`` resolved). The student selector
     # ``list_problems_for_concept`` filters ``concept_id == <session concept> AND
     # tier == 2`` (problem_selector.py); without this re-home a promoted Tier-2 row
     # stranded on ``provisional.inventory`` is permanently UNREACHABLE. Idempotent: a
     # re-run re-assigns the SAME tagged concept_id (no-op). (scrape.py:18.)
-    row.concept_id = mint_plan.concept_id
-    row.tier = 2
+    row.concept_id = mint_plan.concept_id  # type: ignore[assignment]
+    row.tier = 2  # type: ignore[assignment]
     if not row.solution_source:
-        row.solution_source = _SOLUTION_SOURCE_DEFAULT
+        row.solution_source = _SOLUTION_SOURCE_DEFAULT  # type: ignore[assignment]
     await db.flush()
 
     # --- :Canon projection (idempotent MERGE) -------------------------------- #
-    await project_canon(
-        db, neo, search_space_id=search_space_id, concept_id=mint_plan.concept_id
-    )
+    await project_canon(db, neo, search_space_id=search_space_id, concept_id=mint_plan.concept_id)
 
     _LOG.info(
         "provisioning_promote_ok",

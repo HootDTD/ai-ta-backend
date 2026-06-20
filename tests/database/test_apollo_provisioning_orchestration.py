@@ -38,18 +38,12 @@ from unittest.mock import AsyncMock
 import asyncpg
 import pytest
 import pytest_asyncio
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 # Register the Apollo ORM on Base.metadata before any create_all elsewhere.
 from apollo.persistence import models as _apollo_models  # noqa: F401
-from apollo.persistence.models import (
-    ConceptProblem,
-    IngestError,
-    IngestRun,
-    ProvisioningJob,
-)
 from apollo.provisioning.enqueue import enqueue_provisioning_job
 from apollo.provisioning.queue import claim_provisioning_job
 from apollo.provisioning.scrape import CandidateQuestion, ScrapeResult
@@ -90,9 +84,7 @@ _TOUCHES_TARGETS = re.compile(
     r"apollo_(subjects|concepts|concept_problems|kg_entities|problem_attempts)\b"
 )
 _MIGRATION_030 = MIGRATIONS_DIR / "030_apollo_autoprovisioning.sql"
-_EXCLUDE_FROM_CHAIN = frozenset(
-    {_MIGRATION_030.name, "028_apollo_learner_janitor.sql"}
-)
+_EXCLUDE_FROM_CHAIN = frozenset({_MIGRATION_030.name, "028_apollo_learner_janitor.sql"})
 
 
 def _chain_migrations() -> list[Path]:
@@ -110,9 +102,7 @@ def _plain_dsn(sqlalchemy_url: str, database: str) -> str:
 
 
 def _asyncpg_sqlalchemy_url(sqlalchemy_url: str, database: str) -> str:
-    url = make_url(sqlalchemy_url).set(
-        drivername="postgresql+asyncpg", database=database
-    )
+    url = make_url(sqlalchemy_url).set(drivername="postgresql+asyncpg", database=database)
     return url.render_as_string(hide_password=False)
 
 
@@ -198,9 +188,7 @@ async def committed_engine(_orch_dsns):
 async def _seed_space(plain_dsn: str) -> int:
     conn = await asyncpg.connect(plain_dsn)
     try:
-        return await conn.fetchval(
-            "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
-        )
+        return await conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
     finally:
         await conn.close()
 
@@ -232,7 +220,11 @@ async def _seed_chunk(plain_dsn: str, *, document_id: int, content: str) -> int:
 
 
 async def _seed_run(
-    plain_dsn: str, space_id: int, *, document_id: int, content_hash: str | None,
+    plain_dsn: str,
+    space_id: int,
+    *,
+    document_id: int,
+    content_hash: str | None,
     status: str = "queued",
 ) -> int:
     conn = await asyncpg.connect(plain_dsn)
@@ -310,8 +302,7 @@ async def test_enqueue_creates_open_job_real_pg(committed_engine):
     )
     n_queued = await _count(
         plain_dsn,
-        "SELECT count(*) FROM apollo_ingest_runs WHERE document_id=$1 "
-        "AND status='queued'",
+        "SELECT count(*) FROM apollo_ingest_runs WHERE document_id=$1 AND status='queued'",
         doc,
     )
     assert n_open == 1
@@ -354,9 +345,7 @@ async def test_enqueue_short_circuit_unchanged_reupload(committed_engine):
     space = await _seed_space(plain_dsn)
     doc = await _seed_document(plain_dsn, space_id=space, content_hash="h1")
     # A SUCCEEDED run for (doc, 'h1') already exists — an unchanged re-upload.
-    await _seed_run(
-        plain_dsn, space, document_id=doc, content_hash="h1", status="succeeded"
-    )
+    await _seed_run(plain_dsn, space, document_id=doc, content_hash="h1", status="succeeded")
 
     async with factory() as session:
         result = await enqueue_provisioning_job(
@@ -386,9 +375,7 @@ async def test_lease_reaper_reopens_expired_running_job_and_fails_run(
     plain_dsn, factory = committed_engine
     space = await _seed_space(plain_dsn)
     doc = await _seed_document(plain_dsn, space_id=space, content_hash="h1")
-    run_id = await _seed_run(
-        plain_dsn, space, document_id=doc, content_hash="h1", status="running"
-    )
+    run_id = await _seed_run(plain_dsn, space, document_id=doc, content_hash="h1", status="running")
     past = datetime.now(UTC) - timedelta(seconds=60)
     job_id = await _seed_job(
         plain_dsn,
@@ -426,9 +413,7 @@ async def test_lease_reaper_reopens_expired_running_job_and_fails_run(
 
     # The job is now re-claimable by the FROZEN claim (lease expired).
     async with factory() as session:
-        claimed = await claim_provisioning_job(
-            session, lease_owner="w2", lease_seconds=300
-        )
+        claimed = await claim_provisioning_job(session, lease_owner="w2", lease_seconds=300)
     assert claimed is not None
     assert claimed.job_id == job_id
     assert claimed.attempt_count == 2  # bumped again
@@ -444,9 +429,7 @@ async def test_terminal_status_reconciliation_failed_run_never_running(
     space = await _seed_space(plain_dsn)
     doc = await _seed_document(plain_dsn, space_id=space, content_hash="h1")
     await _seed_chunk(plain_dsn, document_id=doc, content="chunk text")
-    run_id = await _seed_run(
-        plain_dsn, space, document_id=doc, content_hash="h1", status="queued"
-    )
+    run_id = await _seed_run(plain_dsn, space, document_id=doc, content_hash="h1", status="queued")
     job_id = await _seed_job(
         plain_dsn,
         space_id=space,
@@ -482,9 +465,7 @@ async def test_terminal_status_reconciliation_failed_run_never_running(
             return "{}"
 
     async with factory() as session:
-        outcome = await run_provisioning(
-            session, AsyncMock(), job=claimed, metered_chat=_Metered()
-        )
+        outcome = await run_provisioning(session, AsyncMock(), job=claimed, metered_chat=_Metered())
 
     assert outcome.status == "failed"
     run_status = await _count(
@@ -502,9 +483,7 @@ async def test_terminal_status_reconciliation_failed_run_never_running(
 # T-DB6 / T-DB8 — flag-OFF non-regression: enqueue never breaks the caller commit
 # and leaves upload-facing columns untouched.
 # ===========================================================================
-async def test_flag_off_enqueue_never_breaks_caller_commit(
-    committed_engine, monkeypatch
-):
+async def test_flag_off_enqueue_never_breaks_caller_commit(committed_engine, monkeypatch):
     plain_dsn, factory = committed_engine
     space = await _seed_space(plain_dsn)
     doc = await _seed_document(plain_dsn, space_id=space, content_hash="h1")
@@ -517,9 +496,7 @@ async def test_flag_off_enqueue_never_breaks_caller_commit(
     async with factory() as session:
         # A sentinel write in the SAME session that MUST survive the commit.
         await session.execute(
-            text(
-                "UPDATE aita_documents SET content_hash='sentinel' WHERE id=:i"
-            ).bindparams(i=doc)
+            text("UPDATE aita_documents SET content_hash='sentinel' WHERE id=:i").bindparams(i=doc)
         )
         result = await enqueue_provisioning_job(
             session, search_space_id=space, document_id=doc, content_hash="h1"
@@ -530,9 +507,7 @@ async def test_flag_off_enqueue_never_breaks_caller_commit(
         await session.commit()
 
     # The sentinel write survived (the enqueue collision never wedged the commit).
-    sentinel = await _count(
-        plain_dsn, "SELECT content_hash FROM aita_documents WHERE id=$1", doc
-    )
+    sentinel = await _count(plain_dsn, "SELECT content_hash FROM aita_documents WHERE id=$1", doc)
     assert sentinel == "sentinel"
     # Still exactly one open job (no duplicate inserted).
     n_open = await _count(
@@ -566,9 +541,7 @@ async def test_intra_job_rerun_skips_scraped_chunks(committed_engine, monkeypatc
     space = await _seed_space(plain_dsn)
     doc = await _seed_document(plain_dsn, space_id=space, content_hash="h1")
     await _seed_chunk(plain_dsn, document_id=doc, content="chunk one")
-    run_id = await _seed_run(
-        plain_dsn, space, document_id=doc, content_hash="h1", status="queued"
-    )
+    run_id = await _seed_run(plain_dsn, space, document_id=doc, content_hash="h1", status="queued")
     job_id = await _seed_job(
         plain_dsn,
         space_id=space,
@@ -680,39 +653,86 @@ async def test_intra_job_rerun_skips_scraped_chunks(committed_engine, monkeypatc
 import json as _json  # noqa: E402
 
 _BERNOULLI_GIVENS = {
-    "A1": 0.01, "A2": 0.005, "P1": 200000.0, "v1": 2.0, "rho": 1000.0,
+    "A1": 0.01,
+    "A2": 0.005,
+    "P1": 200000.0,
+    "v1": 2.0,
+    "rho": 1000.0,
 }
 _BERNOULLI_REFERENCE_SOLUTION = [
-    {"id": "continuity", "step": 1, "entry_type": "equation",
-     "content": {"label": "Continuity", "symbolic": "rho*A1*v1 - rho*A2*v2",
-                 "variables": ["rho", "A1", "v1", "A2", "v2"]}, "depends_on": []},
-    {"id": "incompressibility", "step": 2, "entry_type": "condition",
-     "content": {"label": "Incompressibility", "applies_when": "density constant"},
-     "depends_on": []},
-    {"id": "bernoulli", "step": 3, "entry_type": "equation",
-     "content": {"label": "Bernoulli", "symbolic":
-                 "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 "
-                 "- (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
-                 "variables": ["P1", "rho", "v1", "g", "h1", "P2", "v2", "h2"]},
-     "depends_on": ["incompressibility"]},
-    {"id": "horizontal_simplification", "step": 4, "entry_type": "simplification",
-     "content": {"applies_when": "h1 == h2",
-                 "transformation": "rho*g*h1 and rho*g*h2 cancel"},
-     "depends_on": ["bernoulli"]},
-    {"id": "plan_apply_continuity", "step": 5, "entry_type": "procedure_step",
-     "content": {"order": 1, "action": "use continuity to solve for v2",
-                 "purpose": "obtain v2", "uses_equations": ["continuity"]},
-     "depends_on": ["continuity"]},
-    {"id": "plan_apply_horizontal_simplification", "step": 6,
-     "entry_type": "procedure_step",
-     "content": {"order": 2, "action": "set h1 == h2", "purpose": "simplify",
-                 "uses_equations": ["bernoulli"]},
-     "depends_on": ["bernoulli", "horizontal_simplification"]},
-    {"id": "plan_solve_bernoulli_for_p2", "step": 7, "entry_type": "procedure_step",
-     "content": {"order": 3, "action": "solve for P2", "purpose": "answer",
-                 "uses_equations": ["bernoulli"]},
-     "depends_on": ["plan_apply_continuity",
-                    "plan_apply_horizontal_simplification"]},
+    {
+        "id": "continuity",
+        "step": 1,
+        "entry_type": "equation",
+        "content": {
+            "label": "Continuity",
+            "symbolic": "rho*A1*v1 - rho*A2*v2",
+            "variables": ["rho", "A1", "v1", "A2", "v2"],
+        },
+        "depends_on": [],
+    },
+    {
+        "id": "incompressibility",
+        "step": 2,
+        "entry_type": "condition",
+        "content": {"label": "Incompressibility", "applies_when": "density constant"},
+        "depends_on": [],
+    },
+    {
+        "id": "bernoulli",
+        "step": 3,
+        "entry_type": "equation",
+        "content": {
+            "label": "Bernoulli",
+            "symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 "
+            "- (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
+            "variables": ["P1", "rho", "v1", "g", "h1", "P2", "v2", "h2"],
+        },
+        "depends_on": ["incompressibility"],
+    },
+    {
+        "id": "horizontal_simplification",
+        "step": 4,
+        "entry_type": "simplification",
+        "content": {"applies_when": "h1 == h2", "transformation": "rho*g*h1 and rho*g*h2 cancel"},
+        "depends_on": ["bernoulli"],
+    },
+    {
+        "id": "plan_apply_continuity",
+        "step": 5,
+        "entry_type": "procedure_step",
+        "content": {
+            "order": 1,
+            "action": "use continuity to solve for v2",
+            "purpose": "obtain v2",
+            "uses_equations": ["continuity"],
+        },
+        "depends_on": ["continuity"],
+    },
+    {
+        "id": "plan_apply_horizontal_simplification",
+        "step": 6,
+        "entry_type": "procedure_step",
+        "content": {
+            "order": 2,
+            "action": "set h1 == h2",
+            "purpose": "simplify",
+            "uses_equations": ["bernoulli"],
+        },
+        "depends_on": ["bernoulli", "horizontal_simplification"],
+    },
+    {
+        "id": "plan_solve_bernoulli_for_p2",
+        "step": 7,
+        "entry_type": "procedure_step",
+        "content": {
+            "order": 3,
+            "action": "solve for P2",
+            "purpose": "answer",
+            "uses_equations": ["bernoulli"],
+        },
+        "depends_on": ["plan_apply_continuity", "plan_apply_horizontal_simplification"],
+    },
 ]
 
 
@@ -739,17 +759,18 @@ class _ShapeFaithfulMeteredChat:
 
     def cheap(self, *, purpose, messages, response_format=None, temperature=0.0, model=None):  # noqa: ANN001
         return _json.dumps(
-            {"concept_slug": "bernoulli_principle",
-             "display_name": "Bernoulli Principle", "prereqs": []}
+            {
+                "concept_slug": "bernoulli_principle",
+                "display_name": "Bernoulli Principle",
+                "prereqs": [],
+            }
         )
 
     def main(self, *, purpose, messages, response_format=None, temperature=0.0, model=None):  # noqa: ANN001
         return "{}"
 
 
-async def test_full_promote_spine_rehomes_and_dedups_real_pg(
-    committed_engine, monkeypatch
-):
+async def test_full_promote_spine_rehomes_and_dedups_real_pg(committed_engine, monkeypatch):
     from apollo.overseer.problem_selector import list_problems_for_concept
     from apollo.provisioning.pairing_gate import PairingVerdict
     from apollo.provisioning.solution import ReferenceSolutionDraft
@@ -760,26 +781,28 @@ async def test_full_promote_spine_rehomes_and_dedups_real_pg(
     # TWO chunks -> two candidates with identical problem content (gate-8 collide).
     await _seed_chunk(plain_dsn, document_id=doc, content="chunk one")
     await _seed_chunk(plain_dsn, document_id=doc, content="chunk two")
-    run_id = await _seed_run(
-        plain_dsn, space, document_id=doc, content_hash="h1", status="queued"
-    )
+    run_id = await _seed_run(plain_dsn, space, document_id=doc, content_hash="h1", status="queued")
     job_id = await _seed_job(
-        plain_dsn, space_id=space, document_id=doc, state="running",
-        ingest_run_id=run_id, attempt_count=1,
+        plain_dsn,
+        space_id=space,
+        document_id=doc,
+        state="running",
+        ingest_run_id=run_id,
+        attempt_count=1,
     )
 
     cand_a = _bernoulli_candidate(document_id=doc, chash="bern-a")
     cand_b = _bernoulli_candidate(document_id=doc, chash="bern-b")
 
     async def _scrape(chunks, *, chat_fn):  # noqa: ANN001
-        return ScrapeResult(candidates=(cand_a, cand_b), scraped_count=1,
-                            parse_failures=0)
+        return ScrapeResult(candidates=(cand_a, cand_b), scraped_count=1, parse_failures=0)
 
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
         return ReferenceSolutionDraft(
             solution_source="generated",
             reference_solution=[dict(s) for s in _BERNOULLI_REFERENCE_SOLUTION],
-            grounding=(), provenance={},
+            grounding=(),
+            provenance={},
         )
 
     async def _vp(q, draft, *, retrieve_fn, judge_fn):  # noqa: ANN001
@@ -796,13 +819,18 @@ async def test_full_promote_spine_rehomes_and_dedups_real_pg(
     monkeypatch.setattr(promote_mod, "project_canon", _noop_canon)
 
     claimed = ClaimedJob(
-        job_id=job_id, search_space_id=space, document_id=doc,
-        ingest_run_id=run_id, attempt_count=1,
+        job_id=job_id,
+        search_space_id=space,
+        document_id=doc,
+        ingest_run_id=run_id,
+        attempt_count=1,
     )
 
     async with factory() as session:
         outcome = await run_provisioning(
-            session, AsyncMock(), job=claimed,
+            session,
+            AsyncMock(),
+            job=claimed,
             metered_chat=_ShapeFaithfulMeteredChat(),
             retrieve_fn=AsyncMock(return_value=()),
             embed_fn=lambda _t: [0.0] * 8,
@@ -819,7 +847,8 @@ async def test_full_promote_spine_rehomes_and_dedups_real_pg(
         plain_dsn,
         "SELECT c.id FROM apollo_concepts c JOIN apollo_subjects s "
         "ON c.subject_id = s.id WHERE s.search_space_id=$1 AND c.slug=$2",
-        space, "bernoulli_principle",
+        space,
+        "bernoulli_principle",
     )
     assert tagged_id is not None
     n_tier2_on_tagged = await _count(

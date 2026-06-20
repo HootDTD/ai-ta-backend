@@ -144,9 +144,7 @@ def _default_metered_factory(*, ingest_run, document_id) -> MeteredChat:
     return MeteredChat(ingest_run=ingest_run, document_id=document_id)
 
 
-async def _drain_one(
-    neo, *, session_factory, metered_chat_factory
-) -> ProvisioningOutcome | None:
+async def _drain_one(neo, *, session_factory, metered_chat_factory) -> ProvisioningOutcome | None:
     """Claim (3B2f) -> run_provisioning -> complete_job | fail_job. Returns the
     outcome, or ``None`` when nothing is claimable. The claim COMMITs the job
     transition; ``run_provisioning`` then runs in its own session bound to the
@@ -160,12 +158,8 @@ async def _drain_one(
 
     async with session_factory() as work_session:
         ingest_run = await work_session.get(IngestRun, claimed.ingest_run_id)
-        metered = metered_chat_factory(
-            ingest_run=ingest_run, document_id=claimed.document_id
-        )
-        outcome = await run_provisioning(
-            work_session, neo, job=claimed, metered_chat=metered
-        )
+        metered = metered_chat_factory(ingest_run=ingest_run, document_id=claimed.document_id)
+        outcome = await run_provisioning(work_session, neo, job=claimed, metered_chat=metered)
 
     async with session_factory() as terminal_session:
         if outcome.status == "succeeded":
@@ -228,9 +222,7 @@ async def _loop(neo, *, stop_event: asyncio.Event) -> None:
     _LOG.info("apollo_provision_worker_stopped")
 
 
-def _install_signal_handlers(
-    loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event
-) -> None:
+def _install_signal_handlers(loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event) -> None:
     """Register SIGINT + SIGTERM to set ``stop_event`` (cooperative cancel).
     Wrapped in try/except so Windows (``NotImplementedError``) and non-main
     threads (``RuntimeError``) fall back to a warning instead of crashing."""
@@ -238,9 +230,7 @@ def _install_signal_handlers(
         try:
             loop.add_signal_handler(sig, stop_event.set)
         except (NotImplementedError, RuntimeError):
-            _LOG.warning(
-                "apollo_provision_signal_handler_unsupported", extra={"signal": sig}
-            )
+            _LOG.warning("apollo_provision_signal_handler_unsupported", extra={"signal": sig})
 
 
 async def main() -> None:
@@ -258,7 +248,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover - manual entrypoint
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     asyncio.run(main())

@@ -37,7 +37,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy import select
@@ -52,7 +51,6 @@ from apollo.persistence.models import (
 )
 from apollo.provisioning.metered_chat import CostBudgetExceeded, MeteredChat
 from apollo.provisioning.pairing_gate import (
-    Rejection,
     rejection_from_verdict,
     validate_pair,
 )
@@ -82,8 +80,7 @@ _RUN_SUCCEEDED = "succeeded"
 _RUN_FAILED = "failed"
 
 _SCRAPE_SYSTEM_PROMPT = (
-    "Extract candidate practice questions from the course passage as a JSON "
-    "array of objects."
+    "Extract candidate practice questions from the course passage as a JSON array of objects."
 )
 
 
@@ -168,10 +165,10 @@ def _recompute_counts(
 ) -> None:
     """ASSIGN (never ``+=``) the per-run aggregates so a replay re-computes rather
     than inflates them (§2c — a ``+=`` would double on a re-claimed job)."""
-    run.n_questions_scraped = scraped
-    run.n_promoted = promoted
-    run.n_rejected = rejected
-    run.n_dedup_merged = merged
+    run.n_questions_scraped = scraped  # type: ignore[assignment]
+    run.n_promoted = promoted  # type: ignore[assignment]
+    run.n_rejected = rejected  # type: ignore[assignment]
+    run.n_dedup_merged = merged  # type: ignore[assignment]
 
 
 # --------------------------------------------------------------------------- #
@@ -239,8 +236,10 @@ async def run_provisioning(
     re-assigns the per-run counts, sets the terminal status (+finished_at), and
     commits. Returns the outcome; the worker calls complete_job/fail_job on it."""
     run = await db.get(IngestRun, job.ingest_run_id)
-    run.status = _RUN_RUNNING
-    run.started_at = _now()
+    if run is None:
+        raise RuntimeError(f"run_provisioning: ingest_run {job.ingest_run_id} not found")
+    run.status = _RUN_RUNNING  # type: ignore[assignment]
+    run.started_at = _now()  # type: ignore[assignment]
     await db.flush()
 
     if embed_fn is None:
@@ -260,7 +259,8 @@ async def run_provisioning(
         chunks = await _load_chunks(db, document_id=job.document_id)
         try:
             scrape_result = await scrape_questions(
-                chunks, chat_fn=metered_chat.scrape_chat_fn(_SCRAPE_SYSTEM_PROMPT)
+                chunks,  # type: ignore[arg-type]  # _ChunkView is the minimal duck-typed shape scrape_questions reads
+                chat_fn=metered_chat.scrape_chat_fn(_SCRAPE_SYSTEM_PROMPT),
             )
         except CostBudgetExceeded as exc:
             raise _cost_abort(exc, stage="scrape") from exc
@@ -370,12 +370,16 @@ async def _concept_dup_hashes(db: AsyncSession, *, concept_id: int) -> set[str]:
     as a ``Problem`` (e.g. a Tier-1 inventory stub) is skipped (it carries no
     promotable content to dedup against)."""
     rows = (
-        await db.execute(
-            select(ConceptProblem.payload)
-            .where(ConceptProblem.concept_id == concept_id)
-            .where(ConceptProblem.tier == 2)
+        (
+            await db.execute(
+                select(ConceptProblem.payload)
+                .where(ConceptProblem.concept_id == concept_id)
+                .where(ConceptProblem.tier == 2)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     hashes: set[str] = set()
     for payload in rows:
         try:
@@ -412,9 +416,7 @@ async def _process_candidate(
             db, candidate, retrieve_fn=retrieve_fn, chat_fn=metered_chat.main
         )
     except SolutionDraftError as exc:
-        raise _PerDocumentError(
-            stage="find_or_generate", error_class="SolutionDraftError"
-        ) from exc
+        raise _PerDocumentError(stage="find_or_generate", error_class="SolutionDraftError") from exc
     except CostBudgetExceeded as exc:
         raise _cost_abort(exc, stage="find_or_generate") from exc
 
@@ -446,9 +448,7 @@ async def _process_candidate(
             db, pair, chat_fn=_tag_mint_chat_fn(metered_chat), embed_fn=embed_fn
         )
     except TagMintError as exc:
-        raise _PerDocumentError(
-            stage="tag_mint", error_class="TagMintError"
-        ) from exc
+        raise _PerDocumentError(stage="tag_mint", error_class="TagMintError") from exc
     except CostBudgetExceeded as exc:
         raise _cost_abort(exc, stage="tag_mint") from exc
 
@@ -464,15 +464,11 @@ async def _process_candidate(
         # Defensive: ``write_tier1_problems`` already wrote this row earlier in the
         # run, so a miss means a corrupted/raced inventory write — fail the run
         # rather than promote a phantom row.
-        raise _PerDocumentError(
-            stage="promote", error_class="MissingTier1Row"
-        )
+        raise _PerDocumentError(stage="promote", error_class="MissingTier1Row")
     # Gate 8 needs the concept-scoped dup-hash set of ALREADY-promoted problems on
     # the REAL tagged concept (``mint_plan.concept_id``) — NOT an empty set (which
     # makes gate 8 vacuous). Computed AFTER tag/mint resolved the tagged concept.
-    existing_problem_hashes = await _concept_dup_hashes(
-        db, concept_id=mint_plan.concept_id
-    )
+    existing_problem_hashes = await _concept_dup_hashes(db, concept_id=mint_plan.concept_id)
     try:
         result: PromoteResult = await promote(
             db,
@@ -484,9 +480,7 @@ async def _process_candidate(
             existing_problem_hashes=existing_problem_hashes,
         )
     except CanonProjectionError as exc:
-        raise _PerDocumentError(
-            stage="promotion", error_class="CanonProjectionError"
-        ) from exc
+        raise _PerDocumentError(stage="promotion", error_class="CanonProjectionError") from exc
 
     if not result.promoted:
         _record_rejection(
@@ -522,11 +516,9 @@ async def _finalize(
 ) -> ProvisioningOutcome:
     """ASSIGN the recomputed counts, set the terminal status + finished_at, commit,
     and return the immutable outcome. The run is NEVER left 'running'."""
-    _recompute_counts(
-        run, scraped=scraped, promoted=promoted, rejected=rejected, merged=merged
-    )
-    run.status = status
-    run.finished_at = _now()
+    _recompute_counts(run, scraped=scraped, promoted=promoted, rejected=rejected, merged=merged)
+    run.status = status  # type: ignore[assignment]
+    run.finished_at = _now()  # type: ignore[assignment]
     await db.commit()
     _LOG.info(
         "provisioning_run_finalized",
