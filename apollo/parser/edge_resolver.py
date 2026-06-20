@@ -15,6 +15,7 @@ entry never shifts the mapping (risk #1).
 Split out of `parser_llm.py` for cohesion + the <800-line / <50-line-function
 size budget. Pure logic, no LLM, no I/O.
 """
+
 from __future__ import annotations
 
 import logging
@@ -68,7 +69,9 @@ def _reject(reason: str, raw: object, **extra: object) -> None:
     parts = " ".join(f"{k}=%s" for k in extra)
     _LOG.info(
         "parser_edge_rejected reason=%s " + parts + " edge=%r",
-        reason, *extra.values(), raw,
+        reason,
+        *extra.values(),
+        raw,
     )
 
 
@@ -86,23 +89,32 @@ def _build_typed_edge(
     would reject.
     """
     from_id, from_type = _resolve_ref(
-        str(raw.get("from_ref", "")), index_to_node=index_to_node, graph_context=graph_context,
+        str(raw.get("from_ref", "")),
+        index_to_node=index_to_node,
+        graph_context=graph_context,
     )
     to_id, to_type = _resolve_ref(
-        str(raw.get("to_ref", "")), index_to_node=index_to_node, graph_context=graph_context,
+        str(raw.get("to_ref", "")),
+        index_to_node=index_to_node,
+        graph_context=graph_context,
     )
     if from_id is None or to_id is None:
-        return _reject("unresolvable_ref", raw)
+        _reject("unresolvable_ref", raw)
+        return None
     if from_type is None or to_type is None:
-        return _reject("unknown_endpoint_type", raw)
+        _reject("unknown_endpoint_type", raw)
+        return None
     if from_id == to_id:
-        return _reject("self_loop", raw)
+        _reject("self_loop", raw)
+        return None
     try:
-        edge_type = EdgeType(raw.get("edge_type"))
+        edge_type = EdgeType(str(raw.get("edge_type", "")))
     except ValueError:
-        return _reject("bad_edge_type", raw)
+        _reject("bad_edge_type", raw)
+        return None
     if (from_type, to_type) not in EDGE_ALLOWED_PAIRS[edge_type]:
-        return _reject("disallowed_pair", raw, pair=(from_type, to_type))
+        _reject("disallowed_pair", raw, pair=(from_type, to_type))
+        return None
     try:
         return Edge(
             edge_type=edge_type,
@@ -115,7 +127,8 @@ def _build_typed_edge(
             provenance=_coerce_provenance(raw.get("provenance")),
         )
     except ValueError as exc:  # belt-and-braces; the pair pre-check should prevent this
-        return _reject("validator_rejected", raw, detail=exc)
+        _reject("validator_rejected", raw, detail=exc)
+        return None
 
 
 def resolve_typed_edges(
