@@ -9,6 +9,7 @@ Offline tests only. A fake Neo4j session holds the per-attempt node store,
 answers the endpoint-existence read, and records node CREATE batches. Live
 round-trips stay in `test_store_neo4j.py`. Test attempt_ids are NEGATIVE.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,7 +35,6 @@ from apollo.persistence.models import (
 )
 from database.models import Base
 
-
 # ---------------------------------------------------------------------------
 # Fake Neo4j — endpoint-existence read + node CREATE counting.
 # ---------------------------------------------------------------------------
@@ -49,8 +49,9 @@ class _FakeRecord:
 
 
 class _FakeResult:
-    def __init__(self, *, single: _FakeRecord | None = None,
-                 rows: list[_FakeRecord] | None = None) -> None:
+    def __init__(
+        self, *, single: _FakeRecord | None = None, rows: list[_FakeRecord] | None = None
+    ) -> None:
         self._single = single
         self._rows = rows or []
 
@@ -61,11 +62,12 @@ class _FakeResult:
         async def gen():
             for r in self._rows:
                 yield r
+
         return gen()
 
 
 class _FakeSession:
-    def __init__(self, store: "_FakeNeo4jClient") -> None:
+    def __init__(self, store: _FakeNeo4jClient) -> None:
         self._store = store
 
     async def run(self, cypher: str, **params: Any) -> _FakeResult:
@@ -136,9 +138,11 @@ async def db():
 @pytest_asyncio.fixture
 async def attempt(db: AsyncSession):
     sess = ApolloSession(
-        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID,
+        user_id=TEST_USER_ID,
+        search_space_id=TEST_SPACE_ID,
         concept_cluster_id="continuity",
-        status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.TEACHING.value,
     )
     db.add(sess)
     await db.flush()
@@ -161,8 +165,11 @@ def store(db, neo):
 
 def _eq(node_id, attempt_id, symbolic="A1*v1 - A2*v2", label="continuity"):
     return build_node(
-        node_type="equation", node_id=node_id, attempt_id=attempt_id,
-        source="parser", content={"symbolic": symbolic, "label": label},
+        node_type="equation",
+        node_id=node_id,
+        attempt_id=attempt_id,
+        source="parser",
+        content={"symbolic": symbolic, "label": label},
     )
 
 
@@ -202,7 +209,9 @@ async def test_write_nodes_reused_not_counted_as_added(store, neo, attempt):
     aid = attempt.id
     neo.seed_node(attempt_id=aid, node=_eq("eq1", aid))
     created = await store.write_nodes(
-        attempt_id=aid, nodes=[_eq("eq1", aid)], source="parser",
+        attempt_id=aid,
+        nodes=[_eq("eq1", aid)],
+        source="parser",
     )
     assert created == 0
     assert neo.created_node_batches == []  # nothing CREATEd
@@ -226,9 +235,9 @@ async def test_write_nodes_empty_returns_zero(store, neo, attempt):
 @pytest.mark.asyncio
 async def test_write_nodes_respects_freeze(store, neo, db, attempt):
     aid = attempt.id
-    sess = (await db.execute(
-        select(ApolloSession).where(ApolloSession.id == attempt.session_id)
-    )).scalar_one()
+    sess = (
+        await db.execute(select(ApolloSession).where(ApolloSession.id == attempt.session_id))
+    ).scalar_one()
     sess.phase = SessionPhase.SOLVING.value
     await db.commit()
     with pytest.raises(SessionFrozenError):
