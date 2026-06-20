@@ -18,7 +18,7 @@ provides:
 consumes:
   - `database.models.AITAChunk` (READ ONLY — never re-indexes)
   - `apollo.persistence.models` (`ConceptProblem`, `Concept`, `KGEntity`, `EntityPrereq`, `Subject`)
-  - the frozen seed converters `reference_solution_to_entities` / `misconceptions_to_entities` / `concept_dag_to_prereqs` / `annotate_reference_solution`
+  - TWO frozen seed converters `reference_solution_to_entities` / `misconceptions_to_entities` (IMPORTED, not reimplemented). `concept_dag_to_prereqs` and `annotate_reference_solution` are NOT used by `tag_and_mint`: prereqs come from the LLM tag draft (auto-provisioning drafts them before a concept-DAG exists), and `annotate_reference_solution` is a promotion-time step owned by 3B2g.
   - `apollo.provisioning.resolve_candidate` (3B2c dedup ladder)
   - `apollo.agent._llm.cheap_chat` (injected `chat_fn`, returns `str`) + `indexing.document_embedder.embed_text` (injected `embed_fn`)
 depends_on:
@@ -268,7 +268,7 @@ RED-first throughout. Every step writes the failing test(s) BEFORE the implement
 - [ ] **Step 4 — Concept resolution + symbol authoring (real-PG, RED).** Write `test_tag_mint.py` real-PG tests for `_resolve_or_create_concept` (slug→BIGINT, creates if absent) and `_author_concept_symbols` (first-writer-wins UNION: author from the approved problem's `given_values` keys + `target_unknown` + equation free-symbols; a second DIFFERENT problem UNIONs new symbols and does NOT rewrite existing ones). Implement them.
   - Verify: green.
 
-- [ ] **Step 5 — Mint via frozen converters + dedup (real-PG, RED).** Write tests that `tag_and_mint` calls `reference_solution_to_entities` + `misconceptions_to_entities` + `concept_dag_to_prereqs` + `annotate_reference_solution` (asserted by the rows they produce, not by mock-spy), resolves each entity candidate through `resolve_candidate` (injected `embed_fn`/`judge_fn` stubs), upserts on `(concept_id, canonical_key)`, and returns a populated `MintPlan`. Implement `tag_and_mint` + `_upsert_entity_resolved` + `_insert_prereqs` + `_link_opposes`.
+- [ ] **Step 5 — Mint via frozen converters + dedup (real-PG, RED).** Write tests that `tag_and_mint` calls the TWO reused frozen converters `reference_solution_to_entities` + `misconceptions_to_entities` (asserted by the rows they produce, not by mock-spy) — NOT `concept_dag_to_prereqs` (prereqs are LLM-drafted from the tag) and NOT `annotate_reference_solution` (a promotion-time step owned by 3B2g) — resolves each entity candidate through `resolve_candidate` (injected `embed_fn`/`judge_fn` stubs), upserts on `(concept_id, canonical_key)`, and returns a populated `MintPlan`. Implement `tag_and_mint` + `_upsert_entity_resolved` + `_insert_prereqs` + `_link_opposes`.
   - The candidate adapter: each minted EntitySpec → a `{canonical_key, scope_summary}` duck-typed object (`scope_summary` authored from `display_name` + symbols) passed to `resolve_candidate`; a `merged` verdict reuses the matched entity id instead of inserting.
   - Verify: green.
 

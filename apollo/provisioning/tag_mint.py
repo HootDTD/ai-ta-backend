@@ -10,14 +10,20 @@ order), ``tag_and_mint``:
   3. AUTHORS the concept's ``canonical_symbols``/``normalization_map`` from the
      approved problem's symbol set (first-writer-wins UNION — NOT derived from a
      promoted problem, which is circular because gate 4 runs BEFORE promotion);
-  4. mints reference + misconception ``EntitySpec``s by REUSING the frozen §8 seed
-     converters (``reference_solution_to_entities`` / ``misconceptions_to_entities``
-     / ``concept_dag_to_prereqs`` / ``annotate_reference_solution``), resolving
-     EACH entity candidate through 3B2c's ``resolve_candidate`` dedup ladder
-     BEFORE upsert (a ``merged`` verdict reuses the matched id instead of
-     inserting);
-  5. inserts the LLM-drafted prereq edges and links each misconception's
+  4. mints reference + misconception ``EntitySpec``s by REUSING two frozen §8 seed
+     converters (``reference_solution_to_entities`` /
+     ``misconceptions_to_entities``), resolving EACH entity candidate through
+     3B2c's ``resolve_candidate`` dedup ladder BEFORE upsert (a ``merged`` verdict
+     reuses the matched id instead of inserting);
+  5. inserts the prereq edges from the LLM tag draft (NOT from the frozen
+     ``concept_dag_to_prereqs`` converter — auto-provisioning drafts prereqs at
+     tag time, before any concept-DAG exists) and links each misconception's
      ``opposes_entity_key`` to its entity id.
+
+The two §8 converters that the seed script uses but this auto-provisioning path
+does NOT — ``concept_dag_to_prereqs`` (prereqs are LLM-drafted here) and
+``annotate_reference_solution`` (a promotion-time annotation, applied by 3B2g,
+not at mint) — are intentionally unused.
 
 Returns a typed ``MintPlan`` (observability + the 3B2g handoff). NO promotion
 here — 3B2g runs ``run_promotion_lint`` over the result, flips Tier-2, and
