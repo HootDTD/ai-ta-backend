@@ -32,6 +32,7 @@ from apollo.overseer.problem_selector import (
     cluster_to_concept,
     list_problems_for_cluster,
 )
+from apollo.parser.graph_context import build_graph_context
 from apollo.parser.parser_llm import parse_utterance
 from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
 from apollo.persistence.neo4j_client import Neo4jClient
@@ -250,16 +251,28 @@ async def handle_chat(
         return intent_response
 
     # ---- Normal teaching path -----------------------------------------
+    # Cross-turn linking (WU-2B): read the CURRENT subgraph (everything taught
+    # so far this attempt — the new turn's nodes aren't written until after
+    # parsing) and project it into a GraphContext the parser threads in so it
+    # can emit edges referencing prior-turn node ids.
+    prior_graph = await store.read_graph(attempt_id=current_attempt.id)
+    graph_context = build_graph_context(prior_graph)
     nodes, edges = parse_utterance(
         message,
         concept=concept,
         attempt_id=current_attempt.id,
+        graph_context=graph_context,
     )
+    # write_nodes de-dups cross-turn re-assertions by id (WU-2B): a node whose
+    # id already exists is reused, not re-minted, so the returned count is the
+    # genuinely-new entries only.
     nodes_added = await store.write_nodes(
         attempt_id=current_attempt.id, nodes=nodes, source="parser",
     )
-    # Edges must be written AFTER nodes — the MATCH...CREATE pattern needs
-    # both endpoints to exist at write time.
+    # Edges must be written AFTER nodes — the CREATE needs both endpoints to
+    # exist. write_edges validates endpoint existence + EDGE_ALLOWED_PAIRS and
+    # logs any drop/invalid (no silent drop); the structured log is the
+    # observable, so the result is intentionally not captured here.
     await store.write_edges(
         attempt_id=current_attempt.id, edges=edges, source="parser",
     )

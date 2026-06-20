@@ -47,6 +47,12 @@ def _resolve_ref(
     "ref unresolvable" (id None) from "endpoint type unknown" (id set, type
     None). Returns (None, None) when neither shape applies.
     """
+    # `^n\d+$` is the reserved this-response ordinal namespace;
+    # `graph_context.build_graph_context` guarantees context ids never collide
+    # (see `graph_context.is_safe_context_id`), so ordinal-first resolution is
+    # unambiguous. An out-of-range ordinal returns (None, None) and does NOT
+    # fall through to graph_context — the two namespaces are disjoint by
+    # construction (WU-2B nit-3 pin; tested in test_edge_resolver_precedence.py).
     if ref.startswith("n") and ref[1:].isdigit():
         node = index_to_node.get(int(ref[1:]))
         if node is None:

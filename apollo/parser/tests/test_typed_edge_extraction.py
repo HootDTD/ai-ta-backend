@@ -1068,3 +1068,116 @@ def test_prompt_builder_guard_still_passes(concept):
     assert "{{canonical_symbols_csv}}" not in prompt
     assert "{{subscript_convention}}" not in prompt
     assert "canonical symbols for this concept" not in low
+
+
+# ===========================================================================
+# K. WU-2B nit-1: deterministic USES fallback survives skipped entries
+# ===========================================================================
+#
+# `_resolve_uses_edges` must resolve `uses_equation_ordinals` through the
+# ORIGINAL-entry-index map (`index_to_node`), exactly like the typed-edge
+# path, so a malformed entry dropped BEFORE an equation does not skew the
+# compacted target index. (Pre-WU-2B the fallback zipped raw_entries with the
+# COMPACTED nodes list and indexed `nodes[o]`, which mis-targeted on a skip.)
+
+@patch("apollo.parser.parser_llm.OpenAI")
+def test_uses_fallback_survives_malformed_entry_before_equation(mock_cls, concept):
+    from apollo.parser.parser_llm import parse_utterance
+
+    # original indices: 0=step(uses ord 2), 1=malformed equation (skipped), 2=good equation
+    step = _flat_entry(
+        type="procedure_step", action="apply continuity", purpose="find v2",
+        uses_equation_ordinals=[2],
+    )
+    malformed_eq = _flat_entry(type="equation")  # missing `symbolic` -> dropped
+    good_eq = _flat_entry(type="equation", symbolic="A1*v1 - A2*v2", label="continuity")
+
+    client = _mock_client(entries=[step, malformed_eq, good_eq], edges=[])
+    mock_cls.return_value = client
+
+    nodes, edges = parse_utterance(_LONG, concept=concept, attempt_id=1)
+    assert len(nodes) == 2  # malformed dropped
+    uses = _find(edges, EdgeType.USES)
+    assert len(uses) == 1
+    eq_node = next(n for n in nodes if n.node_type == "equation")
+    step_node = next(n for n in nodes if n.node_type == "procedure_step")
+    # The fallback links the step to the GOOD equation (original index 2),
+    # NOT to a skewed compacted target.
+    assert uses[0].to_node_id == eq_node.node_id
+    assert uses[0].from_node_id == step_node.node_id
+    assert uses[0].from_node_type == "procedure_step"
+    assert uses[0].to_node_type == "equation"
+
+
+@patch("apollo.parser.parser_llm.OpenAI")
+def test_uses_fallback_no_malformed_entry_unchanged(mock_cls, concept):
+    """Control: with no skipped entry, the happy-path USES fallback still
+    produces the single correct edge."""
+    from apollo.parser.parser_llm import parse_utterance
+
+    step = _flat_entry(
+        type="procedure_step", action="apply continuity", purpose="find v2",
+        uses_equation_ordinals=[1],
+    )
+    eq = _flat_entry(type="equation", symbolic="A1*v1 - A2*v2", label="continuity")
+    client = _mock_client(entries=[step, eq], edges=[])
+    mock_cls.return_value = client
+
+    nodes, edges = parse_utterance(_LONG, concept=concept, attempt_id=1)
+    uses = _find(edges, EdgeType.USES)
+    assert len(uses) == 1
+    eq_node = next(n for n in nodes if n.node_type == "equation")
+    step_node = next(n for n in nodes if n.node_type == "procedure_step")
+    assert uses[0].from_node_id == step_node.node_id
+    assert uses[0].to_node_id == eq_node.node_id
+
+
+@patch("apollo.parser.parser_llm.OpenAI")
+def test_uses_fallback_ordinal_to_non_equation_is_dropped(mock_cls, concept):
+    """An ordinal pointing at a non-equation node yields no USES edge."""
+    from apollo.parser.parser_llm import parse_utterance
+
+    step = _flat_entry(
+        type="procedure_step", action="apply continuity", purpose="find v2",
+        uses_equation_ordinals=[1],
+    )
+    df = _flat_entry(type="definition", concept="density", meaning="mass per volume")
+    client = _mock_client(entries=[step, df], edges=[])
+    mock_cls.return_value = client
+
+    nodes, edges = parse_utterance(_LONG, concept=concept, attempt_id=1)
+    assert _find(edges, EdgeType.USES) == []
+
+
+@patch("apollo.parser.parser_llm.OpenAI")
+def test_uses_fallback_out_of_range_ordinal_dropped(mock_cls, concept):
+    """An ordinal with no matching original-index node is dropped (no IndexError)."""
+    from apollo.parser.parser_llm import parse_utterance
+
+    step = _flat_entry(
+        type="procedure_step", action="apply continuity", purpose="find v2",
+        uses_equation_ordinals=[7],  # no such entry
+    )
+    eq = _flat_entry(type="equation", symbolic="A1*v1 - A2*v2", label="continuity")
+    client = _mock_client(entries=[step, eq], edges=[])
+    mock_cls.return_value = client
+
+    nodes, edges = parse_utterance(_LONG, concept=concept, attempt_id=1)
+    assert _find(edges, EdgeType.USES) == []
+
+
+@patch("apollo.parser.parser_llm.OpenAI")
+def test_uses_fallback_non_list_ordinals_skipped(mock_cls, concept):
+    """A malformed (non-list) `uses_equation_ordinals` yields no USES edge."""
+    from apollo.parser.parser_llm import parse_utterance
+
+    step = _flat_entry(
+        type="procedure_step", action="apply continuity", purpose="find v2",
+        uses_equation_ordinals="not-a-list",
+    )
+    eq = _flat_entry(type="equation", symbolic="A1*v1 - A2*v2", label="continuity")
+    client = _mock_client(entries=[step, eq], edges=[])
+    mock_cls.return_value = client
+
+    nodes, edges = parse_utterance(_LONG, concept=concept, attempt_id=1)
+    assert _find(edges, EdgeType.USES) == []
