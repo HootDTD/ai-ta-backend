@@ -60,9 +60,11 @@ def test_explicit_parser_confidence_round_trips():
 # ---------------------------------------------------------------------------
 
 def test_entry_to_node_uses_reported_confidence():
+    # WU-2A: entries are FLAT (strict json_schema; no nested "content").
     entry = {
         "type": "equation",
-        "content": {"symbolic": "A1*v1 - A2*v2", "label": "continuity"},
+        "symbolic": "A1*v1 - A2*v2",
+        "label": "continuity",
         "confidence": 0.55,
     }
     node = _entry_to_node(entry, attempt_id=1, fallback_node_id="x")
@@ -72,10 +74,7 @@ def test_entry_to_node_uses_reported_confidence():
 
 def test_entry_to_node_missing_confidence_defaults_to_one():
     """Legacy LLM responses without `confidence` must keep the safe default."""
-    entry = {
-        "type": "equation",
-        "content": {"symbolic": "x", "label": "x"},
-    }
+    entry = {"type": "equation", "symbolic": "x", "label": "x"}
     node = _entry_to_node(entry, attempt_id=1, fallback_node_id="x")
     assert node is not None
     assert node.parser_confidence == 1.0
@@ -84,7 +83,8 @@ def test_entry_to_node_missing_confidence_defaults_to_one():
 def test_entry_to_node_malformed_confidence_falls_back():
     entry = {
         "type": "equation",
-        "content": {"symbolic": "x", "label": "x"},
+        "symbolic": "x",
+        "label": "x",
         "confidence": "not a number",
     }
     node = _entry_to_node(entry, attempt_id=1, fallback_node_id="x")
@@ -93,22 +93,14 @@ def test_entry_to_node_malformed_confidence_falls_back():
 
 
 def test_entry_to_node_clips_confidence_above_one():
-    entry = {
-        "type": "equation",
-        "content": {"symbolic": "x", "label": "x"},
-        "confidence": 1.7,
-    }
+    entry = {"type": "equation", "symbolic": "x", "label": "x", "confidence": 1.7}
     node = _entry_to_node(entry, attempt_id=1, fallback_node_id="x")
     assert node is not None
     assert node.parser_confidence == 1.0
 
 
 def test_entry_to_node_clips_confidence_below_zero():
-    entry = {
-        "type": "equation",
-        "content": {"symbolic": "x", "label": "x"},
-        "confidence": -0.2,
-    }
+    entry = {"type": "equation", "symbolic": "x", "label": "x", "confidence": -0.2}
     node = _entry_to_node(entry, attempt_id=1, fallback_node_id="x")
     assert node is not None
     assert node.parser_confidence == 0.0
@@ -137,7 +129,8 @@ def test_parse_utterance_propagates_confidence(mock_client_cls, concept):
     client.chat.completions.create.return_value = _mock_openai_response([
         {
             "type": "equation",
-            "content": {"symbolic": "A1*v1 - A2*v2", "label": "continuity"},
+            "symbolic": "A1*v1 - A2*v2",
+            "label": "continuity",
             "confidence": 0.45,
         },
     ])
@@ -159,10 +152,7 @@ def test_parse_utterance_legacy_response_defaults_to_one(mock_client_cls, concep
     OLM Done-gate."""
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_openai_response([
-        {
-            "type": "equation",
-            "content": {"symbolic": "x", "label": "x"},
-        },
+        {"type": "equation", "symbolic": "x", "label": "x"},
     ])
     mock_client_cls.return_value = client
 

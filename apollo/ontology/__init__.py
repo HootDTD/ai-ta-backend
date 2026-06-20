@@ -2,6 +2,7 @@
 from apollo.ontology.edges import (
     EDGE_ALLOWED_PAIRS,
     Edge,
+    EdgeProvenance,
     EdgeType,
 )
 from apollo.ontology.graph import KGGraph
@@ -51,6 +52,7 @@ __all__ = [
     # edges
     "Edge",
     "EdgeType",
+    "EdgeProvenance",
     "EDGE_ALLOWED_PAIRS",
     # graph
     "KGGraph",
