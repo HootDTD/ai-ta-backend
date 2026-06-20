@@ -72,14 +72,10 @@ def _axis_delta(old_rubric: dict, shadow_rubric: dict, axis: str) -> AxisDelta:
         delta: int | None = None
     else:
         delta = shadow_score - old_score
-    return AxisDelta(
-        axis=axis, old_score=old_score, shadow_score=shadow_score, delta=delta
-    )
+    return AxisDelta(axis=axis, old_score=old_score, shadow_score=shadow_score, delta=delta)
 
 
-def compute_calibration_metrics(
-    *, old_rubric: dict, shadow_rubric: dict
-) -> CalibrationMetrics:
+def compute_calibration_metrics(*, old_rubric: dict, shadow_rubric: dict) -> CalibrationMetrics:
     """Compare the SHADOW graph-sim rubric against the OLD student-facing rubric.
 
     PURE — reads ``["overall"]["letter"]``/``["overall"]["score"]`` + each axis
@@ -89,17 +85,11 @@ def compute_calibration_metrics(
     shadow_letter = shadow_rubric["overall"]["letter"]
     letter_agreement = old_letter == shadow_letter
 
-    overall_score_delta = (
-        shadow_rubric["overall"]["score"] - old_rubric["overall"]["score"]
-    )
+    overall_score_delta = shadow_rubric["overall"]["score"] - old_rubric["overall"]["score"]
 
-    axis_deltas = tuple(
-        _axis_delta(old_rubric, shadow_rubric, axis) for axis in _AXIS_ORDER
-    )
+    axis_deltas = tuple(_axis_delta(old_rubric, shadow_rubric, axis) for axis in _AXIS_ORDER)
 
-    divergent = (not letter_agreement) or (
-        abs(overall_score_delta) > DIVERGENCE_SCORE_THRESHOLD
-    )
+    divergent = (not letter_agreement) or (abs(overall_score_delta) > DIVERGENCE_SCORE_THRESHOLD)
 
     return CalibrationMetrics(
         letter_agreement=letter_agreement,

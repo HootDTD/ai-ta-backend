@@ -121,7 +121,10 @@ def _old_path_patches():
         patch("apollo.handlers.done.generate_diagnostic", return_value="narrative"),
         patch("apollo.handlers.done.has_prior_graded_attempt", new=AsyncMock(return_value=False)),
         patch("apollo.handlers.done.compute_xp_earned", return_value=10),
-        patch("apollo.handlers.done.apply_xp", new=AsyncMock(return_value={"xp_before": 0, "xp_after": 10})),
+        patch(
+            "apollo.handlers.done.apply_xp",
+            new=AsyncMock(return_value={"xp_before": 0, "xp_after": 10}),
+        ),
         patch("apollo.handlers.done.compute_progress_envelope", return_value=_envelope()),
     ]
     return db, sess, attempt, patches

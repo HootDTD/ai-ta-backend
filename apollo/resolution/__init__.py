@@ -19,8 +19,8 @@ from apollo.resolution.candidates import (
     candidates_from_misconceptions,
     candidates_from_reference_solution,
 )
-from apollo.resolution.result import ResolutionResult, ResolvedNode
 from apollo.resolution.resolver import resolve_attempt
+from apollo.resolution.result import ResolutionResult, ResolvedNode
 
 __all__ = [
     "resolve_attempt",

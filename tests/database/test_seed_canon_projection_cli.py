@@ -110,7 +110,7 @@ def _patch_run_infra(session, project_mock):
     fake_engine = AsyncMock()
     return (
         patch("scripts.seed_canon_projection.create_async_engine", return_value=fake_engine),
-        patch("scripts.seed_canon_projection.async_sessionmaker", lambda *a, **kw: (lambda: session)),
+        patch("scripts.seed_canon_projection.async_sessionmaker", lambda *a, **kw: lambda: session),
         patch("scripts.seed_canon_projection.Neo4jClient.from_env", return_value=fake_neo),
         patch("scripts.seed_canon_projection.project_canon", project_mock),
     )

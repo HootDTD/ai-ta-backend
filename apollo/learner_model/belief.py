@@ -72,7 +72,7 @@ def _covered_likelihood(s: float) -> tuple[float, float, float]:
         (
             (1 - s) ** GAMMA,
             1 - abs(2 * s - 1) ** GAMMA,
-            s ** GAMMA,
+            s**GAMMA,
         )
     )
 
@@ -83,6 +83,8 @@ def likelihood_for_event(event: LearnerEvent) -> tuple[float, float, float]:
     kind = event.event_kind
     if kind == LearnerEventKind.COVERED:
         # event.score is the resolution-scaled coverage — use it verbatim.
+        # COVERED events always carry a score (converter contract).
+        assert event.score is not None, "COVERED event missing score"
         return _covered_likelihood(event.score)
     if kind == LearnerEventKind.PARTIAL:
         # The converter already set partial's score to 0.5; map via the imported
@@ -99,7 +101,8 @@ def likelihood_for_event(event: LearnerEvent) -> tuple[float, float, float]:
 def damp(L: tuple[float, float, float], q: float) -> tuple[float, float, float]:
     """§3.1 linear damper: ``q·L + (1-q)·(1,1,1)``. q=0 -> NO_OP (no evidence);
     q=1 -> identity. Output is never 0 (L floored, NO_OP is 1.0)."""
-    return tuple(q * l + (1 - q) * one for l, one in zip(L, NO_OP_LIKELIHOOD))
+    a, b, c = (q * li + (1 - q) * one for li, one in zip(L, NO_OP_LIKELIHOOD, strict=True))
+    return a, b, c
 
 
 def bayes_update(
@@ -107,11 +110,12 @@ def bayes_update(
 ) -> tuple[float, float, float]:
     """Bayes update + renormalize: ``normalize(prior ⊙ L)``. Zero-sum guard: if
     the products sum to 0 (degenerate input), return ``prior`` unchanged."""
-    products = tuple(p * l for p, l in zip(prior, L))
+    products = tuple(p * li for p, li in zip(prior, L, strict=True))
     z = sum(products)
     if z == 0:
         return prior
-    return tuple(x / z for x in products)
+    a, b, c = (x / z for x in products)
+    return a, b, c
 
 
 def mastery_of(belief: tuple[float, float, float]) -> float:
@@ -127,9 +131,7 @@ def confidence_of(belief: tuple[float, float, float]) -> float:
     return 1 - entropy / math.log(3)
 
 
-def misconception_code_of(
-    belief: tuple[float, float, float], event: LearnerEvent
-) -> str | None:
+def misconception_code_of(belief: tuple[float, float, float], event: LearnerEvent) -> str | None:
     """Two-step misconception flag: return ``event.misconception_code`` ONLY when
     ``p_misc`` is the argmax AND ``>= MISCONCEPTION_FLAG_THRESHOLD`` AND the event
     carries a code; else ``None``. LOCKED tie rule: ``belief[0] == max(belief)``
