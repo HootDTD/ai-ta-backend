@@ -453,6 +453,10 @@ class ChatTurn(Base):
     tool_inputs = Column(JSONB, nullable=True)
     attachments = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     citations = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    # §10 RQ5 hedge (WU-5B4): write-only <=8 concept terms from
+    # extract_and_filter_keywords, persisted for offline class-level backfill.
+    # No read path in v1. Mirrors the attachments/citations JSONB-array shape.
+    keywords = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
 
     session = relationship("ChatSession", back_populates="turns")
 
