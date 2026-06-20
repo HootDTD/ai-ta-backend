@@ -36,9 +36,7 @@ _BERNOULLI = (
 
 
 def _problem01() -> dict:
-    return json.loads(
-        (_BERNOULLI / "problems" / "problem_01.json").read_text(encoding="utf-8")
-    )
+    return json.loads((_BERNOULLI / "problems" / "problem_01.json").read_text(encoding="utf-8"))
 
 
 def _by_key(graph: ReferenceGraph) -> dict[str, CanonicalNode]:
@@ -110,9 +108,27 @@ def test_reference_canonical_multi_path_views():
     its own node-id sequence to canonical keys (covers the multi-path branch)."""
     problem = {
         "reference_solution": [
-            {"id": "a", "entry_type": "equation", "entity_key": "eq.a", "content": {"symbolic": "x = y"}, "depends_on": []},
-            {"id": "b", "entry_type": "equation", "entity_key": "eq.b", "content": {"symbolic": "y = z"}, "depends_on": []},
-            {"id": "c", "entry_type": "condition", "entity_key": "cond.c", "content": {"applies_when": "always"}, "depends_on": []},
+            {
+                "id": "a",
+                "entry_type": "equation",
+                "entity_key": "eq.a",
+                "content": {"symbolic": "x = y"},
+                "depends_on": [],
+            },
+            {
+                "id": "b",
+                "entry_type": "equation",
+                "entity_key": "eq.b",
+                "content": {"symbolic": "y = z"},
+                "depends_on": [],
+            },
+            {
+                "id": "c",
+                "entry_type": "condition",
+                "entity_key": "cond.c",
+                "content": {"applies_when": "always"},
+                "depends_on": [],
+            },
         ],
         "declared_paths": [
             ["a", "c"],
@@ -131,13 +147,25 @@ def test_reference_canonical_uses_own_reference_solution_not_dedup():
     a shared/deduped value."""
     problem_a = {
         "reference_solution": [
-            {"id": "continuity", "entry_type": "equation", "entity_key": "eq.continuity", "content": {"symbolic": "rho*A1*v1 - rho*A2*v2"}, "depends_on": []},
+            {
+                "id": "continuity",
+                "entry_type": "equation",
+                "entity_key": "eq.continuity",
+                "content": {"symbolic": "rho*A1*v1 - rho*A2*v2"},
+                "depends_on": [],
+            },
         ],
         "declared_paths": [["continuity"]],
     }
     problem_b = {
         "reference_solution": [
-            {"id": "continuity", "entry_type": "equation", "entity_key": "eq.continuity", "content": {"symbolic": "A1*v1 - A2*v2"}, "depends_on": []},
+            {
+                "id": "continuity",
+                "entry_type": "equation",
+                "entity_key": "eq.continuity",
+                "content": {"symbolic": "A1*v1 - A2*v2"},
+                "depends_on": [],
+            },
         ],
         "declared_paths": [["continuity"]],
     }
@@ -153,7 +181,12 @@ def test_reference_canonical_invalid_reference_raises():
     (the §6.6 block-grading gate)."""
     problem = {
         "reference_solution": [
-            {"id": "a", "entry_type": "equation", "content": {"symbolic": "x = y"}, "depends_on": []},
+            {
+                "id": "a",
+                "entry_type": "equation",
+                "content": {"symbolic": "x = y"},
+                "depends_on": [],
+            },
         ],
         "declared_paths": [["a"]],
     }
@@ -174,7 +207,13 @@ def test_reference_canonical_definition_node_type_round_trip():
     'definition' (extra coverage over the entry_type table)."""
     problem = {
         "reference_solution": [
-            {"id": "d", "entry_type": "definition", "entity_key": "def.d", "content": {"label": "a def"}, "depends_on": []},
+            {
+                "id": "d",
+                "entry_type": "definition",
+                "entity_key": "def.d",
+                "content": {"label": "a def"},
+                "depends_on": [],
+            },
         ],
         "declared_paths": [["d"]],
     }
