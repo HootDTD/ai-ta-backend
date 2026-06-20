@@ -36,7 +36,10 @@ from apollo.persistence.neo4j_client import Neo4jClient
 
 
 async def _find_problem_payload(
-    db: AsyncSession, *, concept_id: int, problem_code: str,
+    db: AsyncSession,
+    *,
+    concept_id: int,
+    problem_code: str,
 ) -> dict:
     """Read the RAW ``ConceptProblem.payload`` dict for the chosen problem.
 
@@ -98,30 +101,32 @@ async def build_rerun_inputs(
     report = attempt.diagnostic_report
     if report is None:
         raise LearnerUpdateUnreconstructableError(
-            attempt_id=attempt.id, reason="diagnostic_report_missing"
+            attempt_id=int(attempt.id), reason="diagnostic_report_missing"
         )
     old_rubric = report.get("rubric")
     if not isinstance(old_rubric, dict) or "overall" not in old_rubric:
         raise LearnerUpdateUnreconstructableError(
-            attempt_id=attempt.id, reason="rubric_missing"
+            attempt_id=int(attempt.id), reason="rubric_missing"
         )
 
     # --- problem_payload: KEY ON attempt.problem_id (durable), never current_problem_id
     problem_payload = await _find_problem_payload(
-        db, concept_id=sess.concept_id, problem_code=attempt.problem_id,
+        db,
+        concept_id=sess.concept_id,  # type: ignore[arg-type]  # nullable col, bound at done
+        problem_code=str(attempt.problem_id),
     )
 
     store = KGStore(db, neo)
 
     # --- student_graph: the frozen per-attempt graph (freeze is PG-only, so the
     # frozen read == the original).
-    student_graph = await store.read_graph(attempt_id=attempt.id)
+    student_graph = await store.read_graph(attempt_id=int(attempt.id))
 
     # --- graded_at: the durable done_ts source; dead-letter on an empty subgraph.
-    graded_at_map = await store.read_node_graded_at(attempt_id=attempt.id)
+    graded_at_map = await store.read_node_graded_at(attempt_id=int(attempt.id))
     if not graded_at_map:
         raise LearnerUpdateUnreconstructableError(
-            attempt_id=attempt.id, reason="graded_at_missing"
+            attempt_id=int(attempt.id), reason="graded_at_missing"
         )
     graded_at_iso = next(iter(graded_at_map.values()))  # all nodes share one done_ts
 

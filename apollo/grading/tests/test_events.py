@@ -338,9 +338,7 @@ def test_unsupported_extra_emits_no_event():
 def test_unresolved_emits_no_event():
     """Row 10: an unresolved-only grade -> () (counts toward abstention, already
     consumed by WU-4B1)."""
-    grade = audited(
-        (Finding(kind=FindingKind.UNRESOLVED, student_node_ids=("u1",)),)
-    )
+    grade = audited((Finding(kind=FindingKind.UNRESOLVED, student_node_ids=("u1",)),))
 
     assert convert_findings_to_events(grade, opposes_map={}, turn_order={}) == ()
 

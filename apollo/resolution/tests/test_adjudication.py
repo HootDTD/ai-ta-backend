@@ -50,9 +50,7 @@ _CANDS = (_cand("cond.a"), _cand("cond.b"))
 def test_one_llm_call_max_for_all_remaining():
     remaining = [_node("s1"), _node("s2"), _node("s3")]
     payload = json.dumps({"resolutions": {"s1": "cond.a"}})
-    with patch(
-        "apollo.resolution.adjudication.main_chat", return_value=payload
-    ) as mock_chat:
+    with patch("apollo.resolution.adjudication.main_chat", return_value=payload) as mock_chat:
         adjudicate(remaining, _CANDS, adjudicator=main_chat_adjudicator)
     assert mock_chat.call_count == 1
 

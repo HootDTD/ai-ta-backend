@@ -65,12 +65,8 @@ def test_overall_score_delta_is_shadow_minus_old():
 
 
 def test_axis_delta_present_both_sides():
-    old = _rubric(
-        overall=70, overall_letter="B-", procedure=_axis(60, "C", present=True)
-    )
-    shadow = _rubric(
-        overall=80, overall_letter="B+", procedure=_axis(80, "B+", present=True)
-    )
+    old = _rubric(overall=70, overall_letter="B-", procedure=_axis(60, "C", present=True))
+    shadow = _rubric(overall=80, overall_letter="B+", procedure=_axis(80, "B+", present=True))
     out = compute_calibration_metrics(old_rubric=old, shadow_rubric=shadow)
     proc = next(d for d in out.axis_deltas if d.axis == "procedure")
     assert isinstance(proc, AxisDelta)
@@ -80,12 +76,8 @@ def test_axis_delta_present_both_sides():
 
 
 def test_axis_delta_absent_one_side_is_none():
-    old = _rubric(
-        overall=70, overall_letter="B-", procedure=_axis(60, "C", present=True)
-    )
-    shadow = _rubric(
-        overall=70, overall_letter="B-", procedure=_axis(0, "F", present=False)
-    )
+    old = _rubric(overall=70, overall_letter="B-", procedure=_axis(60, "C", present=True))
+    shadow = _rubric(overall=70, overall_letter="B-", procedure=_axis(0, "F", present=False))
     out = compute_calibration_metrics(old_rubric=old, shadow_rubric=shadow)
     proc = next(d for d in out.axis_deltas if d.axis == "procedure")
     assert proc.old_score == 60
@@ -142,7 +134,13 @@ def test_axis_deltas_cover_all_axes_deterministic_order():
     )
     out = compute_calibration_metrics(old_rubric=old, shadow_rubric=shadow)
     axes = [d.axis for d in out.axis_deltas]
-    assert axes == ["overall", "procedure", "justification", "simplification", "misconception_corrected"]
+    assert axes == [
+        "overall",
+        "procedure",
+        "justification",
+        "simplification",
+        "misconception_corrected",
+    ]
     # all deltas zero (identical rubrics)
     assert all(d.delta == 0 for d in out.axis_deltas)
 
