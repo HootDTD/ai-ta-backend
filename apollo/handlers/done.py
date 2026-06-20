@@ -11,10 +11,11 @@ proceed if any of them have not been touched with a negotiation move
 (challenge / paraphrase / skip). Behind env flag
 `APOLLO_DONE_GATE_ENABLED` (default off) until manual UX verification.
 """
+
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,7 +45,6 @@ from apollo.persistence.models import (
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.persistence.progress_repo import apply_xp
 from apollo.schemas.problem import Problem
-
 
 # P3.6 — Done-gate constants. The conf threshold (0.6) is intentionally
 # below the OLM-invite threshold (0.7): the invite is opportunistic;
@@ -105,20 +105,30 @@ def _node_summary_for_review(node: Node) -> str:
 
 
 async def _entries_with_moves(
-    db: AsyncSession, *, attempt_id: int,
+    db: AsyncSession,
+    *,
+    attempt_id: int,
 ) -> set[str]:
     """Return the set of `entry_id`s that have at least one negotiation
     move recorded for this attempt. The Done-gate clears once every
     flagged entry is in this set."""
-    rows = (await db.execute(
-        select(KGNegotiation.entry_id)
-        .where(KGNegotiation.attempt_id == attempt_id)
-    )).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(KGNegotiation.entry_id).where(KGNegotiation.attempt_id == attempt_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     return set(rows)
 
 
 async def _enforce_done_gate(
-    db: AsyncSession, *, attempt_id: int, graph: KGGraph,
+    db: AsyncSession,
+    *,
+    attempt_id: int,
+    graph: KGGraph,
 ) -> None:
     """Raises ReviewRequiredError if any flagged entry lacks a negotiation
     move. Caller invokes this before freeze so failures don't lock the
@@ -132,18 +142,22 @@ async def _enforce_done_gate(
     for node, reason in flagged:
         if node.node_id in moved:
             continue
-        review_required.append({
-            "entry_id": node.node_id,
-            "type": node.node_type,
-            "reason": reason,
-            "summary": _node_summary_for_review(node),
-        })
+        review_required.append(
+            {
+                "entry_id": node.node_id,
+                "type": node.node_type,
+                "reason": reason,
+                "summary": _node_summary_for_review(node),
+            }
+        )
     if review_required:
         raise ReviewRequiredError(entries=review_required)
 
 
 async def _attempt_misconception_scores(
-    db: AsyncSession, *, attempt_id: int,
+    db: AsyncSession,
+    *,
+    attempt_id: int,
 ) -> dict[str, float]:
     """Read every Apollo turn for this attempt and reduce misconception
     signals to a per-bank-code score map for the rubric's axis.
@@ -153,12 +167,18 @@ async def _attempt_misconception_scores(
     empty dict when nothing fired — the rubric treats that as
     axis-absent and falls back to the pre-P2.8 60/25/15 weights.
     """
-    rows = (await db.execute(
-        select(Message.message_metadata)
-        .where(Message.attempt_id == attempt_id)
-        .where(Message.role == "apollo")
-        .order_by(Message.turn_index)
-    )).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(Message.message_metadata)
+                .where(Message.attempt_id == attempt_id)
+                .where(Message.role == "apollo")
+                .order_by(Message.turn_index)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     signals: list[MisconceptionSignal] = []
     for payload in rows:
@@ -170,12 +190,14 @@ async def _attempt_misconception_scores(
         state = raw.get("state", "default")
         if state not in {"default", "probe", "socratic"}:
             continue
-        signals.append(MisconceptionSignal(
-            fired=bool(raw.get("fired", False)),
-            state=state,  # type: ignore[arg-type]
-            bank_code=raw.get("bank_code"),
-            confidence=float(raw.get("confidence", 0.0) or 0.0),
-        ))
+        signals.append(
+            MisconceptionSignal(
+                fired=bool(raw.get("fired", False)),
+                state=state,  # type: ignore[arg-type]
+                bank_code=raw.get("bank_code"),
+                confidence=float(raw.get("confidence", 0.0) or 0.0),
+            )
+        )
 
     return summarize_for_rubric(signals)
 
@@ -192,24 +214,28 @@ async def handle_done(
     db: AsyncSession,
     neo: Neo4jClient,
     session_id: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     store = KGStore(db, neo)
 
-    sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+    sess = (
+        await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+    ).scalar_one()
     problem = _find_problem(sess.concept_cluster_id, sess.current_problem_id)
 
     attempt = (
-        await db.execute(
-            select(ProblemAttempt)
-            .where(ProblemAttempt.session_id == session_id)
-            .where(ProblemAttempt.problem_id == problem.id)
-            .order_by(ProblemAttempt.id.desc())
+        (
+            await db.execute(
+                select(ProblemAttempt)
+                .where(ProblemAttempt.session_id == session_id)
+                .where(ProblemAttempt.problem_id == problem.id)
+                .order_by(ProblemAttempt.id.desc())
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if attempt is None:
-        raise RuntimeError(
-            f"no ProblemAttempt for session {session_id} / problem {problem.id}"
-        )
+        raise RuntimeError(f"no ProblemAttempt for session {session_id} / problem {problem.id}")
 
     # P3.6 — Done-gate. Read the graph BEFORE freezing so a 422 doesn't
     # lock the student into PROBLEM_REVEAL. When the master flag is off,
@@ -217,7 +243,9 @@ async def handle_done(
     pre_freeze_graph = await store.read_graph(attempt_id=attempt.id)
     if _done_gate_enabled():
         await _enforce_done_gate(
-            db, attempt_id=attempt.id, graph=pre_freeze_graph,
+            db,
+            attempt_id=attempt.id,
+            graph=pre_freeze_graph,
         )
 
     await store.freeze(session_id)
@@ -236,7 +264,8 @@ async def handle_done(
     # existing 60/25/15. When no misconceptions fired, the dict is empty
     # and the rubric is byte-identical to its pre-P2.8 output.
     misconception_scores = await _attempt_misconception_scores(
-        db, attempt_id=attempt.id,
+        db,
+        attempt_id=attempt.id,
     )
     rubric = compute_rubric(
         coverage,
