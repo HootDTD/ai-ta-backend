@@ -23,8 +23,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.handlers.done_grading import ShadowGradeResult
 from apollo.knowledge_graph.canon_projection import load_entity_specs
-from apollo.learner_model.belief import COLD_START_PRIOR
+from apollo.learner_model.belief import COLD_START_PRIOR, NO_OP_LIKELIHOOD
 from apollo.learner_model.decay import decay_toward_prior
+from apollo.learner_model.negotiation import (
+    entity_negotiation_move,
+    load_student_moves,
+    negotiation_multiplier,
+    suppresses_hedge,
+)
 from apollo.learner_model.persistence import (
     LearnerUpdateResult,
     persist_learner_update,
@@ -42,6 +48,18 @@ _LEARNER_DECAY_FLAG: str = "APOLLO_LEARNER_DECAY_ENABLED"
 
 def _learner_decay_enabled() -> bool:
     return os.environ.get(_LEARNER_DECAY_FLAG, "").lower() in ("1", "true", "yes")
+
+
+# WU-5B2 §3 — the negotiation-multiplier gate. Default OFF EVERYWHERE (mirrors
+# _learner_decay_enabled). When ON, run_learner_update reads the student moves
+# ONCE + builds the per-entity multiplier/move closures and threads them into
+# persist_learner_update; when OFF it passes None (identity -> byte-identical to
+# WU-5B1). Read INTERNALLY so run_learner_update's public signature is unchanged.
+_LEARNER_NEGOTIATION_FLAG: str = "APOLLO_LEARNER_NEGOTIATION_ENABLED"
+
+
+def _learner_negotiation_enabled() -> bool:
+    return os.environ.get(_LEARNER_NEGOTIATION_FLAG, "").lower() in ("1", "true", "yes")
 
 
 async def _set_pending_and_commit(db: AsyncSession, attempt: ProblemAttempt) -> None:
@@ -89,6 +107,26 @@ async def run_learner_update(
                     return belief
                 return decay_toward_prior(belief, COLD_START_PRIOR, dt_days)
 
+        # WU-5B2 §3: when the negotiation flag is ON, read this attempt's student
+        # moves ONCE (actor='student', latest-wins) and build the per-entity
+        # closures: the representative move (persisted on each event row) and the
+        # likelihood multiplier (RATIFIED suppression -> identity on a
+        # misconception entity). OFF -> both None -> identity -> byte-identical 5B1.
+        likelihood_multiplier_for_entity = None
+        negotiation_move_for_entity = None
+        if _learner_negotiation_enabled():
+            moves = await load_student_moves(db, attempt_id=int(attempt.id))
+
+            def negotiation_move_for_entity(entity_events):
+                return entity_negotiation_move(entity_events, moves)
+
+            def likelihood_multiplier_for_entity(entity_events):
+                # RATIFIED suppression (#4b): a misconception entity forces identity
+                # x1.0 — a negotiation move must NOT dilute a misconception.
+                if suppresses_hedge(entity_events):
+                    return NO_OP_LIKELIHOOD
+                return negotiation_multiplier(entity_negotiation_move(entity_events, moves))
+
         result = await persist_learner_update(
             db,
             sess=sess,
@@ -98,6 +136,8 @@ async def run_learner_update(
             parser_confidence=parser_confidence,
             canon_key_by_canonical_key=canon_key_by_canonical_key,
             prior_transform=prior_transform,
+            likelihood_multiplier_for_entity=likelihood_multiplier_for_entity,
+            negotiation_move_for_entity=negotiation_move_for_entity,
         )
         await db.commit()  # the single all-or-nothing boundary
         return result

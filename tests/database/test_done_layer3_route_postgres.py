@@ -36,6 +36,7 @@ from apollo.learner_model.belief import (
     mastery_of,
 )
 from apollo.learner_model.decay import decay_toward_prior
+from apollo.learner_model.negotiation import NEGOTIATION_LIKELIHOOD
 from apollo.learner_model.persistence import (
     LearnerUpdateResult,
     persist_learner_update,
@@ -46,6 +47,7 @@ from apollo.persistence.models import (
     ApolloSession,
     Concept,
     KGEntity,
+    KGNegotiation,
     LearnerState,
     MasteryEvent,
     Message,
@@ -1162,3 +1164,310 @@ async def test_decay_flag_on_decays_base_prior(db_session, monkeypatch):
         select(MasteryEvent).where(MasteryEvent.attempt_id == attempt2.id)
     )).scalar_one()
     assert me2.dt_days_since_last == 7
+
+
+# ---------------------------------------------------------------------------
+# 14. WU-5B2 — APOLLO_LEARNER_NEGOTIATION_ENABLED §3 negotiation multiplier
+# ---------------------------------------------------------------------------
+#
+# The fold READS apollo_kg_negotiations (actor='student', latest-wins) and, when
+# the flag is ON, multiplies a qualifying entity's COMBINED likelihood by
+# NEGOTIATION_LIKELIHOOD ONCE BEFORE damp, persists the representative
+# negotiation_move on each event row, and SUPPRESSES the multiplier (-> identity)
+# on a misconception entity. Independent oracles are recomputed INLINE from the
+# frozen belief.py + negotiation.py constants (never the production fold).
+
+
+async def _seed_negotiation(
+    db, *, attempt_id, entry_id, move, actor="student", created_at=None
+):
+    """Seed one apollo_kg_negotiations row (mirrors the LearnerState seed pattern).
+    KGNegotiation is in Base.metadata so the integration tests seed it directly."""
+    db.add(
+        KGNegotiation(
+            attempt_id=attempt_id,
+            entry_id=entry_id,
+            move=move,
+            actor=actor,
+            payload={},
+            **({"created_at": created_at} if created_at else {}),
+        )
+    )
+    await db.flush()
+
+
+def _covered_oracle(*, score, q, multiplier=None):
+    """The INLINE oracle for a single covered@score event over the cold-start base:
+    combined L = covered_likelihood(score) (x) multiplier (identity when None),
+    multiplier BEFORE damp, then damp(q) and one bayes_update."""
+    combined = likelihood_for_event(
+        convert_findings_to_events(
+            _audited([_covered_finding(score=score)]), opposes_map={}, turn_order={}
+        )[0]
+    )
+    if multiplier is not None:
+        combined = tuple(a * b for a, b in zip(combined, multiplier, strict=True))
+    return bayes_update(COLD_START_PRIOR, damp(combined, q))
+
+
+_Q = 0.9 * (0.8 * 1.0)  # parser_confidence * (normalization_confidence * comparison)
+
+
+async def test_negotiation_flag_on_covered_entity_gets_boost(db_session, monkeypatch):
+    monkeypatch.setenv("APOLLO_LEARNER_NEGOTIATION_ENABLED", "1")
+    sid, cid, by_key = await _seed_course_with_entity(db_session)
+    sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
+    done_ts = datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
+
+    await _seed_negotiation(
+        db_session, attempt_id=attempt.id, entry_id="stu_1", move="challenge"
+    )
+    audited = _audited([_covered_finding(score=1.0)])
+    await run_learner_update(
+        db_session, sess=sess, attempt=attempt, shadow=_shadow(audited),
+        done_ts=done_ts, parser_confidence=0.9,
+    )
+
+    state = (await db_session.execute(
+        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+    )).scalar_one()
+    boosted = _covered_oracle(score=1.0, q=_Q, multiplier=NEGOTIATION_LIKELIHOOD)
+    no_boost = _covered_oracle(score=1.0, q=_Q)
+    assert _belief_close(state.belief, boosted)
+    # distinctness: the boost actually fired (boosted != no-boost posterior).
+    assert not _belief_close(state.belief, no_boost)
+
+
+async def test_negotiation_flag_on_misconception_entity_unchanged(db_session, monkeypatch):
+    monkeypatch.setenv("APOLLO_LEARNER_NEGOTIATION_ENABLED", "1")
+    # the misconception entity's key must be mapped so the event is persisted.
+    sid, cid, by_key = await _seed_course_with_entity(db_session, canonical_keys=(_CONTINUITY,))
+    sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
+    done_ts = datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
+
+    # a misconception finding on _CONTINUITY (node stu_m) WITH a qualifying move.
+    misc_audited = _audited([_misconception_finding(key=_CONTINUITY)])
+    await _seed_negotiation(
+        db_session, attempt_id=attempt.id, entry_id="stu_m", move="paraphrase"
+    )
+    await run_learner_update(
+        db_session, sess=sess, attempt=attempt, shadow=_shadow(misc_audited),
+        done_ts=done_ts, parser_confidence=0.9,
+    )
+
+    state = (await db_session.execute(
+        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+    )).scalar_one()
+    # suppression -> identity: the persisted posterior is the no-negotiation
+    # misconception posterior (combined L = misconception only).
+    misc_event = convert_findings_to_events(misc_audited, opposes_map={}, turn_order={})[0]
+    misc_only = bayes_update(COLD_START_PRIOR, damp(likelihood_for_event(misc_event), _Q))
+    assert _belief_close(state.belief, misc_only)
+    # and DISTINCT from the (rejected) boosted misconception posterior.
+    misc_l = likelihood_for_event(misc_event)
+    boosted = bayes_update(
+        COLD_START_PRIOR,
+        damp(
+            tuple(a * b for a, b in zip(misc_l, NEGOTIATION_LIKELIHOOD, strict=True)),
+            _Q,
+        ),
+    )
+    assert not _belief_close(state.belief, boosted)
+
+
+async def test_negotiation_move_persisted_on_event_row(db_session, monkeypatch):
+    monkeypatch.setenv("APOLLO_LEARNER_NEGOTIATION_ENABLED", "1")
+    sid, cid, by_key = await _seed_course_with_entity(db_session)
+    sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
+    done_ts = datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
+
+    await _seed_negotiation(
+        db_session, attempt_id=attempt.id, entry_id="stu_1", move="challenge"
+    )
+    await run_learner_update(
+        db_session, sess=sess, attempt=attempt, shadow=_shadow(_audited([_covered_finding()])),
+        done_ts=done_ts, parser_confidence=0.9,
+    )
+
+    me = (await db_session.execute(
+        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
+    )).scalar_one()
+    # the override replaced the frozen MasteryEventRowSpec.negotiation_move=None.
+    assert me.negotiation_move == "challenge"
+
+
+async def test_negotiation_latest_wins_two_moves_one_node(db_session, monkeypatch):
+    monkeypatch.setenv("APOLLO_LEARNER_NEGOTIATION_ENABLED", "1")
+    sid, cid, by_key = await _seed_course_with_entity(db_session)
+    sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
+    done_ts = datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
+
+    t0 = datetime(2026, 6, 18, 11, 0, 0, tzinfo=UTC)
+    t1 = datetime(2026, 6, 18, 11, 5, 0, tzinfo=UTC)  # later
+    await _seed_negotiation(
+        db_session, attempt_id=attempt.id, entry_id="stu_1", move="paraphrase", created_at=t0
+    )
+    await _seed_negotiation(
+        db_session, attempt_id=attempt.id, entry_id="stu_1", move="challenge", created_at=t1
+    )
+    await run_learner_update(
+        db_session,
+        sess=sess,
+        attempt=attempt,
+        shadow=_shadow(_audited([_covered_finding(score=1.0)])),
+        done_ts=done_ts,
+        parser_confidence=0.9,
+    )
+
+    me = (await db_session.execute(
+        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
+    )).scalar_one()
+    assert me.negotiation_move == "challenge"  # latest-wins
+    # and the belief still reflects the (qualifying) boost.
+    state = (await db_session.execute(
+        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+    )).scalar_one()
+    assert _belief_close(
+        state.belief, _covered_oracle(score=1.0, q=_Q, multiplier=NEGOTIATION_LIKELIHOOD)
+    )
+
+
+async def test_negotiation_actor_filter_ignores_non_student(db_session, monkeypatch):
+    monkeypatch.setenv("APOLLO_LEARNER_NEGOTIATION_ENABLED", "1")
+    sid, cid, by_key = await _seed_course_with_entity(db_session)
+    sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
+    done_ts = datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
+
+    # ONLY a parser-actor row (later created_at) -> the student read IGNORES it.
+    await _seed_negotiation(
+        db_session, attempt_id=attempt.id, entry_id="stu_1", move="challenge", actor="parser",
+    )
+    await run_learner_update(
+        db_session,
+        sess=sess,
+        attempt=attempt,
+        shadow=_shadow(_audited([_covered_finding(score=1.0)])),
+        done_ts=done_ts,
+        parser_confidence=0.9,
+    )
+
+    me = (await db_session.execute(
+        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
+    )).scalar_one()
+    assert me.negotiation_move is None  # parser row ignored -> no move
+    state = (await db_session.execute(
+        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+    )).scalar_one()
+    # no student move -> no boost -> the plain covered posterior.
+    assert _belief_close(state.belief, _covered_oracle(score=1.0, q=_Q))
+
+
+async def test_negotiation_skip_is_noop(db_session, monkeypatch):
+    monkeypatch.setenv("APOLLO_LEARNER_NEGOTIATION_ENABLED", "1")
+    sid, cid, by_key = await _seed_course_with_entity(db_session)
+    sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
+    done_ts = datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
+
+    await _seed_negotiation(db_session, attempt_id=attempt.id, entry_id="stu_1", move="skip")
+    await run_learner_update(
+        db_session,
+        sess=sess,
+        attempt=attempt,
+        shadow=_shadow(_audited([_covered_finding(score=1.0)])),
+        done_ts=done_ts,
+        parser_confidence=0.9,
+    )
+
+    state = (await db_session.execute(
+        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+    )).scalar_one()
+    # skip -> identity multiplier -> byte-identical to the no-negotiation posterior.
+    assert _belief_close(state.belief, _covered_oracle(score=1.0, q=_Q))
+    me = (await db_session.execute(
+        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
+    )).scalar_one()
+    # but the skip move IS recorded (the corpus keeps it even though it doesn't boost).
+    assert me.negotiation_move == "skip"
+
+
+async def test_negotiation_no_move_for_entity_identity(db_session, monkeypatch):
+    monkeypatch.setenv("APOLLO_LEARNER_NEGOTIATION_ENABLED", "1")
+    sid, cid, by_key = await _seed_course_with_entity(db_session)
+    sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
+    done_ts = datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
+
+    # a move exists for a DIFFERENT node not in this entity's evidence_node_ids.
+    await _seed_negotiation(
+        db_session, attempt_id=attempt.id, entry_id="other_node", move="challenge"
+    )
+    await run_learner_update(
+        db_session,
+        sess=sess,
+        attempt=attempt,
+        shadow=_shadow(_audited([_covered_finding(score=1.0)])),
+        done_ts=done_ts,
+        parser_confidence=0.9,
+    )
+
+    state = (await db_session.execute(
+        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+    )).scalar_one()
+    assert _belief_close(state.belief, _covered_oracle(score=1.0, q=_Q))
+    me = (await db_session.execute(
+        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
+    )).scalar_one()
+    assert me.negotiation_move is None
+
+
+async def test_negotiation_flag_off_byte_identical(db_session, monkeypatch):
+    monkeypatch.delenv("APOLLO_LEARNER_NEGOTIATION_ENABLED", raising=False)
+    sid, cid, by_key = await _seed_course_with_entity(db_session)
+    sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
+    done_ts = datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
+
+    # a qualifying challenge row is seeded BUT the flag is OFF -> identity path.
+    await _seed_negotiation(
+        db_session, attempt_id=attempt.id, entry_id="stu_1", move="challenge"
+    )
+    await run_learner_update(
+        db_session,
+        sess=sess,
+        attempt=attempt,
+        shadow=_shadow(_audited([_covered_finding(score=1.0)])),
+        done_ts=done_ts,
+        parser_confidence=0.9,
+    )
+
+    state = (await db_session.execute(
+        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+    )).scalar_one()
+    # byte-identical to the WU-5A2/5B1 no-negotiation posterior.
+    assert _belief_close(state.belief, _covered_oracle(score=1.0, q=_Q))
+    me = (await db_session.execute(
+        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
+    )).scalar_one()
+    assert me.negotiation_move is None  # flag OFF -> no override
+
+
+async def test_negotiation_suppressed_then_move_persisted(db_session, monkeypatch):
+    """I9: suppression mutes the BELIEF multiplier but the move STRING is STILL
+    persisted (the two closures are decoupled) — so the refit corpus keeps it."""
+    monkeypatch.setenv("APOLLO_LEARNER_NEGOTIATION_ENABLED", "1")
+    sid, cid, by_key = await _seed_course_with_entity(db_session, canonical_keys=(_CONTINUITY,))
+    sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
+    done_ts = datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
+
+    misc_audited = _audited([_misconception_finding(key=_CONTINUITY)])
+    await _seed_negotiation(
+        db_session, attempt_id=attempt.id, entry_id="stu_m", move="paraphrase"
+    )
+    await run_learner_update(
+        db_session, sess=sess, attempt=attempt, shadow=_shadow(misc_audited),
+        done_ts=done_ts, parser_confidence=0.9,
+    )
+
+    me = (await db_session.execute(
+        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
+    )).scalar_one()
+    # belief suppressed (asserted in I2) but the move string IS recorded.
+    assert me.negotiation_move == "paraphrase"
