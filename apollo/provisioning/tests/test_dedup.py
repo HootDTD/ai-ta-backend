@@ -430,18 +430,21 @@ async def test_null_scope_summary_entities_are_skipped(db_session):
 
 
 async def test_cross_course_identical_embeddings_stay_distinct(db_session):
-    """LOAD-BEARING (§8B.7 / §1.4). Two courses EACH hold an 'incompressible'
-    entity whose scope_summary text is IDENTICAL ('INCOMPRESSIBLE') -> identical
-    `_embed` vector (cosine 1.0). Resolving that SAME text against course-a must
-    return distinct, because `_in_course_entities` applies the
-    `Subject.search_space_id` WHERE BEFORE any cosine — course-b's entity is
-    removed from the candidate set first.
+    """Within-course merge + same-text cross-course isolation (§8B.7 / §1.4).
+    Two courses EACH hold an 'incompressible' entity with IDENTICAL scope_summary
+    text ('INCOMPRESSIBLE' -> identical `_embed` vector, cosine 1.0). Resolving
+    that text against course-a merges onto COURSE-A's OWN entity and never reaches
+    across to course-b.
 
-    MUTATION PIN (orchestrator independent-mutation check): deleting
-    `.where(Subject.search_space_id == search_space_id)` in
-    `_in_course_entities` puts course-b's identical entity back in scope, the
-    embedding tier merges (cosine 1.0 >= 0.92), and this test goes RED with
-    verdict='merged' / a non-None matched_entity_id — a cross-course false-merge.
+    NOT the load-bearing mutation pin: this test does NOT by itself discriminate
+    the `Subject.search_space_id` WHERE. With that predicate dropped, course-b's
+    identical entity re-enters scope but the lowest-id tie-break still selects
+    course-a's (earlier-seeded) `ent.a`, and the decision row is stamped with the
+    passed `search_space_id` regardless — so both assertions survive the mutation
+    (orchestrator-verified: this test stays GREEN under the dropped WHERE). The
+    genuine §1.4 mutation pin is the sibling
+    `test_cross_course_no_local_match_stays_distinct` (course-a has no matching
+    entity, so dropping the WHERE merges onto course-b and REDs).
     """
     ss_a, concept_a, _ids_a = await _seed_course(
         db_session, slug="course-a", entities=[("ent.a", "INCOMPRESSIBLE")]
