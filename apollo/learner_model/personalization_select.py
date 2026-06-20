@@ -68,8 +68,7 @@ def reference_entity_keys(problem: Problem) -> frozenset[str]:
     map is imported and never mutated.
     """
     return frozenset(
-        f"{_ENTRY_TYPE_TO_KIND_PREFIX[s.entry_type][1]}.{s.id}"
-        for s in problem.reference_solution
+        f"{_ENTRY_TYPE_TO_KIND_PREFIX[s.entry_type][1]}.{s.id}" for s in problem.reference_solution
     )
 
 
@@ -102,9 +101,7 @@ def prereqs_mastered(profile: LearnerProfile, key: str) -> bool:
     # endpoints among this concept's entities), so a missing pid would mean a broken
     # 6A1 contract — let the subscript raise loudly rather than silently mask it.
     prereq_keys = [profile.key_by_entity_id[pid] for pid in prereq_ids]
-    return all(
-        _mastery_of_key(profile, pk) >= MASTERED_THRESHOLD for pk in prereq_keys
-    )
+    return all(_mastery_of_key(profile, pk) >= MASTERED_THRESHOLD for pk in prereq_keys)
 
 
 def weak_teachable(profile: LearnerProfile) -> dict[str, float]:
@@ -155,13 +152,9 @@ def personalize_selection(
     LOWEST ``Problem.id`` EXPLICITLY (independent of pool order).
     """
     attempted = set(attempted_ids)
-    candidates = [
-        p for p in pool if p.difficulty == difficulty and p.id not in attempted
-    ]
+    candidates = [p for p in pool if p.difficulty == difficulty and p.id not in attempted]
     if not candidates:
-        raise PoolExhaustedError(
-            concept_cluster_id=str(concept_id), difficulty=difficulty
-        )
+        raise PoolExhaustedError(concept_cluster_id=str(concept_id), difficulty=difficulty)
 
     weak = weak_teachable(profile)
     if profile.is_empty or not weak:
@@ -169,6 +162,4 @@ def personalize_selection(
 
     scored = {p.id: coverage_score(p, weak) for p in candidates}
     best = max(scored.values())
-    return min(
-        (p for p in candidates if scored[p.id] == best), key=lambda p: p.id
-    )
+    return min((p for p in candidates if scored[p.id] == best), key=lambda p: p.id)

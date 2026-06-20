@@ -109,8 +109,8 @@ class DrainResult:
     claimed: int
     succeeded: int
     dead_lettered: int
-    retried: int            # transient failure -> backoff (not terminal)
-    deferred: int           # LAYER3 interlock OFF -> belief write skipped, row left pending
+    retried: int  # transient failure -> backoff (not terminal)
+    deferred: int  # LAYER3 interlock OFF -> belief write skipped, row left pending
     backlog_remaining: int
 
 
@@ -147,9 +147,7 @@ class _Claim:
     attempts_after_claim: int
 
 
-async def _claim_due(
-    *, limit: int, user_id: str | None
-) -> list[_Claim]:
+async def _claim_due(*, limit: int, user_id: str | None) -> list[_Claim]:
     """Phase A — claim up to ``limit`` due rows (FOR UPDATE SKIP LOCKED), bump
     ``learner_update_attempts``, write the work-lease, and COMMIT immediately."""
     async with get_async_session() as claim_db:
@@ -166,9 +164,9 @@ async def _claim_due(
             )
         )
         if user_id is not None:
-            stmt = stmt.join(
-                ApolloSession, ApolloSession.id == ProblemAttempt.session_id
-            ).where(ApolloSession.user_id == user_id)
+            stmt = stmt.join(ApolloSession, ApolloSession.id == ProblemAttempt.session_id).where(
+                ApolloSession.user_id == user_id
+            )
         stmt = (
             stmt.order_by(ProblemAttempt.created_at.asc())
             .limit(limit)
@@ -240,9 +238,7 @@ async def _work_one(neo, claim: _Claim) -> tuple[str, str | None]:
             return "retry", _truncate(str(e))
 
 
-async def _record(
-    claim: _Claim, outcome: str, detail: str | None, *, max_attempts: int
-) -> str:
+async def _record(claim: _Claim, outcome: str, detail: str | None, *, max_attempts: int) -> str:
     """Phase C — short record-txn; RE-SELECT by id and apply the outcome.
 
     Returns the FINAL terminal classification: ``success`` / ``deferred`` /
@@ -260,9 +256,7 @@ async def _record(
             # A LAYER3 configuration deferral is NOT a failed attempt: undo the
             # at-claim retry consumption and re-arm so the row is immediately due
             # (worker pacing throttles the re-drain spin in WU-5B3b).
-            attempt.learner_update_attempts = max(
-                0, (attempt.learner_update_attempts or 1) - 1
-            )
+            attempt.learner_update_attempts = max(0, (attempt.learner_update_attempts or 1) - 1)
             attempt.learner_update_next_attempt_at = None
         elif outcome == "dead_letter":
             attempt.learner_update_failed_permanently = True
