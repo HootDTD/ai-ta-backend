@@ -7,6 +7,7 @@ the parser needs to reference earlier-turn nodes for cross-turn edges.
 Invariant under test: context node ids never collide with the parser's
 `^n\\d+$` this-response ordinal namespace (`edge_resolver._resolve_ref`).
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,6 +35,7 @@ def _node(node_type, node_id, content, attempt_id=-1):
 # is_safe_context_id
 # ---------------------------------------------------------------------------
 
+
 def test_is_safe_context_id_rejects_ordinal_shape():
     assert is_safe_context_id("n0") is False
     assert is_safe_context_id("n12") is False
@@ -52,15 +54,32 @@ def test_is_safe_context_id_allows_n_prefix_with_non_digits():
 # build_graph_context
 # ---------------------------------------------------------------------------
 
+
 def test_build_graph_context_projects_all_node_types():
-    graph = KGGraph(nodes=[
-        _node("equation", "stu_eq000000000", {"symbolic": "A1*v1 - A2*v2", "label": "continuity"}),
-        _node("condition", "stu_cond00000000", {"applies_when": "incompressible flow"}),
-        _node("simplification", "stu_simp0000000", {"applies_when": "horizontal pipe", "transformation": "drop rho g h"}),
-        _node("definition", "stu_def000000000", {"concept": "density", "meaning": "mass per volume"}),
-        _node("variable_mapping", "stu_var000000000", {"term": "velocity", "symbol": "v"}),
-        _node("procedure_step", "stu_step00000000", {"action": "apply continuity", "purpose": "find v2"}),
-    ])
+    graph = KGGraph(
+        nodes=[
+            _node(
+                "equation", "stu_eq000000000", {"symbolic": "A1*v1 - A2*v2", "label": "continuity"}
+            ),
+            _node("condition", "stu_cond00000000", {"applies_when": "incompressible flow"}),
+            _node(
+                "simplification",
+                "stu_simp0000000",
+                {"applies_when": "horizontal pipe", "transformation": "drop rho g h"},
+            ),
+            _node(
+                "definition",
+                "stu_def000000000",
+                {"concept": "density", "meaning": "mass per volume"},
+            ),
+            _node("variable_mapping", "stu_var000000000", {"term": "velocity", "symbol": "v"}),
+            _node(
+                "procedure_step",
+                "stu_step00000000",
+                {"action": "apply continuity", "purpose": "find v2"},
+            ),
+        ]
+    )
     ctx = build_graph_context(graph)
     assert isinstance(ctx, GraphContext)
     assert len(ctx.nodes) == 6
@@ -80,34 +99,41 @@ def test_build_graph_context_projects_all_node_types():
 
 
 def test_build_graph_context_equation_falls_back_to_symbolic_when_no_label():
-    graph = KGGraph(nodes=[
-        _node("equation", "stu_eq111111111", {"symbolic": "P + rho*g*h", "label": ""}),
-    ])
+    graph = KGGraph(
+        nodes=[
+            _node("equation", "stu_eq111111111", {"symbolic": "P + rho*g*h", "label": ""}),
+        ]
+    )
     ctx = build_graph_context(graph)
     assert ctx.nodes[0].label == "P + rho*g*h"
 
 
 def test_build_graph_context_truncates_label_to_60():
     long_when = "x" * 200
-    graph = KGGraph(nodes=[
-        _node("condition", "stu_condlong0000", {"applies_when": long_when}),
-    ])
+    graph = KGGraph(
+        nodes=[
+            _node("condition", "stu_condlong0000", {"applies_when": long_when}),
+        ]
+    )
     ctx = build_graph_context(graph)
     assert len(ctx.nodes[0].label) <= 60
 
 
 def test_build_graph_context_skips_unsafe_ids(caplog):
-    graph = KGGraph(nodes=[
-        _node("equation", "n5", {"symbolic": "x - y", "label": "bad"}),
-        _node("equation", "stu_eq222222222", {"symbolic": "a - b", "label": "good"}),
-    ])
+    graph = KGGraph(
+        nodes=[
+            _node("equation", "n5", {"symbolic": "x - y", "label": "bad"}),
+            _node("equation", "stu_eq222222222", {"symbolic": "a - b", "label": "good"}),
+        ]
+    )
     with caplog.at_level(logging.INFO, logger="apollo.parser.graph_context"):
         ctx = build_graph_context(graph)
     ids = {n.node_id for n in ctx.nodes}
     assert "n5" not in ids
     assert "stu_eq222222222" in ids
-    assert any("graph_context_skip" in r.getMessage() and "n5" in r.getMessage()
-               for r in caplog.records)
+    assert any(
+        "graph_context_skip" in r.getMessage() and "n5" in r.getMessage() for r in caplog.records
+    )
 
 
 def test_build_graph_context_empty_graph_is_empty():
@@ -127,9 +153,11 @@ def test_build_graph_context_does_not_mutate_input():
 
 
 def test_build_graph_context_returns_immutable_tuple():
-    graph = KGGraph(nodes=[
-        _node("equation", "stu_eq444444444", {"symbolic": "x - y", "label": "eq"}),
-    ])
+    graph = KGGraph(
+        nodes=[
+            _node("equation", "stu_eq444444444", {"symbolic": "x - y", "label": "eq"}),
+        ]
+    )
     ctx = build_graph_context(graph)
     assert isinstance(ctx.nodes, tuple)
     assert isinstance(ctx.nodes[0], ContextNode)
