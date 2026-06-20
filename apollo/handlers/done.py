@@ -289,6 +289,14 @@ async def handle_done(
         xp_after=progress["xp_after"],
     )
 
+    # Retention (§7 / §6.4, WU-3C1): stamp `graded_at` on the now-frozen
+    # subgraph. This is the FINAL, idempotent, post-commit retention write —
+    # the student-facing grade + XP are already durable (committed above), so a
+    # RetentionError here surfaces (NO FALLBACK) WITHOUT voiding the grade; the
+    # next Done / retry / janitor re-stamps idempotently. Δt-anchoring in
+    # Layer-3 (§3) reads this stored value, never now().
+    await store.stamp_graded_at(attempt_id=attempt.id)
+
     return {
         "rubric": rubric,
         "diagnostic_narrative": diagnostic_narrative,

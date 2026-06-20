@@ -62,6 +62,8 @@ async def handle_restart_problem(
         raise RuntimeError(f"no current ProblemAttempt for session {session_id}")
 
     store = KGStore(db, neo)
+    # Retention (§7, WU-3C1): restart_problem is the ONE explicit student wipe
+    # that still deletes the subgraph — handle_end now PERSISTS (no delete).
     await store.delete_subgraph(attempt_id=current_attempt.id)
     await db.execute(delete(Message).where(Message.attempt_id == current_attempt.id))
 

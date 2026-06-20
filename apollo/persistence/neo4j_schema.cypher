@@ -31,3 +31,19 @@ CREATE INDEX precedes_attempt_id IF NOT EXISTS FOR ()-[e:PRECEDES]-() ON (e.atte
 CREATE INDEX uses_attempt_id IF NOT EXISTS FOR ()-[e:USES]-() ON (e.attempt_id);
 CREATE INDEX depends_on_attempt_id IF NOT EXISTS FOR ()-[e:DEPENDS_ON]-() ON (e.attempt_id);
 CREATE INDEX scopes_attempt_id IF NOT EXISTS FOR ()-[e:SCOPES]-() ON (e.attempt_id);
+
+// ---------------------------------------------------------------------------
+// WU-3C1 — :Canon projection + Layer-2 node scoping.
+//
+// :Canon nodes are projected from Postgres (apollo_kg_entities) by
+// apollo/knowledge_graph/canon_projection.py. The `key` is the surrogate
+// entity id; this uniqueness constraint is what makes MERGE (c:Canon {key})
+// an upsert (not a duplicate-create) and enforces one-node-per-entity-id at
+// the DB level — the defense-in-depth behind the application MERGE.
+CREATE CONSTRAINT canon_key_unique IF NOT EXISTS FOR (c:Canon) REQUIRE c.key IS UNIQUE;
+
+// Course-scoped :Canon filters (WU-3C2 resolver filters :Canon by course).
+CREATE INDEX canon_search_space_id IF NOT EXISTS FOR (c:Canon) ON (c.search_space_id);
+
+// Layer-2 node user scoping. The existing kgnode_attempt_id index (above) stays.
+CREATE INDEX kgnode_user_id IF NOT EXISTS FOR (n:_KGNode) ON (n.user_id);

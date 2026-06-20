@@ -26,30 +26,20 @@ async def handle_end(
     neo: Neo4jClient,
     session_id: int,
 ) -> Dict[str, Any]:
-    """Student clicked 'End session' — mark ended, drop Neo4j subgraphs.
+    """Student clicked 'End session' — mark the session ended.
 
-    Cross-DB cleanup contract: drop every per-attempt subgraph for this
-    session in a try/finally so a Neo4j blip doesn't leave the user
-    staring at a 500. Postgres rows are kept for history.
+    Retention (§7 retention change, WU-3C1): per-attempt Neo4j subgraphs are
+    PERSISTED — `handle_end` no longer deletes them. Cross-attempt connectivity
+    comes free (two attempts resolving to the same :Canon node are two hops
+    apart). A future janitor prunes old subgraphs via
+    `KGStore.delete_subgraph`; `restart_problem` is the ONLY explicit student
+    wipe. The `neo` param is retained for signature parity with the other
+    lifecycle handlers (api.py threads it positionally-by-keyword); it is
+    unused here now that no Neo4j write happens at end-of-session.
     """
     sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
     sess.status = SessionStatus.ended.value
     await db.commit()
-
-    attempts = (await db.execute(
-        select(ProblemAttempt.id).where(ProblemAttempt.session_id == session_id)
-    )).scalars().all()
-    store = KGStore(db, neo)
-    for aid in attempts:
-        try:
-            await store.delete_subgraph(attempt_id=aid)
-        except Exception as exc:  # noqa: BLE001
-            # Best-effort cleanup — log and continue. A janitor job (out of
-            # scope) sweeps orphans by attempt_id with no Postgres counterpart.
-            import logging
-            logging.getLogger(__name__).warning(
-                "neo4j subgraph cleanup failed for attempt_id=%s: %s", aid, exc,
-            )
 
     return {"ok": True}
 
