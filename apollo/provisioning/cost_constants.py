@@ -24,9 +24,7 @@ from decimal import Decimal
 
 # Runaway circuit-breaker: cumulative (in+out) tokens per document. The default
 # is generous — a large chapter scrapes well below it; the breach is the abort.
-PER_DOCUMENT_TOKEN_CEILING: int = int(
-    os.getenv("APOLLO_PROVISION_TOKEN_CEILING", "2000000")
-)
+PER_DOCUMENT_TOKEN_CEILING: int = int(os.getenv("APOLLO_PROVISION_TOKEN_CEILING", "2000000"))
 
 # Dead-letter cap: a job whose ``attempt_count`` reaches this is failed terminally
 # by ``queue.fail_job`` (no further claim possible).

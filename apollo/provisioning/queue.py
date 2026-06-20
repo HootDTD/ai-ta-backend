@@ -95,11 +95,11 @@ async def claim_provisioning_job(
     if job is None:
         return None
 
-    job.state = _STATE_RUNNING
-    job.lease_owner = lease_owner
-    job.lease_expires_at = now + timedelta(seconds=lease_seconds)
-    job.attempt_count = int(job.attempt_count or 0) + 1
-    job.updated_at = now
+    job.state = _STATE_RUNNING  # type: ignore[assignment]
+    job.lease_owner = lease_owner  # type: ignore[assignment]
+    job.lease_expires_at = now + timedelta(seconds=lease_seconds)  # type: ignore[assignment]
+    job.attempt_count = int(job.attempt_count or 0) + 1  # type: ignore[assignment]
+    job.updated_at = now  # type: ignore[assignment]
 
     await session.commit()
 
@@ -117,9 +117,7 @@ async def claim_provisioning_job(
         job_id=int(job.id),
         search_space_id=int(job.search_space_id),
         document_id=int(job.document_id),
-        ingest_run_id=(
-            int(job.ingest_run_id) if job.ingest_run_id is not None else None
-        ),
+        ingest_run_id=(int(job.ingest_run_id) if job.ingest_run_id is not None else None),
         attempt_count=int(job.attempt_count),
     )
 
@@ -132,16 +130,16 @@ async def _load(session: AsyncSession, job_id: int) -> ProvisioningJob:
 
 
 def _clear_lease(job: ProvisioningJob, now: datetime) -> None:
-    job.lease_owner = None
-    job.lease_expires_at = None
-    job.updated_at = now
+    job.lease_owner = None  # type: ignore[assignment]
+    job.lease_expires_at = None  # type: ignore[assignment]
+    job.updated_at = now  # type: ignore[assignment]
 
 
 async def complete_job(session: AsyncSession, *, job_id: int) -> None:
     """Move a job to terminal ``completed`` and clear its lease, then COMMIT."""
     now = _now()
     job = await _load(session, job_id)
-    job.state = _STATE_COMPLETED
+    job.state = _STATE_COMPLETED  # type: ignore[assignment]
     _clear_lease(job, now)
     await session.commit()
     _LOG.info(
@@ -158,10 +156,10 @@ async def fail_job(session: AsyncSession, *, job_id: int, error: str) -> str:
     now = _now()
     job = await _load(session, job_id)
     if int(job.attempt_count or 0) >= MAX_ATTEMPTS:
-        job.state = _STATE_FAILED
+        job.state = _STATE_FAILED  # type: ignore[assignment]
     else:
-        job.state = _STATE_PENDING
-    job.last_error = (error or "")[:_MAX_ERROR_LEN]
+        job.state = _STATE_PENDING  # type: ignore[assignment]
+    job.last_error = (error or "")[:_MAX_ERROR_LEN]  # type: ignore[assignment]
     _clear_lease(job, now)
     await session.commit()
     _LOG.info(
@@ -173,7 +171,7 @@ async def fail_job(session: AsyncSession, *, job_id: int, error: str) -> str:
             "attempt_count": job.attempt_count,
         },
     )
-    return job.state
+    return str(job.state)
 
 
 async def release_job(session: AsyncSession, *, job_id: int) -> None:
@@ -182,7 +180,7 @@ async def release_job(session: AsyncSession, *, job_id: int) -> None:
     then COMMIT."""
     now = _now()
     job = await _load(session, job_id)
-    job.state = _STATE_PENDING
+    job.state = _STATE_PENDING  # type: ignore[assignment]
     _clear_lease(job, now)
     await session.commit()
     _LOG.info(

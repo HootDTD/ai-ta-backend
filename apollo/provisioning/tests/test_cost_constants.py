@@ -55,9 +55,7 @@ def test_cost_usd_for_unknown_model_is_zero():
 
 
 def test_cost_usd_for_zero_tokens():
-    assert cost_constants.cost_usd_for(
-        "gpt-4o", tokens_in=0, tokens_out=0
-    ) == Decimal("0")
+    assert cost_constants.cost_usd_for("gpt-4o", tokens_in=0, tokens_out=0) == Decimal("0")
 
 
 def test_cost_usd_for_returns_decimal_type():
