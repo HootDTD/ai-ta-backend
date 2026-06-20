@@ -26,6 +26,9 @@ from apollo.provisioning.cost_constants import (
     cost_usd_for,
 )
 from apollo.provisioning.dedup import DedupVerdict, resolve_candidate
+from apollo.provisioning.enqueue import enqueue_provisioning_job
+from apollo.provisioning.orchestrator import ProvisioningOutcome, run_provisioning
+from apollo.provisioning.promote import PromoteResult, promote
 from apollo.provisioning.metered_chat import CostBudgetExceeded, MeteredChat
 from apollo.provisioning.pairing_gate import (
     PairingVerdict,
@@ -105,4 +108,12 @@ __all__ = [
     "MAX_ATTEMPTS",
     "MODEL_PRICES",
     "cost_usd_for",
+    # WU-3B2g — enqueue seam (enqueue.py)
+    "enqueue_provisioning_job",
+    # WU-3B2g — promotion step (promote.py)
+    "promote",
+    "PromoteResult",
+    # WU-3B2g — orchestrator (orchestrator.py)
+    "run_provisioning",
+    "ProvisioningOutcome",
 ]
