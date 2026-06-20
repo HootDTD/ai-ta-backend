@@ -534,7 +534,9 @@ class KGStore:
                 aid=attempt_id,
             )
 
-    async def stamp_graded_at(self, *, attempt_id: int) -> int:
+    async def stamp_graded_at(
+        self, *, attempt_id: int, ts: str | datetime | None = None
+    ) -> int:
         """Stamp `graded_at` (ISO-8601 UTC) on every node of the frozen
         per-attempt subgraph at Done (§7 / §6.4). Returns the count stamped.
 
@@ -544,8 +546,17 @@ class KGStore:
         `RetentionError` (the grade is already committed when this runs, so the
         failure is loud but never voids the grade; the next Done / retry /
         janitor re-stamps idempotently).
+
+        WU-5A2 back-compat widening: an optional `ts` lets the Done handler thread
+        ONE captured `done_ts` so Neo4j `graded_at` and Postgres `last_evidence_at`
+        carry the IDENTICAL instant. A `datetime` is normalized via `.isoformat()`;
+        a string passes through verbatim; `None` (the legacy callers) falls back to
+        a fresh `_utc_now_iso()`.
         """
-        ts = _utc_now_iso()
+        if ts is None:
+            ts = _utc_now_iso()
+        elif isinstance(ts, datetime):
+            ts = ts.isoformat()
         try:
             async with self.neo.session() as s:
                 result = await s.run(

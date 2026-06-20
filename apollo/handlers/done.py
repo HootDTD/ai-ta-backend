@@ -14,13 +14,16 @@ proceed if any of them have not been touched with a negotiation move
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import ReviewRequiredError
+from apollo.grading.abstention import min_parser_confidence_of
 from apollo.handlers.done_grading import run_graph_simulation
+from apollo.handlers.learner_update import run_learner_update
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph, Node
 from apollo.overseer.coverage import compute_coverage
@@ -46,7 +49,6 @@ from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.persistence.progress_repo import apply_xp
 from apollo.schemas.problem import Problem
 
-
 # P3.6 — Done-gate constants. The conf threshold (0.6) is intentionally
 # below the OLM-invite threshold (0.7): the invite is opportunistic;
 # the Done-gate is the final brake. Dropping below 0.6 means "the parser
@@ -69,6 +71,16 @@ _GRAPH_SIM_SHADOW_FLAG: str = "APOLLO_GRAPH_SIM_SHADOW_ENABLED"
 # chain REPLACE them. This gates only PROMOTION, NOT the shadow computation.
 _GRAPH_SIM_LIVE_FLAG: str = "APOLLO_GRAPH_SIM_LIVE_ENABLED"
 
+# WU-5A2 — the Layer-3 belief-PERSIST flag (default OFF EVERYWHERE incl. prod +
+# staging). When OFF (the only build state), the gated `run_learner_update` call
+# NEVER fires and `handle_done` is byte-identical to WU-4C2 (the shadow-flag-off
+# regression guard `test_done_shadow_route_postgres.py` me==0/ls==0 stays green).
+# When ON, the Done txn appends `apollo_mastery_events` + upserts
+# `apollo_learner_state` (the §3 Bayesian belief) all-or-nothing AFTER the shadow
+# persist. Flipping it ON is a later HUMAN calibration decision (same posture as
+# APOLLO_GRAPH_SIM_LIVE_ENABLED), NOT part of this build.
+_GRAPH_SIM_LAYER3_FLAG: str = "APOLLO_GRAPH_SIM_LAYER3_ENABLED"
+
 
 def _done_gate_enabled() -> bool:
     return os.environ.get(_DONE_GATE_FLAG, "").lower() in ("1", "true", "yes")
@@ -80,6 +92,10 @@ def _graph_sim_shadow_enabled() -> bool:
 
 def _graph_sim_live_enabled() -> bool:
     return os.environ.get(_GRAPH_SIM_LIVE_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _graph_sim_layer3_enabled() -> bool:
+    return os.environ.get(_GRAPH_SIM_LAYER3_FLAG, "").lower() in ("1", "true", "yes")
 
 
 def _flagged_entries(graph: KGGraph) -> list[tuple[Node, str]]:
@@ -239,7 +255,7 @@ async def handle_done(
     db: AsyncSession,
     neo: Neo4jClient,
     session_id: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     store = KGStore(db, neo)
 
     sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
@@ -342,7 +358,12 @@ async def handle_done(
     # RetentionError here surfaces (NO FALLBACK) WITHOUT voiding the grade; the
     # next Done / retry / janitor re-stamps idempotently. Δt-anchoring in
     # Layer-3 (§3) reads this stored value, never now().
-    await store.stamp_graded_at(attempt_id=attempt.id)
+    #
+    # WU-5A2: capture ONE `done_ts` and thread it into BOTH `stamp_graded_at`
+    # (Neo4j `graded_at`) AND `run_learner_update` (Postgres `last_evidence_at`)
+    # so the two stores stamp the IDENTICAL freeze instant (no second clock).
+    done_ts = datetime.now(UTC)
+    await store.stamp_graded_at(attempt_id=attempt.id, ts=done_ts)
 
     # The student-facing payload is constructed from OLD-path values ONLY. It is
     # byte-identical whether the shadow flag is on or off and whether the shadow
@@ -398,5 +419,26 @@ async def handle_done(
         if shadow is not None and _graph_sim_live_enabled():
             student_response["rubric"] = shadow.graph_sim_rubric
             student_response["diagnostic_narrative"] = shadow.diagnostic.narrative
+
+        # WU-5A2 — Layer-3 belief PERSIST (DORMANT; flag OFF in this build). When
+        # ON, after the shadow persist the Done txn appends `apollo_mastery_events`
+        # + upserts `apollo_learner_state` (the §3 Bayesian belief) all-or-nothing
+        # with `done_ts` as the single `last_evidence_at`/`updated_at` instant. The
+        # shadow result carries `audited`/`opposes_map`/`turn_order`; `parser_confidence`
+        # is the §6.6 MIN over the student graph's parser confidences; `grader_confidence`
+        # is derived in `persist_learner_update` from `shadow.normalization_confidence`.
+        # A raised shadow (e.g. pending) never reaches here, so the gate is guarded
+        # on `shadow is not None`; a Layer-3 failure sets `learner_update_pending`
+        # without voiding the already-committed grade (NO-FALLBACK).
+        if shadow is not None and _graph_sim_layer3_enabled():
+            parser_confidence = min_parser_confidence_of(student_graph.nodes)
+            await run_learner_update(
+                db,
+                sess=sess,
+                attempt=attempt,
+                shadow=shadow,
+                done_ts=done_ts,
+                parser_confidence=parser_confidence,
+            )
 
     return student_response

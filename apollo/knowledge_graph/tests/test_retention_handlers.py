@@ -13,7 +13,7 @@ modules are imported and called directly. Test attempt_ids are NEGATIVE.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 
@@ -169,7 +169,11 @@ async def test_done_stamps_graded_at():
 
         await handle_done(db=db, neo=neo, session_id=-20)
 
-    stamp_spy.assert_awaited_once_with(attempt_id=attempt.id)
+    # WU-5A2: done.py now threads the single `done_ts` into stamp_graded_at so
+    # Neo4j `graded_at` and Postgres `last_evidence_at` carry the IDENTICAL
+    # instant (contract 12). The retention guarantee (stamped once, post-commit)
+    # is unchanged — only the call now also carries `ts`.
+    stamp_spy.assert_awaited_once_with(attempt_id=attempt.id, ts=ANY)
     # stamp runs AFTER the grade commits (post-commit retention write).
     assert "stamp" in order
     assert order.index("stamp") > order.index("commit")
