@@ -146,6 +146,13 @@ def _record_to_node(props: dict[str, Any], labels: list[str]) -> Node:
     bag.pop("search_space_id", None)
     bag.pop("created_at", None)
     bag.pop("graded_at", None)
+    # WU-3C2 Layer-2 resolution node-fields (written by resolution_store after
+    # the §5 resolver). Also NODE METADATA — strip the four props so read_graph
+    # still round-trips byte-identically once resolution has stamped them.
+    bag.pop("resolution", None)
+    bag.pop("resolved_key", None)
+    bag.pop("resolution_method", None)
+    bag.pop("resolution_confidence", None)
 
     if node_type == "equation" and "symbolic" in bag and "latex" not in bag:
         tex = _equation_latex(bag["symbolic"])

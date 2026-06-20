@@ -19,3 +19,4 @@ sympy>=1.12
 aiosqlite
 pytest-asyncio
 neo4j>=5.27,<6
+rapidfuzz>=3.12,<4

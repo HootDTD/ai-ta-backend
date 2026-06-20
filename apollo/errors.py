@@ -164,3 +164,40 @@ class RetentionError(ApolloError):
         super().__init__(
             f"Retention operation failed for attempt {attempt_id}: {last_error}"
         )
+
+
+class ResolutionUnavailableError(ApolloError):
+    """Resolver INFRASTRUCTURE failure (the one LLM adjudication call failed /
+    timed out, or a Neo4j ``RESOLVES_TO`` / resolution-field write failed).
+
+    NO FALLBACK and — critically — must NOT void the earned grade: at Done the
+    grade/XP are already committed when resolution runs, so this surfaces loud
+    while the caller (WU-4A's Done orchestrator) sets
+    ``learner_update_pending = true`` on the attempt and the next Done / janitor
+    retry re-runs resolution idempotently (§5 NO-FALLBACK, §6.4 transaction
+    story). ``stage`` is one of
+    ``{"llm_adjudication", "write_resolves_to", "persist_fields"}`` (WU-3C2)."""
+
+    def __init__(self, *, stage: str, last_error: str) -> None:
+        self.stage = stage
+        self.last_error = last_error
+        super().__init__(
+            f"Resolution unavailable at stage {stage!r}: {last_error}"
+        )
+
+
+class ResolutionInvalidOutputError(ApolloError):
+    """The one LLM adjudication call returned a key that is NOT in the closed
+    candidate set (a hallucination).
+
+    Hard error (§5) — the resolver must never fabricate a resolution target.
+    Carries the offending ``returned_key`` plus the ``allowed_keys`` (the closed
+    candidate set) for the audit log (WU-3C2)."""
+
+    def __init__(self, *, returned_key: str, allowed_keys: tuple[str, ...]) -> None:
+        self.returned_key = returned_key
+        self.allowed_keys = allowed_keys
+        super().__init__(
+            f"Resolution adjudication returned hallucinated key {returned_key!r} "
+            f"not in the candidate set ({len(allowed_keys)} allowed keys)"
+        )
