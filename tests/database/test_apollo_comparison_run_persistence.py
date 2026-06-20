@@ -112,9 +112,7 @@ async def test_round_trip_all_columns(db_session):
     )
 
     run = (
-        await db_session.execute(
-            select(GraphComparisonRun).where(GraphComparisonRun.id == run_id)
-        )
+        await db_session.execute(select(GraphComparisonRun).where(GraphComparisonRun.id == run_id))
     ).scalar_one()
 
     assert run.attempt_id == attempt_id
@@ -198,9 +196,7 @@ async def test_abstention_reasons_jsonb_roundtrip(db_session):
         reference_graph_hash=_REF_HASH,
     )
     run = (
-        await db_session.execute(
-            select(GraphComparisonRun).where(GraphComparisonRun.id == run_id)
-        )
+        await db_session.execute(select(GraphComparisonRun).where(GraphComparisonRun.id == run_id))
     ).scalar_one()
     assert run.abstention_reasons == [
         "unresolved_rate_above_threshold",
@@ -228,9 +224,7 @@ async def test_nullable_subscores_persist_null(db_session):
         reference_graph_hash=_REF_HASH,
     )
     run = (
-        await db_session.execute(
-            select(GraphComparisonRun).where(GraphComparisonRun.id == run_id)
-        )
+        await db_session.execute(select(GraphComparisonRun).where(GraphComparisonRun.id == run_id))
     ).scalar_one()
     assert run.node_coverage_score is None
     assert run.scoping_score is None
@@ -359,9 +353,7 @@ async def test_abstained_run_still_persists(db_session):
         reference_graph_hash=_REF_HASH,
     )
     run = (
-        await db_session.execute(
-            select(GraphComparisonRun).where(GraphComparisonRun.id == run_id)
-        )
+        await db_session.execute(select(GraphComparisonRun).where(GraphComparisonRun.id == run_id))
     ).scalar_one()
     assert run.abstained is True
     assert await _count_findings_for_run(db_session, run_id) > 0
