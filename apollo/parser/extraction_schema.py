@@ -15,6 +15,7 @@ why all type-specific entry fields are present-and-nullable. This is a pure
 data builder (no LLM, no I/O); it lives in its own module so `parser_llm.py`
 does not grow an ~80-line schema literal.
 """
+
 from __future__ import annotations
 
 from apollo.ontology import EdgeType

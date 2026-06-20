@@ -46,7 +46,7 @@ def test_polar_near_miss_resolves_to_misconception_not_reference():
     )
     student_text = "pressure increases with speed"
     candidate_matches = [
-        ScoredMatch("s1", definition, method="fuzzy", score=0.93),    # raw: closer
+        ScoredMatch("s1", definition, method="fuzzy", score=0.93),  # raw: closer
         ScoredMatch("s1", misconception, method="fuzzy", score=0.90),  # within margin
     ]
     winner = apply_misconception_competition(student_text, candidate_matches)
@@ -58,15 +58,21 @@ def test_polarity_screen_rejects_direction_inverted_fuzzy():
     """A high-fuzzy candidate whose direction word is inverted relative to the
     student text is screened out (rejected) for a non-misconception target."""
     # student says pressure goes UP; alias says pressure goes DOWN -> inverted.
-    assert polarity_screen(
-        "pressure goes up when speed rises",
-        "pressure goes down when speed rises",
-    ) is False
+    assert (
+        polarity_screen(
+            "pressure goes up when speed rises",
+            "pressure goes down when speed rises",
+        )
+        is False
+    )
     # same direction -> passes.
-    assert polarity_screen(
-        "pressure drops when speed rises",
-        "pressure goes down when speed rises",
-    ) is True
+    assert (
+        polarity_screen(
+            "pressure drops when speed rises",
+            "pressure goes down when speed rises",
+        )
+        is True
+    )
 
 
 def test_competition_returns_best_non_misconception_when_no_misc_present():
