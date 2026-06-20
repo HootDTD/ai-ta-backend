@@ -56,8 +56,7 @@ _PREFIX_TO_ENTRY_TYPE = {
 }
 
 SEED_DIR = (
-    Path(apollo.__file__).parent
-    / "subjects/fluid_mechanics/concepts/bernoulli_principle/problems"
+    Path(apollo.__file__).parent / "subjects/fluid_mechanics/concepts/bernoulli_principle/problems"
 )
 
 
@@ -135,7 +134,9 @@ def _problem(pid: str, difficulty: str, keys: set[str]) -> Problem:
         prefix, node_id = key.split(".", 1)
         entry_type = _PREFIX_TO_ENTRY_TYPE[prefix]
         if entry_type == "procedure_step":
-            assert eq_ids, f"_problem({pid!r}): a procedure_step key needs an equation key in {keys!r}"
+            assert eq_ids, (
+                f"_problem({pid!r}): a procedure_step key needs an equation key in {keys!r}"
+            )
             content = {
                 "order": proc_order,
                 "action": f"do {node_id}",
@@ -237,9 +238,7 @@ def test_locked_constants():
 @pytest.mark.unit
 def test_reference_entity_keys_constructed():
     p = _problem("p1", "intro", {"eq.continuity", "cond.incompressibility"})
-    assert reference_entity_keys(p) == frozenset(
-        {"eq.continuity", "cond.incompressibility"}
-    )
+    assert reference_entity_keys(p) == frozenset({"eq.continuity", "cond.incompressibility"})
 
 
 @pytest.mark.unit
@@ -429,9 +428,7 @@ def test_personalize_selection_cold_start_returns_candidates0():
     )
     # Pure replication of select_problem's filter branch (do NOT call the async fn).
     replicated = [
-        p
-        for p in sorted(pool, key=lambda p: p.id)
-        if p.difficulty == "intro" and p.id not in set()
+        p for p in sorted(pool, key=lambda p: p.id) if p.difficulty == "intro" and p.id not in set()
     ][0]
     assert chosen.id == replicated.id
     assert chosen.id == _P2_ID  # bernoulli_height_change_find_v2

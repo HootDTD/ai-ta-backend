@@ -200,8 +200,7 @@ async def test_migration_028_is_idempotent(_migrated_dsn):
         )
         assert n_cols == len(_EXPECTED_COLUMNS)
         idx = await conn.fetchval(
-            "SELECT count(*) FROM pg_indexes "
-            "WHERE indexname='apollo_problem_attempts_pending_idx'"
+            "SELECT count(*) FROM pg_indexes WHERE indexname='apollo_problem_attempts_pending_idx'"
         )
         assert idx == 1
     finally:
