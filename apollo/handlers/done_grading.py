@@ -28,6 +28,7 @@ consume them. It does NOT promote the shadow grade to student-facing (WU-4C2).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -41,10 +42,17 @@ from apollo.errors import (
     TranscriptAuditUnavailableError,
 )
 from apollo.grading.audited_grade import AuditedGrade, build_audited_grade
+from apollo.grading.calibration import CalibrationMetrics, compute_calibration_metrics
+from apollo.grading.diagnostic import (
+    ConstrainedDiagnostic,
+    generate_constrained_diagnostic,
+    main_chat_diagnostic_llm,
+)
 from apollo.grading.normalization_confidence import compute_normalization_confidence
 from apollo.grading.opposes import build_opposes_map
 from apollo.grading.persistence import persist_comparison_run
 from apollo.grading.reference_hash import reference_graph_hash
+from apollo.grading.rubric_mapping import build_graph_sim_rubric
 from apollo.grading.transcript_audit import main_chat_auditor
 from apollo.graph_compare.canonical import (
     build_reference_canonical,
@@ -67,6 +75,8 @@ from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.resolution import resolve_attempt
 from apollo.resolution.adjudication import main_chat_adjudicator
 
+_LOG = logging.getLogger(__name__)
+
 # The named infra errors that surface in the cross-store window (step 5+). These
 # DO set learner_update_pending (the grade is already committed; the retry re-runs
 # resolution idempotently). StudentGraph/Reference invalid are handled separately
@@ -81,7 +91,14 @@ _PENDING_ON_ERRORS = (
 @dataclass(frozen=True)
 class ShadowGradeResult:
     """The frozen handoff WU-4C2 (calibration metrics) and WU-5A (belief update)
-    both read. Carries everything the live chain computed for the shadow run."""
+    both read. Carries everything the live chain computed for the shadow run.
+
+    WU-4C2 EXTENDS it (all REQUIRED, no defaults — a half-populated calibration
+    result is a silent bug we do not want) with the graph-sim candidate grade
+    (``graph_sim_rubric``), the §6.7 ``calibration`` metrics (shadow-vs-OLD), and
+    the §6.8 constrained ``diagnostic``. These are computed INSIDE the shadow
+    chain (only when SHADOW is on); the dormant ``APOLLO_GRAPH_SIM_LIVE_ENABLED``
+    flag (``done.py``) gates only their PROMOTION to student-facing."""
 
     run_id: int
     grade: GradeResult
@@ -90,6 +107,10 @@ class ShadowGradeResult:
     reference_graph_hash: str
     opposes_map: Mapping[str, str]
     turn_order: Mapping[str, int]
+    # WU-4C2 — graph-sim candidate grade + calibration + constrained diagnostic.
+    graph_sim_rubric: dict
+    calibration: CalibrationMetrics
+    diagnostic: ConstrainedDiagnostic
 
 
 def _now_iso() -> str:
@@ -151,6 +172,7 @@ async def run_graph_simulation(
     sess: ApolloSession,
     student_graph: KGGraph,
     problem_payload: dict,
+    old_rubric: dict,
 ) -> ShadowGradeResult | None:
     """Run the full §6.4 chain in SHADOW and persist the comparison run + findings.
 
@@ -243,6 +265,33 @@ async def run_graph_simulation(
             db, neo, attempt_id=int(attempt.id), student_graph=student_graph
         )
 
+        # Step 12b (WU-4C2) — graph-sim candidate grade + §6.7 calibration + §6.8
+        # constrained diagnostic. Computed AFTER the run-txn commit on already-
+        # durable data; PURE (rubric/calibration) or soft-failing-injected (the
+        # diagnostic's llm never raises past its own template fallback). Runs
+        # INSIDE the existing try: so any defensive failure still follows the
+        # WU-4C1 NO-FALLBACK contract (sets pending, re-raises) — no new except.
+        graph_sim_rubric = build_graph_sim_rubric(
+            audited=audited,
+            reference_graph=reference_graph,
+            opposes_map=opposes_map,
+            turn_order=turn_order,
+        )
+        calibration = compute_calibration_metrics(
+            old_rubric=old_rubric, shadow_rubric=graph_sim_rubric
+        )
+        diagnostic = generate_constrained_diagnostic(
+            audited, llm=main_chat_diagnostic_llm
+        )
+        _LOG.info(
+            "graph_sim_calibration",
+            extra={
+                "letter_agreement": calibration.letter_agreement,
+                "overall_score_delta": calibration.overall_score_delta,
+                "divergent": calibration.divergent,
+            },
+        )
+
         # Step 13 — the frozen handoff.
         return ShadowGradeResult(
             run_id=run_id,
@@ -252,6 +301,9 @@ async def run_graph_simulation(
             reference_graph_hash=ref_hash,
             opposes_map=opposes_map,
             turn_order=turn_order,
+            graph_sim_rubric=graph_sim_rubric,
+            calibration=calibration,
+            diagnostic=diagnostic,
         )
     except ReferenceGraphInvalidError:
         # §6.6 in SHADOW v1: a bad reference blocks only the shadow run (the OLD

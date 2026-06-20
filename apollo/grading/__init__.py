@@ -58,6 +58,28 @@ from apollo.grading.transcript_audit import (
     audit_missing,
 )
 
+# WU-4C2 — calibration harness (§6.7) + rubric mapping (§6.4) + constrained
+# diagnostic (§6.8). Additive over WU-4B1/4B2/4B3.
+from apollo.grading.calibration import (
+    CALIBRATION_VERSION,
+    AxisDelta,
+    CalibrationMetrics,
+    compute_calibration_metrics,
+)
+from apollo.grading.diagnostic import (
+    ConstrainedDiagnostic,
+    DiagnosticFinding,
+    DiagnosticRequest,
+    generate_constrained_diagnostic,
+    main_chat_diagnostic_llm,
+)
+from apollo.grading.rubric_mapping import (
+    RubricMappingInput,
+    RubricRefNode,
+    build_graph_sim_rubric,
+    findings_to_rubric_input,
+)
+
 __all__ = [
     "audit_missing",
     "AuditResult",
@@ -90,4 +112,19 @@ __all__ = [
     "NORMALIZATION_CONFIDENCE_FLOOR_WHEN_NO_SCORED_NODES",
     "reference_graph_hash",
     "REFERENCE_HASH_VERSION",
+    # WU-4C2 — calibration (§6.7) + rubric mapping (§6.4) + constrained
+    # diagnostic (§6.8).
+    "CALIBRATION_VERSION",
+    "AxisDelta",
+    "CalibrationMetrics",
+    "compute_calibration_metrics",
+    "RubricMappingInput",
+    "RubricRefNode",
+    "build_graph_sim_rubric",
+    "findings_to_rubric_input",
+    "ConstrainedDiagnostic",
+    "DiagnosticFinding",
+    "DiagnosticRequest",
+    "generate_constrained_diagnostic",
+    "main_chat_diagnostic_llm",
 ]
