@@ -488,6 +488,19 @@ def _debug_error_detail(prefix: str, exc: Exception) -> str:
     return f"{prefix}: {type(exc).__name__}: {exc}"
 
 
+def _keywords_from_bundle(bundle: Any) -> List[str]:
+    """Robustly pull the ≤8-term keyword list off a ResearchBundle for write-only
+    persistence (§10 RQ5 hedge). Returns [] for a None/AUGMENT/cache bundle that
+    carries no found_terms. Does NOT re-cap at 8 — the bound is upstream in
+    extract_and_filter_keywords."""
+    terms = (
+        getattr(bundle, "found_terms", None)
+        or getattr(getattr(bundle, "metadata", None), "found_terms", None)
+        or []
+    )
+    return [str(t) for t in terms]
+
+
 async def _append_assistant_turn_and_refresh_async(
     *,
     auth: AuthContext,
@@ -495,6 +508,7 @@ async def _append_assistant_turn_and_refresh_async(
     search_space_id: int,
     assistant_content: str,
     citations: Optional[List[Dict[str, Any]]] = None,
+    keywords: Optional[List[str]] = None,  # §10 RQ5 hedge — write-only chat keywords
 ) -> None:
     async with get_async_session() as db_session:
         session = await get_chat_session_for_user(
@@ -521,6 +535,7 @@ async def _append_assistant_turn_and_refresh_async(
             content=assistant_content,
             model=os.getenv("SOLVER_MODEL", "gpt-4o"),
             citations=list(citations) if citations else None,
+            keywords=list(keywords) if keywords else None,  # None/empty -> [] in append_turn
         )
         await refresh_memory_summary(db_session, chat_session=session)
         session.updated_at = datetime.now(UTC)
@@ -534,6 +549,7 @@ def _append_assistant_turn_and_refresh(
     search_space_id: int,
     assistant_content: str,
     citations: Optional[List[Dict[str, Any]]] = None,
+    keywords: Optional[List[str]] = None,  # §10 RQ5 hedge — write-only chat keywords
 ) -> None:
     run_async(
         _append_assistant_turn_and_refresh_async(
@@ -542,6 +558,7 @@ def _append_assistant_turn_and_refresh(
             search_space_id=search_space_id,
             assistant_content=assistant_content,
             citations=citations,
+            keywords=keywords,
         )
     )
 
@@ -1855,6 +1872,7 @@ def post_ask(payload: AskRequest, request: Request):
             search_space_id=search_space_id,
             assistant_content=assistant_turn,
             citations=structured_citations,
+            keywords=_keywords_from_bundle(bundle),  # write-only; [] if bundle has none
         )
     except Exception:
         log.warning("Failed to persist assistant turn for chat_id=%s", chat_id, exc_info=True)
@@ -2138,6 +2156,7 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                         search_space_id=search_space_id,
                         assistant_content=answer_text.strip() or "[empty answer]",
                         citations=persist_citations,
+                        keywords=_keywords_from_bundle(bundle),
                     ),
                 )
             except Exception:
