@@ -36,7 +36,7 @@ from tests.database.test_seed_apollo_learner_model import (  # reuse the WU-3B h
 pytestmark = pytest.mark.integration
 
 
-async def test_symbolic_mappings_round_trips_into_concept_problem_payload(seeded_db):
+async def test_symbolic_mappings_round_trips_into_concept_problem_payload(seeded_db):  # noqa: F811 - pytest injects the re-exported fixture
     """The additive ``symbolic_mappings`` key survives the registry-equivalent
     disk-verbatim load AND the learner-model seed (write_disk=False)."""
     sa_dsn, plain = await seeded_db(_seed_one_course)
@@ -48,8 +48,7 @@ async def test_symbolic_mappings_round_trips_into_concept_problem_payload(seeded
 
     payload = await _fetchval(
         plain,
-        "SELECT payload FROM apollo_concept_problems "
-        "WHERE problem_code = $1",
+        "SELECT payload FROM apollo_concept_problems WHERE problem_code = $1",
         "bernoulli_horizontal_pipe_find_p2",
     )
     # asyncpg returns JSONB as a JSON string; the WU-3B harness decodes with
