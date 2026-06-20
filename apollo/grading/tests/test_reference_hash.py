@@ -66,10 +66,7 @@ def test_same_graph_same_hash():
     h1 = reference_graph_hash(_reference())
     h2 = reference_graph_hash(_reference())
     assert h1 == h2
-    assert (
-        h1
-        == "refhash-v1:7539e0f3151bb0326eac081b976d9674de2b87747737e655f53229992be0c222"
-    )
+    assert h1 == "refhash-v1:7539e0f3151bb0326eac081b976d9674de2b87747737e655f53229992be0c222"
 
 
 def test_edited_node_changes_hash():
