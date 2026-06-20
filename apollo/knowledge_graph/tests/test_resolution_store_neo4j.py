@@ -171,9 +171,7 @@ async def test_re_resolution_is_idempotent_merge(tc_neo4j):
     await _write_node_direct(tc_neo4j, aid, _eq("s1", aid))
     await _seed_canon(tc_neo4j, 1)
     result = ResolutionResult(
-        resolved=(
-            ResolvedNode("s1", "resolved", "eq.continuity", 1, "exact", 1.0),
-        ),
+        resolved=(ResolvedNode("s1", "resolved", "eq.continuity", 1, "exact", 1.0),),
         tier_counts={"exact": 1},
         llm_calls=0,
     )
@@ -206,6 +204,7 @@ async def test_write_resolution_edges_and_fields_counts(tc_neo4j):
 # ---------------------------------------------------------------------------
 # FOLDED WU-3C1 deferred nit — write_nodes scoping props persist + strip on read.
 # ---------------------------------------------------------------------------
+
 
 async def test_write_nodes_scoping_props_persist_and_strip_on_read(tc_neo4j):
     aid = -707
