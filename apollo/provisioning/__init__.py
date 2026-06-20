@@ -22,6 +22,18 @@ from __future__ import annotations
 from apollo.provisioning.dedup import DedupVerdict, resolve_candidate
 from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promotion_lint import PromotionResult, run_promotion_lint
+from apollo.provisioning.scrape import (
+    CandidateQuestion,
+    ScrapeResult,
+    scrape_questions,
+    write_tier1_problems,
+)
+from apollo.provisioning.tag_mint import (
+    ApprovedPair,
+    MintPlan,
+    TagMintError,
+    tag_and_mint,
+)
 
 __all__ = [
     "PromotionResult",
@@ -29,4 +41,14 @@ __all__ = [
     "problem_dup_hash",
     "DedupVerdict",
     "resolve_candidate",
+    # WU-3B2d — scrape (stage 1) public surface
+    "CandidateQuestion",
+    "ScrapeResult",
+    "scrape_questions",
+    "write_tier1_problems",
+    # WU-3B2d — tag/mint (stage 4) public surface
+    "ApprovedPair",
+    "MintPlan",
+    "TagMintError",
+    "tag_and_mint",
 ]
