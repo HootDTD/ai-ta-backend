@@ -29,6 +29,7 @@ until the ADJ #12 calibration step passes (see ``docs/architecture/apollo.md``).
 
 from __future__ import annotations
 
+import json
 import logging
 import statistics
 from collections.abc import Mapping, Sequence
@@ -54,13 +55,33 @@ _LOG = logging.getLogger(__name__)
 
 # A per-problem coverage matrix: reference-node key -> per-attempt "missing?"
 # flags. All sequences share length N (the graded-attempt count). Keyed by the
-# node's stable id (``str(entity_id)`` at the sweep boundary; arbitrary hashable
-# in fixtures).
+# node's stable id (``_node_key(reference_node_ids)`` at the sweep boundary;
+# arbitrary hashable in fixtures).
 CoverageMatrix = Mapping[str, Sequence[bool]]
 
 # Only an explicit missing-node finding counts as a miss. A node absent from an
 # attempt's findings is NOT a miss for that attempt.
 _MISSING_NODE = "missing_node"
+
+
+def _node_key(reference_node_ids: object) -> str | None:
+    """Derive the STABLE per-node key for a ``missing_node`` finding.
+
+    The PRODUCTION grading core (``apollo/grading/persistence.py``
+    ``finding_to_row_spec``) hardcodes ``entity_id=None`` in v1 and carries the
+    missing reference node's identity in ``reference_node_ids`` (a JSONB list ==
+    the canonical reference node's source step ids; see
+    ``apollo/graph_compare/findings.py`` ``missing_finding``). So the sweep MUST
+    key on ``reference_node_ids``, NOT ``entity_id`` (keying on the always-NULL
+    ``entity_id`` would make quarantine inert against real data).
+
+    Returns a deterministic JSON-canonical string over the SORTED id list, or
+    ``None`` when the list is empty / not a list — a finding with no resolvable
+    reference node carries no node identity and must be EXCLUDED from the per-node
+    aggregation (it must never collapse into a phantom node)."""
+    if not isinstance(reference_node_ids, (list, tuple)) or not reference_node_ids:
+        return None
+    return json.dumps(sorted(str(rid) for rid in reference_node_ids))
 
 
 def _now() -> datetime:
@@ -173,36 +194,38 @@ async def _aggregate_misses(
     """Per-(problem_code, search_space_id) -> {node_key -> miss_count}.
 
     The §9 OPS-3 join: findings -> runs -> attempts, filtered to
-    ``missing_node`` findings with a NON-NULL ``entity_id`` (a pruned-entity
-    finding carries no resolvable node identity — it must never become a phantom
-    node). Optionally course-scoped by ``runs.search_space_id``.
+    ``missing_node`` findings. The per-node key is ``_node_key`` over each
+    finding's ``reference_node_ids`` JSONB list — the field the PRODUCTION
+    grading core populates (``entity_id`` is hardcoded NULL in v1). A finding
+    with an EMPTY ``reference_node_ids`` carries no resolvable node identity and
+    is EXCLUDED (``_node_key`` returns ``None``) so it never becomes a phantom
+    node. Optionally course-scoped by ``runs.search_space_id``.
+
+    Counting is done row-by-row in Python (the node key is a JSON-canonicalized
+    list, not a scalar column, so a SQL ``GROUP BY`` on it is non-portable across
+    the pgvector/sqlite variant — selecting the raw list per finding keeps the
+    keying logic in ONE place, ``_node_key``).
     """
     stmt = (
         select(
             ProblemAttempt.problem_id,
             GraphComparisonRun.search_space_id,
-            GraphComparisonFinding.entity_id,
-            func.count().label("miss_count"),
+            GraphComparisonFinding.reference_node_ids,
         )
         .join(GraphComparisonRun, GraphComparisonFinding.run_id == GraphComparisonRun.id)
         .join(ProblemAttempt, GraphComparisonRun.attempt_id == ProblemAttempt.id)
-        .where(
-            GraphComparisonFinding.finding_kind == _MISSING_NODE,
-            GraphComparisonFinding.entity_id.is_not(None),
-        )
-        .group_by(
-            ProblemAttempt.problem_id,
-            GraphComparisonRun.search_space_id,
-            GraphComparisonFinding.entity_id,
-        )
+        .where(GraphComparisonFinding.finding_kind == _MISSING_NODE)
     )
     if search_space_id is not None:
         stmt = stmt.where(GraphComparisonRun.search_space_id == search_space_id)
 
     misses: dict[tuple[str, int], dict[str, int]] = {}
-    for problem_code, sid, entity_id, miss_count in (await db.execute(stmt)).all():
-        key = (problem_code, sid)
-        misses.setdefault(key, {})[str(entity_id)] = int(miss_count)
+    for problem_code, sid, reference_node_ids in (await db.execute(stmt)).all():
+        node_key = _node_key(reference_node_ids)
+        if node_key is None:
+            continue  # no resolvable reference node — never a phantom node
+        group = misses.setdefault((problem_code, sid), {})
+        group[node_key] = group.get(node_key, 0) + 1
     return misses
 
 
@@ -241,9 +264,19 @@ def _build_coverage_matrix(
 
     A node missed ``c`` of N attempts becomes ``c`` True flags then ``N-c``
     False — order is irrelevant to ``quarantine_decision`` (it only counts), so
-    a count-faithful reconstruction is exact for the statistic."""
+    a count-faithful reconstruction is exact for the statistic.
+
+    ``miss_count`` is CLAMPED to ``n_attempts`` via ``min(...)``: the two values
+    come from independent queries (``miss_count`` = COUNT of missing_node finding
+    rows for the node; ``n_attempts`` = COUNT-DISTINCT graded attempts), and if a
+    single graded attempt ever carried >1 missing_node finding for the SAME node
+    key, an unclamped ``c > N`` would produce a NEGATIVE-length False list,
+    yielding a ragged matrix longer than the others (the §review LOW). Clamping
+    pins every sequence to exactly length N so the statistic stays well-formed; a
+    saturated node simply reads as missed in ALL N attempts (m == 1.0)."""
     return {
-        node_key: [True] * miss_count + [False] * (n_attempts - miss_count)
+        node_key: [True] * min(miss_count, n_attempts)
+        + [False] * (n_attempts - min(miss_count, n_attempts))
         for node_key, miss_count in node_misses.items()
     }
 
