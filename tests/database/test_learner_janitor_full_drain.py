@@ -157,9 +157,7 @@ async def _bound_session(db):
     yield db
 
 
-async def test_full_drain_reads_frozen_graph_from_real_neo4j(
-    db_session, neo4j_client, monkeypatch
-):
+async def test_full_drain_reads_frozen_graph_from_real_neo4j(db_session, neo4j_client, monkeypatch):
     monkeypatch.setenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", "true")
     monkeypatch.setenv("APOLLO_GRAPH_SIM_LAYER3_ENABLED", "1")
 
@@ -171,20 +169,21 @@ async def test_full_drain_reads_frozen_graph_from_real_neo4j(
     stamped = await store.stamp_graded_at(attempt_id=attempt.id, ts=_GRADED_AT)
     assert stamped == 1  # the one node carries the frozen done_ts
 
-    monkeypatch.setattr(
-        learner_janitor, "get_async_session", lambda: _bound_session(db_session)
-    )
+    monkeypatch.setattr(learner_janitor, "get_async_session", lambda: _bound_session(db_session))
 
     # Stub ONLY the LLM; Neo4j is the real Testcontainers graph.
-    with patch(
-        "apollo.handlers.done_grading.main_chat_adjudicator", new=_adjudicator_stub
-    ), patch(
-        "apollo.handlers.done_grading.main_chat_auditor", new=_auditor_stub
+    with (
+        patch("apollo.handlers.done_grading.main_chat_adjudicator", new=_adjudicator_stub),
+        patch("apollo.handlers.done_grading.main_chat_auditor", new=_auditor_stub),
     ):
         result = await drain_pending_attempts(neo4j_client, limit=1)
 
     assert result == DrainResult(
-        claimed=1, succeeded=1, dead_lettered=0, retried=0, deferred=0,
+        claimed=1,
+        succeeded=1,
+        dead_lettered=0,
+        retried=0,
+        deferred=0,
         backlog_remaining=0,
     )
 
@@ -200,8 +199,6 @@ async def test_full_drain_reads_frozen_graph_from_real_neo4j(
     # The Δt anchor is the FROZEN Neo4j graded_at instant the drain rebuilt — NOT
     # now(). build_rerun_inputs read the real graded_at off the Testcontainers node.
     state = (
-        await db_session.execute(
-            select(LearnerState).where(LearnerState.user_id == TEST_USER_ID)
-        )
+        await db_session.execute(select(LearnerState).where(LearnerState.user_id == TEST_USER_ID))
     ).scalar_one()
     assert state.last_evidence_at == _GRADED_AT

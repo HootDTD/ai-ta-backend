@@ -23,6 +23,7 @@ daemon — that would put the drain on a different loop than the signal handlers
 Activation is a HUMAN deploy step (scale the Railway process from 0 replicas and
 flip the flag); see ``docs/architecture/_overview.md``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -66,9 +67,7 @@ async def _run_one_iteration(neo, *, stop_event: asyncio.Event) -> None:
     """
     if _janitor_enabled():
         try:
-            result = await drain_pending_attempts(
-                neo, limit=SWEEP_LIMIT, max_attempts=MAX_ATTEMPTS
-            )
+            result = await drain_pending_attempts(neo, limit=SWEEP_LIMIT, max_attempts=MAX_ATTEMPTS)
             _LOG.info(
                 "apollo_janitor_sweep",
                 extra={
@@ -106,9 +105,7 @@ async def _loop(neo, *, stop_event: asyncio.Event) -> None:
     _LOG.info("apollo_janitor_worker_stopped")
 
 
-def _install_signal_handlers(
-    loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event
-) -> None:
+def _install_signal_handlers(loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event) -> None:
     """Register SIGINT + SIGTERM to set ``stop_event`` (cooperative cancel).
 
     ``stop_event.set`` (the bound, no-arg method) is the callback —
@@ -120,9 +117,7 @@ def _install_signal_handlers(
         try:
             loop.add_signal_handler(sig, stop_event.set)
         except (NotImplementedError, RuntimeError):
-            _LOG.warning(
-                "apollo_janitor_signal_handler_unsupported", extra={"signal": sig}
-            )
+            _LOG.warning("apollo_janitor_signal_handler_unsupported", extra={"signal": sig})
 
 
 async def main() -> None:
@@ -141,7 +136,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover - manual entrypoint
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     asyncio.run(main())

@@ -173,9 +173,7 @@ def _post_check(narrative: str, request: DiagnosticRequest) -> tuple[str, ...]:
     spans is allowed)."""
     failures: list[str] = []
     failures.extend(_claims_covered_for_missing(narrative, request.missing_keys))
-    failures.extend(
-        _introduces_unknown_misconception(narrative, request.misconception_keys)
-    )
+    failures.extend(_introduces_unknown_misconception(narrative, request.misconception_keys))
     return tuple(failures)
 
 
@@ -185,16 +183,8 @@ def _template_narrative(request: DiagnosticRequest) -> str:
     keys deterministically."""
     covered = ", ".join(request.covered_keys) if request.covered_keys else "none"
     missing = ", ".join(request.missing_keys) if request.missing_keys else "none"
-    misc = (
-        ", ".join(request.misconception_keys)
-        if request.misconception_keys
-        else "none"
-    )
-    return (
-        f"Covered: {covered}. "
-        f"Missing: {missing}. "
-        f"Misconceptions flagged: {misc}."
-    )
+    misc = ", ".join(request.misconception_keys) if request.misconception_keys else "none"
+    return f"Covered: {covered}. Missing: {missing}. Misconceptions flagged: {misc}."
 
 
 def _call_llm_safely(
