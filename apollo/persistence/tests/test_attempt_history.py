@@ -37,7 +37,7 @@ async def _mk_session(
     s = ApolloSession(
         user_id=user_id,
         search_space_id=TEST_SPACE_ID,
-        concept_cluster_id="fluid_mechanics",
+        concept_id=1,
         status=status,
         phase=SessionPhase.TEACHING.value,
         current_problem_id="p1",

@@ -55,7 +55,7 @@ async def db_session_attempt():
         sess = ApolloSession(
             user_id=TEST_USER_ID,
             search_space_id=TEST_SPACE_ID,
-            concept_cluster_id="fluid_mechanics",
+            concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.TEACHING.value,
             current_problem_id="bernoulli_horizontal_pipe_find_p2",
@@ -113,9 +113,13 @@ def _patches(store):
             return_value=IntentVerdict(intent="teaching", confidence=1.0, reason=""),
         ),
         patch("apollo.handlers.chat.load_windowed_history", new=AsyncMock(return_value=(None, []))),
+        # WU-3D: concept now resolves from the DB; _find_problem is async.
         patch(
             "apollo.handlers.chat._find_problem",
-            return_value=MagicMock(problem_text="find P2 in a horizontal pipe"),
+            new=AsyncMock(return_value=MagicMock(problem_text="find P2 in a horizontal pipe")),
+        ),
+        patch(
+            "apollo.handlers.chat.load_concept_definition", new=AsyncMock(return_value=MagicMock())
         ),
     ]
 
@@ -143,7 +147,7 @@ async def test_chat_threads_graph_context_into_parser(db_session_attempt):
     prior = KGGraph(nodes=[_eq("eq_prev", attempt_id, label="continuity")])
     store = _fake_store(prior_graph=prior)
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
         mock_parse.return_value = ([], [])
         from apollo.handlers.chat import handle_chat
 
@@ -162,7 +166,7 @@ async def test_chat_passes_built_context_not_none(db_session_attempt):
     prior = KGGraph(nodes=[_eq("eq_prev", attempt_id)])
     store = _fake_store(prior_graph=prior)
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
         mock_parse.return_value = ([], [])
         from apollo.handlers.chat import handle_chat
 
@@ -178,7 +182,7 @@ async def test_chat_empty_prior_graph_passes_empty_context(db_session_attempt):
     db, session_id, attempt_id = db_session_attempt
     store = _fake_store(prior_graph=KGGraph())
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
         mock_parse.return_value = ([], [])
         from apollo.handlers.chat import handle_chat
 
@@ -203,7 +207,7 @@ async def test_chat_does_not_recreate_prior_node(db_session_attempt):
     # store reports 1 created (the new one) — reused not counted.
     store = _fake_store(prior_graph=prior, nodes_added=1)
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
         mock_parse.return_value = ([reused, new], [])
         from apollo.handlers.chat import handle_chat
 
@@ -222,7 +226,7 @@ async def test_chat_response_envelope_unchanged(db_session_attempt):
     db, session_id, attempt_id = db_session_attempt
     store = _fake_store(prior_graph=KGGraph())
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
         mock_parse.return_value = ([], [])
         from apollo.handlers.chat import handle_chat
 
@@ -242,7 +246,7 @@ async def test_chat_writes_edges_after_nodes(db_session_attempt):
         side_effect=lambda **k: order.append("edges") or WriteEdgesResult(written=0)
     )
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
         mock_parse.return_value = ([], [])
         from apollo.handlers.chat import handle_chat
 

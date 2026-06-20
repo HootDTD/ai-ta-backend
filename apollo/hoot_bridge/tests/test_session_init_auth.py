@@ -8,6 +8,8 @@ the auth-scoping tests, while the legacy file is left untouched.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
@@ -19,6 +21,12 @@ from apollo.hoot_bridge.session_init import init_session_from_hoot
 from apollo.persistence.models import ApolloSession, ProblemAttempt, SessionPhase, SessionStatus
 from apollo.schemas.problem import Problem, ReferenceStep
 from database.models import Base
+
+# WU-3D: the concept signal is now an int concept_id (not a cluster string); the
+# curriculum readers are async DB calls. These tests stay on SQLite by mocking
+# the concept-resolution + problem-selection I/O entirely (no apollo_concepts
+# rows needed), and assert apollo_sessions.concept_id is populated.
+_STUB_CONCEPT_ID = 7
 
 # ---------------------------------------------------------------------------
 # Stable in-memory stub returned by the patched select_problem
@@ -49,16 +57,24 @@ _STUB_PROBLEM = Problem(
 
 
 def _mock_inference_and_selection(monkeypatch) -> None:
-    """Patch both external I/O calls (LLM inference + file-based problem selection)
-    so tests are fully hermetic — no OpenAI key or apollo/subjects/ data files needed.
+    """Patch the concept-resolution + problem-selection I/O so tests are fully
+    hermetic — no OpenAI key and no apollo_concepts rows needed.
+
+    The candidate-list read (``list_course_concepts``) and the DB problem
+    selection (``select_problem``) are async; ``infer_concept_id`` is the sync
+    LLM hop returning the chosen concept_id.
     """
     monkeypatch.setattr(
-        "apollo.hoot_bridge.session_init.infer_concept_cluster",
-        lambda **kwargs: "fluid_mechanics",
+        "apollo.hoot_bridge.session_init.list_course_concepts",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "apollo.hoot_bridge.session_init.infer_concept_id",
+        lambda **kwargs: _STUB_CONCEPT_ID,
     )
     monkeypatch.setattr(
         "apollo.hoot_bridge.session_init.select_problem",
-        lambda **kwargs: _STUB_PROBLEM,
+        AsyncMock(return_value=_STUB_PROBLEM),
     )
 
 
@@ -118,7 +134,7 @@ async def test_init_session_creates_session_and_first_problem(db, monkeypatch):
     assert sess.search_space_id == TEST_SPACE_ID
     assert sess.status == SessionStatus.active.value
     assert sess.phase == SessionPhase.TEACHING.value
-    assert sess.concept_cluster_id == "fluid_mechanics"
+    assert sess.concept_id == _STUB_CONCEPT_ID
 
     pa = (await db.execute(select(ProblemAttempt))).scalar_one()
     assert pa.difficulty == "intro"
@@ -192,7 +208,11 @@ async def test_init_session_raises_on_no_match(db, monkeypatch):
         raise NoMatchingConceptError(transcript_summary="cooking")
 
     monkeypatch.setattr(
-        "apollo.hoot_bridge.session_init.infer_concept_cluster",
+        "apollo.hoot_bridge.session_init.list_course_concepts",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "apollo.hoot_bridge.session_init.infer_concept_id",
         _raise,
     )
     with pytest.raises(NoMatchingConceptError):

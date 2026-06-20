@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.knowledge_graph.store import KGStore
-from apollo.overseer.problem_selector import list_problems_for_cluster
+from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.persistence.models import ApolloSession, Message, ProblemAttempt, SessionPhase, SessionStatus
 from apollo.persistence.neo4j_client import Neo4jClient
 
@@ -75,8 +75,8 @@ async def handle_get_session(
         msgs = []
 
     problem = None
-    if sess.current_problem_id:
-        for p in list_problems_for_cluster(sess.concept_cluster_id):
+    if sess.current_problem_id and sess.concept_id is not None:
+        for p in await list_problems_for_concept(db, concept_id=sess.concept_id):
             if p.id == sess.current_problem_id:
                 problem = {
                     "id": p.id,
@@ -92,7 +92,7 @@ async def handle_get_session(
         "session_id": sess.id,
         "user_id": sess.user_id,
         "search_space_id": sess.search_space_id,
-        "concept_cluster_id": sess.concept_cluster_id,
+        "concept_id": sess.concept_id,
         "status": sess.status,
         "phase": sess.phase,
         "problem": problem,

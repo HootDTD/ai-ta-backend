@@ -12,7 +12,7 @@ tests are deterministic.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -36,7 +36,6 @@ from apollo.persistence.models import (
     SessionStatus,
 )
 from database.models import Base
-
 
 # ---------------------------------------------------------------------------
 # Pure helpers
@@ -97,7 +96,7 @@ async def db():
 @pytest_asyncio.fixture
 async def session(db: AsyncSession):
     s = ApolloSession(
-        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_cluster_id="x",
+        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_id=1,
         status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
     )
     db.add(s)
@@ -203,7 +202,7 @@ async def test_decide_respects_cooldown(monkeypatch, db, session):
     await _add_student_turn(db, s.id, a.id, 0, low_conf=True)
     await _add_student_turn(db, s.id, a.id, 1, low_conf=True)
     # An apollo invite fired 30s ago — well within the 60s cooldown.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await _add_apollo_turn(
         db, s.id, a.id, 2, fired=True,
         when=now - timedelta(seconds=30),
@@ -223,7 +222,7 @@ async def test_decide_fires_after_cooldown_elapsed(monkeypatch, db, session):
     monkeypatch.setenv("APOLLO_OLM_INVITES_ENABLED", "1")
     s, a = session
     await _add_student_turn(db, s.id, a.id, 0, low_conf=True)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # Last invite was COOLDOWN_SECONDS+10s ago.
     await _add_apollo_turn(
         db, s.id, a.id, 1, fired=True,
@@ -248,7 +247,7 @@ async def test_decide_unfired_apollo_turns_dont_block_cooldown(
     s, a = session
     await _add_student_turn(db, s.id, a.id, 0, low_conf=True)
     # An apollo turn that DID NOT fire an invite, recent.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await _add_apollo_turn(
         db, s.id, a.id, 1, fired=False, when=now - timedelta(seconds=5),
     )

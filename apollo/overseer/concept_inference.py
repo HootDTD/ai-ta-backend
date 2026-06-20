@@ -1,41 +1,60 @@
-"""Overseer.concept_inference: Hoot transcript → concept_cluster_id.
+"""Overseer.concept_inference: Hoot transcript -> concept_id.
 
-Isolated LLM call. The LLM is given the transcript and the list of
-concept clusters Apollo has problems for. It must return exactly one
-matching cluster_id or null. Apollo NEVER sees this call's output
-directly — only the Overseer uses it to select a problem.
+Isolated LLM call. The LLM is given the transcript and the course's candidate
+concepts (``{concept_id, display_name}``, drawn from ``apollo_concepts`` rows
+scoped to the course). It must return exactly one matching ``concept_id`` (int)
+from the provided set, or null. Apollo NEVER sees this call's output directly —
+only the Overseer uses it to select a problem.
+
+WU-3D §8A cutover: the candidate list changed from a hard-coded constant to a
+course-scoped query result threaded in by the handler. This stays a pure LLM
+call.
 """
+
 from __future__ import annotations
 
 import json
 import os
-from typing import List
 
 from openai import OpenAI
 
 from apollo.errors import NoMatchingConceptError
+from apollo.subjects.curriculum_db import ConceptRow
 
-_SYSTEM_PROMPT = """You are identifying which concept cluster a student was most
-recently learning about in a conversation. You will be given:
+_SYSTEM_PROMPT = """You are identifying which concept a student was most recently
+learning about in a conversation. You will be given:
 - the conversation transcript
-- the list of concept clusters that a downstream tool supports
+- the list of candidate concepts a downstream tool supports, each as
+  {"concept_id": <int>, "display_name": "<name>"}
 
-Return ONLY a JSON object of the form: {"cluster_id": "<one of the provided cluster ids, or null>"}
+Return ONLY a JSON object of the form: {"concept_id": <one of the provided concept_ids, or null>}
 
 Rules:
-- Pick the cluster whose topic was MOST RECENTLY the focus of the conversation.
-- If none of the provided clusters matches, return {"cluster_id": null}.
-- Do NOT invent cluster ids. Use exactly one of the provided ids, or null.
+- Pick the concept whose topic was MOST RECENTLY the focus of the conversation.
+- If none of the provided concepts matches, return {"concept_id": null}.
+- Do NOT invent concept ids. Use exactly one of the provided ids, or null.
 """
 
 
-def infer_concept_cluster(*, transcript: str, available_clusters: List[str], model: str | None = None) -> str:
+def infer_concept_id(
+    *, transcript: str, candidates: list[ConceptRow], model: str | None = None
+) -> int:
+    """Infer the single best-matching ``concept_id`` from ``candidates``.
+
+    Raises ``NoMatchingConceptError`` on null / unknown / invalid JSON (including
+    the empty-candidates "course has no curriculum" path, where the LLM can only
+    return null).
+    """
     model = model or os.getenv("MAIN_MODEL", "gpt-4o")
     client = OpenAI()
-    user_content = json.dumps({
-        "transcript": transcript,
-        "available_clusters": list(available_clusters),
-    })
+    user_content = json.dumps(
+        {
+            "transcript": transcript,
+            "candidate_concepts": [
+                {"concept_id": c.concept_id, "display_name": c.display_name} for c in candidates
+            ],
+        }
+    )
     resp = client.chat.completions.create(
         model=model,
         response_format={"type": "json_object"},
@@ -52,8 +71,11 @@ def infer_concept_cluster(*, transcript: str, available_clusters: List[str], mod
     except json.JSONDecodeError as exc:
         raise NoMatchingConceptError(transcript_summary=transcript[:200]) from exc
 
-    cluster = payload.get("cluster_id")
-    if cluster is None or cluster not in available_clusters:
+    returned = payload.get("concept_id")
+    allowed = {c.concept_id for c in candidates}
+    # Reject bool explicitly: in Python `True == 1`, so a JSON `true` would
+    # otherwise pass an `in {1, ...}` membership check.
+    if isinstance(returned, bool) or not isinstance(returned, int) or returned not in allowed:
         raise NoMatchingConceptError(transcript_summary=transcript[:200])
 
-    return cluster
+    return returned

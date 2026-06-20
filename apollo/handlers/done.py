@@ -28,9 +28,7 @@ from apollo.overseer.misconception import (
     MisconceptionSignal,
     summarize_for_rubric,
 )
-from apollo.overseer.problem_selector import (
-    list_problems_for_cluster,
-)
+from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.overseer.rubric import compute_rubric
 from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
 from apollo.persistence.attempt_history import has_prior_graded_attempt
@@ -180,11 +178,11 @@ async def _attempt_misconception_scores(
     return summarize_for_rubric(signals)
 
 
-def _find_problem(cluster_id: str, problem_id: str) -> Problem:
-    for p in list_problems_for_cluster(cluster_id):
-        if p.id == problem_id:
+async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) -> Problem:
+    for p in await list_problems_for_concept(db, concept_id=concept_id):
+        if p.id == problem_code:
             return p
-    raise RuntimeError(f"problem {problem_id!r} not in bank for cluster {cluster_id!r}")
+    raise RuntimeError(f"problem {problem_code!r} not in bank for cluster {concept_id!r}")
 
 
 async def handle_done(
@@ -196,7 +194,7 @@ async def handle_done(
     store = KGStore(db, neo)
 
     sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
-    problem = _find_problem(sess.concept_cluster_id, sess.current_problem_id)
+    problem = await _find_problem(db, sess.concept_id, sess.current_problem_id)
 
     attempt = (
         await db.execute(

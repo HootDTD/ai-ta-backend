@@ -40,7 +40,8 @@ class _Sess:
         self.status = kw.get("status", SessionStatus.active.value)
         self.phase = kw.get("phase", SessionPhase.TEACHING.value)
         self.current_problem_id = kw.get("current_problem_id", "p1")
-        self.concept_cluster_id = kw.get("concept_cluster_id", "continuity")
+        # WU-3D: the concept signal is the int concept_id FK (cluster string gone).
+        self.concept_id = kw.get("concept_id", 1)
 
 
 class _Attempt:
@@ -123,7 +124,7 @@ async def test_handle_end_does_not_delete_subgraph():
 
 
 async def test_done_stamps_graded_at():
-    sess = _Sess(id=-20, current_problem_id="p1", concept_cluster_id="continuity")
+    sess = _Sess(id=-20, current_problem_id="p1", concept_id=1)
     attempt = _Attempt(-201)
 
     db = _StubDB(
@@ -145,7 +146,7 @@ async def test_done_stamps_graded_at():
     fake_problem = _FakeProblem()
 
     with (
-        patch("apollo.handlers.done._find_problem", return_value=fake_problem),
+        patch("apollo.handlers.done._find_problem", new=AsyncMock(return_value=fake_problem)),
         patch("apollo.handlers.done.KGStore.read_graph", new_callable=AsyncMock) as read_graph,
         patch("apollo.handlers.done.KGStore.freeze", new_callable=AsyncMock),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", stamp_spy),

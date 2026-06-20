@@ -209,14 +209,11 @@ class ApolloSession(Base):
         nullable=False,
         index=True,
     )
-    # Legacy (TEXT, hardcoded mapping in problem_selector). Kept during the
-    # migration window for backward compatibility while seeded sessions
-    # exist; new sessions populate concept_id and ignore this column.
-    # Migration 022 will drop it once the cutover completes.
-    concept_cluster_id = Column(Text, nullable=True)
-    # FK into apollo_concepts (migration 018). All new code paths read
-    # concept_id from the session row and pass it as the only concept
-    # signal — no subject/concept slug strings appear in handler code.
+    # FK into apollo_concepts (migration 018). All code paths read concept_id
+    # from the session row and pass it as the only concept signal — no
+    # subject/concept slug strings appear in handler code. The legacy
+    # concept_cluster_id (TEXT) column was dropped in migration 027 (WU-3D §8A
+    # cutover) once the runtime stopped reading/writing it.
     concept_id = Column(
         BigInteger,
         ForeignKey("apollo_concepts.id", ondelete="RESTRICT"),
