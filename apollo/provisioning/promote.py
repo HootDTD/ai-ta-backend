@@ -134,12 +134,27 @@ async def promote(
             diagnostic=result.diagnostic,
         )
 
-    # --- PASS: flip tier 1->2 + store the annotated reference solution -------- #
+    # --- PASS: flip tier 1->2, RE-HOME to the tagged concept, store solution --- #
     row = await db.get(ConceptProblem, concept_problem_id)
-    new_payload = dict(row.payload or {})
-    new_payload["reference_solution"] = annotated["reference_solution"]
-    new_payload["declared_paths"] = annotated["declared_paths"]
-    row.payload = new_payload  # immutable assign (new dict, not in-place mutate)
+    # Store the COMPLETE annotated problem as the payload: the student selector
+    # (``list_problems_for_concept``) and the gate-8 dup-hash both validate the
+    # payload through ``Problem.model_validate``, so the promoted row's payload MUST
+    # be a full Problem (id/concept_id/difficulty/problem_text/given_values/
+    # target_unknown + the annotated reference_solution + declared_paths), not a
+    # Tier-1 inventory stub. ``annotated`` carries every original problem field
+    # (annotate_reference_solution returns a NEW dict of the whole problem) plus the
+    # entity_key per step + declared_paths. The Tier-1 row's existing keys (its
+    # content-derived ``id``) are preserved where the annotated dict does not set
+    # them. Immutable assign (a NEW dict — never an in-place mutate).
+    new_payload = {**(row.payload or {}), **annotated}
+    row.payload = new_payload
+    # RE-HOME the row from the provisional-inventory concept (scrape.py's seam home)
+    # onto the REAL tagged concept (``tag_and_mint`` resolved). The student selector
+    # ``list_problems_for_concept`` filters ``concept_id == <session concept> AND
+    # tier == 2`` (problem_selector.py); without this re-home a promoted Tier-2 row
+    # stranded on ``provisional.inventory`` is permanently UNREACHABLE. Idempotent: a
+    # re-run re-assigns the SAME tagged concept_id (no-op). (scrape.py:18.)
+    row.concept_id = mint_plan.concept_id
     row.tier = 2
     if not row.solution_source:
         row.solution_source = _SOLUTION_SOURCE_DEFAULT

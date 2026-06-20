@@ -39,7 +39,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +56,7 @@ from apollo.provisioning.pairing_gate import (
     rejection_from_verdict,
     validate_pair,
 )
+from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promote import PromoteResult, promote
 from apollo.provisioning.queue import ClaimedJob
 from apollo.provisioning.scrape import (
@@ -70,6 +71,7 @@ from apollo.provisioning.solution import (
     find_or_generate,
 )
 from apollo.provisioning.tag_mint import TagMintError, tag_and_mint
+from apollo.schemas.problem import Problem
 
 __all__ = ["run_provisioning", "ProvisioningOutcome"]
 
@@ -241,9 +243,9 @@ async def run_provisioning(
     run.started_at = _now()
     await db.flush()
 
-    if embed_fn is None:  # pragma: no cover - default wiring exercised at runtime
+    if embed_fn is None:
         from indexing.document_embedder import embed_text as embed_fn  # type: ignore
-    if retrieve_fn is None:  # pragma: no cover - default course-corpus adapter
+    if retrieve_fn is None:
         retrieve_fn = _default_retrieve_fn
 
     scraped = 0
@@ -271,7 +273,7 @@ async def run_provisioning(
         )
 
         for candidate in scrape_result.candidates:
-            outcome = await _process_candidate(
+            outcome, merged_delta = await _process_candidate(
                 db,
                 neo,
                 candidate=candidate,
@@ -286,7 +288,11 @@ async def run_provisioning(
                 promoted += 1
             elif outcome == "rejected":
                 rejected += 1
-            merged += 0  # dedup merges accrue inside tag_and_mint (3B2c); v1: 0
+            # ``merged_delta`` is the count of entity candidates ``tag_and_mint`` (3B2c
+            # dedup ladder) RESOLVED to an existing entity instead of minting fresh —
+            # ``len(mint_plan.merged_entity_keys)`` for this candidate. 0 when a
+            # candidate rejected before tag/mint or merged nothing.
+            merged += merged_delta
 
     except _PerDocumentError as exc:
         _record_stage_error(
@@ -336,6 +342,50 @@ async def run_provisioning(
     )
 
 
+def _tag_mint_chat_fn(metered_chat: MeteredChat) -> Callable[[str], str]:
+    """Adapt the keyword-only ``MeteredChat.cheap`` to the POSITIONAL-string
+    ``chat_fn`` contract ``tag_and_mint`` invokes (``chat_fn(json.dumps(problem))``
+    at ``tag_mint.py:_parse_tag``). Mirrors ``MeteredChat.scrape_chat_fn``: handing
+    ``metered_chat.cheap`` directly would raise ``TypeError`` because ``cheap`` is
+    ``def cheap(self, *, purpose, messages, ...)`` (keyword-only). The
+    ``find_or_generate``/``validate_pair`` stages call their callables WITH keywords,
+    so they consume ``.main``/``.cheap`` unchanged — only tag/mint needs this seam."""
+
+    def _chat_fn(prompt: str) -> str:
+        return metered_chat.cheap(
+            purpose="tag_mint",
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+    return _chat_fn
+
+
+async def _concept_dup_hashes(db: AsyncSession, *, concept_id: int) -> set[str]:
+    """Compute the concept-scoped gate-8 ``existing_problem_hashes`` set: load every
+    already-promoted (``tier=2``) ``apollo_concept_problems`` payload for this
+    BIGINT concept and apply the frozen ``problem_dup_hash`` to each. §8B.4 gate 8
+    is 'not already present FOR THIS COURSE'S CONCEPT' — the orchestrator (the
+    caller) supplies the concept-scoped set; an empty set would make gate 8 vacuous
+    (a duplicate problem would always re-promote). A payload that does not validate
+    as a ``Problem`` (e.g. a Tier-1 inventory stub) is skipped (it carries no
+    promotable content to dedup against)."""
+    rows = (
+        await db.execute(
+            select(ConceptProblem.payload)
+            .where(ConceptProblem.concept_id == concept_id)
+            .where(ConceptProblem.tier == 2)
+        )
+    ).scalars().all()
+    hashes: set[str] = set()
+    for payload in rows:
+        try:
+            problem = Problem.model_validate(payload)
+        except (ValidationError, ValueError):
+            continue
+        hashes.add(problem_dup_hash(problem))
+    return hashes
+
+
 async def _process_candidate(
     db: AsyncSession,
     neo,
@@ -347,8 +397,11 @@ async def _process_candidate(
     metered_chat: MeteredChat,
     embed_fn,
     retrieve_fn,
-) -> str:
-    """Run stages 2-5 for one candidate. Returns 'promoted' | 'rejected'.
+) -> tuple[str, int]:
+    """Run stages 2-5 for one candidate. Returns ``(outcome, merged_delta)`` where
+    ``outcome`` is 'promoted' | 'rejected' and ``merged_delta`` is the number of
+    entities ``tag_and_mint`` de-duplicated for this candidate (0 when it rejected
+    before tag/mint).
 
     A per-CANDIDATE rejection (pairing fail / lint fail) writes the rejection row
     and returns 'rejected' (the run continues). A per-DOCUMENT error raises a
@@ -384,13 +437,13 @@ async def _process_candidate(
             concept_id=provisional_concept_id,
             payload={"reason": rej.reason},
         )
-        return "rejected"
+        return "rejected", 0
 
     # --- stage 4: build_approved_pair + tag_and_mint ---------------------- #
     pair = build_approved_pair(candidate, draft, search_space_id=search_space_id)
     try:
         mint_plan = await tag_and_mint(
-            db, pair, chat_fn=metered_chat.cheap, embed_fn=embed_fn
+            db, pair, chat_fn=_tag_mint_chat_fn(metered_chat), embed_fn=embed_fn
         )
     except TagMintError as exc:
         raise _PerDocumentError(
@@ -399,16 +452,27 @@ async def _process_candidate(
     except CostBudgetExceeded as exc:
         raise _cost_abort(exc, stage="tag_mint") from exc
 
+    merged_delta = len(mint_plan.merged_entity_keys)
+
     # --- stage 5: promote (lint + :Canon) --------------------------------- #
     concept_problem_id = await _find_tier1_row_id(
         db,
         concept_id=provisional_concept_id,
         chunk_content_hash=candidate.chunk_content_hash,
     )
-    if concept_problem_id is None:  # pragma: no cover - write_tier1 always wrote it
+    if concept_problem_id is None:
+        # Defensive: ``write_tier1_problems`` already wrote this row earlier in the
+        # run, so a miss means a corrupted/raced inventory write — fail the run
+        # rather than promote a phantom row.
         raise _PerDocumentError(
             stage="promote", error_class="MissingTier1Row"
         )
+    # Gate 8 needs the concept-scoped dup-hash set of ALREADY-promoted problems on
+    # the REAL tagged concept (``mint_plan.concept_id``) — NOT an empty set (which
+    # makes gate 8 vacuous). Computed AFTER tag/mint resolved the tagged concept.
+    existing_problem_hashes = await _concept_dup_hashes(
+        db, concept_id=mint_plan.concept_id
+    )
     try:
         result: PromoteResult = await promote(
             db,
@@ -417,7 +481,7 @@ async def _process_candidate(
             mint_plan=mint_plan,
             search_space_id=search_space_id,
             concept_problem_id=concept_problem_id,
-            existing_problem_hashes=set(),
+            existing_problem_hashes=existing_problem_hashes,
         )
     except CanonProjectionError as exc:
         raise _PerDocumentError(
@@ -434,8 +498,8 @@ async def _process_candidate(
             concept_id=mint_plan.concept_id,
             payload={},
         )
-        return "rejected"
-    return "promoted"
+        return "rejected", merged_delta
+    return "promoted", merged_delta
 
 
 def _cost_abort(exc: CostBudgetExceeded, *, stage: str) -> _PerDocumentError:
@@ -484,7 +548,7 @@ async def _finalize(
     )
 
 
-async def _default_retrieve_fn(question) -> Sequence[GroundingSpan]:  # pragma: no cover
+async def _default_retrieve_fn(question) -> Sequence[GroundingSpan]:
     """The default course-corpus retrieval adapter for ``find_or_generate`` /
     ``validate_pair``. v1 returns no spans (the generate branch grounds on the
     question alone); the real hybrid-retrieval adapter is a Tier-2 nightly
