@@ -947,6 +947,13 @@ def _route_neo_stubs(attempt_id: int, *, stamp_mock):
         ),
         patch("apollo.handlers.done.KGStore.freeze", new=AsyncMock()),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=stamp_mock),
+        # WU-5B3a-0: the shadow chain now sources problem_payload via
+        # build_rerun_inputs, which reads the Neo4j graded_at; stub it non-empty so
+        # the live path never dead-letters (this is a Neo4j boundary call, like the
+        # read_graph/stamp_graded_at stubs above — KGStore is the same class object
+        # whether reached via done.py or done_inputs.py).
+        patch("apollo.handlers.done.KGStore.read_node_graded_at",
+              new=AsyncMock(return_value={"stu_continuity": "2026-06-18T00:00:02+00:00"})),
         patch("apollo.handlers.done_grading.write_resolution", new=AsyncMock(return_value=None)),
         patch(
             "apollo.handlers.done_turn_order.KGStore.read_node_created_at",

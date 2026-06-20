@@ -494,6 +494,34 @@ class KGStore:
                 out[record["node_id"]] = created_at
         return out
 
+    async def read_node_graded_at(self, *, attempt_id: int) -> dict[str, str]:
+        """node_id -> ``graded_at`` ISO string for every ``:_KGNode`` in the
+        per-attempt subgraph (WU-5B3a janitor done_ts source).
+
+        ``read_graph`` STRIPS ``graded_at`` (``bag.pop("graded_at", None)``), and
+        there is NO Postgres ``graded_at`` column — the frozen Done instant lives
+        ONLY on the Neo4j nodes (``stamp_graded_at``, stored as an ISO-8601 STRING
+        via ``.isoformat()``). The janitor (WU-5B3a-1) reads any one value (all
+        nodes of an attempt share the same ``done_ts``) and parses it tz-AWARE via
+        ``datetime.fromisoformat``. A node whose ``graded_at`` is absent
+        (never-stamped / legacy) is OMITTED; an EMPTY map (``{}``) means the
+        subgraph was never stamped → the janitor dead-letters
+        (``graded_at_missing``). Mirrors ``read_node_created_at``; NOT a schema
+        change."""
+        async with self.neo.session() as s:
+            result = await s.run(
+                "MATCH (n:_KGNode {attempt_id: $aid}) "
+                "RETURN n.node_id AS node_id, n.graded_at AS graded_at",
+                aid=attempt_id,
+            )
+            out: dict[str, str] = {}
+            async for record in result:
+                graded_at = record["graded_at"]
+                if graded_at is None:
+                    continue
+                out[record["node_id"]] = graded_at
+        return out
+
     async def walk_chain(
         self,
         *,

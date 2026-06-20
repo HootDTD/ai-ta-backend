@@ -280,6 +280,19 @@ class ProblemAttempt(Base):
     learner_update_pending = Column(
         Boolean, nullable=False, server_default=text("false"), default=False
     )
+    # WU-5B3a janitor (migration 028): dead-letter + exponential-backoff
+    # bookkeeping for the learner_update retry. WU-5B3a-0 maps these columns;
+    # the drain state machine (WU-5B3a-1) reads/writes them. server_default so
+    # raw-SQL/legacy/migration inserts see the default; default=... for ORM.
+    learner_update_attempts = Column(
+        Integer, nullable=False, server_default=text("0"), default=0
+    )
+    learner_update_failed_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    learner_update_last_error = Column(Text, nullable=True)
+    learner_update_next_attempt_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    learner_update_failed_permanently = Column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     session = relationship("ApolloSession", back_populates="problem_attempts")
