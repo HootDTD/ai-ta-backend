@@ -269,9 +269,7 @@ async def tag_and_mint(
     try:
         await link_opposes(db, concept_id=concept_id, key_to_id=key_to_id)
     except KeyError as exc:
-        raise TagMintError(
-            f"misconception opposes an unknown entity key {exc}"
-        ) from exc
+        raise TagMintError(f"misconception opposes an unknown entity key {exc}") from exc
 
     # --- 5b. Insert LLM-drafted prereq edges (fail-closed on a bad key) ----- #
     raw_pairs = tag.get("prereqs", []) or []
@@ -286,9 +284,7 @@ async def tag_and_mint(
     try:
         await insert_prereqs(db, key_to_id=key_to_id, pairs=prereq_pairs)
     except KeyError as exc:
-        raise TagMintError(
-            f"prereq draft references an unminted entity key {exc}"
-        ) from exc
+        raise TagMintError(f"prereq draft references an unminted entity key {exc}") from exc
 
     return MintPlan(
         concept_id=concept_id,
