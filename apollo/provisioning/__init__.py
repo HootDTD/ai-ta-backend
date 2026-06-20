@@ -19,7 +19,14 @@ run_promotion_lint, ...``) rather than owning it.
 
 from __future__ import annotations
 
+from apollo.provisioning.cost_constants import (
+    MAX_ATTEMPTS,
+    MODEL_PRICES,
+    PER_DOCUMENT_TOKEN_CEILING,
+    cost_usd_for,
+)
 from apollo.provisioning.dedup import DedupVerdict, resolve_candidate
+from apollo.provisioning.metered_chat import CostBudgetExceeded, MeteredChat
 from apollo.provisioning.pairing_gate import (
     PairingVerdict,
     Rejection,
@@ -28,6 +35,13 @@ from apollo.provisioning.pairing_gate import (
 )
 from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promotion_lint import PromotionResult, run_promotion_lint
+from apollo.provisioning.queue import (
+    ClaimedJob,
+    claim_provisioning_job,
+    complete_job,
+    fail_job,
+    release_job,
+)
 from apollo.provisioning.scrape import (
     CandidateQuestion,
     ScrapeResult,
@@ -77,4 +91,18 @@ __all__ = [
     "Rejection",
     "validate_pair",
     "rejection_from_verdict",
+    # WU-3B2f — SKIP-LOCKED claim/lease queue drain (queue.py)
+    "ClaimedJob",
+    "claim_provisioning_job",
+    "complete_job",
+    "fail_job",
+    "release_job",
+    # WU-3B2f — metered LLM client (metered_chat.py)
+    "MeteredChat",
+    "CostBudgetExceeded",
+    # WU-3B2f — cost/attempt constants (cost_constants.py)
+    "PER_DOCUMENT_TOKEN_CEILING",
+    "MAX_ATTEMPTS",
+    "MODEL_PRICES",
+    "cost_usd_for",
 ]
