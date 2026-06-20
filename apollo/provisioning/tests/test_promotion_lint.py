@@ -209,9 +209,15 @@ def test_seeded_bernoulli_passes_all_eight_gates():
 # --------------------------------------------------------------------------- #
 
 
-def test_gate1_fires_on_forbidden_edge_pair():
-    """A procedure_step whose uses_equations points at a NON-equation makes
-    Problem._resolve_references raise -> caught at gate 1."""
+def test_gate1_fires_on_uses_equations_pointing_at_non_equation():
+    """A procedure_step whose ``uses_equations`` points at a NON-equation
+    (``incompressibility`` is a condition) makes ``Problem._resolve_references``
+    RAISE inside gate 1's ``model_validate`` -> failed_gate == 1.
+
+    NOTE (test-honesty): this exercises gate 1's SCHEMA-VALIDATION path, not the
+    downstream ``to_kg_graph`` forbidden-edge ``except`` (that branch is provably
+    unreachable from a validated Problem and is marked ``# pragma: no cover`` —
+    see ``run_promotion_lint``). The name reflects the path actually taken."""
     graph = copy.deepcopy(_bernoulli_graph())
     # incompressibility is a condition, not an equation.
     _step(graph, "plan_apply_continuity")["content"]["uses_equations"] = [
@@ -264,6 +270,68 @@ def test_gate4_fires_on_foreign_symbol():
     result = _lint(graph)
     assert result.ok is False
     assert result.failed_gate == 4
+
+
+def test_equation_free_symbols_is_independent_of_global_sympy_cache():
+    """REGRESSION (test-honesty HIGH finding): ``_equation_free_symbols`` must
+    return the SAME set regardless of SymPy's process-global symbol cache.
+
+    ``parse_zero_form`` -> ``sympy.parse_expr`` auto-creates a foreign symbol from
+    that cache; the observed flake was gate 4's foreign-symbol verdict going
+    order-dependent (``x`` vanishing from ``free_symbols`` under some interleaving,
+    so it slipped to gate 7). ``_equation_free_symbols`` now ``clear_cache()``s
+    before every parse, so its output depends ONLY on the equation text. This test
+    pins that directly: compute the free symbols, deliberately POISON the global
+    cache with assumption-bearing variants of every symbol involved, recompute, and
+    assert the two sets are IDENTICAL and still contain the foreign ``x``.
+
+    DISCRIMINATION: with the ``clear_cache()`` line removed this still passes only
+    because the harness cannot force the rare poisoning that triggers the drop; the
+    load-bearing guarantee is the explicit cache clear, asserted via the
+    cache-independence equality below (any future poisoning that DID affect a parse
+    would break this equality)."""
+    from sympy import Symbol
+    from sympy.core.cache import clear_cache
+
+    from apollo.provisioning.promotion_lint import _equation_free_symbols
+
+    problem = Problem.model_validate(_bernoulli_graph())
+    step = next(s for s in problem.reference_solution if s.id == "continuity")
+    step.content["symbolic"] = "rho*A1*v1 - rho*A2*v2 + x"
+
+    clear_cache()
+    first = _equation_free_symbols(step)
+
+    # Poison the global cache with assumption-bearing variants of EVERY symbol the
+    # equation parses (name+assumptions are distinct cache keys; this is the closest
+    # reproducible analogue of the cross-test leakage that caused the flake).
+    poison = [
+        Symbol(name, **kw)
+        for name in ("x", "rho", "A1", "v1", "A2", "v2")
+        for kw in (dict(zero=True), dict(positive=True), dict(real=True))
+    ]
+    assert poison  # keep references live so the cache stays primed
+
+    second = _equation_free_symbols(step)
+
+    assert first == second  # cache-independent
+    assert "x" in second  # the foreign symbol survives -> gate 4 will fire
+
+
+def test_gate4_fires_on_foreign_symbol_under_poisoned_cache():
+    """End-to-end companion to the cache-independence test: even with the global
+    SymPy cache poisoned BEFORE the lint runs, gate 4 (the sole foreign-symbol
+    guard) still fires on a foreign ``x`` -> ``failed_gate == 4`` (NOT 7)."""
+    from sympy import Symbol
+
+    poison = [Symbol("x", zero=True), Symbol("x", positive=True), Symbol("x")]
+    assert poison  # prime the cache before the lint
+
+    graph = copy.deepcopy(_bernoulli_graph())
+    _step(graph, "continuity")["content"]["symbolic"] = "rho*A1*v1 - rho*A2*v2 + x"
+    result = _lint(graph)
+    assert result.ok is False
+    assert result.failed_gate == 4  # determinism pin holds: 4, never 7
 
 
 def test_gate5_fires_on_terminal_not_computing_target():
@@ -471,6 +539,36 @@ def test_cancelled_symbols_reads_variables_list():
         if step.entry_type == "simplification":
             step.content["variables"] = ["zeta"]
     assert "zeta" in _cancelled_symbols(problem)
+
+
+def test_gate7_skips_non_equation_id_in_nonterminal_uses_equations():
+    """White-box (test-honesty LOW finding): exercise the ``if u in free_by_eq``
+    FALSE arm of ``_gate_7``'s intermediate-collection loop.
+
+    A validated ``Problem`` forbids ``uses_equations`` pointing at a non-equation
+    (``_resolve_references`` raises), so this path is only reachable by mutating
+    the typed view post-validation. We point a NON-terminal procedure step's
+    ``uses_equations`` at ``incompressibility`` (a CONDITION id, NOT in
+    ``free_by_eq``). The false arm must simply SKIP that id without crashing
+    (gate 7 collects intermediates only from real equation ids)."""
+    from apollo.provisioning.promotion_lint import (
+        _equation_free_symbols,
+        _equation_steps,
+        _gate_7,
+    )
+
+    problem = Problem.model_validate(_bernoulli_graph())
+    free_by_eq = {s.id: _equation_free_symbols(s) for s in _equation_steps(problem)}
+    assert "incompressibility" not in free_by_eq  # the non-equation id we point at
+
+    for step in problem.reference_solution:
+        if step.id == "plan_apply_continuity":  # a NON-terminal procedure step
+            step.content["uses_equations"] = ["incompressibility"]
+
+    # The false arm skips the non-equation id without raising (KeyError would mean
+    # the guard is missing). Behavior is well-defined: gate 7 returns a verdict.
+    diag = _gate_7(problem)
+    assert diag is None or isinstance(diag, str)
 
 
 def test_gate5_passes_on_real_bernoulli():
