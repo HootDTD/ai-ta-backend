@@ -62,6 +62,7 @@ __all__ = [
 _LOG = logging.getLogger(__name__)
 
 _UNPARSEABLE_MARKER = "<unparseable judge response>"
+_NO_CLAIMS_MARKER = "<no claims decomposed>"
 
 
 class PairingVerdict(BaseModel):
@@ -234,10 +235,25 @@ async def validate_pair(
         return verdict
 
     claims = phase_b.get("claims", []) or []
+    parsed = [c for c in claims if isinstance(c, dict)]
+    if not parsed:
+        # Fail-CLOSED on a degenerate Phase-B response: a faithfulness judge that
+        # decomposes ZERO claims gives NO positive evidence of faithfulness (a
+        # real reference solution always has >=1 checkable claim). Reject rather
+        # than vacuously approve — mirrors the unparseable path, distinguished by
+        # _NO_CLAIMS_MARKER for an honest reject reason.
+        verdict = PairingVerdict(
+            paired=True,
+            faithful=False,
+            failed_claims=(_NO_CLAIMS_MARKER,),
+            confidence=confidence,
+        )
+        _log_verdict(verdict, draft)
+        return verdict
     failed = tuple(
         str(c.get("claim", ""))
-        for c in claims
-        if isinstance(c, dict) and not c.get("entailed", False)
+        for c in parsed
+        if not c.get("entailed", False)
     )
     faithful = not failed
     verdict = PairingVerdict(
@@ -279,6 +295,12 @@ def rejection_from_verdict(verdict: PairingVerdict) -> Rejection | None:
         return Rejection(
             reason="unparseable_judge",
             diagnostic="the judge response was unparseable (fail-closed reject)",
+            failed_claims=verdict.failed_claims,
+        )
+    if _NO_CLAIMS_MARKER in verdict.failed_claims:
+        return Rejection(
+            reason="no_claims_decomposed",
+            diagnostic="the faithfulness judge decomposed zero claims (fail-closed reject)",
             failed_claims=verdict.failed_claims,
         )
     if not verdict.paired:

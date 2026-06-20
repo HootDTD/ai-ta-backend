@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 # The not-yet-existing public names (RED on import until pairing_gate.py exists).
 from apollo.provisioning.pairing_gate import (
     PairingVerdict,
@@ -25,8 +23,8 @@ from apollo.provisioning.pairing_gate import (
     rejection_from_verdict,
     validate_pair,
 )
-from apollo.provisioning.solution import GroundingSpan, ReferenceSolutionDraft
 from apollo.provisioning.scrape import CandidateQuestion
+from apollo.provisioning.solution import GroundingSpan, ReferenceSolutionDraft
 
 # pytest.ini sets asyncio_mode = auto, so async tests need no mark.
 
@@ -296,6 +294,29 @@ async def test_validate_pair_rejects_unfaithful_claim():
     assert "fabricated claim" in verdict.failed_claims
 
 
+async def test_validate_pair_fails_closed_on_zero_decomposed_claims():
+    """Phase A paired, but Phase B decomposes ZERO claims (``{"claims": []}``) →
+    the judge produced NO positive evidence of faithfulness, so the gate FAILS
+    CLOSED (faithful=False) rather than vacuously approving. The verdict maps to a
+    distinct ``no_claims_decomposed`` rejection."""
+    judge = _judge_returning(
+        {"paired": True, "confidence": 0.9},
+        {"claims": []},
+    )
+    verdict = await validate_pair(
+        _candidate(),
+        _draft(),
+        retrieve_fn=_retrieve_returning([]),
+        judge_fn=judge,
+    )
+    assert verdict.paired is True
+    assert verdict.faithful is False
+    assert verdict.approved is False
+    rejection = rejection_from_verdict(verdict)
+    assert rejection is not None
+    assert rejection.reason == "no_claims_decomposed"
+
+
 # --------------------------------------------------------------------------- #
 # Step 9 — THE LOAD-BEARING FAIL-CLOSED tests
 # --------------------------------------------------------------------------- #
@@ -452,17 +473,33 @@ def test_solution_pairing_public_api_reexport():
     test_tag_mint_public_api_reexport)."""
     from apollo.provisioning import (
         GroundingSpan as ReGroundingSpan,
+    )
+    from apollo.provisioning import (
         PairingVerdict as RePairingVerdict,
+    )
+    from apollo.provisioning import (
         ReferenceSolutionDraft as ReDraft,
+    )
+    from apollo.provisioning import (
         Rejection as ReRejection,
+    )
+    from apollo.provisioning import (
         SolutionDraftError as ReSolutionDraftError,
+    )
+    from apollo.provisioning import (
         build_approved_pair as re_build_approved_pair,
+    )
+    from apollo.provisioning import (
         find_or_generate as re_find_or_generate,
-        rejection_from_verdict as re_rejection_from_verdict,
-        validate_pair as re_validate_pair,
     )
     from apollo.provisioning import pairing_gate as pg_mod
+    from apollo.provisioning import (
+        rejection_from_verdict as re_rejection_from_verdict,
+    )
     from apollo.provisioning import solution as sol_mod
+    from apollo.provisioning import (
+        validate_pair as re_validate_pair,
+    )
 
     assert ReGroundingSpan is sol_mod.GroundingSpan
     assert ReDraft is sol_mod.ReferenceSolutionDraft
