@@ -4,8 +4,7 @@ The grading package is the downstream orchestration surface; this module pins
 its public seam (every name importable from ``apollo.grading``), the RECON
 correction (the audit cap is ``0.75 == llm tier``, NOT a key in the frozen
 ``METHOD_CONFIDENCE_CAP``), the abstention-threshold shape, and that the named
-infra error is an :class:`ApolloError` but is NOT HTTP-registered here (WU-4C
-registers it).
+infra error is an :class:`ApolloError` now HTTP-registered (503) as of WU-4C1.
 """
 
 from __future__ import annotations
@@ -93,10 +92,11 @@ def test_abstention_thresholds_shape():
     }
 
 
-def test_error_is_apollo_error_not_http_registered():
-    """The named infra error is an ApolloError (NO-FALLBACK registry) but is not
-    yet wired into apollo/api.py's exception handlers (WU-4C registers it)."""
+def test_transcript_audit_error_is_apollo_error_and_http_registered():
+    """The named infra error is an ApolloError (NO-FALLBACK registry) and, as of
+    WU-4C1, IS wired into apollo/api.py's exception handlers (503 — the shadow
+    Done chain re-raises it; this WU-4B1 forward-guard flipped from `not in`)."""
     assert issubclass(TranscriptAuditUnavailableError, ApolloError)
 
     src = inspect.getsource(apollo_api.register_exception_handlers)
-    assert "TranscriptAuditUnavailableError" not in src
+    assert "TranscriptAuditUnavailableError" in src

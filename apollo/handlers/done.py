@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import ReviewRequiredError
+from apollo.handlers.done_grading import run_graph_simulation
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph, Node
 from apollo.overseer.coverage import compute_coverage
@@ -34,6 +35,8 @@ from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
 from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
     ApolloSession,
+    Concept,
+    ConceptProblem,
     KGNegotiation,
     Message,
     ProblemAttempt,
@@ -52,9 +55,20 @@ from apollo.schemas.problem import Problem
 _DONE_GATE_LOW_CONF: float = 0.6
 _DONE_GATE_FLAG: str = "APOLLO_DONE_GATE_ENABLED"
 
+# WU-4C1 — the SHADOW graph-simulation flag (default OFF in prod, ON in test).
+# When OFF, handle_done is byte-identical to today (the chain is never called).
+# When ON, the chain runs AFTER the OLD grade/XP/retention commit and persists a
+# comparison run + findings ALONGSIDE the unchanged student-facing grade. This is
+# NOT the promote-to-live flag (that is WU-4C2's APOLLO_GRAPH_SIM_LIVE_ENABLED).
+_GRAPH_SIM_SHADOW_FLAG: str = "APOLLO_GRAPH_SIM_SHADOW_ENABLED"
+
 
 def _done_gate_enabled() -> bool:
     return os.environ.get(_DONE_GATE_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _graph_sim_shadow_enabled() -> bool:
+    return os.environ.get(_GRAPH_SIM_SHADOW_FLAG, "").lower() in ("1", "true", "yes")
 
 
 def _flagged_entries(graph: KGGraph) -> list[tuple[Node, str]]:
@@ -185,6 +199,30 @@ async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) ->
     raise RuntimeError(f"problem {problem_code!r} not in bank for cluster {concept_id!r}")
 
 
+async def _find_problem_payload(
+    db: AsyncSession, *, concept_id: int, problem_code: str,
+) -> dict:
+    """Read the RAW ``ConceptProblem.payload`` dict for the chosen problem.
+
+    WU-4C1: the parsed :class:`Problem` schema (``schemas/problem.py``) DROPS the
+    ``declared_paths`` / ``symbolic_mappings`` / per-step ``entity_key`` fields the
+    graph-simulation chain needs (``Problem.model_validate`` silently discards
+    them). So the shadow chain reads the raw payload directly here, while the OLD
+    path keeps the parsed :class:`Problem` (``to_kg_graph`` / ``reference_solution``
+    / ``problem_text``). ``problem_code`` is the ``ConceptProblem.problem_code``
+    join key (same code ``_find_problem`` matches as ``Problem.id``).
+    """
+    payload = (
+        await db.execute(
+            select(ConceptProblem.payload)
+            .join(Concept, Concept.id == ConceptProblem.concept_id)
+            .where(Concept.id == concept_id)
+            .where(ConceptProblem.problem_code == problem_code)
+        )
+    ).scalar_one()
+    return payload
+
+
 async def handle_done(
     *,
     db: AsyncSession,
@@ -295,7 +333,10 @@ async def handle_done(
     # Layer-3 (§3) reads this stored value, never now().
     await store.stamp_graded_at(attempt_id=attempt.id)
 
-    return {
+    # The student-facing payload is constructed from OLD-path values ONLY. It is
+    # byte-identical whether the shadow flag is on or off and whether the shadow
+    # chain succeeds — the shadow result is NEVER merged into it (WU-4C1).
+    student_response = {
         "rubric": rubric,
         "diagnostic_narrative": diagnostic_narrative,
         "coverage": coverage,
@@ -320,3 +361,21 @@ async def handle_done(
         "level_after": envelope.level_after,
         "level_up": envelope.level_up,
     }
+
+    # WU-4C1 — SHADOW graph-simulation chain. Runs AFTER the OLD grade/XP/retention
+    # are fully durable, so any failure here surfaces a named error (the right HTTP
+    # status) WITHOUT voiding the already-committed student grade (NO-FALLBACK,
+    # mirrors RetentionError). The student_response above is NOT modified by it.
+    if _graph_sim_shadow_enabled():
+        problem_payload = await _find_problem_payload(
+            db, concept_id=sess.concept_id, problem_code=problem.id,
+        )
+        await run_graph_simulation(
+            db, neo,
+            attempt=attempt,
+            sess=sess,
+            student_graph=student_graph,
+            problem_payload=problem_payload,
+        )
+
+    return student_response

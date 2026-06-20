@@ -28,8 +28,15 @@ from apollo.errors import (
     NoMatchingConceptError,
     ParserCouldNotExtractError,
     PoolExhaustedError,
+    ResolutionInvalidOutputError,
+    ResolutionUnavailableError,
     ReviewRequiredError,
     SessionFrozenError,
+    TranscriptAuditUnavailableError,
+)
+from apollo.graph_compare.validator import (
+    ReferenceGraphInvalidError,
+    StudentGraphInvalidError,
 )
 from apollo.handlers.chat import handle_chat
 from apollo.handlers.done import handle_done
@@ -385,6 +392,74 @@ async def coverage_grading_handler(request: Request, exc: CoverageGradingError) 
     )
 
 
+# ----------------------------------------------------------------------
+# WU-4C1 — the five Done shadow-chain named errors -> HTTP. The two 503s
+# mirror the no-fallback contract; the user message reads as non-fatal to the
+# student ("your grade is saved; grading is computing in the background"),
+# because the SHADOW failure NEVER voids the already-committed student grade.
+# ----------------------------------------------------------------------
+
+async def resolution_unavailable_handler(request: Request, exc: ResolutionUnavailableError) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content=_err_payload(
+            "resolution_unavailable",
+            "Your grade is saved. Deeper grading is computing in the background — please try again shortly.",
+            stage=exc.stage,
+            last_error=exc.last_error,
+        ),
+    )
+
+
+async def transcript_audit_unavailable_handler(request: Request, exc: TranscriptAuditUnavailableError) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content=_err_payload(
+            "transcript_audit_unavailable",
+            "Your grade is saved. Deeper grading is computing in the background — please try again shortly.",
+            stage=exc.stage,
+            last_error=exc.last_error,
+        ),
+    )
+
+
+async def resolution_invalid_output_handler(request: Request, exc: ResolutionInvalidOutputError) -> JSONResponse:
+    """The adjudicator returned a key outside the closed candidate set (a
+    hallucination). The payload is bounded: the COUNT of allowed keys, never the
+    full list."""
+    return JSONResponse(
+        status_code=500,
+        content=_err_payload(
+            "resolution_invalid_output",
+            str(exc),
+            returned_key=exc.returned_key,
+            allowed_key_count=len(exc.allowed_keys),
+        ),
+    )
+
+
+async def student_graph_invalid_handler(request: Request, exc: StudentGraphInvalidError) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content=_err_payload(
+            "student_graph_invalid",
+            str(exc),
+            reasons=list(exc.reasons),
+        ),
+    )
+
+
+async def reference_graph_invalid_handler(request: Request, exc: ReferenceGraphInvalidError) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content=_err_payload(
+            "reference_graph_invalid",
+            str(exc),
+            reasons=list(exc.reasons),
+        ),
+    )
+
+
 async def context_overflow_handler(request: Request, exc) -> JSONResponse:
     """Item #2: surface token-budget overflow as 503 instead of silently
     truncating Apollo's context."""
@@ -415,3 +490,9 @@ def register_exception_handlers(app) -> None:
     app.add_exception_handler(SessionFrozenError, session_frozen_handler)
     app.add_exception_handler(KGEntryNotFoundError, kg_entry_not_found_handler)
     app.add_exception_handler(ReviewRequiredError, review_required_handler)
+    # WU-4C1 — the five Done shadow-chain named errors.
+    app.add_exception_handler(ResolutionUnavailableError, resolution_unavailable_handler)
+    app.add_exception_handler(TranscriptAuditUnavailableError, transcript_audit_unavailable_handler)
+    app.add_exception_handler(ResolutionInvalidOutputError, resolution_invalid_output_handler)
+    app.add_exception_handler(StudentGraphInvalidError, student_graph_invalid_handler)
+    app.add_exception_handler(ReferenceGraphInvalidError, reference_graph_invalid_handler)
