@@ -2,73 +2,145 @@
   "id": "bernoulli_horizontal_pipe_find_p2",
   "concept_id": "bernoulli_principle",
   "difficulty": "intro",
+  "given_values": {
+    "A1": 0.01,
+    "A2": 0.005,
+    "P1": 200000.0,
+    "v1": 2.0,
+    "rho": 1000.0
+  },
   "problem_text": "Water (density 1000 kg/m³) flows through a horizontal pipe. At section 1 the cross-sectional area is 0.01 m², the pressure is 200 000 Pa, and the velocity is 2.0 m/s. At section 2 the cross-sectional area narrows to 0.005 m². What is the pressure at section 2?",
-  "given_values": {"rho": 1000.0, "A1": 0.01, "P1": 200000.0, "v1": 2.0, "A2": 0.005},
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "continuity",
+      "incompressibility",
+      "bernoulli",
+      "horizontal_simplification",
+      "plan_apply_continuity",
+      "plan_apply_horizontal_simplification",
+      "plan_solve_bernoulli_for_p2"
+    ]
+  ],
   "target_unknown": "P2",
   "reference_solution": [
     {
-      "step": 1,
-      "entry_type": "equation",
       "id": "continuity",
-      "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "Continuity (mass conservation)", "variables": ["rho", "A1", "v1", "A2", "v2"]},
-      "depends_on": []
+      "step": 1,
+      "content": {
+        "label": "Continuity (mass conservation)",
+        "symbolic": "rho*A1*v1 - rho*A2*v2",
+        "variables": [
+          "rho",
+          "A1",
+          "v1",
+          "A2",
+          "v2"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.continuity",
+      "entry_type": "equation"
     },
     {
-      "step": 2,
-      "entry_type": "condition",
       "id": "incompressibility",
-      "content": {"applies_when": "density is constant", "label": "Incompressibility assumption"},
-      "depends_on": []
+      "step": 2,
+      "content": {
+        "label": "Incompressibility assumption",
+        "applies_when": "density is constant"
+      },
+      "depends_on": [],
+      "entity_key": "cond.incompressibility",
+      "entry_type": "condition"
     },
     {
-      "step": 3,
-      "entry_type": "equation",
       "id": "bernoulli",
-      "content": {"symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)", "label": "Bernoulli's equation", "variables": ["P1", "rho", "v1", "g", "h1", "P2", "v2", "h2"]},
-      "depends_on": ["incompressibility"]
+      "step": 3,
+      "content": {
+        "label": "Bernoulli's equation",
+        "symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
+        "variables": [
+          "P1",
+          "rho",
+          "v1",
+          "g",
+          "h1",
+          "P2",
+          "v2",
+          "h2"
+        ]
+      },
+      "depends_on": [
+        "incompressibility"
+      ],
+      "entity_key": "eq.bernoulli",
+      "entry_type": "equation"
     },
     {
-      "step": 4,
-      "entry_type": "simplification",
       "id": "horizontal_simplification",
-      "content": {"applies_when": "h1 == h2", "transformation": "rho*g*h1 and rho*g*h2 cancel"},
-      "depends_on": ["bernoulli"]
+      "step": 4,
+      "content": {
+        "applies_when": "h1 == h2",
+        "transformation": "rho*g*h1 and rho*g*h2 cancel"
+      },
+      "depends_on": [
+        "bernoulli"
+      ],
+      "entity_key": "simp.horizontal_simplification",
+      "entry_type": "simplification"
     },
     {
-      "step": 5,
-      "entry_type": "procedure_step",
       "id": "plan_apply_continuity",
+      "step": 5,
       "content": {
         "order": 1,
         "action": "use the continuity equation with the known rho, A1, v1, and A2 to solve for v2",
-        "uses_equations": ["continuity"],
-        "purpose": "obtain v2 so it can be plugged into bernoulli at section 2"
+        "purpose": "obtain v2 so it can be plugged into bernoulli at section 2",
+        "uses_equations": [
+          "continuity"
+        ]
       },
-      "depends_on": ["continuity"]
+      "depends_on": [
+        "continuity"
+      ],
+      "entity_key": "proc.plan_apply_continuity",
+      "entry_type": "procedure_step"
     },
     {
-      "step": 6,
-      "entry_type": "procedure_step",
       "id": "plan_apply_horizontal_simplification",
+      "step": 6,
       "content": {
         "order": 2,
         "action": "since the pipe is horizontal, set h1 equal to h2 so the gravitational terms cancel out of bernoulli",
-        "uses_equations": ["bernoulli"],
-        "purpose": "simplify bernoulli to an equation relating only P1, P2, v1, and v2"
+        "purpose": "simplify bernoulli to an equation relating only P1, P2, v1, and v2",
+        "uses_equations": [
+          "bernoulli"
+        ]
       },
-      "depends_on": ["bernoulli", "horizontal_simplification"]
+      "depends_on": [
+        "bernoulli",
+        "horizontal_simplification"
+      ],
+      "entity_key": "proc.plan_apply_horizontal_simplification",
+      "entry_type": "procedure_step"
     },
     {
-      "step": 7,
-      "entry_type": "procedure_step",
       "id": "plan_solve_bernoulli_for_p2",
+      "step": 7,
       "content": {
         "order": 3,
         "action": "substitute v2 and the known P1, rho, v1 into the simplified bernoulli and solve for P2",
-        "uses_equations": ["bernoulli"],
-        "purpose": "produce the numerical answer for the pressure at section 2"
+        "purpose": "produce the numerical answer for the pressure at section 2",
+        "uses_equations": [
+          "bernoulli"
+        ]
       },
-      "depends_on": ["plan_apply_continuity", "plan_apply_horizontal_simplification"]
+      "depends_on": [
+        "plan_apply_continuity",
+        "plan_apply_horizontal_simplification"
+      ],
+      "entity_key": "proc.plan_solve_bernoulli_for_p2",
+      "entry_type": "procedure_step"
     }
   ]
 }

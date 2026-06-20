@@ -24,7 +24,7 @@ related:
   - shared/conventions
   - shared/security
   - shared/supabase
-last_verified: 2026-06-12
+last_verified: 2026-06-15
 stub: false
 ---
 
@@ -65,7 +65,7 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` is a single ~2000-l
 | `workspaces/manager.py` | `ClassWorkspace` / `WorkspaceMaterial` dataclasses, `WorkspaceManager` (TTL cache, `CLASS_WORKSPACE_CACHE_TTL` default 300s), `StaticWorkspaceRepository` legacy fallback, `build_workspace_manager()` factory. |
 | `workspaces/db.py` | `DBWorkspaceRepository` — the primary repo. Resolves identifier by slug, then case-insensitive name, then integer id against `aita_search_spaces`; materials come from `aita_documents` rows with `status.state == 'ready'`. `index_path` is empty in the pgvector path (no FAISS dirs). |
 | `citations/formatter.py` | `build_citation_info()` + `format_citations()`: maps snippets to labels like `[Notes, Week 3, p. 12]`, dedupes by `(doc_type, file, page)`, marks `verified=True` only for Textbook sources. |
-| `scripts/` | Three one-shot tools: `migrate_indexes_to_supabase.py` (legacy FAISS/SQLite → pgvector), `seed_apollo_concept_registry.py` (filesystem concept registry → `apollo_*` tables, idempotent), `test_search.py` (pgvector hybrid-search smoke test). Not imported by the app. |
+| `scripts/` | Four one-shot tools: `migrate_indexes_to_supabase.py` (legacy FAISS/SQLite → pgvector), `seed_apollo_concept_registry.py` (filesystem concept registry → `apollo_*` tables, idempotent), `seed_apollo_learner_model.py` (course-scoped, idempotent Apollo Layer-1 seeder — writes migration-026 `apollo_kg_entities`/`apollo_entity_prereqs` rows + annotates `apollo_concept_problems.payload` with reference-node entity links + declared solution paths; layers on top of the concept registry, WU-3B), `test_search.py` (pgvector hybrid-search smoke test). Not imported by the app. |
 | `runtime/` | Runtime artifact dir (location overridable via `RUNTIME_DIR`). Holds `uploads/` (written per request by `/ask` attachments), `debug/`, `teacher_weekly/` worker scratch. Not code. |
 | `subjects/` | Legacy sample course data, not code: "Fluid Mechanics" (PDF + manifest + textbook index) and "Fluid Mechanics Test" (manifest + a FAISS smoke-test index fixture with `embeddings.npy`, `faiss.index`, `items.jsonl`). |
 | `text-embeder/` | Legacy standalone layout-aware multimodal PDF embedder (`layout_multimodal_embedder.py`, CLI, FAISS+SQLite-FTS5 output) plus a 38 MB sample aerodynamics PDF. Pre-pgvector era; also the default `CLASS_INDEX_ROOT` for the static workspace fallback. |
