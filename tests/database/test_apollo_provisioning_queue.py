@@ -16,9 +16,16 @@ The migration selection reuses the EXACT content-scoped chain from
 
 Four load-bearing behaviors are pinned here (GREEN-NOT-SKIPPED with Docker up — a
 skip is a FAIL of the real-infra gate):
-  (1) TWO workers claim NON-OVERLAPPING jobs under contention (+ the mutation
-      proof: a single job → exactly one claimer wins, the other gets None;
-      dropping ``skip_locked=True`` would let BOTH grab it → REDs the non-overlap);
+  (1) TWO workers claim NON-OVERLAPPING jobs under contention — no double-claim
+      (single job → exactly one claimer wins, the other gets None). NOTE: this
+      non-overlap is guaranteed by ``FOR UPDATE`` ALONE (the loser blocks, then
+      EvalPlanQual rechecks the now-``running`` row, finds it no longer matches the
+      pending/expired predicate, excludes it, and returns the next job or None), so
+      dropping ``skip_locked=True`` does NOT RED the two non-overlap tests. What
+      SKIP LOCKED additionally buys is NON-BLOCKING LIVENESS — a worker SKIPS an
+      already-locked row instead of head-of-line blocking on it — and THAT is the
+      property mutation-proved by ``test_skip_locked_skips_locked_row_without_blocking``
+      (an externally-held row lock makes a no-skip claim block until timeout → REDs);
   (2) lease-expiry re-claim (a stuck ``running`` row with ``lease_expires_at <
       now()`` is re-claimable, ``attempt_count`` bumps again);
   (3) MAX-attempt dead-letter (``fail_job`` past ``MAX_ATTEMPTS`` → ``failed``);
@@ -267,10 +274,13 @@ async def test_two_workers_claim_non_overlapping_jobs(committed_engine):
     assert {c1.job_id, c2.job_id} == {j1, j2}  # distinct, covering both rows
 
 
-async def test_skip_locked_mutation_proof(committed_engine):
+async def test_concurrent_single_job_no_double_claim(committed_engine):
     # A SINGLE seeded job under two concurrent claims: exactly one wins, the other
-    # gets None. DROPPING skip_locked=True would let BOTH lock-wait then claim the
-    # SAME job → {None, None}=={False, False} → this REDs.
+    # gets None (no double-claim). This pins the non-overlap INVARIANT and holds
+    # under FOR UPDATE with OR without SKIP LOCKED — it does NOT by itself prove
+    # skip_locked is wired (FOR UPDATE alone serializes the two claimers via
+    # lock-wait + EvalPlanQual requery, so the loser still gets None). The genuine
+    # skip_locked discriminator is test_skip_locked_skips_locked_row_without_blocking.
     plain_dsn, factory = committed_engine
     space = await _seed_space(plain_dsn)
     job = await _seed_committed_job(plain_dsn, search_space_id=space, document_id=1)
@@ -284,6 +294,46 @@ async def test_skip_locked_mutation_proof(committed_engine):
     assert len(winners) == 1
     assert winners[0].job_id == job
     assert {c1 is None, c2 is None} == {True, False}
+
+
+async def test_skip_locked_skips_locked_row_without_blocking(committed_engine):
+    # GENUINE skip_locked discriminator. An EXTERNAL connection holds an exclusive
+    # row lock on the FIFO-first job and never releases it for the duration of the
+    # claim. With skip_locked=True the claim SKIPS the locked row and returns the
+    # SECOND job promptly. DROPPING skip_locked=True makes the claim BLOCK on the
+    # held lock (FOR UPDATE waits) until asyncio.wait_for times out → TimeoutError
+    # → this REDs. This is the ONLY test in the file that fails when skip_locked is
+    # removed; the non-overlap tests above intentionally do not (FOR UPDATE alone
+    # gives non-overlap), so this pins SKIP LOCKED's non-blocking-liveness contract.
+    plain_dsn, factory = committed_engine
+    space = await _seed_space(plain_dsn)
+    older_ts = datetime.now(UTC) - timedelta(seconds=120)
+    newer_ts = datetime.now(UTC) - timedelta(seconds=10)
+    locked = await _seed_committed_job(
+        plain_dsn, search_space_id=space, document_id=1, created_at=older_ts
+    )
+    free = await _seed_committed_job(
+        plain_dsn, search_space_id=space, document_id=2, created_at=newer_ts
+    )
+
+    lock_conn = await asyncpg.connect(plain_dsn)
+    tx = lock_conn.transaction()
+    await tx.start()
+    # Hold an exclusive row lock on the FIFO-first job for the whole claim.
+    await lock_conn.execute(
+        "SELECT id FROM apollo_provisioning_jobs WHERE id=$1 FOR UPDATE", locked
+    )
+    try:
+        claimed = await asyncio.wait_for(
+            _claim_once(factory, lease_owner="w1"), timeout=5
+        )
+    finally:
+        await tx.rollback()
+        await lock_conn.close()
+
+    # skip_locked skipped the externally-locked FIFO-first row and took the free one.
+    assert claimed is not None
+    assert claimed.job_id == free
 
 
 # ===========================================================================
