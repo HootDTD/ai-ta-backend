@@ -213,9 +213,7 @@ def test_persist_uses_audited_findings_not_grade():
     upgraded = [s for s in audited_specs if s.finding_kind == "covered_node"]
     assert len(upgraded) == 1
     assert upgraded[0].message == AUDIT_UPGRADE_MESSAGE
-    assert upgraded[0].evidence_spans == [
-        "the student wrote p + half rho v^2 = c"
-    ]
+    assert upgraded[0].evidence_spans == ["the student wrote p + half rho v^2 = c"]
     assert upgraded[0].confidence == 0.75
     # The pre-audit grade.findings STILL shows the missing_node (proof we did not
     # persist the pre-audit set).

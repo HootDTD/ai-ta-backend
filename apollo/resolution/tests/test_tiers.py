@@ -148,8 +148,9 @@ def _node(node_id, node_type, content):
 
 
 def test_student_surface_text_simplification_concats_applies_and_transform():
-    node = _node("s", "simplification",
-                 {"applies_when": "h1 == h2", "transformation": "gravity cancels"})
+    node = _node(
+        "s", "simplification", {"applies_when": "h1 == h2", "transformation": "gravity cancels"}
+    )
     text = student_surface_text(node)
     assert "h1 == h2" in text and "gravity cancels" in text
 
@@ -174,7 +175,10 @@ def test_exact_tier_matches_canonical_key_via_label():
     """The exact tier fires when the node's label equals the candidate key."""
     node = _condition_node("s1", "anything")
     node = build_node(
-        node_type="condition", node_id="s1", attempt_id=1, source="parser",
+        node_type="condition",
+        node_id="s1",
+        attempt_id=1,
+        source="parser",
         content={"applies_when": "anything", "label": "cond.incompressibility"},
     )
     cands = (_cand("cond.incompressibility", node_type="condition"),)
@@ -260,8 +264,11 @@ def test_fuzzy_tier_picks_highest_above_threshold():
     node = _condition_node("s1", "the density stays constant throughout")
     cands = (
         _cand("cond.a", node_type="condition", aliases=("density is constant",)),
-        _cand("cond.b", node_type="condition",
-              aliases=("the density stays constant throughout the pipe",)),
+        _cand(
+            "cond.b",
+            node_type="condition",
+            aliases=("the density stays constant throughout the pipe",),
+        ),
     )
     hit = match_fuzzy(node, cands, threshold=0.9)
     assert hit is not None
@@ -287,7 +294,7 @@ def test_exact_tier_scans_past_non_matching_first_candidate():
     node = _equation_node("s1", "P1 - P2")  # no label
     cands = (
         _cand("eq.other", node_type="equation", symbolic="X - Y"),  # no match
-        _cand("eq.b", node_type="equation", symbolic="P1 - P2"),    # matches
+        _cand("eq.b", node_type="equation", symbolic="P1 - P2"),  # matches
     )
     hit = match_exact(node, cands)
     assert hit is not None and hit[0].canonical_key == "eq.b"
@@ -300,14 +307,14 @@ def test_exact_tier_scans_past_non_matching_first_candidate():
 # discarded before competition runs (§5 / §6.11).
 # ---------------------------------------------------------------------------
 
+
 def test_match_alias_all_returns_every_type_compatible_exact_alias_hit():
     """Two distinct candidates both carry the student's exact alias -> BOTH are
     returned (raw score 1.0, each with the winning alias), not just one."""
     node = _condition_node("s1", "density is constant")
     cands = (
         _cand("cond.a", node_type="condition", aliases=("density is constant",)),
-        _cand("cond.b", node_type="condition",
-              aliases=("incompressible", "density is constant")),
+        _cand("cond.b", node_type="condition", aliases=("incompressible", "density is constant")),
         _cand("cond.other", node_type="condition", aliases=("totally different",)),
     )
     hits = match_alias_all(node, cands)
@@ -334,8 +341,11 @@ def test_match_fuzzy_all_returns_every_above_threshold_with_raw_score():
     polar-near-miss student claim -> BOTH appear with their RAW token_set_ratio
     and the alias that produced the hit (the misconception is not discarded as
     'not the global best')."""
-    node = _node("s1", "definition",
-                 {"concept": "pressure", "meaning": "faster flow gives higher pressure here"})
+    node = _node(
+        "s1",
+        "definition",
+        {"concept": "pressure", "meaning": "faster flow gives higher pressure here"},
+    )
     ref_alias = "faster flow gives lower pressure here"
     misc_alias = "faster flow means higher pressure"
     cands = (
@@ -365,8 +375,11 @@ def test_match_fuzzy_all_picks_best_alias_per_candidate():
     HIGHEST-scoring alias as winning_alias (deterministic)."""
     node = _condition_node("s1", "density is constant throughout")
     cands = (
-        _cand("cond.a", node_type="condition",
-              aliases=("density is constant throughout", "density is constant")),
+        _cand(
+            "cond.a",
+            node_type="condition",
+            aliases=("density is constant throughout", "density is constant"),
+        ),
     )
     hits = match_fuzzy_all(node, cands, threshold=0.9)
     assert len(hits) == 1

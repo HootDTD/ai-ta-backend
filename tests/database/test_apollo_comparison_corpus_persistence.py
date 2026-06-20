@@ -72,9 +72,7 @@ async def _findings_for_run(db, run_id: int):
     return (
         (
             await db.execute(
-                select(GraphComparisonFinding).where(
-                    GraphComparisonFinding.run_id == run_id
-                )
+                select(GraphComparisonFinding).where(GraphComparisonFinding.run_id == run_id)
             )
         )
         .scalars()
@@ -119,9 +117,7 @@ async def test_high_unresolved_persists_run_no_events(db_session):
     run_id, audited, events = await _persist_fixture(db_session, fixture)
 
     run = (
-        await db_session.execute(
-            select(GraphComparisonRun).where(GraphComparisonRun.id == run_id)
-        )
+        await db_session.execute(select(GraphComparisonRun).where(GraphComparisonRun.id == run_id))
     ).scalar_one()
     assert run.abstained is True
     assert "unresolved_rate_above_threshold" in run.abstention_reasons
@@ -152,9 +148,7 @@ async def test_bernoulli_capstone_persisted(db_session):
 
     # the run row itself persisted with the score core's values.
     run = (
-        await db_session.execute(
-            select(GraphComparisonRun).where(GraphComparisonRun.id == run_id)
-        )
+        await db_session.execute(select(GraphComparisonRun).where(GraphComparisonRun.id == run_id))
     ).scalar_one()
     assert run.abstained is False
     assert run.reference_graph_hash.startswith("refhash-v1:")

@@ -91,9 +91,7 @@ def convert_findings_to_events(
 
     contradictions, covered, missing = _bucket_by_kind(audited_grade.findings)
 
-    consumed, conflict_events = _resolve_conflicts(
-        contradictions, covered, opposes_map, turn_order
-    )
+    consumed, conflict_events = _resolve_conflicts(contradictions, covered, opposes_map, turn_order)
 
     standalone_events = _emit_standalone(contradictions, covered, missing, consumed)
 
@@ -134,10 +132,7 @@ def _is_audit_upgraded(finding: Finding) -> bool:
     """A finding is an audit-upgrade ONLY when it is a covered node carrying the
     ``AUDIT_UPGRADE_MESSAGE`` marker (NOT keyed on confidence — a genuine
     llm-tier covered node also sits at 0.75)."""
-    return (
-        finding.kind == FindingKind.COVERED_NODE
-        and finding.message == AUDIT_UPGRADE_MESSAGE
-    )
+    return finding.kind == FindingKind.COVERED_NODE and finding.message == AUDIT_UPGRADE_MESSAGE
 
 
 def _turn_position(finding: Finding, turn_order: Mapping[str, int]) -> float:
@@ -145,9 +140,7 @@ def _turn_position(finding: Finding, turn_order: Mapping[str, int]) -> float:
     to the EARLIEST assertion — a multi-turn restated claim is anchored to when
     the student FIRST asserted it). An absent id contributes the ``+inf``
     sentinel; with no resolvable id the whole finding is the sentinel."""
-    positions = [
-        turn_order.get(nid, _SENTINEL_TURN) for nid in finding.student_node_ids
-    ]
+    positions = [turn_order.get(nid, _SENTINEL_TURN) for nid in finding.student_node_ids]
     if not positions:
         return _SENTINEL_TURN
     return min(positions)

@@ -50,9 +50,9 @@ class LearnerEvent:
     event_kind: LearnerEventKind
     score: float | None = None
     confidence: float | None = None
-    misconception_code: str | None = None       # misconception/corrected only
-    evidence_node_ids: tuple[str, ...] = ()      # the finding's student_node_ids
-    reference_step_id: str | None = None         # covered/missing — the ref node id
+    misconception_code: str | None = None  # misconception/corrected only
+    evidence_node_ids: tuple[str, ...] = ()  # the finding's student_node_ids
+    reference_step_id: str | None = None  # covered/missing — the ref node id
     diagnostic_flags: tuple[str, ...] = field(default_factory=tuple)
     # 'edge-gap' | 'mixed-understanding' — §6.8 diagnostics (WU-4C), carried as
     # data only; NOT a DB column.
