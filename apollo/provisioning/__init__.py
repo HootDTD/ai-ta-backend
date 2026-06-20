@@ -19,7 +19,14 @@ run_promotion_lint, ...``) rather than owning it.
 
 from __future__ import annotations
 
+from apollo.provisioning.dedup import DedupVerdict, resolve_candidate
 from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promotion_lint import PromotionResult, run_promotion_lint
 
-__all__ = ["PromotionResult", "run_promotion_lint", "problem_dup_hash"]
+__all__ = [
+    "PromotionResult",
+    "run_promotion_lint",
+    "problem_dup_hash",
+    "DedupVerdict",
+    "resolve_candidate",
+]
