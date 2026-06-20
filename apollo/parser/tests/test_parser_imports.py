@@ -3,6 +3,7 @@
 Pure introspection — no LLM, no Neo4j. Guards against the unused import
 creeping back (and documents the nit if `Any` ever becomes needed again).
 """
+
 from __future__ import annotations
 
 import ast

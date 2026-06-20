@@ -214,9 +214,7 @@ async def _bound_session(db):
 
 def _patch_session(db):
     """Patch get_async_session in the janitor module to the bound shim."""
-    return patch.object(
-        learner_janitor, "get_async_session", lambda: _bound_session(db)
-    )
+    return patch.object(learner_janitor, "get_async_session", lambda: _bound_session(db))
 
 
 async def _refresh(db, attempt_id: int) -> ProblemAttempt:
@@ -306,7 +304,11 @@ async def test_drain_success_clears_pending(db_session, monkeypatch):
             p.stop()
 
     assert result == DrainResult(
-        claimed=1, succeeded=1, dead_lettered=0, retried=0, deferred=0,
+        claimed=1,
+        succeeded=1,
+        dead_lettered=0,
+        retried=0,
+        deferred=0,
         backlog_remaining=0,
     )
     refreshed = await _refresh(db_session, attempt.id)
@@ -315,9 +317,9 @@ async def test_drain_success_clears_pending(db_session, monkeypatch):
     # the belief fold actually ran -> a learner_state row exists for the user.
     ls = (
         await db_session.execute(
-            select(func.count()).select_from(LearnerState).where(
-                LearnerState.user_id == TEST_USER_ID
-            )
+            select(func.count())
+            .select_from(LearnerState)
+            .where(LearnerState.user_id == TEST_USER_ID)
         )
     ).scalar_one()
     assert ls >= 1
@@ -352,15 +354,16 @@ async def test_drain_increments_attempts_at_claim(db_session, monkeypatch):
 async def test_drain_dead_letters_on_diagnostic_report_none(db_session, monkeypatch):
     monkeypatch.setenv("APOLLO_GRAPH_SIM_LAYER3_ENABLED", "1")
     sess, attempt = await _seed_pending_attempt(
-        db_session, subject_slug="fm_dr", concept_slug="bp_dr", diagnostic_report=None,
+        db_session,
+        subject_slug="fm_dr",
+        concept_slug="bp_dr",
+        diagnostic_report=None,
     )
     patches, _rg, _rga = _neo_stubs(attempt.id)
     sim_spy = AsyncMock()
     [p.start() for p in patches]
     try:
-        with patch(
-            "apollo.handlers.learner_janitor.run_graph_simulation", new=sim_spy
-        ):
+        with patch("apollo.handlers.learner_janitor.run_graph_simulation", new=sim_spy):
             with _patch_session(db_session):
                 result = await drain_pending_attempts(object(), limit=1)
     finally:
@@ -379,16 +382,16 @@ async def test_drain_dead_letters_on_diagnostic_report_none(db_session, monkeypa
 async def test_drain_dead_letters_on_rubric_missing(db_session, monkeypatch):
     monkeypatch.setenv("APOLLO_GRAPH_SIM_LAYER3_ENABLED", "1")
     sess, attempt = await _seed_pending_attempt(
-        db_session, subject_slug="fm_rm", concept_slug="bp_rm",
+        db_session,
+        subject_slug="fm_rm",
+        concept_slug="bp_rm",
         diagnostic_report={"narrative": "x", "coverage": {}},  # no "rubric"
     )
     patches, _rg, _rga = _neo_stubs(attempt.id)
     sim_spy = AsyncMock()
     [p.start() for p in patches]
     try:
-        with patch(
-            "apollo.handlers.learner_janitor.run_graph_simulation", new=sim_spy
-        ):
+        with patch("apollo.handlers.learner_janitor.run_graph_simulation", new=sim_spy):
             with _patch_session(db_session):
                 result = await drain_pending_attempts(object(), limit=1)
     finally:
@@ -412,9 +415,7 @@ async def test_drain_dead_letters_on_graded_at_missing(db_session, monkeypatch):
     sim_spy = AsyncMock()
     [p.start() for p in patches]
     try:
-        with patch(
-            "apollo.handlers.learner_janitor.run_graph_simulation", new=sim_spy
-        ):
+        with patch("apollo.handlers.learner_janitor.run_graph_simulation", new=sim_spy):
             with _patch_session(db_session):
                 result = await drain_pending_attempts(object(), limit=1)
     finally:
@@ -438,9 +439,7 @@ async def test_drain_dead_letters_on_naive_graded_at(db_session, monkeypatch):
         db_session, subject_slug="fm_naive", concept_slug="bp_naive"
     )
     # naive graded_at (no +00:00 offset) -> datetime.fromisoformat -> tzinfo None.
-    patches, _rg, _rga = _neo_stubs(
-        attempt.id, graded_at={"stu_continuity": "2026-06-18T00:00:02"}
-    )
+    patches, _rg, _rga = _neo_stubs(attempt.id, graded_at={"stu_continuity": "2026-06-18T00:00:02"})
     [p.start() for p in patches]
     try:
         with _patch_session(db_session):
@@ -471,9 +470,7 @@ async def test_drain_dead_letters_on_vanished_problem(db_session, monkeypatch):
     sim_spy = AsyncMock()
     [p.start() for p in patches]
     try:
-        with patch(
-            "apollo.handlers.learner_janitor.run_graph_simulation", new=sim_spy
-        ):
+        with patch("apollo.handlers.learner_janitor.run_graph_simulation", new=sim_spy):
             with _patch_session(db_session):
                 result = await drain_pending_attempts(object(), limit=1)
     finally:
@@ -500,10 +497,13 @@ async def test_drain_backoff_schedule_on_repeated_transient_failure(db_session, 
     midpoint = lambda lo, hi: 0.0  # noqa: E731
 
     async def _drain_once():
-        with patch(
-            "apollo.handlers.learner_janitor.run_graph_simulation",
-            new=AsyncMock(side_effect=RuntimeError("transient")),
-        ), patch.object(learner_janitor, "_jitter_fn", midpoint):
+        with (
+            patch(
+                "apollo.handlers.learner_janitor.run_graph_simulation",
+                new=AsyncMock(side_effect=RuntimeError("transient")),
+            ),
+            patch.object(learner_janitor, "_jitter_fn", midpoint),
+        ):
             with _patch_session(db_session):
                 return await drain_pending_attempts(object(), limit=1)
 
@@ -537,15 +537,15 @@ async def test_drain_backoff_schedule_on_repeated_transient_failure(db_session, 
 def _assert_delta(next_at, before, seconds, tol=5):
     assert next_at is not None
     delta = (next_at - before).total_seconds()
-    assert seconds - tol <= delta <= seconds + tol, (
-        f"expected ~{seconds}s, got {delta}s"
-    )
+    assert seconds - tol <= delta <= seconds + tol, f"expected ~{seconds}s, got {delta}s"
 
 
 async def test_drain_max_attempts_dead_letters(db_session, monkeypatch):
     monkeypatch.setenv("APOLLO_GRAPH_SIM_LAYER3_ENABLED", "1")
     sess, attempt = await _seed_pending_attempt(
-        db_session, subject_slug="fm_max", concept_slug="bp_max",
+        db_session,
+        subject_slug="fm_max",
+        concept_slug="bp_max",
         learner_update_attempts=2,
     )
     with patch(
@@ -583,9 +583,7 @@ async def test_drain_layer3_off_defers_without_belief_write(db_session, monkeypa
     lu_spy = AsyncMock()
     [p.start() for p in patches]
     try:
-        with patch(
-            "apollo.handlers.learner_janitor.run_learner_update", new=lu_spy
-        ):
+        with patch("apollo.handlers.learner_janitor.run_learner_update", new=lu_spy):
             with _patch_session(db_session):
                 with caplog.at_level(logging.WARNING):
                     result = await drain_pending_attempts(object(), limit=1)
@@ -605,9 +603,9 @@ async def test_drain_layer3_off_defers_without_belief_write(db_session, monkeypa
     # zero mastery events for the attempt
     me = (
         await db_session.execute(
-            select(func.count()).select_from(MasteryEvent).where(
-                MasteryEvent.attempt_id == attempt.id
-            )
+            select(func.count())
+            .select_from(MasteryEvent)
+            .where(MasteryEvent.attempt_id == attempt.id)
         )
     ).scalar_one()
     assert me == 0
@@ -638,18 +636,18 @@ async def test_drain_supersede_idempotent_same_attempt_twice(db_session, monkeyp
 
     await _drain()
     states1 = (
-        await db_session.execute(
-            select(LearnerState).where(LearnerState.user_id == TEST_USER_ID)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(LearnerState).where(LearnerState.user_id == TEST_USER_ID)))
+        .scalars()
+        .all()
+    )
     assert states1, "first drain wrote at least one learner_state"
     belief1 = {s.entity_id: list(s.belief) for s in states1}
     count1 = {s.entity_id: s.evidence_count for s in states1}
     me_count1 = (
         await db_session.execute(
-            select(func.count()).select_from(MasteryEvent).where(
-                MasteryEvent.attempt_id == attempt.id
-            )
+            select(func.count())
+            .select_from(MasteryEvent)
+            .where(MasteryEvent.attempt_id == attempt.id)
         )
     ).scalar_one()
 
@@ -663,18 +661,22 @@ async def test_drain_supersede_idempotent_same_attempt_twice(db_session, monkeyp
 
     await _drain()
     states2 = (
-        await db_session.execute(
-            select(LearnerState)
-            .where(LearnerState.user_id == TEST_USER_ID)
-            .execution_options(populate_existing=True)
+        (
+            await db_session.execute(
+                select(LearnerState)
+                .where(LearnerState.user_id == TEST_USER_ID)
+                .execution_options(populate_existing=True)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     belief2 = {s.entity_id: list(s.belief) for s in states2}
     me_count2 = (
         await db_session.execute(
-            select(func.count()).select_from(MasteryEvent).where(
-                MasteryEvent.attempt_id == attempt.id
-            )
+            select(func.count())
+            .select_from(MasteryEvent)
+            .where(MasteryEvent.attempt_id == attempt.id)
         )
     ).scalar_one()
 
@@ -753,7 +755,11 @@ async def test_drain_empty_backlog_is_noop(db_session, monkeypatch):
         with _patch_session(db_session):
             result = await drain_pending_attempts(object(), limit=1)
     assert result == DrainResult(
-        claimed=0, succeeded=0, dead_lettered=0, retried=0, deferred=0,
+        claimed=0,
+        succeeded=0,
+        dead_lettered=0,
+        retried=0,
+        deferred=0,
         backlog_remaining=0,
     )
     sim_spy.assert_not_awaited()
@@ -762,10 +768,16 @@ async def test_drain_empty_backlog_is_noop(db_session, monkeypatch):
 async def test_drain_user_id_scope_filters_other_students(db_session, monkeypatch):
     monkeypatch.setenv("APOLLO_GRAPH_SIM_LAYER3_ENABLED", "1")
     sess_a, attempt_a = await _seed_pending_attempt(
-        db_session, subject_slug="fm_sa", concept_slug="bp_sa", user_id=TEST_USER_ID,
+        db_session,
+        subject_slug="fm_sa",
+        concept_slug="bp_sa",
+        user_id=TEST_USER_ID,
     )
     sess_b, attempt_b = await _seed_pending_attempt(
-        db_session, subject_slug="fm_sb", concept_slug="bp_sb", user_id=TEST_USER_ID_2,
+        db_session,
+        subject_slug="fm_sb",
+        concept_slug="bp_sb",
+        user_id=TEST_USER_ID_2,
     )
     patches, _rg, _rga = _neo_stubs(attempt_a.id)
     [p.start() for p in patches]
@@ -787,7 +799,9 @@ async def test_drain_user_id_scope_filters_other_students(db_session, monkeypatc
 async def test_drain_skips_already_dead_lettered_rows(db_session, monkeypatch):
     monkeypatch.setenv("APOLLO_GRAPH_SIM_LAYER3_ENABLED", "1")
     sess, attempt = await _seed_pending_attempt(
-        db_session, subject_slug="fm_sd", concept_slug="bp_sd",
+        db_session,
+        subject_slug="fm_sd",
+        concept_slug="bp_sd",
         failed_permanently=True,
     )
     sim_spy = AsyncMock()
@@ -802,7 +816,9 @@ async def test_drain_skips_future_next_attempt_at(db_session, monkeypatch):
     monkeypatch.setenv("APOLLO_GRAPH_SIM_LAYER3_ENABLED", "1")
     future = datetime.now(UTC) + timedelta(hours=1)
     sess, attempt = await _seed_pending_attempt(
-        db_session, subject_slug="fm_fu", concept_slug="bp_fu",
+        db_session,
+        subject_slug="fm_fu",
+        concept_slug="bp_fu",
         next_attempt_at=future,
     )
     # not yet due -> skipped
