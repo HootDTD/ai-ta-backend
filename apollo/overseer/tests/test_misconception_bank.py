@@ -22,6 +22,7 @@ from apollo.overseer.misconception_bank import (
     MisconceptionEntry,
     load_for_concept,
 )
+from apollo.conftest import TEST_SPACE_ID
 from apollo.persistence.models import Concept, Misconception, Subject
 from database.models import Base
 
@@ -44,7 +45,11 @@ async def db_with_seed():
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
     async with Session() as s:
-        subj = Subject(slug="generic_subject", display_name="Generic Subject")
+        subj = Subject(
+            slug="generic_subject",
+            display_name="Generic Subject",
+            search_space_id=TEST_SPACE_ID,
+        )
         s.add(subj)
         await s.flush()
 

@@ -38,7 +38,22 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "database" / "migrations"
 MIGRATED_DB_NAME = "apollo_attempts_migrations"
 
 # 009 creates apollo_sessions (self-contained — no external FK) alongside
-# apollo_problem_attempts, so the content-scoped chain needs no FK stubs.
+# apollo_problem_attempts. The content-scoped chain auto-includes any migration
+# that touches apollo_problem_attempts, which now sweeps in 026 (it ALTERs the
+# table to add learner_update_pending). 026 ALSO ALTERs apollo_subjects and hangs
+# FKs off apollo_concepts / aita_search_spaces / auth.users — tables this chain
+# never creates. We stub those four with the minimal shape 026's ALTER/FK resolve
+# against, exactly like test_apollo_learner_model_migration.py and
+# test_teacher_uploads_constraints.py. The stub keeps the auto-coverage design
+# (a future apollo_problem_attempts constraint change is still tested for free).
+_STUB_DDL = """
+CREATE SCHEMA IF NOT EXISTS auth;
+CREATE TABLE auth.users (id UUID PRIMARY KEY);
+CREATE TABLE aita_search_spaces (id SERIAL PRIMARY KEY);
+CREATE TABLE apollo_subjects (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY);
+CREATE TABLE apollo_concepts (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY);
+"""
+
 _TOUCHES_ATTEMPTS = re.compile(
     r"(CREATE TABLE IF NOT EXISTS|CREATE TABLE|ALTER TABLE)\s+apollo_problem_attempts\b"
 )
@@ -76,6 +91,7 @@ def _migrated_dsn(_pg_url: str):
 
         conn = await asyncpg.connect(migrated_dsn)
         try:
+            await conn.execute(_STUB_DDL)
             for migration in _attempt_migrations():
                 await conn.execute(migration.read_text(encoding="utf-8"))
         finally:

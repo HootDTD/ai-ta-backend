@@ -17,19 +17,60 @@ from sqlalchemy import (
     JSON,
     TIMESTAMP,
     BigInteger,
+    Boolean,
     Column,
+    Float,
     ForeignKey,
     Index,
     Integer,
     Text,
+    UniqueConstraint,
+    text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, REAL, UUID
 from sqlalchemy.orm import relationship
 
 from database.models import Base
 
 # JSONB on Postgres, fall back to JSON on SQLite (tests use in-memory SQLite).
 _JSONType = JSONB().with_variant(JSON(), "sqlite")
+
+# REAL[] on Postgres for the belief vectors; SQLite has no array type, so the
+# fast metadata/insert tests degrade to JSON. The behavioral array-CHECK tests
+# (array_length(belief,1)=3) run ONLY on real Postgres (see
+# tests/database/test_apollo_learner_model_migration.py), so the SQLite variant
+# is exercised by shape/round-trip tests, never for array semantics.
+# NOTE: the SQLite variant is a bare JSON() — _JSONType is itself a variant and
+# SQLAlchemy forbids nesting variants in with_variant().
+_RealArrayType = ARRAY(REAL).with_variant(JSON(), "sqlite")
+
+# App-layer mirrors of migration 026's enum sets (spec §2/§6.3). Following the
+# ATTEMPT_RESULTS precedent: tuples the runtime reasons about, kept in sync with
+# the migration. ENTITY_KINDS is the one tied to a SQL CHECK (on
+# apollo_kg_entities.kind) and is asserted equal to the migration's set by
+# apollo/persistence/tests/test_learner_model_allowlists.py. The other two are
+# OPEN enums (no SQL CHECK) — documentation tuples, NOT asserted against the SQL.
+ENTITY_KINDS = (
+    "concept",
+    "equation",
+    "condition",
+    "definition",
+    "procedure",
+    "variable",
+    "misconception",
+)
+# event_kind is an OPEN enum per spec §2 (no SQL CHECK) — documented set only:
+MASTERY_EVENT_KINDS = ("covered", "missing", "partial", "misconception", "corrected")
+FINDING_KINDS = (
+    "covered_node",
+    "missing_node",
+    "matched_edge",
+    "missing_edge",
+    "unsupported_extra",
+    "contradiction",
+    "unresolved",
+    "alternative_path",
+)
 
 # Allowed values for apollo_problem_attempts.result. The DB CHECK constraint is
 # the schema authority (migration 009 created it, 025 widened it) — following
@@ -80,6 +121,15 @@ class Subject(Base):
     id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
     slug = Column(Text, nullable=False, unique=True)
     display_name = Column(Text, nullable=False)
+    # Course-scoping (migration 026 / isolation invariant §1.4). NOT NULL by
+    # design: every subject belongs to exactly one course, and the whole
+    # curriculum chain inherits course ownership through this column.
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 
@@ -226,6 +276,13 @@ class ProblemAttempt(Base):
     result = Column(Text, nullable=True)
     solver_trace = Column(_JSONType, nullable=True)
     diagnostic_report = Column(_JSONType, nullable=True)
+    # §6/§7 cross-store retry flag (migration 026): true while a Done-time
+    # learner-model update is pending retry. server_default so raw-SQL/legacy
+    # inserts see false; default=False for ORM inserts. The grade is never
+    # voided by grading-pipeline failure — this flag covers the cross-store window.
+    learner_update_pending = Column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     session = relationship("ApolloSession", back_populates="problem_attempts")
@@ -280,3 +337,222 @@ Index(
     KGNegotiation.attempt_id,
     KGNegotiation.entry_id,
 )
+
+
+# ===========================================================================
+# WU-3A learner model (migration 026). Layer-1 skill inventory + Layer-3
+# learner model + grading-core audit tables. Following the repo convention,
+# these declare NO DB CHECK constraints — the migration SQL is the authority;
+# the ORM is the typed Python access layer. The schema EXISTS as of WU-3A but
+# nothing reads/writes these tables yet (resolver = WU-3C, seed = WU-3B, §3
+# update math + §6 grading core + §8A cutover = later units).
+# ===========================================================================
+
+
+class KGEntity(Base):
+    """Layer-1 course-scoped skill inventory (spec §2). Course ownership is
+    inherited via concept_id -> apollo_concepts -> apollo_subjects.search_space_id.
+    canonical_key is unique PER CONCEPT, not global (§1.4)."""
+
+    __tablename__ = "apollo_kg_entities"
+
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    concept_id = Column(
+        BigInteger,
+        ForeignKey("apollo_concepts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    canonical_key = Column(Text, nullable=False)
+    # kind is constrained by a SQL CHECK (mirror: ENTITY_KINDS). TEXT here.
+    kind = Column(Text, nullable=False)
+    display_name = Column(Text, nullable=False)
+    payload = Column(_JSONType, nullable=False, default=dict)
+    aliases = Column(_JSONType, nullable=False, default=list)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "concept_id", "canonical_key", name="apollo_kg_entities_concept_key_uniq"
+        ),
+    )
+
+
+class EntityPrereq(Base):
+    """Prerequisite DAG edges between Layer-1 entities (spec §2). from depends on
+    to. Composite PK (from_entity_id, to_entity_id)."""
+
+    __tablename__ = "apollo_entity_prereqs"
+
+    from_entity_id = Column(
+        BigInteger,
+        ForeignKey("apollo_kg_entities.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    to_entity_id = Column(
+        BigInteger,
+        ForeignKey("apollo_kg_entities.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+
+class LearnerState(Base):
+    """Layer-3 current per-(user, course, entity) belief snapshot, updated in
+    place at Done (spec §3). Composite PK enforces one row per learner per entity
+    per course. The belief array CHECK (length 3) lives in the migration SQL."""
+
+    __tablename__ = "apollo_learner_state"
+
+    # user_id FKs auth.users(id) ON DELETE CASCADE in the migration SQL. The ORM
+    # declares no FK here because auth.users (Supabase-managed) is not in
+    # Base.metadata — same convention as ApolloSession.user_id.
+    user_id = Column(UUID(as_uuid=False), primary_key=True)
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    entity_id = Column(
+        BigInteger,
+        ForeignKey("apollo_kg_entities.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    belief = Column(_RealArrayType, nullable=False)
+    mastery = Column(Float, nullable=False)
+    confidence = Column(Float, nullable=False)
+    misconception_code = Column(Text, nullable=True)
+    evidence_count = Column(Integer, nullable=False, default=0)
+    last_evidence_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
+class MasteryEvent(Base):
+    """Layer-3 append-only longitudinal evidence log AND refit corpus (spec
+    §2/§3). attempt_id is ON DELETE SET NULL: the log outlives a deleted attempt.
+    The (attempt_id, entity_id, event_kind) UNIQUE uses NULLS NOT DISTINCT so a
+    retry with a NULL attempt_id cannot double-insert (PG15+)."""
+
+    __tablename__ = "apollo_mastery_events"
+
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    # No ORM FK on user_id (auth.users is Supabase-managed, not in Base.metadata);
+    # the migration SQL declares the FK + ON DELETE CASCADE.
+    user_id = Column(UUID(as_uuid=False), nullable=False)
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    entity_id = Column(
+        BigInteger,
+        ForeignKey("apollo_kg_entities.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    attempt_id = Column(
+        BigInteger,
+        ForeignKey("apollo_problem_attempts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    event_kind = Column(Text, nullable=False)
+    score = Column(Float, nullable=True)
+    misconception_code = Column(Text, nullable=True)
+    parser_confidence = Column(Float, nullable=True)
+    grader_confidence = Column(Float, nullable=True)
+    negotiation_move = Column(Text, nullable=True)
+    reference_step_id = Column(Text, nullable=True)
+    prior_belief = Column(_RealArrayType, nullable=False)
+    posterior_belief = Column(_RealArrayType, nullable=False)
+    mastery_after = Column(Float, nullable=False)
+    dt_days_since_last = Column(Float, nullable=True)
+    evidence_node_ids = Column(_JSONType, nullable=False, default=list)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "attempt_id",
+            "entity_id",
+            "event_kind",
+            name="apollo_mastery_events_attempt_entity_kind_uniq",
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
+
+
+class GraphComparisonRun(Base):
+    """One row per Done-time comparison; makes the grader auditable (spec §2/§6).
+    UNIQUE (attempt_id, comparison_version) lets a re-run at the same version be a
+    supersede (delete-then-reinsert), not a crash."""
+
+    __tablename__ = "apollo_graph_comparison_runs"
+
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    attempt_id = Column(
+        BigInteger,
+        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # No ORM FK on user_id (auth.users is Supabase-managed, not in Base.metadata);
+    # the migration SQL declares the FK + ON DELETE CASCADE.
+    user_id = Column(UUID(as_uuid=False), nullable=False)
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    coverage_score = Column(Float, nullable=False)
+    soundness_score = Column(Float, nullable=False)
+    bisimilarity_score = Column(Float, nullable=False)
+    node_coverage_score = Column(Float, nullable=True)
+    edge_coverage_score = Column(Float, nullable=True)
+    scoping_score = Column(Float, nullable=True)
+    usage_score = Column(Float, nullable=True)
+    procedure_order_score = Column(Float, nullable=True)
+    dependency_score = Column(Float, nullable=True)
+    contradiction_score = Column(Float, nullable=True)
+    normalization_confidence = Column(Float, nullable=False)
+    abstained = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    abstention_reasons = Column(_JSONType, nullable=False, default=list)
+    comparison_version = Column(Text, nullable=False)
+    reference_graph_hash = Column(Text, nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "attempt_id",
+            "comparison_version",
+            name="apollo_graph_comparison_runs_attempt_version_uniq",
+        ),
+    )
+
+
+class GraphComparisonFinding(Base):
+    """Structured evidence behind every comparison score; diagnostics read THIS,
+    not the transcript (spec §2/§6). entity_id ON DELETE SET NULL: a pruned entity
+    must not delete the audit finding."""
+
+    __tablename__ = "apollo_graph_comparison_findings"
+
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    run_id = Column(
+        BigInteger,
+        ForeignKey("apollo_graph_comparison_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    entity_id = Column(
+        BigInteger,
+        ForeignKey("apollo_kg_entities.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    finding_kind = Column(Text, nullable=False)
+    score = Column(Float, nullable=True)
+    confidence = Column(Float, nullable=True)
+    student_node_ids = Column(_JSONType, nullable=False, default=list)
+    reference_node_ids = Column(_JSONType, nullable=False, default=list)
+    student_edge_ids = Column(_JSONType, nullable=False, default=list)
+    reference_edge_ids = Column(_JSONType, nullable=False, default=list)
+    evidence_spans = Column(_JSONType, nullable=False, default=list)
+    message = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
