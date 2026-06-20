@@ -179,8 +179,15 @@ def _belief_close(persisted, expected) -> bool:
     return list(persisted) == pytest.approx(list(expected), rel=1e-5, abs=1e-6)
 
 
-def _expected_update(event, *, parser_confidence, normalization_confidence, prior_belief=None,
-                     prior_last_evidence_at=None, done_ts):
+def _expected_update(
+    event,
+    *,
+    parser_confidence,
+    normalization_confidence,
+    prior_belief=None,
+    prior_last_evidence_at=None,
+    done_ts,
+):
     """Recompute the WU-5A1 pure result so the test asserts against the math
     core, not a hard-coded float."""
     return apply_event(
@@ -224,20 +231,28 @@ async def test_layer3_persists_events_and_state(db_session):
     assert result.abstained is False
 
     # exactly one mastery event + one learner_state for this entity
-    events = (await db_session.execute(
-        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
-    )).scalars().all()
+    events = (
+        (
+            await db_session.execute(
+                select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert len(events) == 1
     me = events[0]
     assert me.entity_id == by_key[_CONTINUITY]
     assert me.event_kind == "covered"
 
-    state = (await db_session.execute(
-        select(LearnerState).where(
-            LearnerState.user_id == TEST_USER_ID,
-            LearnerState.entity_id == by_key[_CONTINUITY],
+    state = (
+        await db_session.execute(
+            select(LearnerState).where(
+                LearnerState.user_id == TEST_USER_ID,
+                LearnerState.entity_id == by_key[_CONTINUITY],
+            )
         )
-    )).scalar_one()
+    ).scalar_one()
 
     # the persisted posterior matches the WU-5A1 pure core (cold-start base)
     event = convert_findings_to_events(audited, opposes_map={}, turn_order={})[0]
@@ -281,12 +296,20 @@ async def test_unmapped_canonical_key_skipped(db_session):
     assert result.skipped_unmapped == (_CONTINUITY,)
     assert result.abstained is False  # events existed, just unmapped
 
-    me = (await db_session.execute(
-        select(func.count()).select_from(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
-    )).scalar_one()
-    ls = (await db_session.execute(
-        select(func.count()).select_from(LearnerState).where(LearnerState.user_id == TEST_USER_ID)
-    )).scalar_one()
+    me = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(MasteryEvent)
+            .where(MasteryEvent.attempt_id == attempt.id)
+        )
+    ).scalar_one()
+    ls = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(LearnerState)
+            .where(LearnerState.user_id == TEST_USER_ID)
+        )
+    ).scalar_one()
     assert me == 0
     assert ls == 0
 
@@ -317,9 +340,13 @@ async def test_abstained_writes_nothing(db_session):
     assert result == LearnerUpdateResult(
         events_written=0, states_upserted=0, skipped_unmapped=(), abstained=True
     )
-    me = (await db_session.execute(
-        select(func.count()).select_from(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
-    )).scalar_one()
+    me = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(MasteryEvent)
+            .where(MasteryEvent.attempt_id == attempt.id)
+        )
+    ).scalar_one()
     assert me == 0
 
 
@@ -346,9 +373,13 @@ async def test_run_learner_update_commits(db_session):
     assert result.events_written == 1
     assert result.states_upserted == 1
 
-    me = (await db_session.execute(
-        select(func.count()).select_from(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
-    )).scalar_one()
+    me = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(MasteryEvent)
+            .where(MasteryEvent.attempt_id == attempt.id)
+        )
+    ).scalar_one()
     assert me == 1
 
 
@@ -388,18 +419,28 @@ async def test_layer3_atomic_rollback(db_session):
                 parser_confidence=0.9,
             )
 
-    me = (await db_session.execute(
-        select(func.count()).select_from(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
-    )).scalar_one()
-    ls = (await db_session.execute(
-        select(func.count()).select_from(LearnerState).where(LearnerState.user_id == TEST_USER_ID)
-    )).scalar_one()
+    me = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(MasteryEvent)
+            .where(MasteryEvent.attempt_id == attempt.id)
+        )
+    ).scalar_one()
+    ls = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(LearnerState)
+            .where(LearnerState.user_id == TEST_USER_ID)
+        )
+    ).scalar_one()
     assert me == 0
     assert ls == 0
     # the seed survived the L3 rollback (the attempt row is still there)
-    surviving = (await db_session.execute(
-        select(func.count()).select_from(ProblemAttempt).where(ProblemAttempt.id == attempt.id)
-    )).scalar_one()
+    surviving = (
+        await db_session.execute(
+            select(func.count()).select_from(ProblemAttempt).where(ProblemAttempt.id == attempt.id)
+        )
+    ).scalar_one()
     assert surviving == 1
 
 
@@ -433,9 +474,9 @@ async def test_layer3_failure_sets_pending_keeps_grade(db_session):
                 parser_confidence=0.9,
             )
 
-    refreshed = (await db_session.execute(
-        select(ProblemAttempt).where(ProblemAttempt.id == attempt.id)
-    )).scalar_one()
+    refreshed = (
+        await db_session.execute(select(ProblemAttempt).where(ProblemAttempt.id == attempt.id))
+    ).scalar_one()
     assert refreshed.learner_update_pending is True
     assert refreshed.result == "graded"  # the grade survives
 
@@ -456,22 +497,38 @@ async def test_retry_identical_idempotent(db_session):
     audited = _audited([_covered_finding()])
 
     await run_learner_update(
-        db_session, sess=sess, attempt=attempt, shadow=_shadow(audited),
-        done_ts=done_ts, parser_confidence=0.9,
+        db_session,
+        sess=sess,
+        attempt=attempt,
+        shadow=_shadow(audited),
+        done_ts=done_ts,
+        parser_confidence=0.9,
     )
     await run_learner_update(
-        db_session, sess=sess, attempt=attempt, shadow=_shadow(audited),
-        done_ts=done_ts, parser_confidence=0.9,
+        db_session,
+        sess=sess,
+        attempt=attempt,
+        shadow=_shadow(audited),
+        done_ts=done_ts,
+        parser_confidence=0.9,
     )
 
-    events = (await db_session.execute(
-        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
-    )).scalars().all()
+    events = (
+        (
+            await db_session.execute(
+                select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert len(events) == 1  # supersede, not double
 
-    state = (await db_session.execute(
-        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
-    )).scalar_one()
+    state = (
+        await db_session.execute(
+            select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+        )
+    ).scalar_one()
     # equals the single-run posterior (cold-start base both times)
     event = convert_findings_to_events(audited, opposes_map={}, turn_order={})[0]
     expected = _expected_update(
@@ -486,21 +543,29 @@ async def test_retry_changed_kind_recomputes(db_session):
     """First run emits a MISCONCEPTION for the entity; retry emits a CORRECTED
     for the SAME entity -> the posterior reflects ONLY the corrected event over
     the (cold-start) base, with no misconception residue."""
-    sid, cid, by_key = await _seed_course_with_entity(
-        db_session, canonical_keys=(_CONTINUITY,)
-    )
+    sid, cid, by_key = await _seed_course_with_entity(db_session, canonical_keys=(_CONTINUITY,))
     sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
     done_ts = datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
 
     # Run 1: a standalone contradiction on eq.continuity -> misconception event.
     misc_audited = _audited([_misconception_finding(key=_CONTINUITY)])
     await run_learner_update(
-        db_session, sess=sess, attempt=attempt, shadow=_shadow(misc_audited),
-        done_ts=done_ts, parser_confidence=0.9,
+        db_session,
+        sess=sess,
+        attempt=attempt,
+        shadow=_shadow(misc_audited),
+        done_ts=done_ts,
+        parser_confidence=0.9,
     )
-    ev1 = (await db_session.execute(
-        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
-    )).scalars().all()
+    ev1 = (
+        (
+            await db_session.execute(
+                select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert len(ev1) == 1
     assert ev1[0].event_kind == "misconception"
 
@@ -508,19 +573,31 @@ async def test_retry_changed_kind_recomputes(db_session):
     # event (kind change misconception -> covered) on the same entity.
     covered_audited = _audited([_covered_finding(key=_CONTINUITY, score=1.0)])
     await run_learner_update(
-        db_session, sess=sess, attempt=attempt, shadow=_shadow(covered_audited),
-        done_ts=done_ts, parser_confidence=0.9,
+        db_session,
+        sess=sess,
+        attempt=attempt,
+        shadow=_shadow(covered_audited),
+        done_ts=done_ts,
+        parser_confidence=0.9,
     )
 
-    events = (await db_session.execute(
-        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
-    )).scalars().all()
+    events = (
+        (
+            await db_session.execute(
+                select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     # the misconception row is superseded; only the covered remains
     assert [e.event_kind for e in events] == ["covered"]
 
-    state = (await db_session.execute(
-        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
-    )).scalar_one()
+    state = (
+        await db_session.execute(
+            select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+        )
+    ).scalar_one()
     # posterior reflects ONLY the covered event over the cold-start base (no
     # misconception residue, no double-count)
     event = convert_findings_to_events(covered_audited, opposes_map={}, turn_order={})[0]
@@ -579,14 +656,26 @@ async def test_same_entity_multi_event_folds_once(db_session):
     assert result.events_written == 2
     assert result.states_upserted == 1
 
-    events = (await db_session.execute(
-        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
-    )).scalars().all()
+    events = (
+        (
+            await db_session.execute(
+                select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert len(events) == 2  # both event-log rows present
 
-    states = (await db_session.execute(
-        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
-    )).scalars().all()
+    states = (
+        (
+            await db_session.execute(
+                select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert len(states) == 1  # ONE upsert, not two
     state = states[0]
     # fires ONCE per Done episode -> evidence_count is 1, not 2
@@ -631,12 +720,18 @@ async def test_misconception_code_surfaces_on_second_attempt(db_session):
     misc_audited = _audited([_misconception_finding(key=_CONTINUITY)])
 
     await run_learner_update(
-        db_session, sess=sess, attempt=attempt1, shadow=_shadow(misc_audited),
-        done_ts=done_ts, parser_confidence=0.9,
+        db_session,
+        sess=sess,
+        attempt=attempt1,
+        shadow=_shadow(misc_audited),
+        done_ts=done_ts,
+        parser_confidence=0.9,
     )
-    state1 = (await db_session.execute(
-        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
-    )).scalar_one()
+    state1 = (
+        await db_session.execute(
+            select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+        )
+    ).scalar_one()
     # 1st misconception from cold-start: p_misc not yet argmax -> code withheld.
     assert state1.misconception_code is None
 
@@ -647,18 +742,24 @@ async def test_misconception_code_surfaces_on_second_attempt(db_session):
     db_session.add(attempt2)
     await db_session.flush()
     await run_learner_update(
-        db_session, sess=sess, attempt=attempt2, shadow=_shadow(misc_audited),
-        done_ts=done_ts, parser_confidence=0.9,
+        db_session,
+        sess=sess,
+        attempt=attempt2,
+        shadow=_shadow(misc_audited),
+        done_ts=done_ts,
+        parser_confidence=0.9,
     )
 
-    state2 = (await db_session.execute(
-        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
-    )).scalar_one()
+    state2 = (
+        await db_session.execute(
+            select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+        )
+    ).scalar_one()
     # combined posterior clears the §3 two-step flag -> the code is now recorded.
     assert state2.misconception_code == _CONTINUITY
-    me2 = (await db_session.execute(
-        select(MasteryEvent).where(MasteryEvent.attempt_id == attempt2.id)
-    )).scalar_one()
+    me2 = (
+        await db_session.execute(select(MasteryEvent).where(MasteryEvent.attempt_id == attempt2.id))
+    ).scalar_one()
     assert me2.misconception_code == _CONTINUITY
 
 
@@ -675,12 +776,18 @@ async def test_evidence_count_increments(db_session):
     audited = _audited([_covered_finding()])
 
     await run_learner_update(
-        db_session, sess=sess, attempt=attempt1, shadow=_shadow(audited),
-        done_ts=done_ts, parser_confidence=0.9,
+        db_session,
+        sess=sess,
+        attempt=attempt1,
+        shadow=_shadow(audited),
+        done_ts=done_ts,
+        parser_confidence=0.9,
     )
-    state1 = (await db_session.execute(
-        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
-    )).scalar_one()
+    state1 = (
+        await db_session.execute(
+            select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+        )
+    ).scalar_one()
     assert state1.evidence_count == 1  # fresh insert
 
     # a SECOND distinct attempt for the same (user, entity)
@@ -690,12 +797,18 @@ async def test_evidence_count_increments(db_session):
     db_session.add(attempt2)
     await db_session.flush()
     await run_learner_update(
-        db_session, sess=sess, attempt=attempt2, shadow=_shadow(audited),
-        done_ts=done_ts, parser_confidence=0.9,
+        db_session,
+        sess=sess,
+        attempt=attempt2,
+        shadow=_shadow(audited),
+        done_ts=done_ts,
+        parser_confidence=0.9,
     )
-    state2 = (await db_session.execute(
-        select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
-    )).scalar_one()
+    state2 = (
+        await db_session.execute(
+            select(LearnerState).where(LearnerState.entity_id == by_key[_CONTINUITY])
+        )
+    ).scalar_one()
     assert state2.evidence_count == 2  # incremented on upsert
 
 
@@ -730,11 +843,20 @@ async def test_belief_length_3_check(db_session):
     sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
     await _apply_learner_state_checks(db_session)
     # a length-2 belief violates the REAL CHECK (array_length(belief,1)=3)
-    db_session.add(LearnerState(
-        user_id=TEST_USER_ID, search_space_id=sid, entity_id=by_key[_CONTINUITY],
-        belief=[0.5, 0.5], mastery=0.5, confidence=0.5, misconception_code=None,
-        evidence_count=1, last_evidence_at=datetime.now(UTC), updated_at=datetime.now(UTC),
-    ))
+    db_session.add(
+        LearnerState(
+            user_id=TEST_USER_ID,
+            search_space_id=sid,
+            entity_id=by_key[_CONTINUITY],
+            belief=[0.5, 0.5],
+            mastery=0.5,
+            confidence=0.5,
+            misconception_code=None,
+            evidence_count=1,
+            last_evidence_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+    )
     with pytest.raises(IntegrityError):
         await db_session.flush()
 
@@ -744,11 +866,20 @@ async def test_mastery_range_check(db_session):
     sess, attempt = await _seed_session_attempt(db_session, sid=sid, cid=cid)
     await _apply_learner_state_checks(db_session)
     # mastery 1.5 is out of [0,1] -> the REAL CHECK rejects it
-    db_session.add(LearnerState(
-        user_id=TEST_USER_ID, search_space_id=sid, entity_id=by_key[_CONTINUITY],
-        belief=[0.3, 0.3, 0.4], mastery=1.5, confidence=0.5, misconception_code=None,
-        evidence_count=1, last_evidence_at=datetime.now(UTC), updated_at=datetime.now(UTC),
-    ))
+    db_session.add(
+        LearnerState(
+            user_id=TEST_USER_ID,
+            search_space_id=sid,
+            entity_id=by_key[_CONTINUITY],
+            belief=[0.3, 0.3, 0.4],
+            mastery=1.5,
+            confidence=0.5,
+            misconception_code=None,
+            evidence_count=1,
+            last_evidence_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+    )
     with pytest.raises(IntegrityError):
         await db_session.flush()
 
@@ -759,11 +890,18 @@ async def test_unique_attempt_entity_kind(db_session):
 
     def _mk():
         return MasteryEvent(
-            user_id=TEST_USER_ID, search_space_id=sid, entity_id=by_key[_CONTINUITY],
-            attempt_id=attempt.id, event_kind="covered", score=1.0,
-            parser_confidence=0.9, grader_confidence=0.8,
-            prior_belief=[0.2, 0.6, 0.2], posterior_belief=[0.1, 0.5, 0.4],
-            mastery_after=0.65, evidence_node_ids=[],
+            user_id=TEST_USER_ID,
+            search_space_id=sid,
+            entity_id=by_key[_CONTINUITY],
+            attempt_id=attempt.id,
+            event_kind="covered",
+            score=1.0,
+            parser_confidence=0.9,
+            grader_confidence=0.8,
+            prior_belief=[0.2, 0.6, 0.2],
+            posterior_belief=[0.1, 0.5, 0.4],
+            mastery_after=0.65,
+            evidence_node_ids=[],
         )
 
     db_session.add(_mk())
@@ -800,13 +938,17 @@ def _auditor_stub(_request):
 
 def _route_neo_stubs(attempt_id: int, *, stamp_mock):
     return [
-        patch("apollo.handlers.done.KGStore.read_graph",
-              new=AsyncMock(return_value=_route_student_graph(attempt_id))),
+        patch(
+            "apollo.handlers.done.KGStore.read_graph",
+            new=AsyncMock(return_value=_route_student_graph(attempt_id)),
+        ),
         patch("apollo.handlers.done.KGStore.freeze", new=AsyncMock()),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=stamp_mock),
         patch("apollo.handlers.done_grading.write_resolution", new=AsyncMock(return_value=None)),
-        patch("apollo.handlers.done_turn_order.KGStore.read_node_created_at",
-              new=AsyncMock(return_value={"stu_continuity": "2026-06-18T00:00:02+00:00"})),
+        patch(
+            "apollo.handlers.done_turn_order.KGStore.read_node_created_at",
+            new=AsyncMock(return_value={"stu_continuity": "2026-06-18T00:00:02+00:00"}),
+        ),
         patch("apollo.handlers.done_grading.main_chat_adjudicator", new=_adjudicator_stub),
         patch("apollo.handlers.done_grading.main_chat_auditor", new=_auditor_stub),
     ]
@@ -814,8 +956,11 @@ def _route_neo_stubs(attempt_id: int, *, stamp_mock):
 
 async def _seed_route_session(db, *, current_code, sid, cid):
     sess = ApolloSession(
-        user_id=TEST_USER_ID, search_space_id=sid, concept_id=cid,
-        status=SessionStatus.active.value, phase=SessionPhase.SOLVING.value,
+        user_id=TEST_USER_ID,
+        search_space_id=sid,
+        concept_id=cid,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.SOLVING.value,
         current_problem_id=current_code,
     )
     db.add(sess)
@@ -823,8 +968,15 @@ async def _seed_route_session(db, *, current_code, sid, cid):
     attempt = ProblemAttempt(session_id=sess.id, problem_id=current_code, difficulty="intro")
     db.add(attempt)
     await db.flush()
-    db.add(Message(session_id=sess.id, attempt_id=attempt.id, role="student",
-                   content="continuity says rho A1 v1 equals rho A2 v2", turn_index=0))
+    db.add(
+        Message(
+            session_id=sess.id,
+            attempt_id=attempt.id,
+            role="student",
+            content="continuity says rho A1 v1 equals rho A2 v2",
+            turn_index=0,
+        )
+    )
     await db.flush()
     return sess, attempt
 
@@ -833,8 +985,12 @@ async def _seed_route_entity(db, *, concept_id):
     """Seed eq.continuity entity under the bernoulli concept so the route's
     load_entity_specs map resolves the covered event."""
     ent = KGEntity(
-        concept_id=concept_id, canonical_key=_CONTINUITY, kind="equation",
-        display_name="Continuity", payload={}, aliases=[],
+        concept_id=concept_id,
+        canonical_key=_CONTINUITY,
+        kind="equation",
+        display_name="Continuity",
+        payload={},
+        aliases=[],
     )
     db.add(ent)
     await db.flush()
@@ -845,8 +1001,10 @@ async def test_done_ts_single_instant(db_session, monkeypatch):
     """Flag ON: the persisted LearnerState.last_evidence_at equals the `ts`
     threaded into the (stubbed) stamp_graded_at — ONE done_ts reaches both."""
     sid, cid, codes = await seed_course(
-        db_session, subject_slug="fluid_mechanics",
-        concept_slug="bernoulli_principle", problems=_INTRO,
+        db_session,
+        subject_slug="fluid_mechanics",
+        concept_slug="bernoulli_principle",
+        problems=_INTRO,
     )
     entity_id = await _seed_route_entity(db_session, concept_id=cid)
     sess, attempt = await _seed_route_session(db_session, current_code=codes[0], sid=sid, cid=cid)
@@ -868,9 +1026,9 @@ async def test_done_ts_single_instant(db_session, monkeypatch):
     ts_arg = stamp_mock.await_args.kwargs["ts"]
     assert isinstance(ts_arg, datetime)
 
-    state = (await db_session.execute(
-        select(LearnerState).where(LearnerState.entity_id == entity_id)
-    )).scalar_one()
+    state = (
+        await db_session.execute(select(LearnerState).where(LearnerState.entity_id == entity_id))
+    ).scalar_one()
     assert state.last_evidence_at == ts_arg
 
 
@@ -878,8 +1036,10 @@ async def test_layer3_flag_off_no_write(db_session, monkeypatch):
     """Contract 1: shadow ON but Layer-3 flag OFF -> the gated call never fires,
     NO mastery events / learner state written, grade committed."""
     sid, cid, codes = await seed_course(
-        db_session, subject_slug="fluid_mechanics",
-        concept_slug="bernoulli_principle", problems=_INTRO,
+        db_session,
+        subject_slug="fluid_mechanics",
+        concept_slug="bernoulli_principle",
+        problems=_INTRO,
     )
     await _seed_route_entity(db_session, concept_id=cid)
     sess, attempt = await _seed_route_session(db_session, current_code=codes[0], sid=sid, cid=cid)
@@ -897,16 +1057,24 @@ async def test_layer3_flag_off_no_write(db_session, monkeypatch):
             p.stop()
 
     assert "rubric" in out and "xp_earned" in out
-    me = (await db_session.execute(
-        select(func.count()).select_from(MasteryEvent).where(MasteryEvent.user_id == TEST_USER_ID)
-    )).scalar_one()
-    ls = (await db_session.execute(
-        select(func.count()).select_from(LearnerState).where(LearnerState.user_id == TEST_USER_ID)
-    )).scalar_one()
+    me = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(MasteryEvent)
+            .where(MasteryEvent.user_id == TEST_USER_ID)
+        )
+    ).scalar_one()
+    ls = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(LearnerState)
+            .where(LearnerState.user_id == TEST_USER_ID)
+        )
+    ).scalar_one()
     assert me == 0
     assert ls == 0
-    refreshed = (await db_session.execute(
-        select(ProblemAttempt).where(ProblemAttempt.id == attempt.id)
-    )).scalar_one()
+    refreshed = (
+        await db_session.execute(select(ProblemAttempt).where(ProblemAttempt.id == attempt.id))
+    ).scalar_one()
     assert refreshed.result == "graded"
     assert refreshed.learner_update_pending is False

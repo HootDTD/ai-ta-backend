@@ -96,10 +96,10 @@ class LearnerUpdateResult:
     """Immutable summary of one Layer-3 persist. ``abstained`` is True ONLY when
     ``convert_findings_to_events`` returned ``()`` (no events to write at all)."""
 
-    events_written: int                 # rows appended to apollo_mastery_events
-    states_upserted: int                # distinct (user, search_space, entity) upserts
-    skipped_unmapped: tuple[str, ...]   # canonical_keys with no entity_id (event skipped)
-    abstained: bool                     # True when convert_findings_to_events() == ()
+    events_written: int  # rows appended to apollo_mastery_events
+    states_upserted: int  # distinct (user, search_space, entity) upserts
+    skipped_unmapped: tuple[str, ...]  # canonical_keys with no entity_id (event skipped)
+    abstained: bool  # True when convert_findings_to_events() == ()
 
 
 def _mastery_event_orm_from_spec(spec) -> MasteryEvent:
@@ -158,7 +158,8 @@ async def _recompute_base_for_entity(
     ).scalar_one_or_none()
     if row is None:
         return None
-    return tuple(float(x) for x in row)
+    a, b, c = (float(x) for x in row)
+    return a, b, c
 
 
 async def _lock_prior_state(
@@ -214,13 +215,13 @@ def _upsert_learner_state(
         return
     # Upsert: INCREMENT evidence_count (never blindly write the spec default
     # literal 1 onto an existing row).
-    prior_state.belief = list(state_spec.belief)
+    prior_state.belief = list(state_spec.belief)  # type: ignore[assignment]
     prior_state.mastery = state_spec.mastery
     prior_state.confidence = state_spec.confidence
     prior_state.misconception_code = state_spec.misconception_code
-    prior_state.evidence_count = prior_state.evidence_count + 1
-    prior_state.last_evidence_at = done_ts
-    prior_state.updated_at = done_ts
+    prior_state.evidence_count = prior_state.evidence_count + 1  # type: ignore[assignment]
+    prior_state.last_evidence_at = done_ts  # type: ignore[assignment]
+    prior_state.updated_at = done_ts  # type: ignore[assignment]
 
 
 async def persist_learner_update(
@@ -269,9 +270,7 @@ async def persist_learner_update(
     # Attempt-wide supersede FIRST: a retry of this attempt drops ALL its prior
     # events (every entity/kind) so a kind change (misconception->corrected) does
     # not leave residue. Same txn as the re-inserts below -> atomic.
-    await db.execute(
-        delete(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
-    )
+    await db.execute(delete(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id))
 
     # Resolve canonical_key -> entity_id and GROUP events by entity (preserving
     # the converter's deterministic order). One entity may carry >1 event in a
@@ -339,9 +338,8 @@ def _combined_belief_update(
     combined_likelihood = NO_OP_LIKELIHOOD
     for event in entity_events:
         likelihood = likelihood_for_event(event)
-        combined_likelihood = tuple(
-            a * b for a, b in zip(combined_likelihood, likelihood, strict=True)
-        )
+        x, y, z = (cl * li for cl, li in zip(combined_likelihood, likelihood, strict=True))
+        combined_likelihood = (x, y, z)
     damped = damp(combined_likelihood, q)
     posterior = bayes_update(prior, damped)
     misconception_code = None
@@ -350,9 +348,7 @@ def _combined_belief_update(
         if code is not None:
             misconception_code = code
     dt_days_since_last = (
-        (done_ts - prior_last_evidence_at).days
-        if prior_last_evidence_at is not None
-        else None
+        (done_ts - prior_last_evidence_at).days if prior_last_evidence_at is not None else None
     )
     return BeliefUpdate(
         prior_belief=prior,
@@ -385,8 +381,8 @@ async def _persist_entity_group(
     base->combined transition). Returns the count of event rows appended."""
     prior_state = await _lock_prior_state(
         db,
-        user_id=sess.user_id,
-        search_space_id=sess.search_space_id,
+        user_id=str(sess.user_id),
+        search_space_id=int(sess.search_space_id),
         entity_id=entity_id,
     )
     # Recompute base = the EVENT LOG (prior-ATTEMPT posterior), never the
@@ -394,19 +390,17 @@ async def _persist_entity_group(
     # dt_days_since_last (no v1 decay) and is read off the locked prior state.
     base_belief = await _recompute_base_for_entity(
         db,
-        user_id=sess.user_id,
-        search_space_id=sess.search_space_id,
+        user_id=str(sess.user_id),
+        search_space_id=int(sess.search_space_id),
         entity_id=entity_id,
-        attempt_id=attempt.id,
+        attempt_id=int(attempt.id),
     )
-    prior_last_evidence_at = (
-        prior_state.last_evidence_at if prior_state is not None else None
-    )
+    prior_last_evidence_at = prior_state.last_evidence_at if prior_state is not None else None
 
     update = _combined_belief_update(
         entity_events,
         prior_belief=base_belief,
-        prior_last_evidence_at=prior_last_evidence_at,
+        prior_last_evidence_at=prior_last_evidence_at,  # type: ignore[arg-type]
         parser_confidence=parser_confidence,
         grader_confidence=grader_confidence,
         done_ts=done_ts,
@@ -420,10 +414,10 @@ async def _persist_entity_group(
         mastery_spec, state_spec = event_to_row_specs(
             event,
             update,
-            user_id=sess.user_id,
-            search_space_id=sess.search_space_id,
+            user_id=str(sess.user_id),
+            search_space_id=int(sess.search_space_id),
             entity_id=entity_id,
-            attempt_id=attempt.id,
+            attempt_id=int(attempt.id),
         )
         db.add(_mastery_event_orm_from_spec(mastery_spec))
 
@@ -432,8 +426,8 @@ async def _persist_entity_group(
         db,
         prior_state=prior_state,
         state_spec=state_spec,
-        user_id=sess.user_id,
-        search_space_id=sess.search_space_id,
+        user_id=str(sess.user_id),
+        search_space_id=int(sess.search_space_id),
         entity_id=entity_id,
         done_ts=done_ts,
     )
