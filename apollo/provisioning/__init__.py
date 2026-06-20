@@ -20,6 +20,12 @@ run_promotion_lint, ...``) rather than owning it.
 from __future__ import annotations
 
 from apollo.provisioning.dedup import DedupVerdict, resolve_candidate
+from apollo.provisioning.pairing_gate import (
+    PairingVerdict,
+    Rejection,
+    rejection_from_verdict,
+    validate_pair,
+)
 from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promotion_lint import PromotionResult, run_promotion_lint
 from apollo.provisioning.scrape import (
@@ -27,6 +33,14 @@ from apollo.provisioning.scrape import (
     ScrapeResult,
     scrape_questions,
     write_tier1_problems,
+)
+from apollo.provisioning.solution import (
+    GroundingSpan,
+    ReferenceSolutionDraft,
+    SolutionDraftError,
+    build_approved_pair,
+    find_or_generate,
+    solution_hash,
 )
 from apollo.provisioning.tag_mint import (
     ApprovedPair,
@@ -51,4 +65,16 @@ __all__ = [
     "MintPlan",
     "TagMintError",
     "tag_and_mint",
+    # WU-3B2e — find-or-generate (stage 2) public surface
+    "GroundingSpan",
+    "ReferenceSolutionDraft",
+    "SolutionDraftError",
+    "find_or_generate",
+    "solution_hash",
+    "build_approved_pair",
+    # WU-3B2e — pairing/correctness gate (stage 3) public surface
+    "PairingVerdict",
+    "Rejection",
+    "validate_pair",
+    "rejection_from_verdict",
 ]
