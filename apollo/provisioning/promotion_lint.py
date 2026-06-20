@@ -41,8 +41,8 @@ owns the gate logic + diagnostic ONLY — it does NOT promote, call
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Iterable, Mapping
 
 from pydantic import ValidationError
 from sympy.core.cache import clear_cache
@@ -204,10 +204,7 @@ def _gate_5(problem: Problem, kg: KGGraph) -> str | None:
         return f"gate 5: expected exactly one PRECEDES chain head, found {len(heads)}"
     chain = kg.precedes_chain()
     if len(chain) != len(procs):
-        return (
-            f"gate 5: PRECEDES chain covers {len(chain)}/{len(procs)} "
-            f"procedure steps"
-        )
+        return f"gate 5: PRECEDES chain covers {len(chain)}/{len(procs)} procedure steps"
 
     # Terminal-computes-target: the last procedure step must use >=1 equation
     # whose free symbols include target_unknown.
@@ -219,9 +216,7 @@ def _gate_5(problem: Problem, kg: KGGraph) -> str | None:
     eq_by_id = {s.id: s for s in _equation_steps(problem)}
     target = problem.target_unknown
     reaches_target = any(
-        target in _equation_free_symbols(eq_by_id[u])
-        for u in used
-        if u in eq_by_id
+        target in _equation_free_symbols(eq_by_id[u]) for u in used if u in eq_by_id
     )
     if not reaches_target:
         return (
@@ -260,9 +255,7 @@ def _gate_7(problem: Problem) -> str | None:
     could be flagged unclosed; that errs toward rejection, the safe direction for a
     promotion gate (a false-RED quarantines a good problem; never a false-GREEN)."""
     eq_steps = _equation_steps(problem)
-    free_by_eq: dict[str, set[str]] = {
-        s.id: _equation_free_symbols(s) for s in eq_steps
-    }
+    free_by_eq: dict[str, set[str]] = {s.id: _equation_free_symbols(s) for s in eq_steps}
     all_symbols: set[str] = set()
     for syms in free_by_eq.values():
         all_symbols |= syms
@@ -290,8 +283,7 @@ def _gate_7(problem: Problem) -> str | None:
     unclosed = sorted(all_symbols - closed)
     if unclosed:
         return (
-            f"gate 7: equation system is not closed (paper check): unclosed "
-            f"free symbols {unclosed}"
+            f"gate 7: equation system is not closed (paper check): unclosed free symbols {unclosed}"
         )
     return None
 
@@ -360,9 +352,7 @@ def run_promotion_lint(
         # at ``model_validate`` (the earlier try), never reaching this call. This
         # guard stays so a FUTURE ``to_kg_graph`` change that emits a typed edge for
         # a forbidden pair still fails CLOSED at gate 1 rather than crashing the lint.
-        return PromotionResult(
-            ok=False, failed_gate=1, diagnostic=f"gate 1: forbidden edge: {exc}"
-        )
+        return PromotionResult(ok=False, failed_gate=1, diagnostic=f"gate 1: forbidden edge: {exc}")
 
     # Gates 2-8, ordered. The loop returns on the first non-None diagnostic, so
     # the short-circuit ORDER guarantee is explicit and testable.

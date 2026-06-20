@@ -18,7 +18,6 @@ from apollo.provisioning import PromotionResult, problem_dup_hash, run_promotion
 from apollo.provisioning.promotion_lint import _normalize_symbol
 from apollo.schemas.problem import Problem
 
-
 # --------------------------------------------------------------------------- #
 # Central fixtures
 # --------------------------------------------------------------------------- #
@@ -220,9 +219,7 @@ def test_gate1_fires_on_uses_equations_pointing_at_non_equation():
     see ``run_promotion_lint``). The name reflects the path actually taken."""
     graph = copy.deepcopy(_bernoulli_graph())
     # incompressibility is a condition, not an equation.
-    _step(graph, "plan_apply_continuity")["content"]["uses_equations"] = [
-        "incompressibility"
-    ]
+    _step(graph, "plan_apply_continuity")["content"]["uses_equations"] = ["incompressibility"]
     result = _lint(graph)
     assert result.ok is False
     assert result.failed_gate == 1
@@ -338,9 +335,7 @@ def test_gate5_fires_on_terminal_not_computing_target():
     """Terminal procedure step uses ONLY continuity (which lacks P2==target)
     -> gate 5 terminal-computes-target sub-clause."""
     graph = copy.deepcopy(_bernoulli_graph())
-    _step(graph, "plan_solve_bernoulli_for_p2")["content"]["uses_equations"] = [
-        "continuity"
-    ]
+    _step(graph, "plan_solve_bernoulli_for_p2")["content"]["uses_equations"] = ["continuity"]
     result = _lint(graph)
     assert result.ok is False
     assert result.failed_gate == 5
