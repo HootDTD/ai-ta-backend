@@ -49,8 +49,12 @@ class CanonicalNode:
 
     canonical_key: str  # the resolved / entity key (the comparison identity)
     node_type: NodeType
-    source_node_ids: tuple[str, ...]  # raw student node-ids merged here (sorted); for R_norm: the ref step id(s)
-    evidence_spans: tuple[str, ...]  # surface text per source node (durable provenance, §7); () for R_norm
+    source_node_ids: tuple[
+        str, ...
+    ]  # raw student node-ids merged here (sorted); for R_norm: the ref step id(s)
+    evidence_spans: tuple[
+        str, ...
+    ]  # surface text per source node (durable provenance, §7); () for R_norm
     symbolic: str | None = None  # equations only
     method: str | None = None  # resolution method for S_norm nodes (None for R_norm)
     confidence: float | None = None  # method-cap confidence for S_norm nodes (None for R_norm)
@@ -72,7 +76,9 @@ class CanonicalGraph:
 
     nodes: tuple[CanonicalNode, ...]
     edges: tuple[CanonicalEdge, ...]
-    unresolved_nodes: tuple[tuple[str, str], ...]  # (raw node_id, surface_text) — findings-input, NOT scored here
+    unresolved_nodes: tuple[
+        tuple[str, str], ...
+    ]  # (raw node_id, surface_text) — findings-input, NOT scored here
     dropped_edge_count: int  # edges dropped because an endpoint was unresolved
 
 
@@ -152,9 +158,7 @@ def build_reference_canonical(problem: dict) -> ReferenceGraph:
     # is a real reference-node id and >= 1 path exists).
     paths: list[ReferencePathView] = []
     for path in problem["declared_paths"]:
-        paths.append(
-            ReferencePathView(canonical_keys=tuple(key_for_step[nid] for nid in path))
-        )
+        paths.append(ReferencePathView(canonical_keys=tuple(key_for_step[nid] for nid in path)))
 
     return ReferenceGraph(nodes=tuple(nodes), edges=tuple(edges), paths=tuple(paths))
 
@@ -164,9 +168,7 @@ def build_reference_canonical(problem: dict) -> ReferenceGraph:
 # ---------------------------------------------------------------------------
 
 
-def build_student_canonical(
-    student_graph: KGGraph, resolution: ResolutionResult
-) -> CanonicalGraph:
+def build_student_canonical(student_graph: KGGraph, resolution: ResolutionResult) -> CanonicalGraph:
     """Build ``S_norm`` from the student graph + an already-computed resolution.
 
     Merges student nodes by ``resolved_key`` (two nodes resolving to the same
@@ -204,9 +206,7 @@ def build_student_canonical(
         evidence = tuple(student_surface_text(n) for n in member_nodes)
         # Equation symbolic: carry the first member's symbolic surface (equations
         # only); None for non-equations.
-        symbolic = (
-            student_surface_text(member_nodes[0]) if node_type == "equation" else None
-        )
+        symbolic = student_surface_text(member_nodes[0]) if node_type == "equation" else None
         # Deterministic method/confidence: highest confidence wins, tie-broken on
         # method name (sort by (-confidence, method)).
         method, confidence = _winning_method(member_ids, rn_by_node)
@@ -258,9 +258,7 @@ def build_student_canonical(
     )
 
 
-def _winning_method(
-    member_ids: list[str], rn_by_node: dict
-) -> tuple[str | None, float | None]:
+def _winning_method(member_ids: list[str], rn_by_node: dict) -> tuple[str | None, float | None]:
     """Pick the merged node's (method, confidence) deterministically: the
     highest-confidence member wins, tie-broken on method name (sort by
     ``(-confidence, method)``). Returns ``(None, None)`` when no member carries a

@@ -123,7 +123,9 @@ async def test_build_rerun_inputs_keys_on_attempt_problem_id_not_current_problem
     # Two problems with DISTINCT payloads.
     p_a, p_b = _payload("p_a", "AAA"), _payload("p_b", "BBB")
     sid, cid, codes = await seed_course(
-        db_session, subject_slug="s_wprob", concept_slug="k_wprob",
+        db_session,
+        subject_slug="s_wprob",
+        concept_slug="k_wprob",
         problems=[p_a, p_b],
     )
     assert set(codes) == {"p_a", "p_b"}
@@ -138,9 +140,7 @@ async def test_build_rerun_inputs_keys_on_attempt_problem_id_not_current_problem
 
     patches, _rg, _rga = _neo_stubs()
     with patches[0], patches[1]:
-        result = await build_rerun_inputs(
-            db_session, object(), attempt=attempt, sess=sess
-        )
+        result = await build_rerun_inputs(db_session, object(), attempt=attempt, sess=sess)
 
     # The builder rebuilt the OLD problem (p_a) the pending attempt belongs to,
     # NOT the session's current problem (p_b).
@@ -157,21 +157,19 @@ async def test_build_rerun_inputs_keys_on_attempt_problem_id_not_current_problem
 async def test_build_rerun_inputs_happy_path_assembles_all_fields(db_session):
     payload = _payload("p_h", "HHH")
     sid, cid, _codes = await seed_course(
-        db_session, subject_slug="s_happy", concept_slug="k_happy",
+        db_session,
+        subject_slug="s_happy",
+        concept_slug="k_happy",
         problems=[payload],
     )
     sess = await _seed_session(db_session, sid=sid, cid=cid, current_problem_id="p_h")
     report = _good_report()
-    attempt = await _seed_attempt(
-        db_session, session_id=sess.id, problem_id="p_h", report=report
-    )
+    attempt = await _seed_attempt(db_session, session_id=sess.id, problem_id="p_h", report=report)
 
     graph = _stub_graph(parser_confidence=0.95)
     patches, _rg, _rga = _neo_stubs(graph=graph, graded_at={"n1": _ISO})
     with patches[0], patches[1]:
-        result = await build_rerun_inputs(
-            db_session, object(), attempt=attempt, sess=sess
-        )
+        result = await build_rerun_inputs(db_session, object(), attempt=attempt, sess=sess)
 
     assert isinstance(result, RerunInputs)
     assert result.problem_payload == payload
@@ -193,12 +191,13 @@ async def test_build_rerun_inputs_happy_path_assembles_all_fields(db_session):
 async def test_build_rerun_inputs_dead_letters_when_diagnostic_report_none(db_session):
     payload = _payload("p_dr", "DRD")
     sid, cid, _codes = await seed_course(
-        db_session, subject_slug="s_dr", concept_slug="k_dr", problems=[payload],
+        db_session,
+        subject_slug="s_dr",
+        concept_slug="k_dr",
+        problems=[payload],
     )
     sess = await _seed_session(db_session, sid=sid, cid=cid, current_problem_id="p_dr")
-    attempt = await _seed_attempt(
-        db_session, session_id=sess.id, problem_id="p_dr", report=None
-    )
+    attempt = await _seed_attempt(db_session, session_id=sess.id, problem_id="p_dr", report=None)
 
     patches, read_graph, read_graded = _neo_stubs()
     with patches[0], patches[1]:
@@ -219,35 +218,37 @@ async def test_build_rerun_inputs_dead_letters_when_diagnostic_report_none(db_se
 
 async def test_build_rerun_inputs_dead_letters_when_rubric_missing(db_session):
     sid, cid, _codes = await seed_course(
-        db_session, subject_slug="s_rm", concept_slug="k_rm",
+        db_session,
+        subject_slug="s_rm",
+        concept_slug="k_rm",
         problems=[_payload("p_rm", "RMR")],
     )
     sess = await _seed_session(db_session, sid=sid, cid=cid, current_problem_id="p_rm")
 
     # (a) "rubric" key absent entirely.
     attempt_no_rubric = await _seed_attempt(
-        db_session, session_id=sess.id, problem_id="p_rm",
+        db_session,
+        session_id=sess.id,
+        problem_id="p_rm",
         report={"narrative": "x", "coverage": {}},
     )
     patches, _rg, _rga = _neo_stubs()
     with patches[0], patches[1]:
         with pytest.raises(LearnerUpdateUnreconstructableError) as exc_a:
-            await build_rerun_inputs(
-                db_session, object(), attempt=attempt_no_rubric, sess=sess
-            )
+            await build_rerun_inputs(db_session, object(), attempt=attempt_no_rubric, sess=sess)
     assert exc_a.value.reason == "rubric_missing"
 
     # (b) rubric present but lacks "overall" (calibration.py derefs ["overall"]).
     attempt_no_overall = await _seed_attempt(
-        db_session, session_id=sess.id, problem_id="p_rm",
+        db_session,
+        session_id=sess.id,
+        problem_id="p_rm",
         report={"rubric": {"no_overall": 1}},
     )
     patches_b, _rg2, _rga2 = _neo_stubs()
     with patches_b[0], patches_b[1]:
         with pytest.raises(LearnerUpdateUnreconstructableError) as exc_b:
-            await build_rerun_inputs(
-                db_session, object(), attempt=attempt_no_overall, sess=sess
-            )
+            await build_rerun_inputs(db_session, object(), attempt=attempt_no_overall, sess=sess)
     assert exc_b.value.reason == "rubric_missing"
 
 
@@ -258,7 +259,9 @@ async def test_build_rerun_inputs_dead_letters_when_rubric_missing(db_session):
 
 async def test_build_rerun_inputs_dead_letters_when_graded_at_empty(db_session):
     sid, cid, _codes = await seed_course(
-        db_session, subject_slug="s_ge", concept_slug="k_ge",
+        db_session,
+        subject_slug="s_ge",
+        concept_slug="k_ge",
         problems=[_payload("p_ge", "GEG")],
     )
     sess = await _seed_session(db_session, sid=sid, cid=cid, current_problem_id="p_ge")

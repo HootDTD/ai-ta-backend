@@ -98,9 +98,7 @@ def test_migration_subjects_backfill_present():
     )
     assert update_match, "no backfill UPDATE on apollo_subjects.search_space_id"
     assert notnull_match, "no SET NOT NULL on apollo_subjects.search_space_id"
-    assert update_match.start() < notnull_match.start(), (
-        "backfill UPDATE must precede SET NOT NULL"
-    )
+    assert update_match.start() < notnull_match.start(), "backfill UPDATE must precede SET NOT NULL"
 
 
 def test_migration_header_notes_reconciliation():
@@ -126,9 +124,19 @@ def test_mastery_event_and_finding_kinds_documented():
     assert isinstance(FINDING_KINDS, tuple) and FINDING_KINDS
     # The spec §2 mastery-event set and §6.3 finding set.
     assert set(MASTERY_EVENT_KINDS) == {
-        "covered", "missing", "partial", "misconception", "corrected",
+        "covered",
+        "missing",
+        "partial",
+        "misconception",
+        "corrected",
     }
     assert set(FINDING_KINDS) == {
-        "covered_node", "missing_node", "matched_edge", "missing_edge",
-        "unsupported_extra", "contradiction", "unresolved", "alternative_path",
+        "covered_node",
+        "missing_node",
+        "matched_edge",
+        "missing_edge",
+        "unsupported_extra",
+        "contradiction",
+        "unresolved",
+        "alternative_path",
     }

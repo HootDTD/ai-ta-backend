@@ -60,9 +60,7 @@ def _edge(edge_type, frm, to, *, attempt_id=1, from_type=None, to_type=None):
 
 
 def _load_problem01() -> dict:
-    return json.loads(
-        (_BERNOULLI / "problems" / "problem_01.json").read_text(encoding="utf-8")
-    )
+    return json.loads((_BERNOULLI / "problems" / "problem_01.json").read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +219,12 @@ def test_validate_reference_undeclared_paths_raises():
     """Empty declared_paths -> ReferenceGraphInvalidError."""
     problem = {
         "reference_solution": [
-            {"id": "a", "entry_type": "equation", "entity_key": "eq.a", "content": {"symbolic": "x = y"}},
+            {
+                "id": "a",
+                "entry_type": "equation",
+                "entity_key": "eq.a",
+                "content": {"symbolic": "x = y"},
+            },
         ],
         "declared_paths": [],
     }

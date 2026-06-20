@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from apollo.agent._llm import main_chat
 from apollo.errors import ResolutionInvalidOutputError, ResolutionUnavailableError
@@ -37,8 +37,8 @@ class ResolutionLLMRequest:
     """The single batched adjudication request: the remaining node texts +
     the closed candidate vocabulary."""
 
-    nodes: tuple[tuple[str, str], ...]          # (node_id, surface_text)
-    candidates: tuple[tuple[str, str], ...]     # (canonical_key, display_name)
+    nodes: tuple[tuple[str, str], ...]  # (node_id, surface_text)
+    candidates: tuple[tuple[str, str], ...]  # (canonical_key, display_name)
 
 
 # An adjudicator maps a request to {node_id: canonical_key} for the nodes it is
@@ -48,12 +48,8 @@ Adjudicator = Callable[[ResolutionLLMRequest], ResolutionLLMReply]
 
 
 def _build_messages(request: ResolutionLLMRequest) -> list[dict[str, str]]:
-    candidate_lines = "\n".join(
-        f"- {key}: {name}" for key, name in request.candidates
-    )
-    node_lines = "\n".join(
-        f"- {node_id}: {text}" for node_id, text in request.nodes
-    )
+    candidate_lines = "\n".join(f"- {key}: {name}" for key, name in request.candidates)
+    node_lines = "\n".join(f"- {node_id}: {text}" for node_id, text in request.nodes)
     system = (
         "You map each student statement to AT MOST ONE canonical key from the "
         "provided closed candidate list. Return STRICT JSON "
@@ -88,9 +84,7 @@ def main_chat_adjudicator(request: ResolutionLLMRequest) -> ResolutionLLMReply:
     except ResolutionUnavailableError:
         raise
     except Exception as exc:  # noqa: BLE001 - surface as a named infra error
-        raise ResolutionUnavailableError(
-            stage="llm_adjudication", last_error=str(exc)
-        ) from exc
+        raise ResolutionUnavailableError(stage="llm_adjudication", last_error=str(exc)) from exc
 
 
 def adjudicate(
@@ -121,11 +115,7 @@ def adjudicate(
     resolved: dict[str, Candidate] = {}
     for node_id, returned_key in reply.items():
         if returned_key not in by_key:
-            _LOG.info(
-                "resolution_llm_invalid returned=%s node_id=%s", returned_key, node_id
-            )
-            raise ResolutionInvalidOutputError(
-                returned_key=returned_key, allowed_keys=allowed
-            )
+            _LOG.info("resolution_llm_invalid returned=%s node_id=%s", returned_key, node_id)
+            raise ResolutionInvalidOutputError(returned_key=returned_key, allowed_keys=allowed)
         resolved[node_id] = by_key[returned_key]
     return resolved

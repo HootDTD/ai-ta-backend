@@ -75,7 +75,7 @@ _COVERED_GOLDEN = [
 @pytest.mark.parametrize("score, expected", _COVERED_GOLDEN)
 def test_covered_likelihood_golden_vectors(score, expected):
     L = likelihood_for_event(_covered(score))
-    for got, want in zip(L, expected):
+    for got, want in zip(L, expected, strict=True):
         assert math.isclose(got, want, abs_tol=1e-3)
 
 
@@ -118,12 +118,8 @@ def test_missing_misconception_corrected_likelihoods():
     )
     # The clamp is a no-op on the fixed rows (min component 0.2 > floor 0.02).
     assert likelihood_for_event(missing) == MISSING_LIKELIHOOD == (0.7, 1.0, 0.4)
-    assert (
-        likelihood_for_event(misc) == MISCONCEPTION_LIKELIHOOD == (3.0, 1.0, 0.2)
-    )
-    assert (
-        likelihood_for_event(corrected) == CORRECTED_LIKELIHOOD == (0.5, 1.5, 1.2)
-    )
+    assert likelihood_for_event(misc) == MISCONCEPTION_LIKELIHOOD == (3.0, 1.0, 0.2)
+    assert likelihood_for_event(corrected) == CORRECTED_LIKELIHOOD == (0.5, 1.5, 1.2)
 
 
 def test_partial_maps_to_covered_at_half():
@@ -135,7 +131,7 @@ def test_partial_maps_to_covered_at_half():
     Lp = likelihood_for_event(partial)
     Lc = likelihood_for_event(_covered(0.5))
     assert Lp == Lc
-    for got, want in zip(Lp, (0.3536, 1.0000, 0.3536)):
+    for got, want in zip(Lp, (0.3536, 1.0000, 0.3536), strict=True):
         assert math.isclose(got, want, abs_tol=1e-3)
     assert _argmax(Lp) == 1  # shaky
 
