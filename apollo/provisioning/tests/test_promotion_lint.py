@@ -228,16 +228,23 @@ def test_gate1_fires_on_uses_equations_pointing_at_non_equation():
     assert result.failed_gate == 1
 
 
-def test_gate1_fires_on_unmapped_entry_type_variable_mapping():
-    """variable_mapping is schema-legal but absent from the frozen mint map on
-    THIS branch -> gate 1 fails CLOSED (ADJ #5 defense-in-depth)."""
+def test_gate1_accepts_variable_mapping_after_3b2d_map_extension():
+    """variable_mapping is schema-legal AND, as of WU-3B2d's additive extension of
+    the frozen ``_ENTRY_TYPE_TO_KIND_PREFIX`` (``variable_mapping -> (variable,
+    varmap)``), is in the mint map — so gate-1's mint-map membership sub-check
+    ACCEPTS it (it no longer fails CLOSED). Before 3B2d this asserted
+    ``failed_gate == 1`` (ADJ #5 defense-in-depth); the extension is the unit that
+    flips it. DISCRIMINATING: reverting the additive map key makes gate 1 fire
+    again (``ok is False`` / ``failed_gate == 1``), so this RED-flags the revert."""
     graph = copy.deepcopy(_bernoulli_graph())
     step = _step(graph, "incompressibility")
     step["entry_type"] = "variable_mapping"
     step["content"] = {"term": "density", "symbol": "rho"}
     result = _lint(graph)
-    assert result.ok is False
-    assert result.failed_gate == 1
+    # gate 1's mint-map sub-check no longer rejects variable_mapping; the graph is
+    # otherwise valid, so the lint passes all 8 gates.
+    assert result.failed_gate != 1, result.diagnostic
+    assert result.ok is True
 
 
 def test_gate2_fires_on_missing_entity_link():

@@ -77,12 +77,19 @@ class SeedError(RuntimeError):
 # reference-solution entry_type -> (entity kind, canonical_key prefix).
 # 'simplification' has no kind in ENTITY_KINDS: simplifications are scoping
 # conditions, so they map to kind 'condition' with a distinct 'simp.' prefix.
+# 'variable_mapping' (WU-3B2d additive): a symbol-binding step (e.g. "P maps to
+# pressure"); maps to kind 'variable' with a 'varmap.' prefix so a §8B auto-
+# provisioned problem carrying one mints (no KeyError) and 3B2b's gate-1 mint-map
+# membership sub-check ACCEPTS it. Additive only — no seeded problem uses
+# variable_mapping, so the WU-6A2 reference_entity_keys golden vectors are
+# byte-identical (the test_personalization_select anchor proves it).
 _ENTRY_TYPE_TO_KIND_PREFIX: dict[str, tuple[str, str]] = {
     "equation": ("equation", "eq"),
     "condition": ("condition", "cond"),
     "simplification": ("condition", "simp"),
     "procedure_step": ("procedure", "proc"),
     "definition": ("definition", "def"),
+    "variable_mapping": ("variable", "varmap"),
 }
 
 # Authored definition (D5): the pressure-velocity tradeoff a misconception
