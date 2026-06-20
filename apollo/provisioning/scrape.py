@@ -29,9 +29,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from database.models import AITAChunk
 
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
@@ -96,7 +99,9 @@ class ScrapeResult:
 
 
 def _coerce_candidate(
-    raw: Any, *, chunk: "AITAChunk"  # noqa: F821 - AITAChunk imported for typing only
+    raw: Any,
+    *,
+    chunk: AITAChunk,
 ) -> CandidateQuestion | None:
     """Build a ``CandidateQuestion`` from one LLM record, stamping the chunk-
     derived provenance (``document_id``/``page``/``chunk_content_hash`` come from
@@ -104,15 +109,15 @@ def _coerce_candidate(
     validation error."""
     if not isinstance(raw, dict):
         return None
-    content_hash = _chunk_content_hash(chunk.content)
+    content_hash = _chunk_content_hash(str(chunk.content))
     try:
         return CandidateQuestion(
             problem_text=raw.get("problem_text", ""),
             given_values=raw.get("given_values", {}),
             target_unknown=raw.get("target_unknown", ""),
             difficulty=raw.get("difficulty", ""),
-            document_id=chunk.document_id,
-            page=chunk.page_number,
+            document_id=int(chunk.document_id),
+            page=chunk.page_number,  # type: ignore[arg-type]  # nullable col
             chunk_content_hash=content_hash,
             concept_slug=raw.get("concept_slug", ""),
         )
@@ -121,7 +126,7 @@ def _coerce_candidate(
 
 
 async def scrape_questions(
-    chunks: Sequence["AITAChunk"],  # noqa: F821
+    chunks: Sequence[AITAChunk],
     *,
     chat_fn: Callable[..., str],
 ) -> ScrapeResult:
@@ -181,12 +186,16 @@ async def resolve_or_create_provisional_concept(
     the course and reuses or creates a ``provisional.inventory`` concept under it.
     Idempotent: re-calling returns the SAME concept id."""
     subject_id = (
-        await db.execute(
-            select(Subject.id)
-            .where(Subject.search_space_id == search_space_id)
-            .order_by(Subject.id.asc())
+        (
+            await db.execute(
+                select(Subject.id)
+                .where(Subject.search_space_id == search_space_id)
+                .order_by(Subject.id.asc())
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if subject_id is None:
         subject = Subject(
             slug=f"provisional-{search_space_id}",
@@ -195,7 +204,7 @@ async def resolve_or_create_provisional_concept(
         )
         db.add(subject)
         await db.flush()
-        subject_id = subject.id
+        subject_id = int(subject.id)
 
     concept_id = (
         await db.execute(
@@ -214,7 +223,7 @@ async def resolve_or_create_provisional_concept(
     )
     db.add(concept)
     await db.flush()
-    return concept.id
+    return int(concept.id)
 
 
 def _problem_code_for(candidate: CandidateQuestion) -> str:

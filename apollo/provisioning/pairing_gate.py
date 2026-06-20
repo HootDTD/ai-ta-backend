@@ -145,9 +145,7 @@ def _judge_or_fail_closed(
         )
         parsed = json.loads(raw)
     except Exception as exc:  # noqa: BLE001 - any failure → fail-CLOSED (reject)
-        _LOG.warning(
-            "pairing_judge fail-closed (reject) on parse error: %s", exc
-        )
+        _LOG.warning("pairing_judge fail-closed (reject) on parse error: %s", exc)
         return None
     if not isinstance(parsed, dict):
         _LOG.warning("pairing_judge fail-closed (reject): non-object response")
@@ -250,11 +248,7 @@ async def validate_pair(
         )
         _log_verdict(verdict, draft)
         return verdict
-    failed = tuple(
-        str(c.get("claim", ""))
-        for c in parsed
-        if not c.get("entailed", False)
-    )
+    failed = tuple(str(c.get("claim", "")) for c in parsed if not c.get("entailed", False))
     faithful = not failed
     verdict = PairingVerdict(
         paired=True,

@@ -28,28 +28,37 @@ from apollo.grading.tests._builders import (
 )
 
 
-def _counting_llm(*returns: str):
+class _CountingLLM:
     """An llm stub returning ``returns[i]`` on call i (last value repeats);
     records every request on ``.requests`` and the call count on ``.calls``."""
 
-    def _fn(request: DiagnosticRequest) -> str:
-        idx = min(_fn.calls, len(returns) - 1)
-        _fn.calls += 1
-        _fn.requests.append(request)
-        return returns[idx]
+    def __init__(self, *returns: str) -> None:
+        self._returns = returns
+        self.calls = 0
+        self.requests: list[DiagnosticRequest] = []
 
-    _fn.calls = 0
-    _fn.requests = []
-    return _fn
+    def __call__(self, request: DiagnosticRequest) -> str:
+        idx = min(self.calls, len(self._returns) - 1)
+        self.calls += 1
+        self.requests.append(request)
+        return self._returns[idx]
 
 
-def _raising_llm():
-    def _fn(request: DiagnosticRequest) -> str:
-        _fn.calls += 1
+def _counting_llm(*returns: str) -> _CountingLLM:
+    return _CountingLLM(*returns)
+
+
+class _RaisingLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self, request: DiagnosticRequest) -> str:
+        self.calls += 1
         raise RuntimeError("llm boom")
 
-    _fn.calls = 0
-    return _fn
+
+def _raising_llm() -> _RaisingLLM:
+    return _RaisingLLM()
 
 
 def test_request_built_from_findings_only():

@@ -144,21 +144,23 @@ async def _read_transcript(db: AsyncSession, *, attempt_id: int) -> str:
     """Join the attempt's messages (ordered by turn) into one transcript string
     for the §6.4 step-12 transcript audit."""
     rows = (
-        await db.execute(
-            select(Message.content)
-            .where(Message.attempt_id == attempt_id)
-            .order_by(Message.turn_index)
+        (
+            await db.execute(
+                select(Message.content)
+                .where(Message.attempt_id == attempt_id)
+                .order_by(Message.turn_index)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return "\n".join(rows)
 
 
-async def _set_pending_and_commit(
-    db: AsyncSession, attempt: ProblemAttempt
-) -> None:
+async def _set_pending_and_commit(db: AsyncSession, attempt: ProblemAttempt) -> None:
     """NO-FALLBACK: flag the attempt for a learner-model retry and commit ONLY
     that flag (the grade/XP are already durable from the OLD path)."""
-    attempt.learner_update_pending = True
+    attempt.learner_update_pending = True  # type: ignore[assignment]
     await db.commit()
 
 
@@ -181,11 +183,13 @@ async def run_graph_simulation(
     setting pending (nothing cross-store was written).
     """
     # ---- Steps 1-4: assemble inputs + the step-4 raw-graph gate (no writes) ----
-    entries = await load_for_concept(db, concept_id=sess.concept_id)
+    entries = await load_for_concept(db, concept_id=sess.concept_id)  # type: ignore[arg-type]
     misconceptions = _misconceptions_dict(entries)
 
     specs = await load_entity_specs(
-        db, search_space_id=sess.search_space_id, concept_id=sess.concept_id
+        db,
+        search_space_id=int(sess.search_space_id),
+        concept_id=sess.concept_id,  # type: ignore[arg-type]  # nullable col, bound at grade time
     )
     canon_key_by_canonical_key = {spec.canonical_key: spec.key for spec in specs}
 
@@ -210,7 +214,7 @@ async def run_graph_simulation(
             symbolic_mappings=inputs.symbolic_mappings,
         )
         # Step 6 — RESOLVES_TO + resolution fields (idempotent MERGE).
-        await write_resolution(neo, attempt.id, resolution, resolved_at=_now_iso())
+        await write_resolution(neo, int(attempt.id), resolution, resolved_at=_now_iso())
 
         # Step 7 — canonicalize both sides. build_reference_canonical validates
         # the reference FIRST (raises ReferenceGraphInvalidError = 409); it runs
@@ -225,7 +229,7 @@ async def run_graph_simulation(
 
         # Step 9 — transcript audit (live auditor; suppress-all-missing on infra
         # failure is handled INSIDE build_audited_grade).
-        transcript = await _read_transcript(db, attempt_id=attempt.id)
+        transcript = await _read_transcript(db, attempt_id=int(attempt.id))
         student_nodes = tuple(student_graph.nodes)
         audited = build_audited_grade(
             grade,
@@ -245,9 +249,9 @@ async def run_graph_simulation(
         # the run-txn boundary).
         run_id = await persist_comparison_run(
             db,
-            attempt_id=attempt.id,
-            user_id=sess.user_id,
-            search_space_id=sess.search_space_id,
+            attempt_id=int(attempt.id),
+            user_id=str(sess.user_id),
+            search_space_id=int(sess.search_space_id),
             grade=grade,
             audited=audited,
             normalization_confidence=normalization_confidence,
@@ -258,7 +262,7 @@ async def run_graph_simulation(
         # Step 12 — opposes map + turn order (WU-5A handoff signals).
         opposes_map = build_opposes_map(inputs.candidates)
         turn_order = await build_turn_order(
-            db, neo, attempt_id=attempt.id, student_graph=student_graph
+            db, neo, attempt_id=int(attempt.id), student_graph=student_graph
         )
 
         # Step 12b (WU-4C2) — graph-sim candidate grade + §6.7 calibration + §6.8

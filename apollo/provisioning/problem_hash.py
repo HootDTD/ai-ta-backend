@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Mapping
+from collections.abc import Mapping
 
 from apollo.schemas.problem import Problem
 

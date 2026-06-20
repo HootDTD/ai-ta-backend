@@ -27,8 +27,8 @@ quarantine (3B2h). This unit reads the inventory + writes ONE audit row.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,7 +71,7 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
     dot = 0.0
     norm_a = 0.0
     norm_b = 0.0
-    for x, y in zip(a, b):
+    for x, y in zip(a, b, strict=True):
         dot += x * y
         norm_a += x * x
         norm_b += y * y
@@ -183,14 +183,14 @@ async def resolve_candidate(
                 method="slug",
                 similarity=None,
                 verdict="merged",
-                matched_entity_id=ent.id,
+                matched_entity_id=int(ent.id),
                 ingest_run_id=ingest_run_id,
             )
             return DedupVerdict(
                 verdict="merged",
                 method="slug",
                 similarity=None,
-                matched_entity_id=ent.id,
+                matched_entity_id=int(ent.id),
             )
 
     # --- EMBEDDING tier ----------------------------------------------------- #
@@ -221,9 +221,9 @@ async def resolve_candidate(
     # Pick the MAX cosine; ties break to the LOWEST entity id (-id maximised).
     best = max(
         embed_pool,
-        key=lambda ent: (_cosine(cand_vec, embed_fn(ent.scope_summary)), -ent.id),
+        key=lambda ent: (_cosine(cand_vec, embed_fn(str(ent.scope_summary))), -ent.id),
     )
-    max_cos = _cosine(cand_vec, embed_fn(best.scope_summary))
+    max_cos = _cosine(cand_vec, embed_fn(str(best.scope_summary)))
 
     band_low, _band_high = EMBED_JUDGE_BAND
 
@@ -236,14 +236,14 @@ async def resolve_candidate(
             method="embedding",
             similarity=max_cos,
             verdict="merged",
-            matched_entity_id=best.id,
+            matched_entity_id=int(best.id),
             ingest_run_id=ingest_run_id,
         )
         return DedupVerdict(
             verdict="merged",
             method="embedding",
             similarity=max_cos,
-            matched_entity_id=best.id,
+            matched_entity_id=int(best.id),
         )
 
     if max_cos < band_low:
@@ -272,7 +272,7 @@ async def resolve_candidate(
         search_space_id=search_space_id,
     )
     merged = decision == "merged"
-    matched_id = best.id if merged else None
+    matched_id = int(best.id) if merged else None
     await _record_decision(
         db,
         search_space_id=search_space_id,
