@@ -76,10 +76,7 @@ def test_descending_score_order_and_deterministic_tiebreak():
 
 def test_over_cap_abstains_no_hang():
     """151 student nodes -> the whole attempt abstains (no unbounded solve)."""
-    matches = {
-        f"s{i}": [_m(f"s{i}", "cond.x", 0.95)]
-        for i in range(MAX_STUDENT_NODES + 1)
-    }
+    matches = {f"s{i}": [_m(f"s{i}", "cond.x", 0.95)] for i in range(MAX_STUDENT_NODES + 1)}
     outcome = greedy_global_assignment(matches)
     assert isinstance(outcome, AssignmentOutcome)
     assert outcome.abstained is True
@@ -88,10 +85,7 @@ def test_over_cap_abstains_no_hang():
 
 def test_at_cap_does_not_abstain():
     """Exactly the cap is fine; one over abstains."""
-    matches = {
-        f"s{i}": [_m(f"s{i}", "cond.x", 0.95)]
-        for i in range(MAX_STUDENT_NODES)
-    }
+    matches = {f"s{i}": [_m(f"s{i}", "cond.x", 0.95)] for i in range(MAX_STUDENT_NODES)}
     outcome = greedy_global_assignment(matches)
     assert outcome.abstained is False
 
