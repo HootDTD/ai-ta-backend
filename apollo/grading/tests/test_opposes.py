@@ -16,23 +16,19 @@ def test_build_opposes_map_maps_misconception_to_opposed():
     """A misconception candidate's canonical_key -> its opposes_key."""
     candidates = (misc_candidate("misc.density_ignored", "cond.incompressibility"),)
 
-    assert build_opposes_map(candidates) == {
-        "misc.density_ignored": "cond.incompressibility"
-    }
+    assert build_opposes_map(candidates) == {"misc.density_ignored": "cond.incompressibility"}
 
 
 def test_build_opposes_map_skips_non_misconception_and_none_opposes():
     """A non-misconception candidate and a misconception with opposes_key=None
     BOTH contribute nothing (only opposing misconceptions are detectable pairs)."""
     candidates = (
-        candidate("eq.bernoulli"),                       # not a misconception
-        misc_candidate("misc.no_opposes", None),         # misconception, no opposes
+        candidate("eq.bernoulli"),  # not a misconception
+        misc_candidate("misc.no_opposes", None),  # misconception, no opposes
         misc_candidate("misc.density_ignored", "cond.incompressibility"),
     )
 
-    assert build_opposes_map(candidates) == {
-        "misc.density_ignored": "cond.incompressibility"
-    }
+    assert build_opposes_map(candidates) == {"misc.density_ignored": "cond.incompressibility"}
 
 
 def test_build_opposes_map_is_immutable_mapping():
