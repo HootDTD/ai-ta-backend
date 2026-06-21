@@ -154,9 +154,7 @@ def _misconception_confidences(
     for finding in findings:
         if finding.kind != FindingKind.CONTRADICTION:
             continue
-        node_confs = [
-            conf_by_node[nid] for nid in finding.student_node_ids if nid in conf_by_node
-        ]
+        node_confs = [conf_by_node[nid] for nid in finding.student_node_ids if nid in conf_by_node]
         if node_confs:
             out.append(max(node_confs))
     return tuple(out)

@@ -50,7 +50,7 @@ class _FakeResponse:
 
 
 class _FakeCompletions:
-    def __init__(self, owner: "_FakeClient") -> None:
+    def __init__(self, owner: _FakeClient) -> None:
         self._owner = owner
 
     def create(self, **kwargs):
@@ -61,7 +61,7 @@ class _FakeCompletions:
 
 
 class _FakeChat:
-    def __init__(self, owner: "_FakeClient") -> None:
+    def __init__(self, owner: _FakeClient) -> None:
         self.completions = _FakeCompletions(owner)
 
 
@@ -96,9 +96,7 @@ def _resp(content: str, prompt: int, completion: int) -> _FakeResponse:
 def _make(*, responses, ceiling=cost_constants.PER_DOCUMENT_TOKEN_CEILING, document_id=7):
     run = _FakeIngestRun()
     client = _FakeClient(responses)
-    metered = MeteredChat(
-        ingest_run=run, client=client, ceiling=ceiling, document_id=document_id
-    )
+    metered = MeteredChat(ingest_run=run, client=client, ceiling=ceiling, document_id=document_id)
     return metered, run, client
 
 
@@ -127,9 +125,7 @@ def test_main_routes_to_main_model(monkeypatch):
 
 def test_explicit_model_overrides_routing():
     metered, _run, client = _make(responses=[_resp("ok", 1, 1)])
-    metered.cheap(
-        purpose="p", messages=[{"role": "user", "content": "x"}], model="gpt-4o"
-    )
+    metered.cheap(purpose="p", messages=[{"role": "user", "content": "x"}], model="gpt-4o")
     assert client.calls[0]["model"] == "gpt-4o"
 
 
@@ -165,20 +161,14 @@ def test_single_call_accumulates_counts():
 
 def test_cost_accumulates_via_cost_usd_for():
     metered, run, _client = _make(responses=[_resp("y", 1_000_000, 1_000_000)])
-    metered.cheap(
-        purpose="p", messages=[{"role": "user", "content": "x"}], model="gpt-4o"
-    )
-    assert run.llm_cost_usd == cost_usd_for(
-        "gpt-4o", tokens_in=1_000_000, tokens_out=1_000_000
-    )
+    metered.cheap(purpose="p", messages=[{"role": "user", "content": "x"}], model="gpt-4o")
+    assert run.llm_cost_usd == cost_usd_for("gpt-4o", tokens_in=1_000_000, tokens_out=1_000_000)
     assert run.llm_cost_usd == Decimal("12.50")
 
 
 def test_multiple_calls_accumulate_additively():
     # MUTATION: an `=` instead of `+=` makes this RED (second call would overwrite).
-    metered, run, _client = _make(
-        responses=[_resp("a", 100, 20), _resp("b", 50, 10)]
-    )
+    metered, run, _client = _make(responses=[_resp("a", 100, 20), _resp("b", 50, 10)])
     metered.cheap(purpose="p", messages=[{"role": "user", "content": "x"}])
     metered.cheap(purpose="p", messages=[{"role": "user", "content": "x"}])
     assert run.llm_calls == 2
@@ -247,9 +237,7 @@ def test_counts_accrued_before_raise():
 
 def test_ceiling_breach_on_cumulative_across_calls():
     # First call stays under; the second pushes the CUMULATIVE over the ceiling.
-    metered, run, _client = _make(
-        responses=[_resp("a", 40, 40), _resp("b", 40, 40)], ceiling=150
-    )
+    metered, run, _client = _make(responses=[_resp("a", 40, 40), _resp("b", 40, 40)], ceiling=150)
     metered.cheap(purpose="p", messages=[{"role": "user", "content": "x"}])
     with pytest.raises(CostBudgetExceeded):
         metered.cheap(purpose="p", messages=[{"role": "user", "content": "x"}])

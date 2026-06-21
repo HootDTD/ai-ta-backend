@@ -25,6 +25,9 @@ import json
 
 import pytest
 
+# IMPORT the REAL types — do NOT mock/redefine.
+from apollo.provisioning.scrape import CandidateQuestion
+
 # The not-yet-existing public names (RED on import until solution.py exists).
 from apollo.provisioning.solution import (
     GroundingSpan,
@@ -34,9 +37,6 @@ from apollo.provisioning.solution import (
     find_or_generate,
     solution_hash,
 )
-
-# IMPORT the REAL types — do NOT mock/redefine.
-from apollo.provisioning.scrape import CandidateQuestion
 from apollo.provisioning.tag_mint import ApprovedPair
 from apollo.schemas.problem import Problem
 
@@ -196,7 +196,7 @@ def test_reference_solution_draft_shape():
     # Pydantic round-trip.
     again = ReferenceSolutionDraft.model_validate(draft.model_dump())
     assert again.solution_source == "extracted"
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         _draft(solution_source="invented")
 
 
@@ -415,11 +415,7 @@ def test_build_approved_pair_extracted_vs_generated_source():
     """An extracted draft → pair.solution_source=='extracted'; a generated draft →
     'generated' (the two paths DISCRIMINATE)."""
     q = _candidate()
-    pair_ext = build_approved_pair(
-        q, _draft(solution_source="extracted"), search_space_id=1
-    )
-    pair_gen = build_approved_pair(
-        q, _draft(solution_source="generated"), search_space_id=1
-    )
+    pair_ext = build_approved_pair(q, _draft(solution_source="extracted"), search_space_id=1)
+    pair_gen = build_approved_pair(q, _draft(solution_source="generated"), search_space_id=1)
     assert pair_ext.solution_source == "extracted"
     assert pair_gen.solution_source == "generated"

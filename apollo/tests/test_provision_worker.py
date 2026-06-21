@@ -178,9 +178,7 @@ async def test_iteration_reaps_before_claim(monkeypatch):
 async def test_iteration_survives_drain_exception(monkeypatch, caplog):
     monkeypatch.setenv(worker._AUTOPROVISION_ENABLED_FLAG, "1")
     monkeypatch.setattr(worker, "_reap_expired", AsyncMock(return_value=0))
-    monkeypatch.setattr(
-        worker, "_drain_one", AsyncMock(side_effect=RuntimeError("boom"))
-    )
+    monkeypatch.setattr(worker, "_drain_one", AsyncMock(side_effect=RuntimeError("boom")))
     sleep = AsyncMock()
     monkeypatch.setattr(worker.asyncio, "sleep", sleep)
 
@@ -197,9 +195,7 @@ async def test_iteration_survives_drain_exception(monkeypatch, caplog):
 async def test_iteration_does_not_swallow_system_exit(monkeypatch):
     monkeypatch.setenv(worker._AUTOPROVISION_ENABLED_FLAG, "1")
     monkeypatch.setattr(worker, "_reap_expired", AsyncMock(return_value=0))
-    monkeypatch.setattr(
-        worker, "_drain_one", AsyncMock(side_effect=SystemExit())
-    )
+    monkeypatch.setattr(worker, "_drain_one", AsyncMock(side_effect=SystemExit()))
     monkeypatch.setattr(worker.asyncio, "sleep", AsyncMock())
 
     with pytest.raises(SystemExit):
@@ -233,9 +229,7 @@ async def test_drain_one_completes_on_succeeded(monkeypatch):
 
 async def test_drain_one_fails_job_on_failed_outcome(monkeypatch):
     """T-WK3 — a failed outcome -> fail_job (not complete_job)."""
-    monkeypatch.setattr(
-        worker, "claim_provisioning_job", AsyncMock(return_value=_CLAIMED)
-    )
+    monkeypatch.setattr(worker, "claim_provisioning_job", AsyncMock(return_value=_CLAIMED))
     monkeypatch.setattr(worker, "run_provisioning", AsyncMock(return_value=_FAILED))
     complete = AsyncMock()
     fail = AsyncMock()
@@ -254,9 +248,7 @@ async def test_drain_one_fails_job_on_failed_outcome(monkeypatch):
 
 
 async def test_drain_one_returns_none_when_nothing_claimable(monkeypatch):
-    monkeypatch.setattr(
-        worker, "claim_provisioning_job", AsyncMock(return_value=None)
-    )
+    monkeypatch.setattr(worker, "claim_provisioning_job", AsyncMock(return_value=None))
     run = AsyncMock()
     monkeypatch.setattr(worker, "run_provisioning", run)
 
@@ -314,10 +306,7 @@ def test_install_signal_handlers_tolerates_not_implemented(caplog):
     with caplog.at_level(logging.WARNING, logger=worker.__name__):
         worker._install_signal_handlers(fake_loop, stop_event)
 
-    assert any(
-        r.message == "apollo_provision_signal_handler_unsupported"
-        for r in caplog.records
-    )
+    assert any(r.message == "apollo_provision_signal_handler_unsupported" for r in caplog.records)
     assert not stop_event.is_set()
 
 
@@ -364,9 +353,7 @@ async def test_main_builds_runs_and_closes(monkeypatch):
     def _record_install(loop, stop_event):  # noqa: ANN001 - test fake
         install.append((loop, stop_event))
 
-    monkeypatch.setattr(
-        worker.Neo4jClient, "from_env", staticmethod(lambda: fake_neo)
-    )
+    monkeypatch.setattr(worker.Neo4jClient, "from_env", staticmethod(lambda: fake_neo))
     loop_mock = AsyncMock()
     monkeypatch.setattr(worker, "_loop", loop_mock)
     monkeypatch.setattr(worker, "_install_signal_handlers", _record_install)
@@ -381,9 +368,7 @@ async def test_main_builds_runs_and_closes(monkeypatch):
 async def test_main_closes_neo_on_loop_error(monkeypatch):
     fake_neo = _FakeNeo()
     fake_neo.close = AsyncMock()
-    monkeypatch.setattr(
-        worker.Neo4jClient, "from_env", staticmethod(lambda: fake_neo)
-    )
+    monkeypatch.setattr(worker.Neo4jClient, "from_env", staticmethod(lambda: fake_neo))
     monkeypatch.setattr(worker, "_loop", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(worker, "_install_signal_handlers", lambda loop, stop: None)
 

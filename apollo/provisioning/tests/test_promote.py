@@ -51,9 +51,7 @@ def _bernoulli_problem() -> dict:
             "v1": 2.0,
             "rho": 1000.0,
         },
-        "problem_text": (
-            "Water flows through a horizontal pipe. Find the pressure P2."
-        ),
+        "problem_text": ("Water flows through a horizontal pipe. Find the pressure P2."),
         "target_unknown": "P2",
         "reference_solution": [
             {
@@ -213,9 +211,7 @@ def _mint_plan(concept_id: int) -> MintPlan:
 # T-PR1 — pass flips tier + payload + calls project_canon
 # --------------------------------------------------------------------------- #
 async def test_promote_pass_flips_tier_and_payload(db_session):
-    space, concept_id, problem_id = await _seed_concept_with_problem(
-        db_session, slug="pr1"
-    )
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="pr1")
     neo = AsyncMock()
     result = await promote(
         db_session,
@@ -245,17 +241,13 @@ async def test_promote_pass_flips_tier_and_payload(db_session):
 # T-PR1b — project_canon called with the mint plan's concept_id
 # --------------------------------------------------------------------------- #
 async def test_promote_pass_calls_project_canon_with_concept_id(db_session, monkeypatch):
-    space, concept_id, problem_id = await _seed_concept_with_problem(
-        db_session, slug="pr1b"
-    )
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="pr1b")
     calls: list[dict] = []
 
     async def _fake_project_canon(db, neo, *, search_space_id, concept_id):
         calls.append({"search_space_id": search_space_id, "concept_id": concept_id})
 
-    monkeypatch.setattr(
-        promote_mod, "project_canon", _fake_project_canon
-    )
+    monkeypatch.setattr(promote_mod, "project_canon", _fake_project_canon)
     result = await promote(
         db_session,
         AsyncMock(),
@@ -275,9 +267,7 @@ async def test_promote_pass_calls_project_canon_with_concept_id(db_session, monk
 # T-PR2 — fail returns failed_gate, no flip, no project_canon
 # --------------------------------------------------------------------------- #
 async def test_promote_fail_returns_failed_gate_no_flip(db_session, monkeypatch):
-    space, concept_id, problem_id = await _seed_concept_with_problem(
-        db_session, slug="pr2"
-    )
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="pr2")
     # Inject a foreign symbol so gate 4 fails (the sole foreign-symbol guard).
     problem = _bernoulli_problem()
     problem["given_values"]["zzz_foreign"] = 1.0
@@ -287,9 +277,7 @@ async def test_promote_fail_returns_failed_gate_no_flip(db_session, monkeypatch)
     async def _fake_project_canon(*a, **k):
         called.append(1)
 
-    monkeypatch.setattr(
-        promote_mod, "project_canon", _fake_project_canon
-    )
+    monkeypatch.setattr(promote_mod, "project_canon", _fake_project_canon)
     result = await promote(
         db_session,
         AsyncMock(),
@@ -338,9 +326,7 @@ async def test_promote_passes_existing_hashes_to_gate8(db_session):
     from apollo.provisioning import problem_dup_hash
     from apollo.schemas.problem import Problem
 
-    space, concept_id, problem_id = await _seed_concept_with_problem(
-        db_session, slug="pr4"
-    )
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="pr4")
     problem = _bernoulli_problem()
     # The dup hash gate 8 keys on is computed over the validated Problem (the lint
     # validates the annotated dict to a Problem before hashing).
@@ -364,17 +350,13 @@ async def test_promote_passes_existing_hashes_to_gate8(db_session):
 # T-PR5 — idempotent re-run (tier flip no-ops, project_canon re-called)
 # --------------------------------------------------------------------------- #
 async def test_promote_idempotent_rerun(db_session, monkeypatch):
-    space, concept_id, problem_id = await _seed_concept_with_problem(
-        db_session, slug="pr5"
-    )
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="pr5")
     n_canon = []
 
     async def _fake_project_canon(*a, **k):
         n_canon.append(1)
 
-    monkeypatch.setattr(
-        promote_mod, "project_canon", _fake_project_canon
-    )
+    monkeypatch.setattr(promote_mod, "project_canon", _fake_project_canon)
 
     r1 = await promote(
         db_session,
@@ -404,9 +386,7 @@ async def test_promote_idempotent_rerun(db_session, monkeypatch):
 # T-PR6 — canon error propagates; tier flip not rolled back inside promote
 # --------------------------------------------------------------------------- #
 async def test_promote_canon_error_propagates(db_session, monkeypatch):
-    space, concept_id, problem_id = await _seed_concept_with_problem(
-        db_session, slug="pr6"
-    )
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="pr6")
 
     async def _boom(*a, **k):
         raise CanonProjectionError(stage="merge_canon", last_error="neo down")
@@ -503,7 +483,5 @@ async def test_promote_rehomes_row_to_tagged_concept(db_session):
     teachable = await list_problems_for_concept(db_session, concept_id=tagged.id)
     assert any(p.id == _bernoulli_problem()["id"] for p in teachable)
     # ...and it is NOT reachable under the provisional concept.
-    provisional_pool = await list_problems_for_concept(
-        db_session, concept_id=provisional.id
-    )
+    provisional_pool = await list_problems_for_concept(db_session, concept_id=provisional.id)
     assert provisional_pool == []

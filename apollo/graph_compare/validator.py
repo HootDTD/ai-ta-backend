@@ -72,13 +72,11 @@ def validate_student_graph(student_graph: KGGraph) -> None:
         to_node = node_index.get(edge.to_node_id)
         if from_node is None:
             reasons.append(
-                f"edge {edge.edge_type} references missing from_node_id "
-                f"{edge.from_node_id!r}"
+                f"edge {edge.edge_type} references missing from_node_id {edge.from_node_id!r}"
             )
         if to_node is None:
             reasons.append(
-                f"edge {edge.edge_type} references missing to_node_id "
-                f"{edge.to_node_id!r}"
+                f"edge {edge.edge_type} references missing to_node_id {edge.to_node_id!r}"
             )
         if from_node is None or to_node is None:
             continue

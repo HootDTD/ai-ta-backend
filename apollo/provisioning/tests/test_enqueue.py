@@ -32,15 +32,13 @@ async def _seed_space(db, *, slug: str) -> int:
     space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
-    return space.id
+    return int(space.id)
 
 
 async def _count_runs(db, *, document_id: int) -> int:
     return (
         await db.execute(
-            select(func.count(IngestRun.id)).where(
-                IngestRun.document_id == document_id
-            )
+            select(func.count(IngestRun.id)).where(IngestRun.document_id == document_id)
         )
     ).scalar_one()
 
@@ -48,9 +46,7 @@ async def _count_runs(db, *, document_id: int) -> int:
 async def _count_jobs(db, *, document_id: int) -> int:
     return (
         await db.execute(
-            select(func.count(ProvisioningJob.id)).where(
-                ProvisioningJob.document_id == document_id
-            )
+            select(func.count(ProvisioningJob.id)).where(ProvisioningJob.document_id == document_id)
         )
     ).scalar_one()
 
@@ -177,9 +173,7 @@ async def test_enqueue_none_content_hash_enqueues(db_session):
 # (the §14 byte-identical-upload non-regression — a degraded env must not take
 # down a teacher upload). A non-Integrity error is swallowed via the savepoint.
 # --------------------------------------------------------------------------- #
-async def test_enqueue_swallows_unexpected_error_and_returns_none(
-    db_session, monkeypatch
-):
+async def test_enqueue_swallows_unexpected_error_and_returns_none(db_session, monkeypatch):
     space = await _seed_space(db_session, slug="eq5")
 
     class _Boom:

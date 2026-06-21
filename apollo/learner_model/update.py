@@ -60,9 +60,7 @@ def apply_event(
     damped = damp(likelihood, q)
     posterior = bayes_update(prior, damped)
     dt_days_since_last = (
-        (done_ts - prior_last_evidence_at).days
-        if prior_last_evidence_at is not None
-        else None
+        (done_ts - prior_last_evidence_at).days if prior_last_evidence_at is not None else None
     )
     return BeliefUpdate(
         prior_belief=prior,

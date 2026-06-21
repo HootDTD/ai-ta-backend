@@ -79,10 +79,12 @@ _MIGRATION_030 = MIGRATIONS_DIR / "030_apollo_autoprovisioning.sql"
 # creates — so it MUST be excluded: the chain applies 026 in filename order, and
 # 028's forward dependency is its own concern (it has its own migration test).
 # This mirrors the 026 harness's exclusion of 028 exactly.
-_EXCLUDE_FROM_CHAIN = frozenset({
-    _MIGRATION_030.name,
-    "028_apollo_learner_janitor.sql",
-})
+_EXCLUDE_FROM_CHAIN = frozenset(
+    {
+        _MIGRATION_030.name,
+        "028_apollo_learner_janitor.sql",
+    }
+)
 
 
 def _chain_migrations() -> list[Path]:
@@ -141,9 +143,9 @@ def test_chain_order_018_before_026_before_030():
     assert _MIGRATION_030.name not in names, "030 must be applied separately, last"
     # Ordering invariant: 009 (base tables) < 018 (concepts) < 026 (kg_entities +
     # subjects.search_space_id) — or 030's FK targets / backfill-join won't exist.
-    assert names.index("009_apollo_slice0.sql") < names.index(
-        "018_apollo_concept_registry.sql"
-    ), f"009 must precede 018: {names}"
+    assert names.index("009_apollo_slice0.sql") < names.index("018_apollo_concept_registry.sql"), (
+        f"009 must precede 018: {names}"
+    )
     assert names.index("018_apollo_concept_registry.sql") < names.index(
         "026_apollo_learner_model.sql"
     ), f"018 must precede 026: {names}"
@@ -207,14 +209,10 @@ async def _expect_violation(conn: asyncpg.Connection, error_type, coro) -> None:
 
 
 async def _seed_space(conn: asyncpg.Connection) -> int:
-    return await conn.fetchval(
-        "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
-    )
+    return await conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
 
 
-async def _seed_subject(
-    conn: asyncpg.Connection, space_id: int, slug: str = "s1"
-) -> int:
+async def _seed_subject(conn: asyncpg.Connection, space_id: int, slug: str = "s1") -> int:
     return await conn.fetchval(
         "INSERT INTO apollo_subjects (slug, display_name, search_space_id) "
         "VALUES ($1, 'Subj', $2) RETURNING id",
@@ -223,9 +221,7 @@ async def _seed_subject(
     )
 
 
-async def _seed_concept(
-    conn: asyncpg.Connection, subject_id: int, slug: str = "c1"
-) -> int:
+async def _seed_concept(conn: asyncpg.Connection, subject_id: int, slug: str = "c1") -> int:
     return await conn.fetchval(
         "INSERT INTO apollo_concepts (subject_id, slug, display_name) "
         "VALUES ($1, $2, 'Concept') RETURNING id",
@@ -306,10 +302,7 @@ async def _seed_run(
         cols.append("status")
         vals.append(status)
     placeholders = ", ".join(f"${i + 1}" for i in range(len(vals)))
-    sql = (
-        f"INSERT INTO apollo_ingest_runs ({', '.join(cols)}) "
-        f"VALUES ({placeholders}) RETURNING id"
-    )
+    sql = f"INSERT INTO apollo_ingest_runs ({', '.join(cols)}) VALUES ({placeholders}) RETURNING id"
     return await conn.fetchval(sql, *vals)
 
 
@@ -442,15 +435,11 @@ async def test_solution_source_check(mig_conn):
     # NULL ok (omit the column).
     await _seed_concept_problem(mig_conn, concept, problem_code="s_null")
     for i, src in enumerate(("extracted", "generated", "authored")):
-        await _seed_concept_problem(
-            mig_conn, concept, problem_code=f"s{i}", solution_source=src
-        )
+        await _seed_concept_problem(mig_conn, concept, problem_code=f"s{i}", solution_source=src)
     await _expect_violation(
         mig_conn,
         asyncpg.CheckViolationError,
-        _seed_concept_problem(
-            mig_conn, concept, problem_code="s_bad", solution_source="invented"
-        ),
+        _seed_concept_problem(mig_conn, concept, problem_code="s_bad", solution_source="invented"),
     )
 
 
@@ -539,9 +528,7 @@ async def test_concept_problem_tier_defaults_1(mig_conn):
     default a raw/migration insert sees."""
     _space, _subject, concept = await _seed_chain(mig_conn)
     pid = await _seed_concept_problem(mig_conn, concept, problem_code="d1")
-    tier = await mig_conn.fetchval(
-        "SELECT tier FROM apollo_concept_problems WHERE id=$1", pid
-    )
+    tier = await mig_conn.fetchval("SELECT tier FROM apollo_concept_problems WHERE id=$1", pid)
     assert tier == 1
 
 
@@ -644,9 +631,7 @@ async def test_backfill_b_flips_seeded_tier1_to_tier2_authored(pre030_factory):
     'UPDATE ... SET tier=2' line makes this RED."""
 
     async def _seed(conn):
-        space = await conn.fetchval(
-            "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
-        )
+        space = await conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
         subject = await conn.fetchval(
             "INSERT INTO apollo_subjects (slug, display_name, search_space_id) "
             "VALUES ('s1', 'Subj', $1) RETURNING id",
@@ -669,8 +654,7 @@ async def test_backfill_b_flips_seeded_tier1_to_tier2_authored(pre030_factory):
     conn = await asyncpg.connect(dsn)
     try:
         row = await conn.fetchrow(
-            "SELECT tier, solution_source FROM apollo_concept_problems "
-            "WHERE problem_code='legacy'"
+            "SELECT tier, solution_source FROM apollo_concept_problems WHERE problem_code='legacy'"
         )
         assert row["tier"] == 2, "seeded row must flip to tier=2 (teachable)"
         assert row["solution_source"] == "authored"
@@ -683,9 +667,7 @@ async def test_backfill_a_denormalizes_search_space_id(pre030_factory):
     and equals the seeded course id, for a row inserted pre-030."""
 
     async def _seed(conn):
-        space = await conn.fetchval(
-            "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
-        )
+        space = await conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
         subject = await conn.fetchval(
             "INSERT INTO apollo_subjects (slug, display_name, search_space_id) "
             "VALUES ('s1', 'Subj', $1) RETURNING id",
@@ -832,9 +814,7 @@ async def test_child_tables_ingest_run_cascade(mig_conn):
         "apollo_dedup_decisions",
         "apollo_ingest_errors",
     ):
-        n = await mig_conn.fetchval(
-            f"SELECT count(*) FROM {table} WHERE ingest_run_id=$1", run
-        )
+        n = await mig_conn.fetchval(f"SELECT count(*) FROM {table} WHERE ingest_run_id=$1", run)
         assert n == 0, f"{table} row should cascade-delete with its ingest_run"
 
 
@@ -886,9 +866,7 @@ async def _seed_two_courses_with_runs(conn: asyncpg.Connection):
 
 async def test_ingest_runs_scoped_select_returns_rows(mig_conn):
     sA, _sB = await _seed_two_courses_with_runs(mig_conn)
-    rows = await mig_conn.fetch(
-        "SELECT * FROM apollo_ingest_runs WHERE search_space_id=$1", sA
-    )
+    rows = await mig_conn.fetch("SELECT * FROM apollo_ingest_runs WHERE search_space_id=$1", sA)
     assert len(rows) == 1
 
 
@@ -896,8 +874,7 @@ async def test_ingest_runs_other_tenant_returns_zero_rows(mig_conn):
     sA, sB = await _seed_two_courses_with_runs(mig_conn)
     # Querying course-B's id returns ZERO of course-A's rows.
     rows = await mig_conn.fetch(
-        "SELECT * FROM apollo_ingest_runs "
-        "WHERE search_space_id=$1 AND document_id=$2",
+        "SELECT * FROM apollo_ingest_runs WHERE search_space_id=$1 AND document_id=$2",
         sB,
         100,
     )

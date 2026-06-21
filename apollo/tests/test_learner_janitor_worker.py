@@ -6,6 +6,7 @@ is patched to an ``AsyncMock`` so tests never wait ``POLL_SECONDS``. Signal
 registration is exercised with a fake loop — never a real OS signal (the suite
 runs on Windows where ``add_signal_handler`` raises ``NotImplementedError``).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -102,9 +103,7 @@ async def test_iteration_flag_on_calls_drain_with_limit_1(monkeypatch):
 
     await worker._run_one_iteration(neo, stop_event=asyncio.Event())
 
-    drain.assert_awaited_once_with(
-        neo, limit=worker.SWEEP_LIMIT, max_attempts=MAX_ATTEMPTS
-    )
+    drain.assert_awaited_once_with(neo, limit=worker.SWEEP_LIMIT, max_attempts=MAX_ATTEMPTS)
     # No user_id kwarg — the worker drains globally.
     _, kwargs = drain.call_args
     assert "user_id" not in kwargs
@@ -114,9 +113,7 @@ async def test_iteration_flag_on_calls_drain_with_limit_1(monkeypatch):
 
 async def test_iteration_logs_drain_result(monkeypatch, caplog):
     monkeypatch.setenv(worker._JANITOR_ENABLED_FLAG, "1")
-    monkeypatch.setattr(
-        worker, "drain_pending_attempts", AsyncMock(return_value=_FAKE_RESULT)
-    )
+    monkeypatch.setattr(worker, "drain_pending_attempts", AsyncMock(return_value=_FAKE_RESULT))
     monkeypatch.setattr(worker.asyncio, "sleep", AsyncMock())
 
     with caplog.at_level(logging.INFO, logger=worker.__name__):
@@ -144,9 +141,7 @@ async def test_iteration_flag_off_logs_disabled(monkeypatch, caplog):
     assert any(r.message == "apollo_janitor_disabled" for r in caplog.records)
 
 
-async def test_iteration_drain_exception_is_swallowed_and_still_sleeps(
-    monkeypatch, caplog
-):
+async def test_iteration_drain_exception_is_swallowed_and_still_sleeps(monkeypatch, caplog):
     """R3: one bad sweep must NOT kill the worker. The drain is wrapped in
     ``try/except Exception`` — the error is logged, then the loop still sleeps
     and ``_run_one_iteration`` returns normally."""
@@ -259,10 +254,7 @@ def test_install_signal_handlers_tolerates_not_implemented(caplog):
         # Must NOT raise.
         worker._install_signal_handlers(fake_loop, stop_event)
 
-    assert any(
-        r.message == "apollo_janitor_signal_handler_unsupported"
-        for r in caplog.records
-    )
+    assert any(r.message == "apollo_janitor_signal_handler_unsupported" for r in caplog.records)
     assert not stop_event.is_set()
 
 
@@ -298,9 +290,7 @@ async def test_main_builds_runs_and_closes(monkeypatch):
 async def test_main_closes_neo_on_loop_error(monkeypatch):
     fake_neo = _FakeNeo()
     fake_neo.close = AsyncMock()
-    monkeypatch.setattr(
-        worker.Neo4jClient, "from_env", staticmethod(lambda: fake_neo)
-    )
+    monkeypatch.setattr(worker.Neo4jClient, "from_env", staticmethod(lambda: fake_neo))
     monkeypatch.setattr(worker, "_loop", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(worker, "_install_signal_handlers", lambda loop, stop: None)
 

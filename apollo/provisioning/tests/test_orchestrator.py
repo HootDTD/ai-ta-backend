@@ -17,8 +17,6 @@ import json
 import sys
 from unittest.mock import AsyncMock
 
-import pytest
-
 from apollo.persistence.models import (
     Concept,
     ConceptProblem,
@@ -31,12 +29,12 @@ from apollo.persistence.models import (
 from apollo.provisioning import run_provisioning
 from apollo.provisioning.metered_chat import CostBudgetExceeded
 from apollo.provisioning.orchestrator import ProvisioningOutcome
-from apollo.provisioning.pairing_gate import PairingVerdict, Rejection
+from apollo.provisioning.pairing_gate import PairingVerdict
 from apollo.provisioning.promote import PromoteResult
 from apollo.provisioning.queue import ClaimedJob
 from apollo.provisioning.scrape import CandidateQuestion, ScrapeResult
 from apollo.provisioning.solution import ReferenceSolutionDraft
-from apollo.provisioning.tag_mint import ApprovedPair, MintPlan
+from apollo.provisioning.tag_mint import MintPlan
 from database.models import AITAChunk, AITADocument, SearchSpace
 
 orch = sys.modules["apollo.provisioning.orchestrator"]
@@ -108,10 +106,10 @@ async def _seed(db, *, slug: str, document_id: int = 1, n_chunks: int = 1):
     db.add(job)
     await db.flush()
     claimed = ClaimedJob(
-        job_id=job.id,
-        search_space_id=space.id,
+        job_id=int(job.id),
+        search_space_id=int(space.id),
         document_id=document_id,
-        ingest_run_id=run.id,
+        ingest_run_id=int(run.id),
         attempt_count=1,
     )
     return space.id, run.id, claimed
@@ -162,6 +160,7 @@ def _patch_stages(
     concept_id: int,
 ):
     """Patch the frozen stage callables on the orchestrator module surface."""
+
     async def _scrape(chunks, *, chat_fn):  # noqa: ANN001
         # exercise the injected chat_fn so a cost-abort scrape can raise.
         for ch in chunks:
@@ -294,9 +293,7 @@ async def test_run_provisioning_pairing_rejection_continues(db_session, monkeypa
     space, run_id, claimed = await _seed(db_session, slug="or2")
     concept_id = await _seed_concept(db_session, search_space_id=space)
     chash = "c1"
-    await _seed_tier1_row(
-        db_session, concept_id=concept_id, chash=chash, search_space_id=space
-    )
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
 
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
         return _draft()
@@ -319,9 +316,7 @@ async def test_run_provisioning_pairing_rejection_continues(db_session, monkeypa
     assert outcome.n_promoted == 0
     rejects = (
         await db_session.execute(
-            RejectedProblem.__table__.select().where(
-                RejectedProblem.ingest_run_id == run_id
-            )
+            RejectedProblem.__table__.select().where(RejectedProblem.ingest_run_id == run_id)
         )
     ).all()
     assert len(rejects) == 1
@@ -369,9 +364,7 @@ async def test_run_provisioning_lint_rejection_continues(db_session, monkeypatch
     assert outcome.n_promoted == 0
     rejects = (
         await db_session.execute(
-            RejectedProblem.__table__.select().where(
-                RejectedProblem.ingest_run_id == run_id
-            )
+            RejectedProblem.__table__.select().where(RejectedProblem.ingest_run_id == run_id)
         )
     ).all()
     assert len(rejects) == 1
@@ -390,9 +383,7 @@ async def test_run_provisioning_solution_error_fails_run(db_session, monkeypatch
     space, run_id, claimed = await _seed(db_session, slug="or4")
     concept_id = await _seed_concept(db_session, search_space_id=space)
     chash = "c1"
-    await _seed_tier1_row(
-        db_session, concept_id=concept_id, chash=chash, search_space_id=space
-    )
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
 
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
         raise SolutionDraftError("no solution")
@@ -428,9 +419,7 @@ async def test_run_provisioning_tagmint_error_fails_run(db_session, monkeypatch)
     space, run_id, claimed = await _seed(db_session, slug="or5")
     concept_id = await _seed_concept(db_session, search_space_id=space)
     chash = "c1"
-    await _seed_tier1_row(
-        db_session, concept_id=concept_id, chash=chash, search_space_id=space
-    )
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
 
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
         return _draft()
@@ -477,9 +466,7 @@ async def test_run_provisioning_cost_abort_fails_run(db_session, monkeypatch):
         concept_id=concept_id,
     )
 
-    outcome = await _run(
-        db_session, claimed, metered=_FakeMeteredChat(raise_on_scrape=True)
-    )
+    outcome = await _run(db_session, claimed, metered=_FakeMeteredChat(raise_on_scrape=True))
 
     assert outcome.status == "failed"
     errors = (
@@ -500,9 +487,7 @@ async def test_run_provisioning_recomputes_counts_on_replay(db_session, monkeypa
     space, run_id, claimed = await _seed(db_session, slug="or7")
     concept_id = await _seed_concept(db_session, search_space_id=space)
     chash = "c1"
-    await _seed_tier1_row(
-        db_session, concept_id=concept_id, chash=chash, search_space_id=space
-    )
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
 
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
         return _draft()
@@ -578,9 +563,7 @@ async def test_run_provisioning_empty_scrape_succeeds(db_session, monkeypatch):
 # --------------------------------------------------------------------------- #
 # T-OR10 — an unexpected stage exception fails the run terminally (never running)
 # --------------------------------------------------------------------------- #
-async def test_run_provisioning_unexpected_error_fails_run_terminally(
-    db_session, monkeypatch
-):
+async def test_run_provisioning_unexpected_error_fails_run_terminally(db_session, monkeypatch):
     space, run_id, claimed = await _seed(db_session, slug="or10")
     concept_id = await _seed_concept(db_session, search_space_id=space)
 
@@ -616,9 +599,7 @@ async def test_run_provisioning_cost_abort_in_validate_pair(db_session, monkeypa
     space, run_id, claimed = await _seed(db_session, slug="or11")
     concept_id = await _seed_concept(db_session, search_space_id=space)
     chash = "c1"
-    await _seed_tier1_row(
-        db_session, concept_id=concept_id, chash=chash, search_space_id=space
-    )
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
 
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
         return _draft()
@@ -654,9 +635,7 @@ async def test_run_provisioning_cost_abort_in_tag_mint(db_session, monkeypatch):
     space, run_id, claimed = await _seed(db_session, slug="or12")
     concept_id = await _seed_concept(db_session, search_space_id=space)
     chash = "c1"
-    await _seed_tier1_row(
-        db_session, concept_id=concept_id, chash=chash, search_space_id=space
-    )
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
 
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
         return _draft()
@@ -692,15 +671,11 @@ async def test_run_provisioning_cost_abort_in_tag_mint(db_session, monkeypatch):
 # --------------------------------------------------------------------------- #
 # T-OR13 — find_or_generate cost abort fails the run (per-stage cost branch)
 # --------------------------------------------------------------------------- #
-async def test_run_provisioning_cost_abort_in_find_or_generate(
-    db_session, monkeypatch
-):
+async def test_run_provisioning_cost_abort_in_find_or_generate(db_session, monkeypatch):
     space, run_id, claimed = await _seed(db_session, slug="or13")
     concept_id = await _seed_concept(db_session, search_space_id=space)
     chash = "c1"
-    await _seed_tier1_row(
-        db_session, concept_id=concept_id, chash=chash, search_space_id=space
-    )
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
 
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
         raise CostBudgetExceeded(tokens=99, ceiling=5, document_id=1)
@@ -734,9 +709,7 @@ async def test_run_provisioning_canon_error_fails_run(db_session, monkeypatch):
     space, run_id, claimed = await _seed(db_session, slug="or14")
     concept_id = await _seed_concept(db_session, search_space_id=space)
     chash = "c1"
-    await _seed_tier1_row(
-        db_session, concept_id=concept_id, chash=chash, search_space_id=space
-    )
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
 
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
         return _draft()
@@ -943,9 +916,7 @@ class _ShapeFaithfulMeteredChat:
 # (passing the keyword-only .cheap as tag_and_mint's positional chat_fn) would
 # raise TypeError here, fail the run, and promote nothing.
 # --------------------------------------------------------------------------- #
-async def test_run_provisioning_real_tag_mint_end_to_end_promotes(
-    db_session, monkeypatch
-):
+async def test_run_provisioning_real_tag_mint_end_to_end_promotes(db_session, monkeypatch):
     space, run_id, claimed = await _seed(db_session, slug="or15")
     # The Tier-1 row lives under the PROVISIONAL concept (scrape's home); the real
     # tagged concept is minted by tag_and_mint at runtime.
@@ -953,9 +924,7 @@ async def test_run_provisioning_real_tag_mint_end_to_end_promotes(
         db_session, search_space_id=space, slug="provisional.inventory"
     )
     chash = "bernoulli-c1"
-    pid = await _seed_tier1_row(
-        db_session, concept_id=provisional_id, chash=chash, search_space_id=space
-    )
+    await _seed_tier1_row(db_session, concept_id=provisional_id, chash=chash, search_space_id=space)
 
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
         return _bernoulli_draft()
@@ -1001,9 +970,7 @@ async def test_run_provisioning_real_tag_mint_end_to_end_promotes(
 # the SAME tagged concept is rejected at gate 8 (the orchestrator computes the
 # concept-scoped existing_problem_hashes from already-promoted rows).
 # --------------------------------------------------------------------------- #
-async def test_run_provisioning_gate8_rejects_duplicate_on_concept(
-    db_session, monkeypatch
-):
+async def test_run_provisioning_gate8_rejects_duplicate_on_concept(db_session, monkeypatch):
     space, run_id, claimed = await _seed(db_session, slug="or16", n_chunks=2)
     provisional_id = await _seed_concept(
         db_session, search_space_id=space, slug="provisional.inventory"
@@ -1052,9 +1019,7 @@ async def test_run_provisioning_gate8_rejects_duplicate_on_concept(
     assert outcome.n_rejected == 1
     rejects = (
         await db_session.execute(
-            RejectedProblem.__table__.select().where(
-                RejectedProblem.ingest_run_id == run_id
-            )
+            RejectedProblem.__table__.select().where(RejectedProblem.ingest_run_id == run_id)
         )
     ).all()
     assert len(rejects) == 1
@@ -1083,9 +1048,7 @@ async def test_run_provisioning_default_embed_and_retrieve_fn(db_session, monkey
         return PairingVerdict(paired=False, faithful=False, confidence=0.0)
 
     chash = "c1"
-    await _seed_tier1_row(
-        db_session, concept_id=concept_id, chash=chash, search_space_id=space
-    )
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
     _patch_stages(
         monkeypatch,
         scrape_candidates=(_candidate(chash=chash),),
@@ -1156,9 +1119,7 @@ async def test_run_provisioning_counts_dedup_merges(db_session, monkeypatch):
     space, run_id, claimed = await _seed(db_session, slug="or19")
     concept_id = await _seed_concept(db_session, search_space_id=space)
     chash = "c1"
-    await _seed_tier1_row(
-        db_session, concept_id=concept_id, chash=chash, search_space_id=space
-    )
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
 
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
         return _draft()
@@ -1222,8 +1183,13 @@ async def test_concept_dup_hashes_skips_non_problem_payload(db_session):
         "given_values": {"P1": 1.0},
         "target_unknown": "P2",
         "reference_solution": [
-            {"id": "s1", "step": 1, "entry_type": "equation",
-             "content": {"label": "eq", "symbolic": "P1 - P2"}, "depends_on": []}
+            {
+                "id": "s1",
+                "step": 1,
+                "entry_type": "equation",
+                "content": {"label": "eq", "symbolic": "P1 - P2"},
+                "depends_on": [],
+            }
         ],
     }
     db_session.add(

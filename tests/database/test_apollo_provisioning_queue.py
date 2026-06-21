@@ -80,9 +80,7 @@ _TOUCHES_TARGETS = re.compile(
     r"apollo_(subjects|concepts|concept_problems|kg_entities|problem_attempts)\b"
 )
 _MIGRATION_030 = MIGRATIONS_DIR / "030_apollo_autoprovisioning.sql"
-_EXCLUDE_FROM_CHAIN = frozenset(
-    {_MIGRATION_030.name, "028_apollo_learner_janitor.sql"}
-)
+_EXCLUDE_FROM_CHAIN = frozenset({_MIGRATION_030.name, "028_apollo_learner_janitor.sql"})
 
 
 def _chain_migrations() -> list[Path]:
@@ -100,9 +98,7 @@ def _plain_dsn(sqlalchemy_url: str, database: str) -> str:
 
 
 def _asyncpg_sqlalchemy_url(sqlalchemy_url: str, database: str) -> str:
-    url = make_url(sqlalchemy_url).set(
-        drivername="postgresql+asyncpg", database=database
-    )
+    url = make_url(sqlalchemy_url).set(drivername="postgresql+asyncpg", database=database)
     return url.render_as_string(hide_password=False)
 
 
@@ -177,9 +173,7 @@ async def committed_engine(_queue_dsns):
 async def _seed_space(plain_dsn: str) -> int:
     conn = await asyncpg.connect(plain_dsn)
     try:
-        return await conn.fetchval(
-            "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
-        )
+        return await conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
     finally:
         await conn.close()
 
@@ -324,9 +318,7 @@ async def test_skip_locked_skips_locked_row_without_blocking(committed_engine):
         "SELECT id FROM apollo_provisioning_jobs WHERE id=$1 FOR UPDATE", locked
     )
     try:
-        claimed = await asyncio.wait_for(
-            _claim_once(factory, lease_owner="w1"), timeout=5
-        )
+        claimed = await asyncio.wait_for(_claim_once(factory, lease_owner="w1"), timeout=5)
     finally:
         await tx.rollback()
         await lock_conn.close()
@@ -551,9 +543,7 @@ async def test_cost_abort_writes_ingest_error_and_fails_run(committed_engine):
 
     async with factory() as session:
         ingest_run = await session.get(IngestRun, run_id)
-        metered = MeteredChat(
-            ingest_run=ingest_run, client=_Client(), ceiling=100, document_id=1
-        )
+        metered = MeteredChat(ingest_run=ingest_run, client=_Client(), ceiling=100, document_id=1)
         raised = False
         try:
             metered.cheap(
@@ -615,9 +605,7 @@ async def test_claim_order_is_fifo(committed_engine):
     older = await _seed_committed_job(
         plain_dsn, search_space_id=space, document_id=1, created_at=older_ts
     )
-    await _seed_committed_job(
-        plain_dsn, search_space_id=space, document_id=2, created_at=newer_ts
-    )
+    await _seed_committed_job(plain_dsn, search_space_id=space, document_id=2, created_at=newer_ts)
 
     claimed = await _claim_once(factory, lease_owner="w1")
     assert claimed is not None
