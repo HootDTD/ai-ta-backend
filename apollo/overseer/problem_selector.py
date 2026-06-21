@@ -39,15 +39,21 @@ async def list_problems_for_concept(db: AsyncSession, *, concept_id: int) -> lis
     WU-3B2a (§8B auto-provisioning): ONLY Tier-2 problems are returned. Tier-1 is
     auto-provisioned inventory (not yet teachable) and is excluded. This single
     predicate is the SOLE chokepoint, so it gates BOTH ``select_problem`` and
-    ``select_problem_personalized`` with no separate edit. (The
-    ``quarantined_at IS NULL`` clause is added by WU-3B2h — the column exists in
-    migration 030 but the filter is NOT added here.)"""
+    ``select_problem_personalized`` with no separate edit.
+
+    WU-3B2h (§8B.3 anomaly quarantine): the additional ``quarantined_at IS NULL``
+    predicate excludes a problem the ``apollo.provisioning.quarantine`` sweep has
+    pulled from the selectable pool (a wrong/mispaired reference solution whose
+    class-wide misses concentrate on one node). The column ships in migration 030;
+    this is where its filter is applied. Reversible: the sweep clears
+    ``quarantined_at`` and the problem becomes selectable again."""
     rows = (
         (
             await db.execute(
                 select(ConceptProblem.payload).where(
                     ConceptProblem.concept_id == concept_id,
                     ConceptProblem.tier == 2,
+                    ConceptProblem.quarantined_at.is_(None),
                 )
             )
         )
