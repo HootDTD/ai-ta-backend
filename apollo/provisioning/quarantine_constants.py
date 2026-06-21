@@ -32,6 +32,4 @@ THETA_MISS: float = float(os.getenv("APOLLO_QUARANTINE_THETA_MISS", "0.80"))
 
 # The top node's miss rate must exceed the MEAN per-node miss rate by at least
 # this much — the "concentrated, not uniformly hard" test.
-CONCENTRATION_MARGIN: float = float(
-    os.getenv("APOLLO_QUARANTINE_CONCENTRATION_MARGIN", "0.40")
-)
+CONCENTRATION_MARGIN: float = float(os.getenv("APOLLO_QUARANTINE_CONCENTRATION_MARGIN", "0.40"))

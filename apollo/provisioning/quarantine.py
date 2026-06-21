@@ -251,10 +251,7 @@ async def _attempt_totals(
     if search_space_id is not None:
         stmt = stmt.where(GraphComparisonRun.search_space_id == search_space_id)
 
-    return {
-        (problem_code, sid): int(n)
-        for problem_code, sid, n in (await db.execute(stmt)).all()
-    }
+    return {(problem_code, sid): int(n) for problem_code, sid, n in (await db.execute(stmt)).all()}
 
 
 def _build_coverage_matrix(
@@ -337,7 +334,7 @@ async def sweep_quarantine(
         currently_quarantined = row.quarantined_at is not None
 
         if verdict.quarantine and not currently_quarantined:
-            row.quarantined_at = _now()
+            row.quarantined_at = _now()  # type: ignore[assignment]
             fired.append(problem_code)
             _LOG.info(
                 "quarantine_fire",
@@ -353,7 +350,7 @@ async def sweep_quarantine(
                 },
             )
         elif not verdict.quarantine and currently_quarantined:
-            row.quarantined_at = None
+            row.quarantined_at = None  # type: ignore[assignment]
             cleared.append(problem_code)
             _LOG.info(
                 "quarantine_clear",
