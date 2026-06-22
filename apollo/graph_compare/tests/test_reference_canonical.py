@@ -222,3 +222,52 @@ def test_reference_canonical_definition_node_type_round_trip():
     assert node.node_type == "definition"
     # definitions carry no symbolic.
     assert node.symbolic is None
+
+
+def test_reference_canonical_emits_uses_edges():
+    """Each procedure step's ``uses_equations`` becomes a USES edge
+    (procedure_step entity_key -> equation entity_key), mirroring
+    ``Problem.to_kg_graph`` so the student's real USES edges can score the
+    ``usage`` dimension instead of it being vacuously 1.0 (the 'structural edge
+    scoring is dead' regression)."""
+    graph = build_reference_canonical(_problem01())
+    uses = {(e.from_key, e.to_key) for e in graph.edges if e.edge_type == EdgeType.USES}
+    assert uses == {
+        ("proc.plan_apply_continuity", "eq.continuity"),
+        ("proc.plan_apply_horizontal_simplification", "eq.bernoulli"),
+        ("proc.plan_solve_bernoulli_for_p2", "eq.bernoulli"),
+    }
+    # USES reference edges carry the same 'explicit' provenance as DEPENDS_ON.
+    assert all(e.provenance == "explicit" for e in graph.edges if e.edge_type == EdgeType.USES)
+
+
+def test_reference_canonical_emits_precedes_chain():
+    """Procedure steps ordered by ``content.order`` form a consecutive PRECEDES
+    chain (prev -> next over canonical keys), mirroring ``Problem.to_kg_graph``;
+    this gives ``edge_coverage`` real procedure-order structure to match the
+    student's PRECEDES edges against."""
+    graph = build_reference_canonical(_problem01())
+    precedes = [(e.from_key, e.to_key) for e in graph.edges if e.edge_type == EdgeType.PRECEDES]
+    assert precedes == [
+        ("proc.plan_apply_continuity", "proc.plan_apply_horizontal_simplification"),
+        ("proc.plan_apply_horizontal_simplification", "proc.plan_solve_bernoulli_for_p2"),
+    ]
+
+
+def test_reference_canonical_no_uses_or_precedes_without_procedure_steps():
+    """A reference with no procedure steps emits neither USES nor PRECEDES edges
+    (the new edge families are scoped to procedure steps; guards over-emission)."""
+    problem = {
+        "reference_solution": [
+            {
+                "id": "a",
+                "entry_type": "equation",
+                "entity_key": "eq.a",
+                "content": {"symbolic": "x = y"},
+                "depends_on": [],
+            },
+        ],
+        "declared_paths": [["a"]],
+    }
+    graph = build_reference_canonical(problem)
+    assert not [e for e in graph.edges if e.edge_type in (EdgeType.USES, EdgeType.PRECEDES)]
