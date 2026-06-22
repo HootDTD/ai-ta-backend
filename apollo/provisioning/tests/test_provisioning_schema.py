@@ -156,9 +156,7 @@ def test_solution_schema_object_round_trips_through_problem():
     async def _retrieve(*_a, **_k):
         return []
 
-    draft = asyncio.run(
-        find_or_generate(None, question, retrieve_fn=_retrieve, chat_fn=_chat)
-    )
+    draft = asyncio.run(find_or_generate(None, question, retrieve_fn=_retrieve, chat_fn=_chat))
     assert isinstance(draft, ReferenceSolutionDraft)
     assert len(draft.reference_solution) == 2
 
@@ -192,7 +190,11 @@ def test_tag_schema_concept_slug_satisfies_parse_tag():
     network)."""
     from apollo.provisioning.tag_mint import _parse_tag
 
-    obj = {"concept_slug": "bernoulli-equation", "display_name": "bernoulli-equation", "prereqs": []}
+    obj = {
+        "concept_slug": "bernoulli-equation",
+        "display_name": "bernoulli-equation",
+        "prereqs": [],
+    }
 
     def _chat(_prompt: str) -> str:
         return json.dumps(obj)
