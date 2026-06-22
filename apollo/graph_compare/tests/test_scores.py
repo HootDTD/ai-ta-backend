@@ -11,8 +11,11 @@ NEVER emits an event. Binding rules under test:
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 
+from apollo.graph_compare.canonical import build_reference_canonical
 from apollo.graph_compare.coverage import coverage_result
 from apollo.graph_compare.scores import (
     INFERRED_EDGE_WEIGHT,
@@ -23,6 +26,45 @@ from apollo.graph_compare.soundness import contradiction_penalty
 from apollo.ontology.edges import EdgeType
 
 from ._builders import cedge, cnode, path, rgraph, rnode, snorm
+
+_BERNOULLI = (
+    Path(__file__).resolve().parents[2]
+    / "subjects"
+    / "fluid_mechanics"
+    / "concepts"
+    / "bernoulli_principle"
+)
+
+
+def _problem01() -> dict:
+    return json.loads((_BERNOULLI / "problems" / "problem_01.json").read_text(encoding="utf-8"))
+
+
+# problem_01's single declared path, as canonical keys + their node types — used
+# to build a student S_norm that COVERS the reference so the edge dimensions are
+# exercised on real authored data (not just hand-built fixtures).
+_NODE_TYPE_BY_KEY = {
+    "eq.continuity": "equation",
+    "cond.incompressibility": "condition",
+    "eq.bernoulli": "equation",
+    "simp.horizontal_simplification": "simplification",
+    "proc.plan_apply_continuity": "procedure_step",
+    "proc.plan_apply_horizontal_simplification": "procedure_step",
+    "proc.plan_solve_bernoulli_for_p2": "procedure_step",
+}
+_REF_USES = (
+    ("proc.plan_apply_continuity", "eq.continuity"),
+    ("proc.plan_apply_horizontal_simplification", "eq.bernoulli"),
+    ("proc.plan_solve_bernoulli_for_p2", "eq.bernoulli"),
+)
+_REF_PRECEDES = (
+    ("proc.plan_apply_continuity", "proc.plan_apply_horizontal_simplification"),
+    ("proc.plan_apply_horizontal_simplification", "proc.plan_solve_bernoulli_for_p2"),
+)
+
+
+def _full_student_nodes():
+    return tuple(cnode(k, node_type) for k, node_type in _NODE_TYPE_BY_KEY.items())
 
 
 def _winning(student, reference):
@@ -215,3 +257,31 @@ def test_subscores_is_frozen():
         contradiction=1.0,
     )
     assert s.node_coverage == 1.0
+
+
+def test_real_problem_uses_precedes_dims_score_when_student_matches():
+    """Regression for the 'structural edge scoring is dead by construction'
+    handoff: with USES + PRECEDES now emitted into R_norm, a student whose
+    USES/PRECEDES edges match the reference scores ``usage == 1.0`` and
+    ``edge_coverage > 0`` — both were 0 / vacuous before the fix because
+    ``build_reference_canonical`` only carried DEPENDS_ON edges."""
+    reference = build_reference_canonical(_problem01())
+    student = snorm(
+        nodes=_full_student_nodes(),
+        edges=tuple(cedge(EdgeType.USES, f, t) for f, t in _REF_USES)
+        + tuple(cedge(EdgeType.PRECEDES, f, t) for f, t in _REF_PRECEDES),
+    )
+    sub = compute_sub_scores(student, reference, _winning(student, reference))
+    assert sub.usage == 1.0  # all 3 reference USES edges matched
+    assert sub.procedure_order == 1.0  # correct-direction PRECEDES, no inversions
+    assert sub.edge_coverage > 0.0  # USES + PRECEDES now contribute (was 0.0)
+
+
+def test_real_problem_usage_not_vacuous_when_student_omits_uses():
+    """With USES edges now in R_norm, a student that COVERS every node but
+    states no USES edges scores ``usage == 0.0`` — proving the dimension is a
+    real measurement, not the vacuous 1.0 it returned before the fix."""
+    reference = build_reference_canonical(_problem01())
+    student = snorm(nodes=_full_student_nodes())  # nodes only, no USES edges
+    sub = compute_sub_scores(student, reference, _winning(student, reference))
+    assert sub.usage == 0.0
