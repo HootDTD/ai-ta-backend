@@ -209,6 +209,35 @@ def test_candidate_question_requires_fields():
 
 
 # --------------------------------------------------------------------------- #
+# Stage-1 prompt↔parser contract (the missing un-mocked-class test). PURE, no DB.
+# --------------------------------------------------------------------------- #
+
+
+def test_scrape_prompt_declares_candidate_question_fields():
+    """The ``_SCRAPE_SYSTEM_PROMPT`` declares every LLM-SUPPLIED ``CandidateQuestion``
+    field. The chunk-stamped provenance fields (``document_id``/``page``/
+    ``chunk_content_hash`` — stamped from the CHUNK in ``_coerce_candidate``, NOT the
+    LLM) are excluded; the minus-set is derived from that function's chunk-stamped
+    args so it stays honest with the model. DISCRIMINATING: reverting the prompt to
+    the vague one-liner (no field names) RED-flags."""
+    from apollo.provisioning.orchestrator import _SCRAPE_SYSTEM_PROMPT
+
+    # The fields _coerce_candidate stamps from the chunk (scrape.py:112-122) — the
+    # LLM never supplies these, so the prompt does not declare them.
+    chunk_stamped = {"document_id", "page", "chunk_content_hash"}
+    llm_supplied = set(CandidateQuestion.model_fields) - chunk_stamped
+    assert llm_supplied == {
+        "problem_text",
+        "given_values",
+        "target_unknown",
+        "difficulty",
+        "concept_slug",
+    }
+    for field in llm_supplied:
+        assert field in _SCRAPE_SYSTEM_PROMPT, field
+
+
+# --------------------------------------------------------------------------- #
 # Real-PG helpers
 # --------------------------------------------------------------------------- #
 
