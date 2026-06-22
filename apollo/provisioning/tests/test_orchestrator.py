@@ -1213,3 +1213,55 @@ async def test_concept_dup_hashes_skips_non_problem_payload(db_session):
     from apollo.schemas.problem import Problem
 
     assert hashes == {problem_dup_hash(Problem.model_validate(valid))}
+
+
+# --------------------------------------------------------------------------- #
+# Stage-4 _tag_mint_chat_fn wiring contract (PURE — no DB, no network). The
+# missing un-mocked-class test: the closure must send the system prompt + the
+# json_schema response_format, else a real model gets no key instructions.
+# --------------------------------------------------------------------------- #
+class _RecorderMeteredChat:
+    """A tiny recorder stub: ``.cheap(**kwargs)`` records the kwargs and returns a
+    minimal schema-conformant tag string. NO real MeteredChat, NO network."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def cheap(self, **kwargs):  # noqa: ANN003
+        self.calls.append(kwargs)
+        return "{}"
+
+
+def test_tag_mint_chat_fn_sends_system_prompt_and_schema():
+    """``_tag_mint_chat_fn`` threads a system message (``_TAG_MINT_SYSTEM_PROMPT``)
+    AND a ``response_format`` json_schema named ``concept_tag`` through the
+    ``metered_chat.cheap`` call. DISCRIMINATING: dropping the system prompt or the
+    response_format RED-flags."""
+    from apollo.provisioning.orchestrator import _TAG_MINT_SYSTEM_PROMPT
+
+    recorder = _RecorderMeteredChat()
+    chat_fn = orch._tag_mint_chat_fn(recorder)
+    out = chat_fn('{"id": "p1"}')
+    assert out == "{}"
+    assert len(recorder.calls) == 1
+    kwargs = recorder.calls[0]
+    messages = kwargs["messages"]
+    system_msgs = [m for m in messages if m["role"] == "system"]
+    assert len(system_msgs) == 1
+    assert system_msgs[0]["content"] == _TAG_MINT_SYSTEM_PROMPT
+    # the user message carries the positional prompt verbatim.
+    user_msgs = [m for m in messages if m["role"] == "user"]
+    assert user_msgs[0]["content"] == '{"id": "p1"}'
+    assert kwargs["response_format"]["type"] == "json_schema"
+    assert kwargs["response_format"]["json_schema"]["name"] == "concept_tag"
+
+
+def test_tag_mint_system_prompt_declares_concept_slug():
+    """``_TAG_MINT_SYSTEM_PROMPT`` names the parser-read keys (``concept_slug`` is
+    REQUIRED; ``display_name``/``prereqs`` are read with defaults). The minimal
+    stub-catcher for the Stage-4 prompt content."""
+    from apollo.provisioning.orchestrator import _TAG_MINT_SYSTEM_PROMPT
+
+    assert "concept_slug" in _TAG_MINT_SYSTEM_PROMPT
+    assert "display_name" in _TAG_MINT_SYSTEM_PROMPT
+    assert "prereqs" in _TAG_MINT_SYSTEM_PROMPT

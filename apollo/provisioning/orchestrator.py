@@ -56,6 +56,7 @@ from apollo.provisioning.pairing_gate import (
 )
 from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promote import PromoteResult, promote
+from apollo.provisioning.provisioning_schema import build_tag_schema
 from apollo.provisioning.queue import ClaimedJob
 from apollo.provisioning.scrape import (
     resolve_or_create_provisional_concept,
@@ -80,7 +81,31 @@ _RUN_SUCCEEDED = "succeeded"
 _RUN_FAILED = "failed"
 
 _SCRAPE_SYSTEM_PROMPT = (
-    "Extract candidate practice questions from the course passage as a JSON array of objects."
+    "You extract solvable quantitative practice problems from a passage of course "
+    "material (textbook prose, worked examples, and exercise sets all count).\n"
+    "Return ONLY a JSON array - no prose, no explanation, no markdown code fences. "
+    "Each array element is an object with EXACTLY these keys:\n"
+    '  "problem_text": string - the full, self-contained problem statement.\n'
+    '  "given_values": object mapping each stated known quantity\'s short symbol to '
+    "its NUMERIC value (numbers only - no units, no strings); use {} if none.\n"
+    '  "target_unknown": string - the single quantity the problem asks to find.\n'
+    '  "difficulty": exactly one of "intro", "standard", "hard".\n'
+    '  "concept_slug": string - a short dotted/kebab concept id, e.g. '
+    '"bernoulli-equation".\n'
+    "If the passage contains no solvable problems, return []."
+)
+
+_TAG_MINT_SYSTEM_PROMPT = (
+    "You tag an already-approved physics problem with its canonical concept and "
+    "the prerequisite edges between its solution entities.\n"
+    "Return ONLY a JSON object - no prose, no explanation, no markdown code fences. "
+    "The object has EXACTLY these keys:\n"
+    '  "concept_slug": string - a short dotted/kebab concept id (e.g. '
+    '"bernoulli-equation"). REQUIRED.\n'
+    '  "display_name": string - a human-readable concept label; if unknown, repeat '
+    "the concept_slug.\n"
+    '  "prereqs": array of {"from": <entity-key>, "to": <entity-key>} objects naming '
+    "prerequisite edges between the problem's minted entity keys; use [] if none."
 )
 
 
@@ -354,7 +379,11 @@ def _tag_mint_chat_fn(metered_chat: MeteredChat) -> Callable[[str], str]:
     def _chat_fn(prompt: str) -> str:
         return metered_chat.cheap(
             purpose="tag_mint",
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": _TAG_MINT_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_schema", "json_schema": build_tag_schema()},
         )
 
     return _chat_fn
