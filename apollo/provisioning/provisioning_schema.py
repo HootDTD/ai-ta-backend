@@ -30,6 +30,8 @@ __all__ = [
     "ENTRY_TYPES",
     "build_solution_schema",
     "build_tag_schema",
+    "build_pairing_phase_a_schema",
+    "build_pairing_phase_b_schema",
     "solution_content_field_hints",
 ]
 
@@ -114,6 +116,64 @@ def build_tag_schema() -> dict:
                         "properties": {
                             "from": {"type": "string"},
                             "to": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+
+def build_pairing_phase_a_schema() -> dict:
+    """Return the Stage-3 Phase-A (pairing / answer-relevance) ``json_schema``
+    payload (a FRESH dict per call).
+
+    Strict-capable (no open dicts) → ``strict=True``. The keys mirror exactly what
+    ``pairing_gate.validate_pair`` reads from the Phase-A response
+    (``phase_a.get("paired")`` and ``phase_a.get("confidence")``); the contract
+    test pins ``required`` == those reads.
+    """
+    return {
+        "name": "pairing_phase_a",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["paired", "confidence"],
+            "properties": {
+                "paired": {"type": "boolean"},
+                "confidence": {"type": "number"},
+            },
+        },
+    }
+
+
+def build_pairing_phase_b_schema() -> dict:
+    """Return the Stage-3 Phase-B (claim-decomposed faithfulness) ``json_schema``
+    payload (a FRESH dict per call).
+
+    Strict-capable → ``strict=True``. The shape mirrors exactly what
+    ``pairing_gate.validate_pair`` reads from the Phase-B response: a ``claims``
+    array whose entries each carry ``claim`` (string) and ``entailed`` (bool)
+    (``c.get("claim")`` / ``c.get("entailed")``). The contract test pins these.
+    """
+    return {
+        "name": "pairing_phase_b",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["claims"],
+            "properties": {
+                "claims": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["claim", "entailed"],
+                        "properties": {
+                            "claim": {"type": "string"},
+                            "entailed": {"type": "boolean"},
                         },
                     },
                 },

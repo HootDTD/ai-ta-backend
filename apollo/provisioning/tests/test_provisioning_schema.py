@@ -25,6 +25,8 @@ import pytest
 from apollo.ontology.nodes import NODE_CONTENT_TYPES
 from apollo.provisioning.provisioning_schema import (
     REFERENCE_STEP_FIELDS,
+    build_pairing_phase_a_schema,
+    build_pairing_phase_b_schema,
     build_solution_schema,
     build_tag_schema,
     solution_content_field_hints,
@@ -219,3 +221,45 @@ def test_tag_schema_empty_prereqs_and_slug_display_name_conform():
         return json.dumps(obj)
 
     assert _parse_tag(_chat, {})["concept_slug"] == "x"
+
+
+# --------------------------------------------------------------------------- #
+# Stage 3 — pairing-gate phase schemas ↔ what validate_pair reads
+# --------------------------------------------------------------------------- #
+
+
+def test_pairing_phase_a_schema_strict_and_keys_match_reads():
+    """Phase-A schema is strict/closed and declares exactly the keys
+    ``validate_pair`` reads from the Phase-A response (``paired`` + ``confidence``).
+    THE test that would have caught the Stage-3 stub (no system prompt → 400 →
+    every pair rejected). DISCRIMINATING: dropping a key or strict closure REDs."""
+    schema = build_pairing_phase_a_schema()
+    assert schema["strict"] is True
+    assert schema["name"] == "pairing_phase_a"
+    root = schema["schema"]
+    for sub in _iter_objects(root):
+        assert sub["additionalProperties"] is False
+        assert set(sub["required"]) == set(sub["properties"].keys())
+    # The exact keys validate_pair reads: phase_a.get("paired") / .get("confidence").
+    assert set(root["required"]) == {"paired", "confidence"}
+    assert root["properties"]["paired"]["type"] == "boolean"
+    assert root["properties"]["confidence"]["type"] == "number"
+
+
+def test_pairing_phase_b_schema_strict_and_claims_shape_matches_reads():
+    """Phase-B schema is strict/closed and its ``claims`` items declare exactly the
+    keys ``validate_pair`` reads (``claim`` + ``entailed``). DISCRIMINATING:
+    dropping a key or strict closure REDs."""
+    schema = build_pairing_phase_b_schema()
+    assert schema["strict"] is True
+    assert schema["name"] == "pairing_phase_b"
+    root = schema["schema"]
+    for sub in _iter_objects(root):
+        assert sub["additionalProperties"] is False
+        assert set(sub["required"]) == set(sub["properties"].keys())
+    assert set(root["required"]) == {"claims"}
+    item = root["properties"]["claims"]["items"]
+    # The exact keys validate_pair reads: c.get("claim") / c.get("entailed").
+    assert set(item["required"]) == {"claim", "entailed"}
+    assert item["properties"]["claim"]["type"] == "string"
+    assert item["properties"]["entailed"]["type"] == "boolean"

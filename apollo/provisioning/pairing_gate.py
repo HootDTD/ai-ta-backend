@@ -50,6 +50,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, field_validator
 
+from apollo.provisioning.provisioning_schema import (
+    build_pairing_phase_a_schema,
+    build_pairing_phase_b_schema,
+)
 from apollo.provisioning.solution import GroundingSpan, ReferenceSolutionDraft
 
 __all__ = [
@@ -63,6 +67,34 @@ _LOG = logging.getLogger(__name__)
 
 _UNPARSEABLE_MARKER = "<unparseable judge response>"
 _NO_CLAIMS_MARKER = "<no claims decomposed>"
+
+# Schema-explicit system prompts for the two judge phases. WITHOUT a system prompt
+# the judge (a) got NO instruction on what to decide and (b) the call 400s under a
+# JSON ``response_format`` (OpenAI requires the request to describe the JSON it
+# expects). Each prompt names the EXACT keys ``validate_pair`` reads back, so the
+# prompt↔parser contract is honest; the ``json_schema`` (below) machine-enforces it.
+_PAIRING_PHASE_A_SYSTEM_PROMPT = (
+    "You are a strict grader deciding whether a reference solution actually answers "
+    "a specific quantitative problem. You receive a JSON object with: problem_text, "
+    "reference_solution (a list of typed solution steps), and grounding (the course "
+    "passages the solution relies on). Decide ONLY whether the reference_solution "
+    "solves THIS problem (correct target quantity, coherent method). Return ONLY a "
+    "JSON object with EXACTLY these keys:\n"
+    '  "paired": boolean - true iff the solution answers this problem.\n'
+    '  "confidence": number in [0, 1].\n'
+    "No prose, no markdown fences."
+)
+_PAIRING_PHASE_B_SYSTEM_PROMPT = (
+    "You are a strict grader checking the faithfulness of a reference solution "
+    "against the provided course passages. You receive a JSON object with: "
+    "reference_solution (a list of typed solution steps) and grounding (the course "
+    "passages). Decompose the solution into atomic, checkable claims and decide for "
+    "each whether it is ENTAILED by the grounding. Return ONLY a JSON object with "
+    "EXACTLY this key:\n"
+    '  "claims": a non-empty array of objects, each with "claim" (string) and '
+    '"entailed" (boolean).\n'
+    "Include at least one claim. No prose, no markdown fences."
+)
 
 
 class PairingVerdict(BaseModel):
@@ -127,20 +159,30 @@ def _grounding_text(spans: Sequence[GroundingSpan]) -> str:
 
 
 def _judge_or_fail_closed(
-    judge_fn: Callable[..., str], *, purpose: str, payload: dict
+    judge_fn: Callable[..., str],
+    *,
+    purpose: str,
+    payload: dict,
+    system_prompt: str,
+    schema: dict,
 ) -> dict | None:
     """The SINGLE ``judge_fn`` invocation point. Calls the judge, parses the JSON,
     and returns the parsed dict. FAIL-CLOSED: a parse error / exception / non-dict
     response returns ``None`` (the caller maps ``None`` to a REJECT verdict — the
     inversion of ``leakage_judge``'s fail-OPEN default at :126-129). A future judge
-    call MUST route through here so the fail-closed default cannot be skipped."""
+    call MUST route through here so the fail-closed default cannot be skipped.
+
+    ``system_prompt`` instructs the judge what to decide and names the exact output
+    keys; ``schema`` is the strict ``json_schema`` that machine-enforces the shape.
+    Both are phase-specific (Phase A pairing / Phase B faithfulness)."""
     try:
         raw = judge_fn(
             purpose=purpose,
             messages=[
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload)},
             ],
-            response_format={"type": "json_object"},
+            response_format={"type": "json_schema", "json_schema": schema},
             temperature=0.0,
         )
         parsed = json.loads(raw)
@@ -194,6 +236,8 @@ async def validate_pair(
             "reference_solution": draft.reference_solution,
             "grounding": grounding_text,
         },
+        system_prompt=_PAIRING_PHASE_A_SYSTEM_PROMPT,
+        schema=build_pairing_phase_a_schema(),
     )
     if phase_a is None:
         verdict = _fail_closed_verdict()
@@ -221,6 +265,8 @@ async def validate_pair(
             "reference_solution": draft.reference_solution,
             "grounding": grounding_text,
         },
+        system_prompt=_PAIRING_PHASE_B_SYSTEM_PROMPT,
+        schema=build_pairing_phase_b_schema(),
     )
     if phase_b is None:
         verdict = PairingVerdict(
