@@ -447,6 +447,61 @@ async def test_validate_pair_confidence_clamped():
 
 
 # --------------------------------------------------------------------------- #
+# Stage-3 fix — schema-explicit system prompt + json_schema response_format
+# --------------------------------------------------------------------------- #
+
+
+async def test_validate_pair_sends_system_prompt_and_json_schema():
+    """Both judge phases carry a SYSTEM prompt + a ``json_schema`` response_format
+    (the Stage-3 fix). Without them the LIVE call 400s ("'messages' must contain
+    the word 'json'") and every pair fail-closes to a REJECT. DISCRIMINATING:
+    dropping the system message or reverting to ``json_object`` REDs this."""
+    from apollo.provisioning.pairing_gate import (
+        _PAIRING_PHASE_A_SYSTEM_PROMPT,
+        _PAIRING_PHASE_B_SYSTEM_PROMPT,
+    )
+
+    judge = _recording_judge(
+        {"paired": True, "confidence": 0.9},
+        {"claims": [{"claim": "ok", "entailed": True}]},
+    )
+    await validate_pair(
+        _candidate(),
+        _draft(),
+        retrieve_fn=_retrieve_returning([]),
+        judge_fn=judge,
+    )
+    calls = judge.recorded  # type: ignore[attr-defined]
+    assert len(calls) == 2  # Phase A then Phase B
+    phase_a = calls[0]["kwargs"]
+    assert phase_a["messages"][0]["role"] == "system"
+    assert phase_a["messages"][0]["content"] == _PAIRING_PHASE_A_SYSTEM_PROMPT
+    assert phase_a["response_format"]["type"] == "json_schema"
+    assert phase_a["response_format"]["json_schema"]["name"] == "pairing_phase_a"
+    phase_b = calls[1]["kwargs"]
+    assert phase_b["messages"][0]["role"] == "system"
+    assert phase_b["messages"][0]["content"] == _PAIRING_PHASE_B_SYSTEM_PROMPT
+    assert phase_b["response_format"]["json_schema"]["name"] == "pairing_phase_b"
+
+
+def test_pairing_system_prompts_declare_keys_and_mention_json():
+    """The phase prompts name the EXACT keys ``validate_pair`` reads AND contain the
+    word 'json' (OpenAI requires it for a JSON ``response_format``). DISCRIMINATING:
+    a vague prompt that omits a read key or 'json' REDs."""
+    from apollo.provisioning.pairing_gate import (
+        _PAIRING_PHASE_A_SYSTEM_PROMPT,
+        _PAIRING_PHASE_B_SYSTEM_PROMPT,
+    )
+
+    for key in ("paired", "confidence"):
+        assert key in _PAIRING_PHASE_A_SYSTEM_PROMPT
+    for key in ("claims", "claim", "entailed"):
+        assert key in _PAIRING_PHASE_B_SYSTEM_PROMPT
+    assert "json" in _PAIRING_PHASE_A_SYSTEM_PROMPT.lower()
+    assert "json" in _PAIRING_PHASE_B_SYSTEM_PROMPT.lower()
+
+
+# --------------------------------------------------------------------------- #
 # Step 12 — re-export surface
 # --------------------------------------------------------------------------- #
 
