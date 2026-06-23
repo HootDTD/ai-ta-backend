@@ -52,13 +52,17 @@ def make_course_retrieve_fn(
         rows: Sequence[dict] = await retriever.hybrid_search(query_text, top_k=top_k)
         spans = tuple(
             GroundingSpan(
-                text=row["content"],
+                text=content,
                 document_id=row.get("document_id"),
                 page=row.get("page_number"),
-                chunk_content_hash=chunk_content_hash(row["content"]),
+                chunk_content_hash=chunk_content_hash(content),
                 carries_solution=False,
             )
             for row in rows
+            # Skip a row with no usable text rather than KeyError on row["content"]:
+            # an unexpected exception here aborts the WHOLE document; a missing
+            # chunk is a per-span no-op, not a doc failure.
+            if (content := (row.get("content") or "").strip())
         )
         if not spans:
             _LOG.info(

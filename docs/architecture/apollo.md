@@ -51,6 +51,11 @@ unwired (code still present), and grading is the Done-time LLM semantic diff.
 
 ## Public interfaces
 
+Provisioning retrieval adapter note: `make_course_retrieve_fn` skips hybrid-search
+rows whose `content` is missing or blank before building `GroundingSpan` values.
+Those malformed rows are treated as per-span no-ops; they must not raise a
+`KeyError` that aborts the whole document.
+
 Mounted in `server.py`: `app.include_router(apollo_router)` + `register_exception_handlers(app)`
 (server.py:54, 645-646).
 

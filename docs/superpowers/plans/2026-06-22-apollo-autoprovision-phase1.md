@@ -223,7 +223,7 @@ git commit -m "fix(apollo): resolve LLM bare-id prereq/opposes keys in stage 4 (
 - Consumes: `make_course_retrieve_fn(db, *, search_space_id, top_k=...) -> retrieve(question)`; `retrieval_adapter.AITAHybridSearchRetriever` (importable for monkeypatching).
 - Produces: unchanged signature; the returned `retrieve` now yields only spans for rows with non-empty `content`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `apollo/provisioning/tests/test_retrieval_adapter.py`:
 
@@ -255,12 +255,12 @@ async def test_retrieve_skips_rows_missing_content(db_session, monkeypatch):
     assert spans[0].text == "good chunk"
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `pytest apollo/provisioning/tests/test_retrieval_adapter.py::test_retrieve_skips_rows_missing_content -v`
 Expected: FAIL with `KeyError: 'content'`.
 
-- [ ] **Step 3: Implement the guard**
+- [x] **Step 3: Implement the guard**
 
 In `apollo/provisioning/retrieval_adapter.py`, replace the `spans = tuple(...)` comprehension (lines 53-62) with:
 
@@ -281,12 +281,12 @@ In `apollo/provisioning/retrieval_adapter.py`, replace the `spans = tuple(...)` 
         )
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `pytest apollo/provisioning/tests/test_retrieval_adapter.py -v`
 Expected: PASS (the whole module, no regressions).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apollo/provisioning/retrieval_adapter.py apollo/provisioning/tests/test_retrieval_adapter.py
