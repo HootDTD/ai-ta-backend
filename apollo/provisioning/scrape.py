@@ -46,6 +46,7 @@ from apollo.schemas.problem import Difficulty
 __all__ = [
     "CandidateQuestion",
     "ScrapeResult",
+    "chunk_content_hash",
     "scrape_questions",
     "write_tier1_problems",
 ]
@@ -64,7 +65,7 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
-def _chunk_content_hash(content: str) -> str:
+def chunk_content_hash(content: str) -> str:
     """sha256 hex of the normalized chunk content (64 lowercase hex chars)."""
     return hashlib.sha256(_normalize(content).encode("utf-8")).hexdigest()
 
@@ -109,7 +110,7 @@ def _coerce_candidate(
     validation error."""
     if not isinstance(raw, dict):
         return None
-    content_hash = _chunk_content_hash(str(chunk.content))
+    content_hash = chunk_content_hash(str(chunk.content))
     try:
         return CandidateQuestion(
             problem_text=raw.get("problem_text", ""),

@@ -375,9 +375,10 @@ async def test_run_provisioning_lint_rejection_continues(db_session, monkeypatch
 
 
 # --------------------------------------------------------------------------- #
-# T-OR4 — solution error fails the run
+# T-OR4 — a solution-draft error is a per-CANDIDATE rejection; the run CONTINUES
+# (one bad candidate no longer aborts the whole document run).
 # --------------------------------------------------------------------------- #
-async def test_run_provisioning_solution_error_fails_run(db_session, monkeypatch):
+async def test_run_provisioning_solution_error_rejects_candidate_and_continues(db_session, monkeypatch):
     from apollo.provisioning.solution import SolutionDraftError
 
     space, run_id, claimed = await _seed(db_session, slug="or4")
@@ -397,17 +398,85 @@ async def test_run_provisioning_solution_error_fails_run(db_session, monkeypatch
 
     outcome = await _run(db_session, claimed)
 
-    assert outcome.status == "failed"
+    assert outcome.status == "succeeded"  # NOT failed — the run continues
+    assert outcome.n_rejected == 1
+    assert outcome.n_promoted == 0
     run = await db_session.get(IngestRun, run_id)
-    assert run.status == "failed"
+    assert run.status == "succeeded"
+    # a per-candidate rejection row, NOT an ingest_error
+    rejects = (
+        await db_session.execute(
+            RejectedProblem.__table__.select().where(RejectedProblem.ingest_run_id == run_id)
+        )
+    ).all()
+    assert len(rejects) == 1
+    assert rejects[0].rejected_stage == "solution_draft"
     errors = (
         await db_session.execute(
             IngestError.__table__.select().where(IngestError.ingest_run_id == run_id)
         )
     ).all()
-    assert len(errors) == 1
-    assert errors[0].stage == "find_or_generate"
-    assert errors[0].error_class == "SolutionDraftError"
+    assert not errors
+
+
+# --------------------------------------------------------------------------- #
+# T-OR21 — one straggler candidate rejects while another promotes in the SAME
+# run (the straggler does not sink the document).
+# --------------------------------------------------------------------------- #
+async def test_run_provisioning_straggler_rejected_others_promote(db_session, monkeypatch):
+    from apollo.provisioning.solution import SolutionDraftError
+
+    space, run_id, claimed = await _seed(db_session, slug="or21", n_chunks=2)
+    concept_id = await _seed_concept(db_session, search_space_id=space)
+    good, strag = "good", "strag"
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=good, search_space_id=space)
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=strag, search_space_id=space)
+
+    async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
+        if q.chunk_content_hash == strag:
+            raise SolutionDraftError("no solution")
+        return _draft()
+
+    async def _vp(q, draft, *, retrieve_fn, judge_fn):  # noqa: ANN001
+        return PairingVerdict(paired=True, faithful=True, confidence=1.0)
+
+    async def _tm(db, pair, *, chat_fn, embed_fn):  # noqa: ANN001
+        return _mint_plan(concept_id)
+
+    async def _promote(db, neo, **kwargs):  # noqa: ANN001
+        row = await db.get(ConceptProblem, kwargs["concept_problem_id"])
+        row.tier = 2
+        await db.flush()
+        return PromoteResult(promoted=True)
+
+    _patch_stages(
+        monkeypatch,
+        scrape_candidates=(_candidate(chash=good), _candidate(chash=strag)),
+        find_or_generate=_fog,
+        validate_pair=_vp,
+        tag_and_mint=_tm,
+        promote=_promote,
+        concept_id=concept_id,
+    )
+
+    outcome = await _run(db_session, claimed)
+
+    assert outcome.status == "succeeded"
+    assert outcome.n_promoted == 1
+    assert outcome.n_rejected == 1
+    rejects = (
+        await db_session.execute(
+            RejectedProblem.__table__.select().where(RejectedProblem.ingest_run_id == run_id)
+        )
+    ).all()
+    assert len(rejects) == 1
+    assert rejects[0].rejected_stage == "solution_draft"
+    errors = (
+        await db_session.execute(
+            IngestError.__table__.select().where(IngestError.ingest_run_id == run_id)
+        )
+    ).all()
+    assert not errors
 
 
 # --------------------------------------------------------------------------- #
@@ -1028,27 +1097,36 @@ async def test_run_provisioning_gate8_rejects_duplicate_on_concept(db_session, m
 
 
 # --------------------------------------------------------------------------- #
-# T-OR17 — run_provisioning injects the DEFAULT embed_fn/retrieve_fn when the
-# caller omits them (the worker calls it without those kwargs). Exercises the
-# default-wiring branches (no longer pragma'd).
+# T-OR17 — run_provisioning defaults retrieve_fn to the course adapter bound to
+# the JOB's search_space_id (the worker omits retrieve_fn). Exercises the
+# default-wiring branch without a real retriever / embedder / network.
 # --------------------------------------------------------------------------- #
-async def test_run_provisioning_default_embed_and_retrieve_fn(db_session, monkeypatch):
+async def test_run_provisioning_default_retrieve_fn_is_course_adapter(db_session, monkeypatch):
     space, run_id, claimed = await _seed(db_session, slug="or17")
     concept_id = await _seed_concept(db_session, search_space_id=space)
+    chash = "c1"
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
 
     captured: dict = {}
 
+    def _fake_factory(db, *, search_space_id, top_k=6):  # noqa: ANN001
+        captured["init"] = {"search_space_id": search_space_id, "top_k": top_k}
+
+        async def _retrieve(_q):  # noqa: ANN001
+            return ()
+
+        return _retrieve
+
+    # The orchestrator references make_course_retrieve_fn at its module surface.
+    monkeypatch.setattr(orch, "make_course_retrieve_fn", _fake_factory)
+
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
-        # The orchestrator injected its default retrieve_fn (the worker omits it);
-        # call it to prove it is the real _default_retrieve_fn (returns ()).
         captured["spans"] = tuple(await retrieve_fn(q))
         return _draft()
 
     async def _vp(q, draft, *, retrieve_fn, judge_fn):  # noqa: ANN001
         return PairingVerdict(paired=False, faithful=False, confidence=0.0)
 
-    chash = "c1"
-    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
     _patch_stages(
         monkeypatch,
         scrape_candidates=(_candidate(chash=chash),),
@@ -1061,13 +1139,14 @@ async def test_run_provisioning_default_embed_and_retrieve_fn(db_session, monkey
 
     monkeypatch.setattr(_emb, "embed_text", lambda _t: [0.0], raising=False)
 
-    # NOTE: no embed_fn / retrieve_fn kwargs -> the orchestrator wires its defaults.
+    # NOTE: no retrieve_fn kwarg -> the orchestrator wires its course-adapter default.
     outcome = await run_provisioning(
         db_session, AsyncMock(), job=claimed, metered_chat=_FakeMeteredChat()
     )
 
     assert outcome.status == "succeeded"
-    assert captured["spans"] == ()  # _default_retrieve_fn returned no spans
+    assert captured["init"]["search_space_id"] == space  # bound to the JOB's scope
+    assert captured["spans"] == ()
 
 
 # --------------------------------------------------------------------------- #

@@ -29,7 +29,7 @@ from apollo.persistence.models import Concept, ConceptProblem, Subject
 from apollo.provisioning.scrape import (
     CandidateQuestion,
     ScrapeResult,
-    _chunk_content_hash,
+    chunk_content_hash,
     _normalize,
     resolve_or_create_provisional_concept,
     scrape_questions,
@@ -88,15 +88,15 @@ def test_chunk_content_hash_is_normalized():
     """Two chunks differing only in whitespace/case hash IDENTICALLY; different
     content hashes differently. The idempotency key is content-stable (survives a
     re-index that re-mints chunk ids)."""
-    a = _chunk_content_hash("Find  the  PRESSURE P2.")
-    b = _chunk_content_hash("find the pressure p2.")
+    a = chunk_content_hash("Find  the  PRESSURE P2.")
+    b = chunk_content_hash("find the pressure p2.")
     assert a == b
-    c = _chunk_content_hash("a different question entirely")
+    c = chunk_content_hash("a different question entirely")
     assert c != a
 
 
 def test_chunk_content_hash_is_sha256_hex():
-    h = _chunk_content_hash("anything")
+    h = chunk_content_hash("anything")
     assert len(h) == 64
     assert all(ch in "0123456789abcdef" for ch in h)
 
@@ -123,7 +123,7 @@ def test_scrape_parses_candidates():
     # provenance from the chunk, not the LLM payload:
     assert cand.document_id == 7
     assert cand.page == 3
-    assert cand.chunk_content_hash == _chunk_content_hash(chunk.content)
+    assert cand.chunk_content_hash == chunk_content_hash(chunk.content)
 
 
 def test_scrape_malformed_json_is_failsoft():

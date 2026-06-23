@@ -9,11 +9,12 @@ the orchestrator merely sequences. The orchestrator OWNS:
     run ``running`` — a per-document error always flips it to a TERMINAL status
     (else the partial-unique-index would wedge re-enqueue, §9 OPS-5);
   * the §4b stage-outcome -> observability decision: a per-CANDIDATE rejection
-    (pairing ``Rejection`` / lint fail) writes ONE ``apollo_rejected_problems`` row
-    and CONTINUES (``n_rejected`` recomputed); a per-DOCUMENT error
-    (``SolutionDraftError`` / ``TagMintError`` / ``CostBudgetExceeded`` /
-    ``CanonProjectionError`` / any unexpected exception) writes ONE
-    ``apollo_ingest_errors`` row and FAILS the whole run;
+    (pairing ``Rejection`` / lint fail / a ``find_or_generate``
+    ``SolutionDraftError``) writes ONE ``apollo_rejected_problems`` row and
+    CONTINUES (``n_rejected`` recomputed); a per-DOCUMENT error
+    (``TagMintError`` / ``CostBudgetExceeded`` / ``CanonProjectionError`` / any
+    unexpected exception) writes ONE ``apollo_ingest_errors`` row and FAILS the
+    whole run;
   * the per-run counters: ``n_*`` are ASSIGNED from freshly-computed values (never
     ``+=``) so a re-claimed job's replay does not inflate them (§2c).
 
@@ -57,6 +58,7 @@ from apollo.provisioning.pairing_gate import (
 from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promote import PromoteResult, promote
 from apollo.provisioning.provisioning_schema import build_tag_schema
+from apollo.provisioning.retrieval_adapter import make_course_retrieve_fn
 from apollo.provisioning.queue import ClaimedJob
 from apollo.provisioning.scrape import (
     resolve_or_create_provisional_concept,
@@ -270,7 +272,7 @@ async def run_provisioning(
     if embed_fn is None:
         from indexing.document_embedder import embed_text as embed_fn  # type: ignore
     if retrieve_fn is None:
-        retrieve_fn = _default_retrieve_fn
+        retrieve_fn = make_course_retrieve_fn(db, search_space_id=job.search_space_id)
 
     scraped = 0
     promoted = 0
@@ -436,7 +438,7 @@ async def _process_candidate(
     entities ``tag_and_mint`` de-duplicated for this candidate (0 when it rejected
     before tag/mint).
 
-    A per-CANDIDATE rejection (pairing fail / lint fail) writes the rejection row
+    A per-CANDIDATE rejection (pairing fail / lint fail / a stage-2 SolutionDraftError) writes the rejection row
     and returns 'rejected' (the run continues). A per-DOCUMENT error raises a
     ``_PerDocumentError`` to abort the whole run."""
     # --- stage 2: find_or_generate ---------------------------------------- #
@@ -445,7 +447,19 @@ async def _process_candidate(
             db, candidate, retrieve_fn=retrieve_fn, chat_fn=metered_chat.main
         )
     except SolutionDraftError as exc:
-        raise _PerDocumentError(stage="find_or_generate", error_class="SolutionDraftError") from exc
+        # A single un-draftable candidate is a per-CANDIDATE rejection (write the
+        # row, CONTINUE) — NOT a per-document abort. One bad candidate must not
+        # sink a document whose other candidates promote (§4b decision table).
+        _record_rejection(
+            db,
+            run=run,
+            rejected_stage="solution_draft",
+            failed_gate=None,
+            diagnostic=str(exc),
+            concept_id=provisional_concept_id,
+            payload={"reason": "solution_draft_error"},
+        )
+        return "rejected", 0
     except CostBudgetExceeded as exc:
         raise _cost_abort(exc, stage="find_or_generate") from exc
 
@@ -567,11 +581,3 @@ async def _finalize(
         n_rejected=rejected,
         n_dedup_merged=merged,
     )
-
-
-async def _default_retrieve_fn(question) -> Sequence[GroundingSpan]:
-    """The default course-corpus retrieval adapter for ``find_or_generate`` /
-    ``validate_pair``. v1 returns no spans (the generate branch grounds on the
-    question alone); the real hybrid-retrieval adapter is a Tier-2 nightly
-    concern. Kept <20 lines per the plan §16 deviation note."""
-    return ()
