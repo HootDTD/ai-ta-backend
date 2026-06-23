@@ -9,11 +9,12 @@ the orchestrator merely sequences. The orchestrator OWNS:
     run ``running`` — a per-document error always flips it to a TERMINAL status
     (else the partial-unique-index would wedge re-enqueue, §9 OPS-5);
   * the §4b stage-outcome -> observability decision: a per-CANDIDATE rejection
-    (pairing ``Rejection`` / lint fail) writes ONE ``apollo_rejected_problems`` row
-    and CONTINUES (``n_rejected`` recomputed); a per-DOCUMENT error
-    (``SolutionDraftError`` / ``TagMintError`` / ``CostBudgetExceeded`` /
-    ``CanonProjectionError`` / any unexpected exception) writes ONE
-    ``apollo_ingest_errors`` row and FAILS the whole run;
+    (pairing ``Rejection`` / lint fail / a ``find_or_generate``
+    ``SolutionDraftError``) writes ONE ``apollo_rejected_problems`` row and
+    CONTINUES (``n_rejected`` recomputed); a per-DOCUMENT error
+    (``TagMintError`` / ``CostBudgetExceeded`` / ``CanonProjectionError`` / any
+    unexpected exception) writes ONE ``apollo_ingest_errors`` row and FAILS the
+    whole run;
   * the per-run counters: ``n_*`` are ASSIGNED from freshly-computed values (never
     ``+=``) so a re-claimed job's replay does not inflate them (§2c).
 
@@ -446,7 +447,19 @@ async def _process_candidate(
             db, candidate, retrieve_fn=retrieve_fn, chat_fn=metered_chat.main
         )
     except SolutionDraftError as exc:
-        raise _PerDocumentError(stage="find_or_generate", error_class="SolutionDraftError") from exc
+        # A single un-draftable candidate is a per-CANDIDATE rejection (write the
+        # row, CONTINUE) — NOT a per-document abort. One bad candidate must not
+        # sink a document whose other candidates promote (§4b decision table).
+        _record_rejection(
+            db,
+            run=run,
+            rejected_stage="solution_draft",
+            failed_gate=None,
+            diagnostic=str(exc),
+            concept_id=provisional_concept_id,
+            payload={"reason": "solution_draft_error"},
+        )
+        return "rejected", 0
     except CostBudgetExceeded as exc:
         raise _cost_abort(exc, stage="find_or_generate") from exc
 

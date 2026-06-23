@@ -375,9 +375,10 @@ async def test_run_provisioning_lint_rejection_continues(db_session, monkeypatch
 
 
 # --------------------------------------------------------------------------- #
-# T-OR4 — solution error fails the run
+# T-OR4 — a solution-draft error is a per-CANDIDATE rejection; the run CONTINUES
+# (one bad candidate no longer aborts the whole document run).
 # --------------------------------------------------------------------------- #
-async def test_run_provisioning_solution_error_fails_run(db_session, monkeypatch):
+async def test_run_provisioning_solution_error_rejects_candidate_and_continues(db_session, monkeypatch):
     from apollo.provisioning.solution import SolutionDraftError
 
     space, run_id, claimed = await _seed(db_session, slug="or4")
@@ -397,17 +398,85 @@ async def test_run_provisioning_solution_error_fails_run(db_session, monkeypatch
 
     outcome = await _run(db_session, claimed)
 
-    assert outcome.status == "failed"
+    assert outcome.status == "succeeded"  # NOT failed — the run continues
+    assert outcome.n_rejected == 1
+    assert outcome.n_promoted == 0
     run = await db_session.get(IngestRun, run_id)
-    assert run.status == "failed"
+    assert run.status == "succeeded"
+    # a per-candidate rejection row, NOT an ingest_error
+    rejects = (
+        await db_session.execute(
+            RejectedProblem.__table__.select().where(RejectedProblem.ingest_run_id == run_id)
+        )
+    ).all()
+    assert len(rejects) == 1
+    assert rejects[0].rejected_stage == "solution_draft"
     errors = (
         await db_session.execute(
             IngestError.__table__.select().where(IngestError.ingest_run_id == run_id)
         )
     ).all()
-    assert len(errors) == 1
-    assert errors[0].stage == "find_or_generate"
-    assert errors[0].error_class == "SolutionDraftError"
+    assert not errors
+
+
+# --------------------------------------------------------------------------- #
+# T-OR21 — one straggler candidate rejects while another promotes in the SAME
+# run (the straggler does not sink the document).
+# --------------------------------------------------------------------------- #
+async def test_run_provisioning_straggler_rejected_others_promote(db_session, monkeypatch):
+    from apollo.provisioning.solution import SolutionDraftError
+
+    space, run_id, claimed = await _seed(db_session, slug="or21", n_chunks=2)
+    concept_id = await _seed_concept(db_session, search_space_id=space)
+    good, strag = "good", "strag"
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=good, search_space_id=space)
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=strag, search_space_id=space)
+
+    async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
+        if q.chunk_content_hash == strag:
+            raise SolutionDraftError("no solution")
+        return _draft()
+
+    async def _vp(q, draft, *, retrieve_fn, judge_fn):  # noqa: ANN001
+        return PairingVerdict(paired=True, faithful=True, confidence=1.0)
+
+    async def _tm(db, pair, *, chat_fn, embed_fn):  # noqa: ANN001
+        return _mint_plan(concept_id)
+
+    async def _promote(db, neo, **kwargs):  # noqa: ANN001
+        row = await db.get(ConceptProblem, kwargs["concept_problem_id"])
+        row.tier = 2
+        await db.flush()
+        return PromoteResult(promoted=True)
+
+    _patch_stages(
+        monkeypatch,
+        scrape_candidates=(_candidate(chash=good), _candidate(chash=strag)),
+        find_or_generate=_fog,
+        validate_pair=_vp,
+        tag_and_mint=_tm,
+        promote=_promote,
+        concept_id=concept_id,
+    )
+
+    outcome = await _run(db_session, claimed)
+
+    assert outcome.status == "succeeded"
+    assert outcome.n_promoted == 1
+    assert outcome.n_rejected == 1
+    rejects = (
+        await db_session.execute(
+            RejectedProblem.__table__.select().where(RejectedProblem.ingest_run_id == run_id)
+        )
+    ).all()
+    assert len(rejects) == 1
+    assert rejects[0].rejected_stage == "solution_draft"
+    errors = (
+        await db_session.execute(
+            IngestError.__table__.select().where(IngestError.ingest_run_id == run_id)
+        )
+    ).all()
+    assert not errors
 
 
 # --------------------------------------------------------------------------- #
