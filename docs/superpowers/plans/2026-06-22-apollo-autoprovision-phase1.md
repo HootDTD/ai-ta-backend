@@ -432,7 +432,7 @@ The seed path writes concept→concept edges (`concept_dag_to_prereqs`, `learner
 - Consumes: `read_learner_profile(db, *, user_id: str, search_space_id: int, concept_id: int) -> LearnerProfile` (`.prereq_edges: tuple[tuple[int,int], ...]`).
 - Produces: no code change — a behavior-lock test + documented contract.
 
-- [ ] **Step 1: Write the guard test (must pass against current code — it locks behavior we rely on)**
+- [x] **Step 1: Write the guard test (must pass against current code — it locks behavior we rely on)**
 
 Create `apollo/provisioning/tests/test_prereq_edge_kinds.py`:
 
@@ -497,19 +497,22 @@ async def test_within_concept_filter_excludes_concept_level_edges(db_session):
     await db_session.flush()
 
     profile = await read_learner_profile(
-        db_session, user_id="u-h4", search_space_id=space.id, concept_id=concept_a.id
+        db_session,
+        user_id="00000000-0000-0000-0000-000000000004",
+        search_space_id=space.id,
+        concept_id=concept_a.id,
     )
     # Only the within-concept auto ref-node edge survives; the cross-concept
     # concept-level edge (one endpoint in concept B) is excluded.
     assert profile.prereq_edges == ((proc.id, eq.id),)
 ```
 
-- [ ] **Step 2: Run the guard test to confirm it passes (behavior is already correct; this locks it)**
+- [x] **Step 2: Run the guard test to confirm it passes (behavior is already correct; this locks it)**
 
 Run: `pytest apollo/provisioning/tests/test_prereq_edge_kinds.py -v`
 Expected: PASS. (If it FAILS, stop — the within-concept assumption the H4 decision rests on is wrong; re-open the H4 design before proceeding.)
 
-- [ ] **Step 3: Document the contract in the owner doc**
+- [x] **Step 3: Document the contract in the owner doc**
 
 In `docs/architecture/apollo.md`, near the `apollo_entity_prereqs` / prereq description, add:
 
@@ -525,7 +528,7 @@ in `prereqs_mastered`. Guard: `tests/test_prereq_edge_kinds.py`. (An explicit
 `edge_kind` column is a possible Phase-2+ change, not required for this contract.)
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apollo/provisioning/tests/test_prereq_edge_kinds.py docs/architecture/apollo.md
