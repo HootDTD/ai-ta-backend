@@ -319,6 +319,45 @@ async def test_promote_reads_concept_authored_symbols(db_session):
     assert result.failed_gate == 4
 
 
+async def test_promote_rejects_malformed_problem_cleanly(db_session):
+    """REGRESSION: _annotate runs BEFORE run_promotion_lint's gate-1 validation,
+    so a step whose entry_type is outside the frozen mint map would KeyError in
+    _annotate and surface as a per-DOCUMENT abort. promote must convert it to a
+    clean gate-1 rejection (one bad candidate must not sink the document).
+    DISCRIMINATING: removing the guard REDs with KeyError."""
+    problem = {
+        "id": "scrape.bad",
+        "concept_id": "bernoulli_principle",
+        "difficulty": "intro",
+        "problem_text": "x",
+        "given_values": {},
+        "target_unknown": "P2",
+        "reference_solution": [
+            {"step": 1, "entry_type": "NOT_A_REAL_TYPE", "id": "x", "content": {}},
+        ],
+    }
+    mint_plan = MintPlan(
+        concept_id=1,
+        concept_slug="bernoulli_principle",
+        authored_symbols=[],
+        minted_entity_ids={},
+        merged_entity_keys=[],
+        prereq_pairs=[],
+        misconception_keys=[],
+    )
+    result = await promote(
+        db_session,
+        None,
+        problem=problem,
+        mint_plan=mint_plan,
+        search_space_id=1,
+        concept_problem_id=1,
+        existing_problem_hashes=set(),
+    )
+    assert result.promoted is False
+    assert result.failed_gate == 1
+
+
 # --------------------------------------------------------------------------- #
 # T-PR4 — promote passes existing hashes to gate 8
 # --------------------------------------------------------------------------- #

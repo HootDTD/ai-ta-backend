@@ -102,7 +102,28 @@ async def promote(
     failed_gate, diagnostic)`` on a lint failure (the orchestrator writes the
     rejection row; the row stays Tier-1). Raises ``CanonProjectionError`` when the
     ``:Canon`` projection fails (the orchestrator maps it to a failed run)."""
-    annotated = _annotate(problem, mint_plan)
+    try:
+        annotated = _annotate(problem, mint_plan)
+    except (KeyError, TypeError) as exc:
+        # _annotate runs BEFORE run_promotion_lint's gate-1 schema validation, so
+        # a malformed problem (a step missing id/entry_type, or an entry_type
+        # outside the frozen mint map) would KeyError here and surface to the
+        # orchestrator as an unexpected-exception WHOLE-DOCUMENT abort. Convert it
+        # to the clean gate-1 rejection the lint produces for the cases that reach
+        # it — one bad candidate must not sink the document.
+        _LOG.info(
+            "provisioning_promote_rejected",
+            extra={
+                "event": "provisioning_promote_rejected",
+                "concept_problem_id": concept_problem_id,
+                "failed_gate": 1,
+            },
+        )
+        return PromoteResult(
+            promoted=False,
+            failed_gate=1,
+            diagnostic=f"gate 1: malformed problem rejected before annotation: {exc}",
+        )
 
     # Read the concept's AUTHORED symbol set (gate-4 non-vacuity). The shape is
     # {"symbols": [...], ...} (author_concept_symbols, 3B2d); a vacuous set makes

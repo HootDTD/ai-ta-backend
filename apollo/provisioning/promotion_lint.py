@@ -209,7 +209,10 @@ def _gate_5(problem: Problem, kg: KGGraph) -> str | None:
     # Terminal-computes-target: the last procedure step must use >=1 equation
     # whose free symbols include target_unknown.
     terminal_id = chain[-1].node_id
-    terminal = next(s for s in _proc_steps(problem) if s.id == terminal_id)
+    terminal = next((s for s in _proc_steps(problem) if s.id == terminal_id), None)
+    if terminal is None:  # pragma: no cover - defense in depth: gate 1 builds the
+        # KG from the validated problem, so chain[-1] is always a real proc step.
+        return f"gate 5: terminal step {terminal_id!r} not found among procedure steps"
     used = terminal.content.get("uses_equations", []) or []
     if not used:
         return f"gate 5: terminal step {terminal_id!r} uses no equation"

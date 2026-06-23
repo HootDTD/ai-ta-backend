@@ -308,7 +308,7 @@ git commit -m "fix(apollo): skip content-less grounding rows instead of aborting
 - Consumes: `promote(db, neo, *, problem: dict, mint_plan: MintPlan, search_space_id: int, concept_problem_id: int, existing_problem_hashes) -> PromoteResult`. A malformed-problem reject returns BEFORE any DB/Neo4j access (the `_annotate` call is the first statement), so the test passes `neo=None`.
 - Produces: `promote` returns `PromoteResult(promoted=False, failed_gate=1, diagnostic=...)` on a malformed problem (was: raised `KeyError`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `apollo/provisioning/tests/test_promote.py`:
 
@@ -355,12 +355,12 @@ async def test_promote_rejects_malformed_problem_cleanly(db_session):
     assert result.failed_gate == 1
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `pytest apollo/provisioning/tests/test_promote.py::test_promote_rejects_malformed_problem_cleanly -v`
 Expected: FAIL with `KeyError: 'NOT_A_REAL_TYPE'`.
 
-- [ ] **Step 3: Guard `_annotate` in `promote`**
+- [x] **Step 3: Guard `_annotate` in `promote`**
 
 In `apollo/provisioning/promote.py`, replace the first line of `promote`'s body (`annotated = _annotate(problem, mint_plan)`, line 105) with:
 
@@ -389,7 +389,7 @@ In `apollo/provisioning/promote.py`, replace the first line of `promote`'s body 
         )
 ```
 
-- [ ] **Step 4: Harden the gate-5 `next()` (defense-in-depth)**
+- [x] **Step 4: Harden the gate-5 `next()` (defense-in-depth)**
 
 In `apollo/provisioning/promotion_lint.py`, replace line 212:
 
@@ -406,12 +406,12 @@ with:
         return f"gate 5: terminal step {terminal_id!r} not found among procedure steps"
 ```
 
-- [ ] **Step 5: Run the tests to verify GREEN (no regressions)**
+- [x] **Step 5: Run the tests to verify GREEN (no regressions)**
 
 Run: `pytest apollo/provisioning/tests/test_promote.py apollo/provisioning/tests/test_promotion_lint.py -v`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apollo/provisioning/promote.py apollo/provisioning/promotion_lint.py apollo/provisioning/tests/test_promote.py
