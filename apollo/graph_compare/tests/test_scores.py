@@ -285,3 +285,18 @@ def test_real_problem_usage_not_vacuous_when_student_omits_uses():
     student = snorm(nodes=_full_student_nodes())  # nodes only, no USES edges
     sub = compute_sub_scores(student, reference, _winning(student, reference))
     assert sub.usage == 0.0
+
+
+def test_compute_sub_scores_contradiction_na_when_bank_not_applicable():
+    # D5/D6: bank_applicable=False -> contradiction sub-score is None.
+    ref = rgraph(
+        nodes=(rnode("eq.a"), rnode("eq.b")),
+        paths=(path("eq.a", "eq.b"),),
+    )
+    student = snorm(nodes=(cnode("eq.a"), cnode("eq.b")))
+    winning = _winning(student, ref)
+    sub = compute_sub_scores(student, ref, winning, bank_applicable=False)
+    assert sub.contradiction is None
+    # With the bank applicable, no misconception -> 1.0
+    sub_with = compute_sub_scores(student, ref, winning, bank_applicable=True)
+    assert sub_with.contradiction == 1.0

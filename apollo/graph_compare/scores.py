@@ -55,16 +55,27 @@ class SubScores:
     usage: float
     procedure_order: float
     dependency: float
-    contradiction: float
+    contradiction: float | None
 
 
 def compute_sub_scores(
     student: CanonicalGraph,
     reference: ReferenceGraph,
     winning_path: PathCoverage,
+    *,
+    bank_applicable: bool = True,
 ) -> SubScores:
-    """Compute all 7 sub-scores over the two canonical graphs + the winning path."""
-    contradiction = 1.0 - contradiction_penalty(len(contradiction_nodes(student)))
+    """Compute all 7 sub-scores over the two canonical graphs + the winning path.
+
+    ``bank_applicable=False`` sets the ``contradiction`` sub-score to ``None``
+    (D5/D6 — an empty/absent misconception bank means no ``misc.*`` nodes can
+    ever resolve, making a "0 contradictions → 1.0" count meaningless). Callers
+    (``core.py``) must thread the same flag through from the orchestrator."""
+    contradiction: float | None = (
+        None
+        if not bank_applicable
+        else 1.0 - contradiction_penalty(len(contradiction_nodes(student)))
+    )
     return SubScores(
         node_coverage=winning_path.score,
         edge_coverage=_edge_coverage(student, reference, edge_type=None),

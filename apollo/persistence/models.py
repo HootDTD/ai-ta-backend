@@ -538,6 +538,13 @@ class GraphComparisonRun(Base):
     coverage_score = Column(Float, nullable=False)
     soundness_score = Column(Float, nullable=False)
     bisimilarity_score = Column(Float, nullable=False)
+    # D5/D6: False iff the misconception bank was empty/absent for this concept.
+    # Then soundness_score / bisimilarity_score hold the COVERAGE-ONLY fallback
+    # (NOT NULL invariant preserved, bisimilarity.py:5-6) and contradiction_score
+    # is NULL. Readers MUST consult this before trusting/averaging soundness.
+    soundness_applicable = Column(
+        Boolean, nullable=False, server_default=text("true"), default=True
+    )
     node_coverage_score = Column(Float, nullable=True)
     edge_coverage_score = Column(Float, nullable=True)
     scoping_score = Column(Float, nullable=True)
