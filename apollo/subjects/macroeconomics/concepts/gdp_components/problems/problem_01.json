@@ -1,0 +1,108 @@
+{
+  "id": "gdp_identity",
+  "concept_id": "gdp_components",
+  "difficulty": "intro",
+  "given_values": {
+    "C": 400.0,
+    "G": 120.0,
+    "M": 120.0,
+    "X": 100.0,
+    "INV": 60.0
+  },
+  "problem_text": "An economy reports the following spending for the year (in billions of dollars): household consumption C = 400, business investment = 60, government purchases G = 120, exports X = 100, and imports M = 120. Using the expenditure approach, what is this economy's GDP? Remember that only final goods and services are counted.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "net_exports",
+      "gdp_expenditure",
+      "final_goods_only",
+      "compute_net_exports",
+      "sum_components"
+    ]
+  ],
+  "target_unknown": "GDP",
+  "reference_solution": [
+    {
+      "id": "net_exports",
+      "step": 1,
+      "content": {
+        "label": "Net exports definition",
+        "symbolic": "NX - (X - M)",
+        "variables": [
+          "NX",
+          "X",
+          "M"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.net_exports",
+      "entry_type": "equation"
+    },
+    {
+      "id": "gdp_expenditure",
+      "step": 2,
+      "content": {
+        "label": "GDP expenditure identity",
+        "symbolic": "GDP - (C + INV + G + NX)",
+        "variables": [
+          "GDP",
+          "C",
+          "INV",
+          "G",
+          "NX"
+        ]
+      },
+      "depends_on": [
+        "net_exports"
+      ],
+      "entity_key": "eq.gdp_expenditure",
+      "entry_type": "equation"
+    },
+    {
+      "id": "final_goods_only",
+      "step": 3,
+      "content": {
+        "label": "Final goods and services only",
+        "applies_when": "only final goods and services produced this year are counted; transfer payments, used goods, and intermediate goods are excluded from GDP"
+      },
+      "depends_on": [],
+      "entity_key": "cond.final_goods_only",
+      "entry_type": "condition"
+    },
+    {
+      "id": "compute_net_exports",
+      "step": 4,
+      "content": {
+        "order": 1,
+        "action": "subtract imports M from exports X to compute net exports NX = X - M",
+        "purpose": "obtain net exports so it can be added as a single component in the GDP expenditure identity",
+        "uses_equations": [
+          "net_exports"
+        ]
+      },
+      "depends_on": [
+        "net_exports"
+      ],
+      "entity_key": "proc.compute_net_exports",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "sum_components",
+      "step": 5,
+      "content": {
+        "order": 2,
+        "action": "add the four expenditure components, consumption C, investment INV, government purchases G, and net exports NX, to obtain GDP",
+        "purpose": "produce the numerical GDP using the expenditure approach",
+        "uses_equations": [
+          "gdp_expenditure"
+        ]
+      },
+      "depends_on": [
+        "gdp_expenditure",
+        "compute_net_exports"
+      ],
+      "entity_key": "proc.sum_components",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

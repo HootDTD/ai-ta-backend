@@ -1,0 +1,14 @@
+{
+  "constants": {},
+  "augmented_givens": {},
+  "non_trivial_keywords": [
+    "nominal", "real", "gdp", "deflator", "price index", "base year",
+    "deflate", "adjust", "inflation", "growth", "percentage", "percent",
+    "constant dollars", "current dollars"
+  ],
+  "plan_markers": [
+    "first", "then", "next", "after that", "after this",
+    "step 1", "step 2", "solve for",
+    "substitute", "plug in", "plug into", "divide by", "multiply by"
+  ]
+}

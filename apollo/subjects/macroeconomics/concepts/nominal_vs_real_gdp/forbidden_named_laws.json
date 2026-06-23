@@ -1,0 +1,30 @@
+{
+  "named_laws": [
+    "gdp deflator",
+    "deflator",
+    "price index",
+    "growth rate formula"
+  ],
+  "forbidden_concepts": [
+    "consumer price index",
+    "cpi",
+    "producer price index",
+    "ppi",
+    "chain-weighted",
+    "chained index",
+    "purchasing power parity",
+    "ppp",
+    "base year"
+  ],
+  "forbidden_domains": [
+    "macroeconomics",
+    "economics",
+    "national accounts"
+  ],
+  "forbidden_units": [
+    "billion dollars",
+    "trillion dollars",
+    "percent",
+    "percentage points"
+  ]
+}

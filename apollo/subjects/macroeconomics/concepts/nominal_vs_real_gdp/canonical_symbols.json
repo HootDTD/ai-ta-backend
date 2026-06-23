@@ -1,0 +1,13 @@
+{
+  "symbols": ["nomGDP", "realGDP", "deflator", "PI", "growth", "g1", "g2"],
+  "description": {
+    "nomGDP": "nominal GDP (output valued at current-year prices)",
+    "realGDP": "real GDP (output valued at constant base-year prices)",
+    "deflator": "GDP deflator (price index, base year = 100)",
+    "PI": "price index quoted for the year",
+    "growth": "percentage growth rate of real GDP",
+    "g1": "real GDP in the earlier year",
+    "g2": "real GDP in the later year"
+  },
+  "subscript_convention": null
+}

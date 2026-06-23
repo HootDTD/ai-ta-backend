@@ -82,13 +82,15 @@ def test_build_problem_candidates_assembles_closed_set():
 
 
 def test_symbolic_mappings_read_from_problem():
-    """KEY (Decision 2): problem_01 (now carrying {'d':'2*r'}) -> inputs carry it."""
+    """KEY (Decision 2): problem_01 carries the problem-level ``{'d':'2*r'}`` AND
+    its horizontal_simplification's explicit ``{'h2':'h1'}`` substitution — both
+    are merged into the resolver's symbolic_mappings."""
     inputs = build_problem_candidates(
         _load("problem_01"),
         _load("misconceptions"),
         canon_key_by_canonical_key=_canon_key_map(),
     )
-    assert inputs.symbolic_mappings == {"d": "2*r"}
+    assert inputs.symbolic_mappings == {"d": "2*r", "h2": "h1"}
 
 
 def test_symbolic_mappings_default_empty_when_absent():
@@ -199,6 +201,107 @@ def test_symbolic_mappings_absent_circular_area_does_not_resolve():
     )
     result = resolve_attempt(student, candidates, llm_adjudicator=None, symbolic_mappings={})
     assert result.resolved[0].resolution == "unresolved"
+
+
+def test_simplification_substitution_collected_into_symbolic_mappings():
+    """A simplification's explicit ``content.substitution`` is merged into the
+    resolver's symbolic_mappings (the derive-from-simplifications contract).
+    ``applies_when`` is a CONCEPT here — it is never parsed."""
+    problem = {
+        "reference_solution": [
+            {
+                "id": "eq",
+                "entry_type": "equation",
+                "entity_key": "eq.x",
+                "content": {"symbolic": "a - b", "label": ""},
+                "depends_on": [],
+            },
+            {
+                "id": "simp",
+                "entry_type": "simplification",
+                "entity_key": "simp.x",
+                "content": {"applies_when": "the system is balanced", "substitution": {"b": "a"}},
+                "depends_on": ["eq"],
+            },
+        ],
+        "declared_paths": [["eq", "simp"]],
+    }
+    inputs = build_problem_candidates(
+        problem, {"misconceptions": []}, canon_key_by_canonical_key={}
+    )
+    assert inputs.symbolic_mappings == {"b": "a"}
+
+
+def test_conceptual_only_simplification_contributes_no_mapping():
+    """A simplification with NO ``substitution`` (a purely conceptual precondition)
+    contributes nothing and does not crash."""
+    problem = {
+        "reference_solution": [
+            {
+                "id": "simp",
+                "entry_type": "simplification",
+                "entity_key": "simp.x",
+                "content": {"applies_when": "the flow is steady"},
+                "depends_on": [],
+            },
+        ],
+        "declared_paths": [["simp"]],
+    }
+    inputs = build_problem_candidates(
+        problem, {"misconceptions": []}, canon_key_by_canonical_key={}
+    )
+    assert inputs.symbolic_mappings == {}
+
+
+def test_problem_level_symbolic_mappings_wins_over_simplification_on_collision():
+    """The explicit problem-level table is authoritative: on a key collision it
+    WINS over a simplification's substitution (setdefault)."""
+    problem = {
+        "reference_solution": [
+            {
+                "id": "simp",
+                "entry_type": "simplification",
+                "entity_key": "simp.x",
+                "content": {"applies_when": "x", "substitution": {"d": "q"}},
+                "depends_on": [],
+            },
+        ],
+        "declared_paths": [["simp"]],
+        "symbolic_mappings": {"d": "2*r"},
+    }
+    inputs = build_problem_candidates(
+        problem, {"misconceptions": []}, canon_key_by_canonical_key={}
+    )
+    assert inputs.symbolic_mappings == {"d": "2*r"}
+
+
+def test_multiple_simplification_substitutions_merge_with_problem_level():
+    """Several simplifications each contribute their substitution; all merge with
+    the (non-colliding) problem-level table."""
+    problem = {
+        "reference_solution": [
+            {
+                "id": "s1",
+                "entry_type": "simplification",
+                "entity_key": "simp.1",
+                "content": {"applies_when": "a", "substitution": {"P2": "P1"}},
+                "depends_on": [],
+            },
+            {
+                "id": "s2",
+                "entry_type": "simplification",
+                "entity_key": "simp.2",
+                "content": {"applies_when": "b", "substitution": {"h2": "h1"}},
+                "depends_on": [],
+            },
+        ],
+        "declared_paths": [["s1", "s2"]],
+        "symbolic_mappings": {"d": "2*r"},
+    }
+    inputs = build_problem_candidates(
+        problem, {"misconceptions": []}, canon_key_by_canonical_key={}
+    )
+    assert inputs.symbolic_mappings == {"d": "2*r", "P2": "P1", "h2": "h1"}
 
 
 def test_problem_inputs_is_frozen():
