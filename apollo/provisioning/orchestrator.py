@@ -438,7 +438,7 @@ async def _process_candidate(
     entities ``tag_and_mint`` de-duplicated for this candidate (0 when it rejected
     before tag/mint).
 
-    A per-CANDIDATE rejection (pairing fail / lint fail) writes the rejection row
+    A per-CANDIDATE rejection (pairing fail / lint fail / a stage-2 SolutionDraftError) writes the rejection row
     and returns 'rejected' (the run continues). A per-DOCUMENT error raises a
     ``_PerDocumentError`` to abort the whole run."""
     # --- stage 2: find_or_generate ---------------------------------------- #
