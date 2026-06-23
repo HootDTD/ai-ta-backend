@@ -77,3 +77,26 @@ def test_ceiling_env_override(monkeypatch):
         monkeypatch.delenv("APOLLO_PROVISION_TOKEN_CEILING", raising=False)
         monkeypatch.delenv("APOLLO_PROVISION_MAX_ATTEMPTS", raising=False)
         importlib.reload(cost_constants)
+
+
+def test_scrape_section_bounds_defaults():
+    """Phase-2 structure-aware scrape bounds carry committed defaults."""
+    import importlib
+
+    import apollo.provisioning.cost_constants as cc
+
+    importlib.reload(cc)
+    assert cc.APOLLO_SCRAPE_MAX_SECTIONS == 120
+    assert cc.APOLLO_SCRAPE_MIN_CANDIDATES == 3
+
+
+def test_structured_scrape_enabled_default_on_and_overridable(monkeypatch):
+    """The structured-scrape flag defaults ON and reads per-call (env-overridable)."""
+    from apollo.provisioning.cost_constants import structured_scrape_enabled
+
+    monkeypatch.delenv("APOLLO_STRUCTURED_SCRAPE", raising=False)
+    assert structured_scrape_enabled() is True
+    monkeypatch.setenv("APOLLO_STRUCTURED_SCRAPE", "0")
+    assert structured_scrape_enabled() is False
+    monkeypatch.setenv("APOLLO_STRUCTURED_SCRAPE", "true")
+    assert structured_scrape_enabled() is True
