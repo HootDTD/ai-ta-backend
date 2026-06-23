@@ -20,6 +20,7 @@ from apollo.grading.tests._builders import (
     candidate,
     found_audit_fn,
     missing_grade,
+    nodes_with_confidences,
     notfound_audit_fn,
     raising_audit_fn,
     resolution_with,
@@ -295,3 +296,18 @@ def test_missing_entity_display_name_falls_back_to_key():
     )
     assert captured["entities"][0].display_name == "eq.x"
     assert captured["entities"][0].canonical_key == "eq.x"
+
+
+def test_build_audited_grade_forwards_misconception_bank_empty():
+    from apollo.grading.abstention import REASON_MISCONCEPTION_BANK_EMPTY
+    grade = missing_grade()
+    out = build_audited_grade(
+        grade,
+        transcript="hello",
+        resolution=resolution_with(),
+        student_nodes=nodes_with_confidences(1.0),
+        misconception_bank_empty=True,
+        audit_fn=notfound_audit_fn(),
+    )
+    assert REASON_MISCONCEPTION_BANK_EMPTY in out.abstention_reasons
+    assert out.abstained is False

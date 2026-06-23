@@ -34,3 +34,6 @@ skills-lock.json
 
 # Feller workflow task artifacts (transient scratchpads / verification reports)
 .feller/
+
+# SDD / Superpowers scratch artifacts (transient scratchpads)
+.superpowers/

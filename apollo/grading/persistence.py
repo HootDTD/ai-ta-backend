@@ -56,8 +56,9 @@ class RunRowSpec:
     user_id: str
     search_space_id: int
     coverage_score: float  # top-line 3 are NOT NULL (§2 schema)
-    soundness_score: float
+    soundness_score: float  # NOT NULL column; None -> coverage fallback written
     bisimilarity_score: float
+    soundness_applicable: bool  # D5/D6: False iff misconception bank was empty/absent
     node_coverage_score: float | None  # the 7 sub-scores are nullable (§2 schema)
     edge_coverage_score: float | None
     scoping_score: float | None
@@ -104,14 +105,28 @@ def grade_to_run_spec(
     """Map a ``GradeResult`` (scores) + ``AuditedGrade`` (abstention) onto a
     ``RunRowSpec``. The 10 ``*_score`` fields copy 1:1 from ``grade``;
     ``abstained`` / ``abstention_reasons`` come from ``audited`` (NOT recomputed);
-    the two scalars + ``comparison_version`` (off ``grade``) land verbatim."""
+    the two scalars + ``comparison_version`` (off ``grade``) land verbatim.
+
+    D5/D6: ``soundness_score`` is NOT NULL in the DB. When the misconception bank
+    was absent (``grade.soundness_applicable is False``), ``grade.soundness_score``
+    is ``None`` and the bisimilarity is already the coverage-only fallback — we
+    write that coverage value into the NOT-NULL column to keep the invariant. The
+    ``soundness_applicable`` flag tells readers this happened."""
+    # D5/D6: coerce None soundness to the coverage-only fallback for the NOT-NULL
+    # column; contradiction_score is already nullable so None passes through.
+    soundness_for_column: float = (
+        grade.coverage_score
+        if grade.soundness_score is None
+        else grade.soundness_score
+    )
     return RunRowSpec(
         attempt_id=attempt_id,
         user_id=user_id,
         search_space_id=search_space_id,
         coverage_score=grade.coverage_score,
-        soundness_score=grade.soundness_score,
+        soundness_score=soundness_for_column,
         bisimilarity_score=grade.bisimilarity_score,
+        soundness_applicable=grade.soundness_applicable,
         node_coverage_score=grade.node_coverage_score,
         edge_coverage_score=grade.edge_coverage_score,
         scoping_score=grade.scoping_score,
@@ -163,6 +178,7 @@ def _run_orm_from_spec(spec: RunRowSpec) -> GraphComparisonRun:
         coverage_score=spec.coverage_score,
         soundness_score=spec.soundness_score,
         bisimilarity_score=spec.bisimilarity_score,
+        soundness_applicable=spec.soundness_applicable,
         node_coverage_score=spec.node_coverage_score,
         edge_coverage_score=spec.edge_coverage_score,
         scoping_score=spec.scoping_score,

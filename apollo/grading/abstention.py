@@ -41,6 +41,10 @@ REASON_LOW_PARSER_CONFIDENCE = "min_parser_confidence_below_threshold"
 REASON_LOW_MISCONCEPTION_CONFIDENCE = "misconception_confidence_below_threshold"
 REASON_REFERENCE_INVALID = "reference_graph_invalid"
 REASON_TRANSCRIPT_AUDIT_FAILED = "transcript_audit_unavailable"
+# D5/D6: the misconception bank was empty/absent for this concept. Soundness
+# was never checked; soundness_score and contradiction_score are None.
+# Layer-3 (coverage) still updates — this is NOT a full abstention.
+REASON_MISCONCEPTION_BANK_EMPTY = "misconception_bank_empty"
 
 # Event kinds (subset) WU-4B2 may be told to withhold.
 _SUPPRESS_MISSING = "missing"
@@ -83,6 +87,7 @@ def apply_abstention(
     misconception_confidences: tuple[float, ...] = (),
     transcript_audit_failed: bool = False,
     reference_invalid: bool = False,
+    misconception_bank_empty: bool = False,
 ) -> Abstention:
     """Apply the §6.6 gates and return the reasons + flags + suppression set.
 
@@ -98,6 +103,9 @@ def apply_abstention(
     - ``reference_invalid``           -> REASON_REFERENCE_INVALID (grading already
                                          blocked upstream; surfaced here, not
                                          re-raised)
+    - ``misconception_bank_empty``    -> REASON_MISCONCEPTION_BANK_EMPTY (D5/D6:
+                                         soundness was never checked; coverage still
+                                         updates Layer-3 — NOT a full abstention)
 
     Pure + deterministic reason ordering (gate-declaration order)."""
     reasons: list[str] = []
@@ -123,6 +131,9 @@ def apply_abstention(
 
     if reference_invalid:
         reasons.append(REASON_REFERENCE_INVALID)
+
+    if misconception_bank_empty:
+        reasons.append(REASON_MISCONCEPTION_BANK_EMPTY)
 
     return Abstention(
         abstention_reasons=tuple(reasons),
