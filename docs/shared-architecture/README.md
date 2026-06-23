@@ -16,6 +16,11 @@ This file maps the doc tree across all Hoot sub-repos. It is committed to
 understand the *system* — that's what these docs are for. Read code only to
 make the change.
 
+> **`_archive/` is transient — skip it.** `ai-ta-backend/docs/_archive/` holds
+> handoffs, plans, specs, and experiment writeups. Do **not** load anything there
+> unless you are resuming a specific task whose handoff/plan lives in it. It is
+> not part of the architecture and is intentionally excluded from this map.
+
 ## In-scope repos (doc tree active)
 
 ### ai-ta-backend (Python/FastAPI backend)
