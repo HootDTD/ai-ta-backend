@@ -381,6 +381,41 @@ def test_scrape_document_fallback_widens_when_thin():
     assert len(scraped_titles) == 2
 
 
+def test_scrape_document_stops_widening_once_min_met():
+    """The complementary half of the fallback contract: once candidates reach
+    min_candidates, a NOT-likely section is NOT scraped (the cost-bound gate).
+    DISCRIMINATING: flipping the gate to `continue`/`>`/removing the break would
+    scrape the unlikely section too and fail this."""
+    @dataclass
+    class _Row:
+        id: int
+        content: str
+        document_id: int = 5
+        page_number: int | None = 1
+        section_path: str | None = None
+        chunk_type: str | None = "heading"
+
+    rows = [_Row(id=1, content="Likely"), _Row(id=2, content="Unlikely")]
+    scrape_calls = {"n": 0}
+
+    def _scrape(_text):
+        scrape_calls["n"] += 1
+        return json.dumps([_well_formed_record()])  # each scraped section yields 1 candidate
+
+    triage = lambda _p: json.dumps(  # noqa: E731
+        [
+            {"index": 0, "is_problem_likely": True, "priority": 5},
+            {"index": 1, "is_problem_likely": False, "priority": 0},
+        ]
+    )
+    result = _run(scrape_document(rows, chat_fn=_scrape, triage_chat_fn=triage,
+                                  max_sections=120, min_candidates=1))
+    # the likely section met min_candidates=1, so the NOT-likely section is gated out
+    assert scrape_calls["n"] == 1
+    assert result.scraped_count == 1
+    assert len(result.candidates) == 1
+
+
 def test_scrape_document_structured_false_uses_legacy_per_chunk():
     """structured=False routes to the legacy per-chunk scrape_questions path."""
     @dataclass
