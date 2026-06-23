@@ -49,6 +49,9 @@
       "step": 2,
       "content": {
         "applies_when": "P1 == P2",
+        "substitution": {
+          "P2": "P1"
+        },
         "transformation": "pressure terms cancel"
       },
       "depends_on": [

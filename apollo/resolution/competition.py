@@ -24,6 +24,7 @@ from apollo.resolution.structural import ScoredMatch
 # disagree on one of these pairs (one uses the left word, the other the right)
 # are polar opposites — the polarity screen rejects the lexical match.
 _DIRECTION_ANTONYMS: tuple[tuple[str, str], ...] = (
+    # Physics / general direction pairs.
     ("up", "down"),
     ("higher", "lower"),
     ("increase", "decrease"),
@@ -33,6 +34,19 @@ _DIRECTION_ANTONYMS: tuple[tuple[str, str], ...] = (
     ("rising", "dropping"),
     ("more", "less"),
     ("faster", "slower"),
+    # Macroeconomics polarity pairs (DESIGN §"Polarity antonyms"). These let the
+    # lexical tiers reject a direction-inverted macro claim (e.g. a "trade
+    # surplus" gloss matched against a "trade deficit" reference).
+    ("surplus", "deficit"),
+    ("rises", "falls"),
+    ("rise", "fall"),
+    ("appreciate", "depreciate"),
+    ("appreciates", "depreciates"),
+    ("expansionary", "contractionary"),
+    ("inflation", "deflation"),
+    ("gross", "net"),
+    ("nominal", "real"),
+    ("multiply", "divide"),
 )
 
 # A misconception within this score margin of the best non-misconception still

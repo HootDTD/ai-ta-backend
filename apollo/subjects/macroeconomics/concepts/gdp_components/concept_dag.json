@@ -1,0 +1,30 @@
+{
+  "topic_cluster": "gdp_components",
+  "nodes": [
+    {"id": "consumption", "label": "Consumption (C)", "prerequisites": [], "scope_boundary": [], "topic_cluster": "gdp_components"},
+    {"id": "investment", "label": "Investment (INV)", "prerequisites": [], "scope_boundary": ["financial_investment"], "topic_cluster": "gdp_components"},
+    {"id": "government_purchases", "label": "Government Purchases (G)", "prerequisites": [], "scope_boundary": ["transfer_payments"], "topic_cluster": "gdp_components"},
+    {"id": "exports", "label": "Exports (X)", "prerequisites": [], "scope_boundary": [], "topic_cluster": "gdp_components"},
+    {"id": "imports", "label": "Imports (M)", "prerequisites": [], "scope_boundary": [], "topic_cluster": "gdp_components"},
+    {"id": "net_exports", "label": "Net Exports (NX = X - M)", "prerequisites": ["exports", "imports"], "scope_boundary": [], "topic_cluster": "gdp_components"},
+    {"id": "final_goods_only", "label": "Final-goods-only rule", "prerequisites": [], "scope_boundary": ["intermediate_goods", "transfer_payments", "used_goods"], "topic_cluster": "gdp_components"},
+    {"id": "gdp_expenditure", "label": "GDP Expenditure Identity (C + INV + G + NX)", "prerequisites": ["consumption", "investment", "government_purchases", "net_exports", "final_goods_only"], "scope_boundary": ["income_approach"], "topic_cluster": "gdp_components"},
+    {"id": "income_from_abroad", "label": "Net Income from Abroad (RIN - ROUT)", "prerequisites": [], "scope_boundary": [], "topic_cluster": "gdp_components"},
+    {"id": "gnp", "label": "Gross National Product (GNP)", "prerequisites": ["gdp_expenditure", "income_from_abroad"], "scope_boundary": [], "topic_cluster": "gdp_components"},
+    {"id": "depreciation", "label": "Depreciation (DEP)", "prerequisites": [], "scope_boundary": [], "topic_cluster": "gdp_components"},
+    {"id": "nnp", "label": "Net National Product (NNP = GNP - DEP)", "prerequisites": ["gnp", "depreciation"], "scope_boundary": [], "topic_cluster": "gdp_components"}
+  ],
+  "edges": [
+    {"type": "requires", "from": "net_exports", "to": "exports"},
+    {"type": "requires", "from": "net_exports", "to": "imports"},
+    {"type": "requires", "from": "gdp_expenditure", "to": "consumption"},
+    {"type": "requires", "from": "gdp_expenditure", "to": "investment"},
+    {"type": "requires", "from": "gdp_expenditure", "to": "government_purchases"},
+    {"type": "requires", "from": "gdp_expenditure", "to": "net_exports"},
+    {"type": "requires", "from": "gdp_expenditure", "to": "final_goods_only"},
+    {"type": "extends", "from": "gnp", "to": "gdp_expenditure"},
+    {"type": "requires", "from": "gnp", "to": "income_from_abroad"},
+    {"type": "extends", "from": "nnp", "to": "gnp"},
+    {"type": "requires", "from": "nnp", "to": "depreciation"}
+  ]
+}

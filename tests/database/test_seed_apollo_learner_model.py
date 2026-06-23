@@ -501,8 +501,20 @@ async def test_seed_is_course_scoped_two_courses_do_not_collide(seeded_db):
     # Resolve the two spaces + their bernoulli concepts.
     spaces = [r["id"] for r in await _fetch(plain, "SELECT id FROM aita_search_spaces ORDER BY id")]
     assert len(spaces) == 2
-    await seed(sa_dsn, search_space_id=spaces[0])
-    await seed(sa_dsn, search_space_id=spaces[1])
+    # Each course's DB subject slug is distinct (global UNIQUE), but both share the
+    # physical bernoulli source dir, so source_subject_slug pins it to fluid_mechanics.
+    await seed(
+        sa_dsn,
+        subject_slug="fluid_mechanics_c1",
+        source_subject_slug="fluid_mechanics",
+        search_space_id=spaces[0],
+    )
+    await seed(
+        sa_dsn,
+        subject_slug="fluid_mechanics_c2",
+        source_subject_slug="fluid_mechanics",
+        search_space_id=spaces[1],
+    )
 
     for space_id in spaces:
         concept_id = await _fetchval(
