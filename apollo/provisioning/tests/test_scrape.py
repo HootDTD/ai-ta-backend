@@ -32,9 +32,12 @@ from apollo.provisioning.scrape import (
     chunk_content_hash,
     _normalize,
     resolve_or_create_provisional_concept,
+    scrape_document,
     scrape_questions,
+    scrape_section,
     write_tier1_problems,
 )
+from apollo.provisioning.section_grouping import Section
 from database.models import SearchSpace
 
 # pytest.ini sets asyncio_mode = auto.
@@ -235,6 +238,167 @@ def test_scrape_prompt_declares_candidate_question_fields():
     }
     for field in llm_supplied:
         assert field in _SCRAPE_SYSTEM_PROMPT, field
+
+
+# --------------------------------------------------------------------------- #
+# scrape_section + scrape_document (pure, no DB)
+# --------------------------------------------------------------------------- #
+
+
+def _section(*, title="6.2 Exercises", text="Find P2 in the pipe.", doc=7, page=3,
+             shash="a" * 64) -> Section:
+    return Section(
+        title=title, document_id=doc, page_start=page, page_end=page, text=text,
+        source_content_hash=shash, member_chunk_ids=(1, 2),
+    )
+
+
+def test_scrape_section_stamps_section_scoped_hash():
+    """A section yielding two problems stamps chunk_content_hash =
+    '<section_hash>.<ordinal>' with a DETERMINISTIC ordinal (sorted by problem_text
+    hash), and provenance (document_id/page) comes from the SECTION."""
+    sec = _section(shash="b" * 64, doc=7, page=3)
+    chat = lambda _text: json.dumps(  # noqa: E731
+        [
+            _well_formed_record(problem_text="Zebra problem find P2."),
+            _well_formed_record(problem_text="Apple problem find P2."),
+        ]
+    )
+    cands, failures = scrape_section(sec, concept_hint="fluids", chat_fn=chat)
+    assert failures == 0
+    assert len(cands) == 2
+    assert {c.chunk_content_hash for c in cands} == {f"{'b' * 64}.0", f"{'b' * 64}.1"}
+    assert all(c.document_id == 7 for c in cands)
+    assert all(c.page == 3 for c in cands)
+    # ordinal is deterministic: re-running yields the SAME hash↔problem mapping
+    cands2, _ = scrape_section(sec, concept_hint="fluids", chat_fn=chat)
+    map1 = {c.problem_text: c.chunk_content_hash for c in cands}
+    map2 = {c.problem_text: c.chunk_content_hash for c in cands2}
+    assert map1 == map2
+
+
+def test_scrape_section_uses_concept_hint_when_llm_omits():
+    sec = _section()
+    rec = _well_formed_record()
+    del rec["concept_slug"]
+    cands, _ = scrape_section(sec, concept_hint="integration", chat_fn=lambda _t: json.dumps([rec]))
+    assert cands[0].concept_slug == "integration"
+
+
+def test_scrape_section_failsoft_on_bad_json():
+    sec = _section()
+    cands, failures = scrape_section(sec, concept_hint="c", chat_fn=lambda _t: "not json")
+    assert cands == []
+    assert failures == 1
+
+
+def test_scrape_document_groups_triages_and_scrapes():
+    """End-to-end (mocked): two body chunks under one heading → one section →
+    triage marks it likely → section scrape yields a candidate."""
+    @dataclass
+    class _Row:
+        id: int
+        content: str
+        document_id: int = 5
+        page_number: int | None = 1
+        section_path: str | None = None
+        chunk_type: str | None = "body"
+
+    rows = [
+        _Row(id=1, content="6.2 Exercises", chunk_type="heading"),
+        _Row(id=2, content="A region bounded by curves."),
+        _Row(id=3, content="Find the area."),
+    ]
+    triage = lambda _p: json.dumps([{"index": 0, "is_problem_likely": True, "priority": 5,  # noqa: E731
+                                     "concept_slug": "area", "concept_display": "Area"}])
+    scrape = lambda _text: json.dumps([_well_formed_record(concept_slug="area")])  # noqa: E731
+    result = _run(scrape_document(
+        rows, chat_fn=scrape, triage_chat_fn=triage, max_sections=120, min_candidates=3,
+    ))
+    assert isinstance(result, ScrapeResult)
+    assert result.scraped_count == 1
+    assert len(result.candidates) == 1
+    assert result.candidates[0].concept_slug == "area"
+    # the section-scoped key namespace
+    assert result.candidates[0].chunk_content_hash.endswith(".0")
+
+
+def test_scrape_document_respects_max_sections():
+    """max_sections caps the number of sections scraped (cost bound)."""
+    @dataclass
+    class _Row:
+        id: int
+        content: str
+        document_id: int = 5
+        page_number: int | None = 1
+        section_path: str | None = None
+        chunk_type: str | None = "heading"
+
+    # 3 single-heading sections; cap at 1 → only one section is scraped.
+    rows = [_Row(id=i, content=f"Section {i}") for i in range(3)]
+    calls = {"n": 0}
+
+    def _scrape(_text):
+        calls["n"] += 1
+        return json.dumps([_well_formed_record()])
+
+    triage = lambda _p: json.dumps(  # noqa: E731
+        [{"index": i, "is_problem_likely": True, "priority": 0} for i in range(3)]
+    )
+    _run(scrape_document(rows, chat_fn=_scrape, triage_chat_fn=triage,
+                         max_sections=1, min_candidates=99))
+    assert calls["n"] == 1  # capped
+
+
+def test_scrape_document_fallback_widens_when_thin():
+    """A section triaged NOT-likely is still scraped when candidates < MIN
+    (the exhaustive fallback), but skipped once MIN is met."""
+    @dataclass
+    class _Row:
+        id: int
+        content: str
+        document_id: int = 5
+        page_number: int | None = 1
+        section_path: str | None = None
+        chunk_type: str | None = "heading"
+
+    rows = [_Row(id=1, content="Likely"), _Row(id=2, content="Unlikely")]
+    scraped_titles = []
+
+    def _scrape(text):
+        scraped_titles.append(text)
+        return "[]"  # no candidates anywhere → stays under MIN → fallback widens
+
+    triage = lambda _p: json.dumps(  # noqa: E731
+        [
+            {"index": 0, "is_problem_likely": True, "priority": 5},
+            {"index": 1, "is_problem_likely": False, "priority": 0},
+        ]
+    )
+    _run(scrape_document(rows, chat_fn=_scrape, triage_chat_fn=triage,
+                         max_sections=120, min_candidates=3))
+    # both the likely AND the unlikely section were scraped (widened, still thin)
+    assert len(scraped_titles) == 2
+
+
+def test_scrape_document_structured_false_uses_legacy_per_chunk():
+    """structured=False routes to the legacy per-chunk scrape_questions path."""
+    @dataclass
+    class _Row:
+        id: int
+        content: str
+        document_id: int = 5
+        page_number: int | None = 1
+        section_path: str | None = None
+        chunk_type: str | None = "body"
+
+    rows = [_Row(id=1, content="legacy chunk")]
+    chat = _chat_per_chunk({"legacy chunk": json.dumps([_well_formed_record()])})
+    result = _run(scrape_document(rows, chat_fn=chat, triage_chat_fn=lambda _p: "[]",
+                                  max_sections=120, min_candidates=3, structured=False))
+    assert result.scraped_count == 1
+    # legacy path stamps the CHUNK content hash (no ".ordinal" section suffix)
+    assert result.candidates[0].chunk_content_hash == chunk_content_hash("legacy chunk")
 
 
 # --------------------------------------------------------------------------- #
