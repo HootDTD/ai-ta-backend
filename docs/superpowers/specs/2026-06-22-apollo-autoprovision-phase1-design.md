@@ -154,15 +154,22 @@ LLM candidate must not sink a document whose other candidates promote):
 
 - `retrieval_adapter.py:54` → use `row.get("content")` and skip content-less rows
   rather than `row["content"]` → `KeyError` → abort.
-- `promotion_lint.py:212` → `next(..., None)` + return a clean gate-5 reject
-  string when the terminal step is missing, instead of a bare `StopIteration`
-  that the orchestrator catches as an unexpected-error whole-doc abort.
 - `promote.py` `_annotate` → guard the `steps_by_id`/`entry_type` lookup so a
-  malformed step yields a clean reject path rather than a pre-gate `KeyError`
-  (gate 1 can then fail-close it).
-- `learner_model_seed.py:251,255` → wrap the `misconceptions_to_entities` bare
-  `KeyError` into the `TagMintError` convention (dormant today since
-  `misconceptions=[]`, but cheap and consistent with the NO-FALLBACK contract).
+  malformed step yields a clean gate-1 reject rather than a pre-gate `KeyError`.
+  This is the **real ordering bug**: `_annotate` (`promote.py:105`) runs before
+  `run_promotion_lint`'s gate-1 schema validation (`promotion_lint.py:334`).
+
+**Refinements made during plan-writing (kept here so spec↔plan don't drift):**
+- `promotion_lint.py:212` gate-5 `next()` is **unreachable through the lint** —
+  gate 1 validates the `Problem` and builds the KG from it before gate 5 runs, so
+  `chain[-1]` is always a real procedure step. We still harden it to
+  `next(..., None)` marked `# pragma: no cover` (matching the sibling convention
+  at `promotion_lint.py:345`), but with **no dedicated test**.
+- `learner_model_seed.py:251,255` `misconceptions_to_entities` KeyError hardening
+  is **deferred to Phase 2 (H3 wiring)**: it is fully dormant while
+  `misconceptions=[]` and touches the frozen §8 seed converter, so it is better
+  changed alongside the wiring that exercises it. (H1's `link_opposes` bare-key
+  bug is still fixed now, via the shared helper.)
 
 Not in scope (verified safe): the dedup cosine NaN routing — `_cosine`
 (`dedup.py:64-80`) already guards all-zero vectors; a NaN component routes to
