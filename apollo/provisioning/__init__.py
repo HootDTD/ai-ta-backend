@@ -48,6 +48,7 @@ from apollo.provisioning.queue import (
 from apollo.provisioning.scrape import (
     CandidateQuestion,
     ScrapeResult,
+    scrape_document,
     scrape_questions,
     write_tier1_problems,
 )
@@ -75,6 +76,7 @@ __all__ = [
     # WU-3B2d — scrape (stage 1) public surface
     "CandidateQuestion",
     "ScrapeResult",
+    "scrape_document",
     "scrape_questions",
     "write_tier1_problems",
     # WU-3B2d — tag/mint (stage 4) public surface
