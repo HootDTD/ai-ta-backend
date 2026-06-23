@@ -36,3 +36,9 @@ def test_harmonic_mean_one_zero():
 def test_bisimilarity_score_delegates_to_harmonic_mean():
     assert bisimilarity_score(0.8, 0.6) == harmonic_mean(0.8, 0.6)
     assert bisimilarity_score(1.0, 0.0) == 0.0
+
+
+def test_bisimilarity_na_soundness_renormalizes_to_coverage():
+    assert bisimilarity_score(None, 0.8) == 0.8          # coverage-only fallback
+    r = bisimilarity_score(None, 0.0)
+    assert r == 0.0 and not math.isnan(r)                # still NaN-free, in-range

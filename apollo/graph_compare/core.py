@@ -58,10 +58,16 @@ class GradeResult:
     persisted confidence column is ``normalization_confidence`` (supplied by
     WU-4B from resolution method-caps), so it is carried here but NOT persisted
     by this name. There is intentionally NO ``events`` field — finding->event
-    conversion is WU-4B (§6.5)."""
+    conversion is WU-4B (§6.5).
+
+    ``soundness_applicable`` is ``False`` iff the misconception bank was
+    empty/absent for this concept (D5/D6). When ``False``:
+      * ``soundness_score`` and ``contradiction_score`` are ``None``;
+      * ``bisimilarity_score`` holds the coverage-only fallback (== coverage_score);
+      * persisted column ``soundness_applicable=false`` signals this to readers."""
 
     coverage_score: float
-    soundness_score: float
+    soundness_score: float | None
     bisimilarity_score: float
     node_coverage_score: float
     edge_coverage_score: float
@@ -69,27 +75,37 @@ class GradeResult:
     usage_score: float
     procedure_order_score: float
     dependency_score: float
-    contradiction_score: float
+    contradiction_score: float | None
     comparison_confidence: float
     findings: tuple[Finding, ...]
+    soundness_applicable: bool = True
     comparison_version: str = COMPARISON_VERSION
 
 
 def grade_attempt(
-    student_canonical: CanonicalGraph, reference_graph: ReferenceGraph
+    student_canonical: CanonicalGraph,
+    reference_graph: ReferenceGraph,
+    *,
+    bank_applicable: bool = True,
 ) -> GradeResult:
     """Grade a student's canonical graph against the reference (§6.4 10/11/13).
 
     Pure: coverage (max-over-paths), soundness (contradictions-only), the 7
     sub-scores, and bisimilarity, plus the in-memory finding set. No external IO.
+
+    ``bank_applicable=False`` signals that the misconception bank was
+    empty/absent for this concept (D5/D6); soundness_score and
+    contradiction_score become ``None``, bisimilarity renormalizes to coverage.
     """
     # Step 10 — coverage (max over declared paths).
     coverage, winning_path, _ = coverage_result(student_canonical, reference_graph)
-    # Step 11 — soundness (contradictions only).
-    soundness = soundness_score(student_canonical)
-    # Sub-scores.
-    sub = compute_sub_scores(student_canonical, reference_graph, winning_path)
-    # Step 13 — bisimilarity (harmonic mean; a+b==0 -> 0, never NaN).
+    # Step 11 — soundness (contradictions only; None when bank not applicable).
+    soundness = soundness_score(student_canonical, bank_applicable=bank_applicable)
+    # Sub-scores (contradiction sub-score also None when bank not applicable).
+    sub = compute_sub_scores(
+        student_canonical, reference_graph, winning_path, bank_applicable=bank_applicable
+    )
+    # Step 13 — bisimilarity (harmonic mean; None soundness -> coverage-only fallback).
     bisimilarity = bisimilarity_score(soundness, coverage)
 
     findings = _emit_findings(student_canonical, reference_graph, winning_path)
@@ -107,6 +123,7 @@ def grade_attempt(
         contradiction_score=sub.contradiction,
         comparison_confidence=1.0,  # v1 binding
         findings=findings,
+        soundness_applicable=bank_applicable,
         comparison_version=COMPARISON_VERSION,
     )
 

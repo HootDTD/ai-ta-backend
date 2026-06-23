@@ -85,3 +85,11 @@ def test_contradiction_penalty_anchors():
     assert contradiction_penalty(1) == CONTRADICTION_UNIT_PENALTY
     assert contradiction_penalty(2) == 1.0
     assert contradiction_penalty(5) == 1.0  # capped
+
+
+def test_empty_bank_soundness_is_na_not_one():
+    # D5/D6: empty/absent misconception bank -> N/A (None), NOT vacuous 1.0.
+    student = snorm(nodes=(cnode("eq.a"),))
+    assert soundness_score(student, bank_applicable=False) is None
+    # the SAME student WITH a bank is a real 1.0 (0 contradictions):
+    assert soundness_score(student, bank_applicable=True) == 1.0

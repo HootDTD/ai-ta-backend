@@ -494,3 +494,91 @@ async def test_no_mastery_events_written():
             for p in reversed(patches):
                 p.stop()
     convert.assert_not_called()
+
+
+async def test_empty_entries_sets_bank_not_applicable(caplog):
+    """D5/D6 case 11: empty load_for_concept -> bank_applicable=False threaded through."""
+    import logging
+    db = _db()
+    patches, mocks = _all_callee_patches()
+    mocks["load_for_concept"].return_value = []  # empty bank
+
+    with _read_transcript_patch():
+        for p in patches:
+            p.start()
+        try:
+            with caplog.at_level(logging.WARNING):
+                await _run(db)
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    grade_kwargs = mocks["grade_attempt"].call_args.kwargs
+    assert grade_kwargs["bank_applicable"] is False
+    audited_kwargs = mocks["build_audited_grade"].call_args.kwargs
+    assert audited_kwargs["misconception_bank_empty"] is True
+    assert "soundness_not_applicable_empty_bank" in caplog.text
+
+
+async def test_nonempty_entries_sets_bank_applicable(caplog):
+    """D5/D6 case 12: non-empty entries -> bank_applicable=True, no warning."""
+    import logging
+    db = _db()
+    patches, mocks = _all_callee_patches()
+    # Use a MagicMock so _misconceptions_dict can access .code/.trigger_phrases/etc
+    entry = MagicMock()
+    entry.code = "misc.density_ignored"
+    entry.trigger_phrases = ["pressure increases"]
+    entry.description = "Student ignored density"
+    mocks["load_for_concept"].return_value = [entry]  # non-empty
+
+    with _read_transcript_patch():
+        for p in patches:
+            p.start()
+        try:
+            with caplog.at_level(logging.WARNING):
+                await _run(db)
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    grade_kwargs = mocks["grade_attempt"].call_args.kwargs
+    assert grade_kwargs["bank_applicable"] is True
+    audited_kwargs = mocks["build_audited_grade"].call_args.kwargs
+    assert audited_kwargs["misconception_bank_empty"] is False
+    assert "soundness_not_applicable_empty_bank" not in caplog.text
+
+
+async def test_null_concept_id_forces_bank_not_applicable():
+    """D5/D6 case 13: concept_id=None -> bank_applicable=False even with entries."""
+    db = _db()
+    patches, mocks = _all_callee_patches()
+    # Use a MagicMock so _misconceptions_dict can access .code/.trigger_phrases/etc
+    entry = MagicMock()
+    entry.code = "misc.density_ignored"
+    entry.trigger_phrases = ["pressure increases"]
+    entry.description = "Student ignored density"
+    mocks["load_for_concept"].return_value = [entry]  # non-empty but concept_id None
+
+    with _read_transcript_patch():
+        for p in patches:
+            p.start()
+        try:
+            sess = _Sess()
+            sess.concept_id = None  # override
+            attempt = _Attempt()
+            result = await run_graph_simulation(
+                db, MagicMock(name="neo"),
+                attempt=attempt, sess=sess,
+                student_graph=KGGraph(),
+                problem_payload=_payload(),
+                old_rubric=_OLD_RUBRIC,
+            )
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    grade_kwargs = mocks["grade_attempt"].call_args.kwargs
+    assert grade_kwargs["bank_applicable"] is False
+    audited_kwargs = mocks["build_audited_grade"].call_args.kwargs
+    assert audited_kwargs["misconception_bank_empty"] is True

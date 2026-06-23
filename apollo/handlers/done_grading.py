@@ -186,6 +186,25 @@ async def run_graph_simulation(
     entries = await load_for_concept(db, concept_id=sess.concept_id)  # type: ignore[arg-type]
     misconceptions = _misconceptions_dict(entries)
 
+    # D5/D6 — soundness applicability. An empty/absent misconception bank (no rows
+    # for the concept, or a NULL concept_id which can never have a bank) means no
+    # misc.* candidate is ever minted, so a "0 contradictions -> 1.0" soundness
+    # would be FAIL-OPEN ("verified sound" that was never checked). Detect HERE
+    # (the only non-test caller of load_for_concept; the list is already in hand)
+    # and thread the fact into the PURE grader + the abstention reason. Detection
+    # stays in the orchestrator so the score-math remains IO/log-free (purity +
+    # test_grade_attempt_is_pure).
+    bank_applicable = bool(entries) and sess.concept_id is not None
+    if not bank_applicable:
+        _LOG.warning(
+            "soundness_not_applicable_empty_bank",
+            extra={
+                "concept_id": sess.concept_id,
+                "attempt_id": int(attempt.id),
+                "search_space_id": int(sess.search_space_id),
+            },
+        )
+
     specs = await load_entity_specs(
         db,
         search_space_id=int(sess.search_space_id),
@@ -225,7 +244,7 @@ async def run_graph_simulation(
         reference_graph = build_reference_canonical(problem_payload)
 
         # Step 8 — grade (pure).
-        grade = grade_attempt(student_canonical, reference_graph)
+        grade = grade_attempt(student_canonical, reference_graph, bank_applicable=bank_applicable)
 
         # Step 9 — transcript audit (live auditor; suppress-all-missing on infra
         # failure is handled INSIDE build_audited_grade).
@@ -238,6 +257,7 @@ async def run_graph_simulation(
             student_nodes=student_nodes,
             candidates=inputs.candidates,
             reference_invalid=False,
+            misconception_bank_empty=not bank_applicable,
             audit_fn=main_chat_auditor,
         )
 
