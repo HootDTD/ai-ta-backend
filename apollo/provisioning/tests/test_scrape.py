@@ -29,7 +29,7 @@ from apollo.persistence.models import Concept, ConceptProblem, Subject
 from apollo.provisioning.scrape import (
     CandidateQuestion,
     ScrapeResult,
-    _chunk_content_hash,
+    chunk_content_hash,
     _normalize,
     resolve_or_create_provisional_concept,
     scrape_questions,
@@ -88,15 +88,15 @@ def test_chunk_content_hash_is_normalized():
     """Two chunks differing only in whitespace/case hash IDENTICALLY; different
     content hashes differently. The idempotency key is content-stable (survives a
     re-index that re-mints chunk ids)."""
-    a = _chunk_content_hash("Find  the  PRESSURE P2.")
-    b = _chunk_content_hash("find the pressure p2.")
+    a = chunk_content_hash("Find  the  PRESSURE P2.")
+    b = chunk_content_hash("find the pressure p2.")
     assert a == b
-    c = _chunk_content_hash("a different question entirely")
+    c = chunk_content_hash("a different question entirely")
     assert c != a
 
 
 def test_chunk_content_hash_is_sha256_hex():
-    h = _chunk_content_hash("anything")
+    h = chunk_content_hash("anything")
     assert len(h) == 64
     assert all(ch in "0123456789abcdef" for ch in h)
 
@@ -123,7 +123,7 @@ def test_scrape_parses_candidates():
     # provenance from the chunk, not the LLM payload:
     assert cand.document_id == 7
     assert cand.page == 3
-    assert cand.chunk_content_hash == _chunk_content_hash(chunk.content)
+    assert cand.chunk_content_hash == chunk_content_hash(chunk.content)
 
 
 def test_scrape_malformed_json_is_failsoft():
@@ -206,6 +206,35 @@ def test_candidate_question_requires_fields():
             chunk_content_hash="abc",
             concept_slug="c",
         )
+
+
+# --------------------------------------------------------------------------- #
+# Stage-1 prompt↔parser contract (the missing un-mocked-class test). PURE, no DB.
+# --------------------------------------------------------------------------- #
+
+
+def test_scrape_prompt_declares_candidate_question_fields():
+    """The ``_SCRAPE_SYSTEM_PROMPT`` declares every LLM-SUPPLIED ``CandidateQuestion``
+    field. The chunk-stamped provenance fields (``document_id``/``page``/
+    ``chunk_content_hash`` — stamped from the CHUNK in ``_coerce_candidate``, NOT the
+    LLM) are excluded; the minus-set is derived from that function's chunk-stamped
+    args so it stays honest with the model. DISCRIMINATING: reverting the prompt to
+    the vague one-liner (no field names) RED-flags."""
+    from apollo.provisioning.orchestrator import _SCRAPE_SYSTEM_PROMPT
+
+    # The fields _coerce_candidate stamps from the chunk (scrape.py:112-122) — the
+    # LLM never supplies these, so the prompt does not declare them.
+    chunk_stamped = {"document_id", "page", "chunk_content_hash"}
+    llm_supplied = set(CandidateQuestion.model_fields) - chunk_stamped
+    assert llm_supplied == {
+        "problem_text",
+        "given_values",
+        "target_unknown",
+        "difficulty",
+        "concept_slug",
+    }
+    for field in llm_supplied:
+        assert field in _SCRAPE_SYSTEM_PROMPT, field
 
 
 # --------------------------------------------------------------------------- #

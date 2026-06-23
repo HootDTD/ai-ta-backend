@@ -50,6 +50,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from apollo.provisioning.provisioning_schema import (
+    build_solution_schema,
+    solution_content_field_hints,
+)
 from apollo.provisioning.tag_mint import ApprovedPair
 from apollo.schemas.problem import Problem
 
@@ -61,6 +65,45 @@ __all__ = [
     "solution_hash",
     "build_approved_pair",
 ]
+
+
+# --------------------------------------------------------------------------- #
+# Schema-explicit Stage-2 system prompts (the prompt↔parser contract).
+#
+# Both prompts declare the EXACT output shape ``_parse_reference_solution`` +
+# ``Problem.model_validate`` require, so a real model emits a Problem-valid
+# ``reference_solution`` instead of free-form steps. The per-``entry_type``
+# ``content`` field hints are sourced ONCE from the ontology
+# (``solution_content_field_hints()``) so the prose can never drift from
+# ``NODE_CONTENT_TYPES``. JSON object ONLY — no prose, no markdown fences.
+# --------------------------------------------------------------------------- #
+_SOLUTION_OUTPUT_CONTRACT = (
+    "Output a single JSON object with EXACTLY one key, \"reference_solution\", whose "
+    "value is a NON-EMPTY array of step objects. Each step object has EXACTLY these "
+    "keys:\n"
+    '  "step": integer >= 1 (1-based position).\n'
+    '  "entry_type": exactly one of "equation", "condition", "simplification", '
+    '"definition", "variable_mapping", "procedure_step".\n'
+    '  "id": a non-empty string, UNIQUE within the solution.\n'
+    '  "content": an object whose fields depend on "entry_type" -- '
+    f"{solution_content_field_hints()}.\n"
+    '  "depends_on": an array of step "id" strings ([] if none).\n'
+    "Cross-step rules the validator enforces: every \"depends_on\" id must be a real "
+    "step \"id\" in this solution; a procedure_step's content.uses_equations must list "
+    "real equation step \"id\"s; procedure_step content.order values must be 1..N "
+    "contiguous across the procedure_steps.\n"
+    "Return the JSON object ONLY -- no prose, no explanation, no markdown code fences."
+)
+
+_SOLUTION_EXTRACT_SYSTEM_PROMPT = (
+    "Extract the worked reference solution from the provided course passages.\n"
+    + _SOLUTION_OUTPUT_CONTRACT
+)
+
+_SOLUTION_GENERATE_SYSTEM_PROMPT = (
+    "Using ONLY the provided course passages, produce the reference solution.\n"
+    + _SOLUTION_OUTPUT_CONTRACT
+)
 
 
 class SolutionDraftError(RuntimeError):
@@ -216,11 +259,7 @@ async def find_or_generate(
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "Extract the worked reference solution from the provided "
-                        "course passages into a JSON object with a "
-                        "'reference_solution' list of typed steps."
-                    ),
+                    "content": _SOLUTION_EXTRACT_SYSTEM_PROMPT,
                 },
                 {
                     "role": "user",
@@ -232,7 +271,7 @@ async def find_or_generate(
                     ),
                 },
             ],
-            response_format={"type": "json_object"},
+            response_format={"type": "json_schema", "json_schema": build_solution_schema()},
             temperature=0.0,
         )
     else:
@@ -242,11 +281,7 @@ async def find_or_generate(
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "Using ONLY the provided course passages, produce a "
-                        "reference solution as a JSON object with a "
-                        "'reference_solution' list of typed steps."
-                    ),
+                    "content": _SOLUTION_GENERATE_SYSTEM_PROMPT,
                 },
                 {
                     "role": "user",
@@ -260,7 +295,7 @@ async def find_or_generate(
                     ),
                 },
             ],
-            response_format={"type": "json_object"},
+            response_format={"type": "json_schema", "json_schema": build_solution_schema()},
             temperature=0.0,
         )
 

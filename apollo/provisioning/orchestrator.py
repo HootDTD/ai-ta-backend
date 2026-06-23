@@ -9,11 +9,12 @@ the orchestrator merely sequences. The orchestrator OWNS:
     run ``running`` — a per-document error always flips it to a TERMINAL status
     (else the partial-unique-index would wedge re-enqueue, §9 OPS-5);
   * the §4b stage-outcome -> observability decision: a per-CANDIDATE rejection
-    (pairing ``Rejection`` / lint fail) writes ONE ``apollo_rejected_problems`` row
-    and CONTINUES (``n_rejected`` recomputed); a per-DOCUMENT error
-    (``SolutionDraftError`` / ``TagMintError`` / ``CostBudgetExceeded`` /
-    ``CanonProjectionError`` / any unexpected exception) writes ONE
-    ``apollo_ingest_errors`` row and FAILS the whole run;
+    (pairing ``Rejection`` / lint fail / a ``find_or_generate``
+    ``SolutionDraftError``) writes ONE ``apollo_rejected_problems`` row and
+    CONTINUES (``n_rejected`` recomputed); a per-DOCUMENT error
+    (``TagMintError`` / ``CostBudgetExceeded`` / ``CanonProjectionError`` / any
+    unexpected exception) writes ONE ``apollo_ingest_errors`` row and FAILS the
+    whole run;
   * the per-run counters: ``n_*`` are ASSIGNED from freshly-computed values (never
     ``+=``) so a re-claimed job's replay does not inflate them (§2c).
 
@@ -56,6 +57,8 @@ from apollo.provisioning.pairing_gate import (
 )
 from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promote import PromoteResult, promote
+from apollo.provisioning.provisioning_schema import build_tag_schema
+from apollo.provisioning.retrieval_adapter import make_course_retrieve_fn
 from apollo.provisioning.queue import ClaimedJob
 from apollo.provisioning.scrape import (
     resolve_or_create_provisional_concept,
@@ -80,7 +83,31 @@ _RUN_SUCCEEDED = "succeeded"
 _RUN_FAILED = "failed"
 
 _SCRAPE_SYSTEM_PROMPT = (
-    "Extract candidate practice questions from the course passage as a JSON array of objects."
+    "You extract solvable quantitative practice problems from a passage of course "
+    "material (textbook prose, worked examples, and exercise sets all count).\n"
+    "Return ONLY a JSON array - no prose, no explanation, no markdown code fences. "
+    "Each array element is an object with EXACTLY these keys:\n"
+    '  "problem_text": string - the full, self-contained problem statement.\n'
+    '  "given_values": object mapping each stated known quantity\'s short symbol to '
+    "its NUMERIC value (numbers only - no units, no strings); use {} if none.\n"
+    '  "target_unknown": string - the single quantity the problem asks to find.\n'
+    '  "difficulty": exactly one of "intro", "standard", "hard".\n'
+    '  "concept_slug": string - a short dotted/kebab concept id, e.g. '
+    '"bernoulli-equation".\n'
+    "If the passage contains no solvable problems, return []."
+)
+
+_TAG_MINT_SYSTEM_PROMPT = (
+    "You tag an already-approved physics problem with its canonical concept and "
+    "the prerequisite edges between its solution entities.\n"
+    "Return ONLY a JSON object - no prose, no explanation, no markdown code fences. "
+    "The object has EXACTLY these keys:\n"
+    '  "concept_slug": string - a short dotted/kebab concept id (e.g. '
+    '"bernoulli-equation"). REQUIRED.\n'
+    '  "display_name": string - a human-readable concept label; if unknown, repeat '
+    "the concept_slug.\n"
+    '  "prereqs": array of {"from": <entity-key>, "to": <entity-key>} objects naming '
+    "prerequisite edges between the problem's minted entity keys; use [] if none."
 )
 
 
@@ -245,7 +272,7 @@ async def run_provisioning(
     if embed_fn is None:
         from indexing.document_embedder import embed_text as embed_fn  # type: ignore
     if retrieve_fn is None:
-        retrieve_fn = _default_retrieve_fn
+        retrieve_fn = make_course_retrieve_fn(db, search_space_id=job.search_space_id)
 
     scraped = 0
     promoted = 0
@@ -354,7 +381,11 @@ def _tag_mint_chat_fn(metered_chat: MeteredChat) -> Callable[[str], str]:
     def _chat_fn(prompt: str) -> str:
         return metered_chat.cheap(
             purpose="tag_mint",
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": _TAG_MINT_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_schema", "json_schema": build_tag_schema()},
         )
 
     return _chat_fn
@@ -407,7 +438,7 @@ async def _process_candidate(
     entities ``tag_and_mint`` de-duplicated for this candidate (0 when it rejected
     before tag/mint).
 
-    A per-CANDIDATE rejection (pairing fail / lint fail) writes the rejection row
+    A per-CANDIDATE rejection (pairing fail / lint fail / a stage-2 SolutionDraftError) writes the rejection row
     and returns 'rejected' (the run continues). A per-DOCUMENT error raises a
     ``_PerDocumentError`` to abort the whole run."""
     # --- stage 2: find_or_generate ---------------------------------------- #
@@ -416,7 +447,19 @@ async def _process_candidate(
             db, candidate, retrieve_fn=retrieve_fn, chat_fn=metered_chat.main
         )
     except SolutionDraftError as exc:
-        raise _PerDocumentError(stage="find_or_generate", error_class="SolutionDraftError") from exc
+        # A single un-draftable candidate is a per-CANDIDATE rejection (write the
+        # row, CONTINUE) — NOT a per-document abort. One bad candidate must not
+        # sink a document whose other candidates promote (§4b decision table).
+        _record_rejection(
+            db,
+            run=run,
+            rejected_stage="solution_draft",
+            failed_gate=None,
+            diagnostic=str(exc),
+            concept_id=provisional_concept_id,
+            payload={"reason": "solution_draft_error"},
+        )
+        return "rejected", 0
     except CostBudgetExceeded as exc:
         raise _cost_abort(exc, stage="find_or_generate") from exc
 
@@ -538,11 +581,3 @@ async def _finalize(
         n_rejected=rejected,
         n_dedup_merged=merged,
     )
-
-
-async def _default_retrieve_fn(question) -> Sequence[GroundingSpan]:
-    """The default course-corpus retrieval adapter for ``find_or_generate`` /
-    ``validate_pair``. v1 returns no spans (the generate branch grounds on the
-    question alone); the real hybrid-retrieval adapter is a Tier-2 nightly
-    concern. Kept <20 lines per the plan §16 deviation note."""
-    return ()

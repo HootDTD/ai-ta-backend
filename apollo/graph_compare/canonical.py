@@ -11,10 +11,14 @@ canonical graphs:
     endpoint is DROPPED from comparison but counted), and the unresolved student
     nodes RETAINED as findings-input (§6.3).
   * ``R_norm`` (:class:`ReferenceGraph`) — one node per reference-solution step
-    (keyed on its ``entity_key``), the dependency DAG from each step's
-    ``depends_on``, and one :class:`ReferencePathView` per ``declared_paths``
-    entry. **Built from the problem's OWN ``reference_solution`` ONLY** — never
-    the deduped ``apollo_kg_entities`` payload (Decision 3 regression guard).
+    (keyed on its ``entity_key``); its edges are the dependency DAG from each
+    step's ``depends_on`` PLUS the USES edges from each procedure step's
+    ``uses_equations`` and the PRECEDES chain over procedure ``content.order``
+    (edge-symmetric with ``Problem.to_kg_graph`` so the student's real
+    USES/PRECEDES edges have reference targets to match); and one
+    :class:`ReferencePathView` per ``declared_paths`` entry. **Built from the
+    problem's OWN ``reference_solution`` ONLY** — never the deduped
+    ``apollo_kg_entities`` payload (Decision 3 regression guard).
 
 It computes NO scores, runs NO simulation, persists nothing, and calls neither
 Neo4j nor any LLM (scores/findings are WU-4A2). Mirrors ``apollo/resolution/``:
@@ -94,7 +98,8 @@ class ReferenceGraph:
     """R_norm. Per-problem reference nodes + dependency DAG + declared-path views."""
 
     nodes: tuple[CanonicalNode, ...]
-    edges: tuple[CanonicalEdge, ...]  # dependency edges from each step's depends_on
+    # DEPENDS_ON (depends_on) + USES (uses_equations) + PRECEDES (procedure order)
+    edges: tuple[CanonicalEdge, ...]
     paths: tuple[ReferencePathView, ...]  # one per declared_paths entry (>= 1)
 
 
@@ -107,8 +112,9 @@ def build_reference_canonical(problem: dict) -> ReferenceGraph:
     """Build ``R_norm`` from the problem's OWN reference solution (Decision 3).
 
     Validates the reference graph FIRST (the §6.6 "reference fails validation →
-    block grading" gate). Reads only ``reference_solution`` /
-    ``depends_on`` / ``declared_paths`` — NEVER the deduped entity payload.
+    block grading" gate). Reads only ``reference_solution`` (its ``depends_on``,
+    procedure ``content.uses_equations`` + ``content.order``) and
+    ``declared_paths`` — NEVER the deduped entity payload.
 
     Raises :class:`ReferenceGraphInvalidError` if the reference graph is invalid.
     """
@@ -152,6 +158,44 @@ def build_reference_canonical(problem: dict) -> ReferenceGraph:
                     provenance="explicit",
                 )
             )
+
+    # USES edges (procedure_step → equation): mirror ``Problem.to_kg_graph`` so
+    # the student's real USES edges have a reference target to match. WITHOUT
+    # these the ``usage`` dimension is vacuously 1.0 and ``edge_coverage``
+    # collapses onto the DEPENDS_ON-only set (the "structural edge scoring is
+    # dead by construction" regression). ``uses_equations`` holds equation STEP
+    # ids, mapped to canonical keys via ``key_for_step`` (same as depends_on).
+    for step in steps:
+        if step["entry_type"] != "procedure_step":
+            continue
+        from_key = key_for_step[step["id"]]
+        content = step.get("content", {}) or {}
+        for eq_step_id in content.get("uses_equations", []) or []:
+            edges.append(
+                CanonicalEdge(
+                    edge_type=EdgeType.USES,
+                    from_key=from_key,
+                    to_key=key_for_step[eq_step_id],
+                    provenance="explicit",
+                )
+            )
+
+    # PRECEDES chain across procedure steps in ``content.order``: mirror
+    # ``Problem.to_kg_graph`` (consecutive prev → next). Gives ``edge_coverage``
+    # the procedure-order structure the student's PRECEDES edges can match.
+    proc_steps = sorted(
+        (s for s in steps if s["entry_type"] == "procedure_step"),
+        key=lambda s: int((s.get("content", {}) or {})["order"]),
+    )
+    for prev, nxt in zip(proc_steps, proc_steps[1:], strict=False):
+        edges.append(
+            CanonicalEdge(
+                edge_type=EdgeType.PRECEDES,
+                from_key=key_for_step[prev["id"]],
+                to_key=key_for_step[nxt["id"]],
+                provenance="explicit",
+            )
+        )
 
     # Per-path views: each declared path is an ordered list of reference-node
     # ids; map each to its canonical key (validate_reference guarantees every id
