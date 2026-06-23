@@ -56,7 +56,7 @@ The LLM tag prompt (`orchestrator.py:100-111`) tells the model to use "minted en
 - Consumes: `_entity_key_for_step(step: dict) -> str` from `apollo.persistence.learner_model_seed` (returns `f"{prefix}.{id}"`).
 - Produces: `_bare_id_aliases(problem: dict) -> dict[str, str]` (bare reference-node id → prefixed canonical_key) in `tag_mint.py`. `tag_and_mint`'s signature and `MintPlan` are unchanged; `insert_prereqs`/`link_opposes` are unchanged.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `apollo/provisioning/tests/test_tag_mint.py` (after `test_tag_and_mint_prereqs_inserted`, ~line 530):
 
@@ -127,12 +127,12 @@ async def test_tag_and_mint_links_opposes_bare_id(db_session):
     assert payload["opposes_entity_id"] == plan.minted_entity_ids["eq.bernoulli"]
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `pytest apollo/provisioning/tests/test_tag_mint.py::test_tag_and_mint_prereqs_accept_bare_ids apollo/provisioning/tests/test_tag_mint.py::test_tag_and_mint_links_opposes_bare_id -v`
 Expected: BOTH FAIL with `TagMintError` ("prereq draft references an unminted entity key 'solve_p2'" / "misconception opposes an unknown entity key 'bernoulli'").
 
-- [ ] **Step 3: Add the helper to `tag_mint.py`**
+- [x] **Step 3: Add the helper to `tag_mint.py`**
 
 Extend the existing `learner_model_seed` import (currently `EntitySpec, misconceptions_to_entities, reference_solution_to_entities`) to add `_entity_key_for_step`:
 
@@ -167,7 +167,7 @@ def _bare_id_aliases(problem: dict) -> dict[str, str]:
     return aliases
 ```
 
-- [ ] **Step 4: Register the aliases in `tag_and_mint`**
+- [x] **Step 4: Register the aliases in `tag_and_mint`**
 
 In `tag_and_mint`, immediately AFTER the mint/merge loop populates `key_to_id` (after the `for spec in all_specs:` loop ends, ~line 266) and BEFORE the `# --- 5a. Link misconception opposes` block, insert:
 
@@ -185,12 +185,12 @@ In `tag_and_mint`, immediately AFTER the mint/merge loop populates `key_to_id` (
             key_to_id.setdefault(bare_id, key_to_id[canonical_key])
 ```
 
-- [ ] **Step 5: Run the new tests + the full tag_mint suite to verify GREEN (no regressions)**
+- [x] **Step 5: Run the new tests + the full tag_mint suite to verify GREEN (no regressions)**
 
 Run: `pytest apollo/provisioning/tests/test_tag_mint.py -v`
 Expected: PASS — including the new bare-id tests AND the pre-existing fail-closed tests (`opposes: "eq.does_not_exist"` and `prereqs: ["eq.bernoulli", "eq.nonexistent"]` still raise `TagMintError`, because those keys are in neither the canonical nor the bare set).
 
-- [ ] **Step 6: Update the owner doc**
+- [x] **Step 6: Update the owner doc**
 
 In `docs/architecture/apollo.md`, in the stage-4 / `tag_and_mint` description, add one sentence:
 
@@ -202,7 +202,7 @@ the tag prompt never exposes the prefix scheme. Genuinely-unmappable keys still
 fail closed as `TagMintError`.
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apollo/provisioning/tag_mint.py apollo/provisioning/tests/test_tag_mint.py docs/architecture/apollo.md
