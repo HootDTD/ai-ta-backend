@@ -57,6 +57,7 @@ from apollo.provisioning.pairing_gate import (
 from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promote import PromoteResult, promote
 from apollo.provisioning.provisioning_schema import build_tag_schema
+from apollo.provisioning.retrieval_adapter import make_course_retrieve_fn
 from apollo.provisioning.queue import ClaimedJob
 from apollo.provisioning.scrape import (
     resolve_or_create_provisional_concept,
@@ -270,7 +271,7 @@ async def run_provisioning(
     if embed_fn is None:
         from indexing.document_embedder import embed_text as embed_fn  # type: ignore
     if retrieve_fn is None:
-        retrieve_fn = _default_retrieve_fn
+        retrieve_fn = make_course_retrieve_fn(db, search_space_id=job.search_space_id)
 
     scraped = 0
     promoted = 0
@@ -567,11 +568,3 @@ async def _finalize(
         n_rejected=rejected,
         n_dedup_merged=merged,
     )
-
-
-async def _default_retrieve_fn(question) -> Sequence[GroundingSpan]:
-    """The default course-corpus retrieval adapter for ``find_or_generate`` /
-    ``validate_pair``. v1 returns no spans (the generate branch grounds on the
-    question alone); the real hybrid-retrieval adapter is a Tier-2 nightly
-    concern. Kept <20 lines per the plan §16 deviation note."""
-    return ()

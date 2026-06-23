@@ -1028,27 +1028,36 @@ async def test_run_provisioning_gate8_rejects_duplicate_on_concept(db_session, m
 
 
 # --------------------------------------------------------------------------- #
-# T-OR17 — run_provisioning injects the DEFAULT embed_fn/retrieve_fn when the
-# caller omits them (the worker calls it without those kwargs). Exercises the
-# default-wiring branches (no longer pragma'd).
+# T-OR17 — run_provisioning defaults retrieve_fn to the course adapter bound to
+# the JOB's search_space_id (the worker omits retrieve_fn). Exercises the
+# default-wiring branch without a real retriever / embedder / network.
 # --------------------------------------------------------------------------- #
-async def test_run_provisioning_default_embed_and_retrieve_fn(db_session, monkeypatch):
+async def test_run_provisioning_default_retrieve_fn_is_course_adapter(db_session, monkeypatch):
     space, run_id, claimed = await _seed(db_session, slug="or17")
     concept_id = await _seed_concept(db_session, search_space_id=space)
+    chash = "c1"
+    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
 
     captured: dict = {}
 
+    def _fake_factory(db, *, search_space_id, top_k=6):  # noqa: ANN001
+        captured["init"] = {"search_space_id": search_space_id, "top_k": top_k}
+
+        async def _retrieve(_q):  # noqa: ANN001
+            return ()
+
+        return _retrieve
+
+    # The orchestrator references make_course_retrieve_fn at its module surface.
+    monkeypatch.setattr(orch, "make_course_retrieve_fn", _fake_factory)
+
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
-        # The orchestrator injected its default retrieve_fn (the worker omits it);
-        # call it to prove it is the real _default_retrieve_fn (returns ()).
         captured["spans"] = tuple(await retrieve_fn(q))
         return _draft()
 
     async def _vp(q, draft, *, retrieve_fn, judge_fn):  # noqa: ANN001
         return PairingVerdict(paired=False, faithful=False, confidence=0.0)
 
-    chash = "c1"
-    await _seed_tier1_row(db_session, concept_id=concept_id, chash=chash, search_space_id=space)
     _patch_stages(
         monkeypatch,
         scrape_candidates=(_candidate(chash=chash),),
@@ -1061,13 +1070,14 @@ async def test_run_provisioning_default_embed_and_retrieve_fn(db_session, monkey
 
     monkeypatch.setattr(_emb, "embed_text", lambda _t: [0.0], raising=False)
 
-    # NOTE: no embed_fn / retrieve_fn kwargs -> the orchestrator wires its defaults.
+    # NOTE: no retrieve_fn kwarg -> the orchestrator wires its course-adapter default.
     outcome = await run_provisioning(
         db_session, AsyncMock(), job=claimed, metered_chat=_FakeMeteredChat()
     )
 
     assert outcome.status == "succeeded"
-    assert captured["spans"] == ()  # _default_retrieve_fn returned no spans
+    assert captured["init"]["search_space_id"] == space  # bound to the JOB's scope
+    assert captured["spans"] == ()
 
 
 # --------------------------------------------------------------------------- #
