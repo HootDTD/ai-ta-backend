@@ -1,0 +1,18 @@
+{
+  "symbols": ["GDP", "C", "INV", "G", "X", "M", "NX", "GNP", "NNP", "DEP", "RIN", "ROUT"],
+  "description": {
+    "GDP": "gross domestic product (total final output produced within the country)",
+    "C": "personal consumption expenditure",
+    "INV": "gross private domestic investment",
+    "G": "government purchases of goods and services",
+    "X": "exports",
+    "M": "imports",
+    "NX": "net exports (exports minus imports)",
+    "GNP": "gross national product",
+    "NNP": "net national product",
+    "DEP": "depreciation (capital consumption allowance)",
+    "RIN": "income earned by domestic residents from abroad",
+    "ROUT": "income paid to foreigners"
+  },
+  "subscript_convention": null
+}

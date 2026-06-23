@@ -89,6 +89,18 @@ except Exception:
 
     _load_env_fallback()
 
+# Local-dev overrides: load .env.local AFTER .env so local infra (local Supabase
+# + local Neo4j + feature flags) wins without touching .env. Gitignored and
+# absent in prod -> this is a no-op there. (Hoot local-full-stack scaffolding.)
+try:  # pragma: no cover - local dev convenience
+    from dotenv import load_dotenv as _load_dotenv_local  # type: ignore
+
+    _local_env_path = os.path.join(os.path.dirname(__file__), ".env.local")
+    if os.path.isfile(_local_env_path):
+        _load_dotenv_local(_local_env_path, override=True)
+except Exception:
+    pass
+
 log = logging.getLogger("ai_ta_server")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 

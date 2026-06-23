@@ -84,6 +84,9 @@
       "step": 4,
       "content": {
         "applies_when": "h1 == h2",
+        "substitution": {
+          "h2": "h1"
+        },
         "transformation": "rho*g*h1 and rho*g*h2 cancel"
       },
       "depends_on": [

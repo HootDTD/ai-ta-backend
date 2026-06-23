@@ -1,0 +1,25 @@
+{
+  "topic_cluster": "macroeconomics",
+  "nodes": [
+    {"id": "gross_domestic_product", "label": "Gross Domestic Product", "prerequisites": [], "scope_boundary": [], "topic_cluster": "macroeconomics"},
+    {"id": "nominal_gdp", "label": "Nominal GDP", "prerequisites": ["gross_domestic_product"], "scope_boundary": [], "topic_cluster": "macroeconomics"},
+    {"id": "price_index", "label": "Price Index", "prerequisites": [], "scope_boundary": ["consumer_price_index", "chain_weighted_index"], "topic_cluster": "macroeconomics"},
+    {"id": "base_year", "label": "Base Year", "prerequisites": ["price_index"], "scope_boundary": [], "topic_cluster": "macroeconomics"},
+    {"id": "gdp_deflator", "label": "GDP Deflator", "prerequisites": ["nominal_gdp", "price_index", "base_year"], "scope_boundary": ["consumer_price_index"], "topic_cluster": "macroeconomics"},
+    {"id": "real_gdp", "label": "Real GDP", "prerequisites": ["nominal_gdp", "gdp_deflator"], "scope_boundary": ["chain_weighted_index"], "topic_cluster": "macroeconomics"},
+    {"id": "percentage_change", "label": "Percentage Change", "prerequisites": [], "scope_boundary": [], "topic_cluster": "macroeconomics"},
+    {"id": "real_gdp_growth", "label": "Real GDP Growth Rate", "prerequisites": ["real_gdp", "percentage_change"], "scope_boundary": ["compound_annual_growth", "purchasing_power_parity"], "topic_cluster": "macroeconomics"}
+  ],
+  "edges": [
+    {"type": "requires", "from": "nominal_gdp", "to": "gross_domestic_product"},
+    {"type": "requires", "from": "base_year", "to": "price_index"},
+    {"type": "requires", "from": "gdp_deflator", "to": "nominal_gdp"},
+    {"type": "requires", "from": "gdp_deflator", "to": "price_index"},
+    {"type": "requires", "from": "gdp_deflator", "to": "base_year"},
+    {"type": "requires", "from": "real_gdp", "to": "nominal_gdp"},
+    {"type": "requires", "from": "real_gdp", "to": "gdp_deflator"},
+    {"type": "requires", "from": "real_gdp_growth", "to": "real_gdp"},
+    {"type": "requires", "from": "real_gdp_growth", "to": "percentage_change"},
+    {"type": "extends", "from": "real_gdp_growth", "to": "real_gdp"}
+  ]
+}

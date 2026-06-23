@@ -1,0 +1,30 @@
+# Local-dev Neo4j for the Apollo knowledge graph (the :Canon projection + the
+# per-attempt student subgraphs). Supabase (Postgres + Auth + Storage) runs via
+# the Supabase CLI (`supabase start`), NOT here.
+#
+#   Browser / visualization : http://localhost:7474   (login neo4j / local_password123)
+#   Bolt (app connection)    : bolt://127.0.0.1:7687
+#
+# Start:  docker compose -f docker-compose.local.yml up -d
+# Reset:  docker compose -f docker-compose.local.yml down -v   (wipes the graph)
+services:
+  neo4j:
+    image: neo4j:5.25
+    container_name: hoot-neo4j-local
+    ports:
+      - "7474:7474"   # Neo4j Browser (the visualization you want)
+      - "7687:7687"   # Bolt protocol (backend connects here)
+    environment:
+      NEO4J_AUTH: "neo4j/local_password123"
+      NEO4J_server_memory_heap_max__size: "1G"
+      NEO4J_server_memory_pagecache_size: "512M"
+    volumes:
+      - hoot_neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  hoot_neo4j_data:

@@ -1,0 +1,127 @@
+{
+  "search_space_id": 3,
+  "retrieval": [
+    {
+      "problem_id": "gdp_identity",
+      "concept": "gdp_components",
+      "n_spans": 5,
+      "relevant": true,
+      "top_spans": [
+        {
+          "page": 15,
+          "score": 0.0164,
+          "snippet": "= C + I + G + (X \u2013 M) = $400 + $60 + $120 + ($100 \u2013 $120) = $560 billion"
+        },
+        {
+          "page": 33,
+          "score": 0.0161,
+          "snippet": "1.GDP is C + I + G + (X \u2013 M). GDP = $2,000 billion + $50 billion + $1,000 billion + ($20 billion \u2013 $40 billion) = $3,030"
+        },
+        {
+          "page": 30,
+          "score": 0.0159,
+          "snippet": "1. Country A has export sales of $20 billion, government purchases of $1,000 billion, business investment is $50 billion, imports are $40 billion, and consumpti"
+        }
+      ]
+    },
+    {
+      "problem_id": "net_exports_sign",
+      "concept": "gdp_components",
+      "n_spans": 5,
+      "relevant": true,
+      "top_spans": [
+        {
+          "page": 15,
+          "score": 0.0164,
+          "snippet": "Net exports  = X \u2013 M"
+        },
+        {
+          "page": 9,
+          "score": 0.0161,
+          "snippet": "When thinking about the demand for domestically produced goods in a global economy, it is important to count spending on exports\u2014domestically produced goods tha"
+        },
+        {
+          "page": 15,
+          "score": 0.0159,
+          "snippet": "= C + I + G + (X \u2013 M) = $400 + $60 + $120 + ($100 \u2013 $120) = $560 billion"
+        }
+      ]
+    },
+    {
+      "problem_id": "nnp_chain",
+      "concept": "gdp_components",
+      "n_spans": 5,
+      "relevant": true,
+      "top_spans": [
+        {
+          "page": 15,
+          "score": 0.0164,
+          "snippet": "NNP  = GDP + Income receipts from the rest of the world"
+        },
+        {
+          "page": 15,
+          "score": 0.0161,
+          "snippet": "\u2013 Income payments to the rest of the world \u2013 Depreciation = $560 + $10 \u2013 $8 \u2013 $40 = $522 billion"
+        },
+        {
+          "page": 14,
+          "score": 0.0159,
+          "snippet": "c. What is the value of NNP?"
+        }
+      ]
+    },
+    {
+      "problem_id": "real_gdp_from_deflator",
+      "concept": "nominal_vs_real_gdp",
+      "n_spans": 5,
+      "relevant": true,
+      "top_spans": [
+        {
+          "page": 19,
+          "score": 0.0164,
+          "snippet": "Step 1. Look at Table 6.5, to see that, in 1960, nominal GDP was $543.3 billion and the price index (GDP deflator) was 19.0."
+        },
+        {
+          "page": 19,
+          "score": 0.0161,
+          "snippet": "We\u2019ll do this in two parts to make it clear. First adjust the price index: 19 divided by 100 = 0.19. Then divide into nominal GDP: $543.3 billion / 0.19 = $2,85"
+        },
+        {
+          "page": 16,
+          "score": 0.0159,
+          "snippet": "If an unwary analyst compared nominal GDP in 1960 to nominal GDP in 2010, it might appear that national output had risen by a factor of more than twenty-seven o"
+        }
+      ]
+    },
+    {
+      "problem_id": "real_gdp_growth",
+      "concept": "nominal_vs_real_gdp",
+      "n_spans": 5,
+      "relevant": true,
+      "top_spans": [
+        {
+          "page": 33,
+          "score": 0.0164,
+          "snippet": "3.From 1980 to 1990, real GDP grew by (8,225.0 \u2013 5,926.5) / (5,926.5) = 39%. Over the same period, prices increased by (72.7 \u2013 48.3) / (48.3/100) = 51%. So abou"
+        },
+        {
+          "page": 31,
+          "score": 0.0161,
+          "snippet": "3. Using data from Table 6.5 how much of the nominal GDP growth from 1980 to 1990 was real GDP and how much was inflation?"
+        },
+        {
+          "page": 16,
+          "score": 0.0159,
+          "snippet": "If an unwary analyst compared nominal GDP in 1960 to nominal GDP in 2010, it might appear that national output had risen by a factor of more than twenty-seven o"
+        }
+      ]
+    }
+  ],
+  "grounding_adapter": {
+    "problem_id": "gdp_identity",
+    "n_grounding_spans": 6,
+    "first_span": "= C + I + G + (X \u2013 M)\n= $400 + $60 + $120 + ($100 \u2013 $120)\n= $560 billion"
+  },
+  "relevant_hits": 5,
+  "total_questions": 5
+}
