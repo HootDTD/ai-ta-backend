@@ -58,9 +58,7 @@ _PROBLEM_01 = (
 #   reference :  P1 + ½ρv1² + ρgh1 − (P2 + ½ρv2² + ρgh2)
 #   derived   :  P1 + ½ρv1²        − (P2 + ½ρv2²)
 # differing by exactly ρg(h1 − h2) — zero only UNDER h1 == h2.
-HORIZONTAL_DERIVED_BERNOULLI = (
-    "P1 + Rational(1,2)*rho*v1**2 - (P2 + Rational(1,2)*rho*v2**2)"
-)
+HORIZONTAL_DERIVED_BERNOULLI = "P1 + Rational(1,2)*rho*v1**2 - (P2 + Rational(1,2)*rho*v2**2)"
 
 # A synthetic, NON-fluid subject: a balanced two-resistor loop. The governing
 # equation balances source/drop terms; the declared simplification states the
@@ -121,9 +119,7 @@ def _load_problem_01() -> dict:
 
 
 def _inputs(problem: dict):
-    return build_problem_candidates(
-        problem, {"misconceptions": []}, canon_key_by_canonical_key={}
-    )
+    return build_problem_candidates(problem, {"misconceptions": []}, canon_key_by_canonical_key={})
 
 
 def _eq_node(node_id: str, symbolic: str):

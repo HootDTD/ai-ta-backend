@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
@@ -58,11 +59,11 @@ _BERNOULLI_DIR = (
 # DDL instead (its provenance column carries a Postgres-only ``'{}'::jsonb``
 # server_default that SQLite's DDL compiler rejects); the raw table matches the
 # columns the ConceptProblem ORM maps so ``select(ConceptProblem)`` works.
-_SEED_TABLES = [
-    Subject.__table__,
-    Concept.__table__,
-    KGEntity.__table__,
-    EntityPrereq.__table__,
+_SEED_TABLES: list[Table] = [
+    Subject.__table__,  # type: ignore[list-item]  # SA stubs expose __table__ as FromClause
+    Concept.__table__,  # type: ignore[list-item]
+    KGEntity.__table__,  # type: ignore[list-item]
+    EntityPrereq.__table__,  # type: ignore[list-item]
 ]
 
 _CONCEPT_PROBLEMS_DDL = """
@@ -88,7 +89,7 @@ CREATE TABLE apollo_concept_problems (
 
 
 @pytest_asyncio.fixture
-async def db_url() -> str:
+async def db_url() -> AsyncGenerator[str, None]:
     """A shared-cache in-memory SQLite URL with the seeder's ORM tables + an
     aita_search_spaces stub. The seeder opens its OWN engine on this URL, so a
     shared-cache name keeps the schema visible across connections."""
@@ -98,9 +99,7 @@ async def db_url() -> str:
     name = f"memseed_{uuid.uuid4().hex}"
     url = f"sqlite+aiosqlite:///file:{name}?mode=memory&cache=shared&uri=true"
     engine = create_async_engine(url)
-    spaces = Table(
-        "aita_search_spaces", MetaData(), Column("id", Integer, primary_key=True)
-    )
+    spaces = Table("aita_search_spaces", MetaData(), Column("id", Integer, primary_key=True))
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: spaces.create(sc))
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=_SEED_TABLES))
@@ -137,7 +136,7 @@ async def _insert_subject(url: str, *, slug: str, space_id: int) -> int:
             subject = Subject(slug=slug, display_name=slug.title(), search_space_id=space_id)
             s.add(subject)
             await s.flush()
-            sid = subject.id
+            sid: int = int(subject.id)  # type: ignore[arg-type]  # SA stubs expose .id as Column
             await s.commit()
             return sid
     finally:
@@ -154,7 +153,7 @@ async def _insert_concept_with_problems(
             concept = Concept(subject_id=subject_id, slug=slug, display_name=slug.title())
             s.add(concept)
             await s.flush()
-            cid = concept.id
+            cid: int = int(concept.id)  # type: ignore[arg-type]  # SA stubs expose .id as Column
             for p in problems:
                 s.add(
                     ConceptProblem(
@@ -176,11 +175,7 @@ async def _fetch_entities(url: str, concept_id: int) -> list[KGEntity]:
     try:
         async with Session() as s:
             return list(
-                (
-                    await s.execute(
-                        select(KGEntity).where(KGEntity.concept_id == concept_id)
-                    )
-                )
+                (await s.execute(select(KGEntity).where(KGEntity.concept_id == concept_id)))
                 .scalars()
                 .all()
             )
@@ -231,13 +226,9 @@ def _write_concept_dir(
     (cdir / "normalization_map.json").write_text(json.dumps(normalization), encoding="utf-8")
     (cdir / "misconceptions.json").write_text(json.dumps(misconceptions), encoding="utf-8")
     if authored_defs is not None:
-        (cdir / "authored_definitions.json").write_text(
-            json.dumps(authored_defs), encoding="utf-8"
-        )
+        (cdir / "authored_definitions.json").write_text(json.dumps(authored_defs), encoding="utf-8")
     for i, p in enumerate(problems, start=1):
-        (cdir / "problems" / f"problem_{i:02d}.json").write_text(
-            json.dumps(p), encoding="utf-8"
-        )
+        (cdir / "problems" / f"problem_{i:02d}.json").write_text(json.dumps(p), encoding="utf-8")
 
 
 def _macro_problem(pid: str, *, cond_id: str = "final_goods_only") -> dict:
@@ -327,12 +318,16 @@ def _make_macro_subject(base: Path, *, subject: str = "macroeconomics") -> None:
         subject=subject,
         concept="gdp_components",
         dag={
-            "nodes": [{"id": "gdp_components", "label": "GDP Components"},
-                      {"id": "expenditure_approach", "label": "Expenditure Approach"}],
+            "nodes": [
+                {"id": "gdp_components", "label": "GDP Components"},
+                {"id": "expenditure_approach", "label": "Expenditure Approach"},
+            ],
             "edges": [{"from": "gdp_components", "to": "expenditure_approach", "type": "requires"}],
         },
-        symbols={"symbols": ["GDP", "C", "I", "G", "NX"],
-                 "description": {"GDP": "gross domestic product", "C": "consumption"}},
+        symbols={
+            "symbols": ["GDP", "C", "I", "G", "NX"],
+            "description": {"GDP": "gross domestic product", "C": "consumption"},
+        },
         normalization={"output": "GDP", "spending": "C"},
         misconceptions={
             "misconceptions": [
@@ -355,8 +350,10 @@ def _make_macro_subject(base: Path, *, subject: str = "macroeconomics") -> None:
             "nodes": [{"id": "nominal_vs_real_gdp", "label": "Nominal vs Real GDP"}],
             "edges": [],
         },
-        symbols={"symbols": ["nomGDP", "realGDP", "deflator", "PI"],
-                 "description": {"nomGDP": "nominal GDP"}},
+        symbols={
+            "symbols": ["nomGDP", "realGDP", "deflator", "PI"],
+            "description": {"nomGDP": "nominal GDP"},
+        },
         normalization={"price index": "PI"},
         misconceptions={
             "misconceptions": [
@@ -445,9 +442,7 @@ def test_authored_definitions_for_reads_disk_file(tmp_path):
     assert specs[0].payload["statement"] == "zed"
 
 
-def test_collect_entity_specs_generic_concept_opposes_real_reference_key(
-    monkeypatch, tmp_path
-):
+def test_collect_entity_specs_generic_concept_opposes_real_reference_key(monkeypatch, tmp_path):
     """The generic opposes guarantee: every misconception's opposes_entity_key is
     a key minted by the concept's own sources (reference nodes / symbols /
     concept dag) — NO authored-definition file needed."""
@@ -528,11 +523,15 @@ async def test_seed_macro_single_concept_slug_filters(monkeypatch, tmp_path, db_
     await _insert_course(db_url, 1)
     subject_id = await _insert_subject(db_url, slug="macroeconomics", space_id=1)
     cid_a = await _insert_concept_with_problems(
-        db_url, subject_id=subject_id, slug="gdp_components",
+        db_url,
+        subject_id=subject_id,
+        slug="gdp_components",
         problems=[_macro_problem("gdp_identity")],
     )
     cid_b = await _insert_concept_with_problems(
-        db_url, subject_id=subject_id, slug="nominal_vs_real_gdp",
+        db_url,
+        subject_id=subject_id,
+        slug="nominal_vs_real_gdp",
         problems=[_real_gdp_problem()],
     )
 
@@ -546,9 +545,7 @@ async def test_seed_macro_single_concept_slug_filters(monkeypatch, tmp_path, db_
 
 
 @pytest.mark.asyncio
-async def test_seed_macro_annotates_every_problem_passing_validation(
-    monkeypatch, tmp_path, db_url
-):
+async def test_seed_macro_annotates_every_problem_passing_validation(monkeypatch, tmp_path, db_url):
     """The annotate path runs for the generic subject: every seeded problem gains
     entity_key + declared_paths + layer1_seeded and passes §6.1 validation."""
     monkeypatch.setattr(seeder, "_SUBJECTS_ROOT", tmp_path)
@@ -557,7 +554,9 @@ async def test_seed_macro_annotates_every_problem_passing_validation(
     await _insert_course(db_url, 1)
     subject_id = await _insert_subject(db_url, slug="macroeconomics", space_id=1)
     cid_a = await _insert_concept_with_problems(
-        db_url, subject_id=subject_id, slug="gdp_components",
+        db_url,
+        subject_id=subject_id,
+        slug="gdp_components",
         problems=[_macro_problem("gdp_identity"), _macro_problem("net_exports_sign")],
     )
 
@@ -619,9 +618,7 @@ async def test_seed_backward_compat_bernoulli_default_subject(db_url):
     # density_ignored opposes a real reference key; pressure_velocity opposes the
     # authored definition — both resolve to a real entity id.
     misc = {e.canonical_key: e for e in ents if e.kind == "misconception"}
-    assert misc["misc.density_ignored"].payload["opposes_entity_key"] == (
-        "cond.incompressibility"
-    )
+    assert misc["misc.density_ignored"].payload["opposes_entity_key"] == ("cond.incompressibility")
     pv = misc["misc.pressure_velocity_same_direction"]
     assert pv.payload["opposes_entity_key"] == "def.pressure_velocity_tradeoff"
     assert pv.payload["opposes_entity_id"] is not None
@@ -656,7 +653,9 @@ async def test_seed_idempotent_second_run_inserts_nothing(monkeypatch, tmp_path,
     await _insert_course(db_url, 1)
     subject_id = await _insert_subject(db_url, slug="macroeconomics", space_id=1)
     cid = await _insert_concept_with_problems(
-        db_url, subject_id=subject_id, slug="gdp_components",
+        db_url,
+        subject_id=subject_id,
+        slug="gdp_components",
         problems=[_macro_problem("gdp_identity")],
     )
 
@@ -696,12 +695,16 @@ async def test_seed_errors_when_concept_slug_absent(monkeypatch, tmp_path, db_ur
     await _insert_course(db_url, 1)
     subject_id = await _insert_subject(db_url, slug="macroeconomics", space_id=1)
     await _insert_concept_with_problems(
-        db_url, subject_id=subject_id, slug="gdp_components",
+        db_url,
+        subject_id=subject_id,
+        slug="gdp_components",
         problems=[_macro_problem("gdp_identity")],
     )
     with pytest.raises(seeder.SeedError, match="no concept 'no_such_concept'"):
         await seed(
-            db_url, subject_slug="macroeconomics", concept_slug="no_such_concept",
+            db_url,
+            subject_slug="macroeconomics",
+            concept_slug="no_such_concept",
             write_disk=False,
         )
 
@@ -721,12 +724,17 @@ async def test_seed_dry_run_rolls_back(monkeypatch, tmp_path, db_url):
     await _insert_course(db_url, 1)
     subject_id = await _insert_subject(db_url, slug="macroeconomics", space_id=1)
     cid = await _insert_concept_with_problems(
-        db_url, subject_id=subject_id, slug="gdp_components",
+        db_url,
+        subject_id=subject_id,
+        slug="gdp_components",
         problems=[_macro_problem("gdp_identity")],
     )
     stats = await seed(
-        db_url, subject_slug="macroeconomics", concept_slug="gdp_components",
-        dry_run=True, write_disk=False,
+        db_url,
+        subject_slug="macroeconomics",
+        concept_slug="gdp_components",
+        dry_run=True,
+        write_disk=False,
     )
     assert stats["entities_inserted"] > 0  # would-be inserts counted
     assert len(await _fetch_entities(db_url, cid)) == 0  # rolled back
@@ -749,9 +757,12 @@ def test_main_threads_subject_and_concept_slugs(monkeypatch):
     monkeypatch.setattr(seeder, "seed", _fake_seed)
     rc = seeder.main(
         [
-            "--database-url", "postgresql+asyncpg://u@h/d",
-            "--subject-slug", "macroeconomics",
-            "--concept-slug", "gdp_components",
+            "--database-url",
+            "postgresql+asyncpg://u@h/d",
+            "--subject-slug",
+            "macroeconomics",
+            "--concept-slug",
+            "gdp_components",
             "--no-write-disk",
         ]
     )
@@ -782,9 +793,7 @@ def test_main_defaults_subject_to_fluid_mechanics(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_seed_explicit_search_space_id_and_source_override(
-    monkeypatch, tmp_path, db_url
-):
+async def test_seed_explicit_search_space_id_and_source_override(monkeypatch, tmp_path, db_url):
     """An explicit search_space_id is honored (skips the MIN(id) default), and
     source_subject_slug points the on-disk reads at a different physical dir than
     the DB subject slug (the one-dir/many-courses case)."""
@@ -796,7 +805,9 @@ async def test_seed_explicit_search_space_id_and_source_override(
     # DB subject slug differs from the physical source dir name.
     subject_id = await _insert_subject(db_url, slug="macro_course_9", space_id=9)
     cid = await _insert_concept_with_problems(
-        db_url, subject_id=subject_id, slug="gdp_components",
+        db_url,
+        subject_id=subject_id,
+        slug="gdp_components",
         problems=[_macro_problem("gdp_identity")],
     )
 
@@ -821,7 +832,9 @@ async def test_seed_write_disk_mirrors_annotation_to_json(monkeypatch, tmp_path,
     await _insert_course(db_url, 1)
     subject_id = await _insert_subject(db_url, slug="macroeconomics", space_id=1)
     await _insert_concept_with_problems(
-        db_url, subject_id=subject_id, slug="gdp_components",
+        db_url,
+        subject_id=subject_id,
+        slug="gdp_components",
         problems=[_macro_problem("gdp_identity")],
     )
 
@@ -868,7 +881,9 @@ async def test_seed_raises_on_unknown_opposes_key(monkeypatch, tmp_path, db_url)
     await _insert_course(db_url, 1)
     subject_id = await _insert_subject(db_url, slug="brokensub", space_id=1)
     await _insert_concept_with_problems(
-        db_url, subject_id=subject_id, slug="brokencpt",
+        db_url,
+        subject_id=subject_id,
+        slug="brokencpt",
         problems=[_macro_problem("p1")],
     )
 
