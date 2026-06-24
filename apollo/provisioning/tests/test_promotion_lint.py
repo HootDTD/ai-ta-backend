@@ -581,3 +581,148 @@ def test_gate5_passes_on_real_bernoulli():
     problem = Problem.model_validate(_bernoulli_graph())
     kg = problem.to_kg_graph(attempt_id=0)
     assert _gate_5(problem, kg) is None
+
+
+# --------------------------------------------------------------------------- #
+# Subject-fluid Apollo — profile-driven active_gates (gates 4/5 OFF for arguments)
+# --------------------------------------------------------------------------- #
+
+
+def _argument_graph() -> dict:
+    """A prose ARGUMENT reference graph (qualitative_argumentative node vocab:
+    procedure_step / definition / condition; NO equations). Annotated (entity_key
+    per step + declared_paths) so it feeds gate 1 (schema, which drops the extras)
+    AND gate 2 (closure, which requires them). ``target_unknown`` is PROSE and
+    ``given_values`` is empty — exactly what an argument carries."""
+    return {
+        "id": "polisci_federalism_disperses_power",
+        "concept_id": "federalism",
+        "difficulty": "standard",
+        "given_values": {},
+        "problem_text": (
+            "Argue whether a federal system strengthens or weakens democratic "
+            "accountability."
+        ),
+        "target_unknown": "whether federalism strengthens accountability",
+        "declared_paths": [
+            ["def_federalism", "premise_dispersed_power", "step_veto_points", "step_conclusion"]
+        ],
+        "reference_solution": [
+            {
+                "id": "def_federalism",
+                "step": 1,
+                "entry_type": "definition",
+                "entity_key": "def.federalism",
+                "content": {
+                    "concept": "federalism",
+                    "meaning": "Sovereignty divided between national and subnational units.",
+                },
+                "depends_on": [],
+            },
+            {
+                "id": "premise_dispersed_power",
+                "step": 2,
+                "entry_type": "condition",
+                "entity_key": "cond.dispersed_power",
+                "content": {
+                    "applies_when": "authority is constitutionally split across levels",
+                },
+                "depends_on": ["def_federalism"],
+            },
+            {
+                "id": "step_veto_points",
+                "step": 3,
+                "entry_type": "procedure_step",
+                "entity_key": "proc.veto_points",
+                "content": {
+                    "order": 1,
+                    "action": "identify the multiple veto points federalism creates",
+                    "purpose": "establish that power is checked at several levels",
+                },
+                "depends_on": ["premise_dispersed_power"],
+            },
+            {
+                "id": "step_conclusion",
+                "step": 4,
+                "entry_type": "procedure_step",
+                "entity_key": "proc.conclusion",
+                "content": {
+                    "order": 2,
+                    "action": "weigh dispersed checks against blurred responsibility",
+                    "purpose": "reach a reasoned verdict on accountability",
+                },
+                "depends_on": ["step_veto_points"],
+            },
+        ],
+    }
+
+
+def test_argument_graph_fails_gate4_under_quantitative_profile():
+    """Under the back-compat all-8-gates run the argument graph's PROSE target is a
+    foreign symbol (not canonical, not normalizable) -> gate 4 fires. This is the
+    fluid-specialization the qualitative profile must switch off."""
+    result = _lint(_argument_graph())  # default active_gates = all 8
+    assert result.ok is False
+    assert result.failed_gate == 4
+
+
+def test_argument_graph_promotes_under_qualitative_active_gates():
+    """The SAME graph passes when the qualitative_argumentative profile turns gates
+    4/5 off (active_gates={1,2,3,8}): gates 1 (schema+mint map, where
+    definition/condition/procedure_step are all in the map), 2 (closure), 3 (DAG)
+    and 8 (dedup) all pass on a prose argument graph. DISCRIMINATING: drop the
+    ``if number not in active_gates`` skip and gate 4 fires again -> RED."""
+    result = run_promotion_lint(
+        _argument_graph(),
+        canonical_symbols=_canonical_symbols(),
+        normalization_map=_normalization_map(),
+        existing_problem_hashes=set(),
+        active_gates=frozenset({1, 2, 3, 8}),
+    )
+    assert result.ok is True, result.diagnostic
+    assert result.failed_gate is None
+
+
+def test_default_active_gates_is_all_eight_back_compat():
+    """Explicitly passing ALL_PROMOTION_GATES is identical to omitting active_gates
+    (the back-compat contract): the seeded bernoulli still passes all eight."""
+    from apollo.provisioning.promotion_lint import ALL_PROMOTION_GATES
+
+    result = run_promotion_lint(
+        _bernoulli_graph(),
+        canonical_symbols=_canonical_symbols(),
+        normalization_map=_normalization_map(),
+        existing_problem_hashes=set(),
+        active_gates=ALL_PROMOTION_GATES,
+    )
+    assert result == PromotionResult(ok=True, failed_gate=None, diagnostic="")
+
+
+def test_qualitative_gates_still_catch_structural_failures():
+    """Turning 4/5 off must NOT make the qualitative profile a rubber stamp: a
+    DEPENDS_ON cycle still fails gate 3, and a missing entity_key still fails gate
+    2, under active_gates={1,2,3,8}."""
+    cyclic = copy.deepcopy(_argument_graph())
+    _step(cyclic, "def_federalism")["depends_on"] = ["step_conclusion"]
+    _step(cyclic, "step_conclusion")["depends_on"] = ["def_federalism"]
+    r_cycle = run_promotion_lint(
+        cyclic,
+        canonical_symbols=set(),
+        normalization_map={},
+        existing_problem_hashes=set(),
+        active_gates=frozenset({1, 2, 3, 8}),
+    )
+    assert r_cycle.ok is False
+    assert r_cycle.failed_gate == 3
+
+    no_link = copy.deepcopy(_argument_graph())
+    del _step(no_link, "premise_dispersed_power")["entity_key"]
+    r_link = run_promotion_lint(
+        no_link,
+        canonical_symbols=set(),
+        normalization_map={},
+        existing_problem_hashes=set(),
+        active_gates=frozenset({1, 2, 3, 8}),
+    )
+    assert r_link.ok is False
+    assert r_link.failed_gate == 2

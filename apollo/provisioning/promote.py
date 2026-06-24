@@ -46,6 +46,7 @@ from apollo.persistence.learner_model_seed import (
 )
 from apollo.persistence.models import Concept, ConceptProblem
 from apollo.provisioning.promotion_lint import run_promotion_lint
+from apollo.provisioning.subject_profile import resolve_profile
 from apollo.provisioning.tag_mint import MintPlan
 
 __all__ = ["promote", "PromoteResult"]
@@ -134,11 +135,20 @@ async def promote(
     canonical_symbols = set(dict(concept.canonical_symbols or {}).get("symbols") or [])
     normalization_map = dict(concept.normalization_map or {})
 
+    # Subject-fluid Apollo: resolve the subject's PERSISTED profile (the gates and
+    # node vocab the lint runs under). resolve_profile FAILS OPEN to
+    # quantitative_symbolic (all 8 gates — today's fluid behavior) when the subject
+    # is un-detected, so a pre-031 / freshly-backfilled subject promotes exactly as
+    # before. No LLM in this control path: the profile_kind was detected once at
+    # ingest and read deterministically here.
+    profile = await resolve_profile(db, concept.subject_id)
+
     result = run_promotion_lint(
         annotated,
         canonical_symbols=canonical_symbols,
         normalization_map=normalization_map,
         existing_problem_hashes=set(existing_problem_hashes),
+        active_gates=profile.active_gates,
     )
     if not result.ok:
         _LOG.info(

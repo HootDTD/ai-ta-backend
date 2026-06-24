@@ -62,6 +62,17 @@ from apollo.solver.sympy_exec import parse_zero_form
 # never for gate logic. Any fixed int is fine.
 _LINT_ATTEMPT_ID = 0
 
+# The full gate universe (1..8). The DEFAULT ``active_gates`` for
+# ``run_promotion_lint`` — passing it (or omitting it) reproduces the original
+# all-8-gates behavior EXACTLY, so every pre-profile caller and test is unchanged.
+# A subject profile passes a SUBSET (e.g. {1,2,3,8} for an argument graph) to turn
+# the symbolic gates 4/5 OFF; gate 1 is the structural foundation and ALWAYS runs
+# (it builds the Problem + KGGraph the later gates reuse), so it is not gated here.
+# NOTE: this module declares its own constant rather than importing it from
+# ``subject_profile`` — the lint stays ORM-free / import-light (the spec's
+# pure / DB-free / LLM-free contract).
+ALL_PROMOTION_GATES: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8})
+
 
 @dataclass(frozen=True)
 class PromotionResult:
@@ -324,12 +335,25 @@ def run_promotion_lint(
     canonical_symbols: set[str] | frozenset[str],
     normalization_map: Mapping[str, str],
     existing_problem_hashes: set[str] | frozenset[str],
+    active_gates: set[int] | frozenset[int] = ALL_PROMOTION_GATES,
 ) -> PromotionResult:
-    """Run the eight §8B.4 gates in order, short-circuiting on the first failure.
+    """Run the §8B.4 gates in order, short-circuiting on the first failure.
 
     ``graph`` is the ANNOTATED problem DICT (a ``Problem``-validatable dict that
     ALSO carries per-step ``entity_key`` + top-level ``declared_paths`` — the
     minted reference graph the 3B2g orchestrator holds at promotion time).
+
+    ``active_gates`` is the SUBJECT-PROFILE'S gate set (subject-fluid Apollo). It
+    defaults to all eight, so a pre-profile caller is unchanged. A profile passes a
+    subset to skip the gates that are subject-specific: the
+    ``qualitative_argumentative`` profile passes ``{1, 2, 3, 8}`` so the symbolic
+    gates 4 (foreign-symbol) and 5 (terminal-computes-symbolic-target) — the only
+    two that actively break on a prose argument graph — do not run, and the
+    equation-only gates 6/7 are skipped rather than relied on to pass vacuously.
+    Gate 1 ALWAYS runs regardless of ``active_gates``: it validates the schema and
+    builds the ``Problem`` + ``KGGraph`` every later gate consumes. The active-gate
+    SET is passed in by the caller (``promote``), so this unit stays PURE / DB-free
+    / LLM-free — it never reads the subject profile from the DB itself.
     """
     # Gate 1 is special: it validates AND produces the Problem + KGGraph reused
     # by gates 3/5/6/7. Build once; a malformed problem (bad schema or forbidden
@@ -369,6 +393,8 @@ def run_promotion_lint(
         (8, lambda: _gate_8(problem, existing_problem_hashes)),
     ]
     for number, gate in gates:
+        if number not in active_gates:
+            continue  # subject profile turned this gate OFF (e.g. 4/5 for a prose argument graph)
         diagnostic = gate()  # type: ignore[operator]
         if diagnostic is not None:
             return PromotionResult(ok=False, failed_gate=number, diagnostic=diagnostic)
