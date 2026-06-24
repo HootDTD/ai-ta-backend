@@ -10,6 +10,8 @@ No Docker, no network. One assertion per tier behavior:
 
 from __future__ import annotations
 
+import pytest
+
 from apollo.ontology.nodes import build_node
 from apollo.resolution.candidates import Candidate
 from apollo.resolution.tiers import (
@@ -44,7 +46,9 @@ def _condition_node(node_id: str, applies_when: str):
     )
 
 
-def _cand(key, *, node_type, symbolic=None, aliases=(), is_misc=False, opposes=None):
+def _cand(
+    key, *, node_type, symbolic=None, aliases=(), is_misc=False, opposes=None, exact_aliases=()
+):
     return Candidate(
         canonical_key=key,
         canon_key=hash(key) % 1000,
@@ -54,6 +58,7 @@ def _cand(key, *, node_type, symbolic=None, aliases=(), is_misc=False, opposes=N
         aliases=tuple(aliases),
         display_name=key,
         opposes_key=opposes,
+        exact_aliases=tuple(exact_aliases),
     )
 
 
@@ -388,3 +393,105 @@ def test_match_fuzzy_all_picks_best_alias_per_candidate():
 
 def _normalize_for_test(text: str) -> str:
     return text.strip().lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 1b — exact-only alias channel. The exact-alias tier (match_alias_all)
+# reads exact_aliases + aliases; the fuzzy tier (match_fuzzy_all) reads ONLY
+# aliases. A curated reference phrasing resolves exact-only; a hand-wave variant
+# of it can NEVER leak coverage credit through the fuzzy tier.
+# ---------------------------------------------------------------------------
+
+
+def _surface_node(node_id: str, node_type, text: str):
+    """A node whose ``student_surface_text`` equals ``text`` exactly for the
+    given ``node_type``.
+
+    condition -> ``applies_when`` carries the whole text. definition ->
+    ``student_surface_text`` is ``f"{concept} {meaning}".strip()`` and BOTH
+    ``concept`` and ``meaning`` are pydantic ``min_length=1`` (empty meaning is
+    rejected), so the text is split at its first space across concept+meaning;
+    the single-space concat reconstructs the text verbatim. Single-word
+    definition text would have no split point — the corpus has none."""
+    if node_type == "condition":
+        return _node(node_id, "condition", {"applies_when": text, "label": ""})
+    if node_type == "definition":
+        concept, _, meaning = text.partition(" ")
+        return _node(node_id, "definition", {"concept": concept, "meaning": meaning})
+    raise ValueError(f"unsupported node_type for _surface_node: {node_type}")  # pragma: no cover
+
+
+def test_exact_alias_tier_resolves_curated_phrasing_via_exact_aliases():
+    """A curated phrasing present in ``exact_aliases`` resolves via the exact
+    (normalized-equality) alias tier — method 'alias', raw score 1.0."""
+    node = _condition_node("s1", "open to the atmosphere")
+    cands = (_cand("cond.open", node_type="condition", exact_aliases=("open to the atmosphere",)),)
+    hits = match_alias_all(node, cands)
+    assert len(hits) == 1
+    assert hits[0].candidate.canonical_key == "cond.open"
+    assert hits[0].method == "alias" and hits[0].score == 1.0
+
+
+def test_fuzzy_tier_ignores_exact_aliases_near_miss_does_not_resolve():
+    """CRITICAL GUARD: a near-miss paraphrase of a curated ``exact_aliases``
+    entry stays UNRESOLVED in BOTH tiers. The fuzzy tier never reads
+    ``exact_aliases`` (so token_set_ratio>=0.9 cannot snap it), and the exact
+    tier is not exact-equal — so the hand-wave variant is missing."""
+    # Near-miss paraphrase that WOULD clear token_set_ratio>=0.9 if fuzzed.
+    node = _condition_node("s1", "the tank is open to the atmosphere outside")
+    cands = (_cand("cond.open", node_type="condition", exact_aliases=("open to the atmosphere",)),)
+    assert match_fuzzy_all(node, cands, threshold=0.9) == []  # exact_aliases never fuzzed
+    assert match_alias_all(node, cands) == []  # not exact-equal either -> missing
+
+
+def test_exact_alias_tier_still_reads_misconception_aliases():
+    """The exact-alias tier still reads the ``aliases`` channel (e.g. a
+    misconception whose trigger phrase exact-matches), proving the
+    ``exact_aliases`` addition did not break the existing ``aliases`` read."""
+    node = _surface_node("s1", "definition", "faster flow means higher pressure")
+    cands = (
+        _cand(
+            "misc.same_dir",
+            node_type="definition",
+            is_misc=True,
+            aliases=("faster flow means higher pressure",),
+            exact_aliases=(),
+        ),
+    )
+    hits = match_alias_all(node, cands)
+    assert len(hits) == 1
+    assert hits[0].candidate.canonical_key == "misc.same_dir"
+    assert hits[0].method == "alias" and hits[0].score == 1.0
+
+
+# The dropped surfaces from the edge-loss diagnosis (spec §14). Each curated
+# phrasing (an exact_aliases entry) resolves; the hand-wave variant must stay
+# missing in BOTH the alias and the fuzzy tiers.
+_NEGATIVE_CORPUS = [
+    ("open to the atmosphere", "it's basically open air out there", "condition"),
+    ("the reservoir is wide", "the tank is kind of big i guess", "condition"),
+    ("p1 = p2", "the pressures are roughly equal", "condition"),
+    (
+        "nominal and real gdp are basically the same",
+        "gdp is gdp more or less",
+        "definition",
+    ),
+    (
+        "a streamline is a path a fluid particle follows",
+        "it's just a line in the flow",
+        "definition",
+    ),
+]
+
+
+@pytest.mark.parametrize("curated,handwave,ntype", _NEGATIVE_CORPUS)
+def test_negative_corpus_curated_resolves_handwave_missing(curated, handwave, ntype):
+    """For each dropped surface: the CURATED phrasing resolves via the exact
+    alias tier, and the HAND-WAVE variant stays missing in BOTH the alias and
+    the fuzzy tiers (exact_aliases is never fuzzed)."""
+    cand = _cand("ref.x", node_type=ntype, exact_aliases=(curated,))
+    good = _surface_node("g", ntype, curated)
+    bad = _surface_node("b", ntype, handwave)
+    assert len(match_alias_all(good, (cand,))) == 1  # curated resolves exact
+    assert match_alias_all(bad, (cand,)) == []  # hand-wave: not exact
+    assert match_fuzzy_all(bad, (cand,), threshold=0.9) == []  # and never fuzzed

@@ -36,7 +36,17 @@ from apollo.resolution.tiers import (
 # ---------------------------------------------------------------------------
 
 
-def _cand(key, *, node_type, symbolic=None, aliases=(), is_misc=False, opposes=None, canon=None):
+def _cand(
+    key,
+    *,
+    node_type,
+    symbolic=None,
+    aliases=(),
+    is_misc=False,
+    opposes=None,
+    canon=None,
+    exact_aliases=(),
+):
     return Candidate(
         canonical_key=key,
         canon_key=canon if canon is not None else (abs(hash(key)) % 1000) + 1,
@@ -46,6 +56,7 @@ def _cand(key, *, node_type, symbolic=None, aliases=(), is_misc=False, opposes=N
         aliases=tuple(aliases),
         display_name=key,
         opposes_key=opposes,
+        exact_aliases=tuple(exact_aliases),
     )
 
 
@@ -691,3 +702,67 @@ def test_tier_counts_pinned_on_real_6_9_output():
     # p1 alias (3 exact-alias hits), a1 symbolic (d=2r), t1 fuzzy (the
     # definition's concept+meaning surface paraphrases the bare alias).
     assert dict(result.tier_counts) == {"alias": 3, "symbolic": 1, "fuzzy": 1}
+
+
+# ---------------------------------------------------------------------------
+# PHASE 1b — exact-only alias channel end-to-end. A reference candidate's
+# curated `exact_aliases` entry resolves through the wired resolve_attempt via
+# the alias tier (method 'alias', cap 0.92). With NO curated alias set, the
+# §6.9 worked example resolves byte-identically to today (default exact_aliases
+# = () ⇒ no behavior change).
+# ---------------------------------------------------------------------------
+
+
+def test_exact_alias_resolves_end_to_end_via_resolve_attempt():
+    """A condition node whose surface == a candidate's ``exact_aliases`` entry
+    resolves end-to-end through ``resolve_attempt``: method 'alias', confidence
+    METHOD_CONFIDENCE_CAP['alias'] (0.92), ``resolved_key`` == the candidate
+    key. Proves the exact-alias channel reaches the live resolver path."""
+    graph = KGGraph(
+        nodes=[
+            _node("c1", "condition", {"applies_when": "open to the atmosphere", "label": ""}),
+        ]
+    )
+    cand = _cand(
+        "cond.open_tank",
+        node_type="condition",
+        exact_aliases=("open to the atmosphere",),
+    )
+    result = resolve_attempt(graph, (cand,))
+    rn = result.resolved[0]
+    assert rn.resolution == "resolved"
+    assert rn.method == "alias"
+    assert rn.confidence == METHOD_CONFIDENCE_CAP["alias"]  # 0.92
+    assert rn.resolved_key == "cond.open_tank"
+
+
+def test_empty_exact_aliases_resolution_unchanged():
+    """Byte-identical regression: every worked-example candidate carries the
+    default ``exact_aliases == ()``, so the full §6.9 resolution (per-node
+    resolved_key + method + confidence, tier histogram, llm_calls) is IDENTICAL
+    to the pre-Phase-1b expected — no curated alias ⇒ no behavior change."""
+    result = resolve_attempt(
+        _worked_example_graph(),
+        _worked_example_candidates(),
+        symbolic_mappings={"d": "2*r"},
+    )
+    keyed = {rn.node_id: rn.resolved_key for rn in result.resolved}
+    assert keyed == {
+        "d1": "cond.incompressibility",
+        "a1": "eq.circular_area",
+        "b1": "eq.bernoulli",
+        "p1": "proc.compute_v2",
+        "t1": "def.pressure_velocity_tradeoff",
+    }
+    methods = {rn.node_id: rn.method for rn in result.resolved}
+    assert methods == {
+        "d1": "alias",
+        "a1": "symbolic",
+        "b1": "alias",
+        "p1": "alias",
+        "t1": "fuzzy",
+    }
+    for rn in result.resolved:
+        assert rn.confidence == METHOD_CONFIDENCE_CAP[rn.method]
+    assert dict(result.tier_counts) == {"alias": 3, "symbolic": 1, "fuzzy": 1}
+    assert result.llm_calls == 0
