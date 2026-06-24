@@ -49,7 +49,10 @@ def test_classify_none():
 # --------------------------------------------------------------------------- #
 
 
-def _mixed_records() -> list[dict]:
+def _mixed_records() -> list:
+    # Heterogeneous on purpose: the last two items are malformed (a no-statement
+    # dict + a non-mapping) and must be dropped by the loader. Bare ``list`` so the
+    # intentional non-dict item is not a type error.
     return [
         {  # worked
             "statement": "Find the pressure P2 in a horizontal pipe.",

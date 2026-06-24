@@ -155,8 +155,10 @@ def _covered_finding(key: str):
 
 
 def _shadow_for(key: str) -> ShadowGradeResult:
+    # grade/calibration/diagnostic are not read on the Layer-3 belief path, so
+    # placeholder objects suffice (mirrors tests/database/test_done_layer3_route).
     audited = AuditedGrade(
-        grade=object(),
+        grade=object(),  # type: ignore[arg-type]
         findings=(_covered_finding(key),),
         abstention_reasons=(),
         abstained=False,
@@ -165,15 +167,15 @@ def _shadow_for(key: str) -> ShadowGradeResult:
     )
     return ShadowGradeResult(
         run_id=1,
-        grade=object(),
+        grade=object(),  # type: ignore[arg-type]
         audited=audited,
         normalization_confidence=0.8,
         reference_graph_hash="refhash-v1:beef",
         opposes_map={},
         turn_order={},
         graph_sim_rubric={},
-        calibration=object(),
-        diagnostic=object(),
+        calibration=object(),  # type: ignore[arg-type]
+        diagnostic=object(),  # type: ignore[arg-type]
     )
 
 
