@@ -203,6 +203,30 @@ async def test_unfaithful_candidate_is_clean_reject(db_session):
     assert result.stage == "pairing_gate"
 
 
+async def test_tag_mint_failure_is_clean_reject(db_session):
+    """A tag/mint failure (the LLM omits concept_slug -> TagMintError) is a CLEAN
+    per-candidate reject, NOT a run abort (AC #3). DISCRIMINATING: removing the
+    try/except around tag_and_mint lets the TagMintError propagate."""
+    space, subj_id, prov_id = await _seed_subject(db_session, slug="ap-tagfail")
+    await ingest_authored_problems(
+        db_session, [_POLISCI_RECORD], subject_id=subj_id, concept_id=prov_id,
+        search_space_id=space, commit=False,
+    )
+    profile = await resolve_profile(db_session, subj_id)
+    authored = load_authored_problems([_POLISCI_RECORD], default_concept_slug="prov")[0][0]
+    result = await provision_authored_problem(
+        db_session, AsyncMock(), authored,
+        profile=profile, search_space_id=space, ingest_concept_id=prov_id,
+        construct_chat_fn=_chat_returning({"reference_solution": _argument_reference_solution()}),
+        judge_fn=_approving_judge(),
+        # tag payload missing concept_slug -> tag_and_mint raises TagMintError
+        tag_chat_fn=_chat_returning({"display_name": "X", "prereqs": []}),
+        embed_fn=_embed_distinct,
+    )
+    assert result.outcome == "rejected"
+    assert result.stage == "tag_mint"
+
+
 # --------------------------------------------------------------------------- #
 # Back-compat — a fluid worked problem promotes under quantitative (all 8 gates)
 # --------------------------------------------------------------------------- #

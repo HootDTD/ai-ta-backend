@@ -210,8 +210,13 @@ def _problem_is_symbolic(problem: Mapping[str, Any]) -> bool:
         return True
     text = " ".join(
         str(problem.get(k) or "")
-        for k in ("statement", "problem_text", "solution", "answer", "worked")
+        for k in ("statement", "problem_text", "solution", "answer")
     )
+    # Also scan worked-procedure prose (records carry ``worked_procedure``, a list);
+    # stringify it so math living only in untyped procedure steps is still detected.
+    wp = problem.get("worked_procedure")
+    if wp:
+        text += " " + str(wp)
     return bool(_MATH_SIGNAL.search(text))
 
 

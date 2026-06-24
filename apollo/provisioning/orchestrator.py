@@ -690,7 +690,21 @@ async def provision_authored_problem(
 
     # --- tag/mint + profile-gated promote ----------------------------------- #
     pair = build_authored_approved_pair(authored, draft, search_space_id=search_space_id)
-    mint_plan = await tag_and_mint(db, pair, chat_fn=tag_chat_fn, embed_fn=embed_fn)
+    # A failed tag/mint (the LLM omits a concept_slug) or a blown cost budget is a
+    # per-CANDIDATE reject — never a run abort (AC #3). Mirrors _process_candidate's
+    # guard, except the authored path treats a TagMintError as a clean reject rather
+    # than a per-document abort (one un-taggable authored problem must not sink a
+    # batch of others).
+    try:
+        mint_plan = await tag_and_mint(db, pair, chat_fn=tag_chat_fn, embed_fn=embed_fn)
+    except (TagMintError, CostBudgetExceeded) as exc:
+        if run is not None:
+            _record_rejection(
+                db, run=run, rejected_stage="tag_mint", failed_gate=None,
+                diagnostic=f"{type(exc).__name__}: {exc}", concept_id=ingest_concept_id,
+                payload={"reason": "tag_mint_error"},
+            )
+        return AuthoredProvisionResult(outcome="rejected", stage="tag_mint", diagnostic=str(exc))
 
     concept_problem_id = await _find_authored_tier1_row_id(
         db, concept_id=ingest_concept_id, problem_code=authored.problem_code
