@@ -27,6 +27,7 @@ many small pure modules, frozen dataclasses, tuple (immutable) fields.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from apollo.graph_compare.validator import (
@@ -42,6 +43,8 @@ from apollo.ontology.nodes import NodeType
 from apollo.resolution.candidates import _ENTRY_TYPE_TO_NODE_TYPE
 from apollo.resolution.result import ResolutionResult
 from apollo.resolution.tiers import student_surface_text
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -244,9 +247,29 @@ def build_student_canonical(student_graph: KGGraph, resolution: ResolutionResult
     for key in sorted(members_by_key):
         member_ids = sorted(members_by_key[key])
         member_nodes = [node_index[nid] for nid in member_ids if nid in node_index]
-        # All merged members share one node type (type-compat guarantees it);
-        # take the first member's type.
-        node_type: NodeType = member_nodes[0].node_type
+        # Explicit, observable merge type. After the resolver type-gate (0.1) all
+        # merged members share one type, so the common path is byte-identical
+        # (first member's type). A disagreement should NEVER fire — when it does
+        # we make the mis-label explicit + deterministic instead of silently
+        # taking [0]: lowest node_type (lexicographic — NodeType is a str Literal
+        # with no canonical priority), then lowest member id; and we WARN.
+        member_types = {n.node_type for n in member_nodes}
+        if len(member_types) == 1:
+            node_type: NodeType = member_nodes[0].node_type
+        else:
+            node_type = min(
+                (n.node_type for n in member_nodes),
+                key=lambda t: (
+                    t,
+                    min(nid for nid in member_ids if node_index[nid].node_type == t),
+                ),
+            )
+            _LOG.warning(
+                "canonical_merge_type_disagreement key=%s types=%s chosen=%s",
+                key,
+                sorted(member_types),
+                node_type,
+            )
         evidence = tuple(student_surface_text(n) for n in member_nodes)
         # Equation symbolic: carry the first member's symbolic surface (equations
         # only); None for non-equations.
@@ -273,6 +296,9 @@ def build_student_canonical(student_graph: KGGraph, resolution: ResolutionResult
         from_key = resolved_key_by_node.get(edge.from_node_id)
         to_key = resolved_key_by_node.get(edge.to_node_id)
         if from_key is None or to_key is None:
+            dropped += 1
+            continue
+        if from_key == to_key:  # post-merge self-loop (D3)
             dropped += 1
             continue
         edges.append(

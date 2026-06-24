@@ -189,7 +189,7 @@ def resolve_attempt(
         if n.node_id in assigned:
             m = assigned[n.node_id]
             resolved_nodes.append(_resolved(n.node_id, m.candidate, m.method))
-        elif n.node_id in llm_resolved:
+        elif n.node_id in llm_resolved and type_compatible(n.node_type, llm_resolved[n.node_id]):
             resolved_nodes.append(_resolved(n.node_id, llm_resolved[n.node_id], "llm"))
         else:
             resolved_nodes.append(_unresolved(n))

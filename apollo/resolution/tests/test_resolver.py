@@ -608,6 +608,77 @@ def test_worked_example_6_9_requires_explicit_mapping_for_area():
     assert result.llm_calls == 0
 
 
+# ---------------------------------------------------------------------------
+# PHASE 0 — 0.1 type-gate the LLM adjudication result. `adjudicate` only rejects
+# keys ABSENT from the candidate set; a real-but-CROSS-TYPE in-set key passes
+# adjudicate and was consumed unchecked. The resolver must re-apply
+# type_compatible to the LLM remainder and fall through to unresolved on a
+# cross-type hit. The `adjudicator=None` CI default never exercises this path,
+# so these recorded-adjudicator tests close that live-LLM coverage gap (§14).
+# ---------------------------------------------------------------------------
+
+
+def test_llm_adjudication_cross_type_key_stays_unresolved():
+    """A recorded (non-None) adjudicator returns a real-but-cross-type in-set
+    key: a `definition` node mapped to a `simplification`-typed `simp.*`
+    candidate. The key IS in the candidate set (so `adjudicate` accepts it) but
+    `type_compatible(definition, simplification_candidate)` is False, so the node
+    must stay unresolved (method 'unresolved', resolved_key None)."""
+    # A definition node whose surface matches NO content tier (no alias/symbolic).
+    graph = KGGraph(
+        nodes=[
+            _node(
+                "s1",
+                "definition",
+                {"concept": "wholly", "meaning": "unrelated ambiguous phrase qqq"},
+            ),
+        ]
+    )
+    # A type-INCOMPATIBLE candidate whose canonical_key IS in the candidate set.
+    simp_cand = _cand("simp.drop_friction", node_type="simplification", aliases=())
+    cands = (simp_cand,)
+
+    # Recorded adjudicator returns the cross-type in-set key for the node.
+    def _stub(request):
+        node_id = request.nodes[0][0]
+        return {node_id: "simp.drop_friction"}
+
+    result = resolve_attempt(graph, cands, llm_adjudicator=_stub)
+    rn = result.resolved[0]
+    assert rn.resolution == "unresolved"
+    assert rn.method == "unresolved"
+    assert rn.resolved_key is None
+
+
+def test_llm_adjudication_same_type_key_still_resolves():
+    """Control: a recorded adjudicator returning a type-COMPATIBLE in-set key
+    still resolves via the LLM tier (method 'llm', confidence 0.75). Proves the
+    type-gate does not over-reject."""
+    graph = KGGraph(
+        nodes=[
+            _node(
+                "s1",
+                "definition",
+                {"concept": "wholly", "meaning": "unrelated ambiguous phrase qqq"},
+            ),
+        ]
+    )
+    # A type-COMPATIBLE candidate whose canonical_key IS in the candidate set.
+    def_cand = _cand("def.some_concept", node_type="definition", aliases=())
+    cands = (def_cand,)
+
+    def _stub(request):
+        node_id = request.nodes[0][0]
+        return {node_id: "def.some_concept"}
+
+    result = resolve_attempt(graph, cands, llm_adjudicator=_stub)
+    rn = result.resolved[0]
+    assert rn.resolution == "resolved"
+    assert rn.method == "llm"
+    assert rn.confidence == 0.75
+    assert rn.resolved_key == "def.some_concept"
+
+
 def test_tier_counts_pinned_on_real_6_9_output():
     """NIT (test-honesty): pin _histogram's REAL output on the §6.9 graph — the
     per-method histogram from actual resolution, not a hand-built dict."""
