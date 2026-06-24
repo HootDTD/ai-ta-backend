@@ -24,6 +24,7 @@ from apollo.ontology.nodes import NodeType
 RESOLUTION_METHODS: tuple[str, ...] = (
     "exact",
     "symbolic",
+    "derived",
     "alias",
     "fuzzy",
     "llm",
@@ -35,6 +36,7 @@ RESOLUTION_METHODS: tuple[str, ...] = (
 METHOD_CONFIDENCE_CAP: dict[str, float] = {
     "exact": 1.00,
     "symbolic": 0.98,
+    "derived": 0.95,
     "alias": 0.92,
     "fuzzy": 0.80,
     "llm": 0.75,

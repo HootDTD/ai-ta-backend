@@ -63,6 +63,7 @@ def test_method_confidence_caps_match_spec():
     assert METHOD_CONFIDENCE_CAP == {
         "exact": 1.00,
         "symbolic": 0.98,
+        "derived": 0.95,
         "alias": 0.92,
         "fuzzy": 0.80,
         "llm": 0.75,
