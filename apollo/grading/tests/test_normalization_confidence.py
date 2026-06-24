@@ -110,6 +110,21 @@ def test_scored_finding_with_no_resolved_backer_falls_to_floor():
     )
 
 
+def test_helper_matches_public_function():
+    """The extracted pure helper computes the IDENTICAL value the public
+    delegator returns over the same findings -> proves the refactor is value-
+    preserving (the persisted nc must stay byte-identical)."""
+    from apollo.grading.normalization_confidence import _normalization_confidence_over
+
+    findings = (
+        covered_finding_with_nodes("k.a", ("a1",)),
+        covered_finding_with_nodes("k.b", ("b1",)),
+    )
+    resolution = resolution_with(resolved_nodes=(("a1", 0.92), ("b1", 0.75)))
+    assert _normalization_confidence_over(findings, resolution) == 0.75
+    assert compute_normalization_confidence(audited(findings), resolution) == 0.75
+
+
 def test_pure_no_mutation():
     findings = (
         covered_finding_with_nodes("k.a", ("a1",)),
