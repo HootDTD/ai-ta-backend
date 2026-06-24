@@ -42,3 +42,6 @@ bundle.json
 parsed_task.json
 auth.users
 RUNBOOK.md
+
+# SDD / Superpowers scratch artifacts (transient scratchpads)
+.superpowers/

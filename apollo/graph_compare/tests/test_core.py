@@ -265,3 +265,13 @@ def test_grade_result_default_comparison_version():
         findings=(),
     )
     assert result.comparison_version == COMPARISON_VERSION
+
+
+def test_grade_attempt_empty_bank_is_na_and_flagged():
+    student = snorm(nodes=(cnode("eq.a"), cnode("eq.b")))
+    ref = _ref_three()
+    g = grade_attempt(student, ref, bank_applicable=False)
+    assert g.soundness_score is None
+    assert g.contradiction_score is None
+    assert g.soundness_applicable is False
+    assert g.bisimilarity_score == g.coverage_score      # renormalized to coverage

@@ -13,7 +13,12 @@ source files into migration-026 Layer-1 row specs:
                                    + an entity-link + declared-path annotation
   * ``misconceptions.json``     -> ``misc.*`` entities carrying an opposes-link
   * ``_AUTHORED_DEFINITIONS``   -> the single ``def.pressure_velocity_tradeoff``
-                                   a misconception opposes (§6.9)
+                                   a misconception opposes (§6.9). This is the
+                                   bernoulli-specific case; generalized concepts
+                                   either oppose a REAL reference key or supply
+                                   their own definitions from an optional
+                                   ``authored_definitions.json`` via
+                                   ``authored_definitions_from_spec``.
 
 It also exposes ``validate_reference_graph`` — the executable §6.1 contract that
 WU-4A's grading core consumes (every reference node must carry an entity link
@@ -262,8 +267,47 @@ def misconceptions_to_entities(misc: dict) -> list[EntitySpec]:
 
 def authored_definitions() -> list[EntitySpec]:
     """The authored ``def.*`` entities a misconception opposes (D5). Returns a
-    fresh list of the immutable ``_AUTHORED_DEFINITIONS`` constant."""
+    fresh list of the immutable ``_AUTHORED_DEFINITIONS`` constant.
+
+    Backward-compatible bernoulli entry point: bernoulli's
+    ``def.pressure_velocity_tradeoff`` is not a reference-solution node, so it
+    must be minted from this constant for the existing seed to link. Generalized
+    concepts whose misconceptions oppose REAL reference keys (the macro content
+    guarantee) instead supply their authored definitions from disk via
+    :func:`authored_definitions_from_spec` and pass an empty list when none.
+    """
     return list(_AUTHORED_DEFINITIONS)
+
+
+def authored_definitions_from_spec(entries: list[dict]) -> list[EntitySpec]:
+    """Convert a list of authored-definition dicts (parsed from a concept dir's
+    optional ``authored_definitions.json``) into ``definition`` EntitySpecs.
+
+    A generic concept rarely needs this: if a misconception opposes a real
+    reference-solution node (``cond.*`` / ``def.*`` / ``eq.*`` minted from a
+    problem) the opposes-link resolves without any standalone definition. The
+    file exists only for the bernoulli-shaped case where the opposed concept is
+    NOT a reference node. Each entry shape mirrors ``misconceptions.json`` style::
+
+        {"key": "def.<slug>", "display_name": "...", "statement": "...",
+         "aliases": ["...", ...]}
+
+    ``key`` and ``statement`` are required; ``display_name``/``aliases`` default.
+    Returns a fresh list; never mutates ``entries``.
+    """
+    specs: list[EntitySpec] = []
+    for entry in entries:
+        key = entry["key"]
+        specs.append(
+            EntitySpec(
+                canonical_key=key,
+                kind="definition",
+                display_name=entry.get("display_name", _humanize(key.split(".", 1)[-1])),
+                payload={"statement": entry["statement"]},
+                aliases=tuple(entry.get("aliases", [])),
+            )
+        )
+    return specs
 
 
 # ---------------------------------------------------------------------------

@@ -56,10 +56,23 @@ def contradiction_penalty(n: int) -> float:
     return min(1.0, n * CONTRADICTION_UNIT_PENALTY)
 
 
-def soundness_score(student: CanonicalGraph) -> float:
-    """``1 - contradiction_penalty(#contradictions)``.
+def soundness_score(
+    student: CanonicalGraph, *, bank_applicable: bool = True
+) -> float | None:
+    """``1 - contradiction_penalty(#contradictions)``, or ``None`` when the
+    misconception bank was empty/absent for this concept (D5/D6).
 
-    Unsupported extras and unresolved nodes contribute ZERO penalty (they are not
-    contradictions). Empty student graph -> 0 contradictions -> 1.0 (vacuously
-    sound; §6.1)."""
+    ``bank_applicable=False`` short-circuits to ``None`` BEFORE counting
+    contradiction nodes: with no bank, zero ``misc.*`` nodes resolve regardless
+    of what the student said, so the count is meaningless and a ``1.0`` would be
+    a fail-open "verified sound" that was NEVER checked. ``None`` means downstream
+    must EXCLUDE soundness (renormalize bisimilarity to coverage), never read it
+    as ``0.0`` or ``1.0``.
+
+    Unsupported extras and unresolved nodes still contribute ZERO penalty (they
+    are not contradictions). An EMPTY STUDENT GRAPH with an applicable bank ->
+    0 contradictions -> 1.0 (vacuously sound; §6.1) — a legitimately different
+    case from an empty BANK, and intentionally still 1.0."""
+    if not bank_applicable:
+        return None
     return 1.0 - contradiction_penalty(len(contradiction_nodes(student)))

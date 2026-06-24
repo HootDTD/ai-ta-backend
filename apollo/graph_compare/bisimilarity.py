@@ -17,6 +17,18 @@ def harmonic_mean(a: float, b: float) -> float:
     return 2 * a * b / total
 
 
-def bisimilarity_score(soundness: float, coverage: float) -> float:
-    """The top-line bisimilarity: ``harmonic_mean(soundness, coverage)``."""
+def bisimilarity_score(soundness: float | None, coverage: float) -> float:
+    """``harmonic_mean(soundness, coverage)`` — or, when soundness is N/A
+    (``None``; the misconception bank was empty, D5/D6), the coverage-only
+    fallback ``bisimilarity == coverage``.
+
+    Rationale (§6.1 + the N/A rule): the harmonic mean of a SINGLE available
+    dimension is that dimension. We must NOT substitute ``soundness=1.0``
+    (inflates a never-checked answer to a fake-perfect harmonic mean) nor
+    ``soundness=0.0`` (zeros a good answer via the product — and ``a+b==0`` does
+    NOT catch it when coverage>0). Coverage-only is the only honest top-line when
+    soundness was never checked. The result is still NaN-free and in [0, 1], so
+    the ``REAL NOT NULL`` column stays safe."""
+    if soundness is None:
+        return coverage
     return harmonic_mean(soundness, coverage)

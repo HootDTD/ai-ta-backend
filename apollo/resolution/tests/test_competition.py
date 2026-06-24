@@ -9,6 +9,8 @@ No Docker, no network. Pin (§5 anti-over-normalization guardrails / §6.11):
 
 from __future__ import annotations
 
+import pytest
+
 from apollo.resolution.candidates import Candidate
 from apollo.resolution.competition import (
     apply_misconception_competition,
@@ -105,3 +107,53 @@ def test_competition_misconception_loses_when_far_below_margin():
     winner = apply_misconception_competition("a clearly-correct claim", matches)
     assert winner is not None
     assert winner.candidate.canonical_key == "def.tradeoff"
+
+
+# --- Macro polarity antonyms (DESIGN §"Polarity antonyms") -------------------
+#
+# Each new macroeconomics pair must INVERT a fuzzy lexical match (one text uses
+# the left word, the other the right -> screened out), while a word shared by
+# BOTH texts is non-discriminating and must NOT reject the match.
+
+# (left, right, neutral-shared-word) per appended macro pair.
+_MACRO_PAIRS: tuple[tuple[str, str, str], ...] = (
+    ("surplus", "deficit", "trade"),
+    ("rises", "falls", "output"),
+    ("rise", "fall", "prices"),
+    ("appreciate", "depreciate", "currency"),
+    ("appreciates", "depreciates", "currency"),
+    ("expansionary", "contractionary", "policy"),
+    ("inflation", "deflation", "expected"),
+    ("gross", "net", "product"),
+    ("nominal", "real", "gdp"),
+    ("multiply", "divide", "deflator"),
+)
+
+
+@pytest.mark.parametrize("left,right,shared", _MACRO_PAIRS)
+def test_macro_antonym_inverts_lexical_match(left: str, right: str, shared: str):
+    """Each macro pair: a text asserting LEFT vs one asserting RIGHT is polar
+    inverted, so the polarity screen rejects the lexical match (returns False),
+    in BOTH word orders."""
+    student_left = f"the {shared} {left}"
+    candidate_right = f"the {shared} {right}"
+    assert polarity_screen(student_left, candidate_right) is False
+    # Symmetric: order of the pair across the two texts must not matter.
+    assert polarity_screen(candidate_right, student_left) is False
+
+
+@pytest.mark.parametrize("left,right,shared", _MACRO_PAIRS)
+def test_macro_antonym_shared_word_does_not_discriminate(
+    left: str, right: str, shared: str
+):
+    """A direction word present in BOTH texts is not discriminating between the
+    two phrases — the pair is skipped and the (otherwise neutral) match passes."""
+    # `left` appears in both texts -> the pair is skipped, screen passes.
+    assert polarity_screen(f"{shared} {left} sharply", f"{shared} {left} a bit") is True
+    # Same for the right word shared across both texts.
+    assert polarity_screen(f"{shared} {right} sharply", f"{shared} {right} a bit") is True
+
+
+def test_macro_antonym_neutral_text_passes():
+    """Macro-domain text with no direction word at all always passes (neutral)."""
+    assert polarity_screen("the gdp identity sums four components", "gdp = c + i + g + nx") is True

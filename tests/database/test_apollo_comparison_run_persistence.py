@@ -398,3 +398,72 @@ async def test_returns_run_id(db_session):
         )
     ).scalar_one()
     assert found == run_id
+
+
+async def test_na_soundness_round_trip(db_session):
+    """Case 14: N/A soundness round-trip — soundness_applicable=False persisted correctly."""
+    import dataclasses
+
+    attempt_id, search_space_id = await _seed_attempt(db_session)
+    grade, graded = _grade_with_findings()
+    # Simulate empty bank: soundness=None, contradiction=None, bisim=coverage
+    grade = dataclasses.replace(
+        grade,
+        soundness_score=None,
+        contradiction_score=None,
+        soundness_applicable=False,
+        bisimilarity_score=grade.coverage_score,  # renormalized
+    )
+    from apollo.grading.audited_grade import AuditedGrade
+
+    graded = AuditedGrade(
+        grade=grade,
+        findings=grade.findings,
+        abstention_reasons=("misconception_bank_empty",),
+        abstained=False,
+        suppressed_event_kinds=frozenset(),
+        alias_candidates=(),
+    )
+    run_id = await persist_comparison_run(
+        db_session,
+        attempt_id=attempt_id,
+        user_id=_USER_ID,
+        search_space_id=search_space_id,
+        grade=grade,
+        audited=graded,
+        normalization_confidence=1.0,
+        reference_graph_hash=_REF_HASH,
+    )
+    run = (
+        await db_session.execute(
+            select(GraphComparisonRun).where(GraphComparisonRun.id == run_id)
+        )
+    ).scalar_one()
+    assert run.soundness_applicable is False
+    assert run.contradiction_score is None
+    assert run.soundness_score == grade.coverage_score   # NOT-NULL fallback
+    assert "misconception_bank_empty" in run.abstention_reasons
+
+
+async def test_applicable_soundness_flag_default(db_session):
+    """Case 15: applicable grade -> soundness_applicable=True (default) persisted."""
+    attempt_id, search_space_id = await _seed_attempt(db_session)
+    grade, graded = _grade_with_findings()
+    # grade.soundness_applicable defaults to True
+    run_id = await persist_comparison_run(
+        db_session,
+        attempt_id=attempt_id,
+        user_id=_USER_ID,
+        search_space_id=search_space_id,
+        grade=grade,
+        audited=graded,
+        normalization_confidence=0.9,
+        reference_graph_hash=_REF_HASH,
+    )
+    run = (
+        await db_session.execute(
+            select(GraphComparisonRun).where(GraphComparisonRun.id == run_id)
+        )
+    ).scalar_one()
+    assert run.soundness_applicable is True
+    assert run.contradiction_score == 0.99  # numeric, not None

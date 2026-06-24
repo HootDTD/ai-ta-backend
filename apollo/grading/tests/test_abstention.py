@@ -157,3 +157,20 @@ def test_min_parser_confidence_of_empty_is_one():
 def test_min_parser_confidence_of_picks_min():
     nodes = nodes_with_confidences(0.8, 0.3, 0.9)
     assert min_parser_confidence_of(nodes) == 0.3
+
+
+def test_misconception_bank_empty_reason_is_reason_only():
+    from apollo.grading.abstention import REASON_MISCONCEPTION_BANK_EMPTY
+    out = apply_abstention(
+        unresolved_rate=0.0, min_parser_confidence=1.0, misconception_bank_empty=True
+    )
+    assert REASON_MISCONCEPTION_BANK_EMPTY in out.abstention_reasons
+    assert out.abstained is False                        # coverage still updates Layer-3
+
+
+def test_misconception_bank_empty_false_no_reason():
+    from apollo.grading.abstention import REASON_MISCONCEPTION_BANK_EMPTY
+    out = apply_abstention(
+        unresolved_rate=0.0, min_parser_confidence=1.0, misconception_bank_empty=False
+    )
+    assert REASON_MISCONCEPTION_BANK_EMPTY not in out.abstention_reasons

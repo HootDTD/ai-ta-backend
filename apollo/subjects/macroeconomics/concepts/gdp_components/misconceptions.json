@@ -1,0 +1,32 @@
+{
+  "misconceptions": [
+    {
+      "key": "misc.includes_transfers",
+      "display_name": "Counts transfers and used goods in GDP",
+      "description": "Believes transfer payments, sales of used goods, or intermediate goods add to GDP. GDP counts only final goods and services newly produced this year, so transfers and resales are excluded.",
+      "opposes": "cond.final_goods_only",
+      "trigger_phrases": [
+        "transfer payments count",
+        "include welfare in gdp",
+        "social security adds to gdp",
+        "count used cars in gdp",
+        "intermediate goods are part of gdp",
+        "add transfers to gdp"
+      ]
+    },
+    {
+      "key": "misc.gross_for_net",
+      "display_name": "Uses gross instead of net (forgets depreciation)",
+      "description": "Forgets to subtract depreciation, treating gross national product as if it were net national product, or otherwise conflates GDP, GNP, and NNP. Net measures subtract the capital worn out over the year.",
+      "opposes": "def.depreciation",
+      "trigger_phrases": [
+        "gnp equals nnp",
+        "no need to subtract depreciation",
+        "gross is the same as net",
+        "skip depreciation",
+        "depreciation doesn't matter",
+        "nnp is just gnp"
+      ]
+    }
+  ]
+}
