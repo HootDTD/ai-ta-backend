@@ -1,0 +1,167 @@
+{
+  "canon_nodes": 103,
+  "web_base": "http://127.0.0.1:8001",
+  "results": [
+    {
+      "mode": "strong",
+      "variation": "strong",
+      "session_id": 33,
+      "attempt_id": 33,
+      "served_problem": "real_gdp_from_deflator",
+      "reference_node_count": 3,
+      "reference_by_type": {
+        "equation": 1,
+        "simplification": 1,
+        "procedure_step": 1
+      },
+      "turns": [
+        {
+          "message": "The GDP deflator is defined by deflator = (nomGDP/realGDP)*100 \u2014 it is the price index that relates nominal GDP to real GDP with the base year set to 100.",
+          "status": 200,
+          "kg_entries_added": 2,
+          "reply": null
+        },
+        {
+          "message": "The price index quoted for the year IS the GDP deflator, so I treat the given PI = 19.0 as the deflator in that definition.",
+          "status": 200,
+          "kg_entries_added": 1,
+          "reply": null
+        },
+        {
+          "message": "I rearrange the deflator definition to solve for real GDP: starting from deflator = (nomGDP/realGDP)*100, real GDP = nomGDP/(PI/100).",
+          "status": 200,
+          "kg_entries_added": 3,
+          "reply": null
+        },
+        {
+          "message": "Substituting nomGDP = 543.3 and PI = 19.0: realGDP = 543.3/(19.0/100) = 543.3/0.19 = 2859.5.",
+          "status": 200,
+          "kg_entries_added": 1,
+          "reply": null
+        }
+      ],
+      "rubric": {
+        "overall": {
+          "score": 80,
+          "letter": "B+"
+        },
+        "procedure": {
+          "score": 75,
+          "letter": "B",
+          "present": true
+        },
+        "justification": {
+          "score": 0,
+          "letter": "F",
+          "present": false
+        },
+        "simplification": {
+          "score": 100,
+          "letter": "A+",
+          "present": true
+        },
+        "misconception_corrected": {
+          "score": 0,
+          "letter": "F",
+          "present": false,
+          "detected": 0,
+          "resolved": 0
+        }
+      },
+      "coverage_per_step": {
+        "rearrange_for_real_gdp": "covered",
+        "gdp_deflator": "covered",
+        "deflator_is_price_index": "covered"
+      },
+      "covered": [
+        "rearrange_for_real_gdp",
+        "gdp_deflator",
+        "deflator_is_price_index"
+      ],
+      "missing": [],
+      "procedure_scores": {
+        "rearrange_for_real_gdp": 1.0
+      },
+      "diagnostic_narrative": "You've done a great job covering several key concepts related to the GDP deflator and its role as a price index. Let's go over what you covered successfully:\n\n1. **Equation for GDP Deflator**: You accurately identified and used the equation for the GDP deflator, as shown in your evidence: \"deflator - (nomGDP/realGDP)*100\". This demonstrates your understanding of how the deflator relates nominal GDP to real GDP.\n\n2. **Rearranging for Real GDP**: You demonstrated the ability to rearrange the deflator equation to solve for real GDP. This is evident in your approach: \"rearrange the deflator definition to solve for real GDP\" and your application of substituting values: \"Substitute nomGDP = 543.3 and PI = 19.0 into the rearranged deflator equation to calculate real GDP\". This skill is crucial for solving problems involving real GDP calculations.\n\n3. **Deflator as a Price Index**: You correctly identified the GDP deflator as a price index, as shown in your explanation: \"The price index quoted for the year is the GDP deflator Treat the given PI = 19.0 as the deflator\". Recognizing the deflator as a price index that sets the base year to 100 is an important concept.\n\nYour understanding of these concepts is solid, and you're effectively applying them to solve problems. Keep practicing these skills to reinforce your knowledge and continue building confidence in your ability to work with economic indices and equations. Great work!",
+      "solver_indicator": null,
+      "xp_earned": 150,
+      "neo4j": {
+        "nodes_total": 7,
+        "nodes_by_source": {
+          "parser": 7
+        },
+        "edges_by_type": {
+          "USES": 2,
+          "SCOPES": 1,
+          "DEPENDS_ON": 1,
+          "PRECEDES": 1
+        },
+        "graded_at_stamped": 7,
+        "nodes": [
+          {
+            "kind": "Definition",
+            "node_id": "stu_5dc5dfe4346c",
+            "source": "parser"
+          },
+          {
+            "kind": "Equation",
+            "node_id": "stu_1fdc8b17e2c5",
+            "source": "parser"
+          },
+          {
+            "kind": "Equation",
+            "node_id": "stu_7636852cdfe6",
+            "source": "parser"
+          },
+          {
+            "kind": "Equation",
+            "node_id": "stu_ae22529f3079",
+            "source": "parser"
+          },
+          {
+            "kind": "ProcedureStep",
+            "node_id": "stu_07114d9cfacb",
+            "source": "parser"
+          },
+          {
+            "kind": "ProcedureStep",
+            "node_id": "stu_5f054cf9019e",
+            "source": "parser"
+          },
+          {
+            "kind": "Simplification",
+            "node_id": "stu_3a4b6993a2fd",
+            "source": "parser"
+          }
+        ]
+      },
+      "graphsim_evidence": {
+        "comparison_runs": [
+          {
+            "id": 33,
+            "attempt_id": 33,
+            "user_id": "84edeece-69c3-4e6a-9c47-b4c2def1f04e",
+            "search_space_id": 3,
+            "coverage_score": 1.0,
+            "soundness_score": 1.0,
+            "bisimilarity_score": 1.0,
+            "node_coverage_score": 1.0,
+            "edge_coverage_score": 0.5,
+            "scoping_score": 1.0,
+            "usage_score": 1.0,
+            "procedure_order_score": 1.0,
+            "dependency_score": 0.3333333333333333,
+            "contradiction_score": 1.0,
+            "normalization_confidence": 0.75,
+            "abstained": false,
+            "abstention_reasons": [],
+            "comparison_version": "graph-compare-v1",
+            "reference_graph_hash": "refhash-v1:32855a0ae3062c2957b50fb51b3cbc6927f5801be2bae5dd9e52ae1ab6457d51",
+            "created_at": "2026-06-23 05:20:23.065556+00:00"
+          }
+        ],
+        "mastery_events": 3
+      }
+    }
+  ]
+}
