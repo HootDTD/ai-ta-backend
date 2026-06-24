@@ -50,8 +50,16 @@ class Problem(BaseModel):
     concept_id: str = Field(min_length=1)
     difficulty: Difficulty
     problem_text: str = Field(min_length=1)
-    given_values: Dict[str, float]
-    target_unknown: str = Field(min_length=1)
+    # Subject-fluid Apollo: given_values / target_unknown are OPTIONAL per subject
+    # profile. A quantitative_symbolic problem still supplies both (and the
+    # promotion-lint gates 4/5 enforce that target_unknown is a real canonical
+    # symbol — an empty/omitted target fails gate 4, the sole foreign-symbol
+    # guard). A qualitative_argumentative problem may omit given_values (no numeric
+    # givens) and carry a PROSE target_unknown or none at all; gates 4/5 are OFF
+    # under that profile so the symbol contract is not imposed. Defaults keep every
+    # existing fluid problem byte-identical (they always pass both explicitly).
+    given_values: Dict[str, float] = Field(default_factory=dict)
+    target_unknown: str = Field(default="")
     reference_solution: List[ReferenceStep] = Field(min_length=1)
 
     # ------------------------------------------------------------------ #

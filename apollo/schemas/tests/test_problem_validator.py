@@ -78,6 +78,42 @@ def test_validator_accepts_clean_problem():
     assert p.id == "test_problem"
 
 
+def test_argument_problem_may_omit_given_values_and_target_unknown():
+    """Subject-fluid Apollo: a qualitative_argumentative problem need not carry
+    numeric givens or a symbolic target — both fields are now OPTIONAL. Omitting
+    them validates (defaulting to {} / "") so an authored argument record doesn't
+    have to synthesize physics placeholders. DISCRIMINATING: restoring the
+    required `given_values` / `min_length=1 target_unknown` REDs this."""
+    payload = {
+        "id": "polisci_arg",
+        "concept_id": "federalism",
+        "difficulty": "standard",
+        "problem_text": "Argue whether federalism strengthens accountability.",
+        # NO given_values, NO target_unknown keys at all.
+        "reference_solution": [
+            {"step": 1, "entry_type": "definition", "id": "d1",
+             "content": {"concept": "federalism", "meaning": "divided sovereignty"},
+             "depends_on": []},
+            {"step": 2, "entry_type": "procedure_step", "id": "p1",
+             "content": {"order": 1, "action": "weigh dispersed checks", "purpose": "verdict"},
+             "depends_on": ["d1"]},
+        ],
+    }
+    p = Problem.model_validate(payload)
+    assert p.given_values == {}
+    assert p.target_unknown == ""
+
+
+def test_prose_target_unknown_is_accepted():
+    """A PROSE target (the qualitative target_contract) validates — the schema no
+    longer demands a short symbolic token."""
+    payload = _base_problem()
+    payload.pop("given_values")
+    payload["target_unknown"] = "whether the policy advances distributive justice"
+    p = Problem.model_validate(payload)
+    assert p.target_unknown.startswith("whether")
+
+
 def test_all_bundled_bernoulli_problems_validate():
     """Every bundled Bernoulli problem JSON must pass the V3 validator."""
     concept = load_concept("fluid_mechanics", "bernoulli_principle")
