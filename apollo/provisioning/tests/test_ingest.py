@@ -129,10 +129,10 @@ async def test_tier1_write_is_explicit_tier1_and_authored(db_session):
     )
     assert n == 3
     rows = (
-        (await db_session.execute(ConceptProblem.__table__.select().where(
-            ConceptProblem.concept_id == concept_id
-        ))).fetchall()
-    )
+        await db_session.execute(
+            ConceptProblem.__table__.select().where(ConceptProblem.concept_id == concept_id)
+        )
+    ).fetchall()
     assert len(rows) == 3
     for row in rows:
         assert row.tier == 1  # NEVER the teachable default
@@ -193,8 +193,12 @@ async def test_ingest_detects_polisci_qualitative_profile(db_session):
         },
     ]
     result = await ingest_authored_problems(
-        db_session, polisci, subject_id=subj_id, concept_id=concept_id,
-        search_space_id=space, commit=False,
+        db_session,
+        polisci,
+        subject_id=subj_id,
+        concept_id=concept_id,
+        search_space_id=space,
+        commit=False,
     )
     assert result.profile.kind == PROFILE_QUALITATIVE_ARGUMENTATIVE
     subj = await db_session.get(Subject, subj_id)
@@ -209,17 +213,21 @@ async def test_ingest_independent_commit_persists_inventory(db_session):
     survive (a commit to the test savepoint outlives a later rollback)."""
     space, subj_id, concept_id = await _seed_subject_concept(db_session, slug="ing5")
     result = await ingest_authored_problems(
-        db_session, _mixed_records(), subject_id=subj_id, concept_id=concept_id,
-        search_space_id=space, commit=True,
+        db_session,
+        _mixed_records(),
+        subject_id=subj_id,
+        concept_id=concept_id,
+        search_space_id=space,
+        commit=True,
     )
     assert result.n_written == 3
     # Simulate a downstream abort.
     await db_session.rollback()
     # Inventory + profile survived the rollback (committed independently).
     surviving = (
-        await db_session.execute(ConceptProblem.__table__.select().where(
-            ConceptProblem.concept_id == concept_id
-        ))
+        await db_session.execute(
+            ConceptProblem.__table__.select().where(ConceptProblem.concept_id == concept_id)
+        )
     ).fetchall()
     assert len(surviving) == 3
     subj = await db_session.get(Subject, subj_id)

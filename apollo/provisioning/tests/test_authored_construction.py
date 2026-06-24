@@ -35,19 +35,38 @@ def _chat_returning(payload):
 
 def _argument_reference_solution() -> list[dict]:
     return [
-        {"step": 1, "entry_type": "definition", "id": "def_fed",
-         "content": {"concept": "federalism", "meaning": "divided sovereignty"},
-         "depends_on": []},
-        {"step": 2, "entry_type": "condition", "id": "premise",
-         "content": {"applies_when": "authority is split across levels"},
-         "depends_on": ["def_fed"]},
-        {"step": 3, "entry_type": "procedure_step", "id": "veto",
-         "content": {"order": 1, "action": "identify veto points", "purpose": "show checks"},
-         "depends_on": ["premise"]},
-        {"step": 4, "entry_type": "procedure_step", "id": "concl",
-         "content": {"order": 2, "action": "weigh checks vs blurred responsibility",
-                     "purpose": "reach verdict"},
-         "depends_on": ["veto"]},
+        {
+            "step": 1,
+            "entry_type": "definition",
+            "id": "def_fed",
+            "content": {"concept": "federalism", "meaning": "divided sovereignty"},
+            "depends_on": [],
+        },
+        {
+            "step": 2,
+            "entry_type": "condition",
+            "id": "premise",
+            "content": {"applies_when": "authority is split across levels"},
+            "depends_on": ["def_fed"],
+        },
+        {
+            "step": 3,
+            "entry_type": "procedure_step",
+            "id": "veto",
+            "content": {"order": 1, "action": "identify veto points", "purpose": "show checks"},
+            "depends_on": ["premise"],
+        },
+        {
+            "step": 4,
+            "entry_type": "procedure_step",
+            "id": "concl",
+            "content": {
+                "order": 2,
+                "action": "weigh checks vs blurred responsibility",
+                "purpose": "reach verdict",
+            },
+            "depends_on": ["veto"],
+        },
     ]
 
 
@@ -77,7 +96,8 @@ async def test_construct_worked_argument_under_qualitative():
 
 async def test_construct_answer_only_is_authored_not_flagged():
     authored = AuthoredProblem(
-        problem_code="authored.fed2", concept_slug="federalism",
+        problem_code="authored.fed2",
+        concept_slug="federalism",
         statement="Does separation of powers prevent tyranny?",
         solution="Yes, by distributing authority so ambition checks ambition.",
         completeness="answer_only",
@@ -90,7 +110,8 @@ async def test_construct_answer_only_is_authored_not_flagged():
 
 async def test_construct_none_is_generated_and_flagged():
     authored = AuthoredProblem(
-        problem_code="authored.fed3", concept_slug="federalism",
+        problem_code="authored.fed3",
+        concept_slug="federalism",
         statement="Explain the separation of powers.",
         completeness="none",
     )
@@ -106,8 +127,15 @@ async def test_construct_rejects_node_type_outside_profile_vocab():
     _validate_authored_node_vocab guard lets it through."""
     authored = _worked_argument()
     bad = _argument_reference_solution()
-    bad.append({"step": 5, "entry_type": "equation", "id": "eq",
-                "content": {"symbolic": "x - y", "label": "eq"}, "depends_on": []})
+    bad.append(
+        {
+            "step": 5,
+            "entry_type": "equation",
+            "id": "eq",
+            "content": {"symbolic": "x - y", "label": "eq"},
+            "depends_on": [],
+        }
+    )
     chat = _chat_returning({"reference_solution": bad})
     with pytest.raises(SolutionDraftError, match="node vocab"):
         await construct_authored_reference(authored, profile=_QUAL, chat_fn=chat)
@@ -135,17 +163,35 @@ async def test_construct_worked_fluid_under_quantitative():
     """A quantitative worked problem constructs with equation/procedure nodes
     (all 6 types are in the quantitative vocab)."""
     authored = AuthoredProblem(
-        problem_code="authored.flu1", concept_slug="bernoulli",
+        problem_code="authored.flu1",
+        concept_slug="bernoulli",
         statement="Find P2 in a horizontal pipe.",
-        solution="P2 = 197 kPa", worked_procedure=[{"order": 1, "text": "continuity"}],
-        given_values={"v1": 2.0}, target_unknown="P2", completeness="worked",
+        solution="P2 = 197 kPa",
+        worked_procedure=[{"order": 1, "text": "continuity"}],
+        given_values={"v1": 2.0},
+        target_unknown="P2",
+        completeness="worked",
     )
     ref = [
-        {"step": 1, "entry_type": "equation", "id": "cont",
-         "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "continuity"}, "depends_on": []},
-        {"step": 2, "entry_type": "procedure_step", "id": "solve",
-         "content": {"order": 1, "action": "solve for P2", "purpose": "answer",
-                     "uses_equations": ["cont"]}, "depends_on": ["cont"]},
+        {
+            "step": 1,
+            "entry_type": "equation",
+            "id": "cont",
+            "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "continuity"},
+            "depends_on": [],
+        },
+        {
+            "step": 2,
+            "entry_type": "procedure_step",
+            "id": "solve",
+            "content": {
+                "order": 1,
+                "action": "solve for P2",
+                "purpose": "answer",
+                "uses_equations": ["cont"],
+            },
+            "depends_on": ["cont"],
+        },
     ]
     chat = _chat_returning({"reference_solution": ref})
     draft = await construct_authored_reference(authored, profile=_QUANT, chat_fn=chat)

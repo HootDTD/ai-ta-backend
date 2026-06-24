@@ -117,14 +117,21 @@ async def _seed_course_entity_session(
     db.add(concept)
     await db.flush()
     ent = KGEntity(
-        concept_id=concept.id, canonical_key=canonical_key, kind=kind,
-        display_name=canonical_key, payload={}, aliases=[],
+        concept_id=concept.id,
+        canonical_key=canonical_key,
+        kind=kind,
+        display_name=canonical_key,
+        payload={},
+        aliases=[],
     )
     db.add(ent)
     await db.flush()
     sess = ApolloSession(
-        user_id=user_id, search_space_id=space.id, concept_id=concept.id,
-        status=SessionStatus.active.value, phase=SessionPhase.SOLVING.value,
+        user_id=user_id,
+        search_space_id=space.id,
+        concept_id=concept.id,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.SOLVING.value,
         current_problem_id=f"p_{course_slug}",
     )
     db.add(sess)
@@ -157,13 +164,22 @@ def _shadow_for(key: str) -> ShadowGradeResult:
         alias_candidates=(),
     )
     return ShadowGradeResult(
-        run_id=1, grade=object(), audited=audited, normalization_confidence=0.8,
-        reference_graph_hash="refhash-v1:beef", opposes_map={}, turn_order={},
-        graph_sim_rubric={}, calibration=object(), diagnostic=object(),
+        run_id=1,
+        grade=object(),
+        audited=audited,
+        normalization_confidence=0.8,
+        reference_graph_hash="refhash-v1:beef",
+        opposes_map={},
+        turn_order={},
+        graph_sim_rubric={},
+        calibration=object(),
+        diagnostic=object(),
     )
 
 
-async def _teach_back_one(db, *, course_slug: str, canonical_key: str, kind: str, user_id=TEST_USER_ID):
+async def _teach_back_one(
+    db, *, course_slug: str, canonical_key: str, kind: str, user_id=TEST_USER_ID
+):
     """Drive one teach-back's learner update end-to-end and return (result, n_events,
     n_states) read back from the DB."""
     entity_id, sess, attempt = await _seed_course_entity_session(
@@ -180,15 +196,15 @@ async def _teach_back_one(db, *, course_slug: str, canonical_key: str, kind: str
     )
     await db.commit()
     n_events = (
-        await db.execute(
-            select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)
-        )
-    ).scalars().all()
+        (await db.execute(select(MasteryEvent).where(MasteryEvent.attempt_id == attempt.id)))
+        .scalars()
+        .all()
+    )
     n_states = (
-        await db.execute(
-            select(LearnerState).where(LearnerState.entity_id == entity_id)
-        )
-    ).scalars().all()
+        (await db.execute(select(LearnerState).where(LearnerState.entity_id == entity_id)))
+        .scalars()
+        .all()
+    )
     return result, n_events, n_states
 
 
@@ -227,11 +243,17 @@ async def test_learner_model_argument_and_fluid_both_update_in_one_session(db_se
     import uuid
 
     _, fluid_events, fluid_states = await _teach_back_one(
-        db_session, course_slug="tb-both-f", canonical_key="eq.bernoulli", kind="equation",
+        db_session,
+        course_slug="tb-both-f",
+        canonical_key="eq.bernoulli",
+        kind="equation",
         user_id=uuid.UUID("a0000000-0000-4000-8000-0000000000f1"),
     )
     _, arg_events, arg_states = await _teach_back_one(
-        db_session, course_slug="tb-both-a", canonical_key="def.federalism", kind="definition",
+        db_session,
+        course_slug="tb-both-a",
+        canonical_key="def.federalism",
+        kind="definition",
         user_id=uuid.UUID("a0000000-0000-4000-8000-0000000000a2"),
     )
     assert len(fluid_events) == 1 and len(fluid_states) == 1

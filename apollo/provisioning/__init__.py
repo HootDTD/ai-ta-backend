@@ -27,20 +27,6 @@ from apollo.provisioning.cost_constants import (
 )
 from apollo.provisioning.dedup import DedupVerdict, resolve_candidate
 from apollo.provisioning.enqueue import enqueue_provisioning_job
-from apollo.provisioning.orchestrator import (
-    AuthoredProvisionResult,
-    ProvisioningOutcome,
-    provision_authored_problem,
-    run_provisioning,
-)
-from apollo.provisioning.promote import PromoteResult, promote
-from apollo.provisioning.metered_chat import CostBudgetExceeded, MeteredChat
-from apollo.provisioning.pairing_gate import (
-    PairingVerdict,
-    Rejection,
-    rejection_from_verdict,
-    validate_pair,
-)
 from apollo.provisioning.ingest import (
     AuthoredProblem,
     IngestResult,
@@ -48,14 +34,22 @@ from apollo.provisioning.ingest import (
     load_authored_problems,
     write_authored_tier1_problems,
 )
-from apollo.provisioning.problem_hash import problem_dup_hash
-from apollo.provisioning.promotion_lint import PromotionResult, run_promotion_lint
-from apollo.provisioning.subject_profile import (
-    SubjectProfile,
-    detect_profile,
-    get_profile,
-    resolve_profile,
+from apollo.provisioning.metered_chat import CostBudgetExceeded, MeteredChat
+from apollo.provisioning.orchestrator import (
+    AuthoredProvisionResult,
+    ProvisioningOutcome,
+    provision_authored_problem,
+    run_provisioning,
 )
+from apollo.provisioning.pairing_gate import (
+    PairingVerdict,
+    Rejection,
+    rejection_from_verdict,
+    validate_pair,
+)
+from apollo.provisioning.problem_hash import problem_dup_hash
+from apollo.provisioning.promote import PromoteResult, promote
+from apollo.provisioning.promotion_lint import PromotionResult, run_promotion_lint
 from apollo.provisioning.queue import (
     ClaimedJob,
     claim_provisioning_job,
@@ -79,6 +73,12 @@ from apollo.provisioning.solution import (
     construct_authored_reference,
     find_or_generate,
     solution_hash,
+)
+from apollo.provisioning.subject_profile import (
+    SubjectProfile,
+    detect_profile,
+    get_profile,
+    resolve_profile,
 )
 from apollo.provisioning.tag_mint import (
     ApprovedPair,

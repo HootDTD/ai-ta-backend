@@ -92,9 +92,9 @@ def authored_problem_code(statement: str) -> str:
 def classify_completeness(solution: Any, worked_procedure: Any) -> Completeness:
     """Three-completeness classification (design spec §4.2):
 
-      worked      = a non-empty solution AND a non-empty worked procedure;
-      answer_only = a non-empty solution, no procedure;
-      none        = no solution.
+    worked      = a non-empty solution AND a non-empty worked procedure;
+    answer_only = a non-empty solution, no procedure;
+    none        = no solution.
     """
     has_solution = bool(solution) and bool(str(solution).strip())
     has_procedure = bool(worked_procedure)
@@ -188,7 +188,9 @@ def _coerce_authored(raw: Any, *, default_concept_slug: str) -> AuthoredProblem 
             statement=statement,
             difficulty=raw.get("difficulty", "standard"),
             solution=(str(solution) if solution is not None else None),
-            worked_procedure=(list(worked_procedure) if isinstance(worked_procedure, list) else None),
+            worked_procedure=(
+                list(worked_procedure) if isinstance(worked_procedure, list) else None
+            ),
             given_values=dict(raw.get("given_values") or {}),
             target_unknown=str(raw.get("target_unknown") or ""),
             completeness=classify_completeness(solution, worked_procedure),

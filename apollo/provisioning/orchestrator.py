@@ -51,6 +51,11 @@ from apollo.persistence.models import (
     IngestRun,
     RejectedProblem,
 )
+from apollo.provisioning.cost_constants import (
+    APOLLO_SCRAPE_MAX_SECTIONS,
+    APOLLO_SCRAPE_MIN_CANDIDATES,
+    structured_scrape_enabled,
+)
 from apollo.provisioning.metered_chat import CostBudgetExceeded, MeteredChat
 from apollo.provisioning.pairing_gate import (
     rejection_from_verdict,
@@ -59,13 +64,8 @@ from apollo.provisioning.pairing_gate import (
 from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promote import PromoteResult, promote
 from apollo.provisioning.provisioning_schema import build_tag_schema
-from apollo.provisioning.retrieval_adapter import make_course_retrieve_fn
 from apollo.provisioning.queue import ClaimedJob
-from apollo.provisioning.cost_constants import (
-    APOLLO_SCRAPE_MAX_SECTIONS,
-    APOLLO_SCRAPE_MIN_CANDIDATES,
-    structured_scrape_enabled,
-)
+from apollo.provisioning.retrieval_adapter import make_course_retrieve_fn
 from apollo.provisioning.scrape import (
     resolve_or_create_provisional_concept,
     scrape_document,

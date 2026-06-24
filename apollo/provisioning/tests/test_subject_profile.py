@@ -151,8 +151,8 @@ def test_detect_profile_never_raises_on_bad_input():
 
 
 async def _seed_subject(db, *, slug: str):
-    from database.models import SearchSpace
     from apollo.persistence.models import Subject
+    from database.models import SearchSpace
 
     space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="X")
     db.add(space)

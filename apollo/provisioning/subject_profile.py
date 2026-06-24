@@ -88,9 +88,7 @@ _ALL_NODE_TYPES: frozenset[str] = frozenset(
 # The general subset an argument graph is built from (no equation/simplification/
 # variable_mapping). All three are already in the gate-1 mint map, so an argument
 # graph passes gate 1 with NO mint-map change.
-_ARGUMENT_NODE_TYPES: frozenset[str] = frozenset(
-    {"procedure_step", "definition", "condition"}
-)
+_ARGUMENT_NODE_TYPES: frozenset[str] = frozenset({"procedure_step", "definition", "condition"})
 
 
 @dataclass(frozen=True)
@@ -209,8 +207,7 @@ def _problem_is_symbolic(problem: Mapping[str, Any]) -> bool:
     if isinstance(gv, Mapping) and len(gv) > 0:
         return True
     text = " ".join(
-        str(problem.get(k) or "")
-        for k in ("statement", "problem_text", "solution", "answer")
+        str(problem.get(k) or "") for k in ("statement", "problem_text", "solution", "answer")
     )
     # Also scan worked-procedure prose (records carry ``worked_procedure``, a list);
     # stringify it so math living only in untyped procedure steps is still detected.
@@ -220,7 +217,9 @@ def _problem_is_symbolic(problem: Mapping[str, Any]) -> bool:
     return bool(_MATH_SIGNAL.search(text))
 
 
-def detect_profile(problems: Sequence[Mapping[str, Any]] | Iterable[Mapping[str, Any]]) -> ProfileDetection:
+def detect_profile(
+    problems: Sequence[Mapping[str, Any]] | Iterable[Mapping[str, Any]],
+) -> ProfileDetection:
     """Profile-neutral probe over an ingested problem set — PURE / DB-free / LLM-free.
 
     Counts each problem's symbolic-vs-prose vote and decides:
@@ -239,7 +238,10 @@ def detect_profile(problems: Sequence[Mapping[str, Any]] | Iterable[Mapping[str,
         if total == 0:
             _LOG.info(
                 "subject_profile_probe_empty",
-                extra={"event": "subject_profile_probe_empty", "fail_open_to": DEFAULT_PROFILE_KIND},
+                extra={
+                    "event": "subject_profile_probe_empty",
+                    "fail_open_to": DEFAULT_PROFILE_KIND,
+                },
             )
             return ProfileDetection(
                 kind=DEFAULT_PROFILE_KIND,

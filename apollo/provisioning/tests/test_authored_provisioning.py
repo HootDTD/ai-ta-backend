@@ -68,21 +68,45 @@ def _embed_distinct(text: str):
 
 
 def _tag_payload(concept_slug: str, display_name: str):
-    return _chat_returning({"concept_slug": concept_slug, "display_name": display_name, "prereqs": []})
+    return _chat_returning(
+        {"concept_slug": concept_slug, "display_name": display_name, "prereqs": []}
+    )
 
 
 def _argument_reference_solution() -> list[dict]:
     return [
-        {"step": 1, "entry_type": "definition", "id": "def_fed",
-         "content": {"concept": "federalism", "meaning": "divided sovereignty"}, "depends_on": []},
-        {"step": 2, "entry_type": "condition", "id": "premise",
-         "content": {"applies_when": "authority split across levels"}, "depends_on": ["def_fed"]},
-        {"step": 3, "entry_type": "procedure_step", "id": "veto",
-         "content": {"order": 1, "action": "identify veto points", "purpose": "show checks"},
-         "depends_on": ["premise"]},
-        {"step": 4, "entry_type": "procedure_step", "id": "concl",
-         "content": {"order": 2, "action": "weigh checks vs blurred blame", "purpose": "verdict"},
-         "depends_on": ["veto"]},
+        {
+            "step": 1,
+            "entry_type": "definition",
+            "id": "def_fed",
+            "content": {"concept": "federalism", "meaning": "divided sovereignty"},
+            "depends_on": [],
+        },
+        {
+            "step": 2,
+            "entry_type": "condition",
+            "id": "premise",
+            "content": {"applies_when": "authority split across levels"},
+            "depends_on": ["def_fed"],
+        },
+        {
+            "step": 3,
+            "entry_type": "procedure_step",
+            "id": "veto",
+            "content": {"order": 1, "action": "identify veto points", "purpose": "show checks"},
+            "depends_on": ["premise"],
+        },
+        {
+            "step": 4,
+            "entry_type": "procedure_step",
+            "id": "concl",
+            "content": {
+                "order": 2,
+                "action": "weigh checks vs blurred blame",
+                "purpose": "verdict",
+            },
+            "depends_on": ["veto"],
+        },
     ]
 
 
@@ -116,8 +140,12 @@ async def test_polisci_authored_problem_promotes_under_qualitative(db_session, m
     # ingest: writes Tier-1 + detects/persists qualitative profile (commit=False
     # keeps the test's outer savepoint).
     ing = await ingest_authored_problems(
-        db_session, [_POLISCI_RECORD], subject_id=subj_id, concept_id=prov_id,
-        search_space_id=space, commit=False,
+        db_session,
+        [_POLISCI_RECORD],
+        subject_id=subj_id,
+        concept_id=prov_id,
+        search_space_id=space,
+        commit=False,
     )
     assert ing.profile.kind == "qualitative_argumentative"
 
@@ -126,8 +154,12 @@ async def test_polisci_authored_problem_promotes_under_qualitative(db_session, m
 
     authored = load_authored_problems([_POLISCI_RECORD], default_concept_slug="prov")[0][0]
     result = await provision_authored_problem(
-        db_session, AsyncMock(), authored,
-        profile=profile, search_space_id=space, ingest_concept_id=prov_id,
+        db_session,
+        AsyncMock(),
+        authored,
+        profile=profile,
+        search_space_id=space,
+        ingest_concept_id=prov_id,
         construct_chat_fn=_chat_returning({"reference_solution": _argument_reference_solution()}),
         judge_fn=_approving_judge(),
         tag_chat_fn=_tag_payload("federalism", "Federalism"),
@@ -136,12 +168,16 @@ async def test_polisci_authored_problem_promotes_under_qualitative(db_session, m
     assert result.outcome == "promoted", result.diagnostic
 
     # the ingested Tier-1 row is now teachable (tier=2), re-homed to the federalism concept
-    fed = (await db_session.execute(
-        Concept.__table__.select().where(Concept.slug == "federalism")
-    )).fetchone()
-    row = (await db_session.execute(
-        ConceptProblem.__table__.select().where(ConceptProblem.problem_code == authored.problem_code)
-    )).fetchone()
+    fed = (
+        await db_session.execute(Concept.__table__.select().where(Concept.slug == "federalism"))
+    ).fetchone()
+    row = (
+        await db_session.execute(
+            ConceptProblem.__table__.select().where(
+                ConceptProblem.problem_code == authored.problem_code
+            )
+        )
+    ).fetchone()
     assert row.tier == 2
     assert row.concept_id == fed.id
     assert "reference_solution" in row.payload
@@ -154,14 +190,22 @@ async def test_polisci_authored_problem_promotes_under_qualitative(db_session, m
 async def test_unconstructable_candidate_is_clean_reject(db_session):
     space, subj_id, prov_id = await _seed_subject(db_session, slug="ap-bad")
     await ingest_authored_problems(
-        db_session, [_POLISCI_RECORD], subject_id=subj_id, concept_id=prov_id,
-        search_space_id=space, commit=False,
+        db_session,
+        [_POLISCI_RECORD],
+        subject_id=subj_id,
+        concept_id=prov_id,
+        search_space_id=space,
+        commit=False,
     )
     profile = await resolve_profile(db_session, subj_id)
     authored = load_authored_problems([_POLISCI_RECORD], default_concept_slug="prov")[0][0]
     result = await provision_authored_problem(
-        db_session, AsyncMock(), authored,
-        profile=profile, search_space_id=space, ingest_concept_id=prov_id,
+        db_session,
+        AsyncMock(),
+        authored,
+        profile=profile,
+        search_space_id=space,
+        ingest_concept_id=prov_id,
         construct_chat_fn=_chat_returning("not json at all"),  # construction fails
         judge_fn=_approving_judge(),
         tag_chat_fn=_tag_payload("federalism", "Federalism"),
@@ -174,8 +218,12 @@ async def test_unconstructable_candidate_is_clean_reject(db_session):
 async def test_unfaithful_candidate_is_clean_reject(db_session):
     space, subj_id, prov_id = await _seed_subject(db_session, slug="ap-unfaith")
     await ingest_authored_problems(
-        db_session, [_POLISCI_RECORD], subject_id=subj_id, concept_id=prov_id,
-        search_space_id=space, commit=False,
+        db_session,
+        [_POLISCI_RECORD],
+        subject_id=subj_id,
+        concept_id=prov_id,
+        search_space_id=space,
+        commit=False,
     )
     profile = await resolve_profile(db_session, subj_id)
     authored = load_authored_problems([_POLISCI_RECORD], default_concept_slug="prov")[0][0]
@@ -192,8 +240,12 @@ async def test_unfaithful_candidate_is_clean_reject(db_session):
         return _judge
 
     result = await provision_authored_problem(
-        db_session, AsyncMock(), authored,
-        profile=profile, search_space_id=space, ingest_concept_id=prov_id,
+        db_session,
+        AsyncMock(),
+        authored,
+        profile=profile,
+        search_space_id=space,
+        ingest_concept_id=prov_id,
         construct_chat_fn=_chat_returning({"reference_solution": _argument_reference_solution()}),
         judge_fn=_rejecting_judge(),
         tag_chat_fn=_tag_payload("federalism", "Federalism"),
@@ -209,14 +261,22 @@ async def test_tag_mint_failure_is_clean_reject(db_session):
     try/except around tag_and_mint lets the TagMintError propagate."""
     space, subj_id, prov_id = await _seed_subject(db_session, slug="ap-tagfail")
     await ingest_authored_problems(
-        db_session, [_POLISCI_RECORD], subject_id=subj_id, concept_id=prov_id,
-        search_space_id=space, commit=False,
+        db_session,
+        [_POLISCI_RECORD],
+        subject_id=subj_id,
+        concept_id=prov_id,
+        search_space_id=space,
+        commit=False,
     )
     profile = await resolve_profile(db_session, subj_id)
     authored = load_authored_problems([_POLISCI_RECORD], default_concept_slug="prov")[0][0]
     result = await provision_authored_problem(
-        db_session, AsyncMock(), authored,
-        profile=profile, search_space_id=space, ingest_concept_id=prov_id,
+        db_session,
+        AsyncMock(),
+        authored,
+        profile=profile,
+        search_space_id=space,
+        ingest_concept_id=prov_id,
         construct_chat_fn=_chat_returning({"reference_solution": _argument_reference_solution()}),
         judge_fn=_approving_judge(),
         # tag payload missing concept_slug -> tag_and_mint raises TagMintError
@@ -232,30 +292,81 @@ async def test_tag_mint_failure_is_clean_reject(db_session):
 # --------------------------------------------------------------------------- #
 def _bernoulli_reference_solution() -> list[dict]:
     return [
-        {"id": "continuity", "step": 1, "entry_type": "equation",
-         "content": {"label": "Continuity", "symbolic": "rho*A1*v1 - rho*A2*v2",
-                     "variables": ["rho", "A1", "v1", "A2", "v2"]}, "depends_on": []},
-        {"id": "incompressibility", "step": 2, "entry_type": "condition",
-         "content": {"label": "Incompressibility", "applies_when": "density is constant"},
-         "depends_on": []},
-        {"id": "bernoulli", "step": 3, "entry_type": "equation",
-         "content": {"label": "Bernoulli", "symbolic":
-                     "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
-                     "variables": ["P1", "rho", "v1", "g", "h1", "P2", "v2", "h2"]},
-         "depends_on": ["incompressibility"]},
-        {"id": "horizontal_simplification", "step": 4, "entry_type": "simplification",
-         "content": {"applies_when": "h1 == h2", "transformation": "rho*g*h1 and rho*g*h2 cancel"},
-         "depends_on": ["bernoulli"]},
-        {"id": "plan_apply_continuity", "step": 5, "entry_type": "procedure_step",
-         "content": {"order": 1, "action": "use continuity to solve for v2", "purpose": "obtain v2",
-                     "uses_equations": ["continuity"]}, "depends_on": ["continuity"]},
-        {"id": "plan_apply_horizontal_simplification", "step": 6, "entry_type": "procedure_step",
-         "content": {"order": 2, "action": "set h1 == h2", "purpose": "cancel gravity terms",
-                     "uses_equations": ["bernoulli"]}, "depends_on": ["bernoulli", "horizontal_simplification"]},
-        {"id": "plan_solve_bernoulli_for_p2", "step": 7, "entry_type": "procedure_step",
-         "content": {"order": 3, "action": "substitute and solve for P2", "purpose": "final answer",
-                     "uses_equations": ["bernoulli"]},
-         "depends_on": ["plan_apply_continuity", "plan_apply_horizontal_simplification"]},
+        {
+            "id": "continuity",
+            "step": 1,
+            "entry_type": "equation",
+            "content": {
+                "label": "Continuity",
+                "symbolic": "rho*A1*v1 - rho*A2*v2",
+                "variables": ["rho", "A1", "v1", "A2", "v2"],
+            },
+            "depends_on": [],
+        },
+        {
+            "id": "incompressibility",
+            "step": 2,
+            "entry_type": "condition",
+            "content": {"label": "Incompressibility", "applies_when": "density is constant"},
+            "depends_on": [],
+        },
+        {
+            "id": "bernoulli",
+            "step": 3,
+            "entry_type": "equation",
+            "content": {
+                "label": "Bernoulli",
+                "symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
+                "variables": ["P1", "rho", "v1", "g", "h1", "P2", "v2", "h2"],
+            },
+            "depends_on": ["incompressibility"],
+        },
+        {
+            "id": "horizontal_simplification",
+            "step": 4,
+            "entry_type": "simplification",
+            "content": {
+                "applies_when": "h1 == h2",
+                "transformation": "rho*g*h1 and rho*g*h2 cancel",
+            },
+            "depends_on": ["bernoulli"],
+        },
+        {
+            "id": "plan_apply_continuity",
+            "step": 5,
+            "entry_type": "procedure_step",
+            "content": {
+                "order": 1,
+                "action": "use continuity to solve for v2",
+                "purpose": "obtain v2",
+                "uses_equations": ["continuity"],
+            },
+            "depends_on": ["continuity"],
+        },
+        {
+            "id": "plan_apply_horizontal_simplification",
+            "step": 6,
+            "entry_type": "procedure_step",
+            "content": {
+                "order": 2,
+                "action": "set h1 == h2",
+                "purpose": "cancel gravity terms",
+                "uses_equations": ["bernoulli"],
+            },
+            "depends_on": ["bernoulli", "horizontal_simplification"],
+        },
+        {
+            "id": "plan_solve_bernoulli_for_p2",
+            "step": 7,
+            "entry_type": "procedure_step",
+            "content": {
+                "order": 3,
+                "action": "substitute and solve for P2",
+                "purpose": "final answer",
+                "uses_equations": ["bernoulli"],
+            },
+            "depends_on": ["plan_apply_continuity", "plan_apply_horizontal_simplification"],
+        },
     ]
 
 
@@ -265,10 +376,19 @@ async def test_fluid_authored_problem_promotes_under_quantitative(db_session, mo
     # Pre-seed the REAL tagged concept WITH canonical_symbols so gate 4/7 pass
     # (tag_and_mint reuses a concept by (search_space, slug)).
     bern = Concept(
-        subject_id=subj_id, slug="bernoulli_principle", display_name="Bernoulli",
+        subject_id=subj_id,
+        slug="bernoulli_principle",
+        display_name="Bernoulli",
         canonical_symbols={"symbols": ["A", "P", "Q", "g", "h", "rho", "v"], "description": {}},
-        normalization_map={"pressure": "P", "density": "rho", "velocity": "v", "area": "A",
-                           "height": "h", "gravity": "g", "flow rate": "Q"},
+        normalization_map={
+            "pressure": "P",
+            "density": "rho",
+            "velocity": "v",
+            "area": "A",
+            "height": "h",
+            "gravity": "g",
+            "flow rate": "Q",
+        },
     )
     db_session.add(bern)
     await db_session.flush()
@@ -282,8 +402,12 @@ async def test_fluid_authored_problem_promotes_under_quantitative(db_session, mo
         "concept_slug": "bernoulli_principle",
     }
     ing = await ingest_authored_problems(
-        db_session, [fluid_record], subject_id=subj_id, concept_id=prov_id,
-        search_space_id=space, commit=False,
+        db_session,
+        [fluid_record],
+        subject_id=subj_id,
+        concept_id=prov_id,
+        search_space_id=space,
+        commit=False,
     )
     assert ing.profile.kind == "quantitative_symbolic"  # numeric givens + m/s + kPa
 
@@ -292,8 +416,12 @@ async def test_fluid_authored_problem_promotes_under_quantitative(db_session, mo
 
     authored = load_authored_problems([fluid_record], default_concept_slug="prov")[0][0]
     result = await provision_authored_problem(
-        db_session, AsyncMock(), authored,
-        profile=profile, search_space_id=space, ingest_concept_id=prov_id,
+        db_session,
+        AsyncMock(),
+        authored,
+        profile=profile,
+        search_space_id=space,
+        ingest_concept_id=prov_id,
         construct_chat_fn=_chat_returning({"reference_solution": _bernoulli_reference_solution()}),
         judge_fn=_approving_judge(),
         tag_chat_fn=_tag_payload("bernoulli_principle", "Bernoulli"),
@@ -301,8 +429,12 @@ async def test_fluid_authored_problem_promotes_under_quantitative(db_session, mo
     )
     assert result.outcome == "promoted", f"{result.stage}: {result.diagnostic}"
 
-    row = (await db_session.execute(
-        ConceptProblem.__table__.select().where(ConceptProblem.problem_code == authored.problem_code)
-    )).fetchone()
+    row = (
+        await db_session.execute(
+            ConceptProblem.__table__.select().where(
+                ConceptProblem.problem_code == authored.problem_code
+            )
+        )
+    ).fetchone()
     assert row.tier == 2
     assert row.concept_id == bern.id
