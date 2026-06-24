@@ -75,22 +75,24 @@ _NO_CLAIMS_MARKER = "<no claims decomposed>"
 # prompt↔parser contract is honest; the ``json_schema`` (below) machine-enforces it.
 _PAIRING_PHASE_A_SYSTEM_PROMPT = (
     "You are a strict grader deciding whether a reference solution actually answers "
-    "a specific quantitative problem. You receive a JSON object with: problem_text, "
-    "reference_solution (a list of typed solution steps), and grounding (the course "
-    "passages the solution relies on). Decide ONLY whether the reference_solution "
-    "solves THIS problem (correct target quantity, coherent method). Return ONLY a "
-    "JSON object with EXACTLY these keys:\n"
+    "a specific problem. The problem may be quantitative (solve for a quantity) or "
+    "qualitative (construct an argument / answer a prose question). You receive a "
+    "JSON object with: problem_text, reference_solution (a list of typed solution "
+    "steps), and grounding (the authored reference solution or course passages the "
+    "solution relies on). Decide ONLY whether the reference_solution addresses THIS "
+    "problem (the correct target — a quantity OR a prose conclusion — via a coherent "
+    "method). Return ONLY a JSON object with EXACTLY these keys:\n"
     '  "paired": boolean - true iff the solution answers this problem.\n'
     '  "confidence": number in [0, 1].\n'
     "No prose, no markdown fences."
 )
 _PAIRING_PHASE_B_SYSTEM_PROMPT = (
     "You are a strict grader checking the faithfulness of a reference solution "
-    "against the provided course passages. You receive a JSON object with: "
-    "reference_solution (a list of typed solution steps) and grounding (the course "
-    "passages). Decompose the solution into atomic, checkable claims and decide for "
-    "each whether it is ENTAILED by the grounding. Return ONLY a JSON object with "
-    "EXACTLY this key:\n"
+    "against the provided grounding (the authored reference solution or course "
+    "passages). You receive a JSON object with: reference_solution (a list of typed "
+    "solution steps) and grounding. Decompose the solution into atomic, checkable "
+    "claims and decide for each whether it is ENTAILED by the grounding. Return ONLY "
+    "a JSON object with EXACTLY this key:\n"
     '  "claims": a non-empty array of objects, each with "claim" (string) and '
     '"entailed" (boolean).\n'
     "Include at least one claim. No prose, no markdown fences."

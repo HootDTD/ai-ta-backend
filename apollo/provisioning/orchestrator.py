@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -74,12 +75,20 @@ from apollo.provisioning.solution import (
     GroundingSpan,
     SolutionDraftError,
     build_approved_pair,
+    build_authored_approved_pair,
+    construct_authored_reference,
     find_or_generate,
 )
+from apollo.provisioning.subject_profile import SubjectProfile
 from apollo.provisioning.tag_mint import TagMintError, tag_and_mint
 from apollo.schemas.problem import Problem
 
-__all__ = ["run_provisioning", "ProvisioningOutcome"]
+__all__ = [
+    "run_provisioning",
+    "ProvisioningOutcome",
+    "provision_authored_problem",
+    "AuthoredProvisionResult",
+]
 
 _LOG = logging.getLogger(__name__)
 
@@ -119,8 +128,8 @@ _TRIAGE_SYSTEM_PROMPT = (
 )
 
 _TAG_MINT_SYSTEM_PROMPT = (
-    "You tag an already-approved physics problem with its canonical concept and "
-    "the prerequisite edges between its solution entities.\n"
+    "You tag an already-approved problem (quantitative OR qualitative) with its "
+    "canonical concept and the prerequisite edges between its solution entities.\n"
     "Return ONLY a JSON object - no prose, no explanation, no markdown code fences. "
     "The object has EXACTLY these keys:\n"
     '  "concept_slug": string - a short dotted/kebab concept id (e.g. '
@@ -579,6 +588,133 @@ def _cost_abort(exc: CostBudgetExceeded, *, stage: str) -> _PerDocumentError:
         error_class="CostBudgetExceeded",
         context={"tokens": exc.tokens, "ceiling": exc.ceiling},
     )
+
+
+# --------------------------------------------------------------------------- #
+# Subject-fluid Apollo — the AUTHORED per-candidate pipeline.
+#
+# Where ``_process_candidate`` runs the textbook-scrape stages (find_or_generate ->
+# pairing -> tag/mint -> promote), this runs the AUTHORED stages for one already-
+# ingested ``AuthoredProblem``: construct the reference graph IN THE SUBJECT
+# PROFILE'S vocab -> faithfulness against the authored solution -> tag/mint ->
+# PROFILE-GATED promote. ``promote`` resolves the subject's profile itself and runs
+# only that profile's active gates (gates 4/5 OFF for an argument), so a polisci
+# problem promotes while a fluid one is unchanged. Reuses the FROZEN stages — it
+# redefines none of them. The ClaimedJob / ingest_run worker lifecycle stays with
+# ``run_provisioning``; this function is driven directly (ingest commits the Tier-1
+# inventory + profile independently first).
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class AuthoredProvisionResult:
+    """The per-authored-problem outcome. ``outcome`` ∈ {'promoted', 'rejected'};
+    ``stage`` names where it ended ('ok' | 'construct' | 'pairing_gate' |
+    'promotion_lint')."""
+
+    outcome: str
+    stage: str
+    diagnostic: str = ""
+    failed_gate: int | None = None
+
+
+async def _no_retrieve(_question) -> tuple[GroundingSpan, ...]:
+    """A no-op retrieve_fn for the authored path: the draft ALWAYS carries the
+    authored solution as its grounding, so ``validate_pair`` never re-grounds."""
+    return ()
+
+
+async def _find_authored_tier1_row_id(
+    db: AsyncSession, *, concept_id: int, problem_code: str
+) -> int | None:
+    """The ingested Tier-1 ``apollo_concept_problems.id`` to flip on promote, keyed
+    on the authored ``problem_code`` (``authored.<hash>``)."""
+    return (
+        await db.execute(
+            select(ConceptProblem.id)
+            .where(ConceptProblem.concept_id == concept_id)
+            .where(ConceptProblem.problem_code == problem_code)
+        )
+    ).scalar_one_or_none()
+
+
+async def provision_authored_problem(
+    db: AsyncSession,
+    neo,
+    authored,
+    *,
+    profile: SubjectProfile,
+    search_space_id: int,
+    ingest_concept_id: int,
+    construct_chat_fn: Callable[..., str],
+    judge_fn: Callable[..., str],
+    tag_chat_fn: Callable[[str], str],
+    embed_fn: Callable[[str], Sequence[float]],
+    run: IngestRun | None = None,
+) -> AuthoredProvisionResult:
+    """Construct -> faithfulness -> tag/mint -> profile-gated promote for ONE
+    already-ingested authored problem. Returns an ``AuthoredProvisionResult``.
+
+    A per-candidate rejection (un-constructable graph, a failed faithfulness
+    verdict, or a lint failure) is a CLEAN reject — never a run abort (AC #3). When
+    ``run`` is supplied an ``apollo_rejected_problems`` row is written for the
+    reject (mirroring ``_process_candidate``); otherwise the rejection is returned
+    only. ``promote`` resolves and applies the subject profile's active gates."""
+    # --- construct (three-completeness, profile vocab, authored grounding) --- #
+    try:
+        draft = await construct_authored_reference(
+            authored, profile=profile, chat_fn=construct_chat_fn
+        )
+    except SolutionDraftError as exc:
+        if run is not None:
+            _record_rejection(
+                db, run=run, rejected_stage="solution_draft", failed_gate=None,
+                diagnostic=str(exc), concept_id=ingest_concept_id,
+                payload={"reason": "authored_construct_error"},
+            )
+        return AuthoredProvisionResult(outcome="rejected", stage="construct", diagnostic=str(exc))
+
+    # --- faithfulness against the AUTHORED solution (draft.grounding) --------- #
+    verdict = await validate_pair(
+        authored, draft, retrieve_fn=_no_retrieve, judge_fn=judge_fn
+    )
+    rej = rejection_from_verdict(verdict)
+    if rej is not None:
+        if run is not None:
+            _record_rejection(
+                db, run=run, rejected_stage="pairing_gate", failed_gate=None,
+                diagnostic=rej.diagnostic, concept_id=ingest_concept_id,
+                payload={"reason": rej.reason},
+            )
+        return AuthoredProvisionResult(outcome="rejected", stage="pairing_gate", diagnostic=rej.diagnostic)
+
+    # --- tag/mint + profile-gated promote ----------------------------------- #
+    pair = build_authored_approved_pair(authored, draft, search_space_id=search_space_id)
+    mint_plan = await tag_and_mint(db, pair, chat_fn=tag_chat_fn, embed_fn=embed_fn)
+
+    concept_problem_id = await _find_authored_tier1_row_id(
+        db, concept_id=ingest_concept_id, problem_code=authored.problem_code
+    )
+    if concept_problem_id is None:
+        raise _PerDocumentError(stage="promote", error_class="MissingTier1Row")
+
+    existing_problem_hashes = await _concept_dup_hashes(db, concept_id=mint_plan.concept_id)
+    result: PromoteResult = await promote(
+        db, neo, problem=pair.problem, mint_plan=mint_plan,
+        search_space_id=search_space_id, concept_problem_id=concept_problem_id,
+        existing_problem_hashes=existing_problem_hashes,
+    )
+    if not result.promoted:
+        if run is not None:
+            _record_rejection(
+                db, run=run, rejected_stage="promotion_lint", failed_gate=result.failed_gate,
+                diagnostic=result.diagnostic, concept_id=mint_plan.concept_id, payload={},
+            )
+        return AuthoredProvisionResult(
+            outcome="rejected", stage="promotion_lint",
+            diagnostic=result.diagnostic, failed_gate=result.failed_gate,
+        )
+    return AuthoredProvisionResult(outcome="promoted", stage="ok")
 
 
 async def _finalize(

@@ -27,7 +27,12 @@ from apollo.provisioning.cost_constants import (
 )
 from apollo.provisioning.dedup import DedupVerdict, resolve_candidate
 from apollo.provisioning.enqueue import enqueue_provisioning_job
-from apollo.provisioning.orchestrator import ProvisioningOutcome, run_provisioning
+from apollo.provisioning.orchestrator import (
+    AuthoredProvisionResult,
+    ProvisioningOutcome,
+    provision_authored_problem,
+    run_provisioning,
+)
 from apollo.provisioning.promote import PromoteResult, promote
 from apollo.provisioning.metered_chat import CostBudgetExceeded, MeteredChat
 from apollo.provisioning.pairing_gate import (
@@ -70,6 +75,8 @@ from apollo.provisioning.solution import (
     ReferenceSolutionDraft,
     SolutionDraftError,
     build_approved_pair,
+    build_authored_approved_pair,
+    construct_authored_reference,
     find_or_generate,
     solution_hash,
 )
@@ -104,6 +111,12 @@ __all__ = [
     "find_or_generate",
     "solution_hash",
     "build_approved_pair",
+    # Subject-fluid Apollo — authored construction (solution.py)
+    "construct_authored_reference",
+    "build_authored_approved_pair",
+    # Subject-fluid Apollo — authored per-candidate pipeline (orchestrator.py)
+    "provision_authored_problem",
+    "AuthoredProvisionResult",
     # WU-3B2e — pairing/correctness gate (stage 3) public surface
     "PairingVerdict",
     "Rejection",

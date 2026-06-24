@@ -121,6 +121,26 @@ class AuthoredProblem(BaseModel):
     target_unknown: str = ""
     completeness: Completeness
 
+    @property
+    def problem_text(self) -> str:
+        """Question-shape alias so an ``AuthoredProblem`` can be passed straight to
+        the (frozen) ``validate_pair`` faithfulness gate as the ``question``."""
+        return self.statement
+
+    def to_problem_dict(self, reference_solution: list[dict]) -> dict[str, Any]:
+        """A ``Problem``-validatable dict from this authored problem + a constructed
+        ``reference_solution``. The id is the authored ``problem_code`` so the
+        promoted payload id matches the Tier-1 inventory row."""
+        return {
+            "id": self.problem_code,
+            "concept_id": self.concept_slug,
+            "difficulty": self.difficulty,
+            "problem_text": self.statement,
+            "given_values": dict(self.given_values),
+            "target_unknown": self.target_unknown,
+            "reference_solution": reference_solution,
+        }
+
     def probe_view(self) -> dict[str, Any]:
         """The dict the profile-neutral detection probe reads (statement/solution
         text + numeric givens + typed worked-procedure steps)."""

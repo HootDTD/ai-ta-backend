@@ -62,6 +62,8 @@ __all__ = [
     "ReferenceSolutionDraft",
     "SolutionDraftError",
     "find_or_generate",
+    "construct_authored_reference",
+    "build_authored_approved_pair",
     "solution_hash",
     "build_approved_pair",
 ]
@@ -137,7 +139,7 @@ class ReferenceSolutionDraft(BaseModel):
     threads the idempotency key (``chunk_content_hash``) + the retrieval hit
     count."""
 
-    solution_source: Literal["extracted", "generated"]
+    solution_source: Literal["extracted", "generated", "authored"]
     reference_solution: list[dict]
     grounding: tuple[GroundingSpan, ...] = ()
     provenance: dict = Field(default_factory=dict)
@@ -327,6 +329,186 @@ def build_approved_pair(
     problem = _problem_dict(question, draft.reference_solution)
     return ApprovedPair(
         problem=problem,
+        search_space_id=search_space_id,
+        solution_source=draft.solution_source,
+        misconceptions=[],
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Subject-fluid Apollo — AUTHORED construction (the three-completeness path).
+#
+# Where ``find_or_generate`` RAG-generates from retrieved textbook spans, the
+# authored path STRUCTURES the PROFESSOR'S solution (the authoritative ground
+# truth) into a teachable reference graph IN THE SUBJECT PROFILE'S node vocab, then
+# grounds the Stage-3 faithfulness judge on that authored solution (NOT RAG'd
+# chunks). One ``chat_fn`` pass per problem, branched by completeness.
+# --------------------------------------------------------------------------- #
+
+_AUTHORED_COMPLETENESS_INSTRUCTION = {
+    "worked": (
+        "The professor PROVIDED a worked solution AND its procedure below. STRUCTURE "
+        "that procedure faithfully into typed reference steps — do NOT invent steps "
+        "the professor did not use and do NOT change their method."
+    ),
+    "answer_only": (
+        "The professor PROVIDED the final answer but NO procedure. RECONSTRUCT the "
+        "reference procedure that reaches EXACTLY this answer, staying faithful to it."
+    ),
+    "none": (
+        "The professor PROVIDED only the problem statement. PRODUCE a correct, "
+        "standard reference solution. (This case is FLAGGED lower-confidence for "
+        "human review.)"
+    ),
+}
+
+
+def _authored_output_contract(profile) -> str:
+    """The output contract restricted to the PROFILE'S node vocab + target
+    contract, so the model never emits a node type the profile forbids or forces a
+    symbolic target on a prose subject."""
+    allowed = ", ".join(f'"{t}"' for t in sorted(profile.node_vocab))
+    if profile.target_contract == "prose":
+        target_rule = (
+            "The target is a PROSE conclusion, NOT a symbol: do NOT invent equations, "
+            "numeric variables, or a symbolic target_unknown."
+        )
+    elif profile.target_contract == "none":
+        target_rule = "There is no single target quantity for this subject."
+    else:
+        target_rule = "Use equations / symbols wherever the method requires them."
+    return (
+        'Output a single JSON object with EXACTLY one key, "reference_solution", whose '
+        "value is a NON-EMPTY array of step objects. Each step object has EXACTLY these "
+        'keys: "step" (integer >= 1), "entry_type" (one of ' + allowed + "), "
+        '"id" (a non-empty string, unique within the solution), "content" (an object '
+        "whose fields depend on entry_type), and "
+        '"depends_on" (array of step ids, [] if none). '
+        + target_rule
+        + " Every depends_on id must be a real step id; procedure_step content.order "
+        "must be 1..N contiguous across the procedure_steps. Return the JSON object "
+        "ONLY — no prose, no markdown fences."
+    )
+
+
+def _authored_system_prompt(completeness: str, profile) -> str:
+    return (
+        "You convert a PROFESSOR-AUTHORED problem into a teachable reference graph for "
+        "a student to teach back.\n"
+        + _AUTHORED_COMPLETENESS_INSTRUCTION.get(
+            completeness, _AUTHORED_COMPLETENESS_INSTRUCTION["none"]
+        )
+        + "\n"
+        + _authored_output_contract(profile)
+    )
+
+
+def _authored_grounding_text(authored) -> str:
+    """The authoritative grounding the faithfulness judge entails against — the
+    professor's statement + solution + procedure (NOT RAG'd chunks)."""
+    parts = [f"PROBLEM: {authored.statement}"]
+    if getattr(authored, "solution", None):
+        parts.append(f"AUTHORED SOLUTION: {authored.solution}")
+    if getattr(authored, "worked_procedure", None):
+        parts.append("AUTHORED PROCEDURE: " + _canonical_json(authored.worked_procedure))
+    return "\n\n".join(parts)
+
+
+def _validate_authored_node_vocab(reference_solution: list[dict], profile) -> None:
+    """FAIL-CLOSED if the construction used a node type outside the profile's vocab
+    (e.g. an ``equation`` minted for a ``qualitative_argumentative`` subject)."""
+    for step in reference_solution:
+        entry_type = step.get("entry_type")
+        if entry_type not in profile.node_vocab:
+            raise SolutionDraftError(
+                f"authored construction used entry_type {entry_type!r} outside the "
+                f"{profile.kind} node vocab {sorted(profile.node_vocab)}"
+            )
+
+
+async def construct_authored_reference(
+    authored,
+    *,
+    profile,
+    chat_fn: Callable[..., str],
+) -> ReferenceSolutionDraft:
+    """Build a reference-solution draft from one ``AuthoredProblem``, branching on
+    completeness (worked = structure / answer_only = reconstruct-to-answer / none =
+    generate+flag), in the profile's node vocab, honoring its target contract.
+
+    The draft's ``grounding`` is the AUTHORED solution (so the Stage-3 faithfulness
+    judge entails against the professor's ground truth, not RAG'd chunks). FAIL-CLOSED
+    via ``SolutionDraftError`` — an unparseable/empty construction, a node type
+    outside the profile vocab, or a non-``Problem``-valid graph raises rather than
+    yielding a half-built draft. ``chat_fn`` is injected (mocked in tests)."""
+    system_prompt = _authored_system_prompt(authored.completeness, profile)
+    raw = chat_fn(
+        purpose="authored_construct",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": _canonical_json(
+                    {
+                        "problem_text": authored.statement,
+                        "authored_solution": authored.solution or "",
+                        "worked_procedure": authored.worked_procedure or [],
+                        "given_values": dict(authored.given_values),
+                        "target_unknown": authored.target_unknown,
+                    }
+                ),
+            },
+        ],
+        response_format={"type": "json_schema", "json_schema": build_solution_schema()},
+        temperature=0.0,
+    )
+
+    reference_solution = _parse_reference_solution(raw)
+    if not reference_solution:
+        raise SolutionDraftError(
+            "authored construction produced no usable reference_solution "
+            "(unparseable/empty; fail-closed, never an empty-step draft)"
+        )
+
+    _validate_authored_node_vocab(reference_solution, profile)
+    # Problem-shape validation against the authored problem dict (depends_on
+    # resolution + procedure order); fail-closed on any violation.
+    try:
+        Problem.model_validate(authored.to_problem_dict(reference_solution))
+    except Exception as exc:  # noqa: BLE001 — any validation failure → fail-closed
+        raise SolutionDraftError(
+            f"authored reference_solution is not Problem-valid: {exc}"
+        ) from exc
+
+    grounding = (
+        GroundingSpan(text=_authored_grounding_text(authored), carries_solution=True),
+    )
+    # worked/answer_only are grounded on the professor's solution -> 'authored';
+    # 'none' has no authored solution to extract from -> 'generated' (and flagged).
+    source: Literal["extracted", "generated", "authored"] = (
+        "authored" if authored.completeness in ("worked", "answer_only") else "generated"
+    )
+    return ReferenceSolutionDraft(
+        solution_source=source,
+        reference_solution=reference_solution,
+        grounding=grounding,
+        provenance={
+            "completeness": authored.completeness,
+            "flagged": authored.completeness == "none",
+            "profile_kind": profile.kind,
+        },
+    )
+
+
+def build_authored_approved_pair(
+    authored, draft: ReferenceSolutionDraft, *, search_space_id: int
+) -> ApprovedPair:
+    """Assemble the REAL ``ApprovedPair`` for an authored (problem, draft) — like
+    ``build_approved_pair`` but the ``problem`` dict uses the authored problem_code
+    (``authored.<hash>``) as its id, so the promoted payload id matches the Tier-1
+    inventory row. IMPORTS the real ``ApprovedPair`` — never redefined."""
+    return ApprovedPair(
+        problem=authored.to_problem_dict(draft.reference_solution),
         search_space_id=search_space_id,
         solution_source=draft.solution_source,
         misconceptions=[],
