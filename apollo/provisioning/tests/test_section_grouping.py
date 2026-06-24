@@ -1,12 +1,11 @@
 """Phase-2 section reconstruction tests. PURE — no DB, no LLM, no network."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from apollo.provisioning.section_grouping import (
-    Section,
     group_into_sections,
-    section_content_hash,
 )
 
 

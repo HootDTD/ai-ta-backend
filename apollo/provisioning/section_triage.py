@@ -10,6 +10,7 @@ The injected ``chat_fn`` is the positional-string ``MeteredChat.scrape_chat_fn``
 (``chat_fn(payload) -> str``); MOCKED in Tier-1. The concept guess is a HINT only —
 stage-4 ``tag_and_mint`` remains the authoritative concept resolver.
 """
+
 from __future__ import annotations
 
 import json

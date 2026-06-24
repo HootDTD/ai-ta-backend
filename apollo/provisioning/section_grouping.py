@@ -12,6 +12,7 @@ PURE: no DB, no LLM. Consumes duck-typed chunk rows (``id``, ``content``,
 ``id`` ascending (the orchestrator's ``_load_chunks`` order) and returns ordered
 ``Section`` records.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -102,7 +103,7 @@ def group_into_sections(chunk_rows: Sequence) -> list[Section]:
         elif cur_title is None and spath:
             cur_title = spath
 
-        cur_ids.append(int(getattr(row, "id")))
+        cur_ids.append(int(row.id))
         cur_doc = getattr(row, "document_id", cur_doc)
         page = getattr(row, "page_number", None)
         if page is not None:

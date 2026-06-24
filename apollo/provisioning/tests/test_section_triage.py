@@ -1,4 +1,5 @@
 """Phase-2 TOC-triage tests. PURE — injected deterministic chat_fn, no network."""
+
 from __future__ import annotations
 
 import json
@@ -31,10 +32,20 @@ def test_triage_parses_per_section_verdicts():
         payload_seen["p"] = payload
         return json.dumps(
             [
-                {"index": 0, "is_problem_likely": False, "priority": 0,
-                 "concept_slug": "theory", "concept_display": "Theory"},
-                {"index": 1, "is_problem_likely": True, "priority": 9,
-                 "concept_slug": "integration", "concept_display": "Integration"},
+                {
+                    "index": 0,
+                    "is_problem_likely": False,
+                    "priority": 0,
+                    "concept_slug": "theory",
+                    "concept_display": "Theory",
+                },
+                {
+                    "index": 1,
+                    "is_problem_likely": True,
+                    "priority": 9,
+                    "concept_slug": "integration",
+                    "concept_display": "Integration",
+                },
             ]
         )
 
@@ -89,7 +100,10 @@ def test_build_triage_payload_indexes_sections():
 
 def test_section_verdict_is_frozen():
     v = SectionVerdict(
-        section=_section("A"), is_problem_likely=True, priority=0,
-        concept_slug="c", concept_display="C",
+        section=_section("A"),
+        is_problem_likely=True,
+        priority=0,
+        concept_slug="c",
+        concept_display="C",
     )
     assert v.is_problem_likely is True
