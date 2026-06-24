@@ -84,6 +84,18 @@ def test_loader_classifies_and_drops_malformed():
     assert problems[0].problem_code == authored_problem_code(problems[0].statement)
 
 
+def test_loader_drops_record_failing_field_validation():
+    # A record that CLEARS the early guards (it has a statement) but carries a field
+    # the AuthoredProblem model rejects (``difficulty`` is a closed Literal) fails in
+    # the pydantic constructor -> ValidationError -> the fail-soft DROP (never an
+    # abort). Distinct from the no-statement / non-mapping early returns above.
+    problems, dropped = load_authored_problems(
+        [{"statement": "x", "difficulty": "impossible"}], default_concept_slug="prov"
+    )
+    assert dropped == 1
+    assert problems == []
+
+
 def test_loader_defaults_concept_slug_and_difficulty():
     problems, _ = load_authored_problems(
         [{"statement": "x", "solution": "y"}], default_concept_slug="prov.fallback"

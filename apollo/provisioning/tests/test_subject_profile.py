@@ -8,6 +8,8 @@ requires GREEN-not-skipped).
 
 from __future__ import annotations
 
+import pytest
+
 from apollo.provisioning.subject_profile import (
     ALL_GATES,
     DEFAULT_PROFILE_KIND,
@@ -145,6 +147,21 @@ def test_detect_profile_never_raises_on_bad_input():
     assert 0.0 <= d.confidence <= 1.0
 
 
+def test_detect_profile_internal_error_fails_open_to_quantitative():
+    # An item that PASSES the isinstance(Mapping) filter but EXPLODES once probed
+    # (a Mapping whose .get raises) drives the probe into its except branch — the
+    # fail-open guarantee must hold even for an error raised INSIDE the count, not
+    # just a non-mapping filtered out up front.
+    class Boom(dict):  # a real Mapping, so it survives the isinstance filter
+        def get(self, *_a, **_k):  # type: ignore[override]
+            raise RuntimeError("probe blew up")
+
+    d = detect_profile([Boom()])
+    assert d.kind == PROFILE_QUANTITATIVE_SYMBOLIC  # == DEFAULT_PROFILE_KIND
+    assert d.evidence["fail_open"] is True
+    assert "probe error" in d.evidence["reason"]
+
+
 # --------------------------------------------------------------------------- #
 # Persistence — write + read-back over the real ORM
 # --------------------------------------------------------------------------- #
@@ -197,3 +214,16 @@ async def test_resolve_profile_missing_subject_fails_open(db_session):
     # A subject id that does not exist resolves to the strict default, never raises.
     profile = await resolve_profile(db_session, 9_999_999)
     assert profile.kind == PROFILE_QUANTITATIVE_SYMBOLIC
+
+
+async def test_persist_profile_missing_subject_raises(db_session):
+    # persist_profile, UNLIKE resolve_profile, does NOT fail open: writing a
+    # detection onto a non-existent subject is a programming error (detection runs
+    # after the subject exists), so it raises rather than silently no-op.
+    detection = ProfileDetection(
+        kind=PROFILE_QUALITATIVE_ARGUMENTATIVE,
+        confidence=0.9,
+        evidence={"n_problems": 3},
+    )
+    with pytest.raises(RuntimeError, match="subject 9999999 not found"):
+        await persist_profile(db_session, 9_999_999, detection)
