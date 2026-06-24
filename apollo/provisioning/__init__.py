@@ -36,8 +36,21 @@ from apollo.provisioning.pairing_gate import (
     rejection_from_verdict,
     validate_pair,
 )
+from apollo.provisioning.ingest import (
+    AuthoredProblem,
+    IngestResult,
+    ingest_authored_problems,
+    load_authored_problems,
+    write_authored_tier1_problems,
+)
 from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promotion_lint import PromotionResult, run_promotion_lint
+from apollo.provisioning.subject_profile import (
+    SubjectProfile,
+    detect_profile,
+    get_profile,
+    resolve_profile,
+)
 from apollo.provisioning.queue import (
     ClaimedJob,
     claim_provisioning_job,
@@ -118,4 +131,15 @@ __all__ = [
     # WU-3B2g — orchestrator (orchestrator.py)
     "run_provisioning",
     "ProvisioningOutcome",
+    # Subject-fluid Apollo — subject profile (subject_profile.py)
+    "SubjectProfile",
+    "get_profile",
+    "detect_profile",
+    "resolve_profile",
+    # Subject-fluid Apollo — authored-problem ingest (ingest.py)
+    "AuthoredProblem",
+    "IngestResult",
+    "ingest_authored_problems",
+    "load_authored_problems",
+    "write_authored_tier1_problems",
 ]
