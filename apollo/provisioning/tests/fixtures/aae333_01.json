@@ -1,0 +1,130 @@
+{
+  "id": "aae333_230",
+  "concept_id": "flat_plate_bl",
+  "difficulty": "standard",
+  "given_values": {
+    "L": 6.0,
+    "U": 0.5,
+    "W": 4.0,
+    "nu": 1.12e-06
+  },
+  "problem_text": "A smooth flat plate (L=6 m, W=4 m) in water (nu=1.12e-6 m^2/s), U=0.5 m/s. Determine the boundary layer thickness and wall shear stress.",
+  "target_unknown": "boundary layer thickness and wall shear stress",
+  "declared_paths": [
+    [
+      "loc",
+      "reynolds",
+      "blasius",
+      "wallshear",
+      "p1",
+      "p2",
+      "p3"
+    ]
+  ],
+  "reference_solution": [
+    {
+      "id": "loc",
+      "step": 1,
+      "entry_type": "variable_mapping",
+      "entity_key": "varmap.loc",
+      "content": {
+        "term": "evaluation location along plate",
+        "symbol": "x"
+      },
+      "depends_on": []
+    },
+    {
+      "id": "reynolds",
+      "step": 2,
+      "entry_type": "equation",
+      "entity_key": "eq.reynolds",
+      "content": {
+        "label": "Reynolds number",
+        "symbolic": "Re - U*x/nu",
+        "variables": []
+      },
+      "depends_on": []
+    },
+    {
+      "id": "blasius",
+      "step": 3,
+      "entry_type": "equation",
+      "entity_key": "eq.blasius",
+      "content": {
+        "label": "Blasius thickness",
+        "symbolic": "delta - 5*x/sqrt(Re)",
+        "variables": []
+      },
+      "depends_on": [
+        "reynolds"
+      ]
+    },
+    {
+      "id": "wallshear",
+      "step": 4,
+      "entry_type": "equation",
+      "entity_key": "eq.wallshear",
+      "content": {
+        "label": "wall shear stress (laminar)",
+        "symbolic": "tau - 0.332*rho*U**2/sqrt(Re)",
+        "variables": []
+      },
+      "depends_on": [
+        "reynolds"
+      ]
+    },
+    {
+      "id": "p1",
+      "step": 5,
+      "entry_type": "procedure_step",
+      "entity_key": "proc.p1",
+      "content": {
+        "order": 1,
+        "action": "compute Re=U*x/nu",
+        "purpose": "compute Re=U*x/nu",
+        "uses_equations": [
+          "reynolds"
+        ]
+      },
+      "depends_on": [
+        "reynolds"
+      ]
+    },
+    {
+      "id": "p2",
+      "step": 6,
+      "entry_type": "procedure_step",
+      "entity_key": "proc.p2",
+      "content": {
+        "order": 2,
+        "action": "compute delta from Blasius",
+        "purpose": "compute delta from Blasius",
+        "uses_equations": [
+          "blasius"
+        ]
+      },
+      "depends_on": [
+        "blasius",
+        "p1"
+      ]
+    },
+    {
+      "id": "p3",
+      "step": 7,
+      "entry_type": "procedure_step",
+      "entity_key": "proc.p3",
+      "content": {
+        "order": 3,
+        "action": "compute wall shear stress tau",
+        "purpose": "compute wall shear stress tau",
+        "uses_equations": [
+          "wallshear"
+        ]
+      },
+      "depends_on": [
+        "wallshear",
+        "p2"
+      ]
+    }
+  ]
+}

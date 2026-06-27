@@ -11,6 +11,8 @@ discipline). Short-circuit-order tests prove the earliest failing gate wins.
 from __future__ import annotations
 
 import copy
+import json
+import pathlib
 
 from apollo.ontology.graph import KGGraph
 from apollo.ontology.nodes import build_node
@@ -726,3 +728,114 @@ def test_qualitative_gates_still_catch_structural_failures():
     )
     assert r_link.ok is False
     assert r_link.failed_gate == 2
+
+
+# --------------------------------------------------------------------------- #
+# WU-3B2b-SA Phase 1 — characterization / differential oracle (subject-agnostic)
+#
+# The regression oracle for the subject-agnostic gate change. Two corpora:
+#   * BACK-COMPAT ANCHOR — the in-repo stand-in for the "41 seeded ss=2 :Canon"
+#     (they were seeded FROM this repo content): the inlined bernoulli fixture +
+#     the 10 seed JSONs under apollo/subjects/*/concepts/*/problems/. The
+#     differential test locks old==new so the behavior change never moves them.
+#   * AAE 333 FORWARD FIXTURES — apollo/provisioning/tests/fixtures/aae333_0*.json.
+#     Real Purdue AAE 333 problem statements/targets/givens pulled read-only from
+#     staging (ss=4/doc=6/run=2); the reference SOLUTIONS are reconstructed (the
+#     live ones were never persisted — rejected_problems carry payload={}), each a
+#     well-formed symbolic system with a single graph-derived answer, calibrated to
+#     reproduce the documented live reject (5x gate5, 1x gate4). Phase 2 inverts the
+#     snapshot test to assert these PROMOTE.
+# --------------------------------------------------------------------------- #
+
+_SEED_ROOT = pathlib.Path(__file__).resolve().parents[2] / "subjects"
+_FIXTURE_DIR = pathlib.Path(__file__).resolve().parent / "fixtures"
+
+
+def _seed_anchor_inputs() -> list[tuple[dict, set, dict]]:
+    """(graph, canonical_symbols, normalization_map) for each in-repo seed JSON.
+
+    The per-concept symbol table is loaded from the seed concept dir so gate 4 is
+    non-vacuous (the SAME table old and new read — the differential holds for any
+    table, but the real table exercises the symbolic path)."""
+    out: list[tuple[dict, set, dict]] = []
+    for pj in sorted(_SEED_ROOT.glob("*/concepts/*/problems/problem_*.json")):
+        g = json.loads(pj.read_text())
+        cdir = pj.parents[1]
+        cs_f, nm_f = cdir / "canonical_symbols.json", cdir / "normalization_map.json"
+        cs = json.loads(cs_f.read_text()) if cs_f.exists() else {}
+        canon = set(cs.get("symbols") or []) if isinstance(cs, dict) else set(cs)
+        nm = json.loads(nm_f.read_text()) if nm_f.exists() else {}
+        out.append((g, canon, nm if isinstance(nm, dict) else {}))
+    return out
+
+
+def _anchor_inputs() -> list[tuple[dict, set, dict]]:
+    return [(_bernoulli_graph(), _canonical_symbols(), _normalization_map())] + _seed_anchor_inputs()
+
+
+def _old_lint(g: dict, canon: set, norm: dict) -> PromotionResult:
+    """The pre-change pipeline: all eight gates (the default active set)."""
+    return run_promotion_lint(
+        g, canonical_symbols=canon, normalization_map=norm, existing_problem_hashes=set()
+    )
+
+
+def _new_lint(g: dict, canon: set, norm: dict) -> PromotionResult:
+    """The post-change pipeline. PHASE 1: identical to ``_old_lint`` — every anchor
+    problem carries equations, so content-derived applicability self-activates all
+    gates and the call is the all-8 default. PHASE 2 Step 2.1 swaps the default for
+    ``active_gates=content_active_gates(g)``; this differential then proves the
+    content-derivation does not move a single anchor verdict (the §5 back-compat
+    anchor, asymmetric-safety: a false-GREEN must never ship)."""
+    return run_promotion_lint(
+        g, canonical_symbols=canon, normalization_map=norm, existing_problem_hashes=set()
+    )
+
+
+def test_new_pipeline_equals_old_on_back_compat_anchor():
+    """DIFFERENTIAL LOCK: for every anchor input, the new pipeline returns the
+    IDENTICAL (ok, failed_gate) as the old. Subject-neutral — bakes in zero subject
+    assumptions; it only asserts new == old wherever the content path applies."""
+    inputs = _anchor_inputs()
+    assert len(inputs) == 11  # inlined bernoulli + 10 seed JSONs
+    for g, canon, norm in inputs:
+        old = _old_lint(g, canon, norm)
+        new = _new_lint(g, canon, norm)
+        assert (old.ok, old.failed_gate) == (new.ok, new.failed_gate), g.get("id")
+
+
+def test_back_compat_anchor_all_promote_today():
+    """ABSOLUTE snapshot: every anchor input PASSES all eight gates on current code.
+    Pins the concrete verdict so a regression that moves old AND new together (which
+    the differential alone would miss) is still caught."""
+    for g, canon, norm in _anchor_inputs():
+        r = _old_lint(g, canon, norm)
+        assert r.ok is True, (g.get("id"), r.diagnostic)
+
+
+def _load_aae333() -> list[tuple[str, dict, set, dict, int]]:
+    expected = json.loads((_FIXTURE_DIR / "aae333_expected.json").read_text())
+    out: list[tuple[str, dict, set, dict, int]] = []
+    for name, meta in sorted(expected.items()):
+        g = json.loads((_FIXTURE_DIR / f"{name}.json").read_text())
+        out.append((name, g, set(meta["canonical_symbols"]), meta["normalization_map"],
+                    int(meta["failed_gate"])))
+    return out
+
+
+def test_aae333_currently_rejects_5x_gate5_1x_gate4():
+    """The 6 reconstructed AAE 333 fixtures reproduce the documented live reject
+    snapshot EXACTLY: 5 reject at gate 5 (prose target, covering table) + 1 at gate 4
+    (fresh concept, empty table). GREEN on current code = the fixtures reproduce the
+    live bug. Phase 2 Step 2.6 inverts this to assert all six PROMOTE."""
+    rows = _load_aae333()
+    assert len(rows) == 6
+    gates: list[int] = []
+    for name, g, canon, norm, exp in rows:
+        r = run_promotion_lint(
+            g, canonical_symbols=canon, normalization_map=norm, existing_problem_hashes=set()
+        )
+        assert r.ok is False, name
+        assert r.failed_gate == exp, (name, r.failed_gate, r.diagnostic)
+        gates.append(r.failed_gate)
+    assert sorted(gates) == [4, 5, 5, 5, 5, 5]  # the spec §1 live snapshot
