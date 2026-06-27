@@ -28,6 +28,7 @@ from apollo.grading.tests._builders import (
     notfound_audit_fn,
     raising_audit_fn,
     resolution_with,
+    student_node,
 )
 from apollo.graph_compare.findings import Finding, FindingKind
 
@@ -342,9 +343,11 @@ def test_reorder_preserves_persisted_nc_value():
 
 
 def test_weak_tier_backing_triggers_1c_abstain_end_to_end():
-    """A covered finding backed by a single weak (fuzzy-cap 0.80) resolved node ->
-    internal nc 0.80 < 0.85 -> abstained=True with the 1c reason, even though
-    unresolved_rate is 0 (the SECOND, quality-keyed abstain trigger)."""
+    """A covered finding backed by a single EQUATION node that fell to a weak
+    (fuzzy-cap 0.80) tier -> type-normalized nc 0.80/1.00 = 0.80 < 0.85 ->
+    abstained=True with the 1c reason, even though unresolved_rate is 0 (the
+    SECOND, quality-keyed abstain trigger). An equation had exact/symbolic/derived
+    paths available, so falling to fuzzy is genuinely suspicious."""
     grade = missing_grade()
     grade = replace(grade, findings=(covered_finding_with_nodes("k.a", ("a1",)),))
     res = resolution_with(resolved_nodes=(("a1", 0.80),))  # one weak (fuzzy-cap) backer
@@ -352,14 +355,61 @@ def test_weak_tier_backing_triggers_1c_abstain_end_to_end():
         grade,
         transcript="t",
         resolution=res,
-        student_nodes=(),
+        student_nodes=(student_node("a1", "equation"),),
         candidates=(candidate("k.a"),),
         audit_fn=notfound_audit_fn(),
     )
     assert out.abstained is True
     assert REASON_LOW_NORMALIZATION_CONFIDENCE in out.abstention_reasons
     # the persisted-value invariant: the internal gate nc == the external recompute.
-    assert compute_normalization_confidence(out, res) == 0.80
+    # a1 is an EQUATION (ceiling 1.00): the fuzzy cap 0.80 normalizes to 0.80/1.00
+    # = 0.80 < 0.85 -> an equation that fell to fuzzy is genuinely suspicious.
+    node_types = {"a1": "equation"}
+    assert compute_normalization_confidence(out, res, node_types) == 0.80
+
+
+# --- G1 fix: type-aware normalization end-to-end (the categorical->selective fix) --
+
+
+def test_conceptual_node_via_llm_does_not_abstain_end_to_end():
+    """THE G1 bug fix, proven end-to-end through build_audited_grade. A covered
+    finding backed by a CONCEPTUAL node (a definition) that resolved via the llm
+    tier (0.75) used to pin nc to 0.75 < 0.85 and categorically abstain — even on
+    perfect-coverage attempts. Type-aware: 0.75/0.75 = 1.0 >= 0.85 -> NOT
+    abstained. The node_type is sourced from the student_nodes threaded in."""
+    grade = replace(missing_grade(), findings=(covered_finding_with_nodes("k.a", ("a1",)),))
+    res = resolution_with(resolved_nodes=(("a1", 0.75),))  # conceptual @ llm cap
+    out = build_audited_grade(
+        grade,
+        transcript="t",
+        resolution=res,
+        student_nodes=(student_node("a1", "definition"),),
+        candidates=(candidate("k.a"),),
+        audit_fn=notfound_audit_fn(),
+    )
+    assert out.abstained is False
+    assert REASON_LOW_NORMALIZATION_CONFIDENCE not in out.abstention_reasons
+    # external recompute over the SAME node types == the internal gate nc (1.0).
+    assert compute_normalization_confidence(out, res, {"a1": "definition"}) == 1.0
+
+
+def test_equation_via_llm_still_abstains_end_to_end():
+    """The fix stays SELECTIVE, not blanket-permissive: an EQUATION node that
+    resolved only via llm (0.75) is suspicious — it had exact/symbolic/derived
+    paths — so 0.75/1.00 = 0.75 < 0.85 -> still abstains with the 1c reason."""
+    grade = replace(missing_grade(), findings=(covered_finding_with_nodes("eq.a", ("a1",)),))
+    res = resolution_with(resolved_nodes=(("a1", 0.75),))  # equation @ llm cap
+    out = build_audited_grade(
+        grade,
+        transcript="t",
+        resolution=res,
+        student_nodes=(student_node("a1", "equation"),),
+        candidates=(candidate("eq.a"),),
+        audit_fn=notfound_audit_fn(),
+    )
+    assert out.abstained is True
+    assert REASON_LOW_NORMALIZATION_CONFIDENCE in out.abstention_reasons
+    assert compute_normalization_confidence(out, res, {"a1": "equation"}) == 0.75
 
 
 def test_nc_is_computed_over_post_rewrite_findings_discriminator():
@@ -384,9 +434,9 @@ def test_nc_is_computed_over_post_rewrite_findings_discriminator():
 
     seen: dict[str, tuple[Finding, ...]] = {}
 
-    def _spy(findings, resolution):
+    def _spy(findings, resolution, node_type_by_id=None):
         seen["findings"] = findings
-        return _normalization_confidence_over(findings, resolution)
+        return _normalization_confidence_over(findings, resolution, node_type_by_id)
 
     with patch(
         "apollo.grading.audited_grade._normalization_confidence_over", side_effect=_spy

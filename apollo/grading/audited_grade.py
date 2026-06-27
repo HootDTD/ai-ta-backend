@@ -200,8 +200,14 @@ def build_audited_grade(
     # rewritten here). _misconception_confidences stays over `grade.findings`:
     # _rewrite_findings only touches MISSING_NODE -> COVERED_NODE, so the
     # CONTRADICTION findings the misconception gate keys on are identical pre/post.
+    # G1 fix: thread the node_id -> node_type map so nc judges each scored backing
+    # node's cap against its TYPE ceiling (done_grading.py rebuilds the SAME map
+    # from the same student_nodes, keeping the persisted nc byte-identical).
     new_findings = _rewrite_findings(grade.findings, audit)
-    normalization_confidence = _normalization_confidence_over(new_findings, resolution)
+    node_type_by_id = {n.node_id: n.node_type for n in student_nodes}
+    normalization_confidence = _normalization_confidence_over(
+        new_findings, resolution, node_type_by_id
+    )
 
     abstention = apply_abstention(
         unresolved_rate=unresolved_rate_of(resolution),

@@ -261,8 +261,12 @@ async def run_graph_simulation(
             audit_fn=main_chat_auditor,
         )
 
-        # Step 10 — confidence + reference hash.
-        normalization_confidence = compute_normalization_confidence(audited, resolution)
+        # Step 10 — confidence + reference hash. Thread the node_id -> node_type
+        # map (same student_nodes build_audited_grade used) so the external nc is
+        # byte-identical to the gate's internal value (G1 type-aware nc).
+        normalization_confidence = compute_normalization_confidence(
+            audited, resolution, {n.node_id: n.node_type for n in student_nodes}
+        )
         ref_hash = reference_graph_hash(reference_graph)
 
         # Step 11 — persist run + findings (flush only) then commit (WU-4C1 owns

@@ -19,10 +19,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import Concept, Subject
+from apollo.persistence.models import Concept, ConceptProblem, Subject
 from apollo.subjects import (
     CanonicalSymbols,
     ConceptDefinition,
@@ -57,16 +57,34 @@ class ConceptNotFoundError(LookupError):
 
 
 async def list_course_concepts(db: AsyncSession, *, search_space_id: int) -> list[ConceptRow]:
-    """All concepts a course teaches, scoped via ``apollo_subjects.search_space_id``.
+    """The course's TEACHABLE concepts, scoped via ``apollo_subjects.search_space_id``.
 
     JOINs ``apollo_concepts`` to ``apollo_subjects`` on ``subject_id`` and filters
     by the course's ``search_space_id``, ordered by ``apollo_concepts.id``
     (deterministic). Returns ``[]`` when the course has no curriculum.
+
+    A correlated ``EXISTS`` additionally drops any concept with NO teachable
+    problem, using the EXACT predicate the downstream pool query
+    (``overseer.problem_selector.list_problems_for_concept``) applies —
+    ``ConceptProblem.tier == 2 AND quarantined_at IS NULL``. This keeps the
+    inference candidate set and the selectable pool in lockstep: without it an
+    autoprovisioned decoy concept (an empty ``provisional.inventory`` /
+    tier-1-only / fully-quarantined concept) would be a candidate that
+    ``infer_concept_id`` could lexically pick, only for ``select_problem`` to
+    then raise ``PoolExhaustedError`` on its empty pool (the G6 fluids-grading
+    409 block).
     """
     result = await db.execute(
         select(Concept.id, Concept.slug, Concept.display_name)
         .join(Subject, Concept.subject_id == Subject.id)
-        .where(Subject.search_space_id == search_space_id)
+        .where(
+            Subject.search_space_id == search_space_id,
+            exists().where(
+                ConceptProblem.concept_id == Concept.id,
+                ConceptProblem.tier == 2,
+                ConceptProblem.quarantined_at.is_(None),
+            ),
+        )
         .order_by(Concept.id)
     )
     return [
