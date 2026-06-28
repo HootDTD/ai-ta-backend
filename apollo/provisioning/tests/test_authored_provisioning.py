@@ -1,18 +1,19 @@
-"""Subject-fluid Apollo Stage-5 — end-to-end authored per-candidate pipeline.
+"""Subject-AGNOSTIC Apollo Stage-5 — end-to-end authored per-candidate pipeline.
 
-ingest (Tier-1 + profile) -> resolve_profile -> provision_authored_problem
-(construct -> faithfulness -> tag/mint -> PROFILE-GATED promote). Real-pgvector
-``db_session`` savepoint; ``neo`` is an AsyncMock (project_canon observable, no
-Neo4j); all LLM/embed are deterministic stubs. Docker-skips cleanly; the gate
-requires GREEN-not-skipped.
+ingest (Tier-1 inventory) -> provision_authored_problem (construct -> faithfulness
+-> tag/mint -> CONTENT-GATED promote). Real-pgvector ``db_session`` savepoint;
+``neo`` is an AsyncMock (project_canon observable, no Neo4j); all LLM/embed are
+deterministic stubs. Docker-skips cleanly; the gate requires GREEN-not-skipped.
 
 Proves the acceptance criteria:
-  * AC #2 — a polisci argument problem PROMOTES under qualitative_argumentative
-    (gates 1/2/3/8 + faithfulness; 4/5 correctly skipped).
+  * AC #2 — a polisci argument problem PROMOTES with NO subject profile: its content
+    carries no parseable equation, so the symbolic rigor gates {4,6,7}
+    self-deactivate and it rides the structural core + faithfulness.
   * AC #3 — an un-constructable / unfaithful candidate is a CLEAN reject (never an
     abort).
-  * Back-compat — a fluid worked problem PROMOTES under quantitative_symbolic
-    (all 8 gates genuinely run: gate 4/5/7 enforced via seeded canonical_symbols).
+  * Back-compat — a fluid worked problem PROMOTES: it carries equations, so the
+    symbolic rigor gates self-activate and genuinely run (gate 4/5/7 enforced via
+    the seeded canonical_symbols).
 """
 
 from __future__ import annotations
@@ -32,7 +33,6 @@ from apollo.persistence.models import (
 )
 from apollo.provisioning.ingest import ingest_authored_problems, load_authored_problems
 from apollo.provisioning.orchestrator import provision_authored_problem
-from apollo.provisioning.subject_profile import resolve_profile
 from database.models import SearchSpace
 
 # pytest.ini sets asyncio_mode = auto.
@@ -164,9 +164,9 @@ async def _count_rejections(db, *, run: IngestRun) -> int:
 async def test_polisci_authored_problem_promotes_under_qualitative(db_session, monkeypatch):
     monkeypatch.setattr(_promote_mod, "project_canon", _noop_project_canon)
     space, subj_id, prov_id = await _seed_subject(db_session, slug="ap-poli")
-    # ingest: writes Tier-1 + detects/persists qualitative profile (commit=False
-    # keeps the test's outer savepoint).
-    ing = await ingest_authored_problems(
+    # ingest: writes the Tier-1 inventory (commit=False keeps the test's outer
+    # savepoint). No subject profile is detected — gates are content-derived at promote.
+    await ingest_authored_problems(
         db_session,
         [_POLISCI_RECORD],
         subject_id=subj_id,
@@ -174,17 +174,13 @@ async def test_polisci_authored_problem_promotes_under_qualitative(db_session, m
         search_space_id=space,
         commit=False,
     )
-    assert ing.profile.kind == "qualitative_argumentative"
 
-    profile = await resolve_profile(db_session, subj_id)
-    assert profile.active_gates == frozenset({1, 2, 3, 8})
 
     authored = load_authored_problems([_POLISCI_RECORD], default_concept_slug="prov")[0][0]
     result = await provision_authored_problem(
         db_session,
         AsyncMock(),
         authored,
-        profile=profile,
         search_space_id=space,
         ingest_concept_id=prov_id,
         construct_chat_fn=_chat_returning({"reference_solution": _argument_reference_solution()}),
@@ -224,14 +220,12 @@ async def test_unconstructable_candidate_is_clean_reject(db_session):
         search_space_id=space,
         commit=False,
     )
-    profile = await resolve_profile(db_session, subj_id)
     authored = load_authored_problems([_POLISCI_RECORD], default_concept_slug="prov")[0][0]
     run = await _seed_ingest_run(db_session, search_space_id=space)
     result = await provision_authored_problem(
         db_session,
         AsyncMock(),
         authored,
-        profile=profile,
         search_space_id=space,
         ingest_concept_id=prov_id,
         construct_chat_fn=_chat_returning("not json at all"),  # construction fails
@@ -262,7 +256,6 @@ async def test_unfaithful_candidate_is_clean_reject(db_session):
         search_space_id=space,
         commit=False,
     )
-    profile = await resolve_profile(db_session, subj_id)
     authored = load_authored_problems([_POLISCI_RECORD], default_concept_slug="prov")[0][0]
 
     def _rejecting_judge():
@@ -281,7 +274,6 @@ async def test_unfaithful_candidate_is_clean_reject(db_session):
         db_session,
         AsyncMock(),
         authored,
-        profile=profile,
         search_space_id=space,
         ingest_concept_id=prov_id,
         construct_chat_fn=_chat_returning({"reference_solution": _argument_reference_solution()}),
@@ -315,14 +307,12 @@ async def test_tag_mint_failure_is_clean_reject(db_session):
         search_space_id=space,
         commit=False,
     )
-    profile = await resolve_profile(db_session, subj_id)
     authored = load_authored_problems([_POLISCI_RECORD], default_concept_slug="prov")[0][0]
     run = await _seed_ingest_run(db_session, search_space_id=space)
     result = await provision_authored_problem(
         db_session,
         AsyncMock(),
         authored,
-        profile=profile,
         search_space_id=space,
         ingest_concept_id=prov_id,
         construct_chat_fn=_chat_returning({"reference_solution": _argument_reference_solution()}),
@@ -358,13 +348,11 @@ async def test_reject_without_run_writes_no_audit_row(db_session):
         search_space_id=space,
         commit=False,
     )
-    profile = await resolve_profile(db_session, subj_id)
     authored = load_authored_problems([_POLISCI_RECORD], default_concept_slug="prov")[0][0]
     result = await provision_authored_problem(
         db_session,
         AsyncMock(),
         authored,
-        profile=profile,
         search_space_id=space,
         ingest_concept_id=prov_id,
         construct_chat_fn=_chat_returning("not json at all"),  # construction fails
@@ -499,7 +487,7 @@ async def test_fluid_authored_problem_promotes_under_quantitative(db_session, mo
         "target_unknown": "P2",
         "concept_slug": "bernoulli_principle",
     }
-    ing = await ingest_authored_problems(
+    await ingest_authored_problems(
         db_session,
         [fluid_record],
         subject_id=subj_id,
@@ -507,17 +495,13 @@ async def test_fluid_authored_problem_promotes_under_quantitative(db_session, mo
         search_space_id=space,
         commit=False,
     )
-    assert ing.profile.kind == "quantitative_symbolic"  # numeric givens + m/s + kPa
 
-    profile = await resolve_profile(db_session, subj_id)
-    assert len(profile.active_gates) == 8  # all gates run
 
     authored = load_authored_problems([fluid_record], default_concept_slug="prov")[0][0]
     result = await provision_authored_problem(
         db_session,
         AsyncMock(),
         authored,
-        profile=profile,
         search_space_id=space,
         ingest_concept_id=prov_id,
         construct_chat_fn=_chat_returning({"reference_solution": _bernoulli_reference_solution()}),

@@ -1,8 +1,9 @@
-"""Subject-fluid Apollo Stage-1 — authored-problem ingest tests.
+"""Subject-AGNOSTIC Apollo Stage-1 — authored-problem ingest tests.
 
-Classification + loader fail-soft are PURE (no DB). The Tier-1 write, independent
-commit, and profile detect+persist use the real-pgvector ``db_session`` savepoint
-fixture (Docker-skips cleanly; the gate requires GREEN-not-skipped).
+Classification + loader fail-soft are PURE (no DB). The Tier-1 write and the
+independent commit use the real-pgvector ``db_session`` savepoint fixture
+(Docker-skips cleanly; the gate requires GREEN-not-skipped). No subject profile is
+detected — gate applicability is content-derived at promote time.
 """
 
 from __future__ import annotations
@@ -15,10 +16,6 @@ from apollo.provisioning.ingest import (
     ingest_authored_problems,
     load_authored_problems,
     write_authored_tier1_problems,
-)
-from apollo.provisioning.subject_profile import (
-    PROFILE_QUALITATIVE_ARGUMENTATIVE,
-    PROFILE_QUANTITATIVE_SYMBOLIC,
 )
 from database.models import SearchSpace
 
@@ -169,11 +166,11 @@ async def test_tier1_write_is_idempotent(db_session):
 
 
 # --------------------------------------------------------------------------- #
-# ingest_authored_problems — independent commit + profile detect/persist
+# ingest_authored_problems — Tier-1 write + independent commit (no profile)
 # --------------------------------------------------------------------------- #
 
 
-async def test_ingest_detects_and_persists_quantitative_profile(db_session):
+async def test_ingest_writes_tier1_inventory(db_session):
     space, subj_id, concept_id = await _seed_subject_concept(db_session, slug="ing3")
     result = await ingest_authored_problems(
         db_session,
@@ -186,39 +183,6 @@ async def test_ingest_detects_and_persists_quantitative_profile(db_session):
     assert result.n_written == 3
     assert result.n_dropped == 2
     assert result.completeness_counts == {"worked": 1, "answer_only": 1, "none": 1}
-    # The fluid-flavored set (numeric givens, m/s, kPa) detects quantitative.
-    assert result.profile.kind == PROFILE_QUANTITATIVE_SYMBOLIC
-    subj = await db_session.get(Subject, subj_id)
-    assert subj.profile_kind == PROFILE_QUANTITATIVE_SYMBOLIC
-
-
-async def test_ingest_detects_polisci_qualitative_profile(db_session):
-    space, subj_id, concept_id = await _seed_subject_concept(db_session, slug="ing4")
-    polisci = [
-        {
-            "statement": "Explain why federalism disperses power across levels of government.",
-            "solution": "Federalism divides sovereignty so multiple veto points check each other.",
-            "worked_procedure": [{"order": 1, "action": "define federalism"}],
-            "concept_slug": "federalism",
-        },
-        {
-            "statement": "Assess whether separation of powers is the primary safeguard against tyranny.",
-            "solution": "It distributes authority so ambition counteracts ambition, though partisanship erodes it.",
-            "concept_slug": "separation_of_powers",
-        },
-    ]
-    result = await ingest_authored_problems(
-        db_session,
-        polisci,
-        subject_id=subj_id,
-        concept_id=concept_id,
-        search_space_id=space,
-        commit=False,
-    )
-    assert result.profile.kind == PROFILE_QUALITATIVE_ARGUMENTATIVE
-    subj = await db_session.get(Subject, subj_id)
-    assert subj.profile_kind == PROFILE_QUALITATIVE_ARGUMENTATIVE
-    assert subj.profile_evidence["n_prose"] == 2
 
 
 async def test_ingest_independent_commit_persists_inventory(db_session):
@@ -238,12 +202,10 @@ async def test_ingest_independent_commit_persists_inventory(db_session):
     assert result.n_written == 3
     # Simulate a downstream abort.
     await db_session.rollback()
-    # Inventory + profile survived the rollback (committed independently).
+    # The inventory survived the rollback (committed independently).
     surviving = (
         await db_session.execute(
             ConceptProblem.__table__.select().where(ConceptProblem.concept_id == concept_id)
         )
     ).fetchall()
     assert len(surviving) == 3
-    subj = await db_session.get(Subject, subj_id)
-    assert subj.profile_kind == PROFILE_QUANTITATIVE_SYMBOLIC

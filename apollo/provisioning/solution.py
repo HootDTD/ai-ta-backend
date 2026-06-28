@@ -50,6 +50,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from apollo.persistence.learner_model_seed import _ENTRY_TYPE_TO_KIND_PREFIX
 from apollo.provisioning.provisioning_schema import (
     build_solution_schema,
     solution_content_field_hints,
@@ -336,13 +337,16 @@ def build_approved_pair(
 
 
 # --------------------------------------------------------------------------- #
-# Subject-fluid Apollo — AUTHORED construction (the three-completeness path).
+# Subject-AGNOSTIC Apollo — AUTHORED construction (the three-completeness path).
 #
 # Where ``find_or_generate`` RAG-generates from retrieved textbook spans, the
 # authored path STRUCTURES the PROFESSOR'S solution (the authoritative ground
-# truth) into a teachable reference graph IN THE SUBJECT PROFILE'S node vocab, then
-# grounds the Stage-3 faithfulness judge on that authored solution (NOT RAG'd
-# chunks). One ``chat_fn`` pass per problem, branched by completeness.
+# truth) into a teachable reference graph over the UNIVERSAL mint-map node vocab
+# (the same 6 entry types gate 1 enforces — no per-subject restriction, no forced
+# symbolic target), then grounds the Stage-3 faithfulness judge on that authored
+# solution (NOT RAG'd chunks). One ``chat_fn`` pass per problem, branched by
+# completeness. The construction LLM uses equations / symbols ONLY where the
+# method genuinely requires them; a prose argument carries none.
 # --------------------------------------------------------------------------- #
 
 _AUTHORED_COMPLETENESS_INSTRUCTION = {
@@ -363,20 +367,12 @@ _AUTHORED_COMPLETENESS_INSTRUCTION = {
 }
 
 
-def _authored_output_contract(profile) -> str:
-    """The output contract restricted to the PROFILE'S node vocab + target
-    contract, so the model never emits a node type the profile forbids or forces a
-    symbolic target on a prose subject."""
-    allowed = ", ".join(f'"{t}"' for t in sorted(profile.node_vocab))
-    if profile.target_contract == "prose":
-        target_rule = (
-            "The target is a PROSE conclusion, NOT a symbol: do NOT invent equations, "
-            "numeric variables, or a symbolic target_unknown."
-        )
-    elif profile.target_contract == "none":
-        target_rule = "There is no single target quantity for this subject."
-    else:
-        target_rule = "Use equations / symbols wherever the method requires them."
+def _authored_output_contract() -> str:
+    """The output contract over the UNIVERSAL node vocab (the 6 mint-map entry
+    types). Subject-agnostic: no per-subject vocab restriction and NO forced target
+    shape — the construction LLM uses equations / symbols ONLY where the method
+    genuinely requires them (a prose argument is free of them)."""
+    allowed = ", ".join(f'"{t}"' for t in sorted(_ENTRY_TYPE_TO_KIND_PREFIX))
     return (
         'Output a single JSON object with EXACTLY one key, "reference_solution", whose '
         "value is a NON-EMPTY array of step objects. Each step object has EXACTLY these "
@@ -384,14 +380,14 @@ def _authored_output_contract(profile) -> str:
         '"id" (a non-empty string, unique within the solution), "content" (an object '
         "whose fields depend on entry_type), and "
         '"depends_on" (array of step ids, [] if none). '
-        + target_rule
-        + " Every depends_on id must be a real step id; procedure_step content.order "
-        "must be 1..N contiguous across the procedure_steps. Return the JSON object "
-        "ONLY — no prose, no markdown fences."
+        "Use equations / symbols ONLY where the method genuinely requires them; a prose "
+        "argument needs none. Every depends_on id must be a real step id; procedure_step "
+        "content.order must be 1..N contiguous across the procedure_steps. Return the JSON "
+        "object ONLY — no prose, no markdown fences."
     )
 
 
-def _authored_system_prompt(completeness: str, profile) -> str:
+def _authored_system_prompt(completeness: str) -> str:
     return (
         "You convert a PROFESSOR-AUTHORED problem into a teachable reference graph for "
         "a student to teach back.\n"
@@ -399,7 +395,7 @@ def _authored_system_prompt(completeness: str, profile) -> str:
             completeness, _AUTHORED_COMPLETENESS_INSTRUCTION["none"]
         )
         + "\n"
-        + _authored_output_contract(profile)
+        + _authored_output_contract()
     )
 
 
@@ -414,34 +410,36 @@ def _authored_grounding_text(authored) -> str:
     return "\n\n".join(parts)
 
 
-def _validate_authored_node_vocab(reference_solution: list[dict], profile) -> None:
-    """FAIL-CLOSED if the construction used a node type outside the profile's vocab
-    (e.g. an ``equation`` minted for a ``qualitative_argumentative`` subject)."""
+def _validate_authored_node_vocab(reference_solution: list[dict]) -> None:
+    """FAIL-CLOSED if the construction emitted an entry_type outside the UNIVERSAL
+    mint map (the 6 entry types gate 1 also enforces). Subject-agnostic: any of the
+    6 types is allowed for any subject — only a genuinely-foreign type is rejected."""
     for step in reference_solution:
         entry_type = step.get("entry_type")
-        if entry_type not in profile.node_vocab:
+        if entry_type not in _ENTRY_TYPE_TO_KIND_PREFIX:
             raise SolutionDraftError(
                 f"authored construction used entry_type {entry_type!r} outside the "
-                f"{profile.kind} node vocab {sorted(profile.node_vocab)}"
+                f"universal mint map {sorted(_ENTRY_TYPE_TO_KIND_PREFIX)}"
             )
 
 
 async def construct_authored_reference(
     authored,
     *,
-    profile,
     chat_fn: Callable[..., str],
 ) -> ReferenceSolutionDraft:
     """Build a reference-solution draft from one ``AuthoredProblem``, branching on
     completeness (worked = structure / answer_only = reconstruct-to-answer / none =
-    generate+flag), in the profile's node vocab, honoring its target contract.
+    generate+flag), over the UNIVERSAL mint-map node vocab with NO forced target
+    shape (subject-agnostic — the construction never pushes a prose author toward a
+    symbolic target).
 
     The draft's ``grounding`` is the AUTHORED solution (so the Stage-3 faithfulness
     judge entails against the professor's ground truth, not RAG'd chunks). FAIL-CLOSED
     via ``SolutionDraftError`` — an unparseable/empty construction, a node type
-    outside the profile vocab, or a non-``Problem``-valid graph raises rather than
-    yielding a half-built draft. ``chat_fn`` is injected (mocked in tests)."""
-    system_prompt = _authored_system_prompt(authored.completeness, profile)
+    outside the universal mint map, or a non-``Problem``-valid graph raises rather
+    than yielding a half-built draft. ``chat_fn`` is injected (mocked in tests)."""
+    system_prompt = _authored_system_prompt(authored.completeness)
     raw = chat_fn(
         purpose="authored_construct",
         messages=[
@@ -470,7 +468,7 @@ async def construct_authored_reference(
             "(unparseable/empty; fail-closed, never an empty-step draft)"
         )
 
-    _validate_authored_node_vocab(reference_solution, profile)
+    _validate_authored_node_vocab(reference_solution)
     # Problem-shape validation against the authored problem dict (depends_on
     # resolution + procedure order); fail-closed on any violation.
     try:
@@ -495,7 +493,6 @@ async def construct_authored_reference(
         provenance={
             "completeness": authored.completeness,
             "flagged": authored.completeness == "none",
-            "profile_kind": profile.kind,
         },
     )
 

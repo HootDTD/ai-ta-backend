@@ -79,7 +79,6 @@ from apollo.provisioning.solution import (
     construct_authored_reference,
     find_or_generate,
 )
-from apollo.provisioning.subject_profile import SubjectProfile
 from apollo.provisioning.tag_mint import TagMintError, tag_and_mint
 from apollo.schemas.problem import Problem
 
@@ -591,18 +590,18 @@ def _cost_abort(exc: CostBudgetExceeded, *, stage: str) -> _PerDocumentError:
 
 
 # --------------------------------------------------------------------------- #
-# Subject-fluid Apollo — the AUTHORED per-candidate pipeline.
+# Subject-AGNOSTIC Apollo — the AUTHORED per-candidate pipeline.
 #
 # Where ``_process_candidate`` runs the textbook-scrape stages (find_or_generate ->
 # pairing -> tag/mint -> promote), this runs the AUTHORED stages for one already-
-# ingested ``AuthoredProblem``: construct the reference graph IN THE SUBJECT
-# PROFILE'S vocab -> faithfulness against the authored solution -> tag/mint ->
-# PROFILE-GATED promote. ``promote`` resolves the subject's profile itself and runs
-# only that profile's active gates (gates 4/5 OFF for an argument), so a polisci
-# problem promotes while a fluid one is unchanged. Reuses the FROZEN stages — it
-# redefines none of them. The ClaimedJob / ingest_run worker lifecycle stays with
-# ``run_provisioning``; this function is driven directly (ingest commits the Tier-1
-# inventory + profile independently first).
+# ingested ``AuthoredProblem``: construct the reference graph over the UNIVERSAL
+# mint-map vocab -> faithfulness against the authored solution -> tag/mint ->
+# content-gated promote. ``promote`` derives the applicable gates from the problem's
+# OWN content (the symbolic rigor gates self-activate only on parseable equations),
+# so a polisci argument promotes while a fluid one is unchanged — no stored subject
+# profile. Reuses the FROZEN stages — it redefines none of them. The ClaimedJob /
+# ingest_run worker lifecycle stays with ``run_provisioning``; this function is
+# driven directly (ingest commits the Tier-1 inventory independently first).
 # --------------------------------------------------------------------------- #
 
 
@@ -643,7 +642,6 @@ async def provision_authored_problem(
     neo,
     authored,
     *,
-    profile: SubjectProfile,
     search_space_id: int,
     ingest_concept_id: int,
     construct_chat_fn: Callable[..., str],
@@ -652,19 +650,18 @@ async def provision_authored_problem(
     embed_fn: Callable[[str], Sequence[float]],
     run: IngestRun | None = None,
 ) -> AuthoredProvisionResult:
-    """Construct -> faithfulness -> tag/mint -> profile-gated promote for ONE
+    """Construct -> faithfulness -> tag/mint -> content-gated promote for ONE
     already-ingested authored problem. Returns an ``AuthoredProvisionResult``.
 
     A per-candidate rejection (un-constructable graph, a failed faithfulness
     verdict, or a lint failure) is a CLEAN reject — never a run abort (AC #3). When
     ``run`` is supplied an ``apollo_rejected_problems`` row is written for the
     reject (mirroring ``_process_candidate``); otherwise the rejection is returned
-    only. ``promote`` resolves and applies the subject profile's active gates."""
-    # --- construct (three-completeness, profile vocab, authored grounding) --- #
+    only. ``promote`` derives the applicable gates from the problem's own content —
+    no subject profile."""
+    # --- construct (three-completeness, universal vocab, authored grounding) --- #
     try:
-        draft = await construct_authored_reference(
-            authored, profile=profile, chat_fn=construct_chat_fn
-        )
+        draft = await construct_authored_reference(authored, chat_fn=construct_chat_fn)
     except SolutionDraftError as exc:
         if run is not None:
             _record_rejection(
@@ -688,7 +685,7 @@ async def provision_authored_problem(
             )
         return AuthoredProvisionResult(outcome="rejected", stage="pairing_gate", diagnostic=rej.diagnostic)
 
-    # --- tag/mint + profile-gated promote ----------------------------------- #
+    # --- tag/mint + content-gated promote ----------------------------------- #
     pair = build_authored_approved_pair(authored, draft, search_space_id=search_space_id)
     # A failed tag/mint (the LLM omits a concept_slug) or a blown cost budget is a
     # per-CANDIDATE reject — never a run abort (AC #3). Mirrors _process_candidate's

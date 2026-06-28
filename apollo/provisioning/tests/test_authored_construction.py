@@ -1,8 +1,10 @@
-"""Subject-fluid Apollo Stage-5 — authored reference-graph construction (pure).
+"""Subject-AGNOSTIC Apollo Stage-5 — authored reference-graph construction (pure).
 
 NO DB / NO network: ``chat_fn`` is a deterministic stub. Covers the three
-completeness branches, the profile node-vocab guard, the authored grounding, and
-the fail-closed property.
+completeness branches, the UNIVERSAL mint-map vocab guard (any of the 6 entry
+types is allowed for any subject), the authored grounding, and the fail-closed
+property. Construction no longer takes a subject profile — it never forces a
+node vocab or a symbolic target shape.
 """
 
 from __future__ import annotations
@@ -17,13 +19,9 @@ from apollo.provisioning.solution import (
     build_authored_approved_pair,
     construct_authored_reference,
 )
-from apollo.provisioning.subject_profile import get_profile
 from apollo.schemas.problem import Problem
 
 # pytest.ini sets asyncio_mode = auto.
-
-_QUAL = get_profile("qualitative_argumentative")
-_QUANT = get_profile("quantitative_symbolic")
 
 
 def _chat_returning(payload):
@@ -81,13 +79,14 @@ def _worked_argument() -> AuthoredProblem:
     )
 
 
-async def test_construct_worked_argument_under_qualitative():
+async def test_construct_worked_argument():
     authored = _worked_argument()
     chat = _chat_returning({"reference_solution": _argument_reference_solution()})
-    draft = await construct_authored_reference(authored, profile=_QUAL, chat_fn=chat)
+    draft = await construct_authored_reference(authored, chat_fn=chat)
     assert draft.solution_source == "authored"
     assert draft.provenance["completeness"] == "worked"
     assert draft.provenance["flagged"] is False
+    assert "profile_kind" not in draft.provenance  # subject-agnostic: no profile stamp
     # grounding is the AUTHORED solution (not RAG): the professor's text is present.
     assert "AUTHORED SOLUTION" in draft.grounding[0].text
     # the constructed graph is Problem-valid under the authored problem dict
@@ -103,7 +102,7 @@ async def test_construct_answer_only_is_authored_not_flagged():
         completeness="answer_only",
     )
     chat = _chat_returning({"reference_solution": _argument_reference_solution()})
-    draft = await construct_authored_reference(authored, profile=_QUAL, chat_fn=chat)
+    draft = await construct_authored_reference(authored, chat_fn=chat)
     assert draft.solution_source == "authored"
     assert draft.provenance["flagged"] is False
 
@@ -116,18 +115,41 @@ async def test_construct_none_is_generated_and_flagged():
         completeness="none",
     )
     chat = _chat_returning({"reference_solution": _argument_reference_solution()})
-    draft = await construct_authored_reference(authored, profile=_QUAL, chat_fn=chat)
+    draft = await construct_authored_reference(authored, chat_fn=chat)
     assert draft.solution_source == "generated"
     assert draft.provenance["flagged"] is True  # 'none' is flagged for review
 
 
-async def test_construct_rejects_node_type_outside_profile_vocab():
-    """An ``equation`` step is outside the qualitative node vocab -> fail-closed
-    SolutionDraftError (never a half-built draft). DISCRIMINATING: dropping the
-    _validate_authored_node_vocab guard lets it through."""
+async def test_construct_rejects_node_type_outside_universal_mint_map():
+    """A node type NOT in the universal mint map (the 6 entry types) is fail-closed
+    -> SolutionDraftError (never a half-built draft). DISCRIMINATING: dropping the
+    _validate_authored_node_vocab guard lets it through. An ``equation`` step is now
+    ALLOWED for ANY subject (subject-agnostic), so the rejected type must be a
+    genuinely-foreign one."""
     authored = _worked_argument()
     bad = _argument_reference_solution()
     bad.append(
+        {
+            "step": 5,
+            "entry_type": "NOT_A_REAL_TYPE",
+            "id": "x",
+            "content": {},
+            "depends_on": [],
+        }
+    )
+    chat = _chat_returning({"reference_solution": bad})
+    with pytest.raises(SolutionDraftError, match="mint map"):
+        await construct_authored_reference(authored, chat_fn=chat)
+
+
+async def test_construct_allows_equation_node_for_prose_subject():
+    """Subject-agnostic: an argument problem MAY now carry an ``equation`` step — no
+    per-subject vocab forbids it. (The promotion lint's content-derived gates decide
+    whether the symbolic rigor applies.) Old code raised here for a 'qualitative'
+    subject."""
+    authored = _worked_argument()
+    mixed = _argument_reference_solution()
+    mixed.append(
         {
             "step": 5,
             "entry_type": "equation",
@@ -136,16 +158,16 @@ async def test_construct_rejects_node_type_outside_profile_vocab():
             "depends_on": [],
         }
     )
-    chat = _chat_returning({"reference_solution": bad})
-    with pytest.raises(SolutionDraftError, match="node vocab"):
-        await construct_authored_reference(authored, profile=_QUAL, chat_fn=chat)
+    chat = _chat_returning({"reference_solution": mixed})
+    draft = await construct_authored_reference(authored, chat_fn=chat)  # no raise
+    assert any(s["entry_type"] == "equation" for s in draft.reference_solution)
 
 
 async def test_construct_fail_closed_on_unparseable():
     authored = _worked_argument()
     chat = _chat_returning("this is not json")
     with pytest.raises(SolutionDraftError):
-        await construct_authored_reference(authored, profile=_QUAL, chat_fn=chat)
+        await construct_authored_reference(authored, chat_fn=chat)
 
 
 async def test_construct_fail_closed_on_non_problem_valid():
@@ -156,12 +178,12 @@ async def test_construct_fail_closed_on_non_problem_valid():
     broken[0]["depends_on"] = ["NONEXISTENT"]
     chat = _chat_returning({"reference_solution": broken})
     with pytest.raises(SolutionDraftError, match="not Problem-valid"):
-        await construct_authored_reference(authored, profile=_QUAL, chat_fn=chat)
+        await construct_authored_reference(authored, chat_fn=chat)
 
 
-async def test_construct_worked_fluid_under_quantitative():
-    """A quantitative worked problem constructs with equation/procedure nodes
-    (all 6 types are in the quantitative vocab)."""
+async def test_construct_worked_quantitative_with_equation_nodes():
+    """A quantitative worked problem constructs with equation/procedure nodes — all
+    6 types are in the universal mint map, no profile needed."""
     authored = AuthoredProblem(
         problem_code="authored.flu1",
         concept_slug="bernoulli",
@@ -194,14 +216,14 @@ async def test_construct_worked_fluid_under_quantitative():
         },
     ]
     chat = _chat_returning({"reference_solution": ref})
-    draft = await construct_authored_reference(authored, profile=_QUANT, chat_fn=chat)
+    draft = await construct_authored_reference(authored, chat_fn=chat)
     assert draft.solution_source == "authored"
 
 
 async def test_build_authored_approved_pair_uses_authored_id():
     authored = _worked_argument()
     chat = _chat_returning({"reference_solution": _argument_reference_solution()})
-    draft = await construct_authored_reference(authored, profile=_QUAL, chat_fn=chat)
+    draft = await construct_authored_reference(authored, chat_fn=chat)
     pair = build_authored_approved_pair(authored, draft, search_space_id=7)
     assert pair.problem["id"] == "authored.fed1"  # matches the Tier-1 problem_code
     assert pair.search_space_id == 7

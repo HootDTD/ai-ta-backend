@@ -16,9 +16,7 @@ cases:
 It then:
   1. writes each authored problem as a **Tier-1** ``apollo_concept_problems`` row
      (``tier=1`` EXPLICIT — the §8B safety trap: the ORM default is 2/teachable);
-  2. runs the profile-neutral DETECTION PROBE over the whole set and PERSISTS the
-     resulting ``profile_kind`` / confidence / evidence onto ``apollo_subjects``;
-  3. **commits independently** of the downstream find/generate/promote stages.
+  2. **commits independently** of the downstream find/generate/promote stages.
 
 The independent commit is the load-bearing fix for the write-then-rollback hazard
 (design spec §1/§5/§8): the legacy orchestrator committed ONCE at run end, so an
@@ -50,7 +48,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.persistence.models import ConceptProblem
-from apollo.provisioning.subject_profile import ProfileDetection, detect_profile, persist_profile
 from apollo.schemas.problem import Difficulty
 
 _LOG = logging.getLogger(__name__)
@@ -274,7 +271,6 @@ class IngestResult:
     n_written: int
     n_dropped: int
     completeness_counts: dict[str, int]
-    profile: ProfileDetection
 
 
 async def ingest_authored_problems(
@@ -287,26 +283,25 @@ async def ingest_authored_problems(
     default_concept_slug: str = "provisional.inventory",
     commit: bool = True,
 ) -> IngestResult:
-    """Stage-1 entry for subject-fluid Apollo: load -> classify -> Tier-1 write ->
-    detect+persist profile -> COMMIT INDEPENDENTLY.
+    """Stage-1 entry for subject-agnostic Apollo: load -> classify -> Tier-1 write
+    -> COMMIT INDEPENDENTLY.
 
     The independent commit (``commit=True``, the default) is the write-then-rollback
-    fix: the ingested inventory AND the detected subject profile are durable the
-    moment ingest returns, so a later downstream failure can never roll them back.
-    Pass ``commit=False`` to compose ingest inside a caller-owned transaction
-    (e.g. a test that asserts pre-commit state)."""
+    fix: the ingested inventory is durable the moment ingest returns, so a later
+    downstream failure can never roll it back. Pass ``commit=False`` to compose
+    ingest inside a caller-owned transaction (e.g. a test that asserts pre-commit
+    state). ``subject_id`` is retained for course-scoping / logging; gate
+    applicability is now content-derived at promote time, so no subject profile is
+    detected or persisted here."""
     problems, dropped = load_authored_problems(records, default_concept_slug=default_concept_slug)
 
     n_written = await write_authored_tier1_problems(
         db, problems, concept_id=concept_id, search_space_id=search_space_id
     )
 
-    detection = detect_profile([p.probe_view() for p in problems])
-    await persist_profile(db, subject_id, detection)
-
     if commit:
-        # INDEPENDENT commit — the durable ingest output (inventory + profile)
-        # persists regardless of the downstream find/generate/promote stages.
+        # INDEPENDENT commit — the durable ingest output (inventory) persists
+        # regardless of the downstream find/generate/promote stages.
         await db.commit()
 
     completeness_counts: dict[str, int] = {"worked": 0, "answer_only": 0, "none": 0}
@@ -323,8 +318,6 @@ async def ingest_authored_problems(
             "n_written": n_written,
             "n_dropped": dropped,
             "completeness_counts": completeness_counts,
-            "profile_kind": detection.kind,
-            "profile_confidence": detection.confidence,
         },
     )
 
@@ -333,5 +326,4 @@ async def ingest_authored_problems(
         n_written=n_written,
         n_dropped=dropped,
         completeness_counts=completeness_counts,
-        profile=detection,
     )

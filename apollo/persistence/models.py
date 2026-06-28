@@ -132,24 +132,6 @@ class Subject(Base):
         nullable=False,
         index=True,
     )
-    # Subject-fluid provisioning (migration 031). The auto-detected, persisted
-    # subject profile that drives which promotion-lint gates / node vocab / target
-    # contract / validator apply. NOT NULL with a server_default of
-    # 'quantitative_symbolic' so every existing (fluid-mechanics) subject keeps
-    # today's all-8-gates behavior unchanged. profile_confidence/profile_evidence
-    # are the probe's audit trail (NULL until a detection runs). The valid set of
-    # kinds lives in apollo.provisioning.subject_profile (no DB CHECK — the repo
-    # convention keeps enumerations in the Python access layer).
-    profile_kind = Column(
-        Text, nullable=False, server_default=text("'quantitative_symbolic'"),
-        default="quantitative_symbolic",
-    )
-    profile_confidence = Column(REAL, nullable=True)
-    # Dialect-neutral server_default: a bare '{}' is a valid jsonb default on
-    # Postgres AND a valid text default on SQLite (the unit suite create_all's
-    # Subject.__table__ on in-memory SQLite). The Postgres migration 031 uses the
-    # explicit '{}'::jsonb cast; create_all uses this one.
-    profile_evidence = Column(_JSONType, nullable=False, server_default=text("'{}'"), default=dict)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 

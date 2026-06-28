@@ -74,12 +74,6 @@ from apollo.provisioning.solution import (
     find_or_generate,
     solution_hash,
 )
-from apollo.provisioning.subject_profile import (
-    SubjectProfile,
-    detect_profile,
-    get_profile,
-    resolve_profile,
-)
 from apollo.provisioning.tag_mint import (
     ApprovedPair,
     MintPlan,
@@ -144,12 +138,7 @@ __all__ = [
     # WU-3B2g — orchestrator (orchestrator.py)
     "run_provisioning",
     "ProvisioningOutcome",
-    # Subject-fluid Apollo — subject profile (subject_profile.py)
-    "SubjectProfile",
-    "get_profile",
-    "detect_profile",
-    "resolve_profile",
-    # Subject-fluid Apollo — authored-problem ingest (ingest.py)
+    # Subject-agnostic Apollo — authored-problem ingest (ingest.py)
     "AuthoredProblem",
     "IngestResult",
     "ingest_authored_problems",

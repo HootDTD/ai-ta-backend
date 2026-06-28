@@ -63,14 +63,14 @@ from apollo.solver.sympy_exec import parse_zero_form
 _LINT_ATTEMPT_ID = 0
 
 # The full gate universe (1..8). The DEFAULT ``active_gates`` for
-# ``run_promotion_lint`` — passing it (or omitting it) reproduces the original
-# all-8-gates behavior EXACTLY, so every pre-profile caller and test is unchanged.
-# A subject profile passes a SUBSET (e.g. {1,2,3,8} for an argument graph) to turn
-# the symbolic gates 4/5 OFF; gate 1 is the structural foundation and ALWAYS runs
-# (it builds the Problem + KGGraph the later gates reuse), so it is not gated here.
-# NOTE: this module declares its own constant rather than importing it from
-# ``subject_profile`` — the lint stays ORM-free / import-light (the spec's
-# pure / DB-free / LLM-free contract).
+# ``run_promotion_lint`` — passing it (or omitting it) reproduces the all-8-gates
+# behavior EXACTLY. The CALLER (``promote``) computes a CONTENT-DERIVED subset via
+# ``content_active_gates`` (structural core {1,2,3,5,8} always; the symbolic rigor
+# gates {4,6,7} only when a parseable equation is present); gate 1 is the structural
+# foundation and ALWAYS runs (it builds the Problem + KGGraph the later gates reuse),
+# so it is not gated here. This module owns the gate vocabulary and stays ORM-free /
+# pure / DB-free / LLM-free — applicability is decided by content, never a stored
+# subject profile.
 ALL_PROMOTION_GATES: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8})
 
 
