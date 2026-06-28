@@ -175,7 +175,6 @@ async def test_polisci_authored_problem_promotes_under_qualitative(db_session, m
         commit=False,
     )
 
-
     authored = load_authored_problems([_POLISCI_RECORD], default_concept_slug="prov")[0][0]
     result = await provision_authored_problem(
         db_session,
@@ -495,7 +494,6 @@ async def test_fluid_authored_problem_promotes_under_quantitative(db_session, mo
         search_space_id=space,
         commit=False,
     )
-
 
     authored = load_authored_problems([fluid_record], default_concept_slug="prov")[0][0]
     result = await provision_authored_problem(
