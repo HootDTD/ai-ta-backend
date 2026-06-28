@@ -27,9 +27,20 @@ from apollo.provisioning.cost_constants import (
 )
 from apollo.provisioning.dedup import DedupVerdict, resolve_candidate
 from apollo.provisioning.enqueue import enqueue_provisioning_job
-from apollo.provisioning.orchestrator import ProvisioningOutcome, run_provisioning
-from apollo.provisioning.promote import PromoteResult, promote
+from apollo.provisioning.ingest import (
+    AuthoredProblem,
+    IngestResult,
+    ingest_authored_problems,
+    load_authored_problems,
+    write_authored_tier1_problems,
+)
 from apollo.provisioning.metered_chat import CostBudgetExceeded, MeteredChat
+from apollo.provisioning.orchestrator import (
+    AuthoredProvisionResult,
+    ProvisioningOutcome,
+    provision_authored_problem,
+    run_provisioning,
+)
 from apollo.provisioning.pairing_gate import (
     PairingVerdict,
     Rejection,
@@ -37,6 +48,7 @@ from apollo.provisioning.pairing_gate import (
     validate_pair,
 )
 from apollo.provisioning.problem_hash import problem_dup_hash
+from apollo.provisioning.promote import PromoteResult, promote
 from apollo.provisioning.promotion_lint import PromotionResult, run_promotion_lint
 from apollo.provisioning.queue import (
     ClaimedJob,
@@ -48,6 +60,7 @@ from apollo.provisioning.queue import (
 from apollo.provisioning.scrape import (
     CandidateQuestion,
     ScrapeResult,
+    scrape_document,
     scrape_questions,
     write_tier1_problems,
 )
@@ -56,6 +69,8 @@ from apollo.provisioning.solution import (
     ReferenceSolutionDraft,
     SolutionDraftError,
     build_approved_pair,
+    build_authored_approved_pair,
+    construct_authored_reference,
     find_or_generate,
     solution_hash,
 )
@@ -75,6 +90,7 @@ __all__ = [
     # WU-3B2d — scrape (stage 1) public surface
     "CandidateQuestion",
     "ScrapeResult",
+    "scrape_document",
     "scrape_questions",
     "write_tier1_problems",
     # WU-3B2d — tag/mint (stage 4) public surface
@@ -89,6 +105,12 @@ __all__ = [
     "find_or_generate",
     "solution_hash",
     "build_approved_pair",
+    # Subject-fluid Apollo — authored construction (solution.py)
+    "construct_authored_reference",
+    "build_authored_approved_pair",
+    # Subject-fluid Apollo — authored per-candidate pipeline (orchestrator.py)
+    "provision_authored_problem",
+    "AuthoredProvisionResult",
     # WU-3B2e — pairing/correctness gate (stage 3) public surface
     "PairingVerdict",
     "Rejection",
@@ -116,4 +138,10 @@ __all__ = [
     # WU-3B2g — orchestrator (orchestrator.py)
     "run_provisioning",
     "ProvisioningOutcome",
+    # Subject-agnostic Apollo — authored-problem ingest (ingest.py)
+    "AuthoredProblem",
+    "IngestResult",
+    "ingest_authored_problems",
+    "load_authored_problems",
+    "write_authored_tier1_problems",
 ]

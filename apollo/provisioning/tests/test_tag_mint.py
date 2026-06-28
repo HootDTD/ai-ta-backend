@@ -529,6 +529,72 @@ async def test_tag_and_mint_prereqs_inserted(db_session):
     assert len(edges) == 1
 
 
+async def test_tag_and_mint_prereqs_accept_bare_ids(db_session):
+    """REGRESSION (BLOCKER): the LLM tag prompt never sees the canonical-key
+    prefix scheme, so it drafts prereqs by BARE reference-node id (solve_p2 /
+    bernoulli), not the prefixed canonical_key (proc.solve_p2 / eq.bernoulli).
+    tag_and_mint must resolve the bare ids to the minted entities and insert the
+    edge. DISCRIMINATING: reverting the bare-id alias REDs with TagMintError
+    ('prereq draft references an unminted entity key')."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-bareid")
+    pair = _approved_pair(search_space_id=ss_id)
+    tag = _tag_payload(prereqs=[["solve_p2", "bernoulli"]])  # BARE ids
+    plan = await tag_and_mint(
+        db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct
+    )
+    from_id = plan.minted_entity_ids["proc.solve_p2"]
+    to_id = plan.minted_entity_ids["eq.bernoulli"]
+    edges = (
+        (
+            await db_session.execute(
+                select(EntityPrereq)
+                .where(EntityPrereq.from_entity_id == from_id)
+                .where(EntityPrereq.to_entity_id == to_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(edges) == 1
+
+
+async def test_tag_and_mint_links_opposes_bare_id(db_session):
+    """REGRESSION (H1): link_opposes shares the BLOCKER's bare/prefixed key bug.
+    A misconception whose opposes names a reference node by BARE id (bernoulli)
+    must link to the minted entity (eq.bernoulli), not raise. DISCRIMINATING:
+    reverting the bare-id alias REDs with TagMintError ('misconception opposes an
+    unknown entity key')."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-bareopp")
+    misc = [
+        {
+            "key": "misc.pressure_follows_speed",
+            "display_name": "Pressure follows speed",
+            "description": "thinks higher speed means higher pressure",
+            "opposes": "bernoulli",  # BARE id (not eq.bernoulli)
+            "trigger_phrases": ["pressure goes up with speed"],
+        }
+    ]
+    pair = _approved_pair(search_space_id=ss_id, misconceptions=misc)
+    plan = await tag_and_mint(
+        db_session, pair, chat_fn=_chat_returning(_tag_payload()), embed_fn=_embed_distinct
+    )
+    rows = (
+        (
+            await db_session.execute(
+                select(KGEntity)
+                .where(KGEntity.concept_id == plan.concept_id)
+                .where(KGEntity.kind == "misconception")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    payload = rows[0].payload
+    assert payload["opposes_entity_key"] == "bernoulli"  # raw draft key preserved
+    assert payload["opposes_entity_id"] == plan.minted_entity_ids["eq.bernoulli"]
+
+
 async def test_tag_and_mint_idempotent(db_session):
     """Running the same ApprovedPair twice inserts no new entities/prereqs and
     unions no new symbols. DISCRIMINATING: a dropped (concept_id, canonical_key)

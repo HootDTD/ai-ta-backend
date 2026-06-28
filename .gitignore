@@ -35,5 +35,13 @@ skills-lock.json
 # Feller workflow task artifacts (transient scratchpads / verification reports)
 .feller/
 
+# Apollo local-run helpers + transient artifacts (machine-specific paths; not for commit)
+apollo_run_env.sh
+apollo_run_launch.py
+bundle.json
+parsed_task.json
+auth.users
+RUNBOOK.md
+
 # SDD / Superpowers scratch artifacts (transient scratchpads)
 .superpowers/

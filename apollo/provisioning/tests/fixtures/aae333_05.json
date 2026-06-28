@@ -1,0 +1,49 @@
+{
+  "id": "aae333_234",
+  "concept_id": "transition_location",
+  "difficulty": "standard",
+  "given_values": {
+    "U": 0.5,
+    "Re": 500000.0,
+    "nu": 1.12e-06
+  },
+  "problem_text": "Water (nu=1.12e-6 m^2/s) flows past a flat plate at U=0.5 m/s. Determine the location downstream where the boundary layer becomes turbulent (Re_cr=500000).",
+  "target_unknown": "location downstream",
+  "declared_paths": [
+    [
+      "recrit",
+      "p1"
+    ]
+  ],
+  "reference_solution": [
+    {
+      "id": "recrit",
+      "step": 1,
+      "entry_type": "equation",
+      "entity_key": "eq.recrit",
+      "content": {
+        "label": "transition Reynolds number",
+        "symbolic": "Re - U*xt/nu",
+        "variables": []
+      },
+      "depends_on": []
+    },
+    {
+      "id": "p1",
+      "step": 2,
+      "entry_type": "procedure_step",
+      "entity_key": "proc.p1",
+      "content": {
+        "order": 1,
+        "action": "set Re=Recrit and solve for xt",
+        "purpose": "set Re=Recrit and solve for xt",
+        "uses_equations": [
+          "recrit"
+        ]
+      },
+      "depends_on": [
+        "recrit"
+      ]
+    }
+  ]
+}

@@ -45,7 +45,7 @@ from apollo.persistence.learner_model_seed import (
     annotate_reference_solution,
 )
 from apollo.persistence.models import Concept, ConceptProblem
-from apollo.provisioning.promotion_lint import run_promotion_lint
+from apollo.provisioning.promotion_lint import content_active_gates, run_promotion_lint
 from apollo.provisioning.tag_mint import MintPlan
 
 __all__ = ["promote", "PromoteResult"]
@@ -102,7 +102,28 @@ async def promote(
     failed_gate, diagnostic)`` on a lint failure (the orchestrator writes the
     rejection row; the row stays Tier-1). Raises ``CanonProjectionError`` when the
     ``:Canon`` projection fails (the orchestrator maps it to a failed run)."""
-    annotated = _annotate(problem, mint_plan)
+    try:
+        annotated = _annotate(problem, mint_plan)
+    except (KeyError, TypeError) as exc:
+        # _annotate runs BEFORE run_promotion_lint's gate-1 schema validation, so
+        # a malformed problem (a step missing id/entry_type, or an entry_type
+        # outside the frozen mint map) would KeyError here and surface to the
+        # orchestrator as an unexpected-exception WHOLE-DOCUMENT abort. Convert it
+        # to the clean gate-1 rejection the lint produces for the cases that reach
+        # it — one bad candidate must not sink the document.
+        _LOG.info(
+            "provisioning_promote_rejected",
+            extra={
+                "event": "provisioning_promote_rejected",
+                "concept_problem_id": concept_problem_id,
+                "failed_gate": 1,
+            },
+        )
+        return PromoteResult(
+            promoted=False,
+            failed_gate=1,
+            diagnostic=f"gate 1: malformed problem rejected before annotation: {exc}",
+        )
 
     # Read the concept's AUTHORED symbol set (gate-4 non-vacuity). The shape is
     # {"symbols": [...], ...} (author_concept_symbols, 3B2d); a vacuous set makes
@@ -113,11 +134,20 @@ async def promote(
     canonical_symbols = set(dict(concept.canonical_symbols or {}).get("symbols") or [])
     normalization_map = dict(concept.normalization_map or {})
 
+    # Subject-AGNOSTIC Apollo (spec §3): gate applicability is CONTENT-DERIVED, not
+    # read from a stored subject profile. The structural core {1,2,3,5,8} always
+    # runs; the symbolic rigor gates {4,6,7} self-activate ONLY when the problem
+    # carries a parseable equation — so a rigor gate can never block a subject it
+    # does not apply to. No DB read, no LLM in this control path; the lint stays
+    # pure (the active set is computed here and passed in).
+    active_gates = content_active_gates(annotated)
+
     result = run_promotion_lint(
         annotated,
         canonical_symbols=canonical_symbols,
         normalization_map=normalization_map,
         existing_problem_hashes=set(existing_problem_hashes),
+        active_gates=active_gates,
     )
     if not result.ok:
         _LOG.info(
@@ -148,7 +178,21 @@ async def promote(
     # entity_key per step + declared_paths. The Tier-1 row's existing keys (its
     # content-derived ``id``) are preserved where the annotated dict does not set
     # them. Immutable assign (a NEW dict — never an in-place mutate).
-    new_payload = {**(row.payload or {}), **annotated}
+    #
+    # Provenance stamp (spec §5 honesty handle): "mechanically_verified" iff a
+    # mechanical (symbolic) oracle was APPLICABLE and passed — i.e. the symbolic
+    # rigor gates {4,6,7} were in the content-derived active set (we only reach this
+    # PASS branch when every active gate passed). Else "faithfulness_only": the
+    # problem rode the structural core + the LLM faithfulness judge with no
+    # mechanical oracle. Distinct from ``solution_source`` (where the solution came
+    # from); this is HOW HARD it was checked — a future higher human-review bar for
+    # faithfulness-only content (intent decision #4).
+    mechanically_verified = bool({4, 6, 7} & set(active_gates))
+    annotated_with_stamp = {
+        **annotated,
+        "verification": "mechanically_verified" if mechanically_verified else "faithfulness_only",
+    }
+    new_payload = {**(row.payload or {}), **annotated_with_stamp}
     row.payload = new_payload  # type: ignore[assignment]
     # RE-HOME the row from the provisional-inventory concept (scrape.py's seam home)
     # onto the REAL tagged concept (``tag_and_mint`` resolved). The student selector

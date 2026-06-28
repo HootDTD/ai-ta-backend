@@ -30,6 +30,22 @@ PER_DOCUMENT_TOKEN_CEILING: int = int(os.getenv("APOLLO_PROVISION_TOKEN_CEILING"
 # by ``queue.fail_job`` (no further claim possible).
 MAX_ATTEMPTS: int = int(os.getenv("APOLLO_PROVISION_MAX_ATTEMPTS", "3"))
 
+# Phase-2 structure-aware scrape bounds (env-overridable, pinned by tests).
+# MAX_SECTIONS caps sections scraped per document (covers calculus's 60 sections
+# with headroom; a per-document bound, not a global one). MIN_CANDIDATES is the
+# "too thin" threshold below which the exhaustive fallback widens past the
+# problem-likely sections.
+APOLLO_SCRAPE_MAX_SECTIONS: int = int(os.getenv("APOLLO_SCRAPE_MAX_SECTIONS", "120"))
+APOLLO_SCRAPE_MIN_CANDIDATES: int = int(os.getenv("APOLLO_SCRAPE_MIN_CANDIDATES", "3"))
+
+
+def structured_scrape_enabled() -> bool:
+    """Read per-call so a flag flip needs no restart. Default ON *within* the
+    already-OFF auto-provisioning subsystem; set ``APOLLO_STRUCTURED_SCRAPE=0`` to
+    revert stage 1 to the legacy per-chunk path."""
+    return os.getenv("APOLLO_STRUCTURED_SCRAPE", "1").lower() in ("1", "true", "yes")
+
+
 # A million tokens — the denominator for the per-1M price table.
 _TOKENS_PER_PRICE_UNIT: Decimal = Decimal("1000000")
 

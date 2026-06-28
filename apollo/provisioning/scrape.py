@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -41,13 +42,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.persistence.models import Concept, ConceptProblem, Subject
+from apollo.provisioning.section_grouping import group_into_sections
+from apollo.provisioning.section_triage import triage_sections
 from apollo.schemas.problem import Difficulty
+
+_LOG = logging.getLogger(__name__)
 
 __all__ = [
     "CandidateQuestion",
     "ScrapeResult",
     "chunk_content_hash",
+    "scrape_document",
     "scrape_questions",
+    "scrape_section",
     "write_tier1_problems",
 ]
 
@@ -166,6 +173,136 @@ async def scrape_questions(
             scraped_count += 1
             candidates.extend(chunk_candidates)
 
+    return ScrapeResult(
+        candidates=tuple(candidates),
+        scraped_count=scraped_count,
+        parse_failures=parse_failures,
+    )
+
+
+def _coerce_section_candidate(
+    raw: Any, *, section, concept_hint: str
+) -> CandidateQuestion | None:
+    """Build a CandidateQuestion from one LLM record scraped from a whole SECTION.
+    Provenance (document_id/page) comes from the SECTION; concept_slug falls back to
+    the triage hint then the provisional concept. ``chunk_content_hash`` is a
+    placeholder here — ``scrape_section`` re-stamps it with the section-scoped
+    ``<section_hash>.<ordinal>`` key after deterministic ordering. Returns None
+    (fail-soft) on any validation error."""
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return CandidateQuestion(
+            problem_text=raw.get("problem_text", ""),
+            given_values=raw.get("given_values", {}),
+            target_unknown=raw.get("target_unknown", ""),
+            difficulty=raw.get("difficulty", ""),
+            document_id=int(section.document_id),
+            page=section.page_start,
+            chunk_content_hash="0",  # placeholder; re-stamped in scrape_section
+            concept_slug=(raw.get("concept_slug") or concept_hint or PROVISIONAL_CONCEPT_SLUG),
+        )
+    except (ValidationError, ValueError, TypeError):
+        return None
+
+
+def scrape_section(
+    section, *, concept_hint: str, chat_fn: Callable[..., str]
+) -> tuple[list[CandidateQuestion], int]:
+    """Scrape one whole section via a single ``chat_fn`` pass. Returns
+    ``(candidates, parse_failures)``. Fail-soft: malformed JSON / a non-array / an
+    invalid candidate drops that record and increments ``parse_failures``. Each
+    surviving candidate's ``chunk_content_hash`` is stamped
+    ``'<section_hash>.<ordinal>'`` with the ordinal assigned over candidates sorted
+    by the content hash of their normalized ``problem_text`` (so a re-run yields the
+    SAME key↔problem mapping — re-index/replay idempotent)."""
+    raw = chat_fn(section.text)
+    try:
+        records = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return [], 1
+    if not isinstance(records, list):
+        return [], 1
+
+    built: list[CandidateQuestion] = []
+    failures = 0
+    for record in records:
+        cand = _coerce_section_candidate(record, section=section, concept_hint=concept_hint)
+        if cand is None:
+            failures += 1
+            continue
+        built.append(cand)
+
+    built.sort(key=lambda c: chunk_content_hash(c.problem_text))
+    finalized = [
+        c.model_copy(update={"chunk_content_hash": f"{section.source_content_hash}.{i}"})
+        for i, c in enumerate(built)
+    ]
+    return finalized, failures
+
+
+async def scrape_document(
+    chunk_rows: Sequence,
+    *,
+    chat_fn: Callable[..., str],
+    triage_chat_fn: Callable[..., str],
+    max_sections: int,
+    min_candidates: int,
+    structured: bool = True,
+) -> ScrapeResult:
+    """Structure-aware stage-1 scrape. Reconstructs sections, triages them once, then
+    scrapes problem-likely sections first; a NOT-likely section is scraped only while
+    candidates remain under ``min_candidates`` (the bounded exhaustive fallback), and
+    no more than ``max_sections`` sections are scraped per document.
+
+    When ``structured`` is False, delegates to the legacy per-chunk
+    ``scrape_questions`` (the ``APOLLO_STRUCTURED_SCRAPE`` revert path)."""
+    if not structured:
+        return await scrape_questions(chunk_rows, chat_fn=chat_fn)
+
+    sections = group_into_sections(chunk_rows)
+    if not sections:
+        return ScrapeResult(candidates=(), scraped_count=0, parse_failures=0)
+
+    verdicts = triage_sections(sections, chat_fn=triage_chat_fn)
+    # problem-likely first, then by priority desc, then original order (stable).
+    order = sorted(
+        range(len(verdicts)),
+        key=lambda i: (not verdicts[i].is_problem_likely, -verdicts[i].priority, i),
+    )
+
+    candidates: list[CandidateQuestion] = []
+    scraped_count = 0
+    parse_failures = 0
+    scraped_sections = 0
+
+    for i in order:
+        if scraped_sections >= max_sections:
+            break
+        verdict = verdicts[i]
+        # Fallback gate: once the problem-likely sections are exhausted, only keep
+        # widening into NOT-likely sections while we are still below min_candidates.
+        if not verdict.is_problem_likely and len(candidates) >= min_candidates:
+            break
+        section_cands, failures = scrape_section(
+            verdict.section, concept_hint=verdict.concept_slug, chat_fn=chat_fn
+        )
+        scraped_sections += 1
+        parse_failures += failures
+        if section_cands:
+            scraped_count += 1
+            candidates.extend(section_cands)
+
+    _LOG.info(
+        "provisioning_scrape_document",
+        extra={
+            "event": "provisioning_scrape_document",
+            "sections_total": len(sections),
+            "sections_scraped": scraped_sections,
+            "candidates": len(candidates),
+            "parse_failures": parse_failures,
+        },
+    )
     return ScrapeResult(
         candidates=tuple(candidates),
         scraped_count=scraped_count,
