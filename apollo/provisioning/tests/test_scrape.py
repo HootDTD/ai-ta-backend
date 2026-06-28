@@ -29,8 +29,8 @@ from apollo.persistence.models import Concept, ConceptProblem, Subject
 from apollo.provisioning.scrape import (
     CandidateQuestion,
     ScrapeResult,
-    chunk_content_hash,
     _normalize,
+    chunk_content_hash,
     resolve_or_create_provisional_concept,
     scrape_document,
     scrape_questions,

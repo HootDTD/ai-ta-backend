@@ -1,9 +1,6 @@
 """V3 reference-side validator tests (checklist item 7)."""
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 from pydantic import ValidationError
 

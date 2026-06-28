@@ -16,7 +16,7 @@ V3 changes:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -29,7 +29,6 @@ from apollo.ontology import (
     build_node,
 )
 
-
 EntryType = Literal[
     "equation", "definition", "condition", "simplification",
     "variable_mapping", "procedure_step",
@@ -41,8 +40,8 @@ class ReferenceStep(BaseModel):
     step: int = Field(ge=1)
     entry_type: EntryType
     id: str = Field(min_length=1)
-    content: Dict[str, Any]
-    depends_on: List[str] = Field(default_factory=list)
+    content: dict[str, Any]
+    depends_on: list[str] = Field(default_factory=list)
 
 
 class Problem(BaseModel):
@@ -58,16 +57,16 @@ class Problem(BaseModel):
     # givens) and carry a PROSE target_unknown or none at all; gates 4/5 are OFF
     # under that profile so the symbol contract is not imposed. Defaults keep every
     # existing fluid problem byte-identical (they always pass both explicitly).
-    given_values: Dict[str, float] = Field(default_factory=dict)
+    given_values: dict[str, float] = Field(default_factory=dict)
     target_unknown: str = Field(default="")
-    reference_solution: List[ReferenceStep] = Field(min_length=1)
+    reference_solution: list[ReferenceStep] = Field(min_length=1)
 
     # ------------------------------------------------------------------ #
     # Cross-reference validators (checklist item 7)                      #
     # ------------------------------------------------------------------ #
 
     @model_validator(mode="after")
-    def _resolve_references(self) -> "Problem":
+    def _resolve_references(self) -> Problem:
         ids = {step.id for step in self.reference_solution}
         eq_ids = {
             step.id for step in self.reference_solution
@@ -179,7 +178,7 @@ class Problem(BaseModel):
             (s for s in self.reference_solution if s.entry_type == "procedure_step"),
             key=lambda s: int(s.content["order"]),
         )
-        for prev, nxt in zip(proc, proc[1:]):
+        for prev, nxt in zip(proc, proc[1:], strict=False):
             edges.append(
                 Edge(
                     edge_type=EdgeType.PRECEDES,
@@ -195,7 +194,7 @@ class Problem(BaseModel):
         return KGGraph(nodes=nodes, edges=edges)
 
     @staticmethod
-    def _strip_legacy_proc_fields(step: ReferenceStep) -> Dict[str, Any]:
+    def _strip_legacy_proc_fields(step: ReferenceStep) -> dict[str, Any]:
         """Drop fields that have moved to edges (order, uses_equations).
 
         ProcedureStepContent only takes action+purpose. order is encoded as
