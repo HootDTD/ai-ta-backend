@@ -906,6 +906,47 @@ def test_content_active_gates_schema_broken_graph_keeps_all_gates():
 
 
 # --------------------------------------------------------------------------- #
+# WU-3B2b-SA Phase 3 — Direction-B named tiers (structural core + rigor layers)
+#
+# The lint's three tiers are NAMED in code: a STRUCTURAL CORE (always-on floor) +
+# a list of RIGOR LAYERS (each a pair (applies?, gate_numbers); v1 ships exactly
+# one — the symbolic layer) + the faithfulness oracle (pairing_gate, run by the
+# orchestrator). content_active_gates is DRIVEN by this surface, so the safety
+# property — a rigor layer's gates activate ONLY when it applies — is structurally
+# enforced (a layer physically cannot block content it does not apply to).
+# --------------------------------------------------------------------------- #
+
+
+def test_direction_b_named_tiers_exist_and_symbolic_layer_is_the_only_one():
+    from apollo.provisioning.promotion_lint import RIGOR_LAYERS, STRUCTURAL_CORE_GATES
+
+    assert STRUCTURAL_CORE_GATES == frozenset({1, 2, 3, 5, 8})
+    assert len(RIGOR_LAYERS) == 1  # v1 ships exactly the symbolic layer
+    applies, gates = RIGOR_LAYERS[0]
+    assert set(gates) == {4, 6, 7}
+    # the symbolic layer APPLIES iff parseable equations are present
+    assert applies(_bernoulli_graph()) is True
+    assert applies(_argument_graph()) is False
+
+
+def test_rigor_layer_gates_activate_only_when_applicable():
+    """The STRUCTURAL safety property: a layer that does not apply contributes NO
+    gates to the active set, so it can only ever ADD a rejection to content it
+    applies to. content_active_gates is the structural enforcement point."""
+    from apollo.provisioning.promotion_lint import (
+        RIGOR_LAYERS,
+        STRUCTURAL_CORE_GATES,
+        content_active_gates,
+    )
+
+    _applies, gates = RIGOR_LAYERS[0]
+    # equation-less graph: the symbolic layer does NOT apply -> only the core runs
+    assert content_active_gates(_argument_graph()) == STRUCTURAL_CORE_GATES
+    # symbolic graph: the layer applies -> its gates join the core
+    assert content_active_gates(_bernoulli_graph()) == STRUCTURAL_CORE_GATES | set(gates)
+
+
+# --------------------------------------------------------------------------- #
 # WU-3B2b-SA Phase 2 — graph-derived symbolic answer + gate 5 (Step 2.2, Option 2)
 #
 # The symbolic answer is DERIVED FROM THE GRAPH, not read from the prose

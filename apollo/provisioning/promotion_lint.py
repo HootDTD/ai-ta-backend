@@ -160,11 +160,15 @@ def _equation_free_symbols(step) -> set[str]:
 # --------------------------------------------------------------------------- #
 
 
-# The rigor gates whose validity theory is "a closed system of symbolic
-# equations": they SELF-ACTIVATE only when the graph carries >=1 parseable
-# equation step. Gate 5 is SPLIT (structural half always-on, symbolic half
-# self-activates INSIDE the gate), so it is NOT in this set — it lives in the
-# always-on structural core.
+# --- Direction B (spec §4/§6): the lint is THREE NAMED TIERS. ---------------- #
+# 1. STRUCTURAL CORE — always runs, pure, no subject assumptions: the structural
+#    gates {1,2,3,8} + the kind-agnostic terminal-sink property (the structural half
+#    of gate 5). Gate 5 is SPLIT (structural half always-on, symbolic half
+#    self-activates INSIDE the gate), so it lives here, NOT in the symbolic layer.
+STRUCTURAL_CORE_GATES: frozenset[int] = frozenset({1, 2, 3, 5, 8})
+
+# The rigor gates whose validity theory is "a closed system of symbolic equations":
+# they SELF-ACTIVATE only when the graph carries >=1 parseable equation step.
 _SYMBOLIC_GATES: frozenset[int] = frozenset({4, 6, 7})
 
 
@@ -183,17 +187,39 @@ def _has_parseable_equation(graph: dict) -> bool:
     return any(_equation_free_symbols(s) for s in _equation_steps(problem))
 
 
+def _symbolic_layer_applies(graph: dict) -> bool:
+    """The symbolic rigor layer applies iff the graph carries parseable equations
+    (spec §6: ``applies? = there are parseable equations``)."""
+    return _has_parseable_equation(graph)
+
+
+# 2. RIGOR LAYERS — additive mechanical oracles, each a pair
+#    ``(applies?(graph), gate_numbers)``. v1 ships EXACTLY ONE: the symbolic layer
+#    (today's gates 4/6/7 + the symbolic half of gate 5, which self-activates inside
+#    the gate). A layer's gates enter the active set ONLY when ``applies?`` is True,
+#    so a missing/inapplicable oracle NEVER blocks a subject — the safety property is
+#    structurally enforced (spec §4 the additive-oracle guarantee). The next
+#    mechanical oracle (units-checking, code-execution, ...) is a new layer here with
+#    no structural-core edit.
+# 3. FAITHFULNESS — the semantic oracle (``apollo/provisioning/pairing_gate.py``),
+#    run by the orchestrator; named here for the legible three-tier model but NOT
+#    invoked from this pure module (it is LLM-bearing).
+RIGOR_LAYERS: list[tuple] = [(_symbolic_layer_applies, _SYMBOLIC_GATES)]
+
+
 def content_active_gates(graph: dict) -> frozenset[int]:
     """The CONTENT-DERIVED active-gate set the caller (``promote``) passes to
-    ``run_promotion_lint``. The structural core {1,2,3,5,8} ALWAYS applies; the
-    symbolic rigor gates {4,6,7} apply ONLY when the graph carries a parseable
-    equation (spec §3/§4). This replaces the stored subject profile: a rigor gate
-    can only ever REJECT content it applies to — it physically cannot block a
-    subject it does not apply to."""
-    always = {1, 2, 3, 5, 8}
-    if _has_parseable_equation(graph):
-        return frozenset(always | set(_SYMBOLIC_GATES))
-    return frozenset(always)
+    ``run_promotion_lint``, DRIVEN by the Direction-B tier surface: the
+    ``STRUCTURAL_CORE_GATES`` always apply, and each rigor layer in ``RIGOR_LAYERS``
+    contributes its gates ONLY when its ``applies?`` predicate holds (the symbolic
+    layer self-activates on a parseable equation). This replaces the stored subject
+    profile: a rigor gate can only ever REJECT content it applies to — it physically
+    cannot block a subject it does not apply to."""
+    active = set(STRUCTURAL_CORE_GATES)
+    for applies, gates in RIGOR_LAYERS:
+        if applies(graph):
+            active |= set(gates)
+    return frozenset(active)
 
 
 # --------------------------------------------------------------------------- #
