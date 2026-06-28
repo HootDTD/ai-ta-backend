@@ -6,19 +6,19 @@
     "L": 6.0,
     "U": 0.5,
     "W": 4.0,
-    "nu": 1.12e-06
+    "nu": 1.12e-06,
+    "rho": 1000.0,
+    "x": 6.0
   },
-  "problem_text": "A smooth flat plate (L=6 m, W=4 m) in water (nu=1.12e-6 m^2/s), U=0.5 m/s. Determine the boundary layer thickness and wall shear stress.",
+  "problem_text": "A smooth flat plate (L=6 m, W=4 m) in water (nu=1.12e-6 m^2/s, rho=1000 kg/m^3), U=0.5 m/s. Determine the boundary layer thickness and wall shear stress at the trailing edge (x=L).",
   "target_unknown": "boundary layer thickness and wall shear stress",
   "declared_paths": [
     [
       "loc",
       "reynolds",
-      "blasius",
       "wallshear",
       "p1",
-      "p2",
-      "p3"
+      "p2"
     ]
   ],
   "reference_solution": [
@@ -46,22 +46,8 @@
       "depends_on": []
     },
     {
-      "id": "blasius",
-      "step": 3,
-      "entry_type": "equation",
-      "entity_key": "eq.blasius",
-      "content": {
-        "label": "Blasius thickness",
-        "symbolic": "delta - 5*x/sqrt(Re)",
-        "variables": []
-      },
-      "depends_on": [
-        "reynolds"
-      ]
-    },
-    {
       "id": "wallshear",
-      "step": 4,
+      "step": 3,
       "entry_type": "equation",
       "entity_key": "eq.wallshear",
       "content": {
@@ -75,13 +61,13 @@
     },
     {
       "id": "p1",
-      "step": 5,
+      "step": 4,
       "entry_type": "procedure_step",
       "entity_key": "proc.p1",
       "content": {
         "order": 1,
-        "action": "compute Re=U*x/nu",
-        "purpose": "compute Re=U*x/nu",
+        "action": "compute Re=U*x/nu at the trailing edge",
+        "purpose": "compute Re=U*x/nu at the trailing edge",
         "uses_equations": [
           "reynolds"
         ]
@@ -92,29 +78,11 @@
     },
     {
       "id": "p2",
-      "step": 6,
+      "step": 5,
       "entry_type": "procedure_step",
       "entity_key": "proc.p2",
       "content": {
         "order": 2,
-        "action": "compute delta from Blasius",
-        "purpose": "compute delta from Blasius",
-        "uses_equations": [
-          "blasius"
-        ]
-      },
-      "depends_on": [
-        "blasius",
-        "p1"
-      ]
-    },
-    {
-      "id": "p3",
-      "step": 7,
-      "entry_type": "procedure_step",
-      "entity_key": "proc.p3",
-      "content": {
-        "order": 3,
         "action": "compute wall shear stress tau",
         "purpose": "compute wall shear stress tau",
         "uses_equations": [
@@ -123,7 +91,7 @@
       },
       "depends_on": [
         "wallshear",
-        "p2"
+        "p1"
       ]
     }
   ]

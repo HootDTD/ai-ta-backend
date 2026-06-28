@@ -498,18 +498,19 @@ def test_gate5_chain_helper_rejects_incomplete_coverage():
     assert "chain covers" in diag
 
 
-def test_gate5_chain_helper_rejects_terminal_with_no_equation():
-    """A single linear chain whose terminal step has empty uses_equations hits
-    the terminal-uses-no-equation branch."""
+def test_gate5_terminal_with_no_equation_passes_structural_half():
+    """INVERTED under Option 2: a single linear chain whose terminal step has empty
+    uses_equations now PASSES the structural half — the unique terminal sink is the
+    kind-agnostic target-reachability property, and there is no parseable terminal
+    equation to run the symbolic half on. (Old code hard-rejected at the
+    'terminal uses no equation' branch; that branch is gone.)"""
     from apollo.provisioning.promotion_lint import _gate_5
 
     graph = copy.deepcopy(_bernoulli_graph())
     _step(graph, "plan_solve_bernoulli_for_p2")["content"]["uses_equations"] = []
     problem = Problem.model_validate(graph)
     kg = problem.to_kg_graph(attempt_id=0)
-    diag = _gate_5(problem, kg)
-    assert diag is not None
-    assert "uses no equation" in diag
+    assert _gate_5(problem, kg) is None  # structural sink present; no symbolic half to run
 
 
 def test_gate6_skips_equation_without_symbolic():
@@ -659,13 +660,24 @@ def _argument_graph() -> dict:
     }
 
 
-def test_argument_graph_fails_gate4_under_quantitative_profile():
-    """Under the back-compat all-8-gates run the argument graph's PROSE target is a
-    foreign symbol (not canonical, not normalizable) -> gate 4 fires. This is the
-    fluid-specialization the qualitative profile must switch off."""
-    result = _lint(_argument_graph())  # default active_gates = all 8
-    assert result.ok is False
-    assert result.failed_gate == 4
+def test_argument_graph_promotes_under_content_derived_gates():
+    """Subject-agnostic (Option 2): a prose argument graph (no equations) PROMOTES.
+    ``content_active_gates`` drops the symbolic gates {4,6,7}, and the prose target
+    is no longer treated as a foreign symbol (gate 4's ``target_unknown`` add is
+    gone). Under the OLD subject-fluid code the prose target made gate 4 fire — the
+    bug a profile had to switch off; it is now fixed STRUCTURALLY, no profile
+    needed."""
+    from apollo.provisioning.promotion_lint import content_active_gates
+
+    g = _argument_graph()
+    result = run_promotion_lint(
+        g,
+        canonical_symbols=_canonical_symbols(),
+        normalization_map=_normalization_map(),
+        existing_problem_hashes=set(),
+        active_gates=content_active_gates(g),
+    )
+    assert result.ok is True, result.diagnostic
 
 
 def test_argument_graph_promotes_under_qualitative_active_gates():
@@ -781,14 +793,20 @@ def _old_lint(g: dict, canon: set, norm: dict) -> PromotionResult:
 
 
 def _new_lint(g: dict, canon: set, norm: dict) -> PromotionResult:
-    """The post-change pipeline. PHASE 1: identical to ``_old_lint`` — every anchor
-    problem carries equations, so content-derived applicability self-activates all
-    gates and the call is the all-8 default. PHASE 2 Step 2.1 swaps the default for
-    ``active_gates=content_active_gates(g)``; this differential then proves the
-    content-derivation does not move a single anchor verdict (the §5 back-compat
-    anchor, asymmetric-safety: a false-GREEN must never ship)."""
+    """The post-change pipeline: the caller computes ``content_active_gates(g)`` and
+    passes it as the active set (exactly what ``promote`` does in Step 2.5). Every
+    anchor problem carries equations, so content-derived applicability self-activates
+    all eight gates — this differential then proves the content-derivation does not
+    move a single anchor verdict (the §5 back-compat anchor; asymmetric safety: a
+    false-GREEN must never ship)."""
+    from apollo.provisioning.promotion_lint import content_active_gates
+
     return run_promotion_lint(
-        g, canonical_symbols=canon, normalization_map=norm, existing_problem_hashes=set()
+        g,
+        canonical_symbols=canon,
+        normalization_map=norm,
+        existing_problem_hashes=set(),
+        active_gates=content_active_gates(g),
     )
 
 
@@ -823,19 +841,260 @@ def _load_aae333() -> list[tuple[str, dict, set, dict, int]]:
     return out
 
 
-def test_aae333_currently_rejects_5x_gate5_1x_gate4():
-    """The 6 reconstructed AAE 333 fixtures reproduce the documented live reject
-    snapshot EXACTLY: 5 reject at gate 5 (prose target, covering table) + 1 at gate 4
-    (fresh concept, empty table). GREEN on current code = the fixtures reproduce the
-    live bug. Phase 2 Step 2.6 inverts this to assert all six PROMOTE."""
+def test_aae333_now_promotes_under_content_derived_gates():
+    """FORWARD PROOF (spec §1 fix): the 6 reconstructed AAE 333 fixtures that the
+    live E2E rejected 0/6 (5×gate5, 1×gate4 — see ``aae333_expected.json``) now ALL
+    PROMOTE under the subject-agnostic gates. The 5 covering-table cases pass via the
+    graph-derived symbolic answer (gate 5 symbolic half + gate 7 closure on a single
+    unknown); ``aae333_06`` (empty table) passes via internal symbol grounding
+    (table-less gate 4). The active set is content-derived, exactly as ``promote``
+    computes it."""
+    from apollo.provisioning.promotion_lint import content_active_gates
+
     rows = _load_aae333()
     assert len(rows) == 6
-    gates: list[int] = []
-    for name, g, canon, norm, exp in rows:
+    for name, g, canon, norm, _historical_gate in rows:
         r = run_promotion_lint(
-            g, canonical_symbols=canon, normalization_map=norm, existing_problem_hashes=set()
+            g,
+            canonical_symbols=canon,
+            normalization_map=norm,
+            existing_problem_hashes=set(),
+            active_gates=content_active_gates(g),
         )
-        assert r.ok is False, name
-        assert r.failed_gate == exp, (name, r.failed_gate, r.diagnostic)
-        gates.append(r.failed_gate)
-    assert sorted(gates) == [4, 5, 5, 5, 5, 5]  # the spec §1 live snapshot
+        assert r.ok is True, (name, r.failed_gate, r.diagnostic)
+
+
+# --------------------------------------------------------------------------- #
+# WU-3B2b-SA Phase 2 — content-derived applicability (Step 2.1)
+#
+# The active-gate set is no longer a stored subject profile: it is DERIVED from
+# the problem's own content. Structural gates {1,2,3,5,8} ALWAYS apply; the
+# symbolic rigor gates {4,6,7} self-activate ONLY when a parseable equation step
+# is present (spec §4 tier 2 "self-activating deterministic rigor"). Gate 5 is
+# SPLIT (structural half always-on, symbolic half self-activates inside the gate),
+# so it stays in the always-on set.
+# --------------------------------------------------------------------------- #
+
+
+def test_content_active_gates_equationless_graph_drops_symbolic():
+    """A prose argument graph (no parseable equations) -> only the structural
+    gates {1,2,3,5,8} apply; the symbolic rigor gates {4,6,7} are NOT in the
+    content-derived active set, so a rigor gate can never reject content it does
+    not apply to (spec §4 the additive-oracle safety property)."""
+    from apollo.provisioning.promotion_lint import content_active_gates
+
+    assert content_active_gates(_argument_graph()) == frozenset({1, 2, 3, 5, 8})
+
+
+def test_content_active_gates_symbolic_graph_keeps_all_eight():
+    """A symbolic graph (>=1 parseable equation) self-activates the symbolic rigor
+    gates {4,6,7}, so the content-derived active set is all eight — byte-identical
+    to today's default for the back-compat anchor."""
+    from apollo.provisioning.promotion_lint import content_active_gates
+
+    assert content_active_gates(_bernoulli_graph()) == frozenset({1, 2, 3, 4, 5, 6, 7, 8})
+
+
+def test_content_active_gates_schema_broken_graph_keeps_all_gates():
+    """A schema-broken graph (cannot even validate as a Problem) keeps ALL gates
+    active so gate 1 still fires on it — fail-closed, never fail-open."""
+    from apollo.provisioning.promotion_lint import content_active_gates
+
+    broken = copy.deepcopy(_bernoulli_graph())
+    broken["reference_solution"] = "not a list"  # ValidationError on model_validate
+    assert content_active_gates(broken) == frozenset({1, 2, 3, 4, 5, 6, 7, 8})
+
+
+# --------------------------------------------------------------------------- #
+# WU-3B2b-SA Phase 2 — graph-derived symbolic answer + gate 5 (Step 2.2, Option 2)
+#
+# The symbolic answer is DERIVED FROM THE GRAPH, not read from the prose
+# ``target_unknown`` (spec §4.1 "the node carrying the answer is what the chain
+# terminates in"). ``_derive_symbolic_answer`` = (all equation free symbols) -
+# givens - intermediates - cancelled, reusing gate 7's existing intermediate /
+# cancellation definitions. For a closed system it is size 0 or 1; the single
+# element is the answer. Gate 5's symbolic half checks the terminal equation
+# computes THAT graph-derived answer (kind-agnostic: a prose target no longer
+# blocks a symbolic system that does close to a single unknown).
+# --------------------------------------------------------------------------- #
+
+
+def test_derive_symbolic_answer_is_the_lone_unknown_for_bernoulli():
+    """The graph-derived answer for the seeded bernoulli system is exactly {P2} —
+    every other free symbol is a given (A1/A2/P1/v1/rho), an intermediate
+    (rho/v1/v2 coupling continuity<->bernoulli), or cancelled (g/h1/h2 via the
+    horizontal simplification). The lone remaining symbol IS the target."""
+    from apollo.provisioning.promotion_lint import _derive_symbolic_answer
+
+    problem = Problem.model_validate(_bernoulli_graph())
+    assert _derive_symbolic_answer(problem) == {"P2"}
+
+
+def test_derive_symbolic_answer_is_two_when_a_second_unknown_is_added():
+    """Adding an ungrounded canonical symbol Q to a non-terminal equation makes the
+    system under-determined: the graph-derived answer becomes {P2, Q} (size 2).
+    This is the signal gate 7 (Option 2) rejects on."""
+    from apollo.provisioning.promotion_lint import _derive_symbolic_answer
+
+    graph = copy.deepcopy(_bernoulli_graph())
+    _step(graph, "continuity")["content"]["symbolic"] = "rho*A1*v1 - rho*A2*v2 + Q"
+    problem = Problem.model_validate(graph)
+    assert _derive_symbolic_answer(problem) == {"P2", "Q"}
+
+
+def test_gate5_structural_half_passes_equationless_argument_graph():
+    """An equation-less argument graph has a unique terminal sink + full chain
+    coverage but NO equations: the structural half passes and the symbolic half is
+    SKIPPED (no parseable terminal equation), so gate 5 returns None. Under the old
+    code this rejected at the 'terminal uses no equation' branch."""
+    from apollo.provisioning.promotion_lint import _gate_5
+
+    problem = Problem.model_validate(_argument_graph())
+    kg = problem.to_kg_graph(attempt_id=0)
+    assert _gate_5(problem, kg) is None
+
+
+def test_gate5_symbolic_half_rejects_terminal_missing_the_graph_answer():
+    """A terminal step that references a parseable equation NOT containing the
+    single graph-derived answer (P2) fails the symbolic half — keyed off the
+    graph-derived answer, NOT the prose target_unknown. The diagnostic names the
+    answer it failed to compute."""
+    from apollo.provisioning.promotion_lint import _gate_5
+
+    graph = copy.deepcopy(_bernoulli_graph())
+    # Terminal now uses continuity (lacks P2) instead of bernoulli.
+    _step(graph, "plan_solve_bernoulli_for_p2")["content"]["uses_equations"] = ["continuity"]
+    problem = Problem.model_validate(graph)
+    kg = problem.to_kg_graph(attempt_id=0)
+    diag = _gate_5(problem, kg)
+    assert diag is not None
+    assert "answer" in diag and "P2" in diag
+
+
+# --------------------------------------------------------------------------- #
+# WU-3B2b-SA Phase 2 — internal symbol grounding (Step 2.3, Option 2)
+#
+# Gate 4 DROPS the explicit target_unknown add (the prose label is no longer a
+# symbol). When a canonical_symbols table EXISTS the seeded path is byte-identical
+# to today. When the concept is TABLE-LESS (a fresh auto-minted concept — the AAE
+# 333 gate-4 failure) a symbol is grounded against the problem's OWN closure:
+# givens U definition/variable_mapping symbols U coupling intermediates U cancelled
+# U {the graph-derived answer}. A foreign/unexplained symbol becomes an extra
+# free unknown, so it is caught by gate 7 (under-determination), never silently
+# promoted (asymmetric safety).
+# --------------------------------------------------------------------------- #
+
+
+def test_internal_grounded_symbols_covers_cancelled_and_the_answer():
+    """The table-less grounded closure includes the SIMPLIFICATION-cancelled
+    gravity terms (g/h1/h2) and the lone graph-derived answer (P2) — not just the
+    givens. Pinned directly so the closure does not silently shrink."""
+    from apollo.provisioning.promotion_lint import _internal_grounded_symbols
+
+    problem = Problem.model_validate(_bernoulli_graph())
+    grounded = _internal_grounded_symbols(problem)
+    assert {"g", "h1", "h2"} <= grounded  # cancelled by the horizontal simplification
+    assert "P2" in grounded  # the lone graph-derived answer
+
+
+def test_defined_symbols_reads_definition_and_variable_mapping_steps():
+    """``_defined_symbols`` harvests a variable_mapping / definition step's
+    ``symbol`` / ``term`` values and tokenizes its ``meaning`` / ``definition`` prose
+    (lenient superset). Pinned directly because the back-compat anchor carries no
+    such step, so this branch needs its own fixture."""
+    from apollo.provisioning.promotion_lint import _defined_symbols
+
+    graph = copy.deepcopy(_bernoulli_graph())
+    vm = _step(graph, "incompressibility")  # repurpose as a variable_mapping step
+    vm["entry_type"] = "variable_mapping"
+    vm["content"] = {"term": "bulk modulus", "symbol": "kappa", "meaning": "stiffness K"}
+    problem = Problem.model_validate(graph)
+    defined = _defined_symbols(problem)
+    assert "kappa" in defined  # content['symbol']
+    assert "bulk modulus" in defined  # content['term'] (whole value)
+    assert "K" in defined  # tokenized out of content['meaning']
+
+    # A ``definition`` step WITHOUT 'symbol'/'term' (only prose 'meaning') exercises
+    # the skip arm — tokens come solely from the prose.
+    arg_defined = _defined_symbols(Problem.model_validate(_argument_graph()))
+    assert "Sovereignty" in arg_defined  # tokenized out of def_federalism['meaning']
+
+
+def test_gate4_table_less_promotes_a_self_grounded_system():
+    """A fresh concept (EMPTY canonical_symbols) whose every symbol is given,
+    computed, cancelled, or the lone answer PASSES — internal grounding, no seeded
+    table needed. The old code rejected at gate 4 (every symbol foreign vs the
+    empty table); the bug that blocked auto-minted concepts is fixed."""
+    graph = copy.deepcopy(_bernoulli_graph())
+    r = run_promotion_lint(
+        graph, canonical_symbols=set(), normalization_map={}, existing_problem_hashes=set()
+    )
+    assert r.ok is True, r.diagnostic
+
+
+def test_gate4_seeded_table_path_is_byte_identical_to_today():
+    """When a table EXISTS the internal path must NOT run: a foreign symbol x still
+    rejects at gate 4 exactly as today (superset-safety — the 41 ride this)."""
+    graph = copy.deepcopy(_bernoulli_graph())
+    _step(graph, "continuity")["content"]["symbolic"] = "rho*A1*v1 - rho*A2*v2 + x"
+    r = run_promotion_lint(
+        graph,
+        canonical_symbols=_canonical_symbols(),
+        normalization_map=_normalization_map(),
+        existing_problem_hashes=set(),
+    )
+    assert r.failed_gate == 4
+
+
+def test_table_less_unexplained_symbol_is_rejected_as_underdetermined():
+    """A truly foreign symbol zzz in a table-less concept is given/defined/computed
+    by nothing -> it becomes a SECOND free unknown alongside the real answer, so the
+    system is under-determined and gate 7 rejects it. Never a false-GREEN."""
+    graph = copy.deepcopy(_bernoulli_graph())
+    _step(graph, "continuity")["content"]["symbolic"] = "rho*A1*v1 - rho*A2*v2 + zzz"
+    r = run_promotion_lint(
+        graph, canonical_symbols=set(), normalization_map={}, existing_problem_hashes=set()
+    )
+    assert r.ok is False
+    assert r.failed_gate == 7  # zzz + P2 = two free unknowns
+
+
+# --------------------------------------------------------------------------- #
+# WU-3B2b-SA Phase 2 — gate 7 under-determination (Step 2.4, Option 2)
+#
+# Gate 7 becomes: FAIL iff the graph-derived answer has MORE THAN ONE free
+# unknown (the system is under-determined). It keys off the GRAPH, not the prose
+# target_unknown — a closed symbolic system with a PROSE target (the live AAE 333
+# shape) passes; a system with two independent unknowns fails. Byte-identical to
+# the old paper-closure check on the anchor (there the lone remaining symbol IS
+# the target, so |answer| == 1 == "closed").
+# --------------------------------------------------------------------------- #
+
+
+def test_gate7_passes_single_answer_even_when_target_is_prose():
+    """Gate 7 keys off the GRAPH-derived answer, not target_unknown. A bernoulli
+    system closing to the single unknown P2 PASSES even when target_unknown is a
+    PROSE label — the live AAE 333 shape. Old code rejected it (P2 'unclosed'
+    because it was not the prose target)."""
+    graph = copy.deepcopy(_bernoulli_graph())
+    graph["target_unknown"] = "the downstream pressure"  # prose, not the symbol 'P2'
+    r = run_promotion_lint(
+        graph,
+        canonical_symbols=_canonical_symbols(),
+        normalization_map=_normalization_map(),
+        existing_problem_hashes=set(),
+    )
+    assert r.ok is True, r.diagnostic
+
+
+def test_gate7_rejects_two_independent_unknowns_via_derive():
+    """White-box: the Option-2 gate keys off ``_derive_symbolic_answer``. Two
+    independent free unknowns (P2 plus an ungrounded canonical Q) make it size 2,
+    so gate 7 fires."""
+    from apollo.provisioning.promotion_lint import _derive_symbolic_answer, _gate_7
+
+    graph = copy.deepcopy(_bernoulli_graph())
+    _step(graph, "continuity")["content"]["symbolic"] = "rho*A1*v1 - rho*A2*v2 + Q"
+    problem = Problem.model_validate(graph)
+    assert _derive_symbolic_answer(problem) == {"P2", "Q"}
+    assert _gate_7(problem) is not None

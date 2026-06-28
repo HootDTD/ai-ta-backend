@@ -142,6 +142,63 @@ def _bernoulli_problem() -> dict:
     }
 
 
+def _argument_problem() -> dict:
+    """A prose ARGUMENT problem (definition / condition / procedure_step; NO
+    equations, empty givens, PROSE target). NO entity_key / declared_paths —
+    ``promote`` annotates those. Mirrors test_promotion_lint._argument_graph."""
+    return {
+        "id": "polisci_federalism_disperses_power",
+        "concept_id": "federalism",
+        "difficulty": "standard",
+        "given_values": {},
+        "problem_text": (
+            "Argue whether a federal system strengthens or weakens democratic accountability."
+        ),
+        "target_unknown": "whether federalism strengthens accountability",
+        "reference_solution": [
+            {
+                "id": "def_federalism",
+                "step": 1,
+                "entry_type": "definition",
+                "content": {
+                    "concept": "federalism",
+                    "meaning": "Sovereignty divided between national and subnational units.",
+                },
+                "depends_on": [],
+            },
+            {
+                "id": "premise_dispersed_power",
+                "step": 2,
+                "entry_type": "condition",
+                "content": {"applies_when": "authority is constitutionally split across levels"},
+                "depends_on": ["def_federalism"],
+            },
+            {
+                "id": "step_veto_points",
+                "step": 3,
+                "entry_type": "procedure_step",
+                "content": {
+                    "order": 1,
+                    "action": "identify the multiple veto points federalism creates",
+                    "purpose": "establish that power is checked at several levels",
+                },
+                "depends_on": ["premise_dispersed_power"],
+            },
+            {
+                "id": "step_conclusion",
+                "step": 4,
+                "entry_type": "procedure_step",
+                "content": {
+                    "order": 2,
+                    "action": "weigh dispersed checks against blurred responsibility",
+                    "purpose": "reach a reasoned verdict on accountability",
+                },
+                "depends_on": ["step_veto_points"],
+            },
+        ],
+    }
+
+
 _AUTHORED_SYMBOLS = ["A", "P", "Q", "g", "h", "rho", "v"]
 _NORMALIZATION = {
     "pressure": "P",
@@ -297,12 +354,14 @@ async def test_promote_fail_returns_failed_gate_no_flip(db_session, monkeypatch)
 
 
 # --------------------------------------------------------------------------- #
-# T-PR3 — promote reads the concept's AUTHORED symbols (non-vacuous gate 4)
+# T-PR3 — a TABLE-LESS concept promotes via internal grounding (Option 2)
 # --------------------------------------------------------------------------- #
-async def test_promote_reads_concept_authored_symbols(db_session):
-    # With the concept's canonical_symbols EMPTIED, the same passing graph fails
-    # gate 4 (foreign symbol) — proves promote reads the authored set, not a
-    # vacuous one.
+async def test_promote_table_less_concept_promotes_via_internal_grounding(db_session):
+    """A fresh auto-minted concept (EMPTY canonical_symbols) no longer auto-fails
+    gate 4: the same self-grounded bernoulli PROMOTES via internal symbol grounding
+    (spec §4.2 fixes the fresh-concept bootstrap that rejected the AAE 333 case). The
+    symbolic rigor gates fire+pass on it, so it is stamped mechanically_verified. Old
+    code rejected it at gate 4 (every symbol foreign vs the empty table)."""
     space, concept_id, problem_id = await _seed_concept_with_problem(
         db_session, slug="pr3", canonical_symbols=[], normalization={}
     )
@@ -315,8 +374,53 @@ async def test_promote_reads_concept_authored_symbols(db_session):
         concept_problem_id=problem_id,
         existing_problem_hashes=set(),
     )
-    assert result.promoted is False
-    assert result.failed_gate == 4
+    assert result.promoted is True, result.diagnostic
+    row = await db_session.get(ConceptProblem, problem_id)
+    assert row.payload["verification"] == "mechanically_verified"
+
+
+# --------------------------------------------------------------------------- #
+# T-PR3b — content-derived active_gates + the "how it cleared" provenance stamp
+# --------------------------------------------------------------------------- #
+async def test_promote_argument_graph_promotes_with_faithfulness_only_stamp(db_session):
+    """A prose argument graph (no equations) PROMOTES with NO subject profile:
+    content-derived active_gates drop the symbolic gates, gate 5 rides its structural
+    half, and NO mechanical oracle fires -> the payload is stamped
+    ``faithfulness_only`` (rode structure + the LLM faithfulness judge only)."""
+    space, concept_id, problem_id = await _seed_concept_with_problem(
+        db_session, slug="argp", canonical_symbols=[], normalization={}
+    )
+    result = await promote(
+        db_session,
+        AsyncMock(),
+        problem=_argument_problem(),
+        mint_plan=_mint_plan(concept_id),
+        search_space_id=space,
+        concept_problem_id=problem_id,
+        existing_problem_hashes=set(),
+    )
+    assert result.promoted is True, result.diagnostic
+    row = await db_session.get(ConceptProblem, problem_id)
+    assert row.payload["verification"] == "faithfulness_only"
+
+
+async def test_promote_symbolic_graph_stamps_mechanically_verified(db_session):
+    """A symbolic graph with a seeded table promotes and is stamped
+    ``mechanically_verified`` — the symbolic rigor layer (gates 4/6/7) was applicable
+    and passed."""
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="symv")
+    result = await promote(
+        db_session,
+        AsyncMock(),
+        problem=_bernoulli_problem(),
+        mint_plan=_mint_plan(concept_id),
+        search_space_id=space,
+        concept_problem_id=problem_id,
+        existing_problem_hashes=set(),
+    )
+    assert result.promoted is True
+    row = await db_session.get(ConceptProblem, problem_id)
+    assert row.payload["verification"] == "mechanically_verified"
 
 
 async def test_promote_rejects_malformed_problem_cleanly(db_session):
