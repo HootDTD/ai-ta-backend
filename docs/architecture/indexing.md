@@ -8,7 +8,7 @@ owns:
 related:
   - ai-ta-backend/rag-pipeline
   - shared/supabase
-last_verified: 2026-06-20
+last_verified: 2026-06-29
 stub: false
 ---
 
@@ -36,13 +36,14 @@ How course material PDFs become searchable vectors. Ported from SurfSense's inde
 
 `indexers/__init__.py` is 2 lines: docstring `"Compatibility indexer package for legacy tests/scripts."` No code. Nothing in repo source imports it. Safe to ignore.
 
-### ocr/ — pluggable OCR provider layer (4 files)
+### ocr/ — pluggable OCR provider layer (5 files)
 
 | File | Role |
 |---|---|
 | `ocr/provider.py` | Abstractions: `OCRBlock` (kind `'text'`/`'latex'`, text, confidence), `OCRResult` (`.fused_text` joins blocks with `\n\n`; `.average_confidence`), `OCRProvider` ABC with `recognize(image_bytes, mime, dpi) -> OCRResult`. |
 | `ocr/mathpix.py` | `MathpixOCRProvider` — POSTs base64 data-URL JSON to `https://api.mathpix.com/v3/text` via stdlib `urllib` (no requests). Requests formats `["text", "latex_styled"]`; parses plain-text and LaTeX into separate blocks. `config_from_env()` reads `MATHPIX_APP_ID`, `MATHPIX_APP_KEY`, `MATHPIX_ENDPOINT`, `OCR_DPI`. |
-| `ocr/factory.py` | `get_ocr_provider_from_env()` — returns Mathpix when `OCR_PROVIDER=mathpix` and credentials exist, else None. **Not wired into any runtime flow** (per `ocr/README.md`, intentional). The live consumer constructs Mathpix directly — see below. |
+| `ocr/openai_vision.py` | `OpenAIVisionOCRProvider` — OpenAI Chat Completions vision OCR adapter for rendered page images. Sends the page as a base64 data URL, requests JSON `{text, confidence}`, returns one LaTeX-flavored `OCRBlock`, and fails soft to an empty `OCRResult` on malformed/provider errors. `from_env()` reads `APOLLO_OCR_MODEL` (default `gpt-4o`) and reuses `OPENAI_API_KEY` through the OpenAI SDK. |
+| `ocr/factory.py` | `get_ocr_provider_from_env()` — returns Mathpix when `OCR_PROVIDER=mathpix` and credentials exist, OpenAI vision when `OCR_PROVIDER=openai`, else None. **Not wired into the existing weekly upload runtime flow** (per `ocr/README.md`, intentional). The live weekly consumer still constructs Mathpix directly; authored-set indexing will pass a factory-selected provider — see below. |
 | `ocr/README.md` | Env flags + usage snippet. |
 
 ### Adjacent files this doc references but does not own
@@ -95,7 +96,7 @@ doc  = await service.index_from_items(docs[0], connector_doc, items)  # -> AITAD
 
 1. **Mathpix selective per-page** (teacher path, Flow 1 step 4) — production; constructed directly from `MATHPIX_APP_ID`/`MATHPIX_APP_KEY` env.
 2. **Tesseract whole-page** (`layout_multimodal_embedder.py`, legacy path) — only when a page yields < 500 native chars; renders at 300 DPI, OCR lines re-chunked at the same token limits, item ids `{doc_id}:{page}:oN`.
-3. **`ocr/factory.py` env-gated provider** (`OCR_PROVIDER=mathpix`) — exists but is not called from any runtime flow; only tests and `knowledge/teacher_pdf_ingestion.py` import from the `ocr` package directly.
+3. **`ocr/factory.py` env-gated provider** (`OCR_PROVIDER=mathpix` or `OCR_PROVIDER=openai`) — exists for authored-set indexing and tests; the weekly upload wrapper still constructs Mathpix directly. `knowledge/teacher_pdf_ingestion.py` accepts any `OCRProvider` at the existing `mathpix_provider` parameter name and only calls `.recognize()`.
 
 ## Key dependencies
 

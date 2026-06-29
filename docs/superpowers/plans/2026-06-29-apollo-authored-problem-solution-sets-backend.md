@@ -502,7 +502,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
     and classmethod `.from_env() -> OpenAIVisionOCRProvider`.
   - `ocr.factory.get_ocr_provider_from_env()` returns it when `OCR_PROVIDER=openai`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/unit/test_openai_vision_ocr.py`:
 
@@ -543,12 +543,12 @@ def test_recognize_unparseable_response_is_low_confidence_not_crash():
     assert (result.average_confidence or 0.0) == 0.0
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/test_openai_vision_ocr.py -v`
 Expected: FAIL — module does not exist.
 
-- [ ] **Step 3: Implement the provider**
+- [x] **Step 3: Implement the provider**
 
 Create `ocr/openai_vision.py`:
 
@@ -634,7 +634,7 @@ class OpenAIVisionOCRProvider(OCRProvider):
         return OCRResult(blocks=[OCRBlock(kind="latex", text=text, confidence=conf)])
 ```
 
-- [ ] **Step 4: Wire the factory + widen the ingestor type hint**
+- [x] **Step 4: Wire the factory + widen the ingestor type hint**
 
 In `ocr/factory.py`, extend `get_ocr_provider_from_env()`:
 
@@ -659,13 +659,13 @@ from ocr.provider import OCRProvider  # add near the existing `from ocr.mathpix 
     ) -> None:
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `pytest tests/unit/test_openai_vision_ocr.py -v`
 Expected: PASS. Also run `pytest tests/functions-tests/test_teacher_pdf_ingestion.py -v` to confirm the
 type-hint widening broke nothing.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ocr/openai_vision.py ocr/factory.py knowledge/teacher_pdf_ingestion.py tests/unit/test_openai_vision_ocr.py

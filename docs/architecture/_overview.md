@@ -24,7 +24,7 @@ related:
   - shared/conventions
   - shared/security
   - shared/supabase
-last_verified: 2026-06-20
+last_verified: 2026-06-29
 stub: false
 ---
 
@@ -58,6 +58,11 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` is a single ~2000-l
 | `vendors/supabase_client.py` | Thin PostgREST helpers (`select`, `select_one`, `insert`, `upsert`, `update`, `delete`, `rpc`) using `SUPABASE_URL` + anon `SUPABASE_API_KEY`; RLS enforces access server-side. |
 | `vendors/supabase_storage.py` | `SupabaseStorageClient.upload_bytes/download_bytes/ensure_bucket` against Storage REST; prefers `SUPABASE_SERVICE_ROLE_KEY`, falls back to API/anon key. `ensure_bucket` POSTs `/storage/v1/bucket` (private by default) and tolerates already-exists (400/409 duplicate) — new environments no longer need manual bucket creation. |
 | `vendors/openai_client.py` | OpenAI Chat Completions wrapper used by AI-use reports: `generate_ai_use_markdown(evidence_pack, style, length)` with token budgeting, retry/backoff, `REPORTS_MODEL` (default `gpt-4o-mini`), and a fake mode when `TEST_FAKE_OPENAI=1` or no API key. |
+
+### OCR/env surface
+
+- `OCR_PROVIDER=openai` selects the OpenAI vision OCR provider via `ocr/factory.py` for authored-set indexing paths that pass a provider into `TeacherPDFIngestor`; `OCR_PROVIDER=mathpix` keeps the existing Mathpix factory option.
+- `APOLLO_OCR_MODEL` optionally overrides the OpenAI vision OCR model used by `OpenAIVisionOCRProvider.from_env()`; the code default is `gpt-4o`.
 
 ### Other scoped dirs
 | Path | Role |
