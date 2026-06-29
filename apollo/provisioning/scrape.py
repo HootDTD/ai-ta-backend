@@ -93,6 +93,7 @@ class CandidateQuestion(BaseModel):
     page: int | None = None
     chunk_content_hash: str = Field(min_length=1)
     concept_slug: str = Field(min_length=1)
+    label: str | None = None  # printed problem label/number, e.g. "Problem 3" (WU-AAS)
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,7 @@ def _coerce_candidate(
             page=chunk.page_number,  # type: ignore[arg-type]  # nullable col
             chunk_content_hash=content_hash,
             concept_slug=raw.get("concept_slug", ""),
+            label=(str(raw.get("label")).strip() or None) if raw.get("label") else None,
         )
     except ValidationError:
         return None
@@ -180,9 +182,7 @@ async def scrape_questions(
     )
 
 
-def _coerce_section_candidate(
-    raw: Any, *, section, concept_hint: str
-) -> CandidateQuestion | None:
+def _coerce_section_candidate(raw: Any, *, section, concept_hint: str) -> CandidateQuestion | None:
     """Build a CandidateQuestion from one LLM record scraped from a whole SECTION.
     Provenance (document_id/page) comes from the SECTION; concept_slug falls back to
     the triage hint then the provisional concept. ``chunk_content_hash`` is a
@@ -201,6 +201,7 @@ def _coerce_section_candidate(
             page=section.page_start,
             chunk_content_hash="0",  # placeholder; re-stamped in scrape_section
             concept_slug=(raw.get("concept_slug") or concept_hint or PROVISIONAL_CONCEPT_SLUG),
+            label=(str(raw.get("label")).strip() or None) if raw.get("label") else None,
         )
     except (ValidationError, ValueError, TypeError):
         return None

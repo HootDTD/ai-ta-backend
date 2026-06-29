@@ -229,7 +229,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `CandidateQuestion.label: str | None = None` (additive, optional — generic path unaffected).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `apollo/provisioning/tests/test_scrape.py`:
 
@@ -263,12 +263,12 @@ def test_candidate_question_accepts_optional_label():
     assert q2.label is None  # backward compatible
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest apollo/provisioning/tests/test_scrape.py::test_candidate_question_accepts_optional_label -v`
 Expected: FAIL — `CandidateQuestion` has no field `label`.
 
-- [ ] **Step 3: Add the field + map it from the scraped record**
+- [x] **Step 3: Add the field + map it from the scraped record**
 
 In `apollo/provisioning/scrape.py`, add to `CandidateQuestion` (after `concept_slug`):
 
@@ -292,12 +292,12 @@ line to the JSON contract:
 
 (Confirm where `_SCRAPE_SYSTEM_PROMPT` lives — `grep -rn "_SCRAPE_SYSTEM_PROMPT =" apollo/provisioning/` — and edit that literal. The field is optional, so existing scrape tests that omit `label` still pass.)
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pytest apollo/provisioning/tests/test_scrape.py -v`
 Expected: PASS (new test + all existing scrape tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apollo/provisioning/scrape.py apollo/provisioning/orchestrator.py apollo/provisioning/tests/test_scrape.py
