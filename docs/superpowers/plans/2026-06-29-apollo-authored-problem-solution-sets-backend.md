@@ -31,6 +31,29 @@
 
 ---
 
+## Execution Protocol (chained Codex sessions)
+
+This plan is implemented **one task per Codex session**. Each session does exactly one task, then hands off to the next session. Follow this every time:
+
+1. **Read** this plan and the spec (`docs/superpowers/specs/2026-06-29-apollo-authored-problem-solution-sets-design.md`).
+2. **Pick the task:** the next task = the lowest-numbered task that still has unchecked `- [ ]` steps. Cross-check `git log --oneline` (each finished task ends in a commit).
+3. **Implement only that one task**, its steps in order (TDD: failing test → run it fails → implement → run it passes → commit). Do not skip ahead or batch tasks.
+4. **Tick the boxes:** as you finish each step, change its `- [ ]` to `- [x]` in this plan file, and include the plan file in that task's commit.
+5. **Obey the Global Constraints** below (branch `ApolloRun`; `ruff check` AND `ruff format --check` on every new file; conventional commit + the `Co-Authored-By` trailer shown in each commit step; never push to main; never merge; don't touch `.env`; don't install packages — stop and ask).
+6. **Resolve the NOTEs:** where a task says "confirm the name/helper," verify it against the code and make the change; record what it resolved to in your handoff so the next session doesn't re-derive it.
+7. **Operational steps** (applying a migration to a remote DB, setting Railway env vars, opening a PR): if you lack access/credentials, **do not guess and never touch prod** — leave the step and flag it in your handoff for the human.
+8. **Stop** after the task's final commit. Do **not** start the next task.
+9. **Emit the next handoff:** as your final output **in chat (do NOT write it to a file)**, produce a HANDOFF PROMPT for the next Codex session containing:
+   - the next task number + title,
+   - the plan + spec paths,
+   - this execution protocol (so the chain continues),
+   - anything you discovered this session the next implementer needs (resolved symbol names, gotchas, plan deviations, and whether DB-backed tests ran or Docker-skipped),
+   - the reminder: implement ONLY that one task, then emit the following handoff.
+
+**Stop condition:** if a task's tests can't pass for a reason the plan didn't anticipate, or a NOTE resolves in a way that changes the design, STOP and surface it in the handoff instead of forcing a workaround.
+
+---
+
 ## File Structure
 
 **Create:**
