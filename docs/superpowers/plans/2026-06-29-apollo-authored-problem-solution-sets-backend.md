@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Branch `ApolloRun`; PR base `staging`; **never merge** (Ishaan merges).
+- **Git:** remote `origin` = `https://github.com/HootDTD/ai-ta-backend.git`. Work only on branch `ApolloRun` (tracks `origin/ApolloRun`). After each task's final commit, **push** it: `git push origin ApolloRun`. Never commit/push to `main` or `staging`; never merge. The PR is opened only at the very end (Task 10 / post-implementation) with `gh pr create --base staging` — report the URL + CI and **stop; Ishaan merges every PR himself**. `git user = ishaanbatra`.
 - Conventional commits, each ending with a trailer line:
   `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
 - **Ruff (CI-blocking on files added vs `origin/staging`):** run BOTH `ruff check <file>` AND
@@ -35,7 +35,7 @@
 
 This plan is implemented **one task per Codex session**. Each session does exactly one task, then hands off to the next session. Follow this every time:
 
-1. **Read** this plan and the spec (`docs/superpowers/specs/2026-06-29-apollo-authored-problem-solution-sets-design.md`).
+1. **Read the required docs before touching code** (Codex does NOT auto-load `CLAUDE.md`): `CLAUDE.md` (project rules), `docs/shared-architecture/conventions.md`, this plan, the spec (`docs/superpowers/specs/2026-06-29-apollo-authored-problem-solution-sets-design.md`), and the **owner doc(s)** for the files your task touches per the drift contract — `docs/architecture/apollo.md` owns `apollo/**`; `docs/architecture/indexing.md` owns `ocr/**` + `indexing/**`; `docs/architecture/_overview.md` owns config + the HTTP surface.
 2. **Pick the task:** the next task = the lowest-numbered task that still has unchecked `- [ ]` steps. Cross-check `git log --oneline` (each finished task ends in a commit).
 3. **Implement only that one task**, its steps in order (TDD: failing test → run it fails → implement → run it passes → commit). Do not skip ahead or batch tasks.
 4. **Tick the boxes:** as you finish each step, change its `- [ ]` to `- [x]` in this plan file, and include the plan file in that task's commit.
