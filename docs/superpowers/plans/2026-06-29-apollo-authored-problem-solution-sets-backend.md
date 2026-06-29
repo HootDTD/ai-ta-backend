@@ -324,7 +324,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   - `match_solution_label(label: str | None, index: dict[str, list[SolutionChunk]]) -> list[SolutionChunk] | None`
     — returns the chunk list for a label with EXACTLY one distinct block; `None` on 0 or ≥2 (fall through).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `apollo/provisioning/tests/test_authored_label_match.py`:
 
@@ -378,12 +378,12 @@ def test_match_ambiguous_returns_none():
     assert match_solution_label("99", index) is None  # 0 matches -> fall through
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest apollo/provisioning/tests/test_authored_label_match.py -v`
 Expected: FAIL — module does not exist.
 
-- [ ] **Step 3: Implement the module**
+- [x] **Step 3: Implement the module**
 
 Create `apollo/provisioning/authored_sets/__init__.py` (empty) and `apollo/provisioning/authored_sets/label_match.py`:
 
@@ -471,12 +471,12 @@ def match_solution_label(
     return hits
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest apollo/provisioning/tests/test_authored_label_match.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apollo/provisioning/authored_sets/__init__.py apollo/provisioning/authored_sets/label_match.py apollo/provisioning/tests/test_authored_label_match.py

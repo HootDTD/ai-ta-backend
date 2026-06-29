@@ -57,6 +57,14 @@ course-scoped problem/solution document pair per `search_space_id,set_index`, wi
 repo convention: `_JSONType`, portable BigInteger primary key, FK to
 `aita_search_spaces`, and no ORM CHECK constraint duplication.
 
+WU-AAS authored-set label matching starts in
+`apollo/provisioning/authored_sets/label_match.py`. It normalizes printed labels
+such as `Problem 3`, `Q3`, `3.`, and `Exercise 4(a)` to canonical keys, extracts
+problem labels from `CandidateQuestion.label` with a problem-text fallback, and
+indexes paired solution chunks by deterministic label matches. Ambiguous labels
+(zero or multiple distinct chunks) deliberately return no match so the paired
+retrieval layer can fall through to doc-scoped retrieval.
+
 ## Public interfaces
 
 Provisioning retrieval adapter note: `make_course_retrieve_fn` skips hybrid-search
