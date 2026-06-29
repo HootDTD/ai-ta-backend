@@ -95,7 +95,7 @@ This plan is implemented **one task per Codex session**. Each session does exact
   `id:int, search_space_id:int, set_index:int, problem_document_id:int|None,
   solution_document_id:int|None, status:str, result_summary:dict, created_at, updated_at`.
 
-- [ ] **Step 1: Write the migration**
+- [x] **Step 1: Write the migration**
 
 Create `database/migrations/032_apollo_authored_sets.sql`:
 
@@ -123,7 +123,7 @@ CREATE INDEX IF NOT EXISTS apollo_authored_sets_space_idx
 COMMIT;
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Create `apollo/persistence/tests/test_authored_sets_model.py`:
 
@@ -155,12 +155,12 @@ async def test_authored_set_roundtrip(db_session):
     assert fetched.result_summary == {}
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `pytest apollo/persistence/tests/test_authored_sets_model.py -v`
 Expected: FAIL — `ImportError: cannot import name 'AuthoredSet'`.
 
-- [ ] **Step 4: Add the model**
+- [x] **Step 4: Add the model**
 
 In `apollo/persistence/models.py`, mirror the existing column style (`_JSONType`, `BigInteger().with_variant(Integer(), "sqlite")`, `TIMESTAMP(timezone=True)`). Insert after `ConceptProblem`:
 
@@ -197,17 +197,17 @@ class AuthoredSet(Base):
 
 Confirm `BigInteger, ForeignKey, UniqueConstraint, Text, text, TIMESTAMP, Integer, datetime, UTC, _JSONType` are imported at the top of the file; add any missing import next to the existing ones.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `pytest apollo/persistence/tests/test_authored_sets_model.py -v`
 Expected: PASS (or SKIP if Docker/pgvector is unavailable — acceptable; CI runs it).
 
-- [ ] **Step 6: Apply the migration to staging**
+- [x] **Step 6: Apply the migration to staging** *(skipped in this session: no `database.run_migrations` module exists, and no staging Supabase apply-migration access/tooling is available; human must apply `032_apollo_authored_sets.sql` to staging `hjevtxdtrkxjcaaexdxt`.)*
 
 Run (against staging `hjevtxdtrkxjcaaexdxt`, per the project's migration runner — confirm the exact command from how `031_*.sql` was applied; do NOT hand-edit prod):
 `python -m database.run_migrations` (or the repo's documented runner). Verify `apollo_authored_sets` exists.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add database/migrations/032_apollo_authored_sets.sql apollo/persistence/models.py apollo/persistence/tests/test_authored_sets_model.py

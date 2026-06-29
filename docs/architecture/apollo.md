@@ -10,7 +10,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-06-27
+last_verified: 2026-06-29
 stub: false
 ---
 
@@ -48,6 +48,14 @@ unwired (code still present), and grading is the Done-time LLM semantic diff.
 | `apollo/hoot_bridge/` | `session_init.py` | Hoot→Apollo handoff: resolve the course's candidate concepts from `apollo_concepts WHERE …search_space_id` → `infer_concept_id` → DB problem selection → session (with `apollo_sessions.concept_id` populated) + attempt rows. **WU-6A3:** the session-start problem selection now routes through `overseer.select_problem_personalized` (flag-gated, byte-identical when OFF) instead of `select_problem`, so the personalization wedge fires at session start. |
 | `apollo/subjects/` | `__init__.py`, `curriculum_db.py`, `fluid_mechanics/concepts/bernoulli_principle/` | Filesystem concept registry: `canonical_symbols.json`, `normalization_map.json`, `parser_prompt_template.md`, `solver_hints.json`, `forbidden_named_laws.json`, `concept_dag.json`, `misconceptions.json`, `problems/problem_*.json`. `misconceptions.json` (WU-3B authoring source) lists the bernoulli `misc.*` Layer-1 entities, each with an `opposes` target key (e.g. `misc.density_ignored` opposes `cond.incompressibility`) and trigger phrases that double as resolution aliases. The `problem_*.json` reference solutions now carry the WU-3B annotation: an `entity_key` per reference-solution step + a top-level `declared_paths` (one complete ordered path) + `layer1_seeded` marker — additive keys only, written by the WU-3B seeder so the §6.1 validation contract passes and a fresh registry re-import carries the links. **As of WU-4A1, `problem_01.json` also carries an additive top-level `symbolic_mappings` key (`{"d": "2*r"}`)** — the per-problem declared variable-substitution table read by `graph_compare.build_problem_candidates` and passed into `resolve_attempt`'s symbolic tier (the §6.9 `A = pi*r**2` → `eq.circular_area` equivalence resolves only with this mapping; the resolver applies NO global `d=2r` default). The key round-trips through BOTH seeders with ZERO seeder code change (the registry seeder reads the JSON verbatim into `apollo_concept_problems.payload`; the learner-model seeder's `annotate_reference_solution` shallow-copies the payload, preserving it) — pinned by `tests/database/test_graph_compare_symbolic_mappings_roundtrip.py` (real-PG, local Docker only). `load_concept(subject_id, concept_id) -> ConceptDefinition` is the AUTHORING-format reader (kept). As of WU-3D (§8A cutover) the runtime reads concepts/problems from the DB — `curriculum_db.list_course_concepts(db, search_space_id)` / `curriculum_db.load_concept_definition(db, concept_id)` + `problem_selector.list_problems_for_concept`/`select_problem` — so the filesystem layout is now the AUTHORING source ONLY, converted to `apollo_subjects`/`apollo_concepts`/`apollo_concept_problems` rows (migration 018) by `scripts/seed_apollo_concept_registry.py`. `curriculum_db` builds a `ConceptDefinition` from the `apollo_concepts` JSONB/TEXT columns (its `problems_dir` is a sentinel non-existent path — the runtime never globs it) and raises the internal `ConceptNotFoundError` if the row is absent. |
 | `*/tests/` | per-subpackage `tests/` dirs + `apollo/tests/` e2e smokes | Most are **skip-marked**: "Tracked in claude_v3_checklist.md item 1; will be re-enabled in test-rewrite phase" (they predate the V3 KGGraph + Neo4j rewrite). |
+
+WU-AAS pairing persistence (migration 032) adds `AuthoredSet` in
+`apollo/persistence/models.py`, mapped to `apollo_authored_sets`. It records one
+course-scoped problem/solution document pair per `search_space_id,set_index`, with
+`status` (`pending|indexing|provisioning|done|failed`) and bounded
+`result_summary` JSON for per-problem provisioning outcomes. The ORM mirrors the
+repo convention: `_JSONType`, portable BigInteger primary key, FK to
+`aita_search_spaces`, and no ORM CHECK constraint duplication.
 
 ## Public interfaces
 
