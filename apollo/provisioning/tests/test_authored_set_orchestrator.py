@@ -286,6 +286,36 @@ async def test_candidate_solution_draft_error_is_rejected(db_session, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_candidate_tag_mint_error_is_rejected(db_session, monkeypatch):
+    """A TagMintError for ONE candidate (e.g. the LLM prereq draft naming an
+    unminted entity key like 'pressure_box_3') must reject just that candidate —
+    not propagate out and fail the entire authored set."""
+    from apollo.provisioning.tag_mint import TagMintError
+
+    async def _fog(db, question, *, retrieve_fn, chat_fn):
+        spans = await retrieve_fn(question)
+        draft = _draft(source="extracted")
+        return draft.model_copy(update={"grounding": spans})
+
+    async def _raise_tag_mint(db, pair, *, chat_fn, embed_fn):
+        raise TagMintError("prereq draft references an unminted entity key 'pressure_box_3'")
+
+    report = await _run_single_candidate(
+        db_session,
+        monkeypatch,
+        slug="tme",
+        find_or_generate=_fog,
+        tag_and_mint=_raise_tag_mint,
+    )
+    assert report.counts["rejected"] == 1
+    result = report.problems[0]
+    assert result.outcome == "rejected"
+    assert result.diagnostic.startswith("tag_mint_error")
+    assert "pressure_box_3" in result.diagnostic
+    assert result.concept_problem_id is not None
+
+
+@pytest.mark.asyncio
 async def test_candidate_pair_rejection_is_rejected(db_session, monkeypatch):
     from apollo.provisioning.pairing_gate import PairingVerdict
 
