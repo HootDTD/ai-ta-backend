@@ -54,6 +54,9 @@ _ANTONYM_PAIRS: tuple[tuple[str, str], ...] = (
 # Words that, when immediately following "no" or "not", form a litotes
 # ("no change" ≈ "constant") — the pattern is ambiguous polarity, so it must
 # PASS to NLI rather than fire as a negation mismatch.
+# NOTE: "effect"/"effects" are intentionally excluded — "no effect" vs
+# "has an effect" is a genuine absence-vs-presence conflict, not a
+# zero-magnitude litotes.
 _NULL_CHANGE: frozenset[str] = frozenset(
     {
         "change",
@@ -64,8 +67,6 @@ _NULL_CHANGE: frozenset[str] = frozenset(
         "variations",
         "fluctuation",
         "fluctuations",
-        "effect",
-        "effects",
     }
 )
 
@@ -80,7 +81,7 @@ def _tokens(text: str) -> set[str]:
     return {w.strip(".,;:!?").lower() for w in text.split()}
 
 
-def _negation_count(toks: set[str], raw: str) -> int:  # noqa: ARG001
+def _negation_count(raw: str) -> int:
     """Count unambiguous negations in *raw*.
 
     "no/not + null-change-word" (litotes patterns like "no change") are
@@ -90,8 +91,10 @@ def _negation_count(toks: set[str], raw: str) -> int:  # noqa: ARG001
     words = [w.strip(".,;:!?").lower() for w in raw.split()]
     n = 0
     for i, w in enumerate(words):
-        # Check for contraction suffix as well as set membership.
-        is_neg = w in _NEGATION or raw.lower().split()[i].endswith("n't")
+        # Use the already-stripped/lowercased token w for the contraction
+        # check — avoids O(n²) re-split and correctly handles tokens like
+        # "wasn't," whose trailing punctuation was stripped into "wasn't".
+        is_neg = w in _NEGATION or w.endswith("n't")
         if not is_neg:
             continue
         # Litotes guard: "no change / no difference / …" is ambiguous.
@@ -117,7 +120,7 @@ def polarity_allows_match(student_text: str, reference_text: str) -> PolarityDec
     """
     s, r = _tokens(student_text), _tokens(reference_text)
     # 1. Negation XOR (single-negation only; double negation is ambiguous -> allow).
-    sn, rn = _negation_count(s, student_text), _negation_count(r, reference_text)
+    sn, rn = _negation_count(student_text), _negation_count(reference_text)
     if (sn % 2) != (rn % 2):
         return PolarityDecision(False, "negation_mismatch")
     # 2. Inverse-proportionality: one side qualifies "proportional" with "inverse(ly)".

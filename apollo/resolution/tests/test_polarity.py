@@ -29,3 +29,14 @@ def test_neutral_text_allowed() -> None:
     assert (
         polarity_allows_match("the fluid is incompressible", "incompressible flow").allowed is True
     )
+
+
+def test_no_effect_vs_effect_rejected() -> None:
+    # Regression: "no effect" is absence-vs-presence, not a zero-magnitude litotes.
+    # "effect"/"effects" must NOT be in _NULL_CHANGE, so "no effect" fires as
+    # a genuine negation mismatch rather than passing to NLI.
+    d = polarity_allows_match(
+        "the intervention has no effect on pressure",
+        "the intervention has an effect on pressure",
+    )
+    assert d.allowed is False and d.reason == "negation_mismatch"
