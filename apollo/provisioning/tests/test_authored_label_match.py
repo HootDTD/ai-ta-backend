@@ -37,6 +37,27 @@ def test_index_and_match_single_block():
     assert hit is not None and hit[0][0] == 10
 
 
+def test_normalize_label_ignores_separated_variable_letter():
+    # A number followed by whitespace then a standalone variable token (common
+    # in math solutions: "Solution 1  M = ...") must normalize to the number
+    # only, never absorb the variable into a "1m"-style sub-label.
+    assert normalize_label("Solution 1\nM = w*L^2/8") == "1"
+    assert normalize_label("Problem 2 x = 3") == "2"
+    # Genuinely adjacent / parenthesized sub-labels are still captured.
+    assert normalize_label("Problem 4b") == "4b"
+    assert normalize_label("Exercise 4 (a)") == "4a"
+
+
+def test_index_not_polluted_by_following_variable():
+    # The problem is labelled "1"; its solution block leads with a variable.
+    # The index must key it as "1" so the paired problem actually matches.
+    chunks = [(10, "Solution 1\nM = w*L^2/8 by summing moments.", 2)]
+    index = build_solution_label_index(chunks)
+    assert "1" in index
+    hit = match_solution_label("1", index)
+    assert hit is not None and hit[0][0] == 10
+
+
 def test_match_ambiguous_returns_none():
     chunks = [
         (10, "Solution 3 first copy ...", 1),

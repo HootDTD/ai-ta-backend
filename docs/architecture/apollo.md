@@ -10,7 +10,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-06-30
+last_verified: 2026-06-29
 stub: false
 ---
 
@@ -61,9 +61,13 @@ WU-AAS authored-set label matching starts in
 `apollo/provisioning/authored_sets/label_match.py`. It normalizes printed labels
 such as `Problem 3`, `Q3`, `3.`, and `Exercise 4(a)` to canonical keys, extracts
 problem labels from `CandidateQuestion.label` with a problem-text fallback, and
-indexes paired solution chunks by deterministic label matches. Ambiguous labels
-(zero or multiple distinct chunks) deliberately return no match so the paired
-retrieval layer can fall through to doc-scoped retrieval.
+indexes paired solution chunks by deterministic label matches. A sub-label (the
+`a` in `4a`/`4(a)`) attaches ONLY when adjacent to the number — a bare letter
+must immediately follow the digit and only the parenthesized form may be
+whitespace-separated, so a solution heading like `Solution 1\nM = …` keys as `1`
+rather than absorbing the following variable into a spurious `1m`. Ambiguous
+labels (zero or multiple distinct chunks) deliberately return no match so the
+paired retrieval layer can fall through to doc-scoped retrieval.
 
 ## Public interfaces
 

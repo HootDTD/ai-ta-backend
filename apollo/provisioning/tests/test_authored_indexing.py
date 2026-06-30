@@ -1,8 +1,89 @@
+import threading
 import types
 
 import pytest
 
 import apollo.provisioning.authored_sets.indexing as idx
+
+
+def _fake_ingestion(pages):
+    """A minimal ingestion result carrying per-page OCR confidence."""
+    return types.SimpleNamespace(
+        items=[types.SimpleNamespace(id="i1")],
+        source_markdown="Problem 1 ...",
+        page_count=len(pages) or 1,
+        pages=pages,
+        artifact_manifest={"pages": []},
+        ocr_provider="openai",
+        ocr_summary={"openai_pages": len(pages)},
+        warning_count=0,
+        warnings=[],
+    )
+
+
+def _patch_indexer_with_real_metadata(monkeypatch, db_session, ingestion):
+    """Wire the indexer seams, but mirror the REAL prepare_for_indexing by
+    copying connector metadata onto the persisted document (the production
+    behavior the existing hidden-status test does not exercise)."""
+    monkeypatch.setattr(idx, "_run_ingest", lambda *a, **k: ingestion)
+    monkeypatch.setattr(
+        idx,
+        "items_to_chunk_texts",
+        lambda items: [("Problem 1 ...", {"page_number": 1, "chunk_type": "body"})],
+    )
+
+    async def fake_prepare(self, conn_docs):
+        from database.models import AITADocument
+
+        cd = conn_docs[0]
+        doc = AITADocument(
+            title=cd.title,
+            search_space_id=cd.search_space_id,
+            content="c",
+            content_hash="h",
+            unique_identifier_hash="u",
+            document_metadata=cd.metadata,
+        )
+        db_session.add(doc)
+        await db_session.flush()
+        return [doc]
+
+    monkeypatch.setattr(idx.AITAIndexingService, "prepare_for_indexing", fake_prepare)
+
+    async def fake_embed(**k):
+        return 1
+
+    async def fake_finalize(session, **k):
+        return None
+
+    monkeypatch.setattr(idx, "embed_and_persist_chunks", fake_embed)
+    monkeypatch.setattr(idx, "finalize_document", fake_finalize)
+    monkeypatch.setattr(idx, "embed_text", lambda t: [0.0] * 8)
+
+
+def test_connector_document_includes_page_debug_confidence():
+    """The connector metadata must carry per-page OCR confidence so the
+    authored-set verification path can detect low-confidence pages."""
+    ingestion = _fake_ingestion(
+        [
+            types.SimpleNamespace(page_number=1, ocr_confidence=0.3, extraction_mode="openai"),
+            types.SimpleNamespace(page_number=2, ocr_confidence=0.95, extraction_mode="native"),
+        ]
+    )
+
+    connector_doc = idx._connector_document(
+        search_space_id=4,
+        title="HW7 Solutions",
+        set_index=1,
+        role="solution",
+        ingestion=ingestion,
+    )
+
+    page_debug = connector_doc.metadata["page_debug"]
+    assert page_debug == [
+        {"page": 1, "ocr_confidence": 0.3, "extraction_mode": "openai"},
+        {"page": 2, "ocr_confidence": 0.95, "extraction_mode": "native"},
+    ]
 
 
 @pytest.mark.asyncio
@@ -77,3 +158,70 @@ async def test_index_authored_doc_sets_hidden_status(db_session, monkeypatch):
 
     doc = await db_session.get(AITADocument, doc_id)
     assert doc.status == {"state": "apollo_reference"}
+
+
+@pytest.mark.asyncio
+async def test_index_authored_doc_propagates_page_confidence(db_session, monkeypatch):
+    """End-to-end indexer seam: a low-confidence page must surface through
+    ``chunk_ocr_confidence`` so the orchestrator's OCR cross-check can fire."""
+    from apollo.provisioning.authored_sets.paired_retrieval import chunk_ocr_confidence
+    from database.models import SearchSpace
+
+    db_session.add(
+        SearchSpace(id=7, name="AAE Conf", slug="aae-conf", subject_name="AAE")
+    )
+    await db_session.flush()
+
+    ingestion = _fake_ingestion(
+        [types.SimpleNamespace(page_number=1, ocr_confidence=0.3, extraction_mode="openai")]
+    )
+    _patch_indexer_with_real_metadata(monkeypatch, db_session, ingestion)
+
+    doc_id = await idx.index_authored_doc(
+        db_session,
+        search_space_id=7,
+        file_bytes=b"%PDF-1.4 fake",
+        title="HW7 Solutions",
+        set_index=1,
+        role="solution",
+    )
+
+    page_conf = await chunk_ocr_confidence(db_session, document_id=doc_id)
+    assert page_conf == {1: 0.3}
+
+
+@pytest.mark.asyncio
+async def test_index_authored_doc_offloads_ingest_off_event_loop(db_session, monkeypatch):
+    """The blocking PyMuPDF/OCR ingest must run off the event-loop thread so it
+    never stalls concurrent request handling."""
+    from database.models import SearchSpace
+
+    db_session.add(
+        SearchSpace(id=8, name="AAE Thread", slug="aae-thread", subject_name="AAE")
+    )
+    await db_session.flush()
+
+    loop_thread_ident = threading.get_ident()
+    captured: dict[str, int] = {}
+
+    ingestion = _fake_ingestion(
+        [types.SimpleNamespace(page_number=1, ocr_confidence=0.9, extraction_mode="native")]
+    )
+
+    def capturing_ingest(*a, **k):
+        captured["ident"] = threading.get_ident()
+        return ingestion
+
+    _patch_indexer_with_real_metadata(monkeypatch, db_session, ingestion)
+    monkeypatch.setattr(idx, "_run_ingest", capturing_ingest)
+
+    await idx.index_authored_doc(
+        db_session,
+        search_space_id=8,
+        file_bytes=b"%PDF-1.4 fake",
+        title="HW7 Solutions",
+        set_index=1,
+        role="solution",
+    )
+
+    assert captured["ident"] != loop_thread_ident

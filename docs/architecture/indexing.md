@@ -8,7 +8,7 @@ owns:
 related:
   - ai-ta-backend/rag-pipeline
   - shared/supabase
-last_verified: 2026-06-30
+last_verified: 2026-06-29
 stub: false
 ---
 
@@ -49,7 +49,7 @@ How course material PDFs become searchable vectors. Ported from SurfSense's inde
 ### Adjacent files this doc references but does not own
 
 - `knowledge/teacher_pdf_ingestion.py` — `TeacherPDFIngestor`, the **production** layout-aware PDF extractor (PyMuPDF native + selective Mathpix). Builds its own provider via `build_teacher_mathpix_provider()`, bypassing `ocr/factory.py`.
-- `apollo/provisioning/authored_sets/indexing.py` — authored-set PDF indexer. It passes the env-selected `OCRProvider` into `TeacherPDFIngestor`, then reuses `AITAIndexingService.prepare_for_indexing`, `embed_and_persist_chunks`, `build_doc_content`, and `finalize_document`. It skips the weekly upload wrapper and overrides `finalize_document`'s ready status to the hidden sentinel `{"state": "apollo_reference"}` so authored problem/solution PDFs are not visible to student RAG.
+- `apollo/provisioning/authored_sets/indexing.py` — authored-set PDF indexer. It passes the env-selected `OCRProvider` into `TeacherPDFIngestor`, then reuses `AITAIndexingService.prepare_for_indexing`, `embed_and_persist_chunks`, `build_doc_content`, and `finalize_document`. It skips the weekly upload wrapper and overrides `finalize_document`'s ready status to the hidden sentinel `{"state": "apollo_reference"}` so authored problem/solution PDFs are not visible to student RAG. The connector metadata carries per-page `page_debug` (`page`, `ocr_confidence`, `extraction_mode`) — the same shape the weekly DTO uses — so the authored-set verification path (`chunk_ocr_confidence`) can detect low-confidence (e.g. handwritten) pages; without it the low-OCR generate-and-compare cross-check never fires. The synchronous PyMuPDF + per-page OCR ingest runs via `asyncio.to_thread` so a multi-page handwritten PDF does not stall the event loop serving concurrent requests.
 - `knowledge/teacher_weekly.py` — upload queue, job leasing, worker loop, week activation. Calls `AITAIndexingService`.
 - `knowledge/manager.py` — legacy `add_pdf_material()` path + `_index_items_to_pgvector()` bridge.
 - `text-embeder/layout_multimodal_embedder.py` — original CLI extractor/embedder (FAISS + SQLite FTS5); still used by `knowledge/manager.py`.

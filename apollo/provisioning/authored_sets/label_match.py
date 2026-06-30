@@ -20,12 +20,19 @@ __all__ = [
 
 SolutionChunk = tuple[int, str, int | None]
 
+# Sub-label (e.g. the "a" in "4a" / "4(a)") attaches ONLY when adjacent to the
+# number — a bare letter must immediately follow the digit, and only the
+# parenthesized form may be whitespace-separated. The earlier ``\s*(...|[a-z])``
+# absorbed the first letter of the NEXT token (e.g. "Solution 1\nM = ..." keyed
+# as "1m"), so a problem labelled "1" never matched its solution block.
+_SUB_LABEL = r"(\s*\([a-z]\)|[a-z](?![a-z]))?"
 _LABEL_RE = re.compile(
     r"\b(?:problem|prob|question|ques|q|exercise|ex|solution|sol|ans(?:wer)?)"
-    r"\s*\.?\s*(\d{1,3})\s*(\([a-z]\)|[a-z]\b)?",
+    r"\s*\.?\s*(\d{1,3})" + _SUB_LABEL,
     re.IGNORECASE,
 )
-_LEADING_NUM_RE = re.compile(r"^\s*(\d{1,3})\s*(\([a-z]\)|[a-z])?\s*[.)]")
+_LEADING_NUM_RE = re.compile(r"^\s*(\d{1,3})" + _SUB_LABEL + r"\s*[.)]")
+_SUB_LETTER_RE = re.compile(r"[a-z]", re.IGNORECASE)
 
 
 def normalize_label(raw: str | None) -> str | None:
@@ -36,7 +43,8 @@ def normalize_label(raw: str | None) -> str | None:
     if not m:
         return None
     num = m.group(1)
-    sub = (m.group(2) or "").strip("()").lower()
+    sub_match = _SUB_LETTER_RE.search(m.group(2) or "")
+    sub = sub_match.group(0).lower() if sub_match else ""
     return f"{num}{sub}" if sub else num
 
 

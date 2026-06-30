@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import tempfile
@@ -62,7 +63,10 @@ async def index_authored_doc(
 
     try:
         doc_id = _authored_doc_id(search_space_id=search_space_id, set_index=set_index, role=role)
-        ingestion = _run_ingest(pdf_path, doc_id=doc_id)
+        # PyMuPDF extraction + per-page OCR (OpenAI vision calls) is synchronous
+        # and slow; offload it so a multi-page handwritten PDF never stalls the
+        # event loop serving concurrent tutoring requests.
+        ingestion = await asyncio.to_thread(_run_ingest, pdf_path, doc_id=doc_id)
         if not ingestion.items:
             raise ValueError(f"authored indexer: no chunks produced from {role} PDF")
 
@@ -150,8 +154,24 @@ def _connector_document(
             "ocr_summary": ingestion.ocr_summary,
             "warning_count": ingestion.warning_count,
             "artifact_manifest": ingestion.artifact_manifest,
+            # Per-page OCR confidence — the signal the authored-set verification
+            # path reads via ``chunk_ocr_confidence`` to cross-check low-confidence
+            # (e.g. handwritten) extractions. Mirrors the weekly ingestor's shape.
+            "page_debug": _page_debug(ingestion),
         },
     )
+
+
+def _page_debug(ingestion) -> list[dict]:
+    """Per-page OCR debug entries (page number + confidence + extraction mode)."""
+    return [
+        {
+            "page": page.page_number,
+            "ocr_confidence": page.ocr_confidence,
+            "extraction_mode": getattr(page, "extraction_mode", None),
+        }
+        for page in getattr(ingestion, "pages", None) or []
+    ]
 
 
 async def _find_doc_by_unique_id(
