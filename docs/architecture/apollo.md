@@ -10,7 +10,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-06-30
+last_verified: 2026-06-29
 stub: false
 ---
 
