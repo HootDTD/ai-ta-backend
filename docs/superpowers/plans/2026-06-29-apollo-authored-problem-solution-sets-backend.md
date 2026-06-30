@@ -2058,7 +2058,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 **Files:**
 - Modify: `docs/architecture/apollo.md`, `docs/architecture/indexing.md`, `docs/architecture/_overview.md`
 
-- [ ] **Step 1: Update owner docs**
+- [x] **Step 1: Update owner docs**
 
 - `docs/architecture/apollo.md`: add an "Authored problem/solution sets (WU-AAS)" subsection describing
   `apollo/provisioning/authored_sets/*`, the `apollo_authored_sets` table, the `extracted`/`held_for_review`
@@ -2068,14 +2068,14 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - `docs/architecture/_overview.md`: add the 4 endpoints + the new env vars (`OCR_PROVIDER`,
   `APOLLO_OCR_MODEL`, `APOLLO_AUTHORED_OCR_CONF_THRESHOLD`). Bump `last_verified`.
 
-- [ ] **Step 2: Run the full provisioning + retrieval suites**
+- [x] **Step 2: Run the full provisioning + retrieval suites**
 
 Run:
 `pytest apollo/provisioning/ apollo/persistence/ tests/unit/test_openai_vision_ocr.py -v --tb=short`
 `pytest tests/ -k retrieval -v` (the retrieval suite — confirms Task 6's reuse of `_halfvec_cosine_distance` didn't regress anything).
 Expected: PASS/SKIP (no failures).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/architecture/apollo.md docs/architecture/indexing.md docs/architecture/_overview.md

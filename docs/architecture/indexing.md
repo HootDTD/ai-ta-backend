@@ -8,7 +8,7 @@ owns:
 related:
   - ai-ta-backend/rag-pipeline
   - shared/supabase
-last_verified: 2026-06-29
+last_verified: 2026-06-30
 stub: false
 ---
 
