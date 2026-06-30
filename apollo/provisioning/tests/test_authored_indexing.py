@@ -288,6 +288,58 @@ async def test_index_authored_doc_falls_back_to_existing_doc(db_session, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_reupload_reuses_content_identical_doc_via_real_prepare(db_session, monkeypatch):
+    """Regression for "prepare_for_indexing returned no doc".
+
+    Runs the REAL ``prepare_for_indexing`` (not a stub). A first upload's doc is
+    already indexed; a re-upload of identical bytes mints a fresh ``set_index``
+    (new ``unique_id``) but the SAME content_hash. The real service dedups it
+    away (returns []) and the indexer must reuse the content-identical doc by
+    falling back to the content hash — not raise.
+    """
+    from database.models import AITADocument, SearchSpace
+    from indexing.document_hashing import (
+        compute_content_hash,
+        compute_unique_identifier_hash,
+    )
+
+    db_session.add(SearchSpace(id=21, name="x", slug="aae-reupload", subject_name="AAE"))
+    await db_session.flush()
+    ing = _fake_ingestion(
+        [types.SimpleNamespace(page_number=1, ocr_confidence=0.9, extraction_mode="native")]
+    )
+
+    # The doc the FIRST upload (set_index=1) indexed and committed before failing.
+    first = idx._connector_document(
+        search_space_id=21, title="t", set_index=1, role="problem", ingestion=ing
+    )
+    existing = AITADocument(
+        title="t",
+        content="c",
+        content_hash=compute_content_hash(first),
+        search_space_id=21,
+        unique_identifier_hash=compute_unique_identifier_hash(first),
+        status={"state": "apollo_reference"},
+    )
+    db_session.add(existing)
+    await db_session.flush()
+    existing_id = int(existing.id)
+
+    monkeypatch.setattr(idx, "_run_ingest", lambda *a, **k: ing)
+
+    # Re-upload as a NEW set_index — real prepare_for_indexing dedups on content.
+    doc_id = await idx.index_authored_doc(
+        db_session,
+        search_space_id=21,
+        file_bytes=b"%PDF",
+        title="t",
+        set_index=2,
+        role="problem",
+    )
+    assert doc_id == existing_id
+
+
+@pytest.mark.asyncio
 async def test_index_authored_doc_raises_when_no_doc_and_no_existing(db_session, monkeypatch):
     from database.models import SearchSpace
 

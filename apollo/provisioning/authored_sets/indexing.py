@@ -21,7 +21,10 @@ from indexing.checkpoint_indexer import (
 from indexing.connector_document import AITAConnectorDocument
 from indexing.document_chunker import items_to_chunk_texts
 from indexing.document_embedder import embed_text
-from indexing.document_hashing import compute_unique_identifier_hash
+from indexing.document_hashing import (
+    compute_content_hash,
+    compute_unique_identifier_hash,
+)
 from indexing.indexing_service import AITAIndexingService
 
 _LOG = logging.getLogger(__name__)
@@ -80,7 +83,14 @@ async def index_authored_doc(
         service = AITAIndexingService(db)
         docs = await service.prepare_for_indexing([connector_doc])
         if not docs:
-            existing = await _find_doc_by_unique_id(db, connector_doc)
+            # ``prepare_for_indexing`` returns [] when the doc is deduped away.
+            # For authored sets this happens on a re-upload of identical PDF bytes:
+            # ``_next_set_index`` always mints a fresh ``set_index`` (so a new
+            # ``unique_id``), but the content_hash is set-index-independent, so the
+            # service skips it as a content duplicate of the doc indexed by the
+            # earlier set. Reuse that already-indexed, content-identical doc —
+            # matching by unique_id first, then by content — instead of failing.
+            existing = await _find_existing_indexed_doc(db, connector_doc)
             if existing is None:
                 raise RuntimeError("authored indexer: prepare_for_indexing returned no doc")
             existing.status = dict(_HIDDEN_STATUS)  # type: ignore[assignment]
@@ -174,12 +184,29 @@ def _page_debug(ingestion) -> list[dict]:
     ]
 
 
-async def _find_doc_by_unique_id(
+async def _find_existing_indexed_doc(
     db: AsyncSession,
     connector_doc: AITAConnectorDocument,
 ) -> AITADocument | None:
+    """Locate an already-indexed doc this connector deduped against.
+
+    Tries source identity (``unique_identifier_hash``) first, then content
+    identity (``content_hash``) — the latter is what a fresh-``set_index``
+    re-upload of identical bytes collides on.
+    """
     unique_hash = compute_unique_identifier_hash(connector_doc)
     result = await db.execute(
         select(AITADocument).where(AITADocument.unique_identifier_hash == unique_hash)
+    )
+    by_unique = result.scalar_one_or_none()
+    if by_unique is not None:
+        return by_unique
+
+    content_hash = compute_content_hash(connector_doc)
+    result = await db.execute(
+        select(AITADocument)
+        .where(AITADocument.content_hash == content_hash)
+        .order_by(AITADocument.id.desc())
+        .limit(1)
     )
     return result.scalar_one_or_none()

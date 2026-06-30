@@ -24,7 +24,7 @@ from fastapi import (
     UploadFile,
 )
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.auth_deps import require_course_member, require_user
@@ -39,6 +39,7 @@ from apollo.provisioning.metered_chat import MeteredChat
 from apollo.provisioning.promote import promote
 from apollo.provisioning.solution import ReferenceSolutionDraft, build_approved_pair
 from apollo.provisioning.tag_mint import tag_and_mint
+from database.models import AITADocument
 from database.session import get_async_session, get_db_session
 from indexing.document_embedder import embed_text
 
@@ -248,6 +249,78 @@ async def get_authored_set(
         "problem_document_id": row.problem_document_id,
         "solution_document_id": row.solution_document_id,
         "result_summary": row.result_summary or {},
+    }
+
+
+@router.delete("/authored-sets/{set_id}")
+async def delete_authored_set(
+    set_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """Remove an authored set and everything it produced.
+
+    Deletable in ANY status — the motivation is clearing failed/stuck runs that
+    otherwise pile up on the teacher console with no way to remove them, so we
+    deliberately do NOT gate on a terminal state. Cascade:
+
+      * the ConceptProblems this set minted (recorded per-problem in
+        ``result_summary``) — deleting the rows is what pulls the content out of
+        tutoring (the student selector filters ``tier == 2 AND concept_id``);
+      * the two hidden reference documents (chunks cascade via the
+        ``aita_chunks`` ON DELETE CASCADE FK);
+      * the ``apollo_authored_sets`` row itself.
+
+    The shared per-concept Neo4j ``:Canon`` projection is intentionally left
+    intact: it is concept-level metadata shared with sibling problems and the
+    §8 seed, so tearing it down here would break unrelated content.
+    """
+    auth = await require_user(request)
+    row = await db.get(AuthoredSet, set_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="authored set not found")
+    await require_course_member(db=db, auth=auth, search_space_id=int(row.search_space_id))
+
+    problems = (row.result_summary or {}).get("problems") or []  # type: ignore[call-overload]
+    problem_ids = sorted(
+        {
+            int(p["concept_problem_id"])
+            for p in problems
+            if isinstance(p, dict) and p.get("concept_problem_id") is not None
+        }
+    )
+    removed_problems = 0
+    if problem_ids:
+        res = await db.execute(
+            delete(ConceptProblem).where(ConceptProblem.id.in_(problem_ids))
+        )
+        removed_problems = res.rowcount or 0
+
+    doc_ids = [
+        int(d)
+        for d in (row.problem_document_id, row.solution_document_id)
+        if d is not None
+    ]
+    removed_documents = 0
+    if doc_ids:
+        res = await db.execute(delete(AITADocument).where(AITADocument.id.in_(doc_ids)))
+        removed_documents = res.rowcount or 0
+
+    await db.delete(row)
+    await db.commit()
+    _LOG.info(
+        "authored_set_deleted",
+        extra={
+            "event": "authored_set_deleted",
+            "set_id": set_id,
+            "removed_problems": removed_problems,
+            "removed_documents": removed_documents,
+        },
+    )
+    return {
+        "deleted": True,
+        "removed_problems": removed_problems,
+        "removed_documents": removed_documents,
     }
 
 
