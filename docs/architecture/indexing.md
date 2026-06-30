@@ -49,6 +49,7 @@ How course material PDFs become searchable vectors. Ported from SurfSense's inde
 ### Adjacent files this doc references but does not own
 
 - `knowledge/teacher_pdf_ingestion.py` — `TeacherPDFIngestor`, the **production** layout-aware PDF extractor (PyMuPDF native + selective Mathpix). Builds its own provider via `build_teacher_mathpix_provider()`, bypassing `ocr/factory.py`.
+- `apollo/provisioning/authored_sets/indexing.py` — authored-set PDF indexer. It passes the env-selected `OCRProvider` into `TeacherPDFIngestor`, then reuses `AITAIndexingService.prepare_for_indexing`, `embed_and_persist_chunks`, `build_doc_content`, and `finalize_document`. It skips the weekly upload wrapper and overrides `finalize_document`'s ready status to the hidden sentinel `{"state": "apollo_reference"}` so authored problem/solution PDFs are not visible to student RAG.
 - `knowledge/teacher_weekly.py` — upload queue, job leasing, worker loop, week activation. Calls `AITAIndexingService`.
 - `knowledge/manager.py` — legacy `add_pdf_material()` path + `_index_items_to_pgvector()` bridge.
 - `text-embeder/layout_multimodal_embedder.py` — original CLI extractor/embedder (FAISS + SQLite FTS5); still used by `knowledge/manager.py`.
@@ -69,6 +70,7 @@ doc  = await service.index_from_items(docs[0], connector_doc, items)  # -> AITAD
 - `embed_texts(texts) -> list[list[float]]` (indexing/document_embedder.py) — batched embedding (~256 texts/request); used by the checkpointed indexer path.
 - `items_to_chunk_texts(items) -> list[tuple[str, dict]]` (indexing/document_chunker.py).
 - `from ocr import get_ocr_provider_from_env, OCRProvider, OCRResult, OCRBlock`.
+- `apollo.provisioning.authored_sets.indexing.index_authored_doc(db, *, search_space_id, file_bytes, title, set_index, role) -> int` — Apollo-authored problem/solution set entry point that consumes the indexing core and returns the hidden `AITADocument.id`.
 
 ## Main data flows
 

@@ -689,7 +689,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   (returns `AITADocument.id`; sets status `{"state": "apollo_reference"}`; deterministic `unique_id`
   per `(search_space_id, set_index, role)` so re-upload reuses the row).
 
-- [ ] **Step 1: Write the failing test (logic-level, OCR + heavy IO mocked)**
+- [x] **Step 1: Write the failing test (logic-level, OCR + heavy IO mocked)**
 
 Create `apollo/provisioning/tests/test_authored_indexing.py`. This test asserts the orchestration wiring
 by monkeypatching the ingestion + indexing primitives (the real PDF path is covered by the ss=4 E2E):
@@ -742,12 +742,12 @@ async def test_index_authored_doc_sets_hidden_status(db_session, monkeypatch):
     assert doc.status == {"state": "apollo_reference"}
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest apollo/provisioning/tests/test_authored_indexing.py -v`
 Expected: FAIL — module/`index_authored_doc` does not exist.
 
-- [ ] **Step 3: Implement the indexer**
+- [x] **Step 3: Implement the indexer**
 
 Create `apollo/provisioning/authored_sets/indexing.py` (the `_run_ingest` seam exists so the test can
 stub the synchronous, PyMuPDF-bound ingest without a real PDF):
@@ -896,12 +896,12 @@ async def _find_doc_by_unique_id(db: AsyncSession, unique_id: str) -> AITADocume
 > (`grep -n "def " indexing/document_hashing.py`) and adjust `_find_doc_by_unique_id` to use the SAME
 > hash `prepare_for_indexing` writes to `unique_identifier_hash`. If the names differ, match them.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest apollo/provisioning/tests/test_authored_indexing.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apollo/provisioning/authored_sets/indexing.py apollo/provisioning/tests/test_authored_indexing.py
