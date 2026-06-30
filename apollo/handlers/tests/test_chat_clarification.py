@@ -173,10 +173,17 @@ async def test_clarification_hints_reach_draft_reply(db_session_attempt):
             "apollo.handlers.chat.guard_clarification_reply",
             new=MagicMock(side_effect=lambda **kw: kw["draft"]),
         ),
+        patch(
+            "apollo.handlers.chat.resolve_pending_clarifications",
+            new=AsyncMock(),
+        ) as mock_resolve,
     ):
         from apollo.handlers.chat import handle_chat
 
         await handle_chat(db=db, neo=MagicMock(), session_id=session_id, message="hi")
+
+    # resolve_pending_clarifications was awaited once (re-scoring prior probes)
+    assert mock_resolve.await_count == 1
 
     # run_clarification_detection was awaited with the right candidates
     assert mock_detect.called
@@ -213,6 +220,10 @@ async def test_clarification_guard_redrafts_on_leak(db_session_attempt):
         ps[8],
         ps[9],
         patch("apollo.handlers.chat.guard_clarification_reply", new=guard_regen),
+        patch(
+            "apollo.handlers.chat.resolve_pending_clarifications",
+            new=AsyncMock(),
+        ),
     ):
         from apollo.handlers.chat import handle_chat
 
@@ -246,6 +257,10 @@ async def test_clarification_setup_failure_is_failsafe(db_session_attempt):
         ps[7],
         patch("apollo.handlers.chat.load_problem_candidates", new=boom),
         ps[9] as mock_detect,
+        patch(
+            "apollo.handlers.chat.resolve_pending_clarifications",
+            new=AsyncMock(),
+        ),
     ):
         from apollo.handlers.chat import handle_chat
 

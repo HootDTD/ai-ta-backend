@@ -25,6 +25,8 @@ from apollo.agent.apollo_llm import draft_reply
 from apollo.clarification import CandidateEmbeddingCache, default_embedder
 from apollo.clarification.candidate_assembly import load_problem_candidates
 from apollo.clarification.leak_guard import guard_clarification_reply
+from apollo.clarification.rescorer import default_clarification_judge
+from apollo.clarification.resolve_turn import resolve_pending_clarifications
 from apollo.clarification.turn import run_clarification_detection
 from apollo.handlers.done_inputs import _find_problem_payload
 from apollo.handlers.history import load_windowed_history
@@ -335,6 +337,14 @@ async def handle_chat(
             search_space_id=int(sess.search_space_id),
             concept_id=sess.concept_id,
             problem_payload=problem_payload,
+        )
+        await resolve_pending_clarifications(
+            db=db,
+            attempt_id=current_attempt.id,
+            student_message=message,
+            candidates=inputs.candidates,
+            judge=default_clarification_judge,
+            answered_turn=next_idx,
         )
         clarification_hints = await run_clarification_detection(
             db=db,
