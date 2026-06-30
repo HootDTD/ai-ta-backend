@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 import pytest
+from sqlalchemy import func, select
 
 from auth import AuthContext
 
@@ -458,3 +459,126 @@ def test_make_metered_chat_seeds_decimal_cost_not_float():
     chat.record_usage(model="gpt-4o", usage=usage)
     assert isinstance(chat._run.llm_cost_usd, Decimal)
     assert chat._run.llm_cost_usd > 0
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monkeypatch):
+    """Delete removes the set, its reference docs (+chunks), and the
+    ConceptProblems it minted — while a sibling set's problem is untouched."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from database.models import AITAChunk, AITADocument
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
+
+    space_id, concept_id = await _seed_course(db_session, slug="aas-del")
+
+    # Two reference docs for the target set, each with a chunk.
+    pdoc = AITADocument(title="p", content="c", content_hash="ph", unique_identifier_hash="pu",
+                        search_space_id=space_id, status={"state": "apollo_reference"})
+    sdoc = AITADocument(title="s", content="c", content_hash="sh", unique_identifier_hash="su",
+                        search_space_id=space_id, status={"state": "apollo_reference"})
+    db_session.add_all([pdoc, sdoc])
+    await db_session.flush()
+    db_session.add_all([
+        AITAChunk(document_id=pdoc.id, content="pc"),
+        AITAChunk(document_id=sdoc.id, content="sc"),
+    ])
+
+    # Two ConceptProblems minted by the target set, one by a sibling set.
+    cp1 = ConceptProblem(concept_id=concept_id, problem_code="scrape.a", difficulty="m",
+                         payload={}, tier=2, search_space_id=space_id)
+    cp2 = ConceptProblem(concept_id=concept_id, problem_code="scrape.b", difficulty="m",
+                         payload={}, tier=2, search_space_id=space_id)
+    sibling = ConceptProblem(concept_id=concept_id, problem_code="scrape.z", difficulty="m",
+                             payload={}, tier=2, search_space_id=space_id)
+    db_session.add_all([cp1, cp2, sibling])
+    await db_session.flush()
+
+    target = AuthoredSet(
+        search_space_id=space_id, set_index=1, status="done",
+        problem_document_id=pdoc.id, solution_document_id=sdoc.id,
+        result_summary={"problems": [
+            {"concept_problem_id": cp1.id, "outcome": "promoted"},
+            {"concept_problem_id": cp2.id, "outcome": "held_for_review"},
+            {"concept_problem_id": None, "outcome": "rejected"},
+        ]},
+    )
+    db_session.add(target)
+    await db_session.flush()
+    target_id, pdoc_id, sdoc_id = int(target.id), int(pdoc.id), int(sdoc.id)
+    cp1_id, cp2_id, sibling_id = int(cp1.id), int(cp2.id), int(sibling.id)
+
+    resp = await aapi.delete_authored_set(set_id=target_id, request=_FakeRequest(), db=db_session)
+    assert resp["deleted"] is True
+    assert resp["removed_problems"] == 2
+    assert resp["removed_documents"] == 2
+
+    assert await db_session.get(AuthoredSet, target_id) is None
+    assert await db_session.get(AITADocument, pdoc_id) is None
+    assert await db_session.get(AITADocument, sdoc_id) is None
+    assert await db_session.get(ConceptProblem, cp1_id) is None
+    assert await db_session.get(ConceptProblem, cp2_id) is None
+    # Chunks cascade with their document.
+    remaining_chunks = (await db_session.execute(
+        select(func.count()).select_from(AITAChunk).where(AITAChunk.document_id.in_([pdoc_id, sdoc_id]))
+    )).scalar_one()
+    assert remaining_chunks == 0
+    # Sibling problem survives.
+    assert await db_session.get(ConceptProblem, sibling_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_failed_set_with_no_problems(db_session, monkeypatch):
+    """A failed run (error summary, no problems, no doc ids) deletes cleanly —
+    the core motivation: clearing failed sets off the console."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
+    space_id, _ = await _seed_course(db_session, slug="aas-del-failed")
+
+    row = AuthoredSet(search_space_id=space_id, set_index=1, status="failed",
+                      result_summary={"error": "boom"})
+    db_session.add(row)
+    await db_session.flush()
+    set_id = int(row.id)
+
+    resp = await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
+    assert resp == {"deleted": True, "removed_problems": 0, "removed_documents": 0}
+    assert await db_session.get(AuthoredSet, set_id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_404(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.delete_authored_set(set_id=999999, request=_FakeRequest(), db=db_session)
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_enforces_membership(db_session, monkeypatch):
+    """A non-member is rejected and the set survives."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    async def _deny_member(**_kwargs):
+        raise aapi.HTTPException(status_code=403, detail="not a member")
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_member", _deny_member)
+    space_id, _ = await _seed_course(db_session, slug="aas-del-auth")
+    row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
+    db_session.add(row)
+    await db_session.flush()
+    set_id = int(row.id)
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
+    assert exc.value.status_code == 403
+    assert await db_session.get(AuthoredSet, set_id) is not None
