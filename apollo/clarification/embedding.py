@@ -50,7 +50,7 @@ def candidate_set_hash(candidates: tuple[Candidate, ...]) -> str:
 
 
 def cosine(a: list[float], b: list[float]) -> float:
-    num = sum(x * y for x, y in zip(a, b))
+    num = sum(x * y for x, y in zip(a, b, strict=False))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0.0 or nb == 0.0:

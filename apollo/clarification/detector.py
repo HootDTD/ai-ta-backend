@@ -48,7 +48,7 @@ def detect_ambiguous_nodes(
 
     by_key = {c.canonical_key: c for c in candidates}
     flagged: list[FlaggedNode] = []
-    for node, nvec in zip(residual_nodes, node_vectors):
+    for node, nvec in zip(residual_nodes, node_vectors, strict=False):
         best_key, best_cos = None, -1.0
         for key, surfaces in cand_vectors.items():
             for svec in surfaces:
