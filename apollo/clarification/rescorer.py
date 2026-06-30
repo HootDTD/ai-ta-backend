@@ -7,14 +7,12 @@ decidable. DI'd + stubbed in tests; no live model in CI."""
 from __future__ import annotations
 
 import json
-import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Literal
 
 from apollo.agent._llm import main_chat
 from apollo.errors import ResolutionUnavailableError
-
-_LOG = logging.getLogger(__name__)
 
 RescoreOutcome = Literal["confirmed", "refuted", "vague"]
 _RESPONSE_FORMAT = {"type": "json_object"}
@@ -35,31 +33,37 @@ ClarificationJudge = Callable[[ClarificationRequest], RescoreOutcome]
 def _build_messages(request: ClarificationRequest) -> list[dict[str, str]]:
     system = (
         "You judge whether a student's clarified explanation matches a target idea. "
-        "Reply strict JSON {\"verdict\": \"confirmed\"|\"refuted\"|\"vague\"}. "
+        'Reply strict JSON {"verdict": "confirmed"|"refuted"|"vague"}. '
         "confirmed = the clarification correctly expresses the target idea; "
         "refuted = it states the opposite or a wrong claim; "
         "vague = noncommittal / unclear. Judge meaning, not wording."
     )
-    user = json.dumps({
-        "original_statement": request.original_statement,
-        "clarification": request.clarification_text,
-        "target_idea": request.candidate_display,
-    })
+    user = json.dumps(
+        {
+            "original_statement": request.original_statement,
+            "clarification": request.clarification_text,
+            "target_idea": request.candidate_display,
+        }
+    )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
 def default_clarification_judge(request: ClarificationRequest) -> RescoreOutcome:
     try:
         raw = main_chat(
-            purpose=_PURPOSE, messages=_build_messages(request),
-            response_format=_RESPONSE_FORMAT, temperature=0.0,
+            purpose=_PURPOSE,
+            messages=_build_messages(request),
+            response_format=_RESPONSE_FORMAT,
+            temperature=0.0,
         )
         verdict = str(json.loads(raw or "{}").get("verdict", "vague"))
         return verdict if verdict in _VALID else "vague"  # unknown -> no credit
     except ResolutionUnavailableError:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise ResolutionUnavailableError(stage="clarification_rescore", last_error=str(exc)) from exc
+        raise ResolutionUnavailableError(
+            stage="clarification_rescore", last_error=str(exc)
+        ) from exc
 
 
 def rescore_clarification(
@@ -69,8 +73,10 @@ def rescore_clarification(
     candidate_display: str,
     judge: ClarificationJudge,
 ) -> RescoreOutcome:
-    return judge(ClarificationRequest(
-        original_statement=original_statement,
-        clarification_text=clarification_text,
-        candidate_display=candidate_display,
-    ))
+    return judge(
+        ClarificationRequest(
+            original_statement=original_statement,
+            clarification_text=clarification_text,
+            candidate_display=candidate_display,
+        )
+    )

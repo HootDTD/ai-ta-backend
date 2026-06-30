@@ -9,10 +9,22 @@ def test_clarification_states_allowlist_matches_sql_check():
 def test_clarification_table_columns():
     cols = Clarification.__table__.columns
     expected = {
-        "id", "attempt_id", "session_id", "user_id", "search_space_id",
-        "concept_id", "node_id", "candidate_key", "state", "probe_question",
-        "original_statement", "clarification_text", "asked_turn", "answered_turn",
-        "created_at", "updated_at",
+        "id",
+        "attempt_id",
+        "session_id",
+        "user_id",
+        "search_space_id",
+        "concept_id",
+        "node_id",
+        "candidate_key",
+        "state",
+        "probe_question",
+        "original_statement",
+        "clarification_text",
+        "asked_turn",
+        "answered_turn",
+        "created_at",
+        "updated_at",
     }
     assert set(cols.keys()) == expected
     assert cols["clarification_text"].nullable is True

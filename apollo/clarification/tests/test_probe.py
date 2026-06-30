@@ -58,9 +58,7 @@ def test_hint_names_the_dimension_per_node_type():
     assert "direction" in hint_cond.lower()
 
     # Equation: should mention variable
-    hint_eq = build_probe_hint(
-        _node("s2", "equation", {"symbolic": "x"}), _cand("equation", "d")
-    )
+    hint_eq = build_probe_hint(_node("s2", "equation", {"symbolic": "x"}), _cand("equation", "d"))
     assert "variable" in hint_eq.lower()
 
     # Definition: should mention define

@@ -3,6 +3,7 @@
 No live model calls: rescore_clarification uses a DI'd judge stub in the brief's
 tests; default_clarification_judge tests monkeypatch apollo.clarification.rescorer.main_chat.
 """
+
 import pytest
 
 from apollo.clarification.rescorer import (
@@ -11,15 +12,16 @@ from apollo.clarification.rescorer import (
     rescore_clarification,
 )
 
-
 # ---------------------------------------------------------------------------
 # Brief's tests (verbatim from task-11-brief.md)
 # ---------------------------------------------------------------------------
+
 
 def _judge(outcome):
     def fn(request: ClarificationRequest):
         assert request.clarification_text  # judge sees the committed answer
         return outcome
+
     return fn
 
 
@@ -42,13 +44,17 @@ def test_judge_failure_propagates_named_error():
 
     with pytest.raises(ResolutionUnavailableError):
         rescore_clarification(
-            original_statement="o", clarification_text="c", candidate_display="d", judge=boom,
+            original_statement="o",
+            clarification_text="c",
+            candidate_display="d",
+            judge=boom,
         )
 
 
 # ---------------------------------------------------------------------------
 # Additional tests for 100% coverage of default_clarification_judge + _build_messages
 # ---------------------------------------------------------------------------
+
 
 def _request():
     return ClarificationRequest(
@@ -95,4 +101,6 @@ def test_default_judge_reraises_resolution_unavailable(monkeypatch):
     monkeypatch.setattr("apollo.clarification.rescorer.main_chat", boom)
     with pytest.raises(ResolutionUnavailableError) as ei:
         default_clarification_judge(_request())
-    assert ei.value.stage == "llm_adjudication"  # original error re-raised unchanged, not re-wrapped
+    assert (
+        ei.value.stage == "llm_adjudication"
+    )  # original error re-raised unchanged, not re-wrapped

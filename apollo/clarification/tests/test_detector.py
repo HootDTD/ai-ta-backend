@@ -9,9 +9,10 @@ keyword `text=` does not exist in the actual helper; condition content is
 `{"applies_when": "...", "label": ""}`.
 """
 
-from apollo.clarification.detector import FlaggedNode, T_AMBIG, detect_ambiguous_nodes
+from apollo.clarification.detector import T_AMBIG, detect_ambiguous_nodes
 from apollo.clarification.embedding import CandidateEmbeddingCache
 from apollo.resolution.candidates import Candidate
+
 # Reuse the resolution test node builder.
 from apollo.resolution.tests.test_resolver import _node
 
@@ -83,7 +84,7 @@ def test_picks_best_surface_when_candidate_has_multiple_surfaces():
         {
             "query text": [1.0, 0.0],
             "query text close match": [0.95, 0.05],  # cosine ~0.998 → best_cos updated
-            "unrelated noise": [0.0, 1.0],           # cosine 0.0 → False branch fires
+            "unrelated noise": [0.0, 1.0],  # cosine 0.0 → False branch fires
         }
     )
     flagged = detect_ambiguous_nodes([node], (cand,), embedder=emb, cache=CandidateEmbeddingCache())

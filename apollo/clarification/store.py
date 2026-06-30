@@ -31,10 +31,17 @@ async def write_asked_waiting(
     stmt = (
         pg_insert(Clarification)
         .values(
-            attempt_id=attempt_id, session_id=session_id, user_id=user_id,
-            search_space_id=search_space_id, concept_id=concept_id, node_id=node_id,
-            candidate_key=candidate_key, state="asked_waiting", probe_question=probe_question,
-            original_statement=original_statement, asked_turn=asked_turn,
+            attempt_id=attempt_id,
+            session_id=session_id,
+            user_id=user_id,
+            search_space_id=search_space_id,
+            concept_id=concept_id,
+            node_id=node_id,
+            candidate_key=candidate_key,
+            state="asked_waiting",
+            probe_question=probe_question,
+            original_statement=original_statement,
+            asked_turn=asked_turn,
         )
         .on_conflict_do_nothing(constraint="apollo_clarifications_attempt_node_uniq")
     )
@@ -59,9 +66,9 @@ async def record_outcome(
     clarification_text: str | None,
     answered_turn: int,
 ) -> None:
-    row = (await db.execute(
-        select(Clarification).where(Clarification.id == clarification_id)
-    )).scalar_one()
+    row = (
+        await db.execute(select(Clarification).where(Clarification.id == clarification_id))
+    ).scalar_one()
     row.state = state
     row.clarification_text = clarification_text
     row.answered_turn = answered_turn

@@ -1,5 +1,3 @@
-import math
-
 from apollo.clarification.embedding import (
     CandidateEmbeddingCache,
     candidate_set_hash,
@@ -11,8 +9,15 @@ from apollo.resolution.candidates import Candidate
 
 def _cand(key, display, aliases=(), exact=()):
     return Candidate(
-        canonical_key=key, canon_key=1, node_type="condition", is_misconception=False,
-        symbolic=None, aliases=aliases, display_name=display, opposes_key=None, exact_aliases=exact,
+        canonical_key=key,
+        canon_key=1,
+        node_type="condition",
+        is_misconception=False,
+        symbolic=None,
+        aliases=aliases,
+        display_name=display,
+        opposes_key=None,
+        exact_aliases=exact,
     )
 
 

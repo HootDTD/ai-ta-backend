@@ -3,7 +3,6 @@ from apollo.clarification.pacing import MAX_PROBES_PER_TURN, rubric_weight_for, 
 from apollo.resolution.candidates import Candidate
 from apollo.resolution.tests.test_resolver import _node
 
-
 _CONTENT_BY_TYPE = {
     "condition": {"applies_when": "t", "label": ""},
     "equation": {"symbolic": "x = 1", "label": "", "variables": []},
@@ -14,8 +13,17 @@ _CONTENT_BY_TYPE = {
 
 def _flag(node_id, node_type, cos):
     n = _node(node_id, node_type, _CONTENT_BY_TYPE[node_type])
-    c = Candidate(canonical_key="k", canon_key=1, node_type=node_type, is_misconception=False,
-                  symbolic=None, aliases=(), display_name="d", opposes_key=None, exact_aliases=())
+    c = Candidate(
+        canonical_key="k",
+        canon_key=1,
+        node_type=node_type,
+        is_misconception=False,
+        symbolic=None,
+        aliases=(),
+        display_name="d",
+        opposes_key=None,
+        exact_aliases=(),
+    )
     return FlaggedNode(node=n, candidate=c, cosine=cos)
 
 
@@ -26,7 +34,7 @@ def test_rubric_weight_prefers_graded_axes():
 
 def test_caps_at_three_and_orders_by_weight_then_cosine():
     flags = [
-        _flag("a", "definition", 0.99),    # weight 0.0
+        _flag("a", "definition", 0.99),  # weight 0.0
         _flag("b", "procedure_step", 0.51),  # highest weight
         _flag("c", "condition", 0.80),
         _flag("d", "condition", 0.90),
