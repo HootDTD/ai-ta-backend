@@ -4,6 +4,10 @@ Provides ``make_def_node`` — a factory that builds a DefinitionNode whose
 ``student_surface_text`` equals the given input text.  Splits the text on the
 first space so the Pydantic model gets a non-empty ``concept`` and a non-empty
 ``meaning``; for single-token texts both fields receive the token.
+
+Provides ``make_equation_node`` — a factory that builds an EquationNode whose
+``node_type`` is ``"equation"`` (excluded from NLI_NODE_TYPES).  The symbolic
+field is set to the supplied string; label and variables are left empty.
 """
 
 from __future__ import annotations
@@ -32,6 +36,27 @@ def make_def_node():
             attempt_id=1,
             source="parser",
             content={"concept": concept, "meaning": meaning},
+        )
+
+    return _factory
+
+
+@pytest.fixture()
+def make_equation_node():
+    """Return a callable that builds an ``equation`` Node from a symbolic string.
+
+    ``node_type`` is ``"equation"`` which is NOT in ``NLI_NODE_TYPES``, so
+    ``match_nli_semantic`` returns ``None`` immediately on the type gate without
+    ever consulting the NLI adjudicator.
+    """
+
+    def _factory(symbolic: str) -> Node:
+        return build_node(
+            node_type="equation",
+            node_id="test-eq-1",
+            attempt_id=1,
+            source="parser",
+            content={"symbolic": symbolic, "label": "", "variables": []},
         )
 
     return _factory
