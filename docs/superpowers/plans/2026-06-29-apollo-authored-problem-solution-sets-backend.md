@@ -1169,7 +1169,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   - `async verify_against_generated(db, *, candidate, draft, min_conf, problem_low_conf, match_method,
     metered_chat, conf_threshold) -> VerificationVerdict`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `apollo/provisioning/tests/test_authored_verification.py`:
 
@@ -1250,12 +1250,12 @@ async def test_low_confidence_agreement_trusts(monkeypatch):
     assert v.review_required is False
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest apollo/provisioning/tests/test_authored_verification.py -v`
 Expected: FAIL — module does not exist.
 
-- [ ] **Step 3: Implement the module**
+- [x] **Step 3: Implement the module**
 
 Create `apollo/provisioning/authored_sets/verification.py`:
 
@@ -1367,12 +1367,12 @@ async def verify_against_generated(
     )
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest apollo/provisioning/tests/test_authored_verification.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apollo/provisioning/authored_sets/verification.py apollo/provisioning/tests/test_authored_verification.py
