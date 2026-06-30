@@ -145,6 +145,7 @@ async def run_authored_set_provisioning(
     """Run trigger-agnostic provisioning for one problem/solution document pair."""
     if embed_fn is None:
         from indexing.document_embedder import embed_text as embed_fn  # type: ignore
+    assert embed_fn is not None
 
     concept_id = await resolve_or_create_provisional_concept(db, search_space_id=search_space_id)
     solution_chunks = await load_solution_chunks(db, solution_document_id=solution_document_id)
@@ -269,7 +270,7 @@ async def _process_authored_candidate(
     if review_required:
         reason = verdict.reason if verdict is not None else "generated_no_match"
         if tier1 is not None:
-            tier1.provenance = {
+            tier1.provenance = {  # type: ignore[assignment]
                 **(tier1.provenance or {}),
                 "authored_review": {
                     "required": True,

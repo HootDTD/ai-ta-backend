@@ -185,10 +185,10 @@ async def _set_status(
     row = await db.get(AuthoredSet, set_id)
     if row is None:
         return
-    row.status = status
-    row.updated_at = datetime.now(UTC)
+    row.status = status  # type: ignore[assignment]
+    row.updated_at = datetime.now(UTC)  # type: ignore[assignment]
     if diagnostic is not None:
-        row.result_summary = {**(row.result_summary or {}), "error": diagnostic}
+        row.result_summary = {**(row.result_summary or {}), "error": diagnostic}  # type: ignore[assignment]
     await db.commit()
 
 
@@ -265,7 +265,7 @@ async def approve_held_problem(
     )
 
     row = await db.get(ConceptProblem, problem_id)
-    review = (row.provenance or {}).get("authored_review") if row is not None else None
+    review = (row.provenance or {}).get("authored_review") if row is not None else None  # type: ignore[call-overload]
     if row is None or not review or not review.get("required"):
         raise HTTPException(status_code=409, detail="problem is not held for review")
 
@@ -300,7 +300,7 @@ async def approve_held_problem(
         existing_problem_hashes=existing_hashes,
     )
     if result.promoted:
-        row.provenance = {
+        row.provenance = {  # type: ignore[assignment]
             **(row.provenance or {}),
             "authored_review": {
                 **review,
@@ -317,8 +317,8 @@ async def approve_held_problem(
 
 
 def _candidate_from_row(row: ConceptProblem) -> SimpleNamespace:
-    payload = row.payload or {}
-    provenance = row.provenance or {}
+    payload: dict = row.payload or {}  # type: ignore[assignment]
+    provenance: dict = row.provenance or {}  # type: ignore[assignment]
     return SimpleNamespace(
         problem_text=payload.get("problem_text", ""),
         given_values=payload.get("given_values", {}) or {},

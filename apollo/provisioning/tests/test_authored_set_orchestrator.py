@@ -88,7 +88,7 @@ def _candidate(*, document_id: int, chash: str = "aas-chunk") -> CandidateQuesti
 
 def _draft(*, source: str = "extracted", symbolic: str = "M = w*L^2/8") -> ReferenceSolutionDraft:
     return ReferenceSolutionDraft(
-        solution_source=source,
+        solution_source=source,  # type: ignore[arg-type]
         reference_solution=[
             {
                 "step": 1,

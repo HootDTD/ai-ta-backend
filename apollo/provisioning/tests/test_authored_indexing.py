@@ -167,9 +167,7 @@ async def test_index_authored_doc_propagates_page_confidence(db_session, monkeyp
     from apollo.provisioning.authored_sets.paired_retrieval import chunk_ocr_confidence
     from database.models import SearchSpace
 
-    db_session.add(
-        SearchSpace(id=7, name="AAE Conf", slug="aae-conf", subject_name="AAE")
-    )
+    db_session.add(SearchSpace(id=7, name="AAE Conf", slug="aae-conf", subject_name="AAE"))
     await db_session.flush()
 
     ingestion = _fake_ingestion(
@@ -196,9 +194,7 @@ async def test_index_authored_doc_offloads_ingest_off_event_loop(db_session, mon
     never stalls concurrent request handling."""
     from database.models import SearchSpace
 
-    db_session.add(
-        SearchSpace(id=8, name="AAE Thread", slug="aae-thread", subject_name="AAE")
-    )
+    db_session.add(SearchSpace(id=8, name="AAE Thread", slug="aae-thread", subject_name="AAE"))
     await db_session.flush()
 
     loop_thread_ident = threading.get_ident()

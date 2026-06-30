@@ -59,7 +59,7 @@ async def chunk_ocr_confidence(
         if not isinstance(entry, dict):
             continue
         try:
-            page = int(entry.get("page"))
+            page = int(entry.get("page"))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             continue
         confidence = entry.get("ocr_confidence")
@@ -109,9 +109,7 @@ def _spans_from_chunks(
         if (content or "").strip()
     )
     confidences = [
-        page_conf.get(page)
-        for (_chunk_id, _content, page) in chunks
-        if page_conf.get(page) is not None
+        conf for (_chunk_id, _content, page) in chunks if (conf := page_conf.get(page)) is not None
     ]
     min_conf = min(confidences) if confidences else None
     return spans, min_conf
@@ -141,21 +139,21 @@ def make_paired_solution_retrieve_fn(
                 page_conf=page_conf,
             )
             if spans:
-                retrieve.last_min_conf = min_conf
-                retrieve.last_match_method = "label"
+                retrieve.last_min_conf = min_conf  # type: ignore[attr-defined]
+                retrieve.last_match_method = "label"  # type: ignore[attr-defined]
                 return spans
 
         query_text = getattr(question, "problem_text", "") or ""
-        hits = await _doc_scoped_semantic(db, solution_document_id, query_text, top_k)
+        hits = await _doc_scoped_semantic(db, solution_document_id, query_text, top_k)  # type: ignore[arg-type]
         spans, min_conf = _spans_from_chunks(
             hits,
             solution_document_id=solution_document_id,
             page_conf=page_conf,
         )
-        retrieve.last_min_conf = min_conf if spans else None
-        retrieve.last_match_method = "retrieval" if spans else None
+        retrieve.last_min_conf = min_conf if spans else None  # type: ignore[attr-defined]
+        retrieve.last_match_method = "retrieval" if spans else None  # type: ignore[attr-defined]
         return spans
 
-    retrieve.last_min_conf = None
-    retrieve.last_match_method = None
+    retrieve.last_min_conf = None  # type: ignore[attr-defined]
+    retrieve.last_match_method = None  # type: ignore[attr-defined]
     return retrieve

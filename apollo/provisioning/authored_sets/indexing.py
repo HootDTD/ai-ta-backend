@@ -83,7 +83,7 @@ async def index_authored_doc(
             existing = await _find_doc_by_unique_id(db, connector_doc)
             if existing is None:
                 raise RuntimeError("authored indexer: prepare_for_indexing returned no doc")
-            existing.status = dict(_HIDDEN_STATUS)
+            existing.status = dict(_HIDDEN_STATUS)  # type: ignore[assignment]
             await db.flush()
             return int(existing.id)
 
@@ -117,7 +117,7 @@ async def index_authored_doc(
         doc = await db.get(AITADocument, document_id)
         if doc is None:
             raise RuntimeError(f"authored indexer: indexed document {document_id} disappeared")
-        doc.status = dict(_HIDDEN_STATUS)
+        doc.status = dict(_HIDDEN_STATUS)  # type: ignore[assignment]
         await db.flush()
         _LOG.info("Indexed authored %s document %s for set %s", role, document_id, set_index)
         return document_id
