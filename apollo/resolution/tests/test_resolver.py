@@ -841,3 +841,21 @@ def test_clarification_confidence_clears_normalization_floor():
     assert nc == 1.0
     assert nc >= ABSTENTION_THRESHOLDS["min_normalization_confidence"]  # 0.85
     assert RESOLUTION_CEILING_DEFAULT == 0.75
+
+
+# ---------------------------------------------------------------------------
+# Task 6 — find_residual_nodes: the public clarification-detector seam.
+# ---------------------------------------------------------------------------
+
+
+def test_find_residual_nodes_returns_only_unmatched():
+    from apollo.resolution.resolver import find_residual_nodes
+
+    # "matched" node: its surface text IS an alias of the candidate → _content_match
+    # returns a ScoredMatch, so it is NOT residual.
+    matched = _node("s1", "condition", {"applies_when": "exact alias text", "label": ""})
+    # "residual" node: its surface text does not match any tier → _content_match None.
+    residual = _node("s2", "condition", {"applies_when": "some paraphrase", "label": ""})
+    cands = _cands_with("cond.k", node_type="condition", aliases=("exact alias text",))
+    out = find_residual_nodes([matched, residual], cands)
+    assert [n.node_id for n in out] == ["s2"]

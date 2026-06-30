@@ -135,6 +135,24 @@ def _content_match(
     return apply_misconception_competition(surface, lexical)
 
 
+def find_residual_nodes(
+    nodes: list[Node],
+    candidates: tuple[Candidate, ...],
+    *,
+    fuzzy_threshold: float = 0.9,
+    symbolic_mappings: dict[str, str] | None = None,
+) -> list[Node]:
+    """Nodes no deterministic tier confidently matched (the clarification
+    detector's input). Pure: reuses ``_content_match`` so banding stays in
+    lockstep with grading-time resolution."""
+    maps = symbolic_mappings if symbolic_mappings is not None else {}
+    residual: list[Node] = []
+    for n in nodes:
+        if _content_match(n, candidates, fuzzy_threshold=fuzzy_threshold, symbolic_mappings=maps) is None:
+            residual.append(n)
+    return residual
+
+
 def resolve_attempt(
     student_graph: KGGraph,
     candidates: tuple[Candidate, ...],
