@@ -63,6 +63,12 @@ def _estimate_tokens(messages: List[Dict[str, Any]]) -> int:
         total_chars = sum(len(str(m.get("content", ""))) for m in messages)
         return total_chars // 4
 
+_CLARIFICATION_PREFIX = (
+    "You have a few things you're unsure about and want to ask your study partner. "
+    "Work these clarifying questions naturally into your reply, in your own confused "
+    "voice. Ask them to commit to a specific answer; do NOT state the answer yourself:\n"
+)
+
 APOLLO_SYSTEM_PROMPT = """You are Apollo, being taught by the user. You know NOTHING about what they are teaching you.
 
 ABSOLUTE RULES (violating any is a failure):
@@ -97,6 +103,7 @@ def draft_reply(
     problem_text: str | None = None,
     model: str | None = None,
     history_summary: str | None = None,
+    clarification_hints: list[str] | None = None,
 ) -> str:
     """Generate Apollo's confused-classmate reply.
 
@@ -135,6 +142,9 @@ def draft_reply(
             "role": "system",
             "content": f"Earlier-conversation summary:\n{history_summary}",
         })
+    if clarification_hints:
+        joined = "\n".join(f"- {h}" for h in clarification_hints)
+        messages.append({"role": "system", "content": _CLARIFICATION_PREFIX + joined})
     messages.extend(history)
 
     tokens = _estimate_tokens(messages)
