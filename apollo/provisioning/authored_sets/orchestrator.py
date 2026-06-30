@@ -45,7 +45,7 @@ from apollo.provisioning.solution import (
     build_approved_pair,
     find_or_generate,
 )
-from apollo.provisioning.tag_mint import tag_and_mint
+from apollo.provisioning.tag_mint import TagMintError, tag_and_mint
 from apollo.schemas.problem import Problem
 
 __all__ = ["ProblemResult", "ProvisioningReport", "run_authored_set_provisioning"]
@@ -304,9 +304,25 @@ async def _process_authored_candidate(
             diagnostic="missing_tier1_row",
         )
 
-    mint_plan = await tag_and_mint(
-        db, pair, chat_fn=_tag_mint_chat_fn(metered_chat), embed_fn=embed_fn
-    )
+    try:
+        mint_plan = await tag_and_mint(
+            db, pair, chat_fn=_tag_mint_chat_fn(metered_chat), embed_fn=embed_fn
+        )
+    except TagMintError as exc:
+        # The mint draft for THIS problem is unusable (e.g. the LLM prereq draft
+        # names an unminted entity key). Reject just this candidate — mirroring
+        # the SolutionDraftError handling above — instead of letting it abort the
+        # whole set. (Infra-level CanonProjectionError from promote is left to
+        # propagate: that is a run-level failure by design.)
+        return ProblemResult(
+            label=label,
+            outcome="rejected",
+            solution_source=draft.solution_source,
+            match_method=match_method,
+            ocr_confidence=min_conf,
+            diagnostic=f"tag_mint_error: {exc}",
+            concept_problem_id=int(tier1.id),
+        )
     existing_problem_hashes = await _authored_concept_dup_hashes(
         db, concept_id=mint_plan.concept_id
     )
