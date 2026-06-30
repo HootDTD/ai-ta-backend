@@ -189,6 +189,41 @@ class ConceptProblem(Base):
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 
+class AuthoredSet(Base):
+    """Problem-doc plus solution-doc pairing for authored-set provisioning
+    (WU-AAS). result_summary holds the bounded per-problem outcome list."""
+
+    __tablename__ = "apollo_authored_sets"
+
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    set_index = Column(Integer, nullable=False)
+    problem_document_id = Column(BigInteger, nullable=True)
+    solution_document_id = Column(BigInteger, nullable=True)
+    status = Column(Text, nullable=False, server_default=text("'pending'"), default="pending")
+    result_summary = Column(
+        _JSONType,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+        default=dict,
+    )
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint("search_space_id", "set_index", name="uq_authored_set_per_space"),
+    )
+
+
 class Misconception(Base):
     """Per-concept misconception bank backing the misconception-inference
     channel. See migration 019. The description_embedding column is the

@@ -7,19 +7,18 @@ Mounted at /apollo in server.py. Each named error class from apollo.errors
 is registered with an exception handler that surfaces the error as a
 structured JSON response — NO FALLBACK behavior, just visible failure.
 """
+
 from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.auth_deps import require_course_member, require_session_owner, require_user
-from auth import AuthContext
 from apollo.errors import (
-    ApolloError,
     CoverageGradingError,
     FilterRejectedError,
     InvalidPhaseError,
@@ -44,7 +43,6 @@ from apollo.handlers.lifecycle import handle_end, handle_get_session, handle_ret
 from apollo.handlers.negotiate import (
     ChallengeRequest,
     ParaphraseRequest,
-    SkipRequest,
     handle_challenge,
     handle_get_trace,
     handle_paraphrase,
@@ -53,8 +51,9 @@ from apollo.handlers.negotiate import (
 from apollo.handlers.progress import handle_get_progress
 from apollo.hoot_bridge.session_init import init_session_from_hoot
 from apollo.persistence.neo4j_client import Neo4jClient
+from apollo.provisioning.authored_sets.api import router as authored_sets_router
+from auth import AuthContext
 from database.session import get_db_session
-
 
 # ----------------------------------------------------------------------
 # Neo4j client — process singleton, lazily constructed.
@@ -78,7 +77,10 @@ async def close_neo4j_client() -> None:
         await _neo4j_client_singleton.close()
         _neo4j_client_singleton = None
 
+
 router = APIRouter(prefix="/apollo", tags=["apollo"])
+
+router.include_router(authored_sets_router)
 
 
 class FromHootRequest(BaseModel):
@@ -166,6 +168,7 @@ async def next_problem(
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     from apollo.handlers.next import handle_next
+
     return await handle_next(db=db, session_id=session_id, difficulty=body.difficulty)
 
 
@@ -177,6 +180,7 @@ async def restart_problem(
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     from apollo.handlers.restart_problem import handle_restart_problem
+
     return await handle_restart_problem(db=db, neo=neo, session_id=session_id)
 
 
@@ -203,6 +207,7 @@ async def progress(
 # P3 — Negotiable OLM. Three move endpoints + trace lookup.
 # ----------------------------------------------------------------------
 
+
 @router.post("/sessions/{session_id}/kg/{entry_id}/challenge")
 async def negotiate_challenge(
     session_id: int,
@@ -213,7 +218,11 @@ async def negotiate_challenge(
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_challenge(
-        db=db, neo=neo, session_id=session_id, entry_id=entry_id, body=body,
+        db=db,
+        neo=neo,
+        session_id=session_id,
+        entry_id=entry_id,
+        body=body,
     )
 
 
@@ -227,7 +236,11 @@ async def negotiate_paraphrase(
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_paraphrase(
-        db=db, neo=neo, session_id=session_id, entry_id=entry_id, body=body,
+        db=db,
+        neo=neo,
+        session_id=session_id,
+        entry_id=entry_id,
+        body=body,
     )
 
 
@@ -240,7 +253,10 @@ async def negotiate_skip(
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_skip(
-        db=db, neo=neo, session_id=session_id, entry_id=entry_id,
+        db=db,
+        neo=neo,
+        session_id=session_id,
+        entry_id=entry_id,
     )
 
 
@@ -253,7 +269,10 @@ async def negotiate_trace(
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_get_trace(
-        db=db, neo=neo, session_id=session_id, entry_id=entry_id,
+        db=db,
+        neo=neo,
+        session_id=session_id,
+        entry_id=entry_id,
     )
 
 
@@ -262,13 +281,16 @@ async def negotiate_trace(
 # response. NO FALLBACK: each error type gets its own HTTP status + code.
 # ----------------------------------------------------------------------
 
+
 def _err_payload(code: str, message: str, **extra: object) -> dict:
     payload = {"error_code": code, "message": message}
     payload.update(extra)
     return payload
 
 
-async def parser_could_not_extract_handler(request: Request, exc: ParserCouldNotExtractError) -> JSONResponse:
+async def parser_could_not_extract_handler(
+    request: Request, exc: ParserCouldNotExtractError
+) -> JSONResponse:
     return JSONResponse(
         status_code=422,
         content=_err_payload(
@@ -304,7 +326,9 @@ async def malformed_equation_handler(request: Request, exc: MalformedEquationErr
     )
 
 
-async def no_matching_concept_handler(request: Request, exc: NoMatchingConceptError) -> JSONResponse:
+async def no_matching_concept_handler(
+    request: Request, exc: NoMatchingConceptError
+) -> JSONResponse:
     return JSONResponse(
         status_code=409,
         content=_err_payload(
@@ -399,7 +423,10 @@ async def coverage_grading_handler(request: Request, exc: CoverageGradingError) 
 # because the SHADOW failure NEVER voids the already-committed student grade.
 # ----------------------------------------------------------------------
 
-async def resolution_unavailable_handler(request: Request, exc: ResolutionUnavailableError) -> JSONResponse:
+
+async def resolution_unavailable_handler(
+    request: Request, exc: ResolutionUnavailableError
+) -> JSONResponse:
     return JSONResponse(
         status_code=503,
         content=_err_payload(
@@ -411,7 +438,9 @@ async def resolution_unavailable_handler(request: Request, exc: ResolutionUnavai
     )
 
 
-async def transcript_audit_unavailable_handler(request: Request, exc: TranscriptAuditUnavailableError) -> JSONResponse:
+async def transcript_audit_unavailable_handler(
+    request: Request, exc: TranscriptAuditUnavailableError
+) -> JSONResponse:
     return JSONResponse(
         status_code=503,
         content=_err_payload(
@@ -423,7 +452,9 @@ async def transcript_audit_unavailable_handler(request: Request, exc: Transcript
     )
 
 
-async def resolution_invalid_output_handler(request: Request, exc: ResolutionInvalidOutputError) -> JSONResponse:
+async def resolution_invalid_output_handler(
+    request: Request, exc: ResolutionInvalidOutputError
+) -> JSONResponse:
     """The adjudicator returned a key outside the closed candidate set (a
     hallucination). The payload is bounded: the COUNT of allowed keys, never the
     full list."""
@@ -438,7 +469,9 @@ async def resolution_invalid_output_handler(request: Request, exc: ResolutionInv
     )
 
 
-async def student_graph_invalid_handler(request: Request, exc: StudentGraphInvalidError) -> JSONResponse:
+async def student_graph_invalid_handler(
+    request: Request, exc: StudentGraphInvalidError
+) -> JSONResponse:
     return JSONResponse(
         status_code=422,
         content=_err_payload(
@@ -449,7 +482,9 @@ async def student_graph_invalid_handler(request: Request, exc: StudentGraphInval
     )
 
 
-async def reference_graph_invalid_handler(request: Request, exc: ReferenceGraphInvalidError) -> JSONResponse:
+async def reference_graph_invalid_handler(
+    request: Request, exc: ReferenceGraphInvalidError
+) -> JSONResponse:
     return JSONResponse(
         status_code=409,
         content=_err_payload(
@@ -486,6 +521,7 @@ def register_exception_handlers(app) -> None:
     # ContextOverflowError lives in apollo.agent.apollo_llm; import lazily
     # to avoid a circular import in api.py's top-level module load.
     from apollo.agent.apollo_llm import ContextOverflowError
+
     app.add_exception_handler(ContextOverflowError, context_overflow_handler)
     app.add_exception_handler(SessionFrozenError, session_frozen_handler)
     app.add_exception_handler(KGEntryNotFoundError, kg_entry_not_found_handler)

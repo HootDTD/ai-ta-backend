@@ -30,8 +30,11 @@ here — 3B2g runs ``run_promotion_lint`` over the result, flips Tier-2, and
 projects ``:Canon``. FAIL-CLOSED: a hallucinated/unmappable LLM tag or an
 ``opposes_entity_key`` resolving to no entity raises ``TagMintError`` (mirroring
 ``SeedError``'s NO-FALLBACK convention) — a mislinked entity silently corrupts
-grading for every student, so minting refuses rather than guesses. NO network:
-``chat_fn``/``embed_fn`` are injected (mocked in Tier-1).
+grading for every student, so minting refuses rather than guesses. The ONE
+exception is a prereq edge naming an unminted entity key: prereqs are optional
+KG-enrichment edges the LLM routinely draws to a problem given (not a minted
+reference step), so such an edge is DROPPED (logged), not fatal — see step 5b.
+NO network: ``chat_fn``/``embed_fn`` are injected (mocked in Tier-1).
 
 Misconception-storage DEVIATION (orchestrator-signed, ADJ #2): auto-minted
 misconceptions are stored as ``apollo_kg_entities kind='misconception'`` (a valid
@@ -43,6 +46,7 @@ literal §8B.2 ``apollo_misconceptions`` table (whose NOT-NULL Socratic
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -64,6 +68,8 @@ from apollo.provisioning.tag_mint_persist import (
     resolve_or_create_concept,
     upsert_entity,
 )
+
+_LOG = logging.getLogger(__name__)
 
 __all__ = ["ApprovedPair", "MintPlan", "TagMintError", "tag_and_mint"]
 
@@ -288,11 +294,10 @@ async def tag_and_mint(
     # Register BARE-id aliases so an LLM prereq/opposes draft that names a
     # reference node by its bare id (bernoulli) resolves to the SAME entity as its
     # prefixed canonical_key (eq.bernoulli). The LLM never sees the prefix scheme,
-    # so it authors bare ids; without this the hard key_to_id[...] lookup in
-    # insert_prereqs / link_opposes KeyErrors and the whole document aborts (the
-    # BLOCKER). setdefault never shadows a real canonical key. A genuinely-unknown
-    # key (in neither the canonical nor the bare set) still raises KeyError ->
-    # TagMintError (fail-closed) downstream.
+    # so it authors bare ids; this alias lets a bare-id prereq/opposes edge
+    # resolve to the same entity as its prefixed canonical_key. setdefault never
+    # shadows a real canonical key. A genuinely-unknown key still fails for
+    # ``opposes`` (5a, fail-closed) but is now DROPPED for prereqs (5b).
     for bare_id, canonical_key in _bare_id_aliases(problem).items():
         if canonical_key in key_to_id:
             key_to_id.setdefault(bare_id, key_to_id[canonical_key])
@@ -303,20 +308,43 @@ async def tag_and_mint(
     except KeyError as exc:
         raise TagMintError(f"misconception opposes an unknown entity key {exc}") from exc
 
-    # --- 5b. Insert LLM-drafted prereq edges (fail-closed on a bad key) ----- #
+    # --- 5b. Insert LLM-drafted prereq edges ------------------------------- #
+    # A malformed prereq ENTRY (not a 2-tuple / {from,to}) is still fail-closed —
+    # the draft's structure is corrupt. But an edge naming an UNMINTED entity key
+    # is DROPPED, not fatal (intent decision, 2026-06-30): prereqs are optional
+    # KG-enrichment edges, and the LLM routinely names a problem given (e.g.
+    # ``pressure_box_3``) — a real quantity that is not a reference-solution step,
+    # so it is never minted. An edge to a non-existent node cannot be inserted
+    # anyway; dropping it keeps the (otherwise valid) problem promotable instead
+    # of failing it. Scoped to prereqs ONLY — entity minting and misconception
+    # ``opposes`` (5a) stay fail-closed (a mislinked entity corrupts grading).
     raw_pairs = tag.get("prereqs", []) or []
-    prereq_pairs: list[tuple[str, str]] = []
+    parsed_pairs: list[tuple[str, str]] = []
     for entry in raw_pairs:
         if isinstance(entry, (list, tuple)) and len(entry) == 2:
-            prereq_pairs.append((str(entry[0]), str(entry[1])))
+            parsed_pairs.append((str(entry[0]), str(entry[1])))
         elif isinstance(entry, dict) and "from" in entry and "to" in entry:
-            prereq_pairs.append((str(entry["from"]), str(entry["to"])))
+            parsed_pairs.append((str(entry["from"]), str(entry["to"])))
         else:
             raise TagMintError(f"prereq draft entry is malformed: {entry!r}")
-    try:
-        await insert_prereqs(db, key_to_id=key_to_id, pairs=prereq_pairs)
-    except KeyError as exc:
-        raise TagMintError(f"prereq draft references an unminted entity key {exc}") from exc
+
+    prereq_pairs: list[tuple[str, str]] = []
+    dropped_pairs: list[tuple[str, str]] = []
+    for from_key, to_key in parsed_pairs:
+        if from_key in key_to_id and to_key in key_to_id:
+            prereq_pairs.append((from_key, to_key))
+        else:
+            dropped_pairs.append((from_key, to_key))
+    if dropped_pairs:
+        _LOG.info(
+            "tag_mint_dropped_unresolvable_prereqs",
+            extra={
+                "event": "tag_mint_dropped_unresolvable_prereqs",
+                "concept_id": concept_id,
+                "dropped": dropped_pairs,
+            },
+        )
+    await insert_prereqs(db, key_to_id=key_to_id, pairs=prereq_pairs)
 
     return MintPlan(
         concept_id=concept_id,
