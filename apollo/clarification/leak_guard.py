@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 from apollo.agent.leakage_judge import (
     CONFIDENCE_THRESHOLD,
-    JudgeVerdict,  # noqa: F401 — re-exported for type hints in callers
+    JudgeVerdict,
     LeakageJudge,
     llm_leakage_judge,
 )

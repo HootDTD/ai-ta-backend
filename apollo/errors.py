@@ -196,8 +196,8 @@ class LearnerUpdateUnreconstructableError(ApolloError):
 
 
 class ResolutionUnavailableError(ApolloError):
-    """Resolver INFRASTRUCTURE failure (the one LLM adjudication call failed /
-    timed out, or a Neo4j ``RESOLVES_TO`` / resolution-field write failed).
+    """Resolver INFRASTRUCTURE failure (a resolver LLM call failed / timed out,
+    or a Neo4j ``RESOLVES_TO`` / resolution-field write failed).
 
     NO FALLBACK and — critically — must NOT void the earned grade: at Done the
     grade/XP are already committed when resolution runs, so this surfaces loud

@@ -46,6 +46,7 @@ async def test_records_confirmed_outcome(monkeypatch):
     )
     assert recorded["state"] == "confirmed"
     assert recorded["text"] == "lower where faster"
+    assert recorded["turn"] == 4
 
 
 async def test_judge_failure_leaves_waiting(monkeypatch):
