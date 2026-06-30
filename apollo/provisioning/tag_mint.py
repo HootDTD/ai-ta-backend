@@ -319,6 +319,11 @@ async def tag_and_mint(
     minted_entity_ids: dict[str, int] = {}
     merged_entity_keys: list[str] = []
     misconception_keys: list[str] = [s.canonical_key for s in misc_specs]
+    # Entities resolved EARLIER in THIS mint (minted or merged). They are excluded
+    # from each subsequent candidate's dedup pool so two distinct nodes of one
+    # problem (the m≡M fusion) cannot merge against each other — only PRE-EXISTING
+    # entities from prior mints are legitimate dedup targets (PR2 Part B).
+    resolved_ids: set[int] = set()
 
     for spec in all_specs:
         scope_summary = _scope_summary_for(spec)
@@ -330,10 +335,12 @@ async def tag_and_mint(
             candidate=candidate,
             embed_fn=embed_fn,
             judge_fn=_judge_distinct,
+            exclude_entity_ids=resolved_ids,
         )
         if verdict.verdict == "merged" and verdict.matched_entity_id is not None:
             key_to_id[spec.canonical_key] = verdict.matched_entity_id
             merged_entity_keys.append(spec.canonical_key)
+            resolved_ids.add(verdict.matched_entity_id)
             continue
 
         entity_id, _inserted = await upsert_entity(
@@ -344,6 +351,7 @@ async def tag_and_mint(
         )
         key_to_id[spec.canonical_key] = entity_id
         minted_entity_ids[spec.canonical_key] = entity_id
+        resolved_ids.add(entity_id)
 
     # Register BARE-id aliases so an LLM prereq/opposes draft that names a
     # reference node by its bare id (bernoulli) resolves to the SAME entity as its

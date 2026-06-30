@@ -501,6 +501,30 @@ async def test_tag_and_mint_dedups_via_resolve_candidate(db_session):
     assert rows[0].id == existing_id
 
 
+def _embed_collide(_text: str) -> list[float]:
+    """Every scope_summary maps to the SAME vector, so any two specs embed at
+    cosine 1.0 and WOULD fuse on the embedding tier -- UNLESS the dedup pool
+    excludes entities minted earlier in the same mint. Models the audit's m≡M
+    fusion (distinct variables whose thin scope_summaries embed identically)."""
+    return [1.0, 0.0, 0.0, 0.0]
+
+
+async def test_tag_and_mint_keeps_same_problem_specs_distinct(db_session):
+    """PR2 Part B: two distinct reference-solution nodes of ONE problem must mint as
+    DISTINCT entities even when their scope_summaries embed identically (the m≡M
+    fusion). The dedup pool excludes entities minted earlier in the SAME call, so
+    nothing fuses within a problem. DISCRIMINATING: without the same-mint exclusion
+    the 2nd spec merges into the 1st (merged_entity_keys non-empty, 1 minted)."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-samemint")
+    pair = _approved_pair(search_space_id=ss_id)  # default 2-spec bernoulli problem
+    plan = await tag_and_mint(
+        db_session, pair, chat_fn=_chat_returning(_tag_payload()), embed_fn=_embed_collide
+    )
+    assert plan.merged_entity_keys == []  # nothing fused within the problem
+    assert set(plan.minted_entity_ids) == {"eq.bernoulli", "proc.solve_p2"}
+    assert len(set(plan.minted_entity_ids.values())) == 2  # two DISTINCT entity ids
+
+
 async def test_tag_and_mint_prereqs_inserted(db_session):
     """Drafted prereq pairs land in apollo_entity_prereqs (skip on re-run)."""
     ss_id, _subj = await _seed_course(db_session, slug="c-prereq")
