@@ -18,4 +18,9 @@ CREATE TABLE IF NOT EXISTS apollo_authored_sets (
 CREATE INDEX IF NOT EXISTS apollo_authored_sets_space_idx
     ON apollo_authored_sets(search_space_id);
 
+-- RLS parity with every sibling Apollo table: enable the deny-all stopgap so the
+-- table is not exposed via the public PostgREST API. No policies are added — the
+-- backend connects through the service/postgres role, which bypasses RLS.
+ALTER TABLE apollo_authored_sets ENABLE ROW LEVEL SECURITY;
+
 COMMIT;
