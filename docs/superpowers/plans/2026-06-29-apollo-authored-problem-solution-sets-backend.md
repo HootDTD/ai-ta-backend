@@ -1756,7 +1756,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   - `GET /authored-sets/{set_id}`
   - `POST /authored-sets/{set_id}/problems/{problem_id}/approve` (body `{reference: "ocr"|"generated"}`)
 
-- [ ] **Step 1: Write the failing test (handler-level, auth + heavy work stubbed)**
+- [x] **Step 1: Write the failing test (handler-level, auth + heavy work stubbed)**
 
 Create `apollo/provisioning/tests/test_authored_api.py`. Test the create handler builds the set row,
 schedules the task, and returns `{set_id, set_index, status}`; and that the background runner transitions
@@ -1792,12 +1792,12 @@ async def test_create_set_persists_and_schedules(db_session, monkeypatch):
     assert row.search_space_id == 4
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest apollo/provisioning/tests/test_authored_api.py -v`
 Expected: FAIL — module/handler does not exist.
 
-- [ ] **Step 3: Implement the endpoints + background runner**
+- [x] **Step 3: Implement the endpoints + background runner**
 
 Create `apollo/provisioning/authored_sets/api.py`:
 
@@ -2025,7 +2025,7 @@ async def approve_held_problem(
     return {"promoted": result.promoted, "failed_gate": result.failed_gate, "diagnostic": result.diagnostic}
 ```
 
-- [ ] **Step 4: Mount the router**
+- [x] **Step 4: Mount the router**
 
 In `apollo/api.py`, after the `router = APIRouter(prefix="/apollo", ...)` line, include the sub-router:
 
@@ -2035,13 +2035,13 @@ from apollo.provisioning.authored_sets.api import router as authored_sets_router
 router.include_router(authored_sets_router)
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `pytest apollo/provisioning/tests/test_authored_api.py -v`
 Expected: PASS. Also run the whole authored-sets suite:
 `pytest apollo/provisioning/tests/test_authored_*.py tests/unit/test_openai_vision_ocr.py apollo/persistence/tests/test_authored_sets_model.py -v`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apollo/provisioning/authored_sets/api.py apollo/api.py apollo/provisioning/tests/test_authored_api.py

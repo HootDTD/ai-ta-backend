@@ -24,7 +24,7 @@ related:
   - shared/conventions
   - shared/security
   - shared/supabase
-last_verified: 2026-06-29
+last_verified: 2026-06-30
 stub: false
 ---
 
@@ -101,6 +101,14 @@ Auth legend: **T** = teacher membership required, **M** = any course membership 
 | POST | `/invite-links/redeem/{code}` | A | Join course; student→teacher upgrade supported; idempotent |
 
 Mounted routers (owned by sibling docs): `apollo.api.router` (prefix `/apollo`), `reports.ai_use.routes.router` and `chats.routes.router` (both unprefixed, mounted defensively inside try/except so a broken import doesn't kill boot).
+
+Apollo's mounted router now also includes the teacher-gated WU-AAS authored-set
+sub-router: `POST /apollo/authored-sets`, `GET /apollo/authored-sets`,
+`GET /apollo/authored-sets/{set_id}`, and
+`POST /apollo/authored-sets/{set_id}/problems/{problem_id}/approve`. These routes
+live in `apollo/provisioning/authored_sets/api.py` and are documented in
+`apollo.md`; they use `require_user`/`require_course_member`, multipart PDF
+uploads, and FastAPI `BackgroundTasks`.
 
 ### auth.py exports
 - `AuthContext` — frozen dataclass `(user_id: str, access_token: str)`.
