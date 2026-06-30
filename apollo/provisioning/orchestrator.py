@@ -108,6 +108,8 @@ _SCRAPE_SYSTEM_PROMPT = (
     '  "difficulty": exactly one of "intro", "standard", "hard".\n'
     '  "concept_slug": string - a short dotted/kebab concept id, e.g. '
     '"bernoulli-equation".\n'
+    '  "label": the problem\'s printed number/label exactly as shown, e.g. '
+    '"Problem 3", "Q3", "3.", or null if none.\n'
     "If the section contains no solvable problems, return []."
 )
 
@@ -665,25 +667,33 @@ async def provision_authored_problem(
     except SolutionDraftError as exc:
         if run is not None:
             _record_rejection(
-                db, run=run, rejected_stage="solution_draft", failed_gate=None,
-                diagnostic=str(exc), concept_id=ingest_concept_id,
+                db,
+                run=run,
+                rejected_stage="solution_draft",
+                failed_gate=None,
+                diagnostic=str(exc),
+                concept_id=ingest_concept_id,
                 payload={"reason": "authored_construct_error"},
             )
         return AuthoredProvisionResult(outcome="rejected", stage="construct", diagnostic=str(exc))
 
     # --- faithfulness against the AUTHORED solution (draft.grounding) --------- #
-    verdict = await validate_pair(
-        authored, draft, retrieve_fn=_no_retrieve, judge_fn=judge_fn
-    )
+    verdict = await validate_pair(authored, draft, retrieve_fn=_no_retrieve, judge_fn=judge_fn)
     rej = rejection_from_verdict(verdict)
     if rej is not None:
         if run is not None:
             _record_rejection(
-                db, run=run, rejected_stage="pairing_gate", failed_gate=None,
-                diagnostic=rej.diagnostic, concept_id=ingest_concept_id,
+                db,
+                run=run,
+                rejected_stage="pairing_gate",
+                failed_gate=None,
+                diagnostic=rej.diagnostic,
+                concept_id=ingest_concept_id,
                 payload={"reason": rej.reason},
             )
-        return AuthoredProvisionResult(outcome="rejected", stage="pairing_gate", diagnostic=rej.diagnostic)
+        return AuthoredProvisionResult(
+            outcome="rejected", stage="pairing_gate", diagnostic=rej.diagnostic
+        )
 
     # --- tag/mint + content-gated promote ----------------------------------- #
     pair = build_authored_approved_pair(authored, draft, search_space_id=search_space_id)
@@ -697,8 +707,12 @@ async def provision_authored_problem(
     except (TagMintError, CostBudgetExceeded) as exc:
         if run is not None:
             _record_rejection(
-                db, run=run, rejected_stage="tag_mint", failed_gate=None,
-                diagnostic=f"{type(exc).__name__}: {exc}", concept_id=ingest_concept_id,
+                db,
+                run=run,
+                rejected_stage="tag_mint",
+                failed_gate=None,
+                diagnostic=f"{type(exc).__name__}: {exc}",
+                concept_id=ingest_concept_id,
                 payload={"reason": "tag_mint_error"},
             )
         return AuthoredProvisionResult(outcome="rejected", stage="tag_mint", diagnostic=str(exc))
@@ -711,19 +725,30 @@ async def provision_authored_problem(
 
     existing_problem_hashes = await _concept_dup_hashes(db, concept_id=mint_plan.concept_id)
     result: PromoteResult = await promote(
-        db, neo, problem=pair.problem, mint_plan=mint_plan,
-        search_space_id=search_space_id, concept_problem_id=concept_problem_id,
+        db,
+        neo,
+        problem=pair.problem,
+        mint_plan=mint_plan,
+        search_space_id=search_space_id,
+        concept_problem_id=concept_problem_id,
         existing_problem_hashes=existing_problem_hashes,
     )
     if not result.promoted:
         if run is not None:
             _record_rejection(
-                db, run=run, rejected_stage="promotion_lint", failed_gate=result.failed_gate,
-                diagnostic=result.diagnostic, concept_id=mint_plan.concept_id, payload={},
+                db,
+                run=run,
+                rejected_stage="promotion_lint",
+                failed_gate=result.failed_gate,
+                diagnostic=result.diagnostic,
+                concept_id=mint_plan.concept_id,
+                payload={},
             )
         return AuthoredProvisionResult(
-            outcome="rejected", stage="promotion_lint",
-            diagnostic=result.diagnostic, failed_gate=result.failed_gate,
+            outcome="rejected",
+            stage="promotion_lint",
+            diagnostic=result.diagnostic,
+            failed_gate=result.failed_gate,
         )
     return AuthoredProvisionResult(outcome="promoted", stage="ok")
 

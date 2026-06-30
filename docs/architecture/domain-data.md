@@ -10,7 +10,7 @@ related:
   - shared/supabase
   - shared/security
   - ai-ta-backend/rag-pipeline
-last_verified: 2026-06-20
+last_verified: 2026-06-29
 stub: false
 ---
 
@@ -34,6 +34,14 @@ stub: false
 | `reports/ai_use/routes.py` | `APIRouter` for `/reports/ai-use` create/get/list/PDF with chat-ownership checks |
 
 Worker entrypoint: `teacher_upload_worker.py` (repo root) runs `TeacherWeeklyStorage().run_upload_worker_loop()` — the Procfile worker process.
+
+Migration 032 (`032_apollo_authored_sets.sql`) adds `apollo_authored_sets`, a
+course-scoped pairing table for the Apollo authored problem/solution set flow.
+Each row is unique by `(search_space_id, set_index)`, references
+`aita_search_spaces(id)` with cascade delete, stores optional problem/solution
+document ids, and tracks `status` plus bounded `result_summary` JSONB. As with
+other raw SQL migrations, staging/prod application is out-of-band; there is no
+`database.run_migrations` module in this repo.
 
 ## Public interfaces
 

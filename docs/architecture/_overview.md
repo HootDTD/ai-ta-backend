@@ -24,7 +24,7 @@ related:
   - shared/conventions
   - shared/security
   - shared/supabase
-last_verified: 2026-06-20
+last_verified: 2026-06-30
 stub: false
 ---
 
@@ -58,6 +58,12 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` is a single ~2000-l
 | `vendors/supabase_client.py` | Thin PostgREST helpers (`select`, `select_one`, `insert`, `upsert`, `update`, `delete`, `rpc`) using `SUPABASE_URL` + anon `SUPABASE_API_KEY`; RLS enforces access server-side. |
 | `vendors/supabase_storage.py` | `SupabaseStorageClient.upload_bytes/download_bytes/ensure_bucket` against Storage REST; prefers `SUPABASE_SERVICE_ROLE_KEY`, falls back to API/anon key. `ensure_bucket` POSTs `/storage/v1/bucket` (private by default) and tolerates already-exists (400/409 duplicate) — new environments no longer need manual bucket creation. |
 | `vendors/openai_client.py` | OpenAI Chat Completions wrapper used by AI-use reports: `generate_ai_use_markdown(evidence_pack, style, length)` with token budgeting, retry/backoff, `REPORTS_MODEL` (default `gpt-4o-mini`), and a fake mode when `TEST_FAKE_OPENAI=1` or no API key. |
+
+### OCR/env surface
+
+- `OCR_PROVIDER=openai` selects the OpenAI vision OCR provider via `ocr/factory.py` for authored-set indexing paths that pass a provider into `TeacherPDFIngestor`; `OCR_PROVIDER=mathpix` keeps the existing Mathpix factory option.
+- `APOLLO_OCR_MODEL` optionally overrides the OpenAI vision OCR model used by `OpenAIVisionOCRProvider.from_env()`; the code default is `gpt-4o`.
+- `APOLLO_AUTHORED_OCR_CONF_THRESHOLD` is the authored-set low-confidence OCR threshold used by `run_authored_set_provisioning` when deciding whether an extracted reference needs generated-reference comparison; the code default is `0.6`.
 
 ### Other scoped dirs
 | Path | Role |
@@ -96,6 +102,14 @@ Auth legend: **T** = teacher membership required, **M** = any course membership 
 | POST | `/invite-links/redeem/{code}` | A | Join course; student→teacher upgrade supported; idempotent |
 
 Mounted routers (owned by sibling docs): `apollo.api.router` (prefix `/apollo`), `reports.ai_use.routes.router` and `chats.routes.router` (both unprefixed, mounted defensively inside try/except so a broken import doesn't kill boot).
+
+Apollo's mounted router now also includes the teacher-gated WU-AAS authored-set
+sub-router: `POST /apollo/authored-sets`, `GET /apollo/authored-sets`,
+`GET /apollo/authored-sets/{set_id}`, and
+`POST /apollo/authored-sets/{set_id}/problems/{problem_id}/approve`. These routes
+live in `apollo/provisioning/authored_sets/api.py` and are documented in
+`apollo.md`; they use `require_user`/`require_course_member`, multipart PDF
+uploads, and FastAPI `BackgroundTasks`.
 
 ### auth.py exports
 - `AuthContext` — frozen dataclass `(user_id: str, access_token: str)`.

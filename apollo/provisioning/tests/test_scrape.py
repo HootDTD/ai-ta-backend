@@ -62,14 +62,18 @@ def _well_formed_record(
     problem_text: str = "Water flows through a pipe; find P2.",
     difficulty: str = "intro",
     concept_slug: str = "bernoulli_principle",
+    label: str | None = None,
 ) -> dict:
-    return {
+    record = {
         "problem_text": problem_text,
         "given_values": {"P1": 200000.0, "v1": 2.0},
         "target_unknown": "P2",
         "difficulty": difficulty,
         "concept_slug": concept_slug,
     }
+    if label is not None:
+        record["label"] = label
+    return record
 
 
 def _chat_per_chunk(by_content: dict[str, str]):
@@ -112,7 +116,7 @@ def test_scrape_parses_candidates():
     """A well-formed JSON array → CandidateQuestions; provenance
     (chunk_content_hash/document_id/page) comes from the CHUNK, not the LLM."""
     chunk = _Chunk(content="Find P2 in the pipe.", document_id=7, page_number=3)
-    chat = _chat_per_chunk({chunk.content: json.dumps([_well_formed_record()])})
+    chat = _chat_per_chunk({chunk.content: json.dumps([_well_formed_record(label="Problem 3")])})
     result = _run(scrape_questions([chunk], chat_fn=chat))
     assert isinstance(result, ScrapeResult)
     assert result.scraped_count == 1
@@ -123,6 +127,7 @@ def test_scrape_parses_candidates():
     assert cand.target_unknown == "P2"
     assert cand.difficulty == "intro"
     assert cand.concept_slug == "bernoulli_principle"
+    assert cand.label == "Problem 3"
     # provenance from the chunk, not the LLM payload:
     assert cand.document_id == 7
     assert cand.page == 3
@@ -211,6 +216,33 @@ def test_candidate_question_requires_fields():
         )
 
 
+def test_candidate_question_accepts_optional_label():
+    q = CandidateQuestion(
+        problem_text="A beam of length L...",
+        given_values={"L": 2.0},
+        target_unknown="M",
+        difficulty="standard",
+        document_id=7,
+        page=3,
+        chunk_content_hash="a" * 64,
+        concept_slug="provisional.inventory",
+        label="Problem 3",
+    )
+    assert q.label == "Problem 3"
+
+    q2 = CandidateQuestion(
+        problem_text="x",
+        given_values={},
+        target_unknown="y",
+        difficulty="intro",
+        document_id=1,
+        page=None,
+        chunk_content_hash="b" * 64,
+        concept_slug="provisional.inventory",
+    )
+    assert q2.label is None
+
+
 # --------------------------------------------------------------------------- #
 # Stage-1 prompt↔parser contract (the missing un-mocked-class test). PURE, no DB.
 # --------------------------------------------------------------------------- #
@@ -235,6 +267,7 @@ def test_scrape_prompt_declares_candidate_question_fields():
         "target_unknown",
         "difficulty",
         "concept_slug",
+        "label",
     }
     for field in llm_supplied:
         assert field in _SCRAPE_SYSTEM_PROMPT, field
@@ -245,11 +278,17 @@ def test_scrape_prompt_declares_candidate_question_fields():
 # --------------------------------------------------------------------------- #
 
 
-def _section(*, title="6.2 Exercises", text="Find P2 in the pipe.", doc=7, page=3,
-             shash="a" * 64) -> Section:
+def _section(
+    *, title="6.2 Exercises", text="Find P2 in the pipe.", doc=7, page=3, shash="a" * 64
+) -> Section:
     return Section(
-        title=title, document_id=doc, page_start=page, page_end=page, text=text,
-        source_content_hash=shash, member_chunk_ids=(1, 2),
+        title=title,
+        document_id=doc,
+        page_start=page,
+        page_end=page,
+        text=text,
+        source_content_hash=shash,
+        member_chunk_ids=(1, 2),
     )
 
 
@@ -279,10 +318,11 @@ def test_scrape_section_stamps_section_scoped_hash():
 
 def test_scrape_section_uses_concept_hint_when_llm_omits():
     sec = _section()
-    rec = _well_formed_record()
+    rec = _well_formed_record(label="Q7")
     del rec["concept_slug"]
     cands, _ = scrape_section(sec, concept_hint="integration", chat_fn=lambda _t: json.dumps([rec]))
     assert cands[0].concept_slug == "integration"
+    assert cands[0].label == "Q7"
 
 
 def test_scrape_section_failsoft_on_bad_json():
@@ -295,6 +335,7 @@ def test_scrape_section_failsoft_on_bad_json():
 def test_scrape_document_groups_triages_and_scrapes():
     """End-to-end (mocked): two body chunks under one heading → one section →
     triage marks it likely → section scrape yields a candidate."""
+
     @dataclass
     class _Row:
         id: int
@@ -309,12 +350,32 @@ def test_scrape_document_groups_triages_and_scrapes():
         _Row(id=2, content="A region bounded by curves."),
         _Row(id=3, content="Find the area."),
     ]
-    triage = lambda _p: json.dumps([{"index": 0, "is_problem_likely": True, "priority": 5,  # noqa: E731
-                                     "concept_slug": "area", "concept_display": "Area"}])
-    scrape = lambda _text: json.dumps([_well_formed_record(concept_slug="area")])  # noqa: E731
-    result = _run(scrape_document(
-        rows, chat_fn=scrape, triage_chat_fn=triage, max_sections=120, min_candidates=3,
-    ))
+
+    def triage(_p):
+        return json.dumps(
+            [
+                {
+                    "index": 0,
+                    "is_problem_likely": True,
+                    "priority": 5,
+                    "concept_slug": "area",
+                    "concept_display": "Area",
+                }
+            ]
+        )
+
+    def scrape(_text):
+        return json.dumps([_well_formed_record(concept_slug="area")])
+
+    result = _run(
+        scrape_document(
+            rows,
+            chat_fn=scrape,
+            triage_chat_fn=triage,
+            max_sections=120,
+            min_candidates=3,
+        )
+    )
     assert isinstance(result, ScrapeResult)
     assert result.scraped_count == 1
     assert len(result.candidates) == 1
@@ -325,6 +386,7 @@ def test_scrape_document_groups_triages_and_scrapes():
 
 def test_scrape_document_respects_max_sections():
     """max_sections caps the number of sections scraped (cost bound)."""
+
     @dataclass
     class _Row:
         id: int
@@ -345,14 +407,18 @@ def test_scrape_document_respects_max_sections():
     triage = lambda _p: json.dumps(  # noqa: E731
         [{"index": i, "is_problem_likely": True, "priority": 0} for i in range(3)]
     )
-    _run(scrape_document(rows, chat_fn=_scrape, triage_chat_fn=triage,
-                         max_sections=1, min_candidates=99))
+    _run(
+        scrape_document(
+            rows, chat_fn=_scrape, triage_chat_fn=triage, max_sections=1, min_candidates=99
+        )
+    )
     assert calls["n"] == 1  # capped
 
 
 def test_scrape_document_fallback_widens_when_thin():
     """A section triaged NOT-likely is still scraped when candidates < MIN
     (the exhaustive fallback), but skipped once MIN is met."""
+
     @dataclass
     class _Row:
         id: int
@@ -375,8 +441,11 @@ def test_scrape_document_fallback_widens_when_thin():
             {"index": 1, "is_problem_likely": False, "priority": 0},
         ]
     )
-    _run(scrape_document(rows, chat_fn=_scrape, triage_chat_fn=triage,
-                         max_sections=120, min_candidates=3))
+    _run(
+        scrape_document(
+            rows, chat_fn=_scrape, triage_chat_fn=triage, max_sections=120, min_candidates=3
+        )
+    )
     # both the likely AND the unlikely section were scraped (widened, still thin)
     assert len(scraped_titles) == 2
 
@@ -386,6 +455,7 @@ def test_scrape_document_stops_widening_once_min_met():
     min_candidates, a NOT-likely section is NOT scraped (the cost-bound gate).
     DISCRIMINATING: flipping the gate to `continue`/`>`/removing the break would
     scrape the unlikely section too and fail this."""
+
     @dataclass
     class _Row:
         id: int
@@ -408,8 +478,11 @@ def test_scrape_document_stops_widening_once_min_met():
             {"index": 1, "is_problem_likely": False, "priority": 0},
         ]
     )
-    result = _run(scrape_document(rows, chat_fn=_scrape, triage_chat_fn=triage,
-                                  max_sections=120, min_candidates=1))
+    result = _run(
+        scrape_document(
+            rows, chat_fn=_scrape, triage_chat_fn=triage, max_sections=120, min_candidates=1
+        )
+    )
     # the likely section met min_candidates=1, so the NOT-likely section is gated out
     assert scrape_calls["n"] == 1
     assert result.scraped_count == 1
@@ -418,6 +491,7 @@ def test_scrape_document_stops_widening_once_min_met():
 
 def test_scrape_document_structured_false_uses_legacy_per_chunk():
     """structured=False routes to the legacy per-chunk scrape_questions path."""
+
     @dataclass
     class _Row:
         id: int
@@ -429,8 +503,16 @@ def test_scrape_document_structured_false_uses_legacy_per_chunk():
 
     rows = [_Row(id=1, content="legacy chunk")]
     chat = _chat_per_chunk({"legacy chunk": json.dumps([_well_formed_record()])})
-    result = _run(scrape_document(rows, chat_fn=chat, triage_chat_fn=lambda _p: "[]",
-                                  max_sections=120, min_candidates=3, structured=False))
+    result = _run(
+        scrape_document(
+            rows,
+            chat_fn=chat,
+            triage_chat_fn=lambda _p: "[]",
+            max_sections=120,
+            min_candidates=3,
+            structured=False,
+        )
+    )
     assert result.scraped_count == 1
     # legacy path stamps the CHUNK content hash (no ".ordinal" section suffix)
     assert result.candidates[0].chunk_content_hash == chunk_content_hash("legacy chunk")
