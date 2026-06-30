@@ -32,6 +32,11 @@ def test_cosine_basic():
     assert abs(cosine([1.0, 0.0], [0.0, 1.0])) < 1e-9
 
 
+def test_cosine_zero_vector_returns_zero():
+    assert cosine([0.0, 0.0], [1.0, 0.0]) == 0.0
+    assert cosine([1.0, 0.0], [0.0, 0.0]) == 0.0
+
+
 def test_cache_embeds_each_surface_once_and_memoizes():
     calls = {"n": 0}
 
@@ -47,3 +52,27 @@ def test_cache_embeds_each_surface_once_and_memoizes():
     assert set(v1) == {"k1", "k2"}
     assert len(v1["k2"]) == 2  # "de" + "fff"
     assert v1 == v2
+
+
+def test_default_embedder_delegates_to_embed_texts(monkeypatch):
+    monkeypatch.setattr(
+        "indexing.document_embedder.embed_texts",
+        lambda texts: [[1.0, 2.0] for _ in texts],
+    )
+    from apollo.clarification.embedding import default_embedder
+
+    assert default_embedder(["a", "b"]) == [[1.0, 2.0], [1.0, 2.0]]
+
+
+def test_cache_with_only_empty_surface_candidates_returns_empty_vectors():
+    calls = {"n": 0}
+
+    def stub(texts):
+        calls["n"] += 1
+        return [[1.0] for _ in texts]
+
+    cand = _cand("empty", "", aliases=(), exact=())
+    cache = CandidateEmbeddingCache()
+    result = cache.vectors_for((cand,), embedder=stub)
+    assert result == {"empty": []}
+    assert calls["n"] == 0  # empty flat_texts -> embedder never invoked
