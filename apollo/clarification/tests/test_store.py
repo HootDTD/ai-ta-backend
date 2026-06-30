@@ -7,6 +7,7 @@ tests/database/test_clarification_store.py and run in CI's Docker job."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 from apollo.clarification.store import (
@@ -123,8 +124,8 @@ async def test_record_outcome_updates_row_fields():
     assert row_mock.state == "confirmed"
     assert row_mock.clarification_text == "pressure is lower where velocity is higher"
     assert row_mock.answered_turn == 3
-    # updated_at is set (any datetime value)
-    assert row_mock.updated_at is not None
+    # updated_at is set to a real datetime (not a vacuous MagicMock attr)
+    assert isinstance(row_mock.updated_at, datetime)
 
 
 async def test_record_outcome_vague_clears_text():
