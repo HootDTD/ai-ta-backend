@@ -1405,7 +1405,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   - `async run_authored_set_provisioning(db, neo, *, search_space_id, problem_document_id,
     solution_document_id, metered_chat, embed_fn=None, conf_threshold=...) -> ProvisioningReport`.
 
-- [ ] **Step 1: Write the failing test (happy path: label-extract → promote)**
+- [x] **Step 1: Write the failing test (happy path: label-extract → promote)**
 
 Create `apollo/provisioning/tests/test_authored_set_orchestrator.py`. Reuse the seed helpers and
 `_FakeMeteredChat` from `test_orchestrator.py` (import or copy them), seed a problem doc with one chunk
@@ -1444,12 +1444,12 @@ Add a second test: a low-confidence solution chunk (`ocr_conf=0.2`) with a diver
 `outcome == "held_for_review"`, `review_required is True`, and assert NO Neo4j `:Canon` node was minted
 (query `neo4j_client`), proving the hold defers KG mutation.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest apollo/provisioning/tests/test_authored_set_orchestrator.py -v`
 Expected: FAIL — module does not exist.
 
-- [ ] **Step 3: Implement the orchestrator**
+- [x] **Step 3: Implement the orchestrator**
 
 Create `apollo/provisioning/authored_sets/orchestrator.py`:
 
@@ -1722,12 +1722,12 @@ async def _process_authored_candidate(
 > NOTE: confirm the exact names of the importable module-level literals in
 > `apollo/provisioning/orchestrator.py` (`grep -nE "^_SCRAPE_SYSTEM_PROMPT|^_TRIAGE_SYSTEM_PROMPT|^_TAG_MINT_SYSTEM_PROMPT|^APOLLO_SCRAPE_MAX_SECTIONS|^APOLLO_SCRAPE_MIN_CANDIDATES|def structured_scrape_enabled|def _load_chunks" apollo/provisioning/orchestrator.py`). If any are defined elsewhere (e.g. a prompts module or `cost_constants`), import from the real source. Do not redefine them.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest apollo/provisioning/tests/test_authored_set_orchestrator.py -v`
 Expected: PASS (needs Docker pgvector + Testcontainers Neo4j; SKIP cleanly otherwise — CI runs it).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apollo/provisioning/authored_sets/orchestrator.py apollo/provisioning/tests/test_authored_set_orchestrator.py
