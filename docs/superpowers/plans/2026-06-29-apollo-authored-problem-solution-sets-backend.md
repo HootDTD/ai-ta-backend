@@ -933,7 +933,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
     via a closure attribute `retrieve.last_min_conf` (read by Task 7), OR recomputed by the caller from
     `page_conf` + returned span pages. **MUST NOT call `active_document_conditions`.**
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `apollo/provisioning/tests/test_authored_paired_retrieval.py`:
 
@@ -981,12 +981,12 @@ async def test_no_label_no_retrieval_hits_returns_empty(monkeypatch):
     assert retrieve.last_min_conf is None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest apollo/provisioning/tests/test_authored_paired_retrieval.py -v`
 Expected: FAIL — module does not exist.
 
-- [ ] **Step 3: Implement the module**
+- [x] **Step 3: Implement the module**
 
 Create `apollo/provisioning/authored_sets/paired_retrieval.py`:
 
@@ -1135,14 +1135,14 @@ def make_paired_solution_retrieve_fn(
 > implementation, drop it from the test signature so the test calls `make_paired_solution_retrieve_fn`
 > with the real kwargs only.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest apollo/provisioning/tests/test_authored_paired_retrieval.py -v`
 Expected: PASS. (The label-branch test needs no DB. Add a `db_session`-backed test that seeds two
 chunks in one doc and asserts the retrieval branch returns `carries_solution=True` spans scoped to that
 `document_id` only.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apollo/provisioning/authored_sets/paired_retrieval.py apollo/provisioning/tests/test_authored_paired_retrieval.py
