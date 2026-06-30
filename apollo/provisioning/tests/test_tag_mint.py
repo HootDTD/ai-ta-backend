@@ -534,8 +534,8 @@ async def test_tag_and_mint_prereqs_accept_bare_ids(db_session):
     prefix scheme, so it drafts prereqs by BARE reference-node id (solve_p2 /
     bernoulli), not the prefixed canonical_key (proc.solve_p2 / eq.bernoulli).
     tag_and_mint must resolve the bare ids to the minted entities and insert the
-    edge. DISCRIMINATING: reverting the bare-id alias REDs with TagMintError
-    ('prereq draft references an unminted entity key')."""
+    edge. DISCRIMINATING: reverting the bare-id alias REDs here — the edge would
+    no longer resolve and would be dropped (5b), leaving 0 edges instead of 1."""
     ss_id, _subj = await _seed_course(db_session, slug="c-bareid")
     pair = _approved_pair(search_space_id=ss_id)
     tag = _tag_payload(prereqs=[["solve_p2", "bernoulli"]])  # BARE ids
@@ -710,15 +710,56 @@ async def test_tag_and_mint_prereq_dict_form(db_session):
     assert plan.prereq_pairs == [("proc.solve_p2", "eq.bernoulli")]
 
 
-async def test_tag_and_mint_prereq_unminted_key_raises(db_session):
-    """A prereq draft referencing a key no entity carries → TagMintError (the
-    insert_prereqs KeyError → TagMintError path, distinct from a malformed
-    entry)."""
+async def test_tag_and_mint_prereq_unminted_key_dropped(db_session):
+    """A prereq draft edge naming a key no entity carries is DROPPED, not fatal
+    (intent decision 2026-06-30): prereqs are optional KG enrichment and the LLM
+    routinely names a problem given. The mint succeeds, the edge is not inserted,
+    and ``prereq_pairs`` reflects only the kept (resolvable) edges."""
     ss_id, _subj = await _seed_course(db_session, slug="c-prqkey")
     pair = _approved_pair(search_space_id=ss_id)
     tag = _tag_payload(prereqs=[["eq.bernoulli", "eq.nonexistent"]])
-    with pytest.raises(TagMintError):
-        await tag_and_mint(db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct)
+    plan = await tag_and_mint(
+        db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct
+    )
+    assert plan.prereq_pairs == []
+    from_id = plan.minted_entity_ids["eq.bernoulli"]
+    edges = (
+        (
+            await db_session.execute(
+                select(EntityPrereq).where(EntityPrereq.from_entity_id == from_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert edges == []
+
+
+async def test_tag_and_mint_prereq_drops_only_the_unresolvable_edge(db_session):
+    """A mixed draft keeps the resolvable edge and drops only the bad one."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-prqmix")
+    pair = _approved_pair(search_space_id=ss_id)
+    tag = _tag_payload(
+        prereqs=[["solve_p2", "bernoulli"], ["eq.bernoulli", "eq.nonexistent"]]
+    )
+    plan = await tag_and_mint(
+        db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct
+    )
+    assert plan.prereq_pairs == [("solve_p2", "bernoulli")]
+    from_id = plan.minted_entity_ids["proc.solve_p2"]
+    to_id = plan.minted_entity_ids["eq.bernoulli"]
+    edges = (
+        (
+            await db_session.execute(
+                select(EntityPrereq)
+                .where(EntityPrereq.from_entity_id == from_id)
+                .where(EntityPrereq.to_entity_id == to_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(edges) == 1
 
 
 async def test_tag_and_mint_escalates_to_judge(db_session):
