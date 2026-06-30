@@ -35,6 +35,7 @@ from apollo.grading.abstention import (
     min_parser_confidence_of,
     unresolved_rate_of,
 )
+from apollo.grading.normalization_confidence import _normalization_confidence_over
 from apollo.grading.transcript_audit import (
     TRANSCRIPT_AUDIT_CONFIDENCE_CAP,
     TRANSCRIPT_AUDIT_METHOD,
@@ -193,6 +194,21 @@ def build_audited_grade(
         transcript_audit_failed = True
         audit = AuditResult(upgraded_keys=frozenset(), spans_by_key={}, alias_candidates=())
 
+    # D1 (Phase 1c): rewrite FIRST, then compute normalization_confidence over the
+    # POST-rewrite findings, so the value the abstention gate sees is byte-identical
+    # to the persisted nc (done_grading.py reads `audited.findings`, already
+    # rewritten here). _misconception_confidences stays over `grade.findings`:
+    # _rewrite_findings only touches MISSING_NODE -> COVERED_NODE, so the
+    # CONTRADICTION findings the misconception gate keys on are identical pre/post.
+    # G1 fix: thread the node_id -> node_type map so nc judges each scored backing
+    # node's cap against its TYPE ceiling (done_grading.py rebuilds the SAME map
+    # from the same student_nodes, keeping the persisted nc byte-identical).
+    new_findings = _rewrite_findings(grade.findings, audit)
+    node_type_by_id = {n.node_id: n.node_type for n in student_nodes}
+    normalization_confidence = _normalization_confidence_over(
+        new_findings, resolution, node_type_by_id
+    )
+
     abstention = apply_abstention(
         unresolved_rate=unresolved_rate_of(resolution),
         min_parser_confidence=min_parser_confidence_of(student_nodes),
@@ -200,9 +216,8 @@ def build_audited_grade(
         transcript_audit_failed=transcript_audit_failed,
         reference_invalid=reference_invalid,
         misconception_bank_empty=misconception_bank_empty,
+        normalization_confidence=normalization_confidence,
     )
-
-    new_findings = _rewrite_findings(grade.findings, audit)
 
     return AuditedGrade(
         grade=grade,

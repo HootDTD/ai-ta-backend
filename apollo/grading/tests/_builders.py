@@ -13,9 +13,34 @@ from apollo.grading.audited_grade import AuditedGrade
 from apollo.grading.transcript_audit import AuditReply, AuditRequest
 from apollo.graph_compare.core import COMPARISON_VERSION, GradeResult
 from apollo.graph_compare.findings import Finding, FindingKind
-from apollo.ontology.nodes import Node, build_node
+from apollo.ontology.nodes import Node, NodeType, build_node
 from apollo.resolution.candidates import Candidate
 from apollo.resolution.result import ResolutionResult, ResolvedNode
+
+# Minimal valid `content` payload per node_type — just enough to satisfy each
+# discriminated-union content model's min_length fields in `build_node`.
+_MIN_CONTENT_BY_TYPE: dict[NodeType, dict[str, str]] = {
+    "equation": {"symbolic": "x"},
+    "condition": {"applies_when": "x"},
+    "simplification": {"applies_when": "x", "transformation": "y"},
+    "definition": {"concept": "c", "meaning": "m"},
+    "variable_mapping": {"term": "t", "symbol": "s"},
+    "procedure_step": {"action": "a"},
+}
+
+
+def student_node(node_id: str, node_type: NodeType = "definition") -> Node:
+    """A minimal student :class:`Node` carrying an explicit ``node_id`` +
+    ``node_type``. The type-aware ``normalization_confidence`` reads each scored
+    backing node's ``node_type`` (threaded as a ``node_id -> node_type`` map), so
+    end-to-end ``build_audited_grade`` tests need real typed student nodes."""
+    return build_node(
+        node_type=node_type,
+        node_id=node_id,
+        attempt_id=-1,
+        source="parser",
+        content=_MIN_CONTENT_BY_TYPE[node_type],
+    )
 
 
 def missing_finding(key: str) -> Finding:

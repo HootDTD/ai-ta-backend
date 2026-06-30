@@ -213,7 +213,14 @@ def match_alias_all(node: Node, candidates: tuple[Candidate, ...]) -> list[TierH
     Returns one :class:`TierHitAll` per matching candidate (raw score 1.0,
     carrying the winning alias), so a misconception sharing the student's exact
     phrase is never discarded before competition (§5). Order: candidate, then
-    alias."""
+    alias.
+
+    Reads BOTH ``cand.exact_aliases`` (Phase 1b — curated reference phrasings)
+    AND ``cand.aliases`` (misconception trigger phrases / normalization map),
+    with ``exact_aliases`` first so a curated phrasing wins the ``winning_alias``
+    provenance slot deterministically. Matching is exact-normalized equality —
+    the precision asymmetry: ``exact_aliases`` resolve here but NEVER through the
+    fuzzy tier (:func:`match_fuzzy_all`)."""
     surface = _normalize(student_surface_text(node))
     if not surface:  # pragma: no cover - defensive: valid nodes always have surface text
         return []
@@ -221,7 +228,7 @@ def match_alias_all(node: Node, candidates: tuple[Candidate, ...]) -> list[TierH
     for cand in candidates:
         if cand.node_type != node.node_type:
             continue
-        for alias in cand.aliases:
+        for alias in (*cand.exact_aliases, *cand.aliases):
             if surface == _normalize(alias):
                 hits.append(TierHitAll(cand, "alias", 1.0, alias))
                 break  # one hit per candidate (the first matching alias)
@@ -280,7 +287,12 @@ def match_fuzzy_all(
     threshold alias). Returning ALL of them — not just a global best — lets a
     competing misconception reach :func:`apply_misconception_competition` even
     when a reference is the lexically closer match (§5 / §6.11). Below threshold
-    a candidate is omitted (no snap, §5). Order: descending score, then key."""
+    a candidate is omitted (no snap, §5). Order: descending score, then key.
+
+    INVARIANT (Phase 1b): this tier reads ONLY ``cand.aliases``. It deliberately
+    does NOT read ``cand.exact_aliases`` — curated reference phrasings are
+    EXACT-only (resolved in :func:`match_alias_all`) and must never gain free
+    coverage credit through ``token_set_ratio`` hand-wave matching."""
     surface = student_surface_text(node)
     if not surface:  # pragma: no cover - defensive: valid nodes always have surface text
         return []

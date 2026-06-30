@@ -36,7 +36,17 @@ from apollo.resolution.tiers import (
 # ---------------------------------------------------------------------------
 
 
-def _cand(key, *, node_type, symbolic=None, aliases=(), is_misc=False, opposes=None, canon=None):
+def _cand(
+    key,
+    *,
+    node_type,
+    symbolic=None,
+    aliases=(),
+    is_misc=False,
+    opposes=None,
+    canon=None,
+    exact_aliases=(),
+):
     return Candidate(
         canonical_key=key,
         canon_key=canon if canon is not None else (abs(hash(key)) % 1000) + 1,
@@ -46,6 +56,7 @@ def _cand(key, *, node_type, symbolic=None, aliases=(), is_misc=False, opposes=N
         aliases=tuple(aliases),
         display_name=key,
         opposes_key=opposes,
+        exact_aliases=tuple(exact_aliases),
     )
 
 
@@ -608,6 +619,77 @@ def test_worked_example_6_9_requires_explicit_mapping_for_area():
     assert result.llm_calls == 0
 
 
+# ---------------------------------------------------------------------------
+# PHASE 0 — 0.1 type-gate the LLM adjudication result. `adjudicate` only rejects
+# keys ABSENT from the candidate set; a real-but-CROSS-TYPE in-set key passes
+# adjudicate and was consumed unchecked. The resolver must re-apply
+# type_compatible to the LLM remainder and fall through to unresolved on a
+# cross-type hit. The `adjudicator=None` CI default never exercises this path,
+# so these recorded-adjudicator tests close that live-LLM coverage gap (§14).
+# ---------------------------------------------------------------------------
+
+
+def test_llm_adjudication_cross_type_key_stays_unresolved():
+    """A recorded (non-None) adjudicator returns a real-but-cross-type in-set
+    key: a `definition` node mapped to a `simplification`-typed `simp.*`
+    candidate. The key IS in the candidate set (so `adjudicate` accepts it) but
+    `type_compatible(definition, simplification_candidate)` is False, so the node
+    must stay unresolved (method 'unresolved', resolved_key None)."""
+    # A definition node whose surface matches NO content tier (no alias/symbolic).
+    graph = KGGraph(
+        nodes=[
+            _node(
+                "s1",
+                "definition",
+                {"concept": "wholly", "meaning": "unrelated ambiguous phrase qqq"},
+            ),
+        ]
+    )
+    # A type-INCOMPATIBLE candidate whose canonical_key IS in the candidate set.
+    simp_cand = _cand("simp.drop_friction", node_type="simplification", aliases=())
+    cands = (simp_cand,)
+
+    # Recorded adjudicator returns the cross-type in-set key for the node.
+    def _stub(request):
+        node_id = request.nodes[0][0]
+        return {node_id: "simp.drop_friction"}
+
+    result = resolve_attempt(graph, cands, llm_adjudicator=_stub)
+    rn = result.resolved[0]
+    assert rn.resolution == "unresolved"
+    assert rn.method == "unresolved"
+    assert rn.resolved_key is None
+
+
+def test_llm_adjudication_same_type_key_still_resolves():
+    """Control: a recorded adjudicator returning a type-COMPATIBLE in-set key
+    still resolves via the LLM tier (method 'llm', confidence 0.75). Proves the
+    type-gate does not over-reject."""
+    graph = KGGraph(
+        nodes=[
+            _node(
+                "s1",
+                "definition",
+                {"concept": "wholly", "meaning": "unrelated ambiguous phrase qqq"},
+            ),
+        ]
+    )
+    # A type-COMPATIBLE candidate whose canonical_key IS in the candidate set.
+    def_cand = _cand("def.some_concept", node_type="definition", aliases=())
+    cands = (def_cand,)
+
+    def _stub(request):
+        node_id = request.nodes[0][0]
+        return {node_id: "def.some_concept"}
+
+    result = resolve_attempt(graph, cands, llm_adjudicator=_stub)
+    rn = result.resolved[0]
+    assert rn.resolution == "resolved"
+    assert rn.method == "llm"
+    assert rn.confidence == 0.75
+    assert rn.resolved_key == "def.some_concept"
+
+
 def test_tier_counts_pinned_on_real_6_9_output():
     """NIT (test-honesty): pin _histogram's REAL output on the §6.9 graph — the
     per-method histogram from actual resolution, not a hand-built dict."""
@@ -620,3 +702,67 @@ def test_tier_counts_pinned_on_real_6_9_output():
     # p1 alias (3 exact-alias hits), a1 symbolic (d=2r), t1 fuzzy (the
     # definition's concept+meaning surface paraphrases the bare alias).
     assert dict(result.tier_counts) == {"alias": 3, "symbolic": 1, "fuzzy": 1}
+
+
+# ---------------------------------------------------------------------------
+# PHASE 1b — exact-only alias channel end-to-end. A reference candidate's
+# curated `exact_aliases` entry resolves through the wired resolve_attempt via
+# the alias tier (method 'alias', cap 0.92). With NO curated alias set, the
+# §6.9 worked example resolves byte-identically to today (default exact_aliases
+# = () ⇒ no behavior change).
+# ---------------------------------------------------------------------------
+
+
+def test_exact_alias_resolves_end_to_end_via_resolve_attempt():
+    """A condition node whose surface == a candidate's ``exact_aliases`` entry
+    resolves end-to-end through ``resolve_attempt``: method 'alias', confidence
+    METHOD_CONFIDENCE_CAP['alias'] (0.92), ``resolved_key`` == the candidate
+    key. Proves the exact-alias channel reaches the live resolver path."""
+    graph = KGGraph(
+        nodes=[
+            _node("c1", "condition", {"applies_when": "open to the atmosphere", "label": ""}),
+        ]
+    )
+    cand = _cand(
+        "cond.open_tank",
+        node_type="condition",
+        exact_aliases=("open to the atmosphere",),
+    )
+    result = resolve_attempt(graph, (cand,))
+    rn = result.resolved[0]
+    assert rn.resolution == "resolved"
+    assert rn.method == "alias"
+    assert rn.confidence == METHOD_CONFIDENCE_CAP["alias"]  # 0.92
+    assert rn.resolved_key == "cond.open_tank"
+
+
+def test_empty_exact_aliases_resolution_unchanged():
+    """Byte-identical regression: every worked-example candidate carries the
+    default ``exact_aliases == ()``, so the full §6.9 resolution (per-node
+    resolved_key + method + confidence, tier histogram, llm_calls) is IDENTICAL
+    to the pre-Phase-1b expected — no curated alias ⇒ no behavior change."""
+    result = resolve_attempt(
+        _worked_example_graph(),
+        _worked_example_candidates(),
+        symbolic_mappings={"d": "2*r"},
+    )
+    keyed = {rn.node_id: rn.resolved_key for rn in result.resolved}
+    assert keyed == {
+        "d1": "cond.incompressibility",
+        "a1": "eq.circular_area",
+        "b1": "eq.bernoulli",
+        "p1": "proc.compute_v2",
+        "t1": "def.pressure_velocity_tradeoff",
+    }
+    methods = {rn.node_id: rn.method for rn in result.resolved}
+    assert methods == {
+        "d1": "alias",
+        "a1": "symbolic",
+        "b1": "alias",
+        "p1": "alias",
+        "t1": "fuzzy",
+    }
+    for rn in result.resolved:
+        assert rn.confidence == METHOD_CONFIDENCE_CAP[rn.method]
+    assert dict(result.tier_counts) == {"alias": 3, "symbolic": 1, "fuzzy": 1}
+    assert result.llm_calls == 0

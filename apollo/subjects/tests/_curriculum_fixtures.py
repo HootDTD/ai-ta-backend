@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -135,6 +136,17 @@ async def seed_concept(
     return int(concept.id)
 
 
+def minimal_problem_payload(code: str = "p1", difficulty: str = "intro") -> dict[str, Any]:
+    """A minimal ``apollo_concept_problems`` payload for the curriculum tests.
+
+    ``seed_problems`` reads only ``id`` + ``difficulty`` off a payload, and
+    ``list_course_concepts``' teachable-pool ``EXISTS`` filter never reads the
+    payload at all, so these two keys suffice — no full ``Problem`` round-trip is
+    exercised by the curriculum-loader tests (those that need the real shape pass
+    ``load_bernoulli_problem_payloads()``)."""
+    return {"id": code, "difficulty": difficulty}
+
+
 async def seed_problems(
     db: AsyncSession,
     *,
@@ -144,6 +156,10 @@ async def seed_problems(
                     # mirroring migration 030's backfill of existing §8-seeded rows.
                     # The param lets the selector tests seed an explicit tier=1 row
                     # to prove the Tier-1 exclusion.
+    quarantined_at: datetime | None = None,  # WU-3B2h: a tz-aware datetime stamps
+                    # every seeded row as quarantined (NOT teachable); None (default)
+                    # leaves the rows live. Lets the curriculum tests prove the
+                    # quarantined_at-IS-NULL leg of the teachable-pool filter.
 ) -> list[str]:
     """Insert one apollo_concept_problems row per payload; return the problem_codes."""
     codes: list[str] = []
@@ -156,6 +172,7 @@ async def seed_problems(
                 difficulty=payload["difficulty"],
                 payload=payload,
                 tier=tier,
+                quarantined_at=quarantined_at,
             )
         )
         codes.append(code)

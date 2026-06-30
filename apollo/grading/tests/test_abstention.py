@@ -7,8 +7,10 @@ confidence proof and the abstained-vs-partial-suppression distinction.
 from __future__ import annotations
 
 from apollo.grading.abstention import (
+    ABSTENTION_THRESHOLDS,
     REASON_HIGH_UNRESOLVED,
     REASON_LOW_MISCONCEPTION_CONFIDENCE,
+    REASON_LOW_NORMALIZATION_CONFIDENCE,
     REASON_LOW_PARSER_CONFIDENCE,
     REASON_REFERENCE_INVALID,
     REASON_TRANSCRIPT_AUDIT_FAILED,
@@ -38,6 +40,33 @@ def test_unresolved_rate_at_threshold_does_not_abstain():
     out = _clean(unresolved_rate=0.35)  # 0.35 is NOT > 0.35
     assert out.abstained is False
     assert REASON_HIGH_UNRESOLVED not in out.abstention_reasons
+
+
+# --- normalization-confidence gate (Phase 1c: the SECOND gate that abstains) ----
+
+
+def test_threshold_constant_importable_and_is_085():
+    assert REASON_LOW_NORMALIZATION_CONFIDENCE  # importable, non-empty
+    assert ABSTENTION_THRESHOLDS["min_normalization_confidence"] == 0.85
+
+
+def test_low_normalization_confidence_abstains():
+    # below 0.85, unresolved_rate stays 0.0 -> the nc gate alone abstains.
+    out = _clean(normalization_confidence=0.80)
+    assert out.abstained is True
+    assert REASON_LOW_NORMALIZATION_CONFIDENCE in out.abstention_reasons
+
+
+def test_normalization_confidence_at_threshold_does_not_abstain():
+    out = _clean(normalization_confidence=0.85)  # 0.85 is NOT < 0.85
+    assert REASON_LOW_NORMALIZATION_CONFIDENCE not in out.abstention_reasons
+    assert out.abstained is False
+
+
+def test_default_normalization_confidence_does_not_abstain():
+    out = _clean()  # default 1.0 never trips -> backward compatible
+    assert REASON_LOW_NORMALIZATION_CONFIDENCE not in out.abstention_reasons
+    assert out.abstained is False
 
 
 # --- min parser-confidence gate (suppress 'missing', NOT abstain) -----------
@@ -126,13 +155,16 @@ def test_reasons_deterministic_order():
         misconception_confidences=(0.1,),
         transcript_audit_failed=True,
         reference_invalid=True,
+        normalization_confidence=0.0,
     )
     first = apply_abstention(**kwargs).abstention_reasons
     second = apply_abstention(**kwargs).abstention_reasons
     assert first == second
-    # gate-declaration order: unresolved -> parser -> audit -> misconception -> ref.
+    # gate-declaration order: unresolved -> normalization -> parser -> audit ->
+    # misconception -> ref. (the nc gate sits right after unresolved — both abstain.)
     assert first == (
         REASON_HIGH_UNRESOLVED,
+        REASON_LOW_NORMALIZATION_CONFIDENCE,
         REASON_LOW_PARSER_CONFIDENCE,
         REASON_TRANSCRIPT_AUDIT_FAILED,
         REASON_LOW_MISCONCEPTION_CONFIDENCE,
