@@ -75,7 +75,9 @@ CREATE TABLE aita_chunks (
     id BIGSERIAL PRIMARY KEY,
     document_id BIGINT NOT NULL,
     content TEXT NOT NULL,
-    page_number INTEGER
+    page_number INTEGER,
+    section_path TEXT,
+    chunk_type TEXT
 );
 """
 
@@ -441,10 +443,12 @@ async def test_terminal_status_reconciliation_failed_run_never_running(
 
     # Inject a stage that raises a per-document error (a generic exception is
     # caught by the orchestrator's terminal catch-all -> failed run, never running).
-    async def _boom_scrape(chunks, *, chat_fn):  # noqa: ANN001
+    async def _boom_scrape(chunks, **kwargs):  # noqa: ANN001, ANN003
         raise RuntimeError("stage exploded")
 
-    monkeypatch.setattr(orch, "scrape_questions", _boom_scrape)
+    # The orchestrator now drives Stage-1 through ``scrape_document`` (the
+    # structure-aware scrape); patch that, accepting its kwargs.
+    monkeypatch.setattr(orch, "scrape_document", _boom_scrape)
 
     claimed = ClaimedJob(
         job_id=job_id,
@@ -566,7 +570,7 @@ async def test_intra_job_rerun_skips_scraped_chunks(committed_engine, monkeypatc
         concept_slug="provisional.inventory",
     )
 
-    async def _scrape(chunks, *, chat_fn):  # noqa: ANN001
+    async def _scrape(chunks, **kwargs):  # noqa: ANN001, ANN003
         return ScrapeResult(candidates=(candidate,), scraped_count=1, parse_failures=0)
 
     from apollo.provisioning.pairing_gate import PairingVerdict
@@ -583,7 +587,7 @@ async def test_intra_job_rerun_skips_scraped_chunks(committed_engine, monkeypatc
     async def _vp(q, draft, *, retrieve_fn, judge_fn):  # noqa: ANN001
         return PairingVerdict(paired=False, faithful=False, confidence=0.1)
 
-    monkeypatch.setattr(orch, "scrape_questions", _scrape)
+    monkeypatch.setattr(orch, "scrape_document", _scrape)
     monkeypatch.setattr(orch, "find_or_generate", _fog)
     monkeypatch.setattr(orch, "validate_pair", _vp)
 
@@ -794,7 +798,7 @@ async def test_full_promote_spine_rehomes_and_dedups_real_pg(committed_engine, m
     cand_a = _bernoulli_candidate(document_id=doc, chash="bern-a")
     cand_b = _bernoulli_candidate(document_id=doc, chash="bern-b")
 
-    async def _scrape(chunks, *, chat_fn):  # noqa: ANN001
+    async def _scrape(chunks, **kwargs):  # noqa: ANN001, ANN003
         return ScrapeResult(candidates=(cand_a, cand_b), scraped_count=1, parse_failures=0)
 
     async def _fog(db, q, *, retrieve_fn, chat_fn):  # noqa: ANN001
@@ -811,7 +815,7 @@ async def test_full_promote_spine_rehomes_and_dedups_real_pg(committed_engine, m
     async def _noop_canon(db, neo, *, search_space_id, concept_id):  # noqa: ANN001
         return None
 
-    monkeypatch.setattr(orch, "scrape_questions", _scrape)
+    monkeypatch.setattr(orch, "scrape_document", _scrape)
     monkeypatch.setattr(orch, "find_or_generate", _fog)
     monkeypatch.setattr(orch, "validate_pair", _vp)
     # Mock project_canon on the promote module surface (the frozen 3C1 MERGE).

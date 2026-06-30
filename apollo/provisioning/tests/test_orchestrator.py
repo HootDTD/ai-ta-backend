@@ -161,9 +161,10 @@ def _patch_stages(
 ):
     """Patch the frozen stage callables on the orchestrator module surface."""
 
-    async def _scrape(chunks, *, chat_fn):  # noqa: ANN001
-        # exercise the injected chat_fn so a cost-abort scrape can raise.
-        for ch in chunks:
+    async def _scrape(chunk_rows, *, chat_fn, triage_chat_fn, max_sections,
+                      min_candidates, structured=True):  # noqa: ANN001
+        # exercise the injected scrape chat_fn so a cost-abort scrape can raise.
+        for ch in chunk_rows:
             chat_fn(ch.content)
         return ScrapeResult(
             candidates=tuple(scrape_candidates),
@@ -177,7 +178,7 @@ def _patch_stages(
     async def _resolve_prov(db, *, search_space_id):  # noqa: ANN001
         return concept_id
 
-    monkeypatch.setattr(orch, "scrape_questions", _scrape)
+    monkeypatch.setattr(orch, "scrape_document", _scrape)
     monkeypatch.setattr(orch, "write_tier1_problems", _write_tier1)
     monkeypatch.setattr(orch, "resolve_or_create_provisional_concept", _resolve_prov)
 
@@ -636,13 +637,14 @@ async def test_run_provisioning_unexpected_error_fails_run_terminally(db_session
     space, run_id, claimed = await _seed(db_session, slug="or10")
     concept_id = await _seed_concept(db_session, search_space_id=space)
 
-    async def _boom_scrape(chunks, *, chat_fn):  # noqa: ANN001
+    async def _boom_scrape(chunk_rows, *, chat_fn, triage_chat_fn, max_sections,
+                           min_candidates, structured=True):  # noqa: ANN001
         raise ValueError("totally unexpected")
 
     async def _resolve_prov(db, *, search_space_id):  # noqa: ANN001
         return concept_id
 
-    monkeypatch.setattr(orch, "scrape_questions", _boom_scrape)
+    monkeypatch.setattr(orch, "scrape_document", _boom_scrape)
     monkeypatch.setattr(orch, "resolve_or_create_provisional_concept", _resolve_prov)
 
     outcome = await _run(db_session, claimed)
@@ -1344,3 +1346,41 @@ def test_tag_mint_system_prompt_declares_concept_slug():
     assert "concept_slug" in _TAG_MINT_SYSTEM_PROMPT
     assert "display_name" in _TAG_MINT_SYSTEM_PROMPT
     assert "prereqs" in _TAG_MINT_SYSTEM_PROMPT
+
+
+# --------------------------------------------------------------------------- #
+# T-OR22 — wiring proof: run_provisioning calls scrape_document and _load_chunks
+# now feeds section metadata (id/section_path/chunk_type) into the chunk rows.
+# --------------------------------------------------------------------------- #
+async def test_run_provisioning_uses_scrape_document_with_section_columns(db_session, monkeypatch):
+    """Wiring proof: run_provisioning calls scrape_document, and _load_chunks now
+    feeds section metadata (id/section_path/chunk_type) into the chunk rows.
+    DISCRIMINATING: reverting _load_chunks to content-only RED-flags on the missing
+    attribute access in this stub."""
+    space, run_id, claimed = await _seed(db_session, slug="ordoc", n_chunks=2)
+    concept_id = await _seed_concept(db_session, search_space_id=space)
+    seen = {}
+
+    async def _scrape_doc(chunk_rows, *, chat_fn, triage_chat_fn, max_sections,
+                          min_candidates, structured=True):  # noqa: ANN001
+        rows = list(chunk_rows)
+        seen["has_section_attrs"] = all(
+            hasattr(r, "id") and hasattr(r, "section_path") and hasattr(r, "chunk_type")
+            for r in rows
+        )
+        seen["max_sections"] = max_sections
+        seen["min_candidates"] = min_candidates
+        return ScrapeResult(candidates=(), scraped_count=0, parse_failures=0)
+
+    async def _resolve_prov(db, *, search_space_id):  # noqa: ANN001
+        return concept_id
+
+    monkeypatch.setattr(orch, "scrape_document", _scrape_doc)
+    monkeypatch.setattr(orch, "resolve_or_create_provisional_concept", _resolve_prov)
+
+    outcome = await _run(db_session, claimed)
+
+    assert outcome.status == "succeeded"
+    assert seen["has_section_attrs"] is True
+    assert isinstance(seen["max_sections"], int)
+    assert isinstance(seen["min_candidates"], int)

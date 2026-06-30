@@ -63,6 +63,32 @@ async def test_maps_chunk_dicts_to_grounding_spans(monkeypatch):
     assert all(s.carries_solution is False for s in spans)
 
 
+async def test_retrieve_skips_rows_missing_content(db_session, monkeypatch):
+    """REGRESSION: a hybrid_search row lacking a 'content' key must be SKIPPED,
+    not crash the whole document with a KeyError (the orchestrator maps an
+    unexpected exception to a per-DOCUMENT abort). DISCRIMINATING: reverting to
+    row['content'] REDs with KeyError."""
+
+    async def _fake_search(self, query_text, top_k):  # noqa: ANN001
+        return [
+            {"content": "good chunk", "document_id": 1, "page_number": 2},
+            {"document_id": 9, "page_number": 3},  # NO 'content' key
+        ]
+
+    monkeypatch.setattr(
+        adapter_mod.AITAHybridSearchRetriever, "hybrid_search", _fake_search
+    )
+    retrieve = make_course_retrieve_fn(db_session, search_space_id=1)
+
+    class _Q:
+        problem_text = "find downstream pressure P2"
+        chunk_content_hash = "abc"
+
+    spans = await retrieve(_Q())
+    assert len(spans) == 1
+    assert spans[0].text == "good chunk"
+
+
 async def test_query_is_problem_text_and_topk_forwarded(monkeypatch):
     _install(monkeypatch, [])
     retrieve = make_course_retrieve_fn(object(), search_space_id=1, top_k=9)

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -50,6 +51,11 @@ from apollo.persistence.models import (
     IngestRun,
     RejectedProblem,
 )
+from apollo.provisioning.cost_constants import (
+    APOLLO_SCRAPE_MAX_SECTIONS,
+    APOLLO_SCRAPE_MIN_CANDIDATES,
+    structured_scrape_enabled,
+)
 from apollo.provisioning.metered_chat import CostBudgetExceeded, MeteredChat
 from apollo.provisioning.pairing_gate import (
     rejection_from_verdict,
@@ -58,23 +64,30 @@ from apollo.provisioning.pairing_gate import (
 from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promote import PromoteResult, promote
 from apollo.provisioning.provisioning_schema import build_tag_schema
-from apollo.provisioning.retrieval_adapter import make_course_retrieve_fn
 from apollo.provisioning.queue import ClaimedJob
+from apollo.provisioning.retrieval_adapter import make_course_retrieve_fn
 from apollo.provisioning.scrape import (
     resolve_or_create_provisional_concept,
-    scrape_questions,
+    scrape_document,
     write_tier1_problems,
 )
 from apollo.provisioning.solution import (
     GroundingSpan,
     SolutionDraftError,
     build_approved_pair,
+    build_authored_approved_pair,
+    construct_authored_reference,
     find_or_generate,
 )
 from apollo.provisioning.tag_mint import TagMintError, tag_and_mint
 from apollo.schemas.problem import Problem
 
-__all__ = ["run_provisioning", "ProvisioningOutcome"]
+__all__ = [
+    "run_provisioning",
+    "ProvisioningOutcome",
+    "provision_authored_problem",
+    "AuthoredProvisionResult",
+]
 
 _LOG = logging.getLogger(__name__)
 
@@ -83,8 +96,9 @@ _RUN_SUCCEEDED = "succeeded"
 _RUN_FAILED = "failed"
 
 _SCRAPE_SYSTEM_PROMPT = (
-    "You extract solvable quantitative practice problems from a passage of course "
-    "material (textbook prose, worked examples, and exercise sets all count).\n"
+    "You extract EVERY solvable quantitative practice problem from one SECTION of "
+    "course material (textbook prose, worked examples, and exercise sets all count; "
+    "a section may contain zero, one, or many problems).\n"
     "Return ONLY a JSON array - no prose, no explanation, no markdown code fences. "
     "Each array element is an object with EXACTLY these keys:\n"
     '  "problem_text": string - the full, self-contained problem statement.\n'
@@ -94,12 +108,27 @@ _SCRAPE_SYSTEM_PROMPT = (
     '  "difficulty": exactly one of "intro", "standard", "hard".\n'
     '  "concept_slug": string - a short dotted/kebab concept id, e.g. '
     '"bernoulli-equation".\n'
-    "If the passage contains no solvable problems, return []."
+    "If the section contains no solvable problems, return []."
+)
+
+_TRIAGE_SYSTEM_PROMPT = (
+    "You triage a textbook's SECTIONS to find which likely contain solvable "
+    "quantitative practice problems. You receive a JSON array of sections, each with "
+    'an "index", "title", "chars", and "has_numeric_imperative" flag.\n'
+    "Return ONLY a JSON array - no prose, no markdown fences. Each element is an "
+    "object with EXACTLY these keys:\n"
+    '  "index": integer - echo the section\'s index.\n'
+    '  "is_problem_likely": boolean - true if the section probably contains solvable '
+    "problems or worked examples.\n"
+    '  "priority": integer 0-10 - higher = scrape sooner.\n'
+    '  "concept_slug": string - a short dotted/kebab concept id for the section.\n'
+    '  "concept_display": string - a human-readable concept label.\n'
+    "Include EVERY index from the input exactly once."
 )
 
 _TAG_MINT_SYSTEM_PROMPT = (
-    "You tag an already-approved physics problem with its canonical concept and "
-    "the prerequisite edges between its solution entities.\n"
+    "You tag an already-approved problem (quantitative OR qualitative) with its "
+    "canonical concept and the prerequisite edges between its solution entities.\n"
     "Return ONLY a JSON object - no prose, no explanation, no markdown code fences. "
     "The object has EXACTLY these keys:\n"
     '  "concept_slug": string - a short dotted/kebab concept id (e.g. '
@@ -202,17 +231,20 @@ def _recompute_counts(
 # Per-candidate handlers — each returns ('promoted'|'rejected'|'merged_delta')
 # --------------------------------------------------------------------------- #
 class _ChunkView:
-    """The minimal chunk shape ``scrape_questions`` reads (``content`` /
-    ``document_id`` / ``page_number``). Selecting only these columns avoids
-    coupling the orchestrator to the full ``AITAChunk`` ORM (e.g. the pgvector
-    ``embedding`` column) and keeps the read cheap."""
+    """The minimal chunk shape the scrape reads. Now carries the section metadata
+    (``id``/``section_path``/``chunk_type``) so ``group_into_sections`` can rebuild
+    the document's sections. Selecting only these columns keeps the read cheap (no
+    pgvector ``embedding``)."""
 
-    __slots__ = ("content", "document_id", "page_number")
+    __slots__ = ("id", "content", "document_id", "page_number", "section_path", "chunk_type")
 
-    def __init__(self, content: str, document_id: int, page_number: int | None):
+    def __init__(self, id, content, document_id, page_number, section_path, chunk_type):  # noqa: A002
+        self.id = id
         self.content = content
         self.document_id = document_id
         self.page_number = page_number
+        self.section_path = section_path
+        self.chunk_type = chunk_type
 
 
 async def _load_chunks(db: AsyncSession, *, document_id: int) -> Sequence[_ChunkView]:
@@ -221,15 +253,21 @@ async def _load_chunks(db: AsyncSession, *, document_id: int) -> Sequence[_Chunk
     rows = (
         await db.execute(
             select(
+                AITAChunk.id,
                 AITAChunk.content,
                 AITAChunk.document_id,
                 AITAChunk.page_number,
+                AITAChunk.section_path,
+                AITAChunk.chunk_type,
             )
             .where(AITAChunk.document_id == document_id)
             .order_by(AITAChunk.id.asc())
         )
     ).all()
-    return [_ChunkView(r.content, r.document_id, r.page_number) for r in rows]
+    return [
+        _ChunkView(r.id, r.content, r.document_id, r.page_number, r.section_path, r.chunk_type)
+        for r in rows
+    ]
 
 
 async def _find_tier1_row_id(
@@ -285,9 +323,13 @@ async def run_provisioning(
         )
         chunks = await _load_chunks(db, document_id=job.document_id)
         try:
-            scrape_result = await scrape_questions(
-                chunks,  # type: ignore[arg-type]  # _ChunkView is the minimal duck-typed shape scrape_questions reads
+            scrape_result = await scrape_document(
+                chunks,  # type: ignore[arg-type]  # _ChunkView is the duck-typed shape grouping reads
                 chat_fn=metered_chat.scrape_chat_fn(_SCRAPE_SYSTEM_PROMPT),
+                triage_chat_fn=metered_chat.scrape_chat_fn(_TRIAGE_SYSTEM_PROMPT),
+                max_sections=APOLLO_SCRAPE_MAX_SECTIONS,
+                min_candidates=APOLLO_SCRAPE_MIN_CANDIDATES,
+                structured=structured_scrape_enabled(),
             )
         except CostBudgetExceeded as exc:
             raise _cost_abort(exc, stage="scrape") from exc
@@ -545,6 +587,145 @@ def _cost_abort(exc: CostBudgetExceeded, *, stage: str) -> _PerDocumentError:
         error_class="CostBudgetExceeded",
         context={"tokens": exc.tokens, "ceiling": exc.ceiling},
     )
+
+
+# --------------------------------------------------------------------------- #
+# Subject-AGNOSTIC Apollo — the AUTHORED per-candidate pipeline.
+#
+# Where ``_process_candidate`` runs the textbook-scrape stages (find_or_generate ->
+# pairing -> tag/mint -> promote), this runs the AUTHORED stages for one already-
+# ingested ``AuthoredProblem``: construct the reference graph over the UNIVERSAL
+# mint-map vocab -> faithfulness against the authored solution -> tag/mint ->
+# content-gated promote. ``promote`` derives the applicable gates from the problem's
+# OWN content (the symbolic rigor gates self-activate only on parseable equations),
+# so a polisci argument promotes while a fluid one is unchanged — no stored subject
+# profile. Reuses the FROZEN stages — it redefines none of them. The ClaimedJob /
+# ingest_run worker lifecycle stays with ``run_provisioning``; this function is
+# driven directly (ingest commits the Tier-1 inventory independently first).
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class AuthoredProvisionResult:
+    """The per-authored-problem outcome. ``outcome`` ∈ {'promoted', 'rejected'};
+    ``stage`` names where it ended ('ok' | 'construct' | 'pairing_gate' |
+    'promotion_lint')."""
+
+    outcome: str
+    stage: str
+    diagnostic: str = ""
+    failed_gate: int | None = None
+
+
+async def _no_retrieve(_question) -> tuple[GroundingSpan, ...]:
+    """A no-op retrieve_fn for the authored path: the draft ALWAYS carries the
+    authored solution as its grounding, so ``validate_pair`` never re-grounds."""
+    return ()
+
+
+async def _find_authored_tier1_row_id(
+    db: AsyncSession, *, concept_id: int, problem_code: str
+) -> int | None:
+    """The ingested Tier-1 ``apollo_concept_problems.id`` to flip on promote, keyed
+    on the authored ``problem_code`` (``authored.<hash>``)."""
+    return (
+        await db.execute(
+            select(ConceptProblem.id)
+            .where(ConceptProblem.concept_id == concept_id)
+            .where(ConceptProblem.problem_code == problem_code)
+        )
+    ).scalar_one_or_none()
+
+
+async def provision_authored_problem(
+    db: AsyncSession,
+    neo,
+    authored,
+    *,
+    search_space_id: int,
+    ingest_concept_id: int,
+    construct_chat_fn: Callable[..., str],
+    judge_fn: Callable[..., str],
+    tag_chat_fn: Callable[[str], str],
+    embed_fn: Callable[[str], Sequence[float]],
+    run: IngestRun | None = None,
+) -> AuthoredProvisionResult:
+    """Construct -> faithfulness -> tag/mint -> content-gated promote for ONE
+    already-ingested authored problem. Returns an ``AuthoredProvisionResult``.
+
+    A per-candidate rejection (un-constructable graph, a failed faithfulness
+    verdict, or a lint failure) is a CLEAN reject — never a run abort (AC #3). When
+    ``run`` is supplied an ``apollo_rejected_problems`` row is written for the
+    reject (mirroring ``_process_candidate``); otherwise the rejection is returned
+    only. ``promote`` derives the applicable gates from the problem's own content —
+    no subject profile."""
+    # --- construct (three-completeness, universal vocab, authored grounding) --- #
+    try:
+        draft = await construct_authored_reference(authored, chat_fn=construct_chat_fn)
+    except SolutionDraftError as exc:
+        if run is not None:
+            _record_rejection(
+                db, run=run, rejected_stage="solution_draft", failed_gate=None,
+                diagnostic=str(exc), concept_id=ingest_concept_id,
+                payload={"reason": "authored_construct_error"},
+            )
+        return AuthoredProvisionResult(outcome="rejected", stage="construct", diagnostic=str(exc))
+
+    # --- faithfulness against the AUTHORED solution (draft.grounding) --------- #
+    verdict = await validate_pair(
+        authored, draft, retrieve_fn=_no_retrieve, judge_fn=judge_fn
+    )
+    rej = rejection_from_verdict(verdict)
+    if rej is not None:
+        if run is not None:
+            _record_rejection(
+                db, run=run, rejected_stage="pairing_gate", failed_gate=None,
+                diagnostic=rej.diagnostic, concept_id=ingest_concept_id,
+                payload={"reason": rej.reason},
+            )
+        return AuthoredProvisionResult(outcome="rejected", stage="pairing_gate", diagnostic=rej.diagnostic)
+
+    # --- tag/mint + content-gated promote ----------------------------------- #
+    pair = build_authored_approved_pair(authored, draft, search_space_id=search_space_id)
+    # A failed tag/mint (the LLM omits a concept_slug) or a blown cost budget is a
+    # per-CANDIDATE reject — never a run abort (AC #3). Mirrors _process_candidate's
+    # guard, except the authored path treats a TagMintError as a clean reject rather
+    # than a per-document abort (one un-taggable authored problem must not sink a
+    # batch of others).
+    try:
+        mint_plan = await tag_and_mint(db, pair, chat_fn=tag_chat_fn, embed_fn=embed_fn)
+    except (TagMintError, CostBudgetExceeded) as exc:
+        if run is not None:
+            _record_rejection(
+                db, run=run, rejected_stage="tag_mint", failed_gate=None,
+                diagnostic=f"{type(exc).__name__}: {exc}", concept_id=ingest_concept_id,
+                payload={"reason": "tag_mint_error"},
+            )
+        return AuthoredProvisionResult(outcome="rejected", stage="tag_mint", diagnostic=str(exc))
+
+    concept_problem_id = await _find_authored_tier1_row_id(
+        db, concept_id=ingest_concept_id, problem_code=authored.problem_code
+    )
+    if concept_problem_id is None:
+        raise _PerDocumentError(stage="promote", error_class="MissingTier1Row")
+
+    existing_problem_hashes = await _concept_dup_hashes(db, concept_id=mint_plan.concept_id)
+    result: PromoteResult = await promote(
+        db, neo, problem=pair.problem, mint_plan=mint_plan,
+        search_space_id=search_space_id, concept_problem_id=concept_problem_id,
+        existing_problem_hashes=existing_problem_hashes,
+    )
+    if not result.promoted:
+        if run is not None:
+            _record_rejection(
+                db, run=run, rejected_stage="promotion_lint", failed_gate=result.failed_gate,
+                diagnostic=result.diagnostic, concept_id=mint_plan.concept_id, payload={},
+            )
+        return AuthoredProvisionResult(
+            outcome="rejected", stage="promotion_lint",
+            diagnostic=result.diagnostic, failed_gate=result.failed_gate,
+        )
+    return AuthoredProvisionResult(outcome="promoted", stage="ok")
 
 
 async def _finalize(

@@ -52,6 +52,7 @@ from sympy import sympify
 
 from apollo.persistence.learner_model_seed import (
     EntitySpec,
+    _entity_key_for_step,
     misconceptions_to_entities,
     reference_solution_to_entities,
 )
@@ -193,6 +194,25 @@ def _parse_tag(chat_fn: Callable[..., str], problem: dict) -> dict[str, Any]:
     return tag
 
 
+def _bare_id_aliases(problem: dict) -> dict[str, str]:
+    """Map each reference-step BARE id to its PREFIXED canonical_key.
+
+    The LLM tag prompt (orchestrator._TAG_MINT_SYSTEM_PROMPT) never reveals the
+    canonical-key prefix scheme, so the model drafts prereq/opposes edges using
+    the bare reference-node id (``bernoulli``) rather than the minted canonical
+    key (``eq.bernoulli``). This recovers ``bare -> {prefix}.{id}`` by REUSING
+    the frozen §8 ``_entity_key_for_step``, so the alias is byte-identical to what
+    ``reference_solution_to_entities`` minted. A step whose ``entry_type`` is
+    outside the frozen mint map is skipped (gate 1 fails it closed at promotion)."""
+    aliases: dict[str, str] = {}
+    for step in problem.get("reference_solution", []):
+        try:
+            aliases[step["id"]] = _entity_key_for_step(step)
+        except (KeyError, TypeError):
+            continue
+    return aliases
+
+
 async def tag_and_mint(
     db,
     pair: ApprovedPair,
@@ -264,6 +284,18 @@ async def tag_and_mint(
         )
         key_to_id[spec.canonical_key] = entity_id
         minted_entity_ids[spec.canonical_key] = entity_id
+
+    # Register BARE-id aliases so an LLM prereq/opposes draft that names a
+    # reference node by its bare id (bernoulli) resolves to the SAME entity as its
+    # prefixed canonical_key (eq.bernoulli). The LLM never sees the prefix scheme,
+    # so it authors bare ids; without this the hard key_to_id[...] lookup in
+    # insert_prereqs / link_opposes KeyErrors and the whole document aborts (the
+    # BLOCKER). setdefault never shadows a real canonical key. A genuinely-unknown
+    # key (in neither the canonical nor the bare set) still raises KeyError ->
+    # TagMintError (fail-closed) downstream.
+    for bare_id, canonical_key in _bare_id_aliases(problem).items():
+        if canonical_key in key_to_id:
+            key_to_id.setdefault(bare_id, key_to_id[canonical_key])
 
     # --- 5a. Link misconception opposes (fail-closed on an unmappable key) -- #
     try:
