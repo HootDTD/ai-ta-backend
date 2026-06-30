@@ -1,11 +1,11 @@
 """WU-3C2 — resolve_attempt: the §5 resolver orchestration.
 
 Maps every student evidence node onto the closed candidate set with content
-tiers (exact -> SymPy-symbolic -> alias -> fuzzy >= 0.9), the structural
-type-compat HARD constraint, misconception competition (on RAW lexical
-proximity) + a per-winning-alias polarity screen, bounded greedy global
-assignment, and ONE LLM adjudication for the remainder. Produces a
-:class:`ResolutionResult` with per-node ``{resolution, resolved_key, method,
+tiers (exact -> SymPy-symbolic -> derived-equation-alignment -> alias -> fuzzy
+>= 0.9), the structural type-compat HARD constraint, misconception competition
+(on RAW lexical proximity) + a per-winning-alias polarity screen, bounded
+greedy global assignment, and authoritative clarification resolutions. Produces
+a :class:`ResolutionResult` with per-node ``{resolution, resolved_key, method,
 confidence}`` and confidence caps by method.
 
 v1 wires the type-compat HARD constraint + misconception competition as the
@@ -13,12 +13,15 @@ structural / anti-over-normalization signals. Neighborhood corroboration (§5
 steps 2-3 — boosting confidence from agreeing graph-neighbors) is DEFERRED to a
 WU-4A-era refinement; the live resolver performs NO neighborhood corroboration.
 
-Pure + synchronous + deterministic given a deterministic ``llm_adjudicator``:
-re-running on the same ``(student_graph, candidates)`` yields the same result.
-A non-match is ``unresolved`` DATA (no edge, no exception); over
+The one-LLM-adjudication path has been RETIRED (Task 4 / §5): a post-tier,
+non-clarified node stays ``unresolved`` DATA (no LLM guess, no exception). The
+clarification loop (Task 5+) occupies the band the silent guess used to.
+
+Pure + synchronous + deterministic: re-running on the same
+``(student_graph, candidates)`` yields the same result. A non-match is
+``unresolved`` DATA (no edge, no exception); over
 :data:`~apollo.resolution.assignment.MAX_STUDENT_NODES` the whole attempt
-abstains; a hallucinated LLM key raises ``ResolutionInvalidOutputError``; an
-infra failure of the one LLM call raises ``ResolutionUnavailableError``.
+abstains (``llm_calls == 0``).
 """
 
 from __future__ import annotations
@@ -27,10 +30,6 @@ import logging
 
 from apollo.ontology.graph import KGGraph
 from apollo.ontology.nodes import Node
-from apollo.resolution.adjudication import (
-    Adjudicator,
-    adjudicate,
-)
 from apollo.resolution.assignment import (
     MAX_STUDENT_NODES,
     greedy_global_assignment,
@@ -136,20 +135,46 @@ def _content_match(
     return apply_misconception_competition(surface, lexical)
 
 
+def find_residual_nodes(
+    nodes: list[Node],
+    candidates: tuple[Candidate, ...],
+    *,
+    fuzzy_threshold: float = 0.9,
+    symbolic_mappings: dict[str, str] | None = None,
+) -> list[Node]:
+    """Nodes no deterministic tier confidently matched (the clarification
+    detector's input). Pure: reuses ``_content_match`` so banding stays in
+    lockstep with grading-time resolution."""
+    maps = symbolic_mappings if symbolic_mappings is not None else {}
+    residual: list[Node] = []
+    for n in nodes:
+        if _content_match(n, candidates, fuzzy_threshold=fuzzy_threshold, symbolic_mappings=maps) is None:
+            residual.append(n)
+    return residual
+
+
 def resolve_attempt(
     student_graph: KGGraph,
     candidates: tuple[Candidate, ...],
     *,
-    llm_adjudicator: Adjudicator | None = None,
+    confirmed_resolutions: dict[str, str] | None = None,
     fuzzy_threshold: float = 0.9,
     symbolic_mappings: dict[str, str] | None = None,
 ) -> ResolutionResult:
     """Resolve every student evidence node against the closed candidate set.
 
-    ``llm_adjudicator`` defaults to ``None`` — when None and nodes remain after
-    the content tiers, those nodes stay ``unresolved`` and NO live call is made
-    (CI-safe). A caller wanting the real one-call path passes
-    :func:`apollo.resolution.adjudication.main_chat_adjudicator`."""
+    ``confirmed_resolutions`` maps ``node_id -> candidate_key`` for nodes whose
+    mapping was authorised by a clarification exchange (Task 3 / §5.3). For each
+    entry whose key exists in the candidate set AND is type-compatible with the
+    node, the node resolves via method ``"clarification"`` (confidence 0.90),
+    applied BEFORE the content tiers and AUTHORITATIVE (overrides any tier hit).
+    Nodes not in the map, or with an unknown/type-incompatible key, follow the
+    normal resolution path unchanged.
+
+    A post-tier, non-clarified node stays ``unresolved`` (no LLM guess).
+    ``llm_calls`` in the result is always 0 — the silent LLM adjudication path
+    was retired in Task 4; the clarification loop (Task 5+) now occupies
+    that band."""
     nodes = list(student_graph.nodes)
     # Symbolic mappings are PER-PROBLEM declared data (§5), never a global
     # default: with none supplied the symbolic tier applies NO substitution (a
@@ -166,9 +191,25 @@ def resolve_attempt(
             llm_calls=0,
         )
 
-    # 1) Content tiers + structural/competition per node.
+    confirmed = confirmed_resolutions or {}
+    by_key = {c.canonical_key: c for c in candidates}
+
+    # Authoritative clarification resolutions (the student committed an answer to
+    # a pointed question). Applied BEFORE the tiers; type-compat still enforced.
+    clarified: dict[str, Candidate] = {}
+    for node in nodes:
+        key = confirmed.get(node.node_id)
+        if key is None:
+            continue
+        cand = by_key.get(key)
+        if cand is not None and type_compatible(node.node_type, cand):
+            clarified[node.node_id] = cand
+
+    # 1) Content tiers — skip nodes already clarified.
     matches_by_node: dict[str, list[ScoredMatch]] = {}
     for n in nodes:
+        if n.node_id in clarified:
+            continue
         hit = _content_match(
             n,
             candidates,
@@ -185,22 +226,18 @@ def resolve_attempt(
         return ResolutionResult(resolved=resolved, tier_counts=_histogram(resolved), llm_calls=0)
     assigned = outcome.assignment
 
-    # 3) ONE LLM adjudication for the remainder (only if an adjudicator is given).
+    # No live LLM adjudication: a post-tier, non-clarified node stays unresolved
+    # (the clarification loop now occupies the band the silent guess used to).
     llm_calls = 0
-    llm_resolved: dict[str, Candidate] = {}
-    remaining = [n for n in nodes if n.node_id not in assigned]
-    if remaining and llm_adjudicator is not None:
-        llm_resolved = adjudicate(remaining, candidates, adjudicator=llm_adjudicator)
-        llm_calls = 1
 
-    # 4) Build the per-node result with confidence caps by method.
+    # 3) Build the per-node result with confidence caps by method.
     resolved_nodes: list[ResolvedNode] = []
     for n in nodes:
-        if n.node_id in assigned:
+        if n.node_id in clarified:
+            resolved_nodes.append(_resolved(n.node_id, clarified[n.node_id], "clarification"))
+        elif n.node_id in assigned:
             m = assigned[n.node_id]
             resolved_nodes.append(_resolved(n.node_id, m.candidate, m.method))
-        elif n.node_id in llm_resolved and type_compatible(n.node_type, llm_resolved[n.node_id]):
-            resolved_nodes.append(_resolved(n.node_id, llm_resolved[n.node_id], "llm"))
         else:
             resolved_nodes.append(_unresolved(n))
 

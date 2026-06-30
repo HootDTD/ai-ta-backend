@@ -65,6 +65,7 @@ def test_method_confidence_caps_match_spec():
         "symbolic": 0.98,
         "derived": 0.95,
         "alias": 0.92,
+        "clarification": 0.90,
         "fuzzy": 0.80,
         "llm": 0.75,
         "unresolved": 0.00,
@@ -212,3 +213,21 @@ def test_reference_without_aliases_has_empty_exact_aliases():
     }
     cands = candidates_from_reference_solution(problem, canon_key_by_canonical_key={})
     assert cands[0].exact_aliases == ()
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — Clarification: live follow-up prompts for resolver ambiguity
+# ---------------------------------------------------------------------------
+
+
+def test_clarification_method_registered_at_0_90():
+    assert "clarification" in RESOLUTION_METHODS
+    assert METHOD_CONFIDENCE_CAP["clarification"] == 0.90
+
+
+def test_clarification_sits_below_proven_tiers_above_floor():
+    # Strong AI-read judgment: below derived(0.95)/alias(0.92), above the 0.85
+    # normalization-confidence abstention floor, and above fuzzy(0.80)/llm(0.75).
+    cap = METHOD_CONFIDENCE_CAP
+    assert cap["alias"] > cap["clarification"] > cap["fuzzy"]
+    assert cap["clarification"] >= 0.85

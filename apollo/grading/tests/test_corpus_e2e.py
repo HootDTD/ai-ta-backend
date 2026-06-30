@@ -81,3 +81,59 @@ def test_polar_near_miss_resolves_to_misc_not_reference():
     misconception_keys = [e.canonical_key for e in events if e.event_kind.value == "misconception"]
     assert misconception_keys == ["misc.pressure_speed"]
     assert "cond.pressure_speed" not in misconception_keys
+
+
+def test_clarification_confirmed_node_avoids_abstention():
+    """G2 proof: a node no deterministic tier matches would abstain the grader;
+    a student-confirmed clarification resolves it (clarification@0.90) and the
+    gate stays open. Deterministic — no live LLM/Neo4j/PG."""
+    from apollo.grading.abstention import apply_abstention, unresolved_rate_of
+    from apollo.ontology import KGGraph, build_node
+    from apollo.resolution import resolve_attempt
+    from apollo.resolution.candidates import Candidate
+
+    node = build_node(
+        node_type="condition",
+        node_id="s_ambig",
+        attempt_id=1,
+        source="parser",
+        content={"applies_when": "some vague phrasing no tier will match", "label": ""},
+    )
+    graph = KGGraph(nodes=[node])
+    cands = (
+        Candidate(
+            canonical_key="cond.target",
+            canon_key=1,
+            node_type="condition",
+            is_misconception=False,
+            symbolic=None,
+            aliases=(),
+            display_name="the target idea",
+            opposes_key=None,
+            exact_aliases=(),
+        ),
+    )
+
+    # WITHOUT clarification: the node is unresolved -> unresolved_rate gate abstains.
+    base = resolve_attempt(graph, cands)
+    assert unresolved_rate_of(base) > 0.35
+    assert (
+        apply_abstention(
+            unresolved_rate=unresolved_rate_of(base),
+            min_parser_confidence=1.0,
+            normalization_confidence=1.0,
+        ).abstained
+        is True
+    )
+
+    # WITH a student-confirmed clarification: the node resolves -> gate stays open.
+    confirmed = resolve_attempt(graph, cands, confirmed_resolutions={"s_ambig": "cond.target"})
+    assert unresolved_rate_of(confirmed) <= 0.35
+    assert (
+        apply_abstention(
+            unresolved_rate=unresolved_rate_of(confirmed),
+            min_parser_confidence=1.0,
+            normalization_confidence=1.0,
+        ).abstained
+        is False
+    )

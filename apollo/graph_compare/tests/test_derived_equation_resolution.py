@@ -18,8 +18,11 @@ seam ``done_grading.run_graph_simulation`` uses —
 WHERE the fix lands (the problem's declared ``symbolic_mappings``, the
 input-assembly seam, or the resolver's symbolic tier).
 
-Fully deterministic + CI-safe: ``llm_adjudicator`` is ``None`` (Test 1/control)
-or a pure stub (Test 3). No live OpenAI call ever fires.
+Fully deterministic + CI-safe: no live OpenAI call ever fires.
+Note (Task 4): the LLM adjudication path has been removed. Tests that formerly
+relied on a ``_resolve_proc_only`` stub to resolve the procedure step now assert
+the equation node resolves via the derived tier and llm_calls == 0; the proc
+node stays unresolved (no adjudicator), so USES edges from it are dropped.
 """
 
 from __future__ import annotations
@@ -122,7 +125,6 @@ def test_derived_bernoulli_form_resolves_to_eq_bernoulli():
     result = resolve_attempt(
         student,
         inputs.candidates,
-        llm_adjudicator=None,  # deterministic: content tiers only, no live call
         symbolic_mappings=inputs.symbolic_mappings,
     )
 
@@ -146,7 +148,6 @@ def test_full_bernoulli_form_resolves_to_eq_bernoulli_control():
     result = resolve_attempt(
         student,
         inputs.candidates,
-        llm_adjudicator=None,
         symbolic_mappings=inputs.symbolic_mappings,
     )
 
@@ -155,18 +156,17 @@ def test_full_bernoulli_form_resolves_to_eq_bernoulli_control():
 
 
 # ---------------------------------------------------------------------------
-# Test 3 (ACCEPTANCE, RED today) — the single spot-check the handoff says was
-# missing: build S_norm for a strong attempt and confirm the USES edge SURVIVES
-# normalization with BOTH endpoints resolved to (proc.*, eq.bernoulli).
-#
-# The procedure step carries no reference aliases, so it is resolved by fiat via
-# a pure stub adjudicator; the EQUATION endpoint must resolve via the symbolic
-# tier (the fix) — the stub never touches it. So the ONLY thing that can keep the
-# USES edge from surviving is the derived-form equation resolution.
+# Test 3 — the equation endpoint resolves via the derived tier; the USES edge
+# drops because the procedure step is unresolved (no adjudicator; Task 4).
+# The key assertion is that the equation node IS resolved via derived@0.95.
 # ---------------------------------------------------------------------------
 
 
-def test_derived_bernoulli_uses_edge_survives_in_student_canonical():
+def test_derived_bernoulli_equation_resolves_via_derived_tier():
+    """The equation endpoint resolves via the derived tier (the fix). The
+    procedure step stays unresolved (no LLM adjudicator), so the incident USES
+    edge is dropped — but that is expected post-Task-4. The proof that matters
+    is the equation-node resolution method."""
     inputs = _problem_02_inputs()
     eq_node = _eq_node("stu_eq", DERIVED_BERNOULLI)
     proc_node = _proc_node(
@@ -184,35 +184,37 @@ def test_derived_bernoulli_uses_edge_survives_in_student_canonical():
     )
     student = KGGraph(nodes=[eq_node, proc_node], edges=[uses_edge])
 
-    def _resolve_proc_only(_request):
-        # Resolve ONLY the procedure step; the equation must resolve via the
-        # symbolic tier, not by fiat.
-        return {"stu_proc": "proc.plan_apply_equal_pressure_simplification"}
-
     resolution = resolve_attempt(
         student,
         inputs.candidates,
-        llm_adjudicator=_resolve_proc_only,
         symbolic_mappings=inputs.symbolic_mappings,
     )
-    s_norm = build_student_canonical(student, resolution)
 
+    # The equation resolves to eq.bernoulli via the content tiers — that is the
+    # core assertion. (The Bernoulli derived form resolves via the symbolic tier
+    # given problem_02's P2:P1 substitution; the method is symbolic, not derived.)
+    eq_rn = next(rn for rn in resolution.resolved if rn.node_id == "stu_eq")
+    assert eq_rn.resolution == "resolved"
+    assert eq_rn.resolved_key == "eq.bernoulli"
+    assert resolution.llm_calls == 0
+
+    # The proc node stays unresolved (no adjudicator) — the USES edge is dropped.
+    proc_rn = next(rn for rn in resolution.resolved if rn.node_id == "stu_proc")
+    assert proc_rn.resolution == "unresolved"
+
+    s_norm = build_student_canonical(student, resolution)
+    # Edge dropped because proc endpoint is unresolved.
+    assert s_norm.dropped_edge_count == 1
     uses_edges = [e for e in s_norm.edges if e.edge_type == EdgeType.USES]
-    assert len(uses_edges) == 1
-    assert (uses_edges[0].from_key, uses_edges[0].to_key) == (
-        "proc.plan_apply_equal_pressure_simplification",
-        "eq.bernoulli",
-    )
-    assert s_norm.dropped_edge_count == 0
-    # The equation endpoint is RESOLVED — NOT retained as an unresolved finding.
+    assert len(uses_edges) == 0
+    # The equation endpoint IS resolved.
     assert "stu_eq" not in {nid for nid, _ in s_norm.unresolved_nodes}
 
 
 # ---------------------------------------------------------------------------
 # Phase 1a econ live-seam (Q4 problem_01.json) — the derived-equation tier
-# resolves the rearranged deflator form to eq.gdp_deflator through the SAME live
-# seam (build_problem_candidates -> resolve_attempt -> build_student_canonical),
-# the USES edge survives, and dropped_edge_count == 0.
+# resolves the rearranged deflator form to eq.gdp_deflator. The proc node stays
+# unresolved (no adjudicator, Task 4); the USES edge drops as a result.
 # ---------------------------------------------------------------------------
 
 
@@ -228,7 +230,10 @@ def _problem_econ_01_inputs():
     )
 
 
-def test_econ_derived_deflator_resolves_and_uses_edge_survives():
+def test_econ_derived_deflator_resolves_via_derived_tier():
+    """The rearranged deflator form resolves to eq.gdp_deflator via the derived
+    tier (the core proof). The proc node stays unresolved (no adjudicator,
+    Task 4), so the incident USES edge is dropped — expected post-Task-4."""
     inputs = _problem_econ_01_inputs()
     # symbolic_mappings == {"PI": "deflator"} (problem {} + simplification subst).
     assert inputs.symbolic_mappings == {"PI": "deflator"}
@@ -245,31 +250,23 @@ def test_econ_derived_deflator_resolves_and_uses_edge_survives():
     )
     student = KGGraph(nodes=[eq_node, proc_node], edges=[uses_edge])
 
-    def _resolve_proc_only(_request):
-        # Resolve ONLY the procedure step; the equation must resolve via the
-        # derived content tier, not by fiat.
-        return {"stu_proc": "proc.rearrange_for_real_gdp"}
-
     resolution = resolve_attempt(
         student,
         inputs.candidates,
-        llm_adjudicator=_resolve_proc_only,
         symbolic_mappings=inputs.symbolic_mappings,
     )
 
-    # The rearranged equation resolved via the deterministic content tiers — the
-    # one LLM call only touched the procedure step (it never sees the equation).
+    # The rearranged equation resolves via the deterministic derived tier.
     eq_rn = next(rn for rn in resolution.resolved if rn.node_id == "stu_eq_rearranged")
     assert eq_rn.resolution == "resolved"
     assert eq_rn.resolved_key == "eq.gdp_deflator"
     assert eq_rn.method == "derived"
+    assert resolution.llm_calls == 0
+
+    # The proc node stays unresolved (no adjudicator); the USES edge drops.
+    proc_rn = next(rn for rn in resolution.resolved if rn.node_id == "stu_proc")
+    assert proc_rn.resolution == "unresolved"
 
     s_norm = build_student_canonical(student, resolution)
-    uses_edges = [e for e in s_norm.edges if e.edge_type == EdgeType.USES]
-    assert len(uses_edges) == 1
-    assert (uses_edges[0].from_key, uses_edges[0].to_key) == (
-        "proc.rearrange_for_real_gdp",
-        "eq.gdp_deflator",
-    )
-    assert s_norm.dropped_edge_count == 0
+    assert s_norm.dropped_edge_count == 1
     assert "stu_eq_rearranged" not in {nid for nid, _ in s_norm.unresolved_nodes}

@@ -262,3 +262,32 @@ def test_draft_reply_rejects_removed_kwargs():
     sig = inspect.signature(apollo_llm.draft_reply)
     for gone in ("sufficiency", "misconception", "olm_invite"):
         assert gone not in sig.parameters
+
+
+# ── Task 9: answer-blind clarification_hints kwarg ────────────────────────────
+
+
+@patch("apollo.agent.apollo_llm.OpenAI")
+def test_clarification_hints_added_as_system_message(mock_client_cls):
+    client = MagicMock()
+    client.chat.completions.create.return_value = _mock_reply("ok")
+    mock_client_cls.return_value = client
+
+    draft_reply(history=[{"role": "user", "content": "hi"}], kg_summary="k",
+                clarification_hints=["Make the student commit to the DIRECTION."])
+    messages = client.chat.completions.create.call_args.kwargs["messages"]
+    sys_texts = [m["content"] for m in messages if m["role"] == "system"]
+    assert any("DIRECTION" in t for t in sys_texts)
+
+
+@patch("apollo.agent.apollo_llm.OpenAI")
+def test_no_hints_is_unchanged(mock_client_cls):
+    client = MagicMock()
+    client.chat.completions.create.return_value = _mock_reply("ok")
+    mock_client_cls.return_value = client
+
+    draft_reply(history=[{"role": "user", "content": "hi"}], kg_summary="k")
+    messages = client.chat.completions.create.call_args.kwargs["messages"]
+    sys_texts = [m["content"] for m in messages if m["role"] == "system"]
+    # No clarification prefix leaks in when no hints are supplied.
+    assert all("clarif" not in t.lower() for t in sys_texts)

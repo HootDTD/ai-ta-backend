@@ -196,8 +196,8 @@ class LearnerUpdateUnreconstructableError(ApolloError):
 
 
 class ResolutionUnavailableError(ApolloError):
-    """Resolver INFRASTRUCTURE failure (the one LLM adjudication call failed /
-    timed out, or a Neo4j ``RESOLVES_TO`` / resolution-field write failed).
+    """Resolver INFRASTRUCTURE failure (a resolver LLM call failed / timed out,
+    or a Neo4j ``RESOLVES_TO`` / resolution-field write failed).
 
     NO FALLBACK and — critically — must NOT void the earned grade: at Done the
     grade/XP are already committed when resolution runs, so this surfaces loud
@@ -205,7 +205,9 @@ class ResolutionUnavailableError(ApolloError):
     ``learner_update_pending = true`` on the attempt and the next Done / janitor
     retry re-runs resolution idempotently (§5 NO-FALLBACK, §6.4 transaction
     story). ``stage`` is one of
-    ``{"llm_adjudication", "write_resolves_to", "persist_fields"}`` (WU-3C2)."""
+    ``{"llm_adjudication", "write_resolves_to", "persist_fields",
+    "clarification_rescore"}`` (WU-3C2; ``clarification_rescore`` is the
+    re-scorer stage added by the clarification loop)."""
 
     def __init__(self, *, stage: str, last_error: str) -> None:
         self.stage = stage

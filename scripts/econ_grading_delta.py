@@ -4,7 +4,7 @@ Drives the REAL macroeconomics Q4 ``nominal_vs_real_gdp`` ``problem_01`` through
 ``build_problem_candidates -> resolve_attempt -> build_student_canonical ->
 grade_attempt`` against a hand-authored STRONG student graph (mirrors RESULTS.md
 attempt-20), and prints a JSON metrics dict. PURE + DETERMINISTIC: no DB, no
-Neo4j, no OpenAI, no server. ``llm_adjudicator`` is a proc-only pure stub.
+Neo4j, no OpenAI, no server. No LLM adjudicator (Task 4 — silent path retired).
 
 The point is the BEFORE/AFTER delta for the ``derived`` equation-alignment tier:
 
@@ -14,7 +14,8 @@ The point is the BEFORE/AFTER delta for the ``derived`` equation-alignment tier:
     BEFORE: ``unresolved`` (the sign-exact symbolic tier rejects it). AFTER:
     ``resolved``/``eq.gdp_deflator`` via ``derived@0.95``.
   * ``USES`` edge ``stu_proc -> stu_eq_rearranged`` — BEFORE dropped (rearranged
-    endpoint unresolved), AFTER retained (both endpoints resolved).
+    endpoint unresolved); AFTER: dropped because proc stays unresolved (Task 4
+    removed the LLM adjudicator that previously resolved it by fiat).
 
 The captured BEFORE / AFTER JSON blocks live at the bottom of this file (the
 §10 calibration record).
@@ -107,13 +108,6 @@ def _student_graph() -> KGGraph:
     return KGGraph(nodes=[eq_base, eq_rearranged, proc], edges=[uses_edge])
 
 
-def _proc_only_adjudicator(_request: object) -> dict[str, str]:
-    """Pure stub: resolve ONLY the procedure step by fiat. The equation nodes
-    must resolve (or not) via the deterministic content tiers — the stub never
-    touches them. No live OpenAI call ever fires."""
-    return {"stu_proc": _PROC_KEY}
-
-
 def run_delta() -> dict:
     """Run the full no-infra pipeline and return the metrics dict.
 
@@ -132,7 +126,6 @@ def run_delta() -> dict:
     resolution = resolve_attempt(
         student,
         inputs.candidates,
-        llm_adjudicator=_proc_only_adjudicator,
         symbolic_mappings=inputs.symbolic_mappings,
     )
 
