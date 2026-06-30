@@ -9,23 +9,28 @@ withhold) plus immutability + score-passthrough pins.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from unittest.mock import patch
 
 from apollo.grading.abstention import (
     REASON_HIGH_UNRESOLVED,
+    REASON_LOW_NORMALIZATION_CONFIDENCE,
     REASON_TRANSCRIPT_AUDIT_FAILED,
 )
 from apollo.grading.audited_grade import AUDIT_UPGRADE_MESSAGE, build_audited_grade
+from apollo.grading.normalization_confidence import compute_normalization_confidence
 from apollo.grading.tests._builders import (
     candidate,
+    covered_finding_with_nodes,
     found_audit_fn,
     missing_grade,
     nodes_with_confidences,
     notfound_audit_fn,
     raising_audit_fn,
     resolution_with,
+    student_node,
 )
-from apollo.graph_compare.findings import FindingKind
+from apollo.graph_compare.findings import Finding, FindingKind
 
 
 def _findings_by_kind(findings, kind):
@@ -311,3 +316,147 @@ def test_build_audited_grade_forwards_misconception_bank_empty():
     )
     assert REASON_MISCONCEPTION_BANK_EMPTY in out.abstention_reasons
     assert out.abstained is False
+
+
+# --- Phase 1c: normalization-confidence brake + D1 reorder -------------------
+
+
+def test_reorder_preserves_persisted_nc_value():
+    """The nc the gate sees internally == the value an EXTERNAL
+    compute_normalization_confidence(out, resolution) yields (the persisted nc at
+    done_grading.py:265). With nothing scored-with-backer the neutral floor (1.0)
+    holds and the 1c gate does NOT fire."""
+    grade = missing_grade(("eq.x",))
+    res = resolution_with(resolved=2)
+    out = build_audited_grade(
+        grade,
+        transcript="t",
+        resolution=res,
+        student_nodes=(),
+        candidates=(candidate("eq.x"),),
+        audit_fn=notfound_audit_fn(),
+    )
+    # external recompute over the SAME audited grade == what the gate saw internally
+    assert compute_normalization_confidence(out, res) == 1.0  # neutral floor
+    assert out.abstained is False
+    assert REASON_LOW_NORMALIZATION_CONFIDENCE not in out.abstention_reasons
+
+
+def test_weak_tier_backing_triggers_1c_abstain_end_to_end():
+    """A covered finding backed by a single EQUATION node that fell to a weak
+    (fuzzy-cap 0.80) tier -> type-normalized nc 0.80/1.00 = 0.80 < 0.85 ->
+    abstained=True with the 1c reason, even though unresolved_rate is 0 (the
+    SECOND, quality-keyed abstain trigger). An equation had exact/symbolic/derived
+    paths available, so falling to fuzzy is genuinely suspicious."""
+    grade = missing_grade()
+    grade = replace(grade, findings=(covered_finding_with_nodes("k.a", ("a1",)),))
+    res = resolution_with(resolved_nodes=(("a1", 0.80),))  # one weak (fuzzy-cap) backer
+    out = build_audited_grade(
+        grade,
+        transcript="t",
+        resolution=res,
+        student_nodes=(student_node("a1", "equation"),),
+        candidates=(candidate("k.a"),),
+        audit_fn=notfound_audit_fn(),
+    )
+    assert out.abstained is True
+    assert REASON_LOW_NORMALIZATION_CONFIDENCE in out.abstention_reasons
+    # the persisted-value invariant: the internal gate nc == the external recompute.
+    # a1 is an EQUATION (ceiling 1.00): the fuzzy cap 0.80 normalizes to 0.80/1.00
+    # = 0.80 < 0.85 -> an equation that fell to fuzzy is genuinely suspicious.
+    node_types = {"a1": "equation"}
+    assert compute_normalization_confidence(out, res, node_types) == 0.80
+
+
+# --- G1 fix: type-aware normalization end-to-end (the categorical->selective fix) --
+
+
+def test_conceptual_node_via_llm_does_not_abstain_end_to_end():
+    """THE G1 bug fix, proven end-to-end through build_audited_grade. A covered
+    finding backed by a CONCEPTUAL node (a definition) that resolved via the llm
+    tier (0.75) used to pin nc to 0.75 < 0.85 and categorically abstain — even on
+    perfect-coverage attempts. Type-aware: 0.75/0.75 = 1.0 >= 0.85 -> NOT
+    abstained. The node_type is sourced from the student_nodes threaded in."""
+    grade = replace(missing_grade(), findings=(covered_finding_with_nodes("k.a", ("a1",)),))
+    res = resolution_with(resolved_nodes=(("a1", 0.75),))  # conceptual @ llm cap
+    out = build_audited_grade(
+        grade,
+        transcript="t",
+        resolution=res,
+        student_nodes=(student_node("a1", "definition"),),
+        candidates=(candidate("k.a"),),
+        audit_fn=notfound_audit_fn(),
+    )
+    assert out.abstained is False
+    assert REASON_LOW_NORMALIZATION_CONFIDENCE not in out.abstention_reasons
+    # external recompute over the SAME node types == the internal gate nc (1.0).
+    assert compute_normalization_confidence(out, res, {"a1": "definition"}) == 1.0
+
+
+def test_equation_via_llm_still_abstains_end_to_end():
+    """The fix stays SELECTIVE, not blanket-permissive: an EQUATION node that
+    resolved only via llm (0.75) is suspicious — it had exact/symbolic/derived
+    paths — so 0.75/1.00 = 0.75 < 0.85 -> still abstains with the 1c reason."""
+    grade = replace(missing_grade(), findings=(covered_finding_with_nodes("eq.a", ("a1",)),))
+    res = resolution_with(resolved_nodes=(("a1", 0.75),))  # equation @ llm cap
+    out = build_audited_grade(
+        grade,
+        transcript="t",
+        resolution=res,
+        student_nodes=(student_node("a1", "equation"),),
+        candidates=(candidate("eq.a"),),
+        audit_fn=notfound_audit_fn(),
+    )
+    assert out.abstained is True
+    assert REASON_LOW_NORMALIZATION_CONFIDENCE in out.abstention_reasons
+    assert compute_normalization_confidence(out, res, {"a1": "equation"}) == 0.75
+
+
+def test_nc_is_computed_over_post_rewrite_findings_discriminator():
+    """REQUIRED [HIGH]-risk discriminator (D1). An audit upgrade turns a
+    MISSING_NODE into a COVERED_NODE (a SCORED kind). This test proves the gate's
+    nc is computed over the POST-rewrite findings: it spies on the helper actually
+    used by build_audited_grade and asserts the findings tuple it received is the
+    rewritten one (carrying the upgraded COVERED_NODE for eq.x), NOT grade.findings
+    (which still carries the MISSING_NODE). A pre-rewrite implementation would pass
+    grade.findings here and the assertion would fail.
+
+    NOTE: with the stock _upgraded_finding (which carries no student_node_ids) the
+    upgraded COVERED_NODE has no resolved backer, so nc's *value* is the same over
+    pre- and post-rewrite findings; the load-bearing distinction the gate depends
+    on is therefore asserted directly on the findings argument, not via a value
+    divergence."""
+    from apollo.grading.normalization_confidence import _normalization_confidence_over
+
+    grade = missing_grade(("eq.x",))
+    fn = found_audit_fn({"eq.x": "the student explained eq.x here"})
+    res = resolution_with(resolved=2)
+
+    seen: dict[str, tuple[Finding, ...]] = {}
+
+    def _spy(findings, resolution, node_type_by_id=None):
+        seen["findings"] = findings
+        return _normalization_confidence_over(findings, resolution, node_type_by_id)
+
+    with patch(
+        "apollo.grading.audited_grade._normalization_confidence_over", side_effect=_spy
+    ):
+        out = build_audited_grade(
+            grade,
+            transcript="t",
+            resolution=res,
+            student_nodes=(),
+            candidates=(candidate("eq.x"),),
+            audit_fn=fn,
+        )
+
+    # the helper was fed the POST-rewrite findings: eq.x is now a COVERED_NODE,
+    # and NO MISSING_NODE for eq.x survives in the argument.
+    fed = seen["findings"]
+    assert fed is out.findings  # same tuple identity as the constructed (rewritten) findings
+    assert any(f.kind == FindingKind.COVERED_NODE and f.canonical_key == "eq.x" for f in fed)
+    assert not any(f.kind == FindingKind.MISSING_NODE and f.canonical_key == "eq.x" for f in fed)
+    # sanity: had it been pre-rewrite findings, eq.x would still be a MISSING_NODE.
+    assert any(
+        f.kind == FindingKind.MISSING_NODE and f.canonical_key == "eq.x" for f in grade.findings
+    )

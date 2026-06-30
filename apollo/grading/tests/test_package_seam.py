@@ -89,6 +89,7 @@ def test_abstention_thresholds_shape():
         "unresolved_rate": 0.35,
         "min_parser_confidence": 0.6,
         "misconception_confidence": 0.8,
+        "min_normalization_confidence": 0.85,  # Phase 1c quality brake (calibration-owned, spec §10)
     }
 
 

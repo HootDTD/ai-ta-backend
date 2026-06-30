@@ -7,8 +7,10 @@ deterministic abstention outcome: a reason list, the ``abstained`` flag, and a
 per-event-kind suppression set (the kinds WU-4B2 must withhold).
 
 Binding semantics (§6.6):
-- ``abstained=True`` is RESERVED for the *no-Layer-3-update* run — only the
-  ``unresolved_rate`` gate sets it. The ``missing`` / ``misconception``
+- ``abstained=True`` is set by TWO gates: the ``unresolved_rate`` gate (resolution
+  *success*) and the Phase 1c ``min_normalization_confidence`` gate (resolution
+  *quality* — the weakest-link nc of the evidence that backed a scored finding).
+  Either one means a *no-Layer-3-update* run. The ``missing`` / ``misconception``
   suppressions are *partial*: they withhold specific event kinds (and record a
   reason) but the run still updates Layer-3 for the rest, so they do NOT set
   ``abstained``.
@@ -32,6 +34,7 @@ ABSTENTION_THRESHOLDS: dict[str, float] = {
     "unresolved_rate": 0.35,  # > 0.35 -> no Layer-3 update (diagnostic-only run)
     "min_parser_confidence": 0.6,  # MIN over turns < 0.6 -> suppress 'missing'
     "misconception_confidence": 0.8,  # < 0.8 -> withhold 'misconception'
+    "min_normalization_confidence": 0.85,  # nc < 0.85 -> abstained=True (Phase 1c; calibration-owned per spec §10)
 }
 
 # Reason strings persisted verbatim into apollo_graph_comparison_runs
@@ -45,6 +48,9 @@ REASON_TRANSCRIPT_AUDIT_FAILED = "transcript_audit_unavailable"
 # was never checked; soundness_score and contradiction_score are None.
 # Layer-3 (coverage) still updates — this is NOT a full abstention.
 REASON_MISCONCEPTION_BANK_EMPTY = "misconception_bank_empty"
+# Phase 1c (spec §8): the attempt resolved only via weak tiers (low
+# normalization_confidence) -> distrust even at low unresolved_rate.
+REASON_LOW_NORMALIZATION_CONFIDENCE = "normalization_confidence_below_threshold"
 
 # Event kinds (subset) WU-4B2 may be told to withhold.
 _SUPPRESS_MISSING = "missing"
@@ -88,11 +94,17 @@ def apply_abstention(
     transcript_audit_failed: bool = False,
     reference_invalid: bool = False,
     misconception_bank_empty: bool = False,
+    normalization_confidence: float = 1.0,
 ) -> Abstention:
     """Apply the §6.6 gates and return the reasons + flags + suppression set.
 
     - ``unresolved_rate > 0.35``      -> ``abstained=True``, REASON_HIGH_UNRESOLVED
                                          (no Layer-3 update; diagnostic-only run)
+    - ``normalization_confidence < 0.85`` -> ``abstained=True`` (Phase 1c),
+                                         REASON_LOW_NORMALIZATION_CONFIDENCE (the
+                                         attempt resolved only via weak tiers — a
+                                         second no-Layer-3-update trigger besides
+                                         ``unresolved_rate``)
     - ``min_parser_confidence < 0.6`` -> suppress ``missing``,
                                          REASON_LOW_PARSER_CONFIDENCE
     - ``transcript_audit_failed``     -> suppress ``missing``,
@@ -114,6 +126,14 @@ def apply_abstention(
     abstained = unresolved_rate > ABSTENTION_THRESHOLDS["unresolved_rate"]
     if abstained:
         reasons.append(REASON_HIGH_UNRESOLVED)
+
+    # Phase 1c quality brake: a low weakest-link normalization_confidence means the
+    # attempt resolved only via weak tiers -> distrust even at low unresolved_rate.
+    # Plain assignment (NOT `or`): this gate sets abstained independently; the
+    # reason list still records BOTH reasons when both gates fire.
+    if normalization_confidence < ABSTENTION_THRESHOLDS["min_normalization_confidence"]:
+        abstained = True
+        reasons.append(REASON_LOW_NORMALIZATION_CONFIDENCE)
 
     if min_parser_confidence < ABSTENTION_THRESHOLDS["min_parser_confidence"]:
         reasons.append(REASON_LOW_PARSER_CONFIDENCE)

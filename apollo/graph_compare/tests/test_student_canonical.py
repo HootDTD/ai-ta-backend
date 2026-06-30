@@ -147,6 +147,35 @@ def test_resolved_edge_endpoints_normalized_to_keys():
     assert edge.edge_type == EdgeType.PRECEDES
     assert (edge.from_key, edge.to_key) == ("proc.a", "proc.b")
     assert edge.provenance == "inferred"
+    # Distinct-endpoint control for the 0.3 self-loop guard: a non-self-loop edge
+    # is kept (the guard does not over-drop).
+    assert edge.from_key != edge.to_key
+
+
+def test_post_merge_self_loop_edge_is_dropped_and_counted():
+    """PHASE 0 / 0.3 (D3): two student nodes resolving to the SAME key merge into
+    one canonical node; a PRECEDES edge BETWEEN them collapses to from_key ==
+    to_key post-merge. That self-loop is DROPPED from edges and counted into the
+    existing dropped_edge_count (no new field). The parser-layer self-loop guard
+    runs PRE-merge and cannot catch this."""
+    graph = KGGraph(
+        nodes=[
+            _node("p1", "procedure_step", {"action": "a", "purpose": ""}),
+            _node("p2", "procedure_step", {"action": "b", "purpose": ""}),
+        ],
+        edges=[_edge(EdgeType.PRECEDES, "p1", "p2")],
+    )
+    # BOTH nodes resolve to the SAME key -> they merge; the edge becomes a
+    # post-merge self-loop (from_key == to_key == 'proc.shared').
+    resolution = _resolution(
+        _resolved("p1", "proc.shared"),
+        _resolved("p2", "proc.shared"),
+    )
+    s = build_student_canonical(graph, resolution)
+    assert len(s.nodes) == 1  # merged into one canonical node
+    assert s.edges == ()  # the self-loop edge is absent
+    assert s.dropped_edge_count == 1  # counted into the existing field (prior 0 + 1)
+    assert all(e.from_key != e.to_key for e in s.edges)
 
 
 def test_merge_carries_highest_confidence_method_deterministically():

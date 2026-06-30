@@ -63,6 +63,7 @@ def test_method_confidence_caps_match_spec():
     assert METHOD_CONFIDENCE_CAP == {
         "exact": 1.00,
         "symbolic": 0.98,
+        "derived": 0.95,
         "alias": 0.92,
         "fuzzy": 0.80,
         "llm": 0.75,
@@ -137,3 +138,77 @@ def test_candidate_is_frozen_immutable():
 
     with __import__("pytest").raises(dataclasses.FrozenInstanceError):
         c.canonical_key = "x"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Phase 1b — Candidate.exact_aliases: curated reference phrasings matched
+# EXACT-only (never fuzzed). The field defaults to () so every existing
+# kwargs-based construction stays valid.
+# ---------------------------------------------------------------------------
+
+
+def test_candidate_exact_aliases_defaults_empty_and_is_frozen():
+    c = Candidate(
+        canonical_key="cond.x",
+        canon_key=1,
+        node_type="condition",
+        is_misconception=False,
+        symbolic=None,
+        aliases=(),
+        display_name="x",
+        opposes_key=None,
+    )
+    assert c.exact_aliases == ()  # defaulted, backward-compatible
+    c2 = Candidate(
+        canonical_key="cond.y",
+        canon_key=2,
+        node_type="condition",
+        is_misconception=False,
+        symbolic=None,
+        aliases=(),
+        display_name="y",
+        opposes_key=None,
+        exact_aliases=("open to the atmosphere",),
+    )
+    assert c2.exact_aliases == ("open to the atmosphere",)
+    import dataclasses
+
+    with __import__("pytest").raises(dataclasses.FrozenInstanceError):
+        c2.exact_aliases = ()  # type: ignore[misc]
+
+
+def test_reference_aliases_flow_into_exact_aliases_not_aliases():
+    """A reference-solution step's ``content.aliases`` lands in ``exact_aliases``
+    (the EXACT-only channel) while ``aliases`` (the fuzzy channel) stays empty."""
+    problem = {
+        "reference_solution": [
+            {
+                "entry_type": "condition",
+                "entity_key": "cond.open_tank",
+                "content": {
+                    "label": "Open tank",
+                    "aliases": ["open to the atmosphere", "vented tank"],
+                },
+            }
+        ]
+    }
+    cands = candidates_from_reference_solution(problem, canon_key_by_canonical_key={})
+    c = cands[0]
+    assert c.exact_aliases == ("open to the atmosphere", "vented tank")
+    assert c.aliases == ()  # reference fuzzy channel stays empty
+
+
+def test_reference_without_aliases_has_empty_exact_aliases():
+    """No-aliases regression: a step WITHOUT ``content.aliases`` keeps
+    ``exact_aliases == ()`` (the default path)."""
+    problem = {
+        "reference_solution": [
+            {
+                "entry_type": "condition",
+                "entity_key": "cond.no_alias",
+                "content": {"label": "No alias"},
+            }
+        ]
+    }
+    cands = candidates_from_reference_solution(problem, canon_key_by_canonical_key={})
+    assert cands[0].exact_aliases == ()

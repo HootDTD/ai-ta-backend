@@ -57,6 +57,21 @@ _PROBLEM_02 = (
     / "problem_02.json"
 )
 
+# Macroeconomics Q4 (nominal_vs_real_gdp / real_gdp_from_deflator): the econ
+# live-seam for the Phase-1a derived equation-alignment tier. The rearranged
+# deflator form must resolve to eq.gdp_deflator via the content tiers (no LLM).
+_PROBLEM_ECON_01 = (
+    Path(__file__).resolve().parents[2]
+    / "subjects"
+    / "macroeconomics"
+    / "concepts"
+    / "nominal_vs_real_gdp"
+    / "problems"
+    / "problem_01.json"
+)
+# The rearranged-for-realGDP derived form of the deflator definition.
+DERIVED_DEFLATOR = "realGDP - nomGDP/(PI/100)"
+
 
 def _load_problem_02() -> dict:
     return json.loads(_PROBLEM_02.read_text(encoding="utf-8"))
@@ -191,3 +206,70 @@ def test_derived_bernoulli_uses_edge_survives_in_student_canonical():
     assert s_norm.dropped_edge_count == 0
     # The equation endpoint is RESOLVED — NOT retained as an unresolved finding.
     assert "stu_eq" not in {nid for nid, _ in s_norm.unresolved_nodes}
+
+
+# ---------------------------------------------------------------------------
+# Phase 1a econ live-seam (Q4 problem_01.json) — the derived-equation tier
+# resolves the rearranged deflator form to eq.gdp_deflator through the SAME live
+# seam (build_problem_candidates -> resolve_attempt -> build_student_canonical),
+# the USES edge survives, and dropped_edge_count == 0.
+# ---------------------------------------------------------------------------
+
+
+def _load_problem_econ_01() -> dict:
+    return json.loads(_PROBLEM_ECON_01.read_text(encoding="utf-8"))
+
+
+def _problem_econ_01_inputs():
+    return build_problem_candidates(
+        _load_problem_econ_01(),
+        {"misconceptions": []},
+        canon_key_by_canonical_key={},
+    )
+
+
+def test_econ_derived_deflator_resolves_and_uses_edge_survives():
+    inputs = _problem_econ_01_inputs()
+    # symbolic_mappings == {"PI": "deflator"} (problem {} + simplification subst).
+    assert inputs.symbolic_mappings == {"PI": "deflator"}
+
+    eq_node = _eq_node("stu_eq_rearranged", DERIVED_DEFLATOR)
+    proc_node = _proc_node("stu_proc", "rearrange the deflator definition to solve for real GDP")
+    uses_edge = Edge(
+        edge_type=EdgeType.USES,
+        from_node_id="stu_proc",
+        to_node_id="stu_eq_rearranged",
+        attempt_id=1,
+        from_node_type="procedure_step",
+        to_node_type="equation",
+    )
+    student = KGGraph(nodes=[eq_node, proc_node], edges=[uses_edge])
+
+    def _resolve_proc_only(_request):
+        # Resolve ONLY the procedure step; the equation must resolve via the
+        # derived content tier, not by fiat.
+        return {"stu_proc": "proc.rearrange_for_real_gdp"}
+
+    resolution = resolve_attempt(
+        student,
+        inputs.candidates,
+        llm_adjudicator=_resolve_proc_only,
+        symbolic_mappings=inputs.symbolic_mappings,
+    )
+
+    # The rearranged equation resolved via the deterministic content tiers — the
+    # one LLM call only touched the procedure step (it never sees the equation).
+    eq_rn = next(rn for rn in resolution.resolved if rn.node_id == "stu_eq_rearranged")
+    assert eq_rn.resolution == "resolved"
+    assert eq_rn.resolved_key == "eq.gdp_deflator"
+    assert eq_rn.method == "derived"
+
+    s_norm = build_student_canonical(student, resolution)
+    uses_edges = [e for e in s_norm.edges if e.edge_type == EdgeType.USES]
+    assert len(uses_edges) == 1
+    assert (uses_edges[0].from_key, uses_edges[0].to_key) == (
+        "proc.rearrange_for_real_gdp",
+        "eq.gdp_deflator",
+    )
+    assert s_norm.dropped_edge_count == 0
+    assert "stu_eq_rearranged" not in {nid for nid, _ in s_norm.unresolved_nodes}

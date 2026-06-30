@@ -40,6 +40,7 @@ from apollo.resolution.competition import (
     apply_misconception_competition,
     polarity_screen,
 )
+from apollo.resolution.equation_alignment import match_equation_alignment
 from apollo.resolution.result import ResolutionResult, ResolvedNode
 from apollo.resolution.structural import ScoredMatch, type_compatible
 from apollo.resolution.tiers import (
@@ -86,6 +87,15 @@ def _content_match(
     symbolic = match_symbolic(node, type_ok, mappings=symbolic_mappings)
     if symbolic is not None:
         cand, method, _ = symbolic
+        return ScoredMatch(node.node_id, cand, method, METHOD_CONFIDENCE_CAP[method])
+
+    # Derived tier (Phase 1a): a solved/rearranged form of a reference equation
+    # aligns deterministically under the DECLARED symbolic_mappings only. Placed
+    # AFTER the symbolic tier so substitution-collapsible forms still report
+    # symbolic@0.98; only genuine solve-for-variable forms report derived@0.95.
+    derived = match_equation_alignment(node, type_ok, mappings=symbolic_mappings)
+    if derived is not None:
+        cand, method, _ = derived
         return ScoredMatch(node.node_id, cand, method, METHOD_CONFIDENCE_CAP[method])
 
     # Lexical tiers: collect EVERY above-threshold alias + fuzzy hit (raw scores)
@@ -189,7 +199,7 @@ def resolve_attempt(
         if n.node_id in assigned:
             m = assigned[n.node_id]
             resolved_nodes.append(_resolved(n.node_id, m.candidate, m.method))
-        elif n.node_id in llm_resolved:
+        elif n.node_id in llm_resolved and type_compatible(n.node_type, llm_resolved[n.node_id]):
             resolved_nodes.append(_resolved(n.node_id, llm_resolved[n.node_id], "llm"))
         else:
             resolved_nodes.append(_unresolved(n))

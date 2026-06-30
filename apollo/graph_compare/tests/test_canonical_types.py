@@ -8,6 +8,7 @@ No DB, no LLM, no network.
 from __future__ import annotations
 
 import dataclasses
+import logging
 
 import pytest
 
@@ -17,7 +18,11 @@ from apollo.graph_compare.canonical import (
     CanonicalNode,
     ReferenceGraph,
     ReferencePathView,
+    build_student_canonical,
 )
+from apollo.ontology.graph import KGGraph
+from apollo.ontology.nodes import build_node
+from apollo.resolution.result import ResolutionResult, ResolvedNode
 
 
 def _node() -> CanonicalNode:
@@ -101,3 +106,111 @@ def test_reference_graph_field_shape():
     graph = ReferenceGraph(nodes=(node,), edges=(), paths=(view,))
     assert graph.paths == (view,)
     assert graph.paths[0].canonical_keys == ("eq.continuity", "eq.bernoulli")
+
+
+# ---------------------------------------------------------------------------
+# PHASE 0 — 0.2 explicit canonical merge type. build_student_canonical took
+# member_nodes[0].node_type, trusting type-compat guarantees a single type. After
+# the resolver type-gate (0.1) a mixed-type merge is impossible, but the merge
+# must convert a silent mis-label into an explicit, observable, deterministic
+# rule (lowest node_type lexicographically — NodeType is a str Literal with no
+# IntEnum priority — then lowest member id) + a WARNING.
+# ---------------------------------------------------------------------------
+
+
+def _sbuild_node(node_id, node_type, content, *, attempt_id=1):
+    return build_node(
+        node_type=node_type,
+        node_id=node_id,
+        attempt_id=attempt_id,
+        source="parser",
+        content=content,
+    )
+
+
+def _sresolved(node_id, key, method="alias", conf=0.92):
+    return ResolvedNode(
+        node_id=node_id,
+        resolution="resolved",
+        resolved_key=key,
+        resolved_canon_key=None,
+        method=method,
+        confidence=conf,
+    )
+
+
+def _sresolution(*rns) -> ResolutionResult:
+    return ResolutionResult(resolved=tuple(rns), tier_counts={}, llm_calls=0)
+
+
+def _mixed_type_inputs():
+    """Two student nodes resolving to the SAME key but carrying DIFFERENT node
+    types (condition vs equation) — fabricated to force the should-never-fire
+    disagreement branch."""
+    # The LOWEST member id ('a_eq') is the equation so member_nodes[0].node_type
+    # == 'equation' — but the deterministic pick is min({condition, equation}) ==
+    # 'condition'. This DISCRIMINATES the explicit-merge rule from the old
+    # take-first-member behavior (which would return 'equation').
+    graph = KGGraph(
+        nodes=[
+            _sbuild_node(
+                "a_eq", "equation", {"symbolic": "A1*v1 = A2*v2", "label": "", "variables": []}
+            ),
+            _sbuild_node(
+                "b_cond", "condition", {"applies_when": "density is constant", "label": ""}
+            ),
+        ],
+        edges=[],
+    )
+    resolution = _sresolution(
+        _sresolved("a_eq", "shared.key"),
+        _sresolved("b_cond", "shared.key"),
+    )
+    return graph, resolution
+
+
+def test_merge_mixed_member_types_picks_deterministic_explicit_type():
+    """Mixed-type members merging to one key -> CanonicalNode.node_type is the
+    deterministic lexicographic min of the member types ('condition' < 'equation'
+    -> 'condition'), stable across re-runs."""
+    graph, resolution = _mixed_type_inputs()
+    a = build_student_canonical(graph, resolution)
+    b = build_student_canonical(graph, resolution)
+    assert len(a.nodes) == 1
+    assert a.nodes[0].canonical_key == "shared.key"
+    assert a.nodes[0].node_type == "condition"  # min("condition", "equation")
+    assert a == b  # deterministic across re-runs
+
+
+def test_merge_logs_warning_on_type_disagreement(caplog):
+    """A type disagreement on a merged key emits a logging.WARNING naming the
+    canonical_key and the disagreeing types."""
+    graph, resolution = _mixed_type_inputs()
+    with caplog.at_level(logging.WARNING, logger="apollo.graph_compare.canonical"):
+        build_student_canonical(graph, resolution)
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    msg = warnings[0].getMessage()
+    assert "shared.key" in msg
+    assert "condition" in msg and "equation" in msg
+
+
+def test_merge_uniform_member_types_unchanged(caplog):
+    """Control: all members share a type -> node_type is that type and NO warning
+    is emitted (protects the pure common path / test_builder_is_pure...)."""
+    graph = KGGraph(
+        nodes=[
+            _sbuild_node("c1", "condition", {"applies_when": "density is constant", "label": ""}),
+            _sbuild_node("c2", "condition", {"applies_when": "constant density", "label": ""}),
+        ],
+        edges=[],
+    )
+    resolution = _sresolution(
+        _sresolved("c1", "cond.incompressibility"),
+        _sresolved("c2", "cond.incompressibility"),
+    )
+    with caplog.at_level(logging.WARNING, logger="apollo.graph_compare.canonical"):
+        s = build_student_canonical(graph, resolution)
+    assert len(s.nodes) == 1
+    assert s.nodes[0].node_type == "condition"
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []

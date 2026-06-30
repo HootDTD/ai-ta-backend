@@ -24,6 +24,7 @@ from apollo.ontology.nodes import NodeType
 RESOLUTION_METHODS: tuple[str, ...] = (
     "exact",
     "symbolic",
+    "derived",
     "alias",
     "fuzzy",
     "llm",
@@ -35,6 +36,7 @@ RESOLUTION_METHODS: tuple[str, ...] = (
 METHOD_CONFIDENCE_CAP: dict[str, float] = {
     "exact": 1.00,
     "symbolic": 0.98,
+    "derived": 0.95,
     "alias": 0.92,
     "fuzzy": 0.80,
     "llm": 0.75,
@@ -60,6 +62,8 @@ class Candidate:
     Immutable (§ coding rule). ``canonical_key`` is the matching-space key
     (``eq.bernoulli`` / ``cond.incompressibility`` / ``misc.*``); ``canon_key``
     is the ``:Canon`` surrogate-id target for the ``RESOLVES_TO`` edge.
+    ``exact_aliases`` holds curated reference-solution phrasings matched
+    EXACT-only (the alias tier reads them; the fuzzy tier never does).
     """
 
     canonical_key: str
@@ -70,6 +74,7 @@ class Candidate:
     aliases: tuple[str, ...]
     display_name: str
     opposes_key: str | None
+    exact_aliases: tuple[str, ...] = ()
 
 
 def candidates_from_reference_solution(
@@ -99,9 +104,10 @@ def candidates_from_reference_solution(
                 node_type=node_type,
                 is_misconception=False,
                 symbolic=symbolic,
-                aliases=(),
+                aliases=(),  # unchanged (refs carry no fuzzy aliases)
                 display_name=display,
                 opposes_key=None,
+                exact_aliases=tuple(content.get("aliases", ())),
             )
         )
     return tuple(out)
