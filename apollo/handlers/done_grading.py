@@ -36,6 +36,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.clarification.store import load_confirmed_resolutions
 from apollo.errors import (
     ResolutionInvalidOutputError,
     ResolutionUnavailableError,
@@ -223,10 +224,12 @@ async def run_graph_simulation(
 
     # ---- Steps 5+ : the cross-store window (NO-FALLBACK on infra failure) ----
     try:
-        # Step 5 — resolve (content tiers + clarification; no live LLM adjudication).
+        confirmed_resolutions = await load_confirmed_resolutions(db, attempt_id=int(attempt.id))
+        # Step 5 — resolve; clarification-confirmed nodes are authoritative (no LLM guess).
         resolution = resolve_attempt(
             student_graph,
             inputs.candidates,
+            confirmed_resolutions=confirmed_resolutions,
             fuzzy_threshold=0.9,
             symbolic_mappings=inputs.symbolic_mappings,
         )
@@ -302,9 +305,7 @@ async def run_graph_simulation(
         calibration = compute_calibration_metrics(
             old_rubric=old_rubric, shadow_rubric=graph_sim_rubric
         )
-        diagnostic = generate_constrained_diagnostic(
-            audited, llm=main_chat_diagnostic_llm
-        )
+        diagnostic = generate_constrained_diagnostic(audited, llm=main_chat_diagnostic_llm)
         _LOG.info(
             "graph_sim_calibration",
             extra={

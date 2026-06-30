@@ -94,11 +94,19 @@ def _all_callee_patches(*, persist_return=4321):
         "build_opposes_map": MagicMock(return_value={"misc.k": "eq.k"}),
         "build_turn_order": AsyncMock(return_value={"n1": 0, "n2": 1}),
         # WU-4C2 — the three new graph-sim candidate-grade callees.
-        "build_graph_sim_rubric": MagicMock(return_value={"overall": {"score": 88, "letter": "B+"}}),
-        "compute_calibration_metrics": MagicMock(return_value=MagicMock(
-            name="calibration", letter_agreement=True, overall_score_delta=5, divergent=False,
-        )),
+        "build_graph_sim_rubric": MagicMock(
+            return_value={"overall": {"score": 88, "letter": "B+"}}
+        ),
+        "compute_calibration_metrics": MagicMock(
+            return_value=MagicMock(
+                name="calibration",
+                letter_agreement=True,
+                overall_score_delta=5,
+                divergent=False,
+            )
+        ),
         "generate_constrained_diagnostic": MagicMock(return_value=MagicMock(name="diagnostic")),
+        "load_confirmed_resolutions": AsyncMock(return_value={}),
     }
     patches = [patch.object(dg, name, new=m) for name, m in mocks.items()]
     return patches, mocks
@@ -116,12 +124,19 @@ async def _run(db, mocks_payload=None, *, old_rubric=None):
     sess = _Sess()
     attempt = _Attempt()
     graph = KGGraph()
-    return await run_graph_simulation(
-        db, MagicMock(name="neo"),
-        attempt=attempt, sess=sess, student_graph=graph,
-        problem_payload=mocks_payload if mocks_payload is not None else _payload(),
-        old_rubric=old_rubric if old_rubric is not None else _OLD_RUBRIC,
-    ), sess, attempt
+    return (
+        await run_graph_simulation(
+            db,
+            MagicMock(name="neo"),
+            attempt=attempt,
+            sess=sess,
+            student_graph=graph,
+            problem_payload=mocks_payload if mocks_payload is not None else _payload(),
+            old_rubric=old_rubric if old_rubric is not None else _OLD_RUBRIC,
+        ),
+        sess,
+        attempt,
+    )
 
 
 def _db() -> MagicMock:
@@ -232,8 +247,12 @@ async def test_resolution_unavailable_marks_attempt_pending():
         try:
             with pytest.raises(ResolutionUnavailableError):
                 await run_graph_simulation(
-                    db, MagicMock(), attempt=attempt, sess=sess,
-                    student_graph=KGGraph(), problem_payload=_payload(),
+                    db,
+                    MagicMock(),
+                    attempt=attempt,
+                    sess=sess,
+                    student_graph=KGGraph(),
+                    problem_payload=_payload(),
                     old_rubric=_OLD_RUBRIC,
                 )
         finally:
@@ -257,8 +276,12 @@ async def test_resolution_invalid_output_sets_pending_and_reraises():
         try:
             with pytest.raises(ResolutionInvalidOutputError):
                 await run_graph_simulation(
-                    db, MagicMock(), attempt=attempt, sess=sess,
-                    student_graph=KGGraph(), problem_payload=_payload(),
+                    db,
+                    MagicMock(),
+                    attempt=attempt,
+                    sess=sess,
+                    student_graph=KGGraph(),
+                    problem_payload=_payload(),
                     old_rubric=_OLD_RUBRIC,
                 )
         finally:
@@ -280,8 +303,12 @@ async def test_student_graph_invalid_does_not_set_pending():
         try:
             with pytest.raises(StudentGraphInvalidError):
                 await run_graph_simulation(
-                    db, MagicMock(), attempt=attempt, sess=sess,
-                    student_graph=KGGraph(), problem_payload=_payload(),
+                    db,
+                    MagicMock(),
+                    attempt=attempt,
+                    sess=sess,
+                    student_graph=KGGraph(),
+                    problem_payload=_payload(),
                     old_rubric=_OLD_RUBRIC,
                 )
         finally:
@@ -305,8 +332,12 @@ async def test_reference_graph_invalid_does_not_set_pending():
         try:
             with pytest.raises(ReferenceGraphInvalidError):
                 await run_graph_simulation(
-                    db, MagicMock(), attempt=attempt, sess=sess,
-                    student_graph=KGGraph(), problem_payload=_payload(),
+                    db,
+                    MagicMock(),
+                    attempt=attempt,
+                    sess=sess,
+                    student_graph=KGGraph(),
+                    problem_payload=_payload(),
                     old_rubric=_OLD_RUBRIC,
                 )
         finally:
@@ -347,8 +378,12 @@ async def test_unexpected_exception_in_window_sets_pending_and_reraises():
         try:
             with pytest.raises(RuntimeError, match="canon projection"):
                 await run_graph_simulation(
-                    db, MagicMock(), attempt=attempt, sess=sess,
-                    student_graph=KGGraph(), problem_payload=_payload(),
+                    db,
+                    MagicMock(),
+                    attempt=attempt,
+                    sess=sess,
+                    student_graph=KGGraph(),
+                    problem_payload=_payload(),
                     old_rubric=_OLD_RUBRIC,
                 )
         finally:
@@ -375,8 +410,12 @@ async def test_student_graph_invalid_inside_window_does_not_set_pending():
         try:
             with pytest.raises(StudentGraphInvalidError):
                 await run_graph_simulation(
-                    db, MagicMock(), attempt=attempt, sess=sess,
-                    student_graph=KGGraph(), problem_payload=_payload(),
+                    db,
+                    MagicMock(),
+                    attempt=attempt,
+                    sess=sess,
+                    student_graph=KGGraph(),
+                    problem_payload=_payload(),
                     old_rubric=_OLD_RUBRIC,
                 )
         finally:
@@ -499,6 +538,7 @@ async def test_no_mastery_events_written():
 async def test_empty_entries_sets_bank_not_applicable(caplog):
     """D5/D6 case 11: empty load_for_concept -> bank_applicable=False threaded through."""
     import logging
+
     db = _db()
     patches, mocks = _all_callee_patches()
     mocks["load_for_concept"].return_value = []  # empty bank
@@ -523,6 +563,7 @@ async def test_empty_entries_sets_bank_not_applicable(caplog):
 async def test_nonempty_entries_sets_bank_applicable(caplog):
     """D5/D6 case 12: non-empty entries -> bank_applicable=True, no warning."""
     import logging
+
     db = _db()
     patches, mocks = _all_callee_patches()
     # Use a MagicMock so _misconceptions_dict can access .code/.trigger_phrases/etc
@@ -567,9 +608,11 @@ async def test_null_concept_id_forces_bank_not_applicable():
             sess = _Sess()
             sess.concept_id = None  # override
             attempt = _Attempt()
-            result = await run_graph_simulation(
-                db, MagicMock(name="neo"),
-                attempt=attempt, sess=sess,
+            await run_graph_simulation(
+                db,
+                MagicMock(name="neo"),
+                attempt=attempt,
+                sess=sess,
                 student_graph=KGGraph(),
                 problem_payload=_payload(),
                 old_rubric=_OLD_RUBRIC,
@@ -582,3 +625,22 @@ async def test_null_concept_id_forces_bank_not_applicable():
     assert grade_kwargs["bank_applicable"] is False
     audited_kwargs = mocks["build_audited_grade"].call_args.kwargs
     assert audited_kwargs["misconception_bank_empty"] is True
+
+
+async def test_confirmed_resolutions_threaded_into_resolve():
+    """Task 16 (G2 payoff): confirmed clarifications loaded from DB and threaded
+    into resolve_attempt as ``confirmed_resolutions=`` (the @0.90 clarification
+    method that clears the abstention floor)."""
+    db = _db()
+    patches, mocks = _all_callee_patches()
+    mocks["load_confirmed_resolutions"].return_value = {"s1": "cond.bernoulli"}
+    with _read_transcript_patch():
+        for p in patches:
+            p.start()
+        try:
+            await _run(db)
+        finally:
+            for p in reversed(patches):
+                p.stop()
+    rkwargs = mocks["resolve_attempt"].call_args.kwargs
+    assert rkwargs["confirmed_resolutions"] == {"s1": "cond.bernoulli"}
