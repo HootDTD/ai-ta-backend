@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Literal
 
@@ -170,7 +171,11 @@ def _make_metered_chat(*, document_id: int) -> MeteredChat:
         llm_calls=0,
         llm_tokens_in=0,
         llm_tokens_out=0,
-        llm_cost_usd=0.0,
+        # Decimal, not float: ``cost_usd_for`` returns Decimal and ``record_usage``
+        # does ``llm_cost_usd += <Decimal>`` — a float seed raises
+        # "unsupported operand type(s) for +=: 'float' and 'decimal.Decimal'"
+        # on the first metered LLM call, failing the whole authored-set run.
+        llm_cost_usd=Decimal("0"),
     )
     return MeteredChat(ingest_run=ingest_run, document_id=document_id)
 

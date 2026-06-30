@@ -438,3 +438,23 @@ async def test_approve_held_problem_promotes_chosen_reference(db_session, monkey
     review = refreshed.provenance["authored_review"]
     assert review["required"] is False
     assert review["approved_reference"] == "ocr"
+
+
+def test_make_metered_chat_seeds_decimal_cost_not_float():
+    """Regression: the authored-set ingest_run stub seeded ``llm_cost_usd`` as a
+    float ``0.0``, so the first metered LLM call hit
+    ``float += Decimal`` -> TypeError and failed the whole run. The seed must be
+    Decimal so ``record_usage`` accumulates ``cost_usd_for``'s Decimal cleanly."""
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    import apollo.provisioning.authored_sets.api as aapi
+
+    chat = aapi._make_metered_chat(document_id=42)
+    assert isinstance(chat._run.llm_cost_usd, Decimal)
+
+    # Accumulating a real (Decimal) cost must not raise.
+    usage = SimpleNamespace(prompt_tokens=1_000_000, completion_tokens=1_000_000)
+    chat.record_usage(model="gpt-4o", usage=usage)
+    assert isinstance(chat._run.llm_cost_usd, Decimal)
+    assert chat._run.llm_cost_usd > 0
