@@ -4,9 +4,9 @@ symbolic_mappings assembly).
 This is the seam where the per-problem ``symbolic_mappings`` table is resolved
 to pass into ``resolve_attempt`` — WU-4A1 does NOT call the resolver itself (the
 caller / WU-4C does), it only assembles the inputs. Test 29 is the ONE test that
-invokes ``resolve_attempt``, with ``llm_adjudicator=None`` (CI-safe: resolves on
-the symbolic tier alone, ``llm_calls == 0``, NO live API call), proving the seam
-correctly plumbs the table into the resolver's symbolic tier.
+invokes ``resolve_attempt`` (CI-safe: resolves on the symbolic tier alone,
+``llm_calls == 0``, NO live API call), proving the seam correctly plumbs the
+table into the resolver's symbolic tier.
 
 Real problem_01.json / misconceptions.json from disk pin the closed-set + the
 symbolic_mappings read against the authored data; hand-built dicts cover the
@@ -128,8 +128,8 @@ def test_symbolic_mappings_plumbed_makes_circular_area_resolvable():
     A = pi*r**2 student node resolves to eq.circular_area via the symbolic tier.
 
     End-to-end proof that 4A1's seam plumbs the per-problem table into the
-    resolver's symbolic tier. CI-safe: llm_adjudicator=None, resolves on the
-    symbolic tier alone -> llm_calls == 0 (NO live API call)."""
+    resolver's symbolic tier. CI-safe: resolves on the symbolic tier alone ->
+    llm_calls == 0 (NO live API call; no LLM adjudicator, Task 4)."""
     problem = {
         "reference_solution": [
             {
@@ -161,7 +161,6 @@ def test_symbolic_mappings_plumbed_makes_circular_area_resolvable():
     result = resolve_attempt(
         student,
         inputs.candidates,
-        llm_adjudicator=None,
         symbolic_mappings=inputs.symbolic_mappings,
     )
     assert result.llm_calls == 0
@@ -199,7 +198,7 @@ def test_symbolic_mappings_absent_circular_area_does_not_resolve():
         ],
         edges=[],
     )
-    result = resolve_attempt(student, candidates, llm_adjudicator=None, symbolic_mappings={})
+    result = resolve_attempt(student, candidates, symbolic_mappings={})
     assert result.resolved[0].resolution == "unresolved"
 
 

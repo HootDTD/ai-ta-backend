@@ -3,8 +3,9 @@
 The ONLY test that exercises the real Neo4j read path end-to-end through the
 drain: ``build_rerun_inputs`` (``read_graph`` + ``read_node_graded_at``) and
 ``run_graph_simulation`` (``write_resolution`` + the canonicalize/grade/audit
-chain) all hit a real ``neo4j:5.25`` Testcontainers graph. ONLY the LLM is stubbed
-(``main_chat_adjudicator`` / ``main_chat_auditor``); Neo4j is NOT.
+chain) all hit a real ``neo4j:5.25`` Testcontainers graph. ONLY the LLM auditor is
+stubbed (``main_chat_auditor``; ``main_chat_adjudicator`` was removed in Task 4);
+Neo4j is NOT.
 
 It lives under ``tests/database/`` so the Testcontainers ``neo4j_client``
 (``tests/conftest.py``) is the fixture in scope — NOT the live-Aura ``neo4j_client``
@@ -171,9 +172,8 @@ async def test_full_drain_reads_frozen_graph_from_real_neo4j(db_session, neo4j_c
 
     monkeypatch.setattr(learner_janitor, "get_async_session", lambda: _bound_session(db_session))
 
-    # Stub ONLY the LLM; Neo4j is the real Testcontainers graph.
+    # Stub ONLY the LLM auditor; Neo4j is the real Testcontainers graph.
     with (
-        patch("apollo.handlers.done_grading.main_chat_adjudicator", new=_adjudicator_stub),
         patch("apollo.handlers.done_grading.main_chat_auditor", new=_auditor_stub),
     ):
         result = await drain_pending_attempts(neo4j_client, limit=1)

@@ -5,8 +5,8 @@ These are PURE unit tests of the §6.4 chain wiring in
 ``done_grading`` import site, so no real grading / Neo4j / LLM runs. They pin:
 
   * call order + the exact kwargs the chain hands each callee (the §1.3 / §1.4
-    signatures), incl. ``llm_adjudicator=main_chat_adjudicator``,
-    ``symbolic_mappings=inputs.symbolic_mappings``, ``user_id``/``search_space_id``;
+    signatures), incl. ``symbolic_mappings=inputs.symbolic_mappings``,
+    ``user_id``/``search_space_id``;
   * the raw-payload regression guard (§1.4): the EXACT problem_payload dict
     (carrying declared_paths/symbolic_mappings/entity_key) reaches
     build_reference_canonical + build_problem_candidates, NOT round-tripped;
@@ -142,9 +142,9 @@ async def test_run_graph_simulation_happy_path_calls_chain_in_order():
             for p in reversed(patches):
                 p.stop()
 
-    # resolve_attempt got the live adjudicator + the inputs' symbolic_mappings
+    # resolve_attempt got the inputs' symbolic_mappings (no llm_adjudicator kwarg)
     rkwargs = mocks["resolve_attempt"].call_args.kwargs
-    assert rkwargs["llm_adjudicator"] is dg.main_chat_adjudicator
+    assert "llm_adjudicator" not in rkwargs
     assert rkwargs["symbolic_mappings"] == {"d": "2*r"}
     assert rkwargs["fuzzy_threshold"] == 0.9
 

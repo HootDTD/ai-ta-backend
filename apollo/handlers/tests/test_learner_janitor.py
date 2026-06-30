@@ -4,8 +4,8 @@ Harness H1: the savepoint ``db_session`` fixture (real pgvector, rolled back per
 test) for single-claimer drain/accounting/dead-letter/backoff/LAYER3/idempotency/
 connection-drop. Neo4j is STUBBED (``KGStore.read_graph`` / ``read_node_graded_at``
 + ``write_resolution`` + ``read_node_created_at`` via ``AsyncMock``); the LLM is
-STUBBED (``main_chat_adjudicator`` / ``main_chat_auditor`` deterministic, no
-network). The two-connection SKIP-LOCKED proof lives in H2
+STUBBED (``main_chat_auditor`` deterministic, no network; ``main_chat_adjudicator``
+was removed in Task 4 — no adjudicator stub needed). The two-connection SKIP-LOCKED proof lives in H2
 (``tests/database/test_learner_janitor_contention.py``); the real-Neo4j full drain
 in H3 (``tests/database/test_learner_janitor_full_drain.py``).
 
@@ -127,7 +127,6 @@ def _neo_stubs(attempt_id: int, *, graph=None, graded_at=None):
             "apollo.handlers.done_turn_order.KGStore.read_node_created_at",
             new=AsyncMock(return_value={"stu_continuity": _ISO}),
         ),
-        patch("apollo.handlers.done_grading.main_chat_adjudicator", new=_adjudicator_stub),
         patch("apollo.handlers.done_grading.main_chat_auditor", new=_auditor_stub),
     ]
     return patches, read_graph, read_graded

@@ -25,8 +25,11 @@ generalizes across:
 All RED today (build_problem_candidates does not yet collect simplification
 substitutions, so the derived forms stay unresolved). They go green once the fix
 lands in the ``build_problem_candidates`` seam AND the two real fluid problems
-are authored with their substitution fields. Deterministic + CI-safe:
-``llm_adjudicator`` is ``None`` or a pure stub; no live OpenAI call fires.
+are authored with their substitution fields. Deterministic + CI-safe: no live OpenAI call fires.
+Note (Task 4): the LLM adjudication path has been removed. Tests that formerly
+used a ``_resolve_proc_only`` stub now assert the equation resolves via the
+derived tier (llm_calls == 0); the proc node stays unresolved, so USES edges
+from it are dropped.
 """
 
 from __future__ import annotations
@@ -157,7 +160,6 @@ def test_horizontal_derived_bernoulli_resolves_via_declared_simplification():
     result = resolve_attempt(
         student,
         inputs.candidates,
-        llm_adjudicator=None,
         symbolic_mappings=inputs.symbolic_mappings,
     )
 
@@ -180,7 +182,6 @@ def test_nonfluid_circuit_derived_form_resolves_via_declared_simplification():
     result = resolve_attempt(
         student,
         inputs.candidates,
-        llm_adjudicator=None,
         symbolic_mappings=inputs.symbolic_mappings,
     )
 
@@ -191,13 +192,15 @@ def test_nonfluid_circuit_derived_form_resolves_via_declared_simplification():
 
 
 # ---------------------------------------------------------------------------
-# Test 3 (ACCEPTANCE, RED) — DIFFERENT subject, full spot-check: the USES edge
-# survives normalization with both endpoints resolved to (proc.*,
-# eq.balanced_loop). Mirrors the fluid spot-check in a non-fluid subject.
+# Test 3 — the equation endpoint resolves via the derived tier; the USES edge
+# drops because the procedure step is unresolved (no adjudicator, Task 4).
 # ---------------------------------------------------------------------------
 
 
-def test_nonfluid_circuit_uses_edge_survives_in_student_canonical():
+def test_nonfluid_circuit_equation_resolves_via_derived_tier():
+    """The equation endpoint resolves via the derived tier. The procedure step
+    stays unresolved (no LLM adjudicator, Task 4), so the incident USES edge
+    drops. The core proof is the equation-node resolution method."""
     inputs = _inputs(CIRCUIT_PROBLEM)
     eq_node = _eq_node("stu_eq", CIRCUIT_DERIVED)
     proc_node = _proc_node("stu_proc", "set Ra equal to Rb so the resistive drops cancel")
@@ -211,24 +214,22 @@ def test_nonfluid_circuit_uses_edge_survives_in_student_canonical():
     )
     student = KGGraph(nodes=[eq_node, proc_node], edges=[uses_edge])
 
-    def _resolve_proc_only(_request):
-        # Resolve ONLY the procedure step by fiat; the equation must resolve via
-        # the symbolic tier (the fix), not the stub.
-        return {"stu_proc": "proc.apply_equal_resistance"}
-
     resolution = resolve_attempt(
         student,
         inputs.candidates,
-        llm_adjudicator=_resolve_proc_only,
         symbolic_mappings=inputs.symbolic_mappings,
     )
-    s_norm = build_student_canonical(student, resolution)
 
-    uses_edges = [e for e in s_norm.edges if e.edge_type == EdgeType.USES]
-    assert len(uses_edges) == 1
-    assert (uses_edges[0].from_key, uses_edges[0].to_key) == (
-        "proc.apply_equal_resistance",
-        "eq.balanced_loop",
-    )
-    assert s_norm.dropped_edge_count == 0
+    # The equation resolves via the derived tier.
+    eq_rn = next(rn for rn in resolution.resolved if rn.node_id == "stu_eq")
+    assert eq_rn.resolution == "resolved"
+    assert eq_rn.resolved_key == "eq.balanced_loop"
+    assert resolution.llm_calls == 0
+
+    # The proc node stays unresolved; the USES edge drops.
+    proc_rn = next(rn for rn in resolution.resolved if rn.node_id == "stu_proc")
+    assert proc_rn.resolution == "unresolved"
+
+    s_norm = build_student_canonical(student, resolution)
+    assert s_norm.dropped_edge_count == 1
     assert "stu_eq" not in {nid for nid, _ in s_norm.unresolved_nodes}

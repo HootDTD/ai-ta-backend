@@ -1,12 +1,12 @@
-"""WU-3C2 Step 9 — pure-unit tests for resolve_attempt orchestration (mocked LLM).
+"""WU-3C2 Step 9 — pure-unit tests for resolve_attempt orchestration.
 
 No live OpenAI call ever fires: the §6.9 worked example resolves on content
-tiers alone (llm_calls == 0); the LLM-needing tests inject a deterministic
-``llm_adjudicator`` stub. Pin (§5):
+tiers alone (llm_calls == 0). The LLM adjudication path has been REMOVED
+(Task 4): unmatched post-tier nodes stay unresolved, llm_calls is always 0.
+Pin (§5):
 - the §6.9 worked example end-to-end (the five mappings);
 - each resolved node's confidence == METHOD_CONFIDENCE_CAP[method];
 - a below-threshold node -> unresolved / 0.0 / no edge (DATA, no exception);
-- result.llm_calls <= 1; one LLM call when adjudication is needed;
 - the resolver is pure (same input -> same output);
 - over the cap the whole attempt abstains (llm_calls == 0);
 - an empty candidate set -> every node unresolved, no edges.
@@ -14,10 +14,13 @@ tiers alone (llm_calls == 0); the LLM-needing tests inject a deterministic
 
 from __future__ import annotations
 
+import inspect
+
 from apollo.grading.abstention import unresolved_rate_of
 from apollo.ontology.graph import KGGraph
 from apollo.ontology.nodes import build_node
 from apollo.resolution import resolve_attempt
+from apollo.resolution import resolver
 from apollo.resolution.candidates import METHOD_CONFIDENCE_CAP, Candidate
 from apollo.resolution.competition import (
     apply_misconception_competition,
@@ -31,6 +34,25 @@ from apollo.resolution.tiers import (
     match_fuzzy_all,
     student_surface_text,
 )
+
+# ---------------------------------------------------------------------------
+# Task 4 guard tests — must fail RED until the adjudicator is removed.
+# ---------------------------------------------------------------------------
+
+
+def test_resolver_has_no_llm_adjudicator():
+    sig = inspect.signature(resolver.resolve_attempt)
+    assert "llm_adjudicator" not in sig.parameters
+
+
+def test_unmatched_node_stays_unresolved_no_llm():
+    graph = _graph([_node("s1", "condition", {"applies_when": "totally unrelated prose", "label": ""})])
+    cands = _cands_with("cond.bernoulli", node_type="condition")
+    result = resolve_attempt(graph, cands)
+    rn = {r.node_id: r for r in result.resolved}["s1"]
+    assert rn.resolution == "unresolved"
+    assert result.llm_calls == 0
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -178,8 +200,9 @@ def test_below_threshold_node_is_unresolved_data_no_edge():
     assert result.resolved_edges() == ()
 
 
-def test_result_llm_calls_at_most_one():
-    """A node only an LLM can place triggers exactly one adjudication call."""
+def test_result_llm_calls_always_zero():
+    """Without an LLM adjudicator, a node that no content tier can place stays
+    unresolved and llm_calls is always 0 (the silent adjudication path is gone)."""
     graph = KGGraph(
         nodes=[
             _node(
@@ -189,13 +212,9 @@ def test_result_llm_calls_at_most_one():
     )
     cands = (_cand("cond.incompressibility", node_type="condition", aliases=()),)
 
-    def _stub(request):
-        return {"x1": "cond.incompressibility"}
-
-    result = resolve_attempt(graph, cands, llm_adjudicator=_stub)
-    assert result.llm_calls == 1
-    assert result.resolved[0].method == "llm"
-    assert result.resolved[0].confidence == 0.75
+    result = resolve_attempt(graph, cands)
+    assert result.llm_calls == 0
+    assert result.resolved[0].resolution == "unresolved"
 
 
 def test_resolver_is_pure_same_input_same_output():
@@ -631,22 +650,16 @@ def test_worked_example_6_9_requires_explicit_mapping_for_area():
 
 
 # ---------------------------------------------------------------------------
-# PHASE 0 — 0.1 type-gate the LLM adjudication result. `adjudicate` only rejects
-# keys ABSENT from the candidate set; a real-but-CROSS-TYPE in-set key passes
-# adjudicate and was consumed unchecked. The resolver must re-apply
-# type_compatible to the LLM remainder and fall through to unresolved on a
-# cross-type hit. The `adjudicator=None` CI default never exercises this path,
-# so these recorded-adjudicator tests close that live-LLM coverage gap (§14).
+# PHASE 0 — post-tier unresolved behaviour (the LLM adjudication path is gone).
+# A node that no content tier can place stays unresolved regardless of whether
+# the candidate set has a type-compatible key or not.
 # ---------------------------------------------------------------------------
 
 
-def test_llm_adjudication_cross_type_key_stays_unresolved():
-    """A recorded (non-None) adjudicator returns a real-but-cross-type in-set
-    key: a `definition` node mapped to a `simplification`-typed `simp.*`
-    candidate. The key IS in the candidate set (so `adjudicate` accepts it) but
-    `type_compatible(definition, simplification_candidate)` is False, so the node
-    must stay unresolved (method 'unresolved', resolved_key None)."""
-    # A definition node whose surface matches NO content tier (no alias/symbolic).
+def test_unmatched_definition_with_incompatible_candidate_stays_unresolved():
+    """A definition node whose surface matches NO content tier stays unresolved
+    when the only candidate is type-INCOMPATIBLE (simplification). This is now
+    purely the content-tier gate — no adjudicator involved."""
     graph = KGGraph(
         nodes=[
             _node(
@@ -656,26 +669,20 @@ def test_llm_adjudication_cross_type_key_stays_unresolved():
             ),
         ]
     )
-    # A type-INCOMPATIBLE candidate whose canonical_key IS in the candidate set.
     simp_cand = _cand("simp.drop_friction", node_type="simplification", aliases=())
     cands = (simp_cand,)
 
-    # Recorded adjudicator returns the cross-type in-set key for the node.
-    def _stub(request):
-        node_id = request.nodes[0][0]
-        return {node_id: "simp.drop_friction"}
-
-    result = resolve_attempt(graph, cands, llm_adjudicator=_stub)
+    result = resolve_attempt(graph, cands)
     rn = result.resolved[0]
     assert rn.resolution == "unresolved"
     assert rn.method == "unresolved"
     assert rn.resolved_key is None
+    assert result.llm_calls == 0
 
 
-def test_llm_adjudication_same_type_key_still_resolves():
-    """Control: a recorded adjudicator returning a type-COMPATIBLE in-set key
-    still resolves via the LLM tier (method 'llm', confidence 0.75). Proves the
-    type-gate does not over-reject."""
+def test_unmatched_definition_with_compatible_candidate_stays_unresolved():
+    """A definition node whose surface matches NO content tier stays unresolved
+    even when a type-COMPATIBLE candidate exists — no LLM guess is made."""
     graph = KGGraph(
         nodes=[
             _node(
@@ -685,20 +692,15 @@ def test_llm_adjudication_same_type_key_still_resolves():
             ),
         ]
     )
-    # A type-COMPATIBLE candidate whose canonical_key IS in the candidate set.
     def_cand = _cand("def.some_concept", node_type="definition", aliases=())
     cands = (def_cand,)
 
-    def _stub(request):
-        node_id = request.nodes[0][0]
-        return {node_id: "def.some_concept"}
-
-    result = resolve_attempt(graph, cands, llm_adjudicator=_stub)
+    result = resolve_attempt(graph, cands)
     rn = result.resolved[0]
-    assert rn.resolution == "resolved"
-    assert rn.method == "llm"
-    assert rn.confidence == 0.75
-    assert rn.resolved_key == "def.some_concept"
+    assert rn.resolution == "unresolved"
+    assert rn.method == "unresolved"
+    assert rn.resolved_key is None
+    assert result.llm_calls == 0
 
 
 def test_tier_counts_pinned_on_real_6_9_output():
@@ -716,7 +718,7 @@ def test_tier_counts_pinned_on_real_6_9_output():
 
 
 # ---------------------------------------------------------------------------
-# PHASE 1b — exact-only alias channel end-to-end. A reference candidate's
+# Phase 1b — exact-only alias channel end-to-end. A reference candidate's
 # curated `exact_aliases` entry resolves through the wired resolve_attempt via
 # the alias tier (method 'alias', cap 0.92). With NO curated alias set, the
 # §6.9 worked example resolves byte-identically to today (default exact_aliases

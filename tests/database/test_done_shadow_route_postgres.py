@@ -116,7 +116,6 @@ def _neo_stubs(attempt_id: int):
               new=AsyncMock(return_value=None)),
         patch("apollo.handlers.done_turn_order.KGStore.read_node_created_at",
               new=AsyncMock(return_value={"stu_continuity": "2026-06-18T00:00:02+00:00"})),
-        patch("apollo.handlers.done_grading.main_chat_adjudicator", new=_adjudicator_stub),
         patch("apollo.handlers.done_grading.main_chat_auditor", new=_auditor_stub),
     ]
 

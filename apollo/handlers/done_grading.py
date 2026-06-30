@@ -73,7 +73,6 @@ from apollo.overseer.misconception_bank import load_for_concept
 from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.resolution import resolve_attempt
-from apollo.resolution.adjudication import main_chat_adjudicator
 
 _LOG = logging.getLogger(__name__)
 
@@ -224,11 +223,10 @@ async def run_graph_simulation(
 
     # ---- Steps 5+ : the cross-store window (NO-FALLBACK on infra failure) ----
     try:
-        # Step 5 — resolve (the one LLM adjudication call, live default).
+        # Step 5 — resolve (content tiers + clarification; no live LLM adjudication).
         resolution = resolve_attempt(
             student_graph,
             inputs.candidates,
-            llm_adjudicator=main_chat_adjudicator,
             fuzzy_threshold=0.9,
             symbolic_mappings=inputs.symbolic_mappings,
         )
