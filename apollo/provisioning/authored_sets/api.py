@@ -376,6 +376,7 @@ async def approve_held_problem(
         search_space_id=int(authored_set.search_space_id),
         concept_problem_id=problem_id,
         existing_problem_hashes=existing_hashes,
+        solution_source=pair.solution_source,
     )
     if result.promoted:
         row.provenance = {  # type: ignore[assignment]
