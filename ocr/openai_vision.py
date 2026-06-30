@@ -43,7 +43,7 @@ class OpenAIVisionOCRProvider(OCRProvider):
         return cls(client=None, model=model)
 
     def _ensure_client(self):
-        if self._client is None:
+        if self._client is None:  # pragma: no cover - real OpenAI client construction
             from openai import OpenAI
 
             self._client = OpenAI()

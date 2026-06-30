@@ -87,6 +87,177 @@ async def test_create_set_persists_and_schedules(db_session, monkeypatch):
     assert row.status == "pending"
 
 
+def test_get_neo4j_client_delegates(monkeypatch):
+    import apollo.api as apollo_api
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(apollo_api, "get_neo4j_client", lambda: "neo-client")
+    assert aapi.get_neo4j_client() == "neo-client"
+
+
+@pytest.mark.asyncio
+async def test_background_runner_returns_when_row_vanishes(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield db_session
+
+    async def _index_authored_doc(db, *, role, **_kwargs):
+        return 101 if role == "problem" else 102
+
+    monkeypatch.setattr(aapi, "get_async_session", _session_cm)
+    monkeypatch.setattr(aapi, "index_authored_doc", _index_authored_doc)
+    # No AuthoredSet row for this id -> the post-index fetch is None -> early return.
+    await aapi._run_set_background(
+        set_id=999999,
+        search_space_id=1,
+        set_index=1,
+        problem_bytes=b"%PDF p",
+        problem_title="p",
+        solution_bytes=b"%PDF s",
+        solution_title="s",
+    )
+
+
+@pytest.mark.asyncio
+async def test_background_runner_persists_failure(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    search_space_id, _concept_id = await _seed_course(db_session, slug="bgfail")
+    row = AuthoredSet(search_space_id=search_space_id, set_index=1, status="pending")
+    db_session.add(row)
+    await db_session.flush()
+    set_id = int(row.id)
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield db_session
+
+    async def _index_fail(db, **_kwargs):
+        raise RuntimeError("index boom")
+
+    monkeypatch.setattr(aapi, "get_async_session", _session_cm)
+    monkeypatch.setattr(aapi, "index_authored_doc", _index_fail)
+
+    await aapi._run_set_background(
+        set_id=set_id,
+        search_space_id=search_space_id,
+        set_index=1,
+        problem_bytes=b"%PDF p",
+        problem_title="p",
+        solution_bytes=b"%PDF s",
+        solution_title="s",
+    )
+
+    refreshed = await db_session.get(AuthoredSet, set_id)
+    assert refreshed.status == "failed"
+    assert "index boom" in refreshed.result_summary["error"]
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_404(db_session, monkeypatch):
+    from fastapi import HTTPException
+
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    with pytest.raises(HTTPException) as exc:
+        await aapi.get_authored_set(set_id=999999, request=_FakeRequest(), db=db_session)
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_approve_404_when_set_missing(db_session, monkeypatch):
+    from fastapi import HTTPException
+
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    with pytest.raises(HTTPException) as exc:
+        await aapi.approve_held_problem(
+            set_id=999999,
+            problem_id=1,
+            body=aapi.ApproveBody(reference="ocr"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_approve_409_when_not_held(db_session, monkeypatch):
+    from fastapi import HTTPException
+
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, ConceptProblem
+
+    space, concept = await _seed_course(db_session, slug="approve409")
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
+    aset = AuthoredSet(search_space_id=space, set_index=1, status="done")
+    db_session.add(aset)
+    await db_session.flush()
+    prob = ConceptProblem(
+        concept_id=concept,
+        problem_code="not-held",
+        difficulty="intro",
+        tier=1,
+        payload={},
+        search_space_id=space,
+        provenance={},  # no authored_review -> not held
+    )
+    db_session.add(prob)
+    await db_session.flush()
+    with pytest.raises(HTTPException) as exc:
+        await aapi.approve_held_problem(
+            set_id=int(aset.id),
+            problem_id=int(prob.id),
+            body=aapi.ApproveBody(reference="ocr"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_approve_422_when_chosen_reference_missing(db_session, monkeypatch):
+    from fastapi import HTTPException
+
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, ConceptProblem
+
+    space, concept = await _seed_course(db_session, slug="approve422")
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
+    aset = AuthoredSet(search_space_id=space, set_index=1, status="done")
+    db_session.add(aset)
+    await db_session.flush()
+    prob = ConceptProblem(
+        concept_id=concept,
+        problem_code="held-no-ocr",
+        difficulty="intro",
+        tier=1,
+        payload={},
+        search_space_id=space,
+        provenance={
+            "authored_review": {"required": True, "ocr_draft": None, "generated_alt": None}
+        },
+    )
+    db_session.add(prob)
+    await db_session.flush()
+    with pytest.raises(HTTPException) as exc:
+        await aapi.approve_held_problem(
+            set_id=int(aset.id),
+            problem_id=int(prob.id),
+            body=aapi.ApproveBody(reference="ocr"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+    assert exc.value.status_code == 422
+
+
 @pytest.mark.asyncio
 async def test_background_runner_indexes_and_persists_report(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi

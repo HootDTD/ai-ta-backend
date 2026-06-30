@@ -8,6 +8,34 @@ from apollo.provisioning.authored_sets.paired_retrieval import make_paired_solut
 
 
 @pytest.mark.asyncio
+async def test_chunk_ocr_confidence_skips_malformed_entries(db_session):
+    from apollo.provisioning.authored_sets.paired_retrieval import chunk_ocr_confidence
+    from database.models import AITADocument, SearchSpace
+
+    sp = SearchSpace(name="Conf", slug="conf-malformed", subject_name="P")
+    db_session.add(sp)
+    await db_session.flush()
+    doc = AITADocument(
+        title="t",
+        content="c",
+        content_hash="h-malformed",
+        search_space_id=sp.id,
+        document_metadata={
+            "page_debug": [
+                "not-a-dict",  # non-dict entry -> skipped
+                {"page": "NaN", "ocr_confidence": 0.5},  # unparseable page -> skipped
+                {"page": 2, "ocr_confidence": 0.7},  # kept
+            ]
+        },
+    )
+    db_session.add(doc)
+    await db_session.flush()
+
+    conf = await chunk_ocr_confidence(db_session, document_id=int(doc.id))
+    assert conf == {2: 0.7}
+
+
+@pytest.mark.asyncio
 async def test_label_branch_returns_carries_solution_span():
     chunks = [(10, "Solution 3\nSum moments: M = wL^2/8", 2)]
     index = build_solution_label_index(chunks)

@@ -36,6 +36,15 @@ def test_recognize_unparseable_response_is_low_confidence_not_crash():
     assert (result.average_confidence or 0.0) == 0.0
 
 
+def test_recognize_empty_text_returns_no_blocks():
+    # A parseable response whose transcription is blank yields no blocks (a
+    # degraded page is a per-page no-op, not a fabricated block).
+    client = _fake_client({"text": "   ", "confidence": 0.9})
+    prov = OpenAIVisionOCRProvider(client=client, model="gpt-4o")
+    result = prov.recognize(b"img", mime="image/png")
+    assert result.blocks == []
+
+
 def test_factory_selects_openai_provider(monkeypatch):
     monkeypatch.setenv("OCR_PROVIDER", "openai")
     monkeypatch.setenv("APOLLO_OCR_MODEL", "gpt-4o")

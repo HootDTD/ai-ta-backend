@@ -29,7 +29,7 @@ _LOG = logging.getLogger(__name__)
 _HIDDEN_STATUS = {"state": "apollo_reference"}
 
 
-def _run_ingest(pdf_path: Path, *, doc_id: str):
+def _run_ingest(pdf_path: Path, *, doc_id: str):  # pragma: no cover - real PyMuPDF/OCR I/O
     """Run PyMuPDF-bound ingestion behind a test seam."""
     from knowledge.teacher_pdf_ingestion import TeacherPDFIngestor
     from ocr import get_ocr_provider_from_env

@@ -189,6 +189,131 @@ async def test_index_authored_doc_propagates_page_confidence(db_session, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_index_authored_doc_rejects_bad_role(db_session):
+    with pytest.raises(ValueError, match="role must be"):
+        await idx.index_authored_doc(
+            db_session,
+            search_space_id=1,
+            file_bytes=b"%PDF",
+            title="t",
+            set_index=1,
+            role="bogus",
+        )
+
+
+@pytest.mark.asyncio
+async def test_index_authored_doc_raises_on_no_items(db_session, monkeypatch):
+    ing = _fake_ingestion(
+        [types.SimpleNamespace(page_number=1, ocr_confidence=0.9, extraction_mode="native")]
+    )
+    ing.items = []
+    monkeypatch.setattr(idx, "_run_ingest", lambda *a, **k: ing)
+    with pytest.raises(ValueError, match="no chunks produced"):
+        await idx.index_authored_doc(
+            db_session,
+            search_space_id=1,
+            file_bytes=b"%PDF",
+            title="t",
+            set_index=1,
+            role="problem",
+        )
+
+
+@pytest.mark.asyncio
+async def test_index_authored_doc_raises_on_no_chunk_texts(db_session, monkeypatch):
+    from database.models import SearchSpace
+
+    db_session.add(SearchSpace(id=9, name="x", slug="aae-nochunks", subject_name="AAE"))
+    await db_session.flush()
+    ing = _fake_ingestion(
+        [types.SimpleNamespace(page_number=1, ocr_confidence=0.9, extraction_mode="native")]
+    )
+    _patch_indexer_with_real_metadata(monkeypatch, db_session, ing)
+    monkeypatch.setattr(idx, "items_to_chunk_texts", lambda items: [])
+    with pytest.raises(ValueError, match="no chunk texts"):
+        await idx.index_authored_doc(
+            db_session,
+            search_space_id=9,
+            file_bytes=b"%PDF",
+            title="t",
+            set_index=1,
+            role="problem",
+        )
+
+
+@pytest.mark.asyncio
+async def test_index_authored_doc_falls_back_to_existing_doc(db_session, monkeypatch):
+    from database.models import AITADocument, SearchSpace
+    from indexing.document_hashing import compute_unique_identifier_hash
+
+    db_session.add(SearchSpace(id=11, name="x", slug="aae-existing", subject_name="AAE"))
+    await db_session.flush()
+    ing = _fake_ingestion(
+        [types.SimpleNamespace(page_number=1, ocr_confidence=0.9, extraction_mode="native")]
+    )
+    # Mirror the connector doc the indexer will build so the unique hash matches.
+    connector = idx._connector_document(
+        search_space_id=11, title="t", set_index=1, role="problem", ingestion=ing
+    )
+    existing = AITADocument(
+        title="t",
+        content="c",
+        content_hash="h-existing",
+        search_space_id=11,
+        unique_identifier_hash=compute_unique_identifier_hash(connector),
+        status={"state": "ready"},
+    )
+    db_session.add(existing)
+    await db_session.flush()
+    existing_id = int(existing.id)
+
+    monkeypatch.setattr(idx, "_run_ingest", lambda *a, **k: ing)
+
+    async def empty_prepare(self, conn_docs):
+        return []
+
+    monkeypatch.setattr(idx.AITAIndexingService, "prepare_for_indexing", empty_prepare)
+
+    doc_id = await idx.index_authored_doc(
+        db_session,
+        search_space_id=11,
+        file_bytes=b"%PDF",
+        title="t",
+        set_index=1,
+        role="problem",
+    )
+    assert doc_id == existing_id
+    refreshed = await db_session.get(AITADocument, existing_id)
+    assert refreshed.status == {"state": "apollo_reference"}
+
+
+@pytest.mark.asyncio
+async def test_index_authored_doc_raises_when_no_doc_and_no_existing(db_session, monkeypatch):
+    from database.models import SearchSpace
+
+    db_session.add(SearchSpace(id=12, name="x", slug="aae-nodoc", subject_name="AAE"))
+    await db_session.flush()
+    ing = _fake_ingestion(
+        [types.SimpleNamespace(page_number=1, ocr_confidence=0.9, extraction_mode="native")]
+    )
+    monkeypatch.setattr(idx, "_run_ingest", lambda *a, **k: ing)
+
+    async def empty_prepare(self, conn_docs):
+        return []
+
+    monkeypatch.setattr(idx.AITAIndexingService, "prepare_for_indexing", empty_prepare)
+    with pytest.raises(RuntimeError, match="returned no doc"):
+        await idx.index_authored_doc(
+            db_session,
+            search_space_id=12,
+            file_bytes=b"%PDF",
+            title="t",
+            set_index=1,
+            role="problem",
+        )
+
+
+@pytest.mark.asyncio
 async def test_index_authored_doc_offloads_ingest_off_event_loop(db_session, monkeypatch):
     """The blocking PyMuPDF/OCR ingest must run off the event-loop thread so it
     never stalls concurrent request handling."""

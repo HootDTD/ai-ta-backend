@@ -190,6 +190,165 @@ async def test_authored_set_label_extract_promotes(db_session, monkeypatch):
     assert result.concept_problem_id is not None
 
 
+def test_doc_is_low_conf_helper():
+    from apollo.provisioning.authored_sets.orchestrator import _doc_is_low_conf
+
+    assert _doc_is_low_conf({1: 0.3, 2: None}, 0.6) is True
+    assert _doc_is_low_conf({1: 0.9}, 0.6) is False
+    assert _doc_is_low_conf({1: None}, 0.6) is False  # no usable values
+
+
+@pytest.mark.asyncio
+async def test_authored_concept_dup_hashes_skips_invalid_payload(db_session):
+    from apollo.provisioning.authored_sets.orchestrator import _authored_concept_dup_hashes
+
+    space = await _seed_search_space(db_session, slug="dup")
+    concept_id = await _seed_concept(db_session, search_space_id=space, slug="dup")
+    db_session.add(
+        ConceptProblem(
+            concept_id=concept_id,
+            problem_code="bad-payload",
+            difficulty="intro",
+            tier=2,
+            payload={"not": "a valid problem"},
+            search_space_id=space,
+        )
+    )
+    await db_session.flush()
+    hashes = await _authored_concept_dup_hashes(db_session, concept_id=concept_id)
+    assert hashes == set()
+
+
+@pytest.mark.asyncio
+async def test_provisioning_defaults_embed_fn_when_omitted(db_session, monkeypatch):
+    space = await _seed_search_space(db_session, slug="noembed")
+    concept_id = await _seed_concept(db_session, search_space_id=space, slug="noembed")
+    prob_doc = await _seed_doc_with_chunk(db_session, space, "nothing here", title="P")
+    sol_doc = await _seed_doc_with_chunk(db_session, space, "nothing", title="S")
+
+    async def _resolve(db, *, search_space_id):
+        return concept_id
+
+    async def _scrape(chunk_rows, **_k):
+        return ScrapeResult(candidates=(), scraped_count=0, parse_failures=0)
+
+    monkeypatch.setattr(orch, "resolve_or_create_provisional_concept", _resolve)
+    monkeypatch.setattr(orch, "scrape_document", _scrape)
+    # embed_fn omitted -> exercises the default-import branch.
+    report = await run_authored_set_provisioning(
+        db_session,
+        neo=None,
+        search_space_id=space,
+        problem_document_id=prob_doc,
+        solution_document_id=sol_doc,
+        metered_chat=_FakeAuthoredMC(),
+    )
+    assert report.counts == {"promoted": 0, "rejected": 0, "held_for_review": 0}
+
+
+async def _run_single_candidate(db, monkeypatch, *, slug, find_or_generate, **overrides):
+    """Drive one extracted, high-confidence candidate through provisioning,
+    letting the caller override find_or_generate / validate_pair / promote /
+    tag_and_mint / _find_tier1_row to exercise a specific branch."""
+    space = await _seed_search_space(db, slug=slug)
+    concept_id = await _seed_concept(db, search_space_id=space, slug=slug)
+    prob_doc = await _seed_doc_with_chunk(db, space, "1. A beam, find M.", title="P")
+    sol_doc = await _seed_doc_with_chunk(
+        db, space, "Solution 1\nM = w*L^2/8", title="S", ocr_conf=0.95
+    )
+    candidate = _candidate(document_id=prob_doc, chash=f"{slug}-chash")
+    _patch_common_stages(monkeypatch, candidate=candidate, concept_id=concept_id)
+    monkeypatch.setattr(orch, "find_or_generate", find_or_generate)
+    for name, fn in overrides.items():
+        monkeypatch.setattr(orch, name, fn)
+    return await run_authored_set_provisioning(
+        db,
+        neo=None,
+        search_space_id=space,
+        problem_document_id=prob_doc,
+        solution_document_id=sol_doc,
+        metered_chat=_FakeAuthoredMC(),
+        embed_fn=lambda _t: [0.0],
+    )
+
+
+@pytest.mark.asyncio
+async def test_candidate_solution_draft_error_is_rejected(db_session, monkeypatch):
+    from apollo.provisioning.solution import SolutionDraftError
+
+    async def _fog(db, question, *, retrieve_fn, chat_fn):
+        await retrieve_fn(question)
+        raise SolutionDraftError("boom")
+
+    report = await _run_single_candidate(db_session, monkeypatch, slug="sde", find_or_generate=_fog)
+    assert report.counts["rejected"] == 1
+    assert report.problems[0].diagnostic.startswith("solution_draft_error")
+
+
+@pytest.mark.asyncio
+async def test_candidate_pair_rejection_is_rejected(db_session, monkeypatch):
+    from apollo.provisioning.pairing_gate import PairingVerdict
+
+    async def _fog(db, question, *, retrieve_fn, chat_fn):
+        spans = await retrieve_fn(question)
+        return _draft(source="extracted").model_copy(update={"grounding": spans})
+
+    async def _reject_pair(question, draft, *, retrieve_fn, judge_fn):
+        return PairingVerdict(paired=False, faithful=False, confidence=0.1)
+
+    report = await _run_single_candidate(
+        db_session, monkeypatch, slug="rej", find_or_generate=_fog, validate_pair=_reject_pair
+    )
+    assert report.counts["rejected"] == 1
+
+
+@pytest.mark.asyncio
+async def test_candidate_missing_tier1_row_is_rejected(db_session, monkeypatch):
+    async def _fog(db, question, *, retrieve_fn, chat_fn):
+        spans = await retrieve_fn(question)
+        return _draft(source="extracted").model_copy(update={"grounding": spans})
+
+    async def _no_tier1(db, *, concept_id, chunk_content_hash):
+        return None
+
+    report = await _run_single_candidate(
+        db_session, monkeypatch, slug="notier1", find_or_generate=_fog, _find_tier1_row=_no_tier1
+    )
+    assert report.counts["rejected"] == 1
+    assert report.problems[0].diagnostic == "missing_tier1_row"
+
+
+@pytest.mark.asyncio
+async def test_candidate_promote_failure_is_rejected(db_session, monkeypatch):
+    from apollo.provisioning.promote import PromoteResult
+
+    async def _fog(db, question, *, retrieve_fn, chat_fn):
+        spans = await retrieve_fn(question)
+        return _draft(source="extracted").model_copy(update={"grounding": spans})
+
+    async def _tag_and_mint(db, pair, *, chat_fn, embed_fn):
+        return _mint_plan(0)
+
+    async def _promote(db, neo, **kwargs):
+        return PromoteResult(promoted=False, failed_gate=8, diagnostic="gate8 failed")
+
+    report = await _run_single_candidate(
+        db_session,
+        monkeypatch,
+        slug="promfail",
+        find_or_generate=_fog,
+        tag_and_mint=_tag_and_mint,
+        promote=_promote,
+        _authored_concept_dup_hashes=_noop_hashes,
+    )
+    assert report.counts["rejected"] == 1
+    assert report.problems[0].failed_gate == 8
+
+
+async def _noop_hashes(db, *, concept_id):
+    return set()
+
+
 @pytest.mark.asyncio
 async def test_authored_set_low_confidence_divergence_holds_without_minting(
     db_session, monkeypatch
