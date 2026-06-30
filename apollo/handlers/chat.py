@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.agent.apollo_llm import draft_reply
 from apollo.clarification import CandidateEmbeddingCache, default_embedder
 from apollo.clarification.candidate_assembly import load_problem_candidates
+from apollo.clarification.leak_guard import guard_clarification_reply
 from apollo.clarification.turn import run_clarification_detection
 from apollo.handlers.done_inputs import _find_problem_payload
 from apollo.handlers.history import load_windowed_history
@@ -359,6 +360,20 @@ async def handle_chat(
         history_summary=history_summary,
         clarification_hints=clarification_hints or None,
     )
+
+    if clarification_hints:
+        validated = guard_clarification_reply(
+            draft=validated,
+            concept=concept,
+            history=history_for_llm,
+            kg_summary=kg_summary,
+            regenerate_without_probes=lambda: draft_reply(
+                history=history_for_llm,
+                kg_summary=kg_summary,
+                problem_text=problem.problem_text,
+                history_summary=history_summary,
+            ),
+        )
 
     # Persist the (student, apollo) pair in one commit. No filter → no
     # mid-turn rejection → no orphan risk.

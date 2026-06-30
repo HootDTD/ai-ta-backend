@@ -157,7 +157,7 @@ async def test_clarification_hints_reach_draft_reply(db_session_attempt):
     mock_draft = MagicMock(return_value="ok")
     ps = _patches(store, mock_draft_reply=mock_draft)
 
-    # Enter all patches via nested with
+    # Enter all patches via nested with; guard is a passthrough so no live LLM fires.
     with (
         ps[0],
         ps[1],
@@ -169,6 +169,10 @@ async def test_clarification_hints_reach_draft_reply(db_session_attempt):
         ps[7],
         ps[8],
         ps[9] as mock_detect,
+        patch(
+            "apollo.handlers.chat.guard_clarification_reply",
+            new=MagicMock(side_effect=lambda **kw: kw["draft"]),
+        ),
     ):
         from apollo.handlers.chat import handle_chat
 
@@ -183,6 +187,40 @@ async def test_clarification_hints_reach_draft_reply(db_session_attempt):
     assert mock_draft.call_args.kwargs["clarification_hints"] == [
         "Make the student commit to the DIRECTION of the relationship."
     ]
+
+
+@pytest.mark.asyncio
+async def test_clarification_guard_redrafts_on_leak(db_session_attempt):
+    """When guard_clarification_reply invokes regenerate_without_probes, draft_reply
+    is called a second time (covering the regenerate lambda body in chat.py)."""
+    db, session_id, attempt_id = db_session_attempt
+    store = _fake_store()
+    mock_draft = MagicMock(return_value="ok")
+    ps = _patches(store, mock_draft_reply=mock_draft)
+
+    # Guard invokes regenerate_without_probes() to simulate a confident leak → regen.
+    guard_regen = MagicMock(side_effect=lambda **kw: kw["regenerate_without_probes"]())
+
+    with (
+        ps[0],
+        ps[1],
+        ps[2],
+        ps[3],
+        ps[4],
+        ps[5],
+        ps[6],
+        ps[7],
+        ps[8],
+        ps[9],
+        patch("apollo.handlers.chat.guard_clarification_reply", new=guard_regen),
+    ):
+        from apollo.handlers.chat import handle_chat
+
+        result = await handle_chat(db=db, neo=MagicMock(), session_id=session_id, message="hi")
+
+    assert "apollo_reply" in result
+    # Once for the main reply, once via the regenerate lambda
+    assert mock_draft.call_count == 2
 
 
 @pytest.mark.asyncio
