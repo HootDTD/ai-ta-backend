@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 from apollo.agent._llm import main_chat
 from apollo.errors import ResolutionUnavailableError
@@ -57,7 +57,9 @@ def default_clarification_judge(request: ClarificationRequest) -> RescoreOutcome
             temperature=0.0,
         )
         verdict = str(json.loads(raw or "{}").get("verdict", "vague"))
-        return verdict if verdict in _VALID else "vague"  # unknown -> no credit
+        return (
+            cast(RescoreOutcome, verdict) if verdict in _VALID else "vague"
+        )  # unknown -> no credit
     except ResolutionUnavailableError:
         raise
     except Exception as exc:  # noqa: BLE001

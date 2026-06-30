@@ -48,7 +48,7 @@ async def load_problem_candidates_with_soundness(
     Returns (inputs, bank_applicable). ``bank_applicable`` is the D5/D6 soundness
     applicability flag: True iff the misconception bank is non-empty AND concept_id is
     not None (a NULL concept can never have a bank, so soundness would fail-open)."""
-    entries = await load_for_concept(db, concept_id=concept_id)
+    entries = await load_for_concept(db, concept_id=concept_id)  # type: ignore[arg-type]
     misconceptions = _misconceptions_dict(entries)
     specs = await load_entity_specs(db, search_space_id=search_space_id, concept_id=concept_id)
     canon_key_by_canonical_key = {spec.canonical_key: spec.key for spec in specs}

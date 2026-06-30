@@ -25,11 +25,12 @@ async def resolve_pending_clarifications(
 ) -> None:
     display_by_key = {c.canonical_key: c.display_name for c in candidates}
     for row in await load_asked_waiting(db, attempt_id=attempt_id):
+        candidate_key = str(row.candidate_key)
         try:
             outcome = rescore_clarification(
-                original_statement=row.original_statement,
+                original_statement=str(row.original_statement),
                 clarification_text=student_message,
-                candidate_display=display_by_key.get(row.candidate_key, row.candidate_key),
+                candidate_display=display_by_key.get(candidate_key, candidate_key),
                 judge=judge,
             )
         except Exception as exc:  # noqa: BLE001 - leave asked_waiting, never credit on failure
@@ -37,7 +38,7 @@ async def resolve_pending_clarifications(
             continue
         await record_outcome(
             db,
-            clarification_id=row.id,
+            clarification_id=int(row.id),
             state=outcome,
             clarification_text=student_message,
             answered_turn=answered_turn,

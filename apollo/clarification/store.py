@@ -69,10 +69,10 @@ async def record_outcome(
     row = (
         await db.execute(select(Clarification).where(Clarification.id == clarification_id))
     ).scalar_one()
-    row.state = state
-    row.clarification_text = clarification_text
-    row.answered_turn = answered_turn
-    row.updated_at = datetime.now(UTC)
+    row.state = state  # type: ignore[assignment]
+    row.clarification_text = clarification_text  # type: ignore[assignment]
+    row.answered_turn = answered_turn  # type: ignore[assignment]
+    row.updated_at = datetime.now(UTC)  # type: ignore[assignment]
 
 
 async def load_confirmed_resolutions(db: AsyncSession, *, attempt_id: int) -> dict[str, str]:
