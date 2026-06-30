@@ -4,7 +4,6 @@ Every failure mode gets its own exception class. No fallbacks — every
 raised exception surfaces as a visible error in the UI via the FastAPI
 exception handlers registered in apollo/api.py.
 """
-
 from __future__ import annotations
 
 
@@ -103,7 +102,9 @@ class ReviewRequiredError(ApolloError):
 
     def __init__(self, *, entries: list[dict]) -> None:
         self.entries = entries
-        super().__init__(f"{len(entries)} KG entries need review before grading")
+        super().__init__(
+            f"{len(entries)} KG entries need review before grading"
+        )
 
 
 class KGEntryNotFoundError(ApolloError):
@@ -113,7 +114,9 @@ class KGEntryNotFoundError(ApolloError):
     def __init__(self, *, attempt_id: int, node_id: str) -> None:
         self.attempt_id = attempt_id
         self.node_id = node_id
-        super().__init__(f"KG entry {node_id!r} not found in attempt {attempt_id}")
+        super().__init__(
+            f"KG entry {node_id!r} not found in attempt {attempt_id}"
+        )
 
 
 class CoverageGradingError(ApolloError):
@@ -127,7 +130,9 @@ class CoverageGradingError(ApolloError):
     def __init__(self, *, stage: str, last_error: str) -> None:
         self.stage = stage
         self.last_error = last_error
-        super().__init__(f"Coverage grading failed at stage {stage!r}: {last_error}")
+        super().__init__(
+            f"Coverage grading failed at stage {stage!r}: {last_error}"
+        )
 
 
 class CanonProjectionError(ApolloError):
@@ -140,7 +145,9 @@ class CanonProjectionError(ApolloError):
     def __init__(self, *, stage: str, last_error: str) -> None:
         self.stage = stage
         self.last_error = last_error
-        super().__init__(f"Canon projection failed at stage {stage!r}: {last_error}")
+        super().__init__(
+            f"Canon projection failed at stage {stage!r}: {last_error}"
+        )
 
 
 class RetentionError(ApolloError):
@@ -154,15 +161,17 @@ class RetentionError(ApolloError):
     def __init__(self, *, attempt_id: int, last_error: str) -> None:
         self.attempt_id = attempt_id
         self.last_error = last_error
-        super().__init__(f"Retention operation failed for attempt {attempt_id}: {last_error}")
+        super().__init__(
+            f"Retention operation failed for attempt {attempt_id}: {last_error}"
+        )
 
 
 # Closed reason set for LearnerUpdateUnreconstructableError. The janitor's
 # pre-flight (WU-5B3a build_rerun_inputs) raises with exactly one of these.
 LEARNER_UPDATE_UNRECONSTRUCTABLE_REASONS = (
     "diagnostic_report_missing",  # attempt.diagnostic_report is None
-    "rubric_missing",  # "rubric" absent, or rubric lacks "overall"
-    "graded_at_missing",  # Neo4j read_node_graded_at returned {} (empty subgraph)
+    "rubric_missing",             # "rubric" absent, or rubric lacks "overall"
+    "graded_at_missing",          # Neo4j read_node_graded_at returned {} (empty subgraph)
 )
 
 
@@ -181,7 +190,9 @@ class LearnerUpdateUnreconstructableError(ApolloError):
     def __init__(self, *, attempt_id: int, reason: str) -> None:
         self.attempt_id = attempt_id
         self.reason = reason
-        super().__init__(f"learner update unreconstructable for attempt {attempt_id}: {reason}")
+        super().__init__(
+            f"learner update unreconstructable for attempt {attempt_id}: {reason}"
+        )
 
 
 class ResolutionUnavailableError(ApolloError):
@@ -194,12 +205,16 @@ class ResolutionUnavailableError(ApolloError):
     ``learner_update_pending = true`` on the attempt and the next Done / janitor
     retry re-runs resolution idempotently (§5 NO-FALLBACK, §6.4 transaction
     story). ``stage`` is one of
-    ``{"llm_adjudication", "write_resolves_to", "persist_fields", "clarification_rescore"}`` (WU-3C2)."""
+    ``{"llm_adjudication", "write_resolves_to", "persist_fields",
+    "clarification_rescore"}`` (WU-3C2; ``clarification_rescore`` is the
+    re-scorer stage added by the clarification loop)."""
 
     def __init__(self, *, stage: str, last_error: str) -> None:
         self.stage = stage
         self.last_error = last_error
-        super().__init__(f"Resolution unavailable at stage {stage!r}: {last_error}")
+        super().__init__(
+            f"Resolution unavailable at stage {stage!r}: {last_error}"
+        )
 
 
 class TranscriptAuditUnavailableError(ApolloError):
@@ -219,7 +234,9 @@ class TranscriptAuditUnavailableError(ApolloError):
     def __init__(self, *, last_error: str) -> None:
         self.stage = "transcript_audit"
         self.last_error = last_error
-        super().__init__(f"Transcript audit unavailable at stage {self.stage!r}: {last_error}")
+        super().__init__(
+            f"Transcript audit unavailable at stage {self.stage!r}: {last_error}"
+        )
 
 
 class ResolutionInvalidOutputError(ApolloError):
