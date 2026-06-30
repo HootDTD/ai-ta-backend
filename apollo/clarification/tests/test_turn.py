@@ -96,3 +96,32 @@ async def test_detection_empty_inputs_returns_early():
         asked_turn=2,
     )
     assert hints == []
+
+
+async def test_detection_no_embedding_when_all_resolved(monkeypatch):
+    """When find_residual_nodes returns [] (all nodes resolve), detect_ambiguous_nodes
+    (embedder) is never called and the function returns [] immediately."""
+    monkeypatch.setattr(turn, "find_residual_nodes", lambda *a, **kw: [])
+
+    embed_calls = {"count": 0}
+
+    def counting_embedder(texts):
+        embed_calls["count"] += 1
+        return [[1.0, 0.0] for _ in texts]
+
+    hints = await turn.run_clarification_detection(
+        db=object(),
+        parsed_nodes=[_node("s1", "condition", {"applies_when": "x", "label": ""})],
+        candidates=(_cand("k", "d"),),
+        symbolic_mappings={},
+        embedder=counting_embedder,
+        cache=CandidateEmbeddingCache(),
+        attempt_id=1,
+        session_id=1,
+        user_id="u",
+        search_space_id=1,
+        concept_id=2,
+        asked_turn=2,
+    )
+    assert hints == []
+    assert embed_calls["count"] == 0

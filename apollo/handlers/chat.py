@@ -16,6 +16,7 @@ explicit handlers for restart/next/return-to-hoot.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from sqlalchemy import select
@@ -48,6 +49,16 @@ from apollo.subjects.curriculum_db import load_concept_definition
 _LOG = logging.getLogger(__name__)
 
 _CLARIFICATION_CACHE = CandidateEmbeddingCache()
+
+# The live clarification loop flag (default OFF everywhere, incl. prod + staging). When OFF,
+# handle_chat is byte-identical to the pre-clarification path: the block is skipped, no
+# extra LLM/embedding round-trips, draft_reply gets clarification_hints=None. Flip ON only
+# after rollout/cost review (same posture as APOLLO_GRAPH_SIM_* in done.py).
+_CLARIFICATION_ENABLED_FLAG: str = "APOLLO_CLARIFICATION_ENABLED"
+
+
+def _clarification_enabled() -> bool:
+    return os.environ.get(_CLARIFICATION_ENABLED_FLAG, "").lower() in ("1", "true", "yes")
 
 
 async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) -> Problem:
@@ -324,44 +335,49 @@ async def handle_chat(
     next_idx = await _next_turn_index(db, session_id)
 
     # ---- Clarification loop: detect ambiguous residual ideas, weave answer-blind
-    # probes into Apollo's reply (spec §6). Fail-safe — never blocks teaching.
+    # probes into Apollo's reply (spec §6). Gated (default OFF) + fail-safe — never blocks
+    # teaching. A savepoint isolates the clarification writes so a DB fault here cannot poison
+    # the outer transaction that commits the message pair below.
     clarification_hints: list[str] = []
-    try:
-        problem_payload = await _find_problem_payload(
-            db,
-            concept_id=sess.concept_id,
-            problem_code=sess.current_problem_id,
-        )
-        inputs = await load_problem_candidates(
-            db,
-            search_space_id=int(sess.search_space_id),
-            concept_id=sess.concept_id,
-            problem_payload=problem_payload,
-        )
-        await resolve_pending_clarifications(
-            db=db,
-            attempt_id=current_attempt.id,
-            student_message=message,
-            candidates=inputs.candidates,
-            judge=default_clarification_judge,
-            answered_turn=next_idx,
-        )
-        clarification_hints = await run_clarification_detection(
-            db=db,
-            parsed_nodes=nodes,
-            candidates=inputs.candidates,
-            symbolic_mappings=inputs.symbolic_mappings,
-            embedder=default_embedder,
-            cache=_CLARIFICATION_CACHE,
-            attempt_id=current_attempt.id,
-            session_id=session_id,
-            user_id=str(sess.user_id),
-            search_space_id=int(sess.search_space_id),
-            concept_id=sess.concept_id,
-            asked_turn=next_idx + 1,
-        )
-    except Exception as exc:  # noqa: BLE001
-        _LOG.warning("clarification_setup_failed session_id=%s error=%s", session_id, exc)
+    if _clarification_enabled():
+        try:
+            async with db.begin_nested():
+                problem_payload = await _find_problem_payload(
+                    db,
+                    concept_id=sess.concept_id,
+                    problem_code=sess.current_problem_id,
+                )
+                inputs = await load_problem_candidates(
+                    db,
+                    search_space_id=int(sess.search_space_id),
+                    concept_id=sess.concept_id,
+                    problem_payload=problem_payload,
+                )
+                await resolve_pending_clarifications(
+                    db=db,
+                    attempt_id=current_attempt.id,
+                    student_message=message,
+                    candidates=inputs.candidates,
+                    judge=default_clarification_judge,
+                    answered_turn=next_idx,
+                )
+                clarification_hints = await run_clarification_detection(
+                    db=db,
+                    parsed_nodes=nodes,
+                    candidates=inputs.candidates,
+                    symbolic_mappings=inputs.symbolic_mappings,
+                    embedder=default_embedder,
+                    cache=_CLARIFICATION_CACHE,
+                    attempt_id=current_attempt.id,
+                    session_id=session_id,
+                    user_id=str(sess.user_id),
+                    search_space_id=int(sess.search_space_id),
+                    concept_id=sess.concept_id,
+                    asked_turn=next_idx + 1,
+                )
+        except Exception as exc:  # noqa: BLE001 - savepoint rolled back; never block teaching
+            _LOG.warning("clarification_setup_failed session_id=%s error=%s", session_id, exc)
+            clarification_hints = []
 
     validated = draft_reply(
         history=history_for_llm,

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from apollo.clarification.detector import detect_ambiguous_nodes
 from apollo.clarification.embedding import CandidateEmbeddingCache, Embedder
 from apollo.clarification.pacing import select_probes
@@ -20,7 +22,7 @@ _LOG = logging.getLogger(__name__)
 
 async def run_clarification_detection(
     *,
-    db,
+    db: AsyncSession,
     parsed_nodes: list,
     candidates: tuple[Candidate, ...],
     symbolic_mappings: dict[str, str],
@@ -42,6 +44,8 @@ async def run_clarification_detection(
         residual = find_residual_nodes(
             parsed_nodes, candidates, symbolic_mappings=symbolic_mappings
         )
+        if not residual:
+            return []
         flagged = detect_ambiguous_nodes(residual, candidates, embedder=embedder, cache=cache)
         chosen = select_probes(flagged)
         hints: list[str] = []
