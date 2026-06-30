@@ -36,6 +36,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.clarification.candidate_assembly import load_problem_candidates_with_soundness
 from apollo.clarification.store import load_confirmed_resolutions
 from apollo.errors import (
     ResolutionInvalidOutputError,
@@ -60,17 +61,14 @@ from apollo.graph_compare.canonical import (
     build_student_canonical,
 )
 from apollo.graph_compare.core import GradeResult, grade_attempt
-from apollo.graph_compare.problem_inputs import build_problem_candidates
 from apollo.graph_compare.validator import (
     ReferenceGraphInvalidError,
     StudentGraphInvalidError,
     validate_student_graph,
 )
 from apollo.handlers.done_turn_order import build_turn_order
-from apollo.knowledge_graph.canon_projection import load_entity_specs
 from apollo.knowledge_graph.resolution_store import write_resolution
 from apollo.ontology import KGGraph
-from apollo.overseer.misconception_bank import load_for_concept
 from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.resolution import resolve_attempt
@@ -117,29 +115,6 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _misconceptions_dict(entries: list) -> dict:
-    """Map ``MisconceptionEntry`` rows onto the dict shape
-    ``candidates_from_misconceptions`` reads: ``{"misconceptions": [{key,
-    trigger_phrases, opposes, display_name}, ...]}``.
-
-    Field translation (§3.1 step 1 / Risk #2): ``code -> key``,
-    ``description -> display_name``. The bank carries no ``opposes`` column today,
-    so ``opposes`` is ``None`` (a missing opposes-link just disables conflict-pair
-    detection for that misconception — tolerated; WU-4C1 writes no events anyway).
-    """
-    return {
-        "misconceptions": [
-            {
-                "key": e.code,
-                "trigger_phrases": list(e.trigger_phrases),
-                "opposes": None,
-                "display_name": e.description,
-            }
-            for e in entries
-        ]
-    }
-
-
 async def _read_transcript(db: AsyncSession, *, attempt_id: int) -> str:
     """Join the attempt's messages (ordered by turn) into one transcript string
     for the §6.4 step-12 transcript audit."""
@@ -183,18 +158,19 @@ async def run_graph_simulation(
     setting pending (nothing cross-store was written).
     """
     # ---- Steps 1-4: assemble inputs + the step-4 raw-graph gate (no writes) ----
-    entries = await load_for_concept(db, concept_id=sess.concept_id)  # type: ignore[arg-type]
-    misconceptions = _misconceptions_dict(entries)
-
     # D5/D6 — soundness applicability. An empty/absent misconception bank (no rows
     # for the concept, or a NULL concept_id which can never have a bank) means no
     # misc.* candidate is ever minted, so a "0 contradictions -> 1.0" soundness
     # would be FAIL-OPEN ("verified sound" that was never checked). Detect HERE
-    # (the only non-test caller of load_for_concept; the list is already in hand)
     # and thread the fact into the PURE grader + the abstention reason. Detection
     # stays in the orchestrator so the score-math remains IO/log-free (purity +
     # test_grade_attempt_is_pure).
-    bank_applicable = bool(entries) and sess.concept_id is not None
+    inputs, bank_applicable = await load_problem_candidates_with_soundness(
+        db,
+        search_space_id=int(sess.search_space_id),
+        concept_id=sess.concept_id,  # type: ignore[arg-type]  # nullable col, bound at grade time
+        problem_payload=problem_payload,
+    )
     if not bank_applicable:
         _LOG.warning(
             "soundness_not_applicable_empty_bank",
@@ -204,19 +180,6 @@ async def run_graph_simulation(
                 "search_space_id": int(sess.search_space_id),
             },
         )
-
-    specs = await load_entity_specs(
-        db,
-        search_space_id=int(sess.search_space_id),
-        concept_id=sess.concept_id,  # type: ignore[arg-type]  # nullable col, bound at grade time
-    )
-    canon_key_by_canonical_key = {spec.canonical_key: spec.key for spec in specs}
-
-    inputs = build_problem_candidates(
-        problem_payload,
-        misconceptions,
-        canon_key_by_canonical_key=canon_key_by_canonical_key,
-    )
 
     # Step 4 gate — runs on the RAW student graph BEFORE resolution. A failure
     # here is a 422 and has written NOTHING cross-store -> do NOT set pending.

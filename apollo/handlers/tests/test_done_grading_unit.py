@@ -78,9 +78,7 @@ def _all_callee_patches(*, persist_return=4321):
     """Patch every chain callee on the done_grading module. Returns
     (patches, mocks-dict) — caller starts/stops the patches."""
     mocks = {
-        "load_for_concept": AsyncMock(return_value=[]),
-        "load_entity_specs": AsyncMock(return_value=[]),
-        "build_problem_candidates": MagicMock(return_value=_inputs()),
+        "load_problem_candidates_with_soundness": AsyncMock(return_value=(_inputs(), True)),
         "validate_student_graph": MagicMock(return_value=None),
         "resolve_attempt": MagicMock(return_value=MagicMock(name="resolution")),
         "write_resolution": AsyncMock(return_value=MagicMock(name="write_result")),
@@ -205,12 +203,13 @@ async def test_raw_payload_passed_not_parsed_problem():
                 p.stop()
 
     ref_arg = mocks["build_reference_canonical"].call_args.args[0]
-    cand_arg = mocks["build_problem_candidates"].call_args.args[0]
     assert ref_arg is payload
-    assert cand_arg is payload
     assert "declared_paths" in ref_arg
-    assert "symbolic_mappings" in cand_arg
     assert ref_arg["reference_solution"][0]["entity_key"] == "eq.k"
+
+    cand_kwarg = mocks["load_problem_candidates_with_soundness"].call_args.kwargs["problem_payload"]
+    assert cand_kwarg is payload
+    assert "symbolic_mappings" in cand_kwarg
 
 
 async def test_resolution_unavailable_sets_pending_and_reraises():
@@ -536,12 +535,13 @@ async def test_no_mastery_events_written():
 
 
 async def test_empty_entries_sets_bank_not_applicable(caplog):
-    """D5/D6 case 11: empty load_for_concept -> bank_applicable=False threaded through."""
+    """D5/D6 case 11: load_problem_candidates_with_soundness returns False ->
+    bank_applicable=False threaded through to grade_attempt + build_audited_grade."""
     import logging
 
     db = _db()
     patches, mocks = _all_callee_patches()
-    mocks["load_for_concept"].return_value = []  # empty bank
+    mocks["load_problem_candidates_with_soundness"].return_value = (_inputs(), False)
 
     with _read_transcript_patch():
         for p in patches:
@@ -561,17 +561,13 @@ async def test_empty_entries_sets_bank_not_applicable(caplog):
 
 
 async def test_nonempty_entries_sets_bank_applicable(caplog):
-    """D5/D6 case 12: non-empty entries -> bank_applicable=True, no warning."""
+    """D5/D6 case 12: load_problem_candidates_with_soundness returns True ->
+    bank_applicable=True, no warning."""
     import logging
 
     db = _db()
     patches, mocks = _all_callee_patches()
-    # Use a MagicMock so _misconceptions_dict can access .code/.trigger_phrases/etc
-    entry = MagicMock()
-    entry.code = "misc.density_ignored"
-    entry.trigger_phrases = ["pressure increases"]
-    entry.description = "Student ignored density"
-    mocks["load_for_concept"].return_value = [entry]  # non-empty
+    mocks["load_problem_candidates_with_soundness"].return_value = (_inputs(), True)
 
     with _read_transcript_patch():
         for p in patches:
@@ -591,22 +587,18 @@ async def test_nonempty_entries_sets_bank_applicable(caplog):
 
 
 async def test_null_concept_id_forces_bank_not_applicable():
-    """D5/D6 case 13: concept_id=None -> bank_applicable=False even with entries."""
+    """D5/D6 case 13: concept_id=None session -> load_problem_candidates_with_soundness
+    returns False -> bank_applicable=False even when bank is non-empty."""
     db = _db()
     patches, mocks = _all_callee_patches()
-    # Use a MagicMock so _misconceptions_dict can access .code/.trigger_phrases/etc
-    entry = MagicMock()
-    entry.code = "misc.density_ignored"
-    entry.trigger_phrases = ["pressure increases"]
-    entry.description = "Student ignored density"
-    mocks["load_for_concept"].return_value = [entry]  # non-empty but concept_id None
+    mocks["load_problem_candidates_with_soundness"].return_value = (_inputs(), False)
 
     with _read_transcript_patch():
         for p in patches:
             p.start()
         try:
             sess = _Sess()
-            sess.concept_id = None  # override
+            sess.concept_id = None  # override — verifies the null-concept scenario
             attempt = _Attempt()
             await run_graph_simulation(
                 db,
