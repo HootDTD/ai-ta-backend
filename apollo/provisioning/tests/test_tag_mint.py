@@ -910,6 +910,176 @@ async def test_tag_and_mint_prereq_drops_only_the_unresolvable_edge(db_session):
     assert len(edges) == 1
 
 
+async def test_insert_prereqs_drops_cross_concept_endpoint(db_session):
+    """Defense-in-depth (audit bug #4): ``insert_prereqs`` must DROP any edge whose
+    endpoint entity belongs to a FOREIGN concept, even when its key resolves — a
+    dedup ``merged``-to-foreign id is still 'resolvable', so the unminted-key drop
+    never catches it. With PR2's concept-scoped dedup this should never fire, but
+    the writer enforces concept scope exactly as the reader does
+    (personalization_read.py:148-150). DISCRIMINATING: removing the concept check
+    REDs (the foreign edge persists)."""
+    from apollo.provisioning.tag_mint_persist import insert_prereqs
+
+    _ss_id, subj_id = await _seed_course(db_session, slug="c-xconcept")
+    ca = Concept(subject_id=subj_id, slug="concept-a", display_name="A")
+    cb = Concept(subject_id=subj_id, slug="concept-b", display_name="B")
+    db_session.add_all([ca, cb])
+    await db_session.flush()
+    ea = KGEntity(
+        concept_id=ca.id, canonical_key="eq.local", kind="equation",
+        display_name="local", payload={}, aliases=[],
+    )
+    eb = KGEntity(
+        concept_id=cb.id, canonical_key="eq.foreign", kind="equation",
+        display_name="foreign", payload={}, aliases=[],
+    )
+    db_session.add_all([ea, eb])
+    await db_session.flush()
+    # key_to_id resolves the 'to' endpoint to a FOREIGN-concept entity id.
+    key_to_id = {"eq.local": int(ea.id), "eq.foreign": int(eb.id)}
+    inserted, _skipped, dropped = await insert_prereqs(
+        db_session,
+        concept_id=int(ca.id),
+        key_to_id=key_to_id,
+        pairs=[("eq.local", "eq.foreign")],
+    )
+    assert inserted == 0
+    assert ("eq.local", "eq.foreign") in dropped
+    rows = (await db_session.execute(select(EntityPrereq))).scalars().all()
+    assert rows == []  # nothing crossed the concept boundary into the table
+
+
+async def test_insert_prereqs_keeps_same_concept_edge(db_session):
+    """An edge whose BOTH endpoints belong to ``concept_id`` is inserted normally
+    (the concept-scope guard only drops cross-concept endpoints)."""
+    from apollo.provisioning.tag_mint_persist import insert_prereqs
+
+    _ss_id, subj_id = await _seed_course(db_session, slug="c-sameconcept")
+    ca = Concept(subject_id=subj_id, slug="concept-a2", display_name="A")
+    db_session.add(ca)
+    await db_session.flush()
+    e1 = KGEntity(
+        concept_id=ca.id, canonical_key="eq.one", kind="equation",
+        display_name="one", payload={}, aliases=[],
+    )
+    e2 = KGEntity(
+        concept_id=ca.id, canonical_key="proc.two", kind="procedure",
+        display_name="two", payload={}, aliases=[],
+    )
+    db_session.add_all([e1, e2])
+    await db_session.flush()
+    key_to_id = {"eq.one": int(e1.id), "proc.two": int(e2.id)}
+    inserted, _skipped, dropped = await insert_prereqs(
+        db_session,
+        concept_id=int(ca.id),
+        key_to_id=key_to_id,
+        pairs=[("proc.two", "eq.one")],
+    )
+    assert inserted == 1
+    assert dropped == []
+
+
+async def test_mint_plan_surfaces_dropped_prereq_pairs(db_session):
+    """Audit bug D: unresolvable-key AND cyclic prereq drops are SURFACED on
+    ``MintPlan.dropped_prereq_pairs`` (previously only INFO-logged). One field
+    carries both drop reasons in one place (PR3's cyclic drops folded in now that
+    #73 is merged). DISCRIMINATING: without the field/population this REDs."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-dropsurface")
+    pair = _approved_pair(search_space_id=ss_id)
+    tag = _tag_payload(
+        prereqs=[
+            ["eq.bernoulli", "eq.nonexistent"],  # unresolvable key -> dropped
+            ["eq.bernoulli", "proc.solve_p2"],  # kept
+            ["proc.solve_p2", "eq.bernoulli"],  # cyclic reverse -> dropped
+        ]
+    )
+    plan = await tag_and_mint(
+        db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct
+    )
+    assert plan.prereq_pairs == [("eq.bernoulli", "proc.solve_p2")]
+    assert ("eq.bernoulli", "eq.nonexistent") in plan.dropped_prereq_pairs
+    assert ("proc.solve_p2", "eq.bernoulli") in plan.dropped_prereq_pairs
+
+
+async def test_tag_and_mint_drops_cross_concept_edge_before_acyclicity(db_session, monkeypatch):
+    """Ordering regression (reviewer, PR2b): the cross-concept endpoint drop must
+    run BEFORE the acyclicity guard, so a foreign-concept endpoint (a dedup MERGE
+    onto another concept — the exact bug PR2 removes at the source) cannot act as a
+    PHANTOM BRIDGE node that fakes a cycle and discards a legitimate within-concept
+    edge. Reproduces the reviewer's scenario: drafted edges ``a->x``, ``x->b``,
+    ``b->a`` where ``x`` merged onto a FOREIGN entity. The only real (within-concept)
+    edge is ``b->a``; ``a->x`` and ``x->b`` are cross-concept. If acyclicity runs
+    first it sees the phantom path ``a->x->b`` and drops ``b->a`` as cyclic — losing
+    a valid edge. DISCRIMINATING: with the buggy order ``("b","a")`` is absent from
+    ``prereq_pairs`` and never inserted."""
+    from apollo.provisioning import tag_mint as tm
+    from apollo.provisioning.dedup import DedupVerdict
+
+    ss_id, subj_id = await _seed_course(db_session, slug="c-phantom")
+    # A FOREIGN concept in the same course, holding the merge-target entity F.
+    foreign = Concept(subject_id=subj_id, slug="concept-foreign", display_name="Foreign")
+    db_session.add(foreign)
+    await db_session.flush()
+    f_entity = KGEntity(
+        concept_id=foreign.id, canonical_key="eq.x", kind="equation",
+        display_name="foreign x", payload={}, aliases=[],
+    )
+    db_session.add(f_entity)
+    await db_session.flush()
+
+    # Force the candidate keyed ``eq.x`` to MERGE onto the foreign entity; mint the
+    # rest (eq.a, eq.b) distinct within the tagged concept.
+    async def _fake_resolve(db, *, candidate, **_kw):
+        if candidate.canonical_key == "eq.x":
+            return DedupVerdict(
+                verdict="merged", method="embedding", similarity=0.95,
+                matched_entity_id=int(f_entity.id),
+            )
+        return DedupVerdict(verdict="distinct", method="slug", similarity=None, matched_entity_id=None)
+
+    monkeypatch.setattr(tm, "resolve_candidate", _fake_resolve)
+
+    problem = {
+        "id": "scrape.phantom",
+        "concept_id": "concept-main",
+        "difficulty": "intro",
+        "problem_text": "phantom-bridge repro",
+        "given_values": {"A": 1.0},
+        "target_unknown": "B",
+        "reference_solution": [
+            {"step": 1, "entry_type": "equation", "id": "a",
+             "content": {"label": "a", "symbolic": "A - B"}, "depends_on": []},
+            {"step": 2, "entry_type": "equation", "id": "b",
+             "content": {"label": "b", "symbolic": "B - A"}, "depends_on": []},
+            {"step": 3, "entry_type": "equation", "id": "x",
+             "content": {"label": "x", "symbolic": "A + B"}, "depends_on": []},
+        ],
+    }
+    pair = _approved_pair(problem=problem, search_space_id=ss_id)
+    tag = _tag_payload(
+        concept_slug="concept-main",
+        prereqs=[["a", "x"], ["x", "b"], ["b", "a"]],
+    )
+    plan = await tag_and_mint(
+        db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct
+    )
+    # The within-concept edge survives (cross-concept bridge edges removed FIRST).
+    assert ("b", "a") in plan.prereq_pairs
+    # The two cross-concept edges are surfaced as drops, not persisted.
+    assert ("a", "x") in plan.dropped_prereq_pairs
+    assert ("x", "b") in plan.dropped_prereq_pairs
+    b_id = plan.minted_entity_ids["eq.b"]
+    a_id = plan.minted_entity_ids["eq.a"]
+    rows = (
+        await db_session.execute(
+            select(EntityPrereq.from_entity_id, EntityPrereq.to_entity_id)
+        )
+    ).all()
+    directed = {(r[0], r[1]) for r in rows}
+    assert (b_id, a_id) in directed  # the legit edge was inserted
+    assert not any(r[0] == int(f_entity.id) or r[1] == int(f_entity.id) for r in rows)
+
+
 async def test_tag_and_mint_escalates_to_judge(db_session):
     """A candidate whose scope_summary lands in the 0.82–0.92 band against a pre-
     seeded entity escalates to tag/mint's injected ``_judge_distinct`` tier (which
