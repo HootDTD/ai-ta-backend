@@ -25,6 +25,7 @@ Gold convention (mirrors match_nli_semantic / calibration.py):
 Run from ai-ta-backend/:
   .venv\\Scripts\\python.exe scripts\\nli_tuning_build_dev_set.py
 """
+
 from __future__ import annotations
 
 import json
@@ -131,9 +132,12 @@ CONCEPT_GROUPS: dict[str, list[str]] = {
 # that repeat across bernoulli problems, which is why cross-group PROCEDURE
 # negatives are deliberately NOT auto-generated).
 CURATED_CROSS_NEG: list[tuple[str, str]] = [
-    ("cond.final_goods_only", "cond.trade_deficit"),          # both conditions, gdp
-    ("simp.horizontal_simplification", "simp.equal_pressure_simplification"),  # both simps, bernoulli
-    ("def.depreciation", "def.real_basis"),                   # both definitions (gdp / nvr)
+    ("cond.final_goods_only", "cond.trade_deficit"),  # both conditions, gdp
+    (
+        "simp.horizontal_simplification",
+        "simp.equal_pressure_simplification",
+    ),  # both simps, bernoulli
+    ("def.depreciation", "def.real_basis"),  # both definitions (gdp / nvr)
 ]
 
 # ---------------------------------------------------------------------------
@@ -371,8 +375,15 @@ def build_reference_pairs() -> list[dict]:
             etype, label = steps[key]
             for prem in PREMISES.get(key, []):
                 pairs.append(
-                    {"premise": prem, "hypothesis": label, "gold": "entailment",
-                     "kind": "positive", "node": key, "type": etype, "group": gid}
+                    {
+                        "premise": prem,
+                        "hypothesis": label,
+                        "gold": "entailment",
+                        "kind": "positive",
+                        "node": key,
+                        "type": etype,
+                        "group": gid,
+                    }
                 )
 
     # 2) Within-group SAME-TYPE hard negatives: premise of A vs label of sibling
@@ -390,9 +401,15 @@ def build_reference_pairs() -> list[dict]:
                     continue  # type-incompatible: never competes in production
                 for prem in PREMISES.get(a, []):
                     pairs.append(
-                        {"premise": prem, "hypothesis": lb, "gold": "neutral",
-                         "kind": "hard_negative", "node": f"{a}!={b}", "type": ta,
-                         "group": gid}
+                        {
+                            "premise": prem,
+                            "hypothesis": lb,
+                            "gold": "neutral",
+                            "kind": "hard_negative",
+                            "node": f"{a}!={b}",
+                            "type": ta,
+                            "group": gid,
+                        }
                     )
 
     # 3) Curated same-type, known-distinct cross-group negatives (both directions)
@@ -406,9 +423,15 @@ def build_reference_pairs() -> list[dict]:
             _, ldst = reg[dst]
             for prem in PREMISES.get(src, []):
                 pairs.append(
-                    {"premise": prem, "hypothesis": ldst, "gold": "neutral",
-                     "kind": "curated_negative", "node": f"{src}!={dst}", "type": tsrc,
-                     "group": "cross"}
+                    {
+                        "premise": prem,
+                        "hypothesis": ldst,
+                        "gold": "neutral",
+                        "kind": "curated_negative",
+                        "node": f"{src}!={dst}",
+                        "type": tsrc,
+                        "group": "cross",
+                    }
                 )
     return pairs
 
@@ -418,13 +441,23 @@ def build_veto_records() -> list[dict]:
     for code, spec in VETO.items():
         for prem in spec["veto_positive"]:
             recs.append(
-                {"premise": prem, "code": code, "concept": spec["concept"],
-                 "gold": "entailment", "kind": "veto_positive"}
+                {
+                    "premise": prem,
+                    "code": code,
+                    "concept": spec["concept"],
+                    "gold": "entailment",
+                    "kind": "veto_positive",
+                }
             )
         for prem in spec["veto_negative"]:
             recs.append(
-                {"premise": prem, "code": code, "concept": spec["concept"],
-                 "gold": "neutral", "kind": "veto_negative"}
+                {
+                    "premise": prem,
+                    "code": code,
+                    "concept": spec["concept"],
+                    "gold": "neutral",
+                    "kind": "veto_negative",
+                }
             )
     return recs
 

@@ -19,11 +19,13 @@ A config is eligible for default-ON only if FALSE CREDITS == 0 here.
 Usage (from ai-ta-backend/):
   .venv\\Scripts\\python.exe scripts\\nli_tuning_gate.py MODEL MIN_ENT MAX_CON VETO
 """
+
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
+from typing import cast
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -33,7 +35,7 @@ SUBJECTS = ROOT / "apollo" / "subjects"
 from nli_tuning_build_dev_set import GROUPS, PREMISES, VETO  # noqa: E402
 
 from apollo.ontology.graph import KGGraph  # noqa: E402
-from apollo.ontology.nodes import build_node  # noqa: E402
+from apollo.ontology.nodes import NodeType, build_node  # noqa: E402
 from apollo.resolution.candidates import (  # noqa: E402
     build_candidate_set,
     candidates_from_misconceptions,
@@ -48,7 +50,9 @@ from apollo.resolution.resolver import resolve_attempt  # noqa: E402
 MODEL = sys.argv[1] if len(sys.argv) > 1 else NLI_MODEL_NAME
 MIN_ENT = float(sys.argv[2]) if len(sys.argv) > 2 else 0.70
 MAX_CON = float(sys.argv[3]) if len(sys.argv) > 3 else 0.10
-VETO_T = float(sys.argv[4]) if len(sys.argv) > 4 else 0.96  # NOT `VETO` — that name is the imported dict
+VETO_T = (
+    float(sys.argv[4]) if len(sys.argv) > 4 else 0.96
+)  # NOT `VETO` — that name is the imported dict
 SLUG = MODEL.split("/")[-1]
 
 CONCEPT_MISC = {
@@ -80,15 +84,21 @@ def _content_for(etype: str, premise: str) -> dict:
 
 
 def _node(etype: str, nid: str, premise: str):
-    return build_node(node_type=etype, node_id=nid, attempt_id=1, source="parser",
-                      content=_content_for(etype, premise))
+    return build_node(
+        node_type=cast(NodeType, etype),
+        node_id=nid,
+        attempt_id=1,
+        source="parser",
+        content=_content_for(etype, premise),
+    )
 
 
 def main() -> None:
     print(f"[{SLUG}] gate: min_ent={MIN_ENT} max_con={MAX_CON} veto={VETO_T}", flush=True)
     adj = TransformersNLIAdjudicator(MODEL, device=NLI_DEVICE)
-    params = NLIParams(min_entailment=MIN_ENT, max_contradiction=MAX_CON,
-                       misconception_veto_entailment=VETO_T)
+    params = NLIParams(
+        min_entailment=MIN_ENT, max_contradiction=MAX_CON, misconception_veto_entailment=VETO_T
+    )
     ctx = NLIContext(nli=adj, embedder=None, cache=CandidateEmbeddingCache(), params=params)
 
     false_credits: list[str] = []
@@ -105,7 +115,9 @@ def main() -> None:
         refs = candidates_from_reference_solution(problem, canon_key_by_canonical_key={})
         miscs = candidates_from_misconceptions(misc, canon_key_by_canonical_key={})
         candidates = build_candidate_set(reference_nodes=refs, misconception_entities=miscs)
-        etype_by_key = {s["entity_key"]: s["entry_type"] for s in problem.get("reference_solution", [])}
+        etype_by_key = {
+            s["entity_key"]: s["entry_type"] for s in problem.get("reference_solution", [])
+        }
 
         # Build student graph: positives (right type) + misconception premises (definition).
         nodes = []
@@ -159,7 +171,9 @@ def main() -> None:
     print("\n" + "=" * 70)
     print(f"MODEL {SLUG}  min_ent={MIN_ENT} max_con={MAX_CON} veto={VETO_T}")
     print(f"positives={positives}  recovered_via_nli={recovered}")
-    print(f"veto cases: {veto_ok}/{veto_total} correctly not-credited (misc->ref false credits={misc_false_credit})")
+    print(
+        f"veto cases: {veto_ok}/{veto_total} correctly not-credited (misc->ref false credits={misc_false_credit})"
+    )
     print(f"TOTAL FALSE CREDITS: {len(false_credits)}")
     for fc in false_credits:
         print(f"   !! {fc}")
@@ -174,10 +188,16 @@ def VETO_DATA_FOR(concept_key: str):
 
 # RESULTS §2 smoke pairs — clear paraphrase, inverse misconception, indirect, unrelated.
 SMOKE = [
-    ("the fluid speeds up where the pipe narrows",
-     "velocity increases as cross-sectional area decreases", "entailment"),
-    ("pressure rises when the fluid moves faster",
-     "pressure decreases as velocity increases", "contradiction"),
+    (
+        "the fluid speeds up where the pipe narrows",
+        "velocity increases as cross-sectional area decreases",
+        "entailment",
+    ),
+    (
+        "pressure rises when the fluid moves faster",
+        "pressure decreases as velocity increases",
+        "contradiction",
+    ),
     ("assume the flow does not change over time", "the flow is steady", "neutral-ish"),
     ("the pipe is painted blue", "the flow is incompressible", "unrelated"),
 ]

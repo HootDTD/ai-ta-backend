@@ -25,6 +25,7 @@ import os
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import cast
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
@@ -33,7 +34,7 @@ from rapidfuzz import fuzz  # noqa: E402 - after path setup
 
 from apollo.grading.abstention import unresolved_rate_of  # noqa: E402
 from apollo.ontology.graph import KGGraph  # noqa: E402
-from apollo.ontology.nodes import build_node  # noqa: E402
+from apollo.ontology.nodes import Node, NodeType, build_node  # noqa: E402
 from apollo.resolution.candidates import (  # noqa: E402
     NLI_NODE_TYPES,
     build_candidate_set,
@@ -148,9 +149,9 @@ def _load(path: Path) -> dict:
         return json.load(f)
 
 
-def _node(node_id: str, node_type: str, content: dict) -> object:
+def _node(node_id: str, node_type: str, content: dict) -> Node:
     return build_node(
-        node_type=node_type,
+        node_type=cast(NodeType, node_type),
         node_id=node_id,
         attempt_id=1,
         source="parser",
@@ -263,7 +264,7 @@ def run_probe(problem: dict, misc: dict, label: str, specs: list[dict]) -> Probe
                     sc = sc_list[0]
                     nli_premise = surface
                     nli_hyp = sc.text
-                    r = NLI_CTX.nli.classify(premise=surface, hypothesis=sc.text)
+                    r = _adj.classify(premise=surface, hypothesis=sc.text)
                     nli_ent = round(r.entailment, 4)
                     nli_con = round(r.contradiction, 4)
                     nli_neu = round(r.neutral, 4)
@@ -300,7 +301,7 @@ def run_probe(problem: dict, misc: dict, label: str, specs: list[dict]) -> Probe
             if sc_for_intended:
                 nli_premise = surface
                 nli_hyp = sc_for_intended.text
-                r = NLI_CTX.nli.classify(premise=surface, hypothesis=sc_for_intended.text)
+                r = _adj.classify(premise=surface, hypothesis=sc_for_intended.text)
                 nli_ent = round(r.entailment, 4)
                 nli_con = round(r.contradiction, 4)
                 nli_neu = round(r.neutral, 4)
@@ -761,7 +762,7 @@ def _write_markdown(results: list[ProbeResult], path: Path) -> None:
             )
             if n.nli_premise:
                 lines.append(f"  - NLI premise:     `{n.nli_premise[:120]}`")
-                lines.append(f"  - NLI hypothesis:  `{n.nli_hypothesis[:120]}`")
+                lines.append(f"  - NLI hypothesis:  `{(n.nli_hypothesis or '')[:120]}`")
                 lines.append(
                     f"  - Scores: ent={n.nli_entailment} con={n.nli_contradiction} "
                     f"neu={n.nli_neutral} → label=**{n.nli_label}**"

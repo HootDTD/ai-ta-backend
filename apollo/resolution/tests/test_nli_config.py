@@ -71,12 +71,20 @@ def test_active_model_env_override(monkeypatch):
 
 def test_default_params_large():
     p = default_params_for_model(NLI_MODEL_LARGE)
-    assert (p.min_entailment, p.max_contradiction, p.misconception_veto_entailment) == (0.90, 0.05, 0.98)
+    assert (p.min_entailment, p.max_contradiction, p.misconception_veto_entailment) == (
+        0.90,
+        0.05,
+        0.98,
+    )
 
 
 def test_default_params_small():
     p = default_params_for_model(NLI_MODEL_SMALL)
-    assert (p.min_entailment, p.max_contradiction, p.misconception_veto_entailment) == (0.70, 0.10, 0.96)
+    assert (p.min_entailment, p.max_contradiction, p.misconception_veto_entailment) == (
+        0.70,
+        0.10,
+        0.96,
+    )
 
 
 def test_default_params_unknown_model_uses_safe_fallback():

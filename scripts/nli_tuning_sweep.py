@@ -26,6 +26,7 @@ Usage (from ai-ta-backend/):
   .venv\\Scripts\\python.exe scripts\\nli_tuning_sweep.py [MODEL_NAME]
     MODEL_NAME defaults to the production small model.
 """
+
 from __future__ import annotations
 
 import json
@@ -99,9 +100,11 @@ def _def_node(premise: str):
 # Reference sweep
 # ---------------------------------------------------------------------------
 def reference_sweep() -> dict:
-    pairs = [json.loads(line) for line in (EXP / "dev_set_reference.jsonl").read_text(
-        encoding="utf-8"
-    ).splitlines() if line.strip()]
+    pairs = [
+        json.loads(line)
+        for line in (EXP / "dev_set_reference.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     print(f"[{SLUG}] reference: classifying {len(pairs)} pairs...", flush=True)
     for p in pairs:
         r = classify(p["premise"], p["hypothesis"])
@@ -147,13 +150,24 @@ def reference_sweep() -> dict:
 
     return {
         "pairs": pairs,
-        "prod_selected": None if prod_sel is None
-        else {"min_entailment": prod_sel.min_entailment, "max_contradiction": prod_sel.max_contradiction},
+        "prod_selected": None
+        if prod_sel is None
+        else {
+            "min_entailment": prod_sel.min_entailment,
+            "max_contradiction": prod_sel.max_contradiction,
+        },
         "fine_grid": grid,
-        "fine_selected": None if fine_sel is None
-        else {"min_entailment": fine_sel[0], "max_contradiction": fine_sel[1],
-              "precision": fine_sel[2], "recall": fine_sel[3],
-              "tp": fine_sel[4], "fp": fine_sel[5], "fn": fine_sel[6]},
+        "fine_selected": None
+        if fine_sel is None
+        else {
+            "min_entailment": fine_sel[0],
+            "max_contradiction": fine_sel[1],
+            "precision": fine_sel[2],
+            "recall": fine_sel[3],
+            "tp": fine_sel[4],
+            "fp": fine_sel[5],
+            "fn": fine_sel[6],
+        },
         "false_positives": fps,
         "recall_misses": fns,
     }
@@ -165,7 +179,9 @@ def reference_sweep() -> dict:
 def veto_sweep() -> dict:
     recs = _load_json(EXP / "dev_set_veto.json")
     misc_cands = {
-        concept: candidates_from_misconceptions(_load_json(SUBJECTS / path), canon_key_by_canonical_key={})
+        concept: candidates_from_misconceptions(
+            _load_json(SUBJECTS / path), canon_key_by_canonical_key={}
+        )
         for concept, path in CONCEPT_MISC.items()
     }
     print(f"[{SLUG}] veto: evaluating {len(recs)} records...", flush=True)
@@ -200,9 +216,15 @@ def veto_sweep() -> dict:
     return {
         "records": recs,
         "grid": grid,
-        "selected": None if sel is None
-        else {"veto_threshold": sel[0], "recall": sel[1], "precision": sel[2],
-              "fired_pos": sel[3], "false_vetoes": sel[4]},
+        "selected": None
+        if sel is None
+        else {
+            "veto_threshold": sel[0],
+            "recall": sel[1],
+            "precision": sel[2],
+            "fired_pos": sel[3],
+            "false_vetoes": sel[4],
+        },
     }
 
 
@@ -221,10 +243,12 @@ def main() -> None:
     print(f"production best_operating_point(>= {PRECISION_FLOOR}): {ref['prod_selected']}")
     fs = ref["fine_selected"]
     if fs:
-        print(f"FINE operating point: min_ent={fs['min_entailment']:.2f} "
-              f"max_con={fs['max_contradiction']:.2f}  "
-              f"precision={fs['precision']:.3f} recall={fs['recall']:.3f} "
-              f"(tp={fs['tp']} fp={fs['fp']} fn={fs['fn']})")
+        print(
+            f"FINE operating point: min_ent={fs['min_entailment']:.2f} "
+            f"max_con={fs['max_contradiction']:.2f}  "
+            f"precision={fs['precision']:.3f} recall={fs['recall']:.3f} "
+            f"(tp={fs['tp']} fp={fs['fp']} fn={fs['fn']})"
+        )
     else:
         print("FINE operating point: NONE meets the precision floor.")
     n_pos = sum(1 for p in ref["pairs"] if p["gold"] == "entailment")

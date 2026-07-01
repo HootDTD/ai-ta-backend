@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Analyze a tuning_results_<model>.json: recall curve, negative-entailment
 safety margin, and the highest-threshold point that still holds max recall."""
+
 from __future__ import annotations
 
 import json
@@ -68,4 +69,4 @@ for me in [round(0.50 + i * 0.01, 2) for i in range(50)]:
         robust_me = me
 print(f"\nmax achievable recall @ precision>=0.95: {best_recall:.3f}")
 print(f"HIGHEST min_entailment still holding that recall: {robust_me:.2f}")
-print(f"  (robust choice: same recall as the floor-edge, maximal FP headroom)")
+print("  (robust choice: same recall as the floor-edge, maximal FP headroom)")
