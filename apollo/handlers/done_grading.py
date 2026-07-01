@@ -72,8 +72,45 @@ from apollo.ontology import KGGraph
 from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.resolution import resolve_attempt
+from apollo.resolution.embedding import CandidateEmbeddingCache, default_embedder
+from apollo.resolution.nli_config import NLI_DEVICE, active_nli_model, load_nli_params, nli_enabled
+from apollo.resolution.nli_resolution import NLIContext
 
 _LOG = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# NLI tier — grading-time injection (Task 9)
+# ---------------------------------------------------------------------------
+# Module-level lazy singletons.  Constructing CandidateEmbeddingCache() is
+# cheap (an empty dict); the real model is built only when the flag is on.
+_NLI_ADJUDICATOR = None  # process-lived TransformersNLIAdjudicator | None
+_NLI_CACHE = CandidateEmbeddingCache()
+
+
+def _build_adjudicator():  # pragma: no cover — constructs the real model (Task 12 probe)
+    from apollo.resolution.nli_adjudicator import TransformersNLIAdjudicator
+
+    return TransformersNLIAdjudicator(active_nli_model(), device=NLI_DEVICE)
+
+
+def _nli_context() -> NLIContext | None:
+    """Return an ``NLIContext`` when ``APOLLO_NLI_ENABLED`` is set, else ``None``.
+
+    The adjudicator is built ONCE and reused across calls (process-lived
+    singleton).  When the flag is off grading is byte-identical to before.
+    """
+    if not nli_enabled():
+        return None
+    global _NLI_ADJUDICATOR
+    if _NLI_ADJUDICATOR is None:
+        _NLI_ADJUDICATOR = _build_adjudicator()
+    return NLIContext(
+        nli=_NLI_ADJUDICATOR,
+        embedder=default_embedder,
+        cache=_NLI_CACHE,
+        params=load_nli_params(),
+    )
+
 
 # The named infra errors that surface in the cross-store window (step 5+). These
 # DO set learner_update_pending (the grade is already committed; the retry re-runs
@@ -195,6 +232,7 @@ async def run_graph_simulation(
             confirmed_resolutions=confirmed_resolutions,
             fuzzy_threshold=0.9,
             symbolic_mappings=inputs.symbolic_mappings,
+            nli_ctx=_nli_context(),
         )
         # Step 6 — RESOLVES_TO + resolution fields (idempotent MERGE).
         await write_resolution(neo, int(attempt.id), resolution, resolved_at=_now_iso())

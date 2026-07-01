@@ -40,6 +40,7 @@ from apollo.resolution.competition import (
     polarity_screen,
 )
 from apollo.resolution.equation_alignment import match_equation_alignment
+from apollo.resolution.nli_resolution import NLIContext
 from apollo.resolution.result import ResolutionResult, ResolvedNode
 from apollo.resolution.structural import ScoredMatch, type_compatible
 from apollo.resolution.tiers import (
@@ -59,6 +60,7 @@ def _content_match(
     *,
     fuzzy_threshold: float,
     symbolic_mappings: dict[str, str],
+    nli_ctx: NLIContext | None = None,
 ) -> ScoredMatch | None:
     """Run the content tiers in priority order for one node and return the
     winning :class:`ScoredMatch`, applying the type-compat HARD constraint, the
@@ -130,9 +132,15 @@ def _content_match(
             )
 
     lexical = list(by_candidate.values())
-    if not lexical:
-        return None
-    return apply_misconception_competition(surface, lexical)
+    if lexical:
+        return apply_misconception_competition(surface, lexical)
+    # Recall-only NLI fallback: fires ONLY when the fused lexical tier found
+    # nothing — so it can never mask a lexical-level misconception.
+    if nli_ctx is not None and nli_ctx.nli is not None:
+        from apollo.resolution.nli_resolution import match_nli_semantic
+
+        return match_nli_semantic(node, type_ok, ctx=nli_ctx)
+    return None
 
 
 def find_residual_nodes(
@@ -141,6 +149,7 @@ def find_residual_nodes(
     *,
     fuzzy_threshold: float = 0.9,
     symbolic_mappings: dict[str, str] | None = None,
+    nli_ctx: NLIContext | None = None,
 ) -> list[Node]:
     """Nodes no deterministic tier confidently matched (the clarification
     detector's input). Pure: reuses ``_content_match`` so banding stays in
@@ -148,7 +157,16 @@ def find_residual_nodes(
     maps = symbolic_mappings if symbolic_mappings is not None else {}
     residual: list[Node] = []
     for n in nodes:
-        if _content_match(n, candidates, fuzzy_threshold=fuzzy_threshold, symbolic_mappings=maps) is None:
+        if (
+            _content_match(
+                n,
+                candidates,
+                fuzzy_threshold=fuzzy_threshold,
+                symbolic_mappings=maps,
+                nli_ctx=nli_ctx,
+            )
+            is None
+        ):
             residual.append(n)
     return residual
 
@@ -160,6 +178,7 @@ def resolve_attempt(
     confirmed_resolutions: dict[str, str] | None = None,
     fuzzy_threshold: float = 0.9,
     symbolic_mappings: dict[str, str] | None = None,
+    nli_ctx: NLIContext | None = None,
 ) -> ResolutionResult:
     """Resolve every student evidence node against the closed candidate set.
 
@@ -215,6 +234,7 @@ def resolve_attempt(
             candidates,
             fuzzy_threshold=fuzzy_threshold,
             symbolic_mappings=maps,
+            nli_ctx=nli_ctx,
         )
         if hit is not None:
             matches_by_node[n.node_id] = [hit]

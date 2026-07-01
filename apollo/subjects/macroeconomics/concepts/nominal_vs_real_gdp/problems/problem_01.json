@@ -38,6 +38,7 @@
       "id": "deflator_is_price_index",
       "step": 2,
       "content": {
+        "label": "Treat the quoted price index as the GDP deflator so the deflator definition can be solved for real GDP",
         "applies_when": "the price index quoted for the year is the GDP deflator itself",
         "substitution": {
           "PI": "deflator"
@@ -55,6 +56,7 @@
       "step": 3,
       "content": {
         "order": 1,
+        "label": "Rearrange the GDP deflator definition to real GDP = nominal GDP divided by (PI/100) and substitute the given values",
         "action": "rearrange the GDP deflator definition to realGDP = nomGDP/(PI/100) and substitute nomGDP = 543.3 and PI = 19.0 to solve for real GDP",
         "purpose": "deflate nominal GDP by the price index to obtain real GDP in base-year dollars",
         "uses_equations": [
