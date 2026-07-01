@@ -109,6 +109,25 @@ For a key-only node the resolver's positive content-overlap floor
 fires, so **NLI is never even called**. econ_b has *zero* labeled conceptual
 nodes, which is exactly why its unresolved-rate is unchanged (0.75 → 0.75).
 
+**This is a production condition, not a probe artifact — and not a code bug.**
+Verified: the production grading path builds reference candidates via
+`load_problem_candidates_with_soundness` → `build_problem_candidates` →
+`candidates_from_reference_solution` — the SAME function the probe used. The DB
+lookup (`load_entity_specs`) in that path supplies only the integer canon-key
+for edge projection, NOT display names/aliases. So production reads reference
+surface text from the problem JSON's `content.label` (fallback = canonical key),
+byte-identical to the probe. Every component behaves correctly by design
+(`content.get("label") or canonical_key` fallback; the floor refusing to run NLI
+on a key string; the lexical tiers not matching a key string). The gap is a
+**data-authoring** one: the conceptual `reference_solution` steps were authored
+without a `content.label`.
+
+**Consequence for the CURRENT grader (NLI-off):** the probe's OFF column shows
+every key-only conceptual node is already `unresolved` under the lexical-only
+resolver — i.e. a student who correctly teaches back one of these steps in any
+phrasing cannot be credited for it TODAY. The missing labels cap grading
+coverage on conceptual steps now; NLI simply can't rescue them either.
+
 Note this hurts the **lexical** tiers too — no student phrasing can
 alias/fuzzy-match a key string. And feeding the key string to NLI directly is
 actively misleading: the model reads `"def.real_basis"` as a claim and returns
@@ -182,6 +201,43 @@ flagged as a misconception," never "wrongly credited to a reference."
 4. The ≥0.95-precision calibration gate (Task 11/12) still governs the
    default-ON flip; the dev set should be expanded with real corpus pairs once
    labels exist (see the branch's calibration caveats).
+
+## 9. Interactive clarification session (Apollo asks / student answers)
+
+Driven on the REAL OpenAI embedder + REAL NLI model, using the same primitives
+`run_clarification_detection` uses (`find_residual_nodes` →
+`detect_ambiguous_nodes` → `build_probe_hint`), on a Bernoulli teach-back.
+
+Student teach-back (two conditions, stated in the student's own words):
+- `stu_paraphrase`: "the liquid keeps the same density all the way through the pipe"
+- `stu_vague`: "the fluid doesn't really change as it flows"
+
+**Apollo's turn (NLI ON):** `stu_paraphrase` stays residual — it shares no
+content token with the reference label "Incompressibility assumption" (the
+student describes the *meaning*; the label is the *term*), so the composer's
+content-overlap floor declines to run NLI (the precision guard). Apollo probes
+it with an **answer-blind** steering hint (per spec §6.4 it never reveals the
+answer):
+> "Make the student commit to the DIRECTION of the relationship they just described (which way it goes), without telling them which is correct."
+
+**Student's turn (I answer):** I commit the idea to the incompressibility
+condition; the answer is applied as a `confirmed_resolution`:
+- `stu_paraphrase` → resolved, method=**clarification**, conf **0.90**, key `cond.incompressibility`
+- `stu_vague` → resolved, method=**clarification**, conf **0.90**, key `cond.incompressibility`
+
+**Takeaway — NLI and clarification are complementary, not redundant:**
+- NLI auto-resolves paraphrases that reuse ≥1 of a *labeled* reference's words
+  (grading probe: `cond.incompressibility` @ entailment 0.974), removing a
+  clarification turn.
+- A **zero-token-overlap** paraphrase is deliberately *not* auto-resolved — the
+  content floor requires a shared token for precision — so it falls through to
+  clarification, where the student's answer resolves it @ 0.90. (This is a real
+  precision/recall knob in the composer, not a bug.)
+- **Key-only** reference nodes (§4) can't be reached by either tier's surface
+  match, so they rely entirely on clarification.
+
+Driver: `scripts/nli_clarification_session.py` (no args = Apollo's probes;
+`--answer node_id=candidate_key` = the student's answer).
 
 ---
 
