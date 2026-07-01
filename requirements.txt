@@ -20,8 +20,3 @@ aiosqlite
 pytest-asyncio
 neo4j>=5.27,<6
 rapidfuzz>=3.12,<4
-# Apollo NLI resolver tier (local NLI adjudicator). Required whenever
-# APOLLO_NLI_ENABLED is on; the tier is default-OFF/dormant otherwise.
-transformers>=4.44,<5
-torch>=2.2
-sentencepiece
