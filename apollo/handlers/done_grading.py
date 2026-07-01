@@ -73,7 +73,7 @@ from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.resolution import resolve_attempt
 from apollo.resolution.embedding import CandidateEmbeddingCache, default_embedder
-from apollo.resolution.nli_config import NLI_DEVICE, NLI_MODEL_NAME, load_nli_params, nli_enabled
+from apollo.resolution.nli_config import NLI_DEVICE, active_nli_model, load_nli_params, nli_enabled
 from apollo.resolution.nli_resolution import NLIContext
 
 _LOG = logging.getLogger(__name__)
@@ -90,7 +90,7 @@ _NLI_CACHE = CandidateEmbeddingCache()
 def _build_adjudicator():  # pragma: no cover — constructs the real model (Task 12 probe)
     from apollo.resolution.nli_adjudicator import TransformersNLIAdjudicator
 
-    return TransformersNLIAdjudicator(NLI_MODEL_NAME, device=NLI_DEVICE)
+    return TransformersNLIAdjudicator(active_nli_model(), device=NLI_DEVICE)
 
 
 def _nli_context() -> NLIContext | None:

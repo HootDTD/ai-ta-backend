@@ -1,0 +1,170 @@
+[
+  {
+    "premise": "the fluid pressure rises as the flow moves faster",
+    "code": "misc.pressure_velocity_same_direction",
+    "concept": "bernoulli",
+    "gold": "entailment",
+    "kind": "veto_positive"
+  },
+  {
+    "premise": "when the flow speeds up, the pressure climbs higher too",
+    "code": "misc.pressure_velocity_same_direction",
+    "concept": "bernoulli",
+    "gold": "entailment",
+    "kind": "veto_positive"
+  },
+  {
+    "premise": "as the fluid speeds up its pressure actually drops",
+    "code": "misc.pressure_velocity_same_direction",
+    "concept": "bernoulli",
+    "gold": "neutral",
+    "kind": "veto_negative"
+  },
+  {
+    "premise": "faster flow goes with lower pressure, not higher",
+    "code": "misc.pressure_velocity_same_direction",
+    "concept": "bernoulli",
+    "gold": "neutral",
+    "kind": "veto_negative"
+  },
+  {
+    "premise": "we can just ignore the fluid's density in these equations",
+    "code": "misc.density_ignored",
+    "concept": "bernoulli",
+    "gold": "entailment",
+    "kind": "veto_positive"
+  },
+  {
+    "premise": "the density does not really matter here so we can leave rho out",
+    "code": "misc.density_ignored",
+    "concept": "bernoulli",
+    "gold": "entailment",
+    "kind": "veto_positive"
+  },
+  {
+    "premise": "the density stays constant and is needed throughout the calculation",
+    "code": "misc.density_ignored",
+    "concept": "bernoulli",
+    "gold": "neutral",
+    "kind": "veto_negative"
+  },
+  {
+    "premise": "we must keep rho because the fluid is incompressible with fixed density",
+    "code": "misc.density_ignored",
+    "concept": "bernoulli",
+    "gold": "neutral",
+    "kind": "veto_negative"
+  },
+  {
+    "premise": "welfare payments and used-car sales should be added into GDP",
+    "code": "misc.includes_transfers",
+    "concept": "gdp",
+    "gold": "entailment",
+    "kind": "veto_positive"
+  },
+  {
+    "premise": "transfer payments like social security count toward GDP",
+    "code": "misc.includes_transfers",
+    "concept": "gdp",
+    "gold": "entailment",
+    "kind": "veto_positive"
+  },
+  {
+    "premise": "transfer payments and used goods are excluded from GDP",
+    "code": "misc.includes_transfers",
+    "concept": "gdp",
+    "gold": "neutral",
+    "kind": "veto_negative"
+  },
+  {
+    "premise": "we only count newly produced final goods, not transfers or resales",
+    "code": "misc.includes_transfers",
+    "concept": "gdp",
+    "gold": "neutral",
+    "kind": "veto_negative"
+  },
+  {
+    "premise": "there is no need to subtract depreciation, gross and net are the same",
+    "code": "misc.gross_for_net",
+    "concept": "gdp",
+    "gold": "entailment",
+    "kind": "veto_positive"
+  },
+  {
+    "premise": "GNP already equals NNP so we can skip depreciation",
+    "code": "misc.gross_for_net",
+    "concept": "gdp",
+    "gold": "entailment",
+    "kind": "veto_positive"
+  },
+  {
+    "premise": "you must subtract depreciation from GNP to get NNP",
+    "code": "misc.gross_for_net",
+    "concept": "gdp",
+    "gold": "neutral",
+    "kind": "veto_negative"
+  },
+  {
+    "premise": "net national product is gross national product minus capital consumption",
+    "code": "misc.gross_for_net",
+    "concept": "gdp",
+    "gold": "neutral",
+    "kind": "veto_negative"
+  },
+  {
+    "premise": "nominal GDP is basically the same as real GDP so there is no need to adjust for inflation",
+    "code": "misc.nominal_for_real",
+    "concept": "nvr",
+    "gold": "entailment",
+    "kind": "veto_positive"
+  },
+  {
+    "premise": "just use nominal GDP, the inflation adjustment does not matter",
+    "code": "misc.nominal_for_real",
+    "concept": "nvr",
+    "gold": "entailment",
+    "kind": "veto_positive"
+  },
+  {
+    "premise": "you have to deflate nominal GDP for inflation to get real GDP",
+    "code": "misc.nominal_for_real",
+    "concept": "nvr",
+    "gold": "neutral",
+    "kind": "veto_negative"
+  },
+  {
+    "premise": "real and nominal GDP differ because real GDP strips out price changes",
+    "code": "misc.nominal_for_real",
+    "concept": "nvr",
+    "gold": "neutral",
+    "kind": "veto_negative"
+  },
+  {
+    "premise": "to get real GDP you multiply nominal GDP by the price index",
+    "code": "misc.deflate_wrong_direction",
+    "concept": "nvr",
+    "gold": "entailment",
+    "kind": "veto_positive"
+  },
+  {
+    "premise": "scale nominal GDP up by the deflator to find real GDP",
+    "code": "misc.deflate_wrong_direction",
+    "concept": "nvr",
+    "gold": "entailment",
+    "kind": "veto_positive"
+  },
+  {
+    "premise": "real GDP is nominal GDP divided by the price index over one hundred",
+    "code": "misc.deflate_wrong_direction",
+    "concept": "nvr",
+    "gold": "neutral",
+    "kind": "veto_negative"
+  },
+  {
+    "premise": "you deflate by dividing nominal GDP by the deflator, not multiplying",
+    "code": "misc.deflate_wrong_direction",
+    "concept": "nvr",
+    "gold": "neutral",
+    "kind": "veto_negative"
+  }
+]

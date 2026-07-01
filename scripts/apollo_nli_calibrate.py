@@ -69,9 +69,9 @@ def main(
 
     if adjudicator is None:  # pragma: no cover
         from apollo.resolution.nli_adjudicator import TransformersNLIAdjudicator
-        from apollo.resolution.nli_config import NLI_DEVICE, NLI_MODEL_NAME
+        from apollo.resolution.nli_config import NLI_DEVICE, NLI_MODEL_SMALL
 
-        adjudicator = TransformersNLIAdjudicator(NLI_MODEL_NAME, device=NLI_DEVICE)
+        adjudicator = TransformersNLIAdjudicator(NLI_MODEL_SMALL, device=NLI_DEVICE)
 
     report = sweep_thresholds(labeled, adjudicator.classify)
     selected = best_operating_point(report, min_precision=0.95)

@@ -39,7 +39,7 @@ from apollo.resolution.candidates import (  # noqa: E402
 )
 from apollo.resolution.embedding import default_embedder  # noqa: E402
 from apollo.resolution.nli_adjudicator import TransformersNLIAdjudicator  # noqa: E402
-from apollo.resolution.nli_config import NLI_DEVICE, NLI_MODEL_NAME, load_nli_params  # noqa: E402
+from apollo.resolution.nli_config import NLI_DEVICE, NLI_MODEL_SMALL, load_nli_params  # noqa: E402
 from apollo.resolution.nli_resolution import NLIContext  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,7 +84,7 @@ def _student_graph() -> KGGraph:
 
 def _nli_ctx() -> NLIContext:
     return NLIContext(
-        nli=TransformersNLIAdjudicator(NLI_MODEL_NAME, device=NLI_DEVICE),
+        nli=TransformersNLIAdjudicator(NLI_MODEL_SMALL, device=NLI_DEVICE),
         embedder=default_embedder,
         cache=CandidateEmbeddingCache(),
         params=load_nli_params(),
