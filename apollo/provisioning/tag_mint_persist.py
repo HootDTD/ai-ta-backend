@@ -15,13 +15,16 @@ SELECT-then-skip; concept symbol authoring first-writer-wins UNION.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import logging
+from collections.abc import Iterable, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.persistence.learner_model_seed import EntitySpec
 from apollo.persistence.models import Concept, EntityPrereq, KGEntity, Subject
+
+_LOG = logging.getLogger(__name__)
 
 
 async def resolve_or_create_concept(
@@ -202,18 +205,93 @@ async def link_opposes(
     return linked
 
 
+async def _entities_concept_map(
+    db: AsyncSession, entity_ids: Iterable[int]
+) -> dict[int, int]:
+    """Map each ``KGEntity.id`` to its owning ``concept_id`` in ONE query. A missing
+    id is simply absent from the map — the caller treats absence as out-of-scope
+    (the fail-safe direction)."""
+    ids = set(entity_ids)
+    if not ids:
+        return {}
+    return {
+        int(eid): int(cid)
+        for eid, cid in (
+            await db.execute(
+                select(KGEntity.id, KGEntity.concept_id).where(KGEntity.id.in_(ids))
+            )
+        ).all()
+    }
+
+
+async def partition_prereqs_by_concept_scope(
+    db: AsyncSession,
+    *,
+    concept_id: int,
+    key_to_id: dict[str, int],
+    pairs: Sequence[tuple[str, str]],
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Split resolvable prereq key-pairs into ``(in_concept, cross_concept)`` by
+    whether BOTH endpoint entities are OWNED BY ``concept_id`` (audit bug #4).
+
+    A dedup ``merged`` verdict can point ``key_to_id`` at a FOREIGN-concept entity
+    id — that key is still 'resolvable', so an unminted-key drop never catches it.
+    This is the single source of truth for the endpoint concept-scope check, reused
+    by ``insert_prereqs`` (the writer boundary) AND by ``tag_and_mint`` BEFORE its
+    acyclicity guard. Running it first matters: it keeps a foreign endpoint out of
+    the acyclicity reachability graph, where it could otherwise act as a PHANTOM
+    BRIDGE across two cross-concept edges and fake a cycle that discards a
+    legitimate within-concept edge. A pair whose key is not in ``key_to_id`` raises
+    KeyError (the caller's fail-closed contract for an unresolvable key)."""
+    concept_of = await _entities_concept_map(
+        db, (key_to_id[key] for pair in pairs for key in pair)
+    )
+    in_concept: list[tuple[str, str]] = []
+    cross_concept: list[tuple[str, str]] = []
+    for from_key, to_key in pairs:
+        if (
+            concept_of.get(key_to_id[from_key]) == concept_id
+            and concept_of.get(key_to_id[to_key]) == concept_id
+        ):
+            in_concept.append((from_key, to_key))
+        else:
+            cross_concept.append((from_key, to_key))
+    return in_concept, cross_concept
+
+
 async def insert_prereqs(
     db: AsyncSession,
     *,
+    concept_id: int,
     key_to_id: dict[str, int],
     pairs: Sequence[tuple[str, str]],
-) -> tuple[int, int]:
+) -> tuple[int, int, list[tuple[str, str]]]:
     """Insert prereq edges (SELECT-then-skip on ``(from_entity_id,
-    to_entity_id)``). Returns ``(inserted, skipped)``. A pair whose key is not in
-    ``key_to_id`` raises KeyError (the caller maps it to a TagMintError)."""
+    to_entity_id)``). Returns ``(inserted, skipped, dropped)``.
+
+    CONCEPT-SCOPE GUARD (audit bug #4, defense-in-depth at the WRITER boundary): via
+    ``partition_prereqs_by_concept_scope``, every edge endpoint must resolve to an
+    entity OWNED BY ``concept_id``. A dedup ``merged`` verdict can point
+    ``key_to_id`` at a FOREIGN-concept entity id — that key is still 'resolvable',
+    so the caller's unminted-key drop never catches it, and the edge would persist
+    pointing into another concept's subgraph (dead weight the reader filters out at
+    ``personalization_read.py:148-150``; and, because ``:Canon`` is a NODE-ONLY
+    projection, the foreign target entity is absent from THIS concept's ``:Canon``
+    nodes, so a student's correct step has no reference node to match). A
+    cross-concept edge is DROPPED (surfaced via the return + a WARNING log), not
+    inserted. The writer re-checks even though ``tag_and_mint`` already pre-filters
+    — the guard must not trust its caller. With PR2's concept-scoped dedup this
+    should never fire; if it does, an upstream scoping invariant regressed.
+
+    A pair whose key is not in ``key_to_id`` raises KeyError (the caller maps it to
+    a TagMintError — an unresolvable key is a caller contract violation, distinct
+    from a resolvable-but-foreign endpoint)."""
+    kept, dropped = await partition_prereqs_by_concept_scope(
+        db, concept_id=concept_id, key_to_id=key_to_id, pairs=pairs
+    )
     inserted = 0
     skipped = 0
-    for from_key, to_key in pairs:
+    for from_key, to_key in kept:
         from_id = key_to_id[from_key]
         to_id = key_to_id[to_key]
         existing = (
@@ -229,4 +307,13 @@ async def insert_prereqs(
         db.add(EntityPrereq(from_entity_id=from_id, to_entity_id=to_id))
         inserted += 1
     await db.flush()
-    return inserted, skipped
+    if dropped:
+        _LOG.warning(
+            "tag_mint_dropped_cross_concept_prereqs",
+            extra={
+                "event": "tag_mint_dropped_cross_concept_prereqs",
+                "concept_id": concept_id,
+                "dropped": dropped,
+            },
+        )
+    return inserted, skipped, dropped

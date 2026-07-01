@@ -66,6 +66,7 @@ def test_method_confidence_caps_match_spec():
         "derived": 0.95,
         "alias": 0.92,
         "clarification": 0.90,
+        "nli": 0.88,
         "fuzzy": 0.80,
         "llm": 0.75,
         "unresolved": 0.00,
@@ -231,3 +232,24 @@ def test_clarification_sits_below_proven_tiers_above_floor():
     cap = METHOD_CONFIDENCE_CAP
     assert cap["alias"] > cap["clarification"] > cap["fuzzy"]
     assert cap["clarification"] >= 0.85
+
+
+# ---------------------------------------------------------------------------
+# Task 1 — NLI: Natural-language-inference tier (recall-only fallback)
+# ---------------------------------------------------------------------------
+
+
+def test_nli_method_registered_between_clarification_and_fuzzy():
+    methods = list(RESOLUTION_METHODS)
+    assert methods.index("clarification") < methods.index("nli") < methods.index("fuzzy")
+    assert METHOD_CONFIDENCE_CAP["nli"] == 0.88
+
+
+def test_nli_node_types_exclude_equation_and_variable_mapping():
+    from apollo.resolution.candidates import NLI_NODE_TYPES
+
+    assert NLI_NODE_TYPES == frozenset(
+        {"procedure_step", "condition", "definition", "simplification"}
+    )
+    assert "equation" not in NLI_NODE_TYPES
+    assert "variable_mapping" not in NLI_NODE_TYPES

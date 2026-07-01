@@ -19,13 +19,14 @@ import inspect
 from apollo.grading.abstention import unresolved_rate_of
 from apollo.ontology.graph import KGGraph
 from apollo.ontology.nodes import build_node
-from apollo.resolution import resolve_attempt
-from apollo.resolution import resolver
+from apollo.resolution import resolve_attempt, resolver
 from apollo.resolution.candidates import METHOD_CONFIDENCE_CAP, Candidate
 from apollo.resolution.competition import (
     apply_misconception_competition,
     polarity_screen,
 )
+from apollo.resolution.nli_adjudicator import FakeNLIAdjudicator, NLIResult
+from apollo.resolution.nli_resolution import NLIContext
 from apollo.resolution.resolver import _content_match
 from apollo.resolution.structural import ScoredMatch
 from apollo.resolution.tiers import (
@@ -46,7 +47,9 @@ def test_resolver_has_no_llm_adjudicator():
 
 
 def test_unmatched_node_stays_unresolved_no_llm():
-    graph = _graph([_node("s1", "condition", {"applies_when": "totally unrelated prose", "label": ""})])
+    graph = _graph(
+        [_node("s1", "condition", {"applies_when": "totally unrelated prose", "label": ""})]
+    )
     cands = _cands_with("cond.bernoulli", node_type="condition")
     result = resolve_attempt(graph, cands)
     rn = {r.node_id: r for r in result.resolved}["s1"]
@@ -804,9 +807,7 @@ def test_confirmed_resolution_resolves_via_clarification_at_0_90():
 def test_confirmed_resolution_overrides_a_weaker_tier_hit():
     """Even if a content tier (alias/fuzzy) would have matched, clarification is
     authoritative and wins regardless of any lower-tier hit."""
-    graph = _graph(
-        [_node("s1", "condition", {"applies_when": "slower means higher", "label": ""})]
-    )
+    graph = _graph([_node("s1", "condition", {"applies_when": "slower means higher", "label": ""})])
     cands = _cands_with("cond.bernoulli", node_type="condition", aliases=("slower means higher",))
     result = resolve_attempt(graph, cands, confirmed_resolutions={"s1": "cond.bernoulli"})
     rn = {r.node_id: r for r in result.resolved}["s1"]
@@ -859,3 +860,78 @@ def test_find_residual_nodes_returns_only_unmatched():
     cands = _cands_with("cond.k", node_type="condition", aliases=("exact alias text",))
     out = find_residual_nodes([matched, residual], cands)
     assert [n.node_id for n in out] == ["s2"]
+
+
+# ---------------------------------------------------------------------------
+# Task 8 — NLI recall-only fallback wired into _content_match / resolve_attempt.
+# The fallback fires ONLY when the fused lexical tier found nothing, so it can
+# never mask a lexical-level misconception. When nli_ctx is None or nli=None,
+# behaviour is BYTE-IDENTICAL to today.
+# ---------------------------------------------------------------------------
+
+
+def test_nli_fallback_resolves_when_lexical_misses():
+    """NLI tier fires when the fused lexical block finds no candidate.
+
+    Student condition node: "density stays constant throughout"
+    (student_surface_text for a condition == applies_when).
+
+    Reference candidate: display_name "density is constant" with NO aliases /
+    exact_aliases, so the alias/fuzzy tiers produce ZERO hits (those tiers use
+    c.aliases + c.exact_aliases, never display_name). The NLI shortlist uses
+    candidate_surface_texts (display_name + aliases + exact_aliases) with
+    Jaccard overlap as the no-embedder fallback; "density" and "constant" are
+    shared tokens (>2 chars) so the _content_tokens floor passes, and the
+    FakeNLIAdjudicator returns entailment@0.95 for that exact pair.
+    """
+    node = _node(
+        "n1", "condition", {"applies_when": "density stays constant throughout", "label": ""}
+    )
+    graph = _graph([node])
+    # Candidate with a meaningful display_name but NO aliases: lexical tiers miss,
+    # NLI shortlist finds it via token-overlap on the display_name.
+    ref = Candidate(
+        canonical_key="def.const_density",
+        canon_key=42,
+        node_type="condition",
+        is_misconception=False,
+        symbolic=None,
+        aliases=(),
+        display_name="density is constant",
+        opposes_key=None,
+        exact_aliases=(),
+    )
+    ENT = NLIResult("entailment", 0.95, 0.02, 0.03, "fake")
+    fake = FakeNLIAdjudicator({("density stays constant throughout", "density is constant"): ENT})
+    ctx = NLIContext(nli=fake)
+    result = resolve_attempt(graph, (ref,), nli_ctx=ctx)
+    rn = result.resolved[0]
+    assert rn.resolution == "resolved"
+    assert rn.method == "nli"
+    assert rn.confidence == METHOD_CONFIDENCE_CAP["nli"]  # 0.88
+
+
+def test_nli_none_is_byte_identical():
+    """When nli_ctx=NLIContext(nli=None) the resolver is byte-identical to the
+    no-nli_ctx default: ResolutionResult is @dataclass(frozen=True) so == works
+    field-by-field (tuple[ResolvedNode], dict tier_counts, int llm_calls)."""
+    node = _node(
+        "n1", "condition", {"applies_when": "density stays constant throughout", "label": ""}
+    )
+    graph = _graph([node])
+    ref = Candidate(
+        canonical_key="def.const_density",
+        canon_key=42,
+        node_type="condition",
+        is_misconception=False,
+        symbolic=None,
+        aliases=(),
+        display_name="density is constant",
+        opposes_key=None,
+        exact_aliases=(),
+    )
+    r1 = resolve_attempt(graph, (ref,))
+    r2 = resolve_attempt(graph, (ref,), nli_ctx=NLIContext(nli=None))
+    # ResolutionResult and ResolvedNode are @dataclass(frozen=True); __eq__ is
+    # auto-generated and does field-by-field comparison, so r1 == r2 is correct.
+    assert r1 == r2

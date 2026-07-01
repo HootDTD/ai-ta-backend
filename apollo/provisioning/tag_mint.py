@@ -65,6 +65,7 @@ from apollo.provisioning.tag_mint_persist import (
     author_concept_symbols,
     insert_prereqs,
     link_opposes,
+    partition_prereqs_by_concept_scope,
     resolve_or_create_concept,
     upsert_entity,
 )
@@ -103,6 +104,12 @@ class MintPlan(BaseModel):
     merged_entity_keys: list[str]
     prereq_pairs: list[tuple[str, str]]
     misconception_keys: list[str]
+    # Prereq edges the LLM drafted but tag/mint refused to persist, surfaced for
+    # observability (previously only INFO/WARNING-logged). Three drop reasons land
+    # here in one place: an endpoint key no entity carries (unresolvable), an edge
+    # that would introduce a self-loop/cycle (acyclicity guard, #73), and an edge
+    # whose resolved endpoint belongs to a FOREIGN concept (endpoint guard, #74).
+    dropped_prereq_pairs: list[tuple[str, str]] = []
 
 
 def _judge_distinct(*_a, **_k) -> str:
@@ -406,6 +413,24 @@ async def tag_and_mint(
                 "dropped": dropped_pairs,
             },
         )
+    # Endpoint concept-scope guard (audit bug #4) — run BEFORE the acyclicity guard.
+    # A dedup MERGE onto a foreign-concept entity leaves a 'resolvable' key the
+    # unresolvable-drop above cannot catch. Dropping cross-concept edges FIRST keeps
+    # a foreign endpoint out of the acyclicity reachability graph, where it could
+    # otherwise act as a phantom BRIDGE across two cross-concept edges and fake a
+    # cycle that discards a legitimate within-concept edge. Surfaced, never silent.
+    prereq_pairs, cross_concept_pairs = await partition_prereqs_by_concept_scope(
+        db, concept_id=concept_id, key_to_id=key_to_id, pairs=prereq_pairs
+    )
+    if cross_concept_pairs:
+        _LOG.warning(
+            "tag_mint_dropped_cross_concept_prereqs",
+            extra={
+                "event": "tag_mint_dropped_cross_concept_prereqs",
+                "concept_id": concept_id,
+                "dropped": cross_concept_pairs,
+            },
+        )
     # Acyclicity guard (audit bug #3): drop any resolvable prereq edge that would
     # introduce a self-loop or a directed cycle in apollo_entity_prereqs. Runs over
     # the resolved entity-id graph (key_to_id), so a dedup MERGE that collapses two
@@ -423,7 +448,10 @@ async def tag_and_mint(
                 "dropped": cyclic_pairs,
             },
         )
-    await insert_prereqs(db, key_to_id=key_to_id, pairs=prereq_pairs)
+    # Persist the surviving edges. ``insert_prereqs`` re-applies the concept-scope
+    # guard at the writer boundary (defense-in-depth); after the pre-filter above it
+    # has nothing left to drop, so its dropped-return is empty here.
+    await insert_prereqs(db, concept_id=concept_id, key_to_id=key_to_id, pairs=prereq_pairs)
 
     return MintPlan(
         concept_id=concept_id,
@@ -433,4 +461,6 @@ async def tag_and_mint(
         merged_entity_keys=merged_entity_keys,
         prereq_pairs=prereq_pairs,
         misconception_keys=misconception_keys,
+        # Drop pipeline order: unresolvable-key -> cross-concept -> cyclic.
+        dropped_prereq_pairs=[*dropped_pairs, *cross_concept_pairs, *cyclic_pairs],
     )
