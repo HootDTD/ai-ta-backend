@@ -321,6 +321,78 @@ async def test_promote_pass_calls_project_canon_with_concept_id(db_session, monk
 
 
 # --------------------------------------------------------------------------- #
+# T-PR1c — a threaded solution_source is persisted (WU-AAS audit bug #1)
+# --------------------------------------------------------------------------- #
+async def test_promote_persists_threaded_solution_source(db_session):
+    """A caller that knows the true per-problem source (e.g. an authored set's
+    paired-EXTRACTED solution) can thread ``solution_source`` into ``promote`` and
+    it lands on the row, instead of the row always defaulting to ``"generated"``."""
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="pr1c")
+    result = await promote(
+        db_session,
+        AsyncMock(),
+        problem=_bernoulli_problem(),
+        mint_plan=_mint_plan(concept_id),
+        search_space_id=space,
+        concept_problem_id=problem_id,
+        existing_problem_hashes=set(),
+        solution_source="extracted",
+    )
+
+    assert result.promoted is True
+    row = await db_session.get(ConceptProblem, problem_id)
+    assert row.solution_source == "extracted"
+
+
+# --------------------------------------------------------------------------- #
+# T-PR1d — omitting solution_source still defaults to "generated" (regression)
+# --------------------------------------------------------------------------- #
+async def test_promote_defaults_solution_source_when_omitted(db_session):
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="pr1d")
+    result = await promote(
+        db_session,
+        AsyncMock(),
+        problem=_bernoulli_problem(),
+        mint_plan=_mint_plan(concept_id),
+        search_space_id=space,
+        concept_problem_id=problem_id,
+        existing_problem_hashes=set(),
+    )
+
+    assert result.promoted is True
+    row = await db_session.get(ConceptProblem, problem_id)
+    assert row.solution_source == "generated"
+
+
+# --------------------------------------------------------------------------- #
+# T-PR1e — a pre-stamped Tier-1 source is preserved over the threaded value
+# --------------------------------------------------------------------------- #
+async def test_promote_preserves_prestamped_solution_source(db_session):
+    """The default-only-if-falsy guard keeps ``promote`` idempotent: a Tier-1 row
+    already stamped (e.g. single-authored ingest's ``"authored"``) is NOT
+    overwritten by a threaded value on (re-)promote."""
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="pr1e")
+    row = await db_session.get(ConceptProblem, problem_id)
+    row.solution_source = "authored"
+    await db_session.flush()
+
+    result = await promote(
+        db_session,
+        AsyncMock(),
+        problem=_bernoulli_problem(),
+        mint_plan=_mint_plan(concept_id),
+        search_space_id=space,
+        concept_problem_id=problem_id,
+        existing_problem_hashes=set(),
+        solution_source="extracted",
+    )
+
+    assert result.promoted is True
+    row = await db_session.get(ConceptProblem, problem_id)
+    assert row.solution_source == "authored"
+
+
+# --------------------------------------------------------------------------- #
 # T-PR2 — fail returns failed_gate, no flip, no project_canon
 # --------------------------------------------------------------------------- #
 async def test_promote_fail_returns_failed_gate_no_flip(db_session, monkeypatch):

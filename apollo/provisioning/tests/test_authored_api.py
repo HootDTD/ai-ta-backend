@@ -411,6 +411,9 @@ async def test_approve_held_problem_promotes_chosen_reference(db_session, monkey
     async def _promote(db, neo, **kwargs):
         assert neo == "neo"
         assert kwargs["concept_problem_id"] == int(problem.id)
+        # The teacher-approved EXTRACTED OCR draft's provenance is threaded into
+        # promote so the re-promoted row records "extracted", not "generated".
+        assert kwargs["solution_source"] == "extracted"
         row = await db.get(ConceptProblem, kwargs["concept_problem_id"])
         row.tier = 2
         return PromoteResult(promoted=True)
