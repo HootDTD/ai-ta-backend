@@ -60,6 +60,7 @@
       "id": "depreciation",
       "step": 3,
       "content": {
+        "label": "Depreciation is the value of capital used up during the year; subtracting it from a gross measure yields the corresponding net measure",
         "concept": "depreciation",
         "meaning": "the value of capital worn out or used up during the year; it is subtracted from gross national product to obtain net national product, which is why net measures are smaller than gross measures"
       },
@@ -72,6 +73,7 @@
       "step": 4,
       "content": {
         "order": 1,
+        "label": "Add net income earned from abroad to GDP to obtain gross national product (GNP)",
         "action": "start from GDP and add net income earned from abroad, RIN minus ROUT, to obtain gross national product GNP",
         "purpose": "convert the domestic measure GDP into the national measure GNP before depreciation is removed",
         "uses_equations": [
@@ -89,6 +91,7 @@
       "step": 5,
       "content": {
         "order": 2,
+        "label": "Subtract depreciation from GNP to obtain net national product (NNP)",
         "action": "subtract depreciation DEP from gross national product GNP to obtain net national product NNP",
         "purpose": "remove the capital worn out over the year so the result reflects net rather than gross output",
         "uses_equations": [

@@ -73,6 +73,7 @@
       "id": "compute_net_exports",
       "step": 4,
       "content": {
+        "label": "Compute net exports (the trade balance) by subtracting imports from exports",
         "order": 1,
         "action": "subtract imports M from exports X to compute net exports NX = X - M",
         "purpose": "obtain net exports so it can be added as a single component in the GDP expenditure identity",
@@ -90,6 +91,7 @@
       "id": "sum_components",
       "step": 5,
       "content": {
+        "label": "Sum the four expenditure components -- consumption, investment, government purchases, and net exports -- to obtain GDP",
         "order": 2,
         "action": "add the four expenditure components, consumption C, investment INV, government purchases G, and net exports NX, to obtain GDP",
         "purpose": "produce the numerical GDP using the expenditure approach",

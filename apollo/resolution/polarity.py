@@ -57,6 +57,14 @@ _ANTONYM_PAIRS: tuple[tuple[str, str], ...] = (
 # NOTE: "effect"/"effects" are intentionally excluded — "no effect" vs
 # "has an effect" is a genuine absence-vs-presence conflict, not a
 # zero-magnitude litotes.
+#
+# The litotes pattern may carry an intervening modifier/noun between the
+# negation and the null-change word ("no elevation change", "no significant
+# difference"), so the guard scans a BOUNDED window after "no"/"not" rather
+# than only the immediately-following token. The window is deliberately small
+# so a genuine negation whose null-change word sits further away (e.g.
+# "does not increase despite the later pressure change") still fires.
+_LITOTES_WINDOW: int = 3
 _NULL_CHANGE: frozenset[str] = frozenset(
     {
         "change",
@@ -97,10 +105,14 @@ def _negation_count(raw: str) -> int:
         is_neg = w in _NEGATION or w.endswith("n't")
         if not is_neg:
             continue
-        # Litotes guard: "no change / no difference / …" is ambiguous.
-        next_w = words[i + 1] if i + 1 < len(words) else ""
-        if w in {"no", "not"} and next_w in _NULL_CHANGE:
-            continue
+        # Litotes guard: "no change / no elevation change / no significant
+        # difference / …" is ambiguous polarity (≈ "constant"). Scan a bounded
+        # window after "no"/"not" so an intervening modifier or noun does not
+        # defeat the guard, while a distant null-change word still fires.
+        if w in {"no", "not"}:
+            window = words[i + 1 : i + 1 + _LITOTES_WINDOW]
+            if any(nw in _NULL_CHANGE for nw in window):
+                continue
         n += 1
     return n
 

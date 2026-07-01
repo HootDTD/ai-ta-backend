@@ -21,6 +21,7 @@ Writes:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -41,7 +42,7 @@ from apollo.resolution.candidates import (  # noqa: E402
 )
 from apollo.resolution.embedding import CandidateEmbeddingCache  # noqa: E402
 from apollo.resolution.nli_adjudicator import TransformersNLIAdjudicator  # noqa: E402
-from apollo.resolution.nli_config import NLI_DEVICE, NLI_MODEL_NAME, load_nli_params  # noqa: E402
+from apollo.resolution.nli_config import NLI_DEVICE, NLI_MODEL_SMALL, load_nli_params  # noqa: E402
 from apollo.resolution.nli_resolution import NLIContext  # noqa: E402
 from apollo.resolution.resolver import resolve_attempt  # noqa: E402
 from apollo.resolution.semantic_shortlist import (  # noqa: E402
@@ -57,8 +58,13 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 # NLI context — built once, shared across all problems
 # ---------------------------------------------------------------------------
 
-print("Loading NLI model (cross-encoder/nli-deberta-v3-small)...", flush=True)
-_adj = TransformersNLIAdjudicator(NLI_MODEL_NAME, device=NLI_DEVICE)
+# Model is selectable via env so the same probe produces a clean small-vs-large
+# comparison. Defaults to the production small model.
+PROBE_MODEL = os.environ.get("NLI_PROBE_MODEL", NLI_MODEL_SMALL)
+MODEL_SLUG = PROBE_MODEL.split("/")[-1]
+
+print(f"Loading NLI model ({PROBE_MODEL})...", flush=True)
+_adj = TransformersNLIAdjudicator(PROBE_MODEL, device=NLI_DEVICE)
 _params = load_nli_params()
 NLI_CTX = NLIContext(
     nli=_adj,
@@ -66,7 +72,7 @@ NLI_CTX = NLIContext(
     cache=CandidateEmbeddingCache(),
     params=_params,
 )
-print(f"Model loaded: {NLI_MODEL_NAME}  device={NLI_DEVICE}", flush=True)
+print(f"Model loaded: {PROBE_MODEL}  device={NLI_DEVICE}", flush=True)
 print(
     f"NLI params: min_entailment={_params.min_entailment}  "
     f"max_contradiction={_params.max_contradiction}  "
@@ -632,7 +638,7 @@ def main() -> None:
 
     # --- Serialise to JSON --------------------------------------------------
     all_results = [result_bern, result_econ_a, result_econ_b]
-    json_path = OUT_DIR / "resolution_results.json"
+    json_path = OUT_DIR / f"resolution_results_{MODEL_SLUG}.json"
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(
             [
@@ -648,7 +654,7 @@ def main() -> None:
     print(f"\nResults written -> {json_path}", flush=True)
 
     # --- Write markdown draft -----------------------------------------------
-    md_path = OUT_DIR / "resolution_draft.md"
+    md_path = OUT_DIR / f"resolution_draft_{MODEL_SLUG}.md"
     _write_markdown(all_results, md_path)
     print(f"Draft written  -> {md_path}", flush=True)
 
@@ -696,7 +702,7 @@ def _write_markdown(results: list[ProbeResult], path: Path) -> None:
     lines: list[str] = [
         "# NLI Grading Probe — Resolution Results",
         "",
-        f"**Date:** 2026-06-30  **Model:** `{NLI_MODEL_NAME}`  **Device:** `{NLI_DEVICE}`",
+        f"**Date:** 2026-06-30  **Model:** `{PROBE_MODEL}`  **Device:** `{NLI_DEVICE}`",
         "",
         "**NLI params:**",
         f"- `min_entailment` = {_params.min_entailment}",
