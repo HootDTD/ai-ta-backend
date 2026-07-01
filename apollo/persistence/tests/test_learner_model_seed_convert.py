@@ -187,9 +187,32 @@ def test_reference_solution_to_entities_kinds_and_keys():
 def test_reference_solution_display_name_from_label():
     problem = _load_problem(1)
     by_key = _by_key(reference_solution_to_entities(problem))
+    # display_name comes from content.label for every labeled reference step —
+    # equations, conditions, AND the conceptual procedure/simplification steps
+    # (the NLI-tier label backfill authored a content.label on all of them).
     assert by_key["eq.continuity"].display_name == "Continuity (mass conservation)"
-    # A node with no content.label falls back to a humanized node id.
-    assert by_key["proc.plan_apply_continuity"].display_name == "Plan Apply Continuity"
+    assert (
+        by_key["proc.plan_apply_continuity"].display_name
+        == "Apply the continuity equation to solve for the outlet velocity v2"
+    )
+
+
+def test_reference_solution_display_name_humanize_fallback():
+    # A reference step with NO content.label still falls back to a humanized
+    # node id — the label path is preferred, humanize is the safety net.
+    problem = {
+        "reference_solution": [
+            {
+                "id": "plan_do_the_thing",
+                "step": 1,
+                "content": {"order": 1, "action": "do the thing"},
+                "entity_key": "proc.plan_do_the_thing",
+                "entry_type": "procedure_step",
+            }
+        ]
+    }
+    by_key = _by_key(reference_solution_to_entities(problem))
+    assert by_key["proc.plan_do_the_thing"].display_name == "Plan Do The Thing"
 
 
 def test_reference_entities_dedup_shared_ids_across_problems():
