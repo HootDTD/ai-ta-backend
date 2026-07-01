@@ -496,6 +496,136 @@ async def test_cross_course_no_local_match_stays_distinct(db_session):
 
 
 # --------------------------------------------------------------------------- #
+# PR2 — concept-scoped pool (Part A) + same-mint exclusion (Part B). These are
+# the structural fix for the 2026-06-30 dedup false-merge family: the candidate
+# pool is restricted to the CURRENT concept (no cross-concept/foreign-set merge)
+# and an entity minted earlier in the SAME mint is kept OUT of the pool (so two
+# distinct nodes of one problem -- m, M -- can't fuse).
+# --------------------------------------------------------------------------- #
+async def _seed_two_concept_course(db, *, slug, a_entities, b_entities):
+    """Seed one SearchSpace -> Subject -> TWO concepts (A, B) in the SAME course.
+    Returns (search_space_id, concept_a_id, concept_b_id, ids_a, ids_b)."""
+    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    db.add(space)
+    await db.flush()
+    subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
+    db.add(subj)
+    await db.flush()
+
+    async def _concept(cslug, entities):
+        concept = Concept(subject_id=subj.id, slug=cslug, display_name="Concept")
+        db.add(concept)
+        await db.flush()
+        ids: dict[str, int] = {}
+        for canonical_key, scope_summary in entities:
+            ent = KGEntity(
+                concept_id=concept.id,
+                canonical_key=canonical_key,
+                kind="quantity",
+                display_name=canonical_key,
+                payload={},
+                aliases=[],
+                scope_summary=scope_summary,
+            )
+            db.add(ent)
+            await db.flush()
+            ids[canonical_key] = ent.id
+        return concept.id, ids
+
+    ca, ids_a = await _concept(f"ka-{slug}", a_entities)
+    cb, ids_b = await _concept(f"kb-{slug}", b_entities)
+    return space.id, ca, cb, ids_a, ids_b
+
+
+async def test_cross_concept_slug_stays_distinct(db_session):
+    """Part A: a slug that exists only in a SIBLING concept of the same course does
+    NOT merge -- it mints fresh. Regresses the audit's foreign-set binding
+    (proc.proc_1 slug-merged into a prior concept). RED without the concept_id pool
+    filter (slug-merges cross-concept)."""
+    ss, _ca, cb, _ids_a, _ids_b = await _seed_two_concept_course(
+        db_session,
+        slug="xc-slug",
+        a_entities=[("proc.proc_1", "BASE")],
+        b_entities=[("ent.unrelated", "BELOW_0_50")],
+    )
+    cand = _Candidate(canonical_key="proc.proc_1", scope_summary="MERGE_0_98")
+    verdict = await resolve_candidate(
+        db_session,
+        search_space_id=ss,
+        concept_id=cb,  # minting under concept B; the slug lives in concept A
+        candidate=cand,
+        embed_fn=_embed,
+        judge_fn=_judge_distinct,
+    )
+    assert verdict.verdict == "distinct"
+    assert verdict.matched_entity_id is None
+
+
+async def test_cross_concept_embedding_stays_distinct(db_session):
+    """Part A: a byte-identical scope_summary in a SIBLING concept does not
+    embedding-merge across concepts (cosine 1.0 but different concept). RED without
+    the concept_id pool filter (cross-concept cosine fusion)."""
+    ss, _ca, cb, _ids_a, _ids_b = await _seed_two_concept_course(
+        db_session,
+        slug="xc-embed",
+        a_entities=[("ent.a", "BASE")],
+        b_entities=[("ent.b", "BELOW_0_50")],
+    )
+    cand = _Candidate(canonical_key="cand.new", scope_summary="BASE")
+    verdict = await resolve_candidate(
+        db_session,
+        search_space_id=ss,
+        concept_id=cb,
+        candidate=cand,
+        embed_fn=_embed,
+        judge_fn=_judge_distinct,
+    )
+    assert verdict.verdict == "distinct"
+    assert verdict.matched_entity_id is None
+
+
+async def test_exclude_entity_ids_forces_distinct(db_session):
+    """Part B: an entity in exclude_entity_ids is kept OUT of the candidate pool, so
+    a candidate cannot dedup against an entity minted earlier in the SAME mint --
+    what keeps two distinct nodes of one problem (m, M) from fusing. RED without the
+    param (slug-merges into the excluded entity)."""
+    ss, concept_id, ids = await _seed_course(
+        db_session, slug="excl", entities=[("ent.x", "BASE")]
+    )
+    cand = _Candidate(canonical_key="ent.x", scope_summary="BASE")
+    verdict = await resolve_candidate(
+        db_session,
+        search_space_id=ss,
+        concept_id=concept_id,
+        candidate=cand,
+        embed_fn=_embed,
+        judge_fn=_judge_distinct,
+        exclude_entity_ids={ids["ent.x"]},
+    )
+    assert verdict.verdict == "distinct"
+    assert verdict.matched_entity_id is None
+
+
+async def test_exclude_entity_ids_none_preserves_merge(db_session):
+    """Part B regression: with no exclusion (the default), a slug still merges --
+    the new param must not change existing behavior when omitted/empty."""
+    ss, concept_id, ids = await _seed_course(
+        db_session, slug="excl-none", entities=[("ent.x", "BASE")]
+    )
+    cand = _Candidate(canonical_key="ent.x", scope_summary="MERGE_0_98")
+    verdict = await resolve_candidate(
+        db_session,
+        search_space_id=ss,
+        concept_id=concept_id,
+        candidate=cand,
+        embed_fn=_embed,
+        judge_fn=_judge_distinct,
+    )
+    assert verdict.verdict == "merged"
+    assert verdict.matched_entity_id == ids["ent.x"]
+
+
+# --------------------------------------------------------------------------- #
 # Tier-1 — determinism / first-writer-wins (real-PG)
 # --------------------------------------------------------------------------- #
 
