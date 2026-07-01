@@ -1,0 +1,16 @@
+# Apollo NLI resolver tier (local NLI adjudicator) — OPTIONAL.
+#
+# Install ONLY when enabling the tier (APOLLO_NLI_ENABLED=1). These are kept out
+# of the main requirements.txt so the default CI + deploy stay lean while the
+# tier is default-OFF / dormant (torch is a large dependency).
+#
+#   pip install -r requirements-nli.txt
+#
+# NOTE (Windows local dev): torch 2.12.1+cpu ships a c10.dll that fails to load
+# with WinError 1114; torch 2.6.0+cpu is verified working. Install the CPU wheel
+# from the pytorch index if you don't need CUDA:
+#   pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.6.0"
+# Linux CI is unaffected by the Windows wheel issue.
+transformers>=4.44,<5
+torch>=2.2
+sentencepiece

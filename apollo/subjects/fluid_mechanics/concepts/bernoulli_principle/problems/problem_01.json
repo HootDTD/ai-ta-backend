@@ -83,6 +83,7 @@
       "id": "horizontal_simplification",
       "step": 4,
       "content": {
+        "label": "Horizontal pipe: both sections are at the same height, so the gravitational potential-energy terms cancel",
         "applies_when": "h1 == h2",
         "substitution": {
           "h2": "h1"
@@ -99,6 +100,7 @@
       "id": "plan_apply_continuity",
       "step": 5,
       "content": {
+        "label": "Apply the continuity equation to solve for the outlet velocity v2",
         "order": 1,
         "action": "use the continuity equation with the known rho, A1, v1, and A2 to solve for v2",
         "purpose": "obtain v2 so it can be plugged into bernoulli at section 2",
@@ -116,6 +118,7 @@
       "id": "plan_apply_horizontal_simplification",
       "step": 6,
       "content": {
+        "label": "Use the horizontal-pipe assumption to cancel the gravity terms in Bernoulli's equation",
         "order": 2,
         "action": "since the pipe is horizontal, set h1 equal to h2 so the gravitational terms cancel out of bernoulli",
         "purpose": "simplify bernoulli to an equation relating only P1, P2, v1, and v2",
@@ -134,6 +137,7 @@
       "id": "plan_solve_bernoulli_for_p2",
       "step": 7,
       "content": {
+        "label": "Substitute the known values into the simplified Bernoulli equation and solve for the section-2 pressure P2",
         "order": 3,
         "action": "substitute v2 and the known P1, rho, v1 into the simplified bernoulli and solve for P2",
         "purpose": "produce the numerical answer for the pressure at section 2",

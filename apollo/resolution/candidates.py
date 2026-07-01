@@ -27,6 +27,7 @@ RESOLUTION_METHODS: tuple[str, ...] = (
     "derived",
     "alias",
     "clarification",
+    "nli",  # recall-only fallback (cap 0.88) — see nli_resolution.py
     "fuzzy",
     "llm",
     "unresolved",
@@ -40,6 +41,7 @@ METHOD_CONFIDENCE_CAP: dict[str, float] = {
     "derived": 0.95,
     "alias": 0.92,
     "clarification": 0.90,
+    "nli": 0.88,
     "fuzzy": 0.80,
     "llm": 0.75,
     "unresolved": 0.00,
@@ -55,6 +57,13 @@ _ENTRY_TYPE_TO_NODE_TYPE: dict[str, NodeType] = {
     "procedure_step": "procedure_step",
     "definition": "definition",
 }
+
+# Node types the NLI tier attempts. Excludes `equation` (exact/symbolic/derived
+# already cover it) and `variable_mapping` (surface is a bare `term` — degenerate
+# for sentence-level inference).
+NLI_NODE_TYPES: frozenset[str] = frozenset(
+    {"procedure_step", "condition", "definition", "simplification"}
+)
 
 
 @dataclass(frozen=True)

@@ -4,6 +4,7 @@ returns no hints and persists nothing — teaching never blocks (spec §12)."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,7 @@ from apollo.clarification.probe import build_probe_hint
 from apollo.clarification.store import write_asked_waiting
 from apollo.resolution import find_residual_nodes
 from apollo.resolution.candidates import Candidate
+from apollo.resolution.nli_resolution import NLIContext
 from apollo.resolution.tiers import student_surface_text
 
 _LOG = logging.getLogger(__name__)
@@ -34,6 +36,7 @@ async def run_clarification_detection(
     search_space_id: int,
     concept_id: int | None,
     asked_turn: int,
+    nli_ctx: NLIContext | None = None,
 ) -> list[str]:
     """Detect ambiguous residual nodes, persist asked_waiting rows, and return
     the answer-blind probe hints for draft_reply. Returns [] on any failure or
@@ -41,9 +44,25 @@ async def run_clarification_detection(
     if not parsed_nodes or not candidates:
         return []
     try:
-        residual = find_residual_nodes(
-            parsed_nodes, candidates, symbolic_mappings=symbolic_mappings
-        )
+        # Conditional offload: when NLI is active, find_residual_nodes runs via
+        # a thread executor so the CPU-bound model never blocks the async event
+        # loop.  When nli_ctx is None (the default off-path) the call is
+        # synchronous — byte-identical to the pre-NLI code.
+        if nli_ctx is not None and nli_ctx.nli is not None:
+            loop = asyncio.get_running_loop()
+            residual = await loop.run_in_executor(
+                None,
+                lambda: find_residual_nodes(
+                    parsed_nodes,
+                    candidates,
+                    symbolic_mappings=symbolic_mappings,
+                    nli_ctx=nli_ctx,
+                ),
+            )
+        else:
+            residual = find_residual_nodes(
+                parsed_nodes, candidates, symbolic_mappings=symbolic_mappings
+            )
         if not residual:
             return []
         flagged = detect_ambiguous_nodes(residual, candidates, embedder=embedder, cache=cache)
