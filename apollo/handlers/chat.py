@@ -384,11 +384,12 @@ async def handle_chat(
                 from apollo.handlers import done_grading as _dg  # noqa: PLC0415
 
                 _nli_ctx = _dg._nli_context()
-                if _nli_ctx is not None and len(nodes) > _nli_chat_node_cap():
+                _nli_cap = _nli_chat_node_cap()
+                if _nli_ctx is not None and len(nodes) > _nli_cap:
                     _LOG.info(
                         "nli_chat_skipped_budget nodes=%d cap=%d session_id=%s",
                         len(nodes),
-                        _nli_chat_node_cap(),
+                        _nli_cap,
                         session_id,
                     )
                     _nli_ctx = None
