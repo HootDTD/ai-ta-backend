@@ -219,6 +219,60 @@ def _bare_id_aliases(problem: dict) -> dict[str, str]:
     return aliases
 
 
+def _acyclic_prereq_pairs(
+    pairs: list[tuple[str, str]],
+    key_to_id: dict[str, int],
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Greedily keep a maximal acyclic subset of resolvable prereq key-pairs.
+
+    Each endpoint is resolved to its entity id via ``key_to_id`` BEFORE the
+    acyclicity check, so two keys that dedup MERGED onto one id (or a bare-id
+    alias) — which collapse a ``from != to`` key-pair into a self-loop, or close a
+    cycle, in the ID graph — are caught even though the keys differ. An edge is
+    dropped when it is a self-loop (``from_id == to_id``) or when adding it would
+    close a directed cycle (its target already reaches its source). Deterministic:
+    pairs are processed in input order, so the earliest edge of a conflicting pair
+    is kept and the later (cycle-closing) one dropped. The composite PK
+    ``(from_entity_id, to_entity_id)`` permits both ``(A,B)`` and ``(B,A)`` (and a
+    self-loop) with no DB-level acyclicity, so without this guard a single mint's
+    drafted edges can persist a cycle. SCOPE: ``adj`` starts empty each call and
+    existing ``apollo_entity_prereqs`` rows are NOT loaded, so the guard keeps THIS
+    mint's contributed edges acyclic (catching merge-collapsed self-loops/cycles
+    within the draft) — it does not by itself prevent a cycle formed ACROSS two
+    mints into a shared concept; that is removed at the source by the dedup fix
+    (separate PR) and could be hardened later by seeding ``adj`` from existing
+    edges. Returns ``(kept, dropped)`` as key-pairs."""
+    kept: list[tuple[str, str]] = []
+    dropped: list[tuple[str, str]] = []
+    adj: dict[int, set[int]] = {}  # from_entity_id -> {to_entity_id}
+
+    def _reaches(src: int, dst: int) -> bool:
+        seen: set[int] = set()
+        stack = [src]
+        while stack:
+            node = stack.pop()
+            if node == dst:
+                return True
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(adj.get(node, ()))
+        return False
+
+    for from_key, to_key in pairs:
+        from_id = key_to_id[from_key]
+        to_id = key_to_id[to_key]
+        # Self-loop, or the target already reaches the source -> adding the edge
+        # would introduce a cycle. Drop it.
+        if from_id == to_id or _reaches(to_id, from_id):
+            dropped.append((from_key, to_key))
+            continue
+        adj.setdefault(from_id, set()).add(to_id)
+        kept.append((from_key, to_key))
+
+    return kept, dropped
+
+
 async def tag_and_mint(
     db,
     pair: ApprovedPair,
@@ -265,6 +319,11 @@ async def tag_and_mint(
     minted_entity_ids: dict[str, int] = {}
     merged_entity_keys: list[str] = []
     misconception_keys: list[str] = [s.canonical_key for s in misc_specs]
+    # Entities resolved EARLIER in THIS mint (minted or merged). They are excluded
+    # from each subsequent candidate's dedup pool so two distinct nodes of one
+    # problem (the m≡M fusion) cannot merge against each other — only PRE-EXISTING
+    # entities from prior mints are legitimate dedup targets (PR2 Part B).
+    resolved_ids: set[int] = set()
 
     for spec in all_specs:
         scope_summary = _scope_summary_for(spec)
@@ -276,10 +335,12 @@ async def tag_and_mint(
             candidate=candidate,
             embed_fn=embed_fn,
             judge_fn=_judge_distinct,
+            exclude_entity_ids=resolved_ids,
         )
         if verdict.verdict == "merged" and verdict.matched_entity_id is not None:
             key_to_id[spec.canonical_key] = verdict.matched_entity_id
             merged_entity_keys.append(spec.canonical_key)
+            resolved_ids.add(verdict.matched_entity_id)
             continue
 
         entity_id, _inserted = await upsert_entity(
@@ -290,6 +351,7 @@ async def tag_and_mint(
         )
         key_to_id[spec.canonical_key] = entity_id
         minted_entity_ids[spec.canonical_key] = entity_id
+        resolved_ids.add(entity_id)
 
     # Register BARE-id aliases so an LLM prereq/opposes draft that names a
     # reference node by its bare id (bernoulli) resolves to the SAME entity as its
@@ -342,6 +404,23 @@ async def tag_and_mint(
                 "event": "tag_mint_dropped_unresolvable_prereqs",
                 "concept_id": concept_id,
                 "dropped": dropped_pairs,
+            },
+        )
+    # Acyclicity guard (audit bug #3): drop any resolvable prereq edge that would
+    # introduce a self-loop or a directed cycle in apollo_entity_prereqs. Runs over
+    # the resolved entity-id graph (key_to_id), so a dedup MERGE that collapses two
+    # keys onto one id (the m≡M fusion) can't sneak a self-loop/cycle through. Scoped
+    # to THIS mint's drafted edges (existing rows are not loaded); it stays even once
+    # dedup stops producing the merge-induced cycles. Cross-run cycles into a shared
+    # concept are addressed at the dedup source, not here.
+    prereq_pairs, cyclic_pairs = _acyclic_prereq_pairs(prereq_pairs, key_to_id)
+    if cyclic_pairs:
+        _LOG.info(
+            "tag_mint_dropped_cyclic_prereqs",
+            extra={
+                "event": "tag_mint_dropped_cyclic_prereqs",
+                "concept_id": concept_id,
+                "dropped": cyclic_pairs,
             },
         )
     await insert_prereqs(db, key_to_id=key_to_id, pairs=prereq_pairs)

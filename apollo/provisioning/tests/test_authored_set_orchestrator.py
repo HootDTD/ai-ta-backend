@@ -161,7 +161,10 @@ async def test_authored_set_label_extract_promotes(db_session, monkeypatch):
     async def _tag_and_mint(db, pair, *, chat_fn, embed_fn):  # noqa: ANN001
         return _mint_plan(concept_id)
 
+    promote_kwargs: dict = {}
+
     async def _promote(db, neo, **kwargs):  # noqa: ANN001
+        promote_kwargs.update(kwargs)
         row = await db.get(ConceptProblem, kwargs["concept_problem_id"])
         row.tier = 2
         return PromoteResult(promoted=True)
@@ -185,6 +188,10 @@ async def test_authored_set_label_extract_promotes(db_session, monkeypatch):
     result = report.problems[0]
     assert result.outcome == "promoted"
     assert result.solution_source == "extracted"
+    # The orchestrator threads the paired-EXTRACTED provenance into promote (so the
+    # persisted apollo_concept_problems row records "extracted", not the generic
+    # "generated" default). promote's own persistence is covered in test_promote.py.
+    assert promote_kwargs["solution_source"] == "extracted"
     assert result.match_method == "label"
     assert result.ocr_confidence == 0.95
     assert result.concept_problem_id is not None

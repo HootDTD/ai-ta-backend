@@ -7,11 +7,14 @@ ladder is:
 
     slug-exact  ->  scope_summary embedding cosine  ->  injected LLM-judge
 
-The COURSE-SCOPE WHERE (``Subject.search_space_id == :search_space_id``) is
-applied in SQL BEFORE any cosine is ever computed (§1.4) — never a global
-similarity search filtered afterward. Two courses that each hold a byte-identical
-``scope_summary`` therefore NEVER merge, because the other course's entity is
-removed from the candidate set first.
+The candidate POOL is scoped in SQL BEFORE any cosine is ever computed (§1.4 +
+PR2 — the 2026-06-30 false-merge fix) — never a global similarity search filtered
+afterward. ``_in_course_entities`` applies, first: ``Subject.search_space_id``
+(two COURSES never merge, even on a byte-identical ``scope_summary``), AND
+``KGEntity.concept_id == :concept_id`` (two CONCEPTS of one course never merge —
+no foreign-set binding / cross-concept fusion); plus ``exclude_entity_ids`` drops
+entities minted earlier in the SAME mint, so two distinct nodes of one problem
+(the ``m≡M`` fusion) cannot fuse against each other.
 
 Embedding source is the on-the-fly-embedded ``KGEntity.scope_summary`` TEXT
 column (migration 030 / WU-3B2a); there is NO persisted entity vector. The
@@ -84,15 +87,25 @@ async def _in_course_entities(
     db: AsyncSession,
     *,
     search_space_id: int,
+    concept_id: int,
     require_summary: bool,
+    exclude_entity_ids: set[int] | None = None,
 ) -> list[KGEntity]:
-    """THE load-bearing course filter (§1.4).
+    """THE load-bearing dedup-pool filter.
 
-    Returns the entities whose concept's subject belongs to ``search_space_id``,
-    ordered by ascending ``KGEntity.id`` (earliest writer first — the
-    deterministic first-writer-wins order). The ``Subject.search_space_id`` WHERE
-    runs in SQL BEFORE any cosine is computed; removing it causes a cross-course
-    false-merge (the property ``test_cross_course_*`` pins).
+    Returns the candidate pool for ``resolve_candidate``: the entities of THIS
+    ``concept_id`` (within ``search_space_id``), ordered by ascending
+    ``KGEntity.id`` (earliest writer first — the deterministic first-writer-wins
+    order). Scoping (PR2 — the 2026-06-30 dedup false-merge fix):
+
+    * ``Subject.search_space_id`` keeps two COURSES apart (the ``test_cross_course_*``
+      property); it runs in SQL BEFORE any cosine.
+    * ``KGEntity.concept_id == concept_id`` keeps two CONCEPTS of one course apart,
+      so a candidate never slug-/cosine-merges into a sibling or earlier-set
+      concept (the audit's foreign-set binding + cross-concept fusions).
+    * ``exclude_entity_ids`` drops entities minted earlier in the SAME mint, so two
+      distinct nodes of one problem (``m``, ``M``) cannot fuse against each other —
+      only PRE-EXISTING entities (from prior mints) are legitimate dedup targets.
 
     ``require_summary=True`` additionally drops ``scope_summary IS NULL`` rows
     (the embedding tier needs a text to embed); the slug tier passes ``False``
@@ -103,10 +116,13 @@ async def _in_course_entities(
         .join(Concept, Concept.id == KGEntity.concept_id)
         .join(Subject, Subject.id == Concept.subject_id)
         .where(Subject.search_space_id == search_space_id)
+        .where(KGEntity.concept_id == concept_id)
         .order_by(KGEntity.id.asc())
     )
     if require_summary:
         stmt = stmt.where(KGEntity.scope_summary.is_not(None))
+    if exclude_entity_ids:
+        stmt = stmt.where(KGEntity.id.not_in(exclude_entity_ids))
     return list((await db.execute(stmt)).scalars().all())
 
 
@@ -152,6 +168,7 @@ async def resolve_candidate(
     embed_fn: Callable[[str], Sequence[float]],
     judge_fn: Callable[..., str],
     ingest_run_id: int | None = None,
+    exclude_entity_ids: set[int] | None = None,
 ) -> DedupVerdict:
     """Resolve ``candidate`` against this course's inventory; return a verdict.
 
@@ -171,7 +188,11 @@ async def resolve_candidate(
     # First-writer-wins: the ascending-id order means the earliest match wins if
     # (defensively) more than one slug somehow collides.
     slug_pool = await _in_course_entities(
-        db, search_space_id=search_space_id, require_summary=False
+        db,
+        search_space_id=search_space_id,
+        concept_id=concept_id,
+        require_summary=False,
+        exclude_entity_ids=exclude_entity_ids,
     )
     for ent in slug_pool:
         if ent.canonical_key == candidate_key:
@@ -195,7 +216,11 @@ async def resolve_candidate(
 
     # --- EMBEDDING tier ----------------------------------------------------- #
     embed_pool = await _in_course_entities(
-        db, search_space_id=search_space_id, require_summary=True
+        db,
+        search_space_id=search_space_id,
+        concept_id=concept_id,
+        require_summary=True,
+        exclude_entity_ids=exclude_entity_ids,
     )
     if not embed_pool:
         # Nothing to compare against -> distinct (similarity unknown).

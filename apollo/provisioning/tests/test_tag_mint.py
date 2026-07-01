@@ -501,6 +501,30 @@ async def test_tag_and_mint_dedups_via_resolve_candidate(db_session):
     assert rows[0].id == existing_id
 
 
+def _embed_collide(_text: str) -> list[float]:
+    """Every scope_summary maps to the SAME vector, so any two specs embed at
+    cosine 1.0 and WOULD fuse on the embedding tier -- UNLESS the dedup pool
+    excludes entities minted earlier in the same mint. Models the audit's m≡M
+    fusion (distinct variables whose thin scope_summaries embed identically)."""
+    return [1.0, 0.0, 0.0, 0.0]
+
+
+async def test_tag_and_mint_keeps_same_problem_specs_distinct(db_session):
+    """PR2 Part B: two distinct reference-solution nodes of ONE problem must mint as
+    DISTINCT entities even when their scope_summaries embed identically (the m≡M
+    fusion). The dedup pool excludes entities minted earlier in the SAME call, so
+    nothing fuses within a problem. DISCRIMINATING: without the same-mint exclusion
+    the 2nd spec merges into the 1st (merged_entity_keys non-empty, 1 minted)."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-samemint")
+    pair = _approved_pair(search_space_id=ss_id)  # default 2-spec bernoulli problem
+    plan = await tag_and_mint(
+        db_session, pair, chat_fn=_chat_returning(_tag_payload()), embed_fn=_embed_collide
+    )
+    assert plan.merged_entity_keys == []  # nothing fused within the problem
+    assert set(plan.minted_entity_ids) == {"eq.bernoulli", "proc.solve_p2"}
+    assert len(set(plan.minted_entity_ids.values())) == 2  # two DISTINCT entity ids
+
+
 async def test_tag_and_mint_prereqs_inserted(db_session):
     """Drafted prereq pairs land in apollo_entity_prereqs (skip on re-run)."""
     ss_id, _subj = await _seed_course(db_session, slug="c-prereq")
@@ -556,6 +580,130 @@ async def test_tag_and_mint_prereqs_accept_bare_ids(db_session):
         .all()
     )
     assert len(edges) == 1
+
+
+# --------------------------------------------------------------------------- #
+# PR3 — acyclicity guard at mint (audit bug #3): a drafted prereq cycle or
+# self-loop must NOT persist in apollo_entity_prereqs. The guard runs over the
+# resolved ENTITY-ID graph (via key_to_id), so dedup-merged / bare-id-aliased
+# keys that collapse onto ONE id are caught too.
+# --------------------------------------------------------------------------- #
+def test_acyclic_prereq_pairs_drops_self_loop():
+    from apollo.provisioning.tag_mint import _acyclic_prereq_pairs
+
+    kept, dropped = _acyclic_prereq_pairs([("a", "a")], {"a": 1})
+    assert kept == []
+    assert dropped == [("a", "a")]
+
+
+def test_acyclic_prereq_pairs_breaks_two_cycle_keeping_first():
+    from apollo.provisioning.tag_mint import _acyclic_prereq_pairs
+
+    kept, dropped = _acyclic_prereq_pairs([("a", "b"), ("b", "a")], {"a": 1, "b": 2})
+    assert kept == [("a", "b")]  # first edge wins (deterministic input order)
+    assert dropped == [("b", "a")]
+
+
+def test_acyclic_prereq_pairs_breaks_three_cycle():
+    from apollo.provisioning.tag_mint import _acyclic_prereq_pairs
+
+    key_to_id = {"a": 1, "b": 2, "c": 3}
+    kept, dropped = _acyclic_prereq_pairs([("a", "b"), ("b", "c"), ("c", "a")], key_to_id)
+    assert kept == [("a", "b"), ("b", "c")]
+    assert dropped == [("c", "a")]
+
+
+def test_acyclic_prereq_pairs_preserves_dag():
+    from apollo.provisioning.tag_mint import _acyclic_prereq_pairs
+
+    key_to_id = {"a": 1, "b": 2, "c": 3}
+    pairs = [("a", "b"), ("a", "c"), ("b", "c")]
+    kept, dropped = _acyclic_prereq_pairs(pairs, key_to_id)
+    assert kept == pairs
+    assert dropped == []
+
+
+def test_acyclic_prereq_pairs_handles_diamond_reconvergence():
+    """A diamond (x->a->c, x->b->c) makes the reachability DFS reach a shared node
+    by two paths; the guard must still keep an acyclic edge into the diamond root
+    (no false cycle) while traversing the reconvergence."""
+    from apollo.provisioning.tag_mint import _acyclic_prereq_pairs
+
+    key_to_id = {"x": 1, "a": 2, "b": 3, "c": 4, "d": 5}
+    pairs = [("x", "a"), ("x", "b"), ("a", "c"), ("b", "c"), ("d", "x")]
+    kept, dropped = _acyclic_prereq_pairs(pairs, key_to_id)
+    assert kept == pairs  # d->x does not reach back into the diamond -> no cycle
+    assert dropped == []
+
+
+def test_acyclic_prereq_pairs_drops_merge_collapsed_self_loop():
+    """When dedup merges two distinct keys onto ONE entity id, an edge between them
+    collapses to a self-loop in the ID graph — the guard must catch it even though
+    the KEYS differ (this is why the check resolves through key_to_id). Mirrors the
+    audit's m≡M fusion (both keys -> entity 751)."""
+    from apollo.provisioning.tag_mint import _acyclic_prereq_pairs
+
+    key_to_id = {"varmap.vm_m": 751, "varmap.vm_M": 751, "eq.tension": 755}
+    kept, dropped = _acyclic_prereq_pairs(
+        [("varmap.vm_m", "varmap.vm_M"), ("eq.tension", "varmap.vm_M")], key_to_id
+    )
+    assert ("varmap.vm_m", "varmap.vm_M") in dropped  # 751 -> 751 self-loop
+    assert kept == [("eq.tension", "varmap.vm_M")]  # 755 -> 751, fine
+
+
+async def test_tag_and_mint_drops_cyclic_prereq_edge(db_session):
+    """A drafted 2-cycle (A->B, B->A) must not persist as two directed rows: the
+    acyclicity guard drops the reverse edge so apollo_entity_prereqs stays a DAG.
+    DISCRIMINATING: removing the guard REDs (both directed rows would persist)."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-cycle")
+    pair = _approved_pair(search_space_id=ss_id)
+    tag = _tag_payload(
+        prereqs=[["eq.bernoulli", "proc.solve_p2"], ["proc.solve_p2", "eq.bernoulli"]]
+    )
+    plan = await tag_and_mint(
+        db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct
+    )
+    a = plan.minted_entity_ids["eq.bernoulli"]
+    b = plan.minted_entity_ids["proc.solve_p2"]
+    rows = (
+        (
+            await db_session.execute(
+                select(EntityPrereq).where(
+                    EntityPrereq.from_entity_id.in_([a, b]),
+                    EntityPrereq.to_entity_id.in_([a, b]),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    directed = {(r.from_entity_id, r.to_entity_id) for r in rows}
+    assert directed == {(a, b)}  # only the first edge; the reverse was dropped
+    assert plan.prereq_pairs == [("eq.bernoulli", "proc.solve_p2")]
+
+
+async def test_tag_and_mint_drops_self_loop_prereq(db_session):
+    """A drafted self-loop (A->A) is never inserted."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-selfloop")
+    pair = _approved_pair(search_space_id=ss_id)
+    tag = _tag_payload(prereqs=[["eq.bernoulli", "eq.bernoulli"]])
+    plan = await tag_and_mint(
+        db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct
+    )
+    a = plan.minted_entity_ids["eq.bernoulli"]
+    rows = (
+        (
+            await db_session.execute(
+                select(EntityPrereq)
+                .where(EntityPrereq.from_entity_id == a)
+                .where(EntityPrereq.to_entity_id == a)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert rows == []
+    assert plan.prereq_pairs == []
 
 
 async def test_tag_and_mint_links_opposes_bare_id(db_session):
