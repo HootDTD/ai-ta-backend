@@ -20,11 +20,24 @@ from apollo.resolution.nli_resolution import NLIContext
 pytestmark = __import__("pytest").mark.unit
 
 
-def test_nli_context_none_when_flag_off(monkeypatch):
-    """With APOLLO_NLI_ENABLED unset, ``_nli_context()`` must return ``None``
-    — grading is byte-identical to before this change."""
-    monkeypatch.delenv("APOLLO_NLI_ENABLED", raising=False)
+def test_nli_context_none_when_flag_explicitly_off(monkeypatch):
+    """The KILL SWITCH: with APOLLO_NLI_ENABLED=0, ``_nli_context()`` returns
+    ``None`` and grading is byte-identical to the pre-NLI path. (NLI is now
+    default-ON, so OFF must be set explicitly.)"""
+    monkeypatch.setenv("APOLLO_NLI_ENABLED", "0")
     assert dg._nli_context() is None
+
+
+def test_nli_context_built_when_flag_unset(monkeypatch):
+    """NLI is DEFAULT-ON: with APOLLO_NLI_ENABLED UNSET and a patched builder,
+    ``_nli_context()`` returns a populated ``NLIContext`` (the enablement wiring)."""
+    monkeypatch.delenv("APOLLO_NLI_ENABLED", raising=False)
+    monkeypatch.setattr(dg, "_NLI_ADJUDICATOR", None)
+    sentinel = object()
+    monkeypatch.setattr(dg, "_build_adjudicator", lambda: sentinel)
+    ctx = dg._nli_context()
+    assert isinstance(ctx, NLIContext)
+    assert ctx.nli is sentinel
 
 
 def test_nli_context_built_when_flag_on(monkeypatch):

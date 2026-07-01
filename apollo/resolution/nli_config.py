@@ -33,8 +33,16 @@ NLI_MODEL_NAME: str = NLI_MODEL_LARGE
 
 
 def nli_enabled() -> bool:
-    """Check if NLI is enabled via environment flag."""
-    return os.environ.get(NLI_ENABLED_FLAG, "").lower() in ("1", "true", "yes")
+    """Whether the NLI resolver tier is active.
+
+    DEFAULT-ON (2026-07-01, after the per-model threshold tuning cleared the
+    precision gate): an UNSET ``APOLLO_NLI_ENABLED`` means enabled. A deployment
+    (or the test-suite guards) forces it OFF with ``APOLLO_NLI_ENABLED=0`` (or any
+    non-truthy value) — the kill switch."""
+    raw = os.environ.get(NLI_ENABLED_FLAG)
+    if raw is None:
+        return True
+    return raw.strip().lower() in ("1", "true", "yes")
 
 
 def active_nli_model() -> str:

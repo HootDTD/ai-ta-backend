@@ -32,15 +32,25 @@ def _clean_nli_env(monkeypatch):
     yield
 
 
-def test_flag_defaults_off_when_unset(monkeypatch):
+def test_flag_defaults_on_when_unset(monkeypatch):
+    """NLI is DEFAULT-ON (enabled 2026-07-01 after per-model tuning): an unset
+    flag means enabled."""
     monkeypatch.delenv(NLI_ENABLED_FLAG, raising=False)
-    assert nli_enabled() is False
+    assert nli_enabled() is True
 
 
 def test_flag_truthy_values(monkeypatch):
     for v in ("1", "true", "YES"):
         monkeypatch.setenv(NLI_ENABLED_FLAG, v)
         assert nli_enabled() is True
+
+
+def test_flag_explicit_off_values_disable(monkeypatch):
+    """A deployment (or the test guards) can still force NLI OFF explicitly — the
+    kill switch. Anything not truthy disables it."""
+    for v in ("0", "false", "no", "off", ""):
+        monkeypatch.setenv(NLI_ENABLED_FLAG, v)
+        assert nli_enabled() is False
 
 
 # --- active model selection -------------------------------------------------
