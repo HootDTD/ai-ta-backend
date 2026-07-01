@@ -55,10 +55,25 @@ _CLARIFICATION_CACHE = CandidateEmbeddingCache()
 # extra LLM/embedding round-trips, draft_reply gets clarification_hints=None. Flip ON only
 # after rollout/cost review (same posture as APOLLO_GRAPH_SIM_* in done.py).
 _CLARIFICATION_ENABLED_FLAG: str = "APOLLO_CLARIFICATION_ENABLED"
+# Per-turn NLI node budget: when more than this many nodes are parsed in a
+# single utterance, NLI is skipped for that turn (degrades to lexical-only).
+# Synchronous model inference runs per residual node, so uncapped utterances
+# can block the event loop under load.  Raise the cap only after profiling.
+_NLI_CHAT_NODE_CAP_FLAG: str = "APOLLO_NLI_CHAT_MAX_NODES"
+_NLI_CHAT_NODE_CAP_DEFAULT: int = 15
 
 
 def _clarification_enabled() -> bool:
     return os.environ.get(_CLARIFICATION_ENABLED_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _nli_chat_node_cap() -> int:
+    """Read ``APOLLO_NLI_CHAT_MAX_NODES`` from env; default 15 on missing or malformed."""
+    raw = os.environ.get(_NLI_CHAT_NODE_CAP_FLAG)
+    try:
+        return int(raw) if raw is not None else _NLI_CHAT_NODE_CAP_DEFAULT
+    except (ValueError, TypeError):
+        return _NLI_CHAT_NODE_CAP_DEFAULT
 
 
 async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) -> Problem:
@@ -361,6 +376,22 @@ async def handle_chat(
                     judge=default_clarification_judge,
                     answered_turn=next_idx,
                 )
+                # NLI context (budget-gated): reuse done_grading's process
+                # singleton so the transformer model loads once per process.
+                # Per-turn cost is synchronous model inference per residual
+                # node; cap node count via APOLLO_NLI_CHAT_MAX_NODES (default
+                # 15) to avoid blocking the event loop for large utterances.
+                from apollo.handlers import done_grading as _dg  # noqa: PLC0415
+
+                _nli_ctx = _dg._nli_context()
+                if _nli_ctx is not None and len(nodes) > _nli_chat_node_cap():
+                    _LOG.info(
+                        "nli_chat_skipped_budget nodes=%d cap=%d session_id=%s",
+                        len(nodes),
+                        _nli_chat_node_cap(),
+                        session_id,
+                    )
+                    _nli_ctx = None
                 clarification_hints = await run_clarification_detection(
                     db=db,
                     parsed_nodes=nodes,
@@ -374,6 +405,7 @@ async def handle_chat(
                     search_space_id=int(sess.search_space_id),
                     concept_id=sess.concept_id,
                     asked_turn=next_idx + 1,
+                    nli_ctx=_nli_ctx,
                 )
         except Exception as exc:  # noqa: BLE001 - savepoint rolled back; never block teaching
             _LOG.warning("clarification_setup_failed session_id=%s error=%s", session_id, exc)
