@@ -93,9 +93,15 @@ async def promote(
     search_space_id: int,
     concept_problem_id: int,
     existing_problem_hashes: set[str] | frozenset[str],
+    solution_source: str | None = None,
 ) -> PromoteResult:
     """Annotate -> lint -> (on PASS) flip tier 1->2 + store payload +
     ``project_canon``. See the module docstring for the full contract.
+
+    ``solution_source`` is the true per-problem provenance
+    (``"extracted"``/``"generated"``/``"authored"``) the caller knows; it is
+    written ONLY when the row has none yet (default ``"generated"``), so callers
+    that don't thread it keep the old behavior and a pre-stamped row is preserved.
 
     Returns ``PromoteResult(promoted=True)`` on a pass (the orchestrator counts
     it + the row is now teachable), or ``PromoteResult(promoted=False,
@@ -202,8 +208,13 @@ async def promote(
     # re-run re-assigns the SAME tagged concept_id (no-op). (scrape.py:18.)
     row.concept_id = mint_plan.concept_id  # type: ignore[assignment]
     row.tier = 2  # type: ignore[assignment]
+    # Persist the true per-problem provenance the caller threaded (e.g. an authored
+    # set's paired-EXTRACTED solution), falling back to the generic default. The
+    # ``if not`` guard keeps promote idempotent and preserves a Tier-1 row already
+    # stamped by ingest (single-authored -> "authored"): a (re-)promote never
+    # downgrades or overwrites an existing source.
     if not row.solution_source:
-        row.solution_source = _SOLUTION_SOURCE_DEFAULT  # type: ignore[assignment]
+        row.solution_source = solution_source or _SOLUTION_SOURCE_DEFAULT  # type: ignore[assignment]
     await db.flush()
 
     # --- :Canon projection (idempotent MERGE) -------------------------------- #

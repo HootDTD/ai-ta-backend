@@ -334,6 +334,7 @@ async def _process_authored_candidate(
         search_space_id=search_space_id,
         concept_problem_id=int(tier1.id),
         existing_problem_hashes=existing_problem_hashes,
+        solution_source=pair.solution_source,
     )
     if not result.promoted:
         return ProblemResult(
