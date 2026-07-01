@@ -26,9 +26,21 @@ from fastapi import (
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from apollo.auth_deps import require_course_member, require_user
-from apollo.persistence.models import AuthoredSet, ConceptProblem
+from apollo.persistence.models import (
+    ApolloSession,
+    AuthoredSet,
+    Concept,
+    ConceptProblem,
+    DedupDecision,
+    EntityPrereq,
+    KGEntity,
+    LearnerState,
+    MasteryEvent,
+    Misconception,
+)
 from apollo.provisioning.authored_sets.indexing import index_authored_doc
 from apollo.provisioning.authored_sets.orchestrator import (
     _authored_concept_dup_hashes,
@@ -252,6 +264,114 @@ async def get_authored_set(
     }
 
 
+async def _protected_concepts(db: AsyncSession, concept_ids: list[int]) -> set[int]:
+    """Of the candidate concepts, return those that must NOT be torn down because
+    they carry a Postgres footprint beyond the deleted set. STRICT / conservative:
+    ANY single signal spares the whole concept — under-tearing-down is the safe
+    direction (it only leaves KG behind; it never destroys data or crashes). Signals:
+
+      * ``apollo_sessions.concept_id`` — a student opened this concept. This is ALSO
+        the only ``ON DELETE RESTRICT`` FK into ``apollo_concepts`` (migration 018),
+        so sparing session-bound concepts is what keeps ``DELETE apollo_concepts``
+        from hard-failing the whole delete.
+      * ``apollo_learner_state`` / ``apollo_mastery_events`` keyed on the concept's
+        entities — the durable learner belief snapshot + the append-only grading /
+        model-refit corpus. Both CASCADE from ``apollo_kg_entities``, so tearing the
+        concept down would silently destroy them.
+      * ``apollo_misconceptions.concept_id`` — a seed-authored misconception bank
+        (CASCADE → silent loss); its presence marks a shared/seed concept.
+      * an INBOUND cross-concept prereq edge from a SURVIVING concept — an entity of
+        a concept NOT in this teardown batch depends on one of this concept's
+        entities, so this concept is a prerequisite the surviving curriculum graph
+        still needs; deleting it would corrupt that concept's prereq chain. (A
+        dependency from a FELLOW candidate does NOT spare it — both go away
+        together, which is what lets a whole corrupted set's concepts be cleared.)
+    """
+    protected: set[int] = set()
+
+    async def _collect(stmt) -> None:
+        protected.update(
+            int(c) for c in (await db.execute(stmt)).scalars().all() if c is not None
+        )
+
+    await _collect(
+        select(ApolloSession.concept_id)
+        .where(ApolloSession.concept_id.in_(concept_ids))
+        .distinct()
+    )
+    await _collect(
+        select(Misconception.concept_id)
+        .where(Misconception.concept_id.in_(concept_ids))
+        .distinct()
+    )
+    await _collect(
+        select(KGEntity.concept_id)
+        .join(LearnerState, LearnerState.entity_id == KGEntity.id)
+        .where(KGEntity.concept_id.in_(concept_ids))
+        .distinct()
+    )
+    await _collect(
+        select(KGEntity.concept_id)
+        .join(MasteryEvent, MasteryEvent.entity_id == KGEntity.id)
+        .where(KGEntity.concept_id.in_(concept_ids))
+        .distinct()
+    )
+    # Inbound cross-concept prereq: FROM a SURVIVING concept's entity TO this
+    # concept's entity (``from`` depends on ``to``). "Surviving" excludes the
+    # concepts still slated for teardown — i.e. candidates NOT already spared by a
+    # signal above (``still_candidate``). Excluding the already-``protected`` set
+    # matters: a concept spared by e.g. a session is a survivor whose OWN
+    # prerequisites must also be kept, so its dependency must spare its target. A
+    # dependency from a fellow STILL-candidate does not spare (both clear together,
+    # so a corrupted set's mutually-linked concepts still go). RESIDUAL (accepted as
+    # safe KG drift, never data loss): this is a single pass, not a fixpoint, so a
+    # concept protected ONLY transitively through this same prereq relation is not
+    # re-fed as a survivor — a deep prereq chain among orphans may shed one edge.
+    still_candidate = [cid for cid in concept_ids if cid not in protected]
+    prereq_target = aliased(KGEntity)
+    prereq_source = aliased(KGEntity)
+    await _collect(
+        select(prereq_target.concept_id)
+        .join(EntityPrereq, EntityPrereq.to_entity_id == prereq_target.id)
+        .join(prereq_source, prereq_source.id == EntityPrereq.from_entity_id)
+        .where(prereq_target.concept_id.in_(still_candidate))
+        .where(prereq_source.concept_id.notin_(still_candidate))
+        .distinct()
+    )
+    return protected
+
+
+async def _concepts_with_canon_history(neo, concept_ids: list[int]) -> set[int]:
+    """Return the subset of ``concept_ids`` whose ``:Canon`` nodes carry at least one
+    incoming ``RESOLVES_TO`` edge — i.e. real student grading history. Read-only; a
+    concept with such history must NOT be torn down. Callers pass a non-empty list
+    (an ``UNWIND []`` would be a harmless no-op regardless)."""
+    async with neo.session() as s:
+        result = await s.run(
+            "UNWIND $cids AS cid\n"
+            "MATCH (c:Canon {concept_id: cid})<-[:RESOLVES_TO]-()\n"
+            "RETURN DISTINCT cid AS cid",
+            cids=concept_ids,
+        )
+        return {int(rec["cid"]) async for rec in result}
+
+
+async def _detach_delete_canon(neo, concept_ids: list[int]) -> None:
+    """DETACH DELETE each concept's ``:Canon`` nodes, GUARDED by the absence of an
+    incoming ``RESOLVES_TO`` so student grading history is never destroyed (a
+    RESOLVES_TO that appeared after the read below is still spared). Idempotent — no
+    shared txn with Postgres, and a re-run over already-gone nodes is a no-op.
+    Callers pass a non-empty list (an ``UNWIND []`` would be a harmless no-op)."""
+    async with neo.session() as s:
+        await s.run(
+            "UNWIND $cids AS cid\n"
+            "MATCH (c:Canon {concept_id: cid})\n"
+            "WHERE NOT (c)<-[:RESOLVES_TO]-()\n"
+            "DETACH DELETE c",
+            cids=concept_ids,
+        )
+
+
 @router.delete("/authored-sets/{set_id}")
 async def delete_authored_set(
     set_id: int,
@@ -271,9 +391,17 @@ async def delete_authored_set(
         ``aita_chunks`` ON DELETE CASCADE FK);
       * the ``apollo_authored_sets`` row itself.
 
-    The shared per-concept Neo4j ``:Canon`` projection is intentionally left
-    intact: it is concept-level metadata shared with sibling problems and the
-    §8 seed, so tearing it down here would break unrelated content.
+    Per-concept KG teardown is STRICTLY scoped to concepts this set fully ORPHANED.
+    A concept is torn down ONLY if it has ZERO footprint of any kind beyond this
+    set: no remaining ``ConceptProblem``s, no Postgres student/seed footprint
+    (``_protected_concepts`` — sessions, learner_state, mastery_events,
+    misconceptions, or an inbound cross-concept prereq), AND no ``:Canon`` student
+    ``RESOLVES_TO`` history. For those (and ONLY those) the reference graph a plain
+    delete used to leave behind is torn down: ``apollo_dedup_decisions`` +
+    ``apollo_concepts`` (KGEntity + ``apollo_entity_prereqs`` cascade) in Postgres,
+    and the guarded ``:Canon`` nodes in Neo4j. Every ambiguous case spares the
+    concept — under-tearing-down only leaves KG behind, whereas over-tearing-down
+    would 500 (the ``apollo_sessions`` RESTRICT FK) or destroy student data.
     """
     auth = await require_user(request)
     row = await db.get(AuthoredSet, set_id)
@@ -290,7 +418,22 @@ async def delete_authored_set(
         }
     )
     removed_problems = 0
+    # Capture the concepts these problems belong to BEFORE deleting the rows — once
+    # they are gone the concept link is unrecoverable.
+    affected_concept_ids: list[int] = []
     if problem_ids:
+        affected_concept_ids = [
+            int(c)
+            for c in (
+                await db.execute(
+                    select(ConceptProblem.concept_id)
+                    .where(ConceptProblem.id.in_(problem_ids))
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        ]
         res = await db.execute(
             delete(ConceptProblem).where(ConceptProblem.id.in_(problem_ids))
         )
@@ -306,8 +449,63 @@ async def delete_authored_set(
         res = await db.execute(delete(AITADocument).where(AITADocument.id.in_(doc_ids)))
         removed_documents = res.rowcount or 0
 
+    # --- Full KG teardown for concepts this set ORPHANED --------------------- #
+    # STRICT / conservative: a concept is torn down ONLY if it has ZERO footprint of
+    # any kind beyond this set — no remaining problems, no Postgres student/seed
+    # footprint (_protected_concepts), and no :Canon RESOLVES_TO grading history.
+    # Under-tearing-down only leaves KG behind; over-tearing-down would 500 or
+    # destroy student data, so every ambiguous case spares the concept.
+    orphaned_concept_ids: list[int] = []
+    neo = None
+    if affected_concept_ids:
+        # PG-orphan candidates: affected concepts with NO remaining ConceptProblem
+        # (the set's deletes above are visible in this uncommitted transaction).
+        surviving = {
+            int(c)
+            for c in (
+                await db.execute(
+                    select(ConceptProblem.concept_id)
+                    .where(ConceptProblem.concept_id.in_(affected_concept_ids))
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        }
+        protected = await _protected_concepts(
+            db, [cid for cid in affected_concept_ids if cid not in surviving]
+        )
+        candidates = [
+            cid
+            for cid in affected_concept_ids
+            if cid not in surviving and cid not in protected
+        ]
+        if candidates:
+            neo = get_neo4j_client()
+            with_history = await _concepts_with_canon_history(neo, candidates)
+            orphaned_concept_ids = [cid for cid in candidates if cid not in with_history]
+            if orphaned_concept_ids:
+                # dedup_decisions FK is ON DELETE SET NULL, so delete explicitly
+                # BEFORE the concept; deleting apollo_concepts cascades KGEntity and
+                # apollo_entity_prereqs. apollo_sessions (the only RESTRICT FK) is
+                # already spared by _protected_concepts, so this never hard-fails.
+                await db.execute(
+                    delete(DedupDecision).where(
+                        DedupDecision.concept_id.in_(orphaned_concept_ids)
+                    )
+                )
+                await db.execute(
+                    delete(Concept).where(Concept.id.in_(orphaned_concept_ids))
+                )
+
     await db.delete(row)
     await db.commit()
+
+    # Neo4j shares no txn with Postgres — run the guarded :Canon teardown AFTER the
+    # PG commit so a Neo4j failure cannot roll back the PG delete. Idempotent.
+    if orphaned_concept_ids and neo is not None:
+        await _detach_delete_canon(neo, orphaned_concept_ids)
+
     _LOG.info(
         "authored_set_deleted",
         extra={
@@ -315,12 +513,14 @@ async def delete_authored_set(
             "set_id": set_id,
             "removed_problems": removed_problems,
             "removed_documents": removed_documents,
+            "removed_concepts": len(orphaned_concept_ids),
         },
     )
     return {
         "deleted": True,
         "removed_problems": removed_problems,
         "removed_documents": removed_documents,
+        "removed_concepts": len(orphaned_concept_ids),
     }
 
 

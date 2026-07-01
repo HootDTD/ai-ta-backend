@@ -37,6 +37,54 @@ async def _fake_require_member(**_kwargs):
     return None
 
 
+class _FakeNeoResult:
+    """Async-iterable / single()-able stand-in for a neo4j Result."""
+
+    def __init__(self, records):
+        self._records = list(records)
+
+    def __aiter__(self):
+        return self._agen()
+
+    async def _agen(self):
+        for rec in self._records:
+            yield rec
+
+    async def single(self):
+        return self._records[0] if self._records else None
+
+
+class _FakeNeoSession:
+    def __init__(self, client):
+        self._client = client
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+    async def run(self, cypher, **params):
+        self._client.calls.append((cypher, params))
+        if "RETURN DISTINCT cid" in cypher:  # the :Canon student-history read
+            cids = params.get("cids", [])
+            recs = [{"cid": c} for c in cids if c in self._client.with_history]
+        else:
+            recs = []
+        return _FakeNeoResult(recs)
+
+
+class _FakeNeo:
+    """Records every Cypher run; reports RESOLVES_TO history for `with_history`."""
+
+    def __init__(self, with_history=None):
+        self.calls = []
+        self.with_history = set(with_history or [])
+
+    def session(self):
+        return _FakeNeoSession(self)
+
+
 async def _seed_course(db, *, slug: str = "aas-api") -> tuple[int, int]:
     from apollo.persistence.models import Concept, Subject
     from database.models import SearchSpace
@@ -550,7 +598,8 @@ async def test_delete_failed_set_with_no_problems(db_session, monkeypatch):
     set_id = int(row.id)
 
     resp = await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
-    assert resp == {"deleted": True, "removed_problems": 0, "removed_documents": 0}
+    assert resp == {"deleted": True, "removed_problems": 0, "removed_documents": 0,
+                    "removed_concepts": 0}
     assert await db_session.get(AuthoredSet, set_id) is None
 
 
@@ -585,3 +634,350 @@ async def test_delete_authored_set_enforces_membership(db_session, monkeypatch):
         await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
     assert exc.value.status_code == 403
     assert await db_session.get(AuthoredSet, set_id) is not None
+
+
+async def _seed_orphanable_concept_kg(db, monkeypatch, *, slug):
+    """Seed a course + a concept whose ONLY ConceptProblem belongs to one authored
+    set, plus the KG the set minted (two entities, a prereq edge, a dedup decision).
+    Returns (aapi, space_id, concept_id, entity_ids, set_id)."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import (
+        AuthoredSet,
+        ConceptProblem,
+        DedupDecision,
+        EntityPrereq,
+        KGEntity,
+    )
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
+    space_id, concept_id = await _seed_course(db, slug=slug)
+
+    e1 = KGEntity(concept_id=concept_id, canonical_key="eq.a", kind="equation",
+                  display_name="a", payload={}, aliases=[])
+    e2 = KGEntity(concept_id=concept_id, canonical_key="proc.b", kind="procedure",
+                  display_name="b", payload={}, aliases=[])
+    db.add_all([e1, e2])
+    await db.flush()
+    db.add(EntityPrereq(from_entity_id=e2.id, to_entity_id=e1.id))
+    db.add(DedupDecision(search_space_id=space_id, concept_id=concept_id,
+                         candidate_key="eq.a", method="slug", similarity=None, verdict="distinct"))
+    cp = ConceptProblem(concept_id=concept_id, problem_code="scrape.a", difficulty="m",
+                        payload={}, tier=2, search_space_id=space_id)
+    db.add(cp)
+    await db.flush()
+    entity_ids = (int(e1.id), int(e2.id))
+
+    target = AuthoredSet(
+        search_space_id=space_id, set_index=1, status="done",
+        result_summary={"problems": [{"concept_problem_id": cp.id, "outcome": "promoted"}]},
+    )
+    db.add(target)
+    await db.flush()
+    return aapi, space_id, concept_id, entity_ids, int(target.id)
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_tears_down_orphaned_concept(db_session, monkeypatch):
+    """When the deleted set's problems were the ONLY ones on a concept and there is
+    no :Canon student history, the concept's full KG is torn down: apollo_concepts
+    (cascading KGEntity + apollo_entity_prereqs) + apollo_dedup_decisions in
+    Postgres, and its :Canon nodes are DETACH DELETEd (guarded) in Neo4j."""
+    from apollo.persistence.models import Concept, DedupDecision, EntityPrereq, KGEntity
+
+    aapi, _space_id, concept_id, (e1_id, e2_id), set_id = await _seed_orphanable_concept_kg(
+        db_session, monkeypatch, slug="aas-orphan"
+    )
+    fake_neo = _FakeNeo()  # no RESOLVES_TO history for any concept
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: fake_neo)
+
+    resp = await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
+    assert resp["removed_concepts"] == 1
+
+    assert await db_session.get(Concept, concept_id) is None
+    assert await db_session.get(KGEntity, e1_id) is None
+    assert await db_session.get(KGEntity, e2_id) is None
+    remaining_prereqs = (await db_session.execute(
+        select(func.count()).select_from(EntityPrereq).where(EntityPrereq.from_entity_id == e2_id)
+    )).scalar_one()
+    assert remaining_prereqs == 0
+    remaining_dedup = (await db_session.execute(
+        select(func.count()).select_from(DedupDecision).where(DedupDecision.concept_id == concept_id)
+    )).scalar_one()
+    assert remaining_dedup == 0
+    # A guarded :Canon DETACH DELETE was issued for this concept.
+    assert any(
+        "DETACH DELETE" in cypher and concept_id in params.get("cids", [])
+        for cypher, params in fake_neo.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_spares_concept_with_student_history(db_session, monkeypatch):
+    """A concept whose :Canon carries RESOLVES_TO student history is NOT torn down,
+    even when the deleted set's problems were its only problems — grading history is
+    never destroyed. No PG concept/KG delete, no Neo4j DETACH DELETE."""
+    from apollo.persistence.models import Concept, DedupDecision, KGEntity
+
+    aapi, _space_id, concept_id, (e1_id, _e2_id), set_id = await _seed_orphanable_concept_kg(
+        db_session, monkeypatch, slug="aas-history"
+    )
+    fake_neo = _FakeNeo(with_history={concept_id})  # RESOLVES_TO exists -> spare
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: fake_neo)
+
+    resp = await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
+    assert resp["removed_concepts"] == 0
+
+    assert await db_session.get(Concept, concept_id) is not None
+    assert await db_session.get(KGEntity, e1_id) is not None
+    remaining_dedup = (await db_session.execute(
+        select(func.count()).select_from(DedupDecision).where(DedupDecision.concept_id == concept_id)
+    )).scalar_one()
+    assert remaining_dedup == 1
+    # The guard spares it: NO DETACH DELETE was issued.
+    assert not any("DETACH DELETE" in cypher for cypher, _p in fake_neo.calls)
+
+
+_STUDENT_UUID = "00000000-0000-0000-0000-000000000009"
+
+
+async def _assert_concept_spared(db, aapi, monkeypatch, *, concept_id, set_id):
+    """Delete the set with a no-history fake Neo4j and assert the concept survived,
+    nothing was reported torn down, and no :Canon DETACH DELETE was issued."""
+    from apollo.persistence.models import Concept
+
+    fake_neo = _FakeNeo()
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: fake_neo)
+    resp = await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db)
+    assert resp["deleted"] is True
+    assert resp["removed_concepts"] == 0
+    assert await db.get(Concept, concept_id) is not None
+    assert not any("DETACH DELETE" in cypher for cypher, _p in fake_neo.calls)
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_spares_concept_with_session(db_session, monkeypatch):
+    """A concept any student ever opened has an apollo_sessions row — the only
+    ON DELETE RESTRICT FK into apollo_concepts. It must be spared (else the whole
+    delete 500s and the set becomes permanently undeletable)."""
+    from apollo.persistence.models import ApolloSession
+
+    aapi, space_id, concept_id, _entities, set_id = await _seed_orphanable_concept_kg(
+        db_session, monkeypatch, slug="aas-session"
+    )
+    db_session.add(ApolloSession(user_id=_STUDENT_UUID, search_space_id=space_id, concept_id=concept_id))
+    await db_session.flush()
+    await _assert_concept_spared(db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id)
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_spares_concept_with_learner_state(db_session, monkeypatch):
+    """apollo_learner_state (the durable per-learner belief) keyed on the concept's
+    entities CASCADEs from apollo_kg_entities — the concept must be spared."""
+    from apollo.persistence.models import LearnerState
+
+    aapi, space_id, concept_id, (e1_id, _e2_id), set_id = await _seed_orphanable_concept_kg(
+        db_session, monkeypatch, slug="aas-lstate"
+    )
+    db_session.add(LearnerState(
+        user_id=_STUDENT_UUID, search_space_id=space_id, entity_id=e1_id,
+        belief=[0.33, 0.33, 0.34], mastery=0.5, confidence=0.5,
+    ))
+    await db_session.flush()
+    await _assert_concept_spared(db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id)
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_spares_concept_with_mastery_event(db_session, monkeypatch):
+    """apollo_mastery_events (the append-only grading / refit corpus) keyed on the
+    concept's entities CASCADEs — and the all-missing grading path writes one with
+    NO RESOLVES_TO edge, so the Neo4j guard alone would miss it. Must be spared."""
+    from apollo.persistence.models import MasteryEvent
+
+    aapi, space_id, concept_id, (e1_id, _e2_id), set_id = await _seed_orphanable_concept_kg(
+        db_session, monkeypatch, slug="aas-mevent"
+    )
+    db_session.add(MasteryEvent(
+        user_id=_STUDENT_UUID, search_space_id=space_id, entity_id=e1_id,
+        event_kind="missing", prior_belief=[0.33, 0.33, 0.34],
+        posterior_belief=[0.3, 0.3, 0.4], mastery_after=0.4,
+    ))
+    await db_session.flush()
+    await _assert_concept_spared(db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id)
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_spares_concept_with_misconceptions(db_session, monkeypatch):
+    """A seed-authored apollo_misconceptions bank marks a shared/seed concept (it
+    would CASCADE-delete). Must be spared."""
+    from apollo.persistence.models import Misconception
+
+    aapi, _space_id, concept_id, _entities, set_id = await _seed_orphanable_concept_kg(
+        db_session, monkeypatch, slug="aas-misc"
+    )
+    db_session.add(Misconception(
+        concept_id=concept_id, code="mc.speed_pressure", description="thinks faster=higher P",
+        probe_question="what happens to pressure?",
+    ))
+    await db_session.flush()
+    await _assert_concept_spared(db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id)
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_spares_concept_depended_on_by_another(db_session, monkeypatch):
+    """A concept another concept DEPENDS ON (inbound cross-concept prereq: another
+    concept's entity -> this concept's entity) is a prerequisite the curriculum
+    still needs — deleting it would corrupt the surviving concept's prereq chain."""
+    from apollo.persistence.models import Concept, EntityPrereq, KGEntity
+
+    aapi, space_id, concept_id, (e1_id, _e2_id), set_id = await _seed_orphanable_concept_kg(
+        db_session, monkeypatch, slug="aas-depended"
+    )
+    # A DIFFERENT concept whose entity depends on this concept's entity e1.
+    subj_id = (await db_session.execute(
+        select(Concept.subject_id).where(Concept.id == concept_id)
+    )).scalar_one()
+    other = Concept(subject_id=subj_id, slug="concept-dependent", display_name="Dependent",
+                    canonical_symbols={}, normalization_map={})
+    db_session.add(other)
+    await db_session.flush()
+    other_entity = KGEntity(concept_id=other.id, canonical_key="eq.dep", kind="equation",
+                            display_name="dep", payload={}, aliases=[])
+    db_session.add(other_entity)
+    await db_session.flush()
+    db_session.add(EntityPrereq(from_entity_id=other_entity.id, to_entity_id=e1_id))
+    await db_session.flush()
+    await _assert_concept_spared(db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id)
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_tears_down_mutually_linked_orphans(db_session, monkeypatch):
+    """The validation guarantee: when a set's OWN concepts are cross-linked (a
+    cross-concept prereq between two concepts the SAME delete orphans — the exact
+    corrupted shape the 2026-06-30 audit found in set 4), they must NOT mutually
+    protect each other. Both are torn down together."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import (
+        AuthoredSet,
+        Concept,
+        ConceptProblem,
+        EntityPrereq,
+        KGEntity,
+        Subject,
+    )
+    from database.models import SearchSpace
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
+
+    space = SearchSpace(name="Course link", slug="aas-link", subject_name="Physics")
+    db_session.add(space)
+    await db_session.flush()
+    subject = Subject(slug="subject-link", display_name="Physics", search_space_id=space.id)
+    db_session.add(subject)
+    await db_session.flush()
+    ca = Concept(subject_id=subject.id, slug="concept-a", display_name="A",
+                 canonical_symbols={}, normalization_map={})
+    cb = Concept(subject_id=subject.id, slug="concept-b", display_name="B",
+                 canonical_symbols={}, normalization_map={})
+    db_session.add_all([ca, cb])
+    await db_session.flush()
+    ea = KGEntity(concept_id=ca.id, canonical_key="eq.a", kind="equation",
+                  display_name="a", payload={}, aliases=[])
+    eb = KGEntity(concept_id=cb.id, canonical_key="eq.b", kind="equation",
+                  display_name="b", payload={}, aliases=[])
+    db_session.add_all([ea, eb])
+    await db_session.flush()
+    # Cross-concept prereq BETWEEN the two set-owned concepts (ca depends on cb).
+    db_session.add(EntityPrereq(from_entity_id=ea.id, to_entity_id=eb.id))
+    cpa = ConceptProblem(concept_id=ca.id, problem_code="scrape.a", difficulty="m",
+                         payload={}, tier=2, search_space_id=space.id)
+    cpb = ConceptProblem(concept_id=cb.id, problem_code="scrape.b", difficulty="m",
+                         payload={}, tier=2, search_space_id=space.id)
+    db_session.add_all([cpa, cpb])
+    await db_session.flush()
+    target = AuthoredSet(
+        search_space_id=space.id, set_index=1, status="done",
+        result_summary={"problems": [
+            {"concept_problem_id": cpa.id, "outcome": "promoted"},
+            {"concept_problem_id": cpb.id, "outcome": "promoted"},
+        ]},
+    )
+    db_session.add(target)
+    await db_session.flush()
+    ca_id, cb_id, set_id = int(ca.id), int(cb.id), int(target.id)
+
+    fake_neo = _FakeNeo()
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: fake_neo)
+    resp = await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
+    assert resp["removed_concepts"] == 2
+    assert await db_session.get(Concept, ca_id) is None
+    assert await db_session.get(Concept, cb_id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session, monkeypatch):
+    """A concept D that is spared by a signal (a session) is a SURVIVOR: if D depends
+    on a fellow-orphan C (D's entity -> C's entity), C must ALSO be spared so D's
+    prereq chain stays intact. The inbound-prereq check must treat a signal-spared
+    in-batch concept as a survivor, not as part of the teardown."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import (
+        ApolloSession,
+        AuthoredSet,
+        Concept,
+        ConceptProblem,
+        EntityPrereq,
+        KGEntity,
+        Subject,
+    )
+    from database.models import SearchSpace
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
+
+    space = SearchSpace(name="Course prereqspare", slug="aas-prqspare", subject_name="Physics")
+    db_session.add(space)
+    await db_session.flush()
+    subject = Subject(slug="subject-prqspare", display_name="Physics", search_space_id=space.id)
+    db_session.add(subject)
+    await db_session.flush()
+    cc = Concept(subject_id=subject.id, slug="concept-c", display_name="C",
+                 canonical_symbols={}, normalization_map={})
+    cd = Concept(subject_id=subject.id, slug="concept-d", display_name="D",
+                 canonical_symbols={}, normalization_map={})
+    db_session.add_all([cc, cd])
+    await db_session.flush()
+    ec = KGEntity(concept_id=cc.id, canonical_key="eq.c", kind="equation",
+                  display_name="c", payload={}, aliases=[])
+    ed = KGEntity(concept_id=cd.id, canonical_key="eq.d", kind="equation",
+                  display_name="d", payload={}, aliases=[])
+    db_session.add_all([ec, ed])
+    await db_session.flush()
+    # D depends on C (from=D's entity, to=C's entity).
+    db_session.add(EntityPrereq(from_entity_id=ed.id, to_entity_id=ec.id))
+    # D is spared by a student session; C has no signal of its own.
+    db_session.add(ApolloSession(user_id=_STUDENT_UUID, search_space_id=space.id, concept_id=cd.id))
+    cpc = ConceptProblem(concept_id=cc.id, problem_code="scrape.c", difficulty="m",
+                         payload={}, tier=2, search_space_id=space.id)
+    cpd = ConceptProblem(concept_id=cd.id, problem_code="scrape.d", difficulty="m",
+                         payload={}, tier=2, search_space_id=space.id)
+    db_session.add_all([cpc, cpd])
+    await db_session.flush()
+    target = AuthoredSet(
+        search_space_id=space.id, set_index=1, status="done",
+        result_summary={"problems": [
+            {"concept_problem_id": cpc.id, "outcome": "promoted"},
+            {"concept_problem_id": cpd.id, "outcome": "promoted"},
+        ]},
+    )
+    db_session.add(target)
+    await db_session.flush()
+    cc_id, cd_id, set_id = int(cc.id), int(cd.id), int(target.id)
+
+    fake_neo = _FakeNeo()
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: fake_neo)
+    resp = await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
+    assert resp["removed_concepts"] == 0  # C spared because survivor D depends on it
+    assert await db_session.get(Concept, cc_id) is not None
+    assert await db_session.get(Concept, cd_id) is not None
