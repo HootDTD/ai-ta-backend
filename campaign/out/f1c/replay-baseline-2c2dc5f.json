@@ -1,0 +1,767 @@
+{
+  "abstention_reasons": {
+    "unresolved_rate_above_threshold": 18
+  },
+  "band_vs_expected": [
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.incompressibility",
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity_for_v2"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "proc.plan_substitute_into_bernoulli",
+        "stu_078a445d1d94",
+        "stu_0ed57ca96546",
+        "stu_19cc2634bc1b",
+        "stu_1b51477edc66",
+        "stu_3e7a4393ee2b",
+        "stu_4d7a1591ba09",
+        "stu_520bf32e49fc",
+        "stu_57c38818d021",
+        "stu_5d80d8e1573b",
+        "stu_69c71c86a329",
+        "stu_74fe879bd345",
+        "stu_75f6a0429028",
+        "stu_9a0c57a73279",
+        "stu_a999e2f83ed9",
+        "stu_b089a2f7ae70",
+        "stu_c20efa2d6493",
+        "stu_c274339431e7",
+        "stu_d097670e1198",
+        "stu_dadf2f8f3a75"
+      ],
+      "attempt_id": 7,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "cond.incompressibility",
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity_for_v2"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [
+        "proc.plan_substitute_into_bernoulli"
+      ],
+      "is_control": false,
+      "persona": "partial"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "eq.bernoulli",
+        "proc.plan_apply_equal_pressure_simplification",
+        "simp.equal_pressure_simplification"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "proc.plan_set_v1_zero_and_solve_bernoulli",
+        "stu_049d85d32b0e",
+        "stu_24de5a58ae4f",
+        "stu_2707010881e9",
+        "stu_2f81edbb275f",
+        "stu_3bf929c5eb1d",
+        "stu_539f5dd34ea3",
+        "stu_6b78dbb2ffa6",
+        "stu_79af6077f223",
+        "stu_7ebe6a8a03e4",
+        "stu_980f99241095",
+        "stu_a64fb6ce1ccf",
+        "stu_c635e09159fb",
+        "stu_f46c98866923"
+      ],
+      "attempt_id": 8,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "eq.bernoulli",
+        "proc.plan_apply_equal_pressure_simplification",
+        "simp.equal_pressure_simplification"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [
+        "proc.plan_set_v1_zero_and_solve_bernoulli"
+      ],
+      "is_control": false,
+      "persona": "partial"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.incompressibility",
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity",
+        "simp.horizontal_simplification"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "proc.plan_apply_horizontal_simplification",
+        "proc.plan_solve_bernoulli_for_p2",
+        "stu_093a3fef8e46",
+        "stu_1b20c2781be7",
+        "stu_216c2d40fff2",
+        "stu_23b545ef8d55",
+        "stu_243cae7386ed",
+        "stu_37c6f99c35e1",
+        "stu_4089c255c964",
+        "stu_45ddc70416bf",
+        "stu_52daecc079b8",
+        "stu_674037c6a019",
+        "stu_678149285eff",
+        "stu_77752fdb18fe",
+        "stu_7f396c882307",
+        "stu_88ba88d06d1d",
+        "stu_8fb183d3e33c",
+        "stu_a2133cd596f6",
+        "stu_b0e1ea6f00fb",
+        "stu_be1e7b4b30e5",
+        "stu_be692dd66210",
+        "stu_bec0d90d6a72",
+        "stu_ea2b841a22b4"
+      ],
+      "attempt_id": 10,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "cond.incompressibility",
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity",
+        "simp.horizontal_simplification"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [
+        "proc.plan_apply_horizontal_simplification",
+        "proc.plan_solve_bernoulli_for_p2"
+      ],
+      "is_control": false,
+      "persona": "partial"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "eq.flow_rate_definition"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "proc.plan_apply_flow_rate_definition",
+        "stu_025a51d40963",
+        "stu_3106d9435602",
+        "stu_3ec8aa97f11d",
+        "stu_a3a0075ae7ea"
+      ],
+      "attempt_id": 14,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "eq.flow_rate_definition"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [
+        "proc.plan_apply_flow_rate_definition"
+      ],
+      "is_control": false,
+      "persona": "partial"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.incompressibility",
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity_for_v2",
+        "proc.plan_substitute_into_bernoulli"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_00c0e0e8f047",
+        "stu_01f03cfdf8ad",
+        "stu_059399f3c489",
+        "stu_0c1dbc67e577",
+        "stu_1552b7fa6d05",
+        "stu_1a9d74de26d2",
+        "stu_1bfd067f00f7",
+        "stu_1da70fdac602",
+        "stu_2320a0222c03",
+        "stu_248945459ee0",
+        "stu_33715f4a5ec3",
+        "stu_34ed932aebb1",
+        "stu_41617640b80a",
+        "stu_42a86617020a",
+        "stu_68effb50dfd9",
+        "stu_6989ff43f70a",
+        "stu_7231be4dcde3",
+        "stu_7492e42e8977",
+        "stu_767d730fd8ed",
+        "stu_8796671b014d",
+        "stu_8d42eeb67ac1",
+        "stu_904f878b4cb4",
+        "stu_aa84f48ee45d",
+        "stu_be56e49bded8",
+        "stu_d3f9b39f2ad9",
+        "stu_f82b78eff520"
+      ],
+      "attempt_id": 15,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "cond.incompressibility",
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity_for_v2",
+        "proc.plan_substitute_into_bernoulli"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [],
+      "is_control": false,
+      "persona": "strong"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "eq.bernoulli",
+        "proc.plan_apply_equal_pressure_simplification",
+        "proc.plan_set_v1_zero_and_solve_bernoulli",
+        "simp.equal_pressure_simplification"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_0051e0855201",
+        "stu_022d9b760efe",
+        "stu_17d364aff642",
+        "stu_1acc3fe38f29",
+        "stu_1c4b338ad68a",
+        "stu_24de15cddea6",
+        "stu_27b0f8a52696",
+        "stu_2f1e6f23477f",
+        "stu_382f17251f63",
+        "stu_417c9713ce2c",
+        "stu_5efb02c8a1d9",
+        "stu_6c607b383f42",
+        "stu_6ce63e8b5a54",
+        "stu_6ff8b1159efc",
+        "stu_83780b4a4fec",
+        "stu_9d47be8e282e",
+        "stu_ae06ab6d6bcf",
+        "stu_b116afbaca1a",
+        "stu_b2a6c7a9c4bd",
+        "stu_bb595bb6b651",
+        "stu_f2a504a86934",
+        "stu_fa91265b60e6"
+      ],
+      "attempt_id": 16,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "eq.bernoulli",
+        "proc.plan_apply_equal_pressure_simplification",
+        "proc.plan_set_v1_zero_and_solve_bernoulli",
+        "simp.equal_pressure_simplification"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [],
+      "is_control": false,
+      "persona": "strong"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.incompressibility",
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity",
+        "proc.plan_apply_horizontal_simplification",
+        "proc.plan_solve_bernoulli_for_p2",
+        "simp.horizontal_simplification"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_026350791663",
+        "stu_07eba1aebd03",
+        "stu_118fa754de5a",
+        "stu_19a438f2cc31",
+        "stu_27060e4b1bbd",
+        "stu_4a9e6bb8f507",
+        "stu_59eddebd3f97",
+        "stu_5f620a17dea8",
+        "stu_65da06312a57",
+        "stu_7041d0f544bf",
+        "stu_764e4b89dcbe",
+        "stu_80885cbc97c5",
+        "stu_83aeaab15f3e",
+        "stu_877cacd2d5cb",
+        "stu_92ac82cf69f9",
+        "stu_9842b4b23441",
+        "stu_a5829776d06c",
+        "stu_aaa193ababa9",
+        "stu_ab3b9ebdf616",
+        "stu_ac0a304f7e4e",
+        "stu_afe0ccea0cc2",
+        "stu_be65cd6be688",
+        "stu_c7152bd268c3",
+        "stu_c78c9e31da9c",
+        "stu_ceaccf6af447",
+        "stu_d3cb38b56cd5",
+        "stu_da4626d6133b",
+        "stu_ec8076167f4d"
+      ],
+      "attempt_id": 18,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "cond.incompressibility",
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity",
+        "proc.plan_apply_horizontal_simplification",
+        "proc.plan_solve_bernoulli_for_p2",
+        "simp.horizontal_simplification"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [],
+      "is_control": false,
+      "persona": "strong"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.incompressibility",
+        "eq.continuity",
+        "proc.plan_invoke_incompressibility",
+        "proc.plan_solve_continuity_for_v2"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_25dc3368cd03",
+        "stu_26cc9715ec90",
+        "stu_4406c0e02503",
+        "stu_4fea0e1d93a6",
+        "stu_50012ef90002",
+        "stu_597c364a017d",
+        "stu_6e8d4bfbc519",
+        "stu_708d43f911eb",
+        "stu_b716eecd1fbb",
+        "stu_d6f4585bb357",
+        "stu_f6ac57160ff9",
+        "stu_fdc77737b552"
+      ],
+      "attempt_id": 21,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "cond.incompressibility",
+        "eq.continuity",
+        "proc.plan_invoke_incompressibility",
+        "proc.plan_solve_continuity_for_v2"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [],
+      "is_control": false,
+      "persona": "strong"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "eq.flow_rate_definition",
+        "proc.plan_apply_flow_rate_definition"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_238121b7056e",
+        "stu_5ece1f71c893",
+        "stu_61b5b1f5b362",
+        "stu_8b7e14ca4711",
+        "stu_a315502e4628",
+        "stu_a40f6a3404c3",
+        "stu_ab01c268a444",
+        "stu_f0e215d3365f"
+      ],
+      "attempt_id": 25,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "eq.flow_rate_definition",
+        "proc.plan_apply_flow_rate_definition"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [],
+      "is_control": false,
+      "persona": "strong"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.final_goods_only",
+        "eq.gdp_expenditure",
+        "eq.net_exports",
+        "proc.compute_net_exports",
+        "proc.sum_components"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_13829b83e1eb",
+        "stu_303deea6e38d",
+        "stu_789add8e7499",
+        "stu_7c815315497d",
+        "stu_9cf85d73889e",
+        "stu_b3f96825f43e",
+        "stu_d9e46b8fe907",
+        "stu_fb062cd9012d"
+      ],
+      "attempt_id": 37,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "cond.final_goods_only",
+        "eq.gdp_expenditure",
+        "eq.net_exports",
+        "proc.compute_net_exports"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [
+        "proc.sum_components"
+      ],
+      "is_control": false,
+      "persona": "partial"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.trade_deficit",
+        "eq.net_exports",
+        "proc.subtract_imports"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_7cdebb1e3994",
+        "stu_99a89f88cf07",
+        "stu_a94d638c1b77",
+        "stu_b8ba74005ba8",
+        "stu_e36c48c1c3e5"
+      ],
+      "attempt_id": 38,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "cond.trade_deficit",
+        "eq.net_exports"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [
+        "proc.subtract_imports"
+      ],
+      "is_control": false,
+      "persona": "partial"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "def.depreciation",
+        "eq.gnp",
+        "eq.nnp",
+        "proc.compute_gnp",
+        "proc.subtract_depreciation"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_15d3eec8c065",
+        "stu_175b6aa0c87d",
+        "stu_733e0f8a580a",
+        "stu_8b1cbab0b0dd",
+        "stu_8d692867ac05",
+        "stu_a28e9e3a7a1e",
+        "stu_bf5b9495f03c",
+        "stu_dbd4e8108ed6"
+      ],
+      "attempt_id": 39,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "def.depreciation",
+        "eq.gnp",
+        "eq.nnp",
+        "proc.compute_gnp"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [
+        "proc.subtract_depreciation"
+      ],
+      "is_control": false,
+      "persona": "partial"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "def.real_basis",
+        "eq.growth_rate",
+        "proc.apply_percent_change",
+        "proc.compute_real_change"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_08da89bf136c",
+        "stu_10b419997d76",
+        "stu_8fea194751cd",
+        "stu_abd149146fdd",
+        "stu_bc3deb646011"
+      ],
+      "attempt_id": 40,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "def.real_basis",
+        "eq.growth_rate",
+        "proc.compute_real_change"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [
+        "proc.apply_percent_change"
+      ],
+      "is_control": false,
+      "persona": "partial"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.final_goods_only",
+        "eq.gdp_expenditure",
+        "eq.net_exports",
+        "proc.compute_net_exports",
+        "proc.sum_components"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_1e9a319b1265",
+        "stu_3ec0740869f8",
+        "stu_3f67e8d8721d",
+        "stu_46f4b2000051",
+        "stu_4b8681ada8e0",
+        "stu_6b942a9b4640",
+        "stu_748c5b7dab83",
+        "stu_7b6f6ce29ea5",
+        "stu_84929e6aa1f4",
+        "stu_8c706e727b3b",
+        "stu_8ecb220755fc",
+        "stu_a9c930f9b651",
+        "stu_ade5f1d0f1e6",
+        "stu_affa14f05d4b",
+        "stu_ba0a67f4f578",
+        "stu_bcceba4f1800",
+        "stu_c313e19228ab",
+        "stu_c9a1bbf4cd88",
+        "stu_f4def04a531a",
+        "stu_f6c82598b1e5"
+      ],
+      "attempt_id": 41,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "cond.final_goods_only",
+        "eq.gdp_expenditure",
+        "eq.net_exports",
+        "proc.compute_net_exports",
+        "proc.sum_components"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [],
+      "is_control": false,
+      "persona": "strong"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.trade_deficit",
+        "eq.net_exports",
+        "proc.subtract_imports"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_607c274fedc6",
+        "stu_795753a50138",
+        "stu_7f8000f5568e",
+        "stu_892cefa31abe",
+        "stu_cc269e77e431",
+        "stu_fb45922f9b48"
+      ],
+      "attempt_id": 42,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "cond.trade_deficit",
+        "eq.net_exports",
+        "proc.subtract_imports"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [],
+      "is_control": false,
+      "persona": "strong"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "def.depreciation",
+        "eq.gnp",
+        "eq.nnp",
+        "proc.compute_gnp",
+        "proc.subtract_depreciation"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_1d9dd3be1988",
+        "stu_397b9d515dd8",
+        "stu_3a337ae580f0",
+        "stu_3b352fe9efd8",
+        "stu_40d5dfb64969",
+        "stu_414c66d83366",
+        "stu_571fc1ffd374",
+        "stu_70966fb73028",
+        "stu_78517caf1eaf",
+        "stu_86f12d7693f0",
+        "stu_afc95b18507b",
+        "stu_c3bb3f7d3c8e",
+        "stu_d29cfcc78163",
+        "stu_ee327d52487a",
+        "stu_eeac5c4f7d68",
+        "stu_fb083a5128a8"
+      ],
+      "attempt_id": 43,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "def.depreciation",
+        "eq.gnp",
+        "eq.nnp",
+        "proc.compute_gnp",
+        "proc.subtract_depreciation"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [],
+      "is_control": false,
+      "persona": "strong"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "eq.gdp_deflator",
+        "proc.rearrange_for_real_gdp",
+        "simp.deflator_is_price_index"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_1cbc9db02557",
+        "stu_24039433ab6f",
+        "stu_533e5a5d175f",
+        "stu_5719e49beddc",
+        "stu_80ddbecda984",
+        "stu_9b8f7816724c",
+        "stu_b44d860539c6",
+        "stu_ce47cea2352d",
+        "stu_d56fda922da1",
+        "stu_e278877482f0",
+        "stu_f59ef527de0e"
+      ],
+      "attempt_id": 44,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "eq.gdp_deflator",
+        "proc.rearrange_for_real_gdp",
+        "simp.deflator_is_price_index"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [],
+      "is_control": false,
+      "persona": "strong"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "def.real_basis",
+        "eq.growth_rate",
+        "proc.apply_percent_change",
+        "proc.compute_real_change"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_041c61a645f4",
+        "stu_13361de61f8b",
+        "stu_1ae29ef44ad6",
+        "stu_23a475c9c2a6",
+        "stu_261dbd2795c9",
+        "stu_2bac6bb41eb5",
+        "stu_4640497ca4e7",
+        "stu_466ecd7ec760",
+        "stu_4c0e28d5dd92",
+        "stu_b30e6d22bed5",
+        "stu_b3b5f6021f23",
+        "stu_dfbd06bd22ef",
+        "stu_eeef0617ae50"
+      ],
+      "attempt_id": 45,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "def.real_basis",
+        "eq.growth_rate",
+        "proc.apply_percent_change",
+        "proc.compute_real_change"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [],
+      "is_control": false,
+      "persona": "strong"
+    }
+  ],
+  "errors": [],
+  "graph_composite": {
+    "partial": {
+      "mean": 0.282053625,
+      "n": 8,
+      "values": [
+        0.12,
+        0.15,
+        0.171429,
+        0.3,
+        0.24,
+        0.4625,
+        0.6625,
+        0.15
+      ]
+    },
+    "strong": {
+      "mean": 0.33235709999999996,
+      "n": 10,
+      "values": [
+        0.12,
+        0.485714,
+        0.257143,
+        0.45,
+        0.3,
+        0.395714,
+        0.4625,
+        0.24,
+        0.4625,
+        0.15
+      ]
+    }
+  },
+  "unresolved_rate": {
+    "partial": {
+      "mean": 0.8138328157349897,
+      "n": 8,
+      "values": [
+        0.95,
+        0.9285714285714286,
+        0.9130434782608695,
+        0.8,
+        0.8,
+        0.7142857142857143,
+        0.5714285714285714,
+        0.8333333333333334
+      ]
+    },
+    "strong": {
+      "mean": 0.8067834050954256,
+      "n": 10,
+      "values": [
+        0.9629629629629629,
+        0.8461538461538461,
+        0.8235294117647058,
+        0.7058823529411765,
+        0.8,
+        0.8695652173913043,
+        0.5454545454545454,
+        0.8,
+        0.7857142857142857,
+        0.9285714285714286
+      ]
+    }
+  }
+}

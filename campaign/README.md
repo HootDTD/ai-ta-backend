@@ -555,3 +555,39 @@ builders (not hand-written dicts) and round-trip the output through the real
 `campaign.judges`/`campaign.report` functions. 98% combined line+branch
 coverage (the handful of uncovered lines are `Protocol` stub bodies, never
 executed by design).
+
+## Replay benchmark — the fix-iteration flywheel (Lane G1)
+
+`campaign/replay.py` (`python -m campaign.replay --run-dir campaign/out/f1c
+--personas strong,partial`) replays ONLY the resolution+grading stage of a
+FROZEN recorded run's `attempts.jsonl` — it drives the same functions the
+`Done` handler calls (`campaign.replay.replay_attempt` loads each attempt +
+session pair and re-runs resolution/grading against the live DB/Neo4j), with
+NO live LLM student and NO HTTP session. It exists so a resolver-recall or
+grading-logic fix can be measured in seconds against a fixed corpus instead
+of re-running a full live campaign.
+
+Output (`ReplayMetrics.as_dict()`) has four keys: `unresolved_rate` (mean +
+per-attempt values, grouped by persona), `abstention_reasons` (histogram),
+`graph_composite` (grouped by persona), and `band_vs_expected` (per-attempt
+credited/unresolved/misconception diff vs each persona's expected ledger).
+Attempts whose recorded status is `"error"` or whose `attempt_id` is null are
+skipped by `load_records`; a replay-time exception on an individual attempt
+is caught and recorded under `errors` rather than aborting the run.
+
+**Baseline freeze:** per the weekend benchmark-freeze rule, the first
+full-corpus run against unmodified `staging` is committed as
+`campaign/out/f1c/replay-baseline-<stagingSHA>.json` and becomes THE
+baseline every subsequent resolver/grading fix is diffed against — personas
+and expected ledgers are never edited to make a run pass. Baseline
+`replay-baseline-2c2dc5f.json` (staging @ `2c2dc5f`, 18 gradeable
+strong+partial attempts, control excluded from this corpus): both persona
+classes show 100% `unresolved_rate_above_threshold` abstention
+(18/18) and `graph_composite` means of 0.33 (strong) / 0.28 (partial), each
+attempt's individual composite falling in roughly the 0.12–0.66 band — this
+matches the known live-campaign abstention/composite pattern (no replay-tool
+disagreement with F1c live numbers).
+
+Requires the local campaign stack up (`.env.campaign` sourced — Postgres on
+`127.0.0.1:57322`, Neo4j on `bolt://127.0.0.1:57687`); it is a measurement
+tool, not something CI runs against a live stack.
