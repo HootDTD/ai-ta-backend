@@ -71,3 +71,21 @@ class TransformersNLIAdjudicator:
         pipe = self._load()
         raw = pipe({"text": premise, "text_pair": hypothesis}, truncation=True)
         return normalize_nli_output(raw, self.model_name)
+
+
+def prewarm() -> None:
+    """Force the active NLI checkpoint to load (and download into ``HF_HOME``
+    if not already cached) NOW, plus run one dummy classification, so the
+    first live grading request is served from a warm model instead of
+    triggering a lazy first-load / Hugging Face download on the request path.
+
+    Constructs its own :class:`TransformersNLIAdjudicator` — it does NOT
+    populate ``apollo.handlers.done_grading``'s process-lived singleton.
+    Once the checkpoint files are cached under ``HF_HOME``, the grading
+    path's own lazy singleton construction reads from local disk (no
+    network), which is the guarantee this function exists to provide.
+    """
+    from apollo.resolution.nli_config import NLI_DEVICE, active_nli_model
+
+    adjudicator = TransformersNLIAdjudicator(active_nli_model(), device=NLI_DEVICE)
+    adjudicator.classify("a", "a")

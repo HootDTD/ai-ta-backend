@@ -45,3 +45,7 @@ RUNBOOK.md
 
 # SDD / Superpowers scratch artifacts (transient scratchpads)
 .superpowers/
+
+# Local HF model cache for the campaign harness's NLI pre-warm step
+# (campaign/infra/prewarm_nli.py) — large binary checkpoint files, never git.
+.hf-cache/
