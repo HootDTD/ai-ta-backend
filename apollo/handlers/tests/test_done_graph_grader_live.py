@@ -210,16 +210,31 @@ async def test_live_on_exception_anywhere_falls_back_to_old_path(monkeypatch):
     assert "RuntimeError" in kwargs["graph_failure"]
 
 
-async def test_live_off_exception_still_reraises_no_fallback(monkeypatch):
-    """LIVE off preserves the pre-A4 NO-FALLBACK diagnostics: a shadow-chain
-    exception propagates (named-error visibility for shadow-only mode)."""
-    with pytest.raises(RuntimeError, match="boom"):
-        await _run_with_flags(
-            monkeypatch,
-            shadow=True,
-            live="false",
-            shadow_side_effect=RuntimeError("boom"),
-        )
+async def test_live_off_exception_isolated_serves_llm_grade(monkeypatch):
+    """Lane B1 / G3 — SHADOW mode (LIVE off) now ISOLATES a shadow-chain
+    exception instead of re-raising it: pre-G3 the crash propagated and 500'd
+    the Done request, costing the student the already-committed LLM grade. Now
+    the OLD/LLM values are served (HTTP 200, no re-raise) and the canonical
+    artifact records the shadow-failure marker so paired analysis sees the gap.
+    (Full early/mid/late byte-identity coverage lives in
+    ``test_done_shadow_isolation``.)"""
+    out, shadow_mock, write_artifacts_mock = await _run_with_flags(
+        monkeypatch,
+        shadow=True,
+        live="false",
+        artifact=True,
+        shadow_side_effect=RuntimeError("boom"),
+    )
+    shadow_mock.assert_awaited_once()
+    assert out["rubric"] == {"overall": {"score": 0.5}}
+    assert out["diagnostic_narrative"] == "narrative"
+
+    write_artifacts_mock.assert_awaited_once()
+    kwargs = write_artifacts_mock.await_args.kwargs
+    assert kwargs["served"] == GRADER_USED_LLM_FALLBACK
+    assert kwargs["shadow"] is None
+    assert kwargs["graph_failure"].startswith(done_mod._SHADOW_FAILURE_MARKER)
+    assert "boom" in kwargs["graph_failure"]
 
 
 async def test_live_on_abstained_shadow_falls_back_to_llm(monkeypatch):
