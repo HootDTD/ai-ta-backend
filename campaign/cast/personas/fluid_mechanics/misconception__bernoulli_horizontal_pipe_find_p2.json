@@ -23,7 +23,9 @@
       "proc.plan_apply_horizontal_simplification",
       "proc.plan_solve_bernoulli_for_p2"
     ],
-    "unresolved": [],
+    "unresolved": [
+      "cond.incompressibility"
+    ],
     "misconceptions": [
       "misc.density_ignored"
     ],

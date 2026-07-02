@@ -19,7 +19,9 @@
       "proc.plan_apply_continuity_for_v2",
       "proc.plan_substitute_into_bernoulli"
     ],
-    "unresolved": [],
+    "unresolved": [
+      "cond.incompressibility"
+    ],
     "misconceptions": [
       "misc.density_ignored"
     ],

@@ -19,7 +19,9 @@
       "proc.compute_net_exports",
       "proc.sum_components"
     ],
-    "unresolved": [],
+    "unresolved": [
+      "cond.final_goods_only"
+    ],
     "misconceptions": [
       "misc.includes_transfers"
     ],

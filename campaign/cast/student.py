@@ -17,7 +17,7 @@ implementations (an actual HTTP call, an actual DB read, an actual OpenAI
 call, an actual Supabase admin-API mint) are ``# pragma: no cover``, matching
 the D1/D2 precedent ("the live path pragma-excluded"; Phase F runs it):
 
-- :class:`ApolloClient` — ``create_session`` / ``retry`` / ``chat`` / ``done``.
+- :class:`ApolloClient` — ``create_session`` / ``next`` / ``chat`` / ``done``.
   :class:`HttpxApolloClient` is the real implementation.
 - ``ChatFn`` — the agent-student "LLM": ``(persona, transcript, beat) ->
   message``. :func:`default_chat_fn` is the real (OpenAI) implementation.
@@ -31,9 +31,16 @@ Apollo's session-creation route (``init_session_from_hoot``) does NOT accept a
 via an LLM call, then the Overseer's personalized selector picks a problem for
 that concept. There is no student-facing lever to force the exact persona
 ``problem_id``. :func:`build_hoot_transcript` names the persona's concept as
-plainly as possible to make selection likely, and :func:`run_attempt` retries
-via ``POST .../retry`` (bounded by ``max_problem_retries``) when the selected
-problem doesn't match; a persistent mismatch is recorded on the
+plainly as possible to make selection likely, and :func:`run_attempt` re-rolls
+via ``POST .../next`` (bounded by ``max_problem_retries``) when the selected
+problem doesn't match. NOTE (fixed after review): the re-roll route is
+``/next``, not ``/retry`` — ``handle_retry`` (``apollo/handlers/lifecycle.py``)
+only unfreezes the KG and returns to ``TEACHING`` on the SAME problem; it never
+re-selects and its response carries no ``problem`` key. ``handle_next``
+(``apollo/handlers/next.py``) is the route that actually calls
+``select_problem_personalized`` again — it also mints a NEW ``ProblemAttempt``
+row, so each re-roll's ``attempt_id`` must be re-captured (see
+:func:`_resolve_problem`). A persistent mismatch is recorded on the
 :class:`AttemptRecord` (``problem_matched=False``) rather than silently
 treated as a hard failure — a real live run may need a richer selection lever
 (e.g. a campaign-only test-selection endpoint) if this proves too lossy in
@@ -86,7 +93,7 @@ __all__ = [
 #: scripted beats are exhausted (spec §3 "bounded clarification loop").
 CLARIFICATION_MAX_TURNS = 3
 
-#: Bounded retries via ``POST .../retry`` when the Overseer's personalized
+#: Bounded re-rolls via ``POST .../next`` when the Overseer's personalized
 #: selector didn't land on the persona's authored ``problem_id`` (see module
 #: docstring deviation note).
 DEFAULT_MAX_PROBLEM_RETRIES = 3
@@ -106,7 +113,9 @@ class ApolloClient(Protocol):
         self, *, search_space_id: int, hoot_transcript: str, difficulty: str, token: str
     ) -> dict[str, Any]: ...
 
-    async def retry(self, *, session_id: int, token: str) -> dict[str, Any]: ...
+    async def next(
+        self, *, session_id: int, difficulty: str, token: str
+    ) -> dict[str, Any]: ...
 
     async def chat(self, *, session_id: int, message: str, token: str) -> dict[str, Any]: ...
 
@@ -260,17 +269,26 @@ async def _resolve_problem(
     session: dict[str, Any],
     session_id: int,
     token: str,
+    difficulty: str,
     max_problem_retries: int,
-) -> tuple[dict[str, Any], bool]:
+) -> tuple[dict[str, Any], bool, Any]:
+    """Re-roll problem selection via ``POST .../next`` (NOT ``.../retry`` —
+    see the module docstring deviation note) until the Overseer's
+    personalized selector lands on ``persona.problem_id`` or
+    ``max_problem_retries`` is exhausted. Each re-roll mints a NEW
+    ``ProblemAttempt`` row, so the returned ``attempt_id`` must be threaded
+    back into the caller's record instead of the session-creation one."""
     problem = session.get("problem") or {}
+    attempt_id = session.get("attempt_id")
     matched = problem.get("id") == persona.problem_id
     retries = 0
     while not matched and retries < max_problem_retries:
-        session = await client.retry(session_id=session_id, token=token)
+        session = await client.next(session_id=session_id, difficulty=difficulty, token=token)
         problem = session.get("problem") or {}
+        attempt_id = session.get("attempt_id", attempt_id)
         matched = problem.get("id") == persona.problem_id
         retries += 1
-    return problem, matched
+    return problem, matched, attempt_id
 
 
 async def run_attempt(
@@ -300,14 +318,14 @@ async def run_attempt(
             token=token,
         )
         session_id = session["session_id"]
-        attempt_id = session["attempt_id"]
 
-        _problem, matched = await _resolve_problem(
+        _problem, matched, attempt_id = await _resolve_problem(
             persona,
             client=client,
             session=session,
             session_id=session_id,
             token=token,
+            difficulty=difficulty,
             max_problem_retries=max_problem_retries,
         )
 
@@ -454,9 +472,13 @@ class HttpxApolloClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def retry(self, *, session_id: int, token: str) -> dict[str, Any]:  # pragma: no cover
+    async def next(  # pragma: no cover - real network call
+        self, *, session_id: int, difficulty: str, token: str
+    ) -> dict[str, Any]:
         resp = await self._client.post(
-            f"/apollo/sessions/{session_id}/retry", headers=self._headers(token)
+            f"/apollo/sessions/{session_id}/next",
+            json={"difficulty": difficulty},
+            headers=self._headers(token),
         )
         resp.raise_for_status()
         return resp.json()

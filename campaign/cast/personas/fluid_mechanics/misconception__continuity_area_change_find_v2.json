@@ -17,7 +17,9 @@
       "proc.plan_invoke_incompressibility",
       "proc.plan_solve_continuity_for_v2"
     ],
-    "unresolved": [],
+    "unresolved": [
+      "cond.incompressibility"
+    ],
     "misconceptions": [
       "misc.density_ignored"
     ],

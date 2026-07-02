@@ -15,7 +15,9 @@
       "simp.deflator_is_price_index",
       "proc.rearrange_for_real_gdp"
     ],
-    "unresolved": [],
+    "unresolved": [
+      "eq.gdp_deflator"
+    ],
     "misconceptions": [
       "misc.deflate_wrong_direction"
     ],

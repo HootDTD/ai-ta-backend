@@ -18,7 +18,8 @@
       "proc.compute_final_velocity"
     ],
     "unresolved": [
-      "proc.compute_distance"
+      "proc.compute_distance",
+      "eq.kinematics_position"
     ],
     "misconceptions": [
       "misc.forgets_half_factor"

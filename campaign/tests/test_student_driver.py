@@ -36,7 +36,14 @@ def _persona(**overrides) -> PersonaAttempt:
 
 
 class FakeApolloClient:
-    """Scripted fake: records every call, returns canned responses."""
+    """Scripted fake: records every call, returns canned responses.
+
+    Models the REAL ``/next`` contract (``handle_next`` in
+    ``apollo/handlers/next.py``): each re-roll mints a NEW ``attempt_id`` and
+    returns a fresh ``problem``. This is deliberately NOT ``/retry``
+    (``handle_retry`` only returns ``{"ok": True}`` and never re-selects) —
+    see the finding this fixture was corrected for.
+    """
 
     def __init__(self, *, problem_id="bernoulli_full_find_p2", replies=None, retry_problem_id=None):
         self.calls: list[tuple[str, dict]] = []
@@ -45,6 +52,7 @@ class FakeApolloClient:
         self._retry_problem_id = retry_problem_id or problem_id
         self._session_id = 101
         self._attempt_id = 5001
+        self._next_attempt_id = self._attempt_id
 
     async def create_session(self, *, search_space_id, hoot_transcript, difficulty, token):
         self.calls.append(("create_session", {
@@ -57,10 +65,15 @@ class FakeApolloClient:
             "problem": {"id": self._problem_id},
         }
 
-    async def retry(self, *, session_id, token):
-        self.calls.append(("retry", {"session_id": session_id, "token": token}))
+    async def next(self, *, session_id, difficulty, token):
+        self.calls.append(("next", {"session_id": session_id, "difficulty": difficulty, "token": token}))
         self._problem_id = self._retry_problem_id
-        return {"session_id": session_id, "problem": {"id": self._problem_id}}
+        self._next_attempt_id += 1
+        return {
+            "session_id": session_id,
+            "attempt_id": self._next_attempt_id,
+            "problem": {"id": self._problem_id},
+        }
 
     async def chat(self, *, session_id, message, token):
         self.calls.append(("chat", {"session_id": session_id, "message": message, "token": token}))
@@ -179,7 +192,10 @@ async def test_run_attempt_retries_on_problem_mismatch_until_matched():
 
     assert record.problem_matched is True
     kinds = [c[0] for c in client.calls]
-    assert kinds.count("retry") == 1
+    assert kinds.count("next") == 1
+    # /next mints a new attempt_id -- the re-rolled one must be captured,
+    # not the original session-creation attempt_id.
+    assert record.attempt_id == 5002
 
 
 @pytest.mark.asyncio
@@ -196,7 +212,9 @@ async def test_run_attempt_gives_up_after_max_retries_but_still_completes():
     assert record.status == "ok"
     assert record.problem_matched is False
     kinds = [c[0] for c in client.calls]
-    assert kinds.count("retry") == 2
+    assert kinds.count("next") == 2
+    # still-mismatched, but the LAST re-roll's attempt_id must be captured.
+    assert record.attempt_id == 5003
 
 
 # --- clarification loop --------------------------------------------------------

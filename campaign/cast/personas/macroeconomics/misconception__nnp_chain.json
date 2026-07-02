@@ -19,7 +19,9 @@
       "proc.compute_gnp",
       "proc.subtract_depreciation"
     ],
-    "unresolved": [],
+    "unresolved": [
+      "def.depreciation"
+    ],
     "misconceptions": [
       "misc.gross_for_net"
     ],

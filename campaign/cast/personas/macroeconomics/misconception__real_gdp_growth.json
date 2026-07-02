@@ -17,7 +17,9 @@
       "proc.compute_real_change",
       "proc.apply_percent_change"
     ],
-    "unresolved": [],
+    "unresolved": [
+      "def.real_basis"
+    ],
     "misconceptions": [
       "misc.nominal_for_real"
     ],
