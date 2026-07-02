@@ -262,9 +262,7 @@ async def test_seed_dry_run_still_reports_stats_but_rolls_back(db_url, monkeypat
 async def test_seed_embeds_description_when_enabled(db_url, monkeypatch):
     calls: list[dict] = []
     _fake_upsert(monkeypatch, calls)
-    monkeypatch.setattr(
-        "indexing.document_embedder.embed_text", lambda text: [0.1, 0.2, 0.3]
-    )
+    monkeypatch.setattr("indexing.document_embedder.embed_text", lambda text: [0.1, 0.2, 0.3])
 
     await _insert_course(db_url, 1)
     subject_id = await _insert_subject(db_url, slug="fluid_mechanics", space_id=1)

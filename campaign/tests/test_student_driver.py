@@ -55,10 +55,17 @@ class FakeApolloClient:
         self._next_attempt_id = self._attempt_id
 
     async def create_session(self, *, search_space_id, hoot_transcript, difficulty, token):
-        self.calls.append(("create_session", {
-            "search_space_id": search_space_id, "hoot_transcript": hoot_transcript,
-            "difficulty": difficulty, "token": token,
-        }))
+        self.calls.append(
+            (
+                "create_session",
+                {
+                    "search_space_id": search_space_id,
+                    "hoot_transcript": hoot_transcript,
+                    "difficulty": difficulty,
+                    "token": token,
+                },
+            )
+        )
         return {
             "session_id": self._session_id,
             "attempt_id": self._attempt_id,
@@ -66,7 +73,9 @@ class FakeApolloClient:
         }
 
     async def next(self, *, session_id, difficulty, token):
-        self.calls.append(("next", {"session_id": session_id, "difficulty": difficulty, "token": token}))
+        self.calls.append(
+            ("next", {"session_id": session_id, "difficulty": difficulty, "token": token})
+        )
         self._problem_id = self._retry_problem_id
         self._next_attempt_id += 1
         return {
@@ -82,7 +91,10 @@ class FakeApolloClient:
 
     async def done(self, *, session_id, token):
         self.calls.append(("done", {"session_id": session_id, "token": token}))
-        return {"rubric": {"overall": {"score": 90}}, "scorecard": {"band": "Strong", "score_0_100": 90}}
+        return {
+            "rubric": {"overall": {"score": 90}},
+            "scorecard": {"band": "Strong", "score_0_100": 90},
+        }
 
 
 class FailingDoneClient(FakeApolloClient):
@@ -108,7 +120,9 @@ async def _scripted_chat_fn(persona, transcript, beat):
 
 
 def _read_jsonl(path):
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
 
 
 # --- build_hoot_transcript ----------------------------------------------------
@@ -128,8 +142,10 @@ def test_build_hoot_transcript_names_the_concept():
 async def test_run_attempt_happy_path_plays_every_beat_and_captures_artifacts():
     persona = _persona()
     client = FakeApolloClient()
-    reader = FakeArtifactReader(canonical={"grader_used": "llm_fallback", "scores": {"composite": 0.9}},
-                                 pair={"grader_used": "graph", "scores": {"composite": 0.85}})
+    reader = FakeArtifactReader(
+        canonical={"grader_used": "llm_fallback", "scores": {"composite": 0.9}},
+        pair={"grader_used": "graph", "scores": {"composite": 0.85}},
+    )
 
     record = await student.run_attempt(
         persona,
@@ -162,10 +178,16 @@ async def test_run_attempt_happy_path_plays_every_beat_and_captures_artifacts():
 async def test_run_attempt_to_jsonl_dict_round_trips_through_json():
     persona = _persona()
     client = FakeApolloClient()
-    reader = FakeArtifactReader(canonical={"grader_used": "llm_fallback", "scores": {"composite": 0.7}})
+    reader = FakeArtifactReader(
+        canonical={"grader_used": "llm_fallback", "scores": {"composite": 0.7}}
+    )
     record = await student.run_attempt(
-        persona, client=client, chat_fn=_scripted_chat_fn, artifact_reader=reader,
-        token="tok", search_space_id=1,
+        persona,
+        client=client,
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=reader,
+        token="tok",
+        search_space_id=1,
     )
     payload = record.to_jsonl_dict()
     json.dumps(payload)  # must be JSON-serialisable
@@ -186,8 +208,13 @@ async def test_run_attempt_retries_on_problem_mismatch_until_matched():
     reader = FakeArtifactReader()
 
     record = await student.run_attempt(
-        persona, client=client, chat_fn=_scripted_chat_fn, artifact_reader=reader,
-        token="tok", search_space_id=1, max_problem_retries=3,
+        persona,
+        client=client,
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=reader,
+        token="tok",
+        search_space_id=1,
+        max_problem_retries=3,
     )
 
     assert record.problem_matched is True
@@ -205,8 +232,13 @@ async def test_run_attempt_gives_up_after_max_retries_but_still_completes():
     reader = FakeArtifactReader()
 
     record = await student.run_attempt(
-        persona, client=client, chat_fn=_scripted_chat_fn, artifact_reader=reader,
-        token="tok", search_space_id=1, max_problem_retries=2,
+        persona,
+        client=client,
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=reader,
+        token="tok",
+        search_space_id=1,
+        max_problem_retries=2,
     )
 
     assert record.status == "ok"
@@ -232,8 +264,12 @@ async def test_run_attempt_plays_clarification_followups_when_expected():
     reader = FakeArtifactReader()
 
     record = await student.run_attempt(
-        persona, client=client, chat_fn=_scripted_chat_fn, artifact_reader=reader,
-        token="tok", search_space_id=1,
+        persona,
+        client=client,
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=reader,
+        token="tok",
+        search_space_id=1,
     )
 
     # 2 scripted beats + 1 clarification follow-up turn (stops once the reply
@@ -254,8 +290,13 @@ async def test_run_attempt_clarification_loop_bounded_by_max_turns():
     reader = FakeArtifactReader()
 
     record = await student.run_attempt(
-        persona, client=client, chat_fn=_scripted_chat_fn, artifact_reader=reader,
-        token="tok", search_space_id=1, clarification_max_turns=2,
+        persona,
+        client=client,
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=reader,
+        token="tok",
+        search_space_id=1,
+        clarification_max_turns=2,
     )
 
     apollo_turns = [t for t in record.transcript if t["role"] == "apollo"]
@@ -270,8 +311,12 @@ async def test_run_attempt_skips_clarification_when_not_expected():
     reader = FakeArtifactReader()
 
     record = await student.run_attempt(
-        persona, client=client, chat_fn=_scripted_chat_fn, artifact_reader=reader,
-        token="tok", search_space_id=1,
+        persona,
+        client=client,
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=reader,
+        token="tok",
+        search_space_id=1,
     )
 
     # Only the 2 scripted beats, even though Apollo's replies look like
@@ -289,8 +334,12 @@ async def test_run_attempt_records_error_status_without_raising():
     reader = FakeArtifactReader()
 
     record = await student.run_attempt(
-        persona, client=client, chat_fn=_scripted_chat_fn, artifact_reader=reader,
-        token="tok", search_space_id=1,
+        persona,
+        client=client,
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=reader,
+        token="tok",
+        search_space_id=1,
     )
 
     assert record.status == "error"
@@ -309,8 +358,12 @@ async def test_run_attempt_records_error_when_create_session_fails():
             raise ConnectionError("no backend")
 
     record = await student.run_attempt(
-        persona, client=BrokenClient(), chat_fn=_scripted_chat_fn,
-        artifact_reader=FakeArtifactReader(), token="tok", search_space_id=1,
+        persona,
+        client=BrokenClient(),
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=FakeArtifactReader(),
+        token="tok",
+        search_space_id=1,
     )
     assert record.status == "error"
     assert record.transcript == ()
@@ -321,19 +374,32 @@ async def test_run_attempt_records_error_when_create_session_fails():
 
 @pytest.mark.asyncio
 async def test_run_corpus_runs_every_persona_and_writes_jsonl(tmp_path):
-    personas = [_persona(problem_id="p1"), _persona(problem_id="p2", persona="partial",
-                                                      expected=ExpectedLedger(credited=["eq.a"], unresolved=["eq.b"]))]
+    personas = [
+        _persona(problem_id="p1"),
+        _persona(
+            problem_id="p2",
+            persona="partial",
+            expected=ExpectedLedger(credited=["eq.a"], unresolved=["eq.b"]),
+        ),
+    ]
     out_path = tmp_path / "attempts.jsonl"
 
     async def client_factory_chat(persona, transcript, beat):
         return f"turn:{beat}"
 
     client = FakeApolloClient()
-    reader = FakeArtifactReader(canonical={"grader_used": "llm_fallback", "scores": {"composite": 0.5}})
+    reader = FakeArtifactReader(
+        canonical={"grader_used": "llm_fallback", "scores": {"composite": 0.5}}
+    )
 
     records = await student.run_corpus(
-        personas, client=client, chat_fn=client_factory_chat, artifact_reader=reader,
-        token="tok", search_space_id=1, attempts_path=out_path,
+        personas,
+        client=client,
+        chat_fn=client_factory_chat,
+        artifact_reader=reader,
+        token="tok",
+        search_space_id=1,
+        attempts_path=out_path,
     )
 
     assert len(records) == 2
@@ -359,8 +425,12 @@ async def test_run_corpus_one_bad_attempt_does_not_kill_the_run(tmp_path):
             return await super().create_session(**kwargs)
 
     records = await student.run_corpus(
-        [good, bad], client=FlakyClient(), chat_fn=_scripted_chat_fn,
-        artifact_reader=FakeArtifactReader(), token="tok", search_space_id=1,
+        [good, bad],
+        client=FlakyClient(),
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=FakeArtifactReader(),
+        token="tok",
+        search_space_id=1,
         attempts_path=out_path,
     )
 
@@ -375,8 +445,13 @@ async def test_run_corpus_without_attempts_path_skips_jsonl_write():
     personas = [_persona(problem_id="p1")]
     reader = FakeArtifactReader()
     records = await student.run_corpus(
-        personas, client=FakeApolloClient(), chat_fn=_scripted_chat_fn,
-        artifact_reader=reader, token="tok", search_space_id=1, attempts_path=None,
+        personas,
+        client=FakeApolloClient(),
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=reader,
+        token="tok",
+        search_space_id=1,
+        attempts_path=None,
     )
     assert len(records) == 1
 
@@ -389,9 +464,15 @@ class _FakeRow:
 
 def test_sql_artifact_reader_row_to_payload_maps_every_jsonb_column():
     row = _FakeRow(
-        grader_used="graph", versions={"grader": "v1"}, node_ledger=[{"canonical_key": "eq.a"}],
-        edge_ledger=[], misconceptions=[], clarification_trace=[], scores={"composite": 0.9},
-        abstention=None, grading_latency_ms=1200,
+        grader_used="graph",
+        versions={"grader": "v1"},
+        node_ledger=[{"canonical_key": "eq.a"}],
+        edge_ledger=[],
+        misconceptions=[],
+        clarification_trace=[],
+        scores={"composite": 0.9},
+        abstention=None,
+        grading_latency_ms=1200,
     )
     payload = student.SqlArtifactReader._row_to_payload(row)
     assert payload == {
@@ -418,10 +499,22 @@ def test_sql_artifact_reader_stores_session_factory():
 def test_append_attempt_record_creates_parent_dir(tmp_path):
     nested = tmp_path / "a" / "b" / "attempts.jsonl"
     record = student.AttemptRecord(
-        status="ok", persona_id="x/y/z/strong", subject="x", concept="y", problem_id="z",
-        persona_archetype="strong", expected={}, session_id=1, attempt_id=1,
-        problem_matched=True, transcript=(), done_response=None, artifact_canonical=None,
-        artifact_pair=None, scorecard=None, wall_time_ms=5,
+        status="ok",
+        persona_id="x/y/z/strong",
+        subject="x",
+        concept="y",
+        problem_id="z",
+        persona_archetype="strong",
+        expected={},
+        session_id=1,
+        attempt_id=1,
+        problem_matched=True,
+        transcript=(),
+        done_response=None,
+        artifact_canonical=None,
+        artifact_pair=None,
+        scorecard=None,
+        wall_time_ms=5,
     )
     student.append_attempt_record(record, nested)
     assert nested.exists()

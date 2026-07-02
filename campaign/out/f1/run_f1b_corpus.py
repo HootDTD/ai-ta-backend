@@ -30,6 +30,7 @@ script only talks HTTP/DB/OpenAI, never imports apollo.resolution.*):
     python -m campaign.out.f1.run_f1b_corpus --subject macroeconomics
     python -m campaign.out.f1.run_f1b_corpus --subject linear_motion
 """
+
 from __future__ import annotations
 
 import argparse
@@ -98,6 +99,7 @@ STUDENT_PASSWORD = "CampaignStudentF1b123!"
 OUT_DIR = Path(__file__).resolve().parent
 ATTEMPTS_PATH = OUT_DIR / "attempts.jsonl"
 _SUBJECTS_ROOT = REPO_ROOT / "apollo" / "subjects"
+
 
 #: Discovered live (smoke test, first attempt): the driver's difficulty=
 #: "standard" default almost never matches a persona's authored problem_id --
@@ -175,6 +177,7 @@ async def run_subject(subject: str) -> None:
     aborted = False
 
     with log_path.open("w", encoding="utf-8") as log:
+
         def logline(msg: str) -> None:
             stamped = f"[{time.strftime('%H:%M:%S')}] {msg}"
             print(stamped, flush=True)

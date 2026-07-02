@@ -26,7 +26,9 @@ from apollo.resolution.nli_adjudicator import TransformersNLIAdjudicator
 from apollo.resolution.nli_config import NLI_DEVICE, active_nli_model
 
 
-def main() -> None:  # pragma: no cover - CLI shim, real-model path (requires transformers + HF download)
+def main() -> (
+    None
+):  # pragma: no cover - CLI shim, real-model path (requires transformers + HF download)
     model_name = active_nli_model()
     print(f"apollo_nli_prewarm: model={model_name!r} device={NLI_DEVICE!r}")
 

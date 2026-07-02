@@ -252,9 +252,7 @@ def latency_p95_ms(attempts: Sequence[Mapping[str, Any]]) -> float | None:
     one (nulls excluded — a missing latency is not a zero). ``None`` if no
     attempt recorded a latency."""
     values = sorted(
-        float(a["grading_latency_ms"])
-        for a in attempts
-        if a.get("grading_latency_ms") is not None
+        float(a["grading_latency_ms"]) for a in attempts if a.get("grading_latency_ms") is not None
     )
     if not values:
         return None
@@ -287,9 +285,7 @@ def ops_gate(
     return GateOutcome(name="ops", passed=passed, value=p95, bar=bar_ms, detail=detail)
 
 
-def classify_subject(
-    subject_key: str, subject_kinds: Mapping[str, str] | None = None
-) -> str:
+def classify_subject(subject_key: str, subject_kinds: Mapping[str, str] | None = None) -> str:
     """``"seeded" | "wu_aas" | "held_out" | "unknown"`` for a subject key.
     ``subject_kinds`` overrides/extends the lookup (tests pass fixtures
     directly rather than depending on ``campaign.cast.subjects``' live
@@ -319,7 +315,13 @@ def breadth_gate(
         f"breadth: {len(subjects)} subjects (bar >= {min_subjects}), "
         f"wu_aas={'yes' if has_wu_aas else 'no'}, held_out={'yes' if has_held_out else 'no'}"
     )
-    return GateOutcome(name="breadth", passed=passed, value=float(len(subjects)), bar=float(min_subjects), detail=detail)
+    return GateOutcome(
+        name="breadth",
+        passed=passed,
+        value=float(len(subjects)),
+        bar=float(min_subjects),
+        detail=detail,
+    )
 
 
 def paired_comparison(
@@ -482,8 +484,12 @@ def render_markdown(report: GateReport) -> str:
     lines.append("## Paired graph-vs-LLM comparison")
     lines.append("")
     paired = report.paired
-    lines.append(f"- Pairs compared: {paired['n_pairs']} (skipped, missing pair: {paired['skipped_missing_pair']})")
-    lines.append(f"- **Band agreement rate (primary paired metric): {paired['band_agreement_rate']:.1%}**")
+    lines.append(
+        f"- Pairs compared: {paired['n_pairs']} (skipped, missing pair: {paired['skipped_missing_pair']})"
+    )
+    lines.append(
+        f"- **Band agreement rate (primary paired metric): {paired['band_agreement_rate']:.1%}**"
+    )
     lines.append(
         f"- Mean raw composite delta (graph - llm): {paired['mean_delta']:.4f} "
         "— **informational / cross-scale only**: the graph composite is "
@@ -533,5 +539,7 @@ def write_report(report: GateReport, out_dir: Path | str) -> tuple[Path, Path]:
     md_path = target / "GATE-REPORT.md"
     json_path = target / "scoreboard.json"
     md_path.write_text(render_markdown(report), encoding="utf-8")
-    json_path.write_text(json.dumps(_scoreboard(report), indent=2, sort_keys=True), encoding="utf-8")
+    json_path.write_text(
+        json.dumps(_scoreboard(report), indent=2, sort_keys=True), encoding="utf-8"
+    )
     return md_path, json_path

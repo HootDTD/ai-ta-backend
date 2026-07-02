@@ -263,10 +263,15 @@ async def test_provision_authored_approves_held_problems(tmp_path):
                     },
                 },
             )
-        if request.method == "POST" and request.url.path == "/apollo/authored-sets/9/problems/201/approve":
+        if (
+            request.method == "POST"
+            and request.url.path == "/apollo/authored-sets/9/problems/201/approve"
+        ):
             body = json.loads(request.content)
             approve_calls.append((201, body))
-            return httpx.Response(200, json={"promoted": True, "failed_gate": None, "diagnostic": ""})
+            return httpx.Response(
+                200, json={"promoted": True, "failed_gate": None, "diagnostic": ""}
+            )
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     async with _mock_client(handler) as client:

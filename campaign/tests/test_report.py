@@ -42,7 +42,14 @@ def _judge_result(stage: str, *, ok: int, total: int, extra=None) -> JudgeResult
     verdicts = tuple(Verdict(f"{stage}:{i}", i < ok, "") for i in range(total))
     passed = sum(1 for v in verdicts if v.ok)
     pass_rate = (passed / total) if total else 0.0
-    return JudgeResult(stage=stage, verdicts=verdicts, passed=passed, total=total, pass_rate=pass_rate, extra=extra or {})
+    return JudgeResult(
+        stage=stage,
+        verdicts=verdicts,
+        passed=passed,
+        total=total,
+        pass_rate=pass_rate,
+        extra=extra or {},
+    )
 
 
 def _passing_judge_results() -> dict[str, JudgeResult]:
@@ -311,51 +318,56 @@ def test_paired_comparison_top_divergent_capped_at_ten():
 
 def _full_passing_setup():
     judge_results = _passing_judge_results()
-    attempts = [
-        _attempt(
-            attempt_id=f"fm-{i}",
-            subject="fluid_mechanics",
-            shadow_succeeded=True,
-            shadow_abstained=False,
-            graph_composite=0.9,
-            llm_composite=0.85,
-            grading_latency_ms=1000,
-        )
-        for i in range(8)
-    ] + [
-        _attempt(
-            attempt_id=f"mac-{i}",
-            subject="macroeconomics",
-            shadow_succeeded=True,
-            shadow_abstained=False,
-            graph_composite=0.8,
-            llm_composite=0.78,
-            grading_latency_ms=1200,
-        )
-        for i in range(8)
-    ] + [
-        _attempt(
-            attempt_id=f"lm-{i}",
-            subject="linear_motion",
-            shadow_succeeded=True,
-            shadow_abstained=False,
-            graph_composite=0.75,
-            llm_composite=0.7,
-            grading_latency_ms=1500,
-        )
-        for i in range(8)
-    ] + [
-        _attempt(
-            attempt_id=f"ho-{i}",
-            subject="held_out_subject",
-            shadow_succeeded=True,
-            shadow_abstained=False,
-            graph_composite=0.72,
-            llm_composite=0.7,
-            grading_latency_ms=1400,
-        )
-        for i in range(8)
-    ]
+    attempts = (
+        [
+            _attempt(
+                attempt_id=f"fm-{i}",
+                subject="fluid_mechanics",
+                shadow_succeeded=True,
+                shadow_abstained=False,
+                graph_composite=0.9,
+                llm_composite=0.85,
+                grading_latency_ms=1000,
+            )
+            for i in range(8)
+        ]
+        + [
+            _attempt(
+                attempt_id=f"mac-{i}",
+                subject="macroeconomics",
+                shadow_succeeded=True,
+                shadow_abstained=False,
+                graph_composite=0.8,
+                llm_composite=0.78,
+                grading_latency_ms=1200,
+            )
+            for i in range(8)
+        ]
+        + [
+            _attempt(
+                attempt_id=f"lm-{i}",
+                subject="linear_motion",
+                shadow_succeeded=True,
+                shadow_abstained=False,
+                graph_composite=0.75,
+                llm_composite=0.7,
+                grading_latency_ms=1500,
+            )
+            for i in range(8)
+        ]
+        + [
+            _attempt(
+                attempt_id=f"ho-{i}",
+                subject="held_out_subject",
+                shadow_succeeded=True,
+                shadow_abstained=False,
+                graph_composite=0.72,
+                llm_composite=0.7,
+                grading_latency_ms=1400,
+            )
+            for i in range(8)
+        ]
+    )
     adjudication_verdicts = [{"attempt_id": f"a{i}", "verdict": "sane"} for i in range(20)]
     subject_kinds = {
         "fluid_mechanics": "seeded",

@@ -35,13 +35,19 @@ class FakeLLM:
     """Records every call it receives and returns canned verdicts by index or
     by a per-item override keyed on ``item_id`` substring."""
 
-    def __init__(self, *, default_ok: bool = True, overrides: dict[str, dict[str, Any]] | None = None):
+    def __init__(
+        self, *, default_ok: bool = True, overrides: dict[str, dict[str, Any]] | None = None
+    ):
         self.calls: list[dict[str, Any]] = []
         self._default_ok = default_ok
         self._overrides = overrides or {}
 
-    async def judge_item(self, *, system_prompt: str, user_prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
-        self.calls.append({"system_prompt": system_prompt, "user_prompt": user_prompt, "schema": schema})
+    async def judge_item(
+        self, *, system_prompt: str, user_prompt: str, schema: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.calls.append(
+            {"system_prompt": system_prompt, "user_prompt": user_prompt, "schema": schema}
+        )
         for key, response in self._overrides.items():
             if key in user_prompt:
                 return response
@@ -282,9 +288,17 @@ def _s3_attempt():
         "attempt_id": "a1",
         "transcript": "Bernoulli's equation relates pressure and velocity...",
         "node_ledger": [
-            {"key": "eq.bernoulli", "status": "credited", "evidence_span": "Bernoulli's equation..."},
+            {
+                "key": "eq.bernoulli",
+                "status": "credited",
+                "evidence_span": "Bernoulli's equation...",
+            },
             {"key": "cond.incompressible", "status": "unresolved"},
-            {"key": "misc.pressure_confusion", "status": "misconception", "evidence_span": "pressure decreases..."},
+            {
+                "key": "misc.pressure_confusion",
+                "status": "misconception",
+                "evidence_span": "pressure decreases...",
+            },
             {"key": "meta.ignored", "status": "not_a_real_status"},
         ],
         "expected": {
@@ -299,7 +313,11 @@ def test_s3_build_items_skips_unaudited_statuses():
     judge = S3StudentFidelityJudge(llm=FakeLLM())
     items = judge.build_items([_s3_attempt()])
     assert len(items) == 3
-    assert {i["key"] for i in items} == {"eq.bernoulli", "cond.incompressible", "misc.pressure_confusion"}
+    assert {i["key"] for i in items} == {
+        "eq.bernoulli",
+        "cond.incompressible",
+        "misc.pressure_confusion",
+    }
 
 
 def test_s3_item_id_scoped_to_attempt():
@@ -450,7 +468,9 @@ def test_s5_recall_reported_not_gated():
 
 
 def test_misconception_recall_no_expected_is_perfect_recall():
-    recall = misconception_recall([{"attempt_id": "x", "expected": {}, "asserted_misconceptions": []}])
+    recall = misconception_recall(
+        [{"attempt_id": "x", "expected": {}, "asserted_misconceptions": []}]
+    )
     assert recall["overall_recall"] == 1.0
 
 

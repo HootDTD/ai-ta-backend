@@ -72,8 +72,8 @@
       "id": "compute_gnp",
       "step": 4,
       "content": {
-        "order": 1,
         "label": "Add net income earned from abroad to GDP to obtain gross national product (GNP)",
+        "order": 1,
         "action": "start from GDP and add net income earned from abroad, RIN minus ROUT, to obtain gross national product GNP",
         "purpose": "convert the domestic measure GDP into the national measure GNP before depreciation is removed",
         "uses_equations": [
@@ -90,8 +90,8 @@
       "id": "subtract_depreciation",
       "step": 5,
       "content": {
-        "order": 2,
         "label": "Subtract depreciation from GNP to obtain net national product (NNP)",
+        "order": 2,
         "action": "subtract depreciation DEP from gross national product GNP to obtain net national product NNP",
         "purpose": "remove the capital worn out over the year so the result reflects net rather than gross output",
         "uses_equations": [

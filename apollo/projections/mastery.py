@@ -162,9 +162,7 @@ def _belief_for(mastery: float) -> list[float]:
     return [max(0.0, min(1.0, 1.0 - mastery)), 0.0, max(0.0, min(1.0, mastery))]
 
 
-async def update_mastery_from_artifact(
-    db: AsyncSession, *, artifact_row: GradingArtifact
-) -> None:
+async def update_mastery_from_artifact(db: AsyncSession, *, artifact_row: GradingArtifact) -> None:
     """Append a ``composite`` ``apollo_mastery_events`` row and EWMA-upsert
     ``apollo_learner_state`` for every distinct entity the artifact's ledger
     credits or flags a misconception on. FLUSH-ONLY: mirrors

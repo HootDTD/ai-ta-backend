@@ -30,9 +30,7 @@ _SYSTEM_PROMPT = (
 )
 
 
-def misconception_recall(
-    attempts: list[Mapping[str, Any]]
-) -> dict[str, Any]:
+def misconception_recall(attempts: list[Mapping[str, Any]]) -> dict[str, Any]:
     """Pure code-side recall check: for each attempt, which of the persona's
     ``expected.misconceptions`` keys were actually asserted by the grader.
     Reported, not gated (spec explicitly defers misconception recall
@@ -43,9 +41,7 @@ def misconception_recall(
     for attempt in attempts:
         attempt_id = str(attempt.get("attempt_id"))
         expected = set(map(str, attempt.get("expected", {}).get("misconceptions", [])))
-        asserted = {
-            str(m.get("key")) for m in attempt.get("asserted_misconceptions", [])
-        }
+        asserted = {str(m.get("key")) for m in attempt.get("asserted_misconceptions", [])}
         found = expected & asserted
         missed = expected - asserted
         total_expected += len(expected)

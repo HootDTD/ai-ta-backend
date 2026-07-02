@@ -16,9 +16,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable, Sequence
 
 _LOG = logging.getLogger(__name__)
 
@@ -57,6 +57,7 @@ def to_sqlalchemy_dsn(dsn: str) -> str:
     if dsn.startswith(_PLAIN_SCHEME_PREFIX) and not dsn.startswith(_ASYNC_SCHEME_PREFIX):
         return _ASYNC_SCHEME_PREFIX + dsn[len(_PLAIN_SCHEME_PREFIX) :]
     return dsn
+
 
 _CREATE_TRACKING_SQL = f"""
 CREATE TABLE IF NOT EXISTS {_TRACKING_TABLE} (
@@ -136,8 +137,7 @@ async def _apply_one(conn, migration: Path) -> None:
     async with conn.transaction():
         await conn.execute(sql)
         await conn.execute(
-            f"INSERT INTO {_TRACKING_TABLE} (name) VALUES ($1) "
-            "ON CONFLICT (name) DO NOTHING",
+            f"INSERT INTO {_TRACKING_TABLE} (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
             migration.name,
         )
     _LOG.info("applied migration %s", migration.name)

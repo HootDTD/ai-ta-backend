@@ -177,9 +177,7 @@ def test_validate_persona_flags_unknown_credited_key():
 def test_validate_persona_flags_unknown_misconception_key():
     bad = PersonaAttempt(
         persona="misconception",
-        expected=ExpectedLedger(
-            credited=["eq.continuity"], misconceptions=["misc.does_not_exist"]
-        ),
+        expected=ExpectedLedger(credited=["eq.continuity"], misconceptions=["misc.does_not_exist"]),
         **_MINIMAL_KWARGS,
     )
     errors = validate_persona(bad)
@@ -189,9 +187,7 @@ def test_validate_persona_flags_unknown_misconception_key():
 def test_validate_persona_flags_unknown_unresolved_key():
     bad = PersonaAttempt(
         persona="partial",
-        expected=ExpectedLedger(
-            credited=["eq.continuity"], unresolved=["eq.does_not_exist"]
-        ),
+        expected=ExpectedLedger(credited=["eq.continuity"], unresolved=["eq.does_not_exist"]),
         **_MINIMAL_KWARGS,
     )
     errors = validate_persona(bad)

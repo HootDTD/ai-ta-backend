@@ -62,7 +62,7 @@ class RunContext:
         *,
         out_root: Path | str = DEFAULT_OUT_ROOT,
         config: CampaignConfig | None = None,
-    ) -> "RunContext":
+    ) -> RunContext:
         """Create (or resume) the run directory for ``run_id``.
 
         ``config`` overrides the captured-live config for the tune phase

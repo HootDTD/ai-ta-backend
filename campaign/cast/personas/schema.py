@@ -61,9 +61,7 @@ class ExpectedLedger(BaseModel):
     def _credited_and_unresolved_disjoint(self) -> ExpectedLedger:
         overlap = set(self.credited) & set(self.unresolved)
         if overlap:
-            raise ValueError(
-                f"keys cannot be both credited and unresolved: {sorted(overlap)}"
-            )
+            raise ValueError(f"keys cannot be both credited and unresolved: {sorted(overlap)}")
         return self
 
     def to_ledger_dict(self) -> dict[str, list[str]]:

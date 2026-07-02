@@ -1,0 +1,82 @@
+{
+  "config": {
+    "abstention_thresholds": {
+      "min_normalization_confidence": 0.85,
+      "min_parser_confidence": 0.6,
+      "misconception_confidence": 0.8,
+      "unresolved_rate": 0.35
+    },
+    "axis_weights": {
+      "justification": 0.2375,
+      "misconception_corrected": 0.05,
+      "procedure": 0.57,
+      "simplification": 0.1425
+    },
+    "flags": {
+      "APOLLO_AUTOPROVISION_ENABLED": true,
+      "APOLLO_CLARIFICATION_ENABLED": true,
+      "APOLLO_DONE_GATE_ENABLED": false,
+      "APOLLO_GRAPH_SIM_LIVE_ENABLED": false,
+      "APOLLO_GRAPH_SIM_SHADOW_ENABLED": true,
+      "APOLLO_LEARNER_DECAY_ENABLED": false,
+      "APOLLO_LEARNER_JANITOR_ENABLED": false,
+      "APOLLO_LEARNER_NEGOTIATION_ENABLED": false,
+      "APOLLO_MISCONCEPTION_ENABLED": false,
+      "APOLLO_NLI_ENABLED": true,
+      "APOLLO_OLM_INVITES_ENABLED": false,
+      "APOLLO_SESSION_PERSONALIZATION_ENABLED": false,
+      "APOLLO_STRUCTURED_SCRAPE": false
+    },
+    "letter_bands": [
+      [
+        97,
+        "A+"
+      ],
+      [
+        90,
+        "A"
+      ],
+      [
+        85,
+        "A-"
+      ],
+      [
+        80,
+        "B+"
+      ],
+      [
+        75,
+        "B"
+      ],
+      [
+        70,
+        "B-"
+      ],
+      [
+        65,
+        "C+"
+      ],
+      [
+        60,
+        "C"
+      ],
+      [
+        50,
+        "D"
+      ],
+      [
+        0,
+        "F"
+      ]
+    ],
+    "nli_model": "cross-encoder/nli-deberta-v3-large",
+    "nli_params": {
+      "ambiguity_margin": 0.1,
+      "max_contradiction": 0.05,
+      "min_entailment": 0.9,
+      "misconception_veto_entailment": 0.98,
+      "top_k": 5
+    }
+  },
+  "config_sha": "11197bb69d8ae7f5559d27ad5b251fce83d19eec9263e570a5a39e2a88cbb386"
+}

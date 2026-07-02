@@ -124,7 +124,9 @@ async def _seed_session_attempt(db) -> tuple[ApolloSession, ProblemAttempt]:
     )
     db.add(sess)
     await db.flush()
-    attempt = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro", result="graded")
+    attempt = ProblemAttempt(
+        session_id=sess.id, problem_id="p1", difficulty="intro", result="graded"
+    )
     db.add(attempt)
     await db.flush()
     return sess, attempt
@@ -150,10 +152,14 @@ async def test_shadow_present_writes_canonical_graph_and_pair_llm(db_session):
     assert result["grader_used"] == GRADER_USED_GRAPH
 
     rows = (
-        await db_session.execute(
-            select(GradingArtifact).where(GradingArtifact.attempt_id == attempt.id)
+        (
+            await db_session.execute(
+                select(GradingArtifact).where(GradingArtifact.attempt_id == attempt.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     by_role = {r.role: r for r in rows}
     assert set(by_role) == {"canonical", "pair"}
     assert by_role["canonical"].grader_used == GRADER_USED_GRAPH
@@ -177,10 +183,14 @@ async def test_shadow_none_writes_single_llm_canonical_row_with_graph_failure(db
     )
 
     rows = (
-        await db_session.execute(
-            select(GradingArtifact).where(GradingArtifact.attempt_id == attempt.id)
+        (
+            await db_session.execute(
+                select(GradingArtifact).where(GradingArtifact.attempt_id == attempt.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     row = rows[0]
     assert row.role == "canonical"
@@ -309,10 +319,14 @@ async def test_flush_error_is_swallowed_and_never_propagates(db_session):
     assert result is None
 
     rows = (
-        await db_session.execute(
-            select(GradingArtifact).where(GradingArtifact.attempt_id == attempt.id)
+        (
+            await db_session.execute(
+                select(GradingArtifact).where(GradingArtifact.attempt_id == attempt.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert rows == []
 
 

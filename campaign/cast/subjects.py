@@ -65,9 +65,7 @@ class AuthoredSubject:
 FLUID_MECHANICS = SeededSubject(key="fluid_mechanics", slug="fluid_mechanics")
 MACROECONOMICS = SeededSubject(key="macroeconomics", slug="macroeconomics")
 
-SEEDED_SUBJECTS: dict[str, SeededSubject] = {
-    s.key: s for s in (FLUID_MECHANICS, MACROECONOMICS)
-}
+SEEDED_SUBJECTS: dict[str, SeededSubject] = {s.key: s for s in (FLUID_MECHANICS, MACROECONOMICS)}
 
 # --- WU-AAS authored subjects -------------------------------------------
 #

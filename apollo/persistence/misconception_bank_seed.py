@@ -93,9 +93,7 @@ def misconception_entry_to_bank_spec(entry: dict) -> MisconceptionBankSpec:
 def misconceptions_json_to_bank_specs(misc: dict) -> list[MisconceptionBankSpec]:
     """Convert a parsed ``misconceptions.json`` dict into the full list of
     ``MisconceptionBankSpec`` for one concept (order preserved)."""
-    return [
-        misconception_entry_to_bank_spec(entry) for entry in misc.get("misconceptions", [])
-    ]
+    return [misconception_entry_to_bank_spec(entry) for entry in misc.get("misconceptions", [])]
 
 
 __all__ = [

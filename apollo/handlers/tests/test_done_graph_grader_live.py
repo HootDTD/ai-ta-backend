@@ -32,7 +32,9 @@ def _shadow_result(*, abstained: bool = False) -> MagicMock:
     result = MagicMock(name="ShadowGradeResult")
     result.graph_sim_rubric = {"overall": {"score": 88, "letter": "B+"}}
     result.diagnostic = MagicMock(narrative="graph-sim narrative")
-    result.audited = MagicMock(abstained=abstained, abstention_reasons=("normalization_confidence",))
+    result.audited = MagicMock(
+        abstained=abstained, abstention_reasons=("normalization_confidence",)
+    )
     return result
 
 
@@ -119,7 +121,10 @@ async def test_flag_off_byte_identical_to_shadow_golden(monkeypatch):
     `test_done_live_flag.test_live_off_return_byte_identical`), regardless of
     what a healthy shadow would have promoted."""
     out, shadow_mock, write_artifacts_mock = await _run_with_flags(
-        monkeypatch, shadow=True, live="false", shadow_return=_shadow_result(),
+        monkeypatch,
+        shadow=True,
+        live="false",
+        shadow_return=_shadow_result(),
     )
     shadow_mock.assert_awaited_once()
     assert out == {
@@ -162,7 +167,11 @@ async def test_live_on_healthy_not_abstained_promotes_graph_grade(monkeypatch):
     with served="graph" (pair row llm)."""
     shadow = _shadow_result(abstained=False)
     out, shadow_mock, write_artifacts_mock = await _run_with_flags(
-        monkeypatch, shadow=True, live="true", artifact=True, shadow_return=shadow,
+        monkeypatch,
+        shadow=True,
+        live="true",
+        artifact=True,
+        shadow_return=shadow,
     )
     shadow_mock.assert_awaited_once()
     assert out["rubric"] is shadow.graph_sim_rubric
@@ -183,7 +192,10 @@ async def test_live_on_exception_anywhere_falls_back_to_old_path(monkeypatch):
     values (HTTP 200 upstream, no re-raise), and the artifact records
     graph_failure containing the exception text."""
     out, shadow_mock, write_artifacts_mock = await _run_with_flags(
-        monkeypatch, shadow=True, live="true", artifact=True,
+        monkeypatch,
+        shadow=True,
+        live="true",
+        artifact=True,
         shadow_side_effect=RuntimeError("boom"),
     )
     shadow_mock.assert_awaited_once()
@@ -203,7 +215,10 @@ async def test_live_off_exception_still_reraises_no_fallback(monkeypatch):
     exception propagates (named-error visibility for shadow-only mode)."""
     with pytest.raises(RuntimeError, match="boom"):
         await _run_with_flags(
-            monkeypatch, shadow=True, live="false", shadow_side_effect=RuntimeError("boom"),
+            monkeypatch,
+            shadow=True,
+            live="false",
+            shadow_side_effect=RuntimeError("boom"),
         )
 
 
@@ -217,7 +232,11 @@ async def test_live_on_abstained_shadow_falls_back_to_llm(monkeypatch):
     `apollo/grading/tests/test_artifact_build.py`)."""
     shadow = _shadow_result(abstained=True)
     out, shadow_mock, write_artifacts_mock = await _run_with_flags(
-        monkeypatch, shadow=True, live="true", artifact=True, shadow_return=shadow,
+        monkeypatch,
+        shadow=True,
+        live="true",
+        artifact=True,
+        shadow_return=shadow,
     )
     shadow_mock.assert_awaited_once()
     assert out["rubric"] == {"overall": {"score": 0.5}}
@@ -235,7 +254,11 @@ async def test_scorecard_absent_when_artifact_flag_off(monkeypatch):
     """Task B1: no artifact write ⇒ nothing to template over ⇒ no scorecard
     key at all (not even ``None``)."""
     out, _shadow_mock, write_artifacts_mock = await _run_with_flags(
-        monkeypatch, shadow=True, live="true", artifact=False, shadow_return=_shadow_result(),
+        monkeypatch,
+        shadow=True,
+        live="true",
+        artifact=False,
+        shadow_return=_shadow_result(),
     )
     write_artifacts_mock.assert_not_awaited()
     assert "scorecard" not in out
@@ -246,8 +269,12 @@ async def test_scorecard_attached_from_write_artifacts_return_value(monkeypatch)
     scorecard from EXACTLY the canonical payload ``write_artifacts`` returns
     — no recomputation, no second lookup."""
     out, _shadow_mock, write_artifacts_mock = await _run_with_flags(
-        monkeypatch, shadow=True, live="true", artifact=True,
-        shadow_return=_shadow_result(), write_artifacts_return=_FAKE_CANONICAL_PAYLOAD,
+        monkeypatch,
+        shadow=True,
+        live="true",
+        artifact=True,
+        shadow_return=_shadow_result(),
+        write_artifacts_return=_FAKE_CANONICAL_PAYLOAD,
     )
     write_artifacts_mock.assert_awaited_once()
     assert out["scorecard"] == {
@@ -266,8 +293,12 @@ async def test_scorecard_absent_when_artifact_write_fails(monkeypatch):
     attached rather than templating over a payload that never made it to
     disk."""
     out, _shadow_mock, write_artifacts_mock = await _run_with_flags(
-        monkeypatch, shadow=True, live="true", artifact=True,
-        shadow_return=_shadow_result(), write_artifacts_return=None,
+        monkeypatch,
+        shadow=True,
+        live="true",
+        artifact=True,
+        shadow_return=_shadow_result(),
+        write_artifacts_return=None,
     )
     write_artifacts_mock.assert_awaited_once()
     assert "scorecard" not in out
@@ -277,7 +308,10 @@ async def test_old_rubric_still_forwarded_to_shadow(monkeypatch):
     """Unchanged plumbing: run_graph_simulation still gets old_rubric=<the OLD
     student-facing rubric> regardless of the A4 flag state."""
     _out, shadow_mock, _write = await _run_with_flags(
-        monkeypatch, shadow=True, live="true", shadow_return=_shadow_result(),
+        monkeypatch,
+        shadow=True,
+        live="true",
+        shadow_return=_shadow_result(),
     )
     kwargs = shadow_mock.await_args.kwargs
     assert kwargs["old_rubric"] == {"overall": {"score": 0.5}}
@@ -355,9 +389,7 @@ async def test_project_mastery_noop_when_no_canonical_row_found():
     canonical row here is unreachable in practice — but if it ever happens,
     this must be a silent no-op (no projection call, no commit)."""
     db = _db_returning(None)
-    with patch(
-        "apollo.handlers.done.update_mastery_from_artifact", new=AsyncMock()
-    ) as project:
+    with patch("apollo.handlers.done.update_mastery_from_artifact", new=AsyncMock()) as project:
         await _project_mastery(db, attempt_id=42)
     project.assert_not_awaited()
     db.commit.assert_not_awaited()
@@ -366,9 +398,7 @@ async def test_project_mastery_noop_when_no_canonical_row_found():
 async def test_project_mastery_success_commits():
     row = MagicMock(name="GradingArtifact")
     db = _db_returning(row)
-    with patch(
-        "apollo.handlers.done.update_mastery_from_artifact", new=AsyncMock()
-    ) as project:
+    with patch("apollo.handlers.done.update_mastery_from_artifact", new=AsyncMock()) as project:
         await _project_mastery(db, attempt_id=42)
     project.assert_awaited_once_with(db, artifact_row=row)
     db.commit.assert_awaited_once()

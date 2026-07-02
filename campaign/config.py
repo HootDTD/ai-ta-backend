@@ -95,7 +95,7 @@ class CampaignConfig:
         }
 
     @staticmethod
-    def capture_live() -> "CampaignConfig":
+    def capture_live() -> CampaignConfig:
         """Read the current process env + code constants into a config."""
         return CampaignConfig(
             axis_weights=dict(AXIS_WEIGHTS),
@@ -107,7 +107,7 @@ class CampaignConfig:
         )
 
     @staticmethod
-    def from_snapshot(data: dict[str, Any]) -> "CampaignConfig":
+    def from_snapshot(data: dict[str, Any]) -> CampaignConfig:
         """Reconstruct a :class:`CampaignConfig` from :meth:`snapshot` output."""
         return CampaignConfig(
             axis_weights=dict(data["axis_weights"]),

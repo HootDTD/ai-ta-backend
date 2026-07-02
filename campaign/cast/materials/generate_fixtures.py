@@ -71,9 +71,7 @@ def build_fixture_pdf(text: str, path: Path) -> Path:
 def generate_linear_motion_fixtures(out_dir: Path | None = None) -> tuple[Path, Path]:
     """Write the linear_motion problem+solution PDF pair; return their paths."""
     base = out_dir or _MATERIALS_DIR
-    problem_path = build_fixture_pdf(
-        LINEAR_MOTION_PROBLEM_TEXT, base / "linear_motion_problem.pdf"
-    )
+    problem_path = build_fixture_pdf(LINEAR_MOTION_PROBLEM_TEXT, base / "linear_motion_problem.pdf")
     solution_path = build_fixture_pdf(
         LINEAR_MOTION_SOLUTION_TEXT, base / "linear_motion_solution.pdf"
     )

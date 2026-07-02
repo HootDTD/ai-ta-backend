@@ -4,6 +4,7 @@ Covers: snapshot round-trip, config_sha stability + tamper detection, and the
 gate-phase divergence guard (campaign.runctx tests exercise the RunContext
 wiring; here we test the pure config-layer primitives).
 """
+
 from __future__ import annotations
 
 import json

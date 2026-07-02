@@ -63,7 +63,10 @@ def _findings() -> tuple[Finding, ...]:
             student_node_ids=("n_x",),
             evidence_spans=("gibberish"),
         ),
-        Finding(kind=FindingKind.MATCHED_EDGE, message="def.pressure_velocity_tradeoff -PRECEDES-> eq.bernoulli_full (explicit)"),
+        Finding(
+            kind=FindingKind.MATCHED_EDGE,
+            message="def.pressure_velocity_tradeoff -PRECEDES-> eq.bernoulli_full (explicit)",
+        ),
     )
 
 
@@ -130,10 +133,16 @@ def shadow():
 @pytest.fixture
 def graph_artifact(shadow) -> dict:
     return build_graph_artifact(
-        shadow=shadow, weights=load_weights(), clarification_trace=[
-            {"probe_question": "Do you mean pressure or velocity?",
-             "clarification_text": "pressure", "credit": "granted"},
-        ], latency_ms=1234
+        shadow=shadow,
+        weights=load_weights(),
+        clarification_trace=[
+            {
+                "probe_question": "Do you mean pressure or velocity?",
+                "clarification_text": "pressure",
+                "credit": "granted",
+            },
+        ],
+        latency_ms=1234,
     )
 
 
@@ -317,7 +326,9 @@ def test_clarification_trace_to_judge_shape():
 
 
 def test_attempt_to_s4_item_shape(graph_artifact):
-    item = adapters.attempt_to_s4_item(attempt_id=9, transcript=_TRANSCRIPT, artifact=graph_artifact)
+    item = adapters.attempt_to_s4_item(
+        attempt_id=9, transcript=_TRANSCRIPT, artifact=graph_artifact
+    )
     assert item["attempt_id"] == 9
     assert item["apollo_questions"] == ["Wait, do you mean pressure or velocity?"]
     assert item["clarification_trace"] == [
@@ -336,21 +347,36 @@ def test_attempt_to_s4_item_shape(graph_artifact):
 
 
 def test_graph_payload_for_finds_graph_row_in_either_slot(graph_artifact, llm_artifact):
-    assert adapters.graph_payload_for(artifact_canonical=graph_artifact, artifact_pair=llm_artifact) == graph_artifact
-    assert adapters.graph_payload_for(artifact_canonical=llm_artifact, artifact_pair=graph_artifact) == graph_artifact
+    assert (
+        adapters.graph_payload_for(artifact_canonical=graph_artifact, artifact_pair=llm_artifact)
+        == graph_artifact
+    )
+    assert (
+        adapters.graph_payload_for(artifact_canonical=llm_artifact, artifact_pair=graph_artifact)
+        == graph_artifact
+    )
     assert adapters.graph_payload_for(artifact_canonical=llm_artifact, artifact_pair=None) is None
 
 
 def test_llm_payload_for_finds_llm_row_in_either_slot(graph_artifact, llm_artifact):
-    assert adapters.llm_payload_for(artifact_canonical=graph_artifact, artifact_pair=llm_artifact) == llm_artifact
-    assert adapters.llm_payload_for(artifact_canonical=llm_artifact, artifact_pair=graph_artifact) == llm_artifact
+    assert (
+        adapters.llm_payload_for(artifact_canonical=graph_artifact, artifact_pair=llm_artifact)
+        == llm_artifact
+    )
+    assert (
+        adapters.llm_payload_for(artifact_canonical=llm_artifact, artifact_pair=graph_artifact)
+        == llm_artifact
+    )
     assert adapters.llm_payload_for(artifact_canonical=graph_artifact, artifact_pair=None) is None
 
 
 def test_attempt_to_report_record_paired_shadow_mode(graph_artifact, llm_artifact):
     # Shadow-mode tuning run: canonical=llm (served), pair=graph (shadow).
     record = adapters.attempt_to_report_record(
-        attempt_id=99, subject="fluid_mechanics", artifact_canonical=llm_artifact, artifact_pair=graph_artifact
+        attempt_id=99,
+        subject="fluid_mechanics",
+        artifact_canonical=llm_artifact,
+        artifact_pair=graph_artifact,
     )
     assert record["attempt_id"] == 99
     assert record["subject"] == "fluid_mechanics"
@@ -366,7 +392,10 @@ def test_attempt_to_report_record_paired_shadow_mode(graph_artifact, llm_artifac
 
     assert graph_graded_fraction([record]) == 1.0
     assert band_for_score(record["graph_composite"]) in {
-        "Strong", "Proficient", "Developing", "Beginning"
+        "Strong",
+        "Proficient",
+        "Developing",
+        "Beginning",
     }
 
 
@@ -395,7 +424,10 @@ def test_attempt_to_report_record_graph_abstained():
     }
     llm_served = {"grader_used": "llm_fallback", "scores": {"composite": 0.6}, "node_ledger": []}
     record = adapters.attempt_to_report_record(
-        attempt_id=2, subject="fluid_mechanics", artifact_canonical=llm_served, artifact_pair=graph_abstained
+        attempt_id=2,
+        subject="fluid_mechanics",
+        artifact_canonical=llm_served,
+        artifact_pair=graph_abstained,
     )
     assert record["shadow_succeeded"] is True
     assert record["shadow_abstained"] is True

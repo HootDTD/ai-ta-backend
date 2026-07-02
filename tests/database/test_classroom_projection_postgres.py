@@ -56,7 +56,10 @@ async def _seed_two_concepts(db) -> tuple[int, int, int]:
 
 async def _seed_entity(db, *, concept_id: int, canonical_key: str, kind: str = "equation") -> int:
     entity = KGEntity(
-        concept_id=concept_id, canonical_key=canonical_key, kind=kind, display_name=canonical_key,
+        concept_id=concept_id,
+        canonical_key=canonical_key,
+        kind=kind,
+        display_name=canonical_key,
     )
     db.add(entity)
     await db.flush()
@@ -91,7 +94,9 @@ async def _seed_attempt(db, *, search_space_id: int, concept_id: int) -> int:
     )
     db.add(sess)
     await db.flush()
-    attempt = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro", result="graded")
+    attempt = ProblemAttempt(
+        session_id=sess.id, problem_id="p1", difficulty="intro", result="graded"
+    )
     db.add(attempt)
     await db.flush()
     return int(attempt.id)
@@ -140,9 +145,15 @@ async def test_heatmap_returns_one_row_per_user_and_concept(db_session):
     e2 = await _seed_entity(db_session, concept_id=cid_2, canonical_key="eq.b")
     u1, u2 = str(uuid.uuid4()), str(uuid.uuid4())
 
-    await _seed_state(db_session, user_id=u1, search_space_id=sid, entity_id=e1, mastery=0.8, confidence=0.9)
-    await _seed_state(db_session, user_id=u1, search_space_id=sid, entity_id=e2, mastery=0.4, confidence=0.5)
-    await _seed_state(db_session, user_id=u2, search_space_id=sid, entity_id=e1, mastery=0.2, confidence=0.3)
+    await _seed_state(
+        db_session, user_id=u1, search_space_id=sid, entity_id=e1, mastery=0.8, confidence=0.9
+    )
+    await _seed_state(
+        db_session, user_id=u1, search_space_id=sid, entity_id=e2, mastery=0.4, confidence=0.5
+    )
+    await _seed_state(
+        db_session, user_id=u2, search_space_id=sid, entity_id=e1, mastery=0.2, confidence=0.3
+    )
     await db_session.commit()
 
     rows = await mastery_heatmap(db_session, search_space_id=sid)
@@ -161,8 +172,12 @@ async def test_heatmap_averages_multiple_entities_under_one_concept(db_session):
     e2 = await _seed_entity(db_session, concept_id=cid_1, canonical_key="eq.b")
     u1 = str(uuid.uuid4())
 
-    await _seed_state(db_session, user_id=u1, search_space_id=sid, entity_id=e1, mastery=1.0, confidence=1.0)
-    await _seed_state(db_session, user_id=u1, search_space_id=sid, entity_id=e2, mastery=0.0, confidence=0.0)
+    await _seed_state(
+        db_session, user_id=u1, search_space_id=sid, entity_id=e1, mastery=1.0, confidence=1.0
+    )
+    await _seed_state(
+        db_session, user_id=u1, search_space_id=sid, entity_id=e2, mastery=0.0, confidence=0.0
+    )
     await db_session.commit()
 
     rows = await mastery_heatmap(db_session, search_space_id=sid)
@@ -178,8 +193,12 @@ async def test_heatmap_scopes_to_search_space(db_session):
     e_b = await _seed_entity(db_session, concept_id=cid_b, canonical_key="eq.b")
     u1 = str(uuid.uuid4())
 
-    await _seed_state(db_session, user_id=u1, search_space_id=sid_a, entity_id=e_a, mastery=0.7, confidence=0.7)
-    await _seed_state(db_session, user_id=u1, search_space_id=sid_b, entity_id=e_b, mastery=0.1, confidence=0.1)
+    await _seed_state(
+        db_session, user_id=u1, search_space_id=sid_a, entity_id=e_a, mastery=0.7, confidence=0.7
+    )
+    await _seed_state(
+        db_session, user_id=u1, search_space_id=sid_b, entity_id=e_b, mastery=0.1, confidence=0.1
+    )
     await db_session.commit()
 
     rows = await mastery_heatmap(db_session, search_space_id=sid_a)

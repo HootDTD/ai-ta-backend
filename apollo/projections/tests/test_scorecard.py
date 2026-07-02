@@ -139,8 +139,13 @@ def test_missing_or_unclear_carries_unresolved_nodes_as_guidance():
 def test_missing_or_unclear_handles_no_key():
     art = _artifact(
         node_ledger=[
-            {"canonical_key": None, "status": "unresolved", "method": None,
-             "confidence": 0.0, "evidence_span": "some stray utterance"},
+            {
+                "canonical_key": None,
+                "status": "unresolved",
+                "method": None,
+                "confidence": 0.0,
+                "evidence_span": "some stray utterance",
+            },
         ]
     )
     missing = render_scorecard(art)["missing_or_unclear"]

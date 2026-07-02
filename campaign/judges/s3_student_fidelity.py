@@ -53,12 +53,8 @@ def ledger_vs_expected(
     """Pure diff between the actual ledger and the persona's authored
     expectation (D2 ``ExpectedLedger``). Returns counts + the mismatched keys
     for each of the three buckets — no LLM involved."""
-    actual_credited = {
-        str(e.get("key")) for e in ledger if e.get("status") in ("credited",)
-    }
-    actual_unresolved = {
-        str(e.get("key")) for e in ledger if e.get("status") == "unresolved"
-    }
+    actual_credited = {str(e.get("key")) for e in ledger if e.get("status") in ("credited",)}
+    actual_unresolved = {str(e.get("key")) for e in ledger if e.get("status") == "unresolved"}
     actual_misconceptions = {
         str(e.get("key")) for e in ledger if e.get("status") == "misconception"
     }

@@ -113,9 +113,7 @@ class ApolloClient(Protocol):
         self, *, search_space_id: int, hoot_transcript: str, difficulty: str, token: str
     ) -> dict[str, Any]: ...
 
-    async def next(
-        self, *, session_id: int, difficulty: str, token: str
-    ) -> dict[str, Any]: ...
+    async def next(self, *, session_id: int, difficulty: str, token: str) -> dict[str, Any]: ...
 
     async def chat(self, *, session_id: int, message: str, token: str) -> dict[str, Any]: ...
 
@@ -135,7 +133,9 @@ class ArtifactReader(Protocol):
     that role's row doesn't exist (e.g. the shadow flag was off, so no
     ``pair`` row was ever written)."""
 
-    async def read(self, attempt_id: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None]: ...
+    async def read(
+        self, attempt_id: Any
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -250,9 +250,7 @@ async def _play_clarification_followups(
 ) -> None:
     turns = 0
     while turns < clarification_max_turns:
-        last_apollo = next(
-            (t for t in reversed(transcript) if t.get("role") == "apollo"), None
-        )
+        last_apollo = next((t for t in reversed(transcript) if t.get("role") == "apollo"), None)
         if last_apollo is None or "?" not in str(last_apollo.get("content", "")):
             break
         message = await chat_fn(persona, tuple(transcript), None)
@@ -556,10 +554,14 @@ class SqlArtifactReader:
 
         async with self._session_factory() as db:
             rows = (
-                await db.execute(
-                    select(GradingArtifact).where(GradingArtifact.attempt_id == attempt_id)
+                (
+                    await db.execute(
+                        select(GradingArtifact).where(GradingArtifact.attempt_id == attempt_id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         canonical = next((r for r in rows if r.role == "canonical"), None)
         pair = next((r for r in rows if r.role == "pair"), None)
         return (

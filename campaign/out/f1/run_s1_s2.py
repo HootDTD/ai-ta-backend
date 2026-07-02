@@ -10,6 +10,7 @@ way to exercise the real S1/S2 judges end-to-end for this task.
 Usage (from repo root, anaconda/base interpreter -- no torch needed):
     python campaign/out/f1/run_s1_s2.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -36,7 +37,9 @@ SUBJECT_CONCEPTS = {
 }
 
 
-async def _fetch_subject_graph(conn: asyncpg.Connection, subject_key: str, concept_ids: list[int]) -> dict:
+async def _fetch_subject_graph(
+    conn: asyncpg.Connection, subject_key: str, concept_ids: list[int]
+) -> dict:
     nodes = []
     edges = []
     problem_texts = []
@@ -52,7 +55,9 @@ async def _fetch_subject_graph(conn: asyncpg.Connection, subject_key: str, conce
                     "node_id": r["canonical_key"],
                     "kind": r["kind"],
                     "display_name": r["display_name"],
-                    "payload": json.loads(r["payload"]) if isinstance(r["payload"], str) else r["payload"],
+                    "payload": json.loads(r["payload"])
+                    if isinstance(r["payload"], str)
+                    else r["payload"],
                 }
             )
         prereq_rows = await conn.fetch(

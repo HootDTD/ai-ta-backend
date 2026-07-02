@@ -141,9 +141,7 @@ def validate_persona(persona: PersonaAttempt) -> list[str]:
         else:
             unknown_misc = set(persona.expected.misconceptions) - misc_keys
             if unknown_misc:
-                errors.append(
-                    f"expected.misconceptions has unknown keys: {sorted(unknown_misc)}"
-                )
+                errors.append(f"expected.misconceptions has unknown keys: {sorted(unknown_misc)}")
     return errors
 
 

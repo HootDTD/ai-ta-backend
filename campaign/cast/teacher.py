@@ -66,7 +66,9 @@ class SeedProvisionResult:
     steps: tuple[SeedStepResult, ...]
 
 
-async def _default_run_subprocess(cmd: Sequence[str]) -> int:  # pragma: no cover - thin subprocess passthrough
+async def _default_run_subprocess(
+    cmd: Sequence[str],
+) -> int:  # pragma: no cover - thin subprocess passthrough
     proc = await asyncio.create_subprocess_exec(*cmd)
     return await proc.wait()
 
@@ -75,9 +77,7 @@ async def _run_step(runner: RunSubprocess, cmd: Sequence[str]) -> SeedStepResult
     cmd_t = tuple(cmd)
     returncode = await runner(cmd_t)
     if returncode != 0:
-        raise SeedProvisioningError(
-            f"seed step failed (exit {returncode}): {' '.join(cmd_t)}"
-        )
+        raise SeedProvisioningError(f"seed step failed (exit {returncode}): {' '.join(cmd_t)}")
     return SeedStepResult(command=cmd_t, returncode=returncode)
 
 

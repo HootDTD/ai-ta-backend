@@ -55,8 +55,8 @@
       "id": "rearrange_for_real_gdp",
       "step": 3,
       "content": {
-        "order": 1,
         "label": "Rearrange the GDP deflator definition to real GDP = nominal GDP divided by (PI/100) and substitute the given values",
+        "order": 1,
         "action": "rearrange the GDP deflator definition to realGDP = nomGDP/(PI/100) and substitute nomGDP = 543.3 and PI = 19.0 to solve for real GDP",
         "purpose": "deflate nominal GDP by the price index to obtain real GDP in base-year dollars",
         "uses_equations": [

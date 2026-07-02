@@ -155,19 +155,13 @@ async def test_apply_all_no_new_migrations_returns_empty(tmp_path):
 
 
 def test_to_asyncpg_dsn_strips_driver_marker():
-    assert (
-        to_asyncpg_dsn("postgresql+asyncpg://u:p@h:5432/db")
-        == "postgresql://u:p@h:5432/db"
-    )
+    assert to_asyncpg_dsn("postgresql+asyncpg://u:p@h:5432/db") == "postgresql://u:p@h:5432/db"
     # Already-plain DSNs pass through unchanged.
     assert to_asyncpg_dsn("postgresql://u:p@h:5432/db") == "postgresql://u:p@h:5432/db"
 
 
 def test_to_sqlalchemy_dsn_adds_driver_marker():
-    assert (
-        to_sqlalchemy_dsn("postgresql://u:p@h:5432/db")
-        == "postgresql+asyncpg://u:p@h:5432/db"
-    )
+    assert to_sqlalchemy_dsn("postgresql://u:p@h:5432/db") == "postgresql+asyncpg://u:p@h:5432/db"
     # Already-annotated DSNs pass through unchanged.
     assert (
         to_sqlalchemy_dsn("postgresql+asyncpg://u:p@h:5432/db")
@@ -206,11 +200,8 @@ async def test_bootstrap_baseline_creates_extension_and_metadata(monkeypatch):
         calls.append(f"engine:{dsn}")
         return _FakeEngine()
 
-    import campaign.infra.apply_migrations as mod
 
-    monkeypatch.setattr(
-        "sqlalchemy.ext.asyncio.create_async_engine", _fake_create_async_engine
-    )
+    monkeypatch.setattr("sqlalchemy.ext.asyncio.create_async_engine", _fake_create_async_engine)
 
     await bootstrap_baseline("postgresql://u:p@h:5432/db")
 

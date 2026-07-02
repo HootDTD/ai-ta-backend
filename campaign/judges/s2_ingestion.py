@@ -50,7 +50,11 @@ def check_verify_path_fired(items: list[Mapping[str, Any]]) -> list[Verdict]:
         should_fire = confidence < threshold
         if should_fire == fired:
             verdicts.append(
-                Verdict(item_id=f"{item_id}:verify_path", ok=True, reason="verify path fired as expected")
+                Verdict(
+                    item_id=f"{item_id}:verify_path",
+                    ok=True,
+                    reason="verify path fired as expected",
+                )
             )
         else:
             verdicts.append(

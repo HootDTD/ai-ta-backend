@@ -11,6 +11,7 @@ Deterministic (seeded) so a re-run reproduces the same sample.
 
 Usage: python -m campaign.out.f1.build_adjudication_packets
 """
+
 from __future__ import annotations
 
 import json
@@ -121,9 +122,7 @@ def stratified_sample(attempts: list[dict]) -> list[dict]:
             if not group:
                 continue
             # prefer an attempt whose band we have not sampled yet
-            idx = next(
-                (i for i, a in enumerate(group) if band_of(a) not in seen_bands), 0
-            )
+            idx = next((i for i, a in enumerate(group) if band_of(a) not in seen_bands), 0)
             att = group.pop(idx)
             k = att.get("attempt_id") or att.get("persona_id")
             if k in picked_ids:

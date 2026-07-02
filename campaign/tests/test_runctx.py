@@ -1,6 +1,7 @@
 """Tests for campaign.runctx.RunContext: campaign/out/<run_id>/ scaffolding,
 tune-phase freeze, and gate-phase divergence refusal.
 """
+
 from __future__ import annotations
 
 import os

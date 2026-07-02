@@ -10,10 +10,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Awaitable, Callable
 
-from campaign.infra.apply_migrations import ConnectFn, _default_connect, apply_all, bootstrap_baseline
+from campaign.infra.apply_migrations import (
+    ConnectFn,
+    _default_connect,
+    apply_all,
+    bootstrap_baseline,
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -49,7 +54,9 @@ async def reset_postgres(
     return await apply_all(dsn, migrations_dir, connect=connect)
 
 
-async def _default_neo4j_wipe(uri: str, database: str, auth: tuple[str, str]) -> None:  # pragma: no cover - thin driver passthrough
+async def _default_neo4j_wipe(
+    uri: str, database: str, auth: tuple[str, str]
+) -> None:  # pragma: no cover - thin driver passthrough
     from neo4j import AsyncGraphDatabase
 
     driver = AsyncGraphDatabase.driver(uri, auth=auth)

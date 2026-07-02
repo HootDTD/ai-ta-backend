@@ -160,7 +160,9 @@ class S1ReferenceGraphJudge(StageJudge):
         for item in items:
             if item["kind"] == "structural":
                 defect: Verdict = item["verdict"]
-                verdicts.append(Verdict(item_id=item["item_id"], ok=defect.ok, reason=defect.reason))
+                verdicts.append(
+                    Verdict(item_id=item["item_id"], ok=defect.ok, reason=defect.reason)
+                )
                 continue
             response = await self._llm.judge_item(
                 system_prompt=self.system_prompt,
@@ -176,5 +178,9 @@ class S1ReferenceGraphJudge(StageJudge):
             )
         passed, total, pass_rate = aggregate(verdicts)
         return JudgeResult(
-            stage=self.stage, verdicts=tuple(verdicts), passed=passed, total=total, pass_rate=pass_rate
+            stage=self.stage,
+            verdicts=tuple(verdicts),
+            passed=passed,
+            total=total,
+            pass_rate=pass_rate,
         )

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from campaign.infra.reset import reset_all, reset_neo4j, reset_postgres
@@ -51,9 +49,7 @@ async def test_reset_postgres_drops_schema_then_bootstraps_and_applies(tmp_path,
 
     monkeypatch.setattr("campaign.infra.reset.bootstrap_baseline", _fake_bootstrap)
 
-    applied = await reset_postgres(
-        "dsn://ignored", migrations_dir=tmp_path, connect=_connect
-    )
+    applied = await reset_postgres("dsn://ignored", migrations_dir=tmp_path, connect=_connect)
 
     assert any("DROP SCHEMA public CASCADE" in sql for sql in conn.executed)
     assert baseline_calls == ["dsn://ignored"]
@@ -112,9 +108,7 @@ async def test_reset_postgres_handles_connection_with_no_close(tmp_path, monkeyp
 
     monkeypatch.setattr("campaign.infra.reset.bootstrap_baseline", _fake_bootstrap)
 
-    applied = await reset_postgres(
-        "dsn://ignored", migrations_dir=tmp_path, connect=_connect
-    )
+    applied = await reset_postgres("dsn://ignored", migrations_dir=tmp_path, connect=_connect)
 
     assert applied == ["001_one.sql"]
 
@@ -132,9 +126,7 @@ async def test_reset_postgres_handles_synchronous_close(tmp_path, monkeypatch):
 
     monkeypatch.setattr("campaign.infra.reset.bootstrap_baseline", _fake_bootstrap)
 
-    applied = await reset_postgres(
-        "dsn://ignored", migrations_dir=tmp_path, connect=_connect
-    )
+    applied = await reset_postgres("dsn://ignored", migrations_dir=tmp_path, connect=_connect)
 
     assert applied == ["001_one.sql"]
     assert conn.closed
@@ -147,9 +139,7 @@ async def test_reset_neo4j_calls_wipe_with_uri_and_auth():
     async def _fake_wipe(uri, database, auth):
         calls.append((uri, database, auth))
 
-    await reset_neo4j(
-        "bolt://localhost:57687", ("neo4j", "campaignpass"), wipe=_fake_wipe
-    )
+    await reset_neo4j("bolt://localhost:57687", ("neo4j", "campaignpass"), wipe=_fake_wipe)
 
     assert calls == [("bolt://localhost:57687", "neo4j", ("neo4j", "campaignpass"))]
 
