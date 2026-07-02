@@ -7,14 +7,26 @@ repro ``KeyError('variable_mapping')`` raised out of
 RE-RAISE out of ``handle_done`` and 500 the student's ``POST
 /apollo/sessions/{id}/done`` — a *shadow* failure killing the *live* LLM grade.
 
-The fix: shadow-mode exceptions are caught at the shadow-chain boundary in
-``done.py`` (the ``except Exception`` around ``run_graph_simulation``). The
-handler logs with full context, records a shadow-failure marker on the
-canonical LLM artifact (``abstention.graph_failure``, so paired analysis sees
-the missing ``pair`` row and WHY), drops the shadow result, and serves the
-already-committed OLD/LLM grade BYTE-IDENTICAL to a shadow-off Done-click. The
-LIVE path (``APOLLO_GRAPH_GRADER_LIVE=1``) keeps its pre-existing any-exception
-fallback semantics untouched.
+The fix (NARROWED boundary): UNEXPECTED shadow-mode exceptions are caught at
+the shadow-chain boundary in ``done.py`` (the ``except Exception`` around
+``run_graph_simulation``). The handler logs with full context, records a
+shadow-failure marker on the canonical LLM artifact
+(``abstention.graph_failure``, so paired analysis sees the missing ``pair``
+row and WHY), drops the shadow result, and serves the already-committed
+OLD/LLM grade BYTE-IDENTICAL to a shadow-off Done-click.
+
+The CONTRACTUAL typed failure modes the route maps to NON-500 responses keep
+PROPAGATING in shadow mode exactly as pre-G3, with their pinned commit
+semantics (``tests/database/test_done_shadow_route_postgres.py``). The
+authoritative list is ``apollo/api.py::register_exception_handlers`` →
+``done.py``'s ``_SHADOW_PROPAGATE_ERRORS``: ``ResolutionUnavailableError``
+(503), ``TranscriptAuditUnavailableError`` (503), ``StudentGraphInvalidError``
+(422), ``ReferenceGraphInvalidError`` (409). ``ResolutionInvalidOutputError``
+maps to 500 and is therefore ISOLATED with the unexpected class.
+
+The LIVE path (``APOLLO_GRAPH_GRADER_LIVE=1``) keeps its pre-existing
+any-exception fallback semantics untouched (it catches ALL types, including
+the four contractual ones).
 
 Unlike ``test_done_shadow_flag`` / ``test_done_graph_grader_live`` (which patch
 ``run_graph_simulation`` wholesale), these tests run the REAL
@@ -32,12 +44,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from apollo.errors import (
+    ResolutionInvalidOutputError,
+    ResolutionUnavailableError,
+    TranscriptAuditUnavailableError,
+)
 from apollo.grading.artifact_build import (
     GRADER_USED_LLM_FALLBACK,
     build_llm_artifact,
 )
 from apollo.grading.composite import load_weights
-from apollo.graph_compare.validator import StudentGraphInvalidError
+from apollo.graph_compare.validator import (
+    ReferenceGraphInvalidError,
+    StudentGraphInvalidError,
+)
 from apollo.handlers import done as done_mod
 from apollo.handlers.done import handle_done
 from apollo.handlers.tests.test_done_shadow_flag import _old_path_patches, _rerun_inputs
@@ -225,7 +245,7 @@ async def test_g3_variable_mapping_keyerror_does_not_500(monkeypatch):
     "make_injection, exc",
     [
         (_inject_early, KeyError("variable_mapping")),
-        (_inject_mid, StudentGraphInvalidError(reasons=("bad node",))),
+        (_inject_mid, TypeError("gate blew up on a malformed node")),
         (_inject_late, RuntimeError("cross-store boom")),
     ],
     ids=["early", "mid", "late"],
@@ -301,7 +321,89 @@ async def test_shadow_failure_marker_present_and_distinguishable(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 4. LIVE-path fallback semantics UNCHANGED (explicit guard).
+# 4. Propagation contract — the CONTRACTUAL typed failure modes (route-mapped
+#    to NON-500 responses) keep propagating in shadow mode, exactly as pre-G3.
+#    Pins the list so a future widening of the isolation boundary fails loudly
+#    here instead of in the integration CI job
+#    (tests/database/test_done_shadow_route_postgres.py).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "make_injection, exc",
+    [
+        # 503 — retryable infra failure in the cross-store window: the chain's
+        # own except sets learner_update_pending + commits, then re-raises; the
+        # done.py boundary must let it surface (route maps it to 503).
+        (
+            _inject_late,
+            ResolutionUnavailableError(stage="write_resolves_to", last_error="neo4j down"),
+        ),
+        # 503 — transcript-audit infra failure (same pending-then-surface path).
+        (_inject_late, TranscriptAuditUnavailableError(last_error="audit LLM timeout")),
+        # 422 — the step-4 raw-graph gate: raised pre-cross-store, no pending.
+        (_inject_mid, StudentGraphInvalidError(reasons=("bad node",))),
+        # 409 — a bad reference: raised without pending, route maps to 409.
+        (_inject_early, ReferenceGraphInvalidError(reasons=("no declared_paths",))),
+    ],
+    ids=[
+        "resolution_unavailable_503",
+        "transcript_audit_unavailable_503",
+        "student_graph_invalid_422",
+        "reference_graph_invalid_409",
+    ],
+)
+async def test_shadow_mode_contractual_errors_propagate(monkeypatch, make_injection, exc):
+    """Shadow mode + a `_SHADOW_PROPAGATE_ERRORS` type ⇒ the exception
+    PROPAGATES out of handle_done (no marker, no swallow, no artifact write) so
+    the route's registered handler serves its contractual non-500 response."""
+    with pytest.raises(type(exc)):
+        await _run(
+            monkeypatch,
+            shadow=True,
+            live="false",
+            artifact=True,
+            injection_patches=make_injection(exc),
+        )
+
+
+def test_shadow_propagate_list_matches_route_contract():
+    """Pin `_SHADOW_PROPAGATE_ERRORS` to exactly the shadow-chain error types
+    whose registered route handlers map to a NON-500 status
+    (`apollo/api.py::register_exception_handlers`). `ResolutionInvalidOutputError`
+    maps to 500 and must NOT be in the list (it is isolated with the
+    unexpected class — a 500 is exactly what G3 must never serve)."""
+    assert set(done_mod._SHADOW_PROPAGATE_ERRORS) == {
+        ResolutionUnavailableError,
+        TranscriptAuditUnavailableError,
+        StudentGraphInvalidError,
+        ReferenceGraphInvalidError,
+    }
+    assert ResolutionInvalidOutputError not in done_mod._SHADOW_PROPAGATE_ERRORS
+
+
+async def test_shadow_mode_resolution_invalid_output_is_isolated(monkeypatch):
+    """`ResolutionInvalidOutputError` route-maps to 500, so shadow mode
+    ISOLATES it like any unexpected failure: no re-raise, LLM grade served,
+    marker recorded."""
+    out, write_artifacts_mock = await _run(
+        monkeypatch,
+        shadow=True,
+        live="false",
+        artifact=True,
+        injection_patches=_inject_late(
+            ResolutionInvalidOutputError(returned_key="eq.hallucinated", allowed_keys=("eq.a",))
+        ),
+    )
+    assert out["rubric"] == {"overall": {"score": 0.5}}
+    kwargs = write_artifacts_mock.await_args.kwargs
+    assert kwargs["shadow"] is None
+    assert kwargs["graph_failure"].startswith(done_mod._SHADOW_FAILURE_MARKER)
+    assert "eq.hallucinated" in kwargs["graph_failure"]
+
+
+# ---------------------------------------------------------------------------
+# 5. LIVE-path fallback semantics UNCHANGED (explicit guard).
 # ---------------------------------------------------------------------------
 
 
@@ -326,3 +428,27 @@ async def test_live_mode_fallback_unchanged_no_shadow_marker(monkeypatch):
     gf = kwargs["graph_failure"]
     assert not gf.startswith(done_mod._SHADOW_FAILURE_MARKER)
     assert "variable_mapping" in gf
+
+
+async def test_live_mode_still_catches_contractual_types(monkeypatch):
+    """LIVE mode's A4 any-exception fallback is UNTOUCHED by the shadow-mode
+    propagate list: even a `_SHADOW_PROPAGATE_ERRORS` type (here
+    `ResolutionUnavailableError`) is caught in LIVE mode and falls back to the
+    OLD/LLM values — the student never loses their grade when the graph grader
+    is live (spec §3 error handling, pre-G3 behavior)."""
+    out, write_artifacts_mock = await _run(
+        monkeypatch,
+        shadow=True,
+        live="true",
+        artifact=True,
+        injection_patches=_inject_late(
+            ResolutionUnavailableError(stage="write_resolves_to", last_error="neo4j down")
+        ),
+    )
+    assert out["rubric"] == {"overall": {"score": 0.5}}
+    kwargs = write_artifacts_mock.await_args.kwargs
+    assert kwargs["shadow"] is None
+    assert kwargs["served"] == GRADER_USED_LLM_FALLBACK
+    gf = kwargs["graph_failure"]
+    assert not gf.startswith(done_mod._SHADOW_FAILURE_MARKER)
+    assert "neo4j down" in gf
