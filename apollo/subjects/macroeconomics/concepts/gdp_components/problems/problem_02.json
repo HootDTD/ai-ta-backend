@@ -50,8 +50,8 @@
       "id": "subtract_imports",
       "step": 3,
       "content": {
-        "label": "Compute net exports (the trade balance) by subtracting imports from exports, then read off the sign",
         "order": 1,
+        "label": "Compute net exports (the trade balance) by subtracting imports from exports, then read off the sign",
         "action": "subtract imports M from exports X to get net exports NX = X - M, then note the sign of the result",
         "purpose": "compute net exports and determine whether the economy runs a trade surplus or a trade deficit",
         "uses_equations": [
