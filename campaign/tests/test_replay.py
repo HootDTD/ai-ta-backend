@@ -130,6 +130,26 @@ def test_load_records_filters_by_persona():
     assert [r["attempt_id"] for r in records] == [15, 7]
 
 
+def test_load_records_rejects_unknown_persona_class():
+    """A --personas value that matches NOTHING recorded in the corpus must be
+    a loud error, not a silent zero-record filter (the exact mistake that
+    produced a controls-free 'baseline': ``control`` is a ROLE served by the
+    ``misconception``/``vague_then_clarifies`` classes, not a persona key)."""
+    with pytest.raises(ValueError, match=r"control") as excinfo:
+        replay.load_records(_FIXTURE, personas=["strong", "control"])
+    # The error must teach the fix: name every class the corpus actually has.
+    for known in ("strong", "partial", "misconception", "vague_then_clarifies"):
+        assert known in str(excinfo.value)
+
+
+def test_load_records_accepts_persona_class_present_only_on_error_rows():
+    """A persona class recorded ONLY on non-gradeable rows is still a real
+    class of this corpus — filtering to it yields zero records (correct),
+    but must not raise as 'unknown'."""
+    records = replay.load_records(_FIXTURE, personas=["vague_then_clarifies"])
+    assert records == []
+
+
 def test_load_records_never_mutates_source_file():
     before = _FIXTURE.read_text(encoding="utf-8")
     replay.load_records(_FIXTURE)

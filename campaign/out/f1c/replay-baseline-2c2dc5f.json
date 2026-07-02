@@ -1,8 +1,154 @@
 {
   "abstention_reasons": {
-    "unresolved_rate_above_threshold": 18
+    "min_parser_confidence_below_threshold": 1,
+    "unresolved_rate_above_threshold": 31
   },
   "band_vs_expected": [
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.incompressibility",
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity_for_v2",
+        "proc.plan_substitute_into_bernoulli"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_0e5e16a3a65a",
+        "stu_1c01fa7efcfa",
+        "stu_1d08d51ea2cf",
+        "stu_222ed3c9af3c",
+        "stu_2f4f0a87ac90",
+        "stu_353ec0bfbdb1",
+        "stu_414383e63905",
+        "stu_44445132a927",
+        "stu_474cff411b5b",
+        "stu_48f967065710",
+        "stu_5780db6bd987",
+        "stu_57afa4735f4b",
+        "stu_7a0976abe7a9",
+        "stu_84b548153600",
+        "stu_88257474e6e2",
+        "stu_89a288342708",
+        "stu_9a5def2e68d7",
+        "stu_9fe442e7b0c8",
+        "stu_b05a029d84e1",
+        "stu_b9aa3661af7f",
+        "stu_ca678c0c3655",
+        "stu_cb4e62970357",
+        "stu_d1f2d79e1f1e",
+        "stu_e0cdabc104b0"
+      ],
+      "attempt_id": 1,
+      "control_credit_leak": true,
+      "expected_credited": [
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity_for_v2",
+        "proc.plan_substitute_into_bernoulli"
+      ],
+      "expected_misconceptions": [
+        "misc.density_ignored"
+      ],
+      "expected_unresolved": [
+        "cond.incompressibility"
+      ],
+      "is_control": true,
+      "persona": "misconception"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.incompressibility",
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity",
+        "proc.plan_apply_horizontal_simplification",
+        "proc.plan_solve_bernoulli_for_p2",
+        "simp.horizontal_simplification"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_0c859c664c68",
+        "stu_0f6dd64c4c81",
+        "stu_1c28fe7538a5",
+        "stu_39d20869c7e5",
+        "stu_4005afe0e2e2",
+        "stu_6f095ed92527",
+        "stu_714f74e35cd8",
+        "stu_77f4421edb68",
+        "stu_780832eb8076",
+        "stu_803eecd50ed9",
+        "stu_83854ce7916e",
+        "stu_9ed8a6358da2",
+        "stu_a634b5e2a8af",
+        "stu_b12d194512eb",
+        "stu_b4124a1a7da5",
+        "stu_b6ec5d429f8b",
+        "stu_b7602ed66ec9",
+        "stu_c23a87519934",
+        "stu_d09a77db992d",
+        "stu_dc7782af0006",
+        "stu_dca440f9a2f6"
+      ],
+      "attempt_id": 3,
+      "control_credit_leak": true,
+      "expected_credited": [
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity",
+        "proc.plan_apply_horizontal_simplification",
+        "proc.plan_solve_bernoulli_for_p2",
+        "simp.horizontal_simplification"
+      ],
+      "expected_misconceptions": [
+        "misc.density_ignored"
+      ],
+      "expected_unresolved": [
+        "cond.incompressibility"
+      ],
+      "is_control": true,
+      "persona": "misconception"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.incompressibility",
+        "eq.continuity",
+        "proc.plan_invoke_incompressibility",
+        "proc.plan_solve_continuity_for_v2"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_1eb9ed28f575",
+        "stu_46f49ab9a183",
+        "stu_5b63d2753a4d",
+        "stu_86c88ba83fc2",
+        "stu_89e252635f07",
+        "stu_97c136567fbe",
+        "stu_aaf7d8424969",
+        "stu_ae62af98e270",
+        "stu_c3e3332e2200",
+        "stu_d0b0b6ba56b2",
+        "stu_d3258c559547"
+      ],
+      "attempt_id": 6,
+      "control_credit_leak": true,
+      "expected_credited": [
+        "eq.continuity",
+        "proc.plan_invoke_incompressibility",
+        "proc.plan_solve_continuity_for_v2"
+      ],
+      "expected_misconceptions": [
+        "misc.density_ignored"
+      ],
+      "expected_unresolved": [
+        "cond.incompressibility"
+      ],
+      "is_control": true,
+      "persona": "misconception"
+    },
     {
       "abstained": true,
       "actual_credited": [
@@ -387,6 +533,252 @@
     {
       "abstained": true,
       "actual_credited": [
+        "eq.bernoulli",
+        "proc.plan_apply_equal_pressure_simplification",
+        "proc.plan_set_v1_zero_and_solve_bernoulli",
+        "simp.equal_pressure_simplification"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_02a60f24b435",
+        "stu_12dbc7ed003b",
+        "stu_257d3b786f97",
+        "stu_2ed10ce7296e",
+        "stu_451638d0aeb7",
+        "stu_5acdce513a08",
+        "stu_5b04b5dfc333",
+        "stu_6e73f9ae11eb",
+        "stu_6f54d73a33d9",
+        "stu_7a4320678f9e",
+        "stu_8e9f754fe9e9",
+        "stu_8f7e0e2dfdf8",
+        "stu_a6c104ce1788",
+        "stu_bd1a372885f2",
+        "stu_c22729c34f2e",
+        "stu_c40af063c5bb",
+        "stu_cefdb5b3b2df",
+        "stu_d46ae6e0d202",
+        "stu_d552a966f1fb",
+        "stu_e0529b3a4582",
+        "stu_f640f930e1a4"
+      ],
+      "attempt_id": 27,
+      "control_credit_leak": true,
+      "expected_credited": [
+        "eq.bernoulli",
+        "proc.plan_apply_equal_pressure_simplification",
+        "proc.plan_set_v1_zero_and_solve_bernoulli"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [
+        "simp.equal_pressure_simplification"
+      ],
+      "is_control": true,
+      "persona": "vague_then_clarifies"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.incompressibility",
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity",
+        "proc.plan_apply_horizontal_simplification",
+        "proc.plan_solve_bernoulli_for_p2",
+        "simp.horizontal_simplification"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_0021da7d9a53",
+        "stu_012921420516",
+        "stu_0342662fe5d2",
+        "stu_1355068f770b",
+        "stu_1b24fc7de7c8",
+        "stu_1b9578c62be1",
+        "stu_22c020d278b7",
+        "stu_24d2102f8273",
+        "stu_2a602d6d502c",
+        "stu_2d83ec7d6444",
+        "stu_2ff9c8a841ea",
+        "stu_31b7fb891949",
+        "stu_3d5e860968cf",
+        "stu_6253b431f0c4",
+        "stu_6ab456fc7501",
+        "stu_73d82c0f1eab",
+        "stu_7ab699bc89d3",
+        "stu_81ab46492f09",
+        "stu_92babc17a3f6",
+        "stu_978b4396c74f",
+        "stu_9ad33c77e34a",
+        "stu_9bc0d271594c",
+        "stu_ace19fc8b748",
+        "stu_ad989acdd970",
+        "stu_aef2a43ea4e3",
+        "stu_b948a3beb553",
+        "stu_d9fa458dea1e",
+        "stu_eace0e585719"
+      ],
+      "attempt_id": 29,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "cond.incompressibility",
+        "eq.bernoulli",
+        "eq.continuity",
+        "proc.plan_apply_continuity",
+        "proc.plan_apply_horizontal_simplification",
+        "proc.plan_solve_bernoulli_for_p2",
+        "simp.horizontal_simplification"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [],
+      "is_control": true,
+      "persona": "vague_then_clarifies"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.final_goods_only",
+        "eq.gdp_expenditure",
+        "eq.net_exports",
+        "proc.compute_net_exports",
+        "proc.sum_components"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_0e403403ce25",
+        "stu_2a5e60f9e459",
+        "stu_3f5dd1f0532c",
+        "stu_565c325ee469",
+        "stu_651575025eb3",
+        "stu_879152f81117",
+        "stu_97234b74b767",
+        "stu_9ad8aa16e0bf",
+        "stu_a380d445d55b"
+      ],
+      "attempt_id": 33,
+      "control_credit_leak": true,
+      "expected_credited": [
+        "eq.gdp_expenditure",
+        "eq.net_exports",
+        "proc.compute_net_exports",
+        "proc.sum_components"
+      ],
+      "expected_misconceptions": [
+        "misc.includes_transfers"
+      ],
+      "expected_unresolved": [
+        "cond.final_goods_only"
+      ],
+      "is_control": true,
+      "persona": "misconception"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "def.depreciation",
+        "eq.gnp",
+        "eq.nnp",
+        "proc.compute_gnp",
+        "proc.subtract_depreciation"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_15f9bea0d5c6",
+        "stu_2946b4fbc28d",
+        "stu_3f12b4837f61",
+        "stu_7c3318e7af6b",
+        "stu_a24549bc8a15",
+        "stu_c8d19d7c877e",
+        "stu_dc19eb1f606b",
+        "stu_eac0cda3a868",
+        "stu_f57c69abbba9"
+      ],
+      "attempt_id": 34,
+      "control_credit_leak": true,
+      "expected_credited": [
+        "eq.gnp",
+        "eq.nnp",
+        "proc.compute_gnp",
+        "proc.subtract_depreciation"
+      ],
+      "expected_misconceptions": [
+        "misc.gross_for_net"
+      ],
+      "expected_unresolved": [
+        "def.depreciation"
+      ],
+      "is_control": true,
+      "persona": "misconception"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "eq.gdp_deflator",
+        "proc.rearrange_for_real_gdp",
+        "simp.deflator_is_price_index"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_262a37d86726",
+        "stu_4d74eb5d81a9",
+        "stu_88857f914c97",
+        "stu_9d1ce7273c9c",
+        "stu_c61597405cd9",
+        "stu_db18d3725912",
+        "stu_dbde94f73f39"
+      ],
+      "attempt_id": 35,
+      "control_credit_leak": true,
+      "expected_credited": [
+        "proc.rearrange_for_real_gdp",
+        "simp.deflator_is_price_index"
+      ],
+      "expected_misconceptions": [
+        "misc.deflate_wrong_direction"
+      ],
+      "expected_unresolved": [
+        "eq.gdp_deflator"
+      ],
+      "is_control": true,
+      "persona": "misconception"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "eq.growth_rate",
+        "proc.apply_percent_change",
+        "proc.compute_real_change"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "def.real_basis",
+        "stu_087dce5e6274",
+        "stu_2cdecf96827a",
+        "stu_2d7c7de3ba75",
+        "stu_79bfd6ee4caf",
+        "stu_7ab2119a26e5",
+        "stu_b8c5f79d4df7",
+        "stu_ce8474c554fa"
+      ],
+      "attempt_id": 36,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "eq.growth_rate",
+        "proc.apply_percent_change",
+        "proc.compute_real_change"
+      ],
+      "expected_misconceptions": [
+        "misc.nominal_for_real"
+      ],
+      "expected_unresolved": [
+        "def.real_basis"
+      ],
+      "is_control": true,
+      "persona": "misconception"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
         "cond.final_goods_only",
         "eq.gdp_expenditure",
         "eq.net_exports",
@@ -697,10 +1089,152 @@
       "expected_unresolved": [],
       "is_control": false,
       "persona": "strong"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "cond.trade_deficit",
+        "eq.net_exports",
+        "proc.subtract_imports"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_0ee7e072335b",
+        "stu_23449987bc48",
+        "stu_2f3b104375d3",
+        "stu_b1d3ecba6fe9",
+        "stu_e91bed6b50e3",
+        "stu_f68f37320972"
+      ],
+      "attempt_id": 47,
+      "control_credit_leak": true,
+      "expected_credited": [
+        "eq.net_exports",
+        "proc.subtract_imports"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [
+        "cond.trade_deficit"
+      ],
+      "is_control": true,
+      "persona": "vague_then_clarifies"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "def.depreciation",
+        "eq.gnp",
+        "eq.nnp",
+        "proc.compute_gnp",
+        "proc.subtract_depreciation"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_0843e6c09fb0",
+        "stu_27294e0c0937",
+        "stu_2b3836f8d3b5",
+        "stu_39362b7d42c4",
+        "stu_48a30e15f2ec",
+        "stu_5fac191859d4",
+        "stu_76a4c9f3c712",
+        "stu_796dbd1f2186",
+        "stu_a59172bf2a85",
+        "stu_adc0ebdcc1a8",
+        "stu_b37eeb024e2b",
+        "stu_b86c2bde5f49",
+        "stu_ba468ede2e6d",
+        "stu_d568d240c7f8",
+        "stu_e8b5fb9f687a",
+        "stu_efdfc6f5c9fd",
+        "stu_f619ab6071f8",
+        "stu_f65744d55f61"
+      ],
+      "attempt_id": 48,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "def.depreciation",
+        "eq.gnp",
+        "eq.nnp",
+        "proc.compute_gnp",
+        "proc.subtract_depreciation"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [],
+      "is_control": true,
+      "persona": "vague_then_clarifies"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "eq.gdp_deflator",
+        "proc.rearrange_for_real_gdp",
+        "simp.deflator_is_price_index"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_496d27add8e5",
+        "stu_6e0c4f8221e0",
+        "stu_72d05df4075f",
+        "stu_769c00e44f8e",
+        "stu_b64ac27c3675"
+      ],
+      "attempt_id": 49,
+      "control_credit_leak": false,
+      "expected_credited": [
+        "eq.gdp_deflator",
+        "proc.rearrange_for_real_gdp",
+        "simp.deflator_is_price_index"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [],
+      "is_control": true,
+      "persona": "vague_then_clarifies"
+    },
+    {
+      "abstained": true,
+      "actual_credited": [
+        "def.real_basis",
+        "eq.growth_rate",
+        "proc.apply_percent_change",
+        "proc.compute_real_change"
+      ],
+      "actual_misconceptions": [],
+      "actual_unresolved": [
+        "stu_18e7d100e71a",
+        "stu_59434ebcf5dd",
+        "stu_d43a7d8d91ce",
+        "stu_e383ca44e8aa"
+      ],
+      "attempt_id": 50,
+      "control_credit_leak": true,
+      "expected_credited": [
+        "def.real_basis",
+        "proc.apply_percent_change",
+        "proc.compute_real_change"
+      ],
+      "expected_misconceptions": [],
+      "expected_unresolved": [
+        "eq.growth_rate"
+      ],
+      "is_control": true,
+      "persona": "vague_then_clarifies"
     }
   ],
   "errors": [],
   "graph_composite": {
+    "misconception": {
+      "mean": 0.33969385714285716,
+      "n": 7,
+      "values": [
+        0.12,
+        0.277976,
+        0.5,
+        0.395714,
+        0.5425,
+        0.2,
+        0.341667
+      ]
+    },
     "partial": {
       "mean": 0.282053625,
       "n": 8,
@@ -730,9 +1264,34 @@
         0.4625,
         0.15
       ]
+    },
+    "vague_then_clarifies": {
+      "mean": 0.33494050000000003,
+      "n": 6,
+      "values": [
+        0.15,
+        0.257143,
+        0.4,
+        0.24,
+        0.6625,
+        0.3
+      ]
     }
   },
   "unresolved_rate": {
+    "misconception": {
+      "mean": 0.7579245031345871,
+      "n": 7,
+      "values": [
+        0.96,
+        0.8076923076923077,
+        0.6470588235294118,
+        0.6923076923076923,
+        0.6428571428571429,
+        0.7777777777777778,
+        0.7777777777777778
+      ]
+    },
     "partial": {
       "mean": 0.8138328157349897,
       "n": 8,
@@ -761,6 +1320,18 @@
         0.8,
         0.7857142857142857,
         0.9285714285714286
+      ]
+    },
+    "vague_then_clarifies": {
+      "mean": 0.7719301308010985,
+      "n": 6,
+      "values": [
+        0.9545454545454546,
+        0.9032258064516129,
+        0.75,
+        0.8571428571428571,
+        0.5,
+        0.6666666666666666
       ]
     }
   }

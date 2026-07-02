@@ -128,9 +128,18 @@ def load_records(
     5/36 F1c rows have nothing to replay) and whose recorded ``persona``
     class is in ``personas`` (all classes when ``personas`` is ``None``).
 
+    Guard: every requested persona class must exist somewhere in the corpus
+    (gradeable or not) — a name that matches NOTHING raises :class:`ValueError`
+    naming the available classes, instead of silently filtering to zero
+    records. (Real incident: ``--personas ...,control`` — "control" is a ROLE
+    served by the ``misconception``/``vague_then_clarifies`` classes, not a
+    persona key, and the silent zero-match produced a controls-free
+    "baseline".)
+
     Read-only: never mutates ``attempts_path``.
     """
     wanted = set(personas) if personas is not None else None
+    seen_classes: set[str] = set()
     records: list[dict[str, Any]] = []
     with Path(attempts_path).open(encoding="utf-8") as fh:
         for line in fh:
@@ -138,11 +147,21 @@ def load_records(
             if not line:
                 continue
             record = json.loads(line)
+            if "persona" in record:
+                seen_classes.add(str(record["persona"]))
             if record.get("status") != "ok" or record.get("attempt_id") is None:
                 continue
             if wanted is not None and record.get("persona") not in wanted:
                 continue
             records.append(record)
+    if wanted is not None:
+        unknown = sorted(wanted - seen_classes)
+        if unknown:
+            raise ValueError(
+                f"unknown persona class(es) {unknown} — this corpus records only "
+                f"{sorted(seen_classes)} (note: 'control' is a role, not a persona "
+                "key; the control classes are the deliberately-deficient personas)"
+            )
     return records
 
 
@@ -264,6 +283,9 @@ class ReplayMetrics:
     serializable shape written to ``replay-baseline-*.json``."""
 
     unresolved_rate: dict[str, dict[str, Any]]
+    # Histogram of abstention-REASON occurrences (a single abstained attempt
+    # can carry >1 reason and contributes >1 count), not a count of abstained
+    # ATTEMPTS — do not read a bucket total as "N attempts abstained".
     abstention_reasons: dict[str, int]
     graph_composite: dict[str, dict[str, Any]]
     band_vs_expected: list[dict[str, Any]]
@@ -301,6 +323,8 @@ def summarize(results: Sequence[ReplayOutcome | ReplayError]) -> ReplayMetrics:
             "values": [o.graph_composite for o in rows],
         }
 
+    # Counts REASON occurrences, not abstained attempts: an attempt with
+    # multiple abstention_reasons increments every bucket it names.
     abstention_reasons: dict[str, int] = {}
     for o in outcomes:
         if not o.abstention_reasons:

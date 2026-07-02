@@ -575,18 +575,31 @@ Attempts whose recorded status is `"error"` or whose `attempt_id` is null are
 skipped by `load_records`; a replay-time exception on an individual attempt
 is caught and recorded under `errors` rather than aborting the run.
 
+Persona-class names are validated: a `--personas` value not recorded
+anywhere in the corpus raises a `ValueError` naming the available classes
+instead of silently filtering to zero records. Note `control` is a ROLE, not
+a persona key — the control classes in this corpus are the
+deliberately-deficient `misconception` and `vague_then_clarifies` personas
+(`campaign.replay.CONTROL_PERSONAS`).
+
 **Baseline freeze:** per the weekend benchmark-freeze rule, the first
 full-corpus run against unmodified `staging` is committed as
 `campaign/out/f1c/replay-baseline-<stagingSHA>.json` and becomes THE
 baseline every subsequent resolver/grading fix is diffed against — personas
 and expected ledgers are never edited to make a run pass. Baseline
-`replay-baseline-2c2dc5f.json` (staging @ `2c2dc5f`, 18 gradeable
-strong+partial attempts, control excluded from this corpus): both persona
-classes show 100% `unresolved_rate_above_threshold` abstention
-(18/18) and `graph_composite` means of 0.33 (strong) / 0.28 (partial), each
-attempt's individual composite falling in roughly the 0.12–0.66 band — this
-matches the known live-campaign abstention/composite pattern (no replay-tool
-disagreement with F1c live numbers).
+`replay-baseline-2c2dc5f.json` (staging @ `2c2dc5f`; all four persona
+classes; 31 gradeable attempts of 36 recorded): 31/31 abstention
+(`unresolved_rate_above_threshold` on all 31, one attempt additionally
+flagging `min_parser_confidence_below_threshold`) — matching the live F1c
+31/31 abstention pattern exactly. `unresolved_rate` means: strong 0.807 /
+partial 0.814 / misconception 0.758 / vague_then_clarifies 0.772.
+`graph_composite` means: strong 0.332 / partial 0.282 / misconception 0.340 /
+vague_then_clarifies 0.335. All 13 control attempts abstain, but
+`control_credit_leak` fires on 9/13 — each such control earned exactly ONE
+credited ledger key beyond its expected-ledger credited set (e.g.
+`cond.incompressibility` on fluid misconception attempts). That is a real
+resolver-behavior observation frozen into the baseline for the recall-fix
+lanes to watch: a recall fix that widens matching must not widen this leak.
 
 Requires the local campaign stack up (`.env.campaign` sourced — Postgres on
 `127.0.0.1:57322`, Neo4j on `bolt://127.0.0.1:57687`); it is a measurement
