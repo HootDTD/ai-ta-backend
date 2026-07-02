@@ -124,9 +124,7 @@ def _missing_ledger_entry(finding: Finding) -> dict:
     }
 
 
-def build_node_ledger(
-    findings: tuple[Finding, ...], resolution: ResolutionResult
-) -> list[dict]:
+def build_node_ledger(findings: tuple[Finding, ...], resolution: ResolutionResult) -> list[dict]:
     """The full node ledger (spec §1): one row per ``credited``/``misconception``/
     ``unresolved`` finding, in ``findings`` order (already deterministic —
     ``GradeResult.findings`` is grouped-then-sorted, §6.4 step 8). ``unresolved``
@@ -222,20 +220,16 @@ def _reference_node_count(findings: tuple[Finding, ...]) -> int:
     )
 
 
-def compute_misconception_penalty(
-    misconceptions: list[dict], reference_node_count: int
-) -> float:
+def compute_misconception_penalty(misconceptions: list[dict], reference_node_count: int) -> float:
     """``(count of asserted misconceptions with confidence >= MISC_CONFIDENCE_FLOOR)
     / max(1, reference_node_count)`` (Task A2 Step 4)."""
-    asserted = sum(
-        1
-        for m in misconceptions
-        if (m["confidence"] or 0.0) >= MISC_CONFIDENCE_FLOOR
-    )
+    asserted = sum(1 for m in misconceptions if (m["confidence"] or 0.0) >= MISC_CONFIDENCE_FLOOR)
     return asserted / max(1, reference_node_count)
 
 
-def _versions_block(*, grader: str, reference_graph_hash: str | None, weights: CompositeWeights) -> dict:
+def _versions_block(
+    *, grader: str, reference_graph_hash: str | None, weights: CompositeWeights
+) -> dict:
     return {
         "grader": grader,
         "reference_graph_hash": reference_graph_hash,

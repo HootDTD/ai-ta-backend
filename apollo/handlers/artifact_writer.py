@@ -50,12 +50,16 @@ async def _load_clarification_trace(db: AsyncSession, *, attempt_id: int) -> lis
     only for a ``confirmed`` verdict, ``"denied"`` for ``refuted``/``vague``,
     and ``None`` while still ``asked_waiting`` (never resolved before Done)."""
     rows = (
-        await db.execute(
-            select(Clarification)
-            .where(Clarification.attempt_id == attempt_id)
-            .order_by(Clarification.asked_turn)
+        (
+            await db.execute(
+                select(Clarification)
+                .where(Clarification.attempt_id == attempt_id)
+                .order_by(Clarification.asked_turn)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     trace: list[dict] = []
     for row in rows:
@@ -167,13 +171,16 @@ async def write_artifacts(
             # exists). Fall back to the LLM payload so a row still lands.
             _LOG.warning(
                 "artifact_writer_served_grade_missing served=%s attempt_id=%s",
-                served, int(attempt.id),
+                served,
+                int(attempt.id),
             )
             served = GRADER_USED_LLM_FALLBACK
             canonical_payload = llm_payload
 
         rows = [
-            _artifact_row(attempt=attempt, sess=sess, role=_ROLE_CANONICAL, payload=canonical_payload)
+            _artifact_row(
+                attempt=attempt, sess=sess, role=_ROLE_CANONICAL, payload=canonical_payload
+            )
         ]
         pair_grader = GRADER_USED_LLM_FALLBACK if served == GRADER_USED_GRAPH else GRADER_USED_GRAPH
         pair_payload = payloads_by_grader.get(pair_grader)

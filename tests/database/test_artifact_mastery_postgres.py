@@ -39,7 +39,10 @@ _USER_ID = str(uuid.uuid4())
 async def _seed_scope(db) -> tuple[int, int]:
     sid = await seed_search_space(db)
     cid = await seed_concept(
-        db, search_space_id=sid, subject_slug=f"subj-{uuid.uuid4().hex[:8]}", concept_slug="bernoulli"
+        db,
+        search_space_id=sid,
+        subject_slug=f"subj-{uuid.uuid4().hex[:8]}",
+        concept_slug="bernoulli",
     )
     return sid, cid
 
@@ -62,7 +65,9 @@ async def _seed_attempt(db, *, search_space_id: int, concept_id: int | None) -> 
     )
     db.add(sess)
     await db.flush()
-    attempt = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro", result="graded")
+    attempt = ProblemAttempt(
+        session_id=sess.id, problem_id="p1", difficulty="intro", result="graded"
+    )
     db.add(attempt)
     await db.flush()
     return int(attempt.id)
@@ -112,7 +117,13 @@ def _artifact_row(
 
 def _ledger(*keys_and_status: tuple[str, str]) -> list[dict]:
     return [
-        {"canonical_key": key, "status": status, "method": None, "confidence": None, "evidence_span": ""}
+        {
+            "canonical_key": key,
+            "status": status,
+            "method": None,
+            "confidence": None,
+            "evidence_span": "",
+        }
         for key, status in keys_and_status
     ]
 
@@ -206,10 +217,10 @@ async def test_second_attempt_moves_mastery_toward_new_composite(db_session, mon
     assert state.evidence_count == 2
 
     events = (
-        await db_session.execute(
-            select(MasteryEvent).where(MasteryEvent.entity_id == entity_id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(MasteryEvent).where(MasteryEvent.entity_id == entity_id)))
+        .scalars()
+        .all()
+    )
     assert len(events) == 2
 
 
@@ -235,12 +246,16 @@ async def test_retry_of_same_attempt_is_idempotent(db_session):
     await db_session.commit()
 
     events = (
-        await db_session.execute(
-            select(MasteryEvent).where(
-                MasteryEvent.attempt_id == attempt_id, MasteryEvent.entity_id == entity_id
+        (
+            await db_session.execute(
+                select(MasteryEvent).where(
+                    MasteryEvent.attempt_id == attempt_id, MasteryEvent.entity_id == entity_id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(events) == 1
 
     state = (
@@ -274,9 +289,7 @@ async def test_unresolved_ledger_rows_and_unmapped_keys_are_skipped(db_session):
     await update_mastery_from_artifact(db_session, artifact_row=artifact)
     await db_session.commit()
 
-    events = (
-        await db_session.execute(select(MasteryEvent))
-    ).scalars().all()
+    events = (await db_session.execute(select(MasteryEvent))).scalars().all()
     assert events == []
 
 
@@ -297,9 +310,7 @@ async def test_no_op_when_concept_id_is_none(db_session):
     await update_mastery_from_artifact(db_session, artifact_row=artifact)
     await db_session.commit()
 
-    events = (
-        await db_session.execute(select(MasteryEvent))
-    ).scalars().all()
+    events = (await db_session.execute(select(MasteryEvent))).scalars().all()
     assert events == []
 
 
@@ -320,9 +331,7 @@ async def test_no_op_when_ledger_has_no_credited_or_misconception_rows(db_sessio
     await update_mastery_from_artifact(db_session, artifact_row=artifact)
     await db_session.commit()
 
-    events = (
-        await db_session.execute(select(MasteryEvent))
-    ).scalars().all()
+    events = (await db_session.execute(select(MasteryEvent))).scalars().all()
     assert events == []
 
 
@@ -348,9 +357,7 @@ async def test_misconception_key_projects_like_credited(db_session):
     await db_session.commit()
 
     state = (
-        await db_session.execute(
-            select(LearnerState).where(LearnerState.entity_id == entity_id)
-        )
+        await db_session.execute(select(LearnerState).where(LearnerState.entity_id == entity_id))
     ).scalar_one()
     assert state.mastery == pytest.approx(0.3)
     # normalization_confidence absent -> default full confidence (1.0).

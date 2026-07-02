@@ -53,9 +53,10 @@ async def mastery_heatmap(db: AsyncSession, *, search_space_id: int) -> list[dic
     ``apollo_learner_state`` for the course-wide scan.
     """
     rows = (
-        await db.execute(
-            text(
-                """
+        (
+            await db.execute(
+                text(
+                    """
                 SELECT
                     ls.user_id AS user_id,
                     e.concept_id AS concept_id,
@@ -67,10 +68,13 @@ async def mastery_heatmap(db: AsyncSession, *, search_space_id: int) -> list[dic
                 GROUP BY ls.user_id, e.concept_id
                 ORDER BY ls.user_id, e.concept_id
                 """
-            ),
-            {"search_space_id": search_space_id},
+                ),
+                {"search_space_id": search_space_id},
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
 
     return [
         {
@@ -130,9 +134,10 @@ async def struggle_signals(
     params: dict[str, Any] = {"search_space_id": search_space_id, "window_start": window_start}
 
     counts = (
-        await db.execute(
-            text(
-                """
+        (
+            await db.execute(
+                text(
+                    """
                 SELECT
                     count(*) FILTER (
                         WHERE a.grader_used = 'graph'
@@ -153,15 +158,19 @@ async def struggle_signals(
                 WHERE a.search_space_id = :search_space_id
                   AND a.created_at >= :window_start
                 """
-            ),
-            params,
+                ),
+                params,
+            )
         )
-    ).mappings().one()
+        .mappings()
+        .one()
+    )
 
     lowest_coverage_rows = (
-        await db.execute(
-            text(
-                """
+        (
+            await db.execute(
+                text(
+                    """
                 SELECT
                     node ->> 'canonical_key' AS key,
                     avg(
@@ -185,19 +194,23 @@ async def struggle_signals(
                 ORDER BY mean_coverage ASC, key ASC
                 LIMIT :limit
                 """
-            ),
-            {
-                **params,
-                "statuses": list(_LEDGER_STATUSES_WITH_REFERENCE_KEY),
-                "limit": _LOWEST_COVERAGE_LIMIT,
-            },
+                ),
+                {
+                    **params,
+                    "statuses": list(_LEDGER_STATUSES_WITH_REFERENCE_KEY),
+                    "limit": _LOWEST_COVERAGE_LIMIT,
+                },
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
 
     top_misconception_rows = (
-        await db.execute(
-            text(
-                """
+        (
+            await db.execute(
+                text(
+                    """
                 SELECT
                     misc ->> 'canonical_key' AS key,
                     count(*) AS n
@@ -211,10 +224,13 @@ async def struggle_signals(
                 ORDER BY n DESC, key ASC
                 LIMIT :limit
                 """
-            ),
-            {**params, "limit": _TOP_MISCONCEPTIONS_LIMIT},
+                ),
+                {**params, "limit": _TOP_MISCONCEPTIONS_LIMIT},
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
 
     return {
         "abstention_count": int(counts["abstention_count"]),

@@ -84,15 +84,11 @@ async def mig_conn(_migrated_dsn: str):
 
 
 async def _new_attempt(conn: asyncpg.Connection) -> int:
-    return await conn.fetchval(
-        "INSERT INTO apollo_problem_attempts DEFAULT VALUES RETURNING id"
-    )
+    return await conn.fetchval("INSERT INTO apollo_problem_attempts DEFAULT VALUES RETURNING id")
 
 
 async def _new_space(conn: asyncpg.Connection) -> int:
-    return await conn.fetchval(
-        "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
-    )
+    return await conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
 
 
 async def _insert_artifact(

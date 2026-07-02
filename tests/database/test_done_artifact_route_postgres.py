@@ -126,10 +126,10 @@ async def _run_done(db, sess_id, monkeypatch, *, neo_patches, shadow_on: bool, a
 
 async def _artifact_rows(db, attempt_id: int):
     return (
-        await db.execute(
-            select(GradingArtifact).where(GradingArtifact.attempt_id == attempt_id)
-        )
-    ).scalars().all()
+        (await db.execute(select(GradingArtifact).where(GradingArtifact.attempt_id == attempt_id)))
+        .scalars()
+        .all()
+    )
 
 
 async def test_both_flags_off_writes_zero_rows_response_unchanged(db_session, monkeypatch):
@@ -144,13 +144,25 @@ async def test_both_flags_off_writes_zero_rows_response_unchanged(db_session, mo
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
 
     out = await _run_done(
-        db_session, sess.id, monkeypatch,
-        neo_patches=_neo_stubs(attempt.id), shadow_on=False, artifact_on=False,
+        db_session,
+        sess.id,
+        monkeypatch,
+        neo_patches=_neo_stubs(attempt.id),
+        shadow_on=False,
+        artifact_on=False,
     )
 
     assert set(out) == {
-        "rubric", "diagnostic_narrative", "coverage", "progress",
-        "xp_earned", "xp_before", "xp_after", "level_before", "level_after", "level_up",
+        "rubric",
+        "diagnostic_narrative",
+        "coverage",
+        "progress",
+        "xp_earned",
+        "xp_before",
+        "xp_after",
+        "level_before",
+        "level_after",
+        "level_up",
     }
     rows = await _artifact_rows(db_session, attempt.id)
     assert rows == []
@@ -166,8 +178,12 @@ async def test_artifact_on_shadow_off_writes_one_llm_canonical_row(db_session, m
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
 
     out = await _run_done(
-        db_session, sess.id, monkeypatch,
-        neo_patches=_neo_stubs(attempt.id), shadow_on=False, artifact_on=True,
+        db_session,
+        sess.id,
+        monkeypatch,
+        neo_patches=_neo_stubs(attempt.id),
+        shadow_on=False,
+        artifact_on=True,
     )
 
     rows = await _artifact_rows(db_session, attempt.id)
@@ -180,8 +196,12 @@ async def test_artifact_on_shadow_off_writes_one_llm_canonical_row(db_session, m
     # student scorecard from the persisted canonical row's payload.
     assert "scorecard" in out
     assert set(out["scorecard"]) == {
-        "score_0_100", "band", "taught_well", "missing_or_unclear",
-        "watch_out", "clarifications",
+        "score_0_100",
+        "band",
+        "taught_well",
+        "missing_or_unclear",
+        "watch_out",
+        "clarifications",
     }
 
 
@@ -195,8 +215,12 @@ async def test_both_flags_on_writes_two_rows_canonical_llm_pair_graph(db_session
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
 
     out = await _run_done(
-        db_session, sess.id, monkeypatch,
-        neo_patches=_neo_stubs(attempt.id), shadow_on=True, artifact_on=True,
+        db_session,
+        sess.id,
+        monkeypatch,
+        neo_patches=_neo_stubs(attempt.id),
+        shadow_on=True,
+        artifact_on=True,
     )
 
     rows = await _artifact_rows(db_session, attempt.id)
@@ -224,8 +248,12 @@ async def test_shadow_on_artifact_off_writes_zero_rows(db_session, monkeypatch):
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
 
     out = await _run_done(
-        db_session, sess.id, monkeypatch,
-        neo_patches=_neo_stubs(attempt.id), shadow_on=True, artifact_on=False,
+        db_session,
+        sess.id,
+        monkeypatch,
+        neo_patches=_neo_stubs(attempt.id),
+        shadow_on=True,
+        artifact_on=False,
     )
 
     rows = await _artifact_rows(db_session, attempt.id)

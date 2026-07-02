@@ -59,7 +59,9 @@ async def test_heatmap_route_requires_teacher(db_session, monkeypatch):
 
     with pytest.raises(HTTPException) as exc:
         await apollo_api.classroom_heatmap(
-            search_space_id=sid, request=_FakeRequest(), db=db_session,
+            search_space_id=sid,
+            request=_FakeRequest(),
+            db=db_session,
         )
     assert exc.value.status_code == 403
 
@@ -86,7 +88,9 @@ async def test_heatmap_route_returns_rows(db_session, monkeypatch):
     monkeypatch.setattr(apollo_api, "require_course_teacher", _fake_require_teacher)
 
     out = await apollo_api.classroom_heatmap(
-        search_space_id=sid, request=_FakeRequest(), db=db_session,
+        search_space_id=sid,
+        request=_FakeRequest(),
+        db=db_session,
     )
     assert out["rows"] == [
         {
@@ -105,7 +109,9 @@ async def test_struggles_route_requires_teacher(db_session, monkeypatch):
 
     with pytest.raises(HTTPException) as exc:
         await apollo_api.classroom_struggles(
-            search_space_id=sid, request=_FakeRequest(), db=db_session,
+            search_space_id=sid,
+            request=_FakeRequest(),
+            db=db_session,
         )
     assert exc.value.status_code == 403
 
@@ -116,7 +122,9 @@ async def test_struggles_route_returns_signals_shape(db_session, monkeypatch):
     monkeypatch.setattr(apollo_api, "require_course_teacher", _fake_require_teacher)
 
     out = await apollo_api.classroom_struggles(
-        search_space_id=sid, request=_FakeRequest(), db=db_session,
+        search_space_id=sid,
+        request=_FakeRequest(),
+        db=db_session,
     )
     assert out == {
         "abstention_count": 0,
@@ -132,6 +140,9 @@ async def test_struggles_route_honors_window_days_param(db_session, monkeypatch)
     monkeypatch.setattr(apollo_api, "require_course_teacher", _fake_require_teacher)
 
     out = await apollo_api.classroom_struggles(
-        search_space_id=sid, request=_FakeRequest(), window_days=1, db=db_session,
+        search_space_id=sid,
+        request=_FakeRequest(),
+        window_days=1,
+        db=db_session,
     )
     assert out["abstention_count"] == 0
