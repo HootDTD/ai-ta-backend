@@ -1,0 +1,231 @@
+"""Campaign-plan Task A4 — the ``APOLLO_GRAPH_GRADER_LIVE`` promotion flag +
+any-exception -> LLM-fallback hardening.
+
+Pure unit tests (same harness as ``test_done_live_flag.py``): every OLD-path
+collaborator is mocked deterministically (``_old_path_patches``), Neo4j is a
+MagicMock, and both ``run_graph_simulation`` and ``write_artifacts`` are
+patched on the ``done`` module so no real chain / DB write / live LLM runs.
+
+Byte-identity guard: flag OFF must reproduce the exact `test_done_live_flag`
+OLD-path golden regardless of what the (never-called-for-promotion) shadow
+mock would have returned.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from apollo.grading.artifact_build import GRADER_USED_GRAPH, GRADER_USED_LLM_FALLBACK
+from apollo.handlers import done as done_mod
+from apollo.handlers.done import _graph_grader_live_enabled, handle_done
+from apollo.handlers.tests.test_done_shadow_flag import _old_path_patches, _rerun_inputs
+
+pytestmark = pytest.mark.unit
+
+
+def _shadow_result(*, abstained: bool = False) -> MagicMock:
+    """A fabricated ShadowGradeResult sentinel carrying a DISTINCT graph_sim
+    rubric + constrained-diagnostic narrative (so promotion is observable) and
+    an ``audited.abstained`` flag driving the LIVE promotion gate."""
+    result = MagicMock(name="ShadowGradeResult")
+    result.graph_sim_rubric = {"overall": {"score": 88, "letter": "B+"}}
+    result.diagnostic = MagicMock(narrative="graph-sim narrative")
+    result.audited = MagicMock(abstained=abstained, abstention_reasons=("normalization_confidence",))
+    return result
+
+
+@pytest.fixture(autouse=True)
+def _clear_flags(monkeypatch):
+    monkeypatch.delenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", raising=False)
+    monkeypatch.delenv("APOLLO_GRAPH_SIM_LIVE_ENABLED", raising=False)
+    monkeypatch.delenv("APOLLO_GRAPH_GRADER_LIVE", raising=False)
+    monkeypatch.delenv("APOLLO_GRADING_ARTIFACT_ENABLED", raising=False)
+    yield
+
+
+async def _run_with_flags(
+    monkeypatch,
+    *,
+    shadow: bool,
+    live,
+    artifact: bool = False,
+    shadow_return=None,
+    shadow_side_effect=None,
+):
+    """Run handle_done with the shadow + A4-live (+ optional artifact) flags
+    set, ``run_graph_simulation``/``build_rerun_inputs``/``write_artifacts``
+    patched on the ``done`` module."""
+    if shadow:
+        monkeypatch.setenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", "true")
+    if live is not None:
+        monkeypatch.setenv("APOLLO_GRAPH_GRADER_LIVE", live)
+    if artifact:
+        monkeypatch.setenv("APOLLO_GRADING_ARTIFACT_ENABLED", "true")
+
+    db, _sess, _attempt, patches = _old_path_patches()
+    payload = {"declared_paths": [["a"]], "symbolic_mappings": {"d": "2*r"}}
+    if shadow_side_effect is not None:
+        shadow_mock = AsyncMock(side_effect=shadow_side_effect)
+    else:
+        shadow_mock = AsyncMock(return_value=shadow_return)
+    write_artifacts_mock = AsyncMock(return_value=None)
+
+    rerun = _rerun_inputs(problem_payload=payload)
+
+    with (
+        patch("apollo.handlers.done.run_graph_simulation", new=shadow_mock),
+        patch("apollo.handlers.done.build_rerun_inputs", new=AsyncMock(return_value=rerun)),
+        patch("apollo.handlers.done.write_artifacts", new=write_artifacts_mock),
+    ):
+        for p in patches:
+            p.start()
+        try:
+            out = await handle_done(db=db, neo=MagicMock(), session_id=11)
+        finally:
+            for p in reversed(patches):
+                p.stop()
+    return out, shadow_mock, write_artifacts_mock
+
+
+def test_live_flag_parsing(monkeypatch):
+    for truthy in ("1", "true", "TRUE", "Yes", "yes"):
+        monkeypatch.setenv("APOLLO_GRAPH_GRADER_LIVE", truthy)
+        assert _graph_grader_live_enabled() is True
+    for falsy in ("0", "false", "no", "", "off", "maybe"):
+        monkeypatch.setenv("APOLLO_GRAPH_GRADER_LIVE", falsy)
+        assert _graph_grader_live_enabled() is False
+    monkeypatch.delenv("APOLLO_GRAPH_GRADER_LIVE", raising=False)
+    assert _graph_grader_live_enabled() is False
+
+
+def test_live_flag_constant_name():
+    assert done_mod._GRAPH_GRADER_LIVE_FLAG == "APOLLO_GRAPH_GRADER_LIVE"
+
+
+async def test_flag_off_byte_identical_to_shadow_golden(monkeypatch):
+    """(a) LIVE off ⇒ response is the exact OLD-path golden (same as
+    `test_done_live_flag.test_live_off_return_byte_identical`), regardless of
+    what a healthy shadow would have promoted."""
+    out, shadow_mock, write_artifacts_mock = await _run_with_flags(
+        monkeypatch, shadow=True, live="false", shadow_return=_shadow_result(),
+    )
+    shadow_mock.assert_awaited_once()
+    assert out == {
+        "rubric": {"overall": {"score": 0.5}},
+        "diagnostic_narrative": "narrative",
+        "coverage": {},
+        "progress": {
+            "xp_earned": 10,
+            "xp_before": 0,
+            "xp_after": 10,
+            "level_before": 1,
+            "level_after": 1,
+            "level_up": False,
+            "title_after": "Novice",
+            "level_progress_pct": 0.1,
+            "xp_to_next_level": 90,
+        },
+        "xp_earned": 10,
+        "xp_before": 0,
+        "xp_after": 10,
+        "level_before": 1,
+        "level_after": 1,
+        "level_up": False,
+    }
+    write_artifacts_mock.assert_not_awaited()
+
+
+async def test_flag_off_no_shadow_byte_identical(monkeypatch):
+    """LIVE off, SHADOW off too ⇒ same golden, run_graph_simulation never
+    called (mirrors WU-4C1's flag guard)."""
+    out, shadow_mock, _write = await _run_with_flags(monkeypatch, shadow=False, live="false")
+    shadow_mock.assert_not_awaited()
+    assert out["rubric"] == {"overall": {"score": 0.5}}
+    assert out["diagnostic_narrative"] == "narrative"
+
+
+async def test_live_on_healthy_not_abstained_promotes_graph_grade(monkeypatch):
+    """(b) LIVE on + healthy shadow, not abstained ⇒ response["rubric"] IS the
+    shadow's graph_sim_rubric object, and the canonical artifact is written
+    with served="graph" (pair row llm)."""
+    shadow = _shadow_result(abstained=False)
+    out, shadow_mock, write_artifacts_mock = await _run_with_flags(
+        monkeypatch, shadow=True, live="true", artifact=True, shadow_return=shadow,
+    )
+    shadow_mock.assert_awaited_once()
+    assert out["rubric"] is shadow.graph_sim_rubric
+    assert out["diagnostic_narrative"] == "graph-sim narrative"
+    # coverage/progress/XP stay OLD-path.
+    assert out["coverage"] == {}
+    assert out["progress"]["xp_earned"] == 10
+
+    write_artifacts_mock.assert_awaited_once()
+    kwargs = write_artifacts_mock.await_args.kwargs
+    assert kwargs["served"] == GRADER_USED_GRAPH
+    assert kwargs["shadow"] is shadow
+    assert kwargs["graph_failure"] is None
+
+
+async def test_live_on_exception_anywhere_falls_back_to_old_path(monkeypatch):
+    """(c) LIVE on + run_graph_simulation raises ⇒ response equals the OLD-path
+    values (HTTP 200 upstream, no re-raise), and the artifact records
+    graph_failure containing the exception text."""
+    out, shadow_mock, write_artifacts_mock = await _run_with_flags(
+        monkeypatch, shadow=True, live="true", artifact=True,
+        shadow_side_effect=RuntimeError("boom"),
+    )
+    shadow_mock.assert_awaited_once()
+    assert out["rubric"] == {"overall": {"score": 0.5}}
+    assert out["diagnostic_narrative"] == "narrative"
+
+    write_artifacts_mock.assert_awaited_once()
+    kwargs = write_artifacts_mock.await_args.kwargs
+    assert kwargs["served"] == GRADER_USED_LLM_FALLBACK
+    assert kwargs["shadow"] is None
+    assert "boom" in kwargs["graph_failure"]
+    assert "RuntimeError" in kwargs["graph_failure"]
+
+
+async def test_live_off_exception_still_reraises_no_fallback(monkeypatch):
+    """LIVE off preserves the pre-A4 NO-FALLBACK diagnostics: a shadow-chain
+    exception propagates (named-error visibility for shadow-only mode)."""
+    with pytest.raises(RuntimeError, match="boom"):
+        await _run_with_flags(
+            monkeypatch, shadow=True, live="false", shadow_side_effect=RuntimeError("boom"),
+        )
+
+
+async def test_live_on_abstained_shadow_falls_back_to_llm(monkeypatch):
+    """(d) LIVE on + abstained shadow ⇒ OLD/LLM values are served
+    (grader_used stays "llm_fallback") without re-running anything at
+    Done-time; the shadow result (carrying the real abstention reasons) is
+    still forwarded to `write_artifacts` so the paired graph artifact records
+    them (`build_graph_artifact` already reshapes
+    `shadow.audited.abstention_reasons` verbatim — proven in
+    `apollo/grading/tests/test_artifact_build.py`)."""
+    shadow = _shadow_result(abstained=True)
+    out, shadow_mock, write_artifacts_mock = await _run_with_flags(
+        monkeypatch, shadow=True, live="true", artifact=True, shadow_return=shadow,
+    )
+    shadow_mock.assert_awaited_once()
+    assert out["rubric"] == {"overall": {"score": 0.5}}
+    assert out["diagnostic_narrative"] == "narrative"
+
+    write_artifacts_mock.assert_awaited_once()
+    kwargs = write_artifacts_mock.await_args.kwargs
+    assert kwargs["served"] == GRADER_USED_LLM_FALLBACK
+    assert kwargs["shadow"] is shadow
+    assert list(shadow.audited.abstention_reasons) == ["normalization_confidence"]
+    assert kwargs["graph_failure"] is None
+
+
+async def test_old_rubric_still_forwarded_to_shadow(monkeypatch):
+    """Unchanged plumbing: run_graph_simulation still gets old_rubric=<the OLD
+    student-facing rubric> regardless of the A4 flag state."""
+    _out, shadow_mock, _write = await _run_with_flags(
+        monkeypatch, shadow=True, live="true", shadow_return=_shadow_result(),
+    )
+    kwargs = shadow_mock.await_args.kwargs
+    assert kwargs["old_rubric"] == {"overall": {"score": 0.5}}
