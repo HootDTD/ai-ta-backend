@@ -93,9 +93,14 @@ async def provision_seeded(
 
     Runs, in order: ``seed_apollo_concept_registry`` (whole-registry walk;
     idempotent, safe to re-run per subject), ``seed_apollo_learner_model
-    --subject-slug <slug>`` (Layer-1 KG rows for this subject only), and —
-    unless ``project_canon=False`` — ``seed_canon_projection`` (rebuild
-    ``:Canon`` in Neo4j from the just-seeded Postgres rows). Raises
+    --subject-slug <slug>`` (Layer-1 KG rows for this subject only),
+    ``seed_apollo_misconceptions --subject-slug <slug>`` (the
+    ``apollo_misconceptions`` TABLE bank the runtime misconception-inference
+    channel + graph-grader soundness axis read — a DIFFERENT store from the
+    ``kind='misconception'`` KG entities the learner-model step mints; see
+    ``apollo/persistence/misconception_bank_seed.py``), and — unless
+    ``project_canon=False`` — ``seed_canon_projection`` (rebuild ``:Canon`` in
+    Neo4j from the just-seeded Postgres rows). Raises
     :class:`SeedProvisioningError` on the first non-zero exit; later steps
     are not attempted.
     """
@@ -128,6 +133,19 @@ async def provision_seeded(
     if subject.concept_slug:
         learner_cmd += ["--concept-slug", subject.concept_slug]
     steps.append(await _run_step(runner, tuple(learner_cmd)))
+
+    misconceptions_cmd: list[str] = [
+        sys.executable,
+        "-m",
+        "scripts.seed_apollo_misconceptions",
+        "--database-url",
+        dsn,
+        "--subject-slug",
+        subject.slug,
+    ]
+    if subject.concept_slug:
+        misconceptions_cmd += ["--concept-slug", subject.concept_slug]
+    steps.append(await _run_step(runner, tuple(misconceptions_cmd)))
 
     if project_canon:
         canon_cmd: tuple[str, ...] = (

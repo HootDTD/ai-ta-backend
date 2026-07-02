@@ -70,7 +70,7 @@ def test_all_subject_keys_lists_seeded_then_authored():
 
 
 @pytest.mark.asyncio
-async def test_provision_seeded_runs_registry_learner_and_canon_in_order():
+async def test_provision_seeded_runs_registry_learner_misconceptions_and_canon_in_order():
     calls: list[tuple[str, ...]] = []
 
     async def fake_run(cmd):
@@ -81,13 +81,15 @@ async def test_provision_seeded_runs_registry_learner_and_canon_in_order():
         "fluid_mechanics", "postgresql://x", run_subprocess=fake_run
     )
 
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert "scripts.seed_apollo_concept_registry" in calls[0]
     assert "scripts.seed_apollo_learner_model" in calls[1]
     assert "--subject-slug" in calls[1] and "fluid_mechanics" in calls[1]
-    assert "scripts.seed_canon_projection" in calls[2]
+    assert "scripts.seed_apollo_misconceptions" in calls[2]
+    assert "--subject-slug" in calls[2] and "fluid_mechanics" in calls[2]
+    assert "scripts.seed_canon_projection" in calls[3]
     assert result.subject_key == "fluid_mechanics"
-    assert [s.returncode for s in result.steps] == [0, 0, 0]
+    assert [s.returncode for s in result.steps] == [0, 0, 0, 0]
 
 
 @pytest.mark.asyncio
@@ -109,6 +111,10 @@ async def test_provision_seeded_passes_concept_slug_when_set(monkeypatch):
     idx = learner_cmd.index("--concept-slug")
     assert learner_cmd[idx + 1] == "bernoulli_principle"
 
+    misconceptions_cmd = calls[2]
+    idx = misconceptions_cmd.index("--concept-slug")
+    assert misconceptions_cmd[idx + 1] == "bernoulli_principle"
+
 
 @pytest.mark.asyncio
 async def test_provision_seeded_skips_canon_projection_when_disabled():
@@ -122,8 +128,9 @@ async def test_provision_seeded_skips_canon_projection_when_disabled():
         "macroeconomics", "postgresql://x", run_subprocess=fake_run, project_canon=False
     )
 
-    assert len(calls) == 2
-    assert len(result.steps) == 2
+    assert len(calls) == 3
+    assert len(result.steps) == 3
+    assert "scripts.seed_apollo_misconceptions" in calls[2]
 
 
 @pytest.mark.asyncio
@@ -146,7 +153,22 @@ async def test_provision_seeded_stops_on_first_failing_step():
     with pytest.raises(teacher.SeedProvisioningError, match="seed step failed"):
         await teacher.provision_seeded("fluid_mechanics", "postgresql://x", run_subprocess=fake_run)
 
-    assert len(calls) == 2  # third step (canon) never attempted
+    assert len(calls) == 2  # misconceptions + canon never attempted
+
+
+@pytest.mark.asyncio
+async def test_provision_seeded_stops_before_canon_on_misconceptions_failure():
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_run(cmd):
+        calls.append(tuple(cmd))
+        return 0 if len(calls) < 3 else 1
+
+    with pytest.raises(teacher.SeedProvisioningError, match="seed step failed"):
+        await teacher.provision_seeded("fluid_mechanics", "postgresql://x", run_subprocess=fake_run)
+
+    assert len(calls) == 3  # canon never attempted
+    assert "scripts.seed_apollo_misconceptions" in calls[2]
 
 
 # --- provision_authored -----------------------------------------------------
