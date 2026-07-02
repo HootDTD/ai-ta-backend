@@ -271,3 +271,69 @@ backend required. **Not run against a live stack by this task** (that is
 Phase F); the default *real* implementations of those seams
 (`asyncio.create_subprocess_exec`, `asyncio.sleep`) are the only
 pragma-excluded lines.
+
+## S1-S5 stage-audit judges (Task E1)
+
+`campaign/judges/` implements the spec §4 validation philosophy — "validate
+stages, not vibes": each judge sees ONLY its own stage's input/output and
+returns a `Verdict(item_id, ok, reason)` per item plus a deterministic
+`JudgeResult(stage, verdicts, passed, total, pass_rate, extra)`. Gate-bar
+comparison (95/95/95/90/90%-precision from the spec table) is left to E3's
+`campaign/report.py` — this package only produces pass rates + evidence.
+
+`campaign/judges/base.py`:
+
+- `verdict_schema(name)` — the strict, closed `{ok: bool, reason: str}`
+  `json_schema` payload every judge shares (mirrors the provisioning
+  precedent, `apollo/provisioning/provisioning_schema.py`'s strict builders).
+- `JudgeLLM` — the async seam (`judge_item(system_prompt, user_prompt,
+  schema) -> dict`) every judge calls through; `OpenAIJudgeClient` is the
+  live implementation (one `gpt-4o` chat call per item, offloaded to a
+  thread so the async judge pipeline never blocks). Its network call is
+  `# pragma: no cover` — never exercised by unit tests, matching the D1
+  precedent of pragma-excluding only the real I/O seam.
+- `StageJudge` — the base class: `build_items(raw)` (pure, unit-tested
+  without an LLM), `user_prompt(item)`, `judge(raw)` (drives the LLM calls +
+  aggregation). `aggregate(verdicts)` is the shared gate math
+  (`pass_rate = ok/total`, and an empty item set aggregates to `0.0`, never
+  a vacuous 100%).
+
+One module per stage, each taking already-loaded run-dir data (a judge never
+does its own file I/O — callers load `attempts.jsonl` / subject dumps via
+`load_jsonl` and hand in plain dicts, keeping `build_items` trivially unit
+testable against fixtures):
+
+- **S1** (`s1_reference_graph.py`) — items = every node + edge of each
+  provisioned subject's minted reference graph, judged against that
+  subject's problem statement. Duplicate-node-id and PRECEDES-cycle checks
+  are CODE (`find_structural_defects`, a Kahn's-algorithm pass mirroring
+  `KGGraph.topological_order`), never sent to the LLM.
+- **S2** (`s2_ingestion.py`) — items = WU-AAS `(page_ref, scraped_label,
+  paired_solution)` triples; the low-confidence -> verify-path contract
+  (`check_verify_path_fired`) is a pure boolean read-back against each
+  item's recorded `ocr_confidence`/`low_confidence_threshold`/
+  `verify_path_fired`, folded into the same pass rate as the LLM verdicts.
+- **S3** (`s3_student_fidelity.py`) — **the most important audit**: one item
+  per `credited`/`misconception`/`unresolved` node-ledger entry, judged
+  against the FULL attempt transcript (catches both phantom credits and
+  missed/resolver-recall gaps). `ledger_vs_expected` is a separate pure
+  diff against the persona's authored `ExpectedLedger` (D2) — reported via
+  `JudgeResult.extra["ledger_vs_expected"]`, not blended into the LLM pass
+  rate (it audits persona-authoring agreement, a different question).
+  Skips ledger entries with statuses this stage does not audit (e.g. no
+  status yet) rather than raising.
+- **S4** (`s4_apollo_coherence.py`) — one item per SAMPLED SESSION (the
+  spec's bar is "coherent on >=90% of sampled sessions", not per-utterance):
+  did Apollo's confused-learner questions/clarifications target what the
+  ledger later marks unresolved/misconceived, and did grading honor
+  clarification credits.
+- **S5** (`s5_misconceptions.py`) — one item per asserted misconception
+  (precision-focused, per spec). `misconception_recall` is a separate pure
+  diff against `expected.misconceptions`, reported via
+  `JudgeResult.extra["recall"]` and explicitly NOT gated (spec: "recall
+  reported, not gated").
+
+Tests: `campaign/tests/test_judges.py` — a `FakeLLM` records every call and
+returns canned/overridable verdicts; nothing touches the network. 99%
+line+branch coverage (the two uncovered branches are defensive loop-exit
+edges with no observable behavior difference).
