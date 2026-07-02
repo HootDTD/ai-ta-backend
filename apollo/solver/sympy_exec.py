@@ -5,12 +5,25 @@ parsing fails. NEVER silently skips entries — all-or-nothing parse.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List
 
 from sympy import Float, Integer, Rational, Symbol, latex, simplify, solve
-from sympy.parsing.sympy_parser import parse_expr
+from sympy.parsing.sympy_parser import (
+    convert_xor,
+    parse_expr,
+    standard_transformations,
+)
 
 from apollo.errors import MalformedEquationError
+
+_LOG = logging.getLogger(__name__)
+
+# ``convert_xor`` normalizes ``^`` (which SymPy otherwise parses as bitwise XOR,
+# raising ``unsupported operand type(s) for ^``) to ``Pow`` — the mainstream
+# textbook / worked-solution exponent notation a real teacher PDF carries. Added
+# to the standard set so every ``parse_expr`` below treats ``^`` as exponentiation.
+_TRANSFORMATIONS = standard_transformations + (convert_xor,)
 
 
 def _tidy_floats(expr):
@@ -45,23 +58,41 @@ def _local_dict() -> Dict[str, Any]:
 
 
 def parse_zero_form(symbolic: str, *, entry_id: str):
-    """Parse a student-taught equation in either 'LHS = RHS' or 'LHS - (RHS)'
-    form and return a SymPy expression representing LHS - RHS.
+    """Parse a student-taught equation in 'LHS = RHS', a CHAINED equality
+    ('A = B = C = ...') or 'LHS - (RHS)' form and return a SymPy expression
+    representing LHS - RHS.
+
+    TOLERANCES (WU-AAS lane B2.2 / G4.2 — real teacher-PDF notations):
+      * CHAINED equality — a physics worked-solution routinely writes
+        ``symbol = symbolic-formula = numeric-substitution = final-value`` on one
+        line. We normalize to the FIRST equality (``A = B``): that is the symbolic
+        statement the gates and solver need; the trailing numeric-substitution /
+        unit-bearing tail (e.g. ``= 25.0 m``) is discarded rather than rejected.
+        Dropping the tail can only UNDER-constrain (the safe direction — gate 7
+        catches an under-determined system), never admit a wrong equation.
+      * ``^`` exponent — normalized to ``Pow`` via ``convert_xor`` (see
+        ``_TRANSFORMATIONS``) instead of raising SymPy's XOR type error.
     """
     s = symbolic.strip()
     if "=" in s:
         parts = s.split("=")
-        if len(parts) != 2:
-            raise MalformedEquationError(
-                entry_id=entry_id,
-                symbolic=symbolic,
-                parse_error=f"expected exactly one '=' but found {len(parts) - 1}",
+        # Chained equality (A = B = C = ...): keep the FIRST equality (A = B), the
+        # symbolic relationship. A single '=' is the len==2 (pairwise) case,
+        # unchanged. len==1 is impossible here (we only enter on a '=' present).
+        lhs, rhs = parts[0], parts[1]
+        if len(parts) > 2:
+            _LOG.debug(
+                "sympy_parse_chained_equality_normalized",
+                extra={
+                    "event": "sympy_parse_chained_equality_normalized",
+                    "entry_id": entry_id,
+                    "equality_count": len(parts) - 1,
+                },
             )
-        lhs, rhs = parts
         s = f"({lhs.strip()}) - ({rhs.strip()})"
 
     try:
-        return parse_expr(s, local_dict=_local_dict())
+        return parse_expr(s, local_dict=_local_dict(), transformations=_TRANSFORMATIONS)
     except Exception as exc:  # noqa: BLE001
         raise MalformedEquationError(
             entry_id=entry_id,
