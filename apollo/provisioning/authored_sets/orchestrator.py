@@ -305,9 +305,20 @@ async def _process_authored_candidate(
         )
 
     try:
-        mint_plan = await tag_and_mint(
-            db, pair, chat_fn=_tag_mint_chat_fn(metered_chat), embed_fn=embed_fn
-        )
+        # The whole mint attempt rides ONE nested SAVEPOINT so a fail-closed
+        # TagMintError (raised AFTER tag_mint has already flushed concept /
+        # KGEntity / apollo_dedup_decisions rows for this candidate — steps
+        # 3/4/5a/5b) rolls back exactly those partial writes instead of
+        # surviving into the caller's end-of-run commit as orphaned KG rows
+        # (unreachable by any promoted ConceptProblem, yet live dedup targets
+        # for the NEXT candidate). Mirrors the enqueue.py / chat.py
+        # ``begin_nested`` idiom. A ``CanonProjectionError`` from ``promote``
+        # below is intentionally OUTSIDE this block — it must still propagate
+        # as a run-level failure.
+        async with db.begin_nested():
+            mint_plan = await tag_and_mint(
+                db, pair, chat_fn=_tag_mint_chat_fn(metered_chat), embed_fn=embed_fn
+            )
     except TagMintError as exc:
         # The mint draft for THIS problem is unusable (e.g. the LLM prereq draft
         # names an unminted entity key). Reject just this candidate — mirroring

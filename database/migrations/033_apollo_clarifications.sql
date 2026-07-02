@@ -1,4 +1,4 @@
--- 032_apollo_clarifications.sql
+-- 033_apollo_clarifications.sql
 -- Apollo clarification loop (G2): one row per ambiguous student idea Apollo
 -- probed with an answer-blind follow-up. State machine:
 --   asked_waiting -> {confirmed | refuted | vague}  (terminal; one probe per idea)

@@ -1,8 +1,10 @@
+import json
 import sys
 
 import pytest
+from sqlalchemy import select
 
-from apollo.persistence.models import Concept, ConceptProblem, Subject
+from apollo.persistence.models import Concept, ConceptProblem, DedupDecision, KGEntity, Subject
 from apollo.provisioning.authored_sets.orchestrator import run_authored_set_provisioning
 from apollo.provisioning.pairing_gate import PairingVerdict
 from apollo.provisioning.promote import PromoteResult
@@ -320,6 +322,173 @@ async def test_candidate_tag_mint_error_is_rejected(db_session, monkeypatch):
     assert result.diagnostic.startswith("tag_mint_error")
     assert "pressure_box_3" in result.diagnostic
     assert result.concept_problem_id is not None
+
+
+class _TagMintFakeMC:
+    """A metered_chat double whose ``cheap`` returns a valid tag/mint concept-tag
+    payload (unlike ``_FakeAuthoredMC.cheap``, which returns a pairing-judge
+    shape) — required so the REAL ``tag_and_mint`` (not mocked) can parse it."""
+
+    def scrape_chat_fn(self, _system_prompt):
+        return lambda _content: "[]"
+
+    def main(self, **_k):
+        return "{}"
+
+    def cheap(self, *, purpose=None, **_k):
+        return json.dumps(
+            {"concept_slug": "savepoint", "display_name": "Savepoint", "prereqs": []}
+        )
+
+
+def _savepoint_candidate(*, document_id: int, label: str, chash: str) -> CandidateQuestion:
+    return CandidateQuestion(
+        problem_text=f"{label}. A beam length L, load w. Find max moment M.",
+        given_values={"L": 2.0, "w": 3.0},
+        target_unknown="M",
+        difficulty="intro",
+        document_id=document_id,
+        page=1,
+        chunk_content_hash=chash,
+        concept_slug="provisional.inventory",
+        label=label,
+    )
+
+
+def _savepoint_draft(*, step_id: str) -> ReferenceSolutionDraft:
+    return ReferenceSolutionDraft(
+        solution_source="extracted",
+        reference_solution=[
+            {
+                "step": 1,
+                "id": step_id,
+                "entry_type": "equation",
+                "content": {"symbolic": "M - w*L**2/8"},
+                "depends_on": [],
+            }
+        ],
+        grounding=(),
+        provenance={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, monkeypatch):
+    """M1: a fail-closed TagMintError raised INSIDE the REAL ``tag_and_mint`` (at
+    step 5a, ``link_opposes``) after concept/KGEntity/apollo_dedup_decisions rows
+    for THAT candidate have already been flushed must not leave those rows
+    orphaned once the caller's (simulated ``_run_set_background``) commit lands.
+    The per-candidate ``begin_nested`` savepoint rolls back exactly the failed
+    candidate's partial writes; a SIBLING candidate in the same run still mints
+    and promotes. DISCRIMINATING: without the savepoint wrap, the failed
+    candidate's ``eq.eq-fail`` KGEntity + its DedupDecision row would survive the
+    outer commit even though no ConceptProblem was ever promoted for it."""
+    from apollo.provisioning import tag_mint as tm
+    from apollo.provisioning.tag_mint_persist import link_opposes as real_link_opposes
+
+    space = await _seed_search_space(db_session, slug="savepoint")
+    concept_id = await _seed_concept(db_session, search_space_id=space, slug="savepoint")
+    prob_doc = await _seed_doc_with_chunk(
+        db_session, space, "1. beam.\n2. beam.", title="P-savepoint"
+    )
+    sol_doc = await _seed_doc_with_chunk(
+        db_session, space, "Solution 1\nM = w*L^2/8\nSolution 2\nM = w*L^2/8", title="S-savepoint"
+    )
+    cand_fail = _savepoint_candidate(document_id=prob_doc, label="1", chash="sp-fail")
+    cand_ok = _savepoint_candidate(document_id=prob_doc, label="2", chash="sp-ok")
+
+    async def _resolve_prov(db, *, search_space_id):
+        return concept_id
+
+    async def _scrape_document(chunk_rows, **_kwargs):
+        return ScrapeResult(candidates=(cand_fail, cand_ok), scraped_count=2, parse_failures=0)
+
+    async def _validate_pair(question, draft, *, retrieve_fn, judge_fn):
+        return PairingVerdict(paired=True, faithful=True, confidence=1.0)
+
+    async def _verify_ok(*_a, **_k):
+        from apollo.provisioning.authored_sets.verification import VerificationVerdict
+
+        return VerificationVerdict(review_required=False)
+
+    async def _fog(db, question, *, retrieve_fn, chat_fn):
+        step_id = "eq-fail" if question.label == "1" else "eq-ok"
+        return _savepoint_draft(step_id=step_id)
+
+    call_count = {"n": 0}
+
+    async def _link_opposes_first_fails(db, *, concept_id, key_to_id):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise KeyError("misc.forced-failure")
+        return await real_link_opposes(db, concept_id=concept_id, key_to_id=key_to_id)
+
+    async def _promote(db, neo, **kwargs):
+        row = await db.get(ConceptProblem, kwargs["concept_problem_id"])
+        row.tier = 2
+        return PromoteResult(promoted=True)
+
+    monkeypatch.setattr(orch, "resolve_or_create_provisional_concept", _resolve_prov)
+    monkeypatch.setattr(orch, "scrape_document", _scrape_document)
+    monkeypatch.setattr(orch, "validate_pair", _validate_pair)
+    monkeypatch.setattr(orch, "verify_against_generated", _verify_ok)
+    monkeypatch.setattr(orch, "find_or_generate", _fog)
+    monkeypatch.setattr(orch, "promote", _promote)
+    monkeypatch.setattr(tm, "link_opposes", _link_opposes_first_fails)
+
+    report = await run_authored_set_provisioning(
+        db_session,
+        neo=None,
+        search_space_id=space,
+        problem_document_id=prob_doc,
+        solution_document_id=sol_doc,
+        metered_chat=_TagMintFakeMC(),
+        embed_fn=lambda _text: [0.0],
+    )
+
+    assert report.counts == {"promoted": 1, "rejected": 1, "held_for_review": 0}
+    by_label = {r.label: r for r in report.problems}
+    assert by_label["1"].outcome == "rejected"
+    assert by_label["1"].diagnostic.startswith("tag_mint_error")
+    assert by_label["2"].outcome == "promoted"
+
+    # Simulate `_run_set_background`'s end-of-run commit over the WHOLE session.
+    await db_session.commit()
+
+    # The failed candidate's entity must NOT have survived the savepoint rollback
+    # (orphaned KG rows unreachable by any promoted ConceptProblem, yet a live
+    # dedup target for a later mint, is exactly the defect M1 fixes).
+    fail_rows = (
+        (
+            await db_session.execute(
+                select(KGEntity).where(KGEntity.canonical_key == "eq.eq-fail")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert fail_rows == []
+
+    # The sibling candidate's mint DOES survive the commit.
+    ok_rows = (
+        (await db_session.execute(select(KGEntity).where(KGEntity.canonical_key == "eq.eq-ok")))
+        .scalars()
+        .all()
+    )
+    assert len(ok_rows) == 1
+
+    # No apollo_dedup_decisions row from the rolled-back candidate leaks through
+    # either (it would otherwise become a live dedup target for a future mint).
+    dedup_rows = (
+        (
+            await db_session.execute(
+                select(DedupDecision).where(DedupDecision.candidate_key == "eq.eq-fail")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert dedup_rows == []
 
 
 @pytest.mark.asyncio

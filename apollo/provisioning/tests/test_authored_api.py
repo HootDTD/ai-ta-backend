@@ -113,7 +113,7 @@ async def test_create_set_persists_and_schedules(db_session, monkeypatch):
 
     search_space_id, _concept_id = await _seed_course(db_session, slug="create")
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
-    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     bg = _BG()
 
     resp = await aapi.create_authored_set(
@@ -244,10 +244,7 @@ async def test_approve_409_when_not_held(db_session, monkeypatch):
 
     space, concept = await _seed_course(db_session, slug="approve409")
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
-    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
-    aset = AuthoredSet(search_space_id=space, set_index=1, status="done")
-    db_session.add(aset)
-    await db_session.flush()
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     prob = ConceptProblem(
         concept_id=concept,
         problem_code="not-held",
@@ -258,6 +255,14 @@ async def test_approve_409_when_not_held(db_session, monkeypatch):
         provenance={},  # no authored_review -> not held
     )
     db_session.add(prob)
+    await db_session.flush()
+    aset = AuthoredSet(
+        search_space_id=space,
+        set_index=1,
+        status="done",
+        result_summary={"problems": [{"concept_problem_id": prob.id, "outcome": "held_for_review"}]},
+    )
+    db_session.add(aset)
     await db_session.flush()
     with pytest.raises(HTTPException) as exc:
         await aapi.approve_held_problem(
@@ -279,10 +284,7 @@ async def test_approve_422_when_chosen_reference_missing(db_session, monkeypatch
 
     space, concept = await _seed_course(db_session, slug="approve422")
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
-    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
-    aset = AuthoredSet(search_space_id=space, set_index=1, status="done")
-    db_session.add(aset)
-    await db_session.flush()
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     prob = ConceptProblem(
         concept_id=concept,
         problem_code="held-no-ocr",
@@ -296,6 +298,14 @@ async def test_approve_422_when_chosen_reference_missing(db_session, monkeypatch
     )
     db_session.add(prob)
     await db_session.flush()
+    aset = AuthoredSet(
+        search_space_id=space,
+        set_index=1,
+        status="done",
+        result_summary={"problems": [{"concept_problem_id": prob.id, "outcome": "held_for_review"}]},
+    )
+    db_session.add(aset)
+    await db_session.flush()
     with pytest.raises(HTTPException) as exc:
         await aapi.approve_held_problem(
             set_id=int(aset.id),
@@ -305,6 +315,124 @@ async def test_approve_422_when_chosen_reference_missing(db_session, monkeypatch
             db=db_session,
         )
     assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_approve_404_when_problem_not_minted_by_this_set(db_session, monkeypatch):
+    """C1 regression: a real ConceptProblem in the SAME course, but not recorded in
+    this set's result_summary (e.g. it belongs to a sibling set), must 404 rather
+    than promote under the caller's search space."""
+    from fastapi import HTTPException
+
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, ConceptProblem
+
+    space, concept = await _seed_course(db_session, slug="approve404cross")
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    other_set = AuthoredSet(search_space_id=space, set_index=1, status="done")
+    db_session.add(other_set)
+    prob = ConceptProblem(
+        concept_id=concept,
+        problem_code="held-cross-set",
+        difficulty="intro",
+        tier=1,
+        payload={},
+        search_space_id=space,
+        provenance={
+            "authored_review": {"required": True, "ocr_draft": {"x": 1}, "generated_alt": None}
+        },
+    )
+    db_session.add(prob)
+    await db_session.flush()
+    # This set never minted `prob` -- its own result_summary is empty.
+    aset = AuthoredSet(search_space_id=space, set_index=2, status="done", result_summary={})
+    db_session.add(aset)
+    await db_session.flush()
+    with pytest.raises(HTTPException) as exc:
+        await aapi.approve_held_problem(
+            set_id=int(aset.id),
+            problem_id=int(prob.id),
+            body=aapi.ApproveBody(reference="ocr"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_approve_404_when_problem_in_different_search_space(db_session, monkeypatch):
+    """C1 regression: even if a corrupted/stale result_summary lists a
+    concept_problem_id, a search-space mismatch between the problem and the set
+    must still 404 -- the strict cross-tenant guard."""
+    from fastapi import HTTPException
+
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, ConceptProblem
+
+    space_a, concept_a = await _seed_course(db_session, slug="approve404space-a")
+    space_b, _concept_b = await _seed_course(db_session, slug="approve404space-b")
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    # Problem actually lives in course A.
+    prob = ConceptProblem(
+        concept_id=concept_a,
+        problem_code="held-other-space",
+        difficulty="intro",
+        tier=1,
+        payload={},
+        search_space_id=space_a,
+        provenance={
+            "authored_review": {"required": True, "ocr_draft": {"x": 1}, "generated_alt": None}
+        },
+    )
+    db_session.add(prob)
+    await db_session.flush()
+    # But the (attacker-controlled) set being approved through is in course B, and
+    # its result_summary falsely claims this problem as its own.
+    aset = AuthoredSet(
+        search_space_id=space_b,
+        set_index=1,
+        status="done",
+        result_summary={"problems": [{"concept_problem_id": prob.id, "outcome": "held_for_review"}]},
+    )
+    db_session.add(aset)
+    await db_session.flush()
+    with pytest.raises(HTTPException) as exc:
+        await aapi.approve_held_problem(
+            set_id=int(aset.id),
+            problem_id=int(prob.id),
+            body=aapi.ApproveBody(reference="ocr"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_approve_404_when_problem_id_nonexistent(db_session, monkeypatch):
+    """A real (existing) set with a nonexistent problem_id 404s -- same status as
+    the cross-tenant cases, so existence of the set is never leaked either way."""
+    from fastapi import HTTPException
+
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    space, _concept = await _seed_course(db_session, slug="approve404missing")
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    aset = AuthoredSet(search_space_id=space, set_index=1, status="done", result_summary={})
+    db_session.add(aset)
+    await db_session.flush()
+    with pytest.raises(HTTPException) as exc:
+        await aapi.approve_held_problem(
+            set_id=int(aset.id),
+            problem_id=999999,
+            body=aapi.ApproveBody(reference="ocr"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+    assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -370,7 +498,7 @@ async def test_list_and_detail_are_course_gated(db_session, monkeypatch):
     async def _member(**kwargs):
         seen.append(kwargs["search_space_id"])
 
-    monkeypatch.setattr(aapi, "require_course_member", _member)
+    monkeypatch.setattr(aapi, "require_course_teacher", _member)
     row = AuthoredSet(
         search_space_id=search_space_id,
         set_index=1,
@@ -401,10 +529,7 @@ async def test_approve_held_problem_promotes_chosen_reference(db_session, monkey
 
     search_space_id, concept_id = await _seed_course(db_session, slug="approve")
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
-    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
-    aset = AuthoredSet(search_space_id=search_space_id, set_index=1, status="done")
-    db_session.add(aset)
-    await db_session.flush()
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     problem = ConceptProblem(
         concept_id=concept_id,
         problem_code="scrape.approve",
@@ -441,6 +566,14 @@ async def test_approve_held_problem_promotes_chosen_reference(db_session, monkey
         },
     )
     db_session.add(problem)
+    await db_session.flush()
+    aset = AuthoredSet(
+        search_space_id=search_space_id,
+        set_index=1,
+        status="done",
+        result_summary={"problems": [{"concept_problem_id": problem.id, "outcome": "held_for_review"}]},
+    )
+    db_session.add(aset)
     await db_session.flush()
 
     async def _tag_and_mint(db, pair, *, chat_fn, embed_fn):
@@ -521,7 +654,7 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
     from database.models import AITAChunk, AITADocument
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
-    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
 
     space_id, concept_id = await _seed_course(db_session, slug="aas-del")
 
@@ -588,7 +721,7 @@ async def test_delete_failed_set_with_no_problems(db_session, monkeypatch):
     from apollo.persistence.models import AuthoredSet
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
-    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     space_id, _ = await _seed_course(db_session, slug="aas-del-failed")
 
     row = AuthoredSet(search_space_id=space_id, set_index=1, status="failed",
@@ -614,6 +747,30 @@ async def test_delete_authored_set_404(db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["pending", "indexing", "provisioning"])
+async def test_delete_authored_set_409_while_in_flight(db_session, monkeypatch, status):
+    """H2 regression: deleting a set mid-provisioning would orphan :Canon nodes
+    the background task writes outside the PG transaction -- reject with 409
+    while the run is still in flight."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    space_id, _ = await _seed_course(db_session, slug=f"aas-inflight-{status}")
+    row = AuthoredSet(search_space_id=space_id, set_index=1, status=status)
+    db_session.add(row)
+    await db_session.flush()
+    set_id = int(row.id)
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
+    assert exc.value.status_code == 409
+    # The set survives the rejected delete.
+    assert await db_session.get(AuthoredSet, set_id) is not None
+
+
+@pytest.mark.asyncio
 async def test_delete_authored_set_enforces_membership(db_session, monkeypatch):
     """A non-member is rejected and the set survives."""
     import apollo.provisioning.authored_sets.api as aapi
@@ -623,7 +780,7 @@ async def test_delete_authored_set_enforces_membership(db_session, monkeypatch):
         raise aapi.HTTPException(status_code=403, detail="not a member")
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
-    monkeypatch.setattr(aapi, "require_course_member", _deny_member)
+    monkeypatch.setattr(aapi, "require_course_teacher", _deny_member)
     space_id, _ = await _seed_course(db_session, slug="aas-del-auth")
     row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
     db_session.add(row)
@@ -650,7 +807,7 @@ async def _seed_orphanable_concept_kg(db, monkeypatch, *, slug):
     )
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
-    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     space_id, concept_id = await _seed_course(db, slug=slug)
 
     e1 = KGEntity(concept_id=concept_id, canonical_key="eq.a", kind="equation",
@@ -868,7 +1025,7 @@ async def test_delete_authored_set_tears_down_mutually_linked_orphans(db_session
     from database.models import SearchSpace
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
-    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
 
     space = SearchSpace(name="Course link", slug="aas-link", subject_name="Physics")
     db_session.add(space)
@@ -934,7 +1091,7 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
     from database.models import SearchSpace
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
-    monkeypatch.setattr(aapi, "require_course_member", _fake_require_member)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
 
     space = SearchSpace(name="Course prereqspare", slug="aas-prqspare", subject_name="Physics")
     db_session.add(space)
@@ -981,3 +1138,213 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
     assert resp["removed_concepts"] == 0  # C spared because survivor D depends on it
     assert await db_session.get(Concept, cc_id) is not None
     assert await db_session.get(Concept, cd_id) is not None
+
+
+# ---------------------------------------------------------------------------
+# H1: every authored-sets endpoint is TEACHER-gated (require_course_teacher),
+# not merely course-membership-gated. These exercise the real dependency (no
+# monkeypatch on require_course_teacher/require_user), seeding an actual
+# CourseMembership row so an enrolled *student* is proven to get 403 while a
+# *teacher* clears the gate.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_membership(db, *, user_id: str, search_space_id: int, role: str) -> None:
+    from database.models import CourseMembership
+
+    db.add(CourseMembership(user_id=user_id, search_space_id=search_space_id, role=role))
+    await db.flush()
+
+
+def _as_real_user(monkeypatch, aapi, user_id: str) -> None:
+    async def _require_user(_request):
+        return AuthContext(user_id=user_id, access_token="tok")
+
+    monkeypatch.setattr(aapi, "require_user", _require_user)
+
+
+_STUDENT_USER = "11111111-1111-1111-1111-111111111111"
+_TEACHER_USER = "22222222-2222-2222-2222-222222222222"
+
+
+@pytest.mark.asyncio
+async def test_create_authored_set_student_gets_403(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    space_id, _concept_id = await _seed_course(db_session, slug="h1-create")
+    await _seed_membership(db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student")
+    _as_real_user(monkeypatch, aapi, _STUDENT_USER)
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.create_authored_set(
+            request=_FakeRequest(),
+            background=_BG(),
+            problem=_FakeUpload(b"%PDF p", "problems.pdf"),
+            solution=_FakeUpload(b"%PDF s", "solutions.pdf"),
+            search_space_id=space_id,
+            db=db_session,
+        )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_create_authored_set_teacher_passes(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    space_id, _concept_id = await _seed_course(db_session, slug="h1-create-ok")
+    await _seed_membership(db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher")
+    _as_real_user(monkeypatch, aapi, _TEACHER_USER)
+    bg = _BG()
+
+    resp = await aapi.create_authored_set(
+        request=_FakeRequest(),
+        background=bg,
+        problem=_FakeUpload(b"%PDF p", "problems.pdf"),
+        solution=_FakeUpload(b"%PDF s", "solutions.pdf"),
+        search_space_id=space_id,
+        db=db_session,
+    )
+    assert resp["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_list_authored_sets_student_gets_403(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    space_id, _concept_id = await _seed_course(db_session, slug="h1-list")
+    await _seed_membership(db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student")
+    _as_real_user(monkeypatch, aapi, _STUDENT_USER)
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.list_authored_sets(request=_FakeRequest(), search_space_id=space_id, db=db_session)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_list_authored_sets_teacher_passes(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    space_id, _concept_id = await _seed_course(db_session, slug="h1-list-ok")
+    await _seed_membership(db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher")
+    _as_real_user(monkeypatch, aapi, _TEACHER_USER)
+
+    resp = await aapi.list_authored_sets(request=_FakeRequest(), search_space_id=space_id, db=db_session)
+    assert resp == {"sets": []}
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_student_gets_403(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    space_id, _concept_id = await _seed_course(db_session, slug="h1-get")
+    await _seed_membership(db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student")
+    _as_real_user(monkeypatch, aapi, _STUDENT_USER)
+    row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
+    db_session.add(row)
+    await db_session.flush()
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.get_authored_set(set_id=int(row.id), request=_FakeRequest(), db=db_session)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_teacher_passes(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    space_id, _concept_id = await _seed_course(db_session, slug="h1-get-ok")
+    await _seed_membership(db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher")
+    _as_real_user(monkeypatch, aapi, _TEACHER_USER)
+    row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
+    db_session.add(row)
+    await db_session.flush()
+
+    resp = await aapi.get_authored_set(set_id=int(row.id), request=_FakeRequest(), db=db_session)
+    assert resp["set_id"] == int(row.id)
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_student_gets_403(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    space_id, _concept_id = await _seed_course(db_session, slug="h1-delete")
+    await _seed_membership(db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student")
+    _as_real_user(monkeypatch, aapi, _STUDENT_USER)
+    row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
+    db_session.add(row)
+    await db_session.flush()
+    set_id = int(row.id)
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
+    assert exc.value.status_code == 403
+    assert await db_session.get(AuthoredSet, set_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_authored_set_teacher_passes(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    space_id, _concept_id = await _seed_course(db_session, slug="h1-delete-ok")
+    await _seed_membership(db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher")
+    _as_real_user(monkeypatch, aapi, _TEACHER_USER)
+    row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
+    db_session.add(row)
+    await db_session.flush()
+    set_id = int(row.id)
+
+    resp = await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
+    assert resp["deleted"] is True
+    assert await db_session.get(AuthoredSet, set_id) is None
+
+
+@pytest.mark.asyncio
+async def test_approve_held_problem_student_gets_403(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    space_id, _concept_id = await _seed_course(db_session, slug="h1-approve")
+    await _seed_membership(db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student")
+    _as_real_user(monkeypatch, aapi, _STUDENT_USER)
+    row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
+    db_session.add(row)
+    await db_session.flush()
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.approve_held_problem(
+            set_id=int(row.id),
+            problem_id=1,
+            body=aapi.ApproveBody(reference="ocr"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_approve_held_problem_teacher_clears_gate(db_session, monkeypatch):
+    """A teacher clears the auth gate; the request still 404s further down since
+    no problem_id=1 exists here -- what matters is that the failure is NOT 403."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    space_id, _concept_id = await _seed_course(db_session, slug="h1-approve-ok")
+    await _seed_membership(db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher")
+    _as_real_user(monkeypatch, aapi, _TEACHER_USER)
+    row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
+    db_session.add(row)
+    await db_session.flush()
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.approve_held_problem(
+            set_id=int(row.id),
+            problem_id=999999,
+            body=aapi.ApproveBody(reference="ocr"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+    assert exc.value.status_code == 404

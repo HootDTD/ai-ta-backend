@@ -20,6 +20,7 @@ from collections.abc import Iterable, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from apollo.persistence.learner_model_seed import EntitySpec
 from apollo.persistence.models import Concept, EntityPrereq, KGEntity, Subject
@@ -224,6 +225,59 @@ async def _entities_concept_map(
     }
 
 
+async def load_concept_prereq_adjacency(
+    db: AsyncSession, *, concept_id: int, entity_ids: Iterable[int]
+) -> dict[int, set[int]]:
+    """Load PERSISTED ``apollo_entity_prereqs`` edges among ``entity_ids`` scoped
+    to ``concept_id`` (BOTH endpoints must be owned by the concept), returned as
+    an adjacency map ``from_entity_id -> {to_entity_id}``. Used to SEED a
+    cross-mint acyclicity check (M2): the composite PK ``(from_entity_id,
+    to_entity_id)`` permits both ``(A,B)`` and ``(B,A)`` with no DB-level
+    acyclicity, so a SECOND mint into the same shared concept that drafts the
+    REVERSE of an EARLIER mint's persisted edge (mint 1: A->B, mint 2: B->A) would
+    otherwise pass — ``_acyclic_prereq_pairs`` starts its ``adj`` empty each call
+    and never sees mint 1's already-committed edge. Scoped to ``entity_ids`` (the
+    resolved entity ids of the CURRENT mint) — a cross-mint cycle can only involve
+    entities the current draft actually names."""
+    ids = set(entity_ids)
+    if not ids:
+        return {}
+    from_entity = aliased(KGEntity)
+    to_entity = aliased(KGEntity)
+    rows = (
+        await db.execute(
+            select(EntityPrereq.from_entity_id, EntityPrereq.to_entity_id)
+            .join(from_entity, from_entity.id == EntityPrereq.from_entity_id)
+            .join(to_entity, to_entity.id == EntityPrereq.to_entity_id)
+            .where(EntityPrereq.from_entity_id.in_(ids))
+            .where(EntityPrereq.to_entity_id.in_(ids))
+            .where(from_entity.concept_id == concept_id)
+            .where(to_entity.concept_id == concept_id)
+        )
+    ).all()
+    adj: dict[int, set[int]] = {}
+    for from_id, to_id in rows:
+        adj.setdefault(int(from_id), set()).add(int(to_id))
+    return adj
+
+
+def _reaches(adj: dict[int, set[int]], src: int, dst: int) -> bool:
+    """Directed reachability over an adjacency map (DFS). Shared by the
+    writer-boundary cycle guard below — kept local (not imported from
+    ``tag_mint``) to avoid a circular import (``tag_mint`` imports this module)."""
+    seen: set[int] = set()
+    stack = [src]
+    while stack:
+        node = stack.pop()
+        if node == dst:
+            return True
+        if node in seen:
+            continue
+        seen.add(node)
+        stack.extend(adj.get(node, ()))
+    return False
+
+
 async def partition_prereqs_by_concept_scope(
     db: AsyncSession,
     *,
@@ -283,14 +337,32 @@ async def insert_prereqs(
     — the guard must not trust its caller. With PR2's concept-scoped dedup this
     should never fire; if it does, an upstream scoping invariant regressed.
 
+    PERSISTED-CYCLE GUARD (M2, defense-in-depth at the WRITER boundary): the
+    composite PK ``(from_entity_id, to_entity_id)`` has no DB-level acyclicity, so
+    two SEPARATE mints into the same shared concept can each pass their own
+    in-mint ``_acyclic_prereq_pairs`` check yet together persist a cycle (mint 1:
+    A->B; mint 2 drafts B->A into a graph mint 2 never re-derives mint 1's edges
+    from). ``tag_and_mint`` now seeds its acyclicity check from
+    ``load_concept_prereq_adjacency`` BEFORE calling this function, so this should
+    already be cycle-free on arrival; this guard re-derives the FULL persisted
+    concept subgraph itself and re-checks each edge before insert — the writer
+    must not trust its caller here either. An edge whose insertion WOULD close a
+    directed cycle against everything already committed for ``concept_id`` is
+    DROPPED (surfaced via the return + a distinct WARNING log), not inserted.
+
     A pair whose key is not in ``key_to_id`` raises KeyError (the caller maps it to
     a TagMintError — an unresolvable key is a caller contract violation, distinct
     from a resolvable-but-foreign endpoint)."""
     kept, dropped = await partition_prereqs_by_concept_scope(
         db, concept_id=concept_id, key_to_id=key_to_id, pairs=pairs
     )
+    kept_ids = {key_to_id[key] for pair in kept for key in pair}
+    adj = await load_concept_prereq_adjacency(
+        db, concept_id=concept_id, entity_ids=kept_ids
+    )
     inserted = 0
     skipped = 0
+    cyclic: list[tuple[str, str]] = []
     for from_key, to_key in kept:
         from_id = key_to_id[from_key]
         to_id = key_to_id[to_key]
@@ -304,7 +376,11 @@ async def insert_prereqs(
         if existing is not None:
             skipped += 1
             continue
+        if from_id == to_id or _reaches(adj, to_id, from_id):
+            cyclic.append((from_key, to_key))
+            continue
         db.add(EntityPrereq(from_entity_id=from_id, to_entity_id=to_id))
+        adj.setdefault(from_id, set()).add(to_id)
         inserted += 1
     await db.flush()
     if dropped:
@@ -316,4 +392,13 @@ async def insert_prereqs(
                 "dropped": dropped,
             },
         )
-    return inserted, skipped, dropped
+    if cyclic:
+        _LOG.warning(
+            "tag_mint_dropped_persisted_cycle_prereqs",
+            extra={
+                "event": "tag_mint_dropped_persisted_cycle_prereqs",
+                "concept_id": concept_id,
+                "dropped": cyclic,
+            },
+        )
+    return inserted, skipped, [*dropped, *cyclic]

@@ -682,6 +682,212 @@ async def test_tag_and_mint_drops_cyclic_prereq_edge(db_session):
     assert plan.prereq_pairs == [("eq.bernoulli", "proc.solve_p2")]
 
 
+# --------------------------------------------------------------------------- #
+# M2 — cross-mint prereq cycle guard: two SEPARATE ``tag_and_mint`` calls into
+# the SAME shared concept must not, together, persist a directed cycle. The
+# in-mint-only acyclicity check (above) cannot see this by construction — each
+# call starts ``adj`` empty — so the guard must SEED from persisted
+# ``apollo_entity_prereqs`` rows (``load_concept_prereq_adjacency``).
+# --------------------------------------------------------------------------- #
+
+
+async def test_cross_mint_prereq_cycle_dropped(db_session):
+    """Mint 1 persists A->B (proc.solve_p2 -> eq.bernoulli). Mint 2, drafting into
+    the SAME shared concept, proposes the REVERSE B->A. DISCRIMINATING: without
+    seeding the acyclicity DFS from mint 1's persisted edge, mint 2 passes its own
+    (empty-``adj``) check and the reverse edge is inserted, persisting a 2-cycle."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-crossmint")
+    pair = _approved_pair(search_space_id=ss_id)
+
+    tag1 = _tag_payload(prereqs=[["proc.solve_p2", "eq.bernoulli"]])
+    plan1 = await tag_and_mint(
+        db_session, pair, chat_fn=_chat_returning(tag1), embed_fn=_embed_distinct
+    )
+    assert plan1.prereq_pairs == [("proc.solve_p2", "eq.bernoulli")]
+
+    tag2 = _tag_payload(prereqs=[["eq.bernoulli", "proc.solve_p2"]])
+    plan2 = await tag_and_mint(
+        db_session, pair, chat_fn=_chat_returning(tag2), embed_fn=_embed_distinct
+    )
+    assert plan2.prereq_pairs == []
+    assert ("eq.bernoulli", "proc.solve_p2") in plan2.dropped_prereq_pairs
+
+    a = plan1.minted_entity_ids["proc.solve_p2"]
+    b = plan1.minted_entity_ids["eq.bernoulli"]
+    rows = (
+        (
+            await db_session.execute(
+                select(EntityPrereq).where(
+                    EntityPrereq.from_entity_id.in_([a, b]),
+                    EntityPrereq.to_entity_id.in_([a, b]),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    directed = {(r.from_entity_id, r.to_entity_id) for r in rows}
+    assert directed == {(a, b)}  # only mint 1's original edge persists
+
+
+async def test_cross_mint_prereq_longer_chain_cycle_dropped(db_session):
+    """A longer cross-mint cycle is caught too: mint 1 persists A->B. Mint 2 (into
+    the same shared concept, introducing a new node C) drafts B->C AND C->A. The
+    first (B->C) is legitimate on arrival and inserts; the second (C->A) closes
+    A->B->C->A and is dropped."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-crosschain")
+    pair1 = _approved_pair(search_space_id=ss_id)
+    tag1 = _tag_payload(prereqs=[["proc.solve_p2", "eq.bernoulli"]])
+    plan1 = await tag_and_mint(
+        db_session, pair1, chat_fn=_chat_returning(tag1), embed_fn=_embed_distinct
+    )
+    assert plan1.prereq_pairs == [("proc.solve_p2", "eq.bernoulli")]
+
+    problem2 = _problem_dict(
+        problem_id="scrape.p2-chain",
+        extra_steps=[
+            {
+                "step": 3,
+                "entry_type": "equation",
+                "id": "third",
+                "content": {"label": "third eq", "symbolic": "P1 - P2"},
+                "depends_on": [],
+            }
+        ],
+    )
+    pair2 = _approved_pair(problem=problem2, search_space_id=ss_id)
+    tag2 = _tag_payload(
+        prereqs=[["eq.bernoulli", "eq.third"], ["eq.third", "proc.solve_p2"]]
+    )
+    plan2 = await tag_and_mint(
+        db_session, pair2, chat_fn=_chat_returning(tag2), embed_fn=_embed_distinct
+    )
+    assert plan2.prereq_pairs == [("eq.bernoulli", "eq.third")]
+    assert ("eq.third", "proc.solve_p2") in plan2.dropped_prereq_pairs
+
+    a = plan1.minted_entity_ids["proc.solve_p2"]
+    b = plan1.minted_entity_ids["eq.bernoulli"]
+    c = plan2.minted_entity_ids["eq.third"]
+    rows = (
+        (
+            await db_session.execute(
+                select(EntityPrereq).where(
+                    EntityPrereq.from_entity_id.in_([a, b, c]),
+                    EntityPrereq.to_entity_id.in_([a, b, c]),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    directed = {(r.from_entity_id, r.to_entity_id) for r in rows}
+    assert directed == {(a, b), (b, c)}  # the closing edge (c, a) never persisted
+
+
+async def test_cross_mint_legit_dag_addition_still_inserts(db_session):
+    """A SECOND mint into the shared concept that adds a genuinely acyclic edge
+    (A->C, no path back to A) inserts normally — the cross-mint seed only drops
+    edges that would actually close a cycle, not every edge touching a
+    previously-minted entity."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-crosslegit")
+    pair1 = _approved_pair(search_space_id=ss_id)
+    tag1 = _tag_payload(prereqs=[["proc.solve_p2", "eq.bernoulli"]])
+    plan1 = await tag_and_mint(
+        db_session, pair1, chat_fn=_chat_returning(tag1), embed_fn=_embed_distinct
+    )
+
+    problem2 = _problem_dict(
+        problem_id="scrape.p2-legit",
+        extra_steps=[
+            {
+                "step": 3,
+                "entry_type": "equation",
+                "id": "third",
+                "content": {"label": "third eq", "symbolic": "P1 - P2"},
+                "depends_on": [],
+            }
+        ],
+    )
+    pair2 = _approved_pair(problem=problem2, search_space_id=ss_id)
+    tag2 = _tag_payload(prereqs=[["proc.solve_p2", "eq.third"]])
+    plan2 = await tag_and_mint(
+        db_session, pair2, chat_fn=_chat_returning(tag2), embed_fn=_embed_distinct
+    )
+    assert plan2.prereq_pairs == [("proc.solve_p2", "eq.third")]
+    assert plan2.dropped_prereq_pairs == []
+
+    a = plan1.minted_entity_ids["proc.solve_p2"]
+    c = plan2.minted_entity_ids["eq.third"]
+    rows = (
+        (
+            await db_session.execute(
+                select(EntityPrereq)
+                .where(EntityPrereq.from_entity_id == a)
+                .where(EntityPrereq.to_entity_id == c)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+
+
+def test_reaches_handles_cycle_without_infinite_loop():
+    """``_reaches`` (the writer-boundary guard's DFS) must terminate and skip an
+    ALREADY-VISITED node rather than re-descending it — covers the ``continue``
+    branch a simple acyclic adjacency never exercises."""
+    from apollo.provisioning.tag_mint_persist import _reaches
+
+    adj = {1: {2}, 2: {1}}
+    assert _reaches(adj, 1, 99) is False
+    assert _reaches(adj, 1, 2) is True
+
+
+async def test_insert_prereqs_rejects_persisted_cycle_at_writer_boundary(db_session):
+    """Defense-in-depth (M2): ``insert_prereqs`` itself must re-derive the
+    persisted concept subgraph and refuse an edge that would close a cycle
+    against it, even when called directly (bypassing ``tag_and_mint``'s
+    pre-filter) — mirroring the existing cross-concept writer-boundary guard.
+    DISCRIMINATING: removing this guard REDs (the reverse edge persists)."""
+    from apollo.provisioning.tag_mint_persist import insert_prereqs
+
+    _ss_id, subj_id = await _seed_course(db_session, slug="c-writercycle")
+    concept = Concept(subject_id=subj_id, slug="writer-cycle", display_name="WC")
+    db_session.add(concept)
+    await db_session.flush()
+    ea = KGEntity(
+        concept_id=concept.id, canonical_key="eq.a", kind="equation",
+        display_name="a", payload={}, aliases=[],
+    )
+    eb = KGEntity(
+        concept_id=concept.id, canonical_key="eq.b", kind="equation",
+        display_name="b", payload={}, aliases=[],
+    )
+    db_session.add_all([ea, eb])
+    await db_session.flush()
+    key_to_id = {"eq.a": int(ea.id), "eq.b": int(eb.id)}
+
+    # Persist A->B directly (as if minted by an earlier call).
+    inserted, _skipped, dropped = await insert_prereqs(
+        db_session, concept_id=int(concept.id), key_to_id=key_to_id, pairs=[("eq.a", "eq.b")]
+    )
+    assert inserted == 1
+    assert dropped == []
+
+    # A second, direct call drafting the REVERSE must be refused.
+    inserted2, _skipped2, dropped2 = await insert_prereqs(
+        db_session, concept_id=int(concept.id), key_to_id=key_to_id, pairs=[("eq.b", "eq.a")]
+    )
+    assert inserted2 == 0
+    assert ("eq.b", "eq.a") in dropped2
+
+    rows = (
+        await db_session.execute(select(EntityPrereq.from_entity_id, EntityPrereq.to_entity_id))
+    ).all()
+    directed = {(r[0], r[1]) for r in rows}
+    assert directed == {(int(ea.id), int(eb.id))}
+
+
 async def test_tag_and_mint_drops_self_loop_prereq(db_session):
     """A drafted self-loop (A->A) is never inserted."""
     ss_id, _subj = await _seed_course(db_session, slug="c-selfloop")

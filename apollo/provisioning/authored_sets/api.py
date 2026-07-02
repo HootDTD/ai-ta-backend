@@ -28,7 +28,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from apollo.auth_deps import require_course_member, require_user
+from apollo.auth_deps import require_course_teacher, require_user
 from apollo.persistence.models import (
     ApolloSession,
     AuthoredSet,
@@ -92,7 +92,7 @@ async def create_authored_set(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
-    await require_course_member(db=db, auth=auth, search_space_id=search_space_id)
+    await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
 
     problem_bytes = await problem.read()
     solution_bytes = await solution.read()
@@ -217,7 +217,7 @@ async def list_authored_sets(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
-    await require_course_member(db=db, auth=auth, search_space_id=search_space_id)
+    await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
     rows = (
         (
             await db.execute(
@@ -253,7 +253,7 @@ async def get_authored_set(
     row = await db.get(AuthoredSet, set_id)
     if row is None:
         raise HTTPException(status_code=404, detail="authored set not found")
-    await require_course_member(db=db, auth=auth, search_space_id=int(row.search_space_id))
+    await require_course_teacher(db=db, auth=auth, search_space_id=int(row.search_space_id))
     return {
         "set_id": int(row.id),
         "set_index": row.set_index,
@@ -372,6 +372,9 @@ async def _detach_delete_canon(neo, concept_ids: list[int]) -> None:
         )
 
 
+_IN_FLIGHT_STATUSES = frozenset({"pending", "indexing", "provisioning"})
+
+
 @router.delete("/authored-sets/{set_id}")
 async def delete_authored_set(
     set_id: int,
@@ -380,9 +383,17 @@ async def delete_authored_set(
 ) -> dict:
     """Remove an authored set and everything it produced.
 
-    Deletable in ANY status — the motivation is clearing failed/stuck runs that
-    otherwise pile up on the teacher console with no way to remove them, so we
-    deliberately do NOT gate on a terminal state. Cascade:
+    Deletable in any TERMINAL status (``done`` / ``failed``) — the motivation is
+    clearing failed/stuck runs that otherwise pile up on the teacher console
+    with no way to remove them. Rejected with 409 while the set is IN-FLIGHT
+    (``pending`` / ``indexing`` / ``provisioning``): ``_run_set_background``
+    writes Neo4j ``:Canon`` nodes per-candidate outside the Postgres
+    transaction, so deleting mid-run would orphan ``:Canon`` nodes this
+    endpoint's teardown can never see (it only reads the finished
+    ``result_summary``). To recover a dead in-flight run (e.g. the worker
+    crashed), mark the set ``failed`` first — the API itself doesn't provide
+    that yet (no stuck-run watchdog exists), so today that's a manual status
+    update. Cascade for the terminal-state delete that IS allowed:
 
       * the ConceptProblems this set minted (recorded per-problem in
         ``result_summary``) — deleting the rows is what pulls the content out of
@@ -407,7 +418,12 @@ async def delete_authored_set(
     row = await db.get(AuthoredSet, set_id)
     if row is None:
         raise HTTPException(status_code=404, detail="authored set not found")
-    await require_course_member(db=db, auth=auth, search_space_id=int(row.search_space_id))
+    await require_course_teacher(db=db, auth=auth, search_space_id=int(row.search_space_id))
+    if row.status in _IN_FLIGHT_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"authored set is still {row.status}; mark it failed before deleting",
+        )
 
     problems = (row.result_summary or {}).get("problems") or []  # type: ignore[call-overload]
     problem_ids = sorted(
@@ -536,15 +552,24 @@ async def approve_held_problem(
     authored_set = await db.get(AuthoredSet, set_id)
     if authored_set is None:
         raise HTTPException(status_code=404, detail="authored set not found")
-    await require_course_member(
+    await require_course_teacher(
         db=db,
         auth=auth,
         search_space_id=int(authored_set.search_space_id),
     )
 
     row = await db.get(ConceptProblem, problem_id)
-    review = (row.provenance or {}).get("authored_review") if row is not None else None  # type: ignore[call-overload]
-    if row is None or not review or not review.get("required"):
+    if row is None or not _problem_belongs_to_set(authored_set, row, problem_id):
+        # 404, not 403/409: don't leak whether problem_id exists at all, and
+        # don't let a caller who cleared the course-membership gate use a
+        # foreign set_id/problem_id pairing to promote into a search space
+        # they don't control (cross-tenant IDOR — the problem must be one
+        # THIS set actually minted, per its own result_summary, and must
+        # live in the SAME search space as the set).
+        raise HTTPException(status_code=404, detail="problem not found in this authored set")
+
+    review = (row.provenance or {}).get("authored_review")  # type: ignore[call-overload]
+    if not review or not review.get("required"):
         raise HTTPException(status_code=409, detail="problem is not held for review")
 
     chosen = (
@@ -593,6 +618,28 @@ async def approve_held_problem(
         "failed_gate": result.failed_gate,
         "diagnostic": result.diagnostic,
     }
+
+
+def _problem_belongs_to_set(
+    authored_set: AuthoredSet, problem: ConceptProblem, problem_id: int
+) -> bool:
+    """True iff ``problem`` is one this ``authored_set`` actually minted.
+
+    Two independent checks, both required: the id must appear in the set's own
+    ``result_summary["problems"]`` list (the orchestrator's per-problem outcome
+    ledger — see ``run_authored_set_provisioning`` / ``_run_set_background``),
+    AND the row's own ``search_space_id`` must match the set's — belt-and-
+    suspenders against a stale/corrupted ``result_summary`` pointing at a
+    problem that has since moved (or was minted) into a different course.
+    """
+    minted_ids = {
+        int(p["concept_problem_id"])
+        for p in (authored_set.result_summary or {}).get("problems") or []  # type: ignore[union-attr]
+        if isinstance(p, dict) and p.get("concept_problem_id") is not None
+    }
+    if problem_id not in minted_ids:
+        return False
+    return int(problem.search_space_id) == int(authored_set.search_space_id)
 
 
 def _candidate_from_row(row: ConceptProblem) -> SimpleNamespace:
