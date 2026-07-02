@@ -1252,11 +1252,15 @@ async def test_tag_and_mint_drops_cross_concept_edge_before_acyclicity(db_sessio
         "problem_text": "phantom-bridge repro",
         "given_values": {"A": 1.0},
         "target_unknown": "B",
+        # Three GENUINELY-DISTINCT equations (not sign-equivalent) so the G4.3
+        # content-collapse leaves all three candidates for the phantom-bridge
+        # resolution under test; the scenario is about cross-concept edge ordering,
+        # not equation equivalence.
         "reference_solution": [
             {"step": 1, "entry_type": "equation", "id": "a",
              "content": {"label": "a", "symbolic": "A - B"}, "depends_on": []},
             {"step": 2, "entry_type": "equation", "id": "b",
-             "content": {"label": "b", "symbolic": "B - A"}, "depends_on": []},
+             "content": {"label": "b", "symbolic": "B - 2*A"}, "depends_on": []},
             {"step": 3, "entry_type": "equation", "id": "x",
              "content": {"label": "x", "symbolic": "A + B"}, "depends_on": []},
         ],
@@ -1543,3 +1547,389 @@ def test_tag_mint_public_api_reexport():
     assert ReexportMintPlan is tag_mint_mod.MintPlan
     assert ReexportTagMintError is tag_mint_mod.TagMintError
     assert reexport_tag_and_mint is tag_mint_mod.tag_and_mint
+
+
+# --------------------------------------------------------------------------- #
+# G4.3 (lane B2.3) — mint-time entity dedup + equation payloads.
+#
+# The WU-AAS mint over the campaign's 2-problem linear_motion PDF produced 37
+# entities: 2-4 near-identical candidates PER ROLE (e.g. eq.eq_motion /
+# eq.eq_velocity_formula / eq1 all == ``v = v0 + a*t``) with NO ``equation``
+# payload to disambiguate them downstream (Findings D + E,
+# campaign/out/f1/provisioning-notes.md). The dedup ladder failed to merge them
+# because the candidates carry DIFFERENT synthetic keys (slug tier misses) and a
+# thin ``display_name | kind`` scope_summary (embedding tier misses).
+#
+# The fix collapses candidates minted from ONE authored set by a DETERMINISTIC,
+# CASE-SENSITIVE, concept-scoped equivalence key (kind + normalized equation /
+# raw symbol / display-name), merges their provenance, and attaches the source
+# equation to each candidate. Being deterministic + case-sensitive, it CANNOT
+# reintroduce the 2026-06-30 ``m≡M`` embedding false-merge class (case-distinct
+# symbols and distinct roles keep distinct signatures).
+# --------------------------------------------------------------------------- #
+
+
+def _eq_spec(key: str, symbolic: str, display: str):
+    from apollo.persistence.learner_model_seed import EntitySpec
+
+    return EntitySpec(
+        canonical_key=key,
+        kind="equation",
+        display_name=display,
+        payload={"entry_type": "equation", "symbolic": symbolic},
+        aliases=(),
+    )
+
+
+def _var_spec(key: str, symbol: str, display: str):
+    from apollo.persistence.learner_model_seed import EntitySpec
+
+    return EntitySpec(
+        canonical_key=key,
+        kind="variable",
+        display_name=display,
+        payload={"symbol": symbol},
+        aliases=(),
+    )
+
+
+def test_normalize_equation_sign_and_order_invariant():
+    """The same equation written ``lhs = rhs`` or ``rhs = lhs`` (or as an already-
+    moved expression) normalizes to ONE canonical string, so two extractions of
+    the SAME physics collapse. Distinct equations do NOT."""
+    from apollo.provisioning.tag_mint import _normalize_equation
+
+    a = _normalize_equation("v = v0 + a*t")
+    b = _normalize_equation("v0 + a*t = v")  # sides swapped
+    c = _normalize_equation("v - v0 - a*t")  # already moved to one side
+    assert a == b == c
+    # a genuinely different equation is NOT collapsed onto it.
+    assert _normalize_equation("x = v0*t + (1/2)*a*t**2") != a
+
+
+def test_normalize_equation_case_sensitive_m_vs_big_m():
+    """The audit's canonical hazard: ``m`` (hanging mass) must NOT normalize to
+    the same string as ``M`` (block mass). sympy symbols are case-sensitive, so
+    the normalized equations differ — no ``m≡M`` collapse."""
+    from apollo.provisioning.tag_mint import _normalize_equation
+
+    assert _normalize_equation("F = m*a") != _normalize_equation("F = M*a")
+
+
+def test_normalize_equation_malformed_falls_back_to_raw():
+    """A malformed / chained-equality expression sympify cannot parse falls back
+    to a whitespace-collapsed raw string (deterministic; case-preserved)."""
+    from apollo.provisioning.tag_mint import _normalize_equation
+
+    # chained equality (two '=') is exactly the campaign's Finding-A notation.
+    out = _normalize_equation("v = 0 + (2.0)(5.0) = 10.0")
+    assert out == "v=0+(2.0)(5.0)=10.0"
+
+
+def test_equivalence_signature_collapses_same_equation():
+    """Three equation candidates encoding the SAME equation under different keys /
+    labels share ONE equivalence signature."""
+    from apollo.provisioning.tag_mint import _equivalence_signature
+
+    s1 = _equivalence_signature(_eq_spec("eq.eq_motion", "v = v0 + a*t", "Velocity formula"))
+    s2 = _equivalence_signature(
+        _eq_spec("eq.eq_velocity_formula", "v0 + a*t = v", "Velocity equation")
+    )
+    s3 = _equivalence_signature(_eq_spec("eq.eq1", "v - v0 - a*t", "Calculated final velocity"))
+    assert s1 == s2 == s3
+
+
+def test_equivalence_signature_distinct_equations_differ():
+    """A velocity equation and a position equation get DIFFERENT signatures."""
+    from apollo.provisioning.tag_mint import _equivalence_signature
+
+    vel = _equivalence_signature(_eq_spec("eq.a", "v = v0 + a*t", "vel"))
+    pos = _equivalence_signature(_eq_spec("eq.b", "x = v0*t + (1/2)*a*t**2", "pos"))
+    assert vel != pos
+
+
+def test_equivalence_signature_case_distinct_symbols_differ():
+    """``m`` and ``M`` variable candidates get DIFFERENT signatures (case-sensitive
+    symbol branch) — the counter to the 2026-06-30 false-merge."""
+    from apollo.provisioning.tag_mint import _equivalence_signature
+
+    lower = _equivalence_signature(_var_spec("varmap.vm_m", "m", "hanging mass"))
+    upper = _equivalence_signature(_var_spec("varmap.vm_M", "M", "block mass"))
+    assert lower != upper
+
+
+def test_equivalence_signature_distinct_roles_same_prefix_differ():
+    """``p1`` and ``p2`` (same symbol prefix, distinct physical quantities) get
+    DIFFERENT signatures — subscripts are preserved, not stripped."""
+    from apollo.provisioning.tag_mint import _equivalence_signature
+
+    p1 = _equivalence_signature(_var_spec("varmap.vm_p1", "p1", "box-1 pressure"))
+    p2 = _equivalence_signature(_var_spec("varmap.vm_p2", "p2", "box-2 pressure"))
+    assert p1 != p2
+
+
+def test_equivalence_signature_cross_kind_differs():
+    """Same content text but different KIND never shares a signature (an equation
+    and a definition are separate roles)."""
+    from apollo.persistence.learner_model_seed import EntitySpec
+    from apollo.provisioning.tag_mint import _equivalence_signature
+
+    eq = _equivalence_signature(_eq_spec("eq.x", "v = v0 + a*t", "vel"))
+    df = _equivalence_signature(
+        EntitySpec(
+            canonical_key="def.x", kind="definition", display_name="v = v0 + a*t", payload={},
+        )
+    )
+    assert eq != df
+
+
+def test_collapse_equivalent_candidates_merges_provenance_and_equation():
+    """N equation specs with the same equation collapse to ONE representative that
+    (a) preserves the earliest key, (b) merges every contributor's node id into
+    ``payload['provenance']``, and (c) carries the source ``payload['equation']``.
+    A distinct equation survives as its own candidate."""
+    from apollo.provisioning.tag_mint import _collapse_equivalent_candidates
+
+    specs = [
+        _eq_spec("eq.eq_motion", "v = v0 + a*t", "Velocity formula"),
+        _eq_spec("eq.eq_velocity_formula", "v0 + a*t = v", "Velocity equation"),
+        _eq_spec("eq.eq1", "v - v0 - a*t", "Calculated final velocity"),
+        _eq_spec("eq.eq_position", "x = v0*t + (1/2)*a*t**2", "Position formula"),
+    ]
+    collapsed, alias_map = _collapse_equivalent_candidates(specs)
+    # 3 velocity dups -> 1; the position eq stays -> 2 total.
+    assert len(collapsed) == 2
+    keys = [s.canonical_key for s in collapsed]
+    assert "eq.eq_motion" in keys  # earliest velocity rep kept
+    assert "eq.eq_position" in keys
+    rep = next(s for s in collapsed if s.canonical_key == "eq.eq_motion")
+    # provenance records EVERY contributing node id (which steps contributed).
+    prov_nodes = {p["node_id"] for p in rep.payload["provenance"]}
+    assert prov_nodes == {"eq_motion", "eq_velocity_formula", "eq1"}
+    # the source equation is attached for downstream role disambiguation.
+    assert rep.payload["equation"] == "v = v0 + a*t"
+    # the dropped duplicate keys alias to the representative key.
+    assert alias_map == {"eq.eq_velocity_formula": "eq.eq_motion", "eq.eq1": "eq.eq_motion"}
+
+
+def test_collapse_does_not_merge_case_distinct_symbols():
+    """Two variable candidates differing ONLY by symbol case (m vs M) do NOT
+    collapse — the equivalence key is case-sensitive."""
+    from apollo.provisioning.tag_mint import _collapse_equivalent_candidates
+
+    specs = [
+        _var_spec("varmap.vm_m", "m", "hanging mass"),
+        _var_spec("varmap.vm_M", "M", "block mass"),
+    ]
+    collapsed, alias_map = _collapse_equivalent_candidates(specs)
+    assert len(collapsed) == 2
+    assert alias_map == {}
+
+
+def test_scope_summary_includes_equation_content():
+    """An equation candidate's scope_summary carries the NORMALIZED equation, so
+    the embedding tier merges cross-mint equation duplicates (identical content ->
+    identical summary) while keeping distinct equations apart."""
+    from apollo.provisioning.tag_mint import _scope_summary_for
+
+    s1 = _scope_summary_for(_eq_spec("eq.a", "v = v0 + a*t", "Velocity formula"))
+    s2 = _scope_summary_for(_eq_spec("eq.b", "v0 + a*t = v", "Some other label"))
+    # different labels, same equation -> byte-identical summary (drives the merge).
+    assert s1 == s2
+    # a distinct equation yields a distinct summary.
+    s3 = _scope_summary_for(_eq_spec("eq.c", "x = v0*t + (1/2)*a*t**2", "Position"))
+    assert s3 != s1
+
+
+# ---- Real-PG: mint-time collapse end-to-end -------------------------------- #
+
+
+def _dup_role_problem() -> dict:
+    """A single-problem reference solution reproducing the campaign's duplicate-
+    per-role pattern: three equation steps that all encode ``v = v0 + a*t`` under
+    different ids/labels, plus a DISTINCT position equation. Carries a page-level
+    provenance so merged provenance records the page."""
+    return {
+        "id": "scrape.dup",
+        "concept_id": "linear_motion",
+        "difficulty": "intro",
+        "problem_text": "Constant-acceleration kinematics.",
+        "given_values": {"v0": 0.0, "a": 2.0, "t": 5.0},
+        "target_unknown": "v",
+        "provenance": {"document_id": 2, "page": 7},
+        "reference_solution": [
+            {"step": 1, "entry_type": "equation", "id": "eq_motion",
+             "content": {"label": "Velocity formula", "symbolic": "v = v0 + a*t"},
+             "depends_on": []},
+            {"step": 2, "entry_type": "equation", "id": "eq_velocity_formula",
+             "content": {"label": "Velocity equation", "symbolic": "v0 + a*t = v"},
+             "depends_on": []},
+            {"step": 3, "entry_type": "equation", "id": "eq1",
+             "content": {"label": "Calculated final velocity", "symbolic": "v - v0 - a*t"},
+             "depends_on": []},
+            {"step": 4, "entry_type": "equation", "id": "eq_position",
+             "content": {"label": "Position formula", "symbolic": "x = v0*t + (1/2)*a*t**2"},
+             "depends_on": []},
+        ],
+    }
+
+
+async def test_tag_and_mint_collapses_duplicate_role_entities(db_session):
+    """END-TO-END: minting a reference solution with 3 duplicate velocity-equation
+    steps + 1 distinct position equation yields 2 equation entities (not 4). The
+    representative carries the merged provenance + the source equation payload.
+    DISCRIMINATING: without the collapse, 4 equation rows persist."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-collapse")
+    pair = _approved_pair(problem=_dup_role_problem(), search_space_id=ss_id)
+    plan = await tag_and_mint(
+        db_session,
+        pair,
+        chat_fn=_chat_returning(_tag_payload(concept_slug="linear_motion")),
+        embed_fn=_embed_distinct,
+    )
+    rows = (
+        (
+            await db_session.execute(
+                select(KGEntity)
+                .where(KGEntity.concept_id == plan.concept_id)
+                .where(KGEntity.kind == "equation")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 2, [r.canonical_key for r in rows]
+    by_key = {r.canonical_key: r for r in rows}
+    # earliest velocity rep survived; the two later dups did not mint.
+    assert "eq.eq_motion" in by_key
+    assert "eq.eq_velocity_formula" not in by_key
+    assert "eq.eq1" not in by_key
+    assert "eq.eq_position" in by_key
+    # collapse is surfaced on the MintPlan.
+    assert set(plan.collapsed_entity_keys) == {"eq.eq_velocity_formula", "eq.eq1"}
+    # the representative carries the source equation + merged provenance.
+    rep = by_key["eq.eq_motion"]
+    assert rep.payload["equation"] == "v = v0 + a*t"
+    prov_nodes = {p["node_id"] for p in rep.payload["provenance"]}
+    assert prov_nodes == {"eq_motion", "eq_velocity_formula", "eq1"}
+    # provenance records the source page (which page contributed).
+    assert all(p["page_ref"] == 7 for p in rep.payload["provenance"])
+
+
+async def test_tag_and_mint_collapsed_prereq_resolves_to_representative(db_session):
+    """A prereq edge naming a COLLAPSED duplicate (by bare id or canonical key)
+    resolves to the surviving representative entity, so the edge is not silently
+    dropped. DISCRIMINATING: without the collapse alias, the edge names an unminted
+    key and is dropped (0 edges)."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-collapse-prq")
+    pair = _approved_pair(problem=_dup_role_problem(), search_space_id=ss_id)
+    # draft a prereq from the DISTINCT position eq to a COLLAPSED velocity dup
+    # (bare id ``eq1``, which merged into eq.eq_motion).
+    tag = _tag_payload(concept_slug="linear_motion", prereqs=[["eq_position", "eq1"]])
+    plan = await tag_and_mint(
+        db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct
+    )
+    assert plan.prereq_pairs == [("eq_position", "eq1")]
+    pos_id = plan.minted_entity_ids["eq.eq_position"]
+    rep_id = plan.minted_entity_ids["eq.eq_motion"]
+    edges = (
+        (
+            await db_session.execute(
+                select(EntityPrereq)
+                .where(EntityPrereq.from_entity_id == pos_id)
+                .where(EntityPrereq.to_entity_id == rep_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(edges) == 1  # resolved to the representative, not dropped
+
+
+async def test_tag_and_mint_cross_mint_equivalent_equation_merges(db_session):
+    """CROSS-MINT: a second authored set minting the SAME equation under a DIFFERENT
+    key merges onto the first mint's entity via the equation-enriched scope_summary
+    (identical content -> identical summary -> cosine 1.0 embedding merge). No new
+    equation row for the duplicate. DISCRIMINATING: with the old thin summary the
+    labels differ and the duplicate mints fresh."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-crossmint-eq")
+    problem1 = _problem_dict(
+        problem_id="scrape.m1",
+        concept_slug="linear_motion",
+        given={"v0": 0.0, "a": 2.0, "t": 5.0},
+        target="v",
+    )
+    # replace the default bernoulli equation step with a velocity equation.
+    problem1["reference_solution"] = [
+        {"step": 1, "entry_type": "equation", "id": "eq_motion",
+         "content": {"label": "Velocity formula", "symbolic": "v = v0 + a*t"}, "depends_on": []},
+    ]
+    plan1 = await tag_and_mint(
+        db_session,
+        _approved_pair(problem=problem1, search_space_id=ss_id),
+        chat_fn=_chat_returning(_tag_payload(concept_slug="linear_motion")),
+        embed_fn=_embed_distinct,
+    )
+    assert "eq.eq_motion" in plan1.minted_entity_ids
+
+    problem2 = dict(problem1)
+    problem2["id"] = "scrape.m2"
+    problem2["reference_solution"] = [
+        {"step": 1, "entry_type": "equation", "id": "eq_velocity_formula",
+         "content": {"label": "A totally different label", "symbolic": "v0 + a*t = v"},
+         "depends_on": []},
+    ]
+    plan2 = await tag_and_mint(
+        db_session,
+        _approved_pair(problem=problem2, search_space_id=ss_id),
+        chat_fn=_chat_returning(_tag_payload(concept_slug="linear_motion")),
+        embed_fn=_embed_distinct,
+    )
+    # the second mint's equivalent equation merged onto mint 1's entity.
+    assert "eq.eq_velocity_formula" in plan2.merged_entity_keys
+    assert "eq.eq_velocity_formula" not in plan2.minted_entity_ids
+    rows = (
+        (
+            await db_session.execute(
+                select(KGEntity)
+                .where(KGEntity.concept_id == plan1.concept_id)
+                .where(KGEntity.kind == "equation")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1  # one equation entity across both mints
+
+
+async def test_tag_and_mint_cross_concept_same_equation_not_merged(db_session):
+    """COUNTER-TEST: the SAME equation minted into two DIFFERENT concepts stays two
+    distinct entities (concept-scoped dedup pool — the PR#74 invariant this fix must
+    preserve)."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-xconcept-eq")
+    problem_a = _problem_dict(problem_id="scrape.ca", concept_slug="concept-alpha")
+    problem_a["reference_solution"] = [
+        {"step": 1, "entry_type": "equation", "id": "eq_motion",
+         "content": {"label": "vel", "symbolic": "v = v0 + a*t"}, "depends_on": []},
+    ]
+    problem_b = dict(problem_a)
+    problem_b["id"] = "scrape.cb"
+    problem_b["concept_id"] = "concept-beta"
+
+    plan_a = await tag_and_mint(
+        db_session,
+        _approved_pair(problem=problem_a, search_space_id=ss_id),
+        chat_fn=_chat_returning(_tag_payload(concept_slug="concept-alpha")),
+        embed_fn=_embed_distinct,
+    )
+    plan_b = await tag_and_mint(
+        db_session,
+        _approved_pair(problem=problem_b, search_space_id=ss_id),
+        chat_fn=_chat_returning(_tag_payload(concept_slug="concept-beta")),
+        embed_fn=_embed_distinct,
+    )
+    assert plan_a.concept_id != plan_b.concept_id
+    # each concept minted its own equation entity — no cross-concept fusion.
+    assert "eq.eq_motion" in plan_a.minted_entity_ids
+    assert "eq.eq_motion" in plan_b.minted_entity_ids
+    assert plan_b.merged_entity_keys == []

@@ -49,10 +49,11 @@ import json
 import logging
 import re
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from typing import Any
 
 from pydantic import BaseModel
-from sympy import sympify
+from sympy import expand, sympify
 
 from apollo.persistence.learner_model_seed import (
     EntitySpec,
@@ -105,6 +106,13 @@ class MintPlan(BaseModel):
     merged_entity_keys: list[str]
     prereq_pairs: list[tuple[str, str]]
     misconception_keys: list[str]
+    # Reference-entity keys collapsed at mint time by the deterministic content-
+    # equivalence pass (G4.3): near-identical candidates minted from ONE authored
+    # set (e.g. eq.eq_motion / eq.eq_velocity_formula / eq.eq1, all == the same
+    # ``v = v0 + a*t``) fold onto ONE representative before the dedup ladder runs.
+    # These keys did NOT mint a row; each aliases to its representative's entity id
+    # so a prereq/opposes edge naming a collapsed duplicate still resolves.
+    collapsed_entity_keys: list[str] = []
     # Prereq edges the LLM drafted but tag/mint refused to persist, surfaced for
     # observability (previously only INFO/WARNING-logged). Three drop reasons land
     # here in one place: an endpoint key no entity carries (unresolvable), an edge
@@ -168,11 +176,137 @@ def _author_symbol_set(problem: dict) -> tuple[list[str], dict[str, str]]:
     return sorted(canonical), normalization
 
 
+def _normalize_equation(symbolic: str) -> str:
+    """Canonicalize an equation string so two extractions of the SAME physics
+    collapse but distinct equations do not (G4.3).
+
+    The equation is moved to one side (``lhs - rhs``), ``expand``-ed, and reduced
+    to a sign-canonical string (``min(str(expr), str(-expr))``) so ``v = v0 + a*t``,
+    ``v0 + a*t = v`` and ``v - v0 - a*t`` all map to ONE key. CASE-SENSITIVE by
+    construction — sympy treats ``m`` and ``M`` as DISTINCT symbols, so this can
+    never reintroduce the 2026-06-30 ``m≡M`` false-merge. A chained equality
+    (``a = b = c``, the campaign's Finding-A notation) or any expression sympy
+    cannot parse falls back to a whitespace-stripped raw string (deterministic,
+    case-preserved) rather than guessing."""
+    raw = str(symbolic).strip()
+    try:
+        if raw.count("=") == 1:
+            lhs, rhs = raw.split("=")
+            expr = sympify(lhs) - sympify(rhs)
+        elif "=" not in raw:
+            expr = sympify(raw)
+        else:  # 2+ '=' → chained equality, not a single equation
+            raise ValueError("chained equality is not a single equation")
+        expr = expand(expr)
+        pos, neg = str(expr), str(expand(-expr))
+        return pos if pos <= neg else neg
+    except Exception:  # noqa: BLE001 — any parse failure → deterministic raw fallback
+        return re.sub(r"\s+", "", raw)
+
+
+def _equivalence_signature(spec: EntitySpec) -> tuple[str, str, str]:
+    """The deterministic, CASE-SENSITIVE, concept-scoped equivalence key a mint's
+    candidates are collapsed on (G4.3).
+
+    ``(kind, tier, content)`` where ``content`` is, in priority order: the
+    NORMALIZED equation (equation candidates carry ``symbolic``/``equation``), else
+    the RAW symbol (variable candidates — case-sensitive, subscripts preserved so
+    ``m≠M`` and ``p1≠p2``), else a whitespace-collapsed (case-preserved)
+    display_name. ``kind`` is part of the key so same-text different-role candidates
+    (an equation vs a definition) never fuse. Concept scope is IMPLICIT: this key
+    only ever compares candidates minted within ONE ``tag_and_mint`` call (a single
+    concept); the cross-mint / cross-concept ladder stays concept-scoped in SQL."""
+    payload = spec.payload or {}
+    symbolic = payload.get("symbolic") or payload.get("equation")
+    if symbolic:
+        return (spec.kind, "equation", _normalize_equation(str(symbolic)))
+    symbol = payload.get("symbol")
+    if symbol:
+        return (spec.kind, "symbol", str(symbol))  # CASE-SENSITIVE: m != M
+    return (spec.kind, "name", re.sub(r"\s+", " ", str(spec.display_name)).strip())
+
+
+def _collapse_equivalent_candidates(
+    specs: Sequence[EntitySpec], *, page_ref: object = None
+) -> tuple[list[EntitySpec], dict[str, str]]:
+    """Collapse content-equivalent reference candidates minted from ONE authored
+    set into a single representative each (G4.3, fix contract item 1).
+
+    Candidates are grouped by :func:`_equivalence_signature`; each group keeps its
+    FIRST (earliest, deterministic input order) member as the representative and
+    folds the rest away. The representative's payload gains:
+
+    * ``provenance`` — one ``{node_id, page_ref, scraped_label}`` triple per
+      contributing candidate (the S2 shape), so a merge never loses WHICH steps /
+      page contributed (fix contract item 1: preserve provenance);
+    * ``equation`` — the source equation string for ``kind='equation'``
+      representatives, so a downstream consumer / the S2 audit can disambiguate an
+      equation role that was previously an empty-payload guess (fix contract item 2,
+      Finding E).
+
+    Returns ``(collapsed_specs, alias_map)`` where ``alias_map`` maps each DROPPED
+    duplicate's ``canonical_key`` to its representative's ``canonical_key`` so the
+    caller can re-point prereq/opposes edges naming a duplicate onto the survivor.
+    Being purely deterministic content-equality (no embedding), this cannot
+    reintroduce the ``m≡M`` embedding false-merge class."""
+    groups: dict[tuple[str, str, str], list[EntitySpec]] = {}
+    order: list[tuple[str, str, str]] = []
+    for spec in specs:
+        sig = _equivalence_signature(spec)
+        if sig not in groups:
+            groups[sig] = []
+            order.append(sig)
+        groups[sig].append(spec)
+
+    collapsed: list[EntitySpec] = []
+    alias_map: dict[str, str] = {}
+    for sig in order:
+        members = groups[sig]
+        rep = members[0]
+        provenance = [
+            {
+                "node_id": m.canonical_key.split(".", 1)[-1],
+                "page_ref": page_ref,
+                "scraped_label": m.display_name,
+            }
+            for m in members
+        ]
+        new_payload = dict(rep.payload or {})
+        new_payload["provenance"] = provenance
+        equation = new_payload.get("symbolic") or new_payload.get("equation")
+        if rep.kind == "equation" and equation:
+            new_payload["equation"] = equation
+        collapsed.append(replace(rep, payload=new_payload))
+        for m in members[1:]:
+            alias_map[m.canonical_key] = rep.canonical_key
+        if len(members) > 1:
+            _LOG.info(
+                "tag_mint_collapsed_equivalent_candidates",
+                extra={
+                    "event": "tag_mint_collapsed_equivalent_candidates",
+                    "representative": rep.canonical_key,
+                    "collapsed": [m.canonical_key for m in members[1:]],
+                    "signature_tier": sig[1],
+                },
+            )
+    return collapsed, alias_map
+
+
 def _scope_summary_for(spec: EntitySpec) -> str:
-    """Compose the dedup candidate's ``scope_summary`` text (the embedding source)
-    from the entity's ``display_name`` + its canonical symbols (ADJ #11). Academic
-    concept text — NO student PII."""
-    symbol = (spec.payload or {}).get("symbol")
+    """Compose the dedup candidate's ``scope_summary`` text (the embedding source).
+
+    For an EQUATION candidate the summary is the NORMALIZED equation + kind (NOT the
+    display_name), so two extractions of the same equation under different labels
+    produce a BYTE-IDENTICAL summary the embedding tier merges across mints, while a
+    genuinely different equation gets a different summary (G4.3, Finding D). Non-
+    equation candidates keep the display_name (+ symbol) summary (ADJ #11) unchanged
+    — this fix does NOT touch the variable dedup path (PR#74's concept-scoped m/M
+    guard owns it). Academic concept text — NO student PII."""
+    payload = spec.payload or {}
+    equation = payload.get("symbolic") or payload.get("equation")
+    if spec.kind == "equation" and equation:
+        return f"equation {_normalize_equation(str(equation))} | kind equation"
+    symbol = payload.get("symbol")
     pieces = [spec.display_name]
     if symbol:
         pieces.append(f"symbol {symbol}")
@@ -329,7 +463,14 @@ async def tag_and_mint(
     )
 
     # --- 4. Mint reference + misconception entities (frozen converters) ----- #
+    # Collapse content-equivalent reference candidates minted from THIS authored set
+    # onto one representative each BEFORE the dedup ladder (G4.3): the frozen scrape
+    # converter emits one spec per reference step, so two extractions of the same
+    # equation/quantity arrive as separate synthetic keys the slug/embedding ladder
+    # would leave as duplicates. Deterministic + case-sensitive → no ``m≡M`` fusion.
+    page_ref = (problem.get("provenance") or {}).get("page")
     ref_specs = reference_solution_to_entities(problem)
+    ref_specs, collapse_alias = _collapse_equivalent_candidates(ref_specs, page_ref=page_ref)
     misc_specs = misconceptions_to_entities({"misconceptions": pair.misconceptions})
     all_specs: list[EntitySpec] = [*ref_specs, *misc_specs]
 
@@ -370,6 +511,15 @@ async def tag_and_mint(
         key_to_id[spec.canonical_key] = entity_id
         minted_entity_ids[spec.canonical_key] = entity_id
         resolved_ids.add(entity_id)
+
+    # Register COLLAPSE aliases so a prereq/opposes edge naming a duplicate that was
+    # folded away at mint time (G4.3) resolves to its surviving representative's
+    # entity id (both its prefixed canonical_key AND — via the bare-id loop below —
+    # its bare reference-node id). Without this, an edge to a collapsed duplicate
+    # would name an unminted key and be dropped (5b).
+    for dropped_key, rep_key in collapse_alias.items():
+        if rep_key in key_to_id:
+            key_to_id.setdefault(dropped_key, key_to_id[rep_key])
 
     # Register BARE-id aliases so an LLM prereq/opposes draft that names a
     # reference node by its bare id (bernoulli) resolves to the SAME entity as its
@@ -480,6 +630,7 @@ async def tag_and_mint(
         merged_entity_keys=merged_entity_keys,
         prereq_pairs=prereq_pairs,
         misconception_keys=misconception_keys,
+        collapsed_entity_keys=sorted(collapse_alias.keys()),
         # Drop pipeline order: unresolvable-key -> cross-concept -> cyclic.
         dropped_prereq_pairs=[*dropped_pairs, *cross_concept_pairs, *cyclic_pairs],
     )
