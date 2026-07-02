@@ -2,12 +2,23 @@
 ``apollo.projections.classroom.mastery_heatmap`` /
 ``apollo.projections.classroom.struggle_signals``.
 
-Seeds 2 students x 2 concepts of ``apollo_learner_state`` rows plus 3
-canonical ``apollo_grading_artifacts`` rows (one abstained, one LLM-fallback,
-one with a misconception asserted twice across two attempts) directly via the
-ORM -- these tests exercise the AGGREGATION SQL, not the writers that produce
-these rows in production (``update_mastery_from_artifact`` / `write_artifacts`
-already have their own dedicated DB test suites).
+Seeds 2 students x 2 concepts of ``apollo_learner_state`` rows plus
+``apollo_grading_artifacts`` rows directly via the ORM -- these tests exercise
+the AGGREGATION SQL, not the writers that produce these rows in production
+(``update_mastery_from_artifact`` / ``write_artifacts`` already have their own
+dedicated DB test suites).
+
+Row shapes below mirror what ``apollo.handlers.artifact_writer.write_artifacts``
++ ``apollo.grading.artifact_build`` actually produce (review fix, Task B3):
+``build_llm_artifact`` hardcodes ``abstention.abstained = None`` -- abstention
+is a GRAPH-grader-only concept -- and an abstained shadow grade always falls
+back to LLM for the SERVED (``role='canonical'``) row, so ``abstained=true``
+only ever lands on a ``grader_used='graph'`` row, which is ``role='pair'``
+whenever the shadow abstained. A "fallback" (``role='canonical'``
+``grader_used='llm_fallback'``) is only a REAL fallback-from-graph when a
+sibling ``role='pair'`` ``grader_used='graph'`` row exists for the same
+attempt -- an attempt graded with the shadow chain off entirely also serves
+``llm_fallback`` but has no paired graph row at all, and must not count.
 """
 
 from __future__ import annotations
@@ -92,6 +103,7 @@ def _artifact(
     search_space_id: int,
     concept_id: int,
     grader_used: str,
+    role: str = "canonical",
     node_ledger: list[dict] | None = None,
     misconceptions: list[dict] | None = None,
     abstained: bool | None = None,
@@ -99,7 +111,7 @@ def _artifact(
 ) -> GradingArtifact:
     return GradingArtifact(
         attempt_id=attempt_id,
-        role="canonical",
+        role=role,
         grader_used=grader_used,
         user_id=str(uuid.uuid4()),
         search_space_id=search_space_id,
@@ -185,36 +197,97 @@ async def test_heatmap_empty_when_no_state_rows(db_session):
 # ---------------------------------------------------------------------------
 
 
+def _paired_abstained(
+    db_session, *, attempt_id, search_space_id, concept_id, created_at=None, **canonical_kwargs
+):
+    """Realistic ``write_artifacts`` shape for an abstained shadow: the served
+    (``role='canonical'``) row is the LLM fallback (``abstained=None``,
+    ``build_llm_artifact`` never sets it) and the abstention lives on the
+    ``role='pair'`` graph row -- the only shape ``build_graph_artifact`` +
+    ``write_artifacts`` can ever actually produce for an abstained attempt."""
+    db_session.add(
+        _artifact(
+            attempt_id=attempt_id,
+            search_space_id=search_space_id,
+            concept_id=concept_id,
+            role="canonical",
+            grader_used="llm_fallback",
+            abstained=None,
+            created_at=created_at,
+            **canonical_kwargs,
+        )
+    )
+    db_session.add(
+        _artifact(
+            attempt_id=attempt_id,
+            search_space_id=search_space_id,
+            concept_id=concept_id,
+            role="pair",
+            grader_used="graph",
+            abstained=True,
+            created_at=created_at,
+        )
+    )
+
+
+def _paired_fallback(
+    db_session, *, attempt_id, search_space_id, concept_id, created_at=None, **canonical_kwargs
+):
+    """Realistic ``write_artifacts`` shape for a REAL (non-abstained)
+    fallback-from-graph: a shadow ran (paired ``role='pair'`` graph row,
+    ``abstained=False``) but LIVE promotion kept ``llm_fallback`` as the
+    served ``role='canonical'`` grade."""
+    db_session.add(
+        _artifact(
+            attempt_id=attempt_id,
+            search_space_id=search_space_id,
+            concept_id=concept_id,
+            role="canonical",
+            grader_used="llm_fallback",
+            abstained=None,
+            created_at=created_at,
+            **canonical_kwargs,
+        )
+    )
+    db_session.add(
+        _artifact(
+            attempt_id=attempt_id,
+            search_space_id=search_space_id,
+            concept_id=concept_id,
+            role="pair",
+            grader_used="graph",
+            abstained=False,
+            created_at=created_at,
+        )
+    )
+
+
 async def test_struggle_signals_counts_and_top_lists(db_session):
     sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
 
     attempt_1 = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
-    abstained_artifact = _artifact(
+    _paired_abstained(
+        db_session,
         attempt_id=attempt_1,
         search_space_id=sid,
         concept_id=cid_1,
-        grader_used="llm_fallback",
-        abstained=True,
         node_ledger=[
             {"canonical_key": "eq.a", "status": "credited"},
             {"canonical_key": "eq.b", "status": "misconception"},
         ],
         misconceptions=[{"canonical_key": "misc.x", "evidence_span": "e1", "confidence": 0.9}],
     )
-    db_session.add(abstained_artifact)
     await db_session.flush()
 
     attempt_2 = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
-    fallback_artifact = _artifact(
+    _paired_fallback(
+        db_session,
         attempt_id=attempt_2,
         search_space_id=sid,
         concept_id=cid_1,
-        grader_used="llm_fallback",
-        abstained=False,
         node_ledger=[{"canonical_key": "eq.b", "status": "misconception"}],
         misconceptions=[{"canonical_key": "misc.x", "evidence_span": "e2", "confidence": 0.8}],
     )
-    db_session.add(fallback_artifact)
     await db_session.flush()
 
     attempt_3 = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
@@ -222,6 +295,7 @@ async def test_struggle_signals_counts_and_top_lists(db_session):
         attempt_id=attempt_3,
         search_space_id=sid,
         concept_id=cid_1,
+        role="canonical",
         grader_used="graph",
         abstained=False,
         node_ledger=[{"canonical_key": "eq.a", "status": "credited"}],
@@ -231,6 +305,9 @@ async def test_struggle_signals_counts_and_top_lists(db_session):
 
     result = await struggle_signals(db_session, search_space_id=sid, window_days=14)
 
+    # attempt_1's pair row is the only grader_used='graph' row with
+    # abstained=true; attempt_1 + attempt_2 are both a canonical
+    # llm_fallback row backed by a paired graph row (a REAL fallback).
     assert result["abstention_count"] == 1
     assert result["fallback_count"] == 2
 
@@ -246,6 +323,48 @@ async def test_struggle_signals_counts_and_top_lists(db_session):
     assert result["top_misconceptions"] == [{"key": "misc.x", "count": 2}]
 
 
+async def test_struggle_signals_counts_abstention_from_paired_graph_row(db_session):
+    """Review-fix regression gate: the OLD query counted
+    ``role='canonical' AND abstention->>'abstained'='true'``, which is
+    structurally dead (``build_llm_artifact`` -- the only thing that can be
+    ``role='canonical'`` when a shadow abstained -- hardcodes
+    ``abstained=None``). The real abstention signal lives on the
+    ``role='pair'`` ``grader_used='graph'`` row; this seeds exactly that
+    shape and proves it is now counted."""
+    sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
+    attempt = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
+    _paired_abstained(db_session, attempt_id=attempt, search_space_id=sid, concept_id=cid_1)
+    await db_session.commit()
+
+    result = await struggle_signals(db_session, search_space_id=sid)
+    assert result["abstention_count"] == 1
+    assert result["fallback_count"] == 1
+
+
+async def test_struggle_signals_fallback_excludes_shadow_off_llm_only(db_session):
+    """An attempt graded with the shadow chain off entirely also serves
+    ``llm_fallback`` on its (only) ``role='canonical'`` row, but there is no
+    paired graph row at all -- that is not a "fallback", it is the only
+    grader that ever ran. Must not inflate ``fallback_count``."""
+    sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
+    attempt = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
+    db_session.add(
+        _artifact(
+            attempt_id=attempt,
+            search_space_id=sid,
+            concept_id=cid_1,
+            role="canonical",
+            grader_used="llm_fallback",
+            abstained=None,
+        )
+    )
+    await db_session.commit()
+
+    result = await struggle_signals(db_session, search_space_id=sid)
+    assert result["abstention_count"] == 0
+    assert result["fallback_count"] == 0
+
+
 async def test_struggle_signals_unresolved_student_ids_excluded_from_coverage(db_session):
     sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
     attempt = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
@@ -255,7 +374,13 @@ async def test_struggle_signals_unresolved_student_ids_excluded_from_coverage(db
         concept_id=cid_1,
         grader_used="graph",
         abstained=False,
-        node_ledger=[{"canonical_key": "student-node-9", "status": "unresolved"}],
+        # A real `_unresolved_ledger_entry` (UNRESOLVED student utterance)
+        # row: keyed on a student-side id, evidence_span is a (possibly
+        # empty) STRING -- never `None` -- distinguishing it from a
+        # `_missing_ledger_entry` MISSING_NODE row.
+        node_ledger=[
+            {"canonical_key": "student-node-9", "status": "unresolved", "evidence_span": ""}
+        ],
     )
     db_session.add(artifact)
     await db_session.commit()
@@ -264,18 +389,52 @@ async def test_struggle_signals_unresolved_student_ids_excluded_from_coverage(db
     assert result["lowest_coverage_nodes"] == []
 
 
-async def test_struggle_signals_respects_window(db_session):
+async def test_struggle_signals_missing_node_rows_surface_as_zero_coverage(db_session):
+    """Review-fix regression gate: a `_missing_ledger_entry` row (a
+    reference node the student never mentioned at all) is keyed on a REAL
+    canonical_key with `evidence_span=None` (never attempted, distinct from
+    a real failed resolution). It must surface as a 0.0-coverage worst
+    offender, not be silently dropped like an opaque student-id row."""
     sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
     attempt = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
-    stale = _artifact(
+    artifact = _artifact(
         attempt_id=attempt,
         search_space_id=sid,
         concept_id=cid_1,
-        grader_used="llm_fallback",
-        abstained=True,
-        created_at=datetime.now(UTC) - timedelta(days=30),
+        grader_used="graph",
+        abstained=False,
+        node_ledger=[
+            {"canonical_key": "eq.a", "status": "credited"},
+            {
+                "canonical_key": "eq.never-taught",
+                "status": "unresolved",
+                "evidence_span": None,
+                "confidence": None,
+            },
+        ],
     )
-    db_session.add(stale)
+    db_session.add(artifact)
+    await db_session.commit()
+
+    result = await struggle_signals(db_session, search_space_id=sid)
+    coverage_by_key = {row["key"]: row for row in result["lowest_coverage_nodes"]}
+    assert coverage_by_key["eq.never-taught"]["mean_coverage"] == pytest.approx(0.0)
+    assert coverage_by_key["eq.never-taught"]["n"] == 1
+    assert coverage_by_key["eq.a"]["mean_coverage"] == pytest.approx(1.0)
+    assert [row["key"] for row in result["lowest_coverage_nodes"]][0] == "eq.never-taught"
+
+
+async def test_struggle_signals_respects_window(db_session):
+    sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
+    attempt = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid_1)
+    stale_created_at = datetime.now(UTC) - timedelta(days=30)
+    _paired_abstained(
+        db_session,
+        attempt_id=attempt,
+        search_space_id=sid,
+        concept_id=cid_1,
+        created_at=stale_created_at,
+    )
     await db_session.commit()
 
     result = await struggle_signals(db_session, search_space_id=sid, window_days=14)
@@ -288,18 +447,8 @@ async def test_struggle_signals_other_course_invisible(db_session):
     sid_b, cid_b, _ = await _seed_two_concepts(db_session)
     attempt_a = await _seed_attempt(db_session, search_space_id=sid_a, concept_id=cid_a)
     attempt_b = await _seed_attempt(db_session, search_space_id=sid_b, concept_id=cid_b)
-    db_session.add(
-        _artifact(
-            attempt_id=attempt_a, search_space_id=sid_a, concept_id=cid_a,
-            grader_used="llm_fallback", abstained=True,
-        )
-    )
-    db_session.add(
-        _artifact(
-            attempt_id=attempt_b, search_space_id=sid_b, concept_id=cid_b,
-            grader_used="llm_fallback", abstained=True,
-        )
-    )
+    _paired_abstained(db_session, attempt_id=attempt_a, search_space_id=sid_a, concept_id=cid_a)
+    _paired_abstained(db_session, attempt_id=attempt_b, search_space_id=sid_b, concept_id=cid_b)
     await db_session.commit()
 
     result_a = await struggle_signals(db_session, search_space_id=sid_a)
