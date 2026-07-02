@@ -65,6 +65,7 @@ from apollo.provisioning.tag_mint_persist import (
     author_concept_symbols,
     insert_prereqs,
     link_opposes,
+    load_concept_prereq_adjacency,
     partition_prereqs_by_concept_scope,
     resolve_or_create_concept,
     upsert_entity,
@@ -229,6 +230,8 @@ def _bare_id_aliases(problem: dict) -> dict[str, str]:
 def _acyclic_prereq_pairs(
     pairs: list[tuple[str, str]],
     key_to_id: dict[str, int],
+    *,
+    persisted_adj: dict[int, set[int]] | None = None,
 ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """Greedily keep a maximal acyclic subset of resolvable prereq key-pairs.
 
@@ -242,16 +245,24 @@ def _acyclic_prereq_pairs(
     is kept and the later (cycle-closing) one dropped. The composite PK
     ``(from_entity_id, to_entity_id)`` permits both ``(A,B)`` and ``(B,A)`` (and a
     self-loop) with no DB-level acyclicity, so without this guard a single mint's
-    drafted edges can persist a cycle. SCOPE: ``adj`` starts empty each call and
-    existing ``apollo_entity_prereqs`` rows are NOT loaded, so the guard keeps THIS
-    mint's contributed edges acyclic (catching merge-collapsed self-loops/cycles
-    within the draft) — it does not by itself prevent a cycle formed ACROSS two
-    mints into a shared concept; that is removed at the source by the dedup fix
-    (separate PR) and could be hardened later by seeding ``adj`` from existing
-    edges. Returns ``(kept, dropped)`` as key-pairs."""
+    drafted edges can persist a cycle.
+
+    CROSS-MINT SEEDING (M2): ``adj`` is seeded from ``persisted_adj`` — the
+    caller's ``load_concept_prereq_adjacency`` read of the SAME concept's already
+    -committed ``apollo_entity_prereqs`` rows — before this mint's own edges are
+    folded in. Without this seed, a SECOND mint into a shared concept could pass
+    this in-mint-only check while drafting the REVERSE of an EARLIER mint's
+    persisted edge (mint 1: A->B; mint 2: B->A), producing a persisted 2-cycle
+    across mints that neither mint's own draft alone contains. Returns ``(kept,
+    dropped)`` as key-pairs."""
     kept: list[tuple[str, str]] = []
     dropped: list[tuple[str, str]] = []
-    adj: dict[int, set[int]] = {}  # from_entity_id -> {to_entity_id}
+    # from_entity_id -> {to_entity_id}; seeded with persisted edges (a COPY — the
+    # caller's dict/sets are never mutated) so this mint's DFS also sees what an
+    # earlier mint into the same concept already committed.
+    adj: dict[int, set[int]] = {
+        node: set(targets) for node, targets in (persisted_adj or {}).items()
+    }
 
     def _reaches(src: int, dst: int) -> bool:
         seen: set[int] = set()
@@ -434,11 +445,19 @@ async def tag_and_mint(
     # Acyclicity guard (audit bug #3): drop any resolvable prereq edge that would
     # introduce a self-loop or a directed cycle in apollo_entity_prereqs. Runs over
     # the resolved entity-id graph (key_to_id), so a dedup MERGE that collapses two
-    # keys onto one id (the m≡M fusion) can't sneak a self-loop/cycle through. Scoped
-    # to THIS mint's drafted edges (existing rows are not loaded); it stays even once
-    # dedup stops producing the merge-induced cycles. Cross-run cycles into a shared
-    # concept are addressed at the dedup source, not here.
-    prereq_pairs, cyclic_pairs = _acyclic_prereq_pairs(prereq_pairs, key_to_id)
+    # keys onto one id (the m≡M fusion) can't sneak a self-loop/cycle through.
+    # M2: seed the acyclicity DFS from this concept's ALREADY-PERSISTED prereq
+    # edges (scoped to the entity ids this mint resolved) so a CROSS-MINT cycle
+    # (an earlier mint's committed A->B vs. this mint's drafted B->A into the SAME
+    # shared concept) is caught too, not just a cycle contained wholly within this
+    # mint's own draft (``insert_prereqs`` re-derives the full persisted graph as a
+    # second, writer-boundary backstop).
+    persisted_adj = await load_concept_prereq_adjacency(
+        db, concept_id=concept_id, entity_ids=set(key_to_id.values())
+    )
+    prereq_pairs, cyclic_pairs = _acyclic_prereq_pairs(
+        prereq_pairs, key_to_id, persisted_adj=persisted_adj
+    )
     if cyclic_pairs:
         _LOG.info(
             "tag_mint_dropped_cyclic_prereqs",
