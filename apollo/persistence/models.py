@@ -846,3 +846,47 @@ class IngestError(Base):
     error_class = Column(Text, nullable=False)
     context = Column(_JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
+class GradingArtifact(Base):
+    """Canonical grading artifact (spec 2026-07-01 §1) — one immutable row per
+    Done-click per grader role. ``role='canonical'`` is the record of the grade
+    the student was served; ``role='pair'`` is the other grader's artifact
+    captured on the same input (paired-artifact contract, spec §5). Append-only:
+    no update path exists in code; retuning weights affects future artifacts
+    only. ``user_id`` declares NO ORM FK (auth.users is Supabase-managed,
+    absent from Base.metadata), mirroring Clarification/GraphComparisonRun."""
+
+    __tablename__ = "apollo_grading_artifacts"
+
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    attempt_id = Column(
+        BigInteger, ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    role = Column(Text, nullable=False)
+    grader_used = Column(Text, nullable=False)
+    user_id = Column(UUID(as_uuid=False), nullable=False)
+    search_space_id = Column(
+        Integer, ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    concept_id = Column(
+        BigInteger, ForeignKey("apollo_concepts.id", ondelete="SET NULL"), nullable=True,
+    )
+    problem_id = Column(Text, nullable=False)
+    versions = Column(_JSONType, nullable=False)
+    node_ledger = Column(_JSONType, nullable=False)
+    edge_ledger = Column(_JSONType, nullable=False)
+    misconceptions = Column(_JSONType, nullable=False, default=list)
+    clarification_trace = Column(_JSONType, nullable=False, default=list)
+    scores = Column(_JSONType, nullable=False)
+    abstention = Column(_JSONType, nullable=True)
+    grading_latency_ms = Column(Integer, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "attempt_id", "role", name="uq_grading_artifact_attempt_role",
+        ),
+    )
