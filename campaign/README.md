@@ -233,3 +233,41 @@ reference back to the `RunContext` object.
 
 Tests: `campaign/tests/test_config.py`, `campaign/tests/test_runctx.py` — no
 Docker required (pure dataclass/JSON/env logic). 100% line+branch coverage.
+
+## Teacher provisioning drivers (Task D1)
+
+`campaign/cast/subjects.py` is the campaign's subject registry: two seeded
+incumbents already authored on disk (`fluid_mechanics`, `macroeconomics`),
+and two subjects that go through the real WU-AAS teacher upload path
+(`linear_motion` — new for this task; `held_out_subject` — a placeholder
+provisioned only during the Task F2 gate phase, never in tune mode).
+
+`campaign/cast/teacher.py` has both provisioning verbs:
+
+- `provision_seeded(subject_key, dsn)` replays
+  `scripts/seed_apollo_concept_registry.py` →
+  `scripts/seed_apollo_learner_model.py --subject-slug <slug>` →
+  `scripts/seed_canon_projection.py` as subprocesses against a LOCAL
+  campaign DSN (e.g. `postgresql+asyncpg://postgres:postgres@127.0.0.1:57322/postgres`).
+- `provision_authored(...)` drives the REAL teacher path end-to-end: a
+  multipart problem+solution PDF upload to `POST /apollo/authored-sets`
+  (bearer-token auth, `require_course_teacher`-gated), polls
+  `GET /apollo/authored-sets/{set_id}` to a terminal status (`done` /
+  `failed`), then approves every problem the orchestrator held for review
+  via `POST .../problems/{problem_id}/approve`.
+
+`campaign/cast/materials/generate_fixtures.py` builds the tiny (single-page,
+plain-text) PDF pair checked in for the new `linear_motion` subject —
+`campaign/cast/materials/linear_motion_{problem,solution}.pdf` — via
+PyMuPDF (`fitz`, already pinned in `requirements.txt`); regenerate with
+`python -m campaign.cast.materials.generate_fixtures` if the fixture
+content ever needs to change.
+
+Both drivers are pure request/flow logic over injected seams (a subprocess
+runner for `provision_seeded`; an `httpx.AsyncClient` + sleep function for
+`provision_authored`) and are unit-tested with fakes/`httpx.MockTransport`
+in `campaign/tests/test_teacher_cast.py` — no Docker, DB, or running
+backend required. **Not run against a live stack by this task** (that is
+Phase F); the default *real* implementations of those seams
+(`asyncio.create_subprocess_exec`, `asyncio.sleep`) are the only
+pragma-excluded lines.
