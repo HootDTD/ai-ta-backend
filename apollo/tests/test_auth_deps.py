@@ -114,6 +114,65 @@ async def test_member_check_passes_with_membership(db, monkeypatch):
     )  # no raise
 
 
+@pytest.mark.asyncio
+async def test_teacher_check_403_without_teacher_membership(db, monkeypatch):
+    async def _no(*args, **kwargs):
+        return False
+
+    monkeypatch.setattr(deps, "has_membership", _no)
+    with pytest.raises(HTTPException) as exc:
+        await deps.require_course_teacher(
+            db=db,
+            auth=AuthContext(user_id=TEST_USER_ID, access_token="tok"),
+            search_space_id=TEST_SPACE_ID,
+        )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_teacher_check_passes_with_teacher_membership(db, monkeypatch):
+    seen = {}
+
+    async def _yes(*args, **kwargs):
+        seen.update(kwargs)
+        return True
+
+    monkeypatch.setattr(deps, "has_membership", _yes)
+    await deps.require_course_teacher(
+        db=db,
+        auth=AuthContext(user_id=TEST_USER_ID, access_token="tok"),
+        search_space_id=TEST_SPACE_ID,
+    )  # no raise
+    assert seen["role"] == "teacher"
+
+
+@pytest.mark.asyncio
+async def test_teacher_check_does_not_auto_enroll(db, monkeypatch):
+    """A student-role member (has_membership(role='teacher') False) must not be
+    let in via auto-enrollment — auto-enroll only ever grants the student role,
+    so it is never even consulted here."""
+
+    async def _no(*args, **kwargs):
+        return False
+
+    called = {"auto_enroll": False}
+
+    async def _track_auto_enroll(*args, **kwargs):
+        called["auto_enroll"] = True
+        return True
+
+    monkeypatch.setattr(deps, "has_membership", _no)
+    monkeypatch.setattr(deps, "auto_enroll_student_membership", _track_auto_enroll)
+    with pytest.raises(HTTPException) as exc:
+        await deps.require_course_teacher(
+            db=db,
+            auth=AuthContext(user_id=TEST_USER_ID, access_token="tok"),
+            search_space_id=TEST_SPACE_ID,
+        )
+    assert exc.value.status_code == 403
+    assert called["auto_enroll"] is False
+
+
 # ---------------------------------------------------------------------------
 # 401 / 500 / 503 path tests for require_user (Fix I-3 / I-4)
 # ---------------------------------------------------------------------------

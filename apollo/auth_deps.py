@@ -70,6 +70,28 @@ async def require_course_member(
     raise HTTPException(status_code=403, detail="Forbidden for this course")
 
 
+async def require_course_teacher(
+    *,
+    db: AsyncSession,
+    auth: AuthContext,
+    search_space_id: int,
+) -> None:
+    """403 unless the user is a *teacher* member of the course.
+
+    Mirrors ``require_course_member`` but does not auto-enroll — auto-enroll
+    only ever grants the student role, so it can never satisfy a teacher
+    check. Used to gate endpoints whose docstrings/product contract say
+    "teacher-gated" (e.g. authored-sets provisioning), where the underlying
+    ``has_membership`` role filter is the only thing separating a teacher
+    from any enrolled student.
+    """
+    if await has_membership(
+        db, user_id=auth.user_id, search_space_id=search_space_id, role="teacher"
+    ):
+        return
+    raise HTTPException(status_code=403, detail="Forbidden for this course")
+
+
 async def require_session_owner(
     session_id: int,
     request: Request,
