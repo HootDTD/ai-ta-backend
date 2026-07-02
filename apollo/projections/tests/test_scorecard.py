@@ -128,6 +128,68 @@ def test_taught_well_carries_credited_nodes_with_evidence_verbatim():
     ]
 
 
+def test_taught_well_omits_evidence_span_when_none():
+    """Q2 fix (lane B4): a credited node with no matched student utterance
+    (``evidence_span is None`` — the honest LLM-fallback shape, since the LLM
+    grader produces per-node coverage but no per-node span) renders the
+    ``taught_well`` item WITHOUT an ``evidence_span`` key at all — never an
+    empty-string quote pretending to be the student's words (spec §2: "in the
+    student's own words")."""
+    art = _artifact(
+        node_ledger=[
+            {
+                "canonical_key": "bernoulli_equation",
+                "status": "credited",
+                "method": None,
+                "confidence": 0.9,
+                "evidence_span": None,
+            },
+        ]
+    )
+    taught_well = render_scorecard(art)["taught_well"]
+    assert taught_well == [{"key": "bernoulli_equation"}]
+    assert "evidence_span" not in taught_well[0]
+
+
+def test_taught_well_omits_evidence_span_when_empty_string():
+    """Q2 fix (lane B4): a legacy/edge ``evidence_span == ""`` credited row is
+    treated identically to ``None`` — the empty string is dropped, never
+    rendered as an empty quote."""
+    art = _artifact(
+        node_ledger=[
+            {
+                "canonical_key": "bernoulli_equation",
+                "status": "credited",
+                "method": None,
+                "confidence": 0.9,
+                "evidence_span": "",
+            },
+        ]
+    )
+    taught_well = render_scorecard(art)["taught_well"]
+    assert taught_well == [{"key": "bernoulli_equation"}]
+    assert "evidence_span" not in taught_well[0]
+
+
+def test_no_empty_string_evidence_span_anywhere_in_rendered_scorecard():
+    """Q2 defect gate (lane B4): under ANY input, no ``taught_well`` item in a
+    rendered scorecard carries ``evidence_span == ""``. Exercised against an
+    LLM-fallback-shaped ledger (all spans absent) — the exact shape that
+    produced ``evidence_span: ""`` in all 12 F1c adjudication packets."""
+    art = _artifact(
+        node_ledger=[
+            {"canonical_key": "k1", "status": "credited", "evidence_span": None},
+            {"canonical_key": "k2", "status": "credited", "evidence_span": ""},
+            {"canonical_key": "k3", "status": "unresolved", "evidence_span": None},
+        ],
+        misconceptions=[],
+        clarification_trace=[],
+    )
+    scorecard = render_scorecard(art)
+    assert all(item.get("evidence_span") != "" for item in scorecard["taught_well"])
+    assert all("evidence_span" not in item for item in scorecard["taught_well"])
+
+
 def test_missing_or_unclear_carries_unresolved_nodes_as_guidance():
     art = _artifact()
     missing = render_scorecard(art)["missing_or_unclear"]

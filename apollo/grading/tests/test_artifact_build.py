@@ -332,6 +332,32 @@ def test_llm_artifact_shape():
     assert statuses == {"credited", "unresolved"}
 
 
+def test_llm_artifact_node_ledger_evidence_span_is_none_never_empty_string():
+    """Q2 fix (lane B4): the LLM-fallback path has NO per-node student
+    utterance (``compute_coverage``'s ``per_step`` is ``{ref_id: status}``,
+    carrying no surface text), so every node-ledger row's ``evidence_span`` is
+    ``None`` — the honest "no span available" value (matching the established
+    ``_missing_ledger_entry`` convention) — NEVER the empty string ``""`` that
+    rendered as a fake empty quote in every F1c scorecard. The key stays
+    PRESENT (value null) so the S3 fidelity judge's ``.get('evidence_span')``
+    input shape is unchanged."""
+    art = build_llm_artifact(
+        coverage={
+            "per_step": {"k1": "covered", "k2": "missing"},
+            "confidences": {"k1": 0.9, "k2": 0.0},
+        },
+        rubric={"overall": {"score": 71}},
+        weights=load_weights(),
+        graph_failure=None,
+        latency_ms=None,
+    )
+    assert art["node_ledger"]  # non-empty
+    for entry in art["node_ledger"]:
+        assert "evidence_span" in entry  # key present (S3 judge input shape)
+        assert entry["evidence_span"] is None
+        assert entry["evidence_span"] != ""
+
+
 def test_llm_artifact_no_attempts_zero_coverage():
     art = build_llm_artifact(
         coverage={"per_step": {}, "confidences": {}},
