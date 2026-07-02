@@ -40,9 +40,11 @@ LINEAR_MOTION_SOLUTION_TEXT = """Linear Motion — Practice Problem Set 1 (Solut
 Problem 1.
 Given: initial velocity v0 = 0 m/s, acceleration a = 2.0 m/s^2, time t = 5.0 s.
 
-(a) v = v0 + a*t = 0 + (2.0)(5.0) = 10.0 m/s.
+(a) v = v0 + a*t
+Substituting the given values, v equals 10.0 m/s.
 
-(b) x = v0*t + (1/2)*a*t^2 = 0 + 0.5*(2.0)*(5.0)^2 = 25.0 m.
+(b) d = v0*t + (1/2)*a*t**2
+Substituting the given values, d equals 25.0 m.
 
 The cyclist reaches 10.0 m/s and travels 25.0 m.
 """
