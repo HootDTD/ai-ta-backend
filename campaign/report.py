@@ -328,7 +328,16 @@ def paired_comparison(
     """Graph-vs-LLM comparison (spec §4/§5 "paired artifacts"): per-attempt
     band agreement, mean signed delta (graph - llm), and the top-10 most
     divergent attempts for human review. Attempts missing either score are
-    excluded (reported as ``skipped_missing_pair``)."""
+    excluded (reported as ``skipped_missing_pair``).
+
+    Post-F1c note: the graph composite is coverage-weighted and the LLM
+    composite is rubric-derived (see 3cf239f), so they now live on different
+    scales. ``band_agreement_rate`` — whether the two scores land in the same
+    letter band — is the PRIMARY paired metric this function reports; it is
+    scale-invariant. ``mean_delta`` (and the raw per-pair ``delta`` values in
+    ``top_divergent``) are kept as an INFORMATIONAL, cross-scale review
+    finding only — a large or shifting mean delta is expected and is not by
+    itself evidence of miscalibration. Never gate on ``mean_delta``."""
     paired = [
         a
         for a in attempts
@@ -474,8 +483,14 @@ def render_markdown(report: GateReport) -> str:
     lines.append("")
     paired = report.paired
     lines.append(f"- Pairs compared: {paired['n_pairs']} (skipped, missing pair: {paired['skipped_missing_pair']})")
-    lines.append(f"- Band agreement rate: {paired['band_agreement_rate']:.1%}")
-    lines.append(f"- Mean delta (graph - llm): {paired['mean_delta']:.4f}")
+    lines.append(f"- **Band agreement rate (primary paired metric): {paired['band_agreement_rate']:.1%}**")
+    lines.append(
+        f"- Mean raw composite delta (graph - llm): {paired['mean_delta']:.4f} "
+        "— **informational / cross-scale only**: the graph composite is "
+        "coverage-weighted and the LLM composite is rubric-derived, so they "
+        "sit on different scales and this delta is a review finding, not a "
+        "gate signal (see paired_comparison() docstring)."
+    )
     if paired["top_divergent"]:
         lines.append("")
         lines.append("| Attempt | Subject | Graph | LLM | Delta | Bands |")

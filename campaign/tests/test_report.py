@@ -456,6 +456,8 @@ def test_render_markdown_contains_overall_verdict_and_gate_table():
     assert "PASS" in md
     assert "| s1_reference_graph |" in md
     assert "Paired graph-vs-LLM comparison" in md
+    assert "Band agreement rate (primary paired metric)" in md
+    assert "informational / cross-scale only" in md
 
 
 def test_render_markdown_lists_failures_as_work_queue():
