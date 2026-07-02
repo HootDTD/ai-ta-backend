@@ -19,7 +19,7 @@ import pytest
 
 from apollo.grading.artifact_build import GRADER_USED_GRAPH, GRADER_USED_LLM_FALLBACK
 from apollo.handlers import done as done_mod
-from apollo.handlers.done import _graph_grader_live_enabled, handle_done
+from apollo.handlers.done import _graph_grader_live_enabled, _project_mastery, handle_done
 from apollo.handlers.tests.test_done_shadow_flag import _old_path_patches, _rerun_inputs
 
 pytestmark = pytest.mark.unit
@@ -281,3 +281,110 @@ async def test_old_rubric_still_forwarded_to_shadow(monkeypatch):
     )
     kwargs = shadow_mock.await_args.kwargs
     assert kwargs["old_rubric"] == {"overall": {"score": 0.5}}
+
+
+# ---------------------------------------------------------------------------
+# Task B2 — mastery projection call site (`_project_mastery`), guarded
+# mutually-exclusive with the dormant WU-5A2 Layer-3 belief path.
+# ---------------------------------------------------------------------------
+
+
+async def test_mastery_projection_runs_when_artifact_written_and_layer3_off(monkeypatch):
+    """Artifact capture succeeded (`canonical_payload is not None`) and the
+    Layer-3 flag is off (the only build state) ⇒ `_project_mastery` is
+    awaited with this attempt's id."""
+    monkeypatch.delenv("APOLLO_GRAPH_SIM_LAYER3_ENABLED", raising=False)
+    project_mock = AsyncMock(return_value=None)
+    with patch("apollo.handlers.done._project_mastery", new=project_mock):
+        out, _shadow_mock, write_artifacts_mock = await _run_with_flags(
+            monkeypatch,
+            shadow=False,
+            live=None,
+            artifact=True,
+            write_artifacts_return=_FAKE_CANONICAL_PAYLOAD,
+        )
+    write_artifacts_mock.assert_awaited_once()
+    project_mock.assert_awaited_once()
+    assert project_mock.await_args.kwargs["attempt_id"] == 99
+    assert "scorecard" in out
+
+
+async def test_mastery_projection_skipped_when_layer3_active(monkeypatch):
+    """Layer-3 (dormant WU-5A2 Bayesian belief path) is enabled ⇒
+    `_project_mastery` must NEVER be called for the same attempt (both write
+    `apollo_mastery_events`/`apollo_learner_state`; running both would
+    double-apply evidence)."""
+    monkeypatch.setenv("APOLLO_GRAPH_SIM_LAYER3_ENABLED", "true")
+    project_mock = AsyncMock(return_value=None)
+    with patch("apollo.handlers.done._project_mastery", new=project_mock):
+        out, _shadow_mock, write_artifacts_mock = await _run_with_flags(
+            monkeypatch,
+            shadow=False,
+            live=None,
+            artifact=True,
+            write_artifacts_return=_FAKE_CANONICAL_PAYLOAD,
+        )
+    write_artifacts_mock.assert_awaited_once()
+    project_mock.assert_not_awaited()
+    # The scorecard (Task B1) is unaffected by the Layer-3 guard.
+    assert "scorecard" in out
+
+
+# ---------------------------------------------------------------------------
+# Task B2 — `_project_mastery` itself: defensive no-op / success / own-
+# failure-domain rollback, exercised directly against a mocked AsyncSession
+# (real-PG entity-resolution + upsert behavior lives in
+# `tests/database/test_artifact_mastery_postgres.py`).
+# ---------------------------------------------------------------------------
+
+
+def _db_returning(scalar_result):
+    """A mocked AsyncSession whose `execute(...).scalar_one_or_none()`
+    returns `scalar_result`."""
+    db = MagicMock()
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none = MagicMock(return_value=scalar_result)
+    db.execute = AsyncMock(return_value=execute_result)
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+    return db
+
+
+async def test_project_mastery_noop_when_no_canonical_row_found():
+    """Defensive: `write_artifacts` already returned non-`None`, so a missing
+    canonical row here is unreachable in practice — but if it ever happens,
+    this must be a silent no-op (no projection call, no commit)."""
+    db = _db_returning(None)
+    with patch(
+        "apollo.handlers.done.update_mastery_from_artifact", new=AsyncMock()
+    ) as project:
+        await _project_mastery(db, attempt_id=42)
+    project.assert_not_awaited()
+    db.commit.assert_not_awaited()
+
+
+async def test_project_mastery_success_commits():
+    row = MagicMock(name="GradingArtifact")
+    db = _db_returning(row)
+    with patch(
+        "apollo.handlers.done.update_mastery_from_artifact", new=AsyncMock()
+    ) as project:
+        await _project_mastery(db, attempt_id=42)
+    project.assert_awaited_once_with(db, artifact_row=row)
+    db.commit.assert_awaited_once()
+    db.rollback.assert_not_awaited()
+
+
+async def test_project_mastery_exception_rolls_back_and_is_swallowed():
+    """Own-failure-domain posture (mirrors `write_artifacts`): ANY exception
+    inside the projection is logged and swallowed — never raised into the
+    Done response — and the session is rolled back."""
+    row = MagicMock(name="GradingArtifact")
+    db = _db_returning(row)
+    with patch(
+        "apollo.handlers.done.update_mastery_from_artifact",
+        new=AsyncMock(side_effect=RuntimeError("boom")),
+    ):
+        await _project_mastery(db, attempt_id=42)  # must not raise
+    db.commit.assert_not_awaited()
+    db.rollback.assert_awaited_once()

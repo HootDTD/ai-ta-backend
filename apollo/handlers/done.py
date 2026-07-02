@@ -46,6 +46,7 @@ from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
 from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
     ApolloSession,
+    GradingArtifact,
     KGNegotiation,
     Message,
     ProblemAttempt,
@@ -53,6 +54,7 @@ from apollo.persistence.models import (
 )
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.persistence.progress_repo import apply_xp
+from apollo.projections.mastery import update_mastery_from_artifact
 from apollo.projections.scorecard import render_scorecard
 from apollo.schemas.problem import Problem
 
@@ -142,6 +144,38 @@ def _grading_artifact_enabled() -> bool:
 
 def _graph_grader_live_enabled() -> bool:
     return os.environ.get(_GRAPH_GRADER_LIVE_FLAG, "").lower() in ("1", "true", "yes")
+
+
+async def _project_mastery(db: AsyncSession, *, attempt_id: int) -> None:
+    """Campaign-plan Task B2 — the composite-EWMA mastery projection, run
+    AFTER `write_artifacts` has durably committed the canonical row. Reads
+    that row back (its id/created_at only exist post-commit) and hands it to
+    `update_mastery_from_artifact`, then owns its OWN commit — mirroring
+    `write_artifacts`' own-failure-domain posture: this is telemetry-derived
+    bookkeeping, not the grade itself, so ANY exception here is logged and
+    swallowed rather than raised into the Done response. Guarded at the call
+    site so this NEVER runs alongside the dormant WU-5A2
+    `run_learner_update` (both write `apollo_mastery_events` /
+    `apollo_learner_state`; running both would double-apply evidence)."""
+    try:
+        row = (
+            await db.execute(
+                select(GradingArtifact).where(
+                    GradingArtifact.attempt_id == attempt_id,
+                    GradingArtifact.role == "canonical",
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:  # defensive — write_artifacts already returned non-None
+            return
+        await update_mastery_from_artifact(db, artifact_row=row)
+        await db.commit()
+    except Exception:
+        _LOG.exception("mastery_projection_failed attempt_id=%s", attempt_id)
+        try:
+            await db.rollback()
+        except Exception:  # pragma: no cover - defensive, rollback itself failing
+            _LOG.exception("mastery_projection_rollback_failed attempt_id=%s", attempt_id)
 
 
 def _flagged_entries(graph: KGGraph) -> list[tuple[Node, str]]:
@@ -552,5 +586,16 @@ async def handle_done(
         )
         if canonical_payload is not None:
             student_response["scorecard"] = render_scorecard(canonical_payload)
+            # Task B2 — mastery ledger projection (spec section 2/3). Guarded off
+            # whenever the dormant WU-5A2 Bayesian path is live (see
+            # `_project_mastery`'s docstring): the two write paths must never
+            # both fire for the same attempt.
+            if _graph_sim_layer3_enabled():
+                _LOG.info(
+                    "mastery_projection_skipped_layer3_active attempt_id=%s",
+                    int(attempt.id),
+                )
+            else:
+                await _project_mastery(db, attempt_id=int(attempt.id))
 
     return student_response
