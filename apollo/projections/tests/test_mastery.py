@@ -6,9 +6,11 @@ idempotence, upsert) is covered by
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
+from apollo.persistence.models import GradingArtifact
 from apollo.projections.mastery import (
     EVENT_KIND,
     _belief_for,
@@ -21,7 +23,7 @@ from apollo.projections.mastery import (
 pytestmark = pytest.mark.unit
 
 
-def _artifact(**overrides) -> SimpleNamespace:
+def _artifact(**overrides: Any) -> GradingArtifact:
     base = dict(
         concept_id=7,
         attempt_id=1,
@@ -33,7 +35,10 @@ def _artifact(**overrides) -> SimpleNamespace:
         created_at=None,
     )
     base.update(overrides)
-    return SimpleNamespace(**base)
+    # A SimpleNamespace duck-types GradingArtifact for these pure-helper tests
+    # (only attribute reads, no ORM behavior needed) — cast so callers keep
+    # the real return-type contract.
+    return cast(GradingArtifact, SimpleNamespace(**base))
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +97,7 @@ def test_belief_for_mastery_of_roundtrip() -> None:
     for m in (0.0, 0.25, 0.5, 0.75, 1.0):
         belief = _belief_for(m)
         assert belief[1] == 0.0
-        assert mastery_of(tuple(belief)) == pytest.approx(m)
+        assert mastery_of((belief[0], belief[1], belief[2])) == pytest.approx(m)
 
 
 def test_belief_for_clamps_out_of_range() -> None:

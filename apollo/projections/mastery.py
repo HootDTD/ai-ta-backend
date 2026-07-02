@@ -49,6 +49,7 @@ mastery`` exactly.
 from __future__ import annotations
 
 import os
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -106,7 +107,8 @@ def _ledger_entity_keys(artifact_row: GradingArtifact) -> list[str]:
     order, de-duplicated."""
     seen: set[str] = set()
     keys: list[str] = []
-    for row in artifact_row.node_ledger or []:
+    node_ledger = cast("list[dict[str, Any]]", artifact_row.node_ledger) or []
+    for row in node_ledger:
         if row.get("status") not in _LEDGER_STATUSES_WITH_ENTITY:
             continue
         key = row.get("canonical_key")
@@ -123,7 +125,7 @@ def _normalization_confidence(artifact_row: GradingArtifact) -> float:
     block). Defaults to ``1.0`` when absent (the LLM-fallback path records no
     such signal; treating it as fully confident matches the pre-artifact
     behavior of trusting the served grade outright)."""
-    abstention = artifact_row.abstention or {}
+    abstention: dict[str, Any] = cast("dict[str, Any] | None", artifact_row.abstention) or {}
     value = abstention.get("normalization_confidence")
     return float(value) if value is not None else 1.0
 
@@ -182,7 +184,8 @@ async def update_mastery_from_artifact(db: AsyncSession, *, artifact_row: Gradin
     specs = await load_entity_specs(db, concept_id=int(artifact_row.concept_id))
     entity_id_by_key = {spec.canonical_key: spec.key for spec in specs}
 
-    composite = float((artifact_row.scores or {}).get("composite", 0.0))
+    scores = cast("dict[str, Any]", artifact_row.scores) or {}
+    composite = float(scores.get("composite", 0.0))
     confidence = _normalization_confidence(artifact_row)
     alpha = ewma_alpha()
     attempt_id = int(artifact_row.attempt_id)
@@ -199,7 +202,7 @@ async def update_mastery_from_artifact(db: AsyncSession, *, artifact_row: Gradin
         prior_state = await _prior_state(
             db, user_id=user_id, search_space_id=search_space_id, entity_id=entity_id
         )
-        prior_mastery = prior_state.mastery if prior_state is not None else composite
+        prior_mastery = cast(float, prior_state.mastery) if prior_state is not None else composite
         new_mastery = ewma_mastery(composite=composite, prior_mastery=prior_mastery, alpha=alpha)
         prior_belief = _belief_for(prior_mastery)
         posterior_belief = _belief_for(new_mastery)
@@ -242,8 +245,8 @@ async def update_mastery_from_artifact(db: AsyncSession, *, artifact_row: Gradin
             )
         else:
             prior_state.belief = posterior_belief  # type: ignore[assignment]
-            prior_state.mastery = new_mastery
-            prior_state.confidence = confidence
+            prior_state.mastery = new_mastery  # type: ignore[assignment]
+            prior_state.confidence = confidence  # type: ignore[assignment]
             prior_state.evidence_count = prior_state.evidence_count + 1  # type: ignore[assignment]
             prior_state.last_evidence_at = artifact_row.created_at  # type: ignore[assignment]
             prior_state.updated_at = artifact_row.created_at  # type: ignore[assignment]
