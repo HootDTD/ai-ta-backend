@@ -337,3 +337,60 @@ Tests: `campaign/tests/test_judges.py` — a `FakeLLM` records every call and
 returns canned/overridable verdicts; nothing touches the network. 99%
 line+branch coverage (the two uncovered branches are defensive loop-exit
 edges with no observable behavior difference).
+
+## Gate evaluation report generator (Task E3)
+
+`campaign/report.py` computes every spec §4 promotion gate for one campaign
+run and emits `GATE-REPORT.md` + `scoreboard.json`. It is pure logic — no DB,
+no Neo4j, no LLM, no filesystem in `build_report()` itself — so it is fully
+unit-tested against fixture data (`campaign/tests/test_report.py`, 100%
+line+branch coverage).
+
+**Deviation from the plan sketch:** this worktree branched directly off
+`staging`, not off `feat/apollo-canonical-artifact` (Phase A/B ran in a
+different worktree in parallel). `apollo.persistence.models.GradingArtifact`,
+`apollo.grading.composite`, and `apollo.projections.scorecard` therefore do
+not exist on this branch. `build_report()` takes plain-dict attempt records
+shaped like the eventual canonical-artifact/scorecard payload instead of
+importing those modules (see the module docstring for the exact shape); once
+the branches are combined, a thin adapter can map real `GradingArtifact` rows
+into that same dict shape without touching this module's gate logic. The
+`BANDS` student-scorecard thresholds are likewise a local copy of the B1
+design (Strong/Proficient/Developing/Beginning at 0.85/0.70/0.50/0.0) since
+`apollo.projections` isn't importable here yet.
+
+Inputs `build_report()` takes (all plain data, matching the E1/E2 output
+shapes and `campaign.config.CampaignConfig`):
+
+- `judge_results: Mapping[str, JudgeResult]` — one S1-S5 result per stage
+  (Task E1's `campaign.judges.*` output). A missing stage is reported and
+  gated as a failure, never silently skipped.
+- `attempts: Sequence[dict]` — one paired graph+LLM record per Done-click:
+  `{attempt_id, subject, band, grading_latency_ms, shadow_succeeded,
+  shadow_abstained, graph_composite, llm_composite}`.
+- `adjudication_verdicts: Sequence[dict]` — Fable's per-packet output
+  (`{attempt_id, verdict: "sane"|"not_sane"|"not_sane_harmful", reason}`;
+  any verdict string containing `"harmful"` trips the zero-harmful gate).
+- `config: CampaignConfig` + `config_sha: str` — recorded as report
+  provenance (which weights/thresholds these numbers were measured under).
+- `subject_kinds: Mapping[str, str]` — `{subject_key: "seeded"|"wu_aas"|"held_out"}`
+  for the breadth gate (≥4 subjects incl. ≥1 WU-AAS + ≥1 held-out).
+- `event_loop_stall_warnings: Sequence[str]` — backend stderr lines the
+  driver captured, for the ops gate's stall check.
+
+Gates computed (named constants `S1_BAR=0.95`, `S2_BAR=0.95`, `S3_BAR=0.95`,
+`S4_BAR=0.90`, `S5_PRECISION_BAR=0.90`, `ADJUDICATION_SANE_BAR=0.95`,
+`GRAPH_GRADED_BAR=0.70`, `LATENCY_P95_MS_BAR=15000`, `MIN_SUBJECTS=4`):
+S1-S5 stage pass rates vs. their bars; Fable sane-rate + zero-harmful;
+per-subject graph-graded fraction — computed counterfactually as
+`shadow_succeeded and not shadow_abstained` so shadow-mode tuning runs (where
+the LLM is always served) still measure the metric the promotion decision
+needs; ops (p95 `grading_latency_ms` ≤ 15s, zero stall warnings); breadth
+(≥4 subjects incl. WU-AAS + held-out). `paired_comparison()` reports (not
+gates) band-agreement rate, mean signed delta, and the top-10 most divergent
+attempts. An empty judge/adjudication/attempt set never silently reads as a
+pass — zero items always fails its gate.
+
+`write_report(report, out_dir)` writes `GATE-REPORT.md` (human-readable,
+failures listed as the literal next work queue per spec §5 exit criteria)
+and `scoreboard.json` (machine-readable) under `out_dir`.
