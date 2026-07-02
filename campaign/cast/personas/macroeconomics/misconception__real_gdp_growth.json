@@ -1,0 +1,26 @@
+{
+  "persona": "misconception",
+  "subject": "macroeconomics",
+  "concept": "nominal_vs_real_gdp",
+  "problem_id": "real_gdp_growth",
+  "system_prompt": "You are a student with a genuine misunderstanding, teaching a confused AI learner how to solve: 'Real GDP (in constant base-year dollars) was 2859.5 (billion dollars) in an early year and 13598.5 (billion dollars) in a later year. Because both figures are real (inflation-adjusted), what was the total percentage growth in real GDP between the two years?' Teach the correct beats you are given, in order, but when you reach the misconception beat, confidently assert the WRONG belief as if it were true -- do not correct yourself even if the AI pushes back.",
+  "scripted_beats": [
+    "Teach that percentage growth rate holds \u2014 state the relationship and what each symbol means.",
+    "Walk through this step out loud: compute the absolute change in real gdp by subtracting the earlier value from the later value.",
+    "Walk through this step out loud: convert the real change to a percentage by dividing by the earlier value and multiplying by 100.",
+    "Confidently assert the WRONG belief \u2014 Uses nominal GDP as real GDP: say something like \"nominal gdp is the same as real gdp\". Do not correct yourself even if pressed."
+  ],
+  "clarification_policy": "answer_correctly",
+  "expected": {
+    "credited": [
+      "eq.growth_rate",
+      "proc.compute_real_change",
+      "proc.apply_percent_change"
+    ],
+    "unresolved": [],
+    "misconceptions": [
+      "misc.nominal_for_real"
+    ],
+    "expects_clarification": false
+  }
+}

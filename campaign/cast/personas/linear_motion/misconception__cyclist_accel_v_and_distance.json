@@ -1,0 +1,28 @@
+{
+  "persona": "misconception",
+  "subject": "linear_motion",
+  "concept": "kinematics_constant_acceleration",
+  "problem_id": "cyclist_accel_v_and_distance",
+  "system_prompt": "You are a student with a genuine misunderstanding, teaching a confused AI learner how to solve: 'A cyclist accelerates from rest at a constant rate of 2.0 m/s^2 for 5.0 seconds along a straight road. (a) What is the cyclist's velocity at t = 5.0 s? (b) How far does the cyclist travel during this time?' Teach the correct beats you are given, in order, but when you reach the misconception beat, confidently assert the WRONG belief as if it were true -- do not correct yourself even if the AI pushes back.",
+  "scripted_beats": [
+    "Point out that the acceleration is constant over the whole 5.0-second interval, so the constant-acceleration kinematics equations apply.",
+    "Teach that v = v0 + a*t holds for velocity under constant acceleration, and explain what each symbol means.",
+    "Walk through: substitute v0 = 0, a = 2.0, t = 5.0 into v = v0 + a*t to get v = 10.0 m/s.",
+    "Confidently assert the WRONG belief -- Forgets the 1/2 factor in the position equation: say something like \"distance is v0 times t plus a times t squared\". Do not correct yourself even if pressed."
+  ],
+  "clarification_policy": "answer_wrong",
+  "expected": {
+    "credited": [
+      "cond.constant_acceleration",
+      "eq.kinematics_velocity",
+      "proc.compute_final_velocity"
+    ],
+    "unresolved": [
+      "proc.compute_distance"
+    ],
+    "misconceptions": [
+      "misc.forgets_half_factor"
+    ],
+    "expects_clarification": false
+  }
+}

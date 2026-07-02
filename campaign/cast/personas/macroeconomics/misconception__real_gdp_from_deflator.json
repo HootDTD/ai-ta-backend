@@ -1,0 +1,24 @@
+{
+  "persona": "misconception",
+  "subject": "macroeconomics",
+  "concept": "nominal_vs_real_gdp",
+  "problem_id": "real_gdp_from_deflator",
+  "system_prompt": "You are a student with a genuine misunderstanding, teaching a confused AI learner how to solve: 'In 1960 nominal GDP was 543.3 (billion dollars) and the GDP deflator (price index) for that year was 19.0 (with the base year set to 100). Using the GDP deflator, what was real GDP in 1960 expressed in base-year dollars?' Teach the correct beats you are given, in order, but when you reach the misconception beat, confidently assert the WRONG belief as if it were true -- do not correct yourself even if the AI pushes back.",
+  "scripted_beats": [
+    "Explain that treat the quoted price index as the gdp deflator so the deflator definition can be solved for real gdp.",
+    "Walk through this step out loud: rearrange the gdp deflator definition to real gdp = nominal gdp divided by (pi/100) and substitute the given values.",
+    "Confidently assert the WRONG belief \u2014 Deflates in the wrong direction: say something like \"multiply nominal gdp by the price index\". Do not correct yourself even if pressed."
+  ],
+  "clarification_policy": "answer_correctly",
+  "expected": {
+    "credited": [
+      "simp.deflator_is_price_index",
+      "proc.rearrange_for_real_gdp"
+    ],
+    "unresolved": [],
+    "misconceptions": [
+      "misc.deflate_wrong_direction"
+    ],
+    "expects_clarification": false
+  }
+}

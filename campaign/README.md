@@ -272,6 +272,88 @@ Phase F); the default *real* implementations of those seams
 (`asyncio.create_subprocess_exec`, `asyncio.sleep`) are the only
 pragma-excluded lines.
 
+## Student personas with expected-ledger briefs (Task D2)
+
+`campaign/cast/personas/` is the authored corpus of agent-student teaching
+scripts. `schema.py` defines the pydantic contract:
+
+- `ExpectedLedger{credited, unresolved, misconceptions, expects_clarification}`
+  — the ledger outcome a persona attempt is authored to produce, keyed by
+  real reference `canonical_key`s (`eq.*`/`cond.*`/`simp.*`/`def.*`/`proc.*`
+  for nodes, `misc.*` for misconceptions — the same `entity_key` convention
+  `apollo/subjects/AUTHORING.md` documents). `ExpectedLedger.to_ledger_dict()`
+  converts to the exact `{credited, unresolved, misconceptions}` dict shape
+  `campaign.judges.s3_student_fidelity.ledger_vs_expected` consumes as its
+  `expected` argument — S3 is the judge that diffs the actual node ledger
+  against this per-attempt ground truth (spec §4 "most important audit").
+- `PersonaAttempt{persona, subject, concept, problem_id, system_prompt,
+  scripted_beats, clarification_policy, expected}` — one authored campaign
+  attempt. The four archetypes (spec §5):
+  - `strong` — teaches every reference node correctly (`expected.credited`
+    = every node).
+  - `partial` — teaches a subset and silently omits the rest (no ambiguous
+    utterance for the omitted nodes — they just never come up; omitted keys
+    land in `expected.unresolved`).
+  - `misconception` — teaches most nodes correctly but asserts one
+    misconception-bank entry (using one of its real `trigger_phrases`)
+    instead of the node it `opposes`; that node's key moves to
+    `expected.misconceptions`, not `expected.credited`/`unresolved`.
+  - `vague_then_clarifies` — teaches most nodes correctly but is
+    deliberately non-committal on one node (`expected.expects_clarification`
+    is schema-enforced `True` for this archetype), forcing Apollo's
+    clarification loop; `clarification_policy` (`answer_correctly` /
+    `answer_wrong` / `stay_vague`) decides whether that node ends up
+    credited (via the `clarification` resolution method) or unresolved.
+
+`validate.py` cross-checks every authored persona file against the REAL
+subject data on disk — `reference_keys_for()`/`misconception_keys_for()`
+load the actual `apollo/subjects/<subject>/concepts/<concept>/` JSON (never
+a hand-mintable key list), so an authoring typo or a subject-data edit that
+drops a key fails the `test_whole_authored_corpus_validates_clean` test
+loudly instead of silently poisoning S3/S4. Problems are looked up by their
+internal `id` field (the real runtime problem identifier, e.g.
+`bernoulli_horizontal_pipe_find_p2`), not by the positional
+`problem_01.json` filename.
+
+**Corpus authored so far** (`campaign/tests/test_persona_schema.py` gates
+all of this):
+
+| Subject | Personas | Notes |
+|---|---|---|
+| `fluid_mechanics` | 16 | all 5 `bernoulli_principle` problems; all 4 archetypes present |
+| `macroeconomics` | 18 | all 5 problems across `gdp_components` + `nominal_vs_real_gdp`; all 4 archetypes present |
+| `linear_motion` | 4 | one archetype each — see deviation note below |
+
+`held_out_subject` has **no** persona files yet — per plan D2/F2, held-out
+personas are authored only after that subject is minted during the Task F2
+gate phase (its subject key isn't even chosen yet).
+
+**Deviation — `linear_motion` is PROVISIONAL, not fully real.** The plan
+(D2) defers WU-AAS persona authoring to F2 "after those subjects are minted
+(their canonical keys don't exist yet)". This task's brief asked for
+concrete `linear_motion` personas now, but the real WU-AAS ingest path is
+LLM-driven parsing — there is no `apollo/subjects/linear_motion/` tree to
+validate against because the actual canonical keys aren't determined until
+the real PDF (`campaign/cast/materials/linear_motion_*.pdf`, Task D1) is
+actually uploaded and parsed. To ground *something* real now rather than
+inventing free-floating keys, `campaign/cast/personas/linear_motion/
+reference/kinematics_constant_acceleration/` hand-authors a provisional
+reference solution + misconception bank that mirrors the exact worked
+arithmetic in the fixture PDF (`v = v0 + a*t`, `x = v0*t + (1/2)*a*t^2`)
+using the same `entity_key` convention. `validate.py`'s
+`PROVISIONAL_SUBJECTS = frozenset({"linear_motion"})` routes lookups there
+instead of `apollo/subjects/`. **This is explicitly not guaranteed to match
+the keys the real LLM parser assigns once F2 actually mints the subject** —
+reconcile (or regenerate) these 4 persona files against the real minted set
+in F2; until then treat `linear_motion` attempts as a schema/pipeline smoke
+test, not a calibration input. Only 4 personas (one per archetype) are
+authored for it — the single fixture problem doesn't support the 15-25
+range the plan wants per subject; that range is met by `fluid_mechanics`
+(16) and `macroeconomics` (18), the two subjects with real reference graphs
+to author a full corpus against. Per-attempt paraphrase variation at D3
+session-driver runtime (not yet built) is expected to multiply the
+effective attempt count per subject beyond this fixed brief count.
+
 ## S1-S5 stage-audit judges (Task E1)
 
 `campaign/judges/` implements the spec §4 validation philosophy — "validate
