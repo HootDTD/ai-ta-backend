@@ -14,7 +14,7 @@ Gate (E3): >=95% item-level correct.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from campaign.judges.base import JudgeResult, StageJudge, Verdict, aggregate
@@ -32,7 +32,7 @@ _SYSTEM_PROMPT = (
 )
 
 
-def check_verify_path_fired(items: list[Mapping[str, Any]]) -> list[Verdict]:
+def check_verify_path_fired(items: Sequence[Mapping[str, Any]]) -> list[Verdict]:
     """Pure code-side check: every item whose recorded ``ocr_confidence`` is
     below its ``low_confidence_threshold`` must have ``verify_path_fired``
     true, and vice versa (a verify path firing on a confident item is also a

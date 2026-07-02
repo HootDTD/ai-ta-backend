@@ -19,6 +19,7 @@ import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Protocol
 
 _LOG = logging.getLogger(__name__)
 
@@ -118,21 +119,36 @@ def migration_files(directory: Path | str) -> list[Path]:
 # a fake connection factory without a real DB.
 # ---------------------------------------------------------------------------
 
-ConnectFn = Callable[[str], Awaitable[object]]
+
+class AsyncpgConnLike(Protocol):
+    """Structural subset of ``asyncpg.Connection`` this module relies on.
+
+    Kept narrow (execute/fetch/transaction) so unit tests can pass a plain
+    mock/fake without inheriting from asyncpg's real connection class.
+    """
+
+    async def execute(self, query: str, *args: Any) -> str: ...
+    async def fetch(self, query: str, *args: Any) -> Sequence[Any]: ...
+    def transaction(self) -> Any: ...
 
 
-async def _default_connect(dsn: str):  # pragma: no cover - thin asyncpg passthrough
+ConnectFn = Callable[[str], Awaitable[AsyncpgConnLike]]
+
+
+async def _default_connect(
+    dsn: str,
+) -> AsyncpgConnLike:  # pragma: no cover - thin asyncpg passthrough
     import asyncpg
 
     return await asyncpg.connect(to_asyncpg_dsn(dsn))
 
 
-async def _fetch_applied(conn) -> set[str]:
+async def _fetch_applied(conn: AsyncpgConnLike) -> set[str]:
     rows = await conn.fetch(f"SELECT name FROM {_TRACKING_TABLE}")
     return {row["name"] for row in rows}
 
 
-async def _apply_one(conn, migration: Path) -> None:
+async def _apply_one(conn: AsyncpgConnLike, migration: Path) -> None:
     sql = migration.read_text(encoding="utf-8")
     async with conn.transaction():
         await conn.execute(sql)

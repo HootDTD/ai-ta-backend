@@ -21,7 +21,7 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 __all__ = [
     "Verdict",
@@ -183,7 +183,7 @@ class OpenAIJudgeClient:
     and constructor ARE covered."""
 
     def __init__(self, *, model: str | None = None) -> None:
-        self._model = model or os.getenv("APOLLO_JUDGE_MODEL", "gpt-4o")
+        self._model: str = model if model is not None else os.getenv("APOLLO_JUDGE_MODEL", "gpt-4o")
 
     async def judge_item(
         self, *, system_prompt: str, user_prompt: str, schema: dict[str, Any]
@@ -196,15 +196,21 @@ class OpenAIJudgeClient:
         self, *, system_prompt: str, user_prompt: str, schema: dict[str, Any]
     ) -> dict[str, Any]:  # pragma: no cover - real network call, never hit in CI
         from openai import OpenAI
+        from openai.types.chat import ChatCompletionMessageParam
 
         client = OpenAI()
-        resp = client.chat.completions.create(
-            model=self._model,
-            messages=[
+        messages = cast(
+            list["ChatCompletionMessageParam"],
+            [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_format={"type": "json_schema", "json_schema": schema},
+        )
+        response_format = cast(Any, {"type": "json_schema", "json_schema": schema})
+        resp = client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            response_format=response_format,
         )
         content = resp.choices[0].message.content or "{}"
         return json.loads(content)

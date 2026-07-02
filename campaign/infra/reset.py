@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from campaign.infra.apply_migrations import (
+    AsyncpgConnLike,
     ConnectFn,
     _default_connect,
     apply_all,
@@ -39,7 +40,7 @@ async def reset_postgres(
     Returns the list of migration filenames applied (all of them, since the
     tracking table is wiped along with the schema drop).
     """
-    conn = await connect(dsn)
+    conn: AsyncpgConnLike = await connect(dsn)
     try:
         await conn.execute(_DROP_AND_RECREATE_SCHEMA_SQL)
         _LOG.info("dropped and recreated public schema on %s", dsn)

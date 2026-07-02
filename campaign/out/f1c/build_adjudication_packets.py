@@ -11,6 +11,7 @@ Deterministic (seeded) so a re-run reproduces the same sample.
 
 Usage: python -m campaign.out.f1.build_adjudication_packets
 """
+
 from __future__ import annotations
 
 import json
@@ -114,16 +115,18 @@ def stratified_sample(attempts: list[dict]) -> list[dict]:
         )
         return bool((graph or {}).get("clarification_trace"))
 
-    clarifying = [
-        a for a in attempts if a.get("status") == "ok" and is_clarification_heavy(a)
-    ]
+    clarifying = [a for a in attempts if a.get("status") == "ok" and is_clarification_heavy(a)]
     if clarifying and not any(is_clarification_heavy(a) for a in picked):
         clarifying.sort(
             key=lambda a: len(
-                (graph_payload_for(
-                    artifact_canonical=a.get("artifact_canonical"),
-                    artifact_pair=a.get("artifact_pair"),
-                ) or {}).get("clarification_trace") or []
+                (
+                    graph_payload_for(
+                        artifact_canonical=a.get("artifact_canonical"),
+                        artifact_pair=a.get("artifact_pair"),
+                    )
+                    or {}
+                ).get("clarification_trace")
+                or []
             ),
             reverse=True,
         )
@@ -145,9 +148,7 @@ def stratified_sample(attempts: list[dict]) -> list[dict]:
             if not group:
                 continue
             # prefer an attempt whose band we have not sampled yet
-            idx = next(
-                (i for i, a in enumerate(group) if band_of(a) not in seen_bands), 0
-            )
+            idx = next((i for i, a in enumerate(group) if band_of(a) not in seen_bands), 0)
             att = group.pop(idx)
             k = att.get("attempt_id") or att.get("persona_id")
             if k in picked_ids:

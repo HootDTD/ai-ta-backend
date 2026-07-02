@@ -65,9 +65,7 @@ def _concept_dir(subject_slug: str, concept_slug: str) -> Path:
     return _SUBJECTS_ROOT / subject_slug / "concepts" / concept_slug
 
 
-async def _resolve_search_space_id(
-    session: AsyncSession, search_space_id: int | None
-) -> int:
+async def _resolve_search_space_id(session: AsyncSession, search_space_id: int | None) -> int:
     if search_space_id is not None:
         return search_space_id
     resolved = (

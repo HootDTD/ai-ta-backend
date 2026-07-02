@@ -61,7 +61,7 @@ def _findings() -> tuple[Finding, ...]:
         Finding(
             kind=FindingKind.UNRESOLVED,
             student_node_ids=("n_x",),
-            evidence_spans=("gibberish"),
+            evidence_spans=("gibberish",),
         ),
         Finding(
             kind=FindingKind.MATCHED_EDGE,

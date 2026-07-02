@@ -11,15 +11,18 @@ import server
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("raw,expected", [
-    (None, False),
-    ("0", False),
-    ("false", False),
-    ("no", False),
-    ("1", True),
-    ("true", True),
-    ("YES", True),
-])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, False),
+        ("0", False),
+        ("false", False),
+        ("no", False),
+        ("1", True),
+        ("true", True),
+        ("YES", True),
+    ],
+)
 def test_apollo_nli_prewarm_enabled_parses_env(monkeypatch, raw, expected):
     if raw is None:
         monkeypatch.delenv("APOLLO_NLI_PREWARM", raising=False)

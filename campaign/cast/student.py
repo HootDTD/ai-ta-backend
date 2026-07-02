@@ -66,7 +66,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from campaign.cast.personas.schema import PersonaAttempt
 
@@ -323,7 +323,7 @@ async def run_attempt(
     bad attempt never kills a corpus run (plan D3 Step 1)."""
     t0 = time.monotonic()
     transcript: list[dict[str, Any]] = []
-    expected = persona.expected.to_ledger_dict()
+    expected: dict[str, Any] = dict(persona.expected.to_ledger_dict())
     expected["expects_clarification"] = persona.expected.expects_clarification
     try:
         session = await client.create_session(
@@ -580,6 +580,7 @@ async def default_chat_fn(  # pragma: no cover - real LLM call
     import os
 
     from openai import OpenAI
+    from openai.types.chat import ChatCompletionMessageParam
 
     client = OpenAI()
     model = os.getenv("MAIN_MODEL", "gpt-4o")
@@ -593,11 +594,12 @@ async def default_chat_fn(  # pragma: no cover - real LLM call
             "confidently assert the wrong thing, 'stay_vague' means remain "
             "non-committal without actually answering."
         )
-    messages = [{"role": "system", "content": persona.system_prompt}]
+    raw_messages: list[dict[str, str]] = [{"role": "system", "content": persona.system_prompt}]
     for turn in transcript:
         role = "assistant" if turn.get("role") == "apollo" else "user"
-        messages.append({"role": role, "content": str(turn.get("content", ""))})
-    messages.append({"role": "user", "content": instruction})
+        raw_messages.append({"role": role, "content": str(turn.get("content", ""))})
+    raw_messages.append({"role": "user", "content": instruction})
+    messages = cast("list[ChatCompletionMessageParam]", raw_messages)
     resp = client.chat.completions.create(model=model, messages=messages)
     return resp.choices[0].message.content or ""
 

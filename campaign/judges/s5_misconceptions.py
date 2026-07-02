@@ -12,7 +12,7 @@ NOT gated (spec: "recall reported, not gated").
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from campaign.judges.base import JudgeResult, StageJudge, aggregate
@@ -30,7 +30,7 @@ _SYSTEM_PROMPT = (
 )
 
 
-def misconception_recall(attempts: list[Mapping[str, Any]]) -> dict[str, Any]:
+def misconception_recall(attempts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Pure code-side recall check: for each attempt, which of the persona's
     ``expected.misconceptions`` keys were actually asserted by the grader.
     Reported, not gated (spec explicitly defers misconception recall
@@ -86,7 +86,7 @@ class S5MisconceptionJudge(StageJudge):
             sort_keys=True,
         )
 
-    async def judge(self, raw: list[Mapping[str, Any]]) -> JudgeResult:
+    async def judge(self, raw: Sequence[Mapping[str, Any]]) -> JudgeResult:
         result = await super().judge(raw)
         passed, total, pass_rate = aggregate(result.verdicts)
         return JudgeResult(

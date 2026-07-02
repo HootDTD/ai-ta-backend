@@ -200,7 +200,6 @@ async def test_bootstrap_baseline_creates_extension_and_metadata(monkeypatch):
         calls.append(f"engine:{dsn}")
         return _FakeEngine()
 
-
     monkeypatch.setattr("sqlalchemy.ext.asyncio.create_async_engine", _fake_create_async_engine)
 
     await bootstrap_baseline("postgresql://u:p@h:5432/db")

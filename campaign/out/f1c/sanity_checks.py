@@ -7,9 +7,9 @@
 
 Usage: python -m campaign.out.f1c.sanity_checks
 """
+
 from __future__ import annotations
 
-import json
 import sys
 from collections import Counter
 from pathlib import Path
@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 
 from apollo.projections.scorecard import render_scorecard  # noqa: E402
-from campaign.adapters import graph_payload_for, llm_payload_for  # noqa: E402
+from campaign.adapters import graph_payload_for  # noqa: E402
 from campaign.judges.base import load_jsonl  # noqa: E402
 
 OUT_DIR = Path(__file__).resolve().parent
@@ -50,9 +50,7 @@ def main() -> None:
         if canonical and pair:
             both_rows += 1
         else:
-            missing_rows.append(
-                (att.get("persona_id"), bool(canonical), bool(pair))
-            )
+            missing_rows.append((att.get("persona_id"), bool(canonical), bool(pair)))
 
         if canonical:
             comp = (canonical.get("scores") or {}).get("composite")
@@ -95,24 +93,32 @@ def main() -> None:
 
     print("\n=== canonical composites (T1 fix evidence) ===")
     if composites:
-        print(f"  n={len(composites)} min={min(composites):.3f} max={max(composites):.3f} "
-              f"mean={sum(composites)/len(composites):.3f} zeros={sum(1 for c in composites if c == 0)}")
+        print(
+            f"  n={len(composites)} min={min(composites):.3f} max={max(composites):.3f} "
+            f"mean={sum(composites) / len(composites):.3f} zeros={sum(1 for c in composites if c == 0)}"
+        )
     print(f"  band distribution: {dict(sorted(bands.items(), key=lambda kv: str(kv[0])))}")
 
     print("\n=== graph/pair abstention (T2 fix evidence; F1b baseline 36/36=100%) ===")
     print(f"  graph rows: {graph_n}  abstained: {abstained_n}  not abstained: {not_abstained_n}")
     if graph_n:
-        print(f"  abstention rate: {abstained_n/graph_n:.1%}")
+        print(f"  abstention rate: {abstained_n / graph_n:.1%}")
     print(f"  reasons histogram: {dict(reasons_hist.most_common())}")
 
     print("\n=== graph-graded fraction per subject (graph_rows/ok) ===")
     for subj, (g, ok) in sorted(per_subject_graph.items()):
-        print(f"  {subj:20s} {g}/{ok} = {g/ok:.1%}" if ok else f"  {subj}: no ok attempts")
+        print(f"  {subj:20s} {g}/{ok} = {g / ok:.1%}" if ok else f"  {subj}: no ok attempts")
 
     if latencies:
         latencies.sort()
-        p95 = latencies[min(len(latencies) - 1, int(round(0.95 * len(latencies))) - 1)] if len(latencies) > 1 else latencies[0]
-        print(f"\n=== grading latency === n={len(latencies)} p95={p95:.0f}ms max={max(latencies):.0f}ms")
+        p95 = (
+            latencies[min(len(latencies) - 1, int(round(0.95 * len(latencies))) - 1)]
+            if len(latencies) > 1
+            else latencies[0]
+        )
+        print(
+            f"\n=== grading latency === n={len(latencies)} p95={p95:.0f}ms max={max(latencies):.0f}ms"
+        )
 
 
 if __name__ == "__main__":

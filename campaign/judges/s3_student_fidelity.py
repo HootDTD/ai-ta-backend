@@ -24,7 +24,7 @@ Gate (E3): >=95% item-level correct.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from campaign.judges.base import JudgeResult, StageJudge, aggregate
@@ -120,7 +120,7 @@ class S3StudentFidelityJudge(StageJudge):
             sort_keys=True,
         )
 
-    async def judge(self, raw: list[Mapping[str, Any]]) -> JudgeResult:
+    async def judge(self, raw: Sequence[Mapping[str, Any]]) -> JudgeResult:
         result = await super().judge(raw)
         diffs = {
             str(attempt.get("attempt_id")): ledger_vs_expected(

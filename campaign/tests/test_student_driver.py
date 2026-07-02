@@ -32,7 +32,7 @@ def _persona(**overrides) -> PersonaAttempt:
         expected=ExpectedLedger(credited=["eq.a", "eq.b"]),
     )
     kwargs.update(overrides)
-    return PersonaAttempt(**kwargs)
+    return PersonaAttempt.model_validate(kwargs)
 
 
 class FakeApolloClient:

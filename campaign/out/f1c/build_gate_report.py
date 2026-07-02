@@ -11,6 +11,7 @@ scoreboard.json) from the run's real artifacts in campaign/out/f1/:
 
 Usage: python -m campaign.out.f1.build_gate_report
 """
+
 from __future__ import annotations
 
 import json

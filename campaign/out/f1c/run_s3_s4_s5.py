@@ -24,6 +24,7 @@ record of why this selection exists.
 
 Usage: python -m campaign.out.f1.run_s3_s4_s5
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -93,10 +94,13 @@ def build_inputs(attempts: list[dict]) -> tuple[list[dict], list[dict], list[dic
             misconceptions=att["expected"].get("misconceptions", []),
             expects_clarification=att["expected"].get("expects_clarification", False),
         )
-        artifact = graph_payload_for(
-            artifact_canonical=att.get("artifact_canonical"),
-            artifact_pair=att.get("artifact_pair"),
-        ) or att["artifact_canonical"]
+        artifact = (
+            graph_payload_for(
+                artifact_canonical=att.get("artifact_canonical"),
+                artifact_pair=att.get("artifact_pair"),
+            )
+            or att["artifact_canonical"]
+        )
         s3_raw.append(
             attempt_to_s3_item(
                 attempt_id=att["attempt_id"],

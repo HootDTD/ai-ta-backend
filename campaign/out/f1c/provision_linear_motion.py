@@ -12,6 +12,7 @@ HTTP route, not a subprocess).
 Usage (anaconda/base interpreter -- no torch needed, this is pure httpx):
     python campaign/out/f1c/provision_linear_motion.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -43,7 +44,7 @@ _load_env(REPO_ROOT / ".env.campaign")
 import httpx  # noqa: E402
 
 from campaign.cast.subjects import LINEAR_MOTION  # noqa: E402
-from campaign.cast.teacher import provision_authored, AuthoredProvisioningError  # noqa: E402
+from campaign.cast.teacher import AuthoredProvisioningError, provision_authored  # noqa: E402
 
 BASE_URL = "http://127.0.0.1:8000"
 OUT_DIR = Path(__file__).resolve().parent
@@ -61,9 +62,11 @@ async def _upload_once(client: httpx.AsyncClient, token: str, search_space_id: i
             problem_pdf=subj.problem_pdf,
             solution_pdf=subj.solution_pdf,
         )
-        print(f"[{tag}] set_id={result.set_id} status={result.status} "
-              f"minted={result.minted_problem_ids} approved={result.approved_problem_ids} "
-              f"failed={result.failed_approvals}")
+        print(
+            f"[{tag}] set_id={result.set_id} status={result.status} "
+            f"minted={result.minted_problem_ids} approved={result.approved_problem_ids} "
+            f"failed={result.failed_approvals}"
+        )
         return result
     except AuthoredProvisioningError as exc:
         print(f"[{tag}] AuthoredProvisioningError: {exc}")
@@ -79,7 +82,9 @@ async def _dump_status(client: httpx.AsyncClient, token: str, set_id: int, name:
     body = resp.json()
     (TMP_DIR / name).write_text(json.dumps(body, indent=2))
     (OUT_DIR / name).write_text(json.dumps(body, indent=2))
-    print(f"dumped set {set_id} status -> {name}: {json.dumps(body.get('result_summary', {}), indent=2)[:1000]}")
+    print(
+        f"dumped set {set_id} status -> {name}: {json.dumps(body.get('result_summary', {}), indent=2)[:1000]}"
+    )
 
 
 async def main() -> None:
@@ -90,16 +95,22 @@ async def main() -> None:
     async with httpx.AsyncClient(timeout=120.0) as client:
         result = await _upload_once(client, token, search_space_id, "attempt1")
         if result is not None:
-            await _dump_status(client, token, result.set_id, f"authored_set_final{result.set_id}.json")
+            await _dump_status(
+                client, token, result.set_id, f"authored_set_final{result.set_id}.json"
+            )
 
         if result is None or len(result.approved_problem_ids) < 2:
-            print("Not both problems promoted in attempt1 -- retrying once "
-                  "(dup-hash idempotency means a second upload of the SAME "
-                  "fixture typically resolves the still-missing half, mirroring "
-                  "F1a's set2/set3 sequence).")
+            print(
+                "Not both problems promoted in attempt1 -- retrying once "
+                "(dup-hash idempotency means a second upload of the SAME "
+                "fixture typically resolves the still-missing half, mirroring "
+                "F1a's set2/set3 sequence)."
+            )
             result2 = await _upload_once(client, token, search_space_id, "attempt2")
             if result2 is not None:
-                await _dump_status(client, token, result2.set_id, f"authored_set_final{result2.set_id}.json")
+                await _dump_status(
+                    client, token, result2.set_id, f"authored_set_final{result2.set_id}.json"
+                )
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ Creates:
 Usage (anaconda/base interpreter -- no torch needed):
     python campaign/out/f1c/bootstrap_course.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -46,9 +47,13 @@ def _load_env(path: Path) -> None:
 _load_env(REPO_ROOT / ".env.campaign")
 
 import httpx  # noqa: E402
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
-from database.models import SearchSpace, CourseMembership  # noqa: E402
+from database.models import CourseMembership, SearchSpace  # noqa: E402
 
 TEACHER_EMAIL = "campaign-teacher@example.com"
 TEACHER_PASSWORD = "CampaignTeacher123!"
@@ -101,14 +106,14 @@ async def main() -> None:
     teacher_id, teacher_token = await mint_teacher(supabase_url, service_role_key)
 
     async with Session() as db:
-        space = SearchSpace(
-            name="Campaign Course", slug="campaign-course", subject_name="Campaign"
-        )
+        space = SearchSpace(name="Campaign Course", slug="campaign-course", subject_name="Campaign")
         db.add(space)
         await db.flush()
         search_space_id = space.id
 
-        db.add(CourseMembership(user_id=teacher_id, search_space_id=search_space_id, role="teacher"))
+        db.add(
+            CourseMembership(user_id=teacher_id, search_space_id=search_space_id, role="teacher")
+        )
         await db.commit()
 
     out = {
@@ -119,7 +124,9 @@ async def main() -> None:
         "teacher_token": teacher_token,
     }
     print(json.dumps(out, indent=2))
-    (Path(__file__).resolve().parent / "course-bootstrap.json").write_text(json.dumps(out, indent=2))
+    (Path(__file__).resolve().parent / "course-bootstrap.json").write_text(
+        json.dumps(out, indent=2)
+    )
 
     await engine.dispose()
 

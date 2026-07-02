@@ -99,7 +99,7 @@ class CampaignConfig:
         """Read the current process env + code constants into a config."""
         return CampaignConfig(
             axis_weights=dict(AXIS_WEIGHTS),
-            letter_bands=tuple(tuple(band) for band in LETTER_BANDS),
+            letter_bands=tuple(LETTER_BANDS),
             nli_model=active_nli_model(),
             nli_params=load_nli_params(),
             abstention_thresholds=dict(ABSTENTION_THRESHOLDS),
