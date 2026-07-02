@@ -70,7 +70,12 @@ async def verify_against_generated(
     metered_chat: Any,
     conf_threshold: float,
 ) -> VerificationVerdict:
-    low_confidence = (min_conf is not None and min_conf < conf_threshold) or problem_low_conf
+    # Fail-closed (M4): a page MISSING from page_debug yields min_conf=None, which
+    # carries NO confidence signal — that must NOT be treated as high confidence
+    # (the pre-fix `min_conf is not None and ...` short-circuited to False and
+    # silently skipped verification). Absent OCR confidence is deliberately
+    # treated as low confidence so generate-and-compare still runs.
+    low_confidence = min_conf is None or min_conf < conf_threshold or problem_low_conf
     base = VerificationVerdict(
         review_required=False,
         ocr_confidence=min_conf,

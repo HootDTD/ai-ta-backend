@@ -28,7 +28,9 @@ consume them. It does NOT promote the shadow grade to student-facing (WU-4C2).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -86,6 +88,20 @@ _LOG = logging.getLogger(__name__)
 _NLI_ADJUDICATOR = None  # process-lived TransformersNLIAdjudicator | None
 _NLI_CACHE = CandidateEmbeddingCache()
 
+# L4 — the ``transformers`` package (or the checkpoint download it lazily
+# triggers) may be unavailable in a given deployment. That must degrade
+# grading to no-NLI rather than re-arm the retry loop forever (an
+# ImportError/ModuleNotFoundError is infra-static — retrying never fixes it).
+# Logged ONCE per process so a missing install doesn't spam every request.
+_NLI_IMPORT_UNAVAILABLE_LOGGED = False
+
+# M3(b) — grading-path node budget cap, mirroring the chat path's
+# ``APOLLO_NLI_CHAT_MAX_NODES`` (fcfd285): synchronous transformer inference
+# runs per residual node, so an uncapped attempt can still tie up the worker
+# thread for a long time. Hoisted to a local once per call (same pattern).
+_NLI_GRADING_NODE_CAP_FLAG: str = "APOLLO_NLI_GRADING_MAX_NODES"
+_NLI_GRADING_NODE_CAP_DEFAULT: int = 15
+
 
 def _build_adjudicator():  # pragma: no cover — constructs the real model (Task 12 probe)
     from apollo.resolution.nli_adjudicator import TransformersNLIAdjudicator
@@ -93,22 +109,94 @@ def _build_adjudicator():  # pragma: no cover — constructs the real model (Tas
     return TransformersNLIAdjudicator(active_nli_model(), device=NLI_DEVICE)
 
 
+def _log_nli_import_failure_once(exc: BaseException) -> None:
+    """L4: log the missing-``transformers`` degradation exactly once per
+    process (not once per request) — grading proceeds WITHOUT NLI."""
+    global _NLI_IMPORT_UNAVAILABLE_LOGGED
+    if not _NLI_IMPORT_UNAVAILABLE_LOGGED:
+        _LOG.warning("apollo_nli_transformers_unavailable degrading_without_nli error=%s", exc)
+        _NLI_IMPORT_UNAVAILABLE_LOGGED = True
+
+
 def _nli_context() -> NLIContext | None:
     """Return an ``NLIContext`` when ``APOLLO_NLI_ENABLED`` is set, else ``None``.
 
     The adjudicator is built ONCE and reused across calls (process-lived
     singleton).  When the flag is off grading is byte-identical to before.
+
+    L4: if construction itself fails on a missing ``transformers`` install
+    (``ImportError``/``ModuleNotFoundError``), degrade to no-NLI (``None``)
+    instead of letting the caller's broad except re-arm the retry loop.
     """
     if not nli_enabled():
         return None
     global _NLI_ADJUDICATOR
     if _NLI_ADJUDICATOR is None:
-        _NLI_ADJUDICATOR = _build_adjudicator()
+        try:
+            _NLI_ADJUDICATOR = _build_adjudicator()
+        except (ImportError, ModuleNotFoundError) as exc:
+            _log_nli_import_failure_once(exc)
+            return None
     return NLIContext(
         nli=_NLI_ADJUDICATOR,
         embedder=default_embedder,
         cache=_NLI_CACHE,
         params=load_nli_params(),
+    )
+
+
+def _nli_grading_node_cap() -> int:
+    """Read ``APOLLO_NLI_GRADING_MAX_NODES`` from env; default 15 on missing or
+    malformed (mirrors ``chat.py``'s ``_nli_chat_node_cap`` semantics)."""
+    raw = os.environ.get(_NLI_GRADING_NODE_CAP_FLAG)
+    try:
+        return int(raw) if raw is not None else _NLI_GRADING_NODE_CAP_DEFAULT
+    except (ValueError, TypeError):
+        return _NLI_GRADING_NODE_CAP_DEFAULT
+
+
+async def _resolve_attempt_async(
+    student_graph: KGGraph,
+    candidates: tuple,
+    *,
+    confirmed_resolutions: dict,
+    fuzzy_threshold: float,
+    symbolic_mappings: dict,
+    nli_ctx: NLIContext | None,
+):
+    """M3(a) — run the (synchronous, CPU-bound when NLI is active) resolver off
+    the event loop. ``resolve_attempt`` itself stays sync/pure/deterministic;
+    only the call boundary changes, mirroring the chat path's conditional
+    offload in ``apollo.clarification.turn.run_clarification_detection``:
+    when NLI is inactive (``nli_ctx`` is ``None``) the call is inline —
+    byte-identical to the pre-NLI path — because there is nothing CPU-bound
+    to offload.
+
+    L4: if the offloaded call fails on a missing ``transformers`` install, log
+    once and re-resolve inline WITHOUT NLI rather than letting the failure
+    propagate into the caller's NO-FALLBACK / retry-forever except clauses.
+    """
+    if nli_ctx is not None and nli_ctx.nli is not None:
+        try:
+            return await asyncio.to_thread(
+                resolve_attempt,
+                student_graph,
+                candidates,
+                confirmed_resolutions=confirmed_resolutions,
+                fuzzy_threshold=fuzzy_threshold,
+                symbolic_mappings=symbolic_mappings,
+                nli_ctx=nli_ctx,
+            )
+        except (ImportError, ModuleNotFoundError) as exc:
+            _log_nli_import_failure_once(exc)
+            # Fall through to the no-NLI path below (same degrade as flag-off).
+    return resolve_attempt(
+        student_graph,
+        candidates,
+        confirmed_resolutions=confirmed_resolutions,
+        fuzzy_threshold=fuzzy_threshold,
+        symbolic_mappings=symbolic_mappings,
+        nli_ctx=None,
     )
 
 
@@ -226,13 +314,28 @@ async def run_graph_simulation(
     try:
         confirmed_resolutions = await load_confirmed_resolutions(db, attempt_id=int(attempt.id))
         # Step 5 — resolve; clarification-confirmed nodes are authoritative (no LLM guess).
-        resolution = resolve_attempt(
+        # M3(b) — grading-path node budget: cap large attempts the same way the
+        # chat path caps large utterances (both share the same NLI cost model).
+        nli_ctx = _nli_context()
+        student_node_count = len(student_graph.nodes)
+        grading_cap = _nli_grading_node_cap()
+        if nli_ctx is not None and student_node_count > grading_cap:
+            _LOG.info(
+                "nli_grading_skipped_budget nodes=%d cap=%d attempt_id=%s",
+                student_node_count,
+                grading_cap,
+                int(attempt.id),
+            )
+            nli_ctx = None
+        # M3(a) — offload the (possibly CPU-bound NLI) resolver call off the
+        # event loop; inline when NLI is inactive (byte-identical to before).
+        resolution = await _resolve_attempt_async(
             student_graph,
             inputs.candidates,
             confirmed_resolutions=confirmed_resolutions,
             fuzzy_threshold=0.9,
             symbolic_mappings=inputs.symbolic_mappings,
-            nli_ctx=_nli_context(),
+            nli_ctx=nli_ctx,
         )
         # Step 6 — RESOLVES_TO + resolution fields (idempotent MERGE).
         await write_resolution(neo, int(attempt.id), resolution, resolved_at=_now_iso())
