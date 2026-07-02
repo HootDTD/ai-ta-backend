@@ -33,6 +33,7 @@ from apollo.persistence.models import (
     SessionStatus,
     Subject,
 )
+from apollo.resolution.result import ResolutionResult
 from database.models import SearchSpace
 
 # pytest.ini sets asyncio_mode = auto.
@@ -176,6 +177,7 @@ def _shadow_for(key: str) -> ShadowGradeResult:
         graph_sim_rubric={},
         calibration=object(),  # type: ignore[arg-type]
         diagnostic=object(),  # type: ignore[arg-type]
+        resolution=ResolutionResult(resolved=(), tier_counts={}, llm_calls=0),
     )
 
 
