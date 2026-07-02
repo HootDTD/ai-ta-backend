@@ -169,7 +169,6 @@ def build_audited_grade(
     student_nodes: tuple[Node, ...],
     candidates: tuple[Candidate, ...] = (),
     reference_invalid: bool = False,
-    misconception_bank_empty: bool = False,
     audit_fn: AuditFn | None = None,
 ) -> AuditedGrade:
     """Orchestrate §6.4 step 12 + step 14 into the frozen :class:`AuditedGrade`.
@@ -177,11 +176,13 @@ def build_audited_grade(
     ``audit_fn`` defaults to the live :func:`main_chat_auditor`; every test
     injects a deterministic stub (CI-safe, no live LLM).
 
-    ``misconception_bank_empty=True`` (D5/D6) adds
-    :data:`REASON_MISCONCEPTION_BANK_EMPTY` to the abstention reasons. This is
-    NOT a full abstention (``abstained`` stays False); coverage still updates
-    Layer-3. The corresponding ``soundness_score`` / ``contradiction_score``
-    are ``None`` on the ``GradeResult`` (set by the pure grader upstream)."""
+    Lane B3a/D1: an empty misconception bank is NO LONGER an abstention input
+    here. When the bank was empty the pure grader sets
+    ``GradeResult.soundness_applicable=False`` (``soundness_score`` /
+    ``contradiction_score`` are ``None``); coverage grades normally and the
+    empty-bank fact surfaces as an explicit marker in the graph artifact's
+    misconception section (:func:`artifact_build.build_graph_artifact`) — never
+    as an abstention reason."""
     missing = _missing_entities(grade.findings, candidates)
 
     transcript_audit_failed = False
@@ -215,7 +216,6 @@ def build_audited_grade(
         misconception_confidences=_misconception_confidences(grade.findings, resolution),
         transcript_audit_failed=transcript_audit_failed,
         reference_invalid=reference_invalid,
-        misconception_bank_empty=misconception_bank_empty,
         normalization_confidence=normalization_confidence,
     )
 

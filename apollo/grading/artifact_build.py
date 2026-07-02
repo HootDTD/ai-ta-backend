@@ -63,6 +63,29 @@ GRADER_USED_LLM_FALLBACK = "llm_fallback"
 
 _GRADER_VERSION_LLM_FALLBACK = "llm-fallback-v1"
 
+# Lane B3a/D1 — the explicit "no misconceptions asserted (empty bank)" marker.
+# Under the emergent-misconception design an empty ``apollo_misconceptions`` bank
+# is the NORMAL cold-start state of every class: coverage grades normally and
+# soundness is simply not assessed (``GradeResult.soundness_applicable=False``).
+# This marker disambiguates an empty ``misconceptions: []`` list that was NEVER
+# assessed (bank empty) from one that WAS assessed and found none — the machine-
+# readable signal that replaced the removed ``misconception_bank_empty``
+# abstention reason. Emitted ONLY on the empty-bank path, so a seeded-bank
+# artifact stays byte-identical to today (no extra key).
+MISCONCEPTIONS_STATUS_KEY = "misconceptions_status"
+MISCONCEPTIONS_STATUS_EMPTY_BANK = "empty_bank"
+
+
+def _empty_bank_misconceptions_marker() -> dict:
+    """The machine-readable "no misconceptions asserted (empty bank)" marker
+    (lane B3a/D1) — placed in the graph artifact's misconception section only
+    when the misconception bank was empty/absent for the concept."""
+    return {
+        "assertable": False,
+        "reason": MISCONCEPTIONS_STATUS_EMPTY_BANK,
+        "detail": "no misconceptions asserted (empty bank)",
+    }
+
 
 def _method_lookup(resolution: ResolutionResult) -> dict[str, tuple[str, float]]:
     """``resolved_key -> (method, confidence)`` for every RESOLVED node (the
@@ -250,7 +273,13 @@ def build_graph_artifact(
     latency_ms: int | None,
 ) -> dict:
     """Build the graph-grader artifact payload (spec §1) from an already-graded
-    ``ShadowGradeResult``. Pure — reshapes ``shadow``'s frozen fields only."""
+    ``ShadowGradeResult``. Pure — reshapes ``shadow``'s frozen fields only.
+
+    Lane B3a/D1: when the misconception bank was empty/absent
+    (``shadow.grade.soundness_applicable is False``) coverage still grades
+    normally and an explicit ``misconceptions_status`` marker is added to the
+    misconception section (no misconceptions were assessed). On the seeded path
+    (the default) NO marker key is added, so the artifact is byte-identical."""
     findings = shadow.audited.findings
     node_ledger = build_node_ledger(findings, shadow.resolution)
     edge_ledger = build_edge_ledger(findings)
@@ -263,7 +292,7 @@ def build_graph_artifact(
     )
     composite = composite_score(node_coverage, edge_coverage, misconception_penalty, weights)
 
-    return {
+    artifact = {
         "grader_used": GRADER_USED_GRAPH,
         "versions": _versions_block(
             grader=shadow.grade.comparison_version,
@@ -290,6 +319,12 @@ def build_graph_artifact(
         },
         "grading_latency_ms": latency_ms,
     }
+    # Lane B3a/D1: empty bank -> coverage graded normally + explicit
+    # "no misconceptions asserted (empty bank)" marker. Conditional so the
+    # seeded-bank artifact is byte-identical to today (no extra key).
+    if not shadow.grade.soundness_applicable:
+        artifact[MISCONCEPTIONS_STATUS_KEY] = _empty_bank_misconceptions_marker()
+    return artifact
 
 
 def _round_like_composite(value: float) -> float:

@@ -191,18 +191,35 @@ def test_min_parser_confidence_of_picks_min():
     assert min_parser_confidence_of(nodes) == 0.3
 
 
-def test_misconception_bank_empty_reason_is_reason_only():
-    from apollo.grading.abstention import REASON_MISCONCEPTION_BANK_EMPTY
-    out = apply_abstention(
-        unresolved_rate=0.0, min_parser_confidence=1.0, misconception_bank_empty=True
-    )
-    assert REASON_MISCONCEPTION_BANK_EMPTY in out.abstention_reasons
-    assert out.abstained is False                        # coverage still updates Layer-3
+# --- Lane B3a/D1: empty misconception bank is NORMAL, not an abstention ------
+# Under the emergent-misconception design an empty ``apollo_misconceptions`` bank
+# is the cold-start state of EVERY class. Coverage grading and misconception
+# detection are separable signals; an empty bank must NOT gate coverage grading
+# and must NOT emit an abstention reason (the reason string polluted harness
+# histograms). The bank-empty fact now rides on ``GradeResult.soundness_applicable``
+# and surfaces as an explicit artifact marker, NOT as an abstention reason.
 
 
-def test_misconception_bank_empty_false_no_reason():
-    from apollo.grading.abstention import REASON_MISCONCEPTION_BANK_EMPTY
-    out = apply_abstention(
-        unresolved_rate=0.0, min_parser_confidence=1.0, misconception_bank_empty=False
-    )
-    assert REASON_MISCONCEPTION_BANK_EMPTY not in out.abstention_reasons
+def test_apply_abstention_has_no_misconception_bank_empty_param():
+    """``apply_abstention`` no longer accepts a ``misconception_bank_empty`` kwarg —
+    the empty-bank signal was moved OUT of the abstention gate entirely."""
+    import inspect
+
+    assert "misconception_bank_empty" not in inspect.signature(apply_abstention).parameters
+
+
+def test_no_misconception_bank_empty_reason_constant():
+    """The ``misconception_bank_empty`` abstention reason string is REMOVED
+    (interface change for harness histograms — it never occurs anywhere now)."""
+    import apollo.grading.abstention as abstention_module
+
+    assert not hasattr(abstention_module, "REASON_MISCONCEPTION_BANK_EMPTY")
+
+
+def test_clean_attempt_has_no_bank_empty_reason():
+    """A clean attempt (all gates pass) abstains from nothing and emits zero
+    reasons — proving an empty bank can never produce a bank-empty reason."""
+    out = apply_abstention(unresolved_rate=0.0, min_parser_confidence=1.0)
+    assert out.abstention_reasons == ()
+    assert out.abstained is False
+    assert "misconception_bank_empty" not in out.abstention_reasons

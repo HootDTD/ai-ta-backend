@@ -416,10 +416,13 @@ async def test_na_soundness_round_trip(db_session):
     )
     from apollo.grading.audited_grade import AuditedGrade
 
+    # Lane B3a/D1: an empty bank is NORMAL cold-start, NOT an abstention — it
+    # emits ZERO abstention reasons (the bank-empty fact rides on
+    # soundness_applicable + the artifact marker instead).
     graded = AuditedGrade(
         grade=grade,
         findings=grade.findings,
-        abstention_reasons=("misconception_bank_empty",),
+        abstention_reasons=(),
         abstained=False,
         suppressed_event_kinds=frozenset(),
         alias_candidates=(),
@@ -442,7 +445,9 @@ async def test_na_soundness_round_trip(db_session):
     assert run.soundness_applicable is False
     assert run.contradiction_score is None
     assert run.soundness_score == grade.coverage_score   # NOT-NULL fallback
-    assert "misconception_bank_empty" in run.abstention_reasons
+    # D1: empty bank persists with NO abstention reason (soundness_applicable is
+    # the machine-readable empty-bank signal, not a reason string).
+    assert list(run.abstention_reasons or []) == []
 
 
 async def test_applicable_soundness_flag_default(db_session):
