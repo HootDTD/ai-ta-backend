@@ -37,10 +37,11 @@ from apollo.ontology.edges import EdgeProvenance, EdgeType
 from apollo.ontology.graph import KGGraph
 from apollo.ontology.nodes import NodeType
 
-# Import (don't duplicate) the resolution-layer entry_type -> NodeType table
-# (Risk MEDIUM in the plan: importing the `_`-private name beats duplicating it
-# and risking drift; candidates.py is NOT edited).
-from apollo.resolution.candidates import _ENTRY_TYPE_TO_NODE_TYPE
+# Import (don't duplicate) the resolution-layer entry_type -> NodeType resolver
+# (importing the `_`-private helper beats duplicating the table and risking
+# drift). ``_node_type_for_entry`` returns ``None`` for an unmapped entry_type so
+# R_norm can DEGRADE that step (G4) instead of KeyError-ing.
+from apollo.resolution.candidates import _node_type_for_entry
 from apollo.resolution.result import ResolutionResult
 from apollo.resolution.tiers import student_surface_text
 
@@ -125,13 +126,22 @@ def build_reference_canonical(problem: dict) -> ReferenceGraph:
 
     steps = problem.get("reference_solution", [])
 
+    # G4 tolerance: DEGRADE steps whose entry_type has no ontology NodeType (a
+    # resolver-map/mint-map drift) rather than KeyError. A dropped step is
+    # excluded from the node set, from ``key_for_step``, and from every edge /
+    # declared-path that references it, so R_norm stays internally consistent.
+    # For the recognized types (which now include ``variable_mapping``) this is
+    # byte-identical to before: no seeded/authored known-type step is skipped.
+    known_steps = [s for s in steps if _node_type_for_entry(s["entry_type"]) is not None]
+
     # step id -> canonical (entity) key, for depends_on + declared_paths mapping.
-    key_for_step: dict[str, str] = {step["id"]: step["entity_key"] for step in steps}
+    key_for_step: dict[str, str] = {step["id"]: step["entity_key"] for step in known_steps}
 
     nodes: list[CanonicalNode] = []
-    for step in steps:
+    for step in known_steps:
         entry_type = step["entry_type"]
-        node_type: NodeType = _ENTRY_TYPE_TO_NODE_TYPE[entry_type]
+        node_type = _node_type_for_entry(entry_type)
+        assert node_type is not None  # known_steps filtered out the unmapped ones
         content = step.get("content", {}) or {}
         symbolic = content.get("symbolic") if node_type == "equation" else None
         nodes.append(
@@ -149,9 +159,11 @@ def build_reference_canonical(problem: dict) -> ReferenceGraph:
     # Dependency edges: (dependency_step → step), mapped to canonical keys. These
     # form the R_norm DAG (generic dependency direction — DEPENDS_ON).
     edges: list[CanonicalEdge] = []
-    for step in steps:
+    for step in known_steps:
         to_key = key_for_step[step["id"]]
         for dep_step_id in step.get("depends_on", []):
+            if dep_step_id not in key_for_step:
+                continue  # G4: dependency on a degraded (unmapped) step — drop the edge
             from_key = key_for_step[dep_step_id]
             edges.append(
                 CanonicalEdge(
@@ -168,12 +180,14 @@ def build_reference_canonical(problem: dict) -> ReferenceGraph:
     # collapses onto the DEPENDS_ON-only set (the "structural edge scoring is
     # dead by construction" regression). ``uses_equations`` holds equation STEP
     # ids, mapped to canonical keys via ``key_for_step`` (same as depends_on).
-    for step in steps:
+    for step in known_steps:
         if step["entry_type"] != "procedure_step":
             continue
         from_key = key_for_step[step["id"]]
         content = step.get("content", {}) or {}
         for eq_step_id in content.get("uses_equations", []) or []:
+            if eq_step_id not in key_for_step:
+                continue  # G4: USES a degraded (unmapped) equation step — drop the edge
             edges.append(
                 CanonicalEdge(
                     edge_type=EdgeType.USES,
@@ -187,7 +201,7 @@ def build_reference_canonical(problem: dict) -> ReferenceGraph:
     # ``Problem.to_kg_graph`` (consecutive prev → next). Gives ``edge_coverage``
     # the procedure-order structure the student's PRECEDES edges can match.
     proc_steps = sorted(
-        (s for s in steps if s["entry_type"] == "procedure_step"),
+        (s for s in known_steps if s["entry_type"] == "procedure_step"),
         key=lambda s: int((s.get("content", {}) or {})["order"]),
     )
     for prev, nxt in zip(proc_steps, proc_steps[1:], strict=False):
@@ -202,10 +216,16 @@ def build_reference_canonical(problem: dict) -> ReferenceGraph:
 
     # Per-path views: each declared path is an ordered list of reference-node
     # ids; map each to its canonical key (validate_reference guarantees every id
-    # is a real reference-node id and >= 1 path exists).
+    # is a real reference-node id and >= 1 path exists). G4: a path node that
+    # was degraded (unmapped entry_type) is dropped from the path, keeping the
+    # remaining known subsequence rather than KeyError-ing.
     paths: list[ReferencePathView] = []
     for path in problem["declared_paths"]:
-        paths.append(ReferencePathView(canonical_keys=tuple(key_for_step[nid] for nid in path)))
+        paths.append(
+            ReferencePathView(
+                canonical_keys=tuple(key_for_step[nid] for nid in path if nid in key_for_step)
+            )
+        )
 
     return ReferenceGraph(nodes=tuple(nodes), edges=tuple(edges), paths=tuple(paths))
 

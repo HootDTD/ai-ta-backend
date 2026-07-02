@@ -50,13 +50,52 @@ METHOD_CONFIDENCE_CAP: dict[str, float] = {
 # reference-solution entry_type -> ontology NodeType. simplifications map to
 # the 'simplification' node type (the resolver's type-compat constraint is over
 # node types, not the Layer-1 'condition' kind the seed uses for storage).
+#
+# G4 (variable_mapping contract): ``variable_mapping`` MUST be here — it is a
+# real ontology ``NodeType`` (nodes.py), the schema ``EntryType`` accepts it, and
+# the mint map ``persistence.learner_model_seed._ENTRY_TYPE_TO_KIND_PREFIX``
+# emits it (``varmap.*`` steps). A WU-AAS-authored ``ConceptProblem.payload``
+# whose ``reference_solution`` carries a ``variable_mapping`` step therefore
+# reaches the graph-sim chain, and its ABSENCE from THIS map is what raised
+# ``KeyError: 'variable_mapping'`` in ``candidates_from_reference_solution`` /
+# ``build_reference_canonical`` (the F1c linear_motion crash). This map and the
+# mint map must stay in lock-step; ``_node_type_for_entry`` below degrades any
+# residual drift instead of crashing the whole grade.
 _ENTRY_TYPE_TO_NODE_TYPE: dict[str, NodeType] = {
     "equation": "equation",
     "condition": "condition",
     "simplification": "simplification",
     "procedure_step": "procedure_step",
     "definition": "definition",
+    "variable_mapping": "variable_mapping",
 }
+
+
+def _node_type_for_entry(entry_type: str) -> NodeType | None:
+    """Map a reference-step ``entry_type`` to its ontology ``NodeType``.
+
+    Returns ``None`` for an entry_type this map does not know (G4 tolerance /
+    defense-in-depth): the graph-sim chain DEGRADES that step — it is dropped
+    from the candidate set / reference graph — rather than raising ``KeyError``
+    and voiding the (already-committed) learner update. Callers that need to
+    SURFACE the degradation read :func:`unknown_reference_entry_types`."""
+    return _ENTRY_TYPE_TO_NODE_TYPE.get(entry_type)
+
+
+def unknown_reference_entry_types(problem: dict) -> tuple[str, ...]:
+    """The DISTINCT reference-step ``entry_type`` values that have no ontology
+    ``NodeType`` (sorted, deduped). Empty when every step is recognized.
+
+    The graph-sim chain reads this to record a structured degradation marker
+    (G4) when a minted payload carries an entry_type the resolver map does not
+    know — after the map/mint-map drift, that step is dropped and this names the
+    offending type(s) so paired analysis can see WHY the simulation degraded."""
+    seen: set[str] = set()
+    for step in problem.get("reference_solution", []):
+        entry_type = step.get("entry_type")
+        if entry_type is not None and _node_type_for_entry(entry_type) is None:
+            seen.add(str(entry_type))
+    return tuple(sorted(seen))
 
 # Node types the NLI tier attempts. Excludes `equation` (exact/symbolic/derived
 # already cover it) and `variable_mapping` (surface is a bare `term` — degenerate
@@ -103,7 +142,12 @@ def candidates_from_reference_solution(
     out: list[Candidate] = []
     for step in problem.get("reference_solution", []):
         entry_type = step["entry_type"]
-        node_type = _ENTRY_TYPE_TO_NODE_TYPE[entry_type]
+        node_type = _node_type_for_entry(entry_type)
+        if node_type is None:
+            # G4 tolerance: an entry_type outside the map degrades to NO candidate
+            # (the step is not a resolution target) rather than KeyError-ing the
+            # whole attempt. run_graph_simulation records the marker separately.
+            continue
         canonical_key = step["entity_key"]
         content = step.get("content", {}) or {}
         symbolic = content.get("symbolic") if node_type == "equation" else None

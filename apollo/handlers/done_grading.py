@@ -74,6 +74,7 @@ from apollo.ontology import KGGraph
 from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.resolution import resolve_attempt
+from apollo.resolution.candidates import unknown_reference_entry_types
 from apollo.resolution.embedding import CandidateEmbeddingCache, default_embedder
 from apollo.resolution.nli_config import NLI_DEVICE, active_nli_model, load_nli_params, nli_enabled
 from apollo.resolution.nli_resolution import NLIContext
@@ -212,6 +213,31 @@ _PENDING_ON_ERRORS = (
 )
 
 
+# G4 — the stable degradation reason code recorded when a minted problem's
+# reference_solution carries an entry_type the resolver/canonical map does not
+# recognize (map/mint-map drift). Named so paired analysis can key on it.
+GRAPH_SIM_DEGRADED_UNMAPPED_ENTRY_TYPES = "unmapped_reference_entry_types"
+
+
+@dataclass(frozen=True)
+class GraphSimDegradation:
+    """Structured marker recorded on :class:`ShadowGradeResult.degradation` when
+    the graph-sim chain could NOT fully simulate a problem and DEGRADED it
+    instead of raising.
+
+    G4 (variable_mapping contract): a WU-AAS-minted ``ConceptProblem.payload``
+    whose ``reference_solution`` carries an ``entry_type`` outside the
+    resolver/canonical node-type map is DEGRADED — those steps are dropped from
+    the candidate set + R_norm rather than KeyError-ing and voiding the already-
+    committed learner update. ``reason`` is a stable code
+    (:data:`GRAPH_SIM_DEGRADED_UNMAPPED_ENTRY_TYPES`); ``unmapped_entry_types``
+    are the distinct offending ``entry_type`` strings so paired analysis sees
+    exactly WHICH types the simulation could not consume."""
+
+    reason: str
+    unmapped_entry_types: tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class ShadowGradeResult:
     """The frozen handoff WU-4C2 (calibration metrics) and WU-5A (belief update)
@@ -244,6 +270,33 @@ class ShadowGradeResult:
     # node's evidence span. Populated where ``resolve_attempt(...)`` already
     # runs inside ``run_graph_simulation`` — carries NO new computation.
     resolution: ResolutionResult
+    # G4 — OPTIONAL degradation marker (``None`` = fully simulated, the common
+    # case). Non-None when the minted payload carried a reference entry_type the
+    # graph-sim node-type map could not consume, so those steps were dropped
+    # (never a KeyError). Defaulted so every existing construction stays valid.
+    degradation: GraphSimDegradation | None = None
+
+
+def build_graph_sim_degradation(problem_payload: dict) -> GraphSimDegradation | None:
+    """G4 — inspect a problem payload for reference steps the graph-sim chain had
+    to DEGRADE (an ``entry_type`` with no ontology ``NodeType``), and return a
+    structured marker (or ``None`` when every step is consumable — the common
+    case, byte-identical to pre-G4 for seeded/known-type problems).
+
+    Logs one structured ``graph_sim_degraded`` WARNING when it degrades, so the
+    map/mint-map drift is visible in ops even though the grade is NOT voided."""
+    unmapped = unknown_reference_entry_types(problem_payload)
+    if not unmapped:
+        return None
+    _LOG.warning(
+        "graph_sim_degraded reason=%s unmapped_entry_types=%s",
+        GRAPH_SIM_DEGRADED_UNMAPPED_ENTRY_TYPES,
+        ",".join(unmapped),
+    )
+    return GraphSimDegradation(
+        reason=GRAPH_SIM_DEGRADED_UNMAPPED_ENTRY_TYPES,
+        unmapped_entry_types=unmapped,
+    )
 
 
 def _now_iso() -> str:
@@ -306,6 +359,12 @@ async def run_graph_simulation(
         concept_id=sess.concept_id,  # type: ignore[arg-type]  # nullable col, bound at grade time
         problem_payload=problem_payload,
     )
+    # G4 — record a degradation marker if the (minted) payload carried a
+    # reference entry_type the graph-sim node-type map could not consume. The
+    # candidate/canonical builders already DEGRADED those steps (no KeyError);
+    # this surfaces WHICH types were dropped onto the frozen handoff so paired
+    # analysis can see the simulation was partial. ``None`` on the common path.
+    degradation = build_graph_sim_degradation(problem_payload)
     if not bank_applicable:
         _LOG.warning(
             "soundness_not_applicable_empty_bank",
@@ -442,6 +501,7 @@ async def run_graph_simulation(
             calibration=calibration,
             diagnostic=diagnostic,
             resolution=resolution,
+            degradation=degradation,
         )
     except ReferenceGraphInvalidError:
         # §6.6 in SHADOW v1: a bad reference blocks only the shadow run (the OLD
