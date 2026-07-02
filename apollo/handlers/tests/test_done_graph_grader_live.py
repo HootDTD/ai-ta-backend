@@ -45,6 +45,15 @@ def _clear_flags(monkeypatch):
     yield
 
 
+_FAKE_CANONICAL_PAYLOAD = {
+    "grader_used": GRADER_USED_GRAPH,
+    "scores": {"composite": 0.9},
+    "node_ledger": [],
+    "misconceptions": [],
+    "clarification_trace": [],
+}
+
+
 async def _run_with_flags(
     monkeypatch,
     *,
@@ -53,6 +62,7 @@ async def _run_with_flags(
     artifact: bool = False,
     shadow_return=None,
     shadow_side_effect=None,
+    write_artifacts_return=None,
 ):
     """Run handle_done with the shadow + A4-live (+ optional artifact) flags
     set, ``run_graph_simulation``/``build_rerun_inputs``/``write_artifacts``
@@ -70,7 +80,7 @@ async def _run_with_flags(
         shadow_mock = AsyncMock(side_effect=shadow_side_effect)
     else:
         shadow_mock = AsyncMock(return_value=shadow_return)
-    write_artifacts_mock = AsyncMock(return_value=None)
+    write_artifacts_mock = AsyncMock(return_value=write_artifacts_return)
 
     rerun = _rerun_inputs(problem_payload=payload)
 
@@ -219,6 +229,48 @@ async def test_live_on_abstained_shadow_falls_back_to_llm(monkeypatch):
     assert kwargs["shadow"] is shadow
     assert list(shadow.audited.abstention_reasons) == ["normalization_confidence"]
     assert kwargs["graph_failure"] is None
+
+
+async def test_scorecard_absent_when_artifact_flag_off(monkeypatch):
+    """Task B1: no artifact write ⇒ nothing to template over ⇒ no scorecard
+    key at all (not even ``None``)."""
+    out, _shadow_mock, write_artifacts_mock = await _run_with_flags(
+        monkeypatch, shadow=True, live="true", artifact=False, shadow_return=_shadow_result(),
+    )
+    write_artifacts_mock.assert_not_awaited()
+    assert "scorecard" not in out
+
+
+async def test_scorecard_attached_from_write_artifacts_return_value(monkeypatch):
+    """Task B1: when artifact capture is on, ``handle_done`` renders the
+    scorecard from EXACTLY the canonical payload ``write_artifacts`` returns
+    — no recomputation, no second lookup."""
+    out, _shadow_mock, write_artifacts_mock = await _run_with_flags(
+        monkeypatch, shadow=True, live="true", artifact=True,
+        shadow_return=_shadow_result(), write_artifacts_return=_FAKE_CANONICAL_PAYLOAD,
+    )
+    write_artifacts_mock.assert_awaited_once()
+    assert out["scorecard"] == {
+        "score_0_100": 90,
+        "band": "Strong",
+        "taught_well": [],
+        "missing_or_unclear": [],
+        "watch_out": [],
+        "clarifications": [],
+    }
+
+
+async def test_scorecard_absent_when_artifact_write_fails(monkeypatch):
+    """Task B1: ``write_artifacts`` returning ``None`` (its own failure
+    domain — see ``artifact_writer.write_artifacts``) means no scorecard is
+    attached rather than templating over a payload that never made it to
+    disk."""
+    out, _shadow_mock, write_artifacts_mock = await _run_with_flags(
+        monkeypatch, shadow=True, live="true", artifact=True,
+        shadow_return=_shadow_result(), write_artifacts_return=None,
+    )
+    write_artifacts_mock.assert_awaited_once()
+    assert "scorecard" not in out
 
 
 async def test_old_rubric_still_forwarded_to_shadow(monkeypatch):

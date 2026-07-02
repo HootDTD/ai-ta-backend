@@ -116,12 +116,20 @@ async def write_artifacts(
     served: str,
     graph_failure: str | None,
     latency_ms: int | None,
-) -> None:
+) -> dict | None:
     """Write the canonical (+ paired, when both grades exist) artifact rows for
     this Done-click. ``served`` is the ``grader_used`` value of the grade
     actually shown to the student (``"graph"`` or ``"llm_fallback"``) — Task
     A4 is the only caller that can pass ``"graph"``; this build always passes
     ``"llm_fallback"``.
+
+    Returns the CANONICAL artifact payload dict (the same shape persisted to
+    the ``canonical`` row) on success, so the caller can hand it straight to
+    ``apollo.projections.scorecard.render_scorecard`` (Task B1) without a
+    round-trip read of what was just written. Returns ``None`` when the write
+    failed (own failure domain below) — the caller renders no scorecard in
+    that case rather than templating over a payload that never made it to
+    disk.
 
     Own failure domain: ANY exception (payload build, DB write) is logged and
     swallowed. The artifact is telemetry — it must never cost a student their
@@ -177,6 +185,7 @@ async def write_artifacts(
         db.add_all(rows)
         await db.flush()
         await db.commit()
+        return canonical_payload
     except Exception:
         _LOG.exception("artifact_write_failed attempt_id=%s", int(attempt.id))
         # Leave the session usable for any caller code that runs after this
@@ -186,3 +195,4 @@ async def write_artifacts(
             await db.rollback()
         except Exception:  # pragma: no cover - defensive, rollback itself failing
             _LOG.exception("artifact_write_rollback_failed attempt_id=%s", int(attempt.id))
+        return None

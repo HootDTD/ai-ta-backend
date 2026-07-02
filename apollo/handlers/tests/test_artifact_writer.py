@@ -135,7 +135,7 @@ async def test_shadow_present_writes_canonical_graph_and_pair_llm(db_session):
     promoted; ``write_artifacts`` must already assign roles generically."""
     sess, attempt = await _seed_session_attempt(db_session)
 
-    await write_artifacts(
+    result = await write_artifacts(
         db_session,
         attempt=attempt,
         sess=sess,
@@ -146,6 +146,8 @@ async def test_shadow_present_writes_canonical_graph_and_pair_llm(db_session):
         graph_failure=None,
         latency_ms=123,
     )
+    assert result is not None
+    assert result["grader_used"] == GRADER_USED_GRAPH
 
     rows = (
         await db_session.execute(
@@ -293,7 +295,7 @@ async def test_flush_error_is_swallowed_and_never_propagates(db_session):
 
     with patch.object(db_session, "flush", new=AsyncMock(side_effect=RuntimeError("db down"))):
         # Must not raise.
-        await write_artifacts(
+        result = await write_artifacts(
             db_session,
             attempt=attempt,
             sess=sess,
@@ -304,6 +306,7 @@ async def test_flush_error_is_swallowed_and_never_propagates(db_session):
             graph_failure=None,
             latency_ms=None,
         )
+    assert result is None
 
     rows = (
         await db_session.execute(

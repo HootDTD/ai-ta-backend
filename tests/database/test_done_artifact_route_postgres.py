@@ -165,7 +165,7 @@ async def test_artifact_on_shadow_off_writes_one_llm_canonical_row(db_session, m
     )
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
 
-    await _run_done(
+    out = await _run_done(
         db_session, sess.id, monkeypatch,
         neo_patches=_neo_stubs(attempt.id), shadow_on=False, artifact_on=True,
     )
@@ -175,6 +175,14 @@ async def test_artifact_on_shadow_off_writes_one_llm_canonical_row(db_session, m
     assert rows[0].role == "canonical"
     assert rows[0].grader_used == "llm_fallback"
     assert rows[0].abstention["graph_failure"] is None
+
+    # Task B1 — artifact capture on ⇒ handle_done renders + attaches the
+    # student scorecard from the persisted canonical row's payload.
+    assert "scorecard" in out
+    assert set(out["scorecard"]) == {
+        "score_0_100", "band", "taught_well", "missing_or_unclear",
+        "watch_out", "clarifications",
+    }
 
 
 async def test_both_flags_on_writes_two_rows_canonical_llm_pair_graph(db_session, monkeypatch):
@@ -186,7 +194,7 @@ async def test_both_flags_on_writes_two_rows_canonical_llm_pair_graph(db_session
     )
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
 
-    await _run_done(
+    out = await _run_done(
         db_session, sess.id, monkeypatch,
         neo_patches=_neo_stubs(attempt.id), shadow_on=True, artifact_on=True,
     )
@@ -196,6 +204,12 @@ async def test_both_flags_on_writes_two_rows_canonical_llm_pair_graph(db_session
     assert set(by_role) == {"canonical", "pair"}
     assert by_role["canonical"].grader_used == "llm_fallback"
     assert by_role["pair"].grader_used == "graph"
+
+    # Task B1 — the scorecard renders from the CANONICAL (served) payload,
+    # i.e. the LLM row here, not the paired graph row.
+    assert "scorecard" in out
+    assert isinstance(out["scorecard"]["score_0_100"], int)
+    assert out["scorecard"]["band"] in {"Strong", "Proficient", "Developing", "Beginning"}
 
 
 async def test_shadow_on_artifact_off_writes_zero_rows(db_session, monkeypatch):
@@ -209,10 +223,12 @@ async def test_shadow_on_artifact_off_writes_zero_rows(db_session, monkeypatch):
     )
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
 
-    await _run_done(
+    out = await _run_done(
         db_session, sess.id, monkeypatch,
         neo_patches=_neo_stubs(attempt.id), shadow_on=True, artifact_on=False,
     )
 
     rows = await _artifact_rows(db_session, attempt.id)
     assert rows == []
+    # Task B1 — no artifact write ⇒ nothing to template a scorecard over.
+    assert "scorecard" not in out

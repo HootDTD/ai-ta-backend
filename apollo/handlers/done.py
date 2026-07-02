@@ -53,6 +53,7 @@ from apollo.persistence.models import (
 )
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.persistence.progress_repo import apply_xp
+from apollo.projections.scorecard import render_scorecard
 from apollo.schemas.problem import Problem
 
 _LOG = logging.getLogger(__name__)
@@ -528,9 +529,17 @@ async def handle_done(
     # (LIVE off, LIVE-on-but-abstained, or LIVE-on-with-a-caught exception).
     # `graph_failure` carries the any-exception fallback reason (LIVE only);
     # `None` in every other build state.
+    # Task B1 — student scorecard projection (spec §2). Additive
+    # `student_response["scorecard"]` key, attached only when artifact capture
+    # is on (there is nothing to template over otherwise): `write_artifacts`
+    # returns the CANONICAL payload it just persisted — the exact grade the
+    # student was served, graph or LLM — and `render_scorecard` is a pure
+    # template over it (no recomputation; same shape either way, spec §3
+    # step 3). A failed artifact write returns `None`, so no scorecard is
+    # attached rather than templating over a payload that was never durable.
     if _grading_artifact_enabled():
         artifact_latency_ms = int((time.monotonic() - _artifact_t0) * 1000)
-        await write_artifacts(
+        canonical_payload = await write_artifacts(
             db,
             attempt=attempt,
             sess=sess,
@@ -541,5 +550,7 @@ async def handle_done(
             graph_failure=graph_failure,
             latency_ms=artifact_latency_ms,
         )
+        if canonical_payload is not None:
+            student_response["scorecard"] = render_scorecard(canonical_payload)
 
     return student_response
