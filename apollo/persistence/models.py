@@ -542,6 +542,17 @@ class LearnerState(Base):
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 
+# Campaign-plan Task B3 / migration 035: the composite PK's leading column is
+# user_id, so a classroom-wide "every learner in this course" scan (the
+# mastery-heatmap query) cannot use it. This mirrors
+# ix_grading_artifacts_space_concept_time's shape for apollo_grading_artifacts.
+Index(
+    "ix_apollo_learner_state_space_entity",
+    LearnerState.search_space_id,
+    LearnerState.entity_id,
+)
+
+
 class MasteryEvent(Base):
     """Layer-3 append-only longitudinal evidence log AND refit corpus (spec
     §2/§3). attempt_id is ON DELETE SET NULL: the log outlives a deleted attempt.

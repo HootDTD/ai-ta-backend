@@ -17,7 +17,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.auth_deps import require_course_member, require_session_owner, require_user
+from apollo.auth_deps import (
+    require_course_member,
+    require_course_teacher,
+    require_session_owner,
+    require_user,
+)
 from apollo.errors import (
     CoverageGradingError,
     FilterRejectedError,
@@ -51,6 +56,11 @@ from apollo.handlers.negotiate import (
 from apollo.handlers.progress import handle_get_progress
 from apollo.hoot_bridge.session_init import init_session_from_hoot
 from apollo.persistence.neo4j_client import Neo4jClient
+from apollo.projections.classroom import (
+    DEFAULT_WINDOW_DAYS,
+    mastery_heatmap,
+    struggle_signals,
+)
 from apollo.provisioning.authored_sets.api import router as authored_sets_router
 from auth import AuthContext
 from database.session import get_db_session
@@ -273,6 +283,40 @@ async def negotiate_trace(
         neo=neo,
         session_id=session_id,
         entry_id=entry_id,
+    )
+
+
+# ----------------------------------------------------------------------
+# Campaign-plan Task B3 — teacher-facing classroom projections (spec §2):
+# pure read-side aggregation over apollo_learner_state / apollo_grading_
+# artifacts, no new inference. Teacher-gated (require_course_teacher) rather
+# than require_course_member -- these expose every student's state.
+# ----------------------------------------------------------------------
+
+
+@router.get("/teacher/classroom/{search_space_id}/heatmap")
+async def classroom_heatmap(
+    search_space_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    auth = await require_user(request)
+    await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
+    rows = await mastery_heatmap(db, search_space_id=search_space_id)
+    return {"rows": rows}
+
+
+@router.get("/teacher/classroom/{search_space_id}/struggles")
+async def classroom_struggles(
+    search_space_id: int,
+    request: Request,
+    window_days: int = DEFAULT_WINDOW_DAYS,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    auth = await require_user(request)
+    await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
+    return await struggle_signals(
+        db, search_space_id=search_space_id, window_days=window_days,
     )
 
 
