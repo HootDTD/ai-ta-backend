@@ -188,3 +188,48 @@ export APOLLO_NLI_PREWARM=1
 export HF_HOME=./.hf-cache
 uvicorn server:app --host 127.0.0.1 --port 8000
 ```
+
+## Config snapshot/freeze + run context (Task C3)
+
+`campaign/config.py::CampaignConfig` captures EVERY grading tunable that
+feeds a campaign attempt's composite score: rubric axis weights
+(`apollo.overseer.rubric.AXIS_WEIGHTS`), the letter-grade bands
+(`LETTER_BANDS`), the active NLI model + its tuned params
+(`load_nli_params()`), the §6.6 abstention thresholds
+(`apollo.grading.abstention.ABSTENTION_THRESHOLDS`), and the boolean feature
+flags that route an attempt down a different code path (clarification loop,
+autoprovisioning, graph-sim live/shadow, learner decay/janitor/negotiation,
+misconceptions, OLM invites, session personalization, structured scrape).
+
+`CampaignConfig.capture_live()` reads the current process env + code
+constants. `freeze(config, path)` writes a hash-stamped `config.json`
+(`config_sha` = sha256 of the canonical JSON snapshot); `load_frozen(path)`
+reloads it and raises `ValueError` if the file was tampered with (recomputed
+hash != stored hash).
+
+`campaign/runctx.py::RunContext.create(run_id, phase, out_root=...)` builds
+`campaign/out/<run_id>/` for one campaign run:
+
+- `config.json` — the frozen config (written on first `"tune"` create; left
+  untouched on a resumed tune run)
+- `attempts.jsonl` — append-only attempt log (created empty, never truncated
+  by a re-create, so resuming a run keeps prior attempts)
+- `artifacts/` — per-attempt artifact output directory
+
+Two phases:
+
+- `phase="tune"` freezes (or reuses) the live config for `run_id`.
+- `phase="gate"` REQUIRES a config already frozen by a prior tune run for the
+  same `run_id`, and calls `assert_live_matches_frozen` — if the live
+  environment (any `APOLLO_*` tunable) has drifted from what was frozen, it
+  raises `ConfigDivergedError` and refuses to run. This is the safety
+  contract: a gate run must execute against exactly the settings it was
+  calibrated against, never silently re-tuned settings.
+
+On success, `RunContext.create` also exports the frozen `config_sha` into
+`os.environ["APOLLO_CONFIG_SHA"]` so the campaign driver (Task D3) can stamp
+it into every artifact's `versions.weights_version` without needing a
+reference back to the `RunContext` object.
+
+Tests: `campaign/tests/test_config.py`, `campaign/tests/test_runctx.py` — no
+Docker required (pure dataclass/JSON/env logic). 100% line+branch coverage.
