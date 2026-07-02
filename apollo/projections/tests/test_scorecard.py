@@ -147,6 +147,30 @@ def test_missing_or_unclear_handles_no_key():
     assert missing == [{"key": None, "guidance": "Next time, explain this step"}]
 
 
+def test_missing_or_unclear_renders_missing_node_shape_with_null_evidence():
+    """Task 3 scorecard fix: a MISSING_NODE ledger row (``artifact_build.
+    _missing_ledger_entry`` — a reference node the student never mentioned)
+    has ``evidence_span``/``confidence`` explicitly ``None``, not ``""``/
+    ``0.0``. The scorecard template must still render readable guidance off
+    its (real, display-safe) ``canonical_key`` without choking on the
+    ``None`` fields it never reads for this block."""
+    art = _artifact(
+        node_ledger=[
+            {
+                "canonical_key": "continuity_equation",
+                "status": "unresolved",
+                "method": None,
+                "confidence": None,
+                "evidence_span": None,
+            },
+        ]
+    )
+    missing = render_scorecard(art)["missing_or_unclear"]
+    assert missing == [
+        {"key": "continuity_equation", "guidance": "Next time, explain continuity_equation"}
+    ]
+
+
 def test_watch_out_quotes_the_triggering_utterance():
     art = _artifact()
     watch_out = render_scorecard(art)["watch_out"]

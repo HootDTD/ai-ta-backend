@@ -16,10 +16,24 @@ findings ``persist_comparison_run`` writes), with the resolution METHOD looked
 up from ``shadow.resolution`` by matching ``ResolvedNode.resolved_key ==
 finding.canonical_key`` (the resolver is the only place that method lives — a
 ``Finding`` has no ``method`` field). An ``UNRESOLVED`` finding (a student
-utterance that matched nothing) earns one ``unresolved`` row. ``MISSING_NODE``
-findings (a reference node with ZERO student evidence — nothing was said) are
-deliberately excluded from the ledger: there is no utterance span to show, and
-they are already reflected in ``node_coverage``.
+utterance that matched nothing) earns one ``unresolved`` row keyed by the
+STUDENT node id (there is no reference key to show — the utterance matched no
+candidate).
+
+Scorecard hardening (campaign-plan Task 3, spec §2 "missing or unclear"):
+``MISSING_NODE`` findings (a reference node with ZERO student evidence —
+nothing was said) ALSO earn one ``unresolved`` row, keyed by the REFERENCE
+node's own display-safe ``canonical_key`` (``missing_finding`` already sets
+this from ``ref_node.canonical_key`` — never an internal student-side id) with
+``evidence_span=None`` (not ``""``) so a renderer can tell "never mentioned"
+apart from an ``UNRESOLVED`` utterance that carries a (possibly empty) surface
+span. Without this row, the scorecard's "missing or unclear" rubric block
+(``apollo.projections.scorecard._missing_or_unclear``) had literally nothing
+to show for a reference concept the student never touched at all — it is
+reflected in the ``node_coverage`` SCORE, but was invisible in the STUDENT-
+FACING ledger the scorecard renders from (spec §2: "nothing computed fresh" —
+the ledger has to carry it, since the scorecard cannot look at ``node_coverage``
+and reconstruct which node was missing).
 """
 
 from __future__ import annotations
@@ -91,12 +105,36 @@ def _unresolved_ledger_entry(finding: Finding) -> dict:
     }
 
 
+def _missing_ledger_entry(finding: Finding) -> dict:
+    """One node-ledger row for a ``MISSING_NODE`` finding (scorecard hardening,
+    campaign-plan Task 3): a reference node the student's transcript never
+    touched at all. Keyed by the REFERENCE node's own display-safe
+    ``canonical_key`` (never a student-side id — there is no student evidence
+    to key on). ``evidence_span`` and ``confidence`` are explicitly ``None``
+    (no utterance was ever produced, so there is nothing to quote and no
+    resolution was ever attempted) -- distinct from an ``UNRESOLVED`` row's
+    ``evidence_span=""``/``confidence=0.0``, which record a REAL (failed)
+    resolution attempt."""
+    return {
+        "canonical_key": finding.canonical_key,
+        "status": "unresolved",
+        "method": None,
+        "confidence": None,
+        "evidence_span": None,
+    }
+
+
 def build_node_ledger(
     findings: tuple[Finding, ...], resolution: ResolutionResult
 ) -> list[dict]:
     """The full node ledger (spec §1): one row per ``credited``/``misconception``/
     ``unresolved`` finding, in ``findings`` order (already deterministic —
-    ``GradeResult.findings`` is grouped-then-sorted, §6.4 step 8)."""
+    ``GradeResult.findings`` is grouped-then-sorted, §6.4 step 8). ``unresolved``
+    covers BOTH an audited ``UNRESOLVED`` student utterance and a ``MISSING_NODE``
+    reference node the student never mentioned (Task 3 scorecard hardening) --
+    the two are distinguished by ``canonical_key`` (student-side id vs. the
+    reference node's own key) and by ``evidence_span``/``confidence`` (``""``/
+    ``0.0`` for a real failed resolution vs. ``None`` for "never attempted")."""
     methods = _method_lookup(resolution)
     ledger: list[dict] = []
     for finding in findings:
@@ -104,6 +142,8 @@ def build_node_ledger(
             ledger.append(_node_ledger_entry(finding, methods))
         elif finding.kind == FindingKind.UNRESOLVED:
             ledger.append(_unresolved_ledger_entry(finding))
+        elif finding.kind == FindingKind.MISSING_NODE:
+            ledger.append(_missing_ledger_entry(finding))
     return ledger
 
 

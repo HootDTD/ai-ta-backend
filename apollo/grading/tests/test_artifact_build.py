@@ -146,16 +146,33 @@ def test_node_ledger_statuses_and_methods():
     assert misc["confidence"] == 0.80
     assert misc["evidence_span"] == "pressure always increases"
 
-    unresolved = [e for e in ledger if e["status"] == "unresolved"][0]
-    assert unresolved["method"] is None
-    assert unresolved["evidence_span"] == "gibberish"
+    # Two "unresolved" rows now: the real UNRESOLVED student utterance
+    # (student-side id, non-null evidence span) and the MISSING_NODE
+    # reference row (Task 3 scorecard fix) -- distinguish by canonical_key.
+    unresolved_rows = [e for e in ledger if e["status"] == "unresolved"]
+    assert len(unresolved_rows) == 2
+    utterance = next(e for e in unresolved_rows if e["canonical_key"] != "eq.b")
+    assert utterance["canonical_key"] == "n_x"
+    assert utterance["method"] is None
+    assert utterance["evidence_span"] == "gibberish"
+    assert utterance["confidence"] == 0.0
 
 
-def test_node_ledger_excludes_missing_node():
+def test_node_ledger_includes_missing_node_as_unresolved_with_reference_key():
+    """Scorecard fix (campaign-plan Task 3): a MISSING_NODE finding (a
+    reference node with ZERO student evidence) now earns an ``unresolved``
+    ledger row keyed by the REFERENCE node's own display-safe canonical_key
+    -- never an internal student-side id -- with ``evidence_span``/
+    ``confidence`` explicitly ``None`` (no utterance was ever produced, so
+    there is nothing to quote and no resolution was ever attempted)."""
     findings = _findings()
     ledger = build_node_ledger(findings, _resolution())
-    assert all(e["canonical_key"] != "eq.b" for e in ledger)
-    assert len(ledger) == 3
+    missing = next(e for e in ledger if e["canonical_key"] == "eq.b")
+    assert missing["status"] == "unresolved"
+    assert missing["method"] is None
+    assert missing["confidence"] is None
+    assert missing["evidence_span"] is None
+    assert len(ledger) == 4
 
 
 def test_edge_ledger_matched_and_missing():
