@@ -1,0 +1,27 @@
+{
+  "_provisional_note": "PROVISIONAL misconception bank for the linear_motion WU-AAS subject, authored ahead of the real mint (see the sibling problems/ file for the full rationale). Reconcile against the real bank once F2 mints this subject.",
+  "misconceptions": [
+    {
+      "key": "misc.forgets_half_factor",
+      "display_name": "Forgets the 1/2 factor in the position equation",
+      "description": "Computes distance as x = v0*t + a*t^2 instead of x = v0*t + (1/2)*a*t^2, doubling the displacement from constant acceleration.",
+      "opposes": "eq.kinematics_position",
+      "trigger_phrases": [
+        "distance is v0 times t plus a times t squared",
+        "no need for the one half",
+        "just multiply acceleration by time squared and add it"
+      ]
+    },
+    {
+      "key": "misc.ignores_constant_acceleration",
+      "display_name": "Assumes acceleration is not constant",
+      "description": "Treats the acceleration as changing over the interval (e.g. averaging or re-deriving it at each instant) instead of using the given constant rate directly in the kinematics equations.",
+      "opposes": "cond.constant_acceleration",
+      "trigger_phrases": [
+        "acceleration probably changes over the five seconds",
+        "we can't assume it stays at 2.0",
+        "the rate is only constant for part of the trip"
+      ]
+    }
+  ]
+}

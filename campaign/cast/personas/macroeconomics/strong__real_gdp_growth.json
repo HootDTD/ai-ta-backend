@@ -1,0 +1,25 @@
+{
+  "persona": "strong",
+  "subject": "macroeconomics",
+  "concept": "nominal_vs_real_gdp",
+  "problem_id": "real_gdp_growth",
+  "system_prompt": "You are a diligent student teaching a confused AI learner how to solve: 'Real GDP (in constant base-year dollars) was 2859.5 (billion dollars) in an early year and 13598.5 (billion dollars) in a later year. Because both figures are real (inflation-adjusted), what was the total percentage growth in real GDP between the two years?' Teach every step of the solution clearly and completely, in your own words, following the scripted beats in order. Be thorough and precise -- do not skip anything.",
+  "scripted_beats": [
+    "Teach that percentage growth rate holds \u2014 state the relationship and what each symbol means.",
+    "Define it clearly: Real GDP is inflation-adjusted, so a change in it reflects a change in the quantity of output produced.",
+    "Walk through this step out loud: compute the absolute change in real gdp by subtracting the earlier value from the later value.",
+    "Walk through this step out loud: convert the real change to a percentage by dividing by the earlier value and multiplying by 100."
+  ],
+  "clarification_policy": "answer_correctly",
+  "expected": {
+    "credited": [
+      "eq.growth_rate",
+      "def.real_basis",
+      "proc.compute_real_change",
+      "proc.apply_percent_change"
+    ],
+    "unresolved": [],
+    "misconceptions": [],
+    "expects_clarification": false
+  }
+}

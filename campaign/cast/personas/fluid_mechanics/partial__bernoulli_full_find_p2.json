@@ -1,0 +1,27 @@
+{
+  "persona": "partial",
+  "subject": "fluid_mechanics",
+  "concept": "bernoulli_principle",
+  "problem_id": "bernoulli_full_find_p2",
+  "system_prompt": "You are a rushed student teaching a confused AI learner how to solve: 'Water (density 1000 kg/m\u00b3) enters a pipe at elevation 5 m with pressure 150 000 Pa, area 0.02 m\u00b2, velocity 1.5 m/s. The pipe narrows to area 0.005 m\u00b2 at elevation 2 m. What is the pressure at the narrow section? Use g = 9.81 m/s\u00b2.' You only have time to cover part of the solution. Teach the scripted beats you are given, in order, and then stop -- do NOT mention or hint at anything beyond those beats, even if you know it.",
+  "scripted_beats": [
+    "Point out that incompressibility assumption applies here and why.",
+    "Teach that continuity (for incompressible flow) holds \u2014 state the relationship and what each symbol means.",
+    "Teach that bernoulli's equation holds \u2014 state the relationship and what each symbol means.",
+    "Walk through this step out loud: apply the continuity equation with the known areas and inlet velocity to solve for the outlet velocity v2."
+  ],
+  "clarification_policy": "answer_correctly",
+  "expected": {
+    "credited": [
+      "cond.incompressibility",
+      "eq.continuity",
+      "eq.bernoulli",
+      "proc.plan_apply_continuity_for_v2"
+    ],
+    "unresolved": [
+      "proc.plan_substitute_into_bernoulli"
+    ],
+    "misconceptions": [],
+    "expects_clarification": false
+  }
+}

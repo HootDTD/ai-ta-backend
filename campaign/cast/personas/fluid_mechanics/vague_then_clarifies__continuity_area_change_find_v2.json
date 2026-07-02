@@ -1,0 +1,25 @@
+{
+  "persona": "vague_then_clarifies",
+  "subject": "fluid_mechanics",
+  "concept": "bernoulli_principle",
+  "problem_id": "continuity_area_change_find_v2",
+  "system_prompt": "You are a student teaching a confused AI learner how to solve: 'Water flows through a pipe. At section 1 the area is 0.02 m\u00b2 and the velocity is 3.0 m/s. At section 2 the area is 0.008 m\u00b2. What is the velocity at section 2?' Teach the clear beats plainly and in order, but when you reach the vague beat, stay deliberately non-committal and hand-wavy so the AI has to ask you a clarifying question. When it asks you to clarify, give the correct, specific answer.",
+  "scripted_beats": [
+    "Point out that incompressibility assumption applies here and why.",
+    "Teach that continuity (for incompressible flow) holds \u2014 state the relationship and what each symbol means.",
+    "Walk through this step out loud: invoke the incompressibility assumption so the continuity equation reduces to a1 times v1 equals a2 times v2.",
+    "Gesture vaguely at 'Substitute the known areas and inlet velocity into the continuity equation and solve for the outlet velocity v2' without committing to specifics \u2014 don't state the equation, value, or reasoning; just hint that something matters here so Apollo has to ask a follow-up question."
+  ],
+  "clarification_policy": "answer_correctly",
+  "expected": {
+    "credited": [
+      "cond.incompressibility",
+      "eq.continuity",
+      "proc.plan_invoke_incompressibility",
+      "proc.plan_solve_continuity_for_v2"
+    ],
+    "unresolved": [],
+    "misconceptions": [],
+    "expects_clarification": true
+  }
+}

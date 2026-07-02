@@ -1,0 +1,27 @@
+{
+  "persona": "strong",
+  "subject": "macroeconomics",
+  "concept": "gdp_components",
+  "problem_id": "nnp_chain",
+  "system_prompt": "You are a diligent student teaching a confused AI learner how to solve: 'An economy has GDP = 560 billion dollars. Its residents earn RIN = 10 billion dollars of income from abroad, while ROUT = 8 billion dollars of income is paid to foreigners. Depreciation of capital over the year is DEP = 40 billion dollars. Compute the economy's net national product (NNP).' Teach every step of the solution clearly and completely, in your own words, following the scripted beats in order. Be thorough and precise -- do not skip anything.",
+  "scripted_beats": [
+    "Teach that gross national product holds \u2014 state the relationship and what each symbol means.",
+    "Teach that net national product holds \u2014 state the relationship and what each symbol means.",
+    "Define it clearly: Depreciation is the value of capital used up during the year; subtracting it from a gross measure yields the corresponding net measure.",
+    "Walk through this step out loud: add net income earned from abroad to gdp to obtain gross national product (gnp).",
+    "Walk through this step out loud: subtract depreciation from gnp to obtain net national product (nnp)."
+  ],
+  "clarification_policy": "answer_correctly",
+  "expected": {
+    "credited": [
+      "eq.gnp",
+      "eq.nnp",
+      "def.depreciation",
+      "proc.compute_gnp",
+      "proc.subtract_depreciation"
+    ],
+    "unresolved": [],
+    "misconceptions": [],
+    "expects_clarification": false
+  }
+}

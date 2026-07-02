@@ -1,0 +1,1103 @@
+{
+  "stage": "s1_reference_graph",
+  "passed": 160,
+  "total": 219,
+  "pass_rate": 0.730593607305936,
+  "verdicts": [
+    {
+      "item_id": "fluid_mechanics:node:concept.pressure",
+      "ok": true,
+      "reason": "Pressure is an essential concept in the problem since Bernoulli's equation, which is used to solve for P2, involves pressure terms and the problem's main goal is to find the pressure at section 2."
+    },
+    {
+      "item_id": "fluid_mechanics:node:concept.fluid_density",
+      "ok": true,
+      "reason": "Fluid Density is indeed a key concept in Bernoulli's equation problems and is used as a given value in the problem statement, supporting the solution process."
+    },
+    {
+      "item_id": "fluid_mechanics:node:concept.fluid_velocity",
+      "ok": true,
+      "reason": "The concept of fluid velocity is directly related to the given problem about water flow through a horizontal pipe. It involves calculations based on the continuity and Bernoulli equations, both of which involve fluid velocity at different sections of the pipe."
+    },
+    {
+      "item_id": "fluid_mechanics:node:concept.cross_sectional_area",
+      "ok": true,
+      "reason": "Cross-sectional area is a key variable in using the continuity equation, which is part of the solution to the problem of finding the pressure at section 2. Specifically, the area is used in the Continuity equation to solve for velocity v2, which is then used in the Bernoulli equation to find P2."
+    },
+    {
+      "item_id": "fluid_mechanics:node:concept.elevation",
+      "ok": false,
+      "reason": "The problem explicitly states that the pipe is horizontal and does not involve elevation or height differences. The entire calculation relies on the flow being at the same elevation throughout, negating elevation as a factor."
+    },
+    {
+      "item_id": "fluid_mechanics:node:concept.gravitational_acceleration",
+      "ok": false,
+      "reason": "The problem involves solving fluid flow through a horizontal pipe using Bernoulli's principle and continuity equation. Gravitational acceleration is not relevant because the problem specifies a horizontal pipe, meaning height changes are zero and gravity effects cancel out. Thus, adding gravitational acceleration as a concept is incorrect in this context."
+    },
+    {
+      "item_id": "fluid_mechanics:node:concept.kinetic_energy_density",
+      "ok": true,
+      "reason": "The concept of 'Kinetic Energy Density (\u00bd\u03c1v\u00b2)' is relevant to this problem, as it is a component of Bernoulli's equation used in the reference solution. In the horizontal pipe, the kinetic energy density terms (\u00bd\u03c1v\u00b2) are used to solve for pressures and velocities."
+    },
+    {
+      "item_id": "fluid_mechanics:node:concept.gravitational_potential_density",
+      "ok": false,
+      "reason": "The node represents 'Gravitational Potential Energy Density (\u03c1gh)', which is irrelevant to the given problem context. The problem involves a horizontal pipe with height terms canceling out, meaning gravitational potential energy is not a factor in the solution."
+    },
+    {
+      "item_id": "fluid_mechanics:node:concept.energy_conservation_fluid",
+      "ok": true,
+      "reason": "\"Energy Conservation (fluid context)\" is a valid concept that relates to Bernoulli's principle and the continuity equation, as the problem deals with applying these principles to determine pressure in a fluid system. The scope boundary of viscosity and friction losses is relevant as these factors can affect energy conservation in real fluid systems."
+    },
+    {
+      "item_id": "fluid_mechanics:node:concept.incompressibility_assumption",
+      "ok": true,
+      "reason": "The incompressibility assumption is a critical part of applying both the Continuity Equation and Bernoulli's Equation for incompressible flow problems, which are central to solving the given problem."
+    },
+    {
+      "item_id": "fluid_mechanics:node:concept.continuity_equation",
+      "ok": true,
+      "reason": "The continuity equation is a real and relevant step for solving the given problem, which involves fluid flow through a pipe with varying cross-sectional area. It is used to relate the flow velocities at different sections of the pipe."
+    },
+    {
+      "item_id": "fluid_mechanics:node:concept.bernoulli_principle",
+      "ok": true,
+      "reason": "Bernoulli's Principle is explicitly used in the problem's reference solution, specifically within the context of applying Bernoulli's equation to relate pressure and velocity changes in the pipe. Therefore, its inclusion as a concept node is accurate and relevant."
+    },
+    {
+      "item_id": "fluid_mechanics:node:concept.horizontal_flow_simplification",
+      "ok": true,
+      "reason": "The horizontal-flow simplification (h\u2081 = h\u2082) is a real and necessary step in the reference solution, used to simplify Bernoulli's equation when the pipe is horizontal and both sections are at the same height."
+    },
+    {
+      "item_id": "fluid_mechanics:node:concept.volumetric_flow_rate",
+      "ok": true,
+      "reason": "The concept of 'Volumetric Flow Rate (Q = Av)' is pertinent to the problem, as it deals with water flow through a pipe and velocity. Calculating flow rate is often involved in related fluid dynamics problems. Given the reference solutions, using or understanding the flow rate is relevant."
+    },
+    {
+      "item_id": "fluid_mechanics:node:var.P",
+      "ok": true,
+      "reason": "The variable 'pressure' (P) is an essential part of the solution being sought, as the problem specifically asks for the pressure at section 2. It is used in Bernoulli's equation to find the unknown pressure (P2) using given and derived data."
+    },
+    {
+      "item_id": "fluid_mechanics:node:var.rho",
+      "ok": true,
+      "reason": "The problem involves the flow of water in a pipe, which inherently requires consideration of the fluid's density. The fluid density is a necessary variable in both the Bernoulli equation and the continuity equation, which are used to determine the pressure and velocity changes between two sections of the pipe. Therefore, the inclusion of 'fluid density' as a node is valid and relevant to solving the problem."
+    },
+    {
+      "item_id": "fluid_mechanics:node:var.v",
+      "ok": true,
+      "reason": "The problem is to find the pressure at section 2 using Bernoulli's principle and continuity equation, both of which involve the fluid velocity. The reference solution specifically solves for velocities as part of applying these principles, making 'fluid velocity' a relevant and correct step of the solution."
+    },
+    {
+      "item_id": "fluid_mechanics:node:var.A",
+      "ok": true,
+      "reason": "The cross-sectional area is relevant because it is used in the continuity equation to relate fluid velocities at two different sections of the pipe. This is a required part of the problem-solving process, as we need to calculate the outlet velocity at section 2, which will then be used in Bernoulli\u2019s equation."
+    },
+    {
+      "item_id": "fluid_mechanics:node:var.h",
+      "ok": false,
+      "reason": "The node 'elevation / height' is related to 'h1' and 'h2', which are part of the Bernoulli equation as seen in the reference solution. However, this problem involves a horizontal pipe wherein the height terms cancel. Thus, 'elevation / height' ('h') is not central to solving for P2 under these conditions. The existence of 'h' in the node implies elevation is a key variable here, which is misleading because the problem ultimately doesn't utilize it due to the horizontal nature of the pipe."
+    },
+    {
+      "item_id": "fluid_mechanics:node:var.g",
+      "ok": true,
+      "reason": "Gravitational acceleration, represented by the symbol 'g', appears as a standard variable in Bernoulli's equation when considering fluid flow that includes elevation changes. It is relevant and correctly mentioned as part of the reference solution related to problems that involve such changes."
+    },
+    {
+      "item_id": "fluid_mechanics:node:var.Q",
+      "ok": true,
+      "reason": "The volumetric flow rate is indeed a relevant and correct step in solving the problem because it involves calculating the flow rate using the formula Q = A*v."
+    },
+    {
+      "item_id": "fluid_mechanics:node:var.q",
+      "ok": false,
+      "reason": "The node 'dynamic pressure' does not explicitly appear in the problem statement or the reference solution. While dynamic pressure is indeed related to fluid flow and can be part of Bernoulli's equation, it is not directly mentioned or calculated in the provided solution steps for this problem."
+    },
+    {
+      "item_id": "fluid_mechanics:node:eq.continuity",
+      "ok": true,
+      "reason": "The continuity equation node ('rho*A1*v1 - rho*A2*v2') is a correct and relevant part of the solution for the problem of finding the pressure at section 2 in a horizontal pipe, where it is necessary to determine the velocity at section 2 as part of applying Bernoulli's principle."
+    },
+    {
+      "item_id": "fluid_mechanics:node:cond.incompressibility",
+      "ok": true,
+      "reason": "The 'Incompressibility assumption' is a relevant and correct condition step in the solution for fluid flow problems involving the continuity equation and Bernoulli's principle, where it assumes the density of the fluid to be constant (incompressible flow). This assumption simplifies the use of these equations in the given problems."
+    },
+    {
+      "item_id": "fluid_mechanics:node:eq.bernoulli",
+      "ok": true,
+      "reason": "Bernoulli's equation is a correct component for solving problems involving fluid flow and pressure differences, such as the given problem of finding the pressure at a different section of a pipe."
+    },
+    {
+      "item_id": "fluid_mechanics:node:simp.horizontal_simplification",
+      "ok": true,
+      "reason": "The node accurately describes a simplification used in solving Bernoulli's equation for a horizontal pipe, where gravitational potential energy terms can be neglected if the height at both sections is equal."
+    },
+    {
+      "item_id": "fluid_mechanics:node:proc.plan_apply_continuity",
+      "ok": true,
+      "reason": "The node 'Apply the continuity equation to solve for the outlet velocity v2' is a correct step in the solution. It specifically addresses using known values of rho, A1, v1, and A2 in the continuity equation to solve for the unknown v2, which is necessary for applying Bernoulli's principle later."
+    },
+    {
+      "item_id": "fluid_mechanics:node:proc.plan_apply_horizontal_simplification",
+      "ok": true,
+      "reason": "The step 'Use the horizontal-pipe assumption to cancel the gravity terms in Bernoulli's equation' is a valid and distinct step in solving the problem. It involves recognizing that the pipe is horizontal, which justifies ignoring the gravitational potential energy terms in Bernoulli's equation. This is crucial for simplifying the equation to relate only pressures and velocities."
+    },
+    {
+      "item_id": "fluid_mechanics:node:proc.plan_solve_bernoulli_for_p2",
+      "ok": true,
+      "reason": "The node in question correctly describes substituting the known values, including the velocity v2, into the simplified Bernoulli equation to solve for pressure P2 at section 2, which is a necessary step in the given problem's solution."
+    },
+    {
+      "item_id": "fluid_mechanics:node:simp.equal_pressure_simplification",
+      "ok": true,
+      "reason": "The node accurately reflects a valid simplification in Bernoulli's equation when both ends of a system are open to the atmosphere, making the pressures equal and cancelling the pressure terms."
+    },
+    {
+      "item_id": "fluid_mechanics:node:proc.plan_apply_equal_pressure_simplification",
+      "ok": true,
+      "reason": "The node represents recognizing a simplification for Bernoulli's equation due to equal atmospheric pressures at both ends. This is valid based on the problem context and aligns with reference solution steps."
+    },
+    {
+      "item_id": "fluid_mechanics:node:proc.plan_set_v1_zero_and_solve_bernoulli",
+      "ok": true,
+      "reason": "The node 'Set the reservoir inlet velocity to zero and solve the simplified Bernoulli equation for the outlet velocity v2' is a correct step in the reference solution for the given problem 'bernoulli_height_change_find_v2'. It describes the step where the inlet velocity is set to zero and the simplified Bernoulli equation is solved for the outlet velocity v2. This matches the content and purpose as described in the reference solution."
+    },
+    {
+      "item_id": "fluid_mechanics:node:proc.plan_invoke_incompressibility",
+      "ok": true,
+      "reason": "The procedure 'Invoke the incompressibility assumption so the continuity equation reduces to A1 times v1 equals A2 times v2' is a real, correct step in solving the problem. It explains the simplification of the continuity equation for incompressible flow, which is crucial in calculating fluid dynamics in this context."
+    },
+    {
+      "item_id": "fluid_mechanics:node:proc.plan_solve_continuity_for_v2",
+      "ok": true,
+      "reason": "The node represents a valid procedure step in the process of solving for the outlet velocity using the continuity equation, as outlined in the reference solution."
+    },
+    {
+      "item_id": "fluid_mechanics:node:eq.flow_rate_definition",
+      "ok": true,
+      "reason": "The node 'Volumetric flow rate' correctly represents a fundamental step in calculating the volumetric flow rate using the formula Q = A * v. This is directly relevant to the problem of determining the volumetric flow rate given the area and velocity."
+    },
+    {
+      "item_id": "fluid_mechanics:node:proc.plan_apply_flow_rate_definition",
+      "ok": true,
+      "reason": "The node 'Evaluate the volumetric flow rate Q = A times v by substituting the given area and velocity' is a valid and necessary procedure step in solving the problem of finding the volumetric flow rate using the formula Q = A*v."
+    },
+    {
+      "item_id": "fluid_mechanics:node:proc.plan_apply_continuity_for_v2",
+      "ok": true,
+      "reason": "The procedure step 'Apply the continuity equation with the known areas and inlet velocity to solve for the outlet velocity v2' is a correct and necessary part of the solution. It involves using the given areas and inlet velocity along with the continuity equation to find the outlet velocity, which is a crucial step before applying Bernoulli's equation to solve for the pressure at section 2."
+    },
+    {
+      "item_id": "fluid_mechanics:node:proc.plan_substitute_into_bernoulli",
+      "ok": true,
+      "reason": "The node 'Substitute the known quantities into Bernoulli's equation and solve for the pressure P2 at the narrow section' is indeed a valid step in solving the given problem. It refers to substituting known parameters into Bernoulli's equation, which is required to solve for the unknown pressure at a section in a flow scenario, precisely fitting the context of the provided problem statement."
+    },
+    {
+      "item_id": "fluid_mechanics:node:def.pressure_velocity_tradeoff",
+      "ok": true,
+      "reason": "The node 'Pressure-velocity tradeoff' is valid as it describes a key concept used in applying Bernoulli's equation, which is relevant to solving the problem of finding pressure at section 2 in the given problem."
+    },
+    {
+      "item_id": "fluid_mechanics:node:misc.pressure_velocity_same_direction",
+      "ok": true,
+      "reason": "The assertion 'Pressure and velocity move together' is a common misconception that contradicts Bernoulli's principle, which states that in a streamline flow the static pressure decreases when the velocity increases."
+    },
+    {
+      "item_id": "fluid_mechanics:node:misc.density_ignored",
+      "ok": true,
+      "reason": "The node 'Density can be ignored' is a valid misconception that opposes the use of density in flow relations, specifically breaking the incompressibility assumption. This concept is important in the context of the Bernoulli equation, where density is crucial for mass conservation and energy changes in a fluid."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.kinetic_energy_density->concept.fluid_density",
+      "ok": false,
+      "reason": "The concept of kinetic energy density does not logically precede fluid density. Fluids have a fixed density characteristic, whereas kinetic energy density involves the velocity of the fluid. The calculation or consideration of kinetic energy density uses the fluid density, not the other way around."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.kinetic_energy_density->concept.fluid_velocity",
+      "ok": false,
+      "reason": "The edge suggests that 'kinetic_energy_density' comes before 'fluid_velocity', which is incorrect. In Bernoulli's equation application, the velocity at section 2 (fluid_velocity) is often determined by using the continuity equation. The concept of kinetic energy density typically follows once the velocity is known. In the given problem, continuity is used to find velocity, which is then used in Bernoulli's equation to find pressure. Thus, 'fluid_velocity' should precede 'kinetic_energy_density', not the other way around."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.gravitational_potential_density->concept.fluid_density",
+      "ok": false,
+      "reason": "The edge is labeled as \"PRECEDES\" from \"gravitational_potential_density\" to \"fluid_density\", but these concepts are not present in the context of the problem or solution. The steps of the reference solution focus on continuity and Bernoulli's equation, not on specific transitions between gravitational potential and fluid density. Moreover, fluid density is typically a constant value provided at the start, independent of potential-related steps."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.gravitational_potential_density->concept.gravitational_acceleration",
+      "ok": false,
+      "reason": "The edge from 'gravitational_potential_density' to 'gravitational_acceleration' with a 'PRECEDES' relationship appears incorrect based on the reference solution content. The problem is about Bernoulli's principle and continuity in a horizontal pipe, not directly involving gravitational potential density leading to gravitational acceleration."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.gravitational_potential_density->concept.elevation",
+      "ok": false,
+      "reason": "Gravitational potential density and elevation refer to concepts relevant to potential energy in the context of Bernoulli's equation. However, the given problem specifically addresses a horizontal pipe problem, where the gravitational potential terms cancel due to elevation being constant. As such, gravitational potential density does not precede elevation in solving this problem since the elevations don't influence the solution directly due to the simplification made for a horizontal pipe. Therefore, this edge does not reflect a necessary precedent relationship in the problem context."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.energy_conservation_fluid->concept.kinetic_energy_density",
+      "ok": true,
+      "reason": "The edge 'concept.energy_conservation_fluid PRECEDES concept.kinetic_energy_density' correctly reflects the logical progression from applying the principle of energy conservation in fluid dynamics (Bernoulli's equation) to determining/computing kinetic energy density as it relates to velocity, which is part of the Bernoulli equation analysis in the reference solution steps."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.energy_conservation_fluid->concept.gravitational_potential_density",
+      "ok": false,
+      "reason": "The node 'concept.energy_conservation_fluid' is not explicitly mentioned in the reference solution for the problem, so we cannot justify that it precedes 'concept.gravitational_potential_density'. The reference solution deals with Bernoulli's principle and concepts related to it, like conservation of energy in fluid flow, but does not explicitly connect these concepts in the order suggested by the edge 'PRECEDES'. The graph might be inferring a relationship that is not directly stated in the solution steps."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.energy_conservation_fluid->concept.pressure",
+      "ok": false,
+      "reason": "The edge from 'concept.energy_conservation_fluid' to 'concept.pressure' implies that energy conservation in fluids specifically precedes pressure in solving the problem. However, the problem and corresponding solution primarily focus on the application of Bernoulli's equation, continuity equation, and horizontal simplification, rather than a broad concept of energy conservation leading directly to pressure. The solution steps do not explicitly include a separate treatment or emphasis on energy conservation fluid leading to pressure apart from Bernoulli's application."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.continuity_equation->concept.fluid_velocity",
+      "ok": true,
+      "reason": "The continuity equation is used to find the fluid velocity at section 2, which is a necessary step before using Bernoulli's equation to find pressure at that section. Thus, the continuity equation precedes finding the fluid velocity."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.continuity_equation->concept.cross_sectional_area",
+      "ok": true,
+      "reason": "The continuity equation is used to solve for the outlet velocity, which requires using the cross-sectional areas, confirming that the continuity equation step logically precedes the consideration of cross-sectional area changes."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.continuity_equation->concept.incompressibility_assumption",
+      "ok": false,
+      "reason": "The edge claims that the 'continuity_equation' concept PRECEDES the 'incompressibility_assumption' concept. However, the reference solution indicates the assumption of incompressibility is explicitly defined before the application of the continuity equation. The incompressibility assumption typically justifies the use of the continuity equation for incompressible flow, meaning 'incompressibility_assumption' should precede 'continuity_equation', not the other way around."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.bernoulli_principle->concept.energy_conservation_fluid",
+      "ok": true,
+      "reason": "The Bernoulli principle is intrinsically related to energy conservation in fluid dynamics. Bernoulli's equation itself derives from the principle of conservation of energy for flowing fluids, making the relationship appropriate and correct."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.bernoulli_principle->concept.incompressibility_assumption",
+      "ok": false,
+      "reason": "The node 'concept.incompressibility_assumption' does not logically follow from the node 'concept.bernoulli_principle'. Instead, the concept of incompressibility is typically assumed as a prerequisite to applying Bernoulli's principle, not a concept that follows from it."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.horizontal_flow_simplification->concept.bernoulli_principle",
+      "ok": true,
+      "reason": "The graph edge between 'horizontal_flow_simplification' and 'bernoulli_principle' is valid because removing gravity terms (horizontal flow simplification) is a step that precedes using Bernoulli's equation for calculations, which aligns with how Bernoulli's principle is applied in horizontally oriented problems."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.volumetric_flow_rate->concept.fluid_velocity",
+      "ok": true,
+      "reason": "The volumetric flow rate determines the fluid velocity since continuity implies A1*v1 = A2*v2; given a constant flow rate, understanding one end's velocity affects the other."
+    },
+    {
+      "item_id": "fluid_mechanics:edge:PRECEDES:concept.volumetric_flow_rate->concept.cross_sectional_area",
+      "ok": false,
+      "reason": "The edge from 'volumetric_flow_rate' to 'cross_sectional_area' is incorrect given the problem context. The problem and solution focus on pressure and velocity in a horizontal pipe using Bernoulli's and continuity equations, not on calculating volumetric flow rate, which would involve cross-sectional area and velocity directly. Hence, relating 'volumetric_flow_rate' to 'cross_sectional_area' is not relevant to this specific problem or its solution process."
+    },
+    {
+      "item_id": "macroeconomics:node:var.GNP",
+      "ok": true,
+      "reason": "The node 'gross national product' (GNP) is a correct step in the reference solution for the problem that asks to compute net national product. GNP is an intermediate value in calculating NNP in the given problem."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.consumption",
+      "ok": true,
+      "reason": "The node 'Consumption (C)' is a real and correct step of the solution for calculating GDP using the expenditure approach, as consumption (C) is one of the components of GDP in the equation C + INV + G + NX."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.investment",
+      "ok": true,
+      "reason": "The concept of 'Investment (INV)' is a real and correct step of the solution. It is mentioned as one of the components in the expenditure approach to calculating GDP, appearing explicitly as 'INV' in the provided reference solution for problem 'gdp_identity'."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.government_purchases",
+      "ok": true,
+      "reason": "'Government Purchases (G)' is a valid and essential component in calculating GDP using the expenditure approach. It is a real and correct step in the reference solution for this problem."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.exports",
+      "ok": true,
+      "reason": "Exports (X) is a correct and necessary concept for determining net exports, which is part of the solution to the problem of calculating GDP using the expenditure approach."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.imports",
+      "ok": true,
+      "reason": "'Imports (M)' is a correct and relevant step in the reference solution. It is an essential component of the net exports calculation, which is a part of the GDP expenditure approach."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.net_exports",
+      "ok": true,
+      "reason": "\"Net Exports (NX = X - M)\" is a correct step within the solution for the given problem. Net exports are part of the GDP calculation according to the expenditure approach, and calculating net exports accurately is necessary for using them in determining GDP."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.final_goods_only",
+      "ok": true,
+      "reason": "The 'Final-goods-only rule' is a real concept relevant to the solution. It describes the principle that only final goods and services are counted in GDP, excluding intermediate goods, transfer payments, and used goods. This aligns with the problem's instruction to count only final goods and services in GDP calculation."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.gdp_expenditure",
+      "ok": true,
+      "reason": "The node \"GDP Expenditure Identity (C + INV + G + NX)\" accurately reflects a genuine concept discussed in the solution's step 2, where the GDP is calculated using the expenditure components (C, INV, G, NX). This concept correctly corresponds to part of the reference solution, making it a real and correct step in solving for GDP using the expenditure approach."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.income_from_abroad",
+      "ok": true,
+      "reason": "The node pertains to the calculation of Net Income from Abroad, which is necessary in the computation of GNP from GDP as mentioned in the third problem of the reference solutions."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.gnp",
+      "ok": true,
+      "reason": "The node 'Gross National Product (GNP)' is relevant and accurate as it is a real concept related to the problem involving the computation of GNP from GDP and net income from abroad, as shown in the reference solution for the 'nnp_chain' problem."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.depreciation",
+      "ok": true,
+      "reason": "The concept of 'Depreciation (DEP)' is relevant and correctly included in the context of calculating NNP, which depends on subtracting depreciation from GNP."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.nnp",
+      "ok": true,
+      "reason": "The node 'Net National Product (NNP = GNP - DEP)' is a real and correct step relevant to one of the provided problems ('nnp_chain'). It defines the equation for calculating NNP, which is relevant to that problem."
+    },
+    {
+      "item_id": "macroeconomics:node:var.GDP",
+      "ok": true,
+      "reason": "\"Gross domestic product (total final output produced within the country)\" is a valid node because it represents the target unknown (GDP) being solved for in the problem using the expenditure approach."
+    },
+    {
+      "item_id": "macroeconomics:node:var.C",
+      "ok": true,
+      "reason": "The variable 'personal consumption expenditure' represented by 'C' is a valid and important component in the calculation of GDP using the expenditure approach. It is clearly part of the given problem statement, and it is used in the reference solution to calculate GDP."
+    },
+    {
+      "item_id": "macroeconomics:node:var.INV",
+      "ok": true,
+      "reason": "The variable 'gross private domestic investment', symbolized as 'INV', is correctly part of the GDP expenditure formula C + INV + G + NX, which is used to compute GDP in the provided reference solution."
+    },
+    {
+      "item_id": "macroeconomics:node:var.G",
+      "ok": true,
+      "reason": "The node 'government purchases of goods and services' represented by 'G' is indeed a variable in the GDP expenditure identity reference solution. It is used as one of the components of GDP calculation, as specified in the problem statement and solution."
+    },
+    {
+      "item_id": "macroeconomics:node:var.X",
+      "ok": true,
+      "reason": "The variable 'exports' is indeed part of the given values needed to solve the problem using the GDP expenditure approach, where exports (X) and imports (M) are used to calculate net exports (NX), an essential component in computing GDP."
+    },
+    {
+      "item_id": "macroeconomics:node:var.M",
+      "ok": true,
+      "reason": "The variable 'imports' (M) is a given value in the problem statement and is used in the calculation for net exports (NX), which is part of the solution."
+    },
+    {
+      "item_id": "macroeconomics:node:var.NX",
+      "ok": true,
+      "reason": "The node 'net exports (exports minus imports)' is a correct and relevant step in determining GDP through the expenditure approach. It represents the net export calculation, which is a component of GDP computation."
+    },
+    {
+      "item_id": "macroeconomics:node:var.NNP",
+      "ok": true,
+      "reason": "Net national product (NNP) is relevant to the problem 'nnp_chain', where the task is to compute the economy's NNP. It is a key variable in this context."
+    },
+    {
+      "item_id": "macroeconomics:node:var.DEP",
+      "ok": true,
+      "reason": "The node 'depreciation (capital consumption allowance)' is a valid component related to the computation of NNP from GNP as described in the 'nnp_chain' problem. Since the problem involves computing net national product (NNP), the use of depreciation (DEP) is relevant and correctly included in the solution, as it is explicitly mentioned that depreciation is to be subtracted from GNP to obtain NNP."
+    },
+    {
+      "item_id": "macroeconomics:node:var.RIN",
+      "ok": true,
+      "reason": "The node 'income earned by domestic residents from abroad' (RIN) is a valid and necessary component for calculating Gross National Product (GNP) as described in the problem 'nnp_chain'. The income from abroad needs to be added to GDP, which is relevant to the problem's solution."
+    },
+    {
+      "item_id": "macroeconomics:node:var.ROUT",
+      "ok": true,
+      "reason": "The node 'income paid to foreigners' with symbol 'ROUT' is a correct step in the solution. It is used in the calculation of Gross National Product (GNP) in the reference solution for the 'nnp_chain' problem, where ROUT is part of the equation to convert GDP to GNP."
+    },
+    {
+      "item_id": "macroeconomics:node:eq.net_exports",
+      "ok": false,
+      "reason": "The node 'Net exports definition' with the symbolic representation 'NX - (X - M)' is incorrect; the correct equation for net exports should be NX = X - M, not NX - (X - M). This represents a misunderstanding of the definition of net exports."
+    },
+    {
+      "item_id": "macroeconomics:node:eq.gdp_expenditure",
+      "ok": true,
+      "reason": "The node 'GDP expenditure identity' is a correct and necessary component of the reference solution for calculating GDP using the expenditure approach. It aligns with the problem's requirement to find GDP by summing consumption, investment, government spending, and net exports."
+    },
+    {
+      "item_id": "macroeconomics:node:cond.final_goods_only",
+      "ok": true,
+      "reason": "The node 'Final goods and services only' is a valid condition that ensures only final goods and services are counted in GDP. It aligns with the problem statement's instruction to 'only final goods and services are counted.' Therefore, it is a correct step in the solution."
+    },
+    {
+      "item_id": "macroeconomics:node:proc.compute_net_exports",
+      "ok": true,
+      "reason": "The node 'Compute net exports (the trade balance) by subtracting imports from exports' correctly corresponds to one of the procedure steps in the reference solution, specifically step 4, where net exports are calculated as the difference between exports (X) and imports (M)."
+    },
+    {
+      "item_id": "macroeconomics:node:proc.sum_components",
+      "ok": true,
+      "reason": "The node 'Sum the four expenditure components -- consumption, investment, government purchases, and net exports -- to obtain GDP' is a correct part of the solution as it outlines the procedure to calculate GDP using the given components in accordance with the expenditure approach detailed in the problem statement."
+    },
+    {
+      "item_id": "macroeconomics:node:cond.trade_deficit",
+      "ok": true,
+      "reason": "The 'Trade deficit condition' node is a valid part of solving the problem related to determining whether the economy runs a trade surplus or deficit based on the relationship of imports and exports. This condition directly relates to understanding the context of net exports being negative when imports exceed exports, which is necessary to answer the problem."
+    },
+    {
+      "item_id": "macroeconomics:node:proc.subtract_imports",
+      "ok": true,
+      "reason": "The step 'Compute net exports (the trade balance) by subtracting imports from exports, then read off the sign' accurately describes a necessary step in calculating net exports, which is crucial for determining the trade balance and whether it results in a trade surplus or deficit."
+    },
+    {
+      "item_id": "macroeconomics:node:eq.gnp",
+      "ok": true,
+      "reason": "The node represents an equation for Gross National Product (GNP) in terms of GDP and net income from abroad, which is relevant to the 'nnp_chain' problem. It is an essential part of converting GDP into GNP, which is a precursor step in the solution to compute Net National Product (NNP)."
+    },
+    {
+      "item_id": "macroeconomics:node:eq.nnp",
+      "ok": true,
+      "reason": "The node 'Net national product' with the equation 'NNP = GNP - DEP' is a valid and correct step in the solution to the problem about computing NNP ('nnp_chain'). It uses GNP derived earlier and subtracts depreciation, which is the right approach for calculating NNP."
+    },
+    {
+      "item_id": "macroeconomics:node:def.depreciation",
+      "ok": true,
+      "reason": "The node provides a definition of depreciation, explaining that it represents the value of capital used up during the year. This is subtracted from a gross measure to yield the corresponding net measure, which fits the context of the provided reference solution where depreciation is subtracted from GNP to obtain NNP. Therefore, it is a real and applicable step in the solution to the problem of computing NNP."
+    },
+    {
+      "item_id": "macroeconomics:node:proc.compute_gnp",
+      "ok": true,
+      "reason": "The node represents a valid procedure step in the solution to compute gross national product (GNP) by adding net income earned from abroad to GDP. This step is required for the problem 'nnp_chain' as outlined in its reference solution, particularly in step 4."
+    },
+    {
+      "item_id": "macroeconomics:node:proc.subtract_depreciation",
+      "ok": true,
+      "reason": "The procedure 'Subtract depreciation from GNP to obtain net national product (NNP)' is a valid step in the solution for the problem 'nnp_chain'. This step subtracts depreciation (DEP) from gross national product (GNP) to obtain net national product (NNP), which aligns with the calculation needed to derive the NNP."
+    },
+    {
+      "item_id": "macroeconomics:node:misc.includes_transfers",
+      "ok": true,
+      "reason": "The node 'Counts transfers and used goods in GDP' is relevant to explaining a common misconception relevant to GDP calculation, which is directly applicable to the given problem statement. The problem emphasizes that only final goods and services are counted in GDP calculations, which implies excluding transfer payments and used goods."
+    },
+    {
+      "item_id": "macroeconomics:node:misc.gross_for_net",
+      "ok": false,
+      "reason": "The node 'Uses gross instead of net (forgets depreciation)' represents a misconception related to the misunderstanding of gross and net measures, specifically forgetting to subtract depreciation. This is not part of the reference solution for 'gdp_identity' which focuses solely on calculating GDP using the expenditure approach and does not involve depreciation concepts."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.gross_domestic_product",
+      "ok": true,
+      "reason": "The node 'Gross Domestic Product' is relevant and correctly part of the solution, as the problem involves calculating GDP using the expenditure approach."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.nominal_gdp",
+      "ok": false,
+      "reason": "Nominal GDP is not explicitly mentioned in the problem statement, and it doesn't appear in any solution steps. The problem deals with GDP calculation using the expenditure approach, but it focuses on real GDP or net national products, not nominal GDP directly. Hence, the node 'Nominal GDP' seems unrelated to the solution path."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.price_index",
+      "ok": false,
+      "reason": "The node 'Price Index' is not relevant to the solution of the given problem about computing GDP using the expenditure approach. The problem and its solution do not involve any calculations related to a price index."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.base_year",
+      "ok": false,
+      "reason": "The concept 'Base Year' is not relevant to the problem of calculating GDP using the expenditure approach. The problem does not involve any historical comparison or deflation that would require knowledge of a base year for price adjustment purposes."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.gdp_deflator",
+      "ok": true,
+      "reason": "The 'GDP Deflator' is a legitimate concept in economics that relates to calculating real GDP using nominal GDP and a deflator. It is relevant to problems involving the conversion between nominal and real GDP figures, such as the problem provided in 'real_gdp_from_deflator'. This node fits within the scope of the solution, which involves using the GDP deflator to find the real GDP in base-year dollars. Additionally, 'GDP Deflator' is explicitly referenced in the problem solution related to the nominal vs real GDP."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.real_gdp",
+      "ok": true,
+      "reason": "The node 'Real GDP' is relevant to the solution process for calculating real GDP using the GDP deflator, as discussed in the problem 'real_gdp_from_deflator'. It is a valid concept node connected to the procedural steps of the solution."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.percentage_change",
+      "ok": false,
+      "reason": "The node 'Percentage Change' does not appear in the reference solution for the problem statement provided. The problem seems focused on GDP calculation and components, which does not directly involve percentage change calculations according to the reference solution steps listed."
+    },
+    {
+      "item_id": "macroeconomics:node:concept.real_gdp_growth",
+      "ok": false,
+      "reason": "The node 'Real GDP Growth Rate' is not relevant to the specific GDP calculation problem presented. It seems to pertain to a different problem about calculating GDP growth, not the GDP expenditure identity problem at hand."
+    },
+    {
+      "item_id": "macroeconomics:node:var.nomGDP",
+      "ok": true,
+      "reason": "The node 'nominal GDP (output valued at current-year prices)' is a real, correct variable in the context provided. The problem asks for the real GDP in certain conditions, so nominal GDP is a relevant starting point for this calculation. In the problem 'real_gdp_from_deflator', nominal GDP is used as a component to calculate real GDP using the GDP deflator definition."
+    },
+    {
+      "item_id": "macroeconomics:node:var.realGDP",
+      "ok": true,
+      "reason": "Real GDP is discussed as part of the problem when calculating GDP adjusted for inflation, which reflects real GDP (valued at constant base-year prices)."
+    },
+    {
+      "item_id": "macroeconomics:node:var.deflator",
+      "ok": false,
+      "reason": "The node 'GDP deflator (price index, base year = 100)' does not appear in the reference solution. The problem is focused on computing GDP using the expenditure approach, which does not involve the GDP deflator or any conversion between nominal and real GDP. Therefore, the presence of this node in the solution is incorrect for the given problem context."
+    },
+    {
+      "item_id": "macroeconomics:node:var.PI",
+      "ok": false,
+      "reason": "The node \"price index quoted for the year\" does not appear to be a relevant or necessary step in any part of the reference solution for the GDP problems presented. It seems out of place since the problems and solutions focus on GDP and its components rather than price indices or deflators used in real GDP calculations. This node might be relevant in a context involving deflators or real versus nominal GDP, but not here."
+    },
+    {
+      "item_id": "macroeconomics:node:var.growth",
+      "ok": true,
+      "reason": "The 'percentage growth rate of real GDP' is a valid variable needed to solve the problem of calculating the total percentage growth in real GDP. It directly relates to the target unknown in the problem 'real_gdp_growth'."
+    },
+    {
+      "item_id": "macroeconomics:node:var.g1",
+      "ok": true,
+      "reason": "The node 'real GDP in the earlier year' with symbol 'g1' is a valid variable in the problem context, as it refers to the initial real GDP value needed to calculate the percentage growth of real GDP in the given years."
+    },
+    {
+      "item_id": "macroeconomics:node:var.g2",
+      "ok": true,
+      "reason": "The node 'real GDP in the later year' with symbol 'g2' is relevant to the problem solution which involves calculating the percentage growth in real GDP between two years. The given variable 'g2' is part of the formula used to determine this growth."
+    },
+    {
+      "item_id": "macroeconomics:node:eq.gdp_deflator",
+      "ok": true,
+      "reason": "The node 'GDP deflator definition' is accurate and relevant to the problem concerning the calculation of real GDP using the GDP deflator. This equation is essential for transforming nominal GDP into real GDP, which is the core task in the 'real_gdp_from_deflator' problem context."
+    },
+    {
+      "item_id": "macroeconomics:node:simp.deflator_is_price_index",
+      "ok": true,
+      "reason": "The node 'Treat the quoted price index as the GDP deflator so the deflator definition can be solved for real GDP' is a correct and meaningful step in the process of solving the real GDP from the GDP deflator. The price index is considered as the GDP deflator which allows us to use the deflator equation to solve for real GDP as indicated in the problem related to nominal vs real GDP calculation."
+    },
+    {
+      "item_id": "macroeconomics:node:proc.rearrange_for_real_gdp",
+      "ok": true,
+      "reason": "The step about rearranging the GDP deflator definition and substituting the given values is accurate for calculating real GDP from nominal GDP and the deflator. It is consistent with the reference solution provided for the given problem."
+    },
+    {
+      "item_id": "macroeconomics:node:eq.growth_rate",
+      "ok": true,
+      "reason": "The node 'Percentage growth rate' is a real, correct step of the fourth problem's reference solution (id: 'real_gdp_growth'). It defines the equation used to calculate the percentage growth rate between two years using given GDP values."
+    },
+    {
+      "item_id": "macroeconomics:node:def.real_basis",
+      "ok": true,
+      "reason": "The provided node contains a valid definition explaining that real GDP is adjusted for inflation, so changes in it reflect changes in output quantity, not price level. This is relevant in understanding real GDP calculations, especially in the context of the 'real_gdp_from_deflator' and 'real_gdp_growth' problem components."
+    },
+    {
+      "item_id": "macroeconomics:node:proc.compute_real_change",
+      "ok": true,
+      "reason": "The node 'Compute the absolute change in real GDP by subtracting the earlier value from the later value' is a correct step of the reference solution for the problem regarding computing the total percentage growth in real GDP. This is indeed a necessary step in the procedure as described in the reference solution."
+    },
+    {
+      "item_id": "macroeconomics:node:proc.apply_percent_change",
+      "ok": true,
+      "reason": "The node 'Convert the real change to a percentage by dividing by the earlier value and multiplying by 100' describes the correct step in calculating the percentage growth of real GDP. This is a procedure evident in calculating percentage change where you take the absolute change and express it as a percentage of the initial value."
+    },
+    {
+      "item_id": "macroeconomics:node:misc.nominal_for_real",
+      "ok": true,
+      "reason": "The node addresses a common misconception relevant for problems involving nominal and real GDP comparison, which is the context of at least some of the problems provided (specifically, the real_gdp_from_deflator problem). The misconception directly relates to misunderstanding the distinction between nominal and real GDP, which is crucial to correctly solving such problems."
+    },
+    {
+      "item_id": "macroeconomics:node:misc.deflate_wrong_direction",
+      "ok": true,
+      "reason": "The misconception 'Deflates in the wrong direction' is relevant to the solution's discussion on GDP deflator and real GDP, specifically the transformation and calculation of real GDP using the deflator."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.net_exports->concept.exports",
+      "ok": false,
+      "reason": "In the context of the problem, net exports (X - M) must be computed first to determine the value of net exports, which is then used as part of the GDP calculation. Thus, the accurate sequence is that 'exports' and 'imports' are inputs to 'compute net exports.' Therefore, 'concept.net_exports' cannot logically precede 'concept.exports.'"
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.net_exports->concept.imports",
+      "ok": false,
+      "reason": "\"net_exports\" and \"imports\" are not directly linked in terms of conceptual dependency. The concept of net exports involves both exports and imports, but the relationship between the concepts of 'net exports' and 'imports' specifically as 'PRECEDES' is incorrect without involving exports as well."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.gdp_expenditure->concept.consumption",
+      "ok": false,
+      "reason": "The edge 'concept.gdp_expenditure PRECEDES concept.consumption' is invalid in the context of determining GDP using the expenditure approach. The GDP expenditure equation includes consumption (C) as a component, but the formulation or consideration of GDP using the expenditure identity (GDP = C + I + G + NX) does not logically precede the definition or identification of consumption. The concept of consumption is one of the starting components and is used in GDP calculations, rather than being something inferred or considered only after the GDP expenditure identity is formed."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.gdp_expenditure->concept.investment",
+      "ok": false,
+      "reason": "The edge 'concept.gdp_expenditure PRECEDES concept.investment' does not appear valid as the reference solution does not support the precedence relationship between the overall GDP expenditure concept and investment specifically. The expenditure approach to GDP includes investment among its components, but the solution does not show computation dependence or process sequence directly linking the entirety of 'concept.gdp_expenditure' leading directly to 'concept.investment' as a subsequent step. Generally, precedence should reflect direct sequential dependency or logical flow, which is absent here."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.gdp_expenditure->concept.government_purchases",
+      "ok": true,
+      "reason": "The relationship between 'gdp_expenditure' and 'government_purchases' is correct because the GDP expenditure identity includes government purchases as one of its components. Therefore, addressing the 'gdp_expenditure' equation precedes or involves knowledge of 'government_purchases'."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.gdp_expenditure->concept.net_exports",
+      "ok": true,
+      "reason": "The node 'concept.gdp_expenditure' refers to the GDP expenditure equation which requires net exports as one of its components ('C + INV + G + NX'). Thus, the calculation of net exports (node 'concept.net_exports') logically precedes and contributes to the calculation of GDP using the expenditure approach."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.gdp_expenditure->concept.final_goods_only",
+      "ok": true,
+      "reason": "Using the expenditure approach (concept.gdp_expenditure) in GDP calculation requires ensuring that only final goods and services are counted, excluding intermediate goods. Therefore, the relationship 'gdp_expenditure' PRECEDES 'final_goods_only' is correct and logical."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.gnp->concept.gdp_expenditure",
+      "ok": false,
+      "reason": "The edge between 'gnp' and 'gdp_expenditure' is not meaningful or accurate, as the reference solution does not establish a direct conceptual or procedural link between the two. 'gnp' relates to Gross National Product calculations, which involve separate concepts like income from abroad, while 'gdp_expenditure' pertains to calculating GDP using domestic expenditure components. The two concepts operate in different economic dimensions and their processes and steps do not naturally precede one another."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.gnp->concept.income_from_abroad",
+      "ok": false,
+      "reason": "The edge 'concept.gnp PRECEDES concept.income_from_abroad' does not appear to be valid because 'income from abroad' is part of the computation leading to Gross National Product (GNP), not a subsequent step. In the given problem, GNP is calculated by starting from GDP and adding net income earned from abroad, RIN minus ROUT."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.nnp->concept.gnp",
+      "ok": true,
+      "reason": "The edge from 'concept.nnp' to 'concept.gnp' represents a logical sequence in the computation steps for this problem. The computation of GNP is a necessary step before calculating NNP by removing depreciation, thus making 'gnp' precede 'nnp' in the problem's solution."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.nnp->concept.depreciation",
+      "ok": false,
+      "reason": "The node 'concept.nnp' in the reference solution refers to Net National Product, which involves components like Gross National Product and depreciation. It is unrealistic for 'concept.nnp' to precede 'concept.depreciation' since depreciation is a component used in the definition of Net National Product. 'concept.depreciation' should occur earlier in the solution process to define what it is before it can be used in the computation of Net National Product."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.nominal_gdp->concept.gross_domestic_product",
+      "ok": false,
+      "reason": "The edge relates 'nominal GDP' to 'GDP', suggesting 'nominal GDP' precedes 'GDP', but the problem is centered around calculating GDP using expenditure components, not nominal GDP concepts. GDP is calculated directly from spending components C, INV, G, and net exports, following the expenditure method. Nominal GDP is more relevant in contexts comparing nominal vs. real GDP, which is not the case here."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.base_year->concept.price_index",
+      "ok": false,
+      "reason": "The edge 'concept.base_year' PRECEDES 'concept.price_index' is incorrect. There is no mention or use of a 'base year' or 'price index' directly influencing one another within the context of the problems and solutions provided. Therefore, the precedence relationship is unsupported."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.gdp_deflator->concept.nominal_gdp",
+      "ok": false,
+      "reason": "The edge claims a 'PRECEDES' relationship between 'concept.gdp_deflator' and 'concept.nominal_gdp', but these concepts are not directly related in the problem 'gdp_identity', which calculations focus on expenditures like consumption, investment, government spending, and net exports. There is no mention of deflators or nominal GDP in this problem's context. The 'gdp_deflator' concept is related to adjusting nominal GDP to obtain real GDP, which is unrelated to calculating GDP using the expenditures provided in the problem statement."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.gdp_deflator->concept.price_index",
+      "ok": false,
+      "reason": "The edge claims that the GDP deflator concept (as an equation) precedes the price index concept, but these are actually the same concept: the GDP deflator is a specific type of price index. There's no distinct step listed here that indicates one being derived or used to derive the other. The reference solution involves equating the GDP deflator directly to the quoted price index, illustrating they are not sequential steps but rather the same."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.gdp_deflator->concept.base_year",
+      "ok": false,
+      "reason": "The node with ID 'concept.gdp_deflator' involving the GDP deflator is not related to the node with ID 'concept.base_year' discussing base year calculation. There is no step in the provided solution that connects these two concepts directly in a sequential relationship. The given problems focus on GDP components, net exports, GNP conversion, and real GDP calculation using the deflator, but do not address the concept of establishing a base year directly nor relate it to the GDP deflator in a way that would require a sequential precedence relationship."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.real_gdp->concept.nominal_gdp",
+      "ok": false,
+      "reason": "The edge 'PRECEDES' from 'real GDP' to 'nominal GDP' does not have a direct relationship in the context provided. The problem text and solutions focus on computing GDP using expenditure components and calculating real GDP from nominal GDP using the GDP deflator. These do not imply a step where real GDP precedes nominal GDP conceptually or procedurally. The correct relationship is typically the nominal GDP being adjusted to find real GDP, not the other way around."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.real_gdp->concept.gdp_deflator",
+      "ok": false,
+      "reason": "The problem involves calculating GDP using the expenditure approach. There is no mention or calculation of real GDP or the GDP deflator within the context of this specific problem. Therefore, the edge stating that 'real_gdp' precedes 'gdp_deflator' does not seem relevant to the solution for finding GDP using the given expenditure components."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.real_gdp_growth->concept.real_gdp",
+      "ok": false,
+      "reason": "\"real_gdp_growth\" and \"real_gdp\" are derived from different problem statements in the scenarios provided, and no clear relationship is established where 'real GDP growth' would directly PRECEDE 'real GDP' based on the referenced solutions. Each calculation is isolated to its own problem."
+    },
+    {
+      "item_id": "macroeconomics:edge:PRECEDES:concept.real_gdp_growth->concept.percentage_change",
+      "ok": true,
+      "reason": "The node 'concept.real_gdp_growth' represents finding the real GDP growth between two periods, and 'concept.percentage_change' represents converting the absolute change in GDP to a percentage. Real GDP growth calculation is typically expressed as a percentage change, so 'concept.real_gdp_growth' precedes the application of 'concept.percentage_change'."
+    },
+    {
+      "item_id": "linear_motion:node:def.def_initial_velocity",
+      "ok": true,
+      "reason": "The node 'Def Initial Velocity' represents a legitimate step in the solution process. It defines the initial velocity of the cyclist, which is necessary for solving linear motion problems."
+    },
+    {
+      "item_id": "linear_motion:node:def.def_acceleration",
+      "ok": true,
+      "reason": "The node 'Def Acceleration' correctly defines acceleration as the rate of change of velocity, given as 2.0 m/s\u00b2 in the context of the problem."
+    },
+    {
+      "item_id": "linear_motion:node:def.def_time",
+      "ok": true,
+      "reason": "The node 'Def Time' is a legitimate part of the reference solution. It correctly defines the concept of 'time' as used in the context of the problem ('The duration for which the cyclist has been moving, given as 5.0 s.'), which is necessary for solving the problem."
+    },
+    {
+      "item_id": "linear_motion:node:eq.eq_velocity_formula",
+      "ok": true,
+      "reason": "The node 'Velocity formula' is a valid and necessary step in the problem's solution, as it provides the essential formula used to calculate velocity given initial velocity, acceleration, and time, which aligns with the problem context of determining the cyclist's velocity at a specific time."
+    },
+    {
+      "item_id": "linear_motion:node:proc.proc_substitute_values",
+      "ok": true,
+      "reason": "The node 'Proc Substitute Values' accurately represents the step in the reference solution where given values are substituted into the velocity formula to calculate the cyclist's velocity."
+    },
+    {
+      "item_id": "linear_motion:node:simp.simp_calculate_velocity",
+      "ok": true,
+      "reason": "The node 'Simp Calculate Velocity' represents the simplification step where the velocity is calculated after substituting the given values into the velocity formula, which is a valid and necessary step in the solution to calculate the cyclist's velocity after 5.0 seconds."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.vm1",
+      "ok": false,
+      "reason": "The node 'Vm1' does not appear in the provided steps of the reference solution. It seems unrelated to any specific variable mapping step in the given problem context."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.vm2",
+      "ok": false,
+      "reason": "The reference solution nodes use specific entity keys like 'varmap.var1' or 'varmap.var2' for variable mappings, but 'Vm2' does not appear in the given reference solution for either of the problems. There is no indication of an entity corresponding to 'Vm2' within the specific set of steps provided for these problems."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.vm3",
+      "ok": true,
+      "reason": "\"Vm3\" refers to the variable mapping for \"time\" (t), which is a real step within the second problem solution to map the concepts to the variables referenced in the equations and problem."
+    },
+    {
+      "item_id": "linear_motion:node:eq.eq1",
+      "ok": true,
+      "reason": "The equation 'v = v0 + a*t' is used in the solution to determine the final velocity based on initial velocity, acceleration, and time, which matches the problem requirements."
+    },
+    {
+      "item_id": "linear_motion:node:proc.ps1",
+      "ok": true,
+      "reason": "The node 'Ps1' correctly represents the first step in the 'reference_solution', where it involves the procedural step of substituting values into the velocity formula."
+    },
+    {
+      "item_id": "linear_motion:node:eq.eq2",
+      "ok": true,
+      "reason": "The node 'Calculated final velocity' represents a real step in the problem's reference solution. It shows the calculation of the final velocity using the given initial velocity (0 m/s), acceleration (2.0 m/s^2), and time (5.0 s): \\( v = 0 + (2.0)(5.0) = 10.0 \\text{ m/s} \\), which matches the solution's other steps."
+    },
+    {
+      "item_id": "linear_motion:node:def.def1",
+      "ok": true,
+      "reason": "The node 'Def1' represents a definition step from the reference solution for the second problem. It correctly defines the initial velocity concept, which is necessary for solving the problem of calculating distance traveled by the cyclist."
+    },
+    {
+      "item_id": "linear_motion:node:def.def2",
+      "ok": true,
+      "reason": "The node 'Def2' represents the definition of 'acceleration' in the second problem and has a correct and distinct definition as part of the reference solution, making it a real and correct step in the solution."
+    },
+    {
+      "item_id": "linear_motion:node:def.def3",
+      "ok": true,
+      "reason": "The node 'Def3' corresponds to the reference solution step 3, which provides the definition of 'time' for the cyclist's motion, matching the content and context in the source problem."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.var1",
+      "ok": true,
+      "reason": "The node 'Var1' represents the mapping of the term 'initial velocity' to the symbol 'v0', which is a required step in expressing and solving the equations for the given problem of calculating the cyclist's distance. This mapping is needed for correctly substituting symbols in the equations."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.var2",
+      "ok": true,
+      "reason": "The node \"Var2\" from the reference solution maps the symbol 'a' to the term 'acceleration' and is correctly included in the solution since acceleration is one of the given values and part of the problem context for calculating distance and velocity in linear motion problems."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.var3",
+      "ok": true,
+      "reason": "The node 'Var3' correctly represents the mapping of the variable 't' to the concept 'time' in the given solution."
+    },
+    {
+      "item_id": "linear_motion:node:proc.proc1",
+      "ok": true,
+      "reason": "The node 'proc1' represents a procedure step in the solution which involves substituting given values into the final velocity equation, aligning correctly with the problem statement and solution process for calculating the final velocity."
+    },
+    {
+      "item_id": "linear_motion:node:proc.proc2",
+      "ok": true,
+      "reason": "The node 'Proc2' represents 'Substitute the given values into the distance equation', which is a valid and necessary step in solving the problem of calculating the distance the cyclist travels. This step directly follows the declaration of the distance equation and precedes the simplification step where the actual calculation occurs."
+    },
+    {
+      "item_id": "linear_motion:node:simp.simp1",
+      "ok": true,
+      "reason": "The node 'Simp1' accurately represents a simplification step. It uses the final velocity equation to substitute values (v0 = 0, a = 2.0, t = 5.0) to calculate the cyclist's final velocity as 10.0 m/s. This is a legitimate component of solving kinematic equations in linear motion context."
+    },
+    {
+      "item_id": "linear_motion:node:simp.simp2",
+      "ok": true,
+      "reason": "The node 'Simp2' represents the simplification of substituting values into the displacement equation, which is a correct and necessary step in calculating the displacement given constant acceleration. It is not a duplicate or off-topic for the problem regarding how far the cyclist travels."
+    },
+    {
+      "item_id": "linear_motion:node:def.def_distance",
+      "ok": false,
+      "reason": "The node 'Def Distance' is not a correct step in the solution for the provided problem statements about calculating the cyclist's velocity and distance. The reference solutions to both problems do not mention or use a definition for 'distance' as a concept being defined separately. The solutions involve calculations related to velocity and use a distance equation, but the definition itself is not listed as a separate step related to the problem at hand."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.var_v0",
+      "ok": false,
+      "reason": "The node 'Var V0' does not appear in either of the reference solutions provided for the problems. It is not a real, correct step of either solution, as it's not defined or used within the given solution content."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.var_a",
+      "ok": false,
+      "reason": "The node 'Var A' does not explicitly appear in the solution steps provided. There is no mapping for a variable labeled 'A' in the given reference solution. It might be a mistaken or undescribed step in the current context."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.var_t",
+      "ok": true,
+      "reason": "The node represents the variable mapping for 't', which is the time given in the problem statement and used in the solution. It is a necessary step in solving the problem related to linear motion."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.var_x",
+      "ok": false,
+      "reason": "The node 'Var X' is not mentioned in the reference solution steps provided. The variable mappings related to this node are not part of any explicit step in the reference solution or problem context given here."
+    },
+    {
+      "item_id": "linear_motion:node:eq.eq_motion",
+      "ok": true,
+      "reason": "The node 'Equation of motion for constant acceleration', represented by 'x = v0*t + (1/2)*a*t**2', is a relevant and correct equation in the context of determining the distance traveled (x) for the problem 'How far does the cyclist travel during this time?'. This equation uses constant acceleration and initial velocity, matching the context and details of the problem provided."
+    },
+    {
+      "item_id": "linear_motion:node:cond.cond_given_values",
+      "ok": true,
+      "reason": "The node 'Given values for the problem' correctly represents the initial conditions of the problem: initial velocity 0 m/s, acceleration 2.0 m/s^2, and time 5.0 s. This aligns with the problem statement and reference solution steps."
+    },
+    {
+      "item_id": "linear_motion:node:simp.simp_calculate_distance",
+      "ok": true,
+      "reason": "The node 'Simp Calculate Distance' correctly represents the simplification step that calculates the distance using the equation of motion. It is relevant to the problem's second reference solution, which involves calculating the distance traveled by the cyclist."
+    },
+    {
+      "item_id": "linear_motion:node:def.def_velocity",
+      "ok": false,
+      "reason": "The 'Def Velocity' node does not appear in the provided reference solution steps. There is no explicit definition or mention of 'velocity' as a concept on its own as a part of the process leading to the solution, aside from the use of the velocity equation."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.map_initial_velocity",
+      "ok": true,
+      "reason": "The node 'Map Initial Velocity' represents a legitimate mapping of the initial velocity variable which is part of solving the problem related to linear motion. The initial velocity is a necessary component for calculations involving the equations of motion."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.map_acceleration",
+      "ok": true,
+      "reason": "The node 'Map Acceleration' is a correct step in the solution for the second problem, which involves mapping the concept of acceleration to the symbol 'a'. This mapping step is necessary to understand the equations involving acceleration and is correctly included as part of reaching a solution in the reference."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.map_time",
+      "ok": false,
+      "reason": "The node 'Map Time' appears to concern mapping the concept of 'time' to a variable in the solution. However, the reference solution for the given problem does not specify a step dedicated to mapping the concept of time to a variable.\"\nThe problem statement provides time as a given value (5.0 s) directly in the problem text and uses it in calculations without a distinct variable mapping step. Thus, this node seems extraneous to the steps outlined in the reference solution for the given problem. Moreover, 'Map Time' does not appear in the ordered steps provided, indicating this node might be unrelated.\n"
+    },
+    {
+      "item_id": "linear_motion:node:varmap.map_velocity",
+      "ok": false,
+      "reason": "The node 'Map Velocity' does not appear in the reference solution steps provided for the first problem related to calculating the cyclist's velocity. Instead, the focus is on defining initial velocity, acceleration, time, applying the velocity formula, and calculating velocity. There is no mention of mapping variables in this context."
+    },
+    {
+      "item_id": "linear_motion:node:def.def4",
+      "ok": true,
+      "reason": "Def4 ('distance') is a relevant definition related to the problem of calculating how far the cyclist travels during the given time."
+    },
+    {
+      "item_id": "linear_motion:node:varmap.var4",
+      "ok": true,
+      "reason": "The node 'Var4' represents a variable mapping for the term 'distance', denoted as 'd', and is necessary for the solution related to calculating the cyclist's travel distance. It correctly maps the conceptual 'distance' to the symbolic 'd' and is a valid step in setting up the equations for solving the problem."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.vm1->eq.eq1",
+      "ok": false,
+      "reason": "The edge from 'varmap.vm1' to 'eq.eq1' is claimed but 'varmap.vm1' does not appear in any part of the problem or solution provided. Also, node 'vm1' is not present in the solution steps, meaning this edge cannot be directly validated or nuanced as correct given the provided steps. Hence, 'vm1' seems to be a hallucination."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.vm2->eq.eq1",
+      "ok": true,
+      "reason": "In the solution for calculating distance, the variable mappings precede the equations. 'varmap.vm2' represents the mapping for the variable 'a' (acceleration), which is used in the equation 'eq1'. This relationship is valid as the equation utilizes the acceleration variable after it is mapped."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.vm3->eq.eq1",
+      "ok": false,
+      "reason": "The edge claims that the variable mapping 'varmap.vm3' precedes the equation 'eq.eq1', but there is no node with id 'varmap.vm3' in the problem data. This appears to be a hallucination or error as there is no corresponding step or entity with this id in the provided solution."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:eq.eq1->proc.ps1",
+      "ok": true,
+      "reason": "The edge represents a logical sequence where the understanding and/or establishment of the equation (eq.eq1) precedes the step (proc.ps1) where that equation is utilized in a procedure, consistent with the problem statements."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:proc.ps1->eq.eq2",
+      "ok": true,
+      "reason": "In the reference solution for the second problem, the node 'proc.proc1' involves substituting values into the final velocity equation, and 'eq.eq2' is the equation used to find the distance. The procedure to find the velocity ('proc.ps1') logically precedes calculation using the distance equation ('eq.eq2') as understanding the motion dynamics (including velocity) is essential to solve for distance."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def1->varmap.var1",
+      "ok": true,
+      "reason": "The edge from 'def1' (initial velocity) to 'var1' (variable mapping for initial velocity) is correct because before we can map a term to a symbol in variable mapping, we need to have that term defined. Therefore, 'def1' must precede 'var1'."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def2->varmap.var2",
+      "ok": true,
+      "reason": "The graph edge from 'def.def2' to 'varmap.var2' correctly represents the sequence in which the definition of 'acceleration' is established and then mapped to a variable 'a'. In the reference solution, 'def.def2' is defined first, and 'varmap.var2' utilizes this definition."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def3->varmap.var3",
+      "ok": true,
+      "reason": "The edge from \"def.def3\" (definition of time) to \"varmap.var3\" (variable mapping for time) is correct. Defining the concept of time precedes mapping it to the symbolic variable 't'."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.var1->eq.eq1",
+      "ok": true,
+      "reason": "The edge from `varmap.var1` (initial velocity variable mapping) to `eq.eq1` (final velocity equation) is correct. The velocity equation depends on the initial velocity, which is mapped by `varmap.var1`. Hence, mapping the variable precedes the use of it in the equation."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.var2->eq.eq1",
+      "ok": true,
+      "reason": "The edge from varmap.var2 (variable mapping for acceleration 'a') to eq.eq1 (Final velocity equation) is valid because the equation \\( v = v0 + a*t \\) requires the acceleration 'a', making this a necessary preceding step to the use of the equation."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.var3->eq.eq1",
+      "ok": true,
+      "reason": "The 'varmap.var3' node involves mapping the symbolic variable 't' to 'time', which is necessary before substituting it into the equation represented by 'eq.eq1'. Therefore, mapping 'varmap.var3' precedes substituting into 'eq.eq1' as an essential step in solving the problem."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.var1->eq.eq2",
+      "ok": false,
+      "reason": "The edge connects 'varmap.var1' (a variable mapping step) with 'eq.eq2' (an equation). However, 'varmap.var1' (identifying 'v0' as initial velocity) depends on 'def1', but is not necessary for 'eq.eq2', which is a different equation used for solving distance not involving 'varmap.var1' directly as a preceding step. 'eq.eq2' involves multiple mappings but no specifically dependent step relationship between these two nodes is established here in the problem. The linear precedence is not directly verified by the information given."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.var2->eq.eq2",
+      "ok": true,
+      "reason": "The edge indicates that the variable mapping step for acceleration (varmap.var2) is a prerequisite for the use of the distance equation (eq.eq2) to calculate the distance traveled by the cyclist. Since acceleration 'a' is a part of the distance equation, its definition is needed before applying the equation, thus the edge is correct."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.var3->eq.eq2",
+      "ok": false,
+      "reason": "The edge claims that the variable mapping of 't' ('varmap.var3') precedes the usage of the distance equation ('eq.eq2'). However, 'varmap.var3' is about mapping the time symbol to the concept of time, while 'eq.eq2' defines the distance equation involving 'd', 'v0', 'a', and 't'. While 't' is used in 'eq.eq2', the edge is not about a direct procedural or logical ordering. Variable mapping is more about defining variables for use, not specifically precedencing an equation unless showing direct use of a specific substituted value."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:eq.eq1->proc.proc1",
+      "ok": true,
+      "reason": "The edge from `eq.eq1` (velocity equation) to `proc.proc1` (substitute values into the final velocity equation) correctly represents the process of using the equation to calculate the final velocity."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:eq.eq2->proc.proc2",
+      "ok": true,
+      "reason": "The edge correctly describes the relationship between the use of equation eq2 and the procedure proc2, as proc2 involves substituting values into eq2."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:proc.proc1->simp.simp1",
+      "ok": true,
+      "reason": "The edge connects 'proc1' (Substitute the given values into the final velocity equation) to 'simp1' (the simplification step applying after substitution), reflecting a correct procedural flow where simplification follows substitution of values."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:proc.proc2->simp.simp2",
+      "ok": true,
+      "reason": "The edge correctly represents that the substitution step (proc.proc2) is completed before the simplification step (simp.simp2). In the solution, 'proc.proc2' involves substituting values into the distance equation, and 'simp.simp2' involves calculating the result based on this substitution."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_initial_velocity->proc.proc_substitute_values",
+      "ok": true,
+      "reason": "The edge PRECEDES from 'def.def_initial_velocity' to 'proc.proc_substitute_values' correctly represents the logical flow in solving the problem. The definition of initial velocity is needed to substitute its value in the velocity formula during calculation."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_acceleration->proc.proc_substitute_values",
+      "ok": true,
+      "reason": "The definition of acceleration (\"def.def_acceleration\") must be understood before substituting it into the velocity formula (\"proc.proc_substitute_values\"). The edge accurately reflects this dependency."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_time->proc.proc_substitute_values",
+      "ok": true,
+      "reason": "The edge 'def.def_time PRECEDES proc.proc_substitute_values' is correct because the definition of time provides necessary information for the procedure step of substituting values, which includes the given time value."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:proc.proc_substitute_values->simp.simp_calculate_velocity",
+      "ok": true,
+      "reason": "In the problem context, 'proc.proc_substitute_values' involves substituting given values into the velocity formula, and the node 'simp.simp_calculate_velocity' involves simplifying the equation with the substituted values to calculate the velocity. The substitution step logically precedes the simplification step, making the 'PRECEDES' edge correct."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_initial_velocity->varmap.var_v0",
+      "ok": true,
+      "reason": "The edge from 'def.def_initial_velocity' to 'varmap.var_v0' is valid because defining 'initial velocity' (def.def_initial_velocity) precedes the use of 'v0' in the velocity formula as the initial velocity term (varmap.var_v0). The definition logically supports the variable mapping."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_acceleration->varmap.var_a",
+      "ok": true,
+      "reason": "The declaration of the acceleration value is necessary before it can be assigned to a variable, so \"def_def_acceleration\" precedes \"varmap.var_a\" is a valid edge."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_time->varmap.var_t",
+      "ok": true,
+      "reason": "The edge 'def.def_time' PRECEDES 'varmap.var_t' is correct because the definition of 'time' as a concept naturally precedes its use in mapping it to a variable ('var_t' or 't'). Understanding the duration is necessary before it can be properly assigned to a symbolic representation in the context of solving the problem."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_distance->varmap.var_x",
+      "ok": false,
+      "reason": "The edge 'def.def_distance' PRECEDES 'varmap.var_x' is not referenced in the provided problem statements or reference solutions. Specifically, the reference solution does not include these identifiers, which means this edge is either incorrect or out of context for the provided information."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.var_v0->eq.eq_motion",
+      "ok": true,
+      "reason": "The edge from `varmap.var_v0` to `eq.eq_motion` is valid because the initial velocity (`v0`) is a necessary component in the equation of motion `v = v0 + a*t`. The variable `v0` is used in the motion equation to calculate the velocity at a given time, thus `varmap.var_v0` USES/PRECEDES the equation `eq.eq_motion`."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.var_a->eq.eq_motion",
+      "ok": false,
+      "reason": "The edge from 'varmap.var_a' to 'eq.eq_motion' suggests a dependency or precedence from a variable mapping to an equation that isn't specifically identified in the given source problem. Without clear definitions of these nodes in the problem statement or solution, the relationship cannot be verified."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.var_t->eq.eq_motion",
+      "ok": false,
+      "reason": "The edge from 'varmap.var_t' to 'eq.eq_motion' does not exist in the provided solution steps. Specifically, the nodes 'varmap.var_t' and 'eq.eq_motion' are not mentioned at all in the solution steps for this problem. The node 'eq.eq_motion' should refer to the formula 'v = v0 + a * t', but it is not referred to by any other node as 'eq.eq_motion', and 'varmap.var_t' is not defined either."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.var_x->eq.eq_motion",
+      "ok": false,
+      "reason": "The node 'varmap.var_x' is not part of the solution steps for linear motion in the given reference solution, indicating it might not be correctly placed. Additionally, 'varmap.var_x' or its description are not found in the provided steps. Without proper context, the edge cannot logically precede 'eq.eq_motion'."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:cond.cond_given_values->proc.proc_substitute_values",
+      "ok": true,
+      "reason": "The edge correctly represents the relationship in the solution process. It shows that the conditioning of values is a necessary step before substituting them into the velocity formula."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:proc.proc_substitute_values->simp.simp_calculate_distance",
+      "ok": false,
+      "reason": "The edge claims that \"proc.proc_substitute_values\" precedes \"simp.simp_calculate_distance,\" but \"simp.simp_calculate_distance\" is not present in the problem's given reference solution. It appears to be a hallucination or a mismatch between the reference solution and the minted knowledge graph nodes."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_initial_velocity->eq.eq_velocity_formula",
+      "ok": true,
+      "reason": "'def.def_initial_velocity' defines the initial velocity used in the velocity formula 'eq.eq_velocity_formula'. The definition of initial velocity precedes using it in the velocity formula as part of the calculation process."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_acceleration->eq.eq_velocity_formula",
+      "ok": true,
+      "reason": "In order to use the velocity formula (v = v0 + a*t), the acceleration (a) must be defined first. Therefore, the definition of acceleration is a logical prerequisite for the use of the velocity formula."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_time->eq.eq_velocity_formula",
+      "ok": true,
+      "reason": "Defining the time is a necessary step before using it in the velocity formula, which depends on this variable."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_velocity->eq.eq_velocity_formula",
+      "ok": true,
+      "reason": "The edge from the definition of velocity (def.def_velocity) to the velocity formula equation (eq.eq_velocity_formula) is valid, as understanding the definition of velocity helps in understanding and applying the velocity formula correctly."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_initial_velocity->varmap.map_initial_velocity",
+      "ok": true,
+      "reason": "The edge from `def.def_initial_velocity` to `varmap.map_initial_velocity` correctly reflects that mapping the initial velocity as a variable requires knowledge of the definition of initial velocity."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_acceleration->varmap.map_acceleration",
+      "ok": true,
+      "reason": "The edge from 'def.def_acceleration' (definition of acceleration) to 'varmap.map_acceleration' (variable mapping for acceleration) indicates that the concept of acceleration is defined before it is mapped to a variable. This is a logical progression as understanding or defining a concept typically precedes its application or mapping in problem-solving contexts."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_time->varmap.map_time",
+      "ok": false,
+      "reason": "The edge from 'def.def_time' to 'varmap.var_time' does not exist in the problem's reference solution or structure. Therefore, this 'PRECEDES' relationship is not valid."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def_velocity->varmap.map_velocity",
+      "ok": false,
+      "reason": "The edge DEF_VELOCITY -> VARMAP_MAP_VELOCITY is not present in the given problem. There is no explicit definition or mapping for 'velocity' in the list of steps. The reference solution outlines a process of definitions, equations, substitutions, and calculations, but does not include a distinct definition node for 'velocity' or a variable mapping for 'velocity'."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:eq.eq_velocity_formula->proc.proc_substitute_values",
+      "ok": true,
+      "reason": "The edge from `eq.eq_velocity_formula` to `proc.proc_substitute_values` is valid because after defining the formula, it's logical to proceed with substituting the given values into it."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:def.def4->varmap.var4",
+      "ok": true,
+      "reason": "The edge from 'def.def4' (definition of distance) to 'varmap.var4' (mapping 'd' to distance) is valid because the distance needs to be defined before it can be associated with the variable 'd'."
+    },
+    {
+      "item_id": "linear_motion:edge:PRECEDES:varmap.var4->eq.eq2",
+      "ok": true,
+      "reason": "The edge correctly represents a PRECEDES relationship because the mapping of the symbol \"d\" to the term \"distance\" (node varmap.var4) logically precedes the usage of this symbol in the distance equation (node eq.eq2).\""
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "stage": "s2_ingestion",
+  "passed": 1,
+  "total": 4,
+  "pass_rate": 0.25,
+  "verdicts": [
+    {
+      "item_id": "set1:Problem 1(a)",
+      "ok": true,
+      "reason": "The scraped label 'Problem 1(a)' correctly matches the page reference 'authored-set 1 / Problem 1(a)', indicating that the page likely contains Problem 1(a). Furthermore, the problem-solution pairing is appropriate since 'solution_source' is 'extracted' and the outcome is 'promoted', which suggests the solution was derived directly from the page content. There is no OCR text provided for verification, but the solution seems consistent with the provided references."
+    },
+    {
+      "item_id": "set1:Problem 1(b)",
+      "ok": false,
+      "reason": "There's no provided information from the actual page content or the OCR text. The diagnostic and outcome description given does not provide information confirming if the problem-solution pairing is actually what is on the page. Without the OCR text or any context about what Problem 1(b) entails, we can't verify if the 'gate 5: terminal step 'proc4' does not compute the answer 'v'' correctly represents the content of Problem 1(b) on the source page. Additionally, although the label is consistent, correctness cannot be guaranteed without actual content comparison."
+    },
+    {
+      "item_id": "set2:Problem 1(a)",
+      "ok": false,
+      "reason": "The label 'Problem 1(a)' matches the reference to the source PDF page, so there is no issue with the label. However, the problem-solution pairing indicates an error related to 'malformed equation' in 'eq_velocity_calculation', which suggests there's an equation presented in a technical format (like code or a computational setup) rather than normal prose or math notation. The text mentions 'Perhaps you forgot a comma?', which is inconsistent with a standard physics or math presentation and indicates a misinterpretation or context error in processing the OCR text."
+    },
+    {
+      "item_id": "set2:Problem 1(b)",
+      "ok": false,
+      "reason": "There is no visible problem or solution text provided, and thus it is unclear if the 'scraped label' is accurately matched to the content of the PDF page. Without seeing the page content, we cannot verify if the problem-solution pairing or the OCR text is correct or faithful."
+    }
+  ]
+}

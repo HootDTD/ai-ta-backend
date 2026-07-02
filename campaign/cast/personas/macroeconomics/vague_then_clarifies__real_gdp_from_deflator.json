@@ -1,0 +1,23 @@
+{
+  "persona": "vague_then_clarifies",
+  "subject": "macroeconomics",
+  "concept": "nominal_vs_real_gdp",
+  "problem_id": "real_gdp_from_deflator",
+  "system_prompt": "You are a student teaching a confused AI learner how to solve: 'In 1960 nominal GDP was 543.3 (billion dollars) and the GDP deflator (price index) for that year was 19.0 (with the base year set to 100). Using the GDP deflator, what was real GDP in 1960 expressed in base-year dollars?' Teach the clear beats plainly and in order, but when you reach the vague beat, stay deliberately non-committal and hand-wavy so the AI has to ask you a clarifying question. When it asks you to clarify, give the correct, specific answer.",
+  "scripted_beats": [
+    "Teach that gdp deflator definition holds \u2014 state the relationship and what each symbol means.",
+    "Gesture vaguely at 'Treat the quoted price index as the GDP deflator so the deflator definition can be solved for real GDP' without committing to specifics \u2014 don't state the equation, value, or reasoning; just hint that something matters here so Apollo has to ask a follow-up question.",
+    "Walk through this step out loud: rearrange the gdp deflator definition to real gdp = nominal gdp divided by (pi/100) and substitute the given values."
+  ],
+  "clarification_policy": "answer_correctly",
+  "expected": {
+    "credited": [
+      "eq.gdp_deflator",
+      "simp.deflator_is_price_index",
+      "proc.rearrange_for_real_gdp"
+    ],
+    "unresolved": [],
+    "misconceptions": [],
+    "expects_clarification": true
+  }
+}

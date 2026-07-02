@@ -1,0 +1,27 @@
+{
+  "persona": "vague_then_clarifies",
+  "subject": "macroeconomics",
+  "concept": "gdp_components",
+  "problem_id": "nnp_chain",
+  "system_prompt": "You are a student teaching a confused AI learner how to solve: 'An economy has GDP = 560 billion dollars. Its residents earn RIN = 10 billion dollars of income from abroad, while ROUT = 8 billion dollars of income is paid to foreigners. Depreciation of capital over the year is DEP = 40 billion dollars. Compute the economy's net national product (NNP).' Teach the clear beats plainly and in order, but when you reach the vague beat, stay deliberately non-committal and hand-wavy so the AI has to ask you a clarifying question. When it asks you to clarify, give the correct, specific answer.",
+  "scripted_beats": [
+    "Teach that gross national product holds \u2014 state the relationship and what each symbol means.",
+    "Gesture vaguely at 'Net national product' without committing to specifics \u2014 don't state the equation, value, or reasoning; just hint that something matters here so Apollo has to ask a follow-up question.",
+    "Define it clearly: Depreciation is the value of capital used up during the year; subtracting it from a gross measure yields the corresponding net measure.",
+    "Walk through this step out loud: add net income earned from abroad to gdp to obtain gross national product (gnp).",
+    "Walk through this step out loud: subtract depreciation from gnp to obtain net national product (nnp)."
+  ],
+  "clarification_policy": "answer_correctly",
+  "expected": {
+    "credited": [
+      "eq.gnp",
+      "eq.nnp",
+      "def.depreciation",
+      "proc.compute_gnp",
+      "proc.subtract_depreciation"
+    ],
+    "unresolved": [],
+    "misconceptions": [],
+    "expects_clarification": true
+  }
+}

@@ -288,6 +288,13 @@ def build_graph_artifact(
     }
 
 
+def _round_like_composite(value: float) -> float:
+    """Clamp to ``[0, 1]`` and round to the same precision ``composite_score``
+    uses, so an LLM-path composite compares equal to a graph-path one built
+    from floating-point-equal inputs."""
+    return round(max(0.0, min(1.0, value)), 6)
+
+
 def build_llm_artifact(
     *,
     coverage: dict,
@@ -298,24 +305,45 @@ def build_llm_artifact(
 ) -> dict:
     """Build the LLM-fallback artifact payload (spec §1/§3) from the OLD
     ``compute_coverage`` output + rubric. Coarser than the graph artifact:
-    nodes come straight off ``coverage``'s covered/missing lists (no per-node
-    resolution method/evidence — the LLM grader does not produce one), the edge
-    ledger is always empty (the LLM path has no edge concept), and
-    ``misconception_penalty`` is always 0.0 (the LLM path detects none)."""
-    covered = list(coverage.get("covered", []))
-    missing = list(coverage.get("missing", []))
-    total = len(covered) + len(missing)
+    nodes come straight off ``coverage["per_step"]`` (the REAL
+    ``compute_coverage`` return shape — a ``{node_id: "covered"|"missing"}``
+    map, not a ``covered``/``missing`` list pair; no per-node resolution
+    method/evidence — the LLM grader does not produce one), the edge ledger is
+    always empty (the LLM path has no edge concept), and
+    ``misconception_penalty`` is always 0.0 (the LLM path detects none).
+
+    ``scores.composite`` is the headline number the student's scorecard bands
+    off (spec §3 step 3: "Same scorecard shape either way — LLM grade
+    rendered into the same band"). The LLM path has no edge/misconception
+    decomposition to run through the graph path's weighted
+    ``composite_score`` formula (that formula tops out at ``w_n`` when
+    ``edge_coverage``/``misconception_penalty`` are both 0, which would
+    silently cap every LLM-graded attempt below "Strong"). Instead the
+    documented LLM-path mapping (spec §1/§3) is direct: the already-computed
+    rubric's ``overall.score`` (0-100) IS the real LLM grade, so composite is
+    that score renormalized to the artifact's 0-1 scale. ``node_coverage`` is
+    still reported for informational/telemetry parity with the graph
+    artifact's shape, but does not feed ``composite`` here.
+    """
+    per_step: dict[str, str] = coverage.get("per_step") or {}
+    confidences: dict[str, float] = coverage.get("confidences") or {}
+    covered = [key for key, status in per_step.items() if status == "covered"]
+    missing = [key for key, status in per_step.items() if status != "covered"]
+    total = len(per_step)
     node_coverage = (len(covered) / total) if total else 0.0
     edge_coverage = 0.0
     misconception_penalty = 0.0
-    composite = composite_score(node_coverage, edge_coverage, misconception_penalty, weights)
+    overall_score = (rubric or {}).get("overall", {}).get("score")
+    composite = (
+        _round_like_composite(float(overall_score) / 100.0) if overall_score is not None else 0.0
+    )
 
     node_ledger = [
         {
             "canonical_key": key,
             "status": "credited",
             "method": None,
-            "confidence": None,
+            "confidence": confidences.get(key),
             "evidence_span": "",
         }
         for key in covered
@@ -324,7 +352,7 @@ def build_llm_artifact(
             "canonical_key": key,
             "status": "unresolved",
             "method": None,
-            "confidence": None,
+            "confidence": confidences.get(key),
             "evidence_span": "",
         }
         for key in missing
@@ -351,7 +379,7 @@ def build_llm_artifact(
             "abstained": None,
             "reasons": [],
             "normalization_confidence": None,
-            "fallback_grade": (rubric or {}).get("overall", {}).get("score"),
+            "fallback_grade": overall_score,
             "graph_failure": graph_failure,
         },
         "grading_latency_ms": latency_ms,

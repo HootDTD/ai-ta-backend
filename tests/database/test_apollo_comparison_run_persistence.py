@@ -467,3 +467,48 @@ async def test_applicable_soundness_flag_default(db_session):
     ).scalar_one()
     assert run.soundness_applicable is True
     assert run.contradiction_score == 0.99  # numeric, not None
+
+
+async def test_nul_byte_in_evidence_span_and_message_does_not_crash_insert(db_session):
+    """Regression (campaign F1 defect): a raw \x00 in a student's typed
+    utterance flows verbatim through parsing into ``Finding.evidence_spans`` /
+    ``.message``. Before the fix this raised
+    ``asyncpg.exceptions.UntranslatableCharacterError`` on the
+    ``apollo_graph_comparison_findings`` INSERT (Postgres TEXT/JSONB reject
+    ``\x00`` outright), 500-ing ``/done`` AFTER the student-facing grade had
+    already committed. Drives the REAL ``persist_comparison_run`` -> real
+    INSERT against Postgres and asserts it succeeds with the NUL stripped."""
+    attempt_id, search_space_id = await _seed_attempt(db_session)
+    grade = missing_grade(("cond.covered_one",), covered=())
+    nul_finding = Finding(
+        kind=FindingKind.COVERED_NODE,
+        canonical_key="cond.covered_one",
+        student_node_ids=("s1",),
+        evidence_spans=("the student said \x00 X", "second\x00span"),
+        score=0.9,
+        confidence=0.92,
+        message="upgraded \x00 via audit",
+    )
+    graded = audited((nul_finding,))
+
+    run_id = await persist_comparison_run(
+        db_session,
+        attempt_id=attempt_id,
+        user_id=_USER_ID,
+        search_space_id=search_space_id,
+        grade=grade,
+        audited=graded,
+        normalization_confidence=0.9,
+        reference_graph_hash=_REF_HASH,
+    )
+
+    finding = (
+        await db_session.execute(
+            select(GraphComparisonFinding).where(GraphComparisonFinding.run_id == run_id)
+        )
+    ).scalar_one()
+    assert finding.evidence_spans == ["the student said  X", "secondspan"]
+    assert finding.message == "upgraded  via audit"
+    assert "\x00" not in finding.evidence_spans[0]
+    assert "\x00" not in finding.evidence_spans[1]
+    assert "\x00" not in finding.message

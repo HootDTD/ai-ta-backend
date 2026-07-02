@@ -220,6 +220,33 @@ def test_persist_uses_audited_findings_not_grade():
     assert [s.finding_kind for s in grade_specs] == ["missing_node"]
 
 
+def test_finding_to_row_spec_strips_nul_bytes_from_evidence_spans_and_message():
+    """Regression (campaign F1 defect): a raw \\x00 in a student's typed
+    utterance flows verbatim through parsing into ``Finding.evidence_spans`` /
+    ``.message``. Postgres TEXT/JSONB reject ``\\x00`` outright
+    (``UntranslatableCharacterError``) at the ``apollo_graph_comparison_findings``
+    INSERT, 500-ing ``/done`` AFTER the student-facing grade already committed.
+    Mirrors the textbook NUL-bytes fix (PR #15): sanitize at the persistence
+    boundary, not upstream in the parser."""
+    finding = Finding(
+        kind=FindingKind.COVERED_NODE,
+        canonical_key="k.a",
+        evidence_spans=("the student said\x00 X", "clean span"),
+        message="upgraded\x00 via audit",
+    )
+    spec = finding_to_row_spec(finding)
+    assert spec.evidence_spans == ["the student said X", "clean span"]
+    assert spec.message == "upgraded via audit"
+    assert "\x00" not in spec.evidence_spans[0]
+    assert "\x00" not in spec.message
+
+
+def test_finding_to_row_spec_message_none_passes_through_sanitization():
+    finding = Finding(kind=FindingKind.MISSING_NODE, canonical_key="k.b", message=None)
+    spec = finding_to_row_spec(finding)
+    assert spec.message is None
+
+
 def test_specs_are_frozen():
     grade = missing_grade(covered=("k.a",))
     run_spec = grade_to_run_spec(

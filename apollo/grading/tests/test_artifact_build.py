@@ -303,8 +303,14 @@ def test_graph_artifact_clarification_trace_passthrough(shadow_fixture):
 
 
 def test_llm_artifact_shape():
+    # Real `compute_coverage` shape: a `per_step` map, not a covered/missing
+    # list pair (that fictional shape was the T1 defect — see artifact_build's
+    # `build_llm_artifact` docstring).
     art = build_llm_artifact(
-        coverage={"covered": ["k1"], "missing": ["k2"]},
+        coverage={
+            "per_step": {"k1": "covered", "k2": "missing"},
+            "confidences": {"k1": 0.9, "k2": 0.0},
+        },
         rubric={"overall": {"score": 71}},
         weights=load_weights(),
         graph_failure="boom",
@@ -317,18 +323,24 @@ def test_llm_artifact_shape():
     assert art["scores"]["edge_coverage"] == 0.0
     assert art["scores"]["misconception_penalty"] == 0.0
     assert art["scores"]["node_coverage"] == 0.5
+    # The headline composite is the documented LLM-path mapping (spec §1/§3):
+    # the rubric's own overall score renormalized to 0-1 — NOT run through the
+    # graph path's weighted composite_score formula (which would cap it at
+    # w_n with edge_coverage/misconception_penalty both 0).
+    assert art["scores"]["composite"] == pytest.approx(0.71)
     statuses = {e["status"] for e in art["node_ledger"]}
     assert statuses == {"credited", "unresolved"}
 
 
 def test_llm_artifact_no_attempts_zero_coverage():
     art = build_llm_artifact(
-        coverage={"covered": [], "missing": []},
+        coverage={"per_step": {}, "confidences": {}},
         rubric={},
         weights=load_weights(),
         graph_failure=None,
         latency_ms=None,
     )
     assert art["scores"]["node_coverage"] == 0.0
+    assert art["scores"]["composite"] == 0.0
     assert art["abstention"]["fallback_grade"] is None
     assert art["abstention"]["graph_failure"] is None

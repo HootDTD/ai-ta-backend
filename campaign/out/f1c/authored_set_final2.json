@@ -1,0 +1,40 @@
+{
+  "set_id": 2,
+  "set_index": 2,
+  "status": "done",
+  "problem_document_id": 1,
+  "solution_document_id": 2,
+  "result_summary": {
+    "counts": {
+      "promoted": 1,
+      "rejected": 1,
+      "held_for_review": 0
+    },
+    "problems": [
+      {
+        "label": "Problem 1(a)",
+        "reason": null,
+        "outcome": "rejected",
+        "diagnostic": "gate 6: malformed equation in 'eq_velocity_calculation': KG entry 'eq_velocity_calculation' has malformed equation 'v = 0 m/s + (2.0 m/s^2 * 5.0 s)': invalid syntax. Perhaps you forgot a comma? (<string>, line 1)",
+        "failed_gate": 6,
+        "match_method": "retrieval",
+        "ocr_confidence": 1.0,
+        "review_required": false,
+        "solution_source": "extracted",
+        "concept_problem_id": 13
+      },
+      {
+        "label": "Problem 1(b)",
+        "reason": null,
+        "outcome": "promoted",
+        "diagnostic": "",
+        "failed_gate": null,
+        "match_method": "retrieval",
+        "ocr_confidence": 1.0,
+        "review_required": false,
+        "solution_source": "extracted",
+        "concept_problem_id": 12
+      }
+    ]
+  }
+}

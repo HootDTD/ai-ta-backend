@@ -45,6 +45,7 @@ from apollo.grading.audited_grade import AuditedGrade
 from apollo.graph_compare.core import GradeResult
 from apollo.graph_compare.findings import Finding
 from apollo.persistence.models import GraphComparisonFinding, GraphComparisonRun
+from indexing.text_sanitization import sanitize_jsonable
 
 
 @dataclass(frozen=True)
@@ -148,7 +149,17 @@ def finding_to_row_spec(finding: Finding) -> FindingRowSpec:
     ``finding_kind`` is the StrEnum ``.value`` plain string; node-id / span tuples
     become lists for the JSONB column; edge ids are always ``[]`` (edges are
     message-only); ``entity_id`` is NULL in v1 (the canonical_key->id join is not
-    a WU-4B3 concern)."""
+    a WU-4B3 concern).
+
+    ``evidence_spans`` (quoted student utterance text — see the module docstring
+    on ``AuditedGrade``) and ``message`` are sanitized with ``strip_nul`` via
+    ``sanitize_jsonable`` (the same textbook-NUL-bytes fix, PR #15, applied at
+    the indexing boundary): a raw \\x00 in a student's typed utterance
+    otherwise round-trips into the parser's output verbatim and Postgres
+    rejects it outright at INSERT (``UntranslatableCharacterError``), 500-ing
+    the whole `/done` request AFTER the student-facing grade already committed.
+    Node ids are resolver-internal labels, never raw student text, so they are
+    left as-is."""
     return FindingRowSpec(
         finding_kind=finding.kind.value,
         entity_id=None,
@@ -158,8 +169,8 @@ def finding_to_row_spec(finding: Finding) -> FindingRowSpec:
         reference_node_ids=list(finding.reference_node_ids),
         student_edge_ids=[],
         reference_edge_ids=[],
-        evidence_spans=list(finding.evidence_spans),
-        message=finding.message,
+        evidence_spans=sanitize_jsonable(list(finding.evidence_spans)),
+        message=sanitize_jsonable(finding.message),
     )
 
 

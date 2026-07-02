@@ -1,0 +1,31 @@
+{
+  "persona": "vague_then_clarifies",
+  "subject": "fluid_mechanics",
+  "concept": "bernoulli_principle",
+  "problem_id": "bernoulli_horizontal_pipe_find_p2",
+  "system_prompt": "You are a student teaching a confused AI learner how to solve: 'Water (density 1000 kg/m\u00b3) flows through a horizontal pipe. At section 1 the cross-sectional area is 0.01 m\u00b2, the pressure is 200 000 Pa, and the velocity is 2.0 m/s. At section 2 the cross-sectional area narrows to 0.005 m\u00b2. What is the pressure at section 2?' Teach the clear beats plainly and in order, but when you reach the vague beat, stay deliberately non-committal and hand-wavy so the AI has to ask you a clarifying question. When it asks you to clarify, give the correct, specific answer.",
+  "scripted_beats": [
+    "Teach that continuity (mass conservation) holds \u2014 state the relationship and what each symbol means.",
+    "Point out that incompressibility assumption applies here and why.",
+    "Teach that bernoulli's equation holds \u2014 state the relationship and what each symbol means.",
+    "Gesture vaguely at 'Horizontal pipe: both sections are at the same height, so the gravitational potential-energy terms cancel' without committing to specifics \u2014 don't state the equation, value, or reasoning; just hint that something matters here so Apollo has to ask a follow-up question.",
+    "Walk through this step out loud: apply the continuity equation to solve for the outlet velocity v2.",
+    "Walk through this step out loud: use the horizontal-pipe assumption to cancel the gravity terms in bernoulli's equation.",
+    "Walk through this step out loud: substitute the known values into the simplified bernoulli equation and solve for the section-2 pressure p2."
+  ],
+  "clarification_policy": "answer_correctly",
+  "expected": {
+    "credited": [
+      "eq.continuity",
+      "cond.incompressibility",
+      "eq.bernoulli",
+      "simp.horizontal_simplification",
+      "proc.plan_apply_continuity",
+      "proc.plan_apply_horizontal_simplification",
+      "proc.plan_solve_bernoulli_for_p2"
+    ],
+    "unresolved": [],
+    "misconceptions": [],
+    "expects_clarification": true
+  }
+}

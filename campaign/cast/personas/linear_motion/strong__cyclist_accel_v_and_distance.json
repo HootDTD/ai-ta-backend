@@ -1,0 +1,27 @@
+{
+  "persona": "strong",
+  "subject": "linear_motion",
+  "concept": "kinematics_constant_acceleration",
+  "problem_id": "cyclist_accel_v_and_distance",
+  "system_prompt": "You are a diligent student teaching a confused AI learner how to solve: 'A cyclist accelerates from rest at a constant rate of 2.0 m/s^2 for 5.0 seconds along a straight road. (a) What is the cyclist's velocity at t = 5.0 s? (b) How far does the cyclist travel during this time?' Teach every step of the solution clearly and completely, in your own words, following the scripted beats in order. Be thorough and precise -- do not skip anything.",
+  "scripted_beats": [
+    "Point out that the acceleration is constant over the whole 5.0-second interval, so the constant-acceleration kinematics equations apply.",
+    "Teach that v = v0 + a*t holds for velocity under constant acceleration, and explain what each symbol means.",
+    "Teach that x = v0*t + (1/2)*a*t^2 holds for position under constant acceleration, and explain what each symbol means.",
+    "Walk through: substitute v0 = 0, a = 2.0, t = 5.0 into v = v0 + a*t to get v = 10.0 m/s.",
+    "Walk through: substitute v0 = 0, a = 2.0, t = 5.0 into x = v0*t + (1/2)*a*t^2 to get x = 25.0 m."
+  ],
+  "clarification_policy": "answer_correctly",
+  "expected": {
+    "credited": [
+      "cond.constant_acceleration",
+      "eq.kinematics_velocity",
+      "eq.kinematics_position",
+      "proc.compute_final_velocity",
+      "proc.compute_distance"
+    ],
+    "unresolved": [],
+    "misconceptions": [],
+    "expects_clarification": false
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "id": "cyclist_accel_v_and_distance",
+  "concept_id": "kinematics_constant_acceleration",
+  "difficulty": "intro",
+  "given_values": {
+    "v0": 0.0,
+    "a": 2.0,
+    "t": 5.0
+  },
+  "problem_text": "A cyclist accelerates from rest at a constant rate of 2.0 m/s^2 for 5.0 seconds along a straight road. (a) What is the cyclist's velocity at t = 5.0 s? (b) How far does the cyclist travel during this time?",
+  "target_unknown": "v, x",
+  "_provisional_note": "PROVISIONAL reference solution, hand-authored from the linear_motion fixture PDF text (campaign/cast/materials/generate_fixtures.py) to unblock D2 persona authoring before the real WU-AAS ingest mints this subject (Task F2). Entity keys follow the same eq./cond./proc. convention as apollo/subjects/AUTHORING.md but are NOT guaranteed to match the keys the real LLM-driven parser assigns once the PDF is actually ingested -- reconcile (or regenerate this persona corpus) against the real minted set in F2.",
+  "reference_solution": [
+    {
+      "id": "constant_acceleration",
+      "step": 1,
+      "content": {
+        "label": "Constant acceleration assumption",
+        "applies_when": "acceleration is constant over the whole interval"
+      },
+      "depends_on": [],
+      "entity_key": "cond.constant_acceleration",
+      "entry_type": "condition"
+    },
+    {
+      "id": "kinematics_velocity",
+      "step": 2,
+      "content": {
+        "label": "Velocity under constant acceleration",
+        "symbolic": "v - (v0 + a*t)",
+        "variables": ["v", "v0", "a", "t"]
+      },
+      "depends_on": ["constant_acceleration"],
+      "entity_key": "eq.kinematics_velocity",
+      "entry_type": "equation"
+    },
+    {
+      "id": "kinematics_position",
+      "step": 3,
+      "content": {
+        "label": "Position under constant acceleration",
+        "symbolic": "x - (v0*t + Rational(1,2)*a*t**2)",
+        "variables": ["x", "v0", "a", "t"]
+      },
+      "depends_on": ["constant_acceleration"],
+      "entity_key": "eq.kinematics_position",
+      "entry_type": "equation"
+    },
+    {
+      "id": "compute_final_velocity",
+      "step": 4,
+      "content": {
+        "label": "Substitute the given v0, a, and t into v = v0 + a*t to get the velocity at t = 5.0 s",
+        "order": 1,
+        "action": "substitute v0 = 0, a = 2.0, t = 5.0 into v = v0 + a*t to get v = 10.0 m/s",
+        "purpose": "produce the numerical velocity answer for part (a)",
+        "uses_equations": ["kinematics_velocity"]
+      },
+      "depends_on": ["kinematics_velocity"],
+      "entity_key": "proc.compute_final_velocity",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "compute_distance",
+      "step": 5,
+      "content": {
+        "label": "Substitute the given v0, a, and t into x = v0*t + 1/2*a*t^2 to get the distance traveled",
+        "order": 2,
+        "action": "substitute v0 = 0, a = 2.0, t = 5.0 into x = v0*t + 1/2*a*t^2 to get x = 25.0 m",
+        "purpose": "produce the numerical distance answer for part (b)",
+        "uses_equations": ["kinematics_position"]
+      },
+      "depends_on": ["kinematics_position"],
+      "entity_key": "proc.compute_distance",
+      "entry_type": "procedure_step"
+    }
+  ]
+}
