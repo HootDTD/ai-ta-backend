@@ -476,3 +476,82 @@ pass — zero items always fails its gate.
 `write_report(report, out_dir)` writes `GATE-REPORT.md` (human-readable,
 failures listed as the literal next work queue per spec §5 exit criteria)
 and `scoreboard.json` (machine-readable) under `out_dir`.
+
+## Agent-student session driver + artifact adapters (Task D3)
+
+`campaign/cast/student.py` drives ONE `PersonaAttempt` (Task D2) through a
+real Apollo session end-to-end over the real student-facing HTTP routes
+(`apollo/api.py`: `POST /apollo/sessions/from_hoot`, `.../chat`, `.../done`,
+`.../retry`), then reads back the two `GradingArtifact` rows (canonical +
+pair) the Done-click persisted and returns one `AttemptRecord`. `run_corpus`
+drives many personas sequentially and appends one JSONL line per attempt to a
+`RunContext`'s `attempts.jsonl` as each attempt completes.
+
+Every real I/O boundary is an injected seam (`ApolloClient`, `ChatFn`,
+`ArtifactReader`) so the whole flow unit-tests with fakes — no Docker, DB,
+network, or LLM required. Only the seams' REAL implementations
+(`HttpxApolloClient`, `SqlArtifactReader`, `default_chat_fn`,
+`mint_student_token`) are `# pragma: no cover`, exercised only in Phase F
+against a live stack. A single failing attempt (HTTP error, LLM error, DB
+read error) never kills a corpus run — it is caught and recorded as
+`status="error"` on that attempt's `AttemptRecord`.
+
+**Deviations (recorded honestly):**
+
+- Apollo's session-creation route (`init_session_from_hoot`) infers the
+  concept from a free-text `hoot_transcript` via an LLM call and the
+  Overseer's personalized selector then picks a problem for that concept —
+  there is no student-facing lever to force the persona's exact
+  `problem_id`. `build_hoot_transcript` names the persona's concept as
+  plainly as possible, and `run_attempt` retries via `POST .../retry`
+  (bounded by `max_problem_retries`, default 3) when the selected problem
+  doesn't match; a persistent mismatch is recorded as
+  `problem_matched=False` on the attempt record rather than treated as a
+  hard failure. If this proves too lossy against the real selector in Phase
+  F, a campaign-only test-selection lever may be needed — flagged here for
+  that handoff.
+- Apollo's clarification loop has no dedicated "answer this clarification"
+  endpoint; it is woven into ordinary `/chat` replies. The driver has no
+  structural signal for "Apollo just asked a clarification probe" and uses
+  the same heuristic `campaign.adapters.extract_apollo_questions` uses for
+  S4 (a reply containing `"?"`) to decide whether to spend one of
+  `clarification_max_turns` (default 3) bounded follow-up turns; the actual
+  wording of the follow-up (including how `clarification_policy` shapes the
+  answer) is delegated to `chat_fn` — the agent-student, not the driver, is
+  the right owner of that judgment.
+- `run_corpus` is sequential only (no `parallelism` parameter): a shared
+  Apollo session-per-user model means concurrent attempts need distinct
+  per-persona student identities and search spaces, which is Task
+  F1's orchestration job, not D3's driver-loop concern.
+
+`campaign/adapters.py` is the thin seam Task E1/E3's judges/report-generator
+docstrings promised: it reshapes a REAL `GradingArtifact` payload (from
+`apollo.grading.artifact_build`) + a persona's `ExpectedLedger` + a session
+transcript into the EXACT plain-dict shapes `campaign.judges` (S3/S4/S5) and
+`campaign.report.build_report` consume, retiring the shape duplication those
+modules' docstrings flagged rather than editing their (frozen) contracts.
+Two real shape mismatches it bridges, found while wiring it:
+
+1. Ledger/misconception entries key their identity as `canonical_key`
+   (`apollo/grading/artifact_build.py`), but every judge reads
+   `entry["key"]` — `ledger_entry_to_judge_shape` renames the field only.
+2. `ExpectedLedger.to_ledger_dict()` already produces the exact
+   `{credited, unresolved, misconceptions}` shape S3 wants — reused
+   verbatim, not reinvented.
+
+`attempt_to_report_record` builds the exact `campaign.report.build_report`
+per-attempt dict (`band` rendered via the real `apollo.projections.scorecard.
+render_scorecard` off the canonical payload — never recomputed;
+`shadow_succeeded`/`shadow_abstained` read the graph payload's abstention
+block, present in either the `canonical` or `pair` slot depending on which
+grader was actually served). `subject_kind_for`/`all_subject_kinds` are the
+`campaign.report.classify_subject` adapter the E3 docstring anticipated,
+sourced from the real `campaign.cast.subjects` registry.
+
+Tests: `campaign/tests/test_student_driver.py`, `campaign/tests/test_adapters.py`
+— the adapter tests build their fixtures via the REAL
+`apollo.grading.artifact_build.build_graph_artifact`/`build_llm_artifact`
+builders (not hand-written dicts) and round-trip the output through the real
+`campaign.judges`/`campaign.report` functions. 98% combined line+branch
+coverage (the handful of uncovered lines are `Protocol` stub bodies, never
+executed by design).
