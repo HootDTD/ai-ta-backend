@@ -6,7 +6,7 @@ related:
   - ai-ta-backend/_overview
   - ai-ta-backend/domain-data
   - shared/security
-last_verified: 2026-06-11
+last_verified: 2026-07-01
 stub: false
 ---
 
@@ -52,7 +52,11 @@ All tables created by `ai-ta-backend/database/migrations/`; ORM models for the c
 - **Apollo (tutoring)**: `apollo_sessions`, `apollo_kg_entries`, `apollo_messages`,
   `apollo_problem_attempts` (009/010/014/020), `apollo_student_progress` (013),
   `apollo_subjects` / `apollo_concepts` / `apollo_concept_problems` (018),
-  `apollo_misconceptions` (019, embedded), `apollo_kg_negotiations` (021).
+  `apollo_misconceptions` (019, embedded), `apollo_kg_negotiations` (021),
+  `apollo_clarifications` (033), `apollo_grading_artifacts` (034 — canonical
+  grading artifact, one immutable row per Done-click per grader role;
+  LOCAL-Docker-verified only, not applied to any remote project yet; see
+  `docs/architecture/apollo.md` persistence row for the full shape).
 - **Reporting**: `ai_use_reports` (012) — the only table accessed via the anon-key REST
   client instead of SQLAlchemy (see shared/security).
 

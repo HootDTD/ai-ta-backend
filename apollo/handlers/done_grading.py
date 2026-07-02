@@ -77,6 +77,7 @@ from apollo.resolution import resolve_attempt
 from apollo.resolution.embedding import CandidateEmbeddingCache, default_embedder
 from apollo.resolution.nli_config import NLI_DEVICE, active_nli_model, load_nli_params, nli_enabled
 from apollo.resolution.nli_resolution import NLIContext
+from apollo.resolution.result import ResolutionResult
 
 _LOG = logging.getLogger(__name__)
 
@@ -234,6 +235,15 @@ class ShadowGradeResult:
     graph_sim_rubric: dict
     calibration: CalibrationMetrics
     diagnostic: ConstrainedDiagnostic
+    # Campaign-plan Task A2 Step 3 — the resolver's structured per-node result
+    # (§5 ``ResolutionResult``), REQUIRED (no default — a half-populated ledger
+    # basis is a silent bug we do not want, same rationale as the WU-4C2
+    # fields above). This is the canonical-artifact node ledger's evidence
+    # source: per-node ``{resolution, resolved_key, resolution_method,
+    # resolution_confidence}`` plus (via ``audited.findings``) the student
+    # node's evidence span. Populated where ``resolve_attempt(...)`` already
+    # runs inside ``run_graph_simulation`` — carries NO new computation.
+    resolution: ResolutionResult
 
 
 def _now_iso() -> str:
@@ -431,6 +441,7 @@ async def run_graph_simulation(
             graph_sim_rubric=graph_sim_rubric,
             calibration=calibration,
             diagnostic=diagnostic,
+            resolution=resolution,
         )
     except ReferenceGraphInvalidError:
         # §6.6 in SHADOW v1: a bad reference blocks only the shadow run (the OLD

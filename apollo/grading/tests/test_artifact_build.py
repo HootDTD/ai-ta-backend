@@ -1,0 +1,334 @@
+"""Campaign-plan Task A2 Step 4/5 — the pure canonical-artifact builders."""
+
+from __future__ import annotations
+
+import pytest
+
+from apollo.grading.artifact_build import (
+    GRADER_USED_GRAPH,
+    GRADER_USED_LLM_FALLBACK,
+    build_edge_ledger,
+    build_graph_artifact,
+    build_llm_artifact,
+    build_misconceptions,
+    build_node_ledger,
+    compute_misconception_penalty,
+)
+from apollo.grading.audited_grade import AuditedGrade
+from apollo.grading.composite import CompositeWeights, composite_score, load_weights
+from apollo.graph_compare.core import COMPARISON_VERSION, GradeResult
+from apollo.graph_compare.findings import Finding, FindingKind
+from apollo.handlers.done_grading import ShadowGradeResult
+from apollo.resolution.result import ResolutionResult, ResolvedNode
+
+
+def _grade(findings: tuple[Finding, ...]) -> GradeResult:
+    return GradeResult(
+        coverage_score=0.5,
+        soundness_score=0.5,
+        bisimilarity_score=0.5,
+        node_coverage_score=0.5,
+        edge_coverage_score=0.5,
+        scoping_score=1.0,
+        usage_score=1.0,
+        procedure_order_score=1.0,
+        dependency_score=1.0,
+        contradiction_score=1.0,
+        comparison_confidence=1.0,
+        findings=findings,
+        comparison_version=COMPARISON_VERSION,
+    )
+
+
+def _findings() -> tuple[Finding, ...]:
+    return (
+        Finding(
+            kind=FindingKind.COVERED_NODE,
+            canonical_key="eq.a",
+            student_node_ids=("n_a",),
+            evidence_spans=("eq a is conserved",),
+            confidence=0.92,
+        ),
+        Finding(kind=FindingKind.MISSING_NODE, canonical_key="eq.b", score=0.0),
+        Finding(
+            kind=FindingKind.CONTRADICTION,
+            canonical_key="misc.wrong",
+            student_node_ids=("n_m",),
+            evidence_spans=("pressure always increases",),
+            score=0.0,
+        ),
+        Finding(
+            kind=FindingKind.UNRESOLVED,
+            student_node_ids=("n_x",),
+            evidence_spans=("gibberish",),
+        ),
+        Finding(kind=FindingKind.MATCHED_EDGE, message="eq.a -PRECEDES-> eq.b (explicit)"),
+        Finding(kind=FindingKind.MISSING_EDGE, message="eq.b -USES-> eq.c (explicit)"),
+    )
+
+
+def _resolution() -> ResolutionResult:
+    return ResolutionResult(
+        resolved=(
+            ResolvedNode(
+                node_id="n_a",
+                resolution="resolved",
+                resolved_key="eq.a",
+                resolved_canon_key=1,
+                method="alias",
+                confidence=0.92,
+            ),
+            ResolvedNode(
+                node_id="n_m",
+                resolution="resolved",
+                resolved_key="misc.wrong",
+                resolved_canon_key=2,
+                method="fuzzy",
+                confidence=0.80,
+            ),
+            ResolvedNode(
+                node_id="n_x",
+                resolution="unresolved",
+                resolved_key=None,
+                resolved_canon_key=None,
+                method="unresolved",
+                confidence=0.0,
+            ),
+        ),
+        tier_counts={"alias": 1, "fuzzy": 1, "unresolved": 1},
+        llm_calls=0,
+    )
+
+
+@pytest.fixture
+def shadow_fixture() -> ShadowGradeResult:
+    findings = _findings()
+    grade = _grade(findings)
+    audited = AuditedGrade(
+        grade=grade,
+        findings=findings,
+        abstention_reasons=(),
+        abstained=False,
+        suppressed_event_kinds=frozenset(),
+        alias_candidates=(),
+    )
+    return ShadowGradeResult(
+        run_id=1,
+        grade=grade,
+        audited=audited,
+        normalization_confidence=0.8,
+        reference_graph_hash="refhash-v1:deadbeef",
+        opposes_map={"misc.wrong": "eq.a"},
+        turn_order={},
+        graph_sim_rubric={},
+        calibration=object(),  # type: ignore[arg-type]
+        diagnostic=object(),  # type: ignore[arg-type]
+        resolution=_resolution(),
+    )
+
+
+# --- node/edge/misconception ledger unit tests ------------------------------
+
+
+def test_node_ledger_statuses_and_methods():
+    findings = _findings()
+    ledger = build_node_ledger(findings, _resolution())
+    statuses = {e["status"] for e in ledger}
+    assert statuses == {"credited", "misconception", "unresolved"}
+    credited = [e for e in ledger if e["status"] == "credited"][0]
+    assert credited["canonical_key"] == "eq.a"
+    assert credited["method"] == "alias"
+    assert credited["confidence"] == 0.92
+    assert credited["evidence_span"] == "eq a is conserved"
+
+    misc = [e for e in ledger if e["status"] == "misconception"][0]
+    assert misc["method"] == "fuzzy"
+    assert misc["confidence"] == 0.80
+    assert misc["evidence_span"] == "pressure always increases"
+
+    # Two "unresolved" rows now: the real UNRESOLVED student utterance
+    # (student-side id, non-null evidence span) and the MISSING_NODE
+    # reference row (Task 3 scorecard fix) -- distinguish by canonical_key.
+    unresolved_rows = [e for e in ledger if e["status"] == "unresolved"]
+    assert len(unresolved_rows) == 2
+    utterance = next(e for e in unresolved_rows if e["canonical_key"] != "eq.b")
+    assert utterance["canonical_key"] == "n_x"
+    assert utterance["method"] is None
+    assert utterance["evidence_span"] == "gibberish"
+    assert utterance["confidence"] == 0.0
+
+
+def test_node_ledger_includes_missing_node_as_unresolved_with_reference_key():
+    """Scorecard fix (campaign-plan Task 3): a MISSING_NODE finding (a
+    reference node with ZERO student evidence) now earns an ``unresolved``
+    ledger row keyed by the REFERENCE node's own display-safe canonical_key
+    -- never an internal student-side id -- with ``evidence_span``/
+    ``confidence`` explicitly ``None`` (no utterance was ever produced, so
+    there is nothing to quote and no resolution was ever attempted)."""
+    findings = _findings()
+    ledger = build_node_ledger(findings, _resolution())
+    missing = next(e for e in ledger if e["canonical_key"] == "eq.b")
+    assert missing["status"] == "unresolved"
+    assert missing["method"] is None
+    assert missing["confidence"] is None
+    assert missing["evidence_span"] is None
+    assert len(ledger) == 4
+
+
+def test_edge_ledger_matched_and_missing():
+    ledger = build_edge_ledger(_findings())
+    assert {e["status"] for e in ledger} == {"matched", "missing"}
+    matched = [e for e in ledger if e["status"] == "matched"][0]
+    assert matched["from_key"] == "eq.a"
+    assert matched["edge_type"] == "PRECEDES"
+    assert matched["to_key"] == "eq.b"
+    assert matched["provenance"] == "explicit"
+
+
+def test_parse_edge_message_missing_degrades_to_none():
+    from apollo.grading.artifact_build import _parse_edge_message
+
+    assert _parse_edge_message(None) == {
+        "from_key": None,
+        "edge_type": None,
+        "to_key": None,
+        "provenance": None,
+    }
+
+
+def test_parse_edge_message_malformed_degrades_but_keeps_raw():
+    from apollo.grading.artifact_build import _parse_edge_message
+
+    parsed = _parse_edge_message("not a well-formed edge message")
+    assert parsed == {
+        "from_key": None,
+        "edge_type": None,
+        "to_key": None,
+        "provenance": "not a well-formed edge message",
+    }
+
+
+def test_misconceptions_asserted_carries_opposes():
+    findings = _findings()
+    misconceptions = build_misconceptions(findings, _resolution(), {"misc.wrong": "eq.a"})
+    assert len(misconceptions) == 1
+    m = misconceptions[0]
+    assert m["canonical_key"] == "misc.wrong"
+    assert m["confidence"] == 0.80
+    assert m["opposes"] == "eq.a"
+    assert m["evidence_span"] == "pressure always increases"
+
+
+def test_misconception_penalty_formula():
+    # 1 asserted misconception (>= floor) / reference_node_count.
+    misconceptions = [{"confidence": 0.8}, {"confidence": 0.1}]
+    assert compute_misconception_penalty(misconceptions, 2) == 0.5
+
+
+def test_misconception_penalty_floors_reference_count_at_one():
+    assert compute_misconception_penalty([{"confidence": 1.0}], 0) == 1.0
+
+
+# --- build_graph_artifact ----------------------------------------------------
+
+
+def test_graph_artifact_node_ledger_statuses(shadow_fixture):
+    art = build_graph_artifact(
+        shadow=shadow_fixture, weights=load_weights(), clarification_trace=[], latency_ms=1200
+    )
+    statuses = {e["status"] for e in art["node_ledger"]}
+    assert statuses <= {"credited", "misconception", "unresolved"}
+    for e in art["node_ledger"]:
+        if e["status"] == "credited":
+            assert e["method"] in {
+                "exact",
+                "symbolic",
+                "derived",
+                "alias",
+                "clarification",
+                "nli",
+                "fuzzy",
+            }
+            assert e["evidence_span"]  # every credit carries evidence (spec §1)
+
+
+def test_graph_artifact_grader_used_and_versions(shadow_fixture):
+    art = build_graph_artifact(
+        shadow=shadow_fixture, weights=load_weights(), clarification_trace=[], latency_ms=1200
+    )
+    assert art["grader_used"] == GRADER_USED_GRAPH
+    assert art["versions"]["grader"] == COMPARISON_VERSION
+    assert art["versions"]["reference_graph_hash"] == "refhash-v1:deadbeef"
+    assert art["versions"]["weights"] == {"w_n": 0.6, "w_e": 0.25, "p": 0.15}
+    assert art["grading_latency_ms"] == 1200
+
+
+def test_scores_block_records_weights(shadow_fixture):
+    art = build_graph_artifact(
+        shadow=shadow_fixture, weights=load_weights(), clarification_trace=[], latency_ms=None
+    )
+    s = art["scores"]
+    assert s["composite"] == composite_score(
+        s["node_coverage"],
+        s["edge_coverage"],
+        s["misconception_penalty"],
+        CompositeWeights(**s["weights"]),
+    )
+
+
+def test_graph_artifact_abstention_block(shadow_fixture):
+    art = build_graph_artifact(
+        shadow=shadow_fixture, weights=load_weights(), clarification_trace=[], latency_ms=None
+    )
+    assert art["abstention"] == {
+        "abstained": False,
+        "reasons": [],
+        "normalization_confidence": 0.8,
+        "fallback_grade": None,
+        "graph_failure": None,
+    }
+
+
+def test_graph_artifact_clarification_trace_passthrough(shadow_fixture):
+    trace = [{"question": "q1", "answer": "a1", "credit_granted": True}]
+    art = build_graph_artifact(
+        shadow=shadow_fixture, weights=load_weights(), clarification_trace=trace, latency_ms=None
+    )
+    assert art["clarification_trace"] == trace
+    # Immutable input: the builder must never mutate the caller's list.
+    assert art["clarification_trace"] is not trace
+
+
+# --- build_llm_artifact ------------------------------------------------------
+
+
+def test_llm_artifact_shape():
+    art = build_llm_artifact(
+        coverage={"covered": ["k1"], "missing": ["k2"]},
+        rubric={"overall": {"score": 71}},
+        weights=load_weights(),
+        graph_failure="boom",
+        latency_ms=5,
+    )
+    assert art["grader_used"] == GRADER_USED_LLM_FALLBACK
+    assert art["abstention"]["graph_failure"] == "boom"
+    assert art["abstention"]["fallback_grade"] == 71
+    assert art["edge_ledger"] == []
+    assert art["scores"]["edge_coverage"] == 0.0
+    assert art["scores"]["misconception_penalty"] == 0.0
+    assert art["scores"]["node_coverage"] == 0.5
+    statuses = {e["status"] for e in art["node_ledger"]}
+    assert statuses == {"credited", "unresolved"}
+
+
+def test_llm_artifact_no_attempts_zero_coverage():
+    art = build_llm_artifact(
+        coverage={"covered": [], "missing": []},
+        rubric={},
+        weights=load_weights(),
+        graph_failure=None,
+        latency_ms=None,
+    )
+    assert art["scores"]["node_coverage"] == 0.0
+    assert art["abstention"]["fallback_grade"] is None
+    assert art["abstention"]["graph_failure"] is None

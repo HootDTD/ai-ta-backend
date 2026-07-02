@@ -13,7 +13,9 @@ proceed if any of them have not been touched with a negotiation move
 """
 from __future__ import annotations
 
+import logging
 import os
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,7 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import ReviewRequiredError
 from apollo.grading.abstention import min_parser_confidence_of
-from apollo.handlers.done_grading import run_graph_simulation
+from apollo.grading.artifact_build import GRADER_USED_GRAPH, GRADER_USED_LLM_FALLBACK
+from apollo.handlers.artifact_writer import write_artifacts
+from apollo.handlers.done_grading import ShadowGradeResult, run_graph_simulation
 from apollo.handlers.done_inputs import (
     _find_problem_payload,  # noqa: F401 — re-export (relocated to done_inputs, WU-5B3a-0)
     build_rerun_inputs,
@@ -42,6 +46,7 @@ from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
 from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
     ApolloSession,
+    GradingArtifact,
     KGNegotiation,
     Message,
     ProblemAttempt,
@@ -49,7 +54,11 @@ from apollo.persistence.models import (
 )
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.persistence.progress_repo import apply_xp
+from apollo.projections.mastery import update_mastery_from_artifact
+from apollo.projections.scorecard import render_scorecard
 from apollo.schemas.problem import Problem
+
+_LOG = logging.getLogger(__name__)
 
 # P3.6 — Done-gate constants. The conf threshold (0.6) is intentionally
 # below the OLM-invite threshold (0.7): the invite is opportunistic;
@@ -83,6 +92,35 @@ _GRAPH_SIM_LIVE_FLAG: str = "APOLLO_GRAPH_SIM_LIVE_ENABLED"
 # APOLLO_GRAPH_SIM_LIVE_ENABLED), NOT part of this build.
 _GRAPH_SIM_LAYER3_FLAG: str = "APOLLO_GRAPH_SIM_LAYER3_ENABLED"
 
+# Campaign-plan Task A3 — the canonical-grading-artifact PERSIST flag (default
+# OFF everywhere). When OFF, `write_artifacts` is never called and `handle_done`
+# writes no `apollo_grading_artifacts` rows (byte-identical to pre-A3). When ON,
+# ONE canonical row is written every Done-click (`grader_used="llm_fallback"` —
+# this build never serves the graph grade; A4's `APOLLO_GRAPH_GRADER_LIVE` is
+# the flag that flips `served`), plus a `pair` row with the graph-grader's
+# artifact whenever the shadow chain ran and produced a result (paired-capture,
+# spec section 5). This is orthogonal to `APOLLO_GRAPH_SIM_SHADOW_ENABLED`:
+# artifact capture with NO shadow run still writes the single LLM canonical row
+# so campaign runs always have a record, even on subjects/attempts where the
+# shadow chain itself is off.
+_GRAPH_SIM_ARTIFACT_FLAG: str = "APOLLO_GRADING_ARTIFACT_ENABLED"
+
+# Campaign-plan Task A4 — the LIVE PROMOTION flag (default OFF everywhere; spec
+# §3/§5). This is the spec's actual promotion switch and OPERATIONALLY
+# SUPERSEDES the older dormant `APOLLO_GRAPH_SIM_LIVE_ENABLED` (WU-4C2), which
+# stays in the codebase untouched but is not the flag the e2e campaign flips.
+# Semantics: OFF -> `handle_done` is byte-identical to pre-A4 (this build's
+# only state); ON + a successful, non-abstained shadow result -> the graph
+# rubric/diagnostic are served (`grader_used="graph"` in the artifact) exactly
+# like the WU-4C2 promotion; ON + an abstained shadow -> the (session-time)
+# clarification loop already ran, so we fall back to the OLD/LLM values
+# (`grader_used="llm_fallback"`) rather than re-run anything at Done time; ON +
+# ANY exception anywhere in the graph path -> logged, `graph_failure` recorded
+# on the artifact, OLD/LLM values served, HTTP 200 (a graph bug must never
+# cost a student their grade). When OFF, a named infra error in the shadow
+# chain still re-raises (today's NO-FALLBACK diagnostics, unchanged).
+_GRAPH_GRADER_LIVE_FLAG: str = "APOLLO_GRAPH_GRADER_LIVE"
+
 
 def _done_gate_enabled() -> bool:
     return os.environ.get(_DONE_GATE_FLAG, "").lower() in ("1", "true", "yes")
@@ -98,6 +136,46 @@ def _graph_sim_live_enabled() -> bool:
 
 def _graph_sim_layer3_enabled() -> bool:
     return os.environ.get(_GRAPH_SIM_LAYER3_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _grading_artifact_enabled() -> bool:
+    return os.environ.get(_GRAPH_SIM_ARTIFACT_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _graph_grader_live_enabled() -> bool:
+    return os.environ.get(_GRAPH_GRADER_LIVE_FLAG, "").lower() in ("1", "true", "yes")
+
+
+async def _project_mastery(db: AsyncSession, *, attempt_id: int) -> None:
+    """Campaign-plan Task B2 — the composite-EWMA mastery projection, run
+    AFTER `write_artifacts` has durably committed the canonical row. Reads
+    that row back (its id/created_at only exist post-commit) and hands it to
+    `update_mastery_from_artifact`, then owns its OWN commit — mirroring
+    `write_artifacts`' own-failure-domain posture: this is telemetry-derived
+    bookkeeping, not the grade itself, so ANY exception here is logged and
+    swallowed rather than raised into the Done response. Guarded at the call
+    site so this NEVER runs alongside the dormant WU-5A2
+    `run_learner_update` (both write `apollo_mastery_events` /
+    `apollo_learner_state`; running both would double-apply evidence)."""
+    try:
+        row = (
+            await db.execute(
+                select(GradingArtifact).where(
+                    GradingArtifact.attempt_id == attempt_id,
+                    GradingArtifact.role == "canonical",
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:  # defensive — write_artifacts already returned non-None
+            return
+        await update_mastery_from_artifact(db, artifact_row=row)
+        await db.commit()
+    except Exception:
+        _LOG.exception("mastery_projection_failed attempt_id=%s", attempt_id)
+        try:
+            await db.rollback()
+        except Exception:  # pragma: no cover - defensive, rollback itself failing
+            _LOG.exception("mastery_projection_rollback_failed attempt_id=%s", attempt_id)
 
 
 def _flagged_entries(graph: KGGraph) -> list[tuple[Node, str]]:
@@ -269,6 +347,12 @@ async def handle_done(
     sess.phase = SessionPhase.SOLVING.value
     await db.commit()
 
+    # Task A3 — grading-latency clock. Captured here (before the OLD grader
+    # runs) so a persisted artifact's `grading_latency_ms` covers the WHOLE
+    # grading pipeline for this Done-click (OLD coverage/rubric + the shadow
+    # chain, when it runs) — not just one half of it.
+    _artifact_t0 = time.monotonic()
+
     coverage = await compute_coverage(student_graph, reference_graph)
 
     # Class 2 Phase 2 (P2.8): pull per-attempt misconception signals from
@@ -377,50 +461,141 @@ async def handle_done(
     # status) WITHOUT voiding the already-committed student grade (NO-FALLBACK,
     # mirrors RetentionError). When LIVE is off (the only build state) the
     # student_response above is NOT modified by it.
+    #
+    # Task A3 — `shadow` starts `None` so the artifact-writer call below (which
+    # runs whether or not the shadow chain ran at all) can tell a "shadow flag
+    # off" Done-click apart from one where the chain ran and returned a result.
+    #
+    # Task A4 — `graph_failure` carries the any-exception fallback reason (LIVE
+    # mode only; see `_GRAPH_GRADER_LIVE_FLAG` above) and `served_grade` is the
+    # `grader_used` value threaded into `write_artifacts` below. Both stay at
+    # their OLD-path defaults (`None` / `llm_fallback`) unless LIVE promotes.
+    shadow: ShadowGradeResult | None = None
+    graph_failure: str | None = None
+    served_grade = GRADER_USED_LLM_FALLBACK
     if _graph_sim_shadow_enabled():
-        # WU-5B3a-0: source the shadow problem_payload through the SHARED builder
-        # (single source of truth with the future retry janitor). The builder keys
-        # on attempt.problem_id (== problem.id at LIVE Done, since `attempt` was
-        # found by ProblemAttempt.problem_id == problem.id), so this is
-        # behavior-preserving here while the janitor reconstructs the OLD problem
-        # later. student_graph + old_rubric stay the LIVE values (unchanged grade).
-        rerun = await build_rerun_inputs(db, neo, attempt=attempt, sess=sess)
-        shadow = await run_graph_simulation(
-            db, neo,
+        live = _graph_grader_live_enabled()
+        try:
+            # WU-5B3a-0: source the shadow problem_payload through the SHARED builder
+            # (single source of truth with the future retry janitor). The builder keys
+            # on attempt.problem_id (== problem.id at LIVE Done, since `attempt` was
+            # found by ProblemAttempt.problem_id == problem.id), so this is
+            # behavior-preserving here while the janitor reconstructs the OLD problem
+            # later. student_graph + old_rubric stay the LIVE values (unchanged grade).
+            rerun = await build_rerun_inputs(db, neo, attempt=attempt, sess=sess)
+            shadow = await run_graph_simulation(
+                db, neo,
+                attempt=attempt,
+                sess=sess,
+                student_graph=student_graph,
+                problem_payload=rerun.problem_payload,
+                old_rubric=rubric,  # the OLD student-facing rubric, for §6.7 calibration
+            )
+            # WU-4C2 — LIVE promotion (DORMANT; flag OFF in this build). Built + tested,
+            # never active. When ON, the graph-sim rubric + constrained-diagnostic
+            # narrative REPLACE the two student-facing keys; coverage/progress/XP stay
+            # OLD-path. Reached only AFTER a successful shadow chain (a raised shadow —
+            # e.g. pending — never reaches here, so the OLD grade stands; §6.4).
+            if shadow is not None and _graph_sim_live_enabled():
+                student_response["rubric"] = shadow.graph_sim_rubric
+                student_response["diagnostic_narrative"] = shadow.diagnostic.narrative
+
+            # WU-5A2 — Layer-3 belief PERSIST (DORMANT; flag OFF in this build). When
+            # ON, after the shadow persist the Done txn appends `apollo_mastery_events`
+            # + upserts `apollo_learner_state` (the §3 Bayesian belief) all-or-nothing
+            # with `done_ts` as the single `last_evidence_at`/`updated_at` instant. The
+            # shadow result carries `audited`/`opposes_map`/`turn_order`; `parser_confidence`
+            # is the §6.6 MIN over the student graph's parser confidences; `grader_confidence`
+            # is derived in `persist_learner_update` from `shadow.normalization_confidence`.
+            # A raised shadow (e.g. pending) never reaches here, so the gate is guarded
+            # on `shadow is not None`; a Layer-3 failure sets `learner_update_pending`
+            # without voiding the already-committed grade (NO-FALLBACK).
+            if shadow is not None and _graph_sim_layer3_enabled():
+                parser_confidence = min_parser_confidence_of(student_graph.nodes)
+                await run_learner_update(
+                    db,
+                    sess=sess,
+                    attempt=attempt,
+                    shadow=shadow,
+                    done_ts=done_ts,
+                    parser_confidence=parser_confidence,
+                )
+
+            # Task A4 — the LIVE promotion (spec §3 steps 2-3): a successful,
+            # non-abstained shadow result REPLACES the OLD-path rubric/
+            # diagnostic exactly like the dormant WU-4C2 block above, and
+            # `served_grade` flips so the artifact records `grader_used=
+            # "graph"`. An abstained shadow means the (session-time)
+            # clarification loop already ran and the graph grader is still
+            # under-confident -> fall straight to the OLD/LLM values (spec
+            # step 3); `served_grade` stays "llm_fallback" and the paired
+            # graph artifact (written by `write_artifacts` below) carries the
+            # abstention reasons for the record. This block is independent of
+            # the dormant `APOLLO_GRAPH_SIM_LIVE_ENABLED` promotion above —
+            # the two flags are never both on in any real deployment.
+            if live and shadow is not None and not shadow.audited.abstained:
+                student_response["rubric"] = shadow.graph_sim_rubric
+                student_response["diagnostic_narrative"] = shadow.diagnostic.narrative
+                served_grade = GRADER_USED_GRAPH
+        except Exception as e:
+            if not live:
+                # Shadow-only mode (LIVE off) keeps today's NO-FALLBACK
+                # diagnostics: a named infra error (or anything else) surfaces
+                # as the right HTTP status rather than being silently eaten.
+                raise
+            # LIVE mode: ANY graph-path exception must never cost the student
+            # their grade (spec §3 error handling). Log, record the failure on
+            # the artifact, and serve the already-committed OLD/LLM values.
+            _LOG.exception(
+                "apollo_graph_grader_live_failure attempt_id=%s", int(attempt.id)
+            )
+            graph_failure = repr(e)[:500]
+            shadow = None
+            served_grade = GRADER_USED_LLM_FALLBACK
+
+    # Task A3 — paired canonical-artifact capture (DEFAULT OFF). Orthogonal to
+    # `_graph_sim_shadow_enabled()`: with the shadow flag off, `shadow` is
+    # `None` and exactly one LLM canonical row is written; with it on and a
+    # shadow result present, a `pair` row with the graph-grader's artifact is
+    # ALSO written (spec §5 paired-capture). Task A4 — `served_grade` is
+    # `"graph"` only when `APOLLO_GRAPH_GRADER_LIVE` promoted a healthy,
+    # non-abstained shadow result above; otherwise it is `"llm_fallback"`
+    # (LIVE off, LIVE-on-but-abstained, or LIVE-on-with-a-caught exception).
+    # `graph_failure` carries the any-exception fallback reason (LIVE only);
+    # `None` in every other build state.
+    # Task B1 — student scorecard projection (spec §2). Additive
+    # `student_response["scorecard"]` key, attached only when artifact capture
+    # is on (there is nothing to template over otherwise): `write_artifacts`
+    # returns the CANONICAL payload it just persisted — the exact grade the
+    # student was served, graph or LLM — and `render_scorecard` is a pure
+    # template over it (no recomputation; same shape either way, spec §3
+    # step 3). A failed artifact write returns `None`, so no scorecard is
+    # attached rather than templating over a payload that was never durable.
+    if _grading_artifact_enabled():
+        artifact_latency_ms = int((time.monotonic() - _artifact_t0) * 1000)
+        canonical_payload = await write_artifacts(
+            db,
             attempt=attempt,
             sess=sess,
-            student_graph=student_graph,
-            problem_payload=rerun.problem_payload,
-            old_rubric=rubric,  # the OLD student-facing rubric, for §6.7 calibration
+            shadow=shadow,
+            coverage=coverage,
+            rubric=rubric,
+            served=served_grade,
+            graph_failure=graph_failure,
+            latency_ms=artifact_latency_ms,
         )
-        # WU-4C2 — LIVE promotion (DORMANT; flag OFF in this build). Built + tested,
-        # never active. When ON, the graph-sim rubric + constrained-diagnostic
-        # narrative REPLACE the two student-facing keys; coverage/progress/XP stay
-        # OLD-path. Reached only AFTER a successful shadow chain (a raised shadow —
-        # e.g. pending — never reaches here, so the OLD grade stands; §6.4).
-        if shadow is not None and _graph_sim_live_enabled():
-            student_response["rubric"] = shadow.graph_sim_rubric
-            student_response["diagnostic_narrative"] = shadow.diagnostic.narrative
-
-        # WU-5A2 — Layer-3 belief PERSIST (DORMANT; flag OFF in this build). When
-        # ON, after the shadow persist the Done txn appends `apollo_mastery_events`
-        # + upserts `apollo_learner_state` (the §3 Bayesian belief) all-or-nothing
-        # with `done_ts` as the single `last_evidence_at`/`updated_at` instant. The
-        # shadow result carries `audited`/`opposes_map`/`turn_order`; `parser_confidence`
-        # is the §6.6 MIN over the student graph's parser confidences; `grader_confidence`
-        # is derived in `persist_learner_update` from `shadow.normalization_confidence`.
-        # A raised shadow (e.g. pending) never reaches here, so the gate is guarded
-        # on `shadow is not None`; a Layer-3 failure sets `learner_update_pending`
-        # without voiding the already-committed grade (NO-FALLBACK).
-        if shadow is not None and _graph_sim_layer3_enabled():
-            parser_confidence = min_parser_confidence_of(student_graph.nodes)
-            await run_learner_update(
-                db,
-                sess=sess,
-                attempt=attempt,
-                shadow=shadow,
-                done_ts=done_ts,
-                parser_confidence=parser_confidence,
-            )
+        if canonical_payload is not None:
+            student_response["scorecard"] = render_scorecard(canonical_payload)
+            # Task B2 — mastery ledger projection (spec section 2/3). Guarded off
+            # whenever the dormant WU-5A2 Bayesian path is live (see
+            # `_project_mastery`'s docstring): the two write paths must never
+            # both fire for the same attempt.
+            if _graph_sim_layer3_enabled():
+                _LOG.info(
+                    "mastery_projection_skipped_layer3_active attempt_id=%s",
+                    int(attempt.id),
+                )
+            else:
+                await _project_mastery(db, attempt_id=int(attempt.id))
 
     return student_response

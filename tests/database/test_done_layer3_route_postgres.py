@@ -56,6 +56,7 @@ from apollo.persistence.models import (
     SessionStatus,
     Subject,
 )
+from apollo.resolution.result import ResolutionResult
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_problem_payloads,
     seed_course,
@@ -173,6 +174,7 @@ def _shadow(audited, *, normalization_confidence=0.8):
         graph_sim_rubric={},
         calibration=object(),
         diagnostic=object(),
+        resolution=ResolutionResult(resolved=(), tier_counts={}, llm_calls=0),
     )
 
 
