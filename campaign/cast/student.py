@@ -283,7 +283,24 @@ async def _resolve_problem(
     matched = problem.get("id") == persona.problem_id
     retries = 0
     while not matched and retries < max_problem_retries:
-        session = await client.next(session_id=session_id, difficulty=difficulty, token=token)
+        try:
+            session = await client.next(session_id=session_id, difficulty=difficulty, token=token)
+        except Exception:
+            # A re-roll can legitimately fail with no more unattempted
+            # problems left at this difficulty (PoolExhaustedError -> 409)
+            # once a small pool has been exhausted by prior retries, or any
+            # other transient route error. Per this function's own contract
+            # ("a persistent mismatch is recorded... rather than silently
+            # treated as a hard failure" — module docstring), that must fall
+            # through to an unmatched result on the LAST successfully
+            # selected problem, not propagate and fail the whole attempt.
+            _LOG.warning(
+                "campaign_problem_reroll_failed session_id=%s persona_problem_id=%s",
+                session_id,
+                persona.problem_id,
+                exc_info=True,
+            )
+            break
         problem = session.get("problem") or {}
         attempt_id = session.get("attempt_id", attempt_id)
         matched = problem.get("id") == persona.problem_id
