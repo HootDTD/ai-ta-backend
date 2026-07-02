@@ -188,22 +188,52 @@ async def test_shadow_none_writes_single_llm_canonical_row_with_graph_failure(db
 
 async def test_clarification_trace_included_when_rows_exist(db_session):
     sess, attempt = await _seed_session_attempt(db_session)
-    db_session.add(
-        Clarification(
-            attempt_id=attempt.id,
-            session_id=sess.id,
-            user_id=TEST_USER_ID,
-            search_space_id=sess.search_space_id,
-            concept_id=None,
-            node_id="n_a",
-            candidate_key="eq.a",
-            state="confirmed",
-            probe_question="Do you mean eq.a?",
-            original_statement="something vague",
-            clarification_text="yes, eq.a",
-            asked_turn=1,
-            answered_turn=2,
-        )
+    db_session.add_all(
+        [
+            Clarification(
+                attempt_id=attempt.id,
+                session_id=sess.id,
+                user_id=TEST_USER_ID,
+                search_space_id=sess.search_space_id,
+                concept_id=None,
+                node_id="n_a",
+                candidate_key="eq.a",
+                state="confirmed",
+                probe_question="Do you mean eq.a?",
+                original_statement="something vague",
+                clarification_text="yes, eq.a",
+                asked_turn=1,
+                answered_turn=2,
+            ),
+            Clarification(
+                attempt_id=attempt.id,
+                session_id=sess.id,
+                user_id=TEST_USER_ID,
+                search_space_id=sess.search_space_id,
+                concept_id=None,
+                node_id="n_b",
+                candidate_key="misc.wrong",
+                state="refuted",
+                probe_question="Do you mean misc.wrong?",
+                original_statement="something else vague",
+                clarification_text="no, not that",
+                asked_turn=3,
+                answered_turn=4,
+            ),
+            Clarification(
+                attempt_id=attempt.id,
+                session_id=sess.id,
+                user_id=TEST_USER_ID,
+                search_space_id=sess.search_space_id,
+                concept_id=None,
+                node_id="n_c",
+                candidate_key="eq.c",
+                state="asked_waiting",
+                probe_question="Do you mean eq.c?",
+                original_statement="yet another vague statement",
+                asked_turn=5,
+            ),
+        ]
     )
     await db_session.flush()
 
@@ -236,7 +266,25 @@ async def test_clarification_trace_included_when_rows_exist(db_session):
             "clarification_text": "yes, eq.a",
             "state": "confirmed",
             "credit": "granted",
-        }
+        },
+        {
+            "node_id": "n_b",
+            "candidate_key": "misc.wrong",
+            "probe_question": "Do you mean misc.wrong?",
+            "original_statement": "something else vague",
+            "clarification_text": "no, not that",
+            "state": "refuted",
+            "credit": "denied",
+        },
+        {
+            "node_id": "n_c",
+            "candidate_key": "eq.c",
+            "probe_question": "Do you mean eq.c?",
+            "original_statement": "yet another vague statement",
+            "clarification_text": None,
+            "state": "asked_waiting",
+            "credit": None,
+        },
     ]
 
 
