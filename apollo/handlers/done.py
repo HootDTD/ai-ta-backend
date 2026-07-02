@@ -14,6 +14,7 @@ proceed if any of them have not been touched with a negotiation move
 from __future__ import annotations
 
 import os
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,7 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import ReviewRequiredError
 from apollo.grading.abstention import min_parser_confidence_of
-from apollo.handlers.done_grading import run_graph_simulation
+from apollo.grading.artifact_build import GRADER_USED_LLM_FALLBACK
+from apollo.handlers.artifact_writer import write_artifacts
+from apollo.handlers.done_grading import ShadowGradeResult, run_graph_simulation
 from apollo.handlers.done_inputs import (
     _find_problem_payload,  # noqa: F401 — re-export (relocated to done_inputs, WU-5B3a-0)
     build_rerun_inputs,
@@ -83,6 +86,19 @@ _GRAPH_SIM_LIVE_FLAG: str = "APOLLO_GRAPH_SIM_LIVE_ENABLED"
 # APOLLO_GRAPH_SIM_LIVE_ENABLED), NOT part of this build.
 _GRAPH_SIM_LAYER3_FLAG: str = "APOLLO_GRAPH_SIM_LAYER3_ENABLED"
 
+# Campaign-plan Task A3 — the canonical-grading-artifact PERSIST flag (default
+# OFF everywhere). When OFF, `write_artifacts` is never called and `handle_done`
+# writes no `apollo_grading_artifacts` rows (byte-identical to pre-A3). When ON,
+# ONE canonical row is written every Done-click (`grader_used="llm_fallback"` —
+# this build never serves the graph grade; A4's `APOLLO_GRAPH_GRADER_LIVE` is
+# the flag that flips `served`), plus a `pair` row with the graph-grader's
+# artifact whenever the shadow chain ran and produced a result (paired-capture,
+# spec section 5). This is orthogonal to `APOLLO_GRAPH_SIM_SHADOW_ENABLED`:
+# artifact capture with NO shadow run still writes the single LLM canonical row
+# so campaign runs always have a record, even on subjects/attempts where the
+# shadow chain itself is off.
+_GRAPH_SIM_ARTIFACT_FLAG: str = "APOLLO_GRADING_ARTIFACT_ENABLED"
+
 
 def _done_gate_enabled() -> bool:
     return os.environ.get(_DONE_GATE_FLAG, "").lower() in ("1", "true", "yes")
@@ -98,6 +114,10 @@ def _graph_sim_live_enabled() -> bool:
 
 def _graph_sim_layer3_enabled() -> bool:
     return os.environ.get(_GRAPH_SIM_LAYER3_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _grading_artifact_enabled() -> bool:
+    return os.environ.get(_GRAPH_SIM_ARTIFACT_FLAG, "").lower() in ("1", "true", "yes")
 
 
 def _flagged_entries(graph: KGGraph) -> list[tuple[Node, str]]:
@@ -269,6 +289,12 @@ async def handle_done(
     sess.phase = SessionPhase.SOLVING.value
     await db.commit()
 
+    # Task A3 — grading-latency clock. Captured here (before the OLD grader
+    # runs) so a persisted artifact's `grading_latency_ms` covers the WHOLE
+    # grading pipeline for this Done-click (OLD coverage/rubric + the shadow
+    # chain, when it runs) — not just one half of it.
+    _artifact_t0 = time.monotonic()
+
     coverage = await compute_coverage(student_graph, reference_graph)
 
     # Class 2 Phase 2 (P2.8): pull per-attempt misconception signals from
@@ -377,6 +403,11 @@ async def handle_done(
     # status) WITHOUT voiding the already-committed student grade (NO-FALLBACK,
     # mirrors RetentionError). When LIVE is off (the only build state) the
     # student_response above is NOT modified by it.
+    #
+    # Task A3 — `shadow` starts `None` so the artifact-writer call below (which
+    # runs whether or not the shadow chain ran at all) can tell a "shadow flag
+    # off" Done-click apart from one where the chain ran and returned a result.
+    shadow: ShadowGradeResult | None = None
     if _graph_sim_shadow_enabled():
         # WU-5B3a-0: source the shadow problem_payload through the SHARED builder
         # (single source of truth with the future retry janitor). The builder keys
@@ -422,5 +453,28 @@ async def handle_done(
                 done_ts=done_ts,
                 parser_confidence=parser_confidence,
             )
+
+    # Task A3 — paired canonical-artifact capture (DEFAULT OFF). Orthogonal to
+    # `_graph_sim_shadow_enabled()`: with the shadow flag off, `shadow` is
+    # `None` and exactly one LLM canonical row is written; with it on and a
+    # shadow result present, a `pair` row with the graph-grader's artifact is
+    # ALSO written (spec §5 paired-capture). `served` is always the LLM grade
+    # in this build — A4's `APOLLO_GRAPH_GRADER_LIVE` is the only flag that can
+    # promote the graph grade to `served`. `graph_failure` is always `None`
+    # here; A4 wraps the shadow chain in its any-exception fallback and threads
+    # the failure reason through this same call.
+    if _grading_artifact_enabled():
+        artifact_latency_ms = int((time.monotonic() - _artifact_t0) * 1000)
+        await write_artifacts(
+            db,
+            attempt=attempt,
+            sess=sess,
+            shadow=shadow,
+            coverage=coverage,
+            rubric=rubric,
+            served=GRADER_USED_LLM_FALLBACK,
+            graph_failure=None,
+            latency_ms=artifact_latency_ms,
+        )
 
     return student_response
