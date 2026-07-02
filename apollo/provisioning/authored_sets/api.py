@@ -36,12 +36,20 @@ from apollo.persistence.models import (
     ConceptProblem,
     DedupDecision,
     EntityPrereq,
+    IngestPageEvidence,
+    IngestRun,
     KGEntity,
     LearnerState,
     MasteryEvent,
     Misconception,
 )
 from apollo.provisioning.authored_sets.indexing import index_authored_doc
+from apollo.provisioning.authored_sets.observability import (
+    finalize_ingest_run,
+    persist_page_evidence,
+    record_ingest_error,
+    start_ingest_run,
+)
 from apollo.provisioning.authored_sets.orchestrator import (
     _authored_concept_dup_hashes,
     _tag_mint_chat_fn,
@@ -128,9 +136,15 @@ async def _run_set_background(
     solution_title: str,
 ) -> None:
     """Own a fresh session; request-scoped sessions are closed before this runs."""
+    ingest_run_id: int | None = None
     try:
         async with get_async_session() as db:
             await _set_status(db, set_id, "indexing")
+            # OCR-observability: capture each doc's transient per-page OCR pass so
+            # the ingest run + page-level evidence tables (empty before WU-AAS
+            # observability) are populated for the S2 audit.
+            problem_pages: list = []
+            solution_pages: list = []
             problem_document_id = await index_authored_doc(
                 db,
                 search_space_id=search_space_id,
@@ -138,6 +152,7 @@ async def _run_set_background(
                 title=problem_title,
                 set_index=set_index,
                 role="problem",
+                page_sink=problem_pages,
             )
             solution_document_id = await index_authored_doc(
                 db,
@@ -146,7 +161,33 @@ async def _run_set_background(
                 title=solution_title,
                 set_index=set_index,
                 role="solution",
+                page_sink=solution_pages,
             )
+
+            ingest_run = await start_ingest_run(
+                db,
+                search_space_id=search_space_id,
+                document_id=problem_document_id,
+                content_hash=await _doc_content_hash(db, problem_document_id),
+            )
+            ingest_run_id = int(ingest_run.id)
+            n_pages = await persist_page_evidence(
+                db,
+                ingest_run=ingest_run,
+                search_space_id=search_space_id,
+                document_id=problem_document_id,
+                role="problem",
+                pages=problem_pages,
+            )
+            n_pages += await persist_page_evidence(
+                db,
+                ingest_run=ingest_run,
+                search_space_id=search_space_id,
+                document_id=solution_document_id,
+                role="solution",
+                pages=solution_pages,
+            )
+            ingest_run.n_pages = n_pages
 
             row = await db.get(AuthoredSet, set_id)
             if row is None:
@@ -163,7 +204,19 @@ async def _run_set_background(
                 search_space_id=search_space_id,
                 problem_document_id=problem_document_id,
                 solution_document_id=solution_document_id,
-                metered_chat=_make_metered_chat(document_id=problem_document_id),
+                metered_chat=_make_metered_chat(
+                    document_id=problem_document_id, ingest_run=ingest_run
+                ),
+            )
+            counts = report.counts or {}
+            await finalize_ingest_run(
+                db,
+                ingest_run=ingest_run,
+                status="succeeded",
+                n_pages=n_pages,
+                n_questions_scraped=len(report.problems),
+                n_promoted=counts.get("promoted", 0),
+                n_rejected=counts.get("rejected", 0),
             )
             row = await db.get(AuthoredSet, set_id)
             if row is None:
@@ -175,11 +228,40 @@ async def _run_set_background(
     except Exception as exc:  # noqa: BLE001 - persist failed status, never escape task
         _LOG.exception("authored_set_background_failed", extra={"set_id": set_id})
         async with get_async_session() as db:
+            # A fresh session: the failed run's own session may be poisoned. Mark
+            # the run failed (if one was opened) and record the stage error so the
+            # observability tables reflect the failure instead of staying empty.
+            if ingest_run_id is not None:
+                failed_run = await db.get(IngestRun, ingest_run_id)
+                if failed_run is not None and failed_run.status != "failed":
+                    await finalize_ingest_run(db, ingest_run=failed_run, status="failed")
+                await record_ingest_error(
+                    db,
+                    search_space_id=search_space_id,
+                    ingest_run=failed_run,
+                    stage="authored_set_ingest",
+                    exc=exc,
+                    context={"set_id": set_id},
+                )
             await _set_status(db, set_id, "failed", diagnostic=str(exc))
 
 
-def _make_metered_chat(*, document_id: int) -> MeteredChat:
-    ingest_run = SimpleNamespace(
+async def _doc_content_hash(db: AsyncSession, document_id: int) -> str | None:
+    """The indexed document's content hash — recorded on the ingest run so an
+    unchanged re-upload is identifiable (parity with the queue path's run rows)."""
+    doc = await db.get(AITADocument, document_id)
+    return getattr(doc, "content_hash", None) if doc is not None else None
+
+
+def _make_metered_chat(*, document_id: int, ingest_run: IngestRun | None = None) -> MeteredChat:
+    """Build the metered LLM client for a run.
+
+    When ``ingest_run`` is a real ``apollo_ingest_runs`` row (the ingestion path),
+    metered LLM usage accrues on it in place, so the run's llm_calls/token/cost
+    aggregates persist. The approve endpoint has no run row, so it falls back to a
+    throwaway namespace whose metering is discarded.
+    """
+    run = ingest_run if ingest_run is not None else SimpleNamespace(
         id=None,
         llm_calls=0,
         llm_tokens_in=0,
@@ -190,7 +272,7 @@ def _make_metered_chat(*, document_id: int) -> MeteredChat:
         # on the first metered LLM call, failing the whole authored-set run.
         llm_cost_usd=Decimal("0"),
     )
-    return MeteredChat(ingest_run=ingest_run, document_id=document_id)
+    return MeteredChat(ingest_run=run, document_id=document_id)
 
 
 async def _set_status(
@@ -254,6 +336,7 @@ async def get_authored_set(
     if row is None:
         raise HTTPException(status_code=404, detail="authored set not found")
     await require_course_teacher(db=db, auth=auth, search_space_id=int(row.search_space_id))
+    ingest_run, pages = await _load_ingest_evidence(db, row.problem_document_id)
     return {
         "set_id": int(row.id),
         "set_index": row.set_index,
@@ -261,7 +344,74 @@ async def get_authored_set(
         "problem_document_id": row.problem_document_id,
         "solution_document_id": row.solution_document_id,
         "result_summary": row.result_summary or {},
+        # WU-AAS observability: the ingest run + per-page OCR evidence so the S2
+        # audit consumes REAL inputs (page_ref, ocr text, confidence,
+        # verify_path_fired) instead of thin/absent ones.
+        "ingest_run": ingest_run,
+        "pages": pages,
     }
+
+
+async def _load_ingest_evidence(
+    db: AsyncSession, problem_document_id: int | None
+) -> tuple[dict | None, list[dict]]:
+    """Return the latest authored-set ingest run for ``problem_document_id`` plus its
+    per-page OCR evidence, both shaped for the teacher/S2-audit surface. ``(None, [])``
+    when the set never produced a run (still indexing, or a pre-observability set)."""
+    if problem_document_id is None:
+        return None, []
+    run = (
+        await db.execute(
+            select(IngestRun)
+            .where(IngestRun.document_id == int(problem_document_id))
+            .order_by(IngestRun.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if run is None:
+        return None, []
+
+    run_dict = {
+        "id": int(run.id),
+        "status": run.status,
+        "n_pages": run.n_pages,
+        "n_questions_scraped": run.n_questions_scraped,
+        "n_promoted": run.n_promoted,
+        "n_rejected": run.n_rejected,
+        "llm_calls": run.llm_calls,
+        "llm_tokens_in": run.llm_tokens_in,
+        "llm_tokens_out": run.llm_tokens_out,
+        "content_hash": run.content_hash,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+    }
+
+    evidence = (
+        (
+            await db.execute(
+                select(IngestPageEvidence)
+                .where(IngestPageEvidence.ingest_run_id == int(run.id))
+                .order_by(IngestPageEvidence.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    pages = [
+        {
+            "role": ev.role,
+            "document_id": int(ev.document_id),
+            "page_number": ev.page_number,
+            # page_ref is the S2 judge's stable per-page handle (role + page).
+            "page_ref": f"{ev.role}:p{ev.page_number}",
+            "ocr_text": ev.ocr_text,
+            "ocr_confidence": ev.ocr_confidence,
+            "extraction_mode": ev.extraction_mode,
+            "verify_path_fired": ev.verify_path_fired,
+        }
+        for ev in evidence
+    ]
+    return run_dict, pages
 
 
 async def _protected_concepts(db: AsyncSession, concept_ids: list[int]) -> set[int]:

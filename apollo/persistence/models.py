@@ -722,6 +722,7 @@ class IngestRun(Base):
     document_id = Column(BigInteger, nullable=False)
     content_hash = Column(Text, nullable=True)
     status = Column(Text, nullable=False, server_default=text("'queued'"), default="queued")
+    n_pages = Column(Integer, nullable=False, server_default=text("0"), default=0)
     n_questions_scraped = Column(Integer, nullable=False, server_default=text("0"), default=0)
     n_promoted = Column(Integer, nullable=False, server_default=text("0"), default=0)
     n_rejected = Column(Integer, nullable=False, server_default=text("0"), default=0)
@@ -856,6 +857,47 @@ class IngestError(Base):
     stage = Column(Text, nullable=False)
     error_class = Column(Text, nullable=False)
     context = Column(_JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
+class IngestPageEvidence(Base):
+    """Per-page OCR evidence for one authored-set ingest run (migration 036,
+    WU-AAS observability). The audit-facing projection of the transient OCR pass:
+    one row per source page per run, carrying the recognized ``ocr_text`` + the
+    self-reported ``ocr_confidence`` + ``extraction_mode`` so the S2 ingestion
+    audit reads REAL inputs instead of thin/absent ones. ``role`` is problem |
+    solution (an authored set pairs two documents). ``verify_path_fired`` records
+    that this page tripped the low-confidence threshold — the signal the S2
+    contract reads to know an OCR-suspect page WOULD route through the extra
+    generated-vs-extracted verification. Append-only; rows CASCADE from the run.
+    ``document_id`` declares no ORM FK (aita_documents is owned by database.models
+    and the ON DELETE CASCADE on aita_chunks/document teardown is handled at the
+    authored-set delete path)."""
+
+    __tablename__ = "apollo_ingest_page_evidence"
+
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    ingest_run_id = Column(
+        BigInteger,
+        ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    document_id = Column(BigInteger, nullable=False)
+    role = Column(Text, nullable=False)  # 'problem' | 'solution' (open enum, no SQL CHECK)
+    page_number = Column(Integer, nullable=True)
+    ocr_text = Column(Text, nullable=False, server_default=text("''"), default="")
+    ocr_confidence = Column(Float, nullable=True)  # REAL on Postgres; self-reported [0,1]
+    extraction_mode = Column(Text, nullable=True)
+    verify_path_fired = Column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 

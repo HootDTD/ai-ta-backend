@@ -189,6 +189,34 @@ async def test_index_authored_doc_propagates_page_confidence(db_session, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_index_authored_doc_captures_pages_into_sink(db_session, monkeypatch):
+    """The optional ``page_sink`` receives the transient per-page OCR pass so the
+    caller can persist page-level OCR evidence (WU-AAS observability)."""
+    from database.models import SearchSpace
+
+    db_session.add(SearchSpace(id=9, name="Sink", slug="sink", subject_name="AAE"))
+    await db_session.flush()
+
+    pages = [
+        types.SimpleNamespace(page_number=1, ocr_confidence=0.8, extraction_mode="openai")
+    ]
+    ingestion = _fake_ingestion(pages)
+    _patch_indexer_with_real_metadata(monkeypatch, db_session, ingestion)
+
+    sink: list = []
+    await idx.index_authored_doc(
+        db_session,
+        search_space_id=9,
+        file_bytes=b"%PDF-1.4 fake",
+        title="Sink Set",
+        set_index=1,
+        role="problem",
+        page_sink=sink,
+    )
+    assert sink == pages
+
+
+@pytest.mark.asyncio
 async def test_index_authored_doc_rejects_bad_role(db_session):
     with pytest.raises(ValueError, match="role must be"):
         await idx.index_authored_doc(
