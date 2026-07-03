@@ -555,3 +555,72 @@ builders (not hand-written dicts) and round-trip the output through the real
 `campaign.judges`/`campaign.report` functions. 98% combined line+branch
 coverage (the handful of uncovered lines are `Protocol` stub bodies, never
 executed by design).
+
+## Replay benchmark — the fix-iteration flywheel (Lane G1)
+
+`campaign/replay.py` (`python -m campaign.replay --run-dir campaign/out/f1c
+--personas strong,partial`) replays ONLY the resolution+grading stage of a
+FROZEN recorded run's `attempts.jsonl` — it drives the same functions the
+`Done` handler calls (`campaign.replay.replay_attempt` loads each attempt +
+session pair and re-runs resolution/grading against the live DB/Neo4j), with
+NO live LLM student and NO HTTP session. It exists so a resolver-recall or
+grading-logic fix can be measured in seconds against a fixed corpus instead
+of re-running a full live campaign.
+
+Output (`ReplayMetrics.as_dict()`) has four keys: `unresolved_rate` (mean +
+per-attempt values, grouped by persona), `abstention_reasons` (histogram),
+`graph_composite` (grouped by persona), and `band_vs_expected` (per-attempt
+credited/unresolved/misconception diff vs each persona's expected ledger).
+Attempts whose recorded status is `"error"` or whose `attempt_id` is null are
+skipped by `load_records`; a replay-time exception on an individual attempt
+is caught and recorded under `errors` rather than aborting the run.
+
+Persona-class names are validated: a `--personas` value not recorded
+anywhere in the corpus raises a `ValueError` naming the available classes
+instead of silently filtering to zero records. Note `control` is a ROLE, not
+a persona key — the control classes in this corpus are the
+deliberately-deficient `misconception` and `vague_then_clarifies` personas
+(`campaign.replay.CONTROL_PERSONAS`).
+
+**Baseline freeze:** per the weekend benchmark-freeze rule, the first
+full-corpus run against unmodified `staging` is committed as
+`campaign/out/f1c/replay-baseline-<stagingSHA>.json` and becomes THE
+baseline every subsequent resolver/grading fix is diffed against — personas
+and expected ledgers are never edited to make a run pass. Baseline
+`replay-baseline-2c2dc5f.json` (staging @ `2c2dc5f`; all four persona
+classes; 31 gradeable attempts of 36 recorded): 31/31 abstention
+(`unresolved_rate_above_threshold` on all 31, one attempt additionally
+flagging `min_parser_confidence_below_threshold`) — matching the live F1c
+31/31 abstention pattern exactly. `unresolved_rate` means: strong 0.807 /
+partial 0.814 / misconception 0.758 / vague_then_clarifies 0.772.
+`graph_composite` means: strong 0.332 / partial 0.282 / misconception 0.340 /
+vague_then_clarifies 0.335. All 13 control attempts abstain, but
+`control_credit_leak` fires on 9/13 — each such control earned exactly ONE
+credited ledger key beyond its expected-ledger credited set (e.g.
+`cond.incompressibility` on fluid misconception attempts). That is a real
+resolver-behavior observation frozen into the baseline for the recall-fix
+lanes to watch: a recall fix that widens matching must not widen this leak.
+
+Requires the local campaign stack up (`.env.campaign` sourced — Postgres on
+`127.0.0.1:57322`, Neo4j on `bolt://127.0.0.1:57687`); it is a measurement
+tool, not something CI runs against a live stack.
+
+**Caveats:**
+
+- **Replay is NOT read-only against the stack.** `run_graph_simulation` (the
+  real chain this module calls) persists a fresh `apollo_graph_comparison_runs`
+  row, `MERGE`s `RESOLVES_TO` edges in Neo4j, and on a caught-error path
+  commits `learner_update_pending=True` on the attempt — the same writes the
+  live Done path and retry janitor produce. Repeated runs over the same
+  corpus accumulate this state; the four benchmark metrics still reproduce
+  deterministically run-to-run, but do not assume the DB/Neo4j are untouched
+  after a replay.
+- **Reconstructed artifacts are not byte-identical to live ones.** Replay
+  passes `clarification_trace=[]` and `latency_ms=None` into
+  `build_graph_artifact` (neither is durably reconstructable from the frozen
+  transcript), so the returned artifact's `clarification_trace` and latency
+  fields differ from what the original live run produced. This is safe for
+  the four benchmark metrics (`unresolved_rate`, `abstention_reasons`,
+  `graph_composite`, `band_vs_expected`), none of which read those fields —
+  but downstream code must not treat a replay artifact as a production
+  artifact.
