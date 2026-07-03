@@ -33,7 +33,7 @@ from apollo.errors import TranscriptAuditUnavailableError
 from apollo.grading.abstention import (
     apply_abstention,
     min_parser_confidence_of,
-    unresolved_rate_of,
+    unresolved_rate_for_abstention,
 )
 from apollo.grading.normalization_confidence import _normalization_confidence_over
 from apollo.grading.transcript_audit import (
@@ -209,8 +209,17 @@ def build_audited_grade(
         new_findings, resolution, node_type_by_id
     )
 
+    # A1 iter1 (G1): candidate_types is this attempt's closed candidate set's
+    # distinct node_types (apollo/resolution/candidates.py::build_candidate_set
+    # = reference-solution steps + course misconceptions) — the structural
+    # denominator input for `unresolved_rate_for_abstention`'s dormant v2 path.
+    # Flag OFF (default) makes this dead weight: the selector ignores it.
+    candidate_types = frozenset(c.node_type for c in candidates)
+
     abstention = apply_abstention(
-        unresolved_rate=unresolved_rate_of(resolution),
+        unresolved_rate=unresolved_rate_for_abstention(
+            resolution, node_type_by_id=node_type_by_id, candidate_types=candidate_types
+        ),
         min_parser_confidence=min_parser_confidence_of(student_nodes),
         misconception_confidences=_misconception_confidences(grade.findings, resolution),
         transcript_audit_failed=transcript_audit_failed,

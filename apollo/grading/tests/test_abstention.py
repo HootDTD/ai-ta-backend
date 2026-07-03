@@ -7,6 +7,7 @@ confidence proof and the abstained-vs-partial-suppression distinction.
 from __future__ import annotations
 
 from apollo.grading.abstention import (
+    _ABSTENTION_DENOM_V2_FLAG,
     ABSTENTION_THRESHOLDS,
     REASON_HIGH_UNRESOLVED,
     REASON_LOW_MISCONCEPTION_CONFIDENCE,
@@ -16,9 +17,12 @@ from apollo.grading.abstention import (
     REASON_TRANSCRIPT_AUDIT_FAILED,
     apply_abstention,
     min_parser_confidence_of,
+    unresolved_rate_for_abstention,
     unresolved_rate_of,
+    unresolved_rate_of_v2,
 )
 from apollo.grading.tests._builders import nodes_with_confidences, resolution_with
+from apollo.resolution.result import ResolutionResult, ResolvedNode
 
 
 def _clean(**overrides):
@@ -193,16 +197,182 @@ def test_min_parser_confidence_of_picks_min():
 
 def test_misconception_bank_empty_reason_is_reason_only():
     from apollo.grading.abstention import REASON_MISCONCEPTION_BANK_EMPTY
+
     out = apply_abstention(
         unresolved_rate=0.0, min_parser_confidence=1.0, misconception_bank_empty=True
     )
     assert REASON_MISCONCEPTION_BANK_EMPTY in out.abstention_reasons
-    assert out.abstained is False                        # coverage still updates Layer-3
+    assert out.abstained is False  # coverage still updates Layer-3
 
 
 def test_misconception_bank_empty_false_no_reason():
     from apollo.grading.abstention import REASON_MISCONCEPTION_BANK_EMPTY
+
     out = apply_abstention(
         unresolved_rate=0.0, min_parser_confidence=1.0, misconception_bank_empty=False
     )
     assert REASON_MISCONCEPTION_BANK_EMPTY not in out.abstention_reasons
+
+
+# --- A1 iter1 (G1): unresolved_rate_of_v2 — structural denominator ----------
+#
+# Dormant behind APOLLO_ABSTENTION_DENOM_V2 (default OFF). Guiding principle:
+# abstention should fire when the grader COULDN'T FOLLOW what the student
+# taught, not when the parser was chatty. v2 restricts the unresolved_rate
+# denominator to student nodes whose node_type has a structural counterpart
+# in THIS problem's candidate set (apollo/resolution/candidates.py) — a
+# student node of a type absent from the candidate set can never resolve
+# (resolver.py::type_compatible hard-gates on node_type), so it is parser
+# noise, not a grading failure.
+
+
+def _rn(node_id: str, resolution: str) -> ResolvedNode:
+    return ResolvedNode(
+        node_id=node_id,
+        resolution=resolution,
+        resolved_key=None if resolution != "resolved" else "k",
+        resolved_canon_key=None,
+        method="exact" if resolution == "resolved" else "unresolved",
+        confidence=1.0 if resolution == "resolved" else 0.0,
+    )
+
+
+def test_unresolved_rate_of_v2_excludes_structurally_unresolvable_types():
+    # 1 resolved equation + 1 unresolved equation (relevant) + 2 unresolved
+    # definitions (irrelevant: candidate set has no `definition` candidate).
+    resolution = ResolutionResult(
+        resolved=(
+            _rn("r0", "resolved"),
+            _rn("u0", "unresolved"),
+            _rn("u1", "unresolved"),
+            _rn("u2", "unresolved"),
+        ),
+        tier_counts={},
+        llm_calls=0,
+    )
+    node_type_by_id = {
+        "r0": "equation",
+        "u0": "equation",
+        "u1": "definition",
+        "u2": "definition",
+    }
+    candidate_types = frozenset({"equation"})
+    # v1 counts everything: 3 unresolved / 4 total.
+    assert unresolved_rate_of(resolution) == 0.75
+    # v2 excludes the two `definition` nodes (no reference peer): 1/2.
+    assert unresolved_rate_of_v2(resolution, node_type_by_id, candidate_types) == 0.5
+
+
+def test_unresolved_rate_of_v2_equals_v1_when_all_types_relevant():
+    resolution = ResolutionResult(
+        resolved=(_rn("r0", "resolved"), _rn("u0", "unresolved"), _rn("u1", "unresolved")),
+        tier_counts={},
+        llm_calls=0,
+    )
+    node_type_by_id = {"r0": "equation", "u0": "equation", "u1": "condition"}
+    candidate_types = frozenset({"equation", "condition"})
+    assert unresolved_rate_of_v2(resolution, node_type_by_id, candidate_types) == (
+        unresolved_rate_of(resolution)
+    )
+
+
+def test_unresolved_rate_of_v2_empty_relevant_set_is_zero():
+    resolution = ResolutionResult(resolved=(_rn("u0", "unresolved"),), tier_counts={}, llm_calls=0)
+    node_type_by_id = {"u0": "definition"}
+    candidate_types = frozenset({"equation"})
+    assert unresolved_rate_of_v2(resolution, node_type_by_id, candidate_types) == 0.0
+
+
+def test_unresolved_rate_of_v2_missing_type_entry_treated_as_irrelevant():
+    resolution = ResolutionResult(
+        resolved=(_rn("r0", "resolved"), _rn("u0", "unresolved")), tier_counts={}, llm_calls=0
+    )
+    # "u0" absent from the map -> defensively excluded, not assumed countable.
+    node_type_by_id = {"r0": "equation"}
+    candidate_types = frozenset({"equation"})
+    assert unresolved_rate_of_v2(resolution, node_type_by_id, candidate_types) == 0.0
+
+
+def test_unresolved_rate_for_abstention_flag_off_is_byte_identical_to_v1(monkeypatch):
+    monkeypatch.delenv(_ABSTENTION_DENOM_V2_FLAG, raising=False)
+    resolution = ResolutionResult(
+        resolved=(
+            _rn("r0", "resolved"),
+            _rn("u0", "unresolved"),
+            _rn("u1", "unresolved"),
+            _rn("u2", "unresolved"),
+        ),
+        tier_counts={},
+        llm_calls=0,
+    )
+    node_type_by_id = {"r0": "equation", "u0": "equation", "u1": "definition", "u2": "definition"}
+    candidate_types = frozenset({"equation"})
+    # v2 WOULD differ (0.5 vs 0.75) if the flag were honored -> proves the
+    # selector really ignores the v2 inputs when the flag is off.
+    assert unresolved_rate_of_v2(resolution, node_type_by_id, candidate_types) == 0.5
+    got = unresolved_rate_for_abstention(
+        resolution, node_type_by_id=node_type_by_id, candidate_types=candidate_types
+    )
+    assert got == unresolved_rate_of(resolution) == 0.75
+
+
+def test_unresolved_rate_for_abstention_flag_off_ignores_missing_v2_inputs(monkeypatch):
+    monkeypatch.delenv(_ABSTENTION_DENOM_V2_FLAG, raising=False)
+    resolution = resolution_with(unresolved=1, resolved=3)
+    assert unresolved_rate_for_abstention(resolution) == unresolved_rate_of(resolution) == 0.25
+
+
+def test_unresolved_rate_for_abstention_flag_on_uses_v2(monkeypatch):
+    monkeypatch.setenv(_ABSTENTION_DENOM_V2_FLAG, "1")
+    resolution = ResolutionResult(
+        resolved=(
+            _rn("r0", "resolved"),
+            _rn("u0", "unresolved"),
+            _rn("u1", "unresolved"),
+            _rn("u2", "unresolved"),
+        ),
+        tier_counts={},
+        llm_calls=0,
+    )
+    node_type_by_id = {"r0": "equation", "u0": "equation", "u1": "definition", "u2": "definition"}
+    candidate_types = frozenset({"equation"})
+    got = unresolved_rate_for_abstention(
+        resolution, node_type_by_id=node_type_by_id, candidate_types=candidate_types
+    )
+    assert got == 0.5 != unresolved_rate_of(resolution)
+
+
+def test_unresolved_rate_for_abstention_flag_on_without_v2_inputs_falls_back_to_v1(monkeypatch):
+    monkeypatch.setenv(_ABSTENTION_DENOM_V2_FLAG, "1")
+    resolution = resolution_with(unresolved=1, resolved=3)
+    assert unresolved_rate_for_abstention(resolution) == unresolved_rate_of(resolution) == 0.25
+
+
+def test_attempt18_shaped_fixture_flips_abstention_decision_under_v2(monkeypatch):
+    """Mirrors attempt 18 (a1-failure-taxonomy.md): 7/7 reference equation
+    nodes fully credited, 27 additional over-segmented student nodes (symbol
+    glosses / generic procedure filler) of types absent from this synthetic
+    problem's candidate set. v1's student-node-wide denominator abstains
+    (rate 27/34 > 0.35); v2's structural denominator does not (0/7)."""
+    resolved = tuple(_rn(f"r{i}", "resolved") for i in range(7)) + tuple(
+        _rn(f"u{i}", "unresolved") for i in range(27)
+    )
+    resolution = ResolutionResult(resolved=resolved, tier_counts={}, llm_calls=0)
+    node_type_by_id = {f"r{i}": "equation" for i in range(7)}
+    node_type_by_id.update({f"u{i}": "definition" for i in range(27)})
+    candidate_types = frozenset({"equation"})
+
+    v1_rate = unresolved_rate_of(resolution)
+    assert round(v1_rate, 4) == round(27 / 34, 4)
+    v1_out = apply_abstention(unresolved_rate=v1_rate, min_parser_confidence=1.0)
+    assert v1_out.abstained is True
+    assert REASON_HIGH_UNRESOLVED in v1_out.abstention_reasons
+
+    monkeypatch.setenv(_ABSTENTION_DENOM_V2_FLAG, "1")
+    v2_rate = unresolved_rate_for_abstention(
+        resolution, node_type_by_id=node_type_by_id, candidate_types=candidate_types
+    )
+    assert v2_rate == 0.0
+    v2_out = apply_abstention(unresolved_rate=v2_rate, min_parser_confidence=1.0)
+    assert v2_out.abstained is False
+    assert REASON_HIGH_UNRESOLVED not in v2_out.abstention_reasons
