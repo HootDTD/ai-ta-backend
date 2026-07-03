@@ -61,11 +61,13 @@ from apollo.persistence.learner_model_seed import (
     misconceptions_to_entities,
     reference_solution_to_entities,
 )
+from apollo.persistence.models import KGEntity
 from apollo.provisioning.dedup import resolve_candidate
 from apollo.provisioning.tag_mint_persist import (
     author_concept_symbols,
     insert_prereqs,
     link_opposes,
+    load_concept_entities,
     load_concept_prereq_adjacency,
     partition_prereqs_by_concept_scope,
     resolve_or_create_concept,
@@ -204,18 +206,24 @@ def _normalize_equation(symbolic: str) -> str:
         return re.sub(r"\s+", "", raw)
 
 
-def _equivalence_signature(spec: EntitySpec) -> tuple[str, str, str]:
-    """The deterministic, CASE-SENSITIVE, concept-scoped equivalence key a mint's
-    candidates are collapsed on (G4.3).
+def _equivalence_signature(spec: EntitySpec | KGEntity) -> tuple[str, str, str]:
+    """The deterministic, CASE-SENSITIVE equivalence key content-duplicate entities
+    are folded on (G4.3). Computed identically for a fresh ``EntitySpec`` candidate
+    AND a PERSISTED ``KGEntity`` row (both expose ``kind``/``display_name``/
+    ``payload``), so it drives BOTH the within-mint collapse and the cross-mint
+    content-equality pre-match against prior uploads' entities.
 
-    ``(kind, tier, content)`` where ``content`` is, in priority order: the
-    NORMALIZED equation (equation candidates carry ``symbolic``/``equation``), else
-    the RAW symbol (variable candidates — case-sensitive, subscripts preserved so
-    ``m≠M`` and ``p1≠p2``), else a whitespace-collapsed (case-preserved)
-    display_name. ``kind`` is part of the key so same-text different-role candidates
-    (an equation vs a definition) never fuse. Concept scope is IMPLICIT: this key
-    only ever compares candidates minted within ONE ``tag_and_mint`` call (a single
-    concept); the cross-mint / cross-concept ladder stays concept-scoped in SQL."""
+    ``(kind, basis, content)`` where ``basis`` names WHICH content signal decided
+    (``'equation'`` | ``'symbol'`` | ``'name'`` — NOT a dedup-ladder tier) and
+    ``content`` is, in priority order: the NORMALIZED equation (equation candidates
+    carry ``symbolic``/``equation``), else the RAW symbol (variable candidates —
+    case-sensitive, subscripts preserved so ``m≠M`` and ``p1≠p2``), else a
+    whitespace-collapsed (case-preserved) display_name. ``kind`` is part of the key
+    so same-text different-role candidates (an equation vs a definition) never fuse.
+    Being pure content-equality (no embedding, no fuzzy) it CANNOT reintroduce the
+    2026-06-30 ``m≡M`` false-merge; concept scope is enforced by the CALLER (the
+    within-mint collapse compares one call's specs; the cross-mint match loads only
+    THIS ``concept_id``'s persisted rows)."""
     payload = spec.payload or {}
     symbolic = payload.get("symbolic") or payload.get("equation")
     if symbolic:
@@ -286,7 +294,7 @@ def _collapse_equivalent_candidates(
                     "event": "tag_mint_collapsed_equivalent_candidates",
                     "representative": rep.canonical_key,
                     "collapsed": [m.canonical_key for m in members[1:]],
-                    "signature_tier": sig[1],
+                    "signature_basis": sig[1],
                 },
             )
     return collapsed, alias_map
@@ -300,8 +308,13 @@ def _scope_summary_for(spec: EntitySpec) -> str:
     produce a BYTE-IDENTICAL summary the embedding tier merges across mints, while a
     genuinely different equation gets a different summary (G4.3, Finding D). Non-
     equation candidates keep the display_name (+ symbol) summary (ADJ #11) unchanged
-    — this fix does NOT touch the variable dedup path (PR#74's concept-scoped m/M
-    guard owns it). Academic concept text — NO student PII."""
+    — this summary path DELIBERATELY does not touch the variable path (PR#74's
+    concept-scoped m/M guard owns the FUZZY tier's discrimination; stripping the
+    display_name here would feed the embedder near-identical ``symbol m``/``symbol
+    M`` texts and risk re-merging them). Cross-UPLOAD non-equation duplicates are
+    instead caught by ``tag_and_mint``'s deterministic content-equality pre-match
+    (``_equivalence_signature`` vs prior-upload rows), which never runs the embedder.
+    Academic concept text — NO student PII."""
     payload = spec.payload or {}
     equation = payload.get("symbolic") or payload.get("equation")
     if spec.kind == "equation" and equation:
@@ -484,7 +497,32 @@ async def tag_and_mint(
     # entities from prior mints are legitimate dedup targets (PR2 Part B).
     resolved_ids: set[int] = set()
 
+    # Cross-mint deterministic content-equality pre-match (G4.3, cross-UPLOAD half of
+    # Finding D). A candidate whose ``_equivalence_signature`` EXACTLY matches an
+    # entity a PRIOR upload minted into this concept resolves to that entity
+    # deterministically — same case-sensitive, kind-in-key, concept-scoped key as the
+    # within-mint collapse, so NO embedding + NO fuzzy runs and ``m≡M`` can never
+    # merge (distinct signatures). This closes the cross-upload duplication the
+    # display-name ``scope_summary`` leaves as embedding-tier misses for non-equation
+    # kinds (def/varmap/proc/simp) when a second upload labels the same content
+    # differently. The pool is a PRE-mint snapshot (rows minted in THIS call are
+    # absent), so it never fuses two nodes of one problem; ``setdefault`` keeps the
+    # earliest (lowest-id) entity as the survivor (first-writer-wins), matching the
+    # ladder. Content-matched candidates skip ``resolve_candidate`` (hence write no
+    # ``apollo_dedup_decisions`` row — like the within-mint collapse) and surface on
+    # ``MintPlan.merged_entity_keys``.
+    prior_by_signature: dict[tuple[str, str, str], int] = {}
+    for _ent in await load_concept_entities(db, concept_id=concept_id):
+        prior_by_signature.setdefault(_equivalence_signature(_ent), int(_ent.id))
+
     for spec in all_specs:
+        prior_id = prior_by_signature.get(_equivalence_signature(spec))
+        if prior_id is not None:
+            key_to_id[spec.canonical_key] = prior_id
+            merged_entity_keys.append(spec.canonical_key)
+            resolved_ids.add(prior_id)
+            continue
+
         scope_summary = _scope_summary_for(spec)
         candidate = _DedupCandidate(spec.canonical_key, scope_summary)
         verdict = await resolve_candidate(

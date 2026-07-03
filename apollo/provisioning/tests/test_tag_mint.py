@@ -1933,3 +1933,239 @@ async def test_tag_and_mint_cross_concept_same_equation_not_merged(db_session):
     assert "eq.eq_motion" in plan_a.minted_entity_ids
     assert "eq.eq_motion" in plan_b.minted_entity_ids
     assert plan_b.merged_entity_keys == []
+
+
+# --------------------------------------------------------------------------- #
+# G4.3 rework (lane B2.3 cross-review) — the CROSS-UPLOAD half of Finding D.
+#
+# Finding D (campaign/out/f1/provisioning-notes.md:70-83) is CROSS-UPLOAD
+# duplication: two problems ingested as two SEPARATE POST /apollo/authored-sets
+# calls into the SAME concept ran entity extraction twice with no cross-run dedup,
+# so ~37 entities minted where ~15-18 were meaningful. The duplication is DOMINATED
+# by NON-EQUATION kinds (def.def1..4, varmap.var1.., proc, simp) under DIFFERENT
+# synthetic keys but the SAME content. The within-mint collapse only folds one
+# call's own specs; the display-name scope_summary leaves these as embedding-tier
+# misses. These tests reproduce the two-upload topology and pin the deterministic
+# cross-mint content-equality pre-match that closes it for BOTH equation and non-
+# equation kinds.
+# --------------------------------------------------------------------------- #
+
+
+def _finding_d_upload_1() -> dict:
+    """First authored set: the ``named``-key extraction (eq_motion / def_acceleration
+    / … ) — the survivors Finding D's reconciliation table treats as canonical."""
+    return {
+        "id": "scrape.up1",
+        "concept_id": "linear_motion",
+        "difficulty": "intro",
+        "problem_text": "A cyclist accelerates from rest; find the final velocity.",
+        "given_values": {"v0": 0.0, "a": 2.0, "t": 5.0},
+        "target_unknown": "v",
+        "provenance": {"document_id": 2, "page": 3},
+        "reference_solution": [
+            {"step": 1, "entry_type": "equation", "id": "eq_motion",
+             "content": {"label": "Velocity formula", "symbolic": "v = v0 + a*t"},
+             "depends_on": []},
+            {"step": 2, "entry_type": "definition", "id": "def_acceleration",
+             "content": {"label": "Acceleration"}, "depends_on": []},
+            {"step": 3, "entry_type": "definition", "id": "def_velocity",
+             "content": {"label": "Velocity"}, "depends_on": []},
+            {"step": 4, "entry_type": "variable_mapping", "id": "map_acceleration",
+             "content": {"label": "Acceleration symbol"}, "depends_on": []},
+            {"step": 5, "entry_type": "procedure_step", "id": "proc_substitute",
+             "content": {"label": "Substitute values"}, "depends_on": []},
+            {"step": 6, "entry_type": "simplification", "id": "simp_calc_velocity",
+             "content": {"label": "Calculate velocity"}, "depends_on": []},
+        ],
+    }
+
+
+def _finding_d_upload_2() -> dict:
+    """Second authored set into the SAME concept: the ``synthetic``-key extraction
+    (eq1 / def1.. / var1 / proc1 / simp1) whose steps are CONTENT-DUPLICATES of
+    upload 1 under different ids — plus ONE genuinely new definition (``def_time``)
+    that MUST still mint fresh (proves the pre-match is exact, not greedy). The
+    equation duplicate carries a DIFFERENT label to prove equation dedup is label-
+    independent (normalized-equation basis)."""
+    return {
+        "id": "scrape.up2",
+        "concept_id": "linear_motion",
+        "difficulty": "intro",
+        "problem_text": "The same cyclist problem, re-scraped independently.",
+        "given_values": {"v0": 0.0, "a": 2.0, "t": 5.0},
+        "target_unknown": "v",
+        "provenance": {"document_id": 2, "page": 4},
+        "reference_solution": [
+            {"step": 1, "entry_type": "equation", "id": "eq1",
+             "content": {"label": "Calculated final velocity", "symbolic": "v0 + a*t = v"},
+             "depends_on": []},
+            {"step": 2, "entry_type": "definition", "id": "def1",
+             "content": {"label": "Acceleration"}, "depends_on": []},
+            {"step": 3, "entry_type": "definition", "id": "def2",
+             "content": {"label": "Velocity"}, "depends_on": []},
+            {"step": 4, "entry_type": "variable_mapping", "id": "var1",
+             "content": {"label": "Acceleration symbol"}, "depends_on": []},
+            {"step": 5, "entry_type": "procedure_step", "id": "proc1",
+             "content": {"label": "Substitute values"}, "depends_on": []},
+            {"step": 6, "entry_type": "simplification", "id": "simp1",
+             "content": {"label": "Calculate velocity"}, "depends_on": []},
+            {"step": 7, "entry_type": "definition", "id": "def_time",
+             "content": {"label": "Time"}, "depends_on": []},
+        ],
+    }
+
+
+async def test_two_upload_finding_d_dedupes_all_kinds(db_session):
+    """CROSS-UPLOAD Finding D: two authored sets into ONE concept. Upload 1 mints 6
+    entities; upload 2's 6 content-duplicates (equation + definition ×2 + variable +
+    procedure + simplification) each MERGE onto upload 1's entity via the
+    deterministic content-equality pre-match, while its 1 genuinely-new definition
+    mints fresh. Net 7 entities, not 13 — dedup holds for BOTH equation and NON-
+    equation kinds. DISCRIMINATING: without the cross-mint pre-match the 6 non-slug
+    duplicates mint fresh (13 rows) because their display-name scope_summary differs
+    or the embedding tier misses."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-finding-d")
+    tag = _chat_returning(_tag_payload(concept_slug="linear_motion"))
+
+    plan1 = await tag_and_mint(
+        db_session,
+        _approved_pair(problem=_finding_d_upload_1(), search_space_id=ss_id),
+        chat_fn=tag,
+        embed_fn=_embed_distinct,
+    )
+    after1 = (
+        await db_session.execute(
+            select(KGEntity).where(KGEntity.concept_id == plan1.concept_id)
+        )
+    ).scalars().all()
+    assert len(after1) == 6, [e.canonical_key for e in after1]
+
+    plan2 = await tag_and_mint(
+        db_session,
+        _approved_pair(problem=_finding_d_upload_2(), search_space_id=ss_id),
+        chat_fn=tag,
+        embed_fn=_embed_distinct,
+    )
+    # every content-duplicate merged; only the new definition minted.
+    assert set(plan2.merged_entity_keys) == {
+        "eq.eq1", "def.def1", "def.def2", "varmap.var1", "proc.proc1", "simp.simp1",
+    }
+    assert set(plan2.minted_entity_ids) == {"def.def_time"}
+
+    rows = (
+        await db_session.execute(
+            select(KGEntity).where(KGEntity.concept_id == plan1.concept_id)
+        )
+    ).scalars().all()
+    assert len(rows) == 7, sorted(r.canonical_key for r in rows)
+    # each duplicate reuses the FIRST upload's entity id (first-writer-wins).
+    by_key = {r.canonical_key: r.id for r in rows}
+    assert plan2.merged_entity_keys and all(
+        k not in by_key for k in ("eq.eq1", "def.def1", "varmap.var1", "proc.proc1", "simp.simp1")
+    )
+    assert by_key["def.def_time"]  # the new quantity minted its own row
+
+
+async def test_two_upload_symbol_bearing_variable_dedup_is_label_independent(db_session):
+    """A variable candidate that DOES carry ``payload['symbol']`` dedups CROSS-UPLOAD
+    on the SYMBOL (case-sensitive), independent of its display label — so a second
+    upload's differently-labelled ``a`` merges, but an ``A`` (distinct symbol) does
+    NOT (the m≡M guard, absolute in the deterministic pre-match). NOTE: the frozen
+    reference-solution converter does not itself emit ``symbol`` payloads for
+    ``variable_mapping`` steps (varmap entities dedup on the NAME basis, exercised by
+    ``test_two_upload_finding_d_dedupes_all_kinds``); this test pins the symbol-basis
+    behaviour directly against pre-seeded rows so the m≡M invariant is covered wherever
+    a symbol payload IS present."""
+    ss_id, subj_id = await _seed_course(db_session, slug="c-var-symbol")
+    concept = Concept(subject_id=subj_id, slug="linear_motion", display_name="Linear motion")
+    db_session.add(concept)
+    await db_session.flush()
+    # Pre-seed two variable entities differing ONLY by symbol case (a vs A).
+    db_session.add_all([
+        KGEntity(concept_id=concept.id, canonical_key="varmap.a", kind="variable",
+                 display_name="acceleration", payload={"symbol": "a"}, aliases=[],
+                 scope_summary="acceleration | symbol a | kind variable"),
+        KGEntity(concept_id=concept.id, canonical_key="varmap.big_a", kind="variable",
+                 display_name="area", payload={"symbol": "A"}, aliases=[],
+                 scope_summary="area | symbol A | kind variable"),
+    ])
+    await db_session.flush()
+
+    from apollo.persistence.learner_model_seed import EntitySpec
+    from apollo.provisioning.tag_mint import _equivalence_signature
+    from apollo.provisioning.tag_mint_persist import load_concept_entities
+
+    prior = {
+        _equivalence_signature(e): int(e.id)
+        for e in await load_concept_entities(db_session, concept_id=concept.id)
+    }
+    # a candidate for symbol 'a' with a DIFFERENT label matches the pre-seeded 'a'…
+    dup_a = EntitySpec(canonical_key="varmap.dup", kind="variable",
+                       display_name="a totally different label", payload={"symbol": "a"})
+    assert _equivalence_signature(dup_a) in prior
+    # …but a candidate for symbol 'A' matches the 'A' row, NOT the 'a' row (m≡M).
+    dup_bigA = EntitySpec(canonical_key="varmap.dup2", kind="variable",
+                          display_name="acceleration", payload={"symbol": "A"})
+    assert prior[_equivalence_signature(dup_a)] != prior[_equivalence_signature(dup_bigA)]
+
+
+async def test_two_upload_different_label_definition_not_deterministically_merged(db_session):
+    """RESIDUAL-GAP GUARD (honest boundary): the deterministic pre-match is EXACT, not
+    fuzzy. A non-equation duplicate whose display_name DIFFERS across uploads and
+    carries no symbol/equation content signal is NOT merged by the content pre-match
+    (with a distinct-embedding stub it mints fresh). Such near-duplicates remain the
+    embedding/LLM-judge tier's job — the deterministic pass never guesses. This pins
+    the boundary so a future fuzzy-widening change is a conscious decision."""
+    ss_id, subj_id = await _seed_course(db_session, slug="c-diff-label")
+    concept = Concept(subject_id=subj_id, slug="linear_motion", display_name="Linear motion")
+    db_session.add(concept)
+    await db_session.flush()
+    db_session.add(
+        KGEntity(
+            concept_id=concept.id, canonical_key="def.def_acceleration", kind="definition",
+            display_name="Acceleration", payload={}, aliases=[],
+            scope_summary="Acceleration | kind definition",
+        )
+    )
+    await db_session.flush()
+
+    problem = _problem_dict(problem_id="scrape.dl", concept_slug="linear_motion")
+    problem["reference_solution"] = [
+        {"step": 1, "entry_type": "definition", "id": "def1",
+         "content": {"label": "Rate of change of velocity"},  # SAME concept, DIFFERENT label
+         "depends_on": []},
+    ]
+    plan = await tag_and_mint(
+        db_session,
+        _approved_pair(problem=problem, search_space_id=ss_id),
+        chat_fn=_chat_returning(_tag_payload(concept_slug="linear_motion")),
+        embed_fn=_embed_distinct,
+    )
+    # different label + no symbol/equation signal → deterministic pass does NOT merge.
+    assert "def.def1" in plan.minted_entity_ids
+    assert "def.def1" not in plan.merged_entity_keys
+
+
+def test_equivalence_signature_payloadless_same_name_same_kind_merges():
+    """DOCUMENTED, INTENTIONAL (adversarial display_name-fallback case): two PAYLOADLESS
+    specs with the SAME kind + SAME display_name share ONE signature, so both the
+    within-mint collapse AND the cross-mint pre-match FOLD them together. This is
+    CORRECT, not the 2026-06-30 m≡M hazard: with no payload the display_name is the
+    ONLY content signal, so identical kind+name entities in ONE concept are genuinely
+    indistinguishable and folding them is the conservative outcome (the m≡M hazard is
+    DISTINCT content wrongly merging — here the content is identical). The
+    discriminators that DO keep payloadless specs apart are kind and name; concept
+    scope (enforced by the caller — the pre-match loads only one concept_id's rows)
+    bounds the merge to a single concept."""
+    from apollo.persistence.learner_model_seed import EntitySpec
+    from apollo.provisioning.tag_mint import _equivalence_signature
+
+    a = EntitySpec(canonical_key="def.a", kind="definition", display_name="Net force", payload={})
+    b = EntitySpec(canonical_key="def.b", kind="definition", display_name="Net force", payload={})
+    assert _equivalence_signature(a) == _equivalence_signature(b)  # merge (correct)
+    # kind is a discriminator: a definition and a condition never fuse.
+    c = EntitySpec(canonical_key="cond.c", kind="condition", display_name="Net force", payload={})
+    assert _equivalence_signature(a) != _equivalence_signature(c)
+    # name is a discriminator: a different label stays distinct.
+    d = EntitySpec(canonical_key="def.d", kind="definition", display_name="Net torque", payload={})
+    assert _equivalence_signature(a) != _equivalence_signature(d)
