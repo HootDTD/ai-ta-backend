@@ -29,7 +29,13 @@ from apollo.graph_compare.validator import (
     StudentGraphInvalidError,
 )
 from apollo.handlers import done_grading as dg
-from apollo.handlers.done_grading import ShadowGradeResult, run_graph_simulation
+from apollo.handlers.done_grading import (
+    GRAPH_SIM_DEGRADED_UNMAPPED_ENTRY_TYPES,
+    GraphSimDegradation,
+    ShadowGradeResult,
+    build_graph_sim_degradation,
+    run_graph_simulation,
+)
 from apollo.ontology import KGGraph
 
 pytestmark = pytest.mark.unit
@@ -636,3 +642,128 @@ async def test_confirmed_resolutions_threaded_into_resolve():
                 p.stop()
     rkwargs = mocks["resolve_attempt"].call_args.kwargs
     assert rkwargs["confirmed_resolutions"] == {"s1": "cond.bernoulli"}
+
+
+# ---------------------------------------------------------------------------
+# G4 — variable_mapping contract: graph-sim degradation marker.
+#
+# A WU-AAS-minted ConceptProblem.payload can carry a reference entry_type the
+# graph-sim node-type map does not recognize. The chain must DEGRADE (drop those
+# steps) and record a structured marker on ShadowGradeResult — never KeyError
+# (which used to void the already-committed learner update: the F1c crash).
+# ---------------------------------------------------------------------------
+
+
+def _varmap_payload() -> dict:
+    """A minted-shaped payload whose reference_solution carries a KNOWN
+    ``variable_mapping`` step (varmap.*, term+symbol — the seeded ontology
+    shape). After the G4 fix this is fully consumable → NO degradation."""
+    return {
+        "reference_solution": [
+            {
+                "id": "m1",
+                "entity_key": "varmap.m1",
+                "entry_type": "variable_mapping",
+                "content": {"term": "mass", "symbol": "m"},
+                "depends_on": [],
+            },
+            {
+                "id": "s1",
+                "entity_key": "eq.k",
+                "entry_type": "equation",
+                "content": {"symbolic": "a-b"},
+                "depends_on": ["m1"],
+            },
+        ],
+        "declared_paths": [["m1", "s1"]],
+        "symbolic_mappings": {},
+    }
+
+
+def _unmapped_payload() -> dict:
+    """A payload whose reference_solution carries an entry_type OUTSIDE the
+    node-type map (a should-never-happen map/mint-map drift) — the graph-sim
+    chain must degrade it, not crash."""
+    return {
+        "reference_solution": [
+            {
+                "id": "p1",
+                "entity_key": "proof.p1",
+                "entry_type": "proof_sketch",
+                "content": {},
+                "depends_on": [],
+            },
+            {
+                "id": "s1",
+                "entity_key": "eq.k",
+                "entry_type": "equation",
+                "content": {"symbolic": "a-b"},
+                "depends_on": ["p1"],
+            },
+        ],
+        "declared_paths": [["p1", "s1"]],
+        "symbolic_mappings": {},
+    }
+
+
+def test_build_graph_sim_degradation_none_for_known_types():
+    """variable_mapping is now a KNOWN type — a minted varmap payload degrades
+    to NOTHING (the marker is None, the common path)."""
+    assert build_graph_sim_degradation(_varmap_payload()) is None
+    assert build_graph_sim_degradation(_payload()) is None
+
+
+def test_build_graph_sim_degradation_marks_unmapped_types(caplog):
+    """An unmapped entry_type yields a structured marker + one WARNING line."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        marker = build_graph_sim_degradation(_unmapped_payload())
+    assert isinstance(marker, GraphSimDegradation)
+    assert marker.reason == GRAPH_SIM_DEGRADED_UNMAPPED_ENTRY_TYPES
+    assert marker.unmapped_entry_types == ("proof_sketch",)
+    assert any("graph_sim_degraded" in r.message for r in caplog.records)
+
+
+def test_graph_sim_degradation_is_frozen():
+    import dataclasses
+
+    marker = GraphSimDegradation(reason="x", unmapped_entry_types=("y",))
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        marker.reason = "z"  # type: ignore[misc]
+
+
+async def test_shadow_result_degradation_none_on_known_payload():
+    """G4: the frozen handoff carries ``degradation=None`` when every reference
+    step is consumable (variable_mapping included)."""
+    db = _db()
+    patches, _ = _all_callee_patches()
+    with _read_transcript_patch():
+        for p in patches:
+            p.start()
+        try:
+            result, _sess, _attempt = await _run(db, mocks_payload=_varmap_payload())
+        finally:
+            for p in reversed(patches):
+                p.stop()
+    assert result.degradation is None
+
+
+async def test_shadow_result_carries_degradation_marker_on_unmapped_payload():
+    """G4: an unmapped entry_type degrades WITHOUT KeyError and the marker rides
+    the frozen ShadowGradeResult so paired analysis sees the partial sim."""
+    db = _db()
+    patches, _ = _all_callee_patches()
+    with _read_transcript_patch():
+        for p in patches:
+            p.start()
+        try:
+            result, _sess, attempt = await _run(db, mocks_payload=_unmapped_payload())
+        finally:
+            for p in reversed(patches):
+                p.stop()
+    assert result.degradation is not None
+    assert result.degradation.reason == GRAPH_SIM_DEGRADED_UNMAPPED_ENTRY_TYPES
+    assert result.degradation.unmapped_entry_types == ("proof_sketch",)
+    # NO-FALLBACK contract intact: the grade was NOT voided / pending NOT set.
+    assert attempt.learner_update_pending is False

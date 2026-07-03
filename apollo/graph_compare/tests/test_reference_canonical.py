@@ -271,3 +271,105 @@ def test_reference_canonical_no_uses_or_precedes_without_procedure_steps():
     }
     graph = build_reference_canonical(problem)
     assert not [e for e in graph.edges if e.edge_type in (EdgeType.USES, EdgeType.PRECEDES)]
+
+
+# ---------------------------------------------------------------------------
+# G4 — variable_mapping contract. A WU-AAS-minted reference_solution can carry a
+# ``variable_mapping`` (``varmap.*``) step; R_norm must build it as a first-class
+# node (it used to raise ``KeyError: 'variable_mapping'`` — the F1c crash). An
+# UNKNOWN entry_type degrades (the node + its edges/paths are dropped) instead.
+# ---------------------------------------------------------------------------
+
+
+def test_reference_canonical_variable_mapping_node_first_class():
+    """A minted ``variable_mapping`` step becomes a canonical node with the
+    ``variable_mapping`` type, and an equation depending on it links normally —
+    no KeyError."""
+    problem = {
+        "reference_solution": [
+            {
+                "id": "m1",
+                "entry_type": "variable_mapping",
+                "entity_key": "varmap.m1",
+                "content": {"term": "mass", "symbol": "m"},
+                "depends_on": [],
+            },
+            {
+                "id": "e1",
+                "entry_type": "equation",
+                "entity_key": "eq.e1",
+                "content": {"symbolic": "v - a*t"},
+                "depends_on": ["m1"],
+            },
+        ],
+        "declared_paths": [["m1", "e1"]],
+    }
+    graph = build_reference_canonical(problem)
+    nodes = _by_key(graph)
+    assert nodes["varmap.m1"].node_type == "variable_mapping"
+    assert nodes["varmap.m1"].symbolic is None
+    depends = [(e.from_key, e.to_key) for e in graph.edges if e.edge_type == EdgeType.DEPENDS_ON]
+    assert ("varmap.m1", "eq.e1") in depends
+    assert graph.paths[0].canonical_keys == ("varmap.m1", "eq.e1")
+
+
+def test_reference_canonical_degrades_unmapped_entry_type():
+    """An entry_type outside the node-type map is DROPPED from R_norm — its node,
+    every depends_on/USES edge touching it, and its slot in a declared path are
+    removed — rather than raising. The recognized steps are unaffected."""
+    problem = {
+        "reference_solution": [
+            {
+                "id": "p1",
+                "entry_type": "proof_sketch",  # unmapped (map/mint-map drift)
+                "entity_key": "proof.p1",
+                "content": {},
+                "depends_on": [],
+            },
+            {
+                "id": "e1",
+                "entry_type": "equation",
+                "entity_key": "eq.e1",
+                "content": {"symbolic": "a - b"},
+                "depends_on": ["p1"],  # depends on the degraded node -> edge dropped
+            },
+        ],
+        "declared_paths": [["p1", "e1"]],
+    }
+    graph = build_reference_canonical(problem)
+    keys = {n.canonical_key for n in graph.nodes}
+    assert keys == {"eq.e1"}  # degraded node dropped
+    # the depends_on edge onto the dropped node is gone (no dangling endpoint)
+    assert not [e for e in graph.edges if e.edge_type == EdgeType.DEPENDS_ON]
+    # the declared path keeps only the known subsequence
+    assert graph.paths[0].canonical_keys == ("eq.e1",)
+
+
+def test_reference_canonical_drops_uses_edge_to_degraded_step():
+    """A procedure_step whose ``uses_equations`` references a DEGRADED (unmapped)
+    step drops that USES edge rather than KeyError-ing on the missing key."""
+    problem = {
+        "reference_solution": [
+            {
+                "id": "x1",
+                "entry_type": "diagram",  # unmapped -> degraded, absent from key map
+                "entity_key": "diag.x1",
+                "content": {},
+                "depends_on": [],
+            },
+            {
+                "id": "pr1",
+                "entry_type": "procedure_step",
+                "entity_key": "proc.pr1",
+                "content": {"order": 1, "action": "do it", "uses_equations": ["x1"]},
+                "depends_on": [],
+            },
+        ],
+        # x1 must appear on a declared path (validate_reference rule (d)); it is
+        # then degraded away inside the builder, exercising the USES-drop guard.
+        "declared_paths": [["x1", "pr1"]],
+    }
+    graph = build_reference_canonical(problem)
+    assert {n.canonical_key for n in graph.nodes} == {"proc.pr1"}
+    # the USES edge onto the degraded step is dropped (no dangling endpoint)
+    assert not [e for e in graph.edges if e.edge_type == EdgeType.USES]

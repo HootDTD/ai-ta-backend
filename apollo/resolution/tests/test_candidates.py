@@ -253,3 +253,91 @@ def test_nli_node_types_exclude_equation_and_variable_mapping():
     )
     assert "equation" not in NLI_NODE_TYPES
     assert "variable_mapping" not in NLI_NODE_TYPES
+
+
+# ---------------------------------------------------------------------------
+# G4 — variable_mapping contract. A WU-AAS-minted reference_solution can carry a
+# ``variable_mapping`` step (``varmap.*``); the entry_type -> NodeType map MUST
+# know it (it is a real ontology NodeType + the mint map emits it), else
+# ``candidates_from_reference_solution`` raised ``KeyError: 'variable_mapping'``
+# on every minted problem (the F1c linear_motion crash). An UNKNOWN entry_type
+# degrades to no candidate rather than crashing.
+# ---------------------------------------------------------------------------
+
+
+def test_entry_type_map_includes_variable_mapping_and_matches_mint_map():
+    """The graph-sim node-type map and the mint kind-prefix map must stay in
+    lock-step — every entry_type one knows, the other must know (the drift that
+    caused the G4 KeyError)."""
+    from apollo.persistence.learner_model_seed import _ENTRY_TYPE_TO_KIND_PREFIX
+    from apollo.resolution.candidates import _ENTRY_TYPE_TO_NODE_TYPE
+
+    assert _ENTRY_TYPE_TO_NODE_TYPE["variable_mapping"] == "variable_mapping"
+    assert set(_ENTRY_TYPE_TO_NODE_TYPE) == set(_ENTRY_TYPE_TO_KIND_PREFIX)
+
+
+def test_node_type_for_entry_known_and_unknown():
+    from apollo.resolution.candidates import _node_type_for_entry
+
+    assert _node_type_for_entry("variable_mapping") == "variable_mapping"
+    assert _node_type_for_entry("equation") == "equation"
+    assert _node_type_for_entry("proof_sketch") is None
+
+
+def test_variable_mapping_step_becomes_first_class_candidate():
+    """A minted ``variable_mapping`` step yields a Candidate with the
+    ``variable_mapping`` node_type — no KeyError."""
+    problem = {
+        "reference_solution": [
+            {
+                "entry_type": "variable_mapping",
+                "entity_key": "varmap.mass",
+                "content": {"term": "mass", "symbol": "m"},
+            }
+        ]
+    }
+    cands = candidates_from_reference_solution(problem, canon_key_by_canonical_key={})
+    assert len(cands) == 1
+    assert cands[0].canonical_key == "varmap.mass"
+    assert cands[0].node_type == "variable_mapping"
+    assert cands[0].symbolic is None  # not an equation
+
+
+def test_unmapped_entry_type_degrades_to_no_candidate():
+    """An entry_type outside the map is DROPPED (degraded), not KeyError-ed, and
+    the recognized steps in the same problem are unaffected."""
+    problem = {
+        "reference_solution": [
+            {"entry_type": "proof_sketch", "entity_key": "proof.x", "content": {}},
+            {
+                "entry_type": "equation",
+                "entity_key": "eq.k",
+                "content": {"symbolic": "a-b", "label": "K"},
+            },
+        ]
+    }
+    cands = candidates_from_reference_solution(problem, canon_key_by_canonical_key={})
+    keys = [c.canonical_key for c in cands]
+    assert keys == ["eq.k"]  # unmapped step dropped, equation kept
+
+
+def test_unknown_reference_entry_types_helper():
+    from apollo.resolution.candidates import unknown_reference_entry_types
+
+    known = {
+        "reference_solution": [
+            {"entry_type": "equation", "entity_key": "eq.k", "content": {}},
+            {"entry_type": "variable_mapping", "entity_key": "varmap.m", "content": {}},
+        ]
+    }
+    assert unknown_reference_entry_types(known) == ()
+
+    drifted = {
+        "reference_solution": [
+            {"entry_type": "proof_sketch", "entity_key": "p.1", "content": {}},
+            {"entry_type": "diagram", "entity_key": "d.1", "content": {}},
+            {"entry_type": "proof_sketch", "entity_key": "p.2", "content": {}},
+        ]
+    }
+    # sorted + deduped
+    assert unknown_reference_entry_types(drifted) == ("diagram", "proof_sketch")
