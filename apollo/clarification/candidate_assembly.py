@@ -28,15 +28,30 @@ def _misconceptions_dict(entries: list) -> dict:
     ``candidates_from_misconceptions`` reads: ``{"misconceptions": [{key,
     trigger_phrases, opposes, display_name}, ...]}``.
 
-    Field translation (§3.1 step 1 / Risk #2): ``code -> key``,
+    Field translation (§3.1 step 1 / Risk #2): ``code -> misc.<code>`` (key),
     ``description -> display_name``. The bank carries no ``opposes`` column today,
     so ``opposes`` is ``None`` (a missing opposes-link just disables conflict-pair
     detection for that misconception — tolerated; WU-4C1 writes no events anyway).
+
+    Re-prefix invariant (lane B4/Q1): the seeder
+    (``misconception_bank_seed.misconception_entry_to_bank_spec``) STRIPS the
+    ``misc.`` prefix into the DB ``code`` column (``key.removeprefix("misc.")``),
+    e.g. ``density_ignored``. But the CANONICAL misconception key form everywhere
+    downstream of candidate assembly is ``misc.<code>``: ``is_misconception_key``
+    (soundness.py) keys contradiction detection on that prefix, the KG-entity
+    ``canon_key`` projection is keyed on the prefixed ``entity_key``, and the
+    ``misconceptions.json`` authoring source itself uses ``misc.*``. Emitting the
+    bare ``code`` here left every candidate's ``canonical_key`` failing
+    ``is_misconception_key`` → the node routed to ``unsupported_extra`` instead of
+    ``contradiction_finding`` → no misconception was EVER detectable course-wide
+    (the vacuous-S5 defect). Re-prefix so the candidate carries the canonical key.
+    The bank code is always stripped (never ``misc.``-prefixed), so a plain
+    ``f"misc.{code}"`` cannot double-prefix.
     """
     return {
         "misconceptions": [
             {
-                "key": e.code,
+                "key": f"misc.{e.code}",
                 "trigger_phrases": list(e.trigger_phrases),
                 "opposes": None,
                 "display_name": e.description,
@@ -69,9 +84,7 @@ async def load_problem_candidates_with_soundness(
     return inputs, bank_applicable
 
 
-async def misconception_bank_applicable(
-    db: AsyncSession, *, concept_id: int | None
-) -> bool:
+async def misconception_bank_applicable(db: AsyncSession, *, concept_id: int | None) -> bool:
     """The D5/D6 soundness-applicability flag in ISOLATION — the bank-empty fact
     without building the closed candidate set. The LLM artifact path
     (``artifact_writer.write_artifacts`` on a shadow-off / LLM-served Done-click)
