@@ -25,13 +25,24 @@ __all__ = ["S1ReferenceGraphJudge", "find_structural_defects"]
 
 _SYSTEM_PROMPT = (
     "You are auditing a minted knowledge-graph reference solution against its "
-    "source problem. You see ONLY the subject's problem statement, the "
+    "source subject. You see ONLY the subject's problem statement(s), the "
     "authored reference solution, and ONE node or edge from the minted graph "
-    "— never the full pipeline. For a NODE: is it a real, correct step of "
-    "the solution (not hallucinated, not a duplicate/paraphrase of another "
-    "step, not off-topic)? For an EDGE: is the claimed PRECEDES/USES "
-    "relationship actually true given the two endpoints? Answer strictly "
-    "from the given material."
+    "— never the full pipeline. The graph spans ALL of the subject's "
+    "problems (provided as a list). A node is VALID if it is a real, "
+    "correct step in ANY of the provided problems; do NOT reject a node "
+    "merely because one particular problem does not use it. A node is "
+    "valid if it is a correct concept for this domain, even if not spelled "
+    "out verbatim in a problem statement; reject only genuine "
+    "hallucinations, off-domain content, or exact duplicates/paraphrases of "
+    "another node. For an EDGE: a concept->concept edge encodes a "
+    "prerequisite/dependency relation (the FROM concept depends on / is "
+    "built from the TO concept) — judge whether that dependency is TRUE; do "
+    "NOT judge temporal/derivation ordering, and do NOT flag it as "
+    "'reversed' for encoding a dependency rather than a sequence. A "
+    "PRECEDES edge between two procedure steps IS a temporal-order claim "
+    "and should be judged as such. A USES edge is a real reference/build-on "
+    "relationship. Answer from the given material and standard domain "
+    "knowledge for this subject."
 )
 
 

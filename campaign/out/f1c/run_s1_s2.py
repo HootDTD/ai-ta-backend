@@ -72,7 +72,14 @@ async def _fetch_subject_graph(
             fk = id_to_key.get(pr["from_entity_id"])
             tk = id_to_key.get(pr["to_entity_id"])
             if fk and tk:
-                edges.append({"edge_type": "PRECEDES", "from_node_id": fk, "to_node_id": tk})
+                # apollo_entity_prereqs rows are generic concept->concept
+                # prerequisite/dependency links, not procedure-step sequence
+                # steps -- per apollo/ontology/edges.py, PRECEDES is legal
+                # ONLY for (procedure_step, procedure_step) pairs. Emit
+                # DEPENDS_ON so the S1 judge sees the correct edge type
+                # (was mislabeled PRECEDES; see .superpowers/sdd/a3-s1-
+                # adjudication.md sec 2A -- 26 false S1 failures).
+                edges.append({"edge_type": "DEPENDS_ON", "from_node_id": fk, "to_node_id": tk})
 
         prob_rows = await conn.fetch(
             "SELECT problem_code, payload FROM apollo_concept_problems WHERE concept_id=$1", cid

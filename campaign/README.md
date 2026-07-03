@@ -389,7 +389,16 @@ testable against fixtures):
   provisioned subject's minted reference graph, judged against that
   subject's problem statement. Duplicate-node-id and PRECEDES-cycle checks
   are CODE (`find_structural_defects`, a Kahn's-algorithm pass mirroring
-  `KGGraph.topological_order`), never sent to the LLM.
+  `KGGraph.topological_order`), never sent to the LLM. Concept->concept
+  prerequisite edges are DEPENDS_ON (PRECEDES is reserved for
+  `(procedure_step, procedure_step)` pairs per `apollo/ontology/edges.py`);
+  the raw-graph harness scripts (`campaign/out/{f1,f1c}/run_s1_s2.py`)
+  used to mislabel every `apollo_entity_prereqs` row PRECEDES, and the judge
+  prompt read PRECEDES/USES as temporal order and anchored node validity on
+  a single problem instead of the whole subject — together these drove
+  ~70% of S1's recorded failures without any real graph defect (see
+  `.superpowers/sdd/a3-s1-adjudication.md`). Both fixed 2026-07-03; S1
+  numbers from before that fix are not comparable to runs after it.
 - **S2** (`s2_ingestion.py`) — items = WU-AAS `(page_ref, scraped_label,
   paired_solution)` triples; the low-confidence -> verify-path contract
   (`check_verify_path_fired`) is a pure boolean read-back against each

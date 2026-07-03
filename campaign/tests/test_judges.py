@@ -216,6 +216,26 @@ def test_s1_user_prompt_only_carries_subject_scoped_fields():
     assert set(prompt.keys()) == {"kind", "problem", "entity"}
 
 
+def test_s1_system_prompt_states_multi_problem_scope():
+    # Adjudication J-SCOPE fix: a node must not be rejected merely because
+    # ONE of the subject's problems doesn't use it -- the reference graph
+    # spans every problem in the subject.
+    judge = S1ReferenceGraphJudge(llm=FakeLLM())
+    prompt = judge.system_prompt
+    assert "spans ALL of the subject's problems" in prompt
+    assert "do NOT reject a node merely because one particular problem" in prompt
+
+
+def test_s1_system_prompt_frames_concept_edges_as_dependency_not_temporal():
+    # Adjudication J-EDGE-TEMPORAL fix: concept->concept edges are
+    # prerequisite/DEPENDS_ON relations, not a PRECEDES-style temporal claim.
+    judge = S1ReferenceGraphJudge(llm=FakeLLM())
+    prompt = judge.system_prompt
+    assert "prerequisite/dependency relation" in prompt
+    assert "do NOT judge temporal/derivation ordering" in prompt
+    assert "do NOT flag it as 'reversed'" in prompt
+
+
 # --- S2 ingestion ----------------------------------------------------------
 
 
