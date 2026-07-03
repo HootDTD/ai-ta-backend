@@ -298,6 +298,9 @@ async def test_scorecard_attached_from_write_artifacts_return_value(monkeypatch)
         "taught_well": [],
         "missing_or_unclear": [],
         "watch_out": [],
+        # Lane B3a/D1 — no empty-bank marker on this seeded payload -> "checked".
+        "watch_out_status": "checked",
+        "watch_out_note": None,
         "clarifications": [],
     }
 

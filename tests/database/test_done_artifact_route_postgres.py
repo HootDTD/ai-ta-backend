@@ -201,6 +201,9 @@ async def test_artifact_on_shadow_off_writes_one_llm_canonical_row(db_session, m
         "taught_well",
         "missing_or_unclear",
         "watch_out",
+        # Lane B3a/D1 — empty-bank ("not checked") vs found-none disambiguation.
+        "watch_out_status",
+        "watch_out_note",
         "clarifications",
     }
 

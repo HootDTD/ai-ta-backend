@@ -2,6 +2,7 @@ from apollo.clarification.candidate_assembly import (
     _misconceptions_dict,
     load_problem_candidates,
     load_problem_candidates_with_soundness,
+    misconception_bank_applicable,
 )
 
 # ---------------------------------------------------------------------------
@@ -146,6 +147,47 @@ async def test_soundness_true_when_nonempty_and_concept_id_set(monkeypatch):
         object(), search_space_id=1, concept_id=2, problem_payload=_PROBLEM
     )
     assert bank_applicable is True
+
+
+# ---------------------------------------------------------------------------
+# misconception_bank_applicable — the isolated flag (lane B3a/D1 LLM path)
+# ---------------------------------------------------------------------------
+
+
+async def test_bank_applicable_isolated_false_when_empty(monkeypatch):
+    """Empty bank → not applicable, WITHOUT building the candidate set (the LLM
+    artifact path has no problem_payload)."""
+    _patch_loaders(monkeypatch, entries=[])
+    assert await misconception_bank_applicable(object(), concept_id=2) is False
+
+
+async def test_bank_applicable_isolated_true_when_nonempty(monkeypatch):
+    _patch_loaders(monkeypatch, entries=[_Entry()])
+    assert await misconception_bank_applicable(object(), concept_id=2) is True
+
+
+async def test_bank_applicable_isolated_none_concept_short_circuits(monkeypatch):
+    """concept_id=None short-circuits to False WITHOUT touching load_for_concept
+    (a NULL concept can never own a bank)."""
+
+    async def _boom(db, *, concept_id):
+        raise AssertionError("load_for_concept must not run for a NULL concept")
+
+    monkeypatch.setattr(
+        "apollo.clarification.candidate_assembly.load_for_concept", _boom
+    )
+    assert await misconception_bank_applicable(object(), concept_id=None) is False
+
+
+async def test_bank_applicable_isolated_matches_soundness_recipe(monkeypatch):
+    """The isolated helper and the candidate-recipe's ``bank_applicable`` share
+    ONE predicate — they can never disagree about whether the bank was empty."""
+    _patch_loaders(monkeypatch, entries=[_Entry()])
+    isolated = await misconception_bank_applicable(object(), concept_id=2)
+    _, recipe = await load_problem_candidates_with_soundness(
+        object(), search_space_id=1, concept_id=2, problem_payload=_PROBLEM
+    )
+    assert isolated == recipe is True
 
 
 # ---------------------------------------------------------------------------

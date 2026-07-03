@@ -34,6 +34,28 @@ _DEFAULT_STRONG = 0.85
 _DEFAULT_PROFICIENT = 0.70
 _DEFAULT_DEVELOPING = 0.50
 
+# Lane B3a/D1 — the empty-bank ("not checked, cold start") signal in the
+# *Watch out* section. The artifact carries a persisted
+# ``abstention.misconceptions_status`` marker ONLY when the class's
+# misconception bank was empty (see ``apollo.grading.artifact_build``); its
+# absence means the grader DID assess soundness and simply found nothing to
+# warn about. The two string values below MIRROR ``artifact_build``'s
+# ``MISCONCEPTIONS_STATUS_KEY`` / ``MISCONCEPTIONS_STATUS_EMPTY_BANK`` — they
+# are redefined here rather than imported to keep this pure projection free of
+# the ``artifact_build`` → ``done_grading`` → Neo4j import chain; the values are
+# a stable persisted contract, pinned by ``test_artifact_build``'s marker-reason
+# assertion and ``test_scorecard``'s round-trip test.
+_ABSTENTION_MISCONCEPTIONS_STATUS_KEY = "misconceptions_status"
+_MISCONCEPTIONS_STATUS_EMPTY_BANK = "empty_bank"
+
+# The two watch-out states the scorecard distinguishes, and the teacher-facing
+# note shown for the cold-start one.
+WATCH_OUT_CHECKED = "checked"
+WATCH_OUT_NOT_CHECKED_EMPTY_BANK = "not_checked_empty_bank"
+COLD_START_WATCH_OUT_NOTE = (
+    "Not checked — no misconception data for this class yet (cold start)."
+)
+
 # The spec's literal default band table (name, threshold), high-to-low. Kept
 # as a module constant for callers/tests that want the documented defaults
 # without touching the environment; `load_bands()` is the live, env-aware
@@ -123,6 +145,27 @@ def _watch_out(misconceptions: list[dict]) -> list[dict]:
     ]
 
 
+def _watch_out_status(artifact: dict) -> tuple[str, str | None]:
+    """Disambiguate an EMPTY *Watch out* list (lane B3a/D1). An empty list can
+    mean two very different things a teacher must not conflate:
+
+    - ``checked``: soundness WAS assessed against a seeded misconception bank
+      and nothing fired — a genuine "no misconceptions detected".
+    - ``not_checked_empty_bank``: the class's misconception bank was empty
+      (cold start), so soundness was NEVER assessed — the empty list is an
+      absence of DATA, not an absence of misconceptions.
+
+    The empty-bank case rides on the artifact's persisted
+    ``abstention.misconceptions_status`` marker; without it, the grade was
+    checked. Returns ``(status, note)`` where ``note`` is the teacher-facing
+    cold-start explanation (``None`` on the checked path)."""
+    abstention = artifact.get("abstention") or {}
+    marker = abstention.get(_ABSTENTION_MISCONCEPTIONS_STATUS_KEY) or {}
+    if marker.get("reason") == _MISCONCEPTIONS_STATUS_EMPTY_BANK:
+        return WATCH_OUT_NOT_CHECKED_EMPTY_BANK, COLD_START_WATCH_OUT_NOTE
+    return WATCH_OUT_CHECKED, None
+
+
 def _clarifications(clarification_trace: list[dict]) -> list[dict]:
     """Clarification exchanges shown inline (spec §2) — question, the
     student's answer, and whether it earned credit, straight off the
@@ -151,11 +194,17 @@ def render_scorecard(artifact: dict) -> dict:
     scores = artifact.get("scores") or {}
     composite = float(scores.get("composite", 0.0))
     node_ledger = artifact.get("node_ledger") or []
+    watch_out_status, watch_out_note = _watch_out_status(artifact)
     return {
         "score_0_100": round(composite * 100),
         "band": _band_for(composite, load_bands()),
         "taught_well": _taught_well(node_ledger),
         "missing_or_unclear": _missing_or_unclear(node_ledger),
         "watch_out": _watch_out(artifact.get("misconceptions") or []),
+        # Lane B3a/D1 — an empty `watch_out` alone is ambiguous; these two keys
+        # tell a cold-start empty bank (never checked) apart from a checked
+        # "found none". `watch_out_note` is None on the checked path.
+        "watch_out_status": watch_out_status,
+        "watch_out_note": watch_out_note,
         "clarifications": _clarifications(artifact.get("clarification_trace") or []),
     }
