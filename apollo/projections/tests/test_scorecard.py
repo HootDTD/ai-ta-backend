@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import pytest
 
+from apollo.grading.artifact_build import build_llm_artifact
+from apollo.grading.composite import load_weights
 from apollo.projections.scorecard import (
     BANDS,
     COLD_START_WATCH_OUT_NOTE,
@@ -321,6 +323,41 @@ def test_misconception_node_ledger_row_excluded_from_taught_well():
 
 def test_clarifications_shown_inline():
     art = _artifact()
+    clar = render_scorecard(art)["clarifications"]
+    assert clar == [
+        {
+            "question": "What happens to velocity when the pipe narrows?",
+            "answer": "it speeds up",
+            "credit": "granted",
+        }
+    ]
+
+
+def test_clarifications_shown_inline_on_llm_fallback_artifact():
+    """A2/G2 fix: the served-served-canonical LLM artifact (``grader_used=
+    "llm_fallback"``) must render its real clarification trace too — the
+    scorecard's clarifications block is grader-agnostic, but this closes the
+    loop end-to-end through the actual ``build_llm_artifact`` builder rather
+    than a hand-built dict."""
+    trace = [
+        {
+            "node_id": "n1",
+            "candidate_key": "continuity_equation",
+            "probe_question": "What happens to velocity when the pipe narrows?",
+            "original_statement": "it stays the same",
+            "clarification_text": "it speeds up",
+            "state": "confirmed",
+            "credit": "granted",
+        }
+    ]
+    art = build_llm_artifact(
+        coverage={"per_step": {"k1": "covered"}, "confidences": {"k1": 0.9}},
+        rubric={"overall": {"score": 71}},
+        weights=load_weights(),
+        graph_failure=None,
+        latency_ms=None,
+        clarification_trace=trace,
+    )
     clar = render_scorecard(art)["clarifications"]
     assert clar == [
         {

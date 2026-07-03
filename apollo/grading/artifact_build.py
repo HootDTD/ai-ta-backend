@@ -358,6 +358,7 @@ def build_llm_artifact(
     weights: CompositeWeights,
     graph_failure: str | None,
     latency_ms: int | None,
+    clarification_trace: list[dict],
     misconceptions_bank_empty: bool = False,
 ) -> dict:
     """Build the LLM-fallback artifact payload (spec §1/§3) from the OLD
@@ -390,6 +391,17 @@ def build_llm_artifact(
     the LLM canonical payload whenever the graph grade was not promoted — the
     default in this build) can tell a cold-start empty bank apart from a checked
     "found none". Default False → the seeded/legacy path is byte-identical.
+
+    A2/G2 fix (2026-07-03 campaign): ``clarification_trace`` is threaded
+    through exactly like ``build_graph_artifact`` does — clarifications are
+    SESSION-level evidence (the student's live answer-blind follow-up dialog),
+    not grader-specific, so the LLM-fallback artifact must carry the same real
+    trace the graph artifact gets, not a hardcoded ``[]``. Previously this
+    builder ignored the caller's trace entirely, which meant the SERVED
+    canonical artifact (this builder wins whenever ``served="llm_fallback"``,
+    which is every attempt today — the graph grader is still shadow) always
+    rendered an empty clarifications block on the student/teacher scorecard
+    even when the live clarification loop ran and produced real exchanges.
     """
     per_step: dict[str, str] = coverage.get("per_step") or {}
     confidences: dict[str, float] = coverage.get("confidences") or {}
@@ -469,7 +481,7 @@ def build_llm_artifact(
         "node_ledger": node_ledger,
         "edge_ledger": [],
         "misconceptions": [],
-        "clarification_trace": [],
+        "clarification_trace": list(clarification_trace),
         "scores": {
             "node_coverage": node_coverage,
             "edge_coverage": edge_coverage,

@@ -403,6 +403,7 @@ def test_llm_artifact_shape():
         weights=load_weights(),
         graph_failure="boom",
         latency_ms=5,
+        clarification_trace=[],
     )
     assert art["grader_used"] == GRADER_USED_LLM_FALLBACK
     assert art["abstention"]["graph_failure"] == "boom"
@@ -438,6 +439,7 @@ def test_llm_artifact_node_ledger_evidence_span_is_none_never_empty_string():
         weights=load_weights(),
         graph_failure=None,
         latency_ms=None,
+        clarification_trace=[],
     )
     assert art["node_ledger"]  # non-empty
     for entry in art["node_ledger"]:
@@ -453,6 +455,7 @@ def test_llm_artifact_no_attempts_zero_coverage():
         weights=load_weights(),
         graph_failure=None,
         latency_ms=None,
+        clarification_trace=[],
     )
     assert art["scores"]["node_coverage"] == 0.0
     assert art["scores"]["composite"] == 0.0
@@ -472,6 +475,7 @@ def test_llm_artifact_empty_bank_nests_marker_in_abstention():
         weights=load_weights(),
         graph_failure=None,
         latency_ms=None,
+        clarification_trace=[],
         misconceptions_bank_empty=True,
     )
     assert "misconceptions_status" not in art  # NOT a dropped top-level key
@@ -491,8 +495,42 @@ def test_llm_artifact_seeded_bank_default_is_byte_identical():
         weights=load_weights(),
         graph_failure=None,
         latency_ms=5,
+        clarification_trace=[],
     )
     default = build_llm_artifact(**kwargs)
     seeded = build_llm_artifact(**kwargs, misconceptions_bank_empty=False)
     assert default == seeded
     assert "misconceptions_status" not in default["abstention"]
+
+
+def test_llm_artifact_clarification_trace_passthrough():
+    """A2/G2 fix: the served (canonical when llm_fallback) artifact must carry
+    the real session clarification trace — same convention as
+    ``build_graph_artifact``'s passthrough (real list in, real list out,
+    never re-hardcoded to ``[]``, never the caller's own list object)."""
+    trace = [{"question": "q1", "answer": "a1", "credit_granted": True}]
+    art = build_llm_artifact(
+        coverage={"per_step": {"k1": "covered"}, "confidences": {"k1": 0.9}},
+        rubric={"overall": {"score": 71}},
+        weights=load_weights(),
+        graph_failure=None,
+        latency_ms=None,
+        clarification_trace=trace,
+    )
+    assert art["clarification_trace"] == trace
+    # Immutable input: the builder must never mutate the caller's list.
+    assert art["clarification_trace"] is not trace
+
+
+def test_llm_artifact_clarification_trace_defaults_empty():
+    """No clarification rows for this attempt -> empty list (not ``None``),
+    matching the graph path's/persistence's convention."""
+    art = build_llm_artifact(
+        coverage={"per_step": {}, "confidences": {}},
+        rubric={},
+        weights=load_weights(),
+        graph_failure=None,
+        latency_ms=None,
+        clarification_trace=[],
+    )
+    assert art["clarification_trace"] == []
