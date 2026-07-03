@@ -165,6 +165,7 @@ async def _resolve_attempt_async(
     fuzzy_threshold: float,
     symbolic_mappings: dict,
     nli_ctx: NLIContext | None,
+    given_values: dict | None = None,
 ):
     """M3(a) — run the (synchronous, CPU-bound when NLI is active) resolver off
     the event loop. ``resolve_attempt`` itself stays sync/pure/deterministic;
@@ -188,6 +189,7 @@ async def _resolve_attempt_async(
                 fuzzy_threshold=fuzzy_threshold,
                 symbolic_mappings=symbolic_mappings,
                 nli_ctx=nli_ctx,
+                given_values=given_values,
             )
         except (ImportError, ModuleNotFoundError) as exc:
             _log_nli_import_failure_once(exc)
@@ -199,6 +201,7 @@ async def _resolve_attempt_async(
         fuzzy_threshold=fuzzy_threshold,
         symbolic_mappings=symbolic_mappings,
         nli_ctx=None,
+        given_values=given_values,
     )
 
 
@@ -405,6 +408,7 @@ async def run_graph_simulation(
             fuzzy_threshold=0.9,
             symbolic_mappings=inputs.symbolic_mappings,
             nli_ctx=nli_ctx,
+            given_values=inputs.given_values,
         )
         # Step 6 — RESOLVES_TO + resolution fields (idempotent MERGE).
         await write_resolution(neo, int(attempt.id), resolution, resolved_at=_now_iso())

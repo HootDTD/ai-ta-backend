@@ -29,6 +29,7 @@ pathological solve degrades to a non-match, never an exception.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sympy import Eq, Symbol, nsimplify, simplify, solve
@@ -164,5 +165,116 @@ def match_equation_alignment(
 
         if _aligns(s, r):
             return (cand, _DERIVED_METHOD, _DERIVED_CAP)
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# A1-iter2 — the default-OFF ``equivalence`` tier (APOLLO_EQUIV_RESOLUTION).
+#
+# The biggest single unresolved-student-node failure class in the A1 taxonomy
+# (19/53) is "equation variants": a student restates an already-credited
+# reference equation with (a) underscore/notation subscript variants
+# (``A_1*v_1`` vs the reference's ``A1*v1``), (b) terms rearranged across the
+# ``=``, or (c) a fully numeric instantiation of the reference form under the
+# problem's OWN declared ``given_values`` (never invented data).
+#
+# Unlike the ``derived`` tier above (which solves the reference for ONE free
+# symbol and tests a single rearranged branch — the "solved-for-variable"
+# shape), this tier tests direct zero-form equality after (i) normalizing
+# underscore-subscript notation and (ii) substituting BOTH the declared
+# ``mappings`` (symbolic_mappings) AND the declared ``given_values`` (numeric
+# knowns already known to the graph-sim — plumbed in via ProblemInputs). A
+# single ``simplify(student_zero - reference_zero) == 0`` check subsumes
+# rearrangement (algebra) and numeric instantiation (arithmetic) — no solve()
+# branching needed. It reuses every SymPy helper the derived tier already
+# has: ``_extended_locals`` / ``_zero_form`` / ``_apply_mappings`` /
+# ``_rationalize`` / ``_is_zero`` — no new SymPy call site, no new failure
+# mode, no new timeout mechanism (the module has none to reuse; every SymPy
+# call here is wrapped ``try/except -> non-match`` exactly like the tiers it
+# borrows from — a pathological expression degrades to a non-match, never
+# hangs the resolver any differently than the derived/symbolic tiers already
+# can).
+#
+# Deliberately conservative: cap 0.93 (< derived's 0.95, < symbolic's 0.98 —
+# see candidates.py). It is a LAST-RESORT tier, tried only after every other
+# content tier has already failed for the node (wired in resolver.py's
+# ``_content_match``), and ONLY for ``equation`` nodes — a misconception
+# equation form is algebraically DIFFERENT from the correct reference, so
+# ``simplify`` correctly reports non-zero and this tier never credits it.
+# ---------------------------------------------------------------------------
+
+_EQUIVALENCE_METHOD = "equivalence"
+_EQUIVALENCE_CAP = 0.93
+
+# Subscript notation normalization: 'A_1' / 'v_12' -> 'A1' / 'v12'. Applied to
+# BOTH the student and reference symbolic text (and to mapping/given_values
+# keys) before parsing, so notation alone never blocks a genuine restatement.
+_SUBSCRIPT_RE = re.compile(r"([A-Za-z]+)_([0-9]+)")
+
+
+def _normalize_subscripts(expr: str) -> str:
+    return _SUBSCRIPT_RE.sub(r"\1\2", expr)
+
+
+def match_algebraic_equivalence(
+    node: Node,
+    candidates: tuple[Candidate, ...],
+    *,
+    mappings: dict[str, str],
+    given_values: dict[str, str] | None = None,
+) -> TierHit | None:
+    """The ``equivalence`` tier: equation nodes only, gated by the caller on
+    ``APOLLO_EQUIV_RESOLUTION`` (resolver.py) — this function itself performs
+    NO env read, so it stays a pure function like every other tier.
+
+    Returns ``(cand, "equivalence", 0.93)`` for the FIRST candidate whose
+    subscript-normalized, mapping-and-given-values-substituted zero-form is
+    identically equal (``simplify(diff) == 0``) to the student's; else None.
+    ``given_values`` defaults to ``{}`` — with none supplied, a purely numeric
+    student form has nothing to instantiate against and stays unresolved (no
+    invented data, mirrors the derived tier's guardrail (i))."""
+    if node.node_type != "equation":
+        return None
+    student_sym = student_surface_text(node)
+    if not student_sym:  # pragma: no cover - defensive: valid equation nodes always have symbolic
+        return None
+    student_norm = _normalize_subscripts(student_sym)
+
+    maps = mappings or {}
+    knowns = given_values or {}
+    # Declared symbolic_mappings win over given_values on a key collision (the
+    # explicit substitution table is the more authoritative declared datum).
+    merged = {_normalize_subscripts(k): v for k, v in knowns.items()}
+    merged.update({_normalize_subscripts(k): v for k, v in maps.items()})
+
+    for cand in candidates:
+        if cand.node_type != "equation" or cand.symbolic is None:
+            continue
+        cand_norm = _normalize_subscripts(cand.symbolic)
+        ld = _extended_locals(student_norm, cand_norm, *merged.values())
+
+        s = _zero_form(student_norm, ld)
+        if s is None:  # pragma: no cover - defensive: valid equation nodes parse
+            continue
+        s = _apply_mappings(s, merged, ld)
+        if s is None:  # pragma: no cover - defensive
+            continue
+        s = _rationalize(s)
+        if s is None:  # pragma: no cover - defensive
+            continue
+
+        r = _zero_form(cand_norm, ld)
+        if r is None:  # pragma: no cover - defensive: reference equations parse
+            continue
+        r = _apply_mappings(r, merged, ld)
+        if r is None:  # pragma: no cover - defensive
+            continue
+        r = _rationalize(r)
+        if r is None:  # pragma: no cover - defensive
+            continue
+
+        if _is_zero(s - r):
+            return (cand, _EQUIVALENCE_METHOD, _EQUIVALENCE_CAP)
 
     return None

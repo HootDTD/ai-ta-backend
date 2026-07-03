@@ -29,6 +29,7 @@ RESOLUTION_METHODS: tuple[str, ...] = (
     "clarification",
     "nli",  # recall-only fallback (cap 0.88) — see nli_resolution.py
     "fuzzy",
+    "equivalence",  # A1-iter2, default-OFF — see equation_alignment.py
     "llm",
     "unresolved",
 )
@@ -43,6 +44,12 @@ METHOD_CONFIDENCE_CAP: dict[str, float] = {
     "clarification": 0.90,
     "nli": 0.88,
     "fuzzy": 0.80,
+    # A1-iter2 — the default-OFF algebraic-equivalence tier (equation nodes
+    # only, gated by APOLLO_EQUIV_RESOLUTION). Conservative: strictly below the
+    # deterministic derived tier's cap (broader match surface — rearrangement
+    # AND numeric instantiation, not just a solved-for-variable branch) and
+    # below the symbolic tier's cap, per the §3 tier-precision convention.
+    "equivalence": 0.93,
     "llm": 0.75,
     "unresolved": 0.00,
 }
@@ -96,6 +103,7 @@ def unknown_reference_entry_types(problem: dict) -> tuple[str, ...]:
         if entry_type is not None and _node_type_for_entry(entry_type) is None:
             seen.add(str(entry_type))
     return tuple(sorted(seen))
+
 
 # Node types the NLI tier attempts. Excludes `equation` (exact/symbolic/derived
 # already cover it) and `variable_mapping` (surface is a bare `term` — degenerate

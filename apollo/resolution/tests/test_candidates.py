@@ -68,6 +68,8 @@ def test_method_confidence_caps_match_spec():
         "clarification": 0.90,
         "nli": 0.88,
         "fuzzy": 0.80,
+        # A1-iter2 — default-OFF algebraic-equivalence tier (APOLLO_EQUIV_RESOLUTION).
+        "equivalence": 0.93,
         "llm": 0.75,
         "unresolved": 0.00,
     }
