@@ -604,3 +604,23 @@ lanes to watch: a recall fix that widens matching must not widen this leak.
 Requires the local campaign stack up (`.env.campaign` sourced — Postgres on
 `127.0.0.1:57322`, Neo4j on `bolt://127.0.0.1:57687`); it is a measurement
 tool, not something CI runs against a live stack.
+
+**Caveats:**
+
+- **Replay is NOT read-only against the stack.** `run_graph_simulation` (the
+  real chain this module calls) persists a fresh `apollo_graph_comparison_runs`
+  row, `MERGE`s `RESOLVES_TO` edges in Neo4j, and on a caught-error path
+  commits `learner_update_pending=True` on the attempt — the same writes the
+  live Done path and retry janitor produce. Repeated runs over the same
+  corpus accumulate this state; the four benchmark metrics still reproduce
+  deterministically run-to-run, but do not assume the DB/Neo4j are untouched
+  after a replay.
+- **Reconstructed artifacts are not byte-identical to live ones.** Replay
+  passes `clarification_trace=[]` and `latency_ms=None` into
+  `build_graph_artifact` (neither is durably reconstructable from the frozen
+  transcript), so the returned artifact's `clarification_trace` and latency
+  fields differ from what the original live run produced. This is safe for
+  the four benchmark metrics (`unresolved_rate`, `abstention_reasons`,
+  `graph_composite`, `band_vs_expected`), none of which read those fields —
+  but downstream code must not treat a replay artifact as a production
+  artifact.

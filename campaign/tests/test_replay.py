@@ -2,7 +2,7 @@
 benchmark).
 
 Feeds a small fixture-copied slice of the frozen F1c transcript log
-(``campaign/tests/fixtures/f1c_sample.jsonl`` — attempt_ids 15/strong,
+(``campaign/tests/fixtures/f1c_sample/attempts.jsonl`` — attempt_ids 15/strong,
 7/partial, 1/misconception, plus one error-status row) through the replay
 entry points. ``build_rerun_inputs``/``run_graph_simulation`` are patched at
 the ``campaign.replay`` import site (same pattern
@@ -217,9 +217,15 @@ def test_mean_of_values():
 # ---------------------------------------------------------------------------
 
 
-async def test_replay_attempt_reproduces_unresolved_rate_above_threshold():
-    """A known F1c-shaped attempt (mostly-unresolved nodes) must abstain with
-    the SAME reason string the live campaign recorded."""
+async def test_replay_attempt_propagates_abstention_reason_from_mocked_sim():
+    """``replay_attempt`` must propagate ``abstention_reasons`` verbatim from
+    the (mocked) ``run_graph_simulation`` result onto ``ReplayOutcome`` — this
+    pins reason PROPAGATION through the reshaping in ``replay_attempt``/
+    ``build_graph_artifact``, not that the real resolver/grader reproduces
+    this reason live (the grading chain itself is mocked here; the live
+    F1c 31/31 ``unresolved_rate_above_threshold`` pattern is instead pinned
+    against the frozen baseline JSON by the ``test_baseline_pin`` tests
+    below)."""
     findings = (
         Finding(kind=FindingKind.MISSING_NODE, canonical_key="eq.bernoulli", score=0.0),
         Finding(kind=FindingKind.UNRESOLVED, student_node_ids=("n_x",), evidence_spans=("?",)),
@@ -323,6 +329,59 @@ async def test_replay_attempt_control_persona_credit_leak_flagged():
 
     assert outcome.is_control is True
     assert outcome.control_credit_leak is True
+
+
+async def test_replay_attempt_control_persona_credit_subset_is_not_a_leak():
+    """A control (misconception) persona attempt whose credited keys are a
+    SUBSET of its expected-credited set must NOT be flagged — pins the
+    ``is_control and bool(set(actual_credited) - set(expected_credited))``
+    conjunction in ``replay_attempt`` (a leak is only real credit the
+    expected ledger never granted, not merely partial credit)."""
+    findings = (
+        Finding(
+            kind=FindingKind.COVERED_NODE,
+            canonical_key="eq.continuity",
+            student_node_ids=("n_a",),
+            evidence_spans=("evidence",),
+            confidence=0.9,
+        ),
+    )
+    resolved = (
+        ResolvedNode(
+            node_id="n_a",
+            resolution="resolved",
+            resolved_key="eq.continuity",
+            resolved_canon_key=1,
+            method="alias",
+            confidence=0.92,
+        ),
+    )
+    shadow = _shadow_for(
+        resolved=resolved,
+        findings=findings,
+        abstained=False,
+        abstention_reasons=(),
+        node_coverage=1.0,
+    )
+
+    records = replay.load_records(_FIXTURE, personas=["misconception"])
+    record = records[0]
+    # Sanity: "eq.continuity" IS in this attempt's expected-credited set, so
+    # crediting only it is a genuine subset, not accidentally the full leak
+    # scenario covered by the sibling test above.
+    assert set(("eq.continuity",)) <= set(record["expected"]["credited"])
+
+    with (
+        patch.object(replay, "build_rerun_inputs", new=AsyncMock(return_value=_rerun_inputs())),
+        patch.object(
+            replay, "_load_attempt_and_session", new=AsyncMock(return_value=(object(), object()))
+        ),
+        patch.object(replay, "run_graph_simulation", new=AsyncMock(return_value=shadow)),
+    ):
+        outcome = await replay.replay_attempt(db=object(), neo=object(), record=record)
+
+    assert outcome.is_control is True
+    assert outcome.control_credit_leak is False
 
 
 async def test_replay_attempt_non_control_credit_is_not_a_leak():
@@ -579,3 +638,88 @@ async def test_amain_prints_metrics_when_no_out_given(capsys: pytest.CaptureFixt
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert "unresolved_rate" in payload
+
+
+# ---------------------------------------------------------------------------
+# Baseline pin — campaign/out/f1c/replay-baseline-2c2dc5f.json
+#
+# Pure JSON reads, no grading stack: recomputes every derived value in the
+# COMMITTED frozen baseline from its own raw rows and asserts it matches what
+# is on disk, so a later hand-edit of the baseline JSON (mean, a leak flag,
+# an abstention count, a class count) turns CI red instead of silently
+# drifting the fix-iteration flywheel's reference point.
+# ---------------------------------------------------------------------------
+
+_BASELINE_PATH = Path(__file__).parent.parent / "out" / "f1c" / "replay-baseline-2c2dc5f.json"
+
+
+def _load_baseline() -> dict[str, Any]:
+    return json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
+
+
+def test_baseline_pin_per_class_means_match_recomputed_mean():
+    baseline = _load_baseline()
+    for metric_key in ("unresolved_rate", "graph_composite"):
+        for persona, stats in baseline[metric_key].items():
+            recomputed = sum(stats["values"]) / len(stats["values"])
+            assert recomputed == pytest.approx(stats["mean"], abs=1e-9), (
+                f"{metric_key}.{persona} mean does not match the arithmetic "
+                "mean of its own recorded per-attempt values"
+            )
+            assert stats["n"] == len(stats["values"])
+
+
+def test_baseline_pin_control_credit_leak_flags_match_recomputation():
+    """Recompute ``control_credit_leak`` for every ``band_vs_expected`` row
+    per the code's own definition in ``replay.replay_attempt``
+    (``is_control and bool(set(actual_credited) - set(expected_credited))``)
+    and assert it matches the frozen flag on disk."""
+    baseline = _load_baseline()
+    for row in baseline["band_vs_expected"]:
+        recomputed_leak = row["is_control"] and bool(
+            set(row["actual_credited"]) - set(row["expected_credited"])
+        )
+        assert recomputed_leak == row["control_credit_leak"], (
+            f"attempt_id={row['attempt_id']} control_credit_leak mismatch"
+        )
+
+
+def test_baseline_pin_abstention_histogram():
+    """Assert exactly what the frozen baseline records: 31/31 gradeable
+    attempts abstain on ``unresolved_rate_above_threshold``, with one of
+    those 31 additionally co-occurring with
+    ``min_parser_confidence_below_threshold`` (reason occurrences, not
+    attempt counts — an attempt with 2 reasons increments both buckets)."""
+    baseline = _load_baseline()
+    assert baseline["abstention_reasons"] == {
+        "unresolved_rate_above_threshold": 31,
+        "min_parser_confidence_below_threshold": 1,
+    }
+
+
+def test_baseline_pin_class_counts_and_controls_and_leak_count():
+    baseline = _load_baseline()
+    rows = baseline["band_vs_expected"]
+    assert len(rows) == 31
+
+    persona_counts: dict[str, int] = {}
+    for row in rows:
+        persona_counts[row["persona"]] = persona_counts.get(row["persona"], 0) + 1
+    assert persona_counts == {
+        "strong": 10,
+        "partial": 8,
+        "misconception": 7,
+        "vague_then_clarifies": 6,
+    }
+
+    controls = [row for row in rows if row["is_control"]]
+    assert len(controls) == 13
+
+    leaks = [row for row in rows if row["control_credit_leak"]]
+    assert len(leaks) == 9
+
+    for metric_key in ("unresolved_rate", "graph_composite"):
+        assert baseline[metric_key]["strong"]["n"] == 10
+        assert baseline[metric_key]["partial"]["n"] == 8
+        assert baseline[metric_key]["misconception"]["n"] == 7
+        assert baseline[metric_key]["vague_then_clarifies"]["n"] == 6
