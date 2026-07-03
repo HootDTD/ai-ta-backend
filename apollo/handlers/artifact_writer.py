@@ -29,6 +29,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.clarification.candidate_assembly import misconception_bank_applicable
+from apollo.emergent.config import emergent_misconceptions_enabled
+from apollo.emergent.store import record_observations_from_canonical
 from apollo.grading.artifact_build import (
     GRADER_USED_GRAPH,
     GRADER_USED_LLM_FALLBACK,
@@ -208,6 +210,35 @@ async def write_artifacts(
         db.add_all(rows)
         await db.flush()
         await db.commit()
+
+        # Emergent misconception store (memo 2026-07-05, increment 1). DORMANT
+        # unless APOLLO_EMERGENT_MISCONCEPTIONS is ON: flag OFF, this branch is
+        # never entered, zero ledger rows are written, and the canonical grade is
+        # byte-identical to the no-store behavior. Only the CANONICAL payload
+        # feeds the store (role=canonical only, OQ4). Own failure domain — a
+        # ledger-write failure is logged and swallowed after its own rollback so
+        # the already-committed artifact is never affected.
+        if emergent_misconceptions_enabled():
+            try:
+                await record_observations_from_canonical(
+                    db,
+                    search_space_id=int(sess.search_space_id),
+                    concept_id=sess.concept_id,
+                    user_id=str(sess.user_id),
+                    attempt_id=int(attempt.id),
+                    canonical_payload=canonical_payload,
+                )
+                await db.commit()
+            except Exception:
+                _LOG.exception(
+                    "emergent_observation_write_failed attempt_id=%s", int(attempt.id)
+                )
+                try:
+                    await db.rollback()
+                except Exception:  # pragma: no cover - defensive
+                    _LOG.exception(
+                        "emergent_observation_rollback_failed attempt_id=%s", int(attempt.id)
+                    )
         return canonical_payload
     except Exception:
         _LOG.exception("artifact_write_failed attempt_id=%s", int(attempt.id))

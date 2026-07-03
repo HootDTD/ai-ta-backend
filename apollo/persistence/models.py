@@ -951,3 +951,59 @@ class GradingArtifact(Base):
             "attempt_id", "role", name="uq_grading_artifact_attempt_role",
         ),
     )
+
+
+class MisconceptionObservation(Base):
+    """Emergent misconception store — append-only observation ledger (design
+    memo 2026-07-05, increment 1; migration 037). ONE row per
+    ``(attempt_id, signature)`` derived from a ``role='canonical'`` grading
+    artifact's asserted misconceptions when the ``APOLLO_EMERGENT_MISCONCEPTIONS``
+    flag is ON. The ledger is the source of truth; trust is derived on read
+    (``apollo.emergent.store``), never stored.
+
+    ``signature`` is the artifact misconception's ``canonical_key`` (the strong,
+    promotable case), or the per-concept ``unkeyed:<concept_id>`` bucket for a
+    free-form (``opposes=None``, no key) misconception, which accumulates but
+    NEVER promotes (memo §4 / OQ1). ``UNIQUE(attempt_id, signature)`` mirrors
+    ``MasteryEvent``'s idempotency: a re-grade / retry of the same attempt cannot
+    double-count. ``user_id`` declares NO ORM FK (auth.users is Supabase-managed,
+    absent from Base.metadata), mirroring GradingArtifact/GraphComparisonRun."""
+
+    __tablename__ = "apollo_misconception_observations"
+
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    search_space_id = Column(
+        Integer, ForeignKey("aita_search_spaces.id", ondelete="CASCADE"), nullable=False,
+    )
+    concept_id = Column(
+        BigInteger, ForeignKey("apollo_concepts.id", ondelete="SET NULL"), nullable=True,
+    )
+    signature = Column(Text, nullable=False)
+    user_id = Column(UUID(as_uuid=False), nullable=False)
+    attempt_id = Column(
+        BigInteger, ForeignKey("apollo_problem_attempts.id", ondelete="SET NULL"), nullable=True,
+    )
+    confidence = Column(Float, nullable=True)
+    opposes = Column(Text, nullable=True)
+    evidence_span = Column(Text, nullable=True)
+    source = Column(Text, nullable=False, server_default=text("'grading_artifact'"),
+                    default="grading_artifact")
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "attempt_id", "signature",
+            name="uq_misconception_observation_attempt_signature",
+        ),
+    )
+
+
+# Read path (apollo.emergent.store) scans the ledger for one class+concept and
+# groups by signature. The PK leads with id, so a (search_space_id, concept_id)
+# scan cannot use it — this index supports it, mirroring
+# ix_grading_artifacts_space_concept_time's shape.
+Index(
+    "ix_apollo_misconception_obs_space_concept",
+    MisconceptionObservation.search_space_id,
+    MisconceptionObservation.concept_id,
+)
