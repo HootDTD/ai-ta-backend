@@ -19,6 +19,7 @@ from apollo.persistence.models import (
     ApolloSession,
     Clarification,
     GradingArtifact,
+    Misconception,
     MisconceptionObservation,
     ProblemAttempt,
     SessionPhase,
@@ -42,6 +43,7 @@ async def db():
                     Clarification.__table__,
                     GradingArtifact.__table__,
                     MisconceptionObservation.__table__,
+                    Misconception.__table__,
                 ],
             )
         )
@@ -108,6 +110,7 @@ async def test_flag_off_is_dormant_zero_observation_rows(monkeypatch):
                     Clarification.__table__,
                     GradingArtifact.__table__,
                     MisconceptionObservation.__table__,
+                    Misconception.__table__,
                 ],
             )
         )
