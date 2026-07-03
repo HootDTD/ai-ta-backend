@@ -22,11 +22,17 @@ Pure: no IO, no mutation of inputs.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import os
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
-from apollo.ontology.nodes import Node
+from apollo.ontology.nodes import Node, NodeType
 from apollo.resolution.result import ResolutionResult
+
+# A1 iter1 (G1 weekend campaign): dormant flag for the structural-denominator
+# unresolved_rate (see :func:`unresolved_rate_of_v2`). Default OFF everywhere
+# — repo idiom, mirrors apollo/handlers/*.py's env-flag helpers.
+_ABSTENTION_DENOM_V2_FLAG = "APOLLO_ABSTENTION_DENOM_V2"
 
 # §6.6 gate thresholds. Named so WU-4B2/4B3 match against the symbol, not a
 # magic literal.
@@ -75,6 +81,83 @@ def unresolved_rate_of(resolution: ResolutionResult) -> float:
         return 0.0
     unresolved = sum(1 for rn in resolution.resolved if rn.resolution != "resolved")
     return unresolved / total
+
+
+def _abstention_denom_v2_enabled() -> bool:
+    """Dormant-flag reader for the structural-denominator unresolved_rate.
+
+    Repo idiom (mirrors ``apollo/handlers/done.py`` etc.): default OFF
+    everywhere, including test, unless the env var is explicitly truthy."""
+    return os.environ.get(_ABSTENTION_DENOM_V2_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def unresolved_rate_of_v2(
+    resolution: ResolutionResult,
+    node_type_by_id: Mapping[str, NodeType],
+    candidate_types: frozenset[NodeType],
+) -> float:
+    """A1 iter1 (G1) — structural-denominator alternative to
+    :func:`unresolved_rate_of`. Dormant behind
+    :func:`_abstention_denom_v2_enabled` (default OFF); see
+    :func:`unresolved_rate_for_abstention` for the flag-gated selector callers
+    should actually use.
+
+    Guiding principle: abstention should fire when the grader COULDN'T FOLLOW
+    what the student taught, not when the parser was chatty. ``unresolved_rate_of``
+    divides by EVERY student node the LLM parser emitted, including
+    over-segmented variable-gloss/procedural-filler atoms that have no
+    reference-graph counterpart to resolve against by construction
+    (``apollo/resolution/candidates.py`` mints candidates only from the
+    reference-solution steps + course misconceptions;
+    ``resolver.py::type_compatible`` hard-gates a node against candidates of
+    its OWN ``node_type`` — a node whose type has zero candidates of that type
+    can never leave ``unresolved``). This function restricts the denominator
+    to student nodes whose ``node_type`` IS present in ``candidate_types``
+    (derived from THIS problem's closed candidate set, per
+    ``apollo/resolution/candidates.py::build_candidate_set`` — reference
+    nodes + misconceptions) — a type/structure-driven exclusion, never a
+    content/correctness one, so it cannot manufacture credit.
+
+    ``node_type_by_id`` missing an entry for a resolved node's id treats that
+    node as NOT relevant (defensive: a node this function cannot type is
+    excluded rather than assumed countable). Identical to
+    :func:`unresolved_rate_of` when every student node's type is in
+    ``candidate_types``. ``0.0`` for an empty relevant set (an attempt with no
+    structurally-relevant student nodes never false-trips the gate, matching
+    ``unresolved_rate_of``'s empty-attempt behavior)."""
+    relevant = tuple(
+        rn for rn in resolution.resolved if node_type_by_id.get(rn.node_id) in candidate_types
+    )
+    total = len(relevant)
+    if total == 0:
+        return 0.0
+    unresolved = sum(1 for rn in relevant if rn.resolution != "resolved")
+    return unresolved / total
+
+
+def unresolved_rate_for_abstention(
+    resolution: ResolutionResult,
+    *,
+    node_type_by_id: Mapping[str, NodeType] | None = None,
+    candidate_types: frozenset[NodeType] | None = None,
+) -> float:
+    """Flag-gated selector between :func:`unresolved_rate_of` (v1, the only
+    live behavior) and :func:`unresolved_rate_of_v2` (dormant, A1 iter1).
+
+    Flag OFF (default) -> always :func:`unresolved_rate_of(resolution)`,
+    byte-identical to pre-A1-iter1 behavior regardless of what
+    ``node_type_by_id``/``candidate_types`` a caller passes (defensive: a
+    caller threading the v2 inputs never regresses the OFF path). Flag ON
+    without BOTH v2 inputs also falls back to v1 (v2 is meaningless without
+    them) — only flag-ON + both-inputs-supplied uses
+    :func:`unresolved_rate_of_v2`."""
+    if (
+        _abstention_denom_v2_enabled()
+        and node_type_by_id is not None
+        and candidate_types is not None
+    ):
+        return unresolved_rate_of_v2(resolution, node_type_by_id, candidate_types)
+    return unresolved_rate_of(resolution)
 
 
 def min_parser_confidence_of(nodes: Iterable[Node]) -> float:
