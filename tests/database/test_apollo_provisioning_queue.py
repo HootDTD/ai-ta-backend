@@ -92,6 +92,23 @@ def _chain_migrations() -> list[Path]:
     ]
 
 
+# Migrations AFTER 030 that extend the apollo_ingest_* observability tables 030
+# created (e.g. 036's n_pages column + apollo_ingest_page_evidence). They must run
+# AFTER 030 (their ALTER/CREATE reference 030's tables), so they are applied
+# separately once 030 is in place rather than folded into the pre-030 chain.
+_INGEST_EXTENSION = re.compile(r"apollo_ingest_(runs|errors|page_evidence)")
+
+
+def _post_030_migrations() -> list[Path]:
+    return [
+        path
+        for path in sorted(MIGRATIONS_DIR.glob("*.sql"))
+        if path.name > _MIGRATION_030.name
+        and path.name not in _EXCLUDE_FROM_CHAIN
+        and _INGEST_EXTENSION.search(path.read_text(encoding="utf-8"))
+    ]
+
+
 def _plain_dsn(sqlalchemy_url: str, database: str) -> str:
     url = make_url(sqlalchemy_url).set(drivername="postgresql", database=database)
     return url.render_as_string(hide_password=False)
@@ -118,6 +135,8 @@ async def _apply_chain(dsn: str) -> None:
         for migration in _chain_migrations():
             await conn.execute(migration.read_text(encoding="utf-8"))
         await conn.execute(_MIGRATION_030.read_text(encoding="utf-8"))
+        for migration in _post_030_migrations():
+            await conn.execute(migration.read_text(encoding="utf-8"))
     finally:
         await conn.close()
 

@@ -49,6 +49,7 @@ async def index_authored_doc(
     title: str,
     set_index: int,
     role: str,
+    page_sink: list | None = None,
 ) -> int:
     """Index raw authored PDF bytes and return the hidden ``AITADocument.id``.
 
@@ -56,6 +57,13 @@ async def index_authored_doc(
     deliberately reuses only the indexing core, not the weekly upload wrapper:
     no TeacherUpload row, no supersede, no week activation, and no generic Apollo
     provisioning enqueue.
+
+    When ``page_sink`` is provided, the transient per-page OCR result
+    (``ingestion.pages`` — ``NormalizedPage`` objects carrying text + confidence +
+    extraction mode) is appended to it so the caller can persist page-level OCR
+    evidence (WU-AAS observability). Left ``None`` (the default), behavior is
+    byte-identical to before — the ingest metadata still records per-page
+    confidence via ``_page_debug``.
     """
     if role not in {"problem", "solution"}:
         raise ValueError("authored indexer: role must be 'problem' or 'solution'")
@@ -70,6 +78,11 @@ async def index_authored_doc(
         # and slow; offload it so a multi-page handwritten PDF never stalls the
         # event loop serving concurrent tutoring requests.
         ingestion = await asyncio.to_thread(_run_ingest, pdf_path, doc_id=doc_id)
+        if page_sink is not None:
+            # Capture the transient per-page OCR pass for the caller's evidence
+            # write BEFORE the no-items guard, so a page-bearing-but-chunkless doc
+            # still surfaces its OCR text in the failure path.
+            page_sink.extend(getattr(ingestion, "pages", None) or [])
         if not ingestion.items:
             raise ValueError(f"authored indexer: no chunks produced from {role} PDF")
 

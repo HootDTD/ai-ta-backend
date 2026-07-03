@@ -148,6 +148,10 @@ def test_get_neo4j_client_delegates(monkeypatch):
 async def test_background_runner_returns_when_row_vanishes(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi
 
+    # A real search space so the ingest-run row (opened before the vanish check)
+    # satisfies its search_space_id FK; the AuthoredSet id stays nonexistent.
+    search_space_id, _concept_id = await _seed_course(db_session, slug="vanish")
+
     @asynccontextmanager
     async def _session_cm():
         yield db_session
@@ -157,10 +161,11 @@ async def test_background_runner_returns_when_row_vanishes(db_session, monkeypat
 
     monkeypatch.setattr(aapi, "get_async_session", _session_cm)
     monkeypatch.setattr(aapi, "index_authored_doc", _index_authored_doc)
+    monkeypatch.setattr(aapi, "MeteredChat", lambda **_kwargs: "metered")
     # No AuthoredSet row for this id -> the post-index fetch is None -> early return.
     await aapi._run_set_background(
         set_id=999999,
-        search_space_id=1,
+        search_space_id=search_space_id,
         set_index=1,
         problem_bytes=b"%PDF p",
         problem_title="p",

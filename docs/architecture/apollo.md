@@ -12,7 +12,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-07-02
+last_verified: 2026-07-03
 stub: false
 ---
 
@@ -142,13 +142,48 @@ cross-checks, stay tier 1 with `ConceptProblem.provenance["authored_review"]`
 until a teacher approves. Held problems do not run `tag_and_mint` or
 `promote`, so the canonical KG is not mutated before approval.
 
+**Ingestion observability (WU-AAS, lane G4.4).** `_run_set_background` opens one
+`apollo_ingest_runs` row per ingestion (`IngestRun`, `status`
+running→succeeded/failed, `started_at`/`finished_at`, `n_pages`,
+`n_questions_scraped`/`n_promoted`/`n_rejected`), and the run is the SAME row
+`MeteredChat` accrues LLM call/token/cost onto (so those aggregates persist instead
+of being discarded on a throwaway namespace). **The run is opened AND committed
+BEFORE indexing** (with `document_id=NULL`, migration 036) so that an OCR/indexing
+stage failure — a bad PDF, or `index_authored_doc` raising "no chunks produced" —
+still leaves a durable run row + `apollo_ingest_errors` row + whatever page evidence
+was captured, instead of both tables staying EMPTY (the S2 "insufficient info"
+failure class). Once problem indexing succeeds its document id is stamped onto the
+run (the handle the GET surface looks up by; the queue path sets it at open).
+`index_authored_doc` takes an optional `page_sink` that captures the transient
+per-page OCR pass (`NormalizedPage` — text + confidence + extraction mode)
+BEFORE its no-chunks guard, so a page-bearing-but-chunkless doc still surfaces its
+OCR text on the failure path; the helpers in
+`apollo/provisioning/authored_sets/observability.py`
+(`start_ingest_run`/`persist_page_evidence`/`finalize_ingest_run`/`record_ingest_error`)
+write one `apollo_ingest_page_evidence` row per source page (`IngestPageEvidence`:
+role=`problem|solution`, `page_number`, `ocr_text`, `ocr_confidence`,
+`extraction_mode`, and `verify_path_fired` set when a page's confidence is ≤ 0.6 —
+the low-confidence signal the S2 audit reads; `document_id` NULLABLE for a page
+captured before a doc was minted). On the SUCCESS path the page evidence + run
+document id + `n_pages` are committed with the provisioning-status transition, so
+the except handler re-persists evidence ONLY when that commit did not happen (no
+duplicate rows); its run/error/evidence writes are committed explicitly, not via
+`_set_status` (which early-returns uncommitted if the set row vanished). Before this,
+both tables stayed EMPTY through a whole ingestion and no per-page OCR text was
+persisted. The GET detail surface caps each page's `ocr_text` to
+`_LIST_OCR_TEXT_CAP` (2000) chars with `ocr_text_truncated`/`ocr_text_chars` flags;
+`?full_ocr=true` returns the untruncated body. Schema is migration
+`036_apollo_ingest_page_evidence.sql`.
+
 The mounted endpoints are teacher-gated with `require_user` +
 `require_course_teacher` (role='teacher' membership; no auto-enroll
 fallback — a plain course member 403s): `POST /apollo/authored-sets` accepts multipart
 problem/solution PDFs and starts in-process background provisioning,
 `GET /apollo/authored-sets?search_space_id=` lists set statuses,
-`GET /apollo/authored-sets/{set_id}` returns detail and per-problem
-`result_summary`, and
+`GET /apollo/authored-sets/{set_id}` returns detail, per-problem
+`result_summary`, and the ingestion observability surface (`ingest_run` +
+per-page `pages`: `page_ref`, `ocr_text`, `ocr_confidence`,
+`verify_path_fired`), and
 `POST /apollo/authored-sets/{set_id}/problems/{problem_id}/approve` promotes a
 held problem using the teacher-selected OCR or generated reference.
 - `apollo.provisioning.validate_pair(question, draft, *, retrieve_fn, judge_fn) -> PairingVerdict{paired, faithful, failed_claims, confidence}` (WU-3B2e stage 3; the §8B two-phase span-grounded pairing/correctness gate). The judge sees the SAME grounding the generator used (`draft.grounding`, else re-grounds via `retrieve_fn`): Phase A pairing (short-circuits Phase B when not paired), Phase B claim-decomposed faithfulness (any unentailed claim → `faithful=False` + `failed_claims`). **FAIL-CLOSED — the EXPLICIT INVERSION of `leakage_judge`'s fail-open:** a malformed/non-JSON/exception/non-object judge response at EITHER phase ⇒ `paired=False, faithful=False, confidence=0.0, failed_claims=("<unparseable judge response>",)` (a REJECT, never an approval); all `judge_fn` calls route through one `_judge_or_fail_closed` helper. `apollo.provisioning.rejection_from_verdict(verdict) -> Rejection | None` is the single fail-mapping point (None on approved; else `Rejection{stage='pairing_gate', reason ∈ unparseable_judge/not_paired/unfaithful_claims, diagnostic, failed_claims}` that 3B2g writes to `apollo_rejected_problems`). Logs ONE `pairing_verdict` line (counts + booleans + `solution_source` ONLY — NO text, NO PII). `judge_fn`/`retrieve_fn` injected (mocked in Tier-1 — NO network, NO DB). This unit hands typed values UP — it does NOT mint (3B2d), promote/lint/write rows (3B2g), or meter/queue (3B2f). Both judge phases now send a SCHEMA-EXPLICIT system prompt (`_PAIRING_PHASE_A_SYSTEM_PROMPT`/`_PAIRING_PHASE_B_SYSTEM_PROMPT`, declaring the exact `paired`/`confidence` and `claims:[{claim,entailed}]` keys) + a strict `response_format` json_schema (`build_pairing_phase_a_schema`/`build_pairing_phase_b_schema`); previously it sent NO system prompt under a JSON `response_format`, so a real model 400'd ("'messages' must contain the word 'json'") and EVERY pair fail-closed to a REJECT. `test_validate_pair_sends_system_prompt_and_json_schema` pins the wiring.
