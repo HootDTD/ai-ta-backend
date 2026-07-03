@@ -28,6 +28,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.clarification.candidate_assembly import misconception_bank_applicable
 from apollo.grading.artifact_build import (
     GRADER_USED_GRAPH,
     GRADER_USED_LLM_FALLBACK,
@@ -151,12 +152,26 @@ async def write_artifacts(
                 latency_ms=latency_ms,
             )
 
+        # Lane B3a/D1 — the empty-bank fact for the LLM artifact's
+        # `misconceptions_status` marker. When the shadow chain ran we already
+        # have it (`shadow.grade.soundness_applicable`), so reuse it — no extra
+        # query. On the shadow-off / LLM-served path (the default build) the
+        # fact was never computed, so read it from the SAME source the grading
+        # path uses (`load_for_concept`, via `misconception_bank_applicable`).
+        if shadow is not None:
+            misconceptions_bank_empty = not shadow.grade.soundness_applicable
+        else:
+            misconceptions_bank_empty = not await misconception_bank_applicable(
+                db, concept_id=sess.concept_id
+            )
+
         llm_payload = build_llm_artifact(
             coverage=coverage,
             rubric=rubric,
             weights=weights,
             graph_failure=graph_failure,
             latency_ms=latency_ms,
+            misconceptions_bank_empty=misconceptions_bank_empty,
         )
 
         payloads_by_grader = {

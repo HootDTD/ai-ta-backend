@@ -5,7 +5,14 @@ from __future__ import annotations
 
 import pytest
 
-from apollo.projections.scorecard import BANDS, load_bands, render_scorecard
+from apollo.projections.scorecard import (
+    BANDS,
+    COLD_START_WATCH_OUT_NOTE,
+    WATCH_OUT_CHECKED,
+    WATCH_OUT_NOT_CHECKED_EMPTY_BANK,
+    load_bands,
+    render_scorecard,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -247,6 +254,63 @@ def test_watch_out_quotes_the_triggering_utterance():
             "quote": "faster flow causes lower pressure because of magic",
         }
     ]
+
+
+# --- Lane B3a/D1: empty-bank vs found-none watch_out disambiguation ---------
+
+
+def _empty_bank_abstention() -> dict:
+    """The persisted ``abstention`` block a lane-B3a/D1 empty-bank artifact
+    carries (``build_*_artifact`` nests the marker here on the empty-bank path)."""
+    return {
+        "abstained": False,
+        "reasons": [],
+        "misconceptions_status": {
+            "assertable": False,
+            "reason": "empty_bank",
+            "detail": "no misconceptions asserted (empty bank)",
+        },
+    }
+
+
+def test_watch_out_checked_when_no_empty_bank_marker():
+    """A seeded-bank grade that fired no misconceptions: `watch_out` is empty
+    because the grader CHECKED and found none — status `checked`, no note."""
+    art = _artifact(misconceptions=[])
+    out = render_scorecard(art)
+    assert out["watch_out"] == []
+    assert out["watch_out_status"] == WATCH_OUT_CHECKED
+    assert out["watch_out_note"] is None
+
+
+def test_watch_out_not_checked_when_empty_bank_marker_present():
+    """Cold-start empty bank: `watch_out` is empty because soundness was NEVER
+    assessed — status `not_checked_empty_bank` + an explicit teacher-facing
+    note, sourced from the persisted `abstention.misconceptions_status` marker."""
+    art = _artifact(misconceptions=[], abstention=_empty_bank_abstention())
+    out = render_scorecard(art)
+    assert out["watch_out"] == []
+    assert out["watch_out_status"] == WATCH_OUT_NOT_CHECKED_EMPTY_BANK
+    assert out["watch_out_note"] == COLD_START_WATCH_OUT_NOTE
+    assert "cold start" in out["watch_out_note"].lower()
+
+
+def test_scorecard_distinguishes_empty_bank_from_found_none():
+    """A's explicit ask: the two identical-looking empty-`watch_out` scorecards
+    (checked-found-none vs never-checked-empty-bank) must NOT render the same.
+    The distinction is what stops a teacher reading "(none)" on a cold-start
+    class as "checked, all clear"."""
+    found_none = render_scorecard(_artifact(misconceptions=[]))
+    empty_bank = render_scorecard(
+        _artifact(misconceptions=[], abstention=_empty_bank_abstention())
+    )
+    # Same empty watch_out list...
+    assert found_none["watch_out"] == empty_bank["watch_out"] == []
+    # ...but the scorecards are NOT identical: status + note diverge.
+    assert found_none != empty_bank
+    assert found_none["watch_out_status"] != empty_bank["watch_out_status"]
+    assert found_none["watch_out_note"] is None
+    assert empty_bank["watch_out_note"] is not None
 
 
 def test_misconception_node_ledger_row_excluded_from_taught_well():

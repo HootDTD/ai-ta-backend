@@ -13,6 +13,16 @@ from apollo.knowledge_graph.canon_projection import load_entity_specs
 from apollo.overseer.misconception_bank import load_for_concept
 
 
+def _bank_applicable(entries: list, concept_id: int | None) -> bool:
+    """The D5/D6 soundness-applicability predicate in isolation: True iff the
+    concept has a non-empty misconception bank AND a non-NULL ``concept_id`` (a
+    NULL concept can never have a bank, so soundness would fail-open). The SINGLE
+    definition of "bank applicable", shared by the candidate-set recipe below and
+    the artifact-path ``misconception_bank_applicable`` helper — they can never
+    drift."""
+    return bool(entries) and concept_id is not None
+
+
 def _misconceptions_dict(entries: list) -> dict:
     """Map ``MisconceptionEntry`` rows onto the dict shape
     ``candidates_from_misconceptions`` reads: ``{"misconceptions": [{key,
@@ -55,8 +65,29 @@ async def load_problem_candidates_with_soundness(
     inputs = build_problem_candidates(
         problem_payload, misconceptions, canon_key_by_canonical_key=canon_key_by_canonical_key
     )
-    bank_applicable = bool(entries) and concept_id is not None
+    bank_applicable = _bank_applicable(entries, concept_id)
     return inputs, bank_applicable
+
+
+async def misconception_bank_applicable(
+    db: AsyncSession, *, concept_id: int | None
+) -> bool:
+    """The D5/D6 soundness-applicability flag in ISOLATION — the bank-empty fact
+    without building the closed candidate set. The LLM artifact path
+    (``artifact_writer.write_artifacts`` on a shadow-off / LLM-served Done-click)
+    needs to know whether the concept's misconception bank is empty so
+    ``build_llm_artifact`` can stamp the lane-B3a/D1 ``misconceptions_status``
+    marker, but has no ``problem_payload`` to build candidates from and does not
+    need one (``bank_applicable`` depends only on ``load_for_concept`` +
+    ``concept_id``). Same source, same predicate as
+    ``load_problem_candidates_with_soundness`` — so the graph and LLM paths can
+    never disagree about whether the bank was empty."""
+    if concept_id is None:
+        # A NULL concept can never own a bank — short-circuit before the query
+        # (``_bank_applicable`` would return False regardless of its result).
+        return False
+    entries = await load_for_concept(db, concept_id=concept_id)
+    return _bank_applicable(entries, concept_id)
 
 
 async def load_problem_candidates(

@@ -350,9 +350,16 @@ async def run_graph_simulation(
     # for the concept, or a NULL concept_id which can never have a bank) means no
     # misc.* candidate is ever minted, so a "0 contradictions -> 1.0" soundness
     # would be FAIL-OPEN ("verified sound" that was never checked). Detect HERE
-    # and thread the fact into the PURE grader + the abstention reason. Detection
-    # stays in the orchestrator so the score-math remains IO/log-free (purity +
-    # test_grade_attempt_is_pure).
+    # and thread the fact into the PURE grader (bank_applicable=), which sets
+    # GradeResult.soundness_applicable=False. Detection stays in the orchestrator
+    # so the score-math remains IO/log-free (purity + test_grade_attempt_is_pure).
+    #
+    # Lane B3a/D1: an empty bank is the NORMAL cold-start state under the
+    # emergent-misconception design — coverage grades NORMALLY (below) and the
+    # empty-bank fact surfaces as an explicit "no misconceptions asserted (empty
+    # bank)" marker in the graph artifact (build_graph_artifact reads
+    # grade.soundness_applicable). It is NO LONGER an abstention reason and is NOT
+    # forwarded to build_audited_grade.
     inputs, bank_applicable = await load_problem_candidates_with_soundness(
         db,
         search_space_id=int(sess.search_space_id),
@@ -431,7 +438,6 @@ async def run_graph_simulation(
             student_nodes=student_nodes,
             candidates=inputs.candidates,
             reference_invalid=False,
-            misconception_bank_empty=not bank_applicable,
             audit_fn=main_chat_auditor,
         )
 

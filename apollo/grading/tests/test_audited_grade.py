@@ -303,19 +303,37 @@ def test_missing_entity_display_name_falls_back_to_key():
     assert captured["entities"][0].canonical_key == "eq.x"
 
 
-def test_build_audited_grade_forwards_misconception_bank_empty():
-    from apollo.grading.abstention import REASON_MISCONCEPTION_BANK_EMPTY
-    grade = missing_grade()
+def test_build_audited_grade_has_no_misconception_bank_empty_param():
+    """Lane B3a/D1: ``build_audited_grade`` no longer threads a
+    ``misconception_bank_empty`` kwarg — the empty-bank signal rides on
+    ``GradeResult.soundness_applicable`` and surfaces as an artifact marker, NOT
+    as an abstention reason."""
+    import inspect
+
+    assert "misconception_bank_empty" not in inspect.signature(build_audited_grade).parameters
+
+
+def test_empty_bank_grade_grades_coverage_normally():
+    """Lane B3a/D1: an empty-bank grade (``soundness_applicable=False``) grades
+    coverage NORMALLY — ``abstained=False``, no ``misconception_bank_empty``
+    reason, and the coverage findings are preserved (grading proceeds, never
+    silenced)."""
+    grade = replace(
+        missing_grade(("eq.x",), covered=("eq.y",)),
+        soundness_applicable=False,
+        soundness_score=None,
+        contradiction_score=None,
+    )
     out = build_audited_grade(
         grade,
         transcript="hello",
         resolution=resolution_with(),
         student_nodes=nodes_with_confidences(1.0),
-        misconception_bank_empty=True,
         audit_fn=notfound_audit_fn(),
     )
-    assert REASON_MISCONCEPTION_BANK_EMPTY in out.abstention_reasons
     assert out.abstained is False
+    assert "misconception_bank_empty" not in out.abstention_reasons
+    assert FindingKind.COVERED_NODE in {f.kind for f in out.findings}
 
 
 # --- Phase 1c: normalization-confidence brake + D1 reorder -------------------

@@ -561,8 +561,11 @@ async def test_empty_entries_sets_bank_not_applicable(caplog):
 
     grade_kwargs = mocks["grade_attempt"].call_args.kwargs
     assert grade_kwargs["bank_applicable"] is False
+    # Lane B3a/D1: the empty-bank signal now rides on grade_attempt's
+    # bank_applicable (→ GradeResult.soundness_applicable → artifact marker); it
+    # is NO LONGER forwarded to build_audited_grade as an abstention input.
     audited_kwargs = mocks["build_audited_grade"].call_args.kwargs
-    assert audited_kwargs["misconception_bank_empty"] is True
+    assert "misconception_bank_empty" not in audited_kwargs
     assert "soundness_not_applicable_empty_bank" in caplog.text
 
 
@@ -587,8 +590,9 @@ async def test_nonempty_entries_sets_bank_applicable(caplog):
 
     grade_kwargs = mocks["grade_attempt"].call_args.kwargs
     assert grade_kwargs["bank_applicable"] is True
+    # Lane B3a/D1: build_audited_grade no longer receives a bank-empty kwarg.
     audited_kwargs = mocks["build_audited_grade"].call_args.kwargs
-    assert audited_kwargs["misconception_bank_empty"] is False
+    assert "misconception_bank_empty" not in audited_kwargs
     assert "soundness_not_applicable_empty_bank" not in caplog.text
 
 
@@ -621,8 +625,9 @@ async def test_null_concept_id_forces_bank_not_applicable():
 
     grade_kwargs = mocks["grade_attempt"].call_args.kwargs
     assert grade_kwargs["bank_applicable"] is False
+    # Lane B3a/D1: build_audited_grade no longer receives a bank-empty kwarg.
     audited_kwargs = mocks["build_audited_grade"].call_args.kwargs
-    assert audited_kwargs["misconception_bank_empty"] is True
+    assert "misconception_bank_empty" not in audited_kwargs
 
 
 async def test_confirmed_resolutions_threaded_into_resolve():

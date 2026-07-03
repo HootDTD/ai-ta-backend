@@ -44,10 +44,16 @@ REASON_LOW_PARSER_CONFIDENCE = "min_parser_confidence_below_threshold"
 REASON_LOW_MISCONCEPTION_CONFIDENCE = "misconception_confidence_below_threshold"
 REASON_REFERENCE_INVALID = "reference_graph_invalid"
 REASON_TRANSCRIPT_AUDIT_FAILED = "transcript_audit_unavailable"
-# D5/D6: the misconception bank was empty/absent for this concept. Soundness
-# was never checked; soundness_score and contradiction_score are None.
-# Layer-3 (coverage) still updates — this is NOT a full abstention.
-REASON_MISCONCEPTION_BANK_EMPTY = "misconception_bank_empty"
+# Lane B3a/D1 (2026-07-02): the ``misconception_bank_empty`` reason string was
+# REMOVED here. Under the emergent-misconception design an empty
+# ``apollo_misconceptions`` bank is the NORMAL cold-start state of every class,
+# not a reason to abstain. Coverage grading and misconception detection are
+# separable signals: an empty bank must NOT gate coverage grading and must NOT
+# emit an abstention reason (the reason polluted the harness abstention
+# histograms). The bank-empty fact now rides on ``GradeResult.soundness_applicable``
+# (D5/D6: soundness_score/contradiction_score are None) and surfaces as an
+# explicit machine-readable marker in the graph artifact's misconception section
+# (``artifact_build.build_graph_artifact``) — never as an abstention reason.
 # Phase 1c (spec §8): the attempt resolved only via weak tiers (low
 # normalization_confidence) -> distrust even at low unresolved_rate.
 REASON_LOW_NORMALIZATION_CONFIDENCE = "normalization_confidence_below_threshold"
@@ -93,7 +99,6 @@ def apply_abstention(
     misconception_confidences: tuple[float, ...] = (),
     transcript_audit_failed: bool = False,
     reference_invalid: bool = False,
-    misconception_bank_empty: bool = False,
     normalization_confidence: float = 1.0,
 ) -> Abstention:
     """Apply the §6.6 gates and return the reasons + flags + suppression set.
@@ -115,9 +120,10 @@ def apply_abstention(
     - ``reference_invalid``           -> REASON_REFERENCE_INVALID (grading already
                                          blocked upstream; surfaced here, not
                                          re-raised)
-    - ``misconception_bank_empty``    -> REASON_MISCONCEPTION_BANK_EMPTY (D5/D6:
-                                         soundness was never checked; coverage still
-                                         updates Layer-3 — NOT a full abstention)
+
+    An empty misconception bank is deliberately NOT a gate here (lane B3a/D1): it
+    is the normal cold-start state and never abstains — the fact is carried on
+    ``GradeResult.soundness_applicable`` + the artifact marker instead.
 
     Pure + deterministic reason ordering (gate-declaration order)."""
     reasons: list[str] = []
@@ -151,9 +157,6 @@ def apply_abstention(
 
     if reference_invalid:
         reasons.append(REASON_REFERENCE_INVALID)
-
-    if misconception_bank_empty:
-        reasons.append(REASON_MISCONCEPTION_BANK_EMPTY)
 
     return Abstention(
         abstention_reasons=tuple(reasons),
