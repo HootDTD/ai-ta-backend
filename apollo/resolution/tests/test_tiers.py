@@ -495,3 +495,70 @@ def test_negative_corpus_curated_resolves_handwave_missing(curated, handwave, nt
     assert len(match_alias_all(good, (cand,))) == 1  # curated resolves exact
     assert match_alias_all(bad, (cand,)) == []  # hand-wave: not exact
     assert match_fuzzy_all(bad, (cand,), threshold=0.9) == []  # and never fuzzed
+
+
+# --------------------------------------------------------------------------- #
+# WU-AAS lane B2.2 Finding 1 — single equation parser (no resolver-local dup).
+#
+# The resolution tier's ``_zero_form`` now DELEGATES to the mint-time
+# ``parse_zero_form`` (one parser, no duplication). These pin: (1) every form the
+# OLD resolver-local parser resolved still resolves BYTE-IDENTICALLY, and (2) the
+# tolerant forms the mint now stores in ``content['symbolic']`` (``^`` exponent,
+# chained equality) are now PARSEABLE here too — closing the recall gap where a
+# minted subject's reference equation was unparseable by the grader.
+# --------------------------------------------------------------------------- #
+
+
+def test_zero_form_previously_resolvable_forms_are_byte_identical():
+    """REGRESSION (single-parser route): for every form the old resolver-local
+    ``_zero_form`` accepted (single ``=`` / bare expression, no ``^``), the unified
+    parser returns a structurally IDENTICAL zero-form — proven by a sign-exact
+    ``simplify(new - reference) == 0`` against a hand-built reference. Adding
+    ``convert_xor`` cannot perturb these (``^`` is absent)."""
+    from sympy import Symbol, pi, simplify
+
+    from apollo.resolution.tiers import _extended_locals, _zero_form
+
+    A1, v1, A2, v2 = (Symbol(n) for n in ("A1", "v1", "A2", "v2"))
+    r = Symbol("r")  # ``pi`` is SymPy's reserved constant (never shadowed by _extended_locals)
+    cases = [
+        ("A1*v1 = A2*v2", A1 * v1 - A2 * v2),
+        ("A1*v1 - A2*v2", A1 * v1 - A2 * v2),  # bare zero-form unchanged
+        ("A = pi*r**2", Symbol("A") - pi * r ** 2),  # ** power path unchanged
+    ]
+    for symbolic, reference in cases:
+        got = _zero_form(symbolic, _extended_locals(symbolic))
+        assert got is not None, symbolic
+        assert simplify(got - reference) == 0, symbolic
+
+
+def test_zero_form_malformed_stays_a_non_match_not_a_crash():
+    """The non-crash contract survives the delegation: a genuinely malformed
+    reference (``MalformedEquationError`` inside the mint parser) is swallowed to
+    ``None`` (a non-match), never propagated."""
+    from apollo.resolution.tiers import _extended_locals, _zero_form
+
+    assert _zero_form("v = = 3", _extended_locals("v")) is None  # empty middle operand
+    assert _zero_form("v = (a*t", _extended_locals("v a t")) is None  # unbalanced
+
+
+def test_symbolic_tier_now_matches_caret_exponent_form():
+    """Tolerance gain: a reference stored with ``^`` (the mainstream teacher-PDF
+    exponent) now resolves against the student's ``**`` form. Before the single-
+    parser route the resolver-local ``_zero_form`` returned None on ``^`` -> the
+    minted reference was silently unmatchable."""
+    node = _equation_node("s1", "A = pi*r**2")
+    cands = (_cand("eq.circular_area", node_type="equation", symbolic="A = pi*r^2"),)
+    hit = match_symbolic(node, cands, mappings={})
+    assert hit is not None and hit[0].canonical_key == "eq.circular_area"
+
+
+def test_symbolic_tier_now_matches_chained_equality_reference():
+    """Tolerance gain: a reference minted as a CHAINED equality
+    (``y = a*t^2 = 25.0`` — symbolic head + numeric tail) resolves against the
+    student's clean symbolic form. The parser normalizes both to the first equality
+    (``y = a*t^2``); the numeric tail is discarded (log-debug only)."""
+    node = _equation_node("s1", "y = a*t**2")
+    cands = (_cand("eq.motion", node_type="equation", symbolic="y = a*t^2 = 25.0"),)
+    hit = match_symbolic(node, cands, mappings={})
+    assert hit is not None and hit[0].canonical_key == "eq.motion"

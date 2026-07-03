@@ -1139,3 +1139,232 @@ def test_gate7_rejects_two_independent_unknowns_via_derive():
     problem = Problem.model_validate(graph)
     assert _derive_symbolic_answer(problem) == {"P2", "Q"}
     assert _gate_7(problem) is not None
+
+
+# --------------------------------------------------------------------------- #
+# WU-AAS lane B2.2 / G4.2 — mint-time equation parser tolerance
+#
+# The F1a provisioning-notes.md rejection log is the regression corpus:
+#   * gate 6 reject #1: ``v = v0 + a*t = 3 + 2*5`` — chained equality.
+#   * gate 6 reject #2: ``x = v0*t + (1/2)*a*t^2 = 0 + 0.5*(2.0)*(5.0)^2 = 25.0 m``
+#                       — chained equality + ``^`` + a unit-bearing numeric tail.
+#   * gate 4 reject:    ``x`` (position) rejected as foreign on the seeded-table
+#                       path even though the problem's own varmap.var_x grounds it.
+# --------------------------------------------------------------------------- #
+
+
+def test_gate6_tolerates_chained_equality_and_caret():
+    """WU-AAS G4.2: the two EXACT F1a-logged gate-6 rejects no longer fire. A chained
+    equality (``=`` used ``symbolic = numeric = final``) and ``^`` exponent notation
+    are normalized (to the first equality / to ``**``) rather than rejected as
+    malformed. White-box on ``_gate_6`` so the verdict is isolated from the other
+    gates."""
+    from apollo.provisioning.promotion_lint import _gate_6
+
+    for symbolic in (
+        "v = v0 + a*t = 3 + 2*5",
+        "x = v0*t + (1/2)*a*t^2 = 0 + 0.5*(2.0)*(5.0)^2 = 25.0 m",
+    ):
+        graph = copy.deepcopy(_bernoulli_graph())
+        _step(graph, "continuity")["content"]["symbolic"] = symbolic
+        problem = Problem.model_validate(graph)
+        assert _gate_6(problem) is None, symbolic
+
+
+def test_gate6_still_rejects_genuinely_malformed_equation():
+    """Counter-test: the tolerance loosening does NOT neuter gate 6 — an unbalanced
+    paren still raises ``MalformedEquationError`` -> gate 6 fires."""
+    from apollo.provisioning.promotion_lint import _gate_6
+
+    graph = copy.deepcopy(_bernoulli_graph())
+    _step(graph, "continuity")["content"]["symbolic"] = "v = v0 + (a*t"
+    problem = Problem.model_validate(graph)
+    assert _gate_6(problem) is not None
+
+
+def test_gate4_seeded_table_accepts_a_problem_given_symbol():
+    """WU-AAS G4.2 (F1a Finding B, root cause): on the SEEDED-table path a symbol the
+    problem itself GIVES a value for must not be rejected as foreign. Here ``k`` is
+    absent from the fluid table but is a given value — the old seeded path ran ONLY
+    ``_normalize_symbol`` (table lookup) and rejected it; now the problem's own
+    grounding is consulted too. Purely additive: a table symbol still normalizes."""
+    graph = copy.deepcopy(_bernoulli_graph())
+    graph["given_values"] = {**graph["given_values"], "k": 1.0}
+    result = _lint(graph)
+    assert result.failed_gate != 4, result.diagnostic
+    assert result.ok is True, result.diagnostic
+
+
+def test_gate4_seeded_table_accepts_variable_mapping_grounded_symbol():
+    """WU-AAS G4.2 (F1a Finding B): a symbol the problem grounds via a
+    ``variable_mapping`` step (the ``varmap.var_x`` shape a prose mint emits for
+    ``x``) survives the seeded-table gate 4 even though ``x`` is not in the fluid
+    canonical table. White-box on ``_gate_4``."""
+    from apollo.provisioning.promotion_lint import _gate_4
+
+    graph = copy.deepcopy(_bernoulli_graph())
+    vm = _step(graph, "incompressibility")  # repurpose as the var-mapping for x
+    vm["entry_type"] = "variable_mapping"
+    vm["content"] = {"term": "position", "symbol": "x"}
+    # Put x in an equation so it enters the gate-4 symbol set.
+    _step(graph, "continuity")["content"]["symbolic"] = "rho*A1*v1 - rho*A2*v2 - x"
+    problem = Problem.model_validate(graph)
+    assert _gate_4(problem, _canonical_symbols(), _normalization_map()) is None
+
+
+def test_gate4_seeded_table_still_rejects_ungrounded_foreign_symbol():
+    """Counter-test (the sole foreign-symbol guard survives): an ungrounded ``x``
+    injected into a seeded-table concept's equation — not given, not defined, not
+    computed, not cancelled — STILL rejects at gate 4, exactly as before. The
+    loosening only admits symbols the problem itself grounds."""
+    graph = copy.deepcopy(_bernoulli_graph())
+    _step(graph, "continuity")["content"]["symbolic"] = "rho*A1*v1 - rho*A2*v2 + x"
+    result = _lint(graph)
+    assert result.ok is False
+    assert result.failed_gate == 4
+
+
+def _linear_motion_graph() -> dict:
+    """The EXACT F1a linear_motion problem 1(b) shape, mis-filed under a fluid
+    (seeded) canonical table — the WU-AAS mint case that reproduced all three G4.2
+    rejects. ``x = v0*t + (1/2)*a*t^2 = ... = 25.0 m`` carries a chained equality +
+    ``^`` (gate 6) and ``x`` grounded only by its ``varmap.var_x`` step (gate 4).
+    Pre-annotated (entity_key + declared_paths) so it feeds ``run_promotion_lint``
+    directly, like ``_bernoulli_graph``."""
+    return {
+        "id": "linear_motion_find_position",
+        "concept_id": "linear_motion",
+        "difficulty": "intro",
+        "given_values": {"v0": 0.0, "a": 2.0, "t": 5.0},
+        "problem_text": (
+            "A body starts from rest and accelerates at 2.0 m/s^2 for 5.0 s. "
+            "Find the distance x travelled."
+        ),
+        "target_unknown": "x",
+        "declared_paths": [["motion", "var_x", "compute_x"]],
+        "reference_solution": [
+            {
+                "id": "motion",
+                "step": 1,
+                "entry_type": "equation",
+                "entity_key": "eq.motion",
+                "content": {
+                    "label": "Kinematic position equation",
+                    # chained equality + caret + unit-bearing numeric tail (all 3 G4.2 classes)
+                    "symbolic": "x = v0*t + (1/2)*a*t^2 = 0 + 0.5*(2.0)*(5.0)^2 = 25.0 m",
+                    "variables": ["x", "v0", "a", "t"],
+                },
+                "depends_on": [],
+            },
+            {
+                "id": "var_x",
+                "step": 2,
+                "entry_type": "variable_mapping",
+                "entity_key": "varmap.var_x",
+                "content": {"term": "position", "symbol": "x"},
+                "depends_on": [],
+            },
+            {
+                "id": "compute_x",
+                "step": 3,
+                "entry_type": "procedure_step",
+                "entity_key": "proc.compute_x",
+                "content": {
+                    "order": 1,
+                    "action": "substitute v0, a, t into the kinematic equation and solve for x",
+                    "purpose": "produce the distance travelled",
+                    "uses_equations": ["motion"],
+                },
+                "depends_on": ["motion", "var_x"],
+            },
+        ],
+    }
+
+
+def test_linear_motion_authored_set_promotes_end_to_end():
+    """WU-AAS lane B2.2 / G4.2 acceptance: the real F1a linear_motion problem 1(b),
+    mis-filed under a fluid seeded canonical table, PROMOTES through all applicable
+    gates — the chained-equality + ``^`` equation parses (gates 4/5/6/7 via
+    ``parse_zero_form``) and ``x`` is grounded by its ``varmap.var_x`` step (gate 4).
+    Before this lane it was rejected 3 ways (gate 6 twice, then gate 4 on ``x``)."""
+    result = _lint(_linear_motion_graph())
+    assert result.ok is True, result.diagnostic
+
+
+# --------------------------------------------------------------------------- #
+# WU-AAS lane B2.2 Finding 2 — gate-4 author-grounding is STRUCTURED-only.
+#
+# Cross-review (live-proven): the SEEDED-table author-grounding arm used
+# ``_defined_symbols``, which TOKENIZES all ``meaning`` / ``definition`` prose. A
+# garbage OCR token that appears in an equation AND as a bare prose word was
+# grounded=True and slipped through gate 4 (the sole foreign-symbol guard) against
+# a REAL canonical table. The fix grounds off STRUCTURED symbol/term fields only.
+# --------------------------------------------------------------------------- #
+
+
+def test_gate4_seeded_rejects_foreign_token_that_also_appears_in_prose():
+    """LIVE-PROVEN regression (Finding 2): a garbage token ``zzz`` present in an
+    equation AND in a definition step's ``meaning`` prose is NOT author-grounded on
+    the seeded-table path — it is foreign vs the fluid table and gate 4 REJECTS.
+    Before the structured-only fix the prose tokenization grounded ``zzz`` and it
+    slipped through (a false-GREEN against a real canonical table)."""
+    graph = copy.deepcopy(_bernoulli_graph())
+    # Repurpose the condition step as a prose-only definition carrying the token.
+    d = _step(graph, "incompressibility")
+    d["entry_type"] = "definition"
+    d["content"] = {"concept": "density", "meaning": "the zzz property of the fluid"}
+    # Same token inside an equation so it enters the gate-4 symbol set.
+    _step(graph, "continuity")["content"]["symbolic"] = "rho*A1*v1 - rho*A2*v2 + zzz"
+    result = _lint(graph)
+    assert result.ok is False
+    assert result.failed_gate == 4, result.diagnostic
+    assert "zzz" in result.diagnostic
+
+
+def test_declared_symbols_reads_structured_symbol_term_only_not_prose():
+    """White-box: ``_declared_symbols`` harvests ONLY the STRUCTURED ``symbol`` /
+    ``term`` fields of a definition / variable_mapping step — never a token from the
+    ``meaning`` / ``definition`` prose. This is the tight grounding gate 4 trusts."""
+    from apollo.provisioning.promotion_lint import _declared_symbols
+
+    graph = copy.deepcopy(_bernoulli_graph())
+    vm = _step(graph, "incompressibility")
+    vm["entry_type"] = "variable_mapping"
+    vm["content"] = {"term": "bulk modulus", "symbol": "kappa", "meaning": "stiffness K zzz"}
+    declared = _declared_symbols(Problem.model_validate(graph))
+    assert "kappa" in declared  # structured content['symbol']
+    assert "bulk modulus" in declared  # structured content['term']
+    assert "K" not in declared  # prose token NOT harvested (the Finding-2 fix)
+    assert "zzz" not in declared  # prose token NOT harvested
+
+
+def test_defined_symbols_still_carries_prose_for_the_table_less_path():
+    """The lenient prose path is RETAINED (constrained to the table-less branch via
+    ``_internal_grounded_symbols``): ``_defined_symbols`` = structured declared PLUS
+    the prose tokens. Pinned so the split (structured for seeded, prose for
+    table-less) does not silently collapse."""
+    from apollo.provisioning.promotion_lint import _declared_symbols, _defined_symbols
+
+    graph = copy.deepcopy(_bernoulli_graph())
+    vm = _step(graph, "incompressibility")
+    vm["entry_type"] = "variable_mapping"
+    vm["content"] = {"term": "bulk modulus", "symbol": "kappa", "meaning": "stiffness K"}
+    problem = Problem.model_validate(graph)
+    defined = _defined_symbols(problem)
+    assert "K" in defined  # prose token IS present in the lenient set
+    assert _declared_symbols(problem) <= defined  # superset of the structured set
+
+
+def test_gate4_table_less_still_grounds_via_prose_meaning():
+    """The table-less branch still admits a prose-grounded symbol (prose path
+    constrained here, where gate 7 is the real guard). A definition whose ``meaning``
+    names the answer symbol keeps the fresh-concept promotion working — the seeded
+    fix did not over-tighten the table-less path."""
+    from apollo.provisioning.promotion_lint import _internal_grounded_symbols
+
+    graph = copy.deepcopy(_bernoulli_graph())
+    d = _step(graph, "incompressibility")
+    d["entry_type"] = "definition"
+    d["content"] = {"concept": "pressure drop", "meaning": "the change P2 across the pipe"}
+    grounded = _internal_grounded_symbols(Problem.model_validate(graph))
+    assert "P2" in grounded  # answer symbol grounded (also a prose token here)

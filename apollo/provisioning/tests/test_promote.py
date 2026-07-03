@@ -397,9 +397,13 @@ async def test_promote_preserves_prestamped_solution_source(db_session):
 # --------------------------------------------------------------------------- #
 async def test_promote_fail_returns_failed_gate_no_flip(db_session, monkeypatch):
     space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="pr2")
-    # Inject a foreign symbol so gate 4 fails (the sole foreign-symbol guard).
+    # Inject a foreign symbol so gate 4 fails (the sole foreign-symbol guard). It
+    # must be UNGROUNDED — appearing only inside an equation, not given/defined —
+    # since a given/defined symbol is now correctly author-grounded (WU-AAS G4.2).
     problem = _bernoulli_problem()
-    problem["given_values"]["zzz_foreign"] = 1.0
+    for step in problem["reference_solution"]:
+        if step["id"] == "continuity":
+            step["content"]["symbolic"] = "rho*A1*v1 - rho*A2*v2 + zzz_foreign"
 
     called = []
 
