@@ -575,6 +575,16 @@ Attempts whose recorded status is `"error"` or whose `attempt_id` is null are
 skipped by `load_records`; a replay-time exception on an individual attempt
 is caught and recorded under `errors` rather than aborting the run.
 
+As of A1 iter3 (`weekend/g1-combo-floor-matrix`), each `band_vs_expected` row
+also carries its own `unresolved_rate`, and the recorded value is the
+FLAG-EFFECTIVE rate — the same number the abstention gate consumed
+(`unresolved_rate_for_abstention` with `node_type_by_id`/`candidate_types`
+threaded; candidate set rebuilt via the Done path's `load_problem_candidates`
+recipe). With `APOLLO_ABSTENTION_DENOM_V2` unset this is byte-identical to
+the old v1 `unresolved_rate_of` recording; with the flag on it reflects the
+structural (v2) denominator, enabling offline abstention-floor sweeps over a
+single replay JSON.
+
 Persona-class names are validated: a `--personas` value not recorded
 anywhere in the corpus raises a `ValueError` naming the available classes
 instead of silently filtering to zero records. Note `control` is a ROLE, not
