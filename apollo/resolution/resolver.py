@@ -27,6 +27,7 @@ abstains (``llm_calls == 0``).
 from __future__ import annotations
 
 import logging
+import os
 
 from apollo.ontology.graph import KGGraph
 from apollo.ontology.nodes import Node
@@ -39,7 +40,10 @@ from apollo.resolution.competition import (
     apply_misconception_competition,
     polarity_screen,
 )
-from apollo.resolution.equation_alignment import match_equation_alignment
+from apollo.resolution.equation_alignment import (
+    match_algebraic_equivalence,
+    match_equation_alignment,
+)
 from apollo.resolution.nli_resolution import NLIContext
 from apollo.resolution.result import ResolutionResult, ResolvedNode
 from apollo.resolution.structural import ScoredMatch, type_compatible
@@ -53,6 +57,19 @@ from apollo.resolution.tiers import (
 
 _LOG = logging.getLogger(__name__)
 
+# A1-iter2 — default-OFF algebraic-equivalence tier flag. Mirrors the exact
+# idiom of ``apollo.handlers.chat._CLARIFICATION_ENABLED_FLAG`` /
+# ``_clarification_enabled``: a plain ``os.environ.get(...).lower() in
+# ("1", "true", "yes")`` read at the call site, no caching, no settings
+# object. Read HERE (not by every caller) so every resolve_attempt caller
+# gets the tier for free the moment the flag is set — no call-site changes
+# required anywhere else in the codebase.
+_EQUIV_RESOLUTION_FLAG: str = "APOLLO_EQUIV_RESOLUTION"
+
+
+def _equiv_resolution_enabled() -> bool:
+    return os.environ.get(_EQUIV_RESOLUTION_FLAG, "").lower() in ("1", "true", "yes")
+
 
 def _content_match(
     node: Node,
@@ -61,6 +78,7 @@ def _content_match(
     fuzzy_threshold: float,
     symbolic_mappings: dict[str, str],
     nli_ctx: NLIContext | None = None,
+    given_values: dict[str, str] | None = None,
 ) -> ScoredMatch | None:
     """Run the content tiers in priority order for one node and return the
     winning :class:`ScoredMatch`, applying the type-compat HARD constraint, the
@@ -139,7 +157,23 @@ def _content_match(
     if nli_ctx is not None and nli_ctx.nli is not None:
         from apollo.resolution.nli_resolution import match_nli_semantic
 
-        return match_nli_semantic(node, type_ok, ctx=nli_ctx)
+        nli_hit = match_nli_semantic(node, type_ok, ctx=nli_ctx)
+        if nli_hit is not None:
+            return nli_hit
+
+    # A1-iter2 — default-OFF LAST RESORT: every deterministic + lexical + NLI
+    # tier above has already failed for this node. Equation nodes only (the
+    # tier function itself also gates this; the flag check short-circuits so
+    # match_algebraic_equivalence is NEVER even called when the flag is off —
+    # the flag-off byte-identity guarantee).
+    if node.node_type == "equation" and _equiv_resolution_enabled():
+        equiv_hit = match_algebraic_equivalence(
+            node, type_ok, mappings=symbolic_mappings, given_values=given_values
+        )
+        if equiv_hit is not None:
+            cand, method, _ = equiv_hit
+            return ScoredMatch(node.node_id, cand, method, METHOD_CONFIDENCE_CAP[method])
+
     return None
 
 
@@ -150,6 +184,7 @@ def find_residual_nodes(
     fuzzy_threshold: float = 0.9,
     symbolic_mappings: dict[str, str] | None = None,
     nli_ctx: NLIContext | None = None,
+    given_values: dict[str, str] | None = None,
 ) -> list[Node]:
     """Nodes no deterministic tier confidently matched (the clarification
     detector's input). Pure: reuses ``_content_match`` so banding stays in
@@ -164,6 +199,7 @@ def find_residual_nodes(
                 fuzzy_threshold=fuzzy_threshold,
                 symbolic_mappings=maps,
                 nli_ctx=nli_ctx,
+                given_values=given_values,
             )
             is None
         ):
@@ -179,6 +215,7 @@ def resolve_attempt(
     fuzzy_threshold: float = 0.9,
     symbolic_mappings: dict[str, str] | None = None,
     nli_ctx: NLIContext | None = None,
+    given_values: dict[str, str] | None = None,
 ) -> ResolutionResult:
     """Resolve every student evidence node against the closed candidate set.
 
@@ -235,6 +272,7 @@ def resolve_attempt(
             fuzzy_threshold=fuzzy_threshold,
             symbolic_mappings=maps,
             nli_ctx=nli_ctx,
+            given_values=given_values,
         )
         if hit is not None:
             matches_by_node[n.node_id] = [hit]

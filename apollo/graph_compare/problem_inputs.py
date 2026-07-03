@@ -37,6 +37,13 @@ class ProblemInputs:
 
     candidates: tuple[Candidate, ...]
     symbolic_mappings: dict[str, str] = field(default_factory=dict)
+    # A1-iter2 — the problem's declared numeric knowns (``given_values``),
+    # ALREADY known to the graph-sim chain (solver/forward_chain.py,
+    # solver/sufficiency.py read the same problem key). Threaded through so
+    # the default-OFF equivalence tier's numeric-instantiation check can use
+    # DECLARED data only — never invented. Every OTHER tier ignores this
+    # field entirely (unchanged behavior when the flag is off).
+    given_values: dict[str, str] = field(default_factory=dict)
 
 
 def build_problem_candidates(
@@ -59,7 +66,10 @@ def build_problem_candidates(
     )
     candidates = build_candidate_set(reference_nodes=refs, misconception_entities=miscs)
     symbolic_mappings = _collect_symbolic_mappings(problem)
-    return ProblemInputs(candidates=candidates, symbolic_mappings=symbolic_mappings)
+    given_values = _collect_given_values(problem)
+    return ProblemInputs(
+        candidates=candidates, symbolic_mappings=symbolic_mappings, given_values=given_values
+    )
 
 
 def _collect_symbolic_mappings(problem: dict) -> dict[str, str]:
@@ -86,3 +96,12 @@ def _collect_symbolic_mappings(problem: dict) -> dict[str, str]:
         for var, expr in substitution.items():
             mappings.setdefault(str(var), str(expr))
     return mappings
+
+
+def _collect_given_values(problem: dict) -> dict[str, str]:
+    """The problem's declared numeric knowns (A1-iter2), coerced to
+    ``str`` for the same SymPy parsing path the symbolic tiers already use.
+    Returns a NEW dict (never an alias into the problem). Default ``{}`` when
+    the problem declares none — every existing tier is unaffected either way;
+    only the default-OFF equivalence tier reads this field."""
+    return {str(k): str(v) for k, v in (problem.get("given_values", {}) or {}).items()}
