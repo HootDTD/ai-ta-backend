@@ -53,8 +53,11 @@ async def db():
 
 async def _mk(db):
     sess = ApolloSession(
-        user_id=_USER, search_space_id=1, concept_id=42,
-        status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
+        user_id=_USER,
+        search_space_id=1,
+        concept_id=42,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.TEACHING.value,
         current_problem_id="p1",
     )
     db.add(sess)
@@ -73,8 +76,15 @@ _RUBRIC = {"overall": {"score": 80}}
 
 async def _run(db, sess, attempt):
     return await artifact_writer.write_artifacts(
-        db, attempt=attempt, sess=sess, shadow=None, coverage=_COVERAGE, rubric=_RUBRIC,
-        served="llm_fallback", graph_failure=None, latency_ms=123,
+        db,
+        attempt=attempt,
+        sess=sess,
+        shadow=None,
+        coverage=_COVERAGE,
+        rubric=_RUBRIC,
+        served="llm_fallback",
+        graph_failure=None,
+        latency_ms=123,
     )
 
 
@@ -93,8 +103,10 @@ async def test_flag_off_is_dormant_zero_observation_rows(monkeypatch):
             lambda sc: Base.metadata.create_all(
                 sc,
                 tables=[
-                    ApolloSession.__table__, ProblemAttempt.__table__,
-                    Clarification.__table__, GradingArtifact.__table__,
+                    ApolloSession.__table__,
+                    ProblemAttempt.__table__,
+                    Clarification.__table__,
+                    GradingArtifact.__table__,
                     MisconceptionObservation.__table__,
                 ],
             )
@@ -105,7 +117,9 @@ async def test_flag_off_is_dormant_zero_observation_rows(monkeypatch):
         payload = await _run(db, sess, attempt)
         assert payload is not None
         # Canonical artifact written, but the store stayed dormant.
-        assert (await db.execute(select(func.count()).select_from(GradingArtifact))).scalar_one() == 1
+        assert (
+            await db.execute(select(func.count()).select_from(GradingArtifact))
+        ).scalar_one() == 1
         assert await _obs_count(db) == 0
     await engine.dispose()
 
@@ -142,22 +156,25 @@ async def test_flag_on_invokes_store_with_canonical_identity(db, monkeypatch):
     async def spy(db, *, search_space_id, concept_id, user_id, attempt_id, canonical_payload):
         calls.append(
             {
-                "search_space_id": search_space_id, "concept_id": concept_id,
-                "user_id": user_id, "attempt_id": attempt_id,
+                "search_space_id": search_space_id,
+                "concept_id": concept_id,
+                "user_id": user_id,
+                "attempt_id": attempt_id,
                 "grader_used": canonical_payload["grader_used"],
             }
         )
         return 0
 
-    monkeypatch.setattr(
-        "apollo.handlers.artifact_writer.record_observations_from_canonical", spy
-    )
+    monkeypatch.setattr("apollo.handlers.artifact_writer.record_observations_from_canonical", spy)
     await _run(db, sess, attempt)
 
     assert len(calls) == 1
     assert calls[0] == {
-        "search_space_id": 1, "concept_id": 42, "user_id": _USER,
-        "attempt_id": int(attempt.id), "grader_used": "llm_fallback",
+        "search_space_id": 1,
+        "concept_id": 42,
+        "user_id": _USER,
+        "attempt_id": int(attempt.id),
+        "grader_used": "llm_fallback",
     }
 
 
@@ -171,9 +188,7 @@ async def test_flag_on_store_failure_is_swallowed(db, monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("ledger down")
 
-    monkeypatch.setattr(
-        "apollo.handlers.artifact_writer.record_observations_from_canonical", boom
-    )
+    monkeypatch.setattr("apollo.handlers.artifact_writer.record_observations_from_canonical", boom)
     payload = await _run(db, sess, attempt)
 
     assert payload is not None  # grade unaffected

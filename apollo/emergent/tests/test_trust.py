@@ -29,9 +29,7 @@ def test_default_constants_match_memo_oq2():
 
 
 def test_full_support_recent_high_confidence_is_trust_one():
-    t = trust.trust_score(
-        distinct_students=3, mean_confidence=1.0, last_seen=_NOW, now=_NOW
-    )
+    t = trust.trust_score(distinct_students=3, mean_confidence=1.0, last_seen=_NOW, now=_NOW)
     assert t == pytest.approx(1.0)
     assert trust.band(t) == "promoted"
 
@@ -83,7 +81,9 @@ def test_recency_halflife_halves_trust_at_one_halflife():
 
 def test_recency_decay_can_demote_below_assert():
     two_halflives = _NOW - timedelta(days=2 * RECENCY_HALFLIFE_DAYS)
-    t = trust.trust_score(distinct_students=3, mean_confidence=1.0, last_seen=two_halflives, now=_NOW)
+    t = trust.trust_score(
+        distinct_students=3, mean_confidence=1.0, last_seen=two_halflives, now=_NOW
+    )
     assert t == pytest.approx(0.25)
     assert trust.is_promoted(t, "misc.foo") is False
 

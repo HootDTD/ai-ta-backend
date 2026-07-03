@@ -38,8 +38,11 @@ async def _seed(db, *, slug, user_id=TEST_USER_ID):
     db.add(concept)
     await db.flush()
     sess = ApolloSession(
-        user_id=user_id, search_space_id=space.id, concept_id=concept.id,
-        status=SessionStatus.active.value, phase=SessionPhase.SOLVING.value,
+        user_id=user_id,
+        search_space_id=space.id,
+        concept_id=concept.id,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.SOLVING.value,
         current_problem_id=f"p_{slug}",
     )
     db.add(sess)
@@ -66,13 +69,21 @@ async def test_pg_write_idempotent_and_promotes(db_session):
     space_id, concept_id, sess_id, attempt_a = await _seed(db_session, slug="emg-a")
 
     n1 = await store.record_observations_from_canonical(
-        db_session, search_space_id=space_id, concept_id=concept_id, user_id=TEST_USER_ID,
-        attempt_id=attempt_a, canonical_payload=_payload("misc.sign", 1.0, "eq.n2", "flip"),
+        db_session,
+        search_space_id=space_id,
+        concept_id=concept_id,
+        user_id=TEST_USER_ID,
+        attempt_id=attempt_a,
+        canonical_payload=_payload("misc.sign", 1.0, "eq.n2", "flip"),
     )
     # Idempotent re-run of the SAME attempt inserts zero (ON CONFLICT).
     n1_again = await store.record_observations_from_canonical(
-        db_session, search_space_id=space_id, concept_id=concept_id, user_id=TEST_USER_ID,
-        attempt_id=attempt_a, canonical_payload=_payload("misc.sign", 1.0, "eq.n2", "flip"),
+        db_session,
+        search_space_id=space_id,
+        concept_id=concept_id,
+        user_id=TEST_USER_ID,
+        attempt_id=attempt_a,
+        canonical_payload=_payload("misc.sign", 1.0, "eq.n2", "flip"),
     )
     # Two more distinct students to reach K=3 distinct.
     for uid in (TEST_USER_ID_2, "d0000000-0000-4000-8000-000000000004"):
@@ -82,8 +93,12 @@ async def test_pg_write_idempotent_and_promotes(db_session):
         db_session.add(att)
         await db_session.flush()
         await store.record_observations_from_canonical(
-            db_session, search_space_id=space_id, concept_id=concept_id, user_id=uid,
-            attempt_id=att.id, canonical_payload=_payload("misc.sign", 1.0, "eq.n2", "flip2"),
+            db_session,
+            search_space_id=space_id,
+            concept_id=concept_id,
+            user_id=uid,
+            attempt_id=att.id,
+            canonical_payload=_payload("misc.sign", 1.0, "eq.n2", "flip2"),
         )
     await db_session.commit()
 

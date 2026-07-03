@@ -103,8 +103,12 @@ async def test_flag_on_hand_authored_wins_collision(monkeypatch):
     monkeypatch.setenv("APOLLO_EMERGENT_MISCONCEPTIONS", "1")
     collision = {
         "misconceptions": [
-            {"key": "misc.density_ignored", "trigger_phrases": ["x"], "opposes": "eq.z",
-             "display_name": "emergent dup"}
+            {
+                "key": "misc.density_ignored",
+                "trigger_phrases": ["x"],
+                "opposes": "eq.z",
+                "display_name": "emergent dup",
+            }
         ]
     }
     _patch(monkeypatch, entries=[_Entry()], promoted=collision)

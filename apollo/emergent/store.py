@@ -59,7 +59,9 @@ def _signature_for(canonical_key: str | None, concept_id: int | None) -> str:
     return f"{UNKEYED_PREFIX}{concept_id if concept_id is not None else 'none'}"
 
 
-def _derive_observation_rows(canonical_payload: dict, *, concept_id: int | None) -> list[_ObservationRow]:
+def _derive_observation_rows(
+    canonical_payload: dict, *, concept_id: int | None
+) -> list[_ObservationRow]:
     """Derive the deduped observation rows from a canonical artifact payload.
 
     Reads the ``misconceptions[]`` block (``{canonical_key, evidence_span,

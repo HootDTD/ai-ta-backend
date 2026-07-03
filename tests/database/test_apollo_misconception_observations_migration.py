@@ -96,7 +96,11 @@ async def _insert_obs(conn, *, space, concept, attempt, signature, user=None):
         VALUES ($1, $2, $3, $4, $5, 0.9)
         RETURNING id
         """,
-        space, concept, signature, user or uuid.uuid4(), attempt,
+        space,
+        concept,
+        signature,
+        user or uuid.uuid4(),
+        attempt,
     )
 
 
@@ -129,8 +133,12 @@ async def test_same_attempt_distinct_signatures_allowed(mig_conn):
     space = await _new_space(mig_conn)
     concept = await _new_concept(mig_conn)
     attempt = await _new_attempt(mig_conn)
-    id1 = await _insert_obs(mig_conn, space=space, concept=concept, attempt=attempt, signature="misc.a")
-    id2 = await _insert_obs(mig_conn, space=space, concept=concept, attempt=attempt, signature="misc.b")
+    id1 = await _insert_obs(
+        mig_conn, space=space, concept=concept, attempt=attempt, signature="misc.a"
+    )
+    id2 = await _insert_obs(
+        mig_conn, space=space, concept=concept, attempt=attempt, signature="misc.b"
+    )
     assert id1 != id2
 
 

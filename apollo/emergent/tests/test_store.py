@@ -30,9 +30,7 @@ async def db():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(
-            lambda sc: Base.metadata.create_all(
-                sc, tables=[MisconceptionObservation.__table__]
-            )
+            lambda sc: Base.metadata.create_all(sc, tables=[MisconceptionObservation.__table__])
         )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
@@ -57,13 +55,21 @@ async def _count(db: AsyncSession) -> int:
 async def test_write_derives_keyed_observation(db):
     payload = _payload(
         misconceptions=[
-            {"canonical_key": "misc.sign_error", "evidence_span": "flipped the sign",
-             "confidence": 0.9, "opposes": "eq.newton2"}
+            {
+                "canonical_key": "misc.sign_error",
+                "evidence_span": "flipped the sign",
+                "confidence": 0.9,
+                "opposes": "eq.newton2",
+            }
         ]
     )
     n = await store.record_observations_from_canonical(
-        db, search_space_id=_SPACE, concept_id=_CONCEPT, user_id=_U1,
-        attempt_id=101, canonical_payload=payload,
+        db,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        user_id=_U1,
+        attempt_id=101,
+        canonical_payload=payload,
     )
     await db.commit()
     assert n == 1
@@ -78,17 +84,26 @@ async def test_write_derives_keyed_observation(db):
 @pytest.mark.asyncio
 async def test_write_is_idempotent_per_attempt(db):
     payload = _payload(
-        misconceptions=[{"canonical_key": "misc.a", "confidence": 0.8, "opposes": None,
-                         "evidence_span": "x"}]
+        misconceptions=[
+            {"canonical_key": "misc.a", "confidence": 0.8, "opposes": None, "evidence_span": "x"}
+        ]
     )
     first = await store.record_observations_from_canonical(
-        db, search_space_id=_SPACE, concept_id=_CONCEPT, user_id=_U1,
-        attempt_id=200, canonical_payload=payload,
+        db,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        user_id=_U1,
+        attempt_id=200,
+        canonical_payload=payload,
     )
     await db.commit()
     second = await store.record_observations_from_canonical(
-        db, search_space_id=_SPACE, concept_id=_CONCEPT, user_id=_U1,
-        attempt_id=200, canonical_payload=payload,
+        db,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        user_id=_U1,
+        attempt_id=200,
+        canonical_payload=payload,
     )
     await db.commit()
     assert first == 1
@@ -99,12 +114,22 @@ async def test_write_is_idempotent_per_attempt(db):
 @pytest.mark.asyncio
 async def test_free_form_goes_to_unkeyed_bucket(db):
     payload = _payload(
-        misconceptions=[{"canonical_key": None, "confidence": 0.7, "opposes": None,
-                         "evidence_span": "vague wrong idea"}]
+        misconceptions=[
+            {
+                "canonical_key": None,
+                "confidence": 0.7,
+                "opposes": None,
+                "evidence_span": "vague wrong idea",
+            }
+        ]
     )
     await store.record_observations_from_canonical(
-        db, search_space_id=_SPACE, concept_id=_CONCEPT, user_id=_U1,
-        attempt_id=300, canonical_payload=payload,
+        db,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        user_id=_U1,
+        attempt_id=300,
+        canonical_payload=payload,
     )
     await db.commit()
     row = (await db.execute(select(MisconceptionObservation))).scalars().one()
@@ -114,12 +139,17 @@ async def test_free_form_goes_to_unkeyed_bucket(db):
 @pytest.mark.asyncio
 async def test_free_form_with_null_concept_uses_none_bucket(db):
     payload = _payload(
-        misconceptions=[{"canonical_key": None, "confidence": 0.7, "opposes": None,
-                         "evidence_span": "vague"}]
+        misconceptions=[
+            {"canonical_key": None, "confidence": 0.7, "opposes": None, "evidence_span": "vague"}
+        ]
     )
     await store.record_observations_from_canonical(
-        db, search_space_id=_SPACE, concept_id=None, user_id=_U1,
-        attempt_id=301, canonical_payload=payload,
+        db,
+        search_space_id=_SPACE,
+        concept_id=None,
+        user_id=_U1,
+        attempt_id=301,
+        canonical_payload=payload,
     )
     await db.commit()
     row = (await db.execute(select(MisconceptionObservation))).scalars().one()
@@ -130,20 +160,42 @@ async def test_free_form_with_null_concept_uses_none_bucket(db):
 async def test_node_ledger_misconception_feeds_store_and_dedups(db):
     # Same signature appears in misconceptions[] AND node_ledger[] -> one row.
     payload = _payload(
-        misconceptions=[{"canonical_key": "misc.dup", "confidence": 0.9, "opposes": "eq.x",
-                         "evidence_span": "span-a"}],
+        misconceptions=[
+            {
+                "canonical_key": "misc.dup",
+                "confidence": 0.9,
+                "opposes": "eq.x",
+                "evidence_span": "span-a",
+            }
+        ],
         node_ledger=[
-            {"canonical_key": "misc.dup", "status": "misconception", "confidence": 0.9,
-             "evidence_span": "span-a"},
-            {"canonical_key": "misc.only_ledger", "status": "misconception", "confidence": 0.6,
-             "evidence_span": "span-b"},
-            {"canonical_key": "eq.credited", "status": "credited", "confidence": 1.0,
-             "evidence_span": "ok"},
+            {
+                "canonical_key": "misc.dup",
+                "status": "misconception",
+                "confidence": 0.9,
+                "evidence_span": "span-a",
+            },
+            {
+                "canonical_key": "misc.only_ledger",
+                "status": "misconception",
+                "confidence": 0.6,
+                "evidence_span": "span-b",
+            },
+            {
+                "canonical_key": "eq.credited",
+                "status": "credited",
+                "confidence": 1.0,
+                "evidence_span": "ok",
+            },
         ],
     )
     n = await store.record_observations_from_canonical(
-        db, search_space_id=_SPACE, concept_id=_CONCEPT, user_id=_U1,
-        attempt_id=400, canonical_payload=payload,
+        db,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        user_id=_U1,
+        attempt_id=400,
+        canonical_payload=payload,
     )
     await db.commit()
     sigs = {
@@ -158,15 +210,27 @@ async def test_duplicate_signature_within_misconceptions_deduped(db):
     # Two misconceptions[] entries with the same key in ONE artifact -> one row.
     payload = _payload(
         misconceptions=[
-            {"canonical_key": "misc.same", "confidence": 0.9, "opposes": "eq.x",
-             "evidence_span": "first"},
-            {"canonical_key": "misc.same", "confidence": 0.5, "opposes": "eq.x",
-             "evidence_span": "second"},
+            {
+                "canonical_key": "misc.same",
+                "confidence": 0.9,
+                "opposes": "eq.x",
+                "evidence_span": "first",
+            },
+            {
+                "canonical_key": "misc.same",
+                "confidence": 0.5,
+                "opposes": "eq.x",
+                "evidence_span": "second",
+            },
         ]
     )
     n = await store.record_observations_from_canonical(
-        db, search_space_id=_SPACE, concept_id=_CONCEPT, user_id=_U1,
-        attempt_id=350, canonical_payload=payload,
+        db,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        user_id=_U1,
+        attempt_id=350,
+        canonical_payload=payload,
     )
     await db.commit()
     assert n == 1
@@ -176,9 +240,16 @@ async def test_duplicate_signature_within_misconceptions_deduped(db):
 
 async def _seed(db, *, attempt_id, user_id, key, conf, opposes="eq.x", span="s", created=None):
     row = MisconceptionObservation(
-        search_space_id=_SPACE, concept_id=_CONCEPT, signature=key, user_id=user_id,
-        attempt_id=attempt_id, confidence=conf, opposes=opposes, evidence_span=span,
-        source="grading_artifact", created_at=created or _NOW,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        signature=key,
+        user_id=user_id,
+        attempt_id=attempt_id,
+        confidence=conf,
+        opposes=opposes,
+        evidence_span=span,
+        source="grading_artifact",
+        created_at=created or _NOW,
     )
     db.add(row)
     await db.flush()
@@ -188,7 +259,9 @@ async def _seed(db, *, attempt_id, user_id, key, conf, opposes="eq.x", span="s",
 async def test_aggregate_counts_distinct_students_and_mean_confidence(db):
     await _seed(db, attempt_id=1, user_id=_U1, key="misc.k", conf=1.0, span="s1")
     await _seed(db, attempt_id=2, user_id=_U2, key="misc.k", conf=0.6, span="s2")
-    await _seed(db, attempt_id=3, user_id=_U1, key="misc.k", conf=0.8, span="s1")  # dup student/span
+    await _seed(
+        db, attempt_id=3, user_id=_U1, key="misc.k", conf=0.8, span="s1"
+    )  # dup student/span
     await db.commit()
     aggs = await store.aggregate_signatures(db, search_space_id=_SPACE, concept_id=_CONCEPT)
     assert len(aggs) == 1
@@ -211,14 +284,28 @@ async def test_aggregate_empty_for_none_concept(db):
 async def test_promoted_dict_returns_keyed_promoted_only(db):
     # misc.hot: 3 distinct students, conf 1.0, recent -> trust 1.0 -> promoted.
     for i, u in enumerate((_U1, _U2, _U3)):
-        await _seed(db, attempt_id=10 + i, user_id=u, key="misc.hot", conf=1.0,
-                    opposes="eq.hot", span=f"hot-{i}")
+        await _seed(
+            db,
+            attempt_id=10 + i,
+            user_id=u,
+            key="misc.hot",
+            conf=1.0,
+            opposes="eq.hot",
+            span=f"hot-{i}",
+        )
     # misc.cold: 1 student -> trust ~0.33 -> NOT promoted.
     await _seed(db, attempt_id=20, user_id=_U1, key="misc.cold", conf=1.0)
     # unkeyed bucket at max support -> NEVER promoted.
     for i, u in enumerate((_U1, _U2, _U3)):
-        await _seed(db, attempt_id=30 + i, user_id=u, key=f"unkeyed:{_CONCEPT}", conf=1.0,
-                    opposes=None, span="free")
+        await _seed(
+            db,
+            attempt_id=30 + i,
+            user_id=u,
+            key=f"unkeyed:{_CONCEPT}",
+            conf=1.0,
+            opposes=None,
+            span="free",
+        )
     await db.commit()
 
     result = await store.load_promoted_misconceptions_dict(
