@@ -22,9 +22,17 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.errors import ReviewRequiredError
+from apollo.errors import (
+    ResolutionUnavailableError,
+    ReviewRequiredError,
+    TranscriptAuditUnavailableError,
+)
 from apollo.grading.abstention import min_parser_confidence_of
 from apollo.grading.artifact_build import GRADER_USED_GRAPH, GRADER_USED_LLM_FALLBACK
+from apollo.graph_compare.validator import (
+    ReferenceGraphInvalidError,
+    StudentGraphInvalidError,
+)
 from apollo.handlers.artifact_writer import write_artifacts
 from apollo.handlers.done_grading import ShadowGradeResult, run_graph_simulation
 from apollo.handlers.done_inputs import (
@@ -120,6 +128,38 @@ _GRAPH_SIM_ARTIFACT_FLAG: str = "APOLLO_GRADING_ARTIFACT_ENABLED"
 # cost a student their grade). When OFF, a named infra error in the shadow
 # chain still re-raises (today's NO-FALLBACK diagnostics, unchanged).
 _GRAPH_GRADER_LIVE_FLAG: str = "APOLLO_GRAPH_GRADER_LIVE"
+
+# Lane B1 / G3 — the shadow-failure marker prefix stamped onto the canonical
+# LLM artifact's `abstention.graph_failure` when a SHADOW-mode (LIVE off)
+# shadow-chain exception is caught and isolated (see the `except` in
+# `handle_done`). Deliberately DISTINCT from the LIVE-mode fallback's bare
+# `repr(e)`: paired analysis greps this prefix to tell "the shadow chain
+# crashed during calibration, so there is no `pair` row" apart from "the live
+# graph grader crashed and fell back to LLM" — the canonical row is the only
+# artifact written in the shadow-crash case, and this marker is why.
+_SHADOW_FAILURE_MARKER: str = "shadow_failure: "
+
+# Lane B1 / G3 (narrowed) — the CONTRACTUAL typed failure modes that must keep
+# propagating out of the shadow chain in SHADOW mode. Authoritative source:
+# `apollo/api.py::register_exception_handlers` — these are exactly the
+# shadow-chain error types the done route explicitly maps to a NON-500
+# response, each with load-bearing commit semantics the route tests pin
+# (`tests/database/test_done_shadow_route_postgres.py`):
+#   * ResolutionUnavailableError      -> 503 (pending set + committed; retryable)
+#   * TranscriptAuditUnavailableError -> 503 (pending set + committed; retryable)
+#   * StudentGraphInvalidError        -> 422 (raised pre-cross-store; no pending)
+#   * ReferenceGraphInvalidError      -> 409 (raised pre-cross-store; no pending)
+# `ResolutionInvalidOutputError` is deliberately ABSENT: its handler maps to
+# 500 — exactly the "shadow bug 500s the live grade" class G3 isolates — so it
+# falls to the isolation branch with everything else unexpected (e.g. the G3
+# KeyError, CanonProjectionError). LIVE mode is untouched by this list: the A4
+# any-exception fallback still catches ALL types, including these four.
+_SHADOW_PROPAGATE_ERRORS: tuple[type[Exception], ...] = (
+    ResolutionUnavailableError,
+    TranscriptAuditUnavailableError,
+    StudentGraphInvalidError,
+    ReferenceGraphInvalidError,
+)
 
 
 def _done_gate_enabled() -> bool:
@@ -538,20 +578,56 @@ async def handle_done(
                 student_response["diagnostic_narrative"] = shadow.diagnostic.narrative
                 served_grade = GRADER_USED_GRAPH
         except Exception as e:
-            if not live:
-                # Shadow-only mode (LIVE off) keeps today's NO-FALLBACK
-                # diagnostics: a named infra error (or anything else) surfaces
-                # as the right HTTP status rather than being silently eaten.
-                raise
-            # LIVE mode: ANY graph-path exception must never cost the student
-            # their grade (spec §3 error handling). Log, record the failure on
-            # the artifact, and serve the already-committed OLD/LLM values.
-            _LOG.exception(
-                "apollo_graph_grader_live_failure attempt_id=%s", int(attempt.id)
-            )
-            graph_failure = repr(e)[:500]
-            shadow = None
-            served_grade = GRADER_USED_LLM_FALLBACK
+            if live:
+                # LIVE mode: ANY graph-path exception must never cost the student
+                # their grade (spec §3 error handling). Log, record the failure on
+                # the artifact, and serve the already-committed OLD/LLM values.
+                # (UNCHANGED — pre-G3 Task A4 semantics; the shadow-isolation
+                # branch below is the ONLY behavioral change in G3.)
+                _LOG.exception(
+                    "apollo_graph_grader_live_failure attempt_id=%s", int(attempt.id)
+                )
+                graph_failure = repr(e)[:500]
+                shadow = None
+                served_grade = GRADER_USED_LLM_FALLBACK
+            else:
+                # SHADOW mode's CONTRACTUAL typed failures keep propagating
+                # unchanged: the route maps each to a deliberate NON-500
+                # response (503/503/422/409, see `_SHADOW_PROPAGATE_ERRORS`)
+                # with pinned commit semantics — pending set+committed for the
+                # retryable 503s, no pending for the two validator errors. The
+                # student-facing message on the 503s already reads "your grade
+                # is saved" (the OLD grade is durable), so surfacing them is
+                # the contract, not a bug.
+                if isinstance(e, _SHADOW_PROPAGATE_ERRORS):
+                    raise
+                # Lane B1 / G3 — SHADOW-mode crash isolation for everything
+                # UNEXPECTED. During calibration staging/prod run SHADOW on but
+                # LIVE off, so the shadow chain computes a comparison run
+                # ALONGSIDE the student grade without promoting it. Pre-G3 an
+                # unexpected exception here re-raised as a raw 500, which killed
+                # the Done request and cost the student their ALREADY-COMMITTED
+                # LLM grade — a shadow bug voiding the live answer. That is
+                # wrong: the shadow is telemetry, not the grade. So mirror the
+                # LIVE fallback's posture WITHOUT promoting anything — log with
+                # full context, stamp a shadow-failure marker on the canonical
+                # LLM artifact (so paired analysis sees the missing `pair` row
+                # and WHY), drop the shadow result, and serve the OLD/LLM values
+                # BYTE-IDENTICAL to a shadow-off Done-click. No re-raise → HTTP
+                # 200 with the LLM grade. (The shadow chain's OWN internal
+                # NO-FALLBACK bookkeeping — `learner_update_pending` set +
+                # committed on a cross-store failure — has already run before
+                # the error reached here; we only stop it from reaching the
+                # HTTP layer.)
+                _LOG.exception(
+                    "apollo_graph_shadow_failure attempt_id=%s session_id=%s "
+                    "served=llm_fallback (shadow isolated; live grade unaffected)",
+                    int(attempt.id),
+                    int(session_id),
+                )
+                graph_failure = f"{_SHADOW_FAILURE_MARKER}{repr(e)}"[:500]
+                shadow = None
+                served_grade = GRADER_USED_LLM_FALLBACK
 
     # Task A3 — paired canonical-artifact capture (DEFAULT OFF). Orthogonal to
     # `_graph_sim_shadow_enabled()`: with the shadow flag off, `shadow` is
