@@ -719,7 +719,12 @@ class IngestRun(Base):
         nullable=False,
         index=True,
     )
-    document_id = Column(BigInteger, nullable=False)
+    # Nullable since WU-AAS observability (migration 036): the authored-set path
+    # opens the run BEFORE indexing so an OCR/indexing failure (bad PDF, no chunks
+    # produced) still leaves a run row — at that point no document has been minted
+    # yet, so document_id is stamped only once problem indexing succeeds. The queue
+    # worker path always sets it.
+    document_id = Column(BigInteger, nullable=True)
     content_hash = Column(Text, nullable=True)
     status = Column(Text, nullable=False, server_default=text("'queued'"), default="queued")
     n_pages = Column(Integer, nullable=False, server_default=text("0"), default=0)
@@ -889,7 +894,10 @@ class IngestPageEvidence(Base):
         nullable=False,
         index=True,
     )
-    document_id = Column(BigInteger, nullable=False)
+    # Nullable: a page captured before the failure path minted a document (e.g. a
+    # page-bearing-but-chunkless PDF that raised "no chunks produced") still gets
+    # its OCR evidence persisted, with no document id to attribute it to.
+    document_id = Column(BigInteger, nullable=True)
     role = Column(Text, nullable=False)  # 'problem' | 'solution' (open enum, no SQL CHECK)
     page_number = Column(Integer, nullable=True)
     ocr_text = Column(Text, nullable=False, server_default=text("''"), default="")

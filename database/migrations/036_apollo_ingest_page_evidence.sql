@@ -24,12 +24,23 @@ BEGIN;
 ALTER TABLE apollo_ingest_runs
   ADD COLUMN IF NOT EXISTS n_pages INTEGER NOT NULL DEFAULT 0;
 
+-- 1b. apollo_ingest_runs.document_id → NULLABLE. The authored-set path opens the
+--     run BEFORE indexing so an OCR/indexing failure (bad PDF, no chunks produced)
+--     still leaves a run row + error, instead of both observability tables staying
+--     empty. At run-open no document has been minted yet, so the column must allow
+--     NULL until problem indexing succeeds. The queue worker path always sets it.
+--     Idempotent: DROP NOT NULL is a no-op if the column is already nullable.
+ALTER TABLE apollo_ingest_runs
+  ALTER COLUMN document_id DROP NOT NULL;
+
 -- 2. apollo_ingest_page_evidence — per-page OCR text + confidence + verify flag.
+--    document_id is NULLABLE: a page captured before the failure path minted a
+--    document (a page-bearing-but-chunkless PDF) still gets its evidence persisted.
 CREATE TABLE IF NOT EXISTS apollo_ingest_page_evidence (
   id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   ingest_run_id     BIGINT  NOT NULL REFERENCES apollo_ingest_runs(id) ON DELETE CASCADE,
   search_space_id   INTEGER NOT NULL REFERENCES aita_search_spaces(id) ON DELETE CASCADE,
-  document_id       BIGINT  NOT NULL,          -- hidden authored problem/solution doc
+  document_id       BIGINT,                    -- hidden authored doc (NULL if indexing failed pre-mint)
   role              TEXT    NOT NULL,          -- 'problem' | 'solution' (open enum)
   page_number       INTEGER,                   -- source page (NULL if the page carried none)
   ocr_text          TEXT    NOT NULL DEFAULT '',  -- recognized text/LaTeX for the page
@@ -49,4 +60,7 @@ ALTER TABLE apollo_ingest_page_evidence ENABLE ROW LEVEL SECURITY;
 COMMIT;
 -- Rollback (run manually; never auto-applied):
 -- BEGIN; DROP TABLE IF EXISTS apollo_ingest_page_evidence;
--- ALTER TABLE apollo_ingest_runs DROP COLUMN IF EXISTS n_pages; COMMIT;
+-- ALTER TABLE apollo_ingest_runs DROP COLUMN IF EXISTS n_pages;
+-- -- Re-tighten document_id ONLY if no run row has a NULL document_id:
+-- -- ALTER TABLE apollo_ingest_runs ALTER COLUMN document_id SET NOT NULL;
+-- COMMIT;

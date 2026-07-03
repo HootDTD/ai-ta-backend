@@ -359,8 +359,67 @@ async def test_get_authored_set_exposes_ingest_run_and_pages(db_session, monkeyp
     page = detail["pages"][0]
     assert page["page_ref"] == "problem:p1"
     assert page["ocr_text"] == "Q1"
+    assert page["ocr_text_truncated"] is False
+    assert page["ocr_text_chars"] == 2
     assert page["ocr_confidence"] == pytest.approx(0.4)
     assert page["verify_path_fired"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_caps_ocr_text_unless_full_ocr(db_session, monkeypatch):
+    """The GET list surface truncates each page's ocr_text to _LIST_OCR_TEXT_CAP
+    (flagging it) so a run of long pages doesn't bloat the payload; ?full_ocr=true
+    returns the untruncated body for a deliberate deep fetch."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+    from apollo.provisioning.authored_sets.observability import (
+        persist_page_evidence,
+        start_ingest_run,
+    )
+
+    space_id, _c = await _seed_course(db_session, slug="obs-cap")
+    long_text = "x" * (aapi._LIST_OCR_TEXT_CAP + 500)
+    run = await start_ingest_run(db_session, search_space_id=space_id, document_id=311)
+    await persist_page_evidence(
+        db_session,
+        ingest_run=run,
+        search_space_id=space_id,
+        document_id=311,
+        role="problem",
+        pages=[_page(1, plain=long_text, conf=0.9)],
+    )
+    aset = AuthoredSet(
+        search_space_id=space_id, set_index=1, status="done", problem_document_id=311
+    )
+    db_session.add(aset)
+    await db_session.flush()
+
+    async def _fake_require_user(_request):
+        from auth import AuthContext
+
+        return AuthContext(user_id="teacher-1", access_token="token")
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", lambda **_kwargs: _noop())
+
+    capped = await aapi.get_authored_set(
+        set_id=int(aset.id), request=SimpleNamespace(), db=db_session
+    )
+    page = capped["pages"][0]
+    assert len(page["ocr_text"]) == aapi._LIST_OCR_TEXT_CAP
+    assert page["ocr_text_truncated"] is True
+    assert page["ocr_text_chars"] == len(long_text)
+
+    full = await aapi.get_authored_set(
+        set_id=int(aset.id), request=SimpleNamespace(), full_ocr=True, db=db_session
+    )
+    full_page = full["pages"][0]
+    assert full_page["ocr_text"] == long_text
+    assert full_page["ocr_text_truncated"] is False
+
+
+async def _noop():
+    return None
 
 
 @pytest.mark.asyncio
@@ -420,3 +479,95 @@ async def test_background_failure_marks_run_failed_and_records_error(db_session,
     assert len(errors) == 1
     assert errors[0].stage == "authored_set_ingest"
     assert "provisioning boom" in errors[0].context["message"]
+
+
+@pytest.mark.asyncio
+async def test_background_indexing_failure_opens_run_and_persists_evidence(db_session, monkeypatch):
+    """An indexing-stage failure (bad PDF / no chunks produced) must still leave a
+    run row + error + whatever page evidence was captured — the S2 'insufficient
+    info' failure class. The run is opened BEFORE indexing, so a raise from
+    ``index_authored_doc`` cannot leave both observability tables empty."""
+    from sqlalchemy import select
+
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    space_id, _c = await _seed_course(db_session, slug="obs-idxfail")
+    row = AuthoredSet(search_space_id=space_id, set_index=1, status="pending")
+    db_session.add(row)
+    await db_session.flush()
+    set_id = int(row.id)
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield db_session
+
+    async def _index_authored_doc(db, *, role, page_sink=None, **_kwargs):
+        # The real indexer appends the transient per-page OCR pass BEFORE the
+        # no-items guard, then raises "no chunks produced" — so the sink holds a
+        # page even though indexing failed and NO document id was ever minted.
+        page_sink.append(_page(1, plain="captured before failure", conf=0.4))
+        raise ValueError("authored indexer: no chunks produced from problem PDF")
+
+    def _fail_provisioning(*_a, **_k):  # pragma: no cover - must never be reached
+        raise AssertionError("provisioning must not run after an indexing failure")
+
+    monkeypatch.setattr(aapi, "get_async_session", _session_cm)
+    monkeypatch.setattr(aapi, "index_authored_doc", _index_authored_doc)
+    monkeypatch.setattr(aapi, "run_authored_set_provisioning", _fail_provisioning)
+    monkeypatch.setattr(aapi, "_make_metered_chat", lambda **_kwargs: "metered")
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: "neo")
+
+    await aapi._run_set_background(
+        set_id=set_id,
+        search_space_id=space_id,
+        set_index=1,
+        problem_bytes=b"%PDF p",
+        problem_title="p",
+        solution_bytes=b"%PDF s",
+        solution_title="s",
+    )
+
+    refreshed = await db_session.get(AuthoredSet, set_id)
+    assert refreshed.status == "failed"
+    assert "no chunks produced" in (refreshed.result_summary or {}).get("error", "")
+
+    # The run row EXISTS (opened before indexing) and is marked failed, even though
+    # indexing never produced a document id.
+    run = (
+        await db_session.execute(
+            select(IngestRun)
+            .where(IngestRun.search_space_id == space_id)
+            .order_by(IngestRun.id.desc())
+            .limit(1)
+        )
+    ).scalar_one()
+    assert run.status == "failed"
+    assert run.finished_at is not None
+    assert run.document_id is None  # problem indexing failed before minting a doc
+
+    # The stage error is recorded against the now-existing run.
+    errors = (
+        (await db_session.execute(select(IngestError).where(IngestError.ingest_run_id == run.id)))
+        .scalars()
+        .all()
+    )
+    assert len(errors) == 1
+    assert errors[0].stage == "authored_set_ingest"
+    assert "no chunks produced" in errors[0].context["message"]
+
+    # The page evidence captured before the raise is persisted (surfacing the OCR
+    # inputs the failure-path comment in indexing.py promises).
+    evidence = (
+        (
+            await db_session.execute(
+                select(IngestPageEvidence).where(IngestPageEvidence.ingest_run_id == run.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(evidence) == 1
+    assert evidence[0].role == "problem"
+    assert evidence[0].ocr_text == "captured before failure"
+    assert evidence[0].verify_path_fired is True

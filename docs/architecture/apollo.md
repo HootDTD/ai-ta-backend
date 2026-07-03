@@ -12,7 +12,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-07-02
+last_verified: 2026-07-03
 stub: false
 ---
 
@@ -142,23 +142,37 @@ cross-checks, stay tier 1 with `ConceptProblem.provenance["authored_review"]`
 until a teacher approves. Held problems do not run `tag_and_mint` or
 `promote`, so the canonical KG is not mutated before approval.
 
-**Ingestion observability (WU-AAS, lane G4.4).** `_run_set_background` now opens
-one `apollo_ingest_runs` row per ingestion (`IngestRun`, keyed on the problem
-document id, `status` running→succeeded/failed, `started_at`/`finished_at`,
-`n_pages`, `n_questions_scraped`/`n_promoted`/`n_rejected`), and the run is the
-SAME row `MeteredChat` accrues LLM call/token/cost onto (so those aggregates
-persist instead of being discarded on a throwaway namespace). `index_authored_doc`
-takes an optional `page_sink` that captures the transient per-page OCR pass
-(`NormalizedPage` — text + confidence + extraction mode); the helpers in
+**Ingestion observability (WU-AAS, lane G4.4).** `_run_set_background` opens one
+`apollo_ingest_runs` row per ingestion (`IngestRun`, `status`
+running→succeeded/failed, `started_at`/`finished_at`, `n_pages`,
+`n_questions_scraped`/`n_promoted`/`n_rejected`), and the run is the SAME row
+`MeteredChat` accrues LLM call/token/cost onto (so those aggregates persist instead
+of being discarded on a throwaway namespace). **The run is opened AND committed
+BEFORE indexing** (with `document_id=NULL`, migration 036) so that an OCR/indexing
+stage failure — a bad PDF, or `index_authored_doc` raising "no chunks produced" —
+still leaves a durable run row + `apollo_ingest_errors` row + whatever page evidence
+was captured, instead of both tables staying EMPTY (the S2 "insufficient info"
+failure class). Once problem indexing succeeds its document id is stamped onto the
+run (the handle the GET surface looks up by; the queue path sets it at open).
+`index_authored_doc` takes an optional `page_sink` that captures the transient
+per-page OCR pass (`NormalizedPage` — text + confidence + extraction mode)
+BEFORE its no-chunks guard, so a page-bearing-but-chunkless doc still surfaces its
+OCR text on the failure path; the helpers in
 `apollo/provisioning/authored_sets/observability.py`
 (`start_ingest_run`/`persist_page_evidence`/`finalize_ingest_run`/`record_ingest_error`)
 write one `apollo_ingest_page_evidence` row per source page (`IngestPageEvidence`:
 role=`problem|solution`, `page_number`, `ocr_text`, `ocr_confidence`,
 `extraction_mode`, and `verify_path_fired` set when a page's confidence is ≤ 0.6 —
-the low-confidence signal the S2 audit reads). A stage failure records an
-`apollo_ingest_errors` row (`IngestError`, stage=`authored_set_ingest`) and marks
-the run `failed`. Before this, both tables stayed EMPTY through a whole ingestion
-and no per-page OCR text was persisted. Schema is migration
+the low-confidence signal the S2 audit reads; `document_id` NULLABLE for a page
+captured before a doc was minted). On the SUCCESS path the page evidence + run
+document id + `n_pages` are committed with the provisioning-status transition, so
+the except handler re-persists evidence ONLY when that commit did not happen (no
+duplicate rows); its run/error/evidence writes are committed explicitly, not via
+`_set_status` (which early-returns uncommitted if the set row vanished). Before this,
+both tables stayed EMPTY through a whole ingestion and no per-page OCR text was
+persisted. The GET detail surface caps each page's `ocr_text` to
+`_LIST_OCR_TEXT_CAP` (2000) chars with `ocr_text_truncated`/`ocr_text_chars` flags;
+`?full_ocr=true` returns the untruncated body. Schema is migration
 `036_apollo_ingest_page_evidence.sql`.
 
 The mounted endpoints are teacher-gated with `require_user` +

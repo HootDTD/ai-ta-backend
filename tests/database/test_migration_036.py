@@ -120,6 +120,24 @@ async def test_036_adds_n_pages_column(mig_conn):
     assert "0" in (row["column_default"] or "")
 
 
+async def test_036_drops_run_document_id_not_null(mig_conn):
+    """The run is opened BEFORE indexing (document_id unknown), so 036 relaxes
+    apollo_ingest_runs.document_id to NULLABLE — a failed indexing run has no doc."""
+    is_nullable = await mig_conn.fetchval(
+        "SELECT is_nullable FROM information_schema.columns "
+        "WHERE table_name='apollo_ingest_runs' AND column_name='document_id'"
+    )
+    assert is_nullable == "YES"
+    # A run row with NO document id is now insertable (the failure-path shape).
+    space_id = await mig_conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
+    run_id = await mig_conn.fetchval(
+        "INSERT INTO apollo_ingest_runs (search_space_id, status) "
+        "VALUES ($1, 'failed') RETURNING id",
+        space_id,
+    )
+    assert run_id is not None
+
+
 async def test_036_creates_page_evidence_table(mig_conn):
     cols = {
         r["column_name"]: r
@@ -144,6 +162,9 @@ async def test_036_creates_page_evidence_table(mig_conn):
         assert expected in cols, f"missing column {expected}"
     assert cols["role"]["is_nullable"] == "NO"
     assert cols["ingest_run_id"]["is_nullable"] == "NO"
+    # document_id is NULLABLE: a page captured before the failure path minted a
+    # document (a chunkless PDF) still gets its OCR evidence persisted.
+    assert cols["document_id"]["is_nullable"] == "YES"
     assert cols["verify_path_fired"]["data_type"] == "boolean"
     assert cols["ocr_confidence"]["data_type"] == "real"
 

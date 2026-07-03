@@ -137,14 +137,31 @@ async def _run_set_background(
 ) -> None:
     """Own a fresh session; request-scoped sessions are closed before this runs."""
     ingest_run_id: int | None = None
+    # OCR-observability: capture each doc's transient per-page OCR pass so the
+    # ingest run + page-level evidence tables (empty before WU-AAS observability)
+    # are populated for the S2 audit — on the SUCCESS path AND, crucially, when an
+    # indexing stage raises. The page lists live outside the `async with` so the
+    # except handler can still persist whatever was captured after the try session
+    # rolled back.
+    problem_pages: list = []
+    solution_pages: list = []
+    problem_document_id: int | None = None
+    solution_document_id: int | None = None
+    evidence_persisted = False
     try:
         async with get_async_session() as db:
             await _set_status(db, set_id, "indexing")
-            # OCR-observability: capture each doc's transient per-page OCR pass so
-            # the ingest run + page-level evidence tables (empty before WU-AAS
-            # observability) are populated for the S2 audit.
-            problem_pages: list = []
-            solution_pages: list = []
+            # Open the ingest run BEFORE indexing and COMMIT it, so an OCR/indexing
+            # failure (bad PDF, "no chunks produced") still leaves a durable run row
+            # + error + captured page evidence instead of both observability tables
+            # staying empty (the S2 "insufficient info" failure class). document_id
+            # is NULL until problem indexing mints it (migration 036).
+            ingest_run = await start_ingest_run(
+                db, search_space_id=search_space_id, document_id=None
+            )
+            ingest_run_id = int(ingest_run.id)
+            await db.commit()
+
             problem_document_id = await index_authored_doc(
                 db,
                 search_space_id=search_space_id,
@@ -154,6 +171,12 @@ async def _run_set_background(
                 role="problem",
                 page_sink=problem_pages,
             )
+            # The run's document handle is the problem doc (parity with the queue
+            # path + what the GET surface looks it up by). Stamp it now that it
+            # exists; committed with the provisioning-status transition below.
+            ingest_run.document_id = problem_document_id
+            ingest_run.content_hash = await _doc_content_hash(db, problem_document_id)
+
             solution_document_id = await index_authored_doc(
                 db,
                 search_space_id=search_space_id,
@@ -164,13 +187,6 @@ async def _run_set_background(
                 page_sink=solution_pages,
             )
 
-            ingest_run = await start_ingest_run(
-                db,
-                search_space_id=search_space_id,
-                document_id=problem_document_id,
-                content_hash=await _doc_content_hash(db, problem_document_id),
-            )
-            ingest_run_id = int(ingest_run.id)
             n_pages = await persist_page_evidence(
                 db,
                 ingest_run=ingest_run,
@@ -187,6 +203,9 @@ async def _run_set_background(
                 role="solution",
                 pages=solution_pages,
             )
+            # Set n_pages here so it is committed with the evidence below and stays
+            # correct even if provisioning later fails (the success finalize does
+            # NOT re-write it — avoids the redundant double-write).
             ingest_run.n_pages = n_pages
 
             row = await db.get(AuthoredSet, set_id)
@@ -197,6 +216,9 @@ async def _run_set_background(
             row.status = "provisioning"
             row.updated_at = datetime.now(UTC)
             await db.commit()
+            # Evidence + run.document_id + n_pages are now durable: the except
+            # handler must NOT re-persist page evidence (it would duplicate rows).
+            evidence_persisted = True
 
             report = await run_authored_set_provisioning(
                 db,
@@ -213,7 +235,6 @@ async def _run_set_background(
                 db,
                 ingest_run=ingest_run,
                 status="succeeded",
-                n_pages=n_pages,
                 n_questions_scraped=len(report.problems),
                 n_promoted=counts.get("promoted", 0),
                 n_rejected=counts.get("rejected", 0),
@@ -228,21 +249,61 @@ async def _run_set_background(
     except Exception as exc:  # noqa: BLE001 - persist failed status, never escape task
         _LOG.exception("authored_set_background_failed", extra={"set_id": set_id})
         async with get_async_session() as db:
-            # A fresh session: the failed run's own session may be poisoned. Mark
-            # the run failed (if one was opened) and record the stage error so the
-            # observability tables reflect the failure instead of staying empty.
+            # A fresh session: the failed run's own session may be poisoned. The run
+            # row was committed before indexing, so it is durable here. Mark it
+            # failed, persist any page evidence captured before the raise (unless it
+            # was already committed on the success path), and record the stage error
+            # so the observability tables reflect the failure instead of staying
+            # empty.
             if ingest_run_id is not None:
                 failed_run = await db.get(IngestRun, ingest_run_id)
-                if failed_run is not None and failed_run.status != "failed":
-                    await finalize_ingest_run(db, ingest_run=failed_run, status="failed")
-                await record_ingest_error(
-                    db,
-                    search_space_id=search_space_id,
-                    ingest_run=failed_run,
-                    stage="authored_set_ingest",
-                    exc=exc,
-                    context={"set_id": set_id},
-                )
+                if failed_run is not None:
+                    failed_pages: int | None = None
+                    if not evidence_persisted:
+                        failed_pages = await persist_page_evidence(
+                            db,
+                            ingest_run=failed_run,
+                            search_space_id=search_space_id,
+                            document_id=problem_document_id,
+                            role="problem",
+                            pages=problem_pages,
+                        )
+                        failed_pages += await persist_page_evidence(
+                            db,
+                            ingest_run=failed_run,
+                            search_space_id=search_space_id,
+                            document_id=solution_document_id,
+                            role="solution",
+                            pages=solution_pages,
+                        )
+                    if failed_run.status != "failed":
+                        await finalize_ingest_run(
+                            db, ingest_run=failed_run, status="failed", n_pages=failed_pages
+                        )
+                    await record_ingest_error(
+                        db,
+                        search_space_id=search_space_id,
+                        ingest_run=failed_run,
+                        stage="authored_set_ingest",
+                        exc=exc,
+                        context={"set_id": set_id},
+                    )
+                else:
+                    # The run row vanished (should not happen after the early
+                    # commit) — still record the error, unlinked, so the failure is
+                    # not silently lost.
+                    await record_ingest_error(
+                        db,
+                        search_space_id=search_space_id,
+                        ingest_run=None,
+                        stage="authored_set_ingest",
+                        exc=exc,
+                        context={"set_id": set_id},
+                    )
+                # Explicit commit: the run/error/evidence writes above must persist
+                # independently of _set_status, which early-returns UNCOMMITTED if
+                # the AuthoredSet row has since vanished.
+                await db.commit()
             await _set_status(db, set_id, "failed", diagnostic=str(exc))
 
 
@@ -325,10 +386,19 @@ async def list_authored_sets(
     }
 
 
+# Per-page ``ocr_text`` cap for the GET list surface. A run can carry dozens of
+# pages, each with a full page of recognized text/LaTeX; returning every page's
+# body unbounded bloats the teacher/S2 detail payload. The list view truncates to
+# this many chars (with ``ocr_text_truncated`` flagged) and callers that need the
+# full page body pass ``?full_ocr=true`` for a deliberate deep fetch.
+_LIST_OCR_TEXT_CAP = 2000
+
+
 @router.get("/authored-sets/{set_id}")
 async def get_authored_set(
     set_id: int,
     request: Request,
+    full_ocr: bool = False,
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
@@ -336,7 +406,9 @@ async def get_authored_set(
     if row is None:
         raise HTTPException(status_code=404, detail="authored set not found")
     await require_course_teacher(db=db, auth=auth, search_space_id=int(row.search_space_id))
-    ingest_run, pages = await _load_ingest_evidence(db, row.problem_document_id)
+    ingest_run, pages = await _load_ingest_evidence(
+        db, row.problem_document_id, full_ocr=full_ocr
+    )
     return {
         "set_id": int(row.id),
         "set_index": row.set_index,
@@ -353,11 +425,15 @@ async def get_authored_set(
 
 
 async def _load_ingest_evidence(
-    db: AsyncSession, problem_document_id: int | None
+    db: AsyncSession, problem_document_id: int | None, *, full_ocr: bool = False
 ) -> tuple[dict | None, list[dict]]:
     """Return the latest authored-set ingest run for ``problem_document_id`` plus its
     per-page OCR evidence, both shaped for the teacher/S2-audit surface. ``(None, [])``
-    when the set never produced a run (still indexing, or a pre-observability set)."""
+    when the set never produced a run (still indexing, or a pre-observability set).
+
+    Each page's ``ocr_text`` is truncated to ``_LIST_OCR_TEXT_CAP`` chars (with
+    ``ocr_text_truncated`` flagged) unless ``full_ocr`` is set — the list surface
+    stays bounded while a deliberate ``?full_ocr=true`` fetch gets the full body."""
     if problem_document_id is None:
         return None, []
     run = (
@@ -397,21 +473,30 @@ async def _load_ingest_evidence(
         .scalars()
         .all()
     )
-    pages = [
-        {
-            "role": ev.role,
-            "document_id": int(ev.document_id),
-            "page_number": ev.page_number,
-            # page_ref is the S2 judge's stable per-page handle (role + page).
-            "page_ref": f"{ev.role}:p{ev.page_number}",
-            "ocr_text": ev.ocr_text,
-            "ocr_confidence": ev.ocr_confidence,
-            "extraction_mode": ev.extraction_mode,
-            "verify_path_fired": ev.verify_path_fired,
-        }
-        for ev in evidence
-    ]
+    pages = [_page_dict(ev, full_ocr=full_ocr) for ev in evidence]
     return run_dict, pages
+
+
+def _page_dict(ev: IngestPageEvidence, *, full_ocr: bool) -> dict:
+    """Shape one page-evidence row for the GET surface, capping ``ocr_text`` unless
+    ``full_ocr`` (see ``_LIST_OCR_TEXT_CAP``)."""
+    text = ev.ocr_text or ""
+    truncated = not full_ocr and len(text) > _LIST_OCR_TEXT_CAP
+    return {
+        "role": ev.role,
+        # document_id is NULL when indexing failed before minting a doc (a page
+        # captured for a chunkless PDF on the failure path).
+        "document_id": int(ev.document_id) if ev.document_id is not None else None,
+        "page_number": ev.page_number,
+        # page_ref is the S2 judge's stable per-page handle (role + page).
+        "page_ref": f"{ev.role}:p{ev.page_number}",
+        "ocr_text": text[:_LIST_OCR_TEXT_CAP] if truncated else text,
+        "ocr_text_truncated": truncated,
+        "ocr_text_chars": len(text),
+        "ocr_confidence": ev.ocr_confidence,
+        "extraction_mode": ev.extraction_mode,
+        "verify_path_fired": ev.verify_path_fired,
+    }
 
 
 async def _protected_concepts(db: AsyncSession, concept_ids: list[int]) -> set[int]:
