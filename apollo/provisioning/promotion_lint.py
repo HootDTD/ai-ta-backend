@@ -284,12 +284,19 @@ def _derive_symbolic_answer(problem: Problem) -> set[str]:
     )
 
 
-def _defined_symbols(problem: Problem) -> set[str]:
-    """Symbols a ``definition`` / ``variable_mapping`` step INTRODUCES (table-less
-    grounding). Reads ``content['symbol']`` / ``content['term']`` and tokenizes
-    ``content['meaning']`` / ``content['definition']``. Lenient token match mirrors
-    ``_cancelled_symbols`` — superset-accept is the safe direction for a promotion
-    gate (a false-RED only quarantines; a false-GREEN never ships)."""
+def _declared_symbols(problem: Problem) -> set[str]:
+    """Symbols a ``definition`` / ``variable_mapping`` step STRUCTURALLY declares:
+    ONLY the ``content['symbol']`` / ``content['term']`` values — the fields whose
+    sole job is to name the symbol/term the step introduces. It DELIBERATELY does
+    NOT tokenize the free-prose ``meaning`` / ``definition`` fields (see
+    ``_defined_symbols`` for that lenient path).
+
+    This tight, structured-only reading is what author-grounding (gate 4) trusts:
+    prose tokenization admits every bare word (``the``, ``of``, ...) AND any garbage
+    OCR token that happens to appear in both an equation and a prose sentence, which
+    on the SEEDED-table path silently grounded a foreign symbol that should reject
+    (WU-AAS lane B2.2 Finding 2, live-proven ``zzz`` probe). Grounding off the
+    declared symbol/term fields cannot admit such a token."""
     out: set[str] = set()
     for step in problem.reference_solution:
         if step.entry_type not in ("definition", "variable_mapping"):
@@ -298,6 +305,26 @@ def _defined_symbols(problem: Problem) -> set[str]:
             val = step.content.get(key)
             if isinstance(val, str) and val:
                 out.add(val)
+    return out
+
+
+def _defined_symbols(problem: Problem) -> set[str]:
+    """The LENIENT (prose-inclusive) grounding: ``_declared_symbols`` PLUS every
+    token found in a ``definition`` / ``variable_mapping`` step's ``content['meaning']``
+    / ``content['definition']`` free prose. Superset-accept mirrors
+    ``_cancelled_symbols``.
+
+    Used ONLY on the TABLE-LESS branch (``_internal_grounded_symbols``): there gate
+    4's foreign-symbol arm is unreachable — the graph-derived answer term absorbs
+    the lone leftover and gate 7's under-determination check is the real guard, so
+    the extra prose tokens can never turn a REJECT into a false-GREEN. The
+    SEEDED-table branch does NOT use this (it grounds off ``_declared_symbols``
+    only) — prose tokenization there could ground a foreign symbol against a real
+    canonical table, which is exactly the Finding-2 bug this split fixes."""
+    out: set[str] = _declared_symbols(problem)
+    for step in problem.reference_solution:
+        if step.entry_type not in ("definition", "variable_mapping"):
+            continue
         for tok_field in ("meaning", "definition"):
             text = step.content.get(tok_field) or ""
             for tok in re.findall(r"[A-Za-z][A-Za-z0-9]*", str(text)):
@@ -307,16 +334,20 @@ def _defined_symbols(problem: Problem) -> set[str]:
 
 def _author_grounded_symbols(problem: Problem) -> set[str]:
     """The symbols the problem's AUTHOR explicitly grounds: GIVES (given_values),
-    DEFINES (definition / variable_mapping step), COMPUTES as a coupling
-    intermediate, or CANCELS (simplification). This is the DECLARED grounding — it
-    DELIBERATELY excludes the speculative lone graph-derived ANSWER term (a symbol
-    that is merely "left over"): an author-grounded symbol is one the problem names
-    a role for, never a bare left-over. Used by gate 4 on BOTH the seeded-table and
-    the table-less paths so a prose-minted problem's own declared symbols (e.g. a
-    ``varmap.var_x`` grounding ``x`` for position) are never rejected as foreign."""
+    DECLARES (a definition / variable_mapping step's STRUCTURED ``symbol`` / ``term``
+    field), COMPUTES as a coupling intermediate, or CANCELS (simplification). This
+    is the DECLARED grounding — it DELIBERATELY excludes (a) the speculative lone
+    graph-derived ANSWER term (a symbol that is merely "left over") and (b) any
+    free-prose ``meaning`` / ``definition`` token (which is unreliable — a bare word
+    or a garbage OCR token, WU-AAS lane B2.2 Finding 2). An author-grounded symbol
+    is one the problem names a STRUCTURAL role for, never a bare left-over and never
+    a token scraped from a sentence. Used by gate 4 on BOTH the seeded-table and the
+    table-less paths so a prose-minted problem's own declared symbols (e.g. a
+    ``varmap.var_x`` grounding ``x`` for position) are never rejected as foreign,
+    while a foreign token that merely appears in prose is NOT admitted."""
     return (
         set(problem.given_values.keys())
-        | _defined_symbols(problem)
+        | _declared_symbols(problem)
         | _intermediate_symbols(problem)
         | _cancelled_symbols(problem)
     )
@@ -325,16 +356,23 @@ def _author_grounded_symbols(problem: Problem) -> set[str]:
 def _internal_grounded_symbols(problem: Problem) -> set[str]:
     """The problem's OWN symbol closure (spec §4.2), used ONLY when no seeded
     ``canonical_symbols`` table exists. A symbol is non-foreign iff the problem
-    GIVES it, DEFINES it (definition / variable_mapping), COMPUTES it (a coupling
-    intermediate), CANCELS it (a simplification), or it is the lone graph-derived
-    ANSWER. SUPERSET-accept: anything a real seeded table would accept the problem
-    itself also introduces, so a seeded concept's verdicts never move.
+    GIVES it, DEFINES it (definition / variable_mapping — INCLUDING prose meaning,
+    the lenient ``_defined_symbols`` path), COMPUTES it (a coupling intermediate),
+    CANCELS it (a simplification), or it is the lone graph-derived ANSWER.
+    SUPERSET-accept: anything a real seeded table would accept the problem itself
+    also introduces, so a seeded concept's verdicts never move.
 
-    Superset of ``_author_grounded_symbols`` by the lone graph-derived ANSWER: the
-    table-less path additionally admits the answer term (a fresh concept has no
-    table to name its answer symbol), whereas the seeded path uses only the
-    DECLARED grounding so a bare left-over symbol still falls through to gate 7."""
-    return _author_grounded_symbols(problem) | _derive_symbolic_answer(problem)
+    Superset of ``_author_grounded_symbols`` by (a) the lenient prose grounding
+    ``_defined_symbols`` and (b) the lone graph-derived ANSWER. Prose grounding is
+    confined to THIS table-less branch (Finding 2): here gate 4's foreign-symbol arm
+    is unreachable (the answer term absorbs the lone leftover; a genuine extra symbol
+    inflates gate 7's free-unknown count), so the extra prose tokens are harmless —
+    whereas on the seeded-table branch they would falsely ground a foreign symbol."""
+    return (
+        _author_grounded_symbols(problem)
+        | _defined_symbols(problem)
+        | _derive_symbolic_answer(problem)
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -406,18 +444,22 @@ def _gate_4(
                 )
         return None
     # SEEDED-TABLE path. A symbol is non-foreign iff it normalizes via the table
-    # OR the problem's AUTHOR grounds it (given / defined via definition or
-    # variable_mapping / coupling-intermediate / cancelled). The author-grounding
-    # arm (WU-AAS lane B2.2 / G4.2, F1a Finding B) is PURELY ADDITIVE: the 41 seeded
-    # problems' symbols all normalize via the table, so their verdicts are
-    # byte-identical. It fixes prose-minted problems mis-filed under a seeded table
-    # (e.g. a kinematics ``x`` under a fluid table) whose own ``varmap.var_x`` /
-    # given value grounds the symbol — the seeded path previously consulted ONLY the
-    # table and rejected the problem's own declared symbols. It stays SUBJECT-
-    # AGNOSTIC (no symbol list is edited) and cannot admit a bare foreign symbol: an
-    # ungrounded left-over is excluded from ``_author_grounded_symbols`` (the answer
-    # term is not in it), so it still falls through to gate 4 here (single unknown)
-    # or inflates gate 7's free-unknown count (under-determination).
+    # OR the problem's AUTHOR grounds it (given / STRUCTURALLY declared via a
+    # definition|variable_mapping ``symbol``/``term`` field / coupling-intermediate /
+    # cancelled). The author-grounding arm (WU-AAS lane B2.2 / G4.2, F1a Finding B)
+    # is PURELY ADDITIVE: the 41 seeded problems' symbols all normalize via the
+    # table, so their verdicts are byte-identical. It fixes prose-minted problems
+    # mis-filed under a seeded table (e.g. a kinematics ``x`` under a fluid table)
+    # whose own ``varmap.var_x`` / given value grounds the symbol — the seeded path
+    # previously consulted ONLY the table and rejected the problem's own declared
+    # symbols. It stays SUBJECT-AGNOSTIC (no symbol list is edited) and cannot admit
+    # a foreign symbol via prose: ``_author_grounded_symbols`` reads only STRUCTURED
+    # grounding (``_declared_symbols``), NOT the free-prose ``meaning``/``definition``
+    # tokenization — so a garbage OCR token (``zzz``) that appears in an equation AND
+    # in a prose sentence is NOT admitted here (WU-AAS lane B2.2 Finding 2, the
+    # live-proven over-acceptance). An ungrounded left-over likewise falls through to
+    # the ``_normalize_symbol`` check below (single unknown) or inflates gate 7's
+    # free-unknown count (under-determination).
     author_grounded = _author_grounded_symbols(problem)
     for name in sorted(symbols):
         if name in author_grounded:

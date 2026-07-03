@@ -1289,3 +1289,82 @@ def test_linear_motion_authored_set_promotes_end_to_end():
     Before this lane it was rejected 3 ways (gate 6 twice, then gate 4 on ``x``)."""
     result = _lint(_linear_motion_graph())
     assert result.ok is True, result.diagnostic
+
+
+# --------------------------------------------------------------------------- #
+# WU-AAS lane B2.2 Finding 2 — gate-4 author-grounding is STRUCTURED-only.
+#
+# Cross-review (live-proven): the SEEDED-table author-grounding arm used
+# ``_defined_symbols``, which TOKENIZES all ``meaning`` / ``definition`` prose. A
+# garbage OCR token that appears in an equation AND as a bare prose word was
+# grounded=True and slipped through gate 4 (the sole foreign-symbol guard) against
+# a REAL canonical table. The fix grounds off STRUCTURED symbol/term fields only.
+# --------------------------------------------------------------------------- #
+
+
+def test_gate4_seeded_rejects_foreign_token_that_also_appears_in_prose():
+    """LIVE-PROVEN regression (Finding 2): a garbage token ``zzz`` present in an
+    equation AND in a definition step's ``meaning`` prose is NOT author-grounded on
+    the seeded-table path — it is foreign vs the fluid table and gate 4 REJECTS.
+    Before the structured-only fix the prose tokenization grounded ``zzz`` and it
+    slipped through (a false-GREEN against a real canonical table)."""
+    graph = copy.deepcopy(_bernoulli_graph())
+    # Repurpose the condition step as a prose-only definition carrying the token.
+    d = _step(graph, "incompressibility")
+    d["entry_type"] = "definition"
+    d["content"] = {"concept": "density", "meaning": "the zzz property of the fluid"}
+    # Same token inside an equation so it enters the gate-4 symbol set.
+    _step(graph, "continuity")["content"]["symbolic"] = "rho*A1*v1 - rho*A2*v2 + zzz"
+    result = _lint(graph)
+    assert result.ok is False
+    assert result.failed_gate == 4, result.diagnostic
+    assert "zzz" in result.diagnostic
+
+
+def test_declared_symbols_reads_structured_symbol_term_only_not_prose():
+    """White-box: ``_declared_symbols`` harvests ONLY the STRUCTURED ``symbol`` /
+    ``term`` fields of a definition / variable_mapping step — never a token from the
+    ``meaning`` / ``definition`` prose. This is the tight grounding gate 4 trusts."""
+    from apollo.provisioning.promotion_lint import _declared_symbols
+
+    graph = copy.deepcopy(_bernoulli_graph())
+    vm = _step(graph, "incompressibility")
+    vm["entry_type"] = "variable_mapping"
+    vm["content"] = {"term": "bulk modulus", "symbol": "kappa", "meaning": "stiffness K zzz"}
+    declared = _declared_symbols(Problem.model_validate(graph))
+    assert "kappa" in declared  # structured content['symbol']
+    assert "bulk modulus" in declared  # structured content['term']
+    assert "K" not in declared  # prose token NOT harvested (the Finding-2 fix)
+    assert "zzz" not in declared  # prose token NOT harvested
+
+
+def test_defined_symbols_still_carries_prose_for_the_table_less_path():
+    """The lenient prose path is RETAINED (constrained to the table-less branch via
+    ``_internal_grounded_symbols``): ``_defined_symbols`` = structured declared PLUS
+    the prose tokens. Pinned so the split (structured for seeded, prose for
+    table-less) does not silently collapse."""
+    from apollo.provisioning.promotion_lint import _declared_symbols, _defined_symbols
+
+    graph = copy.deepcopy(_bernoulli_graph())
+    vm = _step(graph, "incompressibility")
+    vm["entry_type"] = "variable_mapping"
+    vm["content"] = {"term": "bulk modulus", "symbol": "kappa", "meaning": "stiffness K"}
+    problem = Problem.model_validate(graph)
+    defined = _defined_symbols(problem)
+    assert "K" in defined  # prose token IS present in the lenient set
+    assert _declared_symbols(problem) <= defined  # superset of the structured set
+
+
+def test_gate4_table_less_still_grounds_via_prose_meaning():
+    """The table-less branch still admits a prose-grounded symbol (prose path
+    constrained here, where gate 7 is the real guard). A definition whose ``meaning``
+    names the answer symbol keeps the fresh-concept promotion working — the seeded
+    fix did not over-tighten the table-less path."""
+    from apollo.provisioning.promotion_lint import _internal_grounded_symbols
+
+    graph = copy.deepcopy(_bernoulli_graph())
+    d = _step(graph, "incompressibility")
+    d["entry_type"] = "definition"
+    d["content"] = {"concept": "pressure drop", "meaning": "the change P2 across the pipe"}
+    grounded = _internal_grounded_symbols(Problem.model_validate(graph))
+    assert "P2" in grounded  # answer symbol grounded (also a prose token here)

@@ -26,11 +26,11 @@ from dataclasses import dataclass
 
 from rapidfuzz import fuzz
 from sympy import Symbol, simplify
-from sympy.parsing.sympy_parser import parse_expr
 
+from apollo.errors import MalformedEquationError
 from apollo.ontology.nodes import Node, NodeType
 from apollo.resolution.candidates import Candidate
-from apollo.solver.sympy_exec import _local_dict
+from apollo.solver.sympy_exec import _local_dict, parse_zero_form
 
 # Tier result type: (winning candidate, method, raw 0..1 score) or None.
 TierHit = tuple[Candidate, str, float]
@@ -141,19 +141,24 @@ def _extended_locals(*expressions: str) -> dict:
 
 
 def _zero_form(symbolic: str, local_dict: dict):
-    """Parse 'LHS = RHS' (or a bare expression) to the LHS - RHS zero-form
-    under ``local_dict``. Returns None on any parse failure (a non-parse is a
-    non-match, never a crash)."""
-    s = symbolic.strip()
-    if "=" in s:
-        parts = s.split("=")
-        if len(parts) != 2:
-            return None
-        lhs, rhs = parts
-        s = f"({lhs.strip()}) - ({rhs.strip()})"
+    """Parse 'LHS = RHS', a CHAINED equality ('A = B = C = ...'), or a bare
+    expression to the LHS - RHS zero-form under ``local_dict``. Returns None on any
+    parse failure (a non-parse is a non-match, never a crash).
+
+    SINGLE PARSER (WU-AAS lane B2.2 Finding 1): delegates to the mint-time
+    ``parse_zero_form`` rather than re-implementing the split/parse. This closes a
+    recall gap — the mint now accepts ``^`` exponents and chained equalities and
+    stores those RAW forms in the reference graph, so the resolver MUST parse the
+    identical notations or a minted subject silently fails to match here. The
+    ``MalformedEquationError`` the mint parser raises is swallowed to ``None`` to
+    preserve this tier's non-crash contract (a genuinely malformed reference is a
+    non-match, not an error). ``entry_id`` is a fixed sentinel (unused once the
+    error is discarded). Byte-identical to the old behaviour on every previously
+    parseable form: ``standard_transformations`` is the ``parse_expr`` default, so
+    ``convert_xor`` only changes inputs that literally contain ``^``."""
     try:
-        return parse_expr(s, local_dict=local_dict)
-    except Exception:  # noqa: BLE001 - non-parse is a non-match, not an error
+        return parse_zero_form(symbolic, entry_id="<resolution>", local_dict=local_dict)
+    except MalformedEquationError:
         return None
 
 

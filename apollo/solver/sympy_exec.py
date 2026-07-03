@@ -57,7 +57,12 @@ def _local_dict() -> Dict[str, Any]:
     return d
 
 
-def parse_zero_form(symbolic: str, *, entry_id: str):
+def parse_zero_form(
+    symbolic: str,
+    *,
+    entry_id: str,
+    local_dict: Dict[str, Any] | None = None,
+):
     """Parse a student-taught equation in 'LHS = RHS', a CHAINED equality
     ('A = B = C = ...') or 'LHS - (RHS)' form and return a SymPy expression
     representing LHS - RHS.
@@ -67,12 +72,20 @@ def parse_zero_form(symbolic: str, *, entry_id: str):
         ``symbol = symbolic-formula = numeric-substitution = final-value`` on one
         line. We normalize to the FIRST equality (``A = B``): that is the symbolic
         statement the gates and solver need; the trailing numeric-substitution /
-        unit-bearing tail (e.g. ``= 25.0 m``) is discarded rather than rejected.
-        Dropping the tail can only UNDER-constrain (the safe direction — gate 7
-        catches an under-determined system), never admit a wrong equation.
+        unit-bearing tail (e.g. ``= 25.0 m``) — and any further ``= C = D``
+        segments — are DISCARDED (debug-logged, never raised). Dropping the tail
+        can only UNDER-constrain (the safe direction — gate 7 catches an
+        under-determined system), never admit a wrong equation.
       * ``^`` exponent — normalized to ``Pow`` via ``convert_xor`` (see
         ``_TRANSFORMATIONS``) instead of raising SymPy's XOR type error.
+
+    ``local_dict`` overrides the canonical symbol table (defaults to
+    ``_local_dict()``). This is the SINGLE mint-time parser: the resolution tier
+    (``apollo.resolution.tiers._zero_form``) delegates here with its own extended
+    locals so a minted subject and the runtime grader parse identical notations —
+    there is no second, divergent equation parser (WU-AAS lane B2.2 Finding 1).
     """
+    ld = _local_dict() if local_dict is None else local_dict
     s = symbolic.strip()
     if "=" in s:
         parts = s.split("=")
@@ -92,7 +105,7 @@ def parse_zero_form(symbolic: str, *, entry_id: str):
         s = f"({lhs.strip()}) - ({rhs.strip()})"
 
     try:
-        return parse_expr(s, local_dict=_local_dict(), transformations=_TRANSFORMATIONS)
+        return parse_expr(s, local_dict=ld, transformations=_TRANSFORMATIONS)
     except Exception as exc:  # noqa: BLE001
         raise MalformedEquationError(
             entry_id=entry_id,
