@@ -38,12 +38,16 @@ and reconstruct which node was missing).
 
 from __future__ import annotations
 
+import logging
+
 from apollo.grading.composite import MISC_CONFIDENCE_FLOOR, CompositeWeights, composite_score
 from apollo.graph_compare.findings import Finding, FindingKind
 from apollo.handlers.done_grading import ShadowGradeResult
 from apollo.resolution.candidates import METHOD_CONFIDENCE_CAP
 from apollo.resolution.nli_config import active_nli_model, nli_enabled
 from apollo.resolution.result import ResolutionResult
+
+_LOG = logging.getLogger(__name__)
 
 # The resolution methods that can back a CREDITED ledger entry (spec §1's node
 # ledger "resolution method" enum, widened to the full resolver tier set minus
@@ -338,13 +342,29 @@ def build_llm_artifact(
         _round_like_composite(float(overall_score) / 100.0) if overall_score is not None else 0.0
     )
 
+    # Q2 fix (lane B4/2026-07-02 campaign): the LLM-fallback grader produces
+    # per-node coverage (``per_step``) but NO per-node student utterance —
+    # ``compute_coverage``'s ``per_step`` is a ``{ref_id: "covered"|"missing"}``
+    # map with no surface text, and there is no deterministic node→step→
+    # utterance mapping to recover one without an extra LLM call. So every row
+    # carries ``evidence_span=None`` — the honest "no span available" value,
+    # matching the established ``_missing_ledger_entry`` (MISSING_NODE)
+    # convention: ``None`` = nothing to quote, distinct from a graph-path
+    # ``UNRESOLVED`` utterance's ``""`` (a REAL failed resolution attempt with
+    # an empty surface). NEVER ``""`` here — an empty-string span rendered as a
+    # fake empty quote in the scorecard's "in the student's own words" block
+    # (all 12 F1c packets) and, being non-null, was wrongly excluded from
+    # ``classroom.struggle_signals`` (which keys reference-node 0.0-coverage
+    # rows on ``evidence_span IS NULL``). The key stays PRESENT (value null) so
+    # the S3 fidelity judge's ``.get('evidence_span')`` input shape is
+    # unchanged (value goes ``"" -> null``, key presence untouched).
     node_ledger = [
         {
             "canonical_key": key,
             "status": "credited",
             "method": None,
             "confidence": confidences.get(key),
-            "evidence_span": "",
+            "evidence_span": None,
         }
         for key in covered
     ] + [
@@ -353,10 +373,17 @@ def build_llm_artifact(
             "status": "unresolved",
             "method": None,
             "confidence": confidences.get(key),
-            "evidence_span": "",
+            "evidence_span": None,
         }
         for key in missing
     ]
+
+    _LOG.debug(
+        "build_llm_artifact node_ledger: %d credited, %d unresolved "
+        "(evidence_span=None on the LLM path — no per-node student utterance)",
+        len(covered),
+        len(missing),
+    )
 
     return {
         "grader_used": GRADER_USED_LLM_FALLBACK,

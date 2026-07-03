@@ -82,12 +82,23 @@ def _band_for(composite: float, bands: tuple[tuple[str, float], ...]) -> str:
 
 def _taught_well(node_ledger: list[dict]) -> list[dict]:
     """*Taught well*: credited nodes with the student's own evidence span
-    verbatim (spec §2)."""
-    return [
-        {"key": entry.get("canonical_key"), "evidence_span": entry.get("evidence_span") or ""}
-        for entry in node_ledger
-        if entry.get("status") == "credited"
-    ]
+    verbatim (spec §2). Q2 fix (lane B4): the ``evidence_span`` key is emitted
+    ONLY when a real, non-empty span exists — a credited row with no span
+    (``None`` on the LLM-fallback path, which carries no per-node student
+    utterance; or an edge-case empty ``""``) renders WITHOUT the key rather
+    than as an empty quote. The block's whole purpose is "in the student's own
+    words", so a blank quote is worse than an absent one — the renderer must
+    not fabricate empty student speech."""
+    out: list[dict] = []
+    for entry in node_ledger:
+        if entry.get("status") != "credited":
+            continue
+        item: dict = {"key": entry.get("canonical_key")}
+        span = entry.get("evidence_span")
+        if span:  # non-empty string only; drops both None and ""
+            item["evidence_span"] = span
+        out.append(item)
+    return out
 
 
 def _missing_or_unclear(node_ledger: list[dict]) -> list[dict]:
