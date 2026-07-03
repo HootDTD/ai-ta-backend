@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -97,6 +98,25 @@ def _shadow_for(
         calibration=object(),  # type: ignore[arg-type]
         diagnostic=object(),  # type: ignore[arg-type]
         resolution=resolution,
+    )
+
+
+def _sess_pair() -> tuple[object, SimpleNamespace]:
+    """A minimal ``(attempt, sess)`` pair: ``replay_attempt`` reads
+    ``sess.search_space_id`` / ``sess.concept_id`` to rebuild the closed
+    candidate set (A1 iter3 flag-effective ``unresolved_rate``)."""
+    return (object(), SimpleNamespace(search_space_id=1, concept_id=None))
+
+
+def _candidates_patch():
+    """Patch ``replay.load_problem_candidates`` (the DB-touching candidate-set
+    loader added for the A1-iter3 flag-effective ``unresolved_rate``) with an
+    empty closed set — with no candidate types the selector always falls back
+    to the v1 arithmetic, preserving these tests' original expectations."""
+    return patch.object(
+        replay,
+        "load_problem_candidates",
+        new=AsyncMock(return_value=SimpleNamespace(candidates=())),
     )
 
 
@@ -269,9 +289,8 @@ async def test_replay_attempt_propagates_abstention_reason_from_mocked_sim():
 
     with (
         patch.object(replay, "build_rerun_inputs", new=AsyncMock(return_value=_rerun_inputs())),
-        patch.object(
-            replay, "_load_attempt_and_session", new=AsyncMock(return_value=(object(), object()))
-        ),
+        patch.object(replay, "_load_attempt_and_session", new=AsyncMock(return_value=_sess_pair())),
+        _candidates_patch(),
         patch.object(replay, "run_graph_simulation", new=AsyncMock(return_value=shadow)),
     ):
         outcome = await replay.replay_attempt(db=object(), neo=object(), record=record)
@@ -320,9 +339,8 @@ async def test_replay_attempt_control_persona_credit_leak_flagged():
 
     with (
         patch.object(replay, "build_rerun_inputs", new=AsyncMock(return_value=_rerun_inputs())),
-        patch.object(
-            replay, "_load_attempt_and_session", new=AsyncMock(return_value=(object(), object()))
-        ),
+        patch.object(replay, "_load_attempt_and_session", new=AsyncMock(return_value=_sess_pair())),
+        _candidates_patch(),
         patch.object(replay, "run_graph_simulation", new=AsyncMock(return_value=shadow)),
     ):
         outcome = await replay.replay_attempt(db=object(), neo=object(), record=record)
@@ -373,9 +391,8 @@ async def test_replay_attempt_control_persona_credit_subset_is_not_a_leak():
 
     with (
         patch.object(replay, "build_rerun_inputs", new=AsyncMock(return_value=_rerun_inputs())),
-        patch.object(
-            replay, "_load_attempt_and_session", new=AsyncMock(return_value=(object(), object()))
-        ),
+        patch.object(replay, "_load_attempt_and_session", new=AsyncMock(return_value=_sess_pair())),
+        _candidates_patch(),
         patch.object(replay, "run_graph_simulation", new=AsyncMock(return_value=shadow)),
     ):
         outcome = await replay.replay_attempt(db=object(), neo=object(), record=record)
@@ -417,9 +434,8 @@ async def test_replay_attempt_non_control_credit_is_not_a_leak():
 
     with (
         patch.object(replay, "build_rerun_inputs", new=AsyncMock(return_value=_rerun_inputs())),
-        patch.object(
-            replay, "_load_attempt_and_session", new=AsyncMock(return_value=(object(), object()))
-        ),
+        patch.object(replay, "_load_attempt_and_session", new=AsyncMock(return_value=_sess_pair())),
+        _candidates_patch(),
         patch.object(replay, "run_graph_simulation", new=AsyncMock(return_value=shadow)),
     ):
         outcome = await replay.replay_attempt(db=object(), neo=object(), record=record)
@@ -566,9 +582,8 @@ async def test_run_replay_end_to_end_over_fixture():
     )
 
     with (
-        patch.object(
-            replay, "_load_attempt_and_session", new=AsyncMock(return_value=(object(), object()))
-        ),
+        patch.object(replay, "_load_attempt_and_session", new=AsyncMock(return_value=_sess_pair())),
+        _candidates_patch(),
         patch.object(replay, "build_rerun_inputs", new=AsyncMock(return_value=_rerun_inputs())),
         patch.object(replay, "run_graph_simulation", new=AsyncMock(return_value=shadow)),
     ):

@@ -49,13 +49,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from apollo.clarification.candidate_assembly import load_problem_candidates
 from apollo.errors import (
     LearnerUpdateUnreconstructableError,
     ResolutionInvalidOutputError,
     ResolutionUnavailableError,
     TranscriptAuditUnavailableError,
 )
-from apollo.grading.abstention import unresolved_rate_of
+from apollo.grading.abstention import unresolved_rate_for_abstention
 from apollo.grading.artifact_build import build_graph_artifact
 from apollo.grading.composite import load_weights
 from apollo.graph_compare.validator import (
@@ -242,6 +243,29 @@ async def replay_attempt(
         clarification_trace=[],
         latency_ms=None,
     )
+    # A1 iter3 (G1 combo): record the FLAG-EFFECTIVE unresolved_rate — the same
+    # value the abstention gate consumed (``build_audited_grade`` threads
+    # ``node_type_by_id`` + ``candidate_types`` into the flag-gated selector).
+    # With APOLLO_ABSTENTION_DENOM_V2 off this is byte-identical to the old
+    # ``unresolved_rate_of(shadow.resolution)`` (v1) the harness used to record;
+    # with the flag on it reflects the structural (v2) denominator, so an
+    # offline floor sweep over the replay JSON reasons about the same number
+    # the gate did. Candidate set rebuilt via the SAME single recipe the Done
+    # path uses (``load_problem_candidates`` -> byte-identical closed set).
+    candidate_inputs = await load_problem_candidates(
+        db,
+        search_space_id=int(sess.search_space_id),
+        concept_id=sess.concept_id,  # type: ignore[arg-type]  # nullable col, bound at grade time
+        problem_payload=inputs.problem_payload,
+    )
+    node_type_by_id = {n.node_id: n.node_type for n in inputs.student_graph.nodes}
+    candidate_types = frozenset(c.node_type for c in candidate_inputs.candidates)
+    effective_unresolved_rate = unresolved_rate_for_abstention(
+        shadow.resolution,
+        node_type_by_id=node_type_by_id,
+        candidate_types=candidate_types,
+    )
+
     expected = record.get("expected") or {}
     is_control = persona in CONTROL_PERSONAS
     actual_credited = _ledger_keys(artifact, "credited")
@@ -255,7 +279,7 @@ async def replay_attempt(
         attempt_id=attempt_id,
         persona=persona,
         is_control=is_control,
-        unresolved_rate=unresolved_rate_of(shadow.resolution),
+        unresolved_rate=effective_unresolved_rate,
         abstained=bool(shadow.audited.abstained),
         abstention_reasons=tuple(shadow.audited.abstention_reasons),
         graph_composite=float(artifact["scores"]["composite"]),
@@ -342,6 +366,7 @@ def summarize(results: Sequence[ReplayOutcome | ReplayError]) -> ReplayMetrics:
             "persona": o.persona,
             "is_control": o.is_control,
             "abstained": o.abstained,
+            "unresolved_rate": o.unresolved_rate,
             "expected_credited": list(o.expected_credited),
             "actual_credited": list(o.actual_credited),
             "expected_unresolved": list(o.expected_unresolved),
