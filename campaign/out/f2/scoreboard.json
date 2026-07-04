@@ -1,0 +1,308 @@
+{
+  "config_sha": "11197bb69d8ae7f5559d27ad5b251fce83d19eec9263e570a5a39e2a88cbb386",
+  "evidence": {
+    "config_snapshot": {
+      "abstention_thresholds": {
+        "min_normalization_confidence": 0.85,
+        "min_parser_confidence": 0.6,
+        "misconception_confidence": 0.8,
+        "unresolved_rate": 0.35
+      },
+      "axis_weights": {
+        "justification": 0.2375,
+        "misconception_corrected": 0.05,
+        "procedure": 0.57,
+        "simplification": 0.1425
+      },
+      "flags": {
+        "APOLLO_AUTOPROVISION_ENABLED": true,
+        "APOLLO_CLARIFICATION_ENABLED": true,
+        "APOLLO_DONE_GATE_ENABLED": false,
+        "APOLLO_GRAPH_SIM_LIVE_ENABLED": false,
+        "APOLLO_GRAPH_SIM_SHADOW_ENABLED": true,
+        "APOLLO_LEARNER_DECAY_ENABLED": false,
+        "APOLLO_LEARNER_JANITOR_ENABLED": false,
+        "APOLLO_LEARNER_NEGOTIATION_ENABLED": false,
+        "APOLLO_MISCONCEPTION_ENABLED": false,
+        "APOLLO_NLI_ENABLED": true,
+        "APOLLO_OLM_INVITES_ENABLED": false,
+        "APOLLO_SESSION_PERSONALIZATION_ENABLED": false,
+        "APOLLO_STRUCTURED_SCRAPE": false
+      },
+      "letter_bands": [
+        [
+          97,
+          "A+"
+        ],
+        [
+          90,
+          "A"
+        ],
+        [
+          85,
+          "A-"
+        ],
+        [
+          80,
+          "B+"
+        ],
+        [
+          75,
+          "B"
+        ],
+        [
+          70,
+          "B-"
+        ],
+        [
+          65,
+          "C+"
+        ],
+        [
+          60,
+          "C"
+        ],
+        [
+          50,
+          "D"
+        ],
+        [
+          0,
+          "F"
+        ]
+      ],
+      "nli_model": "cross-encoder/nli-deberta-v3-large",
+      "nli_params": {
+        "ambiguity_margin": 0.1,
+        "max_contradiction": 0.05,
+        "min_entailment": 0.9,
+        "misconception_veto_entailment": 0.98,
+        "top_k": 5
+      }
+    },
+    "graph_graded_by_subject": {
+      "fluid_mechanics": 0.0,
+      "linear_motion": 0.0,
+      "macroeconomics": 0.0
+    },
+    "latency_p95_ms": 15609.0,
+    "n_adjudication_samples": 0,
+    "n_attempts": 38,
+    "stage_totals": {
+      "s1_reference_graph": {
+        "pass_rate": 0.825,
+        "passed": 165,
+        "total": 200
+      },
+      "s2_ingestion": {
+        "pass_rate": 0.75,
+        "passed": 3,
+        "total": 4
+      },
+      "s3_student_fidelity": {
+        "pass_rate": 0.6389324960753532,
+        "passed": 407,
+        "total": 637
+      },
+      "s4_apollo_coherence": {
+        "pass_rate": 0.4117647058823529,
+        "passed": 14,
+        "total": 34
+      },
+      "s5_misconceptions": {
+        "pass_rate": 0.0,
+        "passed": 0,
+        "total": 1
+      }
+    }
+  },
+  "gates": [
+    {
+      "bar": 0.95,
+      "detail": "s1_reference_graph: 165/200 = 82.5% (bar 95%)",
+      "name": "s1_reference_graph",
+      "passed": false,
+      "value": 0.825
+    },
+    {
+      "bar": 0.95,
+      "detail": "s2_ingestion: 3/4 = 75.0% (bar 95%)",
+      "name": "s2_ingestion",
+      "passed": false,
+      "value": 0.75
+    },
+    {
+      "bar": 0.95,
+      "detail": "s3_student_fidelity: 407/637 = 63.9% (bar 95%)",
+      "name": "s3_student_fidelity",
+      "passed": false,
+      "value": 0.6389324960753532
+    },
+    {
+      "bar": 0.9,
+      "detail": "s4_apollo_coherence: 14/34 = 41.2% (bar 90%)",
+      "name": "s4_apollo_coherence",
+      "passed": false,
+      "value": 0.4117647058823529
+    },
+    {
+      "bar": 0.9,
+      "detail": "s5_misconceptions: 0/1 = 0.0% (bar 90%)",
+      "name": "s5_misconceptions",
+      "passed": false,
+      "value": 0.0
+    },
+    {
+      "bar": 0.95,
+      "detail": "adjudication: 0 packets sampled \u2014 treated as failing",
+      "name": "adjudication",
+      "passed": false,
+      "value": 0.0
+    },
+    {
+      "bar": 0.7,
+      "detail": "fluid_mechanics: 0.0% graph-graded (0/16, bar 70%)",
+      "name": "graph_graded:fluid_mechanics",
+      "passed": false,
+      "value": 0.0
+    },
+    {
+      "bar": 0.7,
+      "detail": "linear_motion: 0.0% graph-graded (0/4, bar 70%)",
+      "name": "graph_graded:linear_motion",
+      "passed": false,
+      "value": 0.0
+    },
+    {
+      "bar": 0.7,
+      "detail": "macroeconomics: 0.0% graph-graded (0/18, bar 70%)",
+      "name": "graph_graded:macroeconomics",
+      "passed": false,
+      "value": 0.0
+    },
+    {
+      "bar": 15000,
+      "detail": "ops: p95=15609ms (bar <= 15000ms), 0 event-loop-stall warning(s)",
+      "name": "ops",
+      "passed": false,
+      "value": 15609.0
+    },
+    {
+      "bar": 4.0,
+      "detail": "breadth: 3 subjects (bar >= 4), wu_aas=yes, held_out=no",
+      "name": "breadth",
+      "passed": false,
+      "value": 3.0
+    }
+  ],
+  "paired": {
+    "band_agreement_rate": 0.11764705882352941,
+    "mean_delta": -0.49692226470588235,
+    "n_pairs": 34,
+    "skipped_missing_pair": 4,
+    "top_divergent": [
+      {
+        "attempt_id": 40,
+        "band_agreement": false,
+        "delta": -0.95,
+        "graph_band": "Beginning",
+        "graph_composite": 0.0,
+        "llm_band": "Strong",
+        "llm_composite": 0.95,
+        "subject": "macroeconomics"
+      },
+      {
+        "attempt_id": 1,
+        "band_agreement": false,
+        "delta": -0.93,
+        "graph_band": "Beginning",
+        "graph_composite": 0.0,
+        "llm_band": "Strong",
+        "llm_composite": 0.93,
+        "subject": "fluid_mechanics"
+      },
+      {
+        "attempt_id": 45,
+        "band_agreement": false,
+        "delta": -0.7999999999999999,
+        "graph_band": "Beginning",
+        "graph_composite": 0.15,
+        "llm_band": "Strong",
+        "llm_composite": 0.95,
+        "subject": "macroeconomics"
+      },
+      {
+        "attempt_id": 48,
+        "band_agreement": false,
+        "delta": -0.76,
+        "graph_band": "Beginning",
+        "graph_composite": 0.24,
+        "llm_band": "Strong",
+        "llm_composite": 1.0,
+        "subject": "macroeconomics"
+      },
+      {
+        "attempt_id": 36,
+        "band_agreement": false,
+        "delta": -0.75,
+        "graph_band": "Beginning",
+        "graph_composite": 0.15,
+        "llm_band": "Strong",
+        "llm_composite": 0.9,
+        "subject": "macroeconomics"
+      },
+      {
+        "attempt_id": 42,
+        "band_agreement": false,
+        "delta": -0.73,
+        "graph_band": "Beginning",
+        "graph_composite": 0.2,
+        "llm_band": "Strong",
+        "llm_composite": 0.93,
+        "subject": "macroeconomics"
+      },
+      {
+        "attempt_id": 15,
+        "band_agreement": false,
+        "delta": -0.72,
+        "graph_band": "Beginning",
+        "graph_composite": 0.24,
+        "llm_band": "Strong",
+        "llm_composite": 0.96,
+        "subject": "fluid_mechanics"
+      },
+      {
+        "attempt_id": 34,
+        "band_agreement": false,
+        "delta": -0.71,
+        "graph_band": "Beginning",
+        "graph_composite": 0.24,
+        "llm_band": "Strong",
+        "llm_composite": 0.95,
+        "subject": "macroeconomics"
+      },
+      {
+        "attempt_id": 43,
+        "band_agreement": false,
+        "delta": -0.71,
+        "graph_band": "Beginning",
+        "graph_composite": 0.24,
+        "llm_band": "Strong",
+        "llm_composite": 0.95,
+        "subject": "macroeconomics"
+      },
+      {
+        "attempt_id": 25,
+        "band_agreement": false,
+        "delta": -0.7,
+        "graph_band": "Beginning",
+        "graph_composite": 0.3,
+        "llm_band": "Strong",
+        "llm_composite": 1.0,
+        "subject": "fluid_mechanics"
+      }
+    ]
+  },
+  "passed": false,
+  "run_id": "f2"
+}
