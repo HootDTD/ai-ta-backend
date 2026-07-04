@@ -225,6 +225,27 @@ async def _entities_concept_map(
     }
 
 
+async def load_concept_entities(db: AsyncSession, *, concept_id: int) -> list[KGEntity]:
+    """Load THIS concept's already-PERSISTED ``apollo_kg_entities`` rows (ascending
+    ``id`` — first-writer-wins order), for the cross-mint deterministic content-
+    equality pre-match (G4.3, cross-UPLOAD half). ``concept_id`` uniquely belongs to
+    one subject / search space, so the concept filter alone reproduces
+    ``resolve_candidate``'s course+concept dedup pool scope. Returns FULL rows so the
+    caller can recompute each entity's ``_equivalence_signature`` (needs
+    ``kind``/``display_name``/``payload``) — no embedding, no similarity."""
+    return list(
+        (
+            await db.execute(
+                select(KGEntity)
+                .where(KGEntity.concept_id == concept_id)
+                .order_by(KGEntity.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
 async def load_concept_prereq_adjacency(
     db: AsyncSession, *, concept_id: int, entity_ids: Iterable[int]
 ) -> dict[int, set[int]]:

@@ -162,25 +162,44 @@ def test_s1_structural_defect_precedes_cycle():
         {"edge_type": "PRECEDES", "from_node_id": "b", "to_node_id": "a"},
     ]
     defects = find_structural_defects(nodes, edges)
-    assert any(d.item_id == "structure:cycle" for d in defects)
+    assert any(d.item_id == "structure:cycle:PRECEDES" for d in defects)
+
+
+def test_s1_structural_defect_depends_on_cycle():
+    # Regression for cross-review finding #2: after the DEPENDS_ON relabel,
+    # prereq edges are DEPENDS_ON-typed, not PRECEDES -- the cycle guard must
+    # catch cycles in THAT edge type too (mirrors production's
+    # promotion_lint._gate_3, which enforces DEPENDS_ON acyclicity).
+    nodes = [{"node_id": "a"}, {"node_id": "b"}]
+    edges = [
+        {"edge_type": "DEPENDS_ON", "from_node_id": "a", "to_node_id": "b"},
+        {"edge_type": "DEPENDS_ON", "from_node_id": "b", "to_node_id": "a"},
+    ]
+    defects = find_structural_defects(nodes, edges)
+    assert any(d.item_id == "structure:cycle:DEPENDS_ON" for d in defects)
+    assert not any(not d.ok and d.item_id.startswith("structure:cycle:PRECEDES") for d in defects)
 
 
 def test_s1_no_structural_defects_on_a_dag():
     nodes = [{"node_id": "a"}, {"node_id": "b"}, {"node_id": "c"}]
     edges = [
         {"edge_type": "PRECEDES", "from_node_id": "a", "to_node_id": "b"},
-        {"edge_type": "PRECEDES", "from_node_id": "b", "to_node_id": "c"},
+        {"edge_type": "DEPENDS_ON", "from_node_id": "b", "to_node_id": "c"},
     ]
     assert find_structural_defects(nodes, edges) == []
 
 
-def test_s1_structural_defects_ignore_edges_referencing_unknown_nodes():
-    nodes = [{"node_id": "a"}, {"node_id": "b"}]
+def test_s1_structural_defect_dangling_endpoint():
+    # Regression for cross-review finding #3: an edge whose source or target
+    # id is absent from the node set (dangling / cross-problem wiring, e.g.
+    # the f1c ``varmap.vm3 -> eq.eq4`` case) must be flagged, not silently
+    # skipped.
+    nodes = [{"node_id": "varmap.vm3"}]
     edges = [
-        {"edge_type": "PRECEDES", "from_node_id": "a", "to_node_id": "ghost"},
-        {"edge_type": "PRECEDES", "from_node_id": "a", "to_node_id": "b"},
+        {"edge_type": "PRECEDES", "from_node_id": "varmap.vm3", "to_node_id": "eq.eq4"},
     ]
-    assert find_structural_defects(nodes, edges) == []
+    defects = find_structural_defects(nodes, edges)
+    assert any(not d.ok and d.item_id == "structure:dangling:varmap.vm3->eq.eq4" for d in defects)
 
 
 def test_s1_judge_includes_structural_verdict_without_llm_call():
@@ -214,6 +233,144 @@ def test_s1_user_prompt_only_carries_subject_scoped_fields():
     node_item = next(i for i in items if i["kind"] == "node")
     prompt = json.loads(judge.user_prompt(node_item))
     assert set(prompt.keys()) == {"kind", "problem", "entity"}
+
+
+def test_s1_system_prompt_states_multi_problem_scope():
+    # Adjudication J-SCOPE fix: a node must not be rejected merely because
+    # ONE of the subject's problems doesn't use it -- the reference graph
+    # spans every problem in the subject.
+    judge = S1ReferenceGraphJudge(llm=FakeLLM())
+    prompt = judge.system_prompt
+    assert "spans ALL of the subject's problems" in prompt
+    assert "do NOT reject a node merely because one particular problem" in prompt
+
+
+def test_s1_system_prompt_frames_concept_edges_as_dependency_not_temporal():
+    # Adjudication J-EDGE-TEMPORAL fix: concept->concept edges are
+    # prerequisite/DEPENDS_ON relations, not a PRECEDES-style temporal claim.
+    judge = S1ReferenceGraphJudge(llm=FakeLLM())
+    prompt = judge.system_prompt
+    assert "prerequisite/dependency relation" in prompt
+    assert "do NOT judge temporal/derivation ordering" in prompt
+    assert "do NOT flag it as 'reversed'" in prompt
+
+
+# --- S1 behavioral regressions (cross-review findings #1-#4; FakeLLM-driven,
+# not substring-matching the prompt -- see
+# docs/_archive/experiments/2026-07-03-s1-judge-adjudication.md for the
+# adjudication tallies these regression classes are drawn from) ----------
+
+
+def _s1_multi_problem_subject():
+    """A subject whose graph spans TWO problems -- the multi-problem scope
+    the judge must honor (finding #1 keeps this reframe)."""
+    return {
+        "subject": "linear_motion",
+        "problem": {
+            "problems": [
+                {"id": "p1", "statement": "A car accelerates from rest..."},
+                {"id": "p2", "statement": "A ball is thrown upward..."},
+            ]
+        },
+        "nodes": [
+            {"node_id": "eq.kinematics", "node_type": "equation"},
+            # Domain-plausible-sounding but never used in EITHER problem --
+            # the exact hallucination class from f1c (proc.proc3/proc4,
+            # varmap.vm4/var4, def.def_velocity, varmap.map_velocity).
+            {"node_id": "concept.relativistic_correction", "node_type": "concept"},
+        ],
+        "edges": [
+            # A genuine prerequisite dependency: kinematics depends on the
+            # constant-acceleration assumption, not a temporal-sequence claim.
+            {
+                "edge_type": "DEPENDS_ON",
+                "from_node_id": "eq.kinematics",
+                "to_node_id": "concept.constant_acceleration",
+            },
+        ],
+    }
+
+
+def test_s1_hallucinated_node_absent_from_all_problems_fails():
+    # (a) A domain-plausible node grounded in NEITHER provided problem must
+    # be judged a hallucination -- the plausibility clause cross-review
+    # flagged (finding #1) must not let this pass.
+    llm = FakeLLM(
+        default_ok=True,
+        overrides={"concept.relativistic_correction": {"ok": False, "reason": "not grounded"}},
+    )
+    judge = S1ReferenceGraphJudge(llm=llm)
+    result = run(judge.judge([_s1_multi_problem_subject()]))
+    hallucinated = [
+        v
+        for v in result.verdicts
+        if v.item_id == "linear_motion:node:concept.relativistic_correction"
+    ]
+    assert len(hallucinated) == 1
+    assert not hallucinated[0].ok
+
+
+def test_s1_genuine_prerequisite_edge_passes_not_misjudged_as_temporal():
+    # (b) A real DEPENDS_ON prerequisite must PASS -- not be misjudged as a
+    # "reversed"/temporal PRECEDES claim (finding #1's edge-semantics reframe).
+    llm = FakeLLM(
+        default_ok=False,
+        overrides={"concept.constant_acceleration": {"ok": True, "reason": "true dependency"}},
+    )
+    judge = S1ReferenceGraphJudge(llm=llm)
+    result = run(judge.judge([_s1_multi_problem_subject()]))
+    edge_verdict = [
+        v
+        for v in result.verdicts
+        if v.item_id == "linear_motion:edge:DEPENDS_ON:eq.kinematics->concept.constant_acceleration"
+    ]
+    assert len(edge_verdict) == 1
+    assert edge_verdict[0].ok
+
+
+def test_s1_depends_on_cycle_caught_by_structural_check_not_llm():
+    # (c) covers finding #2: a DEPENDS_ON-typed cycle must be caught
+    # deterministically, never left to the (noisy) LLM.
+    subject = {
+        "subject": "macroeconomics",
+        "problem": {"problems": [{"id": "p1", "statement": "..."}]},
+        "nodes": [{"node_id": "a"}, {"node_id": "b"}],
+        "edges": [
+            {"edge_type": "DEPENDS_ON", "from_node_id": "a", "to_node_id": "b"},
+            {"edge_type": "DEPENDS_ON", "from_node_id": "b", "to_node_id": "a"},
+        ],
+    }
+    llm = FakeLLM(default_ok=True)  # if this were asked, it would wrongly pass
+    judge = S1ReferenceGraphJudge(llm=llm)
+    result = run(judge.judge([subject]))
+    cycle_verdicts = [
+        v for v in result.verdicts if v.item_id.endswith(":structure:cycle:DEPENDS_ON")
+    ]
+    assert len(cycle_verdicts) == 1
+    assert not cycle_verdicts[0].ok
+    for call in llm.calls:
+        assert "cycle" not in call["user_prompt"]
+
+
+def test_s1_dangling_endpoint_caught_by_structural_check_not_llm():
+    # (d) covers finding #3: an edge with an endpoint absent from the node
+    # set (e.g. f1c's varmap.vm3 -> eq.eq4) must be flagged deterministically.
+    subject = {
+        "subject": "linear_motion",
+        "problem": {"problems": [{"id": "p1", "statement": "..."}]},
+        "nodes": [{"node_id": "varmap.vm3"}],
+        "edges": [
+            {"edge_type": "PRECEDES", "from_node_id": "varmap.vm3", "to_node_id": "eq.eq4"},
+        ],
+    }
+    llm = FakeLLM(default_ok=True)
+    judge = S1ReferenceGraphJudge(llm=llm)
+    result = run(judge.judge([subject]))
+    dangling_verdicts = [
+        v for v in result.verdicts if "structure:dangling:varmap.vm3->eq.eq4" in v.item_id
+    ]
+    assert len(dangling_verdicts) == 1
+    assert not dangling_verdicts[0].ok
 
 
 # --- S2 ingestion ----------------------------------------------------------

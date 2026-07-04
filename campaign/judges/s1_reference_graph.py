@@ -2,12 +2,18 @@
 
 Item = one provisioned subject's minted reference graph (nodes+edges dumped
 from Postgres entities + the subject's `problems/problem_*.json`). Checks:
-nodes are real concept steps, PRECEDES/USES edges are true, nothing
-missing/duplicated/cyclic. The cycle/duplicate check is CODE (deterministic —
-mirrors ``KGGraph.topological_order``'s Kahn's-algorithm shape), not an LLM
+nodes are real concept steps grounded in at least one provided
+problem/solution, PRECEDES/DEPENDS_ON/USES edges are true, nothing
+missing/duplicated/cyclic/dangling. The duplicate/cycle/dangling-endpoint
+checks are CODE (deterministic — cycle detection mirrors
+``KGGraph.topological_order``'s Kahn's-algorithm shape, run over BOTH
+PRECEDES and DEPENDS_ON edges, matching production's
+``promotion_lint._gate_3`` DEPENDS_ON-acyclicity enforcement), not an LLM
 call, per the plan ("cycle check is CODE ... not the LLM"); everything else
 (is this node a real step, is this edge true) is the LLM's job because it
-requires reading the source material.
+requires reading the source material. See
+``docs/_archive/experiments/2026-07-03-s1-judge-adjudication.md`` for the
+adjudication evidence behind the prompt/harness calibration.
 
 Gate (E3): >=95% item-level correct.
 """
@@ -25,44 +31,48 @@ __all__ = ["S1ReferenceGraphJudge", "find_structural_defects"]
 
 _SYSTEM_PROMPT = (
     "You are auditing a minted knowledge-graph reference solution against its "
-    "source problem. You see ONLY the subject's problem statement, the "
+    "source subject. You see ONLY the subject's problem statement(s), the "
     "authored reference solution, and ONE node or edge from the minted graph "
-    "— never the full pipeline. For a NODE: is it a real, correct step of "
-    "the solution (not hallucinated, not a duplicate/paraphrase of another "
-    "step, not off-topic)? For an EDGE: is the claimed PRECEDES/USES "
-    "relationship actually true given the two endpoints? Answer strictly "
-    "from the given material."
+    "— never the full pipeline. The graph spans ALL of the subject's "
+    "problems (provided as a list). A node is VALID ONLY if it corresponds "
+    "to a step or concept ACTUALLY USED in at least one of the provided "
+    "problems or solutions — do NOT reject a node merely because one "
+    "particular problem does not use it, but do NOT pass a node just "
+    "because it sounds plausible or is a standard concept for this domain. "
+    "A node that is not grounded in any provided problem/solution is a "
+    "hallucination and MUST fail, even if it is a real, correct concept in "
+    "the general domain — plausibility is not grounding. Also reject exact "
+    "duplicates/paraphrases of another node. For an EDGE: a concept->concept "
+    "edge encodes a prerequisite/dependency relation (the FROM concept "
+    "depends on / is built from the TO concept) — judge whether that "
+    "dependency is TRUE; do NOT judge temporal/derivation ordering, and do "
+    "NOT flag it as 'reversed' for encoding a dependency rather than a "
+    "sequence. A PRECEDES edge between two procedure steps IS a "
+    "temporal-order claim and should be judged as such. A USES edge is a "
+    "real reference/build-on relationship. Answer from the given material — "
+    "do not invent grounding from general domain knowledge that isn't "
+    "actually present in the provided problems/solutions."
 )
 
 
-def find_structural_defects(
-    nodes: list[Mapping[str, Any]], edges: list[Mapping[str, Any]]
-) -> list[Verdict]:
-    """Deterministic structural checks: duplicate node ids and PRECEDES
-    cycles. Returns one :class:`Verdict` per defect found (empty if the graph
-    is structurally sound). Cycle detection reuses Kahn's-algorithm (the same
-    shape as ``KGGraph.topological_order``) restricted to PRECEDES edges."""
-    verdicts: list[Verdict] = []
+_CYCLE_CHECKED_EDGE_TYPES = ("PRECEDES", "DEPENDS_ON")
 
-    seen: dict[str, int] = {}
-    for node in nodes:
-        node_id = str(node.get("node_id", ""))
-        seen[node_id] = seen.get(node_id, 0) + 1
-    for node_id, count in seen.items():
-        if count > 1:
-            verdicts.append(
-                Verdict(
-                    item_id=f"structure:duplicate:{node_id}",
-                    ok=False,
-                    reason=f"node_id {node_id!r} appears {count} times",
-                )
-            )
 
-    node_ids = set(seen.keys())
-    precedes = [e for e in edges if e.get("edge_type") == "PRECEDES"]
+def _cycle_defect(
+    node_ids: set[str], edges: list[Mapping[str, Any]], edge_type: str
+) -> Verdict | None:
+    """Kahn's-algorithm cycle check (the same shape as
+    ``KGGraph.topological_order``) restricted to ``edge_type`` edges. Mirrors
+    production's ``promotion_lint._gate_3`` (which enforces DEPENDS_ON
+    acyclicity via ``KGGraph.topological_order(EdgeType.DEPENDS_ON)``) —
+    unlike ``_gate_3``, this also checks PRECEDES since procedure-step
+    sequencing can independently cycle. Dangling-endpoint edges (endpoint not
+    in ``node_ids``) are excluded here; they are reported separately by
+    :func:`find_structural_defects` as their own defect class."""
+    subset = [e for e in edges if e.get("edge_type") == edge_type]
     in_degree: dict[str, int] = {nid: 0 for nid in node_ids}
     adj: dict[str, list[str]] = defaultdict(list)
-    for edge in precedes:
+    for edge in subset:
         src, dst = str(edge.get("from_node_id")), str(edge.get("to_node_id"))
         if src not in node_ids or dst not in node_ids:
             continue
@@ -80,16 +90,59 @@ def find_structural_defects(
                 queue.append(nxt)
 
     if node_ids and ordered != len(node_ids):
-        verdicts.append(
-            Verdict(
-                item_id="structure:cycle",
-                ok=False,
-                reason=(
-                    f"PRECEDES subgraph has a cycle: only {ordered}/{len(node_ids)} "
-                    "nodes are topologically orderable"
-                ),
-            )
+        return Verdict(
+            item_id=f"structure:cycle:{edge_type}",
+            ok=False,
+            reason=(
+                f"{edge_type} subgraph has a cycle: only {ordered}/{len(node_ids)} "
+                "nodes are topologically orderable"
+            ),
         )
+    return None
+
+
+def find_structural_defects(
+    nodes: list[Mapping[str, Any]], edges: list[Mapping[str, Any]]
+) -> list[Verdict]:
+    """Deterministic structural checks: duplicate node ids, PRECEDES/DEPENDS_ON
+    cycles, and dangling edge endpoints. Returns one :class:`Verdict` per
+    defect found (empty if the graph is structurally sound)."""
+    verdicts: list[Verdict] = []
+
+    seen: dict[str, int] = {}
+    for node in nodes:
+        node_id = str(node.get("node_id", ""))
+        seen[node_id] = seen.get(node_id, 0) + 1
+    for node_id, count in seen.items():
+        if count > 1:
+            verdicts.append(
+                Verdict(
+                    item_id=f"structure:duplicate:{node_id}",
+                    ok=False,
+                    reason=f"node_id {node_id!r} appears {count} times",
+                )
+            )
+
+    node_ids = set(seen.keys())
+
+    for edge_type in _CYCLE_CHECKED_EDGE_TYPES:
+        defect = _cycle_defect(node_ids, edges, edge_type)
+        if defect is not None:
+            verdicts.append(defect)
+
+    for edge in edges:
+        src, dst = str(edge.get("from_node_id")), str(edge.get("to_node_id"))
+        if src not in node_ids or dst not in node_ids:
+            verdicts.append(
+                Verdict(
+                    item_id=f"structure:dangling:{src}->{dst}",
+                    ok=False,
+                    reason=(
+                        f"edge {src}->{dst} references an endpoint not present in "
+                        "the node set (dangling or cross-problem-wiring edge)"
+                    ),
+                )
+            )
 
     return verdicts
 
