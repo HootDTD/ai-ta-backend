@@ -100,18 +100,15 @@ def main() -> None:
                     reason_hist[str(r)] += 1
             actual_credited = ledger_keys(gp, "credited")
             if exp_credited:
-                credited_frac.append(
-                    len(actual_credited & exp_credited) / len(exp_credited)
-                )
+                credited_frac.append(len(actual_credited & exp_credited) / len(exp_credited))
             asserted = {
-                m.get("key") or m.get("canonical_key")
-                for m in gp.get("misconceptions", [])
+                m.get("key") or m.get("canonical_key") for m in gp.get("misconceptions", [])
             }
             if asserted & exp_misc:
                 misc_detected += 1
-            if (gp.get("clarification_trace") or (a.get("artifact_canonical") or {}).get(
+            if gp.get("clarification_trace") or (a.get("artifact_canonical") or {}).get(
                 "clarification_trace"
-            )):
+            ):
                 clar_traces += 1
             if cls in CONTROL_PERSONAS and (actual_credited - exp_credited):
                 leak_attempts.append(
@@ -129,9 +126,7 @@ def main() -> None:
             "graph_rows": graded,
             "abstained": abstained,
             "abstention_rate": round(abstained / graded, 3) if graded else None,
-            "mean_expected_credit_recall": round(
-                statistics.mean(credited_frac), 3
-            )
+            "mean_expected_credit_recall": round(statistics.mean(credited_frac), 3)
             if credited_frac
             else None,
             "attempts_with_expected_misc_detected": misc_detected,
