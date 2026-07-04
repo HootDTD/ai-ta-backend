@@ -19,7 +19,9 @@ class _Spec:
 
 
 class _Entry:
-    code = "misc.density_ignored"
+    # DB `code` column is UNPREFIXED (the seeder strips `misc.`; PR #94):
+    # candidate assembly emits the key as f"misc.{code}".
+    code = "density_ignored"
     trigger_phrases = ["density doesn't matter"]
     description = "Student ignored density"
 
