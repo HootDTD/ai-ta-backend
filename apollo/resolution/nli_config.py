@@ -17,6 +17,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from config.settings import apollo_nli_misc_positive_certify
+
 NLI_ENABLED_FLAG: str = "APOLLO_NLI_ENABLED"
 NLI_MODEL_ENV: str = "APOLLO_NLI_MODEL"
 NLI_DEVICE: str = "cpu"
@@ -66,6 +68,12 @@ class NLIParams:
     max_contradiction: float = 0.10
     ambiguity_margin: float = 0.10  # top-2 entailment separation (NOT a per-candidate gate)
     misconception_veto_entailment: float = 0.80
+    # DEFAULT-OFF (``APOLLO_NLI_MISC_POSITIVE_CERTIFY`` via config.settings):
+    # when True, an entailment >= misconception_veto_entailment POSITIVELY
+    # resolves the node to the ``misc.*`` candidate (same ScoredMatch shape the
+    # reference certify emits) instead of only vetoing; reference credit stays
+    # blocked either way. False keeps the veto-only behavior byte-identical.
+    misc_positive_certify: bool = False
 
 
 # Per-model tuned defaults (2026-07-01 threshold tuning). Precision-first: each
@@ -118,4 +126,7 @@ def load_nli_params() -> NLIParams:
         misconception_veto_entailment=_env_float(
             "APOLLO_NLI_MISC_VETO_ENT", base.misconception_veto_entailment
         ),
+        # Flag, not a threshold: read via config.settings (the canonical
+        # APOLLO_NLI_MISC_POSITIVE_CERTIFY reader), default False.
+        misc_positive_certify=apollo_nli_misc_positive_certify(),
     )

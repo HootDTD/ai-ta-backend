@@ -41,6 +41,14 @@ def match_nli_semantic(
     miscs = tuple(c for c in type_ok if c.is_misconception)
 
     # --- Semantic veto: student voicing a (paraphrased) misconception? ---
+    # Flag OFF (default): VETO-ONLY — reference credit is blocked (return None)
+    # but the node never resolves TO the misconception (control issue #82:
+    # nothing ever certified to a misc.* key, so paraphrased misconceptions
+    # were undetectable). Flag ON (APOLLO_NLI_MISC_POSITIVE_CERTIFY): the same
+    # entailment >= misconception_veto_entailment POSITIVELY resolves the node
+    # to the misc.* candidate, symmetric to the reference certify below (same
+    # ScoredMatch shape, method "nli", cap 0.88). The veto side-effect is
+    # preserved in both states: reference credit is blocked either way.
     for sc in shortlist_semantic_candidates(
         student_node, miscs, top_k=p.top_k, embedder=ctx.embedder, cache=ctx.cache
     ):
@@ -48,6 +56,15 @@ def match_nli_semantic(
             continue
         r = ctx.nli.classify(premise=text, hypothesis=sc.text)
         if r.label == "entailment" and r.entailment >= p.misconception_veto_entailment:
+            if p.misc_positive_certify:
+                _LOG.info(
+                    "nli_misconception_certify key=%s ent=%.3f",
+                    sc.candidate.canonical_key,
+                    r.entailment,
+                )
+                return ScoredMatch(
+                    student_node.node_id, sc.candidate, "nli", METHOD_CONFIDENCE_CAP["nli"]
+                )
             _LOG.info(
                 "nli_misconception_veto key=%s ent=%.3f", sc.candidate.canonical_key, r.entailment
             )

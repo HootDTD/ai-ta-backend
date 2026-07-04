@@ -228,6 +228,113 @@ def test_veto_loop_neutral_misc_fallthrough_ref_resolves(make_def_node):
     assert m is not None and m.candidate.canonical_key == "def.const_dens"
 
 
+# ---------------------------------------------------------------------------
+# Misconception positive-certify (APOLLO_NLI_MISC_POSITIVE_CERTIFY, default OFF)
+# ---------------------------------------------------------------------------
+#
+# Defect (control issue #82): the misconception branch was VETO-ONLY — an
+# utterance entailing a misconception hypothesis >= the veto threshold blocked
+# reference credit and returned None, but never positively RESOLVED to the
+# misc.* candidate. These tests pin the flag-OFF byte-identity AND the flag-ON
+# positive-certify behavior (written red-first against the veto-only branch).
+
+
+def test_flag_on_misconception_entailment_resolves_to_misc(make_def_node):
+    """RED-FIRST: flag ON + misc entailment >= veto threshold -> positive resolve.
+
+    Before the fix this returned None (veto-only); with the flag on the node
+    must resolve TO the misc.* candidate with the same ScoredMatch shape the
+    reference certify emits (method "nli", cap 0.88)."""
+    node = make_def_node("pressure rises as speed rises")
+    ref = _ref("def.tradeoff", "pressure falls as speed rises")
+    misc = _misc("misc.same_dir", "pressure rises as speed rises")
+    fake = FakeNLIAdjudicator(
+        {
+            ("pressure rises as speed rises", "pressure falls as speed rises"): ENT,
+            ("pressure rises as speed rises", "pressure rises as speed rises"): ENT,
+        }
+    )
+    ctx = NLIContext(nli=fake, params=NLIParams(misc_positive_certify=True))
+    m = match_nli_semantic(node, (ref, misc), ctx=ctx)
+    assert m is not None, "flag ON must positively certify the misconception, not just veto"
+    assert m.candidate.canonical_key == "misc.same_dir"
+    assert m.candidate.is_misconception
+    assert m.method == "nli"
+    assert m.score == 0.88  # METHOD_CONFIDENCE_CAP["nli"], same as reference certify
+
+
+def test_flag_off_misconception_entailment_still_vetoes_to_none(make_def_node):
+    """Byte-identity: the EXACT flag-ON scenario with the flag off (explicitly
+    False and via the default) still returns None — the veto-only behavior."""
+    node = make_def_node("pressure rises as speed rises")
+    ref = _ref("def.tradeoff", "pressure falls as speed rises")
+    misc = _misc("misc.same_dir", "pressure rises as speed rises")
+    fake = FakeNLIAdjudicator(
+        {
+            ("pressure rises as speed rises", "pressure falls as speed rises"): ENT,
+            ("pressure rises as speed rises", "pressure rises as speed rises"): ENT,
+        }
+    )
+    for params in (NLIParams(), NLIParams(misc_positive_certify=False)):
+        assert (
+            match_nli_semantic(node, (ref, misc), ctx=NLIContext(nli=fake, params=params)) is None
+        )
+
+
+def test_flag_on_below_veto_threshold_unchanged(make_def_node):
+    """Misc entailment BELOW the veto threshold -> no veto, no certify, in BOTH
+    flag states: the loop falls through and the reference certifies normally."""
+    node = make_def_node("density stays constant throughout")
+    ref = _ref("def.const_density", "density is constant")
+    misc = _misc("misc.const_claim", "density stays constant near walls")
+    below = NLIResult("entailment", 0.75, 0.02, 0.23, "fake")  # < veto 0.80
+    fake = FakeNLIAdjudicator(
+        {
+            ("density stays constant throughout", "density stays constant near walls"): below,
+            ("density stays constant throughout", "density is constant"): ENT,
+        }
+    )
+    for flag in (False, True):
+        m = match_nli_semantic(
+            node,
+            (ref, misc),
+            ctx=NLIContext(nli=fake, params=NLIParams(misc_positive_certify=flag)),
+        )
+        assert m is not None and m.candidate.canonical_key == "def.const_density"
+        assert m.method == "nli"
+
+
+def test_veto_side_effect_reference_credit_blocked_both_flag_states(make_def_node):
+    """A reference that WOULD certify on its own is still never credited when a
+    misconception entails >= the veto threshold — in BOTH flag states. Flag off:
+    None (pure veto). Flag on: the misc.* resolution (never the reference)."""
+    node = make_def_node("density stays constant throughout")
+    ref = _ref("def.const_density", "density is constant")
+    misc = _misc("misc.const_everywhere", "density stays constant throughout")
+    fake = FakeNLIAdjudicator(
+        {
+            ("density stays constant throughout", "density is constant"): ENT,
+            ("density stays constant throughout", "density stays constant throughout"): ENT,
+        }
+    )
+    # Sanity: without the misconception in the candidate set, the ref certifies.
+    alone = match_nli_semantic(
+        node, (ref,), ctx=NLIContext(nli=fake, params=NLIParams(misc_positive_certify=False))
+    )
+    assert alone is not None and alone.candidate.canonical_key == "def.const_density"
+
+    off = match_nli_semantic(
+        node, (ref, misc), ctx=NLIContext(nli=fake, params=NLIParams(misc_positive_certify=False))
+    )
+    assert off is None  # veto-only: reference blocked, nothing resolved
+
+    on = match_nli_semantic(
+        node, (ref, misc), ctx=NLIContext(nli=fake, params=NLIParams(misc_positive_certify=True))
+    )
+    assert on is not None and on.candidate.canonical_key == "misc.const_everywhere"
+    assert on.candidate.canonical_key != "def.const_density"  # reference still blocked
+
+
 def test_content_overlap_floor_blocks_ref(make_def_node):
     """Ref passes polarity but has no content tokens (len>2) in common with student.
 
