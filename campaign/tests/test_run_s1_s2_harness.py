@@ -34,6 +34,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import asyncpg
 import pytest
 
 from campaign.judges.base import JudgeResult, Verdict
@@ -229,6 +230,12 @@ def test_run_writes_s1_and_skips_s2_when_no_fixtures(
     )
     monkeypatch.setattr(canonical_script, "S1ReferenceGraphJudge", _FakeJudge(s1_result))
 
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("page-evidence/run-id fetch must not run when there are no fixtures")
+
+    monkeypatch.setattr(canonical_script, "_fetch_page_evidence", _fail_if_called)
+    monkeypatch.setattr(canonical_script, "_fetch_run_ids_by_document", _fail_if_called)
+
     _run(canonical_script.run("dsn", tmp_path, {"fluid_mechanics": [1]}))
 
     assert json.loads((tmp_path / "s1-results.json").read_text())["stage"] == "s1_reference_graph"
@@ -252,6 +259,7 @@ def test_run_writes_s2_when_fixtures_present(tmp_path: Path, monkeypatch: pytest
         pass_rate=1.0,
     )
     fixture = {
+        "problem_document_id": 7,
         "result_summary": {
             "problems": [
                 {
@@ -264,7 +272,7 @@ def test_run_writes_s2_when_fixtures_present(tmp_path: Path, monkeypatch: pytest
                     "review_required": False,
                 }
             ]
-        }
+        },
     }
     (tmp_path / "authored_set_final1.json").write_text(json.dumps(fixture))
 
@@ -274,6 +282,16 @@ def test_run_writes_s2_when_fixtures_present(tmp_path: Path, monkeypatch: pytest
     )
     monkeypatch.setattr(canonical_script, "S1ReferenceGraphJudge", _FakeJudge(s1_result))
     monkeypatch.setattr(canonical_script, "S2IngestionJudge", _FakeJudge(s2_result))
+    monkeypatch.setattr(
+        canonical_script,
+        "_fetch_run_ids_by_document",
+        lambda pg_dsn, document_ids: _async_return({7: 42}),
+    )
+    monkeypatch.setattr(
+        canonical_script,
+        "_fetch_page_evidence",
+        lambda pg_dsn: _async_return({"42": {"problem": "the real scraped page text"}}),
+    )
 
     _run(canonical_script.run("dsn", tmp_path, {"fluid_mechanics": [1]}))
 
@@ -337,6 +355,146 @@ def test_canonical_driver_build_s2_raw_reads_authored_set_fixtures(tmp_path: Pat
     assert items[0]["item_id"] == "set1:Problem 1(a)"
     assert items[0]["low_confidence_threshold"] is None
     assert items[0]["verify_path_fired"] is False
+
+
+def _problem_fixture(**overrides: Any) -> dict:
+    problem = {
+        "label": "Problem 1(a)",
+        "outcome": "promoted",
+        "diagnostic": "ok",
+        "match_method": "exact",
+        "solution_source": "authored",
+        "ocr_confidence": 0.95,
+        "review_required": False,
+    }
+    problem.update(overrides)
+    return {"result_summary": {"problems": [problem]}}
+
+
+def test_build_s2_raw_resolves_evidence_via_real_document_run_linkage(tmp_path: Path):
+    # Two authored sets whose document ids do NOT map to sequential run ids
+    # (as would be the case after a failed ingest consumed a run -- PR #90).
+    # If the harness fell back to positional set-N == run-N pairing, set 1
+    # would wrongly pick up run "1" evidence instead of its real run "42".
+    fixture1 = {"problem_document_id": 7, **_problem_fixture()}
+    fixture2 = {"problem_document_id": 9, **_problem_fixture(label="Problem 2(a)")}
+    (tmp_path / "authored_set_final1.json").write_text(json.dumps(fixture1))
+    (tmp_path / "authored_set_final2.json").write_text(json.dumps(fixture2))
+
+    page_evidence = {
+        "42": {"problem": "real page text for document 7"},
+        "1": {"problem": "WRONG -- positional trap, must not be picked up"},
+    }
+    run_id_by_document = {7: 42, 9: 99}  # document 9's run (99) has no evidence
+
+    items = canonical_script.build_s2_raw(tmp_path, page_evidence, run_id_by_document)
+
+    assert len(items) == 2
+    set1_item = next(i for i in items if i["item_id"] == "set1:Problem 1(a)")
+    assert set1_item["paired_solution"]["source_page_ocr"] == {
+        "problem": "real page text for document 7"
+    }
+    set2_item = next(i for i in items if i["item_id"] == "set2:Problem 2(a)")
+    assert "source_page_ocr" not in set2_item["paired_solution"]
+
+
+def test_build_s2_raw_skips_evidence_when_fixture_has_no_document_id(tmp_path: Path):
+    fixture = _problem_fixture()  # no problem_document_id key at all
+    (tmp_path / "authored_set_final1.json").write_text(json.dumps(fixture))
+
+    items = canonical_script.build_s2_raw(
+        tmp_path, {"1": {"problem": "should not be attached"}}, {}
+    )
+
+    assert "source_page_ocr" not in items[0]["paired_solution"]
+
+
+def test_document_ids_from_fixtures_dedupes_and_skips_missing(tmp_path: Path):
+    (tmp_path / "authored_set_final1.json").write_text(
+        json.dumps({"problem_document_id": 5, **_problem_fixture()})
+    )
+    (tmp_path / "authored_set_final2.json").write_text(
+        json.dumps({"problem_document_id": 5, **_problem_fixture()})
+    )
+    (tmp_path / "authored_set_final3.json").write_text(json.dumps(_problem_fixture()))
+
+    paths = sorted(tmp_path.glob("authored_set_final*.json"))
+    assert canonical_script._document_ids_from_fixtures(paths) == [5]
+
+
+class _FakePageEvidenceConn:
+    def __init__(self, rows: list[dict[str, Any]] | None = None, *, missing_table: bool = False):
+        self._rows = rows or []
+        self._missing_table = missing_table
+        self.closed = False
+
+    async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
+        if self._missing_table:
+            raise asyncpg.UndefinedTableError("missing table")
+        return self._rows
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def test_fetch_page_evidence_happy_path_concatenates_pages_per_role(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    rows = [
+        {"ingest_run_id": 42, "role": "problem", "page_number": 1, "ocr_text": "page one"},
+        {"ingest_run_id": 42, "role": "problem", "page_number": 2, "ocr_text": "page two"},
+        {"ingest_run_id": 42, "role": "solution", "page_number": 1, "ocr_text": "sol page"},
+    ]
+    conn = _FakePageEvidenceConn(rows=rows)
+
+    async def fake_connect(dsn: str):
+        return conn
+
+    monkeypatch.setattr(canonical_script.asyncpg, "connect", fake_connect)
+
+    evidence = _run(canonical_script._fetch_page_evidence("dsn"))
+
+    assert evidence == {
+        "42": {"problem": "page one\npage two", "solution": "sol page"},
+    }
+    assert conn.closed is True
+
+
+def test_fetch_page_evidence_returns_empty_when_table_missing_pre_036(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    conn = _FakePageEvidenceConn(missing_table=True)
+
+    async def fake_connect(dsn: str):
+        return conn
+
+    monkeypatch.setattr(canonical_script.asyncpg, "connect", fake_connect)
+
+    evidence = _run(canonical_script._fetch_page_evidence("dsn"))
+
+    assert evidence == {}
+    assert conn.closed is True
+
+
+def test_fetch_run_ids_by_document_returns_empty_for_empty_input():
+    assert _run(canonical_script._fetch_run_ids_by_document("dsn", [])) == {}
+
+
+def test_fetch_run_ids_by_document_maps_latest_run_per_document(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    rows = [{"document_id": 7, "id": 42}, {"document_id": 9, "id": 99}]
+    conn = _FakePageEvidenceConn(rows=rows)
+
+    async def fake_connect(dsn: str):
+        return conn
+
+    monkeypatch.setattr(canonical_script.asyncpg, "connect", fake_connect)
+
+    result = _run(canonical_script._fetch_run_ids_by_document("dsn", [7, 9]))
+
+    assert result == {7: 42, 9: 99}
+    assert conn.closed is True
 
 
 # --- frozen per-run scripts: must stay pinned to PRECEDES -----------------

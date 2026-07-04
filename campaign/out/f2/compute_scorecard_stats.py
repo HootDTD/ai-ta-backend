@@ -141,8 +141,8 @@ def main() -> None:
     print(json.dumps(summary, indent=2))
     print("abstention reasons:", dict(reason_hist))
     print(f"control_credit_leak attempts: {len(leak_attempts)}")
-    for l in leak_attempts:
-        print("  LEAK", l)
+    for leak_attempt in leak_attempts:
+        print("  LEAK", leak_attempt)
     print(
         "grading_latency_ms p50/p95:",
         percentile(overall_latency_ms, 0.5),
