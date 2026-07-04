@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
 
 from campaign.cast import student
@@ -367,6 +368,238 @@ async def test_run_attempt_records_error_when_create_session_fails():
     )
     assert record.status == "error"
     assert record.transcript == ()
+
+
+# --- parse gaps (O2: chat-route parser 422s are non-fatal) ---------------------
+
+
+def _parser_422(message: str = "no nodes extracted") -> httpx.HTTPStatusError:
+    """The exact error shape the real ``HttpxApolloClient.chat`` raises when
+    Apollo's ``/chat`` rejects a turn with ``parser_could_not_extract``
+    (``apollo/api.py`` returns 422 + ``{"error_code": ..., "message": ...,
+    "utterance": ...}`` and ``resp.raise_for_status()`` raises)."""
+    request = httpx.Request("POST", "http://test/apollo/sessions/101/chat")
+    response = httpx.Response(
+        422,
+        json={
+            "error_code": "parser_could_not_extract",
+            "message": message,
+            "utterance": "word salad",
+        },
+        request=request,
+    )
+    return httpx.HTTPStatusError("422 Unprocessable Entity", request=request, response=response)
+
+
+class ChatFailingClient(FakeApolloClient):
+    """Raises ``exc`` on the Nth ``chat()`` call (1-based); otherwise scripted."""
+
+    def __init__(self, *, fail_on_chat_call: int, exc: Exception, **kwargs):
+        super().__init__(**kwargs)
+        self._fail_on = fail_on_chat_call
+        self._exc = exc
+        self._chat_calls = 0
+
+    async def chat(self, *, session_id, message, token):
+        self._chat_calls += 1
+        if self._chat_calls == self._fail_on:
+            # Record the attempted POST (the real client sends it before
+            # raise_for_status raises), then fail.
+            self.calls.append(
+                ("chat", {"session_id": session_id, "message": message, "token": token})
+            )
+            raise self._exc
+        return await super().chat(session_id=session_id, message=message, token=token)
+
+
+@pytest.mark.asyncio
+async def test_run_attempt_records_clarification_parser_422_as_parse_gap_not_error():
+    """(a) A chat-route 422 with ``parser_could_not_extract`` mid-clarification
+    is recorded as a non-fatal ``parse_gap`` and the attempt still reaches
+    ``/done`` with ``status="ok"`` — it must NOT be discarded as an error."""
+    persona = _persona(
+        persona="vague_then_clarifies",
+        expected=ExpectedLedger(credited=["eq.a"], expects_clarification=True),
+    )
+    # 2 scripted beats succeed; the 2nd reply's "?" opens the clarification
+    # loop, whose first follow-up POST 422s.
+    client = ChatFailingClient(
+        fail_on_chat_call=3,
+        exc=_parser_422(),
+        replies=["sure, teaching turn one", "hmm, what do you mean exactly?"],
+    )
+    reader = FakeArtifactReader(canonical={"grader_used": "graph", "scores": {"composite": 0.8}})
+
+    record = await student.run_attempt(
+        persona,
+        client=client,
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=reader,
+        token="tok",
+        search_space_id=1,
+    )
+
+    assert record.status == "ok"
+    assert record.error is None
+    assert record.parse_gaps == (
+        {
+            "phase": "clarification",
+            "error_code": "parser_could_not_extract",
+            "message": "no nodes extracted",
+        },
+    )
+    # The run continued: /done was reached and artifacts were read back.
+    kinds = [c[0] for c in client.calls]
+    assert kinds == ["create_session", "chat", "chat", "chat", "done"]
+    assert reader.reads == [5001]
+    assert record.artifact_canonical == {"grader_used": "graph", "scores": {"composite": 0.8}}
+    # The rejected turn produced no apollo reply -- transcript ends on the
+    # student turn that 422'd.
+    assert record.transcript[-1]["role"] == "student"
+    # And the gap is reported in the JSONL row (run stats see it).
+    payload = record.to_jsonl_dict()
+    json.dumps(payload)
+    assert payload["status"] == "ok"
+    assert payload["parse_gaps"][0]["error_code"] == "parser_could_not_extract"
+
+
+@pytest.mark.asyncio
+async def test_run_attempt_parser_422_during_beats_keeps_teaching_remaining_beats():
+    """A parser 422 on a scripted beat skips only that turn's reply -- the
+    remaining beats are still taught and the attempt completes."""
+    persona = _persona()  # strong, 2 scripted beats, no clarification
+    client = ChatFailingClient(fail_on_chat_call=1, exc=_parser_422())
+    reader = FakeArtifactReader()
+
+    record = await student.run_attempt(
+        persona,
+        client=client,
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=reader,
+        token="tok",
+        search_space_id=1,
+    )
+
+    assert record.status == "ok"
+    assert record.parse_gaps == (
+        {
+            "phase": "scripted_beats",
+            "error_code": "parser_could_not_extract",
+            "message": "no nodes extracted",
+        },
+    )
+    kinds = [c[0] for c in client.calls]
+    assert kinds == ["create_session", "chat", "chat", "done"]
+    # Beat one got no reply; beat two did.
+    student_turns = [t for t in record.transcript if t["role"] == "student"]
+    apollo_turns = [t for t in record.transcript if t["role"] == "apollo"]
+    assert len(student_turns) == 2
+    assert len(apollo_turns) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_attempt_non_422_chat_error_still_records_error():
+    """(b) A non-422 HTTP error on ``chat`` keeps the old fatal path: the
+    attempt is recorded as ``status="error"`` with no parse gaps."""
+    request = httpx.Request("POST", "http://test/apollo/sessions/101/chat")
+    response = httpx.Response(500, json={"detail": "boom"}, request=request)
+    exc = httpx.HTTPStatusError("500 Internal Server Error", request=request, response=response)
+    client = ChatFailingClient(fail_on_chat_call=1, exc=exc)
+    reader = FakeArtifactReader()
+
+    record = await student.run_attempt(
+        _persona(),
+        client=client,
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=reader,
+        token="tok",
+        search_space_id=1,
+    )
+
+    assert record.status == "error"
+    assert "500" in record.error
+    assert record.parse_gaps == ()
+    assert reader.reads == []  # never reached /done or the artifact read
+
+
+@pytest.mark.asyncio
+async def test_run_attempt_non_422_error_during_clarification_still_records_error():
+    """(b, clarification phase) A non-parse-gap error inside the
+    clarification loop also keeps the old fatal path."""
+    persona = _persona(
+        persona="vague_then_clarifies",
+        expected=ExpectedLedger(credited=["eq.a"], expects_clarification=True),
+    )
+    request = httpx.Request("POST", "http://test/apollo/sessions/101/chat")
+    response = httpx.Response(500, json={"detail": "boom"}, request=request)
+    exc = httpx.HTTPStatusError("500 Internal Server Error", request=request, response=response)
+    # Beats succeed (2 chats); the first clarification follow-up (chat #3) 500s.
+    client = ChatFailingClient(
+        fail_on_chat_call=3,
+        exc=exc,
+        replies=["sure, teaching turn one", "hmm, what do you mean exactly?"],
+    )
+    reader = FakeArtifactReader()
+
+    record = await student.run_attempt(
+        persona,
+        client=client,
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=reader,
+        token="tok",
+        search_space_id=1,
+    )
+
+    assert record.status == "error"
+    assert "500" in record.error
+    assert record.parse_gaps == ()
+    assert reader.reads == []
+
+
+@pytest.mark.asyncio
+async def test_run_attempt_422_with_other_error_code_still_records_error():
+    """A 422 that is NOT ``parser_could_not_extract`` (e.g. the output
+    filter's ``filter_rejected``) keeps the old fatal path."""
+    request = httpx.Request("POST", "http://test/apollo/sessions/101/chat")
+    response = httpx.Response(
+        422, json={"error_code": "filter_rejected", "message": "nope"}, request=request
+    )
+    exc = httpx.HTTPStatusError("422 Unprocessable Entity", request=request, response=response)
+    client = ChatFailingClient(fail_on_chat_call=1, exc=exc)
+
+    record = await student.run_attempt(
+        _persona(),
+        client=client,
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=FakeArtifactReader(),
+        token="tok",
+        search_space_id=1,
+    )
+
+    assert record.status == "error"
+    assert record.parse_gaps == ()
+
+
+@pytest.mark.asyncio
+async def test_run_attempt_non_json_422_still_records_error():
+    """A 422 whose body isn't JSON can't be classified as a parse gap --
+    old fatal path."""
+    request = httpx.Request("POST", "http://test/apollo/sessions/101/chat")
+    response = httpx.Response(422, text="oops", request=request)
+    exc = httpx.HTTPStatusError("422 Unprocessable Entity", request=request, response=response)
+    client = ChatFailingClient(fail_on_chat_call=1, exc=exc)
+
+    record = await student.run_attempt(
+        _persona(),
+        client=client,
+        chat_fn=_scripted_chat_fn,
+        artifact_reader=FakeArtifactReader(),
+        token="tok",
+        search_space_id=1,
+    )
+
+    assert record.status == "error"
+    assert record.parse_gaps == ()
 
 
 # --- run_corpus -------------------------------------------------------------

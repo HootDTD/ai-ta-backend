@@ -167,6 +167,11 @@ class AttemptRecord:
     scorecard: dict[str, Any] | None
     wall_time_ms: int
     error: str | None = None
+    #: Non-fatal chat-route 422 ``parser_could_not_extract`` rejections hit
+    #: while playing this attempt (one dict per rejected student turn). The
+    #: attempt still runs to /done and stays ``status="ok"`` — this field is
+    #: how runs report parse gaps instead of silently discarding the attempt.
+    parse_gaps: tuple[dict[str, Any], ...] = ()
 
     def to_jsonl_dict(self) -> dict[str, Any]:
         """The exact JSON-serialisable record written to ``attempts.jsonl``."""
@@ -188,6 +193,7 @@ class AttemptRecord:
             "scorecard": self.scorecard,
             "wall_times": {"total_ms": self.wall_time_ms},
             "error": self.error,
+            "parse_gaps": list(self.parse_gaps),
         }
 
 
@@ -222,6 +228,32 @@ def build_hoot_transcript(persona: PersonaAttempt) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _parse_gap_detail(exc: Exception) -> dict[str, Any] | None:
+    """Classify ``exc`` as a chat-route parse gap, or return ``None``.
+
+    Apollo's ``/chat`` route hard-rejects a non-trivial-but-content-empty
+    student turn with HTTP 422 ``error_code="parser_could_not_extract"``
+    (``apollo/api.py`` ``parser_could_not_extract_handler``). For the
+    campaign driver that is a benign, expected outcome of vague personas —
+    NOT an attempt failure (see
+    ``docs/_archive/experiments/2026-07-03-weekend-b-o2-422-triage.md``).
+    Duck-typed on ``exc.response`` so it matches ``httpx.HTTPStatusError``
+    without importing httpx at module scope (real I/O imports stay lazy,
+    matching this module's seam convention). Anything that is not exactly a
+    422 with that error code returns ``None`` and keeps the old fatal path.
+    """
+    response = getattr(exc, "response", None)
+    if response is None or getattr(response, "status_code", None) != 422:
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict) or body.get("error_code") != "parser_could_not_extract":
+        return None
+    return {"error_code": "parser_could_not_extract", "message": str(body.get("message", ""))}
+
+
 async def _play_scripted_beats(
     persona: PersonaAttempt,
     *,
@@ -230,11 +262,26 @@ async def _play_scripted_beats(
     token: str,
     chat_fn: ChatFn,
     transcript: list[dict[str, Any]],
+    parse_gaps: list[dict[str, Any]],
 ) -> None:
     for beat in persona.scripted_beats:
         message = await chat_fn(persona, tuple(transcript), beat)
         transcript.append({"role": "student", "content": message})
-        response = await client.chat(session_id=session_id, message=message, token=token)
+        try:
+            response = await client.chat(session_id=session_id, message=message, token=token)
+        except Exception as exc:
+            gap = _parse_gap_detail(exc)
+            if gap is None:
+                raise
+            # Apollo couldn't parse this turn (no reply was produced); the
+            # session itself is fine, so keep teaching the remaining beats.
+            _LOG.warning(
+                "campaign_parse_gap phase=scripted_beats session_id=%s persona=%s",
+                session_id,
+                _persona_id(persona),
+            )
+            parse_gaps.append({"phase": "scripted_beats", **gap})
+            continue
         transcript.append({"role": "apollo", "content": response.get("apollo_reply", "")})
 
 
@@ -247,6 +294,7 @@ async def _play_clarification_followups(
     chat_fn: ChatFn,
     transcript: list[dict[str, Any]],
     clarification_max_turns: int,
+    parse_gaps: list[dict[str, Any]],
 ) -> None:
     turns = 0
     while turns < clarification_max_turns:
@@ -255,7 +303,22 @@ async def _play_clarification_followups(
             break
         message = await chat_fn(persona, tuple(transcript), None)
         transcript.append({"role": "student", "content": message})
-        response = await client.chat(session_id=session_id, message=message, token=token)
+        try:
+            response = await client.chat(session_id=session_id, message=message, token=token)
+        except Exception as exc:
+            gap = _parse_gap_detail(exc)
+            if gap is None:
+                raise
+            # Apollo couldn't parse the vague follow-up. Continuing the loop
+            # would replay the same degenerating word-salad against the same
+            # unanswered "?" — record the gap and move on to /done instead.
+            _LOG.warning(
+                "campaign_parse_gap phase=clarification session_id=%s persona=%s",
+                session_id,
+                _persona_id(persona),
+            )
+            parse_gaps.append({"phase": "clarification", **gap})
+            break
         transcript.append({"role": "apollo", "content": response.get("apollo_reply", "")})
         turns += 1
 
@@ -320,9 +383,18 @@ async def run_attempt(
 ) -> AttemptRecord:
     """Drive one persona attempt end-to-end. Never raises: any failure (HTTP,
     LLM, DB-readback) is caught and recorded as ``status="error"`` so a single
-    bad attempt never kills a corpus run (plan D3 Step 1)."""
+    bad attempt never kills a corpus run (plan D3 Step 1).
+
+    Exception: a chat-route HTTP 422 ``parser_could_not_extract`` (Apollo
+    couldn't parse a vague turn — expected product behavior for word-salad
+    utterances) is NOT an attempt failure. It is recorded as a non-fatal
+    ``parse_gaps`` entry on the record and the attempt proceeds to ``/done``
+    with ``status="ok"``, instead of discarding all prior good teaching turns
+    (the O2 attrition — see
+    ``docs/_archive/experiments/2026-07-03-weekend-b-o2-422-triage.md``)."""
     t0 = time.monotonic()
     transcript: list[dict[str, Any]] = []
+    parse_gaps: list[dict[str, Any]] = []
     expected: dict[str, Any] = dict(persona.expected.to_ledger_dict())
     expected["expects_clarification"] = persona.expected.expects_clarification
     try:
@@ -351,6 +423,7 @@ async def run_attempt(
             token=token,
             chat_fn=chat_fn,
             transcript=transcript,
+            parse_gaps=parse_gaps,
         )
 
         if persona.expected.expects_clarification:
@@ -362,6 +435,7 @@ async def run_attempt(
                 chat_fn=chat_fn,
                 transcript=transcript,
                 clarification_max_turns=clarification_max_turns,
+                parse_gaps=parse_gaps,
             )
 
         done_response = await client.done(session_id=session_id, token=token)
@@ -385,6 +459,7 @@ async def run_attempt(
             artifact_pair=pair,
             scorecard=scorecard,
             wall_time_ms=int((time.monotonic() - t0) * 1000),
+            parse_gaps=tuple(parse_gaps),
         )
     except Exception as exc:  # noqa: BLE001 - one bad attempt must not kill the corpus run
         _LOG.exception("campaign_attempt_failed persona=%s", _persona_id(persona))
@@ -406,6 +481,7 @@ async def run_attempt(
             scorecard=None,
             wall_time_ms=int((time.monotonic() - t0) * 1000),
             error=repr(exc)[:500],
+            parse_gaps=tuple(parse_gaps),
         )
 
 
