@@ -387,18 +387,31 @@ testable against fixtures):
 
 - **S1** (`s1_reference_graph.py`) — items = every node + edge of each
   provisioned subject's minted reference graph, judged against that
-  subject's problem statement. Duplicate-node-id and PRECEDES-cycle checks
-  are CODE (`find_structural_defects`, a Kahn's-algorithm pass mirroring
-  `KGGraph.topological_order`), never sent to the LLM. Concept->concept
-  prerequisite edges are DEPENDS_ON (PRECEDES is reserved for
-  `(procedure_step, procedure_step)` pairs per `apollo/ontology/edges.py`);
-  the raw-graph harness scripts (`campaign/out/{f1,f1c}/run_s1_s2.py`)
-  used to mislabel every `apollo_entity_prereqs` row PRECEDES, and the judge
-  prompt read PRECEDES/USES as temporal order and anchored node validity on
-  a single problem instead of the whole subject — together these drove
-  ~70% of S1's recorded failures without any real graph defect (see
-  `.superpowers/sdd/a3-s1-adjudication.md`). Both fixed 2026-07-03; S1
-  numbers from before that fix are not comparable to runs after it.
+  subject's problem statement(s). `find_structural_defects` (a Kahn's-
+  algorithm pass mirroring `KGGraph.topological_order`) is CODE, never sent
+  to the LLM: duplicate node ids, PRECEDES-cycles, DEPENDS_ON-cycles
+  (mirroring production's `promotion_lint._gate_3` DEPENDS_ON-acyclicity
+  enforcement), and dangling/cross-problem-wiring edges (an endpoint absent
+  from the node set). Concept->concept prerequisite edges are DEPENDS_ON
+  (PRECEDES is reserved for `(procedure_step, procedure_step)` pairs per
+  `apollo/ontology/edges.py`). The frozen raw-graph harness scripts
+  (`campaign/out/{f1,f1c}/run_s1_s2.py`) originally mislabeled every
+  `apollo_entity_prereqs` row PRECEDES, and the judge prompt read
+  PRECEDES/USES as temporal order, anchored node validity on a single
+  problem instead of the whole subject, and (in an interim revision) allowed
+  "domain-plausible but not actually grounded" nodes to pass — together
+  these drove ~70% of S1's recorded failures without any real graph defect,
+  while the plausibility clause independently masked real hallucinations.
+  See `docs/_archive/experiments/2026-07-03-s1-judge-adjudication.md` (the
+  committed copy of `.superpowers/sdd/a3-s1-adjudication.md`) for the full
+  57-item adjudication and tallies. All fixed as of 2026-07-03; S1 numbers
+  from before that fix are not comparable to runs after it.
+
+  **Canonical run script:** `campaign/scripts/run_s1_s2.py` is the reusable,
+  parameterized driver for every NEXT S1/S2 run — land future harness fixes
+  there. The per-run copies under `campaign/out/<run_id>/run_s1_s2.py`
+  (currently `f1`, `f1c`) are FROZEN historical artifacts kept byte-faithful
+  to their recorded `s1-results.json`/`s2-results.json` — do not edit them.
 - **S2** (`s2_ingestion.py`) — items = WU-AAS `(page_ref, scraped_label,
   paired_solution)` triples; the low-confidence -> verify-path contract
   (`check_verify_path_fired`) is a pure boolean read-back against each
