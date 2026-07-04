@@ -171,6 +171,7 @@ async def write_artifacts(
             weights=weights,
             graph_failure=graph_failure,
             latency_ms=latency_ms,
+            clarification_trace=clarification_trace,
             misconceptions_bank_empty=misconceptions_bank_empty,
         )
 

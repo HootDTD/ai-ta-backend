@@ -315,6 +315,7 @@ async def test_shadow_failure_marker_present_and_distinguishable(monkeypatch):
         weights=load_weights(),
         graph_failure=marker,
         latency_ms=1,
+        clarification_trace=[],
     )
     assert row_payload["abstention"]["graph_failure"] == marker
     assert row_payload["grader_used"] == GRADER_USED_LLM_FALLBACK

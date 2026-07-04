@@ -154,6 +154,7 @@ def llm_artifact() -> dict:
         weights=load_weights(),
         graph_failure=None,
         latency_ms=999,
+        clarification_trace=[],
     )
 
 
