@@ -125,32 +125,124 @@ async def build_s1_raw(pg_dsn: str, subject_concepts: dict[str, list[int]]) -> l
         await conn.close()
 
 
-def build_s2_raw(out_dir: Path) -> list[dict]:
+async def _fetch_page_evidence(pg_dsn: str) -> dict[str, dict[str, str]]:
+    """Page-level OCR evidence per ingest run (``apollo_ingest_page_evidence``,
+    migration 036 -- landed on staging AFTER the frozen f1/f1c runs; those
+    runs had no page-level raw inputs, which is exactly the diagnosis's G4.4
+    'S2 unmeasurable' finding). Returns ``{ingest_run_id: {role: ocr_text}}``.
+    Empty when the table is absent (pre-036 database) so S2 degrades to the
+    f1/f1c thin-input behavior instead of crashing."""
+    conn = await asyncpg.connect(pg_dsn)
+    try:
+        try:
+            rows = await conn.fetch(
+                "SELECT ingest_run_id, role, page_number, ocr_text"
+                " FROM apollo_ingest_page_evidence"
+                " ORDER BY ingest_run_id, role, page_number"
+            )
+        except asyncpg.UndefinedTableError:
+            return {}
+        evidence: dict[str, dict[str, str]] = {}
+        for r in rows:
+            role_texts = evidence.setdefault(str(r["ingest_run_id"]), {})
+            prior = role_texts.get(r["role"], "")
+            role_texts[r["role"]] = (prior + "\n" + (r["ocr_text"] or "")).strip()
+        return evidence
+    finally:
+        await conn.close()
+
+
+async def _fetch_run_ids_by_document(pg_dsn: str, document_ids: list[int]) -> dict[int, int]:
+    """Real authored-set <-> ingest-run linkage: the latest ``apollo_ingest_runs``
+    row per ``problem_document_id``, mirrored from
+    ``apollo/provisioning/authored_sets/api.py::_load_ingest_evidence`` (the
+    same lookup the GET ``/authored-sets/{set_id}`` surface uses to expose
+    ``ingest_run`` -- landed in PR #90). Returns ``{document_id: ingest_run_id}``;
+    a document with no run is simply absent from the mapping.
+
+    This replaces the old "authored set N pairs with ingest run N" positional
+    assumption: PR #90 opens the ingest run BEFORE indexing, so a failed
+    ingest consumes a run id without ever producing a promoted set, silently
+    skewing every later index-based pairing (S2 would judge against the wrong
+    page text for every set after the first failure)."""
+    if not document_ids:
+        return {}
+    conn = await asyncpg.connect(pg_dsn)
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT ON (document_id) document_id, id
+            FROM apollo_ingest_runs
+            WHERE document_id = ANY($1::bigint[])
+            ORDER BY document_id, id DESC
+            """,
+            document_ids,
+        )
+        return {int(r["document_id"]): int(r["id"]) for r in rows}
+    finally:
+        await conn.close()
+
+
+def _document_ids_from_fixtures(fixture_paths: list[Path]) -> list[int]:
+    """Distinct ``problem_document_id`` values declared by each authored-set
+    fixture, in file order, skipping fixtures that don't carry one (older
+    fixture shape, or a set that never resolved a document)."""
+    document_ids: list[int] = []
+    for path in fixture_paths:
+        document_id = json.loads(path.read_text()).get("problem_document_id")
+        if document_id is not None and int(document_id) not in document_ids:
+            document_ids.append(int(document_id))
+    return document_ids
+
+
+def build_s2_raw(
+    out_dir: Path,
+    page_evidence: dict[str, dict[str, str]] | None = None,
+    run_id_by_document: dict[int, int] | None = None,
+) -> list[dict]:
     """S2 items from every ``authored_set_final*.json`` fixture found in
     ``out_dir`` (one per promoted authored set for this run). Returns an
-    empty list (S2 is then skipped) if none are found."""
+    empty list (S2 is then skipped) if none are found.
+
+    ``page_evidence`` (``{ingest_run_id: {role: ocr_text}}``) is attached to
+    each item's ``paired_solution.source_page_ocr`` so the judge sees the
+    actual scraped page text -- without it every verdict is an unmeasurable
+    'insufficient info' failure (the f1/f1c pattern). Each fixture's real
+    ingest run is resolved via its ``problem_document_id`` through
+    ``run_id_by_document`` (see ``_fetch_run_ids_by_document``) -- NOT the
+    positional "set N == run N" assumption, which breaks once a failed ingest
+    consumes a run id without producing a set (see that function's docstring).
+    Fixtures with no ``problem_document_id``, or no resolvable run, simply get
+    no page evidence attached (graceful, matches the pre-036 thin-input
+    behavior)."""
     items = []
+    run_id_by_document = run_id_by_document or {}
     for final_path in sorted(out_dir.glob("authored_set_final*.json")):
         set_id = "".join(ch for ch in final_path.stem if ch.isdigit()) or final_path.stem
         resp = json.loads(final_path.read_text())
+        document_id = resp.get("problem_document_id")
+        run_id = run_id_by_document.get(int(document_id)) if document_id is not None else None
+        run_evidence = (page_evidence or {}).get(str(run_id), {}) if run_id is not None else {}
         for prob in resp["result_summary"]["problems"]:
+            paired_solution = {
+                "outcome": prob["outcome"],
+                "diagnostic": prob["diagnostic"],
+                "match_method": prob["match_method"],
+                "solution_source": prob["solution_source"],
+            }
+            if run_evidence:
+                paired_solution["source_page_ocr"] = run_evidence
             items.append(
                 {
                     "item_id": f"set{set_id}:{prob['label']}",
                     "page_ref": f"authored-set {set_id} / {prob['label']}",
                     "scraped_label": prob["label"],
-                    "paired_solution": {
-                        "outcome": prob["outcome"],
-                        "diagnostic": prob["diagnostic"],
-                        "match_method": prob["match_method"],
-                        "solution_source": prob["solution_source"],
-                    },
+                    "paired_solution": paired_solution,
                     "ocr_confidence": prob["ocr_confidence"],
-                    # No low_confidence_threshold / verify_path_fired field
-                    # exists anywhere in the authored-sets result_summary or
-                    # apollo_ingest_runs -- recorded as None so
-                    # check_verify_path_fired skips these items rather than
-                    # fabricating a threshold.
+                    # No low_confidence_threshold field exists anywhere in the
+                    # authored-sets result_summary or apollo_ingest_runs --
+                    # recorded as None so check_verify_path_fired skips these
+                    # items rather than fabricating a threshold.
                     "low_confidence_threshold": None,
                     "verify_path_fired": prob.get("review_required", False),
                 }
@@ -179,7 +271,15 @@ async def run(pg_dsn: str, out_dir: Path, subject_concepts: dict[str, list[int]]
     print(f"S1 pass_rate={s1.pass_rate:.4f} passed={s1.passed} total={s1.total}")
     dump(s1, out_dir / "s1-results.json")  # dump immediately -- don't lose S1 if S2 crashes
 
-    s2_raw = build_s2_raw(out_dir)
+    fixture_paths = sorted(out_dir.glob("authored_set_final*.json"))
+    if fixture_paths:
+        document_ids = _document_ids_from_fixtures(fixture_paths)
+        run_id_by_document = await _fetch_run_ids_by_document(pg_dsn, document_ids)
+        page_evidence = await _fetch_page_evidence(pg_dsn)
+        s2_raw = build_s2_raw(out_dir, page_evidence, run_id_by_document)
+    else:
+        s2_raw = []
+
     if s2_raw:
         s2 = await S2IngestionJudge(llm).judge(s2_raw)
         print(f"S2 pass_rate={s2.pass_rate:.4f} passed={s2.passed} total={s2.total}")
