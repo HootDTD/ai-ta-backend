@@ -29,6 +29,7 @@ from typing import Any
 from apollo.grading.abstention import ABSTENTION_THRESHOLDS
 from apollo.overseer.rubric import AXIS_WEIGHTS, LETTER_BANDS
 from apollo.resolution.nli_config import NLIParams, active_nli_model, load_nli_params
+from config.settings import apollo_composite_coverage_min
 
 #: Boolean campaign flags this config snapshots, mapped to the default each
 #: flag's OWN resolver function documents (kept in sync by hand — these are
@@ -50,10 +51,15 @@ _BOOLEAN_FLAG_DEFAULTS: dict[str, bool] = {
     # along in load_nli_params()'s snapshot below), but tracked here too as a
     # direct, flag-level audit signal (mirrors the composite-gate-probe
     # "threading verification" finding — don't just trust env vars were read).
-    "APOLLO_NLI_MISC_POSITIVE_CERTIFY": False,
     "APOLLO_OLM_INVITES_ENABLED": False,
     "APOLLO_SESSION_PERSONALIZATION_ENABLED": False,
     "APOLLO_STRUCTURED_SCRAPE": False,
+    # certify-zero-fire-trace.md audit fix: these two grading-behavior flags
+    # shipped (PRs #99/#100) without a snapshot entry, so the f1c run had NO
+    # audit trail that the certify flag was silently unset in the server env.
+    # Every grading-behavior APOLLO_* boolean MUST be registered here.
+    "APOLLO_NLI_MISC_POSITIVE_CERTIFY": False,  # config.settings.apollo_nli_misc_positive_certify
+    "APOLLO_ABSTENTION_COMPOSITE": False,  # config.settings.apollo_abstention_composite_enabled
 }
 
 #: Integer campaign tunables this config snapshots, mapped to the default each
@@ -122,6 +128,10 @@ class CampaignConfig:
     abstention_thresholds: dict[str, float]
     flags: dict[str, bool]
     int_flags: dict[str, int] = dataclasses.field(default_factory=dict)
+    # §10 composite gate threshold (APOLLO_COMPOSITE_COVERAGE_MIN). A float,
+    # so it cannot ride in the boolean ``flags`` block; snapshotted as its own
+    # key. Defaulted so pre-composite frozen snapshots still reconstruct.
+    composite_coverage_min: float = 0.6
 
     def snapshot(self) -> dict[str, Any]:
         """JSON-serialisable representation used for hashing and freezing."""
@@ -133,6 +143,7 @@ class CampaignConfig:
             "abstention_thresholds": dict(self.abstention_thresholds),
             "flags": dict(self.flags),
             "int_flags": dict(self.int_flags),
+            "composite_coverage_min": self.composite_coverage_min,
         }
 
     @staticmethod
@@ -146,6 +157,7 @@ class CampaignConfig:
             abstention_thresholds=dict(ABSTENTION_THRESHOLDS),
             flags=snapshot_flags(),
             int_flags=snapshot_int_flags(),
+            composite_coverage_min=apollo_composite_coverage_min(),
         )
 
     @staticmethod
@@ -156,6 +168,10 @@ class CampaignConfig:
         f1/f1c/f2 config.json files): a missing key reconstructs as each
         tracked tunable's documented DEFAULT — which is what those runs
         actually graded under, since the env override did not exist yet.
+
+        ``composite_coverage_min`` is read with a 0.6 fallback so frozen
+        config.json files written BEFORE the composite gate existed (e.g.
+        ``campaign/out/f1c/config.json``) still reconstruct.
         """
         return CampaignConfig(
             axis_weights=dict(data["axis_weights"]),
@@ -165,6 +181,7 @@ class CampaignConfig:
             abstention_thresholds=dict(data["abstention_thresholds"]),
             flags=dict(data["flags"]),
             int_flags=dict(data.get("int_flags", _INT_FLAG_DEFAULTS)),
+            composite_coverage_min=float(data.get("composite_coverage_min", 0.6)),
         )
 
 
