@@ -478,3 +478,99 @@ def test_nc_is_computed_over_post_rewrite_findings_discriminator():
     assert any(
         f.kind == FindingKind.MISSING_NODE and f.canonical_key == "eq.x" for f in grade.findings
     )
+
+
+# --- §10 composite gate (APOLLO_ABSTENTION_COMPOSITE, default OFF) ----------
+# Flag-OFF (unset, the default in every test above) is byte-identical: these
+# pin the flag-ON end-to-end wiring through build_audited_grade -> apply_abstention.
+
+
+def test_composite_flag_off_byte_identical_unresolved_rate_still_governs():
+    """Unset flag: high unresolved_rate still abstains exactly as before, and
+    ``out.composite`` is None (no new metadata leaks in when off)."""
+    grade = replace(missing_grade(("eq.x",)), node_coverage_score=0.9)
+    out = build_audited_grade(
+        grade,
+        transcript="t",
+        resolution=resolution_with(unresolved=3, resolved=2),  # rate 0.6 > 0.35
+        student_nodes=(),
+        candidates=(candidate("eq.x"),),
+        audit_fn=notfound_audit_fn(),
+    )
+    assert out.abstained is True
+    assert REASON_HIGH_UNRESOLVED in out.abstention_reasons
+    assert out.composite is None
+
+
+def test_composite_flag_on_grades_high_coverage_despite_high_unresolved_rate(monkeypatch):
+    """§10: flag ON overrides the volume gate — a high-coverage attempt grades
+    even with a high unresolved_rate."""
+    monkeypatch.setenv("APOLLO_ABSTENTION_COMPOSITE", "1")
+    grade = replace(missing_grade(("eq.x",)), node_coverage_score=0.9)
+    out = build_audited_grade(
+        grade,
+        transcript="t",
+        resolution=resolution_with(unresolved=3, resolved=2),  # rate 0.6 > 0.35
+        student_nodes=(),
+        candidates=(candidate("eq.x"),),
+        audit_fn=notfound_audit_fn(),
+    )
+    assert out.abstained is False
+    assert out.composite is not None
+    assert out.composite["decision"] == "grade"
+    assert out.composite["coverage"] == 0.9
+
+
+def test_composite_flag_on_low_coverage_abstains_with_dedicated_reason(monkeypatch):
+    from apollo.grading.abstention import REASON_COMPOSITE_LOW_COVERAGE
+
+    monkeypatch.setenv("APOLLO_ABSTENTION_COMPOSITE", "1")
+    grade = replace(missing_grade(("eq.x",)), node_coverage_score=0.2)
+    out = build_audited_grade(
+        grade,
+        transcript="t",
+        resolution=resolution_with(resolved=2),  # rate 0.0 (would clear the OLD gate)
+        student_nodes=(),
+        candidates=(candidate("eq.x"),),
+        audit_fn=notfound_audit_fn(),
+    )
+    assert out.abstained is True
+    assert REASON_COMPOSITE_LOW_COVERAGE in out.abstention_reasons
+    assert out.composite["decision"] == "abstain"
+
+
+def test_composite_custom_threshold_env_override(monkeypatch):
+    monkeypatch.setenv("APOLLO_ABSTENTION_COMPOSITE", "1")
+    monkeypatch.setenv("APOLLO_COMPOSITE_COVERAGE_MIN", "0.95")
+    grade = replace(missing_grade(("eq.x",)), node_coverage_score=0.9)  # would grade at default 0.6
+    out = build_audited_grade(
+        grade,
+        transcript="t",
+        resolution=resolution_with(resolved=2),
+        student_nodes=(),
+        candidates=(candidate("eq.x"),),
+        audit_fn=notfound_audit_fn(),
+    )
+    assert out.abstained is True
+    assert out.composite["coverage_min"] == 0.95
+
+
+def test_composite_contradiction_count_recorded_but_does_not_force_abstain(monkeypatch):
+    """A detected misconception (CONTRADICTION finding) is informative — it must
+    be counted in the composite metadata but NOT force abstention when coverage
+    clears the bar."""
+    monkeypatch.setenv("APOLLO_ABSTENTION_COMPOSITE", "1")
+    grade = replace(
+        missing_grade(contradictions=(("misc.wrong", ("n_m",)),)),
+        node_coverage_score=0.9,
+    )
+    out = build_audited_grade(
+        grade,
+        transcript="t",
+        resolution=resolution_with(resolved=2, resolved_nodes=(("n_m", 0.9),)),
+        student_nodes=(),
+        candidates=(),
+        audit_fn=notfound_audit_fn(),
+    )
+    assert out.abstained is False
+    assert out.composite["contradictions"] == 1

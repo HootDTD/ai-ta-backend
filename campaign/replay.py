@@ -101,6 +101,11 @@ class ReplayOutcome:
     abstained: bool
     abstention_reasons: tuple[str, ...]
     graph_composite: float
+    # §10 composite gate signal (GradeResult.node_coverage_score) — reference-
+    # denominated coverage, the same value APOLLO_ABSTENTION_COMPOSITE gates on.
+    # Recorded regardless of whether the flag is on so an offline threshold
+    # sweep can be done from one replay run.
+    node_coverage: float
     actual_credited: tuple[str, ...]
     actual_unresolved: tuple[str, ...]
     actual_misconceptions: tuple[str, ...]
@@ -259,6 +264,7 @@ async def replay_attempt(
         abstained=bool(shadow.audited.abstained),
         abstention_reasons=tuple(shadow.audited.abstention_reasons),
         graph_composite=float(artifact["scores"]["composite"]),
+        node_coverage=float(artifact["scores"]["node_coverage"]),
         actual_credited=actual_credited,
         actual_unresolved=_ledger_keys(artifact, "unresolved"),
         actual_misconceptions=_misconception_keys(artifact),

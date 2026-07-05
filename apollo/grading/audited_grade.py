@@ -50,6 +50,10 @@ from apollo.graph_compare.findings import Finding, FindingKind
 from apollo.ontology.nodes import Node
 from apollo.resolution.candidates import Candidate
 from apollo.resolution.result import ResolutionResult
+from config.settings import (
+    apollo_abstention_composite_enabled,
+    apollo_composite_coverage_min,
+)
 
 # The marker WU-4B2's decision table reads off an upgraded finding (Finding has
 # no `method` field — frozen, WU-4A2 — so the audit provenance rides in
@@ -73,6 +77,9 @@ class AuditedGrade:
     abstained: bool
     suppressed_event_kinds: frozenset[str]
     alias_candidates: tuple[AliasCandidate, ...]
+    # §10 composite gate audit metadata, threaded straight from
+    # ``Abstention.composite`` (None unless APOLLO_ABSTENTION_COMPOSITE is on).
+    composite: dict | None = None
 
 
 def _missing_entities(
@@ -161,6 +168,13 @@ def _misconception_confidences(
     return tuple(out)
 
 
+def _contradiction_count(findings: tuple[Finding, ...]) -> int:
+    """§10 composite gate input: the number of CONTRADICTION findings (each one
+    a detected misconception). Recorded in the abstention audit metadata but
+    never forces abstention on its own — see :func:`apply_abstention`."""
+    return sum(1 for f in findings if f.kind == FindingKind.CONTRADICTION)
+
+
 def build_audited_grade(
     grade: GradeResult,
     *,
@@ -217,6 +231,10 @@ def build_audited_grade(
         transcript_audit_failed=transcript_audit_failed,
         reference_invalid=reference_invalid,
         normalization_confidence=normalization_confidence,
+        composite_enabled=apollo_abstention_composite_enabled(),
+        node_coverage=grade.node_coverage_score,
+        contradiction_count=_contradiction_count(new_findings),
+        coverage_min=apollo_composite_coverage_min(),
     )
 
     return AuditedGrade(
@@ -226,4 +244,5 @@ def build_audited_grade(
         abstained=abstention.abstained,
         suppressed_event_kinds=abstention.suppressed_event_kinds,
         alias_candidates=audit.alias_candidates,
+        composite=abstention.composite,
     )

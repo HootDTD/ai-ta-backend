@@ -341,6 +341,12 @@ def build_graph_artifact(
     # Conditional so the seeded-bank artifact is byte-identical (no extra key).
     if not shadow.grade.soundness_applicable:
         artifact["abstention"][MISCONCEPTIONS_STATUS_KEY] = _empty_bank_misconceptions_marker()
+    # §10 composite gate (APOLLO_ABSTENTION_COMPOSITE): nest the coverage/
+    # contradictions/decision audit trail under ``abstention.composite`` only
+    # when the flag was on for this attempt (``shadow.audited.composite`` is
+    # None otherwise) — so a flag-OFF artifact stays byte-identical.
+    if shadow.audited.composite is not None:
+        artifact["abstention"]["composite"] = shadow.audited.composite
     return artifact
 
 
