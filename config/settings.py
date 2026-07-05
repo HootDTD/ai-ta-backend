@@ -251,6 +251,28 @@ def neo4j_configured() -> bool:
     ])
 
 
+# ---------------------------------------------------------------------------
+# Apollo NLI resolution flags
+# ---------------------------------------------------------------------------
+
+
+def apollo_nli_misc_positive_certify() -> bool:
+    """DEFAULT-OFF flag ``APOLLO_NLI_MISC_POSITIVE_CERTIFY``.
+
+    When ON, the NLI resolution tier POSITIVELY resolves a student utterance to
+    the ``misc.*`` candidate whose hypothesis it entails at/above the
+    misconception-veto threshold (instead of only vetoing reference credit and
+    returning no match). Reference credit stays blocked in that case regardless
+    of the flag — this only adds the positive resolution. Unset or any
+    non-truthy value means OFF (byte-identical veto-only behavior); truthy is
+    ``1``/``true``/``yes`` (same acceptance set as ``APOLLO_NLI_ENABLED``).
+    Flipping this ON is a grading-behavior change — a human decision."""
+    raw = os.getenv("APOLLO_NLI_MISC_POSITIVE_CERTIFY")
+    if raw is None:
+        return False
+    return raw.strip().lower() in ("1", "true", "yes")
+
+
 def rerankers_enabled() -> bool:
     """Return True when the optional reranking step is active."""
     return os.getenv("RERANKERS_ENABLED", "false").lower() not in {
@@ -277,6 +299,8 @@ __all__ = [
     "get_supabase_db_url",
     "rerankers_enabled",
     "get_reranker_model",
+    # Apollo NLI resolution flags
+    "apollo_nli_misc_positive_certify",
     # Neo4j (ApolloV3)
     "get_neo4j_uri",
     "get_neo4j_username",

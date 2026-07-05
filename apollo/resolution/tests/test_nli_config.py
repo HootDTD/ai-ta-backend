@@ -13,6 +13,7 @@ from apollo.resolution.nli_config import (
     load_nli_params,
     nli_enabled,
 )
+from config.settings import apollo_nli_misc_positive_certify
 
 _PARAM_ENVS = (
     "APOLLO_NLI_MODEL",
@@ -21,6 +22,7 @@ _PARAM_ENVS = (
     "APOLLO_NLI_MAX_CONTRADICTION",
     "APOLLO_NLI_AMBIGUITY_MARGIN",
     "APOLLO_NLI_MISC_VETO_ENT",
+    "APOLLO_NLI_MISC_POSITIVE_CERTIFY",
 )
 
 
@@ -141,3 +143,45 @@ def test_load_params_partial_env_override_keeps_model_default(monkeypatch):
     assert p.min_entailment == 0.60  # overridden
     assert p.max_contradiction == 0.10  # small default preserved
     assert p.misconception_veto_entailment == 0.96  # small default preserved
+
+
+# --- APOLLO_NLI_MISC_POSITIVE_CERTIFY (default OFF) ---------------------------
+
+
+def test_misc_positive_certify_defaults_off_when_unset():
+    """DEFAULT-OFF: an unset flag means veto-only behavior (byte-identical)."""
+    assert apollo_nli_misc_positive_certify() is False
+    assert NLIParams().misc_positive_certify is False
+    assert load_nli_params().misc_positive_certify is False
+
+
+def test_misc_positive_certify_truthy_values(monkeypatch):
+    for v in ("1", "true", "YES", " True "):
+        monkeypatch.setenv("APOLLO_NLI_MISC_POSITIVE_CERTIFY", v)
+        assert apollo_nli_misc_positive_certify() is True
+        assert load_nli_params().misc_positive_certify is True
+
+
+def test_misc_positive_certify_non_truthy_values_stay_off(monkeypatch):
+    """Anything not explicitly truthy keeps the flag OFF (fail-closed)."""
+    for v in ("0", "false", "no", "off", "", "banana"):
+        monkeypatch.setenv("APOLLO_NLI_MISC_POSITIVE_CERTIFY", v)
+        assert apollo_nli_misc_positive_certify() is False
+        assert load_nli_params().misc_positive_certify is False
+
+
+def test_misc_positive_certify_flag_never_touches_thresholds(monkeypatch):
+    """The flag reuses the existing veto threshold — enabling it must not move
+    any tuned per-model threshold."""
+    monkeypatch.setenv("APOLLO_NLI_MISC_POSITIVE_CERTIFY", "1")
+    on = load_nli_params()
+    monkeypatch.delenv("APOLLO_NLI_MISC_POSITIVE_CERTIFY")
+    off = load_nli_params()
+    for name in (
+        "top_k",
+        "min_entailment",
+        "max_contradiction",
+        "ambiguity_margin",
+        "misconception_veto_entailment",
+    ):
+        assert getattr(on, name) == getattr(off, name)
