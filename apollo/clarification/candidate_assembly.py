@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.emergent.config import emergent_misconceptions_enabled
+from apollo.emergent.store import load_promoted_misconceptions_dict
 from apollo.graph_compare.problem_inputs import ProblemInputs, build_problem_candidates
 from apollo.knowledge_graph.canon_projection import load_entity_specs
 from apollo.overseer.misconception_bank import load_for_concept
@@ -75,12 +77,37 @@ async def load_problem_candidates_with_soundness(
     not None (a NULL concept can never have a bank, so soundness would fail-open)."""
     entries = await load_for_concept(db, concept_id=concept_id)  # type: ignore[arg-type]
     misconceptions = _misconceptions_dict(entries)
+
+    # Emergent misconception store (memo 2026-07-05, increment 1). DORMANT unless
+    # APOLLO_EMERGENT_MISCONCEPTIONS is ON: flag OFF, `emergent_miscs` stays [],
+    # the candidate set + bank_applicable are byte-identical to the hand-authored-
+    # only behavior. Flag ON: promoted (trust >= TAU_ASSERT, keyed, not muted)
+    # class-misconceptions become `misc.*` candidates exactly like bank entries.
+    # Hand-authored keys WIN on a collision (dedup by key) so the emergent store
+    # is strictly additive over the existing bank (OQ5 co-existence).
+    emergent_miscs: list[dict] = []
+    if emergent_misconceptions_enabled():
+        promoted = await load_promoted_misconceptions_dict(
+            db, search_space_id=search_space_id, concept_id=concept_id
+        )
+        authored_keys = {m["key"] for m in misconceptions["misconceptions"]}
+        emergent_miscs = [
+            m for m in promoted["misconceptions"] if m["key"] not in authored_keys
+        ]
+        misconceptions["misconceptions"].extend(emergent_miscs)
+
     specs = await load_entity_specs(db, search_space_id=search_space_id, concept_id=concept_id)
     canon_key_by_canonical_key = {spec.canonical_key: spec.key for spec in specs}
     inputs = build_problem_candidates(
         problem_payload, misconceptions, canon_key_by_canonical_key=canon_key_by_canonical_key
     )
-    bank_applicable = _bank_applicable(entries, concept_id)
+    # bank_applicable stays the D5/D6 soundness gate: True iff SOME assertable
+    # misconception (hand-authored or promoted-emergent) exists AND concept_id is
+    # not None. Flag OFF, emergent_miscs is [], so this reduces to the shared
+    # _bank_applicable predicate exactly (byte-identical).
+    bank_applicable = _bank_applicable(entries, concept_id) or (
+        bool(emergent_miscs) and concept_id is not None
+    )
     return inputs, bank_applicable
 
 
