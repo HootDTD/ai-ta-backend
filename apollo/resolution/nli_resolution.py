@@ -55,16 +55,25 @@ def match_nli_semantic(
         if not polarity_allows_match(text, sc.text).allowed:
             continue
         r = ctx.nli.classify(premise=text, hypothesis=sc.text)
-        if r.label == "entailment" and r.entailment >= p.misconception_veto_entailment:
-            if p.misc_positive_certify:
-                _LOG.info(
-                    "nli_misconception_certify key=%s ent=%.3f",
-                    sc.candidate.canonical_key,
-                    r.entailment,
-                )
-                return ScoredMatch(
-                    student_node.node_id, sc.candidate, "nli", METHOD_CONFIDENCE_CAP["nli"]
-                )
+        if r.label != "entailment":
+            continue
+        # Fix 3 (2026-07 routing fixes): the CERTIFY decision uses its own,
+        # independently-tunable bar (misc_certify_entailment, env
+        # APOLLO_NLI_MISC_CERTIFY_ENTAILMENT, tuned default 0.95 — a real
+        # misconception utterance measured 0.9742, just under the 0.98 veto
+        # bar) instead of reusing misconception_veto_entailment. The VETO
+        # decision keeps the original bar unchanged (flag OFF stays
+        # byte-identical veto-only behavior).
+        if p.misc_positive_certify and r.entailment >= p.misc_certify_entailment:
+            _LOG.info(
+                "nli_misconception_certify key=%s ent=%.3f",
+                sc.candidate.canonical_key,
+                r.entailment,
+            )
+            return ScoredMatch(
+                student_node.node_id, sc.candidate, "nli", METHOD_CONFIDENCE_CAP["nli"]
+            )
+        if r.entailment >= p.misconception_veto_entailment:
             _LOG.info(
                 "nli_misconception_veto key=%s ent=%.3f", sc.candidate.canonical_key, r.entailment
             )
@@ -106,3 +115,51 @@ def match_nli_semantic(
         return None
     sc, _ = passed[0]
     return ScoredMatch(student_node.node_id, sc.candidate, "nli", METHOD_CONFIDENCE_CAP["nli"])
+
+
+def match_nli_misconception_certify(
+    student_node: Node,
+    miscs: tuple[Candidate, ...],
+    *,
+    ctx: NLIContext,
+    entailment_bar: float,
+) -> ScoredMatch | None:
+    """Misconception-only NLI check that COMPETES with an already-found fuzzy
+    lexical winner (resolver.py's ``_content_match``, 2026-07 routing-fix Fix
+    2) — as opposed to :func:`match_nli_semantic`'s misconception veto/certify,
+    which only ever runs when the lexical tier found NOTHING (Gate C in the
+    routing diagnosis).
+
+    Gated entirely by the caller: this function does not read
+    ``ctx.params.misc_positive_certify`` itself, so the caller decides whether
+    and when to invoke it (only when the flag is on). Uses the caller-supplied
+    ``entailment_bar`` (``APOLLO_NLI_MISC_CERTIFY_ENTAILMENT``, default 0.95),
+    deliberately NOT ``ctx.params.misconception_veto_entailment`` (0.98) — the
+    two bars serve different competitions and must stay independently tunable.
+
+    Returns the winning ``misc.*`` :class:`ScoredMatch` (method ``"nli"``) on
+    the first candidate whose best-shortlisted surface entails at/above
+    ``entailment_bar`` (after the polarity pre-screen), else ``None``."""
+    if ctx.nli is None or not miscs:
+        return None
+    text = student_surface_text(student_node)
+    if not text or student_node.node_type not in NLI_NODE_TYPES:
+        return None
+    p = ctx.params
+    for sc in shortlist_semantic_candidates(
+        student_node, miscs, top_k=p.top_k, embedder=ctx.embedder, cache=ctx.cache
+    ):
+        if not polarity_allows_match(text, sc.text).allowed:
+            continue
+        r = ctx.nli.classify(premise=text, hypothesis=sc.text)
+        if r.label == "entailment" and r.entailment >= entailment_bar:
+            _LOG.info(
+                "nli_misc_competition_certify key=%s ent=%.3f bar=%.3f",
+                sc.candidate.canonical_key,
+                r.entailment,
+                entailment_bar,
+            )
+            return ScoredMatch(
+                student_node.node_id, sc.candidate, "nli", METHOD_CONFIDENCE_CAP["nli"]
+            )
+    return None

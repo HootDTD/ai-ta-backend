@@ -45,6 +45,12 @@ _BOOLEAN_FLAG_DEFAULTS: dict[str, bool] = {
     "APOLLO_LEARNER_JANITOR_ENABLED": False,
     "APOLLO_LEARNER_NEGOTIATION_ENABLED": False,
     "APOLLO_MISCONCEPTION_ENABLED": False,
+    # 2026-07 misc-detection routing fixes: also captured transitively via
+    # nli_params.misc_positive_certify / .misc_certify_entailment (both ride
+    # along in load_nli_params()'s snapshot below), but tracked here too as a
+    # direct, flag-level audit signal (mirrors the composite-gate-probe
+    # "threading verification" finding — don't just trust env vars were read).
+    "APOLLO_NLI_MISC_POSITIVE_CERTIFY": False,
     "APOLLO_OLM_INVITES_ENABLED": False,
     "APOLLO_SESSION_PERSONALIZATION_ENABLED": False,
     "APOLLO_STRUCTURED_SCRAPE": False,

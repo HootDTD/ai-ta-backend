@@ -143,7 +143,7 @@ def test_nli_import_failure_logged_only_once(monkeypatch, caplog):
 
 def test_nli_grading_node_cap_default_when_unset(monkeypatch):
     monkeypatch.delenv("APOLLO_NLI_GRADING_MAX_NODES", raising=False)
-    assert dg._nli_grading_node_cap() == 15
+    assert dg._nli_grading_node_cap() == 40
 
 
 def test_nli_grading_node_cap_reads_env(monkeypatch):
@@ -153,7 +153,7 @@ def test_nli_grading_node_cap_reads_env(monkeypatch):
 
 def test_nli_grading_node_cap_falls_back_on_malformed_env(monkeypatch):
     monkeypatch.setenv("APOLLO_NLI_GRADING_MAX_NODES", "not-a-number")
-    assert dg._nli_grading_node_cap() == 15
+    assert dg._nli_grading_node_cap() == 40
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +385,44 @@ async def test_run_graph_simulation_under_cap_threads_nli_ctx(monkeypatch):
                 attempt=attempt,
                 sess=sess,
                 student_graph=_graph_with_nodes(3),  # under the cap of 10
+                problem_payload=_payload(),
+                old_rubric={"overall": {"score": 70, "letter": "B-"}},
+            )
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    rkwargs = mocks["resolve_attempt"].call_args.kwargs
+    assert rkwargs["nli_ctx"] is not None
+    assert attempt.learner_update_pending is False
+
+
+@pytest.mark.asyncio
+async def test_run_graph_simulation_25_nodes_runs_nli_at_raised_default(monkeypatch):
+    """Fix 1 (2026-07 routing fixes): a 25-node attempt (attempt-1 shape, per
+    ``.superpowers/sdd/misc-node-routing-diagnosis.md`` Q3) was previously
+    ALWAYS skipped by the old default cap of 15 — a whole-attempt binary
+    switch, not per-node truncation. At the raised default of 40, NLI now
+    threads through for this attempt with NO env override needed."""
+    monkeypatch.setenv("APOLLO_NLI_ENABLED", "1")
+    monkeypatch.delenv("APOLLO_NLI_GRADING_MAX_NODES", raising=False)
+    monkeypatch.setattr(dg, "_NLI_ADJUDICATOR", None)
+    monkeypatch.setattr(dg, "_build_adjudicator", lambda: _FakeNLI())
+
+    db = _db()
+    patches, mocks = _all_callee_patches()
+    sess = _Sess()
+    attempt = _Attempt()
+    with _read_transcript_patch():
+        for p in patches:
+            p.start()
+        try:
+            await dg.run_graph_simulation(
+                db,
+                None,
+                attempt=attempt,
+                sess=sess,
+                student_graph=_graph_with_nodes(25),  # under the new default cap of 40
                 problem_payload=_payload(),
                 old_rubric={"overall": {"score": 70, "letter": "B-"}},
             )

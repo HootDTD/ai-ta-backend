@@ -17,7 +17,11 @@ from __future__ import annotations
 from apollo.resolution.candidates import Candidate
 from apollo.resolution.nli_adjudicator import FakeNLIAdjudicator, NLIResult
 from apollo.resolution.nli_config import NLIParams
-from apollo.resolution.nli_resolution import NLIContext, match_nli_semantic
+from apollo.resolution.nli_resolution import (
+    NLIContext,
+    match_nli_misconception_certify,
+    match_nli_semantic,
+)
 
 ENT = NLIResult("entailment", 0.95, 0.02, 0.03, "fake")
 CON = NLIResult("contradiction", 0.02, 0.95, 0.03, "fake")
@@ -348,3 +352,108 @@ def test_content_overlap_floor_blocks_ref(make_def_node):
     fake = FakeNLIAdjudicator({})  # any classify() call would raise KeyError
     ctx = NLIContext(nli=fake, params=NLIParams())
     assert match_nli_semantic(node, (ref,), ctx=ctx) is None
+
+
+# ---------------------------------------------------------------------------
+# 2026-07 misc-detection routing fixes, Fix 2 — direct guard-path tests for
+# match_nli_misconception_certify (the resolver-level integration paths live
+# in test_resolver.py; these pin the function's own early-exit guards).
+# ---------------------------------------------------------------------------
+
+
+def test_misc_certify_inert_without_adjudicator_or_miscs(make_def_node):
+    """Guard 1: no adjudicator, or an empty misconception candidate set, both
+    return None without doing any work."""
+    node = make_def_node("density is constant")
+    misc = _misc("misc.x", "density is constant")
+    no_nli = NLIContext(nli=None, params=NLIParams())
+    assert match_nli_misconception_certify(node, (misc,), ctx=no_nli, entailment_bar=0.95) is None
+    fake = FakeNLIAdjudicator({})  # any classify() call would raise KeyError
+    with_nli = NLIContext(nli=fake, params=NLIParams())
+    assert match_nli_misconception_certify(node, (), ctx=with_nli, entailment_bar=0.95) is None
+
+
+def test_misc_certify_non_nli_node_type_never_consults(make_equation_node):
+    """Guard 2: an ``equation`` node (excluded from NLI_NODE_TYPES) returns
+    None before the adjudicator is ever consulted."""
+    node = make_equation_node("P + rho*g*h = const")
+    misc = _misc("misc.x", "P + rho*g*h = const")
+    fake = FakeNLIAdjudicator({})  # any classify() call would raise KeyError
+    ctx = NLIContext(nli=fake, params=NLIParams())
+    assert match_nli_misconception_certify(node, (misc,), ctx=ctx, entailment_bar=0.95) is None
+
+
+def test_misc_certify_polarity_screen_blocks_before_nli(make_def_node):
+    """Guard 3: a negation-polarity mismatch between the student text and the
+    misconception surface trips the polarity pre-screen ``continue`` — the
+    adjudicator is never consulted and the function returns None."""
+    node = make_def_node("pressure does not drop along the pipe")
+    misc = _misc("misc.pressure_drops", "pressure drops along the pipe")
+    fake = FakeNLIAdjudicator({})  # any classify() call would raise KeyError
+    ctx = NLIContext(nli=fake, params=NLIParams())
+    assert match_nli_misconception_certify(node, (misc,), ctx=ctx, entailment_bar=0.95) is None
+
+
+def test_misc_certify_bar_independent_of_veto_bar(make_def_node):
+    """Fix 3 (2026-07 routing fixes), the persona-36 shape: entailment 0.974
+    sits ABOVE the certify bar (0.95) but BELOW the veto bar (0.98).
+
+    Flag ON  -> the node positively certifies to the misc.* candidate (the
+    certify decision reads ``misc_certify_entailment``, NOT the veto bar).
+    Flag OFF -> byte-identical veto-only behavior: 0.974 < 0.98 means NO veto
+    fires either, and the node falls through to the reference-certify loop
+    (here: resolves to the reference).
+    """
+    node = make_def_node("nominal gdp essentially the same as real gdp")
+    ref = _ref("def.nominal_gdp", "nominal gdp essentially the market-value measure")
+    misc = _misc("misc.nominal_for_real", "nominal gdp is the same as real gdp")
+    near_miss = NLIResult("entailment", 0.9742, 0.01, 0.0158, "fake")
+    fake = FakeNLIAdjudicator(
+        {
+            (
+                "nominal gdp essentially the same as real gdp",
+                "nominal gdp is the same as real gdp",
+            ): near_miss,
+            (
+                "nominal gdp essentially the same as real gdp",
+                "nominal gdp essentially the market-value measure",
+            ): ENT,
+        }
+    )
+    prod_bars = dict(misconception_veto_entailment=0.98, misc_certify_entailment=0.95)
+
+    on = match_nli_semantic(
+        node,
+        (ref, misc),
+        ctx=NLIContext(nli=fake, params=NLIParams(misc_positive_certify=True, **prod_bars)),
+    )
+    assert on is not None and on.candidate.canonical_key == "misc.nominal_for_real"
+
+    off = match_nli_semantic(
+        node,
+        (ref, misc),
+        ctx=NLIContext(nli=fake, params=NLIParams(misc_positive_certify=False, **prod_bars)),
+    )
+    assert off is not None and off.candidate.canonical_key == "def.nominal_gdp"
+
+
+def test_misc_veto_bar_still_vetoes_when_certify_bar_above_it(make_def_node):
+    """Defensive ordering: if an operator sets the certify bar ABOVE the veto
+    bar, an entailment between the two must still VETO (block reference
+    credit) with the flag ON — never silently fall through to reference
+    certify."""
+    node = make_def_node("pressure rises as speed rises")
+    ref = _ref("def.tradeoff", "pressure falls as speed rises")
+    misc = _misc("misc.same_dir", "pressure rises as speed rises")
+    fake = FakeNLIAdjudicator(
+        {
+            ("pressure rises as speed rises", "pressure rises as speed rises"): ENT,  # 0.95
+            ("pressure rises as speed rises", "pressure falls as speed rises"): ENT,
+        }
+    )
+    params = NLIParams(
+        misc_positive_certify=True,
+        misconception_veto_entailment=0.90,
+        misc_certify_entailment=0.99,
+    )
+    assert match_nli_semantic(node, (ref, misc), ctx=NLIContext(nli=fake, params=params)) is None
