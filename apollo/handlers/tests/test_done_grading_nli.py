@@ -143,7 +143,7 @@ def test_nli_import_failure_logged_only_once(monkeypatch, caplog):
 
 def test_nli_grading_node_cap_default_when_unset(monkeypatch):
     monkeypatch.delenv("APOLLO_NLI_GRADING_MAX_NODES", raising=False)
-    assert dg._nli_grading_node_cap() == 40
+    assert dg._nli_grading_node_cap() == 15
 
 
 def test_nli_grading_node_cap_reads_env(monkeypatch):
@@ -153,7 +153,7 @@ def test_nli_grading_node_cap_reads_env(monkeypatch):
 
 def test_nli_grading_node_cap_falls_back_on_malformed_env(monkeypatch):
     monkeypatch.setenv("APOLLO_NLI_GRADING_MAX_NODES", "not-a-number")
-    assert dg._nli_grading_node_cap() == 40
+    assert dg._nli_grading_node_cap() == 15
 
 
 # ---------------------------------------------------------------------------
@@ -398,14 +398,17 @@ async def test_run_graph_simulation_under_cap_threads_nli_ctx(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_graph_simulation_25_nodes_runs_nli_at_raised_default(monkeypatch):
-    """Fix 1 (2026-07 routing fixes): a 25-node attempt (attempt-1 shape, per
-    ``.superpowers/sdd/misc-node-routing-diagnosis.md`` Q3) was previously
-    ALWAYS skipped by the old default cap of 15 — a whole-attempt binary
-    switch, not per-node truncation. At the raised default of 40, NLI now
-    threads through for this attempt with NO env override needed."""
+async def test_run_graph_simulation_25_nodes_runs_nli_with_env_cap_40(monkeypatch):
+    """Fix 1 (2026-07 routing fixes, revised OPT-IN shape after PR #101
+    review): a 25-node attempt (attempt-1 shape, per ``.superpowers/sdd/
+    misc-node-routing-diagnosis.md`` Q3) is ALWAYS skipped at the default cap
+    of 15 — a whole-attempt binary switch, not per-node truncation. Setting
+    the opt-in env override ``APOLLO_NLI_GRADING_MAX_NODES=40`` (the
+    campaign/probe configuration — ``campaign/infra/env.campaign.example``)
+    threads NLI through end-to-end; the DEFAULT stays 15 so default grading
+    behavior is byte-identical."""
     monkeypatch.setenv("APOLLO_NLI_ENABLED", "1")
-    monkeypatch.delenv("APOLLO_NLI_GRADING_MAX_NODES", raising=False)
+    monkeypatch.setenv("APOLLO_NLI_GRADING_MAX_NODES", "40")
     monkeypatch.setattr(dg, "_NLI_ADJUDICATOR", None)
     monkeypatch.setattr(dg, "_build_adjudicator", lambda: _FakeNLI())
 
@@ -422,7 +425,7 @@ async def test_run_graph_simulation_25_nodes_runs_nli_at_raised_default(monkeypa
                 None,
                 attempt=attempt,
                 sess=sess,
-                student_graph=_graph_with_nodes(25),  # under the new default cap of 40
+                student_graph=_graph_with_nodes(25),  # over default 15, under env cap 40
                 problem_payload=_payload(),
                 old_rubric={"overall": {"score": 70, "letter": "B-"}},
             )

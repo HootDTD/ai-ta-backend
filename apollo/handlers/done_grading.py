@@ -102,16 +102,21 @@ _NLI_IMPORT_UNAVAILABLE_LOGGED = False
 # runs per residual node, so an uncapped attempt can still tie up the worker
 # thread for a long time. Hoisted to a local once per call (same pattern).
 _NLI_GRADING_NODE_CAP_FLAG: str = "APOLLO_NLI_GRADING_MAX_NODES"
-# Raised 15 -> 40 (2026-07 misc-detection routing fixes, Fix 1): the 15-node
-# cap was a pure capacity/perf limit (not a grading-logic change) that
-# disabled NLI for the WHOLE attempt (binary, not a per-node truncation — see
-# ``.superpowers/sdd/misc-node-routing-diagnosis.md`` Q3) whenever an attempt
-# had a realistic node count (25+ for a normal fluid-mechanics attempt).
-# Verified against the frozen f1c baseline: NOT flag-gated by
-# APOLLO_NLI_MISC_POSITIVE_CERTIFY, but IS gated by APOLLO_NLI_ENABLED (NLI
-# already runs unconditionally elsewhere when enabled) — a replay with
-# APOLLO_NLI_ENABLED unset/0 is byte-identical regardless of this cap.
-_NLI_GRADING_NODE_CAP_DEFAULT: int = 40
+# DEFAULT STAYS 15 (2026-07 misc-detection routing fixes, Fix 1 — revised
+# after cold-eyes review of PR #101): the cap is a binary whole-attempt NLI
+# disable, not a per-node truncation (see ``.superpowers/sdd/
+# misc-node-routing-diagnosis.md`` Q3), and 15 sits below realistic attempt
+# sizes (25+ nodes for a normal fluid-mechanics attempt). BUT raising the
+# DEFAULT would ship an un-gated grading-behavior change: NLI is default-ON
+# (``APOLLO_NLI_ENABLED``), so previously-capped attempts would start running
+# NLI recall and their unresolved_rate/composite would move (measured on the
+# frozen f1c replay: 6 attempts drift, e.g. one strong composite
+# 0.396 -> 0.516), plus ~2.6x NLI latency on large attempts. The raise is
+# therefore OPT-IN via the existing env override: campaign/probe runs set
+# ``APOLLO_NLI_GRADING_MAX_NODES=40`` explicitly (documented in
+# ``campaign/infra/env.campaign.example``; the live value is snapshot-audited
+# by ``campaign/config.py``), while prod default behavior stays byte-identical.
+_NLI_GRADING_NODE_CAP_DEFAULT: int = 15
 
 
 def _build_adjudicator():  # pragma: no cover — constructs the real model (Task 12 probe)

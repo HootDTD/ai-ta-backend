@@ -56,6 +56,18 @@ _BOOLEAN_FLAG_DEFAULTS: dict[str, bool] = {
     "APOLLO_STRUCTURED_SCRAPE": False,
 }
 
+#: Integer campaign tunables this config snapshots, mapped to the default each
+#: value's OWN reader documents (read-only mirrors, same contract as
+#: ``_BOOLEAN_FLAG_DEFAULTS``; the real default lives in the owning module —
+#: here ``apollo.handlers.done_grading._NLI_GRADING_NODE_CAP_DEFAULT``).
+#: ``APOLLO_NLI_GRADING_MAX_NODES`` is tracked because campaign/probe runs OPT
+#: IN to a raised cap (40 — see ``campaign/infra/env.campaign.example``) while
+#: the prod default stays 15 (2026-07 routing Fix 1, revised after PR #101
+#: review): every frozen config.json must audit which cap a run graded under.
+_INT_FLAG_DEFAULTS: dict[str, int] = {
+    "APOLLO_NLI_GRADING_MAX_NODES": 15,
+}
+
 #: The env var the campaign driver (D3) reads to stamp ``versions.weights_version``
 #: on every artifact it writes. Set by :class:`campaign.runctx.RunContext` when a
 #: run's config is frozen.
@@ -78,6 +90,27 @@ def snapshot_flags() -> dict[str, bool]:
     }
 
 
+def _read_int_flag(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        # Mirror the owning readers' behavior (e.g. done_grading.
+        # _nli_grading_node_cap): a malformed override falls back to the
+        # default rather than crashing a campaign run at snapshot time.
+        return default
+
+
+def snapshot_int_flags() -> dict[str, int]:
+    """Current value of every tracked integer tunable (env override applied on
+    top of that value's documented default), sorted by name for determinism."""
+    return {
+        name: _read_int_flag(name, default) for name, default in sorted(_INT_FLAG_DEFAULTS.items())
+    }
+
+
 @dataclass(frozen=True)
 class CampaignConfig:
     """Every tunable that feeds the composite grade for one campaign run."""
@@ -88,6 +121,7 @@ class CampaignConfig:
     nli_params: NLIParams
     abstention_thresholds: dict[str, float]
     flags: dict[str, bool]
+    int_flags: dict[str, int] = dataclasses.field(default_factory=dict)
 
     def snapshot(self) -> dict[str, Any]:
         """JSON-serialisable representation used for hashing and freezing."""
@@ -98,6 +132,7 @@ class CampaignConfig:
             "nli_params": dataclasses.asdict(self.nli_params),
             "abstention_thresholds": dict(self.abstention_thresholds),
             "flags": dict(self.flags),
+            "int_flags": dict(self.int_flags),
         }
 
     @staticmethod
@@ -110,11 +145,18 @@ class CampaignConfig:
             nli_params=load_nli_params(),
             abstention_thresholds=dict(ABSTENTION_THRESHOLDS),
             flags=snapshot_flags(),
+            int_flags=snapshot_int_flags(),
         )
 
     @staticmethod
     def from_snapshot(data: dict[str, Any]) -> CampaignConfig:
-        """Reconstruct a :class:`CampaignConfig` from :meth:`snapshot` output."""
+        """Reconstruct a :class:`CampaignConfig` from :meth:`snapshot` output.
+
+        Backward-compatible with pre-``int_flags`` frozen snapshots (e.g. the
+        f1/f1c/f2 config.json files): a missing key reconstructs as each
+        tracked tunable's documented DEFAULT — which is what those runs
+        actually graded under, since the env override did not exist yet.
+        """
         return CampaignConfig(
             axis_weights=dict(data["axis_weights"]),
             letter_bands=tuple(tuple(band) for band in data["letter_bands"]),
@@ -122,6 +164,7 @@ class CampaignConfig:
             nli_params=NLIParams(**data["nli_params"]),
             abstention_thresholds=dict(data["abstention_thresholds"]),
             flags=dict(data["flags"]),
+            int_flags=dict(data.get("int_flags", _INT_FLAG_DEFAULTS)),
         )
 
 

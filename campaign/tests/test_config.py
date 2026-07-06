@@ -19,6 +19,7 @@ from campaign.config import (
     freeze,
     load_frozen,
     snapshot_flags,
+    snapshot_int_flags,
 )
 
 
@@ -130,3 +131,47 @@ def test_assert_live_matches_frozen_raises_on_divergence(monkeypatch):
 
     with pytest.raises(ConfigDivergedError):
         assert_live_matches_frozen(frozen_cfg)
+
+
+# ---------------------------------------------------------------------------
+# 2026-07 routing Fix 1 (revised opt-in shape) — int_flags snapshot audit of
+# APOLLO_NLI_GRADING_MAX_NODES (campaign runs opt into 40; prod default 15).
+# ---------------------------------------------------------------------------
+
+
+def test_int_flags_default_when_env_unset(monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_GRADING_MAX_NODES", raising=False)
+    assert snapshot_int_flags() == {"APOLLO_NLI_GRADING_MAX_NODES": 15}
+
+
+def test_int_flags_read_env_override(monkeypatch):
+    monkeypatch.setenv("APOLLO_NLI_GRADING_MAX_NODES", "40")
+    cfg = CampaignConfig.capture_live()
+    assert cfg.int_flags["APOLLO_NLI_GRADING_MAX_NODES"] == 40
+    # and the value participates in the frozen snapshot + sha
+    assert cfg.snapshot()["int_flags"]["APOLLO_NLI_GRADING_MAX_NODES"] == 40
+
+
+def test_int_flags_malformed_env_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("APOLLO_NLI_GRADING_MAX_NODES", "not-a-number")
+    assert snapshot_int_flags()["APOLLO_NLI_GRADING_MAX_NODES"] == 15
+
+
+def test_int_flags_change_the_config_sha(monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_ENABLED", raising=False)
+    monkeypatch.delenv("APOLLO_NLI_GRADING_MAX_NODES", raising=False)
+    sha_default = config_sha(CampaignConfig.capture_live().snapshot())
+    monkeypatch.setenv("APOLLO_NLI_GRADING_MAX_NODES", "40")
+    sha_forty = config_sha(CampaignConfig.capture_live().snapshot())
+    assert sha_default != sha_forty
+
+
+def test_from_snapshot_backfills_int_flags_for_pre_int_flags_snapshots(monkeypatch):
+    """A frozen config.json written BEFORE int_flags existed (f1/f1c/f2)
+    reconstructs with each tracked tunable's documented default — the value
+    those runs actually graded under."""
+    monkeypatch.delenv("APOLLO_NLI_GRADING_MAX_NODES", raising=False)
+    old = CampaignConfig.capture_live().snapshot()
+    del old["int_flags"]  # simulate the pre-int_flags snapshot shape
+    restored = CampaignConfig.from_snapshot(old)
+    assert restored.int_flags == {"APOLLO_NLI_GRADING_MAX_NODES": 15}
