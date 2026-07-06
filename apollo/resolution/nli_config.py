@@ -74,6 +74,16 @@ class NLIParams:
     # reference certify emits) instead of only vetoing; reference credit stays
     # blocked either way. False keeps the veto-only behavior byte-identical.
     misc_positive_certify: bool = False
+    # Independently-configurable certify bar for the resolver-level fuzzy-vs-
+    # misconception competition (``apollo/resolution/resolver.py``'s
+    # ``_content_match``, 2026-07 routing-fix Fix 2). Deliberately SEPARATE from
+    # ``misconception_veto_entailment`` (which stays 0.98 for the recall-only
+    # NLI-fallback veto/certify path in ``nli_resolution.py``): a prior probe
+    # measured a real misconception utterance at max entailment 0.9742 against
+    # the 0.98 veto bar (just missing it), so the certify path that competes
+    # against an ALREADY-FOUND fuzzy lexical winner uses its own, lower-by-design
+    # bar. Only consulted when ``misc_positive_certify`` is True.
+    misc_certify_entailment: float = 0.95
 
 
 # Per-model tuned defaults (2026-07-01 threshold tuning). Precision-first: each
@@ -129,4 +139,7 @@ def load_nli_params() -> NLIParams:
         # Flag, not a threshold: read via config.settings (the canonical
         # APOLLO_NLI_MISC_POSITIVE_CERTIFY reader), default False.
         misc_positive_certify=apollo_nli_misc_positive_certify(),
+        misc_certify_entailment=_env_float(
+            "APOLLO_NLI_MISC_CERTIFY_ENTAILMENT", base.misc_certify_entailment
+        ),
     )

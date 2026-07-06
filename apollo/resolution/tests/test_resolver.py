@@ -26,6 +26,7 @@ from apollo.resolution.competition import (
     polarity_screen,
 )
 from apollo.resolution.nli_adjudicator import FakeNLIAdjudicator, NLIResult
+from apollo.resolution.nli_config import NLIParams
 from apollo.resolution.nli_resolution import NLIContext
 from apollo.resolution.resolver import _content_match
 from apollo.resolution.structural import ScoredMatch
@@ -935,3 +936,158 @@ def test_nli_none_is_byte_identical():
     # ResolutionResult and ResolvedNode are @dataclass(frozen=True); __eq__ is
     # auto-generated and does field-by-field comparison, so r1 == r2 is correct.
     assert r1 == r2
+
+
+# ---------------------------------------------------------------------------
+# 2026-07 misc-detection routing fixes, Fix 2 — the misconception NLI check
+# now competes with an ALREADY-FOUND fuzzy-tier lexical winner instead of
+# being permanently short-circuited (the diagnosed `control_credit_leak`
+# defect: `.superpowers/sdd/misc-node-routing-diagnosis.md` Q2). Gated
+# entirely behind `APOLLO_NLI_MISC_POSITIVE_CERTIFY` (`nli_ctx.params.
+# misc_positive_certify`); flag OFF pins today's byte-identical behavior.
+# ---------------------------------------------------------------------------
+
+_ROUTING_STUDENT_TEXT = "density is basically constant through the entire pipe"
+_ROUTING_REF_ALIAS = "density is basically constant through pipe"  # fuzzy, NOT exact
+_ROUTING_MISC_DISPLAY_NAME = _ROUTING_STUDENT_TEXT  # -> NLI shortlist Jaccard overlap 1.0
+
+
+def _routing_node():
+    return _node("n1", "condition", {"applies_when": _ROUTING_STUDENT_TEXT, "label": ""})
+
+
+def _routing_ref_candidate():
+    return _cand(
+        "def.density_constant",
+        node_type="condition",
+        aliases=(_ROUTING_REF_ALIAS,),
+        canon=51,
+    )
+
+
+def _routing_misc_candidate():
+    return Candidate(
+        canonical_key="misc.density_ignored",
+        canon_key=52,
+        node_type="condition",
+        is_misconception=True,
+        symbolic=None,
+        aliases=(),  # deliberately NO alias/fuzzy hit — only NLI can find this one
+        display_name=_ROUTING_MISC_DISPLAY_NAME,
+        opposes_key="def.density_constant",
+        exact_aliases=(),
+    )
+
+
+def _routing_nli_ctx(*, misc_positive_certify: bool, entailment: float, certify_bar: float = 0.95):
+    """An NLIContext scripted to entail the misconception candidate at
+    ``entailment`` for the fixed routing-test student text, with the flag and
+    certify bar set explicitly (never read from env — deterministic test)."""
+    result = NLIResult("entailment", entailment, 1.0 - entailment, 0.0, "fake")
+    fake = FakeNLIAdjudicator({(_ROUTING_STUDENT_TEXT, _ROUTING_MISC_DISPLAY_NAME): result})
+    params = NLIParams(
+        misc_positive_certify=misc_positive_certify, misc_certify_entailment=certify_bar
+    )
+    return NLIContext(nli=fake, params=params)
+
+
+def test_routing_fix2_no_misconception_entailment_lexical_wins_unchanged():
+    """(a) A correct/strong-persona-style utterance: lexical fuzzy match exists,
+    flag is ON, but the misconception does NOT entail (low score) -> the
+    lexical (fuzzy) winner is returned unchanged."""
+    node = _routing_node()
+    ref = _routing_ref_candidate()
+    misc = _routing_misc_candidate()
+    ctx = _routing_nli_ctx(misc_positive_certify=True, entailment=0.10)
+    match = _content_match(
+        node, (ref, misc), fuzzy_threshold=0.9, symbolic_mappings={}, nli_ctx=ctx
+    )
+    assert match is not None
+    assert match.method == "fuzzy"
+    assert match.candidate.canonical_key == "def.density_constant"
+
+
+def test_routing_fix2_misconception_certifies_and_wins_over_false_fuzzy_match():
+    """(b) A wrong-claim utterance: it FALSELY fuzzy-matches the reference
+    candidate (lexical tiers alone would credit it), but the misconception
+    entails >= the certify bar via NLI -> the misconception WINS, not the
+    lexical match (no credit downstream)."""
+    node = _routing_node()
+    ref = _routing_ref_candidate()
+    misc = _routing_misc_candidate()
+    ctx = _routing_nli_ctx(misc_positive_certify=True, entailment=0.97)
+    match = _content_match(
+        node, (ref, misc), fuzzy_threshold=0.9, symbolic_mappings={}, nli_ctx=ctx
+    )
+    assert match is not None
+    assert match.method == "nli"
+    assert match.candidate.canonical_key == "misc.density_ignored"
+    assert match.candidate.is_misconception is True
+
+
+def test_routing_fix2_flag_off_lexical_wins_regardless_of_entailment():
+    """(c) Flag OFF: even with a high scripted misconception entailment (0.99,
+    well above the certify bar), the lexical winner is returned byte-identical
+    to pre-Fix-2 behavior — the competition never runs when the flag is off."""
+    node = _routing_node()
+    ref = _routing_ref_candidate()
+    misc = _routing_misc_candidate()
+    ctx = _routing_nli_ctx(misc_positive_certify=False, entailment=0.99)
+    match = _content_match(
+        node, (ref, misc), fuzzy_threshold=0.9, symbolic_mappings={}, nli_ctx=ctx
+    )
+    assert match is not None
+    assert match.method == "fuzzy"
+    assert match.candidate.canonical_key == "def.density_constant"
+
+
+def test_routing_fix2_exact_tier_never_overridden_by_misconception_certify():
+    """(d) An EXACT-tier match (student label equals the candidate's canonical
+    key) is returned by ``match_exact`` before the lexical/NLI-competition
+    block is ever reached — flag ON + a high-entailment misconception present
+    changes nothing."""
+    node = _node("n1", "condition", {"applies_when": "irrelevant text", "label": "def.exact_hit"})
+    ref = _cand("def.exact_hit", node_type="condition", canon=60)
+    misc = _routing_misc_candidate()
+    ctx = _routing_nli_ctx(misc_positive_certify=True, entailment=0.99)
+    match = _content_match(
+        node, (ref, misc), fuzzy_threshold=0.9, symbolic_mappings={}, nli_ctx=ctx
+    )
+    assert match is not None
+    assert match.method == "exact"
+    assert match.candidate.canonical_key == "def.exact_hit"
+
+
+def test_routing_fix2_symbolic_tier_never_overridden_by_misconception_certify():
+    """(d) A SYMBOLIC-tier match (equation, sign-exact structural equivalence)
+    is returned before the lexical/NLI-competition block; flag ON + a
+    high-entailment misconception on an unrelated equation candidate set
+    changes nothing."""
+    # "0 = P2 - P1" is structurally equivalent to "P1 = P2" (sign-exact under
+    # simplify) but NOT normalized-text-identical, so this hits the SYMBOLIC
+    # tier specifically (not the earlier EXACT tier, which requires literal
+    # text/label equality).
+    student_sym = "0 = P2 - P1"
+    node = _node("e1", "equation", {"symbolic": student_sym, "label": "", "variables": []})
+    ref = _cand("eq.bernoulli", node_type="equation", symbolic="P1 = P2", canon=61)
+    misc = Candidate(
+        canonical_key="misc.wrong_bernoulli",
+        canon_key=62,
+        node_type="equation",
+        is_misconception=True,
+        symbolic=None,
+        aliases=(),
+        display_name=student_sym,
+        opposes_key="eq.bernoulli",
+        exact_aliases=(),
+    )
+    result = NLIResult("entailment", 0.99, 0.01, 0.0, "fake")
+    fake = FakeNLIAdjudicator({(student_sym, student_sym): result})
+    params = NLIParams(misc_positive_certify=True, misc_certify_entailment=0.95)
+    ctx = NLIContext(nli=fake, params=params)
+    match = _content_match(
+        node, (ref, misc), fuzzy_threshold=0.9, symbolic_mappings={}, nli_ctx=ctx
+    )
+    assert match is not None
+    assert match.method == "symbolic"
+    assert match.candidate.canonical_key == "eq.bernoulli"

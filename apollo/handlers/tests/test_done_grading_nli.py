@@ -398,6 +398,47 @@ async def test_run_graph_simulation_under_cap_threads_nli_ctx(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_graph_simulation_25_nodes_runs_nli_with_env_cap_40(monkeypatch):
+    """Fix 1 (2026-07 routing fixes, revised OPT-IN shape after PR #101
+    review): a 25-node attempt (attempt-1 shape, per ``.superpowers/sdd/
+    misc-node-routing-diagnosis.md`` Q3) is ALWAYS skipped at the default cap
+    of 15 — a whole-attempt binary switch, not per-node truncation. Setting
+    the opt-in env override ``APOLLO_NLI_GRADING_MAX_NODES=40`` (the
+    campaign/probe configuration — ``campaign/infra/env.campaign.example``)
+    threads NLI through end-to-end; the DEFAULT stays 15 so default grading
+    behavior is byte-identical."""
+    monkeypatch.setenv("APOLLO_NLI_ENABLED", "1")
+    monkeypatch.setenv("APOLLO_NLI_GRADING_MAX_NODES", "40")
+    monkeypatch.setattr(dg, "_NLI_ADJUDICATOR", None)
+    monkeypatch.setattr(dg, "_build_adjudicator", lambda: _FakeNLI())
+
+    db = _db()
+    patches, mocks = _all_callee_patches()
+    sess = _Sess()
+    attempt = _Attempt()
+    with _read_transcript_patch():
+        for p in patches:
+            p.start()
+        try:
+            await dg.run_graph_simulation(
+                db,
+                None,
+                attempt=attempt,
+                sess=sess,
+                student_graph=_graph_with_nodes(25),  # over default 15, under env cap 40
+                problem_payload=_payload(),
+                old_rubric={"overall": {"score": 70, "letter": "B-"}},
+            )
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    rkwargs = mocks["resolve_attempt"].call_args.kwargs
+    assert rkwargs["nli_ctx"] is not None
+    assert attempt.learner_update_pending is False
+
+
+@pytest.mark.asyncio
 async def test_run_graph_simulation_import_failure_does_not_arm_retry(monkeypatch):
     """L4: a missing-``transformers`` failure surfacing from the resolver must
     NOT set learner_update_pending / re-raise — grading completes normally,
