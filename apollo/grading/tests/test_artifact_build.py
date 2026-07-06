@@ -289,6 +289,57 @@ def test_graph_artifact_abstention_block(shadow_fixture):
     }
 
 
+def test_graph_artifact_composite_metadata_absent_by_default(shadow_fixture):
+    """Flag-OFF byte-identity: ``shadow.audited.composite`` is None (the
+    default) -> the artifact's ``abstention`` block carries NO ``composite``
+    key at all, matching ``test_graph_artifact_abstention_block`` exactly."""
+    art = build_graph_artifact(
+        shadow=shadow_fixture, weights=load_weights(), clarification_trace=[], latency_ms=None
+    )
+    assert "composite" not in art["abstention"]
+
+
+def test_graph_artifact_composite_metadata_nested_when_present():
+    """§10: when ``AuditedGrade.composite`` carries the gate's audit trail
+    (APOLLO_ABSTENTION_COMPOSITE was on for this attempt), it travels verbatim
+    into ``abstention.composite`` — the one persisted JSONB slot that reaches
+    the row and the served scorecard."""
+    findings = _findings()
+    grade = _grade(findings)
+    composite_meta = {
+        "coverage": 0.9,
+        "contradictions": 1,
+        "coverage_min": 0.6,
+        "decision": "grade",
+    }
+    audited = AuditedGrade(
+        grade=grade,
+        findings=findings,
+        abstention_reasons=(),
+        abstained=False,
+        suppressed_event_kinds=frozenset(),
+        alias_candidates=(),
+        composite=composite_meta,
+    )
+    shadow = ShadowGradeResult(
+        run_id=3,
+        grade=grade,
+        audited=audited,
+        normalization_confidence=0.8,
+        reference_graph_hash="refhash-v1:composite",
+        opposes_map={"misc.wrong": "eq.a"},
+        turn_order={},
+        graph_sim_rubric={},
+        calibration=object(),  # type: ignore[arg-type]
+        diagnostic=object(),  # type: ignore[arg-type]
+        resolution=_resolution(),
+    )
+    art = build_graph_artifact(
+        shadow=shadow, weights=load_weights(), clarification_trace=[], latency_ms=None
+    )
+    assert art["abstention"]["composite"] == composite_meta
+
+
 # --- Lane B3a/D1: empty-bank "no misconceptions asserted" marker ------------
 
 

@@ -57,6 +57,16 @@ REASON_TRANSCRIPT_AUDIT_FAILED = "transcript_audit_unavailable"
 # Phase 1c (spec §8): the attempt resolved only via weak tiers (low
 # normalization_confidence) -> distrust even at low unresolved_rate.
 REASON_LOW_NORMALIZATION_CONFIDENCE = "normalization_confidence_below_threshold"
+# §10 composite gate (APOLLO_ABSTENTION_COMPOSITE, default OFF; decision memo
+# docs/_archive/design/2026-07-06-abstention-signal-decision-memo.md option d):
+# the resolver credited less than the required fraction of the problem's
+# expected reference set (a CONTENT signal, replacing the unresolved_rate
+# volume signal). Only ever appended when the composite gate is enabled; the
+# flag-OFF path never emits this reason (byte-identical to pre-§10 behavior).
+REASON_COMPOSITE_LOW_COVERAGE = "composite_low_coverage"
+
+# §10 composite gate default coverage threshold (APOLLO_COMPOSITE_COVERAGE_MIN).
+COMPOSITE_DEFAULT_COVERAGE_MIN: float = 0.6
 
 # Event kinds (subset) WU-4B2 may be told to withhold.
 _SUPPRESS_MISSING = "missing"
@@ -70,6 +80,12 @@ class Abstention:
     abstention_reasons: tuple[str, ...]
     abstained: bool
     suppressed_event_kinds: frozenset[str]
+    # §10 composite gate audit metadata (``None`` unless ``composite_enabled``):
+    # {"coverage": float, "contradictions": int, "coverage_min": float,
+    #  "decision": "grade" | "abstain"}. Nested verbatim under the artifact's
+    # ``abstention.composite`` key by ``artifact_build.build_graph_artifact`` so
+    # the composite decision is always auditable when the flag is on.
+    composite: dict | None = None
 
 
 def unresolved_rate_of(resolution: ResolutionResult) -> float:
@@ -100,6 +116,10 @@ def apply_abstention(
     transcript_audit_failed: bool = False,
     reference_invalid: bool = False,
     normalization_confidence: float = 1.0,
+    composite_enabled: bool = False,
+    node_coverage: float = 0.0,
+    contradiction_count: int = 0,
+    coverage_min: float = COMPOSITE_DEFAULT_COVERAGE_MIN,
 ) -> Abstention:
     """Apply the §6.6 gates and return the reasons + flags + suppression set.
 
@@ -124,6 +144,16 @@ def apply_abstention(
     An empty misconception bank is deliberately NOT a gate here (lane B3a/D1): it
     is the normal cold-start state and never abstains — the fact is carried on
     ``GradeResult.soundness_applicable`` + the artifact marker instead.
+
+    §10 composite gate (``composite_enabled``, default False — byte-identical
+    when omitted): when True, ``abstained`` is decided SOLELY by
+    ``node_coverage >= coverage_min`` — overriding whatever the unresolved_rate/
+    normalization_confidence gates computed above (those reasons still get
+    RECORDED for audit, they just no longer drive ``abstained``).
+    ``coverage < coverage_min`` appends REASON_COMPOSITE_LOW_COVERAGE.
+    ``contradiction_count`` is recorded in ``Abstention.composite`` for audit
+    but never forces abstention on its own (a detected misconception is
+    informative feedback, not grading uncertainty).
 
     Pure + deterministic reason ordering (gate-declaration order)."""
     reasons: list[str] = []
@@ -158,8 +188,22 @@ def apply_abstention(
     if reference_invalid:
         reasons.append(REASON_REFERENCE_INVALID)
 
+    composite: dict | None = None
+    if composite_enabled:
+        decision = "grade" if node_coverage >= coverage_min else "abstain"
+        abstained = decision == "abstain"
+        if abstained:
+            reasons.append(REASON_COMPOSITE_LOW_COVERAGE)
+        composite = {
+            "coverage": node_coverage,
+            "contradictions": contradiction_count,
+            "coverage_min": coverage_min,
+            "decision": decision,
+        }
+
     return Abstention(
         abstention_reasons=tuple(reasons),
         abstained=abstained,
         suppressed_event_kinds=frozenset(suppressed),
+        composite=composite,
     )

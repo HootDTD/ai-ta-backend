@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from apollo.grading.abstention import (
     ABSTENTION_THRESHOLDS,
+    REASON_COMPOSITE_LOW_COVERAGE,
     REASON_HIGH_UNRESOLVED,
     REASON_LOW_MISCONCEPTION_CONFIDENCE,
     REASON_LOW_NORMALIZATION_CONFIDENCE,
@@ -170,6 +171,83 @@ def test_reasons_deterministic_order():
         REASON_LOW_MISCONCEPTION_CONFIDENCE,
         REASON_REFERENCE_INVALID,
     )
+
+
+# --- composite abstention gate (§10, APOLLO_ABSTENTION_COMPOSITE) -----------
+# Flag-OFF (default) is byte-identical to every test above (composite_enabled
+# defaults False, ``composite`` metadata defaults None). These pin the flag-ON
+# behavior: coverage >= threshold grades REGARDLESS of unresolved_rate/nc;
+# coverage < threshold abstains with a NEW dedicated reason; contradictions are
+# recorded but never force abstention on their own.
+
+
+def test_composite_disabled_by_default_is_byte_identical():
+    """Composite metadata is None and the old unresolved_rate gate still fully
+    governs ``abstained`` when the flag is not passed at all."""
+    out = _clean(unresolved_rate=0.9)
+    assert out.abstained is True
+    assert out.composite is None
+    assert REASON_COMPOSITE_LOW_COVERAGE not in out.abstention_reasons
+
+
+def test_composite_high_coverage_grades_despite_high_unresolved_rate():
+    """The whole point of §10: a high unresolved_rate (volume signal) must NOT
+    abstain a high-coverage (content signal) attempt when the flag is ON."""
+    out = _clean(unresolved_rate=0.9, composite_enabled=True, node_coverage=0.8)
+    assert out.abstained is False
+    assert REASON_COMPOSITE_LOW_COVERAGE not in out.abstention_reasons
+    assert out.composite == {
+        "coverage": 0.8,
+        "contradictions": 0,
+        "coverage_min": 0.6,
+        "decision": "grade",
+    }
+
+
+def test_composite_low_coverage_abstains_with_dedicated_reason():
+    out = _clean(unresolved_rate=0.0, composite_enabled=True, node_coverage=0.4)
+    assert out.abstained is True
+    assert REASON_COMPOSITE_LOW_COVERAGE in out.abstention_reasons
+    assert out.composite["decision"] == "abstain"
+
+
+def test_composite_coverage_at_threshold_grades():
+    """0.6 is NOT < 0.6 (>= threshold grades)."""
+    out = _clean(composite_enabled=True, node_coverage=0.6)
+    assert out.abstained is False
+    assert out.composite["decision"] == "grade"
+
+
+def test_composite_custom_threshold_respected():
+    out = _clean(composite_enabled=True, node_coverage=0.75, coverage_min=0.8)
+    assert out.abstained is True
+    assert out.composite["coverage_min"] == 0.8
+
+
+def test_composite_contradictions_recorded_but_do_not_force_abstain():
+    """A misconception detection (contradiction findings > 0) is informative,
+    not an abstention trigger, when coverage clears the bar."""
+    out = _clean(composite_enabled=True, node_coverage=0.9, contradiction_count=2)
+    assert out.abstained is False
+    assert out.composite["contradictions"] == 2
+
+
+def test_composite_preserves_existing_reasons_as_metadata():
+    """Old volume-gate reasons still get RECORDED (informative/auditable) even
+    though they no longer drive ``abstained`` when composite is enabled."""
+    out = _clean(
+        unresolved_rate=0.9,
+        normalization_confidence=0.1,
+        composite_enabled=True,
+        node_coverage=0.9,
+    )
+    assert out.abstained is False  # composite overrides both volume gates
+    assert REASON_HIGH_UNRESOLVED in out.abstention_reasons
+    assert REASON_LOW_NORMALIZATION_CONFIDENCE in out.abstention_reasons
+
+
+def test_composite_reason_constant_value():
+    assert REASON_COMPOSITE_LOW_COVERAGE == "composite_low_coverage"
 
 
 # --- helpers ----------------------------------------------------------------

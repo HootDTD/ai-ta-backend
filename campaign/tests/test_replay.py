@@ -462,6 +462,7 @@ def _outcome(**overrides: object) -> replay.ReplayOutcome:
         abstained=True,
         abstention_reasons=("unresolved_rate_above_threshold",),
         graph_composite=0.2,
+        node_coverage=0.5,
         actual_credited=("eq.continuity",),
         actual_unresolved=(),
         actual_misconceptions=(),

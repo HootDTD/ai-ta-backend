@@ -175,3 +175,66 @@ def test_from_snapshot_backfills_int_flags_for_pre_int_flags_snapshots(monkeypat
     del old["int_flags"]  # simulate the pre-int_flags snapshot shape
     restored = CampaignConfig.from_snapshot(old)
     assert restored.int_flags == {"APOLLO_NLI_GRADING_MAX_NODES": 15}
+
+
+# --- flag-audit gap fix (certify-zero-fire-trace.md): the snapshot must track
+# APOLLO_NLI_MISC_POSITIVE_CERTIFY + APOLLO_ABSTENTION_COMPOSITE +
+# APOLLO_COMPOSITE_COVERAGE_MIN so a run whose server env silently lacks a
+# grading-behavior flag is visible in the frozen config.json (the f1c run had
+# NO audit trail for the certify flag, which is how it shipped "on in code,
+# off in every live request" undetected).
+
+
+def test_snapshot_tracks_misc_positive_certify_flag(monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_MISC_POSITIVE_CERTIFY", raising=False)
+    assert snapshot_flags()["APOLLO_NLI_MISC_POSITIVE_CERTIFY"] is False  # default OFF
+
+    monkeypatch.setenv("APOLLO_NLI_MISC_POSITIVE_CERTIFY", "1")
+    assert snapshot_flags()["APOLLO_NLI_MISC_POSITIVE_CERTIFY"] is True
+
+
+def test_snapshot_tracks_abstention_composite_flag(monkeypatch):
+    monkeypatch.delenv("APOLLO_ABSTENTION_COMPOSITE", raising=False)
+    assert snapshot_flags()["APOLLO_ABSTENTION_COMPOSITE"] is False  # default OFF
+
+    monkeypatch.setenv("APOLLO_ABSTENTION_COMPOSITE", "1")
+    assert snapshot_flags()["APOLLO_ABSTENTION_COMPOSITE"] is True
+
+
+def test_capture_live_snapshots_composite_coverage_min(monkeypatch):
+    monkeypatch.delenv("APOLLO_COMPOSITE_COVERAGE_MIN", raising=False)
+    cfg = CampaignConfig.capture_live()
+    assert cfg.composite_coverage_min == pytest.approx(0.6)  # settings default
+    assert cfg.snapshot()["composite_coverage_min"] == pytest.approx(0.6)
+
+    monkeypatch.setenv("APOLLO_COMPOSITE_COVERAGE_MIN", "0.8")
+    cfg2 = CampaignConfig.capture_live()
+    assert cfg2.composite_coverage_min == pytest.approx(0.8)
+
+
+def test_config_sha_changes_when_composite_tunables_change(monkeypatch):
+    monkeypatch.delenv("APOLLO_ABSTENTION_COMPOSITE", raising=False)
+    monkeypatch.delenv("APOLLO_COMPOSITE_COVERAGE_MIN", raising=False)
+    sha_base = config_sha(CampaignConfig.capture_live().snapshot())
+
+    monkeypatch.setenv("APOLLO_ABSTENTION_COMPOSITE", "1")
+    sha_flag = config_sha(CampaignConfig.capture_live().snapshot())
+    assert sha_flag != sha_base
+
+    monkeypatch.setenv("APOLLO_COMPOSITE_COVERAGE_MIN", "0.75")
+    sha_thr = config_sha(CampaignConfig.capture_live().snapshot())
+    assert sha_thr != sha_flag
+
+
+def test_from_snapshot_backward_compatible_with_pre_composite_files(monkeypatch):
+    """A frozen config.json written BEFORE composite_coverage_min existed (e.g.
+    campaign/out/f1c/config.json) must still reconstruct — the field falls back
+    to the settings default instead of raising KeyError."""
+    monkeypatch.delenv("APOLLO_COMPOSITE_COVERAGE_MIN", raising=False)
+    cfg = CampaignConfig.capture_live()
+    legacy = cfg.snapshot()
+    del legacy["composite_coverage_min"]  # simulate a pre-composite snapshot
+
+    restored = CampaignConfig.from_snapshot(legacy)
+
+    assert restored.composite_coverage_min == pytest.approx(0.6)

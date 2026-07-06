@@ -339,6 +339,25 @@ def test_veto_side_effect_reference_credit_blocked_both_flag_states(make_def_nod
     assert on.candidate.canonical_key != "def.const_density"  # reference still blocked
 
 
+def test_flag_on_negated_misconception_never_certifies(make_def_node):
+    """Bonus/polarity regression: the polarity screen blocks a candidate BEFORE
+    NLI is even consulted on a single-negation XOR ('does not rise' vs a
+    non-negated hypothesis), so flag ON must never certify to the misc.* key
+    when the student NEGATES it. ``FakeNLIAdjudicator({})`` has NO registered
+    responses at all — if the polarity guard were bypassed for either the misc
+    or the reference candidate, the resulting ``classify()`` call would raise
+    KeyError and fail this test, instead of silently returning a wrong match."""
+    node = make_def_node("pressure does not rise as speed rises")
+    ref = _ref("def.tradeoff", "pressure falls as speed rises")
+    misc = _misc("misc.same_dir", "pressure rises as speed rises")
+    fake = FakeNLIAdjudicator({})
+    ctx = NLIContext(nli=fake, params=NLIParams(misc_positive_certify=True))
+    m = match_nli_semantic(node, (ref, misc), ctx=ctx)
+    # Both candidates are polarity-blocked (single negation vs none) -> neither
+    # is ever passed to NLI -> no match at all, and certainly never the misc key.
+    assert m is None
+
+
 def test_content_overlap_floor_blocks_ref(make_def_node):
     """Ref passes polarity but has no content tokens (len>2) in common with student.
 
