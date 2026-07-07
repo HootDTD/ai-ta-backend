@@ -119,6 +119,41 @@ def _ledger_entity_keys(artifact_row: GradingArtifact) -> list[str]:
     return keys
 
 
+def _entity_id_lookups(specs: list[Any]) -> tuple[dict[str, int], dict[str, int]]:
+    """Two ``ledger canonical_key -> entity_id`` lookups for a concept's specs:
+    an EXACT ``canonical_key`` map and a bare-SUFFIX map.
+
+    WHY two: GRAPH artifacts (the shadow chain) carry TRUE namespaced canonical
+    keys (``eq.bernoulli``, ``proc.plan_solve_...``) that hit the exact map.
+    LLM-FALLBACK artifacts (``apollo.grading.artifact_build.build_llm_artifact``
+    — the ONLY served path when the shadow chain is off) instead put BARE
+    reference-node ids (``bernoulli``, ``plan_invoke_...``) in ``canonical_key``,
+    because they come straight off ``compute_coverage``'s per-step map with no
+    kind prefix. Entity keys are namespaced with a kind prefix (``eq.``,
+    ``proc.``, ``var.``, ``concept.``, ``cond.``, ``simp.``, ``def.``,
+    ``misc.``), so a bare ledger key never hits the exact map. The suffix map
+    (the part after the first ``.``) lets those bare keys still resolve.
+
+    AMBIGUOUS suffixes are dropped: if two specs share the same post-prefix
+    suffix (``eq.foo`` and ``proc.foo``), a bare ``foo`` cannot be attributed to
+    one entity without guessing, so it resolves to NEITHER (no event) rather
+    than crediting the wrong entity."""
+    exact: dict[str, int] = {}
+    suffix: dict[str, int] = {}
+    ambiguous: set[str] = set()
+    for spec in specs:
+        exact[spec.canonical_key] = spec.key
+        if "." in spec.canonical_key:
+            suf = spec.canonical_key.split(".", 1)[1]
+            if suf in suffix:
+                ambiguous.add(suf)
+            else:
+                suffix[suf] = spec.key
+    for suf in ambiguous:
+        del suffix[suf]
+    return exact, suffix
+
+
 def _normalization_confidence(artifact_row: GradingArtifact) -> float:
     """The artifact's normalization confidence (``abstention.
     normalization_confidence`` — see ``artifact_build.py``'s ``abstention``
@@ -182,7 +217,7 @@ async def update_mastery_from_artifact(db: AsyncSession, *, artifact_row: Gradin
         return
 
     specs = await load_entity_specs(db, concept_id=int(artifact_row.concept_id))
-    entity_id_by_key = {spec.canonical_key: spec.key for spec in specs}
+    exact_by_key, suffix_by_key = _entity_id_lookups(specs)
 
     scores = cast("dict[str, Any]", artifact_row.scores) or {}
     composite = float(scores.get("composite", 0.0))
@@ -193,7 +228,11 @@ async def update_mastery_from_artifact(db: AsyncSession, *, artifact_row: Gradin
     search_space_id = int(artifact_row.search_space_id)
 
     for key in keys:
-        entity_id = entity_id_by_key.get(key)
+        # Exact namespaced match first (graph artifacts); fall back to the bare
+        # suffix map (llm_fallback artifacts carry unprefixed reference ids).
+        entity_id = exact_by_key.get(key)
+        if entity_id is None:
+            entity_id = suffix_by_key.get(key)
         if entity_id is None:
             continue
         if await _existing_event(db, attempt_id=attempt_id, entity_id=entity_id) is not None:
