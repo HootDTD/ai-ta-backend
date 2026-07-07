@@ -62,6 +62,7 @@ from apollo.projections.classroom import (
     struggle_signals,
 )
 from apollo.provisioning.authored_sets.api import router as authored_sets_router
+from apollo.subjects.curriculum_db import list_course_concepts
 from auth import AuthContext
 from database.session import get_db_session
 
@@ -211,6 +212,25 @@ async def progress(
 ) -> dict:
     auth = await require_user(request)
     return await handle_get_progress(db=db, user_id=auth.user_id)
+
+
+@router.get("/concepts")
+async def list_concepts(
+    search_space_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """Student browse surface: the course's teachable concepts (tier-2,
+    non-quarantined problem pool — same predicate as session entry)."""
+    auth = await require_user(request)
+    await require_course_member(db=db, auth=auth, search_space_id=search_space_id)
+    rows = await list_course_concepts(db, search_space_id=search_space_id)
+    return {
+        "concepts": [
+            {"concept_id": r.concept_id, "slug": r.slug, "display_name": r.display_name}
+            for r in rows
+        ]
+    }
 
 
 # ----------------------------------------------------------------------

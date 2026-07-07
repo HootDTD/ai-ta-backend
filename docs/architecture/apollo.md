@@ -12,7 +12,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-07-06
+last_verified: 2026-07-07
 stub: false
 ---
 
@@ -97,6 +97,7 @@ HTTP routes (all defined in `apollo/api.py`):
 | `POST /apollo/sessions/{id}/restart_problem` | `handlers.restart_problem` | Wipes attempt KG (Neo4j `DETACH DELETE`) + messages, same problem. Owner-gated (`require_session_owner`). |
 | `POST /apollo/sessions/{id}/end` | `handlers.lifecycle.handle_end` | Marks ended; per-attempt Neo4j subgraphs PERSIST (§7 retention, WU-3C1) — `restart_problem` is the only explicit wipe; a future janitor prunes old subgraphs. Owner-gated (`require_session_owner`). |
 | `GET /apollo/progress` | `handlers.progress` | XP, level, title, next tier threshold. Token-derived identity (`require_user`). |
+| `GET /apollo/concepts?search_space_id=` | `subjects.curriculum_db.list_course_concepts` | Student browse surface — the course's TEACHABLE concepts (`{concepts: [{concept_id, slug, display_name}]}`), each with ≥1 tier-2 non-quarantined problem (the same selectable-pool predicate session entry uses). Membership-gated (`require_course_member`, auto-enroll like `from_hoot`). |
 | `POST /apollo/sessions/{id}/kg/{entry_id}/challenge` / `paraphrase` / `skip`, `GET .../trace` | `handlers.negotiate` | Negotiable-OLM moves (P3). 404 `kg_entry_not_found` on stale entry ids. Owner-gated (`require_session_owner`). |
 | `POST /apollo/authored-sets`, `GET /apollo/authored-sets`, `GET /apollo/authored-sets/{set_id}`, `POST /apollo/authored-sets/{set_id}/problems/{problem_id}/approve`, `DELETE /apollo/authored-sets/{set_id}` | `provisioning.authored_sets.api` | WU-AAS paired problem/solution set surface, gated by `require_course_teacher` (role='teacher'; no auto-enroll fallback) — a plain course member can no longer call these. Create accepts multipart `problem` + `solution` PDFs and `search_space_id`, writes an `AuthoredSet`, indexes both docs hidden, then schedules in-process background provisioning. Poll endpoints return status + bounded `result_summary`. Approve promotes a held Tier-1 problem using the teacher-selected OCR or generated reference. Delete is terminal-status only (`done`/`failed`) — 409 while `pending`/`indexing`/`provisioning` (the in-flight background task writes Neo4j `:Canon` nodes outside the PG transaction, so a mid-run delete would orphan them); on success it removes the `AuthoredSet`, the `ConceptProblem`s it minted (ids read from `result_summary["problems"]`), and the two hidden reference docs (chunks cascade); the shared per-concept `:Canon` projection is deliberately left intact. |
 
