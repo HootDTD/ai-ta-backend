@@ -10,14 +10,16 @@ from typing import Any, cast
 
 import pytest
 
-from apollo.persistence.models import GradingArtifact
+from apollo.persistence.models import GradingArtifact, LearnerState, MasteryEvent
 from apollo.projections.mastery import (
     EVENT_KIND,
     _belief_for,
+    _entity_id_lookups,
     _ledger_entity_keys,
     _normalization_confidence,
     ewma_alpha,
     ewma_mastery,
+    update_mastery_from_artifact,
 )
 
 pytestmark = pytest.mark.unit
@@ -154,3 +156,118 @@ def test_event_kind_is_distinct_from_wu5a_kinds() -> None:
     from apollo.persistence.models import MASTERY_EVENT_KINDS
 
     assert EVENT_KIND not in MASTERY_EVENT_KINDS
+
+
+# ---------------------------------------------------------------------------
+# _entity_id_lookups — exact + bare-suffix maps, ambiguity dropped
+# ---------------------------------------------------------------------------
+
+
+def _spec(entity_id: int, canonical_key: str) -> Any:
+    """A CanonNodeSpec-shaped duck: only ``.key`` (entity id) and
+    ``.canonical_key`` are read by ``_entity_id_lookups``."""
+    return SimpleNamespace(key=entity_id, canonical_key=canonical_key)
+
+
+def test_entity_id_lookups_exact_and_suffix() -> None:
+    exact, suffix = _entity_id_lookups([_spec(11, "eq.bernoulli"), _spec(22, "proc.plan_solve")])
+    assert exact == {"eq.bernoulli": 11, "proc.plan_solve": 22}
+    # bare reference ids (llm_fallback) resolve via the suffix map
+    assert suffix == {"bernoulli": 11, "plan_solve": 22}
+
+
+def test_entity_id_lookups_ambiguous_suffix_dropped() -> None:
+    _exact, suffix = _entity_id_lookups([_spec(1, "eq.foo"), _spec(2, "proc.foo")])
+    assert "foo" not in suffix  # ambiguous bare key credits neither entity
+
+
+# ---------------------------------------------------------------------------
+# update_mastery_from_artifact — key resolution (bare-id fallback + ambiguity)
+# ---------------------------------------------------------------------------
+
+
+class _FakeResult:
+    def scalar_one_or_none(self) -> None:
+        return None  # no existing event, no prior LearnerState (cold start)
+
+
+class _FakeSession:
+    """Minimal AsyncSession stand-in: records ``add``ed rows; every ``execute``
+    reports "nothing there yet" so the projection takes its cold-start path."""
+
+    def __init__(self) -> None:
+        self.added: list[Any] = []
+
+    async def execute(self, _stmt: Any) -> _FakeResult:
+        return _FakeResult()
+
+    def add(self, obj: Any) -> None:
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        return None
+
+
+async def _run_projection(
+    monkeypatch: pytest.MonkeyPatch, *, specs: list[Any], node_ledger: list[dict[str, Any]]
+) -> _FakeSession:
+    async def _fake_load_entity_specs(_db: Any, *, concept_id: int) -> list[Any]:
+        return specs
+
+    monkeypatch.setattr(
+        "apollo.projections.mastery.load_entity_specs", _fake_load_entity_specs
+    )
+    db = _FakeSession()
+    artifact = _artifact(
+        concept_id=7,
+        attempt_id=1,
+        user_id="u1",
+        search_space_id=1,
+        scores={"composite": 0.6},
+        abstention=None,
+        node_ledger=node_ledger,
+        created_at=None,
+    )
+    await update_mastery_from_artifact(cast("Any", db), artifact_row=artifact)
+    return db
+
+
+@pytest.mark.asyncio
+async def test_bare_ledger_key_resolves_to_namespaced_entity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """llm_fallback ledger key ``bernoulli`` credits entity ``eq.bernoulli``:
+    one MasteryEvent + one LearnerState written."""
+    db = await _run_projection(
+        monkeypatch,
+        specs=[_spec(11, "eq.bernoulli")],
+        node_ledger=[{"canonical_key": "bernoulli", "status": "credited"}],
+    )
+    events = [o for o in db.added if isinstance(o, MasteryEvent)]
+    states = [o for o in db.added if isinstance(o, LearnerState)]
+    assert len(events) == 1 and events[0].entity_id == 11
+    assert len(states) == 1 and states[0].entity_id == 11
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_bare_key_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bare ``foo`` with specs ``eq.foo``/``proc.foo`` is ambiguous → no event."""
+    db = await _run_projection(
+        monkeypatch,
+        specs=[_spec(1, "eq.foo"), _spec(2, "proc.foo")],
+        node_ledger=[{"canonical_key": "foo", "status": "credited"}],
+    )
+    assert [o for o in db.added if isinstance(o, MasteryEvent)] == []
+    assert [o for o in db.added if isinstance(o, LearnerState)] == []
+
+
+@pytest.mark.asyncio
+async def test_exact_namespaced_key_still_matches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: a graph artifact's TRUE namespaced key resolves exactly."""
+    db = await _run_projection(
+        monkeypatch,
+        specs=[_spec(11, "eq.bernoulli")],
+        node_ledger=[{"canonical_key": "eq.bernoulli", "status": "credited"}],
+    )
+    events = [o for o in db.added if isinstance(o, MasteryEvent)]
+    assert len(events) == 1 and events[0].entity_id == 11
