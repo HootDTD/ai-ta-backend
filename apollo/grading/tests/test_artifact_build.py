@@ -259,7 +259,7 @@ def test_graph_artifact_grader_used_and_versions(shadow_fixture):
     assert art["grader_used"] == GRADER_USED_GRAPH
     assert art["versions"]["grader"] == COMPARISON_VERSION
     assert art["versions"]["reference_graph_hash"] == "refhash-v1:deadbeef"
-    assert art["versions"]["weights"] == {"w_n": 0.6, "w_e": 0.25, "p": 0.15}
+    assert art["versions"]["weights"] == {"w_n": 0.706, "w_e": 0.294, "p": 0.15}
     assert art["grading_latency_ms"] == 1200
 
 

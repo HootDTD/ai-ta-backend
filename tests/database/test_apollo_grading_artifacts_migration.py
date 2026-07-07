@@ -12,7 +12,7 @@ ARTIFACT_ROW = dict(
     versions={"grader": "graph-v1"},
     node_ledger=[],
     edge_ledger=[],
-    scores={"composite": 0.8, "weights": {"w_n": 0.6, "w_e": 0.25, "p": 0.15}},
+    scores={"composite": 0.8, "weights": {"w_n": 0.706, "w_e": 0.294, "p": 0.15}},
 )
 
 

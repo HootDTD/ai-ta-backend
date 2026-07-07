@@ -15,14 +15,19 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-# Env var names (Task A2). Defaults match the spec's initial weights; the
-# campaign's tuning phase overrides them per subject/run, never the code.
+# Env var names (Task A2). Defaults renormalized 2026-07-07 (score-deflation
+# handoff lane D): the spec's initial w_n=0.6/w_e=0.25 summed to 0.85, so a
+# mathematically perfect attempt scored exactly the Strong band cut (0.85 in
+# apollo/projections/scorecard.py). New defaults keep the same 2.4:1 node:edge
+# ratio but sum to 1.0, so max composite = 1.0. Band cuts and p unchanged; the
+# campaign's tuning phase overrides these per subject/run via env, never the
+# code.
 _ENV_W_NODE = "APOLLO_COMPOSITE_W_NODE"
 _ENV_W_EDGE = "APOLLO_COMPOSITE_W_EDGE"
 _ENV_P_MISC = "APOLLO_COMPOSITE_P_MISC"
 
-_DEFAULT_W_NODE = 0.6
-_DEFAULT_W_EDGE = 0.25
+_DEFAULT_W_NODE = 0.706
+_DEFAULT_W_EDGE = 0.294
 _DEFAULT_P_MISC = 0.15
 
 # The misconception-penalty confidence floor (Task A2 Step 4): only asserted
@@ -59,10 +64,11 @@ def _env_float(name: str, default: float) -> float:
 
 
 def load_weights() -> CompositeWeights:
-    """Build :class:`CompositeWeights` from the environment, falling back to the
-    spec's defaults (``w_n=0.6``, ``w_e=0.25``, ``p=0.15``) on missing/malformed
-    values. Read fresh on every call — no process-lived caching — so campaign
-    tuning runs can flip env vars between attempts."""
+    """Build :class:`CompositeWeights` from the environment, falling back to
+    the defaults (``w_n=0.706``, ``w_e=0.294``, ``p=0.15`` — renormalized
+    2026-07-07 so max composite = 1.0) on missing/malformed values. Read fresh
+    on every call — no process-lived caching — so campaign tuning runs can
+    flip env vars between attempts."""
     return CompositeWeights(
         w_n=_env_float(_ENV_W_NODE, _DEFAULT_W_NODE),
         w_e=_env_float(_ENV_W_EDGE, _DEFAULT_W_EDGE),
