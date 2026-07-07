@@ -1,0 +1,363 @@
+{
+  "_meta": {
+    "date": "2026-07-07",
+    "generator": "scripts/generate_resolver_v2_views.py",
+    "model": "gpt-4o",
+    "rules": "affirmative declarative, no negation/litotes/hedges, <=25 words; label is NOT stored (loader prepends it as view 0)",
+    "source_files": {
+      "bernoulli_principle/bernoulli_full_find_p2": "apollo/subjects/fluid_mechanics/concepts/bernoulli_principle/problems/problem_05.json",
+      "bernoulli_principle/bernoulli_height_change_find_v2": "apollo/subjects/fluid_mechanics/concepts/bernoulli_principle/problems/problem_02.json",
+      "bernoulli_principle/bernoulli_horizontal_pipe_find_p2": "apollo/subjects/fluid_mechanics/concepts/bernoulli_principle/problems/problem_01.json",
+      "continuity_equation/continuity_area_change_find_v2": "apollo/subjects/fluid_mechanics/concepts/bernoulli_principle/problems/problem_03.json",
+      "gdp_components/gdp_identity": "apollo/subjects/macroeconomics/concepts/gdp_components/problems/problem_01.json",
+      "gdp_components/net_exports_sign": "apollo/subjects/macroeconomics/concepts/gdp_components/problems/problem_02.json",
+      "gdp_components/nnp_chain": "apollo/subjects/macroeconomics/concepts/gdp_components/problems/problem_03.json",
+      "kinematics_constant_acceleration/cyclist_accel_v_and_distance": "campaign/cast/personas/linear_motion/reference/kinematics_constant_acceleration/problems/cyclist_accel_v_and_distance.json",
+      "nominal_vs_real_gdp/real_gdp_from_deflator": "apollo/subjects/macroeconomics/concepts/nominal_vs_real_gdp/problems/problem_01.json",
+      "nominal_vs_real_gdp/real_gdp_growth": "apollo/subjects/macroeconomics/concepts/nominal_vs_real_gdp/problems/problem_02.json",
+      "volumetric_flow_rate/volumetric_flow_rate_find_Q": "apollo/subjects/fluid_mechanics/concepts/bernoulli_principle/problems/problem_04.json"
+    },
+    "source_labels": {
+      "bernoulli_principle/bernoulli_full_find_p2": {
+        "cond.incompressibility": "Incompressibility assumption",
+        "eq.bernoulli": "Bernoulli's equation",
+        "eq.continuity": "Continuity (for incompressible flow)",
+        "proc.plan_apply_continuity_for_v2": "Apply the continuity equation with the known areas and inlet velocity to solve for the outlet velocity v2",
+        "proc.plan_substitute_into_bernoulli": "Substitute the known quantities into Bernoulli's equation and solve for the pressure P2 at the narrow section"
+      },
+      "bernoulli_principle/bernoulli_height_change_find_v2": {
+        "eq.bernoulli": "Bernoulli's equation",
+        "proc.plan_apply_equal_pressure_simplification": "Recognize that both ends are at atmospheric pressure, so the pressure terms cancel in Bernoulli's equation",
+        "proc.plan_set_v1_zero_and_solve_bernoulli": "Set the reservoir inlet velocity to zero and solve the simplified Bernoulli equation for the outlet velocity v2",
+        "simp.equal_pressure_simplification": "Both ends are open to the atmosphere so the pressures are equal, and the pressure terms cancel in Bernoulli's equation"
+      },
+      "bernoulli_principle/bernoulli_horizontal_pipe_find_p2": {
+        "cond.incompressibility": "Incompressibility assumption",
+        "eq.bernoulli": "Bernoulli's equation",
+        "eq.continuity": "Continuity (mass conservation)",
+        "proc.plan_apply_continuity": "Apply the continuity equation to solve for the outlet velocity v2",
+        "proc.plan_apply_horizontal_simplification": "Use the horizontal-pipe assumption to cancel the gravity terms in Bernoulli's equation",
+        "proc.plan_solve_bernoulli_for_p2": "Substitute the known values into the simplified Bernoulli equation and solve for the section-2 pressure P2",
+        "simp.horizontal_simplification": "Horizontal pipe: both sections are at the same height, so the gravitational potential-energy terms cancel"
+      },
+      "continuity_equation/continuity_area_change_find_v2": {
+        "cond.incompressibility": "Incompressibility assumption",
+        "eq.continuity": "Continuity (for incompressible flow)",
+        "proc.plan_invoke_incompressibility": "Invoke the incompressibility assumption so the continuity equation reduces to A1 times v1 equals A2 times v2",
+        "proc.plan_solve_continuity_for_v2": "Substitute the known areas and inlet velocity into the continuity equation and solve for the outlet velocity v2"
+      },
+      "gdp_components/gdp_identity": {
+        "cond.final_goods_only": "Final goods and services only",
+        "eq.gdp_expenditure": "GDP expenditure identity",
+        "eq.net_exports": "Net exports definition",
+        "proc.compute_net_exports": "Compute net exports (the trade balance) by subtracting imports from exports",
+        "proc.sum_components": "Sum the four expenditure components -- consumption, investment, government purchases, and net exports -- to obtain GDP"
+      },
+      "gdp_components/net_exports_sign": {
+        "cond.trade_deficit": "Trade deficit condition",
+        "eq.net_exports": "Net exports definition",
+        "proc.subtract_imports": "Compute net exports (the trade balance) by subtracting imports from exports, then read off the sign"
+      },
+      "gdp_components/nnp_chain": {
+        "def.depreciation": "Depreciation is the value of capital used up during the year; subtracting it from a gross measure yields the corresponding net measure",
+        "eq.gnp": "Gross national product",
+        "eq.nnp": "Net national product",
+        "proc.compute_gnp": "Add net income earned from abroad to GDP to obtain gross national product (GNP)",
+        "proc.subtract_depreciation": "Subtract depreciation from GNP to obtain net national product (NNP)"
+      },
+      "kinematics_constant_acceleration/cyclist_accel_v_and_distance": {
+        "cond.constant_acceleration": "Constant acceleration assumption",
+        "eq.kinematics_position": "Position under constant acceleration",
+        "eq.kinematics_velocity": "Velocity under constant acceleration",
+        "proc.compute_distance": "Substitute the given v0, a, and t into x = v0*t + 1/2*a*t^2 to get the distance traveled",
+        "proc.compute_final_velocity": "Substitute the given v0, a, and t into v = v0 + a*t to get the velocity at t = 5.0 s"
+      },
+      "nominal_vs_real_gdp/real_gdp_from_deflator": {
+        "eq.gdp_deflator": "GDP deflator definition",
+        "proc.rearrange_for_real_gdp": "Rearrange the GDP deflator definition to real GDP = nominal GDP divided by (PI/100) and substitute the given values",
+        "simp.deflator_is_price_index": "Treat the quoted price index as the GDP deflator so the deflator definition can be solved for real GDP"
+      },
+      "nominal_vs_real_gdp/real_gdp_growth": {
+        "def.real_basis": "Real GDP is inflation-adjusted, so a change in it reflects a change in the quantity of output produced",
+        "eq.growth_rate": "Percentage growth rate",
+        "proc.apply_percent_change": "Convert the real change to a percentage by dividing by the earlier value and multiplying by 100",
+        "proc.compute_real_change": "Compute the absolute change in real GDP by subtracting the earlier value from the later value"
+      },
+      "volumetric_flow_rate/volumetric_flow_rate_find_Q": {
+        "eq.flow_rate_definition": "Volumetric flow rate",
+        "proc.plan_apply_flow_rate_definition": "Evaluate the volumetric flow rate Q = A times v by substituting the given area and velocity"
+      }
+    }
+  },
+  "bernoulli_principle/bernoulli_full_find_p2": {
+    "cond.incompressibility": [
+      "The fluid density remains constant throughout the flow.",
+      "Constant fluid density allows the use of the continuity equation.",
+      "The fluid maintains its volume as it flows."
+    ],
+    "eq.bernoulli": [
+      "The sum of pressure, kinetic, and potential energy per unit volume is constant along a streamline.",
+      "Bernoulli's equation relates pressure, velocity, and elevation changes in fluid flow.",
+      "Faster flow and lower elevation reduce pressure in a pipe."
+    ],
+    "eq.continuity": [
+      "The product of cross-sectional area and velocity is constant for incompressible flow.",
+      "The continuity equation relates changes in area to changes in velocity.",
+      "The flow speed increases when the pipe narrows."
+    ],
+    "proc.plan_apply_continuity_for_v2": [
+      "Use the continuity equation to find the outlet velocity v2.",
+      "The continuity equation helps calculate the velocity at the narrow section.",
+      "Calculate the new velocity when the pipe narrows."
+    ],
+    "proc.plan_substitute_into_bernoulli": [
+      "Substitute known values into Bernoulli's equation to find the pressure P2.",
+      "Use Bernoulli's equation to calculate pressure at the narrow section.",
+      "Find the pressure change due to velocity and elevation differences."
+    ]
+  },
+  "bernoulli_principle/bernoulli_height_change_find_v2": {
+    "eq.bernoulli": [
+      "Bernoulli's equation relates pressure, kinetic energy, and potential energy in a fluid flow.",
+      "Bernoulli's equation is used to analyze fluid flow between two points.",
+      "Bernoulli's equation shows how fluid speed, height, and pressure are interconnected.",
+      "The sum of pressure, half density times velocity squared, and density times gravity times height is constant."
+    ],
+    "proc.plan_apply_equal_pressure_simplification": [
+      "Recognizing equal pressures allows simplification of Bernoulli's equation.",
+      "Equal atmospheric pressures enable cancellation of pressure terms in Bernoulli's equation.",
+      "Knowing both ends are at atmospheric pressure simplifies the equation.",
+      "Canceling pressure terms simplifies the equation to kinetic and potential energy terms."
+    ],
+    "proc.plan_set_v1_zero_and_solve_bernoulli": [
+      "Setting initial velocity to zero simplifies solving for final velocity.",
+      "Assuming zero initial velocity helps solve for the final velocity using Bernoulli's equation.",
+      "Starting with zero velocity at the reservoir simplifies finding the exit velocity.",
+      "Substitute zero for initial velocity and solve for final velocity using Bernoulli's equation."
+    ],
+    "simp.equal_pressure_simplification": [
+      "Equal pressures at both ends allow pressure terms to cancel in Bernoulli's equation.",
+      "When pressures are equal, Bernoulli's equation simplifies by canceling pressure terms.",
+      "If pressures are the same, they cancel out in Bernoulli's equation.",
+      "The pressure at point one equals the pressure at point two."
+    ]
+  },
+  "bernoulli_principle/bernoulli_horizontal_pipe_find_p2": {
+    "cond.incompressibility": [
+      "The fluid density remains constant during flow.",
+      "Constant density allows the use of the continuity equation.",
+      "The fluid maintains its density as it flows."
+    ],
+    "eq.bernoulli": [
+      "Bernoulli's equation relates pressure, velocity, and height in a fluid flow.",
+      "Bernoulli's equation is used to find unknown pressures in fluid flow.",
+      "Pressure and speed changes in a fluid are related by Bernoulli's principle.",
+      "The sum of pressure, kinetic energy per volume, and potential energy per volume is constant."
+    ],
+    "eq.continuity": [
+      "The mass flow rate is constant across any two sections of a pipe.",
+      "The continuity equation relates the velocities and areas at two sections of a pipe.",
+      "The flow rate stays the same throughout the pipe.",
+      "The product of density, area, and velocity is the same at both sections."
+    ],
+    "proc.plan_apply_continuity": [
+      "The continuity equation is used to calculate the outlet velocity v2.",
+      "The outlet velocity v2 is found using the continuity equation.",
+      "The continuity equation helps determine how fast the fluid exits the pipe."
+    ],
+    "proc.plan_apply_horizontal_simplification": [
+      "The horizontal pipe assumption simplifies Bernoulli's equation by removing gravity terms.",
+      "Gravity terms are removed from Bernoulli's equation for a horizontal pipe.",
+      "Assuming the pipe is horizontal simplifies the pressure calculation."
+    ],
+    "proc.plan_solve_bernoulli_for_p2": [
+      "The simplified Bernoulli equation is used to solve for pressure P2.",
+      "Pressure P2 is calculated using the simplified Bernoulli equation.",
+      "The pressure at section 2 is found by solving Bernoulli's equation."
+    ],
+    "simp.horizontal_simplification": [
+      "The gravitational potential energy terms cancel in a horizontal pipe.",
+      "The gravitational terms in Bernoulli's equation cancel out when height is constant.",
+      "Height remains constant in a horizontal pipe."
+    ]
+  },
+  "continuity_equation/continuity_area_change_find_v2": {
+    "cond.incompressibility": [
+      "The fluid density remains constant throughout the flow.",
+      "Constant fluid density allows the use of the simplified continuity equation.",
+      "The fluid maintains a constant volume during flow."
+    ],
+    "eq.continuity": [
+      "The product of area and velocity is constant for incompressible flow.",
+      "The continuity equation relates area and velocity at two sections of a pipe.",
+      "The flow rate stays the same at different sections of the pipe.",
+      "The product of A1 and v1 equals the product of A2 and v2."
+    ],
+    "proc.plan_invoke_incompressibility": [
+      "The incompressibility assumption simplifies the continuity equation to area times velocity equals constant.",
+      "Assuming incompressibility allows using the area-velocity form of the continuity equation.",
+      "Assuming constant fluid density simplifies the continuity equation for calculations."
+    ],
+    "proc.plan_solve_continuity_for_v2": [
+      "Substitute known values into the continuity equation to find the velocity at section 2.",
+      "Use the continuity equation to calculate the velocity at section 2 from given values.",
+      "Plug in the given areas and velocity to find the speed at the second section."
+    ]
+  },
+  "gdp_components/gdp_identity": {
+    "cond.final_goods_only": [
+      "GDP includes only final goods and services produced this year.",
+      "Only final goods and services are counted in GDP calculations.",
+      "GDP measures the value of new goods and services produced in a year."
+    ],
+    "eq.gdp_expenditure": [
+      "GDP equals the sum of consumption, investment, government purchases, and net exports.",
+      "The GDP expenditure identity calculates GDP using spending components.",
+      "GDP is the total spending on final goods and services in an economy.",
+      "GDP equals consumption plus investment plus government purchases plus net exports."
+    ],
+    "eq.net_exports": [
+      "Net exports equal exports minus imports.",
+      "Net exports are used to calculate the GDP expenditure identity.",
+      "Net exports show the trade balance of an economy."
+    ],
+    "proc.compute_net_exports": [
+      "Subtract imports from exports to find net exports.",
+      "Net exports are calculated by subtracting imports from exports.",
+      "Net exports are the difference between what a country exports and imports."
+    ],
+    "proc.sum_components": [
+      "Add consumption, investment, government purchases, and net exports to find GDP.",
+      "The sum of spending components gives the GDP value.",
+      "GDP is calculated by adding up all major spending categories."
+    ]
+  },
+  "gdp_components/net_exports_sign": {
+    "cond.trade_deficit": [
+      "A trade deficit occurs when imports exceed exports.",
+      "Imports exceeding exports indicates a trade deficit.",
+      "When a country buys more than it sells, it has a trade deficit."
+    ],
+    "eq.net_exports": [
+      "Net exports equal exports minus imports.",
+      "Net exports calculation helps determine trade balance.",
+      "Net exports are what remains after subtracting imports from exports."
+    ],
+    "proc.subtract_imports": [
+      "Subtracting imports from exports gives net exports.",
+      "Subtracting imports from exports determines trade balance.",
+      "To find net exports, subtract what is bought from what is sold."
+    ]
+  },
+  "gdp_components/nnp_chain": {
+    "def.depreciation": [
+      "Depreciation is the value of capital used up during the year.",
+      "Depreciation is subtracted from gross measures to get net measures.",
+      "Depreciation represents the wear and tear on capital assets."
+    ],
+    "eq.gnp": [
+      "Gross national product equals GDP plus RIN minus ROUT.",
+      "Gross national product calculation uses GDP, RIN, and ROUT.",
+      "Gross national product includes domestic and net foreign income."
+    ],
+    "eq.nnp": [
+      "Net national product equals GNP minus depreciation.",
+      "Net national product calculation uses GNP and depreciation.",
+      "Net national product is GNP after accounting for depreciation."
+    ],
+    "proc.compute_gnp": [
+      "Add net foreign income to GDP to find gross national product.",
+      "Gross national product is found by adding net foreign income to GDP.",
+      "To find gross national product, add net foreign income to GDP."
+    ],
+    "proc.subtract_depreciation": [
+      "Subtract depreciation from GNP to find net national product.",
+      "Net national product is found by subtracting depreciation from GNP.",
+      "To find net national product, subtract depreciation from GNP."
+    ]
+  },
+  "kinematics_constant_acceleration/cyclist_accel_v_and_distance": {
+    "cond.constant_acceleration": [
+      "Acceleration remains constant throughout the entire time interval.",
+      "Constant acceleration allows the use of kinematic equations.",
+      "The cyclist speeds up at a steady rate."
+    ],
+    "eq.kinematics_position": [
+      "Position equals initial velocity times time plus half acceleration times time squared.",
+      "Position calculation uses initial velocity, acceleration, and time.",
+      "The distance covered grows as time passes.",
+      "Position equals initial velocity times time plus one half acceleration times time squared."
+    ],
+    "eq.kinematics_velocity": [
+      "Final velocity equals initial velocity plus acceleration times time.",
+      "Velocity calculation uses initial velocity, acceleration, and time.",
+      "The speed increases steadily over time."
+    ],
+    "proc.compute_distance": [
+      "The distance traveled is 25.0 meters.",
+      "The cyclist covers 25.0 meters in 5 seconds.",
+      "The cyclist travels 25.0 meters during the acceleration period."
+    ],
+    "proc.compute_final_velocity": [
+      "The final velocity is 10.0 meters per second.",
+      "The cyclist reaches a speed of 10.0 meters per second.",
+      "The cyclist's speed after 5 seconds is 10.0 meters per second."
+    ]
+  },
+  "nominal_vs_real_gdp/real_gdp_from_deflator": {
+    "eq.gdp_deflator": [
+      "The GDP deflator equals nominal GDP divided by real GDP times 100.",
+      "The GDP deflator helps convert nominal GDP to real GDP.",
+      "The GDP deflator shows how much prices have changed since the base year.",
+      "The deflator equals nominal GDP over real GDP times 100."
+    ],
+    "proc.rearrange_for_real_gdp": [
+      "Real GDP equals nominal GDP divided by the GDP deflator divided by 100.",
+      "Rearranging the GDP deflator formula gives real GDP from nominal GDP and the deflator.",
+      "Real GDP is found by adjusting nominal GDP with the GDP deflator.",
+      "Real GDP equals nominal GDP over the deflator divided by 100."
+    ],
+    "simp.deflator_is_price_index": [
+      "The GDP deflator is the same as the quoted price index.",
+      "The quoted price index can be used as the GDP deflator.",
+      "The price index given is the GDP deflator.",
+      "The price index is treated as the GDP deflator."
+    ]
+  },
+  "nominal_vs_real_gdp/real_gdp_growth": {
+    "def.real_basis": [
+      "Real GDP is adjusted for inflation and reflects changes in output quantity.",
+      "Changes in real GDP indicate changes in the quantity of goods and services produced.",
+      "Real GDP shows how much more or less is produced, ignoring price changes."
+    ],
+    "eq.growth_rate": [
+      "The percentage growth rate is calculated as the change in real GDP divided by the initial GDP, times 100.",
+      "The formula calculates the percentage increase in real GDP over a period.",
+      "You find the growth rate by comparing the change in GDP to the initial GDP.",
+      "The growth rate equals the difference between g2 and g1 divided by g1, times 100."
+    ],
+    "proc.apply_percent_change": [
+      "Divide the change in real GDP by the initial GDP and multiply by 100 to find the growth rate.",
+      "Converting the change to a percentage shows the growth rate of real GDP.",
+      "You express the change as a percentage by dividing by the initial GDP and multiplying by 100."
+    ],
+    "proc.compute_real_change": [
+      "Subtract the initial real GDP from the later real GDP to find the absolute change.",
+      "Finding the absolute change in real GDP helps determine the growth rate.",
+      "You calculate the change in GDP by subtracting the earlier value from the later value."
+    ]
+  },
+  "volumetric_flow_rate/volumetric_flow_rate_find_Q": {
+    "eq.flow_rate_definition": [
+      "The volumetric flow rate equals the product of cross-sectional area and velocity.",
+      "The volumetric flow rate determines how much fluid passes through a section per unit time.",
+      "The flow rate tells how fast water fills a container.",
+      "The volumetric flow rate equals the product of area and velocity."
+    ],
+    "proc.plan_apply_flow_rate_definition": [
+      "Substituting area and velocity into the flow rate equation gives the volumetric flow rate.",
+      "Calculating the flow rate involves multiplying the given area by the velocity.",
+      "To find how much water flows, multiply the pipe's area by the water's speed."
+    ]
+  }
+}

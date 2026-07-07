@@ -52,6 +52,7 @@ unwired (code still present), and grading is the Done-time LLM semantic diff.
 | `apollo/hoot_bridge/` | `session_init.py` | Hoot→Apollo handoff: resolve the course's candidate concepts from `apollo_concepts WHERE …search_space_id` → `infer_concept_id` → DB problem selection → session (with `apollo_sessions.concept_id` populated) + attempt rows. **WU-6A3:** the session-start problem selection now routes through `overseer.select_problem_personalized` (flag-gated, byte-identical when OFF) instead of `select_problem`, so the personalization wedge fires at session start. |
 | `apollo/subjects/` | `__init__.py`, `curriculum_db.py`, `fluid_mechanics/concepts/bernoulli_principle/`, `macroeconomics/`, `calculus_2/` (2026-07-08: 10 concepts / 60 problems, authored from the verified corpus in `apollo/provisioning/corpora/calc2/` under the reversed-provisioning model — premade concept list, reference graphs derived from SymPy-verified worked solutions) | Filesystem concept registry: `canonical_symbols.json`, `normalization_map.json`, `parser_prompt_template.md`, `solver_hints.json`, `forbidden_named_laws.json`, `concept_dag.json`, `misconceptions.json`, `problems/problem_*.json`. `misconceptions.json` (WU-3B authoring source) lists the bernoulli `misc.*` Layer-1 entities, each with an `opposes` target key (e.g. `misc.density_ignored` opposes `cond.incompressibility`) and trigger phrases that double as resolution aliases. The `problem_*.json` reference solutions now carry the WU-3B annotation: an `entity_key` per reference-solution step + a top-level `declared_paths` (one complete ordered path) + `layer1_seeded` marker — additive keys only, written by the WU-3B seeder so the §6.1 validation contract passes and a fresh registry re-import carries the links. **As of WU-4A1, `problem_01.json` also carries an additive top-level `symbolic_mappings` key (`{"d": "2*r"}`)** — the per-problem declared variable-substitution table read by `graph_compare.build_problem_candidates` and passed into `resolve_attempt`'s symbolic tier (the §6.9 `A = pi*r**2` → `eq.circular_area` equivalence resolves only with this mapping; the resolver applies NO global `d=2r` default). The key round-trips through BOTH seeders with ZERO seeder code change (the registry seeder reads the JSON verbatim into `apollo_concept_problems.payload`; the learner-model seeder's `annotate_reference_solution` shallow-copies the payload, preserving it) — pinned by `tests/database/test_graph_compare_symbolic_mappings_roundtrip.py` (real-PG, local Docker only). `load_concept(subject_id, concept_id) -> ConceptDefinition` is the AUTHORING-format reader (kept). As of WU-3D (§8A cutover) the runtime reads concepts/problems from the DB — `curriculum_db.list_course_concepts(db, search_space_id)` / `curriculum_db.load_concept_definition(db, concept_id)` + `problem_selector.list_problems_for_concept`/`select_problem` — so the filesystem layout is now the AUTHORING source ONLY, converted to `apollo_subjects`/`apollo_concepts`/`apollo_concept_problems` rows (migration 018) by `scripts/seed_apollo_concept_registry.py`. `curriculum_db` builds a `ConceptDefinition` from the `apollo_concepts` JSONB/TEXT columns (its `problems_dir` is a sentinel non-existent path — the runtime never globs it) and raises the internal `ConceptNotFoundError` if the row is absent. |
 | `apollo/clarification/` | `embedding.py`, `detector.py`, `probe.py`, `pacing.py`, `candidate_assembly.py`, `rescorer.py`, `store.py`, `turn.py`, `leak_guard.py`, `resolve_turn.py` | G2 clarification loop (spec §6.3–§6.6). **`candidate_assembly.py` is the single shared recipe** used by BOTH the chat path and the grading (Done) path: `load_problem_candidates_with_soundness` runs load-bank→dict→specs→build_problem_candidates once and returns `(ProblemInputs, bank_applicable)`; the chat-path entry `load_problem_candidates` is a thin delegate (drops soundness). **Misconception key-prefix invariant (lane B4/Q1, 2026-07-03):** `_misconceptions_dict` re-prefixes each bank row's DB `code` to the canonical `misc.<code>` key form (`{"key": f"misc.{e.code}"}`) because the seeder (`misconception_bank_seed.misconception_entry_to_bank_spec`) STRIPS the `misc.` prefix into the `apollo_misconceptions.code` column (`key.removeprefix("misc.")`, e.g. `density_ignored`). The canonical misconception key everywhere downstream of assembly is `misc.*` — `candidates_from_misconceptions` uses it as the candidate's `canonical_key`, `soundness.is_misconception_key` keys contradiction detection on the `misc.` prefix, the `:Canon` `canon_key` projection is keyed on the prefixed `apollo_kg_entities.canonical_key`, and `misconceptions.json` authors `misc.*` directly. Emitting the bare `code` here left every misconception candidate's `canonical_key` failing `is_misconception_key` → a resolved-to-misconception student node routed to `unsupported_extra` instead of `contradiction_finding` → `build_misconceptions` returned `[]` and no misconception was EVER detectable course-wide (the vacuous-S5 defect on BOTH the grading `done_grading.run_graph_simulation` and clarification `chat` seams, since both consume this one recipe). The bank code is always stripped (never `misc.`-prefixed), so a plain `f"misc.{code}"` cannot double-prefix. `detector.py` computes cosine similarity between residual-node embeddings and candidate embeddings; a node ambiguously close to a candidate (cosine ≥ T_AMBIG 0.50 threshold) is flagged as a `FlaggedNode`. `turn.py` adds an early-exit: if `find_residual_nodes` returns `[]` (all nodes resolve) the function returns immediately without any embedding call. `pacing.py` gates how many probes to surface per turn. `probe.py` composes an answer-blind follow-up question via `draft_reply` and weaves it into the Apollo reply via `clarification_hints`. `rescorer.py` re-scores the student's committed answer on the next turn (`confirmed`/`refuted`/`vague`, capped at clarification method 0.90). `store.py` persists probes + outcomes to the `apollo_clarifications` table (`UNIQUE(attempt_id, node_id)` — one probe per idea; state machine `asked_waiting → {confirmed|refuted|vague}`). `resolve_turn.py` exposes `load_confirmed_resolutions(db, attempt_id)` → `dict[node_id, candidate_key]`, which `run_graph_simulation` threads into `resolve_attempt(confirmed_resolutions=...)` so confirmed nodes clear the abstention floor before fuzzy/LLM tiers fire. `leak_guard.py` is a soft-fail-open leakage backstop that screens clarification replies only (non-raising; the structural answer-blind guarantee in `probe.py` is the primary line). Note: embeddings flag candidates for probing but NEVER grant credit — credit is PROVEN (deterministic tiers) or STUDENT-CONFIRMED via the clarification method only. |
+| `apollo/resolver_v2/` | `engine.py`, `integration.py`, `config.py`, `types.py`, `windows.py`, `prefilter.py`, `views.py`, `nli_provider.py`, `scoring.py`, `edges.py`, `aggregate.py`, `grayzone.py`, `views/views_cache.json` | **Resolver V2** — flagged shadow node/edge recovery engine (`APOLLO_RESOLVER_V2`, default OFF = byte-identical pipeline). See the "Resolver V2" subsection below. View cache generated offline by `scripts/generate_resolver_v2_views.py`. |
 | `*/tests/` | per-subpackage `tests/` dirs + `apollo/tests/` e2e smokes | Most are **skip-marked**: "Tracked in claude_v3_checklist.md item 1; will be re-enabled in test-rewrite phase" (they predate the V3 KGGraph + Neo4j rewrite). |
 
 WU-AAS pairing persistence (migration 032) adds `AuthoredSet` in
@@ -73,6 +74,56 @@ whitespace-separated, so a solution heading like `Solution 1\nM = …` keys as `
 rather than absorbing the following variable into a spurious `1m`. Ambiguous
 labels (zero or multiple distinct chunks) deliberately return no match so the
 paired retrieval layer can fall through to doc-scoped retrieval.
+
+### Resolver V2 (flagged shadow prototype — `APOLLO_RESOLVER_V2`)
+
+`apollo/resolver_v2/` is a parallel recall-first scoring engine (design:
+`docs/_archive/specs/2026-07-07-resolver-v2-design.md`; research corpus:
+`docs/_archive/research/2026-07-07-node-resolution-prior-art/`). It inverts the v1
+resolver loop: for EACH reference node it scores 3–5 affirmative hypothesis views
+(committed cache `views/views_cache.json`, `content.label` always view 0; generated
+offline by `scripts/generate_resolver_v2_views.py`) against sliding student-turn
+sentence windows — lexical prefilter (`prefilter.py`, rapidfuzz + content-token
+overlap, no embedder) selects top-K windows per view, deberta NLI (`nli_provider.py`,
+V2's own lazy singleton, works even when `APOLLO_NLI_ENABLED=0`) scores them, and
+`scoring.py` fuses (`alpha·P(entail) + (1−alpha)·lex`) with polarity screen +
+contradiction veto + graded credit tiers (1.0 / 0.7 / 0.3-gray / 0). `edges.py`
+grades every reference edge on a 3-tier evidence ladder (verbalized-edge ENTAIL
+1.0 → best-window COOCCUR 0.7 → high-credit ENDPOINTS 0.4, scaled by
+`sqrt(c_u·c_v)`); an entailed edge pulls both endpoint node credits up to 0.6.
+`grayzone.py` (flag `APOLLO_RESOLVER_V2_GRAYZONE`, default OFF = deterministic)
+upgrades gray-band nodes to a capped 0.7 via ONE batched LLM call whose per-node
+quote must verify verbatim against the transcript. `aggregate.py` mirrors v1
+winning-path selection over graded credits. `engine.run_resolver_v2` orchestrates
+the chain and threads the per-attempt NLI pair budget (`max_nli_pairs`) across
+nodes + edges; every knob in `config.ResolverV2Params` is env-overridable
+(`APOLLO_RESOLVER_V2_T_LOW/_T_MID/_T_HIGH/_ALPHA/_MAX_CONTRADICTION/_TOP_K/
+_MAX_PAIRS/_T_EDGE`, trace dump dir `APOLLO_RESOLVER_V2_TRACE_DIR`).
+
+**Score substitution semantics** (step 8b in `done_grading.run_graph_simulation`):
+when `APOLLO_RESOLVER_V2` is on, `integration.apply_resolver_v2` loads the
+attempt's student turns (`apollo_messages` role='student', turn order), derives v1
+floors from the already-built S_norm (resolved non-`misc.*` keys → node credit 1.0;
+explicit/inferred edge triples → edge floors 1.0/0.5 — V2 coverage ≥ v1 by
+construction), runs the engine in `asyncio.to_thread`, and substitutes EXACTLY
+three `GradeResult` fields via `dataclasses.replace`: `coverage_score` and
+`node_coverage_score` (both = V2 winning-path node coverage) and
+`edge_coverage_score`. Substitution happens BEFORE `build_audited_grade` (which
+carries `grade` unchanged), so the §10 composite gate, the persisted run, the
+artifact, and campaign replay all read V2 numbers with zero further changes.
+Findings/ledger/misconceptions/audit stay v1-binary (documented scores-vs-findings
+divergence, design risk 4). `ShadowGradeResult.resolver_v2_trace` (default `None`)
+carries the trace; `build_graph_artifact` nests `trace["summary"]` under
+`scores.resolver_v2` only when V2 ran. Failure semantics: ANY engine/loader
+exception under flag-ON logs `resolver_v2_failed_falling_back_to_v1` and keeps the
+untouched v1 scores (deliberate deviation from the design card's NO-FALLBACK line
+— a shadow prototype never crashes or re-arms the grading retry loop). Flag OFF:
+`done_grading` imports only the tiny `resolver_v2.config` module and the pipeline
+is byte-identical.
+
+**Status: PROTOTYPE.** Smoke tests only (`apollo/resolver_v2/tests/`); the repo's
+95% patch-coverage gate is explicitly deferred until the F1c replay confirms the
+recall hypothesis (design T8: calibration sweep + replay ON/OFF still pending).
 
 ## Public interfaces
 
