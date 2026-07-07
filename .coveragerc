@@ -4,6 +4,13 @@
 
 [run]
 branch = true
+# SQLAlchemy's asyncio bridge runs DB work through greenlet_spawn; without
+# greenlet tracing, every line after the first `await db.execute(...)` in a
+# coroutine is silently dropped from coverage (verified: raise/branch lines
+# executed under TestClient showed as uncovered). "thread" must stay listed —
+# naming only "greenlet" REPLACES default thread tracing and blinds coverage
+# to TestClient's portal thread entirely.
+concurrency = thread, greenlet
 # relative_files lets coverage.xml paths match across local + CI checkout roots,
 # which diff-cover and the GitHub Actions runner both depend on.
 relative_files = true
