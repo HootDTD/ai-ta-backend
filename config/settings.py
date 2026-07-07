@@ -300,16 +300,23 @@ def apollo_abstention_composite_enabled() -> bool:
 def apollo_composite_coverage_min() -> float:
     """The §10 composite gate's coverage threshold (``APOLLO_COMPOSITE_COVERAGE_MIN``).
 
-    Grade iff ``node_coverage_score >= this value`` when
-    :func:`apollo_abstention_composite_enabled` is True. Default ``0.6``
-    (spec §10); malformed/missing values fall back to the default."""
+    Grade iff ``node_coverage_score >= this value`` (or >=1 contradiction
+    finding was detected) when :func:`apollo_abstention_composite_enabled` is
+    True. Default ``0.1`` — the 2026-07-07 F1c-corpus calibration: every
+    correct-persona attempt's resolver-only coverage sat at >= 0.20 and one
+    resolved node on the longest declared path (7 nodes) is ~0.14, so 0.1
+    reads "the resolver credited essentially nothing" (the memo's a-priori 0.6
+    abstained 19/31 gradeable attempts). MUST stay equal to
+    ``apollo.grading.abstention.COMPOSITE_DEFAULT_COVERAGE_MIN`` (this module
+    cannot import apollo — a test pins the equality). Malformed/missing values
+    fall back to the default."""
     raw = os.getenv("APOLLO_COMPOSITE_COVERAGE_MIN")
     if raw is None:
-        return 0.6
+        return 0.1
     try:
         return float(raw)
     except (TypeError, ValueError):
-        return 0.6
+        return 0.1
 
 
 def rerankers_enabled() -> bool:

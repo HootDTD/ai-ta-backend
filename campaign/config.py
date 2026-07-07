@@ -130,8 +130,9 @@ class CampaignConfig:
     int_flags: dict[str, int] = dataclasses.field(default_factory=dict)
     # §10 composite gate threshold (APOLLO_COMPOSITE_COVERAGE_MIN). A float,
     # so it cannot ride in the boolean ``flags`` block; snapshotted as its own
-    # key. Defaulted so pre-composite frozen snapshots still reconstruct.
-    composite_coverage_min: float = 0.6
+    # key. Defaulted so pre-composite frozen snapshots still reconstruct
+    # (0.1 = the 2026-07-07 calibrated settings default).
+    composite_coverage_min: float = 0.1
 
     def snapshot(self) -> dict[str, Any]:
         """JSON-serialisable representation used for hashing and freezing."""
@@ -169,9 +170,9 @@ class CampaignConfig:
         tracked tunable's documented DEFAULT — which is what those runs
         actually graded under, since the env override did not exist yet.
 
-        ``composite_coverage_min`` is read with a 0.6 fallback so frozen
-        config.json files written BEFORE the composite gate existed (e.g.
-        ``campaign/out/f1c/config.json``) still reconstruct.
+        ``composite_coverage_min`` is read with the settings-default fallback
+        (0.1) so frozen config.json files written BEFORE the composite gate
+        existed (e.g. ``campaign/out/f1c/config.json``) still reconstruct.
         """
         return CampaignConfig(
             axis_weights=dict(data["axis_weights"]),
@@ -181,7 +182,7 @@ class CampaignConfig:
             abstention_thresholds=dict(data["abstention_thresholds"]),
             flags=dict(data["flags"]),
             int_flags=dict(data.get("int_flags", _INT_FLAG_DEFAULTS)),
-            composite_coverage_min=float(data.get("composite_coverage_min", 0.6)),
+            composite_coverage_min=float(data.get("composite_coverage_min", 0.1)),
         )
 
 

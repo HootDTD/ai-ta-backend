@@ -204,8 +204,8 @@ def test_snapshot_tracks_abstention_composite_flag(monkeypatch):
 def test_capture_live_snapshots_composite_coverage_min(monkeypatch):
     monkeypatch.delenv("APOLLO_COMPOSITE_COVERAGE_MIN", raising=False)
     cfg = CampaignConfig.capture_live()
-    assert cfg.composite_coverage_min == pytest.approx(0.6)  # settings default
-    assert cfg.snapshot()["composite_coverage_min"] == pytest.approx(0.6)
+    assert cfg.composite_coverage_min == pytest.approx(0.1)  # 2026-07-07 calibrated default
+    assert cfg.snapshot()["composite_coverage_min"] == pytest.approx(0.1)
 
     monkeypatch.setenv("APOLLO_COMPOSITE_COVERAGE_MIN", "0.8")
     cfg2 = CampaignConfig.capture_live()
@@ -237,4 +237,4 @@ def test_from_snapshot_backward_compatible_with_pre_composite_files(monkeypatch)
 
     restored = CampaignConfig.from_snapshot(legacy)
 
-    assert restored.composite_coverage_min == pytest.approx(0.6)
+    assert restored.composite_coverage_min == pytest.approx(0.1)

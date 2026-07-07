@@ -348,6 +348,12 @@ def summarize(results: Sequence[ReplayOutcome | ReplayError]) -> ReplayMetrics:
             "persona": o.persona,
             "is_control": o.is_control,
             "abstained": o.abstained,
+            # Per-attempt scalar signals (§10 sweep inputs) — carried on the
+            # row itself so no consumer ever zip-reconstructs them from the
+            # per-persona ``values`` arrays (the a1-recall-verification footgun).
+            "unresolved_rate": o.unresolved_rate,
+            "graph_composite": o.graph_composite,
+            "node_coverage": o.node_coverage,
             "expected_credited": list(o.expected_credited),
             "actual_credited": list(o.actual_credited),
             "expected_unresolved": list(o.expected_unresolved),

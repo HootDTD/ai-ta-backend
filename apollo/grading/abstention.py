@@ -66,7 +66,13 @@ REASON_LOW_NORMALIZATION_CONFIDENCE = "normalization_confidence_below_threshold"
 REASON_COMPOSITE_LOW_COVERAGE = "composite_low_coverage"
 
 # §10 composite gate default coverage threshold (APOLLO_COMPOSITE_COVERAGE_MIN).
-COMPOSITE_DEFAULT_COVERAGE_MIN: float = 0.6
+# 0.1 is the 2026-07-07 F1c-corpus calibration (replay-certify-composite-e91fbea):
+# every correct-persona attempt's resolver-only node_coverage sat at >= 0.20
+# while the memo's a-priori 0.6 abstained 19/31 — and one-resolved-node on the
+# longest declared path (7 nodes) is ~0.14, so 0.1 reads "the resolver credited
+# essentially nothing". MUST stay equal to config/settings.py's fallback
+# (config cannot import apollo — a test pins the equality).
+COMPOSITE_DEFAULT_COVERAGE_MIN: float = 0.1
 
 # Event kinds (subset) WU-4B2 may be told to withhold.
 _SUPPRESS_MISSING = "missing"
@@ -146,14 +152,15 @@ def apply_abstention(
     ``GradeResult.soundness_applicable`` + the artifact marker instead.
 
     §10 composite gate (``composite_enabled``, default False — byte-identical
-    when omitted): when True, ``abstained`` is decided SOLELY by
-    ``node_coverage >= coverage_min`` — overriding whatever the unresolved_rate/
+    when omitted): when True, ``abstained`` is decided SOLELY by the content
+    signals — grade iff ``node_coverage >= coverage_min`` OR
+    ``contradiction_count >= 1`` — overriding whatever the unresolved_rate/
     normalization_confidence gates computed above (those reasons still get
-    RECORDED for audit, they just no longer drive ``abstained``).
-    ``coverage < coverage_min`` appends REASON_COMPOSITE_LOW_COVERAGE.
-    ``contradiction_count`` is recorded in ``Abstention.composite`` for audit
-    but never forces abstention on its own (a detected misconception is
-    informative feedback, not grading uncertainty).
+    RECORDED for audit, they just no longer drive ``abstained``). A detected
+    misconception never forces abstention AND counts as gradeable content
+    signal (2026-07-07 calibration): abstention is reserved for attempts where
+    the resolver credited essentially nothing and detected nothing wrong.
+    An abstain appends REASON_COMPOSITE_LOW_COVERAGE.
 
     Pure + deterministic reason ordering (gate-declaration order)."""
     reasons: list[str] = []
@@ -190,7 +197,8 @@ def apply_abstention(
 
     composite: dict | None = None
     if composite_enabled:
-        decision = "grade" if node_coverage >= coverage_min else "abstain"
+        has_signal = node_coverage >= coverage_min or contradiction_count >= 1
+        decision = "grade" if has_signal else "abstain"
         abstained = decision == "abstain"
         if abstained:
             reasons.append(REASON_COMPOSITE_LOW_COVERAGE)

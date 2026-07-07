@@ -199,23 +199,40 @@ def test_composite_high_coverage_grades_despite_high_unresolved_rate():
     assert out.composite == {
         "coverage": 0.8,
         "contradictions": 0,
-        "coverage_min": 0.6,
+        "coverage_min": 0.1,
         "decision": "grade",
     }
 
 
 def test_composite_low_coverage_abstains_with_dedicated_reason():
-    out = _clean(unresolved_rate=0.0, composite_enabled=True, node_coverage=0.4)
+    out = _clean(unresolved_rate=0.0, composite_enabled=True, node_coverage=0.05)
     assert out.abstained is True
     assert REASON_COMPOSITE_LOW_COVERAGE in out.abstention_reasons
     assert out.composite["decision"] == "abstain"
 
 
 def test_composite_coverage_at_threshold_grades():
-    """0.6 is NOT < 0.6 (>= threshold grades)."""
-    out = _clean(composite_enabled=True, node_coverage=0.6)
+    """0.1 is NOT < 0.1 (>= threshold grades)."""
+    out = _clean(composite_enabled=True, node_coverage=0.1)
     assert out.abstained is False
     assert out.composite["decision"] == "grade"
+
+
+def test_composite_low_coverage_with_detected_contradiction_grades():
+    """§10 calibration (2026-07-07): a detected misconception IS content signal.
+    Low coverage + >=1 contradiction finding -> grade (never abstain): the
+    student taught something the bank recognizes as wrong — that is gradeable
+    evidence, not resolver blindness. Only zero-coverage AND zero-contradiction
+    attempts abstain under the composite gate."""
+    out = _clean(composite_enabled=True, node_coverage=0.05, contradiction_count=1)
+    assert out.abstained is False
+    assert REASON_COMPOSITE_LOW_COVERAGE not in out.abstention_reasons
+    assert out.composite == {
+        "coverage": 0.05,
+        "contradictions": 1,
+        "coverage_min": 0.1,
+        "decision": "grade",
+    }
 
 
 def test_composite_custom_threshold_respected():
