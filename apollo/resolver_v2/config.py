@@ -112,6 +112,16 @@ class ResolverV2Params:
     # §6 gray zone
     max_grayzone_nodes: int = 8
     grayzone_credit: float = 0.7
+    # Symbolic-blindness gate (T8 anomaly #2, REPORT.md §10.3): max credit an
+    # EQUATION-type node may earn from text evidence alone (NLI/lexical) —
+    # entailment is blind to symbolic coefficients (it scored
+    # ``x = v0*t + a*t^2`` at 0.98 against the half-factor reference).
+    # Default = the gray-band credit (scoring._CREDIT_GRAY), so a paraphrase
+    # can at most make an equation node gray-status (grayzone/clarification
+    # eligible); full credit requires the v1 symbolic floor. Nodes upgraded
+    # via grayzone still carry grayzone's 0.7 cap — a verified quote is text
+    # too, never full equation credit. Calibration owns this value.
+    equation_text_credit_cap: float = 0.3
     # §7 trace dump target (None = no dump; integration writes
     # <trace_dir>/attempt_<id>.json, new files only)
     trace_dir: str | None = None
@@ -157,6 +167,10 @@ def load_params() -> ResolverV2Params:
         ),
         grayzone_credit=_env_float(
             "APOLLO_RESOLVER_V2_GRAYZONE_CREDIT", _DEFAULTS.grayzone_credit
+        ),
+        equation_text_credit_cap=_env_float(
+            "APOLLO_RESOLVER_V2_EQUATION_TEXT_CREDIT_CAP",
+            _DEFAULTS.equation_text_credit_cap,
         ),
         trace_dir=os.environ.get(TRACE_DIR_ENV) or None,
     )
