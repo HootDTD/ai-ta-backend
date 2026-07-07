@@ -1,0 +1,113 @@
+{
+  "edges": [
+    {
+      "credit": 0.4,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "eq.growth_rate",
+      "relation_evidence": "endpoints",
+      "to_key": "proc.compute_real_change"
+    },
+    {
+      "credit": 0.7,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "def.real_basis",
+      "relation_evidence": "cooccur",
+      "to_key": "proc.compute_real_change"
+    },
+    {
+      "credit": 0.8366600265340756,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "proc.compute_real_change",
+      "relation_evidence": "entail",
+      "to_key": "proc.apply_percent_change"
+    },
+    {
+      "credit": 0.4,
+      "edge_type": "USES",
+      "from_key": "proc.compute_real_change",
+      "relation_evidence": "endpoints",
+      "to_key": "eq.growth_rate"
+    },
+    {
+      "credit": 0.8366600265340756,
+      "edge_type": "USES",
+      "from_key": "proc.apply_percent_change",
+      "relation_evidence": "entail",
+      "to_key": "eq.growth_rate"
+    },
+    {
+      "credit": 0.33466401061363027,
+      "edge_type": "PRECEDES",
+      "from_key": "proc.compute_real_change",
+      "relation_evidence": "endpoints",
+      "to_key": "proc.apply_percent_change"
+    }
+  ],
+  "nodes": [
+    {
+      "best": {
+        "contradiction": 5.123002119944431e-05,
+        "entailment": 0.9971981048583984,
+        "fused": 0.9666977912422241,
+        "lexical": 0.8751968503937009,
+        "view_index": 2,
+        "window_index": 6
+      },
+      "canonical_key": "def.real_basis",
+      "credit": 1.0,
+      "score": 0.9666977912422241,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 4.1632501961430535e-05,
+        "entailment": 0.9968088269233704,
+        "fused": 0.9399143125002201,
+        "lexical": 0.7692307692307692,
+        "view_index": 0,
+        "window_index": 4
+      },
+      "canonical_key": "eq.growth_rate",
+      "credit": 1.0,
+      "score": 0.9399143125002201,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 5.9139758377568796e-05,
+        "entailment": 0.9824799299240112,
+        "fused": 0.8588955205655381,
+        "lexical": 0.48814229249011853,
+        "view_index": 0,
+        "window_index": 1
+      },
+      "canonical_key": "proc.apply_percent_change",
+      "credit": 0.7,
+      "score": 0.8588955205655381,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 2.48274409386795e-05,
+        "entailment": 0.9989138841629028,
+        "fused": 0.9909886918107017,
+        "lexical": 0.9672131147540983,
+        "view_index": 1,
+        "window_index": 7
+      },
+      "canonical_key": "proc.compute_real_change",
+      "credit": 1.0,
+      "score": 0.9909886918107017,
+      "source": "nli"
+    }
+  ],
+  "summary": {
+    "edge_count": 6,
+    "edge_coverage": 0.5846640106136302,
+    "grayzone_used": false,
+    "node_count": 4,
+    "node_coverage": 0.925,
+    "pair_count": 61,
+    "winning_path_index": 0
+  }
+}

@@ -1,0 +1,134 @@
+{
+  "edges": [
+    {
+      "credit": 0.8366600265340756,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "eq.net_exports",
+      "relation_evidence": "entail",
+      "to_key": "eq.gdp_expenditure"
+    },
+    {
+      "credit": 1.0,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "eq.net_exports",
+      "relation_evidence": "entail",
+      "to_key": "proc.compute_net_exports"
+    },
+    {
+      "credit": 0.0,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "eq.gdp_expenditure",
+      "relation_evidence": "none",
+      "to_key": "proc.sum_components"
+    },
+    {
+      "credit": 0.0,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "proc.compute_net_exports",
+      "relation_evidence": "none",
+      "to_key": "proc.sum_components"
+    },
+    {
+      "credit": 1.0,
+      "edge_type": "USES",
+      "from_key": "proc.compute_net_exports",
+      "relation_evidence": "entail",
+      "to_key": "eq.net_exports"
+    },
+    {
+      "credit": 0.0,
+      "edge_type": "USES",
+      "from_key": "proc.sum_components",
+      "relation_evidence": "none",
+      "to_key": "eq.gdp_expenditure"
+    },
+    {
+      "credit": 0.0,
+      "edge_type": "PRECEDES",
+      "from_key": "proc.compute_net_exports",
+      "relation_evidence": "none",
+      "to_key": "proc.sum_components"
+    }
+  ],
+  "nodes": [
+    {
+      "best": {
+        "contradiction": 0.005206636618822813,
+        "entailment": 0.0019522884394973516,
+        "fused": 0.15243039990450225,
+        "lexical": 0.6038647342995169,
+        "view_index": 2,
+        "window_index": 8
+      },
+      "canonical_key": "cond.final_goods_only",
+      "credit": 1.0,
+      "score": 0.15243039990450225,
+      "source": "v1_floor"
+    },
+    {
+      "best": {
+        "contradiction": 0.00033681667991913855,
+        "entailment": 0.9957389831542969,
+        "fused": 0.8690868460613749,
+        "lexical": 0.4891304347826087,
+        "view_index": 2,
+        "window_index": 2
+      },
+      "canonical_key": "eq.gdp_expenditure",
+      "credit": 0.7,
+      "score": 0.8690868460613749,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 4.4487256673164666e-05,
+        "entailment": 0.9975290894508362,
+        "fused": 0.9602157826053686,
+        "lexical": 0.8482758620689655,
+        "view_index": 1,
+        "window_index": 0
+      },
+      "canonical_key": "eq.net_exports",
+      "credit": 1.0,
+      "score": 0.9602157826053686,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 3.40614169545006e-05,
+        "entailment": 0.9990283250808716,
+        "fused": 0.9718589631088993,
+        "lexical": 0.8903508771929824,
+        "view_index": 1,
+        "window_index": 9
+      },
+      "canonical_key": "proc.compute_net_exports",
+      "credit": 1.0,
+      "score": 0.9718589631088993,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 3.3128402719739825e-05,
+        "entailment": 0.00025854306295514107,
+        "fused": 0.1424352866075612,
+        "lexical": 0.5689655172413793,
+        "view_index": 1,
+        "window_index": 5
+      },
+      "canonical_key": "proc.sum_components",
+      "credit": 0.0,
+      "score": 0.1424352866075612,
+      "source": "nli"
+    }
+  ],
+  "summary": {
+    "edge_count": 7,
+    "edge_coverage": 0.4052371466477251,
+    "grayzone_used": false,
+    "node_count": 5,
+    "node_coverage": 0.74,
+    "pair_count": 61,
+    "winning_path_index": 0
+  }
+}

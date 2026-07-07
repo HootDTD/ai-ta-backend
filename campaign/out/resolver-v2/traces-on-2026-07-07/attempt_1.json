@@ -1,0 +1,141 @@
+{
+  "edges": [
+    {
+      "credit": 0.7,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "cond.incompressibility",
+      "relation_evidence": "cooccur",
+      "to_key": "eq.continuity"
+    },
+    {
+      "credit": 0.4,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "cond.incompressibility",
+      "relation_evidence": "endpoints",
+      "to_key": "eq.bernoulli"
+    },
+    {
+      "credit": 0.4,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "eq.continuity",
+      "relation_evidence": "endpoints",
+      "to_key": "proc.plan_apply_continuity_for_v2"
+    },
+    {
+      "credit": 1.0,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "eq.bernoulli",
+      "relation_evidence": "entail",
+      "to_key": "proc.plan_substitute_into_bernoulli"
+    },
+    {
+      "credit": 0.4,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "proc.plan_apply_continuity_for_v2",
+      "relation_evidence": "endpoints",
+      "to_key": "proc.plan_substitute_into_bernoulli"
+    },
+    {
+      "credit": 0.4,
+      "edge_type": "USES",
+      "from_key": "proc.plan_apply_continuity_for_v2",
+      "relation_evidence": "endpoints",
+      "to_key": "eq.continuity"
+    },
+    {
+      "credit": 1.0,
+      "edge_type": "USES",
+      "from_key": "proc.plan_substitute_into_bernoulli",
+      "relation_evidence": "entail",
+      "to_key": "eq.bernoulli"
+    },
+    {
+      "credit": 0.4,
+      "edge_type": "PRECEDES",
+      "from_key": "proc.plan_apply_continuity_for_v2",
+      "relation_evidence": "endpoints",
+      "to_key": "proc.plan_substitute_into_bernoulli"
+    }
+  ],
+  "nodes": [
+    {
+      "best": {
+        "contradiction": 5.085657903691754e-05,
+        "entailment": 0.9981899857521057,
+        "fused": 0.9557853464569364,
+        "lexical": 0.8285714285714285,
+        "view_index": 1,
+        "window_index": 0
+      },
+      "canonical_key": "cond.incompressibility",
+      "credit": 1.0,
+      "score": 0.9557853464569364,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 7.98638429841958e-05,
+        "entailment": 0.9931901097297668,
+        "fused": 0.9948925822973251,
+        "lexical": 1.0,
+        "view_index": 0,
+        "window_index": 6
+      },
+      "canonical_key": "eq.bernoulli",
+      "credit": 1.0,
+      "score": 0.9948925822973251,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 0.0004016754974145442,
+        "entailment": 0.9899554252624512,
+        "fused": 0.9074255853402811,
+        "lexical": 0.6598360655737705,
+        "view_index": 0,
+        "window_index": 0
+      },
+      "canonical_key": "eq.continuity",
+      "credit": 1.0,
+      "score": 0.9074255853402811,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 3.199795537511818e-05,
+        "entailment": 0.9990273714065552,
+        "fused": 0.9356429512353288,
+        "lexical": 0.7454896907216495,
+        "view_index": 1,
+        "window_index": 13
+      },
+      "canonical_key": "proc.plan_apply_continuity_for_v2",
+      "credit": 1.0,
+      "score": 0.9356429512353288,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 2.605171175673604e-05,
+        "entailment": 0.998772919178009,
+        "fused": 0.9704546893835068,
+        "lexical": 0.8855,
+        "view_index": 2,
+        "window_index": 22
+      },
+      "canonical_key": "proc.plan_substitute_into_bernoulli",
+      "credit": 1.0,
+      "score": 0.9704546893835068,
+      "source": "nli"
+    }
+  ],
+  "summary": {
+    "edge_count": 8,
+    "edge_coverage": 0.5875,
+    "grayzone_used": false,
+    "node_count": 5,
+    "node_coverage": 1.0,
+    "pair_count": 69,
+    "winning_path_index": 0
+  }
+}

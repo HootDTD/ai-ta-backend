@@ -1,0 +1,120 @@
+{
+  "edges": [
+    {
+      "credit": 1.0,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "eq.bernoulli",
+      "relation_evidence": "entail",
+      "to_key": "simp.equal_pressure_simplification"
+    },
+    {
+      "credit": 0.4,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "eq.bernoulli",
+      "relation_evidence": "endpoints",
+      "to_key": "proc.plan_apply_equal_pressure_simplification"
+    },
+    {
+      "credit": 1.0,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "simp.equal_pressure_simplification",
+      "relation_evidence": "entail",
+      "to_key": "proc.plan_apply_equal_pressure_simplification"
+    },
+    {
+      "credit": 0.0,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "proc.plan_apply_equal_pressure_simplification",
+      "relation_evidence": "none",
+      "to_key": "proc.plan_set_v1_zero_and_solve_bernoulli"
+    },
+    {
+      "credit": 1.0,
+      "edge_type": "USES",
+      "from_key": "proc.plan_apply_equal_pressure_simplification",
+      "relation_evidence": "entail",
+      "to_key": "eq.bernoulli"
+    },
+    {
+      "credit": 0.0,
+      "edge_type": "USES",
+      "from_key": "proc.plan_set_v1_zero_and_solve_bernoulli",
+      "relation_evidence": "cooccur",
+      "to_key": "eq.bernoulli"
+    },
+    {
+      "credit": 0.0,
+      "edge_type": "PRECEDES",
+      "from_key": "proc.plan_apply_equal_pressure_simplification",
+      "relation_evidence": "none",
+      "to_key": "proc.plan_set_v1_zero_and_solve_bernoulli"
+    }
+  ],
+  "nodes": [
+    {
+      "best": {
+        "contradiction": 0.00015409011393785477,
+        "entailment": 0.9831361174583435,
+        "fused": 0.9873520880937576,
+        "lexical": 1.0,
+        "view_index": 0,
+        "window_index": 0
+      },
+      "canonical_key": "eq.bernoulli",
+      "credit": 1.0,
+      "score": 0.9873520880937576,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 2.6826784960576333e-05,
+        "entailment": 0.99854576587677,
+        "fused": 0.9462712573464336,
+        "lexical": 0.789447731755424,
+        "view_index": 0,
+        "window_index": 7
+      },
+      "canonical_key": "proc.plan_apply_equal_pressure_simplification",
+      "credit": 1.0,
+      "score": 0.9462712573464336,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 3.9991271478356794e-05,
+        "entailment": 6.423189915949479e-05,
+        "fused": 0.1010533619918145,
+        "lexical": 0.4040207522697795,
+        "view_index": 2,
+        "window_index": 0
+      },
+      "canonical_key": "proc.plan_set_v1_zero_and_solve_bernoulli",
+      "credit": 0.0,
+      "score": 0.1010533619918145,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 7.892273424658924e-05,
+        "entailment": 0.9974657297134399,
+        "fused": 0.9680067046924874,
+        "lexical": 0.8796296296296295,
+        "view_index": 3,
+        "window_index": 7
+      },
+      "canonical_key": "simp.equal_pressure_simplification",
+      "credit": 1.0,
+      "score": 0.9680067046924874,
+      "source": "nli"
+    }
+  ],
+  "summary": {
+    "edge_count": 7,
+    "edge_coverage": 0.4857142857142857,
+    "grayzone_used": false,
+    "node_count": 4,
+    "node_coverage": 0.75,
+    "pair_count": 36,
+    "winning_path_index": 0
+  }
+}

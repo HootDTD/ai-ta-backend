@@ -1,0 +1,2258 @@
+{
+ "abstained": {
+  "off": 0,
+  "on": 0
+ },
+ "agreement_vs_expected_class": {
+  "expected_band_formula": "band(0.706*expected_node_cov + 0.294*expected_edge_cov - 0.15*penalty); expected_node_cov = max over declared paths of |credited \u2229 path|/|path|; expected_edge_cov = fraction of reference edges with both endpoints credited; penalty = |expected.misconceptions| / |union path keys|",
+  "llm": {
+   "adjacent": "23/31",
+   "exact": "16/31"
+  },
+  "v2_off": {
+   "adjacent": "13/31",
+   "exact": "4/31"
+  },
+  "v2_on": {
+   "adjacent": "25/31",
+   "exact": "15/31"
+  }
+ },
+ "class_means": {
+  "misconception": {
+   "n": 7,
+   "off_composite": 0.3943,
+   "off_edge_cov": 0.1204,
+   "off_node_cov": 0.516,
+   "on_composite": 0.7982,
+   "on_edge_cov": 0.6367,
+   "on_node_cov": 0.8731
+  },
+  "partial": {
+   "n": 8,
+   "off_composite": 0.3445,
+   "off_edge_cov": 0.0625,
+   "off_node_cov": 0.4619,
+   "on_composite": 0.7604,
+   "on_edge_cov": 0.5713,
+   "on_node_cov": 0.8392
+  },
+  "strong": {
+   "n": 10,
+   "off_composite": 0.4193,
+   "off_edge_cov": 0.0786,
+   "off_node_cov": 0.5612,
+   "on_composite": 0.8923,
+   "on_edge_cov": 0.6997,
+   "on_node_cov": 0.9725
+  },
+  "vague_then_clarifies": {
+   "n": 6,
+   "off_composite": 0.4591,
+   "off_edge_cov": 0.0625,
+   "off_node_cov": 0.6313,
+   "on_composite": 0.8559,
+   "on_edge_cov": 0.6442,
+   "on_node_cov": 0.9512
+  }
+ },
+ "control_credit_leaks": {
+  "off": [
+   1,
+   3,
+   6,
+   27,
+   33,
+   34,
+   35,
+   47,
+   50
+  ],
+  "on": [
+   1,
+   3,
+   6,
+   27,
+   33,
+   34,
+   35,
+   47,
+   50
+  ]
+ },
+ "edge_cov_nonzero": {
+  "off": 13,
+  "on": 31
+ },
+ "gates": {
+  "g1_discrimination": {
+   "bar": 0.15,
+   "off": 0.025,
+   "on": 0.0941,
+   "pass": false
+  },
+  "g2_recall_median_strong_node_cov": {
+   "bar": 0.6,
+   "off": 0.6333,
+   "on": 1.0,
+   "pass": true
+  },
+  "g3_agreement_vs_llm": {
+   "bar_adjacent": 0.85,
+   "bar_exact": 0.4,
+   "off_adjacent": "13/31",
+   "off_exact": "4/31",
+   "on_adjacent": "25/31",
+   "on_adjacent_frac": 0.8065,
+   "on_exact": "15/31",
+   "on_exact_frac": 0.4839,
+   "pass": false
+  },
+  "g4_safety": {
+   "bar": "zero misconception Strong AND control FCR <= 0.05",
+   "misconception_banded_strong_on": [
+    1,
+    34,
+    35
+   ],
+   "pass": false,
+   "replay_fcr_all_counts": "12/19",
+   "replay_fcr_all_negatives": 0.6316,
+   "replay_fcr_control_counts": "8/10",
+   "replay_fcr_control_negatives": 0.8,
+   "replay_recall_counts": "113/117",
+   "replay_recall_positives": 0.9658
+  }
+ },
+ "node_source_counts_on": {
+  "edge_pullup": 1,
+  "nli": 129,
+  "v1_floor": 6
+ },
+ "pair_stats_on": {
+  "budget": 200,
+  "max": 108,
+  "max_utilization": 0.54,
+  "mean": 56.6,
+  "min": 11
+ },
+ "per_attempt": [
+  {
+   "attempt_id": 1,
+   "expected_band": "Proficient",
+   "expected_composite": 0.7553,
+   "is_control": true,
+   "llm_band": "Developing",
+   "neg_detected_sources": {
+    "cond.incompressibility": "nli"
+   },
+   "neg_detected_v2": [
+    "cond.incompressibility"
+   ],
+   "negatives": [
+    "cond.incompressibility"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.1412,
+    "control_credit_leak": true,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.2
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.878725,
+    "control_credit_leak": true,
+    "edge_coverage": 0.5874999761581421,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "cond.incompressibility",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.bernoulli",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.continuity",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_apply_continuity_for_v2",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_substitute_into_bernoulli",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 69
+   },
+   "persona": "misconception",
+   "pos_detected_v2": [
+    "eq.bernoulli",
+    "eq.continuity",
+    "proc.plan_apply_continuity_for_v2",
+    "proc.plan_substitute_into_bernoulli"
+   ],
+   "positives": [
+    "eq.bernoulli",
+    "eq.continuity",
+    "proc.plan_apply_continuity_for_v2",
+    "proc.plan_substitute_into_bernoulli"
+   ],
+   "problem_id": "bernoulli_full_find_p2",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 3,
+   "expected_band": "Strong",
+   "expected_composite": 0.8532,
+   "is_control": true,
+   "llm_band": "Developing",
+   "neg_detected_sources": {
+    "cond.incompressibility": "nli"
+   },
+   "neg_detected_v2": [
+    "cond.incompressibility"
+   ],
+   "negatives": [
+    "cond.incompressibility"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.327071,
+    "control_credit_leak": true,
+    "edge_coverage": 0.0833333358168602,
+    "node_coverage": 0.42857142857142855
+   },
+   "on": {
+    "abstained": false,
+    "band": "Proficient",
+    "composite": 0.822645,
+    "control_credit_leak": true,
+    "edge_coverage": 0.705498993396759,
+    "node_coverage": 0.8714285714285713,
+    "node_sources": [
+     [
+      "cond.incompressibility",
+      "nli",
+      0.7
+     ],
+     [
+      "eq.bernoulli",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.continuity",
+      "nli",
+      0.7
+     ],
+     [
+      "proc.plan_apply_continuity",
+      "nli",
+      0.7
+     ],
+     [
+      "proc.plan_apply_horizontal_simplification",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_solve_bernoulli_for_p2",
+      "nli",
+      1.0
+     ],
+     [
+      "simp.horizontal_simplification",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 108
+   },
+   "persona": "misconception",
+   "pos_detected_v2": [
+    "eq.bernoulli",
+    "eq.continuity",
+    "proc.plan_apply_continuity",
+    "proc.plan_apply_horizontal_simplification",
+    "proc.plan_solve_bernoulli_for_p2",
+    "simp.horizontal_simplification"
+   ],
+   "positives": [
+    "eq.bernoulli",
+    "eq.continuity",
+    "proc.plan_apply_continuity",
+    "proc.plan_apply_horizontal_simplification",
+    "proc.plan_solve_bernoulli_for_p2",
+    "simp.horizontal_simplification"
+   ],
+   "problem_id": "bernoulli_horizontal_pipe_find_p2",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 6,
+   "expected_band": "Developing",
+   "expected_composite": 0.6684,
+   "is_control": true,
+   "llm_band": "Developing",
+   "neg_detected_sources": {
+    "cond.incompressibility": "nli"
+   },
+   "neg_detected_v2": [
+    "cond.incompressibility"
+   ],
+   "negatives": [
+    "cond.incompressibility"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.5883,
+    "control_credit_leak": true,
+    "edge_coverage": 0.20000000298023224,
+    "node_coverage": 0.75
+   },
+   "on": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.6471,
+    "control_credit_leak": true,
+    "edge_coverage": 0.4000000059604645,
+    "node_coverage": 0.75,
+    "node_sources": [
+     [
+      "cond.incompressibility",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.continuity",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_invoke_incompressibility",
+      "nli",
+      0.0
+     ],
+     [
+      "proc.plan_solve_continuity_for_v2",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 24
+   },
+   "persona": "misconception",
+   "pos_detected_v2": [
+    "eq.continuity",
+    "proc.plan_solve_continuity_for_v2"
+   ],
+   "positives": [
+    "eq.continuity",
+    "proc.plan_invoke_incompressibility",
+    "proc.plan_solve_continuity_for_v2"
+   ],
+   "problem_id": "continuity_area_change_find_v2",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 7,
+   "expected_band": "Proficient",
+   "expected_composite": 0.7118,
+   "is_control": false,
+   "llm_band": "Developing",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [
+    "proc.plan_substitute_into_bernoulli"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.1412,
+    "control_credit_leak": false,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.2
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.853453,
+    "control_credit_leak": false,
+    "edge_coverage": 0.693649172782898,
+    "node_coverage": 0.9199999999999999,
+    "node_sources": [
+     [
+      "cond.incompressibility",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.bernoulli",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.continuity",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_apply_continuity_for_v2",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_substitute_into_bernoulli",
+      "edge_pullup",
+      0.6
+     ]
+    ],
+    "pair_count": 70
+   },
+   "persona": "partial",
+   "pos_detected_v2": [
+    "cond.incompressibility",
+    "eq.bernoulli",
+    "eq.continuity",
+    "proc.plan_apply_continuity_for_v2"
+   ],
+   "positives": [
+    "cond.incompressibility",
+    "eq.bernoulli",
+    "eq.continuity",
+    "proc.plan_apply_continuity_for_v2"
+   ],
+   "problem_id": "bernoulli_full_find_p2",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 8,
+   "expected_band": "Developing",
+   "expected_composite": 0.6975,
+   "is_control": false,
+   "llm_band": "Beginning",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [
+    "proc.plan_set_v1_zero_and_solve_bernoulli"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.1765,
+    "control_credit_leak": false,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.25
+   },
+   "on": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.6723,
+    "control_credit_leak": false,
+    "edge_coverage": 0.48571428656578064,
+    "node_coverage": 0.75,
+    "node_sources": [
+     [
+      "eq.bernoulli",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_apply_equal_pressure_simplification",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_set_v1_zero_and_solve_bernoulli",
+      "nli",
+      0.0
+     ],
+     [
+      "simp.equal_pressure_simplification",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 36
+   },
+   "persona": "partial",
+   "pos_detected_v2": [
+    "eq.bernoulli",
+    "proc.plan_apply_equal_pressure_simplification",
+    "simp.equal_pressure_simplification"
+   ],
+   "positives": [
+    "eq.bernoulli",
+    "proc.plan_apply_equal_pressure_simplification",
+    "simp.equal_pressure_simplification"
+   ],
+   "problem_id": "bernoulli_height_change_find_v2",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 10,
+   "expected_band": "Developing",
+   "expected_composite": 0.6023,
+   "is_control": false,
+   "llm_band": "Developing",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [
+    "proc.plan_apply_horizontal_simplification",
+    "proc.plan_solve_bernoulli_for_p2"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.302571,
+    "control_credit_leak": false,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.42857142857142855
+   },
+   "on": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.41817,
+    "control_credit_leak": false,
+    "edge_coverage": 0.15305499732494354,
+    "node_coverage": 0.5285714285714286,
+    "node_sources": [
+     [
+      "cond.incompressibility",
+      "v1_floor",
+      1.0
+     ],
+     [
+      "eq.bernoulli",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.continuity",
+      "nli",
+      0.0
+     ],
+     [
+      "proc.plan_apply_continuity",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_apply_horizontal_simplification",
+      "nli",
+      0.0
+     ],
+     [
+      "proc.plan_solve_bernoulli_for_p2",
+      "nli",
+      0.0
+     ],
+     [
+      "simp.horizontal_simplification",
+      "nli",
+      0.7
+     ]
+    ],
+    "pair_count": 67
+   },
+   "persona": "partial",
+   "pos_detected_v2": [
+    "cond.incompressibility",
+    "eq.bernoulli",
+    "proc.plan_apply_continuity",
+    "simp.horizontal_simplification"
+   ],
+   "positives": [
+    "cond.incompressibility",
+    "eq.bernoulli",
+    "eq.continuity",
+    "proc.plan_apply_continuity",
+    "simp.horizontal_simplification"
+   ],
+   "problem_id": "bernoulli_horizontal_pipe_find_p2",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 14,
+   "expected_band": "Beginning",
+   "expected_composite": 0.353,
+   "is_control": false,
+   "llm_band": "Beginning",
+   "neg_detected_sources": {
+    "proc.plan_apply_flow_rate_definition": "nli"
+   },
+   "neg_detected_v2": [
+    "proc.plan_apply_flow_rate_definition"
+   ],
+   "negatives": [
+    "proc.plan_apply_flow_rate_definition"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.353,
+    "control_credit_leak": false,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.5
+   },
+   "on": {
+    "abstained": false,
+    "band": "Proficient",
+    "composite": 0.772285,
+    "control_credit_leak": false,
+    "edge_coverage": 0.5856620073318481,
+    "node_coverage": 0.85,
+    "node_sources": [
+     [
+      "eq.flow_rate_definition",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_apply_flow_rate_definition",
+      "nli",
+      0.7
+     ]
+    ],
+    "pair_count": 11
+   },
+   "persona": "partial",
+   "pos_detected_v2": [
+    "eq.flow_rate_definition"
+   ],
+   "positives": [
+    "eq.flow_rate_definition"
+   ],
+   "problem_id": "volumetric_flow_rate_find_Q",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 15,
+   "expected_band": "Strong",
+   "expected_composite": 1.0,
+   "is_control": false,
+   "llm_band": "Strong",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.1412,
+    "control_credit_leak": false,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.2
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.899133,
+    "control_credit_leak": false,
+    "edge_coverage": 0.8009980320930481,
+    "node_coverage": 0.9400000000000001,
+    "node_sources": [
+     [
+      "cond.incompressibility",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.bernoulli",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.continuity",
+      "nli",
+      0.7
+     ],
+     [
+      "proc.plan_apply_continuity_for_v2",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_substitute_into_bernoulli",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 68
+   },
+   "persona": "strong",
+   "pos_detected_v2": [
+    "cond.incompressibility",
+    "eq.bernoulli",
+    "eq.continuity",
+    "proc.plan_apply_continuity_for_v2",
+    "proc.plan_substitute_into_bernoulli"
+   ],
+   "positives": [
+    "cond.incompressibility",
+    "eq.bernoulli",
+    "eq.continuity",
+    "proc.plan_apply_continuity_for_v2",
+    "proc.plan_substitute_into_bernoulli"
+   ],
+   "problem_id": "bernoulli_full_find_p2",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 16,
+   "expected_band": "Strong",
+   "expected_composite": 1.0,
+   "is_control": false,
+   "llm_band": "Beginning",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [],
+   "off": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.5715,
+    "control_credit_leak": false,
+    "edge_coverage": 0.1428571492433548,
+    "node_coverage": 0.75
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.9622,
+    "control_credit_leak": false,
+    "edge_coverage": 0.8714285492897034,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "eq.bernoulli",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_apply_equal_pressure_simplification",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_set_v1_zero_and_solve_bernoulli",
+      "v1_floor",
+      1.0
+     ],
+     [
+      "simp.equal_pressure_simplification",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 59
+   },
+   "persona": "strong",
+   "pos_detected_v2": [
+    "eq.bernoulli",
+    "proc.plan_apply_equal_pressure_simplification",
+    "proc.plan_set_v1_zero_and_solve_bernoulli",
+    "simp.equal_pressure_simplification"
+   ],
+   "positives": [
+    "eq.bernoulli",
+    "proc.plan_apply_equal_pressure_simplification",
+    "proc.plan_set_v1_zero_and_solve_bernoulli",
+    "simp.equal_pressure_simplification"
+   ],
+   "problem_id": "bernoulli_height_change_find_v2",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 18,
+   "expected_band": "Strong",
+   "expected_composite": 1.0,
+   "is_control": false,
+   "llm_band": "Proficient",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.302571,
+    "control_credit_leak": false,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.42857142857142855
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.9265,
+    "control_credit_leak": false,
+    "edge_coverage": 0.75,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "cond.incompressibility",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.bernoulli",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.continuity",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_apply_continuity",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_apply_horizontal_simplification",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_solve_bernoulli_for_p2",
+      "nli",
+      1.0
+     ],
+     [
+      "simp.horizontal_simplification",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 94
+   },
+   "persona": "strong",
+   "pos_detected_v2": [
+    "cond.incompressibility",
+    "eq.bernoulli",
+    "eq.continuity",
+    "proc.plan_apply_continuity",
+    "proc.plan_apply_horizontal_simplification",
+    "proc.plan_solve_bernoulli_for_p2",
+    "simp.horizontal_simplification"
+   ],
+   "positives": [
+    "cond.incompressibility",
+    "eq.bernoulli",
+    "eq.continuity",
+    "proc.plan_apply_continuity",
+    "proc.plan_apply_horizontal_simplification",
+    "proc.plan_solve_bernoulli_for_p2",
+    "simp.horizontal_simplification"
+   ],
+   "problem_id": "bernoulli_horizontal_pipe_find_p2",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 21,
+   "expected_band": "Strong",
+   "expected_composite": 1.0,
+   "is_control": false,
+   "llm_band": "Developing",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [],
+   "off": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.5295,
+    "control_credit_leak": false,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.75
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.853439,
+    "control_credit_leak": false,
+    "edge_coverage": 0.6815968155860901,
+    "node_coverage": 0.925,
+    "node_sources": [
+     [
+      "cond.incompressibility",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.continuity",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_invoke_incompressibility",
+      "nli",
+      0.7
+     ],
+     [
+      "proc.plan_solve_continuity_for_v2",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 42
+   },
+   "persona": "strong",
+   "pos_detected_v2": [
+    "cond.incompressibility",
+    "eq.continuity",
+    "proc.plan_invoke_incompressibility",
+    "proc.plan_solve_continuity_for_v2"
+   ],
+   "positives": [
+    "cond.incompressibility",
+    "eq.continuity",
+    "proc.plan_invoke_incompressibility",
+    "proc.plan_solve_continuity_for_v2"
+   ],
+   "problem_id": "continuity_area_change_find_v2",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 25,
+   "expected_band": "Strong",
+   "expected_composite": 1.0,
+   "is_control": false,
+   "llm_band": "Strong",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.353,
+    "control_credit_leak": false,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.5
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.9559,
+    "control_credit_leak": false,
+    "edge_coverage": 0.8500000238418579,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "eq.flow_rate_definition",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_apply_flow_rate_definition",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 31
+   },
+   "persona": "strong",
+   "pos_detected_v2": [
+    "eq.flow_rate_definition",
+    "proc.plan_apply_flow_rate_definition"
+   ],
+   "positives": [
+    "eq.flow_rate_definition",
+    "proc.plan_apply_flow_rate_definition"
+   ],
+   "problem_id": "volumetric_flow_rate_find_Q",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 27,
+   "expected_band": "Proficient",
+   "expected_composite": 0.7395,
+   "is_control": true,
+   "llm_band": "Proficient",
+   "neg_detected_sources": {
+    "simp.equal_pressure_simplification": "nli"
+   },
+   "neg_detected_v2": [
+    "simp.equal_pressure_simplification"
+   ],
+   "negatives": [
+    "simp.equal_pressure_simplification"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.1765,
+    "control_credit_leak": true,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.25
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.894843,
+    "control_credit_leak": true,
+    "edge_coverage": 0.8224265575408936,
+    "node_coverage": 0.925,
+    "node_sources": [
+     [
+      "eq.bernoulli",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_apply_equal_pressure_simplification",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_set_v1_zero_and_solve_bernoulli",
+      "nli",
+      0.7
+     ],
+     [
+      "simp.equal_pressure_simplification",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 50
+   },
+   "persona": "vague_then_clarifies",
+   "pos_detected_v2": [
+    "eq.bernoulli",
+    "proc.plan_apply_equal_pressure_simplification",
+    "proc.plan_set_v1_zero_and_solve_bernoulli"
+   ],
+   "positives": [
+    "eq.bernoulli",
+    "proc.plan_apply_equal_pressure_simplification",
+    "proc.plan_set_v1_zero_and_solve_bernoulli"
+   ],
+   "problem_id": "bernoulli_height_change_find_v2",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 29,
+   "expected_band": "Strong",
+   "expected_composite": 1.0,
+   "is_control": true,
+   "llm_band": "Proficient",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.403429,
+    "control_credit_leak": false,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.5714285714285714
+   },
+   "on": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.685993,
+    "control_credit_leak": false,
+    "edge_coverage": 0.2750000059604645,
+    "node_coverage": 0.8571428571428571,
+    "node_sources": [
+     [
+      "cond.incompressibility",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.bernoulli",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.continuity",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_apply_continuity",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.plan_apply_horizontal_simplification",
+      "nli",
+      0.0
+     ],
+     [
+      "proc.plan_solve_bernoulli_for_p2",
+      "nli",
+      1.0
+     ],
+     [
+      "simp.horizontal_simplification",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 87
+   },
+   "persona": "vague_then_clarifies",
+   "pos_detected_v2": [
+    "cond.incompressibility",
+    "eq.bernoulli",
+    "eq.continuity",
+    "proc.plan_apply_continuity",
+    "proc.plan_solve_bernoulli_for_p2",
+    "simp.horizontal_simplification"
+   ],
+   "positives": [
+    "cond.incompressibility",
+    "eq.bernoulli",
+    "eq.continuity",
+    "proc.plan_apply_continuity",
+    "proc.plan_apply_horizontal_simplification",
+    "proc.plan_solve_bernoulli_for_p2",
+    "simp.horizontal_simplification"
+   ],
+   "problem_id": "bernoulli_horizontal_pipe_find_p2",
+   "subject": "fluid_mechanics"
+  },
+  {
+   "attempt_id": 33,
+   "expected_band": "Proficient",
+   "expected_composite": 0.8288,
+   "is_control": true,
+   "llm_band": "Proficient",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [
+    "cond.final_goods_only"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.4656,
+    "control_credit_leak": true,
+    "edge_coverage": 0.1428571492433548,
+    "node_coverage": 0.6
+   },
+   "on": {
+    "abstained": false,
+    "band": "Proficient",
+    "composite": 0.700547,
+    "control_credit_leak": true,
+    "edge_coverage": 0.6058074235916138,
+    "node_coverage": 0.74,
+    "node_sources": [
+     [
+      "cond.final_goods_only",
+      "nli",
+      0.0
+     ],
+     [
+      "eq.gdp_expenditure",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.net_exports",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.compute_net_exports",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.sum_components",
+      "nli",
+      0.7
+     ]
+    ],
+    "pair_count": 65
+   },
+   "persona": "misconception",
+   "pos_detected_v2": [
+    "eq.gdp_expenditure",
+    "eq.net_exports",
+    "proc.compute_net_exports",
+    "proc.sum_components"
+   ],
+   "positives": [
+    "eq.gdp_expenditure",
+    "eq.net_exports",
+    "proc.compute_net_exports",
+    "proc.sum_components"
+   ],
+   "problem_id": "gdp_identity",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 34,
+   "expected_band": "Proficient",
+   "expected_composite": 0.792,
+   "is_control": true,
+   "llm_band": "Strong",
+   "neg_detected_sources": {
+    "def.depreciation": "nli"
+   },
+   "neg_detected_v2": [
+    "def.depreciation"
+   ],
+   "negatives": [
+    "def.depreciation"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.6383,
+    "control_credit_leak": true,
+    "edge_coverage": 0.25,
+    "node_coverage": 0.8
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.93385,
+    "control_credit_leak": true,
+    "edge_coverage": 0.7749999761581421,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "def.depreciation",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.gnp",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.nnp",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.compute_gnp",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.subtract_depreciation",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 69
+   },
+   "persona": "misconception",
+   "pos_detected_v2": [
+    "eq.gnp",
+    "eq.nnp",
+    "proc.compute_gnp",
+    "proc.subtract_depreciation"
+   ],
+   "positives": [
+    "eq.gnp",
+    "eq.nnp",
+    "proc.compute_gnp",
+    "proc.subtract_depreciation"
+   ],
+   "problem_id": "nnp_chain",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 35,
+   "expected_band": "Beginning",
+   "expected_composite": 0.4942,
+   "is_control": true,
+   "llm_band": "Proficient",
+   "neg_detected_sources": {
+    "eq.gdp_deflator": "nli"
+   },
+   "neg_detected_v2": [
+    "eq.gdp_deflator"
+   ],
+   "negatives": [
+    "eq.gdp_deflator"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.235333,
+    "control_credit_leak": true,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.3333333333333333
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.9559,
+    "control_credit_leak": true,
+    "edge_coverage": 0.8500000238418579,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "eq.gdp_deflator",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.rearrange_for_real_gdp",
+      "nli",
+      1.0
+     ],
+     [
+      "simp.deflator_is_price_index",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 49
+   },
+   "persona": "misconception",
+   "pos_detected_v2": [
+    "proc.rearrange_for_real_gdp",
+    "simp.deflator_is_price_index"
+   ],
+   "positives": [
+    "proc.rearrange_for_real_gdp",
+    "simp.deflator_is_price_index"
+   ],
+   "problem_id": "real_gdp_from_deflator",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 36,
+   "expected_band": "Proficient",
+   "expected_composite": 0.737,
+   "is_control": true,
+   "llm_band": "Strong",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [
+    "def.real_basis"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.3645,
+    "control_credit_leak": false,
+    "edge_coverage": 0.1666666716337204,
+    "node_coverage": 0.5
+   },
+   "on": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.6488,
+    "control_credit_leak": false,
+    "edge_coverage": 0.5333333611488342,
+    "node_coverage": 0.75,
+    "node_sources": [
+     [
+      "def.real_basis",
+      "nli",
+      0.0
+     ],
+     [
+      "eq.growth_rate",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.apply_percent_change",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.compute_real_change",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 53
+   },
+   "persona": "misconception",
+   "pos_detected_v2": [
+    "eq.growth_rate",
+    "proc.apply_percent_change",
+    "proc.compute_real_change"
+   ],
+   "positives": [
+    "eq.growth_rate",
+    "proc.apply_percent_change",
+    "proc.compute_real_change"
+   ],
+   "problem_id": "real_gdp_growth",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 37,
+   "expected_band": "Developing",
+   "expected_composite": 0.6908,
+   "is_control": false,
+   "llm_band": "Developing",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [
+    "proc.sum_components"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.2824,
+    "control_credit_leak": false,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.4
+   },
+   "on": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.64158,
+    "control_credit_leak": false,
+    "edge_coverage": 0.4052371382713318,
+    "node_coverage": 0.74,
+    "node_sources": [
+     [
+      "cond.final_goods_only",
+      "v1_floor",
+      1.0
+     ],
+     [
+      "eq.gdp_expenditure",
+      "nli",
+      0.7
+     ],
+     [
+      "eq.net_exports",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.compute_net_exports",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.sum_components",
+      "nli",
+      0.0
+     ]
+    ],
+    "pair_count": 61
+   },
+   "persona": "partial",
+   "pos_detected_v2": [
+    "cond.final_goods_only",
+    "eq.gdp_expenditure",
+    "eq.net_exports",
+    "proc.compute_net_exports"
+   ],
+   "positives": [
+    "cond.final_goods_only",
+    "eq.gdp_expenditure",
+    "eq.net_exports",
+    "proc.compute_net_exports"
+   ],
+   "problem_id": "gdp_identity",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 38,
+   "expected_band": "Developing",
+   "expected_composite": 0.5442,
+   "is_control": false,
+   "llm_band": "Strong",
+   "neg_detected_sources": {
+    "proc.subtract_imports": "v1_floor"
+   },
+   "neg_detected_v2": [
+    "proc.subtract_imports"
+   ],
+   "negatives": [
+    "proc.subtract_imports"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.544167,
+    "control_credit_leak": false,
+    "edge_coverage": 0.25,
+    "node_coverage": 0.6666666666666666
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.93385,
+    "control_credit_leak": false,
+    "edge_coverage": 0.7749999761581421,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "cond.trade_deficit",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.net_exports",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.subtract_imports",
+      "v1_floor",
+      1.0
+     ]
+    ],
+    "pair_count": 43
+   },
+   "persona": "partial",
+   "pos_detected_v2": [
+    "cond.trade_deficit",
+    "eq.net_exports"
+   ],
+   "positives": [
+    "cond.trade_deficit",
+    "eq.net_exports"
+   ],
+   "problem_id": "net_exports_sign",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 39,
+   "expected_band": "Developing",
+   "expected_composite": 0.675,
+   "is_control": false,
+   "llm_band": "Strong",
+   "neg_detected_sources": {
+    "proc.subtract_depreciation": "nli"
+   },
+   "neg_detected_v2": [
+    "proc.subtract_depreciation"
+   ],
+   "negatives": [
+    "proc.subtract_depreciation"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Proficient",
+    "composite": 0.7795,
+    "control_credit_leak": false,
+    "edge_coverage": 0.25,
+    "node_coverage": 1.0
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.966925,
+    "control_credit_leak": false,
+    "edge_coverage": 0.887499988079071,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "def.depreciation",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.gnp",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.nnp",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.compute_gnp",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.subtract_depreciation",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 72
+   },
+   "persona": "partial",
+   "pos_detected_v2": [
+    "def.depreciation",
+    "eq.gnp",
+    "eq.nnp",
+    "proc.compute_gnp"
+   ],
+   "positives": [
+    "def.depreciation",
+    "eq.gnp",
+    "eq.nnp",
+    "proc.compute_gnp"
+   ],
+   "problem_id": "nnp_chain",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 40,
+   "expected_band": "Developing",
+   "expected_composite": 0.6765,
+   "is_control": false,
+   "llm_band": "Developing",
+   "neg_detected_sources": {
+    "proc.apply_percent_change": "nli"
+   },
+   "neg_detected_v2": [
+    "proc.apply_percent_change"
+   ],
+   "negatives": [
+    "proc.apply_percent_change"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.1765,
+    "control_credit_leak": false,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.25
+   },
+   "on": {
+    "abstained": false,
+    "band": "Proficient",
+    "composite": 0.824941,
+    "control_credit_leak": false,
+    "edge_coverage": 0.584663987159729,
+    "node_coverage": 0.925,
+    "node_sources": [
+     [
+      "def.real_basis",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.growth_rate",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.apply_percent_change",
+      "nli",
+      0.7
+     ],
+     [
+      "proc.compute_real_change",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 61
+   },
+   "persona": "partial",
+   "pos_detected_v2": [
+    "def.real_basis",
+    "eq.growth_rate",
+    "proc.compute_real_change"
+   ],
+   "positives": [
+    "def.real_basis",
+    "eq.growth_rate",
+    "proc.compute_real_change"
+   ],
+   "problem_id": "real_gdp_growth",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 41,
+   "expected_band": "Strong",
+   "expected_composite": 1.0,
+   "is_control": false,
+   "llm_band": "Strong",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [],
+   "off": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.6068,
+    "control_credit_leak": false,
+    "edge_coverage": 0.1428571492433548,
+    "node_coverage": 0.8
+   },
+   "on": {
+    "abstained": false,
+    "band": "Proficient",
+    "composite": 0.70796,
+    "control_credit_leak": false,
+    "edge_coverage": 0.34285715222358704,
+    "node_coverage": 0.86,
+    "node_sources": [
+     [
+      "cond.final_goods_only",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.gdp_expenditure",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.net_exports",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.compute_net_exports",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.sum_components",
+      "nli",
+      0.3
+     ]
+    ],
+    "pair_count": 55
+   },
+   "persona": "strong",
+   "pos_detected_v2": [
+    "cond.final_goods_only",
+    "eq.gdp_expenditure",
+    "eq.net_exports",
+    "proc.compute_net_exports"
+   ],
+   "positives": [
+    "cond.final_goods_only",
+    "eq.gdp_expenditure",
+    "eq.net_exports",
+    "proc.compute_net_exports",
+    "proc.sum_components"
+   ],
+   "problem_id": "gdp_identity",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 42,
+   "expected_band": "Strong",
+   "expected_composite": 1.0,
+   "is_control": false,
+   "llm_band": "Strong",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [],
+   "off": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.544167,
+    "control_credit_leak": false,
+    "edge_coverage": 0.25,
+    "node_coverage": 0.6666666666666666
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.93385,
+    "control_credit_leak": false,
+    "edge_coverage": 0.7749999761581421,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "cond.trade_deficit",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.net_exports",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.subtract_imports",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 43
+   },
+   "persona": "strong",
+   "pos_detected_v2": [
+    "cond.trade_deficit",
+    "eq.net_exports",
+    "proc.subtract_imports"
+   ],
+   "positives": [
+    "cond.trade_deficit",
+    "eq.net_exports",
+    "proc.subtract_imports"
+   ],
+   "problem_id": "net_exports_sign",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 43,
+   "expected_band": "Strong",
+   "expected_composite": 1.0,
+   "is_control": false,
+   "llm_band": "Strong",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.4236,
+    "control_credit_leak": false,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.6
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.93385,
+    "control_credit_leak": false,
+    "edge_coverage": 0.7749999761581421,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "def.depreciation",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.gnp",
+      "v1_floor",
+      1.0
+     ],
+     [
+      "eq.nnp",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.compute_gnp",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.subtract_depreciation",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 59
+   },
+   "persona": "strong",
+   "pos_detected_v2": [
+    "def.depreciation",
+    "eq.gnp",
+    "eq.nnp",
+    "proc.compute_gnp",
+    "proc.subtract_depreciation"
+   ],
+   "positives": [
+    "def.depreciation",
+    "eq.gnp",
+    "eq.nnp",
+    "proc.compute_gnp",
+    "proc.subtract_depreciation"
+   ],
+   "problem_id": "nnp_chain",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 44,
+   "expected_band": "Strong",
+   "expected_composite": 1.0,
+   "is_control": false,
+   "llm_band": "Strong",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [],
+   "off": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.544167,
+    "control_credit_leak": false,
+    "edge_coverage": 0.25,
+    "node_coverage": 0.6666666666666666
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.8677,
+    "control_credit_leak": false,
+    "edge_coverage": 0.550000011920929,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "eq.gdp_deflator",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.rearrange_for_real_gdp",
+      "v1_floor",
+      1.0
+     ],
+     [
+      "simp.deflator_is_price_index",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 38
+   },
+   "persona": "strong",
+   "pos_detected_v2": [
+    "eq.gdp_deflator",
+    "proc.rearrange_for_real_gdp",
+    "simp.deflator_is_price_index"
+   ],
+   "positives": [
+    "eq.gdp_deflator",
+    "proc.rearrange_for_real_gdp",
+    "simp.deflator_is_price_index"
+   ],
+   "problem_id": "real_gdp_from_deflator",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 45,
+   "expected_band": "Strong",
+   "expected_composite": 1.0,
+   "is_control": false,
+   "llm_band": "Strong",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.1765,
+    "control_credit_leak": false,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.25
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.8824,
+    "control_credit_leak": false,
+    "edge_coverage": 0.6000000238418579,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "def.real_basis",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.growth_rate",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.apply_percent_change",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.compute_real_change",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 49
+   },
+   "persona": "strong",
+   "pos_detected_v2": [
+    "def.real_basis",
+    "eq.growth_rate",
+    "proc.apply_percent_change",
+    "proc.compute_real_change"
+   ],
+   "positives": [
+    "def.real_basis",
+    "eq.growth_rate",
+    "proc.apply_percent_change",
+    "proc.compute_real_change"
+   ],
+   "problem_id": "real_gdp_growth",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 47,
+   "expected_band": "Developing",
+   "expected_composite": 0.6177,
+   "is_control": true,
+   "llm_band": "Strong",
+   "neg_detected_sources": {
+    "cond.trade_deficit": "nli"
+   },
+   "neg_detected_v2": [
+    "cond.trade_deficit"
+   ],
+   "negatives": [
+    "cond.trade_deficit"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.470667,
+    "control_credit_leak": true,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.6666666666666666
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.9118,
+    "control_credit_leak": true,
+    "edge_coverage": 0.699999988079071,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "cond.trade_deficit",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.net_exports",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.subtract_imports",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 43
+   },
+   "persona": "vague_then_clarifies",
+   "pos_detected_v2": [
+    "eq.net_exports",
+    "proc.subtract_imports"
+   ],
+   "positives": [
+    "eq.net_exports",
+    "proc.subtract_imports"
+   ],
+   "problem_id": "net_exports_sign",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 48,
+   "expected_band": "Strong",
+   "expected_composite": 1.0,
+   "is_control": true,
+   "llm_band": "Strong",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [],
+   "off": {
+    "abstained": false,
+    "band": "Developing",
+    "composite": 0.57155,
+    "control_credit_leak": false,
+    "edge_coverage": 0.125,
+    "node_coverage": 0.8
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.9259,
+    "control_credit_leak": false,
+    "edge_coverage": 0.8500000238418579,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "def.depreciation",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.gnp",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.nnp",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.compute_gnp",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.subtract_depreciation",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 68
+   },
+   "persona": "vague_then_clarifies",
+   "pos_detected_v2": [
+    "def.depreciation",
+    "eq.gnp",
+    "eq.nnp",
+    "proc.compute_gnp",
+    "proc.subtract_depreciation"
+   ],
+   "positives": [
+    "def.depreciation",
+    "eq.gnp",
+    "eq.nnp",
+    "proc.compute_gnp",
+    "proc.subtract_depreciation"
+   ],
+   "problem_id": "nnp_chain",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 49,
+   "expected_band": "Strong",
+   "expected_composite": 1.0,
+   "is_control": true,
+   "llm_band": "Strong",
+   "neg_detected_sources": {},
+   "neg_detected_v2": [],
+   "negatives": [],
+   "off": {
+    "abstained": false,
+    "band": "Proficient",
+    "composite": 0.7795,
+    "control_credit_leak": false,
+    "edge_coverage": 0.25,
+    "node_coverage": 1.0
+   },
+   "on": {
+    "abstained": false,
+    "band": "Strong",
+    "composite": 0.88975,
+    "control_credit_leak": false,
+    "edge_coverage": 0.625,
+    "node_coverage": 1.0,
+    "node_sources": [
+     [
+      "eq.gdp_deflator",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.rearrange_for_real_gdp",
+      "nli",
+      1.0
+     ],
+     [
+      "simp.deflator_is_price_index",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 48
+   },
+   "persona": "vague_then_clarifies",
+   "pos_detected_v2": [
+    "eq.gdp_deflator",
+    "proc.rearrange_for_real_gdp",
+    "simp.deflator_is_price_index"
+   ],
+   "positives": [
+    "eq.gdp_deflator",
+    "proc.rearrange_for_real_gdp",
+    "simp.deflator_is_price_index"
+   ],
+   "problem_id": "real_gdp_from_deflator",
+   "subject": "macroeconomics"
+  },
+  {
+   "attempt_id": 50,
+   "expected_band": "Developing",
+   "expected_composite": 0.6765,
+   "is_control": true,
+   "llm_band": "Strong",
+   "neg_detected_sources": {
+    "eq.growth_rate": "nli"
+   },
+   "neg_detected_v2": [
+    "eq.growth_rate"
+   ],
+   "negatives": [
+    "eq.growth_rate"
+   ],
+   "off": {
+    "abstained": false,
+    "band": "Beginning",
+    "composite": 0.353,
+    "control_credit_leak": true,
+    "edge_coverage": 0.0,
+    "node_coverage": 0.5
+   },
+   "on": {
+    "abstained": false,
+    "band": "Proficient",
+    "composite": 0.827342,
+    "control_credit_leak": true,
+    "edge_coverage": 0.592831015586853,
+    "node_coverage": 0.925,
+    "node_sources": [
+     [
+      "def.real_basis",
+      "nli",
+      1.0
+     ],
+     [
+      "eq.growth_rate",
+      "nli",
+      1.0
+     ],
+     [
+      "proc.apply_percent_change",
+      "nli",
+      0.7
+     ],
+     [
+      "proc.compute_real_change",
+      "nli",
+      1.0
+     ]
+    ],
+    "pair_count": 62
+   },
+   "persona": "vague_then_clarifies",
+   "pos_detected_v2": [
+    "def.real_basis",
+    "proc.apply_percent_change",
+    "proc.compute_real_change"
+   ],
+   "positives": [
+    "def.real_basis",
+    "proc.apply_percent_change",
+    "proc.compute_real_change"
+   ],
+   "problem_id": "real_gdp_growth",
+   "subject": "macroeconomics"
+  }
+ ],
+ "regressions_on_lt_off": [],
+ "wall_clock": {
+  "replay_off_s": 408,
+  "replay_on_s": 1080,
+  "v2_overhead_s_per_attempt": 21.7
+ }
+}
