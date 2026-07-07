@@ -288,6 +288,9 @@ def test_create_session_with_explicit_problem(client_factory, monkeypatch):
     body = resp.json()
     assert body["problem"]["id"] == codes[1]
     assert "reference_solution" not in body["problem"]
+    # teaching flow needs these — lock the contract
+    assert "given_values" in body["problem"]
+    assert "target_unknown" in body["problem"]
     assert isinstance(body["session_id"], int)
     assert isinstance(body["attempt_id"], int)
 
@@ -383,3 +386,39 @@ def test_create_session_ends_prior_active_session(client_factory, monkeypatch):
             assert new.status == "active"
 
     asyncio.run(_check())
+
+
+def test_create_session_rejects_foreign_concept(client_factory, monkeypatch):
+    """Starting a session against a concept from another course must 409,
+    not bind the session to a foreign concept."""
+    app, Session = client_factory
+    _auth_as(monkeypatch, TEST_USER_ID)
+
+    async def _seed_foreign() -> int:
+        async with Session() as db:
+            subj = Subject(slug="chem", display_name="Chem", search_space_id=TEST_SPACE_ID + 99)
+            db.add(subj)
+            await db.flush()
+            concept = Concept(subject_id=subj.id, slug="acids", display_name="Acids")
+            db.add(concept)
+            await db.flush()
+            db.add(ConceptProblem(
+                concept_id=concept.id, problem_code="f1", difficulty="intro",
+                payload=_full_problem_payload("f1", concept.id), tier=2,
+            ))
+            await db.commit()
+            return concept.id
+
+    foreign_id = asyncio.run(_seed_foreign())
+    client = TestClient(app)
+    resp = client.post(
+        "/apollo/sessions",
+        json={
+            "search_space_id": TEST_SPACE_ID,
+            "concept_id": foreign_id,
+            "difficulty": "intro",
+        },
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error_code"] == "no_matching_concept"
