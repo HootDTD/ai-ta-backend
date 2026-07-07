@@ -49,41 +49,66 @@ async def _seed_concept(db, *, slug: str, name: str) -> int:
     c = Concept(subject_id=subj.id, slug=slug, display_name=name)
     db.add(c)
     await db.flush()
-    return c.id
+    return int(c.id)  # type: ignore[arg-type]  # SA stubs expose .id as Column
 
 
 async def _seed_mastery(db, *, concept_id: int, values: list[float]) -> None:
     for i, m in enumerate(values):
         ent = KGEntity(
-            concept_id=concept_id, canonical_key=f"k{concept_id}-{i}",
-            kind="quantity", display_name=f"Entity {concept_id}-{i}",
+            concept_id=concept_id,
+            canonical_key=f"k{concept_id}-{i}",
+            kind="quantity",
+            display_name=f"Entity {concept_id}-{i}",
         )
         db.add(ent)
         await db.flush()
-        db.add(LearnerState(
-            user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, entity_id=ent.id,
-            belief=[0.2, 0.8], mastery=m, confidence=0.9, evidence_count=1,
-        ))
+        db.add(
+            LearnerState(
+                user_id=TEST_USER_ID,
+                search_space_id=TEST_SPACE_ID,
+                entity_id=ent.id,
+                belief=[0.2, 0.8],
+                mastery=m,
+                confidence=0.9,
+                evidence_count=1,
+            )
+        )
     await db.commit()
 
 
 async def _seed_graded_attempt(
-    db, *, concept_id: int, problem_id: str, score: int, letter: str,
-    user_id: str = TEST_USER_ID, when: datetime | None = None,
+    db,
+    *,
+    concept_id: int,
+    problem_id: str,
+    score: int,
+    letter: str,
+    user_id: str = TEST_USER_ID,
+    when: datetime | None = None,
 ) -> None:
     sess = ApolloSession(
-        user_id=user_id, search_space_id=TEST_SPACE_ID, concept_id=concept_id,
-        status="ended", phase="REPORT", current_problem_id=problem_id,
+        user_id=user_id,
+        search_space_id=TEST_SPACE_ID,
+        concept_id=concept_id,
+        status="ended",
+        phase="REPORT",
+        current_problem_id=problem_id,
     )
     db.add(sess)
     await db.flush()
-    db.add(ProblemAttempt(
-        session_id=sess.id, problem_id=problem_id, difficulty="intro",
-        result="graded",
-        diagnostic_report={"rubric": {"overall": {"score": score, "letter": letter}},
-                           "narrative": "..."},
-        created_at=when or datetime.now(UTC),
-    ))
+    db.add(
+        ProblemAttempt(
+            session_id=sess.id,
+            problem_id=problem_id,
+            difficulty="intro",
+            result="graded",
+            diagnostic_report={
+                "rubric": {"overall": {"score": score, "letter": letter}},
+                "narrative": "...",
+            },
+            created_at=when or datetime.now(UTC),
+        )
+    )
     await db.commit()
 
 
@@ -107,20 +132,26 @@ async def test_detail_mastery_grouped_per_concept(db):
 async def test_detail_recent_attempts_graded_only_newest_first(db):
     c1 = await _seed_concept(db, slug="newton-2", name="Newton's Second Law")
     old = datetime.now(UTC) - timedelta(days=2)
-    await _seed_graded_attempt(db, concept_id=c1, problem_id="p-old",
-                               score=60, letter="C", when=old)
-    await _seed_graded_attempt(db, concept_id=c1, problem_id="p-new",
-                               score=85, letter="A-")
+    await _seed_graded_attempt(
+        db, concept_id=c1, problem_id="p-old", score=60, letter="C", when=old
+    )
+    await _seed_graded_attempt(db, concept_id=c1, problem_id="p-new", score=85, letter="A-")
     # ungraded attempt and another student's attempt must not appear
-    sess = ApolloSession(user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID,
-                         concept_id=c1, status="active", phase="TEACHING",
-                         current_problem_id="p-live")
+    sess = ApolloSession(
+        user_id=TEST_USER_ID,
+        search_space_id=TEST_SPACE_ID,
+        concept_id=c1,
+        status="active",
+        phase="TEACHING",
+        current_problem_id="p-live",
+    )
     db.add(sess)
     await db.flush()
     db.add(ProblemAttempt(session_id=sess.id, problem_id="p-live", difficulty="intro"))
     await db.commit()
-    await _seed_graded_attempt(db, concept_id=c1, problem_id="p-other",
-                               score=99, letter="A+", user_id=TEST_USER_ID_2)
+    await _seed_graded_attempt(
+        db, concept_id=c1, problem_id="p-other", score=99, letter="A+", user_id=TEST_USER_ID_2
+    )
 
     out = await handle_get_progress_detail(
         db=db, user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID

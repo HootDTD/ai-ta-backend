@@ -17,6 +17,7 @@ owns:
   - text-embeder/**
   - Procfile
   - pytest.ini
+  - .coveragerc
   - requirements.txt
   - .pre-commit-config.yaml
   - .github/**
@@ -24,7 +25,7 @@ related:
   - shared/conventions
   - shared/security
   - shared/supabase
-last_verified: 2026-07-02
+last_verified: 2026-07-07
 stub: false
 ---
 
@@ -169,6 +170,7 @@ From `requirements.txt` (unpinned except floors): `fastapi` + `uvicorn[standard]
 - **`python server.py` is stale**: the `__main__` block runs `uvicorn.run("backend.server:app", ...)`, a leftover module path. Use `uvicorn server:app` (what the Procfile does).
 - **Auto-enroll**: first student access to a course silently creates a membership (`AUTO_ENROLL_STUDENT_MEMBERSHIP=1` default; restrict with `AUTO_ENROLL_SEARCH_SPACE_IDS`).
 - **Pytest** (`pytest.ini`): `asyncio_mode = auto`, `--strict-markers`, markers `unit` / `integration` / `e2e` / `slow` / `llm`.
+- **Coverage** (`.coveragerc`): `concurrency = thread, greenlet` is load-bearing — SQLAlchemy's asyncio bridge runs DB work through greenlets, and without greenlet tracing coverage silently drops every line after the first `await db.execute(...)` in a coroutine (which starved the diff-cover patch gate). `thread` must stay listed alongside it or TestClient's portal thread goes untraced.
 
 ### CI shape (one paragraph)
 `.github/workflows/ci.yml` runs on PRs/pushes to `main`, `staging`, `ApolloV3` with five jobs: `quality` (ruff on changed files only — blocking for *added* files, advisory for *modified*, because the legacy tree has ~360 ruff errors), `typecheck` (mypy, advisory until Phase 3), `unit` (fast `-m "not integration"`, no Docker), `integration` (full suite on pgvector + Neo4j Testcontainers, plus a diff-cover ≥80% patch-coverage gate that is skipped on promotion PRs into ApolloV3), and `ci-passed` — the single required branch-protection status that asserts quality+unit+integration all passed. `nightly.yml` runs the full suite (incl. e2e/slow) on a 3.11/3.12 matrix with a ratcheted project coverage floor (currently 20%) and an advisory `pip-audit`. Both reuse the composite `.github/actions/setup` action (SHA-pinned actions, pip cache, weasyprint native libs). `.pre-commit-config.yaml` mirrors the CI ruff config (ruff + ruff-format on staged files) plus hygiene hooks (trailing whitespace, large files, private-key detection). `dependabot.yml` is also present.
