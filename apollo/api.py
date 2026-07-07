@@ -55,7 +55,7 @@ from apollo.handlers.negotiate import (
     handle_paraphrase,
     handle_skip,
 )
-from apollo.handlers.progress import handle_get_progress
+from apollo.handlers.progress import handle_get_progress, handle_get_progress_detail
 from apollo.hoot_bridge.session_init import init_session_direct, init_session_from_hoot
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.projections.classroom import (
@@ -238,10 +238,16 @@ async def end(
 @router.get("/progress")
 async def progress(
     request: Request,
+    search_space_id: int | None = None,
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
-    return await handle_get_progress(db=db, user_id=auth.user_id)
+    if search_space_id is None:
+        return await handle_get_progress(db=db, user_id=auth.user_id)
+    await require_course_member(db=db, auth=auth, search_space_id=search_space_id)
+    return await handle_get_progress_detail(
+        db=db, user_id=auth.user_id, search_space_id=search_space_id
+    )
 
 
 @router.get("/concepts")
