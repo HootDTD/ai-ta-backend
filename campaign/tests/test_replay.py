@@ -532,6 +532,28 @@ def test_summarize_band_vs_expected_carries_ledger_diff():
     assert row["expected_credited"] == ["eq.a", "eq.b"]
 
 
+def test_summarize_band_vs_expected_carries_per_attempt_signals():
+    """Each row must carry the attempt's OWN scalar signals (§10 sweep inputs).
+
+    The per-persona ``values`` arrays force zip-reconstruction by list order
+    (the footgun ``a1-recall-verification.md`` documented); the offline
+    coverage_min sweep reads these three directly off each row instead.
+    """
+    outcomes = [
+        _outcome(
+            attempt_id=7,
+            unresolved_rate=0.62,
+            graph_composite=0.41,
+            node_coverage=0.83,
+        )
+    ]
+    metrics = replay.summarize(outcomes)
+    row = metrics.band_vs_expected[0]
+    assert row["unresolved_rate"] == 0.62
+    assert row["graph_composite"] == 0.41
+    assert row["node_coverage"] == 0.83
+
+
 def test_summarize_excludes_errors_from_persona_grouping():
     errors = [replay.ReplayError(attempt_id=9, persona="strong", reason="StudentGraphInvalidError")]
     metrics = replay.summarize(errors)
