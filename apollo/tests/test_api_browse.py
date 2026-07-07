@@ -18,6 +18,9 @@ from apollo.persistence.models import (
     ApolloSession,
     Concept,
     ConceptProblem,
+    EntityPrereq,
+    KGEntity,
+    LearnerState,
     ProblemAttempt,
     StudentProgress,
     Subject,
@@ -33,6 +36,12 @@ TABLES = [
     ApolloSession.__table__,
     ProblemAttempt.__table__,
     StudentProgress.__table__,
+    # Personalized selection (APOLLO_SESSION_PERSONALIZATION_ENABLED=1 in this
+    # env) reads the learner profile at the selection seam; on the cold-start
+    # empty-table path it degrades byte-identically to candidates[0].
+    KGEntity.__table__,
+    LearnerState.__table__,
+    EntityPrereq.__table__,
 ]
 
 
@@ -257,3 +266,120 @@ def test_list_problems_rejects_foreign_concept(client_factory, monkeypatch):
     )
     assert resp.status_code == 409
     assert resp.json()["error_code"] == "no_matching_concept"
+
+
+def test_create_session_with_explicit_problem(client_factory, monkeypatch):
+    app, Session = client_factory
+    _auth_as(monkeypatch, TEST_USER_ID)
+    concept_id, codes = asyncio.run(_seed_curriculum(Session))
+
+    client = TestClient(app)
+    resp = client.post(
+        "/apollo/sessions",
+        json={
+            "search_space_id": TEST_SPACE_ID,
+            "concept_id": concept_id,
+            "difficulty": "intro",
+            "problem_id": codes[1],
+        },
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["problem"]["id"] == codes[1]
+    assert "reference_solution" not in body["problem"]
+    assert isinstance(body["session_id"], int)
+    assert isinstance(body["attempt_id"], int)
+
+    # session row exists, TEACHING phase, correct concept binding
+    async def _check():
+        async with Session() as db:
+            from sqlalchemy import select
+            row = (
+                await db.execute(
+                    select(ApolloSession).where(ApolloSession.id == body["session_id"])
+                )
+            ).scalar_one()
+            assert row.phase == "TEACHING"
+            assert row.status == "active"
+            assert row.concept_id == concept_id
+            assert row.current_problem_id == codes[1]
+
+    asyncio.run(_check())
+
+
+def test_create_session_unknown_problem_404s(client_factory, monkeypatch):
+    app, Session = client_factory
+    _auth_as(monkeypatch, TEST_USER_ID)
+    concept_id, _ = asyncio.run(_seed_curriculum(Session))
+
+    client = TestClient(app)
+    resp = client.post(
+        "/apollo/sessions",
+        json={
+            "search_space_id": TEST_SPACE_ID,
+            "concept_id": concept_id,
+            "difficulty": "intro",
+            "problem_id": "does-not-exist",
+        },
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error_code"] == "problem_not_found"
+
+
+def test_create_session_without_problem_id_selects_from_pool(client_factory, monkeypatch):
+    app, Session = client_factory
+    _auth_as(monkeypatch, TEST_USER_ID)
+    concept_id, codes = asyncio.run(_seed_curriculum(Session))
+
+    client = TestClient(app)
+    resp = client.post(
+        "/apollo/sessions",
+        json={
+            "search_space_id": TEST_SPACE_ID,
+            "concept_id": concept_id,
+            "difficulty": "intro",
+        },
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["problem"]["id"] in codes
+
+
+def test_create_session_ends_prior_active_session(client_factory, monkeypatch):
+    app, Session = client_factory
+    _auth_as(monkeypatch, TEST_USER_ID)
+    concept_id, codes = asyncio.run(_seed_curriculum(Session))
+
+    client = TestClient(app)
+    first = client.post(
+        "/apollo/sessions",
+        json={"search_space_id": TEST_SPACE_ID, "concept_id": concept_id,
+              "difficulty": "intro", "problem_id": codes[0]},
+        headers={"Authorization": "Bearer tok"},
+    ).json()
+    second = client.post(
+        "/apollo/sessions",
+        json={"search_space_id": TEST_SPACE_ID, "concept_id": concept_id,
+              "difficulty": "intro", "problem_id": codes[1]},
+        headers={"Authorization": "Bearer tok"},
+    ).json()
+
+    async def _check():
+        async with Session() as db:
+            from sqlalchemy import select
+            old = (
+                await db.execute(
+                    select(ApolloSession).where(ApolloSession.id == first["session_id"])
+                )
+            ).scalar_one()
+            new = (
+                await db.execute(
+                    select(ApolloSession).where(ApolloSession.id == second["session_id"])
+                )
+            ).scalar_one()
+            assert old.status == "ended"
+            assert new.status == "active"
+
+    asyncio.run(_check())

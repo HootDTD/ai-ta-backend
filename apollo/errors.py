@@ -70,6 +70,19 @@ class PoolExhaustedError(ApolloError):
         )
 
 
+class ProblemNotFoundError(ApolloError):
+    """Standalone session entry named a problem_id that is not in the
+    concept's teachable pool (bad id, tier-1, quarantined, or another
+    concept's problem). Surfaces as 404 to the FE."""
+
+    def __init__(self, *, problem_id: str, concept_id: int) -> None:
+        self.problem_id = problem_id
+        self.concept_id = concept_id
+        super().__init__(
+            f"Problem {problem_id!r} not found in teachable pool of concept {concept_id}"
+        )
+
+
 class SessionFrozenError(ApolloError):
     """Attempted KG write on a frozen session."""
 
