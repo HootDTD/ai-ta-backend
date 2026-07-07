@@ -54,7 +54,7 @@ class NodeScore:
     canonical_key: str
     score: float  # max fused over pairs
     credit: float  # g(score) after grayzone + floors, in [0,1]
-    source: str  # "nli"|"lexical_skip"|"v1_floor"|"grayzone"|"edge_pullup"|"zero"
+    source: str  # "nli"|"lexical_skip"|"equation_cap"|"v1_floor"|"grayzone"|"edge_pullup"|"zero"
     best: PairScore | None  # argmax pair (None when skipped)
 
 

@@ -86,7 +86,10 @@ def _select_by_lex(lex_by_window: dict[int, float]) -> SelectFn:
 
 
 def _node(key: str, *views: str) -> RefNode:
-    return RefNode(canonical_key=key, node_type="equation", label=views[0], views=tuple(views))
+    """Generic scoring-math fixture. Deliberately a NON-equation type:
+    equation nodes now pass the symbolic-blindness gate (text credit capped —
+    see test_equation_gate.py), and these tests pin the uncapped ladder."""
+    return RefNode(canonical_key=key, node_type="definition", label=views[0], views=tuple(views))
 
 
 # --- fusion math ---------------------------------------------------------------

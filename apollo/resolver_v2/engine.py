@@ -46,7 +46,14 @@ from apollo.resolver_v2.windows import build_windows
 #: ``NodeScore.source`` values a gray-zone upgrade may replace. ``v1_floor``
 #: is deliberately absent (credit is already 1.0 — never downgrade), and
 #: ``zero`` nodes have score 0.0 which can never sit in the gray band.
-_GRAY_UPGRADABLE_SOURCES: frozenset[str] = frozenset({"nli", "lexical_skip"})
+#: ``equation_cap`` (the T4 symbolic-blindness gate) is INCLUDED: a capped
+#: equation node is gray-status by construction — grayzone confirmation is
+#: exactly the escalation it is eligible for. Its upgrade still tops out at
+#: ``grayzone_credit`` (0.7): a verified quote is text evidence too, so an
+#: equation node never reaches full credit through this path.
+_GRAY_UPGRADABLE_SOURCES: frozenset[str] = frozenset(
+    {"nli", "lexical_skip", "equation_cap"}
+)
 
 
 def _gray_nodes(
@@ -55,10 +62,18 @@ def _gray_nodes(
     """The §6 gray band: nodes whose fused score landed in
     ``t_low <= score < t_mid`` AND whose credit was not already floored by v1
     (a v1-resolved node keeps 1.0; querying it could only no-op or confuse the
-    trace)."""
+    trace).
+
+    ``equation_cap`` nodes are gray UNCONDITIONALLY: the symbolic-blindness
+    gate only binds on scores at/above ``t_mid`` (their score-band check would
+    say not-gray), but the cap's whole point is to hold the node at gray
+    status pending confirmation."""
     gray: list[NodeScore] = []
     for node in node_scores:
         if node.source not in _GRAY_UPGRADABLE_SOURCES:
+            continue
+        if node.source == "equation_cap":
+            gray.append(node)
             continue
         _credit, is_gray = credit_for_score(node.score, params)
         if is_gray:

@@ -25,6 +25,19 @@ owns the thresholds).
 Floors are applied AFTER ``g`` (max wins, ``source`` records which): the v1
 floor here (resolved-in-S_norm keys keep credit 1.0, guaranteeing V2 >= V1);
 grayzone upgrade and edge pull-up happen in the engine (T7).
+
+Symbolic-blindness gate (T8 anomaly #2): NLI entailment cannot see symbolic
+coefficients — the F1c calibration credited ``x = v0*t + a*t^2`` against the
+half-factor reference at entailment 0.98. So EQUATION-type nodes
+(ontology ``node_type == "equation"``) can never earn full credit from text
+evidence alone: on the ``nli`` and ``lexical_skip`` paths their credit is
+capped at ``params.equation_text_credit_cap`` (default = the gray-band
+credit, ``source="equation_cap"``), applied BEFORE the v1 floor so the
+symbolic path (SymPy resolution in v1, surfaced as ``v1_resolved_keys``)
+remains the ONLY route to credit 1.0. Capped nodes stay eligible for the
+engine's gray-zone confirmation, which itself tops out at
+``grayzone_credit`` (0.7) — a verified quote is still text, never full
+credit for an equation.
 """
 
 from __future__ import annotations
@@ -46,6 +59,13 @@ _CREDIT_MID: float = 0.7
 _CREDIT_GRAY: float = 0.3
 _CREDIT_ZERO: float = 0.0
 
+#: Ontology node types whose full credit requires a SYMBOLIC check (v1's
+#: SymPy resolution path) — paraphrase entailment is blind to coefficient
+#: errors, so text-only credit for these is capped at
+#: ``params.equation_text_credit_cap`` (the symbolic-blindness gate).
+#: ``"equation"`` is the only equation type in ``apollo.ontology.nodes``.
+_EQUATION_NODE_TYPES: frozenset[str] = frozenset({"equation"})
+
 
 def fuse(entailment: float, lexical: float, params: ResolverV2Params) -> float:
     """§5.4 MENLI-style linear fusion: ``alpha * P(entailment) +
@@ -66,6 +86,29 @@ def credit_for_score(score: float, params: ResolverV2Params) -> tuple[float, boo
     if score >= params.t_low:
         return _CREDIT_GRAY, True
     return _CREDIT_ZERO, False
+
+
+def _cap_equation_text_credit(
+    node: RefNode,
+    credit: float,
+    source: str,
+    params: ResolverV2Params,
+) -> tuple[float, str]:
+    """The symbolic-blindness gate (T8 anomaly #2): text-derived credit for an
+    EQUATION-type node is capped at ``params.equation_text_credit_cap``.
+
+    Returns the (possibly capped) ``(credit, source)`` pair — a binding cap
+    records ``source="equation_cap"`` so the engine can hold the node
+    gray-zone-eligible and the trace shows why full credit was withheld.
+    Non-equation nodes and credits already at/below the cap pass through
+    untouched. Runs BEFORE :func:`_with_v1_floor`, so the v1 symbolic path
+    still restores full credit.
+    """
+    if node.node_type not in _EQUATION_NODE_TYPES:
+        return credit, source
+    if credit <= params.equation_text_credit_cap:
+        return credit, source
+    return params.equation_text_credit_cap, "equation_cap"
 
 
 def _with_v1_floor(
@@ -126,6 +169,11 @@ def score_nodes(
       ``best`` = the argmax pair (first-evaluated wins ties). Pairs that hit
       budget exhaustion MID-node are simply not evaluated.
 
+    Equation-type nodes then pass the symbolic-blindness gate: on both text
+    paths (``nli``/``lexical_skip``) their credit is capped at
+    ``params.equation_text_credit_cap`` (``source="equation_cap"`` when the
+    cap binds — see module docstring).
+
     The v1 floor is applied last on every path (``source="v1_floor"``).
     """
     window_by_index = {window.index: window for window in windows}
@@ -146,9 +194,10 @@ def score_nodes(
             # §5.3 skip rule / §5.4 budget exhaustion / no-NLI degrade: score
             # is the raw max lexical signal through g (v1 floor still applies).
             credit, _is_gray = credit_for_score(max_lex, params)
+            credit, source = _cap_equation_text_credit(node, credit, "lexical_skip", params)
             scores.append(
                 _with_v1_floor(
-                    node.canonical_key, max_lex, credit, "lexical_skip", None, v1_resolved_keys
+                    node.canonical_key, max_lex, credit, source, None, v1_resolved_keys
                 )
             )
             continue
@@ -179,9 +228,10 @@ def score_nodes(
 
         node_score = best_pair.fused if best_pair is not None else 0.0
         credit, _is_gray = credit_for_score(node_score, params)
+        credit, source = _cap_equation_text_credit(node, credit, "nli", params)
         scores.append(
             _with_v1_floor(
-                node.canonical_key, node_score, credit, "nli", best_pair, v1_resolved_keys
+                node.canonical_key, node_score, credit, source, best_pair, v1_resolved_keys
             )
         )
 
