@@ -32,6 +32,7 @@ from apollo.errors import (
     NoMatchingConceptError,
     ParserCouldNotExtractError,
     PoolExhaustedError,
+    ProblemNotFoundError,
     ResolutionInvalidOutputError,
     ResolutionUnavailableError,
     ReviewRequiredError,
@@ -42,6 +43,7 @@ from apollo.graph_compare.validator import (
     ReferenceGraphInvalidError,
     StudentGraphInvalidError,
 )
+from apollo.handlers.browse import handle_list_problems
 from apollo.handlers.chat import handle_chat
 from apollo.handlers.done import handle_done
 from apollo.handlers.lifecycle import handle_end, handle_get_session, handle_retry
@@ -53,8 +55,8 @@ from apollo.handlers.negotiate import (
     handle_paraphrase,
     handle_skip,
 )
-from apollo.handlers.progress import handle_get_progress
-from apollo.hoot_bridge.session_init import init_session_from_hoot
+from apollo.handlers.progress import handle_get_progress, handle_get_progress_detail
+from apollo.hoot_bridge.session_init import init_session_direct, init_session_from_hoot
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.projections.classroom import (
     DEFAULT_WINDOW_DAYS,
@@ -62,6 +64,7 @@ from apollo.projections.classroom import (
     struggle_signals,
 )
 from apollo.provisioning.authored_sets.api import router as authored_sets_router
+from apollo.subjects.curriculum_db import list_course_concepts
 from auth import AuthContext
 from database.session import get_db_session
 
@@ -102,6 +105,14 @@ class FromHootRequest(BaseModel):
     difficulty: Literal["intro", "standard", "hard"] = "intro"
 
 
+class SessionCreateRequest(BaseModel):
+    search_space_id: int
+    concept_id: int
+    # Standalone entry: the student explicitly picks — no default.
+    difficulty: Literal["intro", "standard", "hard"]
+    problem_id: str | None = None
+
+
 class ChatRequest(BaseModel):
     message: str
 
@@ -124,6 +135,26 @@ async def session_from_hoot(
         search_space_id=body.search_space_id,
         hoot_transcript=body.hoot_transcript,
         difficulty=body.difficulty,
+    )
+
+
+@router.post("/sessions")
+async def create_session(
+    body: SessionCreateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """Standalone Apollo entry (no Hoot transcript): explicit concept +
+    difficulty + optional specific problem."""
+    auth = await require_user(request)
+    await require_course_member(db=db, auth=auth, search_space_id=body.search_space_id)
+    return await init_session_direct(
+        db=db,
+        user_id=auth.user_id,
+        search_space_id=body.search_space_id,
+        concept_id=body.concept_id,
+        difficulty=body.difficulty,
+        problem_id=body.problem_id,
     )
 
 
@@ -207,10 +238,54 @@ async def end(
 @router.get("/progress")
 async def progress(
     request: Request,
+    search_space_id: int | None = None,
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
-    return await handle_get_progress(db=db, user_id=auth.user_id)
+    if search_space_id is None:
+        return await handle_get_progress(db=db, user_id=auth.user_id)
+    await require_course_member(db=db, auth=auth, search_space_id=search_space_id)
+    return await handle_get_progress_detail(
+        db=db, user_id=auth.user_id, search_space_id=search_space_id
+    )
+
+
+@router.get("/concepts")
+async def list_concepts(
+    search_space_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """Student browse surface: the course's teachable concepts (tier-2,
+    non-quarantined problem pool — same predicate as session entry)."""
+    auth = await require_user(request)
+    await require_course_member(db=db, auth=auth, search_space_id=search_space_id)
+    rows = await list_course_concepts(db, search_space_id=search_space_id)
+    return {
+        "concepts": [
+            {"concept_id": r.concept_id, "slug": r.slug, "display_name": r.display_name}
+            for r in rows
+        ]
+    }
+
+
+@router.get("/problems")
+async def list_problems(
+    search_space_id: int,
+    concept_id: int,
+    request: Request,
+    difficulty: Literal["intro", "standard", "hard"] | None = None,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    auth = await require_user(request)
+    await require_course_member(db=db, auth=auth, search_space_id=search_space_id)
+    return await handle_list_problems(
+        db=db,
+        user_id=auth.user_id,
+        search_space_id=search_space_id,
+        concept_id=concept_id,
+        difficulty=difficulty,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -445,6 +520,20 @@ async def kg_entry_not_found_handler(request: Request, exc: KGEntryNotFoundError
     )
 
 
+async def problem_not_found_handler(request: Request, exc: ProblemNotFoundError) -> JSONResponse:
+    """Standalone entry named a problem that is not in the teachable pool
+    (stale browse list, quarantined since, or bad id)."""
+    return JSONResponse(
+        status_code=404,
+        content=_err_payload(
+            "problem_not_found",
+            str(exc),
+            problem_id=exc.problem_id,
+            concept_id=exc.concept_id,
+        ),
+    )
+
+
 async def coverage_grading_handler(request: Request, exc: CoverageGradingError) -> JSONResponse:
     """Item #10: 503 surfaces the no-fallback contract — the UI shows
     "grading unavailable, try again" instead of receiving a downgraded
@@ -569,6 +658,7 @@ def register_exception_handlers(app) -> None:
     app.add_exception_handler(ContextOverflowError, context_overflow_handler)
     app.add_exception_handler(SessionFrozenError, session_frozen_handler)
     app.add_exception_handler(KGEntryNotFoundError, kg_entry_not_found_handler)
+    app.add_exception_handler(ProblemNotFoundError, problem_not_found_handler)
     app.add_exception_handler(ReviewRequiredError, review_required_handler)
     # WU-4C1 — the five Done shadow-chain named errors.
     app.add_exception_handler(ResolutionUnavailableError, resolution_unavailable_handler)
