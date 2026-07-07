@@ -42,6 +42,7 @@ from apollo.graph_compare.validator import (
     ReferenceGraphInvalidError,
     StudentGraphInvalidError,
 )
+from apollo.handlers.browse import handle_list_problems
 from apollo.handlers.chat import handle_chat
 from apollo.handlers.done import handle_done
 from apollo.handlers.lifecycle import handle_end, handle_get_session, handle_retry
@@ -231,6 +232,25 @@ async def list_concepts(
             for r in rows
         ]
     }
+
+
+@router.get("/problems")
+async def list_problems(
+    search_space_id: int,
+    concept_id: int,
+    request: Request,
+    difficulty: Literal["intro", "standard", "hard"] | None = None,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    auth = await require_user(request)
+    await require_course_member(db=db, auth=auth, search_space_id=search_space_id)
+    return await handle_list_problems(
+        db=db,
+        user_id=auth.user_id,
+        search_space_id=search_space_id,
+        concept_id=concept_id,
+        difficulty=difficulty,
+    )
 
 
 # ----------------------------------------------------------------------

@@ -190,3 +190,70 @@ def test_list_concepts_excludes_concept_without_teachable_problems(client_factor
     )
     assert resp.status_code == 200
     assert resp.json() == {"concepts": []}
+
+
+async def _seed_attempt(Session, *, user_id: str, problem_id: str, space_id: int = TEST_SPACE_ID):
+    async with Session() as db:
+        sess = ApolloSession(
+            user_id=user_id, search_space_id=space_id,
+            status="ended", phase="REPORT", current_problem_id=problem_id,
+        )
+        db.add(sess)
+        await db.flush()
+        db.add(ProblemAttempt(session_id=sess.id, problem_id=problem_id, difficulty="intro"))
+        await db.commit()
+
+
+def test_list_problems_filters_and_flags_attempted(client_factory, monkeypatch):
+    app, Session = client_factory
+    _auth_as(monkeypatch, TEST_USER_ID)
+    concept_id, codes = asyncio.run(_seed_curriculum(Session, n_teachable=2))
+    asyncio.run(_seed_attempt(Session, user_id=TEST_USER_ID, problem_id=codes[0]))
+    # another student's attempt must NOT mark it attempted for us
+    asyncio.run(_seed_attempt(Session, user_id=TEST_USER_ID_2, problem_id=codes[1]))
+
+    client = TestClient(app)
+    resp = client.get(
+        f"/apollo/problems?search_space_id={TEST_SPACE_ID}&concept_id={concept_id}&difficulty=intro",
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 200
+    problems = resp.json()["problems"]
+    by_id = {p["id"]: p for p in problems}
+    # tier-1 + quarantined rows never surface
+    assert set(by_id) == set(codes)
+    assert by_id[codes[0]]["attempted"] is True
+    assert by_id[codes[1]]["attempted"] is False
+    # student-safety: no solution or answer-shaped fields leak
+    for p in problems:
+        assert set(p) == {"id", "difficulty", "problem_text", "attempted"}
+
+
+def test_list_problems_rejects_foreign_concept(client_factory, monkeypatch):
+    """A concept belonging to another course must 409, not leak problems."""
+    app, Session = client_factory
+    _auth_as(monkeypatch, TEST_USER_ID)
+
+    async def _seed_foreign() -> int:
+        async with Session() as db:
+            subj = Subject(slug="chem", display_name="Chem", search_space_id=TEST_SPACE_ID + 99)
+            db.add(subj)
+            await db.flush()
+            concept = Concept(subject_id=subj.id, slug="acids", display_name="Acids")
+            db.add(concept)
+            await db.flush()
+            db.add(ConceptProblem(
+                concept_id=concept.id, problem_code="f1", difficulty="intro",
+                payload=_full_problem_payload("f1", concept.id), tier=2,
+            ))
+            await db.commit()
+            return concept.id
+
+    foreign_id = asyncio.run(_seed_foreign())
+    client = TestClient(app)
+    resp = client.get(
+        f"/apollo/problems?search_space_id={TEST_SPACE_ID}&concept_id={foreign_id}",
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error_code"] == "no_matching_concept"
