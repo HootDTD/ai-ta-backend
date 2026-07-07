@@ -525,7 +525,7 @@ def test_composite_flag_on_low_coverage_abstains_with_dedicated_reason(monkeypat
     from apollo.grading.abstention import REASON_COMPOSITE_LOW_COVERAGE
 
     monkeypatch.setenv("APOLLO_ABSTENTION_COMPOSITE", "1")
-    grade = replace(missing_grade(("eq.x",)), node_coverage_score=0.2)
+    grade = replace(missing_grade(("eq.x",)), node_coverage_score=0.05)
     out = build_audited_grade(
         grade,
         transcript="t",
@@ -542,7 +542,7 @@ def test_composite_flag_on_low_coverage_abstains_with_dedicated_reason(monkeypat
 def test_composite_custom_threshold_env_override(monkeypatch):
     monkeypatch.setenv("APOLLO_ABSTENTION_COMPOSITE", "1")
     monkeypatch.setenv("APOLLO_COMPOSITE_COVERAGE_MIN", "0.95")
-    grade = replace(missing_grade(("eq.x",)), node_coverage_score=0.9)  # would grade at default 0.6
+    grade = replace(missing_grade(("eq.x",)), node_coverage_score=0.9)  # would grade at default 0.1
     out = build_audited_grade(
         grade,
         transcript="t",

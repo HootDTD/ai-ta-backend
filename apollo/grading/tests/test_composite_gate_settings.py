@@ -40,8 +40,18 @@ def test_composite_enabled_non_truthy_values_stay_off(monkeypatch):
         assert apollo_abstention_composite_enabled() is False
 
 
-def test_coverage_min_defaults_to_point_six_when_unset():
-    assert apollo_composite_coverage_min() == 0.6
+def test_coverage_min_defaults_to_calibrated_floor_when_unset():
+    """0.1 = the 2026-07-07 F1c-corpus calibration: every correct-persona
+    attempt's resolver coverage sat at >=0.20, and one-resolved-node on the
+    longest declared path (7 nodes) is ~0.14 — so 0.1 means "abstain only when
+    the resolver credited essentially nothing"."""
+    assert apollo_composite_coverage_min() == 0.1
+
+
+def test_coverage_min_matches_abstention_constant():
+    from apollo.grading.abstention import COMPOSITE_DEFAULT_COVERAGE_MIN
+
+    assert apollo_composite_coverage_min() == COMPOSITE_DEFAULT_COVERAGE_MIN
 
 
 def test_coverage_min_reads_override(monkeypatch):
@@ -51,4 +61,4 @@ def test_coverage_min_reads_override(monkeypatch):
 
 def test_coverage_min_malformed_falls_back_to_default(monkeypatch):
     monkeypatch.setenv("APOLLO_COMPOSITE_COVERAGE_MIN", "not-a-float")
-    assert apollo_composite_coverage_min() == 0.6
+    assert apollo_composite_coverage_min() == 0.1
