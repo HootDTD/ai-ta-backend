@@ -80,6 +80,11 @@ from apollo.resolution.nli_config import NLI_DEVICE, active_nli_model, load_nli_
 from apollo.resolution.nli_resolution import NLIContext
 from apollo.resolution.result import ResolutionResult
 
+# Resolver V2 (T7): the flag reader ONLY — tiny, env-read, no heavy deps. The
+# engine/integration stack is imported LAZILY inside the flag-ON branch below,
+# so flag-OFF import cost and behavior stay byte-identical.
+from apollo.resolver_v2.config import resolver_v2_enabled
+
 _LOG = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -289,6 +294,15 @@ class ShadowGradeResult:
     # graph-sim node-type map could not consume, so those steps were dropped
     # (never a KeyError). Defaulted so every existing construction stays valid.
     degradation: GraphSimDegradation | None = None
+    # Resolver V2 (T7) — OPTIONAL trace from the flagged shadow scoring engine
+    # (``APOLLO_RESOLVER_V2``). ``None`` = V2 did not run (flag OFF, or the
+    # engine failed and grading fell back to v1 scores — the common case).
+    # When present, ``grade``'s coverage/node/edge scores are ALREADY the V2
+    # numbers (substituted in step 8b, before the audit) and
+    # ``build_graph_artifact`` nests ``resolver_v2_trace["summary"]`` under
+    # ``scores.resolver_v2``. Defaulted LAST so every existing construction
+    # stays valid.
+    resolver_v2_trace: dict | None = None
 
 
 def build_graph_sim_degradation(problem_payload: dict) -> GraphSimDegradation | None:
@@ -441,6 +455,27 @@ async def run_graph_simulation(
         # Step 8 — grade (pure).
         grade = grade_attempt(student_canonical, reference_graph, bank_applicable=bank_applicable)
 
+        # Step 8b — Resolver V2 (APOLLO_RESOLVER_V2, default OFF: flag-off is
+        # byte-identical — this branch never runs and the lazy import below
+        # never happens). When ON, the shadow engine substitutes EXACTLY three
+        # GradeResult numbers (coverage/node/edge) BEFORE the audit, so the
+        # §10 gate + artifact + replay read V2 scores with zero further edits
+        # (build_audited_grade carries grade unchanged). An engine failure is
+        # logged inside apply_resolver_v2 and falls back to the v1 grade —
+        # the prototype never crashes grading.
+        resolver_v2_trace: dict | None = None
+        if resolver_v2_enabled():
+            from apollo.resolver_v2.integration import apply_resolver_v2
+
+            grade, resolver_v2_trace = await apply_resolver_v2(
+                db,
+                attempt_id=int(attempt.id),
+                grade=grade,
+                student_canonical=student_canonical,
+                reference_graph=reference_graph,
+                problem_payload=problem_payload,
+            )
+
         # Step 9 — transcript audit (live auditor; suppress-all-missing on infra
         # failure is handled INSIDE build_audited_grade).
         transcript = await _read_transcript(db, attempt_id=int(attempt.id))
@@ -522,6 +557,7 @@ async def run_graph_simulation(
             diagnostic=diagnostic,
             resolution=resolution,
             degradation=degradation,
+            resolver_v2_trace=resolver_v2_trace,
         )
     except ReferenceGraphInvalidError:
         # §6.6 in SHADOW v1: a bad reference blocks only the shadow run (the OLD
