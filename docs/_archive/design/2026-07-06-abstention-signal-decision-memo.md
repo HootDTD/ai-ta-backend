@@ -229,13 +229,19 @@ adjacent text the auditor accepts).
 separator — §4's conclusion stands (misconception controls interleave with strong personas on
 every volume/coverage signal; only detection separates them, and it is 1/7). Graded controls
 grade on coverage alone until detection matures. The graph path's composite SCORES remain
-deflated (strong-persona composites 0.12–0.49: pre-audit node coverage + dead `edge_coverage`
-0.0 corpus-wide) — band agreement vs the LLM grader is NOT claimed; that is the resolver-recall
-(clarification-loop) + edge-resolution lanes, not a threshold problem.
+deflated (strong-persona composites 0.12–0.49: pre-audit node coverage, plus weak
+`edge_coverage` — 19/31 zero, max 0.25, since edges need both endpoints resolved) — band
+agreement vs the LLM grader is NOT claimed; that is the resolver-recall (clarification-loop)
++ edge-resolution lanes, not a threshold problem. Note also the scale ceiling: max composite
+= 0.6·1.0+0.25·1.0 = 0.85 = the Strong band cut, so Strong is unreachable short of perfection.
+Full decomposition + attack order:
+`docs/_archive/handoffs/2026-07-07-apollo-composite-score-deflation-handoff.md`.
 
 **Verification:** `campaign/out/f1c/replay-composite-calibrated-0p1.json` (0 abstentions /
 31 attempts, 0 `degrading_without_nli`, volume-gate reasons still recorded as audit metadata).
 Next lanes, in order of leverage: (1) transcript-audit over-credit probe; (2) misconception
 detection recall (6 missed verbatim-trigger personas — resolution cannot match paraphrase, see
 §3(c)); (3) `control_credit_leak` resolver fix (§4 precision floor, 9 attempts, unchanged);
-(4) edge-coverage liveness (0.0 on all 31 despite PR #59's reference edges).
+(4) edge-coverage weakness (19/31 zero, max 0.25 — measured 2026-07-07; edges require both
+endpoints resolved so edge recall compounds node recall; check edge-matching of
+resolved-endpoint edges separately).
