@@ -31,7 +31,11 @@ from apollo.resolver_v2.scoring import credit_for_score, fuse, score_nodes
 from apollo.resolver_v2.types import RefNode, SelectFn, Window
 from apollo.resolver_v2.views import build_ref_nodes, load_views
 
-_PARAMS = ResolverV2Params()
+# Pinned to the design §7 PLACEHOLDER surface (t_mid=0.75/t_high=0.90/
+# alpha=0.85/...) — these tests exercise the scoring MATH at fixed knobs;
+# the class-field defaults themselves are T8's fitted values and are
+# asserted in test_config_types.py instead.
+_PARAMS = ResolverV2Params(t_low=0.40, t_mid=0.75, t_high=0.90, alpha=0.85)
 
 _W0 = Window(index=0, turn_index=0, text="The student explains conservation of mass in the pipe.")
 _W1 = Window(index=1, turn_index=1, text="The flow rate stays equal at both sections of the pipe.")

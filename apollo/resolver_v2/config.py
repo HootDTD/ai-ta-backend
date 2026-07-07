@@ -11,8 +11,15 @@ caching) so tests' ``monkeypatch.setenv`` and calibration sweeps are honored
 without a restart. Malformed env values fall back to the field default
 (mirror ``apollo/grading/composite.py``'s env-float reader).
 
-The ``ResolverV2Params`` field defaults are pre-calibration placeholders —
-T8's fitted values replace them (the ONLY edit T8 makes here).
+The ``ResolverV2Params`` field defaults carry T8's fitted values
+(``campaign/out/resolver-v2/calibration-2026-07-07.json``): the F1c sweep's
+entailment scores are bimodally saturated, so the grid collapses to one
+operating point — the fit pins ``t_low=0.30``, ``t_high=0.90``, ``alpha=0.75``
+(lexical fusion buys strong-vs-misconception separation at the full-credit
+tier) and is indifferent on the rest, which therefore keep the design §7
+defaults. The §9 FCR<=5% constraint was infeasible at every grid point —
+per the committed ``negative_audit``, the gold per-node negatives are noisy
+(personas teach most "omitted" content inline); see the calibration JSON.
 """
 
 from __future__ import annotations
@@ -83,12 +90,12 @@ class ResolverV2Params:
     surface; the rest are design-fixed defaults, still env-overridable for
     replay levers (§8: ``TOP_K=2``, ``MAX_PAIRS=120``)."""
 
-    # §5.5 credit thresholds (pre-calibration placeholders)
-    t_low: float = 0.40
-    t_mid: float = 0.75
+    # §5.5 credit thresholds (T8 fitted, calibration-2026-07-07.json)
+    t_low: float = 0.30
+    t_mid: float = 0.70
     t_high: float = 0.90
-    # §5.4 fusion weight on entailment + pair contradiction veto
-    alpha: float = 0.85
+    # §5.4 fusion weight on entailment + pair contradiction veto (T8 fitted)
+    alpha: float = 0.75
     max_contradiction: float = 0.30
     # §5.3 prefilter: windows per (node, view) sent to NLI + node skip floor
     top_k_windows: int = 3

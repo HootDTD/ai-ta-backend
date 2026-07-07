@@ -1,0 +1,85 @@
+{
+  "edges": [
+    {
+      "credit": 1.0,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "eq.gdp_deflator",
+      "relation_evidence": "entail",
+      "to_key": "simp.deflator_is_price_index"
+    },
+    {
+      "credit": 1.0,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "eq.gdp_deflator",
+      "relation_evidence": "entail",
+      "to_key": "proc.rearrange_for_real_gdp"
+    },
+    {
+      "credit": 0.4,
+      "edge_type": "DEPENDS_ON",
+      "from_key": "simp.deflator_is_price_index",
+      "relation_evidence": "endpoints",
+      "to_key": "proc.rearrange_for_real_gdp"
+    },
+    {
+      "credit": 1.0,
+      "edge_type": "USES",
+      "from_key": "proc.rearrange_for_real_gdp",
+      "relation_evidence": "entail",
+      "to_key": "eq.gdp_deflator"
+    }
+  ],
+  "nodes": [
+    {
+      "best": {
+        "contradiction": 6.776228838134557e-05,
+        "entailment": 0.9983378648757935,
+        "fused": 0.9825675012209476,
+        "lexical": 0.9352564102564103,
+        "view_index": 3,
+        "window_index": 4
+      },
+      "canonical_key": "eq.gdp_deflator",
+      "credit": 1.0,
+      "score": 0.9825675012209476,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 0.0004403025086503476,
+        "entailment": 0.9941973686218262,
+        "fused": 0.9382352357686952,
+        "lexical": 0.7703488372093024,
+        "view_index": 1,
+        "window_index": 3
+      },
+      "canonical_key": "proc.rearrange_for_real_gdp",
+      "credit": 1.0,
+      "score": 0.9382352357686952,
+      "source": "nli"
+    },
+    {
+      "best": {
+        "contradiction": 0.00031109325936995447,
+        "entailment": 0.9962217807769775,
+        "fused": 0.9782269416433392,
+        "lexical": 0.9242424242424242,
+        "view_index": 3,
+        "window_index": 0
+      },
+      "canonical_key": "simp.deflator_is_price_index",
+      "credit": 1.0,
+      "score": 0.9782269416433392,
+      "source": "nli"
+    }
+  ],
+  "summary": {
+    "edge_count": 4,
+    "edge_coverage": 0.85,
+    "grayzone_used": false,
+    "node_count": 3,
+    "node_coverage": 1.0,
+    "pair_count": 49,
+    "winning_path_index": 0
+  }
+}

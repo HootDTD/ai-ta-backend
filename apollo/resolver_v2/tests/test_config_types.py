@@ -83,11 +83,12 @@ def test_flag_non_truthy_values_stay_off(monkeypatch):
 
 
 def test_load_params_defaults():
-    """Clean env -> the §7 pre-calibration defaults, verbatim."""
+    """Clean env -> the T8 FITTED defaults, verbatim (see
+    campaign/out/resolver-v2/calibration-2026-07-07.json)."""
     params = load_params()
     assert params == ResolverV2Params()
-    assert (params.t_low, params.t_mid, params.t_high) == (0.40, 0.75, 0.90)
-    assert params.alpha == 0.85
+    assert (params.t_low, params.t_mid, params.t_high) == (0.30, 0.70, 0.90)
+    assert params.alpha == 0.75
     assert params.max_contradiction == 0.30
     assert params.top_k_windows == 3
     assert params.max_nli_pairs == 200
