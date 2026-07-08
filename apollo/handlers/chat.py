@@ -262,6 +262,32 @@ def _v1_resolved_keys_for_turn(student_graph, candidates, symbolic_mappings) -> 
     )
 
 
+def _build_incremental_v2_job_inputs(
+    *,
+    problem_payload: dict,
+    student_graph,
+    candidates,
+    symbolic_mappings,
+) -> tuple[frozenset[str], Any, Any]:
+    """CPU-bound setup for the incremental V2 background job (spec §5.5
+    MINOR fix): ``_v1_resolved_keys_for_turn`` reruns v1 resolution over the
+    full taught-so-far graph, and ``build_reference_canonical`` +
+    ``load_views`` + ``build_ref_nodes`` build the reference-side inputs
+    ``score_turn`` needs. None of this touches the DB/``AsyncSession`` -- it
+    is pure/sync -- so ``_maybe_kick_incremental_v2`` runs it via
+    ``asyncio.to_thread`` rather than synchronously on the event loop,
+    keeping this per-turn setup off the teaching-reply path exactly like the
+    NLI scoring itself ("the reply must never block on V2").
+    """
+    v1_resolved_keys = _v1_resolved_keys_for_turn(student_graph, candidates, symbolic_mappings)
+    reference_graph = build_reference_canonical(problem_payload)
+    concept_id = str(problem_payload.get("concept_id") or "")
+    problem_id = str(problem_payload.get("id") or "")
+    views_by_key = load_views(concept_id, problem_id)
+    ref_nodes = build_ref_nodes(reference_graph, problem_payload, views_by_key)
+    return v1_resolved_keys, reference_graph, ref_nodes
+
+
 async def _run_incremental_v2_job(
     *,
     attempt_id: int,
@@ -340,12 +366,13 @@ async def _maybe_kick_incremental_v2(
         state = _INCREMENTAL_HOLDER.latest_state(attempt_id) or _empty_incremental_state()
         prior_turns = await load_student_turns(db, attempt_id)
         all_student_turns = tuple(prior_turns) + (message,)
-        v1_resolved_keys = _v1_resolved_keys_for_turn(student_graph, candidates, symbolic_mappings)
-        reference_graph = build_reference_canonical(problem_payload)
-        concept_id = str(problem_payload.get("concept_id") or "")
-        problem_id = str(problem_payload.get("id") or "")
-        views_by_key = load_views(concept_id, problem_id)
-        ref_nodes = build_ref_nodes(reference_graph, problem_payload, views_by_key)
+        v1_resolved_keys, reference_graph, ref_nodes = await asyncio.to_thread(
+            _build_incremental_v2_job_inputs,
+            problem_payload=problem_payload,
+            student_graph=student_graph,
+            candidates=candidates,
+            symbolic_mappings=symbolic_mappings,
+        )
         params = load_params()
         nli = get_adjudicator()
         grayzone_fn = main_chat_grayzone if grayzone_enabled() else None
