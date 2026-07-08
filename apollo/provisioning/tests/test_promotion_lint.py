@@ -769,8 +769,21 @@ def _seed_anchor_inputs() -> list[tuple[dict, set, dict]]:
     The per-concept symbol table is loaded from the seed concept dir so gate 4 is
     non-vacuous (the SAME table old and new read — the differential holds for any
     table, but the real table exercises the symbolic path)."""
+    # FROZEN anchor corpus: fluid_mechanics + macroeconomics only — the 10 seed
+    # JSONs this back-compat lock was created against (see the `== 11` count
+    # assert). Subjects authored later under the reversed-provisioning model
+    # (calculus_2, 2026-07-08) are NOT anchors: their operator-identity formula
+    # nodes (e.g. `integral u dv = u*v - integral v du`) and series-convergence
+    # problems are intentionally not gate-6/7-shaped, and seeded subjects never
+    # run the promotion gates at runtime. Widening the anchor would turn this
+    # frozen differential lock into an all-subjects gate, which is not its job.
+    anchor_subjects = ("fluid_mechanics", "macroeconomics")
     out: list[tuple[dict, set, dict]] = []
-    for pj in sorted(_SEED_ROOT.glob("*/concepts/*/problems/problem_*.json")):
+    for pj in sorted(
+        pj
+        for subject in anchor_subjects
+        for pj in _SEED_ROOT.glob(f"{subject}/concepts/*/problems/problem_*.json")
+    ):
         g = json.loads(pj.read_text())
         cdir = pj.parents[1]
         cs_f, nm_f = cdir / "canonical_symbols.json", cdir / "normalization_map.json"

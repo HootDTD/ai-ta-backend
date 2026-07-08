@@ -20,10 +20,10 @@
       "plan_apply_simpson"
     ]
   ],
-  "target_unknown": "S",
+  "target_unknown": "Sn",
   "symbolic_mappings": {
     "Delta x": "h",
-    "S_4": "S"
+    "S_4": "Sn"
   },
   "reference_solution": [
     {
@@ -59,9 +59,9 @@
       "step": 3,
       "content": {
         "label": "Simpson's Rule (n=4): S = (Delta x/3)(f0 + 4 f1 + 2 f2 + 4 f3 + f4)",
-        "symbolic": "S - (h/3)*(f0 + 4*f1 + 2*f2 + 4*f3 + f4)",
+        "symbolic": "Sn - (h/3)*(f0 + 4*f1 + 2*f2 + 4*f3 + f4)",
         "variables": [
-          "S",
+          "Sn",
           "h",
           "f0",
           "f1",

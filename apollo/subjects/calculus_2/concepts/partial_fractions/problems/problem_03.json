@@ -36,7 +36,7 @@
       "step": 2,
       "content": {
         "label": "Partial-fraction form (distinct linear factors)",
-        "symbolic": "1/((x - 2)(x + 2)) = A/(x - 2) + B/(x + 2)",
+        "symbolic": "1/((x - 2)*(x + 2)) = A/(x - 2) + B/(x + 2)",
         "variables": [
           "A",
           "B",

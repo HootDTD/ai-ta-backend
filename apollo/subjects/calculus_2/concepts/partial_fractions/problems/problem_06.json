@@ -47,7 +47,7 @@
       "step": 3,
       "content": {
         "label": "Partial-fraction form (simple + repeated linear factor)",
-        "symbolic": "1/(x(x - 1)^2) = A/x + B/(x - 1) + C/(x - 1)^2",
+        "symbolic": "1/(x*(x - 1)^2) = A/x + B/(x - 1) + C/(x - 1)^2",
         "variables": [
           "A",
           "B",

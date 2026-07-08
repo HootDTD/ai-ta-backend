@@ -6,7 +6,10 @@
     "p",
     "I",
     "L",
-    "f"
+    "f",
+    "F",
+    "x",
+    "u"
   ],
   "description": {
     "a": "lower limit of integration",
@@ -15,7 +18,10 @@
     "p": "exponent in a p-integral of the form integral x^(-p) dx",
     "I": "value of the improper integral (when it converges)",
     "L": "the limit that defines the improper integral",
-    "f": "the integrand f(x)"
+    "f": "the integrand f(x)",
+    "F": "the antiderivative of f found before evaluating the finite-cutoff limit",
+    "x": "integration variable",
+    "u": "substitution variable when a u-substitution is used before evaluating"
   },
   "subscript_convention": null
 }

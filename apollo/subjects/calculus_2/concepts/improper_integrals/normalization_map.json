@@ -9,5 +9,8 @@
   "exponent": "p",
   "power": "p",
   "integrand": "f",
-  "function": "f"
+  "function": "f",
+  "antiderivative": "F",
+  "the variable": "x",
+  "substitution variable": "u"
 }

@@ -15,7 +15,7 @@
       "plan_solve"
     ]
   ],
-  "target_unknown": "N",
+  "target_unknown": "Ncut",
   "symbolic_mappings": {},
   "reference_solution": [
     {
@@ -34,10 +34,10 @@
       "step": 2,
       "content": {
         "label": "Alternating series remainder |R_N| <= b_(N+1) = 1/(N+1)^3",
-        "symbolic": "R - 1/(N + 1)**3",
+        "symbolic": "R - 1/(Ncut + 1)**3",
         "variables": [
           "R",
-          "N"
+          "Ncut"
         ]
       },
       "depends_on": [],

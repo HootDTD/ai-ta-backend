@@ -6,10 +6,14 @@
     "h",
     "T",
     "M",
-    "S",
+    "Sn",
     "K",
     "Et",
-    "f"
+    "f",
+    "fm1",
+    "fm2",
+    "fm3",
+    "fm4"
   ],
   "description": {
     "n": "number of subintervals",
@@ -18,10 +22,14 @@
     "h": "step size Delta x = (b-a)/n",
     "T": "Trapezoidal Rule estimate",
     "M": "Midpoint Rule estimate",
-    "S": "Simpson's Rule estimate",
+    "Sn": "Simpson's Rule estimate (renamed from S, which collides with sympy.S)",
     "K": "bound on the relevant derivative used in the error bound",
     "Et": "error bound of the approximation",
-    "f": "the integrand f(x)"
+    "f": "the integrand f(x)",
+    "fm1": "the integrand evaluated at the first Midpoint Rule sample point",
+    "fm2": "the integrand evaluated at the second Midpoint Rule sample point",
+    "fm3": "the integrand evaluated at the third Midpoint Rule sample point",
+    "fm4": "the integrand evaluated at the fourth Midpoint Rule sample point"
   },
-  "subscript_convention": "Use T_n / M_n / S_n and f0, f1, ..., fn for the estimate and the node values at n subintervals."
+  "subscript_convention": "Use T_n / M_n / S_n and f0, f1, ..., fn for the estimate and the node values at n subintervals; the Midpoint Rule's sample values are fm1, fm2, ..."
 }

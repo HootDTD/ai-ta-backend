@@ -47,7 +47,7 @@
       "step": 3,
       "content": {
         "label": "Partial-fraction form (linear + irreducible quadratic)",
-        "symbolic": "(3x + 1)/((x + 1)(x^2 + 1)) = A/(x + 1) + (B x + C)/(x^2 + 1)",
+        "symbolic": "(3x + 1)/((x + 1)*(x^2 + 1)) = A/(x + 1) + (B x + C)/(x^2 + 1)",
         "variables": [
           "A",
           "B",
