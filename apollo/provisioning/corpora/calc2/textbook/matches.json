@@ -1,0 +1,708 @@
+[
+  {
+    "problem_id": 1,
+    "primary": "riemann-sums-area-approximation",
+    "secondary": [
+      "definite-integral"
+    ],
+    "confidence": 0.9,
+    "rationale": "The problem uses tabulated average rates over time intervals to estimate a total change, which is essentially approximating the integral (area under a rate curve) via a Riemann-sum style computation.",
+    "error": null
+  },
+  {
+    "problem_id": 2,
+    "primary": "NO_MATCH",
+    "secondary": [],
+    "confidence": 0.94,
+    "rationale": "This is an application of cumulative changes over time using a table (essentially arithmetic/sequences), not an integral, series, differential equation, or any other listed Calculus 2 topic.",
+    "error": null
+  },
+  {
+    "problem_id": 3,
+    "primary": "definite-integral",
+    "secondary": [
+      "riemann-sums-area-approximation",
+      "fundamental-theorem-of-calculus"
+    ],
+    "confidence": 0.62,
+    "rationale": "The problem is about subdividing an interval into subintervals where a function has a consistent sign and then explaining equalities involving integrals, which uses properties of the definite integral; Riemann sum/area ideas and possibly FTC-based reasoning are secondarily involved.",
+    "error": null
+  },
+  {
+    "problem_id": 4,
+    "primary": "average-value-of-function",
+    "secondary": [
+      "definite-integral"
+    ],
+    "confidence": 0.9,
+    "rationale": "The problem is explicitly about showing an average value of a function over an interval, which uses the definition involving definite integrals.",
+    "error": null
+  },
+  {
+    "problem_id": 5,
+    "primary": "NO_MATCH",
+    "secondary": [],
+    "confidence": 0.97,
+    "rationale": "This is a conceptual Mean Value Theorem/derivatives question from Calculus 1, and none of the provided Calc 2 integral/series/parametric/etc. concepts match it.",
+    "error": null
+  },
+  {
+    "problem_id": 6,
+    "primary": "average-value-of-function",
+    "secondary": [],
+    "confidence": 0.63,
+    "rationale": "The problem relies on using the distance traveled over the time stamp interval to deduce an average speed exceeding the limit, which conceptually matches computing an average value of a function over an interval.",
+    "error": null
+  },
+  {
+    "problem_id": 7,
+    "primary": "conic-sections",
+    "secondary": [
+      "physical-applications"
+    ],
+    "confidence": 0.7,
+    "rationale": "The problem concerns planetary motion in elliptical orbits, which are conic sections, and conceptually applies Kepler\u2019s area law as a physical application of calculus/geometry to orbital mechanics.",
+    "error": null
+  },
+  {
+    "problem_id": 8,
+    "primary": "conic-sections",
+    "secondary": [],
+    "confidence": 0.83,
+    "rationale": "The problem uses the geometric properties of Earth\u2019s elliptical orbit and its major axis, directly invoking the definition and structure of an ellipse, which falls under conic sections rather than integral calculus topics.",
+    "error": null
+  },
+  {
+    "problem_id": 9,
+    "primary": "antiderivatives-basic-integration",
+    "secondary": [
+      "differential-equations-basics"
+    ],
+    "confidence": 0.92,
+    "rationale": "The problem requires integrating constant acceleration to get velocity and position using initial conditions, which is an application of basic antiderivatives/indefinite integration, with a secondary view as solving a simple differential equation initial-value problem.",
+    "error": null
+  },
+  {
+    "problem_id": 10,
+    "primary": "antiderivatives-basic-integration",
+    "secondary": [
+      "physical-applications"
+    ],
+    "confidence": 0.93,
+    "rationale": "The problem requires finding velocity and position functions by integrating a constant acceleration and using initial conditions, which is an application of basic antiderivatives in a physical (kinematics) context.",
+    "error": null
+  },
+  {
+    "problem_id": 11,
+    "primary": "NO_MATCH",
+    "secondary": [],
+    "confidence": 0.86,
+    "rationale": "This is a related-rates/geometry problem involving the area and radius of a circle, not an integration, series, differential equations, or polar/parametric topic from the provided Calculus 2 concept list.",
+    "error": null
+  },
+  {
+    "problem_id": 12,
+    "primary": "NO_MATCH",
+    "secondary": [],
+    "confidence": 0.9,
+    "rationale": "This is a related-rates/geometry problem about volume and radius of a sphere, which does not align with any of the listed integral, series, or differential equations topics specific to Calculus 2.",
+    "error": null
+  },
+  {
+    "problem_id": 13,
+    "primary": "physical-applications",
+    "secondary": [],
+    "confidence": 0.92,
+    "rationale": "This is a kinematics word problem using constant deceleration to find stopping distance, an application of integration (or related formulas) to a physical context.",
+    "error": null
+  },
+  {
+    "problem_id": 14,
+    "primary": "trigonometric-substitution",
+    "secondary": [
+      "definite-integral"
+    ],
+    "confidence": 0.94,
+    "rationale": "The problem rewrites the area integral of a semicircle via a specific trig substitution, which is the hallmark of trigonometric substitution applied to a definite integral representing area.",
+    "error": null
+  },
+  {
+    "problem_id": 15,
+    "primary": "area-between-curves",
+    "secondary": [],
+    "confidence": 0.7,
+    "rationale": "The problem asks for the area of a region described as lying inside one curve (the semicircle) and outside another (the triangle), which is conceptually an area-between-curves setup even if solvable by basic geometry.",
+    "error": null
+  },
+  {
+    "problem_id": 16,
+    "primary": "volume-by-slicing",
+    "secondary": [],
+    "confidence": 0.99,
+    "rationale": "The problem explicitly asks for deriving the volume of a sphere using the slicing method, which is the disks/washers volume-by-slicing technique.",
+    "error": null
+  },
+  {
+    "problem_id": 17,
+    "primary": "volume-by-slicing",
+    "secondary": [],
+    "confidence": 0.97,
+    "rationale": "The problem explicitly asks to use the slicing method to find the volume of a solid (a cone), which is the core of volumes by slicing/disk-washer methods.",
+    "error": null
+  },
+  {
+    "problem_id": 18,
+    "primary": "volume-by-slicing",
+    "secondary": [],
+    "confidence": 0.73,
+    "rationale": "The problem involves a three-dimensional solid (a pyramid) whose volume is typically found in Calc 2 via cross-sectional area (slicing) methods.",
+    "error": null
+  },
+  {
+    "problem_id": 19,
+    "primary": "volume-by-slicing",
+    "secondary": [],
+    "confidence": 0.83,
+    "rationale": "The problem describes a three-dimensional solid (a pyramid) with given dimensions, which in Calculus II is typically used for finding volume via slicing, matching the disks/washers/cross-section volume concept.",
+    "error": null
+  },
+  {
+    "problem_id": 20,
+    "primary": "cylindrical-shells",
+    "secondary": [
+      "volume-by-slicing"
+    ],
+    "confidence": 0.97,
+    "rationale": "The problem explicitly asks to use the method of shells to find the volume of a solid of revolution (a cone), which is a volumes-by-shells application closely related to general slicing methods.",
+    "error": null
+  },
+  {
+    "problem_id": 21,
+    "primary": "cylindrical-shells",
+    "secondary": [],
+    "confidence": 0.96,
+    "rationale": "The problem explicitly asks to use the method of shells to compute a volume of revolution (a cylinder).",
+    "error": null
+  },
+  {
+    "problem_id": 22,
+    "primary": "arc-length-surface-area",
+    "secondary": [],
+    "confidence": 0.9,
+    "rationale": "The problem asks for the length of a linear function over an interval, which is an arc length computation for a curve (here a straight line) and comparison with geometric length.",
+    "error": null
+  },
+  {
+    "problem_id": 23,
+    "primary": "arc-length-surface-area",
+    "secondary": [],
+    "confidence": 0.96,
+    "rationale": "The problem asks for the surface area of a composite solid (spherical cap plus cylindrical side), which in a Calculus II context falls under surface area applications of integration.",
+    "error": null
+  },
+  {
+    "problem_id": 24,
+    "primary": "physical-applications",
+    "secondary": [],
+    "confidence": 0.93,
+    "rationale": "The problem asks for the amount of work done in lifting an object a given height, which is a standard physical application of integration (work = force \u00d7 distance).",
+    "error": null
+  },
+  {
+    "problem_id": 25,
+    "primary": "physical-applications",
+    "secondary": [
+      "definite-integral"
+    ],
+    "confidence": 0.98,
+    "rationale": "The problem is a work-done-by-a-spring question using Hooke\u2019s law and requires computing work as a definite integral of force over displacement.",
+    "error": null
+  },
+  {
+    "problem_id": 26,
+    "primary": "physical-applications",
+    "secondary": [],
+    "confidence": 0.98,
+    "rationale": "The problem explicitly asks for work required to stretch a spring, which is a standard physical application of integration using Hooke\u2019s law.",
+    "error": null
+  },
+  {
+    "problem_id": 27,
+    "primary": "physical-applications",
+    "secondary": [],
+    "confidence": 0.78,
+    "rationale": "The problem uses Hooke\u2019s law (force vs. displacement for a spring), which is typically covered in the physical applications of integration section involving springs and work, even though this specific question only asks for the spring constant.",
+    "error": null
+  },
+  {
+    "problem_id": 28,
+    "primary": "volume-by-slicing",
+    "secondary": [
+      "cylindrical-shells"
+    ],
+    "confidence": 0.88,
+    "rationale": "The problem concerns finding the volume of a cone generated by rotating a triangle around an axis (a solid of revolution), which is typically handled by disk/washer or shell methods under volumes by slicing.",
+    "error": null
+  },
+  {
+    "problem_id": 29,
+    "primary": "volume-by-slicing",
+    "secondary": [
+      "definite-integral"
+    ],
+    "confidence": 0.93,
+    "rationale": "The problem asks for the volume of a solid of revolution (a sphere from rotating a semicircle), which is computed using disk/washer slicing via a definite integral, and then compared to the known volume formula for a sphere.",
+    "error": null
+  },
+  {
+    "problem_id": 30,
+    "primary": "exponential-growth-decay",
+    "secondary": [],
+    "confidence": 0.95,
+    "rationale": "This is an exponential growth question about doubling time and determining the time to reach another multiple of the initial amount.",
+    "error": null
+  },
+  {
+    "problem_id": 31,
+    "primary": "exponential-growth-decay",
+    "secondary": [],
+    "confidence": 0.93,
+    "rationale": "The problem explicitly models memory retention with exponential decay and asks for a time given a proportion remembered, which is a standard exponential growth/decay application.",
+    "error": null
+  },
+  {
+    "problem_id": 32,
+    "primary": "exponential-growth-decay",
+    "secondary": [
+      "separable-equations"
+    ],
+    "confidence": 0.92,
+    "rationale": "This is a Newton\u2019s law of cooling application, which uses an exponential decay model (and can be derived via a separable differential equation), to find temperature at a given time.",
+    "error": null
+  },
+  {
+    "problem_id": 33,
+    "primary": "hyperbolic-functions",
+    "secondary": [],
+    "confidence": 0.96,
+    "rationale": "The problem involves a catenary curve whose equation uses hyperbolic functions, and asks for its slope, directly testing differentiation of hyperbolic functions.",
+    "error": null
+  },
+  {
+    "problem_id": 34,
+    "primary": "fundamental-theorem-of-calculus",
+    "secondary": [
+      "physical-applications"
+    ],
+    "confidence": 0.89,
+    "rationale": "The problem asks for distance traveled from a velocity function over a time interval, which is computed via a definite integral using the Fundamental Theorem of Calculus in a physical motion context.",
+    "error": null
+  },
+  {
+    "problem_id": 35,
+    "primary": "numerical-integration",
+    "secondary": [
+      "riemann-sums-area-approximation"
+    ],
+    "confidence": 0.96,
+    "rationale": "The problem explicitly asks for approximation using the midpoint rule, which is a standard numerical integration technique closely related to Riemann sums.",
+    "error": null
+  },
+  {
+    "problem_id": 36,
+    "primary": "numerical-integration",
+    "secondary": [
+      "definite-integral"
+    ],
+    "confidence": 0.94,
+    "rationale": "The problem explicitly asks to use the trapezoidal rule (a numerical integration method) and compare with the exact integral value, which also implicitly involves understanding definite integrals.",
+    "error": null
+  },
+  {
+    "problem_id": 37,
+    "primary": "numerical-integration",
+    "secondary": [],
+    "confidence": 0.98,
+    "rationale": "The problem explicitly asks to approximate an integral using Simpson\u2019s rule with two subintervals, which is a standard numerical integration technique.",
+    "error": null
+  },
+  {
+    "problem_id": 38,
+    "primary": "numerical-integration",
+    "secondary": [
+      "definite-integral",
+      "fundamental-theorem-of-calculus"
+    ],
+    "confidence": 0.96,
+    "rationale": "The question is about the motivation for numerical methods to evaluate definite integrals despite knowing the Fundamental Theorem of Calculus, directly targeting numerical integration in the context of definite integrals and FTC.",
+    "error": null
+  },
+  {
+    "problem_id": 39,
+    "primary": "improper-integrals",
+    "secondary": [
+      "definite-integral"
+    ],
+    "confidence": 0.96,
+    "rationale": "The problem explicitly asks about convergence/divergence and values of improper integrals, which directly targets improper integrals and relies on definite integral concepts.",
+    "error": null
+  },
+  {
+    "problem_id": 40,
+    "primary": "improper-integrals",
+    "secondary": [],
+    "confidence": 1.0,
+    "rationale": "The problem explicitly asks to evaluate improper integrals with infinite discontinuities at endpoints or interior points, which is exactly the definition of improper integrals.",
+    "error": null
+  },
+  {
+    "problem_id": 41,
+    "primary": "NO_MATCH",
+    "secondary": [],
+    "confidence": 0.05,
+    "rationale": "The prompt does not include the actual expression or any mathematical details, so it is impossible to determine which calculus concept is being exercised.",
+    "error": null
+  },
+  {
+    "problem_id": 42,
+    "primary": "improper-integrals",
+    "secondary": [
+      "volume-by-slicing"
+    ],
+    "confidence": 0.63,
+    "rationale": "The main mathematical operation in finding Laplace transforms is evaluating improper integrals over an infinite interval and determining where they converge, while the brief mention of revolving an area about the x-axis relates to volume by slicing.",
+    "error": null
+  },
+  {
+    "problem_id": 43,
+    "primary": "separable-equations",
+    "secondary": [
+      "differential-equations-basics"
+    ],
+    "confidence": 0.86,
+    "rationale": "Modeling vertical motion under gravity leads to a first-order separable ODE dv/dt = -g whose solution gives the velocity function.",
+    "error": null
+  },
+  {
+    "problem_id": 44,
+    "primary": "differential-equations-basics",
+    "secondary": [],
+    "confidence": 0.94,
+    "rationale": "The problem asks to approximate solutions of an initial-value differential equation using Euler\u2019s method and compare with the exact solution, which falls under basic differential equations topics including numerical methods like Euler\u2019s method.",
+    "error": null
+  },
+  {
+    "problem_id": 45,
+    "primary": "differential-equations-basics",
+    "secondary": [],
+    "confidence": 0.86,
+    "rationale": "The problem describes setting up and interpreting a system of differential equations to model interacting populations (susceptible and infected), which falls under basic differential equations modeling rather than a specific separable, logistic, or linear single-equation case.",
+    "error": null
+  },
+  {
+    "problem_id": 46,
+    "primary": "exponential-growth-decay",
+    "secondary": [],
+    "confidence": 0.96,
+    "rationale": "The problem concerns drug concentration decaying over time with a given half-life and asks for the remaining fraction after some time, which is a standard exponential decay/half-life application.",
+    "error": null
+  },
+  {
+    "problem_id": 47,
+    "primary": "separable-equations",
+    "secondary": [
+      "physical-applications"
+    ],
+    "confidence": 0.98,
+    "rationale": "The problem is a standard mixing application modeled by a separable differential equation for salt amount or concentration over time.",
+    "error": null
+  },
+  {
+    "problem_id": 48,
+    "primary": "separable-equations",
+    "secondary": [
+      "exponential-growth-decay"
+    ],
+    "confidence": 0.92,
+    "rationale": "The problem uses Newton\u2019s law of cooling, which leads to a separable differential equation solved as an initial-value problem with exponential decay behavior.",
+    "error": null
+  },
+  {
+    "problem_id": 49,
+    "primary": "separable-equations",
+    "secondary": [
+      "exponential-growth-decay",
+      "differential-equations-basics"
+    ],
+    "confidence": 0.81,
+    "rationale": "The coffee-cooling situation is modeled by Newton\u2019s Law of Cooling, a separable differential equation leading to an exponential decay-type solution.",
+    "error": null
+  },
+  {
+    "problem_id": 50,
+    "primary": "exponential-growth-decay",
+    "secondary": [
+      "separable-equations"
+    ],
+    "confidence": 0.83,
+    "rationale": "The problem concerns Newton\u2019s law of cooling and temperature change over time, modeled by an exponential decay differential equation solved via separation of variables.",
+    "error": null
+  },
+  {
+    "problem_id": 51,
+    "primary": "logistic-equation",
+    "secondary": [
+      "separable-equations"
+    ],
+    "confidence": 0.97,
+    "rationale": "The problem explicitly involves a population with carrying capacity and intrinsic growth rate, which models with the logistic differential equation, solved via separation of variables.",
+    "error": null
+  },
+  {
+    "problem_id": 52,
+    "primary": "logistic-equation",
+    "secondary": [
+      "separable-equations"
+    ],
+    "confidence": 0.98,
+    "rationale": "The problem clearly describes population growth with a carrying capacity and minimum threshold, which uses the logistic differential equation model solved via separation of variables.",
+    "error": null
+  },
+  {
+    "problem_id": 53,
+    "primary": "logistic-equation",
+    "secondary": [
+      "separable-equations"
+    ],
+    "confidence": 0.83,
+    "rationale": "The Gompertz tumor growth model is a specific sigmoidal population-growth differential equation, conceptually aligned with logistic-type growth and solved via separable methods to find the time to reach a given population level.",
+    "error": null
+  },
+  {
+    "problem_id": 54,
+    "primary": "logistic-equation",
+    "secondary": [
+      "separable-equations"
+    ],
+    "confidence": 0.97,
+    "rationale": "The problem explicitly involves writing and solving a logistic differential equation with carrying capacity to model population and find when a certain population is reached, which is the core logistic growth topic and uses separation of variables to solve.",
+    "error": null
+  },
+  {
+    "problem_id": 55,
+    "primary": "separable-equations",
+    "secondary": [
+      "physical-applications"
+    ],
+    "confidence": 0.86,
+    "rationale": "The problem asks to formulate and solve a first-order differential equation modeling velocity with drag proportional to velocity, which is a classic separable differential equation with a physical context.",
+    "error": null
+  },
+  {
+    "problem_id": 56,
+    "primary": "separable-equations",
+    "secondary": [
+      "differential-equations-basics"
+    ],
+    "confidence": 0.96,
+    "rationale": "The problem asks to set up and solve a first-order DE modeling velocity with drag proportional to v\u00b2, which leads to a separable differential equation in v and t.",
+    "error": null
+  },
+  {
+    "problem_id": 57,
+    "primary": "NO_MATCH",
+    "secondary": [],
+    "confidence": 0.1,
+    "rationale": "The problem statement is incomplete and does not specify any mathematical expression, integral, series, or differential equation to link clearly to one of the listed concepts.",
+    "error": null
+  },
+  {
+    "problem_id": 58,
+    "primary": "sequences",
+    "secondary": [
+      "exponential-growth-decay"
+    ],
+    "confidence": 0.88,
+    "rationale": "The problem describes a discrete iterative dilution process best modeled as a sequence of concentrations, though it also reflects exponential-type decay behavior.",
+    "error": null
+  },
+  {
+    "problem_id": 59,
+    "primary": "exponential-growth-decay",
+    "secondary": [],
+    "confidence": 0.83,
+    "rationale": "The problem models a fish population that grows proportionally but is reduced by losses over time and asks for the population after a given time, which is a standard exponential growth/decay application.",
+    "error": null
+  },
+  {
+    "problem_id": 60,
+    "primary": "exponential-growth-decay",
+    "secondary": [],
+    "confidence": 0.96,
+    "rationale": "This is a compound interest / loan repayment problem modeled with exponential growth/decay formulas involving periodic payments.",
+    "error": null
+  },
+  {
+    "problem_id": 61,
+    "primary": "NO_MATCH",
+    "secondary": [],
+    "confidence": 0.99,
+    "rationale": "This is a discrete probability / geometric distribution problem and does not involve integrals, series, or any other listed Calculus II topics.",
+    "error": null
+  },
+  {
+    "problem_id": 62,
+    "primary": "sequences",
+    "secondary": [],
+    "confidence": 0.76,
+    "rationale": "The problem models periodic deposits with compound interest, leading to a recursively or explicitly defined sequence (and likely a geometric pattern), fitting the sequences concept best among the listed options.",
+    "error": null
+  },
+  {
+    "problem_id": 63,
+    "primary": "exponential-growth-decay",
+    "secondary": [],
+    "confidence": 0.86,
+    "rationale": "The problem models a drug level that decreases by a constant multiplicative factor over equal time intervals, which is an exponential decay situation asking for safe/effective dosing over time.",
+    "error": null
+  },
+  {
+    "problem_id": 64,
+    "primary": "infinite-series-basics",
+    "secondary": [
+      "sequences"
+    ],
+    "confidence": 0.6,
+    "rationale": "The coupon collector\u2019s expected value formula involves harmonic numbers, which are partial sums of the harmonic series and naturally tied to series and their partial sums, with harmonic numbers also forming a sequence.",
+    "error": null
+  },
+  {
+    "problem_id": 65,
+    "primary": "NO_MATCH",
+    "secondary": [],
+    "confidence": 0.97,
+    "rationale": "The problem is a fuel-transfer / optimization puzzle with no evident connection to any of the listed Calculus 2 integration, series, or differential equations concepts.",
+    "error": null
+  },
+  {
+    "problem_id": 66,
+    "primary": "infinite-series-basics",
+    "secondary": [
+      "sequences"
+    ],
+    "confidence": 0.79,
+    "rationale": "The problem is about approximating a weight to arbitrary precision using successively smaller weights, which conceptually relies on sums of infinitely many terms approaching a limit (infinite series) and implicitly on the convergence of the associated sequence of partial sums.",
+    "error": null
+  },
+  {
+    "problem_id": 67,
+    "primary": "comparison-tests",
+    "secondary": [
+      "infinite-series-basics"
+    ],
+    "confidence": 0.79,
+    "rationale": "The problem asks to prove convergence of a particular subseries of the harmonic series by bounding it above with a known convergent series, which is an application of comparison tests for series, relying on basic series concepts.",
+    "error": null
+  },
+  {
+    "problem_id": 68,
+    "primary": "sequences",
+    "secondary": [],
+    "confidence": 0.55,
+    "rationale": "The incomplete problem statement appears to involve a parameter for which some expression is guaranteed to converge, which most closely aligns with determining convergence of sequences among the listed concepts.",
+    "error": null
+  },
+  {
+    "problem_id": 69,
+    "primary": "sequences",
+    "secondary": [],
+    "confidence": 0.92,
+    "rationale": "The problem is about convergence properties of a sequence, which directly falls under limits and behavior of sequences.",
+    "error": null
+  },
+  {
+    "problem_id": 70,
+    "primary": "power-series-convergence",
+    "secondary": [],
+    "confidence": 0.92,
+    "rationale": "The problem concerns comparing radii of convergence of power series, which is directly about power series and their intervals/radii of convergence.",
+    "error": null
+  },
+  {
+    "problem_id": 71,
+    "primary": "power-series-convergence",
+    "secondary": [
+      "infinite-series-basics"
+    ],
+    "confidence": 0.88,
+    "rationale": "The problem concerns where a power series converges or diverges based on distance from its center, which is about radius/interval of convergence, with general series convergence ideas in the background.",
+    "error": null
+  },
+  {
+    "problem_id": 72,
+    "primary": "infinite-series-basics",
+    "secondary": [],
+    "confidence": 0.77,
+    "rationale": "Determining the interest rate that allows perpetual fixed payouts is modeled as an infinite geometric series for the present value of the annuity, fitting the geometric-series portion of infinite series basics.",
+    "error": null
+  },
+  {
+    "problem_id": 73,
+    "primary": "exponential-growth-decay",
+    "secondary": [],
+    "confidence": 0.81,
+    "rationale": "The problem concerns finding an interest rate that supports perpetual fixed payouts from an annuity, which is a compound interest / exponential growth-decay style financial application of calculus.",
+    "error": null
+  },
+  {
+    "problem_id": 74,
+    "primary": "taylor-series-applications",
+    "secondary": [
+      "taylor-maclaurin-series",
+      "infinite-series-basics"
+    ],
+    "confidence": 0.86,
+    "rationale": "The problem asks for how many terms of a power (Taylor) series are needed to approximate \u03c0 to a specified accuracy, which is an application of Taylor/Maclaurin series and their remainders.",
+    "error": null
+  },
+  {
+    "problem_id": 75,
+    "primary": "conic-sections",
+    "secondary": [],
+    "confidence": 0.9,
+    "rationale": "The problem involves finding the focus of a parabolic cross-section of a paraboloid (satellite dish), which is directly a conic sections application.",
+    "error": null
+  },
+  {
+    "problem_id": 76,
+    "primary": "conic-sections",
+    "secondary": [],
+    "confidence": 0.93,
+    "rationale": "The problem involves a parabolic satellite dish and asks for the receiver placement at the focus of the parabola, which is a standard conic sections application.",
+    "error": null
+  },
+  {
+    "problem_id": 77,
+    "primary": "NO_MATCH",
+    "secondary": [],
+    "confidence": 0.98,
+    "rationale": "This is a geometry/conic sections application about a paraboloid\u2019s dimensions and does not involve any of the listed Calculus 2 integration, series, or differential equation topics.",
+    "error": null
+  },
+  {
+    "problem_id": 78,
+    "primary": "conic-sections",
+    "secondary": [],
+    "confidence": 0.98,
+    "rationale": "The problem involves an ellipse with given major axis length and focal distance, asking for the corresponding height (semi-minor axis) using the standard ellipse relationship.",
+    "error": null
+  },
+  {
+    "problem_id": 79,
+    "primary": "conic-sections",
+    "secondary": [],
+    "confidence": 0.97,
+    "rationale": "The problem involves an elliptical whispering gallery and uses the distance between foci to determine geometric dimensions, which is core conic sections content.",
+    "error": null
+  }
+]
