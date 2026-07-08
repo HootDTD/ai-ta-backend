@@ -140,6 +140,44 @@ def _gray_eligible(source: str, score: float, params: ResolverV2Params) -> bool:
     return is_gray
 
 
+def seed(state: IncrementalState, keys: Sequence[str]) -> IncrementalState:
+    """Freeze the given canonical keys at full credit (design §6, task T4).
+
+    Called when ``resolve_pending_clarifications`` records a content-verified
+    ``confirmed`` outcome (never on bare student self-report -- that
+    precondition is enforced by the caller, not here). Per §6:
+
+    * ``running_node_max[key] = 1.0`` and ``node_source[key] = "clarification"``
+      for every key in ``keys``, and each key is added to ``seeded_keys``.
+    * Seeding freezes the NODE only. Because ``score_turn`` step 2 excludes
+      any ``key in state.seeded_keys`` from the unresolved-candidate pool
+      (regardless of its running credit), a seeded key spends zero NLI pairs
+      on every subsequent turn.
+    * Seeding does NOT, by itself, raise any OTHER node's credit: a seeded
+      key's incident edges recompute their credit from the running node
+      credits (so edge credit rises -- that is real and intended, §6), but
+      ``score_turn``'s edge-pullup-floor step only fires from
+      ``running_edge_evidence == "entail"`` earned from real windows -- it
+      never reads ``seeded_keys`` -- so a neighbor node is never pulled up
+      merely because this node was seeded (M5).
+
+    Immutable: returns a NEW ``IncrementalState``; never mutates ``state``.
+    """
+    running_node_max = dict(state.running_node_max)
+    node_source = dict(state.node_source)
+    seeded_keys = set(state.seeded_keys)
+    for key in keys:
+        running_node_max[key] = 1.0
+        node_source[key] = "clarification"
+        seeded_keys.add(key)
+    return replace(
+        state,
+        running_node_max=running_node_max,
+        node_source=node_source,
+        seeded_keys=frozenset(seeded_keys),
+    )
+
+
 def score_turn(
     state: IncrementalState,
     *,
