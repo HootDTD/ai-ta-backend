@@ -140,7 +140,7 @@ async def seed_premade_concepts(
     return PremadeSeedReport(created=created, updated=updated, vocab_copied=vocab_copied)
 
 
-async def _main() -> None:
+async def _main() -> None:  # pragma: no cover - CLI entrypoint (engine + argparse)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database-url", required=True)
     parser.add_argument("--search-space-id", type=int, required=True)

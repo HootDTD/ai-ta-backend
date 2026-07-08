@@ -1,0 +1,49 @@
+{
+  "id": "aae333_235",
+  "concept_id": "blasius_velocity",
+  "difficulty": "standard",
+  "given_values": {
+    "U": 0.5,
+    "nu": 1.12e-06,
+    "f_half": 0.793
+  },
+  "problem_text": "Water (nu=1.12e-6 m^2/s) flows past a flat plate at U=0.5 m/s. Calculate the u velocity at y = delta/2, where the self-similar Blasius profile value is f_half = 0.793.",
+  "target_unknown": "u velocity at y = delta/2",
+  "declared_paths": [
+    [
+      "profile",
+      "p1"
+    ]
+  ],
+  "reference_solution": [
+    {
+      "id": "profile",
+      "step": 1,
+      "entry_type": "equation",
+      "entity_key": "eq.profile",
+      "content": {
+        "label": "Blasius velocity at y=delta/2",
+        "symbolic": "u - U*f_half",
+        "variables": []
+      },
+      "depends_on": []
+    },
+    {
+      "id": "p1",
+      "step": 2,
+      "entry_type": "procedure_step",
+      "entity_key": "proc.p1",
+      "content": {
+        "order": 1,
+        "action": "evaluate u = U*f_half at y=delta/2",
+        "purpose": "evaluate u = U*f_half at y=delta/2",
+        "uses_equations": [
+          "profile"
+        ]
+      },
+      "depends_on": [
+        "profile"
+      ]
+    }
+  ]
+}

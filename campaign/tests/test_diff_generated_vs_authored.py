@@ -88,3 +88,69 @@ def test_diff_graph_reports_nodes_edges_and_opacity() -> None:
     assert diff["committed_only"] == ["parts_assignment"]
     assert diff["edge_pairs_generated"] == [("vm_a", "ibp_formula")]
     assert diff["opaque_ids"] == ["vm_a"]
+
+
+def test_score_concept_match_counts_unaligned() -> None:
+    generated = [_gen("A totally different statistics question about medians.", "u_substitution")]
+    report = score_concept_match(align_problems(generated, _CORPUS))
+    assert report["unaligned"] == 1 and report["total"] == 0
+
+
+def test_eval_driver_pure_helpers() -> None:
+    """The eval driver's pure classification/alignment helpers (its live I/O
+    functions are pragma-excluded; these are the unit-testable core)."""
+    from campaign.scripts.eval_authored_calc2 import (
+        _classify_generated,
+        _load_gold_index,
+        _match_gold,
+    )
+
+    rows = [
+        {  # promoted -> concept slug taken from the row
+            "tier": 2,
+            "provenance": {},
+            "concept_slug": "integration-by-parts",
+            "payload": {},
+        },
+        {  # NO_MATCH hold -> slug None
+            "tier": 1,
+            "provenance": {"authored_review": {"required": True, "reason": "no_matching_concept"}},
+            "concept_slug": "provisional.inventory",
+            "payload": {},
+        },
+        {  # other hold with a stored match -> matcher's slug
+            "tier": 1,
+            "provenance": {
+                "authored_review": {
+                    "required": True,
+                    "reason": "ocr_divergence",
+                    "concept_match": {"slug": "u_substitution"},
+                }
+            },
+            "concept_slug": "provisional.inventory",
+            "payload": {},
+        },
+        {  # tier-1, not held (rejected) -> slug None
+            "tier": 1,
+            "provenance": {},
+            "concept_slug": "provisional.inventory",
+            "payload": {},
+        },
+    ]
+    records = _classify_generated(rows)
+    assert [r["outcome"] for r in records] == [
+        "promoted",
+        "held_for_review",
+        "held_for_review",
+        "tier1_unpromoted",
+    ]
+    assert records[0]["concept_slug"] == "integration-by-parts"
+    assert records[1]["concept_slug"] is None
+    assert records[2]["concept_slug"] == "u_substitution"
+    assert records[3]["concept_slug"] is None
+
+    gold = _load_gold_index()
+    assert len(gold) == 60 and all("_concept_dir" in g for g in gold)
+    hit = _match_gold({"problem_text": "Evaluate  integral e^x sin(x) dx."}, gold)
+    assert hit is not None and hit["_concept_dir"] == "integration_by_parts"
+    assert _match_gold({"problem_text": "median of a data set"}, gold) is None

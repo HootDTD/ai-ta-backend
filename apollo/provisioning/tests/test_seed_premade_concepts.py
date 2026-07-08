@@ -127,3 +127,34 @@ async def test_seed_copies_vocab_only_into_empty_rows(db_session, tmp_path):
 
 def test_norm_slug() -> None:
     assert norm_slug("Integration-By-Parts ") == "integration_by_parts"
+
+
+@pytest.mark.asyncio
+async def test_seed_backfills_vocab_and_name_on_existing_row(db_session, tmp_path):
+    ss = await _space(db_session, "backfill")
+    subj = Subject(slug="calculus_2", display_name="Calculus 2", search_space_id=ss)
+    db_session.add(subj)
+    await db_session.flush()
+    db_session.add(Concept(subject_id=subj.id, slug="integration_by_parts", display_name=""))
+    await db_session.flush()
+
+    vocab_dir = tmp_path / "concepts"
+    cdir = vocab_dir / "integration_by_parts"
+    cdir.mkdir(parents=True)
+    (cdir / "canonical_symbols.json").write_text('{"symbols": ["x", "u"]}')
+    (cdir / "normalization_map.json").write_text('{"antiderivative": "F"}')
+
+    report = await seed_premade_concepts(
+        db_session,
+        search_space_id=ss,
+        subject_slug="calculus_2",
+        subject_display_name="Calculus 2",
+        concepts=_CONCEPTS,
+        vocab_dir=vocab_dir,
+    )
+    assert report.vocab_copied == 1
+    row = (
+        await db_session.execute(select(Concept).where(Concept.slug == "integration_by_parts"))
+    ).scalar_one()
+    assert row.display_name == "Integration by Parts"  # empty name backfilled
+    assert dict(row.canonical_symbols)["symbols"] == ["x", "u"]  # empty vocab filled

@@ -314,3 +314,80 @@ class TestForeignSymbols:
             _good_graph(), canonical_symbols=_VOCAB, normalization_map=_NORM
         )
         assert not any(d.startswith("foreign_symbol") for d in defects)
+
+
+class TestValidatorBranches:
+    def test_trig_textbook_notation_is_display(self) -> None:
+        g = _good_graph()
+        g["reference_solution"][2]["content"]["symbolic"] = "sin^2 x = 1 - cos^2 x"
+        defects = find_derivation_defects(g, canonical_symbols=_VOCAB, normalization_map=_NORM)
+        assert not any(d.startswith("equation_parse") for d in defects)
+
+    def test_empty_symbolic_rejected(self) -> None:
+        g = _good_graph()
+        g["reference_solution"][2]["content"]["symbolic"] = ""
+        defects = find_derivation_defects(g, canonical_symbols=_VOCAB, normalization_map=_NORM)
+        assert any("empty symbolic" in d for d in defects)
+
+    def test_sympify_side_failure_rejected(self, monkeypatch) -> None:
+        # the sympify double-parse is defense-in-depth: force its failure to
+        # pin the defect wording and the continue path
+        import apollo.provisioning.authored_sets.graph_derivation as gd
+
+        def _boom(*_a, **_k):
+            raise TypeError("forced sympify failure")
+
+        monkeypatch.setattr(gd.sympy, "sympify", _boom)
+        defects = find_derivation_defects(
+            _good_graph(), canonical_symbols=_VOCAB, normalization_map=_NORM
+        )
+        assert any("sympify failed" in d for d in defects)
+
+    def test_non_snake_case_id_rejected(self) -> None:
+        g = _good_graph()
+        g["reference_solution"][2]["id"] = "Vm A"
+        defects = find_derivation_defects(g, canonical_symbols=_VOCAB, normalization_map=_NORM)
+        assert any("is not snake_case" in d for d in defects)
+
+    def test_duplicate_id_rejected(self) -> None:
+        g = _good_graph()
+        g["reference_solution"][2]["id"] = "parts_assignment"
+        defects = find_derivation_defects(g, canonical_symbols=_VOCAB, normalization_map=_NORM)
+        assert any(d.startswith("duplicate_id") for d in defects)
+
+    def test_schema_failure_short_circuits(self) -> None:
+        g = _good_graph()
+        del g["reference_solution"][3]["content"]["order"]  # breaks order contiguity
+        defects = find_derivation_defects(g, canonical_symbols=_VOCAB, normalization_map=_NORM)
+        assert len(defects) == 1 and defects[0].startswith("schema:")
+
+
+@pytest.mark.asyncio
+async def test_derive_unparseable_first_pass_retries_then_succeeds() -> None:
+    chat_fn = _chat(["not json at all", _llm_payload(_good_graph())])
+    out = await derive_reference_graph(
+        _Candidate(),
+        _SPANS,
+        concept_slug="integration-by-parts",
+        concept_display_name="Integration by Parts",
+        canonical_symbols=_VOCAB,
+        normalization_map=_NORM,
+        chat_fn=chat_fn,
+    )
+    assert out.retried
+    assert "unparseable derivation response" in chat_fn.calls[1]["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_derive_non_dict_and_missing_list_responses_fail_closed() -> None:
+    chat_fn = _chat(['["a list"]', '{"reference_solution": "not a list"}'])
+    with pytest.raises(DerivationError):
+        await derive_reference_graph(
+            _Candidate(),
+            _SPANS,
+            concept_slug="integration-by-parts",
+            concept_display_name="Integration by Parts",
+            canonical_symbols=_VOCAB,
+            normalization_map=_NORM,
+            chat_fn=chat_fn,
+        )

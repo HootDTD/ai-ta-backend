@@ -1782,3 +1782,32 @@ async def test_approve_gate_rejection_rolls_back_mint(db_session, monkeypatch):
     # the hold is preserved (still requires review)
     fresh = await db_session.get(type(prob), int(prob.id))
     assert fresh.provenance["authored_review"]["required"] is True
+
+
+@pytest.mark.asyncio
+async def test_approve_tag_mint_error_reports_without_committing(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.provisioning.tag_mint import TagMintError
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    _space, _concept, prob, aset = await _seed_held_problem(db_session, slug="approve-tme")
+
+    async def _raise_tme(*_a, **_k):
+        raise TagMintError("opposes an unknown entity key")
+
+    monkeypatch.setattr(aapi, "tag_and_mint", _raise_tme)
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: None)
+    monkeypatch.setattr(aapi, "_make_metered_chat", lambda **_k: object())
+
+    out = await aapi.approve_held_problem(
+        set_id=int(aset.id),
+        problem_id=int(prob.id),
+        body=aapi.ApproveBody(reference="ocr"),
+        request=_FakeRequest(),
+        db=db_session,
+    )
+    assert out["promoted"] is False
+    assert out["diagnostic"].startswith("tag_mint_error")
+    fresh = await db_session.get(type(prob), int(prob.id))
+    assert fresh.provenance["authored_review"]["required"] is True  # hold preserved

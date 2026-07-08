@@ -159,3 +159,33 @@ def test_match_schema_is_strict_json_schema() -> None:
     schema = build_match_schema()
     assert schema["name"] and schema["strict"] is True
     assert set(schema["schema"]["required"]) == {"primary", "secondary", "confidence", "rationale"}
+
+
+@pytest.mark.asyncio
+async def test_non_dict_response_retries(chat_list=None) -> None:
+    chat_fn = _chat(
+        [
+            '["a list"]',
+            '{"primary": "u_substitution", "secondary": [], "confidence": 0.9, "rationale": "sub"}',
+        ]
+    )
+    m = await match_concept("integral 2x cos(x^2) dx", _CONCEPTS, chat_fn=chat_fn)
+    assert m.retried and m.concept_id == 2
+
+
+@pytest.mark.asyncio
+async def test_non_numeric_confidence_degrades_to_zero() -> None:
+    chat_fn = _chat(
+        [
+            json.dumps(
+                {
+                    "primary": "u_substitution",
+                    "secondary": [],
+                    "confidence": "high",
+                    "rationale": "sub",
+                }
+            )
+        ]
+    )
+    m = await match_concept("integral", _CONCEPTS, chat_fn=chat_fn)
+    assert m.concept_id == 2 and m.confidence == 0.0

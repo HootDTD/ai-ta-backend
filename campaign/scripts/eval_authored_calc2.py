@@ -66,7 +66,9 @@ TEACHER_PASSWORD = "RevgenTeacher123!"
 # --------------------------------------------------------------------------- #
 
 
-async def _mint_teacher(supabase_url: str, service_role_key: str) -> tuple[str, str]:
+async def _mint_teacher(
+    supabase_url: str, service_role_key: str
+) -> tuple[str, str]:  # pragma: no cover - live GoTrue I/O
     """Create (idempotent) the teacher auth user; return (user_id, token).
 
     The JWT's own "sub" claim is the only trustworthy user-id source (the
@@ -92,7 +94,7 @@ async def _mint_teacher(supabase_url: str, service_role_key: str) -> tuple[str, 
         return user_id, token
 
 
-async def _bootstrap(args: argparse.Namespace) -> None:
+async def _bootstrap(args: argparse.Namespace) -> None:  # pragma: no cover - live stack I/O
     supabase_url = os.environ["SUPABASE_URL"]
     service_role_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
     teacher_id, teacher_token = await _mint_teacher(supabase_url, service_role_key)
@@ -140,7 +142,7 @@ async def _bootstrap(args: argparse.Namespace) -> None:
 # --------------------------------------------------------------------------- #
 
 
-async def _upload_and_poll(
+async def _upload_and_poll(  # pragma: no cover - live HTTP I/O
     client: httpx.AsyncClient,
     *,
     base_url: str,
@@ -185,7 +187,9 @@ async def _upload_and_poll(
         await asyncio.sleep(poll_interval)
 
 
-async def _dump_generated(pg_dsn: str, search_space_id: int) -> list[dict]:
+async def _dump_generated(
+    pg_dsn: str, search_space_id: int
+) -> list[dict]:  # pragma: no cover - live DB I/O
     engine = create_async_engine(pg_dsn)
     async with engine.connect() as conn:
         rows = (
@@ -270,7 +274,7 @@ def _match_gold(generated_payload: dict, gold: list[dict]) -> dict | None:
     return best if best_score >= 0.6 else None
 
 
-async def _run(args: argparse.Namespace) -> None:
+async def _run(args: argparse.Namespace) -> None:  # pragma: no cover - live stack I/O
     course = json.loads(Path(args.course_json).read_text())
     search_space_id = int(args.search_space_id or course["search_space_id"])
     token = str(course["teacher_token"])
@@ -350,7 +354,7 @@ async def _run(args: argparse.Namespace) -> None:
     )
 
 
-def main() -> None:
+def main() -> None:  # pragma: no cover - CLI entrypoint
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
