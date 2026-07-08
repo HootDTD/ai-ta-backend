@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import select
@@ -51,6 +52,7 @@ from apollo.resolution.resolver import resolve_attempt
 from apollo.resolver_v2.config import grayzone_enabled, load_params, resolver_v2_enabled
 from apollo.resolver_v2.grayzone import main_chat_grayzone
 from apollo.resolver_v2.incremental import score_turn
+from apollo.resolver_v2.incremental import seed as _seed_incremental_state
 from apollo.resolver_v2.incremental_types import IncrementalSnapshot, IncrementalState
 from apollo.resolver_v2.integration import load_student_turns
 from apollo.resolver_v2.nli_provider import get_adjudicator
@@ -102,6 +104,21 @@ def _v2_ranker_active() -> bool:
         and resolver_v2_enabled()
         and _clarification_enabled()
     )
+
+
+def _confirmed_seed_keys(outcomes: Sequence[tuple[str, str]]) -> tuple[str, ...]:
+    """B-HIGH-2 / spec §6: the V2 seed path is gated ONLY on a content-verified
+    `confirmed` outcome (see the precondition pinned on
+    ``rescorer.default_clarification_judge``) -- never on `refuted` or `vague`,
+    and never on a bare student self-report. Explicitly asserts the gate on
+    every key it selects rather than trusting the filter alone."""
+    keys: list[str] = []
+    for candidate_key, outcome in outcomes:
+        if outcome != "confirmed":
+            continue
+        assert outcome == "confirmed"  # seed path MUST be gated on this outcome
+        keys.append(candidate_key)
+    return tuple(keys)
 
 
 def _empty_incremental_state() -> IncrementalState:
@@ -181,6 +198,29 @@ class _IncrementalHolder:
             return
         entry["state"] = new_state
         entry["snapshot"] = snapshot
+
+    def seed_state(self, attempt_id: int, keys: Sequence[str]) -> None:
+        """Freeze ``keys`` into this attempt's persisted state (spec §6,
+        T12): a content-verified `confirmed` clarification outcome calls this
+        so the background job kicked later THIS SAME TURN
+        (``_maybe_kick_incremental_v2``) starts from a state where those keys
+        are already ``running_node_max=1.0`` / ``seeded_keys`` -- the next
+        completed snapshot reflects the freeze (and the seeded node's own
+        edge-credit lift) naturally via the normal ``score_turn`` recompute.
+        No-op on an empty ``keys`` (never touches the holder when nothing was
+        confirmed this turn).
+
+        Unlike ``write``, this does NOT gate on ``window_cursor`` -- seeding
+        is an out-of-band credit grant, not a new window score, so it must
+        apply even when no job has completed yet (cold worker / turn 1) and
+        must never regress an existing state's cursor. The stored snapshot is
+        left untouched; only the next completed job replaces it.
+        """
+        if not keys:
+            return
+        entry = self._entry(attempt_id)
+        state = entry["state"] or _empty_incremental_state()
+        entry["state"] = _seed_incremental_state(state, keys)
 
 
 _INCREMENTAL_HOLDER = _IncrementalHolder()
@@ -617,7 +657,7 @@ async def handle_chat(
                     concept_id=sess.concept_id,
                     problem_payload=problem_payload,
                 )
-                await resolve_pending_clarifications(
+                clarification_outcomes = await resolve_pending_clarifications(
                     db=db,
                     attempt_id=current_attempt.id,
                     student_message=message,
@@ -625,6 +665,20 @@ async def handle_chat(
                     judge=default_clarification_judge,
                     answered_turn=next_idx,
                 )
+
+                # ---- V2 feedback seeding (spec §6, T12). Gated on BOTH the H1
+                # ranker-active predicate (no session-state mutation at all when
+                # OFF) AND, within that, only `confirmed` outcomes (B-HIGH-2 --
+                # see the precondition pinned on
+                # rescorer.default_clarification_judge). `refuted`/`vague` are
+                # never seeded: the node stays in the unresolved pool, but its
+                # topic key is already asked so the existing dedup prevents a
+                # re-probe. Seeding only freezes the node itself -- it must NOT
+                # be read by chat.py as a signal to resolve any OTHER node (M5).
+                if _v2_ranker_active():
+                    _seed_keys = _confirmed_seed_keys(clarification_outcomes)
+                    if _seed_keys:
+                        _INCREMENTAL_HOLDER.seed_state(current_attempt.id, _seed_keys)
 
                 # ---- V2 incremental score (H1: gated on ALL THREE flags). When
                 # OFF (including the RESOLVER_V2=ON/RANKER=OFF row), this branch

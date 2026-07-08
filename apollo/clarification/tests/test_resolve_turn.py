@@ -36,7 +36,7 @@ async def test_records_confirmed_outcome(monkeypatch):
     monkeypatch.setattr(resolve_turn, "load_asked_waiting", fake_load)
     monkeypatch.setattr(resolve_turn, "record_outcome", fake_record)
 
-    await resolve_turn.resolve_pending_clarifications(
+    outcomes = await resolve_turn.resolve_pending_clarifications(
         db=object(),
         attempt_id=1,
         student_message="lower where faster",
@@ -47,6 +47,38 @@ async def test_records_confirmed_outcome(monkeypatch):
     assert recorded["state"] == "confirmed"
     assert recorded["text"] == "lower where faster"
     assert recorded["turn"] == 4
+    # T12: the recorded (candidate_key, outcome) pair is returned so chat.py
+    # can seed the V2 view on `confirmed` only.
+    assert outcomes == (("cond.bernoulli", "confirmed"),)
+
+
+async def test_returns_refuted_and_vague_outcomes_too(monkeypatch):
+    """T12: refuted/vague outcomes are still returned (chat.py filters them
+    out before seeding -- they must never seed)."""
+
+    async def fake_load(db, *, attempt_id):
+        return [_Row("s1", "cond.bernoulli", "p~v"), _Row("s2", "cond.other", "x")]
+
+    async def fake_record(db, *, clarification_id, state, clarification_text, answered_turn):
+        pass
+
+    verdicts = iter(["refuted", "vague"])
+
+    monkeypatch.setattr(resolve_turn, "load_asked_waiting", fake_load)
+    monkeypatch.setattr(resolve_turn, "record_outcome", fake_record)
+
+    outcomes = await resolve_turn.resolve_pending_clarifications(
+        db=object(),
+        attempt_id=1,
+        student_message="m",
+        candidates=(_cand("cond.bernoulli", "d1"), _cand("cond.other", "d2")),
+        judge=lambda req: next(verdicts),
+        answered_turn=4,
+    )
+    assert outcomes == (
+        ("cond.bernoulli", "refuted"),
+        ("cond.other", "vague"),
+    )
 
 
 async def test_judge_failure_leaves_waiting(monkeypatch):
