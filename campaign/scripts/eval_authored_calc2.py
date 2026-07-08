@@ -110,8 +110,8 @@ async def _bootstrap(args: argparse.Namespace) -> None:
         ).scalar_one()
         await conn.execute(
             text(
-                "INSERT INTO course_memberships (user_id, search_space_id, role) "
-                "VALUES (:u, :ss, 'teacher')"
+                "INSERT INTO course_memberships (user_id, search_space_id, role, "
+                "created_at, updated_at) VALUES (:u, :ss, 'teacher', now(), now())"
             ),
             {"u": teacher_id, "ss": space_id},
         )
