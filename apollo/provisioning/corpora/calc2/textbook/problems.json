@@ -1,0 +1,792 @@
+[
+  {
+    "problem_id": 1,
+    "problem_text": "The following table gives approximate values of the average annual atmospheric rate of increase in carbon dioxide (CO2) each decade since 1960, in parts per million (ppm). Estimate the total increase in atmospheric CO2 between 1964 and 2013. Decade Ppm/y 1964\u20131973 1.07 1974\u20131983 1.34 1984\u20131993 1.40 1994\u20132003 1.87 2004\u20132013 2.07 Table 1.2 Average Annual Atmospheric CO2 Increase, 1964\u20132013 Source: http://www.esrl.noaa.g ov/gmd/ccgg/trends/.",
+    "section_path": "1.1 Approximating Areas",
+    "chapter": 1,
+    "page_number": 28,
+    "chunk_id": 61700,
+    "source_exercise_number": 38,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 2,
+    "problem_text": "The following table gives the approximate increase in dollars in the average price of a gallon of gas per decade since 1950. If the average price of a gallon of gas in 2010 was $2.60, what was the average price of a gallon of gas in 1950? Starting Year 10-Year Change 0.03 0.05 0.86 \u22120.03 0.29 1.12 Table 1.4 Approximate 10-Year Gas Price Increases, 1950\u20132000 Source: http://epb.lbl.gov/ homepages/Rick_Diamond/ docs/lbnl55011-trends.pdf.",
+    "section_path": "1.1 Approximating Areas",
+    "chapter": 1,
+    "page_number": 28,
+    "chunk_id": 61722,
+    "source_exercise_number": 40,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 3,
+    "problem_text": "Suppose can be subdivided into subintervals such that either over or over Set a. Explain why b. Then, explain why",
+    "section_path": "1.2 The Definite Integral",
+    "chapter": 1,
+    "page_number": 47,
+    "chunk_id": 62051,
+    "source_exercise_number": 130,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 4,
+    "problem_text": "Suppose the average value of f over is 1 and the average value of f over is 1 where Show that the average value of f over is also 1.",
+    "section_path": "1.2 The Definite Integral",
+    "chapter": 1,
+    "page_number": 47,
+    "chunk_id": 62060,
+    "source_exercise_number": 132,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 5,
+    "problem_text": "Two mountain climbers start their climb at base camp, taking two different routes, one steeper than the other, and arrive at the peak at exactly the same time. Is it necessarily true that, at some point, both climbers increased in altitude at the same rate?",
+    "section_path": "1.3 The Fundamental Theorem of Calculus",
+    "chapter": 1,
+    "page_number": 59,
+    "chunk_id": 62254,
+    "source_exercise_number": 145,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 6,
+    "problem_text": "To get on a certain toll road a driver has to take a card that lists the mile entrance point. The card also has a timestamp. When going to pay the toll at the exit, the driver is surprised to receive a speeding ticket along with the toll. Explain how this can happen.",
+    "section_path": "1.3 The Fundamental Theorem of Calculus",
+    "chapter": 1,
+    "page_number": 59,
+    "chunk_id": 62256,
+    "source_exercise_number": 146,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 7,
+    "problem_text": "Kepler\u2019s first law states that the planets move in elliptical orbits with the Sun at one focus. The closest point of a planetary orbit to the Sun is called the perihelion (for Earth, it currently occurs around January 3) and the farthest point is called the aphelion (for Earth, it currently occurs around July 4). Kepler\u2019s second law states that planets sweep out equal areas of their elliptical orbits in equal times. Thus, the two arcs indicated in the following figure are swept out in equal times. At what time of year is Earth moving fastest in its orbit? When is it moving slowest?",
+    "section_path": "1.3 The Fundamental Theorem of Calculus",
+    "chapter": 1,
+    "page_number": 63,
+    "chunk_id": 62325,
+    "source_exercise_number": 202,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 8,
+    "problem_text": "As implied earlier, according to Kepler\u2019s laws, Earth\u2019s orbit is an ellipse with the Sun at one focus. The perihelion for Earth\u2019s orbit around the Sun is 147,098,290 km and the aphelion is 152,098,232 km. a. By placing the major axis along the x-axis, find the average distance from Earth to the Sun. b. The classic definition of an astronomical unit (AU) is the distance from Earth to the Sun, and its value was computed as the average of the perihelion and aphelion distances. Is this definition justified?",
+    "section_path": "1.3 The Fundamental Theorem of Calculus",
+    "chapter": 1,
+    "page_number": 63,
+    "chunk_id": 62333,
+    "source_exercise_number": 204,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 9,
+    "problem_text": "A ball is thrown upward from a height of 1.5 m at an initial speed of 40 m/ sec. Acceleration resulting from gravity is \u22129.8 m/ sec2. Neglecting air resistance, solve for the velocity and the height of the ball t seconds after it is thrown and before it returns to the ground.",
+    "section_path": "1.4 Integration Formulas and the Net Change Theorem",
+    "chapter": 1,
+    "page_number": 73,
+    "chunk_id": 62474,
+    "source_exercise_number": 227,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 10,
+    "problem_text": "A ball is thrown upward from a height of 3 m at an initial speed of 60 m/sec. Acceleration resulting from gravity is \u22129.8 m/ sec2. Neglecting air resistance, solve for the velocity and the height of the ball t seconds after it is thrown and before it returns to the ground.",
+    "section_path": "1.4 Integration Formulas and the Net Change Theorem",
+    "chapter": 1,
+    "page_number": 73,
+    "chunk_id": 62476,
+    "source_exercise_number": 228,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 11,
+    "problem_text": "The area of a circular shape is growing at a constant rate. If the area increases from 4\u03c0 units to 9\u03c0 units between times and find the net change in the radius during that time.",
+    "section_path": "1.4 Integration Formulas and the Net Change Theorem",
+    "chapter": 1,
+    "page_number": 73,
+    "chunk_id": 62478,
+    "source_exercise_number": 229,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 12,
+    "problem_text": "A spherical balloon is being inflated at a constant rate. If the volume of the balloon changes from 36\u03c0 in.3 to 288\u03c0 in.3 between time and seconds, find the net change in the radius of the balloon during that time.",
+    "section_path": "1.4 Integration Formulas and the Net Change Theorem",
+    "chapter": 1,
+    "page_number": 73,
+    "chunk_id": 62480,
+    "source_exercise_number": 230,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 13,
+    "problem_text": "For a given motor vehicle, the maximum achievable deceleration from braking is approximately 7 m/sec2 on dry concrete. On wet asphalt, it is approximately 2.5 m/sec2. Given that 1 mph corresponds to 0.447 m/ sec, find the total distance that a car travels in meters on dry concrete after the brakes are applied until it comes to a complete stop if the initial velocity is 67 mph (30 m/ sec) or if the initial braking velocity is 56 mph (25 m/sec). Find the corresponding distances if the surface is slippery wet asphalt.",
+    "section_path": "1.4 Integration Formulas and the Net Change Theorem",
+    "chapter": 1,
+    "page_number": 77,
+    "chunk_id": 62594,
+    "source_exercise_number": 239,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 14,
+    "problem_text": "The area of a semicircle of radius 1 can be expressed as Use the substitution to express the area of a semicircle as the integral of a trigonometric function. You do not need to compute the integral.",
+    "section_path": "1.5 Substitution",
+    "chapter": 1,
+    "page_number": 91,
+    "chunk_id": 62883,
+    "source_exercise_number": 316,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 15,
+    "problem_text": "The largest triangle with a base on the that fits inside the upper half of the unit circle is given by and See the following figure. What is the area inside the semicircle but outside the triangle?",
+    "section_path": "2.1 Areas between Curves",
+    "chapter": 2,
+    "page_number": 126,
+    "chunk_id": 63476,
+    "source_exercise_number": 48,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 16,
+    "problem_text": "Derive the formula for the volume of a sphere using the slicing method.",
+    "section_path": "2.2 Determining Volumes by Slicing",
+    "chapter": 2,
+    "page_number": 141,
+    "chunk_id": 63651,
+    "source_exercise_number": 58,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 17,
+    "problem_text": "Use the slicing method to derive the formula for the volume of a cone.",
+    "section_path": "2.2 Determining Volumes by Slicing",
+    "chapter": 2,
+    "page_number": 141,
+    "chunk_id": 63652,
+    "source_exercise_number": 59,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 18,
+    "problem_text": "A pyramid with height 6 units and square base of side 2 units, as pictured here.",
+    "section_path": "2.2 Determining Volumes by Slicing",
+    "chapter": 2,
+    "page_number": 141,
+    "chunk_id": 63661,
+    "source_exercise_number": 63,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 19,
+    "problem_text": "A pyramid with height 5 units, and an isosceles triangular base with lengths of 6 units and 8 units, as seen here.",
+    "section_path": "2.2 Determining Volumes by Slicing",
+    "chapter": 2,
+    "page_number": 141,
+    "chunk_id": 63667,
+    "source_exercise_number": 66,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 20,
+    "problem_text": "Use the method of shells to find the volume of a cone with radius and height",
+    "section_path": "2.3 Volumes of Revolution: Cylindrical Shells",
+    "chapter": 2,
+    "page_number": 157,
+    "chunk_id": 63895,
+    "source_exercise_number": 159,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 21,
+    "problem_text": "Use the method of shells to find the volume of a cylinder with radius and height",
+    "section_path": "2.3 Volumes of Revolution: Cylindrical Shells",
+    "chapter": 2,
+    "page_number": 157,
+    "chunk_id": 63899,
+    "source_exercise_number": 161,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 22,
+    "problem_text": "Pick an arbitrary linear function over any interval of your choice Determine the length of the function and then prove the length is correct by using geometry.",
+    "section_path": "2.4 Arc Length of a Curve and Surface Area",
+    "chapter": 2,
+    "page_number": 167,
+    "chunk_id": 64034,
+    "source_exercise_number": 167,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 23,
+    "problem_text": "A light bulb is a sphere with radius in. with the bottom sliced off to fit exactly onto a cylinder of radius in. and length in., as seen here. The sphere is cut off at the bottom to fit exactly onto the cylinder, so the radius of the cut is in. Find the surface area (not including the top or bottom of the cylinder).",
+    "section_path": "2.4 Arc Length of a Curve and Surface Area",
+    "chapter": 2,
+    "page_number": 168,
+    "chunk_id": 64067,
+    "source_exercise_number": 208,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 24,
+    "problem_text": "How much work is done when a person lifts a lb box of comics onto a truck that is ft off the ground?",
+    "section_path": "2.5 Physical Applications",
+    "chapter": 2,
+    "page_number": 183,
+    "chunk_id": 64270,
+    "source_exercise_number": 219,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 25,
+    "problem_text": "A spring has a natural length of cm. It takes J to stretch the spring to cm. How much work would it take to stretch the spring from cm to cm?",
+    "section_path": "2.5 Physical Applications",
+    "chapter": 2,
+    "page_number": 184,
+    "chunk_id": 64304,
+    "source_exercise_number": 235,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 26,
+    "problem_text": "A -m spring requires J to stretch the spring to m. How much work would it take to stretch the spring from m to m?",
+    "section_path": "2.5 Physical Applications",
+    "chapter": 2,
+    "page_number": 184,
+    "chunk_id": 64307,
+    "source_exercise_number": 236,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 27,
+    "problem_text": "A shock absorber is compressed 1 in. by a weight of 1 t. What is the spring constant?",
+    "section_path": "2.5 Physical Applications",
+    "chapter": 2,
+    "page_number": 184,
+    "chunk_id": 64311,
+    "source_exercise_number": 238,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 28,
+    "problem_text": "A general cone created by rotating a triangle with vertices and around the -axis. Does your answer agree with the volume of a cone?",
+    "section_path": "2.6 Moments and Centers of Mass",
+    "chapter": 2,
+    "page_number": 200,
+    "chunk_id": 64584,
+    "source_exercise_number": 282,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 29,
+    "problem_text": "A sphere created by rotating a semicircle with radius around the -axis. Does your answer agree with the volume of a sphere?",
+    "section_path": "2.6 Moments and Centers of Mass",
+    "chapter": 2,
+    "page_number": 200,
+    "chunk_id": 64589,
+    "source_exercise_number": 284,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 30,
+    "problem_text": "If a culture of bacteria doubles in hours, how many hours does it take to multiply by",
+    "section_path": "2.8 Exponential Growth and Decay",
+    "chapter": 2,
+    "page_number": 219,
+    "chunk_id": 64916,
+    "source_exercise_number": 352,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 31,
+    "problem_text": "The effect of advertising decays exponentially. If of the population remembers a new product after days, how long will remember it?",
+    "section_path": "2.8 Exponential Growth and Decay",
+    "chapter": 2,
+    "page_number": 219,
+    "chunk_id": 64931,
+    "source_exercise_number": 359,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 32,
+    "problem_text": "You are cooling a turkey that was taken out of the oven with an internal temperature of After minutes of resting the turkey in a apartment, the temperature has reached What is the temperature of the turkey minutes after taking it out of the oven?",
+    "section_path": "2.8 Exponential Growth and Decay",
+    "chapter": 2,
+    "page_number": 219,
+    "chunk_id": 64944,
+    "source_exercise_number": 366,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 33,
+    "problem_text": "[T] A chain hangs from two posts m apart to form a catenary described by the equation Find the slope of the catenary at the left fence post.",
+    "section_path": "2.9 Calculus of the Hyperbolic Functions",
+    "chapter": 2,
+    "page_number": 230,
+    "chunk_id": 65114,
+    "source_exercise_number": 425,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 34,
+    "problem_text": "A particle moving along a straight line has a velocity of after t sec. How far does it travel in the first 2 sec? (Assume the units are in feet and express the answer in exact form.)",
+    "section_path": "3.1 Integration by Parts",
+    "chapter": 3,
+    "page_number": 248,
+    "chunk_id": 65462,
+    "source_exercise_number": 62,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 35,
+    "problem_text": "Approximate using the midpoint rule with four subdivisions to four decimal places.",
+    "section_path": "3.6 Numerical Integration",
+    "chapter": 3,
+    "page_number": 293,
+    "chunk_id": 66368,
+    "source_exercise_number": 317,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 36,
+    "problem_text": "Use the trapezoidal rule estimate Compare this value with the exact value and find the error estimate.",
+    "section_path": "3.6 Numerical Integration",
+    "chapter": 3,
+    "page_number": 294,
+    "chunk_id": 66377,
+    "source_exercise_number": 320,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 37,
+    "problem_text": "The growth rate of a certain tree (in feet) is given by where t is time in years. Estimate the growth of the tree through the end of the second year by using Simpson\u2019s rule, using two subintervals. (Round the answer to the nearest hundredth.)",
+    "section_path": "3.6 Numerical Integration",
+    "chapter": 3,
+    "page_number": 295,
+    "chunk_id": 66432,
+    "source_exercise_number": 339,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 38,
+    "problem_text": "Given that we know the Fundamental Theorem of Calculus, why would we want to develop numerical methods for definite integrals?",
+    "section_path": "3.6 Numerical Integration",
+    "chapter": 3,
+    "page_number": 295,
+    "chunk_id": 66442,
+    "source_exercise_number": 342,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 39,
+    "problem_text": "Without integrating, converges or diverges. Determine whether the improper integrals converge or diverge. If possible, determine the value of the integrals that converge.",
+    "section_path": "3.7 Improper Integrals",
+    "chapter": 3,
+    "page_number": 308,
+    "chunk_id": 66680,
+    "source_exercise_number": 354,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 40,
+    "problem_text": "Evaluate the improper integrals. Each of these integrals has an infinite discontinuity either at an endpoint or at an interior point of the interval.",
+    "section_path": "3.7 Improper Integrals",
+    "chapter": 3,
+    "page_number": 309,
+    "chunk_id": 66708,
+    "source_exercise_number": 384,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 41,
+    "problem_text": "Evaluate (Be careful!) (Express your answer using three decimal places.)",
+    "section_path": "3.7 Improper Integrals",
+    "chapter": 3,
+    "page_number": 309,
+    "chunk_id": 66712,
+    "source_exercise_number": 391,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 42,
+    "problem_text": "Find the volume of the solid generated by revolving about the x-axis the area under the curve in the first quadrant. The Laplace transform of a continuous function over the interval \u221e is defined by (see the Student Project). This definition is used to solve some important initial-value problems in differential equations, as discussed later. The domain of F is the set of all real numbers s such that the improper integral converges. Find the Laplace transform F of each of the following functions and give the domain of F.",
+    "section_path": "3.7 Improper Integrals",
+    "chapter": 3,
+    "page_number": 309,
+    "chunk_id": 66733,
+    "source_exercise_number": 400,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 43,
+    "problem_text": "Find the general solution to describe the velocity of a ball of mass that is thrown upward at a rate ft/sec.",
+    "section_path": "4.1 Basics of Differential Equations",
+    "chapter": 4,
+    "page_number": 324,
+    "chunk_id": 67018,
+    "source_exercise_number": 53,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 44,
+    "problem_text": "Estimate the following solutions using Euler\u2019s method with steps over the interval If you are able to solve the initial-value problem exactly, compare your solution with the exact solution. If you are unable to solve the initial- value problem, the exact solution will be provided for you to compare with Euler\u2019s method. How accurate is Euler\u2019s method?",
+    "section_path": "4.2 Direction Fields and Numerical Methods",
+    "chapter": 4,
+    "page_number": 340,
+    "chunk_id": 67184,
+    "source_exercise_number": 93,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 45,
+    "problem_text": "Differential equations can be used to model disease epidemics. In the next set of problems, we examine the change of size of two sub-populations of people living in a city: individuals who are infected and individuals who are susceptible to infection. represents the size of the susceptible population, and represents the size of the infected population. We assume that if a susceptible person interacts with an infected person, there is a probability that the susceptible person will become infected. Each infected person recovers from the infection at a rate and becomes susceptible again. We consider the case of influenza, where we assume that no one dies from the disease, so we assume that the total population size of the two sub-populations is a constant number, The differential equations that model these population sizes are Here represents the contact rate and is the recovery rate.",
+    "section_path": "4.2 Direction Fields and Numerical Methods",
+    "chapter": 4,
+    "page_number": 340,
+    "chunk_id": 67194,
+    "source_exercise_number": 103,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 46,
+    "problem_text": "Most drugs in the bloodstream decay according to the equation where is the concentration of the drug in the bloodstream. If the half-life of a drug is hours, what fraction of the initial dose remains after hours?",
+    "section_path": "4.3 Separable Equations",
+    "chapter": 4,
+    "page_number": 350,
+    "chunk_id": 67365,
+    "source_exercise_number": 148,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 47,
+    "problem_text": "A tank contains kilogram of salt dissolved in liters of water. A salt solution of kg salt/L is pumped into the tank at a rate of L/min and is drained at the same rate. Solve for the salt concentration at time Assume the tank is well mixed.",
+    "section_path": "4.3 Separable Equations",
+    "chapter": 4,
+    "page_number": 350,
+    "chunk_id": 67372,
+    "source_exercise_number": 151,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 48,
+    "problem_text": "The liquid base of an ice cream has an initial temperature of before it is placed in a freezer with a constant temperature of After hour, the temperature of the ice-cream base has decreased to Formulate and solve the initial-value problem to determine the temperature of the ice cream.",
+    "section_path": "4.3 Separable Equations",
+    "chapter": 4,
+    "page_number": 351,
+    "chunk_id": 67391,
+    "source_exercise_number": 156,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 49,
+    "problem_text": "[T] You have a cup of coffee at temperature that you put outside, where the ambient temperature is After minutes, how much colder is the coffee?",
+    "section_path": "4.3 Separable Equations",
+    "chapter": 4,
+    "page_number": 351,
+    "chunk_id": 67403,
+    "source_exercise_number": 160,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 50,
+    "problem_text": "You have a cup of coffee at temperature which you let cool minutes before you pour in the same amount of milk at as in the preceding problem. How does the temperature compare to the previous cup after minutes?",
+    "section_path": "4.3 Separable Equations",
+    "chapter": 4,
+    "page_number": 351,
+    "chunk_id": 67409,
+    "source_exercise_number": 162,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 51,
+    "problem_text": "A population of deer inside a park has a carrying capacity of and a growth rate of If the initial population is deer, what is the population of deer at any given time?",
+    "section_path": "4.4 The Logistic Equation",
+    "chapter": 4,
+    "page_number": 361,
+    "chunk_id": 67550,
+    "source_exercise_number": 173,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 52,
+    "problem_text": "Bengal tigers in a conservation park have a carrying capacity of and need a minimum of to survive. If they grow in population at a rate of per year, with an initial population of tigers, solve for the number of tigers present.",
+    "section_path": "4.4 The Logistic Equation",
+    "chapter": 4,
+    "page_number": 362,
+    "chunk_id": 67601,
+    "source_exercise_number": 191,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 53,
+    "problem_text": "[T] The Gompertz equation has been used to model tumor growth in the human body. Starting from one tumor cell on day and assuming and a carrying capacity of million cells, how long does it take to reach \u201cdetection\u201d stage at million cells?",
+    "section_path": "4.4 The Logistic Equation",
+    "chapter": 4,
+    "page_number": 363,
+    "chunk_id": 67620,
+    "source_exercise_number": 197,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 54,
+    "problem_text": "[T] It is estimated that the world human population reached billion people in and billion in Assuming a carrying capacity of billion humans, write and solve the differential equation for logistic growth, and determine what year the population reached billion.",
+    "section_path": "4.4 The Logistic Equation",
+    "chapter": 4,
+    "page_number": 363,
+    "chunk_id": 67623,
+    "source_exercise_number": 198,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 55,
+    "problem_text": "A falling object of mass can reach terminal velocity when the drag force is proportional to its velocity, with proportionality constant Set up the differential equation and solve for the velocity given an initial velocity of",
+    "section_path": "4.5 First-order Linear Equations",
+    "chapter": 4,
+    "page_number": 375,
+    "chunk_id": 67833,
+    "source_exercise_number": 251,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 56,
+    "problem_text": "A more accurate way to describe terminal velocity is that the drag force is proportional to the square of velocity, with a proportionality constant Set up the differential equation and solve for the velocity.",
+    "section_path": "4.5 First-order Linear Equations",
+    "chapter": 4,
+    "page_number": 375,
+    "chunk_id": 67839,
+    "source_exercise_number": 254,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 57,
+    "problem_text": "Solve with the initial condition As approaches what happens to your formula?",
+    "section_path": "4.5 First-order Linear Equations",
+    "chapter": 4,
+    "page_number": 376,
+    "chunk_id": 67853,
+    "source_exercise_number": 261,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 58,
+    "problem_text": "[T] Suppose you start with one liter of vinegar and repeatedly remove replace with water, mix, and repeat. a. Find a formula for the concentration after steps. b. After how many steps does the mixture contain less than vinegar?",
+    "section_path": "5.1 Sequences",
+    "chapter": 5,
+    "page_number": 401,
+    "chunk_id": 68292,
+    "source_exercise_number": 58,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 59,
+    "problem_text": "[T] A lake initially contains fish. Suppose that in the absence of predators or other causes of removal, the fish population increases by each month. However, factoring in all causes, fish are lost each month. a. Explain why the fish population after months is modeled by with b. How many fish will be in the pond after one year?",
+    "section_path": "5.1 Sequences",
+    "chapter": 5,
+    "page_number": 401,
+    "chunk_id": 68296,
+    "source_exercise_number": 59,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 60,
+    "problem_text": "[T] A student takes out a college loan of at an annual percentage rate of compounded monthly. a. If the student makes payments of per month, how much does the student owe after months? b. After how many months will the loan be paid off?",
+    "section_path": "5.1 Sequences",
+    "chapter": 5,
+    "page_number": 401,
+    "chunk_id": 68311,
+    "source_exercise_number": 61,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 61,
+    "problem_text": "[T] Find the probability that a fair coin is flipped a multiple of three times before coming up heads.",
+    "section_path": "5.2 Infinite Series",
+    "chapter": 5,
+    "page_number": 419,
+    "chunk_id": 68650,
+    "source_exercise_number": 122,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 62,
+    "problem_text": "[T] A person deposits at the beginning of each quarter into a bank account that earns annual interest compounded quarterly (four times a year). a. Show that the interest accumulated after quarters is b. Find the first eight terms of the sequence. c. How much interest has accumulated after years?",
+    "section_path": "5.2 Infinite Series",
+    "chapter": 5,
+    "page_number": 419,
+    "chunk_id": 68659,
+    "source_exercise_number": 126,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 63,
+    "problem_text": "[T] A certain drug is effective for an average patient only if there is at least mg per kg in the patient\u2019s system, while it is safe only if there is at most mg per kg in an average patient\u2019s system. Suppose that the amount in a patient\u2019s system diminishes by a multiplicative factor of each hour after a dose is administered. Find the maximum interval of hours between doses, and corresponding dose range (in mg/kg) for this that will enable use of the drug to be both safe and effective in the long term.",
+    "section_path": "5.2 Infinite Series",
+    "chapter": 5,
+    "page_number": 420,
+    "chunk_id": 68670,
+    "source_exercise_number": 128,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 64,
+    "problem_text": "[T] Complete sampling with replacement, sometimes called the coupon collector\u2019s problem, is phrased as follows: Suppose you have unique items in a bin. At each step, an item is chosen at random, identified, and put back in the bin. The problem asks what is the expected number of steps that it takes to draw each unique item at least once. It turns out that . Find for",
+    "section_path": "5.3 The Divergence and Integral Tests",
+    "chapter": 5,
+    "page_number": 433,
+    "chunk_id": 68946,
+    "source_exercise_number": 186,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 65,
+    "problem_text": "Suppose a scooter can travel km on a full tank of fuel. Assuming that fuel can be transferred from one scooter to another but can only be carried in the tank, present a procedure that will enable one of the scooters to travel km, where",
+    "section_path": "5.3 The Divergence and Integral Tests",
+    "chapter": 5,
+    "page_number": 433,
+    "chunk_id": 68955,
+    "source_exercise_number": 188,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 66,
+    "problem_text": "[T] Evelyn has a perfect balancing scale, an unlimited number of weights, and one each of and so on weights. She wishes to weigh a meteorite of unspecified origin to arbitrary precision. Assuming the scale is big enough, can she do it? What does this have to do with infinite series?",
+    "section_path": "5.4 Comparison Tests",
+    "chapter": 5,
+    "page_number": 443,
+    "chunk_id": 69241,
+    "source_exercise_number": 244,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 67,
+    "problem_text": "In view of the previous exercise, it may be surprising that a subseries of the harmonic series in which about one in every five terms is deleted might converge. A depleted harmonic series is a series obtained from by removing any term if a given digit, say appears in the decimal expansion of Argue that this depleted harmonic series converges by answering the following questions. a. How many whole numbers have digits? b. How many whole numbers do not contain as one or more of their digits? c. What is the smallest number d. Explain why the deleted harmonic series is bounded by e. Show that converges.",
+    "section_path": "5.4 Comparison Tests",
+    "chapter": 5,
+    "page_number": 444,
+    "chunk_id": 69252,
+    "source_exercise_number": 247,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 68,
+    "problem_text": "Suppose that for all where is a fixed real number. For which values of is guaranteed to",
+    "section_path": "5.6 Ratio and Root Tests",
+    "chapter": 5,
+    "page_number": 468,
+    "chunk_id": 69899,
+    "source_exercise_number": 372,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 69,
+    "problem_text": "Given any sequence there is always some possibly very small, such that converges on",
+    "section_path": "6.1 Power Series and Functions",
+    "chapter": 6,
+    "page_number": 485,
+    "chunk_id": 70231,
+    "source_exercise_number": 3,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 70,
+    "problem_text": "If has radius of convergence and if for all n, then the radius of convergence of is greater than or equal to R.",
+    "section_path": "6.1 Power Series and Functions",
+    "chapter": 6,
+    "page_number": 485,
+    "chunk_id": 70235,
+    "source_exercise_number": 4,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 71,
+    "problem_text": "Suppose that converges at At which of the following points might the series diverge? Use the fact that if converges at x, then it converges at any point closer to c than x. a. b. c. d. e. f.",
+    "section_path": "6.1 Power Series and Functions",
+    "chapter": 6,
+    "page_number": 486,
+    "chunk_id": 70241,
+    "source_exercise_number": 5,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 72,
+    "problem_text": "Suppose that an annuity has a present value What interest rate r would allow for perpetual annual payouts of $50,000?",
+    "section_path": "6.2 Properties of Power Series",
+    "chapter": 6,
+    "page_number": 502,
+    "chunk_id": 70590,
+    "source_exercise_number": 77,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 73,
+    "problem_text": "Suppose that an annuity What interest rate r would allow for perpetual annual payouts of $100,000?",
+    "section_path": "6.2 Properties of Power Series",
+    "chapter": 6,
+    "page_number": 502,
+    "chunk_id": 70593,
+    "source_exercise_number": 78,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 74,
+    "problem_text": "[T] Recall that Assuming an exact value of estimate by evaluating partial sums of the power series expansion at What is the smallest number N such that approximates \u03c0 accurately to within 0.001? How many terms are needed for accuracy to within 0.00001?",
+    "section_path": "6.2 Properties of Power Series",
+    "chapter": 6,
+    "page_number": 504,
+    "chunk_id": 70677,
+    "source_exercise_number": 115,
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 75,
+    "problem_text": "A satellite dish is shaped like a paraboloid of revolution. The receiver is to be located at the focus. If the dish is 12 feet across at its opening and 4 feet deep at its center, where should the receiver be placed?",
+    "section_path": "7.5 Conic Sections",
+    "chapter": 7,
+    "page_number": 618,
+    "chunk_id": 72467,
+    "source_exercise_number": 313,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 76,
+    "problem_text": "Consider the satellite dish of the preceding problem. If the dish is 8 feet across at the opening and 2 feet deep, where should we place the receiver?",
+    "section_path": "7.5 Conic Sections",
+    "chapter": 7,
+    "page_number": 618,
+    "chunk_id": 72469,
+    "source_exercise_number": 314,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 77,
+    "problem_text": "A searchlight is shaped like a paraboloid of revolution. A light source is located 1 foot from the base along the axis of symmetry. If the opening of the searchlight is 3 feet across, find the depth.",
+    "section_path": "7.5 Conic Sections",
+    "chapter": 7,
+    "page_number": 618,
+    "chunk_id": 72471,
+    "source_exercise_number": 315,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 78,
+    "problem_text": "Whispering galleries are rooms designed with elliptical ceilings. A person standing at one focus can whisper and be heard by a person standing at the other focus because all the sound waves that reach the ceiling are reflected to the other person. If a whispering gallery has a length of 120 feet and the foci are located 30 feet from the center, find the height of the ceiling at the center.",
+    "section_path": "7.5 Conic Sections",
+    "chapter": 7,
+    "page_number": 618,
+    "chunk_id": 72473,
+    "source_exercise_number": 316,
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 79,
+    "problem_text": "A person is standing 8 feet from the nearest wall in a whispering gallery. If that person is at one focus and the other focus is 80 feet away, what is the length and the height at the center of the gallery?",
+    "section_path": "7.5 Conic Sections",
+    "chapter": 7,
+    "page_number": 618,
+    "chunk_id": 72475,
+    "source_exercise_number": 317,
+    "extraction_quality": "clean"
+  }
+]

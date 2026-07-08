@@ -123,6 +123,13 @@ Key service entry points:
 
 ### Authored problem/solution sets (WU-AAS)
 
+`apollo/provisioning/corpora/` holds assessment corpora for the
+reversed-provisioning direction (premade course concept list + question→concept
+matching instead of autonomous concept generation); `corpora/calc2/README.md`
+documents the 2026-07-07 Calculus 2 assessment (hand-authored 40-concept list,
+79 textbook-extracted + 60 original authored problems, blind gpt-5.1 matching
+results: ~97% on well-formed text).
+
 WU-AAS is a paired-document provisioning path under
 `apollo/provisioning/authored_sets/`. It indexes a teacher's problem PDF and its
 paired solution PDF as hidden `AITADocument` rows, scrapes candidate problems

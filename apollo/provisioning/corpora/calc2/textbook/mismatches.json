@@ -1,0 +1,489 @@
+[
+  {
+    "problem_id": 2,
+    "status": "UNSCORED_NO_MATCH",
+    "section": "1.1 Approximating Areas",
+    "expected": [
+      "riemann-sums-area-approximation"
+    ],
+    "predicted_primary": "NO_MATCH",
+    "predicted_secondary": [],
+    "confidence": 0.94,
+    "rationale": "This is an application of cumulative changes over time using a table (essentially arithmetic/sequences), not an integral, series, differential equation, or any other listed Calculus 2 topic.",
+    "problem_text": "The following table gives the approximate increase in dollars in the average price of a gallon of gas per decade since 1950. If the average price of a gallon of gas in 2010 was $2.60, what was the average price of a gallon of gas in 1950? Starting Year 10-Year Change 0.03 0.05 0.86 \u22120.03 0.29 1.12 Table 1.4 Approximate 10-Year Gas Price Increases, 1950\u20132000 Source: http://epb.lbl.gov/ homepages/Rick_Diamond/ docs/lbnl55011-trends.pdf.",
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 5,
+    "status": "UNSCORED_NO_MATCH",
+    "section": "1.3 The Fundamental Theorem of Calculus",
+    "expected": [
+      "fundamental-theorem-of-calculus"
+    ],
+    "predicted_primary": "NO_MATCH",
+    "predicted_secondary": [],
+    "confidence": 0.97,
+    "rationale": "This is a conceptual Mean Value Theorem/derivatives question from Calculus 1, and none of the provided Calc 2 integral/series/parametric/etc. concepts match it.",
+    "problem_text": "Two mountain climbers start their climb at base camp, taking two different routes, one steeper than the other, and arrive at the peak at exactly the same time. Is it necessarily true that, at some point, both climbers increased in altitude at the same rate?",
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 6,
+    "status": "MISMATCH",
+    "section": "1.3 The Fundamental Theorem of Calculus",
+    "expected": [
+      "fundamental-theorem-of-calculus"
+    ],
+    "predicted_primary": "average-value-of-function",
+    "predicted_secondary": [],
+    "confidence": 0.63,
+    "rationale": "The problem relies on using the distance traveled over the time stamp interval to deduce an average speed exceeding the limit, which conceptually matches computing an average value of a function over an interval.",
+    "problem_text": "To get on a certain toll road a driver has to take a card that lists the mile entrance point. The card also has a timestamp. When going to pay the toll at the exit, the driver is surprised to receive a speeding ticket along with the toll. Explain how this can happen.",
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 7,
+    "status": "MISMATCH",
+    "section": "1.3 The Fundamental Theorem of Calculus",
+    "expected": [
+      "fundamental-theorem-of-calculus"
+    ],
+    "predicted_primary": "conic-sections",
+    "predicted_secondary": [
+      "physical-applications"
+    ],
+    "confidence": 0.7,
+    "rationale": "The problem concerns planetary motion in elliptical orbits, which are conic sections, and conceptually applies Kepler\u2019s area law as a physical application of calculus/geometry to orbital mechanics.",
+    "problem_text": "Kepler\u2019s first law states that the planets move in elliptical orbits with the Sun at one focus. The closest point of a planetary orbit to the Sun is called the perihelion (for Earth, it currently occurs around January 3) and the farthest point is called the aphelion (for Earth, it currently occurs around July 4). Kepler\u2019s second law states that planets sweep out equal areas of their elliptical orbits in equal times. Thus, the two arcs indicated in the following figure are swept out in equal times. At what time of year is Earth moving fastest in its orbit? When is it moving slowest?",
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 8,
+    "status": "MISMATCH",
+    "section": "1.3 The Fundamental Theorem of Calculus",
+    "expected": [
+      "fundamental-theorem-of-calculus"
+    ],
+    "predicted_primary": "conic-sections",
+    "predicted_secondary": [],
+    "confidence": 0.83,
+    "rationale": "The problem uses the geometric properties of Earth\u2019s elliptical orbit and its major axis, directly invoking the definition and structure of an ellipse, which falls under conic sections rather than integral calculus topics.",
+    "problem_text": "As implied earlier, according to Kepler\u2019s laws, Earth\u2019s orbit is an ellipse with the Sun at one focus. The perihelion for Earth\u2019s orbit around the Sun is 147,098,290 km and the aphelion is 152,098,232 km. a. By placing the major axis along the x-axis, find the average distance from Earth to the Sun. b. The classic definition of an astronomical unit (AU) is the distance from Earth to the Sun, and its value was computed as the average of the perihelion and aphelion distances. Is this definition justified?",
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 11,
+    "status": "UNSCORED_NO_MATCH",
+    "section": "1.4 Integration Formulas and the Net Change Theorem",
+    "expected": [
+      "antiderivatives-basic-integration"
+    ],
+    "predicted_primary": "NO_MATCH",
+    "predicted_secondary": [],
+    "confidence": 0.86,
+    "rationale": "This is a related-rates/geometry problem involving the area and radius of a circle, not an integration, series, differential equations, or polar/parametric topic from the provided Calculus 2 concept list.",
+    "problem_text": "The area of a circular shape is growing at a constant rate. If the area increases from 4\u03c0 units to 9\u03c0 units between times and find the net change in the radius during that time.",
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 12,
+    "status": "UNSCORED_NO_MATCH",
+    "section": "1.4 Integration Formulas and the Net Change Theorem",
+    "expected": [
+      "antiderivatives-basic-integration"
+    ],
+    "predicted_primary": "NO_MATCH",
+    "predicted_secondary": [],
+    "confidence": 0.9,
+    "rationale": "This is a related-rates/geometry problem about volume and radius of a sphere, which does not align with any of the listed integral, series, or differential equations topics specific to Calculus 2.",
+    "problem_text": "A spherical balloon is being inflated at a constant rate. If the volume of the balloon changes from 36\u03c0 in.3 to 288\u03c0 in.3 between time and seconds, find the net change in the radius of the balloon during that time.",
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 13,
+    "status": "MISMATCH",
+    "section": "1.4 Integration Formulas and the Net Change Theorem",
+    "expected": [
+      "antiderivatives-basic-integration"
+    ],
+    "predicted_primary": "physical-applications",
+    "predicted_secondary": [],
+    "confidence": 0.92,
+    "rationale": "This is a kinematics word problem using constant deceleration to find stopping distance, an application of integration (or related formulas) to a physical context.",
+    "problem_text": "For a given motor vehicle, the maximum achievable deceleration from braking is approximately 7 m/sec2 on dry concrete. On wet asphalt, it is approximately 2.5 m/sec2. Given that 1 mph corresponds to 0.447 m/ sec, find the total distance that a car travels in meters on dry concrete after the brakes are applied until it comes to a complete stop if the initial velocity is 67 mph (30 m/ sec) or if the initial braking velocity is 56 mph (25 m/sec). Find the corresponding distances if the surface is slippery wet asphalt.",
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 14,
+    "status": "MISMATCH",
+    "section": "1.5 Substitution",
+    "expected": [
+      "u-substitution"
+    ],
+    "predicted_primary": "trigonometric-substitution",
+    "predicted_secondary": [
+      "definite-integral"
+    ],
+    "confidence": 0.94,
+    "rationale": "The problem rewrites the area integral of a semicircle via a specific trig substitution, which is the hallmark of trigonometric substitution applied to a definite integral representing area.",
+    "problem_text": "The area of a semicircle of radius 1 can be expressed as Use the substitution to express the area of a semicircle as the integral of a trigonometric function. You do not need to compute the integral.",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 28,
+    "status": "MISMATCH",
+    "section": "2.6 Moments and Centers of Mass",
+    "expected": [
+      "physical-applications"
+    ],
+    "predicted_primary": "volume-by-slicing",
+    "predicted_secondary": [
+      "cylindrical-shells"
+    ],
+    "confidence": 0.88,
+    "rationale": "The problem concerns finding the volume of a cone generated by rotating a triangle around an axis (a solid of revolution), which is typically handled by disk/washer or shell methods under volumes by slicing.",
+    "problem_text": "A general cone created by rotating a triangle with vertices and around the -axis. Does your answer agree with the volume of a cone?",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 29,
+    "status": "MISMATCH",
+    "section": "2.6 Moments and Centers of Mass",
+    "expected": [
+      "physical-applications"
+    ],
+    "predicted_primary": "volume-by-slicing",
+    "predicted_secondary": [
+      "definite-integral"
+    ],
+    "confidence": 0.93,
+    "rationale": "The problem asks for the volume of a solid of revolution (a sphere from rotating a semicircle), which is computed using disk/washer slicing via a definite integral, and then compared to the known volume formula for a sphere.",
+    "problem_text": "A sphere created by rotating a semicircle with radius around the -axis. Does your answer agree with the volume of a sphere?",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 34,
+    "status": "MISMATCH",
+    "section": "3.1 Integration by Parts",
+    "expected": [
+      "integration-by-parts"
+    ],
+    "predicted_primary": "fundamental-theorem-of-calculus",
+    "predicted_secondary": [
+      "physical-applications"
+    ],
+    "confidence": 0.89,
+    "rationale": "The problem asks for distance traveled from a velocity function over a time interval, which is computed via a definite integral using the Fundamental Theorem of Calculus in a physical motion context.",
+    "problem_text": "A particle moving along a straight line has a velocity of after t sec. How far does it travel in the first 2 sec? (Assume the units are in feet and express the answer in exact form.)",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 41,
+    "status": "UNSCORED_NO_MATCH",
+    "section": "3.7 Improper Integrals",
+    "expected": [
+      "improper-integrals"
+    ],
+    "predicted_primary": "NO_MATCH",
+    "predicted_secondary": [],
+    "confidence": 0.05,
+    "rationale": "The prompt does not include the actual expression or any mathematical details, so it is impossible to determine which calculus concept is being exercised.",
+    "problem_text": "Evaluate (Be careful!) (Express your answer using three decimal places.)",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 43,
+    "status": "PARTIAL",
+    "section": "4.1 Basics of Differential Equations",
+    "expected": [
+      "differential-equations-basics"
+    ],
+    "predicted_primary": "separable-equations",
+    "predicted_secondary": [
+      "differential-equations-basics"
+    ],
+    "confidence": 0.86,
+    "rationale": "Modeling vertical motion under gravity leads to a first-order separable ODE dv/dt = -g whose solution gives the velocity function.",
+    "problem_text": "Find the general solution to describe the velocity of a ball of mass that is thrown upward at a rate ft/sec.",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 46,
+    "status": "MISMATCH",
+    "section": "4.3 Separable Equations",
+    "expected": [
+      "separable-equations"
+    ],
+    "predicted_primary": "exponential-growth-decay",
+    "predicted_secondary": [],
+    "confidence": 0.96,
+    "rationale": "The problem concerns drug concentration decaying over time with a given half-life and asks for the remaining fraction after some time, which is a standard exponential decay/half-life application.",
+    "problem_text": "Most drugs in the bloodstream decay according to the equation where is the concentration of the drug in the bloodstream. If the half-life of a drug is hours, what fraction of the initial dose remains after hours?",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 50,
+    "status": "PARTIAL",
+    "section": "4.3 Separable Equations",
+    "expected": [
+      "separable-equations"
+    ],
+    "predicted_primary": "exponential-growth-decay",
+    "predicted_secondary": [
+      "separable-equations"
+    ],
+    "confidence": 0.83,
+    "rationale": "The problem concerns Newton\u2019s law of cooling and temperature change over time, modeled by an exponential decay differential equation solved via separation of variables.",
+    "problem_text": "You have a cup of coffee at temperature which you let cool minutes before you pour in the same amount of milk at as in the preceding problem. How does the temperature compare to the previous cup after minutes?",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 55,
+    "status": "MISMATCH",
+    "section": "4.5 First-order Linear Equations",
+    "expected": [
+      "first-order-linear-ode"
+    ],
+    "predicted_primary": "separable-equations",
+    "predicted_secondary": [
+      "physical-applications"
+    ],
+    "confidence": 0.86,
+    "rationale": "The problem asks to formulate and solve a first-order differential equation modeling velocity with drag proportional to velocity, which is a classic separable differential equation with a physical context.",
+    "problem_text": "A falling object of mass can reach terminal velocity when the drag force is proportional to its velocity, with proportionality constant Set up the differential equation and solve for the velocity given an initial velocity of",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 56,
+    "status": "MISMATCH",
+    "section": "4.5 First-order Linear Equations",
+    "expected": [
+      "first-order-linear-ode"
+    ],
+    "predicted_primary": "separable-equations",
+    "predicted_secondary": [
+      "differential-equations-basics"
+    ],
+    "confidence": 0.96,
+    "rationale": "The problem asks to set up and solve a first-order DE modeling velocity with drag proportional to v\u00b2, which leads to a separable differential equation in v and t.",
+    "problem_text": "A more accurate way to describe terminal velocity is that the drag force is proportional to the square of velocity, with a proportionality constant Set up the differential equation and solve for the velocity.",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 57,
+    "status": "UNSCORED_NO_MATCH",
+    "section": "4.5 First-order Linear Equations",
+    "expected": [
+      "first-order-linear-ode"
+    ],
+    "predicted_primary": "NO_MATCH",
+    "predicted_secondary": [],
+    "confidence": 0.1,
+    "rationale": "The problem statement is incomplete and does not specify any mathematical expression, integral, series, or differential equation to link clearly to one of the listed concepts.",
+    "problem_text": "Solve with the initial condition As approaches what happens to your formula?",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 59,
+    "status": "MISMATCH",
+    "section": "5.1 Sequences",
+    "expected": [
+      "sequences"
+    ],
+    "predicted_primary": "exponential-growth-decay",
+    "predicted_secondary": [],
+    "confidence": 0.83,
+    "rationale": "The problem models a fish population that grows proportionally but is reduced by losses over time and asks for the population after a given time, which is a standard exponential growth/decay application.",
+    "problem_text": "[T] A lake initially contains fish. Suppose that in the absence of predators or other causes of removal, the fish population increases by each month. However, factoring in all causes, fish are lost each month. a. Explain why the fish population after months is modeled by with b. How many fish will be in the pond after one year?",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 60,
+    "status": "MISMATCH",
+    "section": "5.1 Sequences",
+    "expected": [
+      "sequences"
+    ],
+    "predicted_primary": "exponential-growth-decay",
+    "predicted_secondary": [],
+    "confidence": 0.96,
+    "rationale": "This is a compound interest / loan repayment problem modeled with exponential growth/decay formulas involving periodic payments.",
+    "problem_text": "[T] A student takes out a college loan of at an annual percentage rate of compounded monthly. a. If the student makes payments of per month, how much does the student owe after months? b. After how many months will the loan be paid off?",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 61,
+    "status": "UNSCORED_NO_MATCH",
+    "section": "5.2 Infinite Series",
+    "expected": [
+      "infinite-series-basics"
+    ],
+    "predicted_primary": "NO_MATCH",
+    "predicted_secondary": [],
+    "confidence": 0.99,
+    "rationale": "This is a discrete probability / geometric distribution problem and does not involve integrals, series, or any other listed Calculus II topics.",
+    "problem_text": "[T] Find the probability that a fair coin is flipped a multiple of three times before coming up heads.",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 62,
+    "status": "MISMATCH",
+    "section": "5.2 Infinite Series",
+    "expected": [
+      "infinite-series-basics"
+    ],
+    "predicted_primary": "sequences",
+    "predicted_secondary": [],
+    "confidence": 0.76,
+    "rationale": "The problem models periodic deposits with compound interest, leading to a recursively or explicitly defined sequence (and likely a geometric pattern), fitting the sequences concept best among the listed options.",
+    "problem_text": "[T] A person deposits at the beginning of each quarter into a bank account that earns annual interest compounded quarterly (four times a year). a. Show that the interest accumulated after quarters is b. Find the first eight terms of the sequence. c. How much interest has accumulated after years?",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 63,
+    "status": "MISMATCH",
+    "section": "5.2 Infinite Series",
+    "expected": [
+      "infinite-series-basics"
+    ],
+    "predicted_primary": "exponential-growth-decay",
+    "predicted_secondary": [],
+    "confidence": 0.86,
+    "rationale": "The problem models a drug level that decreases by a constant multiplicative factor over equal time intervals, which is an exponential decay situation asking for safe/effective dosing over time.",
+    "problem_text": "[T] A certain drug is effective for an average patient only if there is at least mg per kg in the patient\u2019s system, while it is safe only if there is at most mg per kg in an average patient\u2019s system. Suppose that the amount in a patient\u2019s system diminishes by a multiplicative factor of each hour after a dose is administered. Find the maximum interval of hours between doses, and corresponding dose range (in mg/kg) for this that will enable use of the drug to be both safe and effective in the long term.",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 64,
+    "status": "MISMATCH",
+    "section": "5.3 The Divergence and Integral Tests",
+    "expected": [
+      "divergence-and-integral-tests"
+    ],
+    "predicted_primary": "infinite-series-basics",
+    "predicted_secondary": [
+      "sequences"
+    ],
+    "confidence": 0.6,
+    "rationale": "The coupon collector\u2019s expected value formula involves harmonic numbers, which are partial sums of the harmonic series and naturally tied to series and their partial sums, with harmonic numbers also forming a sequence.",
+    "problem_text": "[T] Complete sampling with replacement, sometimes called the coupon collector\u2019s problem, is phrased as follows: Suppose you have unique items in a bin. At each step, an item is chosen at random, identified, and put back in the bin. The problem asks what is the expected number of steps that it takes to draw each unique item at least once. It turns out that . Find for",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 65,
+    "status": "UNSCORED_NO_MATCH",
+    "section": "5.3 The Divergence and Integral Tests",
+    "expected": [
+      "divergence-and-integral-tests"
+    ],
+    "predicted_primary": "NO_MATCH",
+    "predicted_secondary": [],
+    "confidence": 0.97,
+    "rationale": "The problem is a fuel-transfer / optimization puzzle with no evident connection to any of the listed Calculus 2 integration, series, or differential equations concepts.",
+    "problem_text": "Suppose a scooter can travel km on a full tank of fuel. Assuming that fuel can be transferred from one scooter to another but can only be carried in the tank, present a procedure that will enable one of the scooters to travel km, where",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 66,
+    "status": "MISMATCH",
+    "section": "5.4 Comparison Tests",
+    "expected": [
+      "comparison-tests"
+    ],
+    "predicted_primary": "infinite-series-basics",
+    "predicted_secondary": [
+      "sequences"
+    ],
+    "confidence": 0.79,
+    "rationale": "The problem is about approximating a weight to arbitrary precision using successively smaller weights, which conceptually relies on sums of infinitely many terms approaching a limit (infinite series) and implicitly on the convergence of the associated sequence of partial sums.",
+    "problem_text": "[T] Evelyn has a perfect balancing scale, an unlimited number of weights, and one each of and so on weights. She wishes to weigh a meteorite of unspecified origin to arbitrary precision. Assuming the scale is big enough, can she do it? What does this have to do with infinite series?",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 68,
+    "status": "MISMATCH",
+    "section": "5.6 Ratio and Root Tests",
+    "expected": [
+      "ratio-root-tests"
+    ],
+    "predicted_primary": "sequences",
+    "predicted_secondary": [],
+    "confidence": 0.55,
+    "rationale": "The incomplete problem statement appears to involve a parameter for which some expression is guaranteed to converge, which most closely aligns with determining convergence of sequences among the listed concepts.",
+    "problem_text": "Suppose that for all where is a fixed real number. For which values of is guaranteed to",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 69,
+    "status": "MISMATCH",
+    "section": "6.1 Power Series and Functions",
+    "expected": [
+      "power-series-convergence"
+    ],
+    "predicted_primary": "sequences",
+    "predicted_secondary": [],
+    "confidence": 0.92,
+    "rationale": "The problem is about convergence properties of a sequence, which directly falls under limits and behavior of sequences.",
+    "problem_text": "Given any sequence there is always some possibly very small, such that converges on",
+    "extraction_quality": "clean"
+  },
+  {
+    "problem_id": 72,
+    "status": "MISMATCH",
+    "section": "6.2 Properties of Power Series",
+    "expected": [
+      "power-series-operations"
+    ],
+    "predicted_primary": "infinite-series-basics",
+    "predicted_secondary": [],
+    "confidence": 0.77,
+    "rationale": "Determining the interest rate that allows perpetual fixed payouts is modeled as an infinite geometric series for the present value of the annuity, fitting the geometric-series portion of infinite series basics.",
+    "problem_text": "Suppose that an annuity has a present value What interest rate r would allow for perpetual annual payouts of $50,000?",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 73,
+    "status": "MISMATCH",
+    "section": "6.2 Properties of Power Series",
+    "expected": [
+      "power-series-operations"
+    ],
+    "predicted_primary": "exponential-growth-decay",
+    "predicted_secondary": [],
+    "confidence": 0.81,
+    "rationale": "The problem concerns finding an interest rate that supports perpetual fixed payouts from an annuity, which is a compound interest / exponential growth-decay style financial application of calculus.",
+    "problem_text": "Suppose that an annuity What interest rate r would allow for perpetual annual payouts of $100,000?",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 74,
+    "status": "MISMATCH",
+    "section": "6.2 Properties of Power Series",
+    "expected": [
+      "power-series-operations"
+    ],
+    "predicted_primary": "taylor-series-applications",
+    "predicted_secondary": [
+      "taylor-maclaurin-series",
+      "infinite-series-basics"
+    ],
+    "confidence": 0.86,
+    "rationale": "The problem asks for how many terms of a power (Taylor) series are needed to approximate \u03c0 to a specified accuracy, which is an application of Taylor/Maclaurin series and their remainders.",
+    "problem_text": "[T] Recall that Assuming an exact value of estimate by evaluating partial sums of the power series expansion at What is the smallest number N such that approximates \u03c0 accurately to within 0.001? How many terms are needed for accuracy to within 0.00001?",
+    "extraction_quality": "degraded"
+  },
+  {
+    "problem_id": 77,
+    "status": "UNSCORED_NO_MATCH",
+    "section": "7.5 Conic Sections",
+    "expected": [
+      "conic-sections"
+    ],
+    "predicted_primary": "NO_MATCH",
+    "predicted_secondary": [],
+    "confidence": 0.98,
+    "rationale": "This is a geometry/conic sections application about a paraboloid\u2019s dimensions and does not involve any of the listed Calculus 2 integration, series, or differential equation topics.",
+    "problem_text": "A searchlight is shaped like a paraboloid of revolution. A light source is located 1 foot from the base along the axis of symmetry. If the opening of the searchlight is 3 feet across, find the depth.",
+    "extraction_quality": "clean"
+  }
+]
