@@ -181,6 +181,49 @@ async def test_ranks_multiple_topics_and_packs_them(monkeypatch):
     assert written_keys == {"cond.a", "cond.b", "eq.c"}
 
 
+async def test_equation_node_uncertainty_floor_fires_via_backfilled_node_type(monkeypatch):
+    """Fix-wave MAJOR: `v2_gray_candidates` cannot recover `node_type` from
+    the snapshot alone (it always builds candidates with `node_type=""`),
+    so `select` must backfill it from the closed candidate set BEFORE
+    ranking -- otherwise the equation-node uncertainty floor
+    (`p_equation_floor`, §4.2) never actually fires for a real equation-cap
+    node in the wired pipeline (only in unit tests that construct
+    `VoICandidate(node_type=...)` directly).
+
+    credit=0.65 sits close enough to t_mid (0.70, default) that plain band
+    uncertainty (~0.36) is well under the 0.7 equation floor -- a clear,
+    non-degenerate distinguisher.
+    """
+    _patch_store(monkeypatch)
+    captured: dict = {}
+    monkeypatch.setattr(
+        v2_selection,
+        "emit_trace",
+        lambda trace, *, attempt_id: captured.setdefault("trace", trace),
+    )
+
+    snapshot = _snapshot({"eq.a": 0.65}, gray=frozenset({"eq.a"}))
+    candidates = (_candidate("eq.a", "equation", "F = ma"),)
+
+    await v2_selection.select(
+        snapshot,
+        candidates,
+        db=object(),
+        attempt_id=1,
+        session_id=1,
+        user_id="u",
+        search_space_id=1,
+        concept_id=2,
+        asked_turn=3,
+    )
+
+    trace = captured["trace"]
+    assert len(trace.ranked) == 1
+    entry = trace.ranked[0]
+    assert entry.canonical_key == "eq.a"
+    assert entry.uncertainty == 0.7  # p_equation_floor, not the ~0.36 band value
+
+
 async def test_candidate_missing_from_closed_set_is_skipped_defensively(monkeypatch):
     """A pooled canonical_key with no matching Candidate is skipped rather
     than crashing selection (defensive; §8.3 fail-open spirit)."""

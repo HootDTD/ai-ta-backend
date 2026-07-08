@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -355,8 +355,25 @@ async def select(
         _emit(pool_all, [], [], dedup_skipped)
         return []
 
+    # `v2_gray_candidates` cannot recover `node_type` from the snapshot alone
+    # (it only carries `node_credits`/`edge_scores`, see its docstring) so
+    # every pooled candidate arrives with `node_type=""`. `candidate_by_key`
+    # (this attempt's closed candidate set) DOES have the real node types --
+    # backfill them here, before ranking, so `rank_by_voi`'s equation-node
+    # uncertainty floor (§4.2 `p_equation_floor`) can actually match
+    # `node_type in _EQUATION_NODE_TYPES` for real equation-cap nodes.
+    # Without this the floor never fires in the wired pipeline (it only
+    # fired in unit tests that construct `VoICandidate(node_type=...)`
+    # directly).
+    ranking_pool = [
+        replace(c, node_type=candidate_by_key[c.canonical_key].node_type)
+        if c.canonical_key in candidate_by_key
+        else c
+        for c in pool
+    ]
+
     weights = load_weights()
-    ranked = rank_by_voi(pool, snapshot, weights, params)
+    ranked = rank_by_voi(ranking_pool, snapshot, weights, params)
 
     remaining_budget = max(0, params.max_questions_per_attempt - len(asked_keys))
     packed = pack_questions(
