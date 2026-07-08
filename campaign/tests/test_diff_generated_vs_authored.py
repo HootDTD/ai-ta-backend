@@ -43,9 +43,10 @@ def test_align_matches_by_text_and_uses_each_corpus_entry_once() -> None:
         _gen("Totally unrelated statistics question about medians.", None),
     ]
     aligned = align_problems(generated, _CORPUS)
-    assert aligned[0][1]["problem_id"] == "ibp-01"
-    assert aligned[1][1]["problem_id"] == "usub-01"
-    assert aligned[2][1] is None
+    first, second, third = aligned[0][1], aligned[1][1], aligned[2][1]
+    assert first is not None and first["problem_id"] == "ibp-01"
+    assert second is not None and second["problem_id"] == "usub-01"
+    assert third is None
 
 
 def test_score_concept_match_normalizes_slugs_and_counts_misses() -> None:
