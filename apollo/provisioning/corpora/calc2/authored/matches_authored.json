@@ -1,0 +1,694 @@
+{
+  "pass1_low": [
+    {
+      "problem_id": "pf-03",
+      "primary": "partial-fractions",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.98,
+      "rationale": "Integrating 1/(x^2\u22124) requires decomposing the rational function into partial fractions and then applying basic antiderivative rules.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "rr-06",
+      "primary": "ratio-root-tests",
+      "secondary": [
+        "comparison-tests"
+      ],
+      "confidence": 0.95,
+      "rationale": "The problem explicitly involves applying the Ratio Test (and finding it inconclusive) and then testing convergence by another method, most naturally a comparison-type test for a p-series.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "usub-06",
+      "primary": "u-substitution",
+      "secondary": [],
+      "confidence": 0.96,
+      "rationale": "The integral is most directly evaluated using a change of variables u = 9 \u2212 x\u00b2, which is a straightforward application of u-substitution.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "cmp-02",
+      "primary": "comparison-tests",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 1.0,
+      "rationale": "The problem explicitly asks to use a comparison test to determine convergence of an infinite series, which directly targets the comparison-tests concept, with basic series convergence as background.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "usub-03",
+      "primary": "u-substitution",
+      "secondary": [
+        "integrals-exponential-logarithmic"
+      ],
+      "confidence": 0.98,
+      "rationale": "The integral is evaluated by letting u = sin x so that du = cos x dx, a straightforward u-substitution involving an exponential function.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "trigsub-05",
+      "primary": "trigonometric-substitution",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.9,
+      "rationale": "The integral of sqrt(x^2 + 1) is a standard case for trigonometric substitution (or hyperbolic), fitting the sqrt(a^2 + x^2) pattern, with basic antiderivative rules also used in the computation.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "trigsub-06",
+      "primary": "trigonometric-substitution",
+      "secondary": [
+        "integrals-inverse-trig"
+      ],
+      "confidence": 0.98,
+      "rationale": "The integrand has the form 1/\u221a(x\u00b2\u2212a\u00b2), which is a classic case for trigonometric substitution and typically leads to an inverse trig antiderivative (arcsec or arccos form).",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "ibp-04",
+      "primary": "integration-by-parts",
+      "secondary": [
+        "integrals-exponential-logarithmic"
+      ],
+      "confidence": 0.96,
+      "rationale": "The integral of x^2 e^x requires repeated integration by parts, involving an exponential function.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "trigsub-01",
+      "primary": "integrals-inverse-trig",
+      "secondary": [
+        "trigonometric-substitution"
+      ],
+      "confidence": 0.97,
+      "rationale": "The integral matches the standard arcsin inverse trig form \u222bdx/\u221a(a\u00b2\u2212x\u00b2), with trigonometric substitution as an alternative method.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "cmp-06",
+      "primary": "comparison-tests",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 0.98,
+      "rationale": "The problem explicitly asks to use a comparison test to determine convergence of a series, which is the core of comparison tests for series.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "pf-06",
+      "primary": "partial-fractions",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.98,
+      "rationale": "The integrand is a rational function requiring decomposition into partial fractions before integrating term-by-term.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "trigint-04",
+      "primary": "trigonometric-integrals",
+      "secondary": [
+        "u-substitution"
+      ],
+      "confidence": 0.96,
+      "rationale": "The integrand is a product of powers of tan and sec, a standard trigonometric integral type, and it is naturally solved via a substitution like u = tan x or u = sec x.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "trigsub-02",
+      "primary": "trigonometric-substitution",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.96,
+      "rationale": "The integral of sqrt(9 - x^2) requires a trigonometric substitution of the form x = 3sin\u03b8, though it also involves basic antiderivative skills.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "usub-04",
+      "primary": "u-substitution",
+      "secondary": [
+        "definite-integral"
+      ],
+      "confidence": 0.98,
+      "rationale": "The integral is evaluated most naturally via the substitution u = tan(x), applied in a definite integral context.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "ibp-05",
+      "primary": "integration-by-parts",
+      "secondary": [
+        "integrals-exponential-logarithmic",
+        "trigonometric-integrals"
+      ],
+      "confidence": 0.98,
+      "rationale": "The integral of e^x sin x is a standard problem requiring repeated integration by parts, involving both exponential and trigonometric functions.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "ibp-06",
+      "primary": "integration-by-parts",
+      "secondary": [
+        "fundamental-theorem-of-calculus"
+      ],
+      "confidence": 0.96,
+      "rationale": "Evaluating \u222b\u2080\u00b9 arctan(x) dx is a standard application of integration by parts for a definite integral, with FTC used only as the evaluation step.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "pf-02",
+      "primary": "partial-fractions",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.99,
+      "rationale": "The integral of a rational function with factorable linear denominator is a standard application of partial fraction decomposition, along with basic antiderivative rules.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "improp-02",
+      "primary": "improper-integrals",
+      "secondary": [
+        "definite-integral"
+      ],
+      "confidence": 0.98,
+      "rationale": "The problem asks about convergence of an integral over an infinite interval, which is the core of improper integrals, and it also involves interpreting a definite integral.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "rr-04",
+      "primary": "ratio-root-tests",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 0.99,
+      "rationale": "The problem explicitly asks to use the Root Test to determine convergence of an infinite series, which falls under Ratio & Root Tests with basic series concepts as supporting material.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "numint-06",
+      "primary": "numerical-integration",
+      "secondary": [
+        "definite-integral"
+      ],
+      "confidence": 0.98,
+      "rationale": "The problem explicitly uses the trapezoidal rule and its error bound for a definite integral to determine the required number of subintervals, which is a standard numerical integration topic.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "improp-05",
+      "primary": "improper-integrals",
+      "secondary": [
+        "integrals-exponential-logarithmic",
+        "definite-integral"
+      ],
+      "confidence": 0.96,
+      "rationale": "The problem asks about convergence and evaluation of an integral with an infinite upper limit, which is an improper integral involving an exponential function and a definite integral evaluation.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "alt-06",
+      "primary": "alternating-series",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 0.97,
+      "rationale": "The problem asks to classify an alternating series as absolutely convergent, conditionally convergent, or divergent, directly invoking the alternating series test and related concepts about series convergence.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "alt-03",
+      "primary": "alternating-series",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 0.99,
+      "rationale": "The problem involves determining whether an alternating series converges absolutely or conditionally, directly invoking the alternating series test and the notions of absolute vs conditional convergence.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "trigint-01",
+      "primary": "trigonometric-integrals",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.96,
+      "rationale": "The integral of sin^2(x) is a standard trigonometric integral often solved using trig identities and basic antiderivative rules.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "numint-05",
+      "primary": "numerical-integration",
+      "secondary": [
+        "definite-integral"
+      ],
+      "confidence": 0.98,
+      "rationale": "The problem explicitly asks to use Simpson\u2019s Rule with a given n to approximate a definite integral, which is a standard numerical integration task, with the definite integral concept only in the background.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "cmp-04",
+      "primary": "comparison-tests",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 0.96,
+      "rationale": "Testing convergence of a positive-term rational series like (n+2)/(n^3+n) is typically done via direct or limit comparison with a p-series such as 1/n^2, which falls under comparison tests.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "alt-05",
+      "primary": "alternating-series",
+      "secondary": [],
+      "confidence": 1.0,
+      "rationale": "The problem explicitly involves an alternating series and uses the alternating series remainder bound to control the approximation error.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "numint-04",
+      "primary": "numerical-integration",
+      "secondary": [],
+      "confidence": 0.99,
+      "rationale": "The problem explicitly asks to use the Trapezoidal Rule with a specified n to approximate a definite integral, which is a standard numerical integration task.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "rr-05",
+      "primary": "ratio-root-tests",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 0.98,
+      "rationale": "The problem explicitly asks to use the Ratio Test on an infinite series, which falls directly under ratio/root tests, with basic infinite series concepts as a minor component.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "trigsub-04",
+      "primary": "trigonometric-substitution",
+      "secondary": [
+        "u-substitution"
+      ],
+      "confidence": 0.93,
+      "rationale": "The integrand has the form x^2/\u221a(a^2\u2212x^2), which is a standard case for trigonometric substitution, and one might also use an auxiliary substitution in the process.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "numint-03",
+      "primary": "numerical-integration",
+      "secondary": [],
+      "confidence": 0.99,
+      "rationale": "The problem explicitly asks to use Simpson's Rule to approximate a definite integral, which is a standard topic in numerical integration.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "improp-03",
+      "primary": "improper-integrals",
+      "secondary": [
+        "definite-integral"
+      ],
+      "confidence": 1.0,
+      "rationale": "The problem asks about convergence and evaluation of a definite integral with an infinite discontinuity at the lower limit, which is the hallmark of improper integrals.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "cmp-03",
+      "primary": "comparison-tests",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 0.98,
+      "rationale": "The problem explicitly asks to use a comparison test to determine convergence of an infinite series, directly targeting comparison tests with basic series knowledge as background.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "trigint-06",
+      "primary": "trigonometric-integrals",
+      "secondary": [
+        "definite-integral"
+      ],
+      "confidence": 0.96,
+      "rationale": "The integral involves powers of sine and cosine, a standard trigonometric integral, evaluated over a specific interval as a definite integral.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "cmp-01",
+      "primary": "comparison-tests",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 0.97,
+      "rationale": "The problem explicitly asks to use a comparison test to determine convergence of an infinite series.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "usub-01",
+      "primary": "u-substitution",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 1.0,
+      "rationale": "The integral is evaluated by a straightforward substitution u = x^2 + 1, which is a classic u-substitution problem involving basic antiderivative rules.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "trigsub-03",
+      "primary": "trigonometric-substitution",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.95,
+      "rationale": "The integrand has the form (x^2 + a^2)^{-3/2}, which is a standard case for trigonometric substitution, and involves basic antiderivative skills as a secondary concept.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "improp-04",
+      "primary": "improper-integrals",
+      "secondary": [
+        "integrals-exponential-logarithmic",
+        "definite-integral"
+      ],
+      "confidence": 0.97,
+      "rationale": "The problem asks about convergence and evaluation of an integral with an infinite upper limit, fitting improper integrals, and specifically uses an exponential function in a definite integral context.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "alt-02",
+      "primary": "alternating-series",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 0.96,
+      "rationale": "The problem asks to classify an alternating series as absolutely or conditionally convergent, directly invoking the theory of alternating series and basic convergence concepts for series.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "trigint-03",
+      "primary": "trigonometric-integrals",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.97,
+      "rationale": "The integral involves powers of sine and cosine requiring trig identities, which is the hallmark of trigonometric integrals, with basic antiderivative skills as a supporting concept.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "pf-01",
+      "primary": "partial-fractions",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.98,
+      "rationale": "The integral of a rational function with factorable linear denominator is a standard application of partial fraction decomposition, using basic antiderivative rules after decomposing.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "pf-05",
+      "primary": "partial-fractions",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.97,
+      "rationale": "Integrating 1/(x^2+x) requires decomposing the rational function into partial fractions, using basic antiderivative rules afterward.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "improp-06",
+      "primary": "improper-integrals",
+      "secondary": [
+        "integrals-exponential-logarithmic",
+        "u-substitution"
+      ],
+      "confidence": 0.96,
+      "rationale": "The problem asks about convergence and evaluation of an improper integral with infinite upper limit and a logarithmic integrand, typically handled via u-substitution using ln x.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "trigint-02",
+      "primary": "trigonometric-integrals",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.98,
+      "rationale": "The integral of cos\u00b3(x)dx is a standard trigonometric integral using trig identities and basic integration rules.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "ibp-01",
+      "primary": "integrals-exponential-logarithmic",
+      "secondary": [
+        "u-substitution",
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.96,
+      "rationale": "The integral involves e^x multiplied by a polynomial, a standard exponential integral often approached with substitution or basic antiderivative rules.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "cmp-05",
+      "primary": "comparison-tests",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 0.94,
+      "rationale": "The problem asks about convergence of a specific positive term series where the natural solution is to compare sin\u00b2(n)/n\u00b2 to a p-series using comparison tests.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "pf-04",
+      "primary": "partial-fractions",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 1.0,
+      "rationale": "The integral of a rational function with linear and irreducible quadratic factors is a standard application of partial fraction decomposition, followed by basic antiderivative rules.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "rr-03",
+      "primary": "ratio-root-tests",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 1.0,
+      "rationale": "The problem explicitly asks to use the Ratio Test to determine convergence of an infinite series, directly targeting the ratio/root tests concept with basic series knowledge as supporting.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "numint-01",
+      "primary": "numerical-integration",
+      "secondary": [],
+      "confidence": 1.0,
+      "rationale": "The problem explicitly asks for an approximation of a definite integral using the Trapezoidal Rule, which is a standard numerical integration technique.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "usub-02",
+      "primary": "u-substitution",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.97,
+      "rationale": "The integral is directly evaluated by setting u = x^2 + 4, a standard u-substitution application, within the context of basic antiderivatives.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "alt-04",
+      "primary": "alternating-series",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 0.98,
+      "rationale": "The series is alternating and the question asks about absolute vs conditional convergence, which is directly tied to the alternating series test and related concepts.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "trigint-05",
+      "primary": "trigonometric-integrals",
+      "secondary": [
+        "integration-by-parts"
+      ],
+      "confidence": 0.94,
+      "rationale": "Evaluating \u222bsec\u00b3x dx is a standard example in the trigonometric integrals unit and typically requires integration by parts as a key step.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "numint-02",
+      "primary": "numerical-integration",
+      "secondary": [
+        "riemann-sums-area-approximation"
+      ],
+      "confidence": 0.98,
+      "rationale": "The problem explicitly asks to approximate a definite integral using the Midpoint Rule with a specified number of subintervals, which is a standard numerical integration technique closely related to Riemann sum area approximations.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "rr-02",
+      "primary": "ratio-root-tests",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 0.99,
+      "rationale": "The problem explicitly asks to use the Ratio Test on an infinite series, which falls under ratio/root tests with basic series knowledge as secondary.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "usub-05",
+      "primary": "u-substitution",
+      "secondary": [
+        "integrals-exponential-logarithmic"
+      ],
+      "confidence": 0.98,
+      "rationale": "The integral is most naturally solved by the substitution u = ln x, though it also specifically involves integrating a logarithmic function.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "improp-01",
+      "primary": "improper-integrals",
+      "secondary": [
+        "definite-integral"
+      ],
+      "confidence": 1.0,
+      "rationale": "The problem asks about convergence and evaluation of an integral with an infinite upper limit, which is the definition of an improper integral, using definite integral ideas.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "ibp-02",
+      "primary": "integration-by-parts",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 1.0,
+      "rationale": "The integral of x cos(x) requires the integration by parts formula, with basic antiderivative rules used as a supporting step.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "rr-01",
+      "primary": "ratio-root-tests",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 1.0,
+      "rationale": "The problem explicitly asks to use the Ratio Test on an infinite series, which squarely falls under ratio/root tests with basic series understanding as secondary.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "alt-01",
+      "primary": "alternating-series",
+      "secondary": [
+        "infinite-series-basics"
+      ],
+      "confidence": 0.98,
+      "rationale": "The problem asks to classify an alternating series as absolutely or conditionally convergent, which directly involves the alternating series test and its convergence notions, relying secondarily on knowledge of the harmonic series.",
+      "effort": "low",
+      "error": null
+    },
+    {
+      "problem_id": "ibp-03",
+      "primary": "integrals-exponential-logarithmic",
+      "secondary": [
+        "integration-by-parts"
+      ],
+      "confidence": 0.94,
+      "rationale": "The problem is to find \u222bln(x)dx, an antiderivative involving a logarithmic function, typically solved using integration by parts, so it mainly fits exponential/logarithmic integrals with integration by parts as a supporting technique.",
+      "effort": "low",
+      "error": null
+    }
+  ],
+  "pass2_medium_on_misses": [
+    {
+      "problem_id": "trigsub-01",
+      "primary": "integrals-inverse-trig",
+      "secondary": [
+        "antiderivatives-basic-integration"
+      ],
+      "confidence": 0.98,
+      "rationale": "The integral is of the standard form \u222b dx/\u221a(a\u00b2\u2212x\u00b2), which evaluates to an arcsin function, directly exercising integrals that result in inverse trig functions.",
+      "effort": "medium",
+      "error": null
+    },
+    {
+      "problem_id": "ibp-01",
+      "primary": "integration-by-parts",
+      "secondary": [
+        "integrals-exponential-logarithmic"
+      ],
+      "confidence": 0.99,
+      "rationale": "The integral \u222bx e^x dx is a standard product requiring integration by parts, with the exponential function involved as a secondary feature.",
+      "effort": "medium",
+      "error": null
+    },
+    {
+      "problem_id": "ibp-03",
+      "primary": "antiderivatives-basic-integration",
+      "secondary": [
+        "integration-by-parts"
+      ],
+      "confidence": 0.97,
+      "rationale": "The problem asks for an indefinite integral (an antiderivative), and the standard method for \u222bln x dx uses integration by parts.",
+      "effort": "medium",
+      "error": null
+    }
+  ]
+}
