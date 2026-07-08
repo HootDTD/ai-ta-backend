@@ -717,6 +717,15 @@ async def handle_chat(
                         session_id,
                     )
                     _nli_ctx = None
+                # H1: only reads (never creates/mutates) the holder's entry when the
+                # ranker is fully active -- mirrors the `_maybe_kick_incremental_v2`
+                # gate above so a gate-OFF turn leaves `_INCREMENTAL_HOLDER._entries`
+                # untouched (`latest_state` lazily creates an entry on first access).
+                _incr_state = (
+                    _INCREMENTAL_HOLDER.latest_state(current_attempt.id)
+                    if _v2_ranker_active()
+                    else None
+                )
                 clarification_hints = await run_clarification_detection(
                     db=db,
                     parsed_nodes=nodes,
@@ -732,6 +741,19 @@ async def handle_chat(
                     asked_turn=next_idx + 1,
                     nli_ctx=_nli_ctx,
                     snapshot=v2_snapshot,
+                    # Trace-only (spec §7, T13): _maybe_kick_incremental_v2 never
+                    # returns THIS turn's job result (fire-and-forget, §5.5), so a
+                    # non-None snapshot here is always a prior turn's completed
+                    # score. pair_count_total/seeded_keys mirror the process-local
+                    # holder's current state for the attempt, defaulting to the
+                    # cold-start values when no state has been written yet.
+                    snapshot_source="prior_turn",
+                    pair_count_total=(
+                        _incr_state.pair_count_total if _incr_state is not None else 0
+                    ),
+                    seeded_keys=(
+                        _incr_state.seeded_keys if _incr_state is not None else frozenset()
+                    ),
                 )
         except Exception as exc:  # noqa: BLE001 - savepoint rolled back; never block teaching
             _LOG.warning("clarification_setup_failed session_id=%s error=%s", session_id, exc)

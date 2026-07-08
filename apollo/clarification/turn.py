@@ -132,6 +132,9 @@ async def run_clarification_detection(
     reference_graph=None,
     problem_payload=None,
     resolved_candidate_keys: frozenset[str] = frozenset(),
+    snapshot_source: str = "prior_turn",
+    pair_count_total: int = 0,
+    seeded_keys: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Detect ambiguous residual nodes, persist asked_waiting rows, and return
     the answer-blind probe hints for draft_reply. Returns [] on any failure or
@@ -147,6 +150,9 @@ async def run_clarification_detection(
     ``resolved_candidate_keys`` are accepted here for forward wiring by the
     caller (building/reusing the incremental snapshot) and are not consumed
     directly by this function.
+
+    ``snapshot_source``/``pair_count_total``/``seeded_keys`` are trace-only
+    (spec §7, task T13), forwarded to ``v2_selection.select`` for observability.
     """
     del reference_graph, problem_payload, resolved_candidate_keys
     if not parsed_nodes or not candidates:
@@ -164,6 +170,9 @@ async def run_clarification_detection(
                 search_space_id=search_space_id,
                 concept_id=concept_id,
                 asked_turn=asked_turn,
+                snapshot_source=snapshot_source,
+                pair_count_total=pair_count_total,
+                seeded_keys=seeded_keys,
             )
         except Exception as exc:  # noqa: BLE001 - fail-open to v1, spec §8.3
             _LOG.warning(
@@ -179,6 +188,10 @@ async def run_clarification_detection(
         # scoring to rank (APOLLO_RESOLVER_V2 is OFF, so no snapshot was ever
         # produced) -- fall back to v1, no force-enabling V2 from here.
         _LOG.info("clarification_v2_no_resolver_v2 attempt_id=%s", attempt_id)
+        v2_selection.emit_trace(
+            v2_selection.build_empty_trace(snapshot_source="none_v1_fallback"),
+            attempt_id=attempt_id,
+        )
 
     return await _v1_select(
         db=db,

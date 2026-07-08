@@ -176,6 +176,70 @@ def _nli_grading_node_cap() -> int:
         return _NLI_GRADING_NODE_CAP_DEFAULT
 
 
+# Clarification-v2 incremental/batch diff trace (spec §7, task T13). DEFAULT
+# OFF, observability only: when ON and a live (process-local, per-attempt)
+# incremental snapshot exists at Done, logs how far the chat-turn incremental
+# approximation drifted from the from-scratch batch V2 result. NEVER reads
+# back into ``grade`` -- see ``_log_clarification_v2_diff_trace`` below.
+_CLARIFICATION_V2_DIFF_TRACE_FLAG: str = "APOLLO_CLARIFICATION_V2_DIFF_TRACE"
+
+
+def _clarification_v2_diff_trace_enabled() -> bool:
+    return os.environ.get(_CLARIFICATION_V2_DIFF_TRACE_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _log_clarification_v2_diff_trace(
+    *, attempt_id: int, grade, resolver_v2_trace: dict | None
+) -> None:
+    """Compare the chat-turn incremental snapshot (process-local holder in
+    ``chat.py``) against the from-scratch batch V2 result already substituted
+    into ``grade``/``resolver_v2_trace`` (spec §7). Logs
+    ``clarification_v2_diff_trace {incremental_node_cov, batch_node_cov,
+    max_abs_node_delta}`` and returns -- this function never mutates
+    ``grade`` or raises; any failure (including "no snapshot yet") is a
+    silent no-op, since this is pure observability, never a grading input.
+
+    ``max_abs_node_delta`` is the largest per-node |incremental credit -
+    batch credit| across the union of both node sets (the per-node audit is
+    only available via ``resolver_v2_trace["nodes"]``, T7's ``ResolverV2Result
+    .trace()`` output); when that trace is unavailable (V2 failed/fell back
+    this turn), it degrades to the aggregate node-coverage delta."""
+    try:
+        from apollo.handlers.chat import _INCREMENTAL_HOLDER  # noqa: PLC0415 - lazy, avoid cycle
+
+        snapshot = _INCREMENTAL_HOLDER.latest_snapshot(attempt_id)
+        if snapshot is None:
+            return
+        batch_node_cov = grade.node_coverage_score
+
+        batch_nodes = (resolver_v2_trace or {}).get("nodes") or []
+        if batch_nodes:
+            batch_credits = {n["canonical_key"]: n["credit"] for n in batch_nodes}
+            all_keys = set(snapshot.node_credits) | set(batch_credits)
+            max_abs_node_delta = max(
+                (
+                    abs(snapshot.node_credits.get(k, 0.0) - batch_credits.get(k, 0.0))
+                    for k in all_keys
+                ),
+                default=0.0,
+            )
+        else:
+            max_abs_node_delta = abs(snapshot.node_cov - batch_node_cov)
+
+        _LOG.info(
+            "clarification_v2_diff_trace attempt_id=%s incremental_node_cov=%.4f "
+            "batch_node_cov=%.4f max_abs_node_delta=%.4f",
+            attempt_id,
+            snapshot.node_cov,
+            batch_node_cov,
+            max_abs_node_delta,
+        )
+    except Exception:  # noqa: BLE001 - observability only, never touches grading
+        _LOG.warning(
+            "clarification_v2_diff_trace_failed attempt_id=%s", attempt_id, exc_info=True
+        )
+
+
 async def _resolve_attempt_async(
     student_graph: KGGraph,
     candidates: tuple,
@@ -475,6 +539,14 @@ async def run_graph_simulation(
                 reference_graph=reference_graph,
                 problem_payload=problem_payload,
             )
+            # Optional (default OFF) observability-only diff trace -- spec §7,
+            # task T13. Never touches `grade`; failures are swallowed inside.
+            if _clarification_v2_diff_trace_enabled():
+                _log_clarification_v2_diff_trace(
+                    attempt_id=int(attempt.id),
+                    grade=grade,
+                    resolver_v2_trace=resolver_v2_trace,
+                )
 
         # Step 9 — transcript audit (live auditor; suppress-all-missing on infra
         # failure is handled INSIDE build_audited_grade).
