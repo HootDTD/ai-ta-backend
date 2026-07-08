@@ -4,6 +4,12 @@ description: Apollo "student teaches the tutor" subsystem — GPT-4o parsing of 
 owns:
   - apollo/**
   - apollo/clarification/**
+  - apollo/clarification/v2_ranker.py
+  - apollo/clarification/v2_selection.py
+  - apollo/clarification/v2_config.py
+  - apollo/resolver_v2/**
+  - apollo/resolver_v2/incremental.py
+  - apollo/resolver_v2/incremental_types.py
   - apollo/graph_compare/**
   - apollo/grading/**
   - apollo/projections/**
@@ -124,6 +130,83 @@ is byte-identical.
 **Status: PROTOTYPE.** Smoke tests only (`apollo/resolver_v2/tests/`); the repo's
 95% patch-coverage gate is explicitly deferred until the F1c replay confirms the
 recall hypothesis (design T8: calibration sweep + replay ON/OFF still pending).
+
+### Resolver V2 → clarification-loop VoI ranker (`APOLLO_CLARIFICATION_V2_RANKER`)
+
+Spec: `docs/_archive/specs/2026-07-07-apollo-resolver-v2-clarification-integration.md`.
+A third default-OFF flag, `APOLLO_CLARIFICATION_V2_RANKER`, wires Resolver V2's
+per-node NLI scores into the **existing** clarification loop
+(`APOLLO_CLARIFICATION_ENABLED`) as both the trigger (which reference nodes are
+weak/gray/missing) and the ranker (value-of-information = importance ×
+uncertainty), replacing the v1 lexical/embedding probe-selection rubric with V2
+scores when all three flags line up. New files: `apollo/resolver_v2/incremental.py`
++ `incremental_types.py` (pure per-turn incremental V2 scorer: builds only the new
+student-turn windows, reindexes them into the global window space, rescores only
+still-unresolved reference nodes, runs the same gray-zone stage the batch engine
+runs, merges into a running per-node/per-edge max — no DB, no env) and
+`apollo/clarification/v2_ranker.py` (`rank_by_voi`, candidate extraction,
+`pack_questions` 3×3), `v2_selection.py` (the alternate selection pipeline
+`turn.py` branches into), `v2_config.py` (flag reader + `ClarificationV2Params`).
+
+**Triple gate (H1).** Every new side effect — including `chat.py`'s background
+per-turn V2 incremental job (which persists `IncrementalState`/`IncrementalSnapshot`
+on process-local session state and spends `max_nli_pairs` budget) — is gated behind
+the SAME predicate, `_v2_ranker_active()`: `APOLLO_CLARIFICATION_V2_RANKER` AND
+`APOLLO_RESOLVER_V2` AND `APOLLO_CLARIFICATION_ENABLED` all ON. If ANY one is OFF,
+the whole feature is a byte-identical no-op — this explicitly includes
+`(APOLLO_RESOLVER_V2=ON, APOLLO_CLARIFICATION_V2_RANKER=OFF)`, a real rollout state
+since V2 grading (previous subsection) rolls out independently of this ranker.
+`apollo/handlers/tests/test_chat_v2_ranker_golden.py` (T15) asserts the full
+`handle_chat` artifact (`apollo_reply`, `kg_entries_added`, `kg`) is byte-identical
+between the all-OFF baseline and that specific `(RESOLVER_V2=ON, RANKER=OFF)` row.
+
+**Behavior matrix** (`APOLLO_CLARIFICATION_ENABLED` / `APOLLO_RESOLVER_V2` /
+`APOLLO_CLARIFICATION_V2_RANKER`):
+
+| Clarification | Resolver V2 | V2 Ranker | Behavior |
+|:---:|:---:|:---:|---|
+| OFF | any | any | No clarification at all. Byte-identical baseline. |
+| ON | any | OFF | v1 clarification selection (`find_residual_nodes` → `detector` ambiguity → probe selection). **Current live behavior.** Includes the H1 row `(RESOLVER_V2=ON, RANKER=OFF)` — still a strict no-op for this feature. |
+| ON | OFF | ON | V2 ranker needs V2 scores; `APOLLO_RESOLVER_V2` OFF means no snapshot is ever produced, so `turn.py` falls back to v1 selection and logs `clarification_v2_no_resolver_v2`. Flags stay orthogonal — clarification never force-enables V2 scoring. |
+| ON | ON | ON | **New behavior.** Per-turn incremental V2 → VoI rank → 3×3 packing (`pack_questions`) → candidate-key dedup (`load_asked_candidate_keys`) → answer-blind hints via the unchanged `build_probe_hint`/`draft_reply`/`guard_clarification_reply` machinery. Fails open to v1 on ANY exception in either the selection call or the background incremental job (two independent guards; the background job's exception is swallowed and recorded as "no snapshot this turn" — it can never propagate into the reply, since the reply never awaits the current turn's job). |
+
+**Two credit spaces — do not conflate (§6).** A clarification-confirmed node gets
+TWO different numbers depending on which space is being read: (1) **selection
+space** — seeding a confirmed node into the running V2 incremental snapshot sets
+its node credit to `1.0` (frozen, no further NLI spend on it) so it stops being a
+VoI candidate and ranks/dedupes correctly; this number is used ONLY to pick the
+next questions, never persisted as a grade. (2) **grading space** — the actual
+persisted credit for a clarification-confirmed node, via the existing v1 rescorer
+(`apollo/clarification/rescorer.py`), stays capped at clarification method `0.90`
+(unchanged by this build). Seeding only freezes the seeded node itself; it never
+pulls up neighbor nodes or edges beyond the node's own incident evidence (M5) —
+a gray neighbor is not auto-resolved just because a sibling was confirmed.
+
+**Conservative monotone lower bound, not batch-equal (§5.4).** The per-turn
+incremental V2 snapshot is explicitly NOT claimed byte-equal to a from-scratch
+batch V2 run over the same transcript — edges, the gray-zone stage, and v1
+edge-floors are all allowed to diverge by design between the incremental and
+batch code paths. The only guarantee is
+`incremental_node/edge_coverage ≤ batch_node/edge_coverage + ε` (asserted as a hard
+CI check in `apollo/resolver_v2/tests/test_v2_multiturn_integration.py`, T14). This
+bound is why the incremental snapshot is safe to use for ranking *which question to
+ask* but must never be substituted for the from-scratch batch grade — the Done-time
+grading substitution (previous subsection) is completely untouched by this feature.
+
+**Non-goals (explicitly out of scope for this build).** Misconception penalty
+rework; the `proc.plan_*` bare-definition cap; control-negative bank re-authoring;
+the SymPy `parse_expr` RCE fix (no new parse surface added); Done-time grading
+composite behavior (`done_grading.py` step 8b, previous subsection, is unchanged —
+this feature only reads V2 scores for chat-time question selection); any migration
+or schema change (reuses migration 033 `apollo_clarifications`, dedup done via a
+new `load_asked_candidate_keys` SELECT, no DDL); the offline VoI-vs-v1
+selection-quality/calibration gate is a separate pre-flag-ON task and must pass
+before this flag is ever turned ON in any environment.
+
+**Status: PROTOTYPE, default OFF.** Same smoke-test convention as Resolver V2
+above (`apollo/resolver_v2/tests/`, `apollo/clarification/tests/`,
+`apollo/handlers/tests/test_chat_incremental_v2.py`,
+`apollo/handlers/tests/test_chat_v2_ranker_golden.py`).
 
 ## Public interfaces
 
