@@ -11,12 +11,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 
+from apollo.persistence.models import Concept, Subject
 from apollo.subjects import ConceptDefinition
 from apollo.subjects.curriculum_db import (
     ConceptNotFoundError,
     ConceptRow,
+    RegisteredConcept,
     list_course_concepts,
+    list_registered_concepts,
     load_concept_definition,
 )
 from apollo.subjects.tests._curriculum_fixtures import (
@@ -131,9 +135,7 @@ async def test_list_course_concepts_excludes_concept_with_only_tier1_problems(db
     cid = await seed_concept(
         db_session, search_space_id=sid, subject_slug="s1", concept_slug="inventory_only"
     )
-    await seed_problems(
-        db_session, concept_id=cid, payloads=[minimal_problem_payload()], tier=1
-    )
+    await seed_problems(db_session, concept_id=cid, payloads=[minimal_problem_payload()], tier=1)
 
     rows = await list_course_concepts(db_session, search_space_id=sid)
     assert cid not in {r.concept_id for r in rows}
@@ -185,13 +187,19 @@ async def test_list_course_concepts_excludes_unteachable_decoy_beside_real(db_se
     infer_concept_id can never pick the empty decoy and blow up select_problem."""
     sid = await seed_search_space(db_session)
     real_cid = await seed_concept(
-        db_session, search_space_id=sid, subject_slug="fluids_real", concept_slug="bernoulli_principle"
+        db_session,
+        search_space_id=sid,
+        subject_slug="fluids_real",
+        concept_slug="bernoulli_principle",
     )
     await seed_problems(
         db_session, concept_id=real_cid, payloads=[minimal_problem_payload("real1")]
     )
     decoy_cid = await seed_concept(
-        db_session, search_space_id=sid, subject_slug="fluids_decoy", concept_slug="bernoulli-equation"
+        db_session,
+        search_space_id=sid,
+        subject_slug="fluids_decoy",
+        concept_slug="bernoulli-equation",
     )
 
     rows = await list_course_concepts(db_session, search_space_id=sid)
@@ -236,3 +244,58 @@ async def test_load_concept_definition_problems_dir_is_sentinel_not_globbed(db_s
     cid = await seed_concept(db_session, search_space_id=sid, subject_slug="s1", concept_slug="c1")
     cd = await load_concept_definition(db_session, concept_id=cid)
     assert cd.problems_dir.exists() is False
+
+
+async def test_list_registered_concepts_includes_problemless_and_description(db_session):
+    """Reversed provisioning — the matcher's closed list is EVERY registered
+    concept (a fresh premade-list course has zero problems yet), with the
+    reserved provisional-inventory concept excluded and description carried."""
+    sid = await seed_search_space(db_session)
+    cid_teachable = await seed_concept(
+        db_session, search_space_id=sid, subject_slug="calc2", concept_slug="u_substitution"
+    )
+    await seed_problems(db_session, concept_id=cid_teachable, payloads=[minimal_problem_payload()])
+    # a problemless registered concept — must STILL appear (no tier-2 EXISTS)
+    subject_id = (
+        (await db_session.execute(select(Subject.id).where(Subject.search_space_id == sid)))
+        .scalars()
+        .first()
+    )
+    db_session.add(
+        Concept(
+            subject_id=subject_id,
+            slug="integration-by-parts",
+            display_name="Integration by Parts",
+            description="u dv = uv - v du",
+        )
+    )
+    db_session.add(
+        Concept(
+            subject_id=subject_id,
+            slug="provisional.inventory",
+            display_name="Provisional Inventory",
+        )
+    )
+    await db_session.flush()
+
+    rows = await list_registered_concepts(db_session, search_space_id=sid)
+    slugs = {r.slug for r in rows}
+    assert "integration-by-parts" in slugs  # problemless included
+    assert "u_substitution" in slugs
+    assert "provisional.inventory" not in slugs  # reserved concept excluded
+    ibp = next(r for r in rows if r.slug == "integration-by-parts")
+    assert ibp.description == "u dv = uv - v du"
+    assert isinstance(ibp, RegisteredConcept)
+
+
+async def test_list_registered_concepts_scoped_to_course(db_session):
+    sid_a = await seed_search_space(db_session)
+    sid_b = await seed_search_space(db_session)
+    await seed_concept(
+        db_session, search_space_id=sid_a, subject_slug="ca", concept_slug="only_in_a"
+    )
+    await seed_concept(
+        db_session, search_space_id=sid_b, subject_slug="cb", concept_slug="only_in_b"
+    )
+    rows = await list_registered_concepts(db_session, search_space_id=sid_a)
+    assert {r.slug for r in rows} == {"only_in_a"}

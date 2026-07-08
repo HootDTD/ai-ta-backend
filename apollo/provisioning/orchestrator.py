@@ -96,9 +96,12 @@ _RUN_SUCCEEDED = "succeeded"
 _RUN_FAILED = "failed"
 
 _SCRAPE_SYSTEM_PROMPT = (
-    "You extract EVERY solvable quantitative practice problem from one SECTION of "
+    "You extract EVERY practice problem from one SECTION of "
     "course material (textbook prose, worked examples, and exercise sets all count; "
-    "a section may contain zero, one, or many problems).\n"
+    "a section may contain zero, one, or many problems). Numeric solve-for "
+    "exercises, convergence/divergence determinations, show-that/verify tasks, "
+    "and qualitative determine-whether questions ALL count as problems — for "
+    'those, "target_unknown" is a short phrase (e.g. "convergence verdict").\n'
     "Return ONLY a JSON array - no prose, no explanation, no markdown code fences. "
     "Each array element is an object with EXACTLY these keys:\n"
     '  "problem_text": string - the full, self-contained problem statement.\n'

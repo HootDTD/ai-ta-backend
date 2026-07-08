@@ -93,6 +93,49 @@ async def list_course_concepts(db: AsyncSession, *, search_space_id: int) -> lis
     ]
 
 
+@dataclass(frozen=True)
+class RegisteredConcept:
+    """One registered concept of a course's premade list (reversed provisioning).
+
+    Unlike ``ConceptRow``/``list_course_concepts`` this is NOT filtered to
+    teachable concepts — a fresh reversed-provisioning course has registered
+    concepts and zero problems. The reserved provisional-inventory concept is
+    excluded (it is a scrape seam, never a match target). ``description`` is
+    the migration-038 column the closed-list matcher prompt renders.
+    """
+
+    concept_id: int
+    slug: str
+    display_name: str
+    description: str
+
+
+async def list_registered_concepts(
+    db: AsyncSession, *, search_space_id: int
+) -> list[RegisteredConcept]:
+    """EVERY registered concept of a course (the concept matcher's closed list)."""
+    from apollo.provisioning.scrape import PROVISIONAL_CONCEPT_SLUG
+
+    result = await db.execute(
+        select(Concept.id, Concept.slug, Concept.display_name, Concept.description)
+        .join(Subject, Concept.subject_id == Subject.id)
+        .where(
+            Subject.search_space_id == search_space_id,
+            Concept.slug != PROVISIONAL_CONCEPT_SLUG,
+        )
+        .order_by(Concept.id)
+    )
+    return [
+        RegisteredConcept(
+            concept_id=int(row.id),
+            slug=str(row.slug),
+            display_name=str(row.display_name),
+            description=str(row.description or ""),
+        )
+        for row in result.all()
+    ]
+
+
 async def load_concept_definition(db: AsyncSession, *, concept_id: int) -> ConceptDefinition:
     """Build a ``ConceptDefinition`` from the ``apollo_concepts`` row's columns.
 

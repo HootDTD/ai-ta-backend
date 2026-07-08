@@ -12,7 +12,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-07-07
+last_verified: 2026-07-08
 stub: false
 ---
 
@@ -129,6 +129,97 @@ matching instead of autonomous concept generation); `corpora/calc2/README.md`
 documents the 2026-07-07 Calculus 2 assessment (hand-authored 40-concept list,
 79 textbook-extracted + 60 original authored problems, blind gpt-5.1 matching
 results: ~97% on well-formed text).
+
+**Reversed provisioning (2026-07-08, default path).** When a course carries
+REGISTERED concepts (a premade list — `scripts/seed_premade_concepts.py`
+registers a `concepts.json` into `apollo_subjects`/`apollo_concepts`,
+idempotent by hyphen/underscore-normalized slug, backfilling the new
+migration-038 `apollo_concepts.description` column and optionally copying
+vocab from a subject tree; it NEVER writes problems), the authored-set
+orchestrator runs the reversed pipeline instead of the legacy LLM-tag-draft
+path (`APOLLO_REVERSED_PROVISIONING=0` is the kill switch; a course with no
+registered concepts keeps legacy behavior automatically):
+
+1. **Concept match** — `apollo/provisioning/concept_match.py::match_concept
+   (problem_text, concepts, *, chat_fn) -> ConceptMatch` classifies each
+   scraped problem against `curriculum_db.list_registered_concepts(db,
+   search_space_id=...)` (ALL registered concepts incl. problemless ones,
+   provisional-inventory excluded, `description` carried) with one main-tier
+   call at `reasoning_effort='low'` (`MeteredChat.cheap/main` now take an
+   optional `reasoning_effort`, omitting `temperature` when set), retrying
+   ONCE at `'medium'` on an unparseable response, a hallucinated slug, or the
+   known self-contradiction slip (primary=NO_MATCH while the rationale names a
+   listed concept). NO_MATCH is NEVER force-matched: the candidate is held
+   (`reason="no_matching_concept"`, `provenance.authored_review.concept_match`
+   records the evidence) and its approve call 409s until the teacher extends
+   the course list and re-uploads. Protocol + measured accuracy (95.0% low /
+   96.7% with retry): `corpora/calc2/authored/results_authored.md`.
+2. **Solution-grounded graph derivation** —
+   `apollo/provisioning/authored_sets/graph_derivation.py::
+   derive_reference_graph(candidate, spans, *, concept_slug,
+   concept_display_name, canonical_symbols, normalization_map, chat_fn) ->
+   DerivedGraph{reference_solution, target_unknown, symbolic_mappings,
+   bound_variables, retried}` replaces the ungrounded generation (48% S1) with
+   the dress-rehearsal procedure that authored `apollo/subjects/calculus_2`:
+   one main-tier call over problem text + the paired solution's
+   `carries_solution=True` spans ONLY (leak guard) + the matched concept's
+   vocabulary, validated by the pure `find_derivation_defects` (Problem
+   schema; 5–9 nodes; meaningful snake_case ids — entity keys derive from
+   entry_type+id; concrete equations parse under BOTH `sympy.sympify` AND
+   `parse_zero_form` with a concept-derived `local_dict` so reserved names
+   N/S/E/I don't collide; operator-identity/textbook-trig formulas are
+   `content.display=true` pedagogical content, never fake zero-forms; no
+   variable/equation fragmentation; Kahn's-algorithm `depends_on` acyclicity
+   mirroring the campaign judge's `find_structural_defects` — the mint-time
+   cycle guard), with ONE defect-feedback retry at `'high'`, then fail-closed
+   `DerivationError` (candidate rejected, `diagnostic="derivation_error:
+   ..."`). The validator sweeps 0/60 defects on the committed gold corpus.
+   The derived draft promotes as `solution_source='extracted'`; its extras
+   (`concept_id`=matched slug, `target_unknown`, `symbolic_mappings`,
+   `bound_variables`) ride the problem dict into the promoted payload. When
+   label/semantic retrieval finds NO solution span the candidate falls
+   through to the legacy `find_or_generate` (generated ⇒ held), unchanged.
+3. **Deterministic mint** — `tag_and_mint(db, pair, *, chat_fn, embed_fn,
+   resolved_concept: ResolvedConcept | None = None)`: with `resolved_concept`
+   (the matcher's `{concept_id, slug}`) there is NO tag-draft LLM call and NO
+   concept creation (a missing registered row is a fail-closed
+   `TagMintError`), and prereq edges are derived from the reference graph's
+   `depends_on` (step X depends_on Y ⇒ `apollo_entity_prereqs` (from=X,
+   to=Y) — exactly the DEPENDS_ON edges the S1 driver reads), replacing the
+   LLM prereq draft that produced reversed/spurious edges. All downstream
+   guards (resolvable-key, concept-scope, acyclicity, writer re-check) run
+   unchanged; `resolved_concept=None` is byte-identical to the legacy path.
+4. **Transactional mint+promote** — in BOTH the orchestrator and the approve
+   path, `tag_and_mint` + gate-8 dup-hash read + `promote` ride ONE
+   `begin_nested()` savepoint; a lint rejection raises the internal
+   `MintRejected` to unwind it, so the mint's flushed
+   concept/KGEntity/prereq/dedup rows never survive as orphans (fixes the
+   verified 17→33 entity doubling where mint ran BEFORE the gate-8 check
+   with no rollback). `CanonProjectionError` still propagates run-level (PG
+   rolls back with the savepoint; the `:Canon` MERGE is idempotent +
+   node-only).
+5. **Lint gate annotations (additive, anchor-invariant)** — gate 6 skips
+   equation steps carrying `content.display=true` (an UNMARKED malformed
+   equation still rejects); gate 7 subtracts the graph's top-level
+   `bound_variables` (read off the RAW dict — pydantic drops extras) before
+   the under-determination check, covering function-valued answers
+   (antiderivative argument x, series index n), sampled values f0..fn,
+   undetermined coefficients A/B/C, and error-bound symbols. Absent
+   annotations ⇒ byte-identical legacy behavior; the fluid+macro anchor suite
+   is untouched. `apollo/provisioning/tests/test_lint_calc2_compat.py` pins
+   all 60 committed calc-2 gold graphs lint-PASS under the annotations the
+   derivation emits (pre-change baseline: 37/60 — 5× gate 6 on display
+   identities, 18× gate 7 on function-valued answers).
+
+Eval harness: `campaign/scripts/eval_authored_calc2.py` (bootstrap teacher +
+course; upload the 6 corpora HW pairs through the real HTTP path with NO
+auto-approve; write `match_report.json` — accuracy vs the corpus's private
+`concept_slug` — and `graph_diff_report.json` — per-graph structural diff vs
+the committed gold graphs via the pure helpers in
+`campaign/scripts/diff_generated_vs_authored.py`; print the `run_s1_s2`
+command over the matched concept ids). Acceptance bar: match ≥ 0.95, zero
+opaque ids, S1 ≥ 0.95, live teach-back crediting comparably to the authored
+counterpart.
 
 WU-AAS is a paired-document provisioning path under
 `apollo/provisioning/authored_sets/`. It indexes a teacher's problem PDF and its
