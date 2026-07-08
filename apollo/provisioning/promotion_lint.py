@@ -523,6 +523,13 @@ def _gate_5(problem: Problem, kg: KGGraph) -> str | None:
 
 def _gate_6(problem: Problem) -> str | None:
     for step in _equation_steps(problem):
+        # Reversed-provisioning display marker: a pedagogical operator identity
+        # (e.g. "integral u dv = u*v - integral v du") is intentionally NOT a
+        # zero-form; the derivation marks it content.display=true and the
+        # runtime symbolic tier already treats a non-parse as a non-match.
+        # Fail-closed is preserved: an UNMARKED malformed equation still rejects.
+        if step.content.get("display") is True:
+            continue
         symbolic = step.content.get("symbolic")
         if not symbolic:
             continue
@@ -533,7 +540,18 @@ def _gate_6(problem: Problem) -> str | None:
     return None
 
 
-def _gate_7(problem: Problem) -> str | None:
+def _declared_bound_variables(graph: dict) -> frozenset[str]:
+    """Reversed-provisioning annotation: the graph's declared bound symbols
+    (an antiderivative's argument x, a series index n, sample points / the
+    opaque integrand symbol of a numerical rule). They remain free in a
+    CORRECT function-valued answer, so gate 7 subtracts them before the
+    under-determination check. Read off the RAW graph dict — pydantic's
+    ``Problem`` drops extra keys. Absent key -> empty set (legacy behavior
+    byte-identical; the fluid+macro anchor carries no such key)."""
+    return frozenset(str(b) for b in (graph.get("bound_variables") or []))
+
+
+def _gate_7(problem: Problem, bound_variables: frozenset[str] = frozenset()) -> str | None:
     """Equation-system closure (Option 2, spec §4.1). The system is CLOSED iff the
     GRAPH-DERIVED answer — every free symbol that is not a given, a coupling
     intermediate, or cancelled (see ``_derive_symbolic_answer``) — has AT MOST ONE
@@ -551,7 +569,7 @@ def _gate_7(problem: Problem) -> str | None:
     ``_intermediate_symbols``) keeps this INTENTIONALLY CONSERVATIVE — it
     rejects-on-doubt, the safe direction for a promotion gate (a false-RED
     quarantines a good problem; never a false-GREEN)."""
-    answer = _derive_symbolic_answer(problem)
+    answer = _derive_symbolic_answer(problem) - set(bound_variables)
     if len(answer) > 1:
         return (
             f"gate 7: equation system is under-determined (paper check): "
@@ -647,7 +665,7 @@ def run_promotion_lint(
         (4, lambda: _gate_4(problem, canonical_symbols, normalization_map)),
         (5, lambda: _gate_5(problem, kg)),
         (6, lambda: _gate_6(problem)),
-        (7, lambda: _gate_7(problem)),
+        (7, lambda: _gate_7(problem, _declared_bound_variables(graph))),
         (8, lambda: _gate_8(problem, existing_problem_hashes)),
     ]
     for number, gate in gates:

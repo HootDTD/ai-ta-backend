@@ -112,10 +112,12 @@ _DERIVATION_SYSTEM_PROMPT = (
     '  "symbolic_mappings": object mapping declared substitutions the solution '
     'uses (e.g. {"u": "sin(x)"}); {} if none\n'
     '  "bound_variables": array of symbols that remain free in the final '
-    "answer because they are the answer's argument or an index — e.g. the "
+    "answer OR that the method introduces and the procedure determines — the "
     "integration variable x of an antiderivative, a series index n, sample "
-    "points x0..xn and an opaque integrand symbol f in numerical rules; [] "
-    "for a fully numeric answer\n\n"
+    "points x0..xn / sampled values f0..fn and an opaque integrand symbol f "
+    "in numerical rules, undetermined template coefficients like A, B, C in "
+    "a partial-fraction decomposition, an error term and derivative bound "
+    "like Et, K; [] for a fully numeric answer\n\n"
     'Each step object has EXACTLY: "step" (int >= 1, file order), '
     '"entry_type", "id", "content" (object), "depends_on" (array of step ids, '
     "[] if none).\n\n"
