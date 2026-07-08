@@ -52,3 +52,7 @@ class IncrementalSnapshot:
     winning_path_index: int
     gray: frozenset[str]  # canonical_keys currently classified gray
     pair_count_this_turn: int  # NLI pairs spent this turn (budget audit)
+    # True when this turn hit the per-attempt max_nli_pairs cap and had to
+    # skip issuing further pairs (§5.3 step 3); defaults False so existing
+    # callers/tests built before this field (T2) keep working unchanged.
+    budget_truncated: bool = False
