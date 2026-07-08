@@ -27,6 +27,7 @@ assign, so `edge_gain` is the non-negative rise in that credit.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -65,6 +66,8 @@ _EVIDENCE_TO_R: dict[str, float] = {
 # resolver_v2/scoring.py's _EQUATION_NODE_TYPES) -- used here only to give
 # these nodes the uncertainty floor (§4.2), not to recompute their credit.
 _EQUATION_NODE_TYPES: frozenset[str] = frozenset({"equation"})
+
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -337,3 +340,57 @@ def rank_by_voi(
         key=lambda s: (-s.voi, s.candidate.node_credit, s.candidate.canonical_key)
     )
     return scored
+
+
+@dataclass(frozen=True)
+class PackedQuestion:
+    """One Apollo clarification question, holding up to
+    ``max_topics_per_question`` reference topic keys (design §10.1)."""
+
+    topic_keys: tuple[str, ...]
+
+
+def pack_questions(
+    ranked: Sequence[VoIScore],
+    max_q: int,
+    max_topics: int,
+    remaining_budget: int,
+) -> list[PackedQuestion]:
+    """Greedily pack ``ranked`` (already VoI-desc, already asked-key-deduped
+    by the caller per §10.3) into up to ``max_q`` questions of up to
+    ``max_topics`` topic keys each (design §10.1, task T7).
+
+    ``remaining_budget`` is the M4 per-attempt cumulative cap's remaining
+    allowance (``max(0, max_questions_per_attempt - already_asked)``,
+    computed by the caller/``v2_selection``) -- the number of NEW topics
+    this call may pack. A non-positive ``remaining_budget`` packs zero new
+    questions (a valid outcome, not an error); the cap-reached event is
+    logged here so every caller gets it for free.
+
+    Order is preserved from ``ranked`` (no re-sorting) -- callers must pass
+    an already VoI-ranked sequence. Chunking is the simple "top max_topics /
+    next max_topics / ..." default (§10.1): edge-affinity grouping is
+    cosmetic and out of scope for v1 of this build.
+    """
+    budget = max(0, remaining_budget)
+    if budget <= 0:
+        _LOG.warning(
+            "clarification_v2_attempt_cap_reached remaining_budget=%s pool_size=%s",
+            remaining_budget,
+            len(ranked),
+        )
+        return []
+
+    max_total_topics = max(0, max_q) * max(0, max_topics)
+    take = min(len(ranked), max_total_topics, budget)
+
+    keys = [scored.candidate.canonical_key for scored in ranked[:take]]
+
+    packed: list[PackedQuestion] = []
+    for start in range(0, len(keys), max(1, max_topics)):
+        chunk = tuple(keys[start : start + max_topics])
+        if chunk:
+            packed.append(PackedQuestion(topic_keys=chunk))
+        if len(packed) >= max_q:
+            break
+    return packed

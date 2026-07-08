@@ -23,9 +23,11 @@ import json
 
 from apollo.clarification.v2_config import ClarificationV2Params
 from apollo.clarification.v2_ranker import (
+    PackedQuestion,
     VoICandidate,
     VoIScore,
     edge_gain,
+    pack_questions,
     rank_by_voi,
 )
 from apollo.grading.composite import CompositeWeights
@@ -229,6 +231,89 @@ class TestImportanceUsesLiveWeights:
         heavier_w_n = CompositeWeights(w_n=1.4, w_e=0.294, p=0.15)
         ranked_heavier = rank_by_voi([cand], snapshot, heavier_w_n, PARAMS)
         assert ranked_heavier[0].importance > ranked_default[0].importance
+
+
+def _score(key: str, voi: float, credit: float = 0.3) -> VoIScore:
+    cand = _candidate(key, credit=credit, is_gray=True)
+    return VoIScore(candidate=cand, importance=voi, uncertainty=1.0, voi=voi)
+
+
+class TestPackQuestions:
+    """§10.1 pack_questions — 3x3 bounds + M4 cumulative per-attempt cap."""
+
+    def test_nine_or_more_candidates_pack_exactly_3x3(self):
+        ranked = [_score(f"k{i}", voi=float(20 - i)) for i in range(12)]
+        packed = pack_questions(ranked, max_q=3, max_topics=3, remaining_budget=12)
+        assert len(packed) == 3
+        assert all(len(q.topic_keys) == 3 for q in packed)
+        all_keys = [k for q in packed for k in q.topic_keys]
+        assert len(all_keys) == len(set(all_keys)) == 9
+
+    def test_fewer_than_nine_candidates_packs_fewer(self):
+        ranked = [_score(f"k{i}", voi=float(10 - i)) for i in range(5)]
+        packed = pack_questions(ranked, max_q=3, max_topics=3, remaining_budget=12)
+        total_keys = sum(len(q.topic_keys) for q in packed)
+        assert total_keys == 5
+        assert len(packed) == 2  # 3 + 2
+        assert len(packed[0].topic_keys) == 3
+        assert len(packed[1].topic_keys) == 2
+
+    def test_topic_keys_unique_across_questions(self):
+        ranked = [_score(f"k{i}", voi=float(20 - i)) for i in range(12)]
+        packed = pack_questions(ranked, max_q=3, max_topics=3, remaining_budget=12)
+        seen: set[str] = set()
+        for q in packed:
+            for key in q.topic_keys:
+                assert key not in seen
+                seen.add(key)
+
+    def test_order_by_voi_desc(self):
+        ranked = [
+            _score("low", voi=1.0),
+            _score("high", voi=9.0),
+            _score("mid", voi=5.0),
+        ]
+        # Caller passes VoI-ranked list already sorted desc (as rank_by_voi
+        # returns); pack_questions must preserve that order, not re-sort.
+        ranked_sorted = sorted(ranked, key=lambda s: -s.voi)
+        packed = pack_questions(ranked_sorted, max_q=3, max_topics=3, remaining_budget=12)
+        assert packed[0].topic_keys == ("high", "mid", "low")
+
+    def test_zero_candidates_packs_nothing(self):
+        packed = pack_questions([], max_q=3, max_topics=3, remaining_budget=12)
+        assert packed == []
+
+    def test_remaining_budget_zero_packs_nothing(self):
+        ranked = [_score(f"k{i}", voi=float(10 - i)) for i in range(9)]
+        packed = pack_questions(ranked, max_q=3, max_topics=3, remaining_budget=0)
+        assert packed == []
+
+    def test_remaining_budget_truncates_below_pool_size(self):
+        ranked = [_score(f"k{i}", voi=float(20 - i)) for i in range(12)]
+        packed = pack_questions(ranked, max_q=3, max_topics=3, remaining_budget=4)
+        total_keys = sum(len(q.topic_keys) for q in packed)
+        assert total_keys == 4
+        # top-4 by voi (k0..k3) are the ones packed
+        assert {k for q in packed for k in q.topic_keys} == {"k0", "k1", "k2", "k3"}
+
+    def test_negative_remaining_budget_treated_as_zero(self):
+        ranked = [_score(f"k{i}", voi=float(10 - i)) for i in range(5)]
+        packed = pack_questions(ranked, max_q=3, max_topics=3, remaining_budget=-3)
+        assert packed == []
+
+    def test_packed_question_is_json_safe(self):
+        ranked = [_score(f"k{i}", voi=float(10 - i)) for i in range(3)]
+        packed = pack_questions(ranked, max_q=3, max_topics=3, remaining_budget=12)
+        json.dumps([{"topic_keys": list(q.topic_keys)} for q in packed])
+
+    def test_packed_question_is_frozen_dataclass(self):
+        pq = PackedQuestion(topic_keys=("a", "b"))
+        assert pq.topic_keys == ("a", "b")
+        try:
+            pq.topic_keys = ("c",)  # type: ignore[misc]
+            assert False, "PackedQuestion must be frozen"
+        except Exception:
+            pass
 
 
 class TestJsonSafety:
