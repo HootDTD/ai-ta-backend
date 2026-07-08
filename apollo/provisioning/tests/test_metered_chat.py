@@ -290,3 +290,36 @@ def test_cheap_uses_env_cheap_model_override(monkeypatch):
     metered, _run, client = _make(responses=[_resp("ok", 1, 1)])
     metered.cheap(purpose="p", messages=[{"role": "user", "content": "x"}])
     assert client.calls[0]["model"] == "gpt-4o-mini-custom"
+
+
+# --------------------------------------------------------------------------- #
+# Reasoning effort (reversed-provisioning matcher/derivation retries).
+# --------------------------------------------------------------------------- #
+def test_main_reasoning_effort_sends_effort_and_omits_temperature():
+    metered, _run, client = _make(responses=[_resp("ok", 1, 1)])
+    metered.main(
+        purpose="p",
+        messages=[{"role": "user", "content": "x"}],
+        reasoning_effort="medium",
+    )
+    kw = client.calls[0]
+    assert kw["reasoning_effort"] == "medium"
+    assert "temperature" not in kw  # reasoning models reject temperature
+
+
+def test_cheap_reasoning_effort_passthrough():
+    metered, _run, client = _make(responses=[_resp("ok", 1, 1)])
+    metered.cheap(
+        purpose="p",
+        messages=[{"role": "user", "content": "x"}],
+        reasoning_effort="low",
+    )
+    assert client.calls[0]["reasoning_effort"] == "low"
+
+
+def test_main_without_effort_is_unchanged():
+    metered, _run, client = _make(responses=[_resp("ok", 1, 1)])
+    metered.main(purpose="p", messages=[{"role": "user", "content": "x"}])
+    kw = client.calls[0]
+    assert "reasoning_effort" not in kw
+    assert kw["temperature"] == 0.0
