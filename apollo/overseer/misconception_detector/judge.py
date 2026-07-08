@@ -47,6 +47,50 @@ _VALID_VERDICTS = frozenset(
     {"clear", "needs_clarification", "misconception", "wrong"}
 )
 
+# R2 (belt-and-suspenders fix, docs/_archive/experiments/2026-07-08-misconception-detector-validation.md):
+# live gpt-4o at temperature=0.0 deterministically collapses a free-form
+# `{"type": "json_object"}` request for a top-level `concepts` array down to a
+# SINGLE flat row (no `concepts` wrapper) on real attempts. OpenAI Structured
+# Outputs (`{"type": "json_schema", ..., "strict": True}`) forces the exact
+# array shape at the API level instead of relying on prose instructions.
+# `additionalProperties: false` + `required` on every field (all fields
+# required under strict mode) pins the row shape; `confidence` stays a
+# REQUIRED field on every row so the verbalized-confidence fallback (A1) always
+# has something to read even when `verdict_token_prob` is None.
+_JSON_SCHEMA = {
+    "name": "misconception_verdicts",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "concepts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "concept_key": {"type": "string"},
+                        "verdict": {
+                            "type": "string",
+                            "enum": sorted(_VALID_VERDICTS),
+                        },
+                        "confidence": {"type": "number"},
+                        "evidence_span": {"type": "string"},
+                    },
+                    "required": [
+                        "concept_key",
+                        "verdict",
+                        "confidence",
+                        "evidence_span",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["concepts"],
+        "additionalProperties": False,
+    },
+}
+
 _SYSTEM_PROMPT = """You are the Apollo Overseer's comparative misconception judge.
 You are given a problem, and for each of several concepts: the correct belief
 a student should hold, and (optionally) a small bank of known misconceptions
@@ -161,6 +205,36 @@ def _finding_from_row(
     )
 
 
+def _normalize_rows(parsed: Any) -> list[dict] | None:
+    """Tolerant shape-normalizer (belt-and-suspenders #2, R2).
+
+    The Structured Outputs schema (``_JSON_SCHEMA``) should make this
+    unnecessary in the live path, but ``judge_concepts`` stays defensive in
+    case any future provider/model swap regresses the shape the way live
+    gpt-4o did under the old free-form ``json_object`` contract (master
+    defect, docs/_archive/experiments/2026-07-08-misconception-detector-validation.md):
+
+      * ``parsed["concepts"]`` is a list -> use it as-is (the documented/
+        expected shape).
+      * ``parsed`` is itself a single flat row (has a "concept_key" or
+        "verdict" key) -> wrap it as a one-element list.
+      * ``parsed`` is itself a top-level list of rows -> use it as-is.
+
+    Returns ``None`` (triggering the existing soft-fail) only when none of
+    these shapes match.
+    """
+    if isinstance(parsed, dict):
+        rows = parsed.get("concepts")
+        if isinstance(rows, list):
+            return rows
+        if "concept_key" in parsed or "verdict" in parsed:
+            return [parsed]
+        return None
+    if isinstance(parsed, list):
+        return parsed
+    return None
+
+
 def judge_concepts(
     *,
     problem_text: str,
@@ -190,9 +264,12 @@ def judge_concepts(
 
     try:
         parsed = json.loads(raw.content)
-        rows = parsed.get("concepts")
-        if not isinstance(rows, list):
-            raise ValueError("missing/invalid 'concepts' array")
+        rows = _normalize_rows(parsed)
+        if rows is None:
+            raise ValueError(
+                "response has neither a 'concepts' array, a single concept "
+                "row, nor a top-level array of rows"
+            )
         rows_by_key = {
             row.get("concept_key"): row for row in rows if isinstance(row, dict)
         }
@@ -247,12 +324,29 @@ def make_openai_judge(model: str | None = None) -> JudgeFn:
     NEW call path (A1) — does NOT go through ``apollo.agent._llm.main_chat``
     (string-only, no logprob access). Calls
     ``client.chat.completions.create(..., logprobs=True, top_logprobs=5,
-    temperature=0.0, response_format={"type": "json_object"})`` directly,
-    then walks the response for a verdict-token probability. Falls back to
-    ``None`` when logprobs are unavailable/unwalkable (gate.py then reads the
-    per-concept ``confidence`` field instead, per A1). This function's single
-    live ``client.chat.completions.create`` call is the ONLY documented
-    coverage exemption in this module.
+    temperature=0.0, response_format={"type": "json_schema", ...})`` directly,
+    then walks the response for a verdict-token probability.
+
+    R2 (belt-and-suspenders fix): ``response_format`` now uses OpenAI
+    Structured Outputs (``json_schema`` + ``strict: True``, see
+    ``_JSON_SCHEMA``) instead of a free ``json_object`` — this forces the
+    top-level ``{"concepts": [...]}`` array shape at the API level, closing
+    the master defect where live gpt-4o (temperature=0.0, deterministic)
+    collapsed the reply to a single flat row and every attempt soft-failed to
+    all-clear (docs/_archive/experiments/2026-07-08-misconception-detector-validation.md).
+
+    Structured Outputs + ``logprobs=True`` DO compose on gpt-4o (both are
+    accepted together by the Chat Completions API; this is the live path).
+    ``_extract_verdict_token_prob`` still falls back to ``None`` when logprobs
+    are absent/unwalkable for any other reason, and ``judge_concepts`` /
+    ``_finding_from_row`` then read the per-concept ``confidence`` field
+    instead (the verbalized-confidence path, A1) — ``confidence`` is a
+    REQUIRED field on every row in ``_JSON_SCHEMA`` specifically so that
+    fallback always has something to read. ``judge_concepts`` is ALSO made
+    tolerant of a stray flat-object reply (belt-and-suspenders #2) in case any
+    future model/provider swap regresses the array shape again. This
+    function's single live ``client.chat.completions.create`` call is the ONLY
+    documented coverage exemption in this module.
     """
     resolved_model = model or os.getenv("MAIN_MODEL", "gpt-4o")
 
@@ -268,7 +362,7 @@ def make_openai_judge(model: str | None = None) -> JudgeFn:
                 temperature=0.0,
                 logprobs=True,
                 top_logprobs=5,
-                response_format={"type": "json_object"},
+                response_format={"type": "json_schema", "json_schema": _JSON_SCHEMA},
             )
         except Exception as exc:  # noqa: BLE001
             _LOG.warning("misconception judge OpenAI call failed: %s", exc)

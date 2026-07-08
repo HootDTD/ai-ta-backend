@@ -322,6 +322,166 @@ class TestJudgeConceptsSoftFail:
         assert findings[0].verdict == "clear"
 
 
+class TestJudgeConceptsFlatCollapseRegression:
+    """R2 regression test for the master defect (docs/_archive/experiments/
+    2026-07-08-misconception-detector-validation.md): live gpt-4o at
+    temperature=0.0 deterministically collapsed the requested top-level
+    ``{"concepts": [...]}`` array down to a SINGLE flat object with no
+    wrapper, e.g. ``{"concept_key": ..., "verdict": ..., "confidence": ...,
+    "evidence_span": ...}``. The old strict ``parsed.get("concepts")`` list
+    check failed on this shape every time and silently soft-failed to
+    all-clear/confidence-0.0 -- making the whole detector a no-op on real
+    data. This must now produce a REAL ConceptFinding, not a soft-fail."""
+
+    def test_real_collapsed_flat_single_object_produces_real_finding(self):
+        # Exact shape captured from a live run per the validation writeup:
+        # no "concepts" key at all -- just one bare row at the top level.
+        payload = {
+            "concept_key": "net_exports",
+            "verdict": "needs_clarification",
+            "evidence_span": "",
+            "confidence": 0.5,
+        }
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+
+        findings = judge_concepts(
+            problem_text="Explain net exports in the GDP identity.",
+            concepts=(_concept("net_exports", "Net exports = exports - imports."),),
+            judge_fn=judge_fn,
+        )
+
+        assert len(findings) == 1
+        finding = findings[0]
+        # Must be the REAL mapped verdict/confidence, not the all-clear
+        # soft-fail fallback (verdict="clear", confidence=0.0).
+        assert finding.concept_key == "net_exports"
+        assert finding.verdict == "needs_clarification"
+        assert finding.confidence == pytest.approx(0.5)
+        assert finding.source == "judge"
+        assert finding.severity == 0.0
+
+    def test_flat_collapse_with_misconception_verdict_is_docked_not_cleared(self):
+        payload = {
+            "concept_key": "gdp_identity",
+            "verdict": "misconception",
+            "evidence_span": "imports add to GDP",
+            "confidence": 0.88,
+        }
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+
+        findings = judge_concepts(
+            problem_text="Explain GDP accounting.",
+            concepts=(_concept("gdp_identity"),),
+            judge_fn=judge_fn,
+        )
+
+        assert len(findings) == 1
+        assert findings[0].verdict == "misconception"
+        assert findings[0].confidence == pytest.approx(0.88)
+        assert findings[0].evidence_span == "imports add to GDP"
+
+    def test_flat_collapse_with_multiple_requested_concepts_only_fills_matched_row(self):
+        """A flat single-row collapse against a multi-concept batch should
+        still be tolerated: the matched concept gets its real finding, and
+        any concept the model dropped defaults to the existing per-row
+        'clear' fallback (not a full soft-fail of the whole batch)."""
+        payload = {
+            "concept_key": "gdp_identity",
+            "verdict": "wrong",
+            "evidence_span": "y",
+            "confidence": 0.7,
+        }
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+        concepts = (_concept("gdp_identity"), _concept("money_multiplier"))
+
+        findings = judge_concepts(
+            problem_text="p",
+            concepts=concepts,
+            judge_fn=judge_fn,
+        )
+
+        assert len(findings) == 2
+        by_key = {f.concept_key: f for f in findings}
+        assert by_key["gdp_identity"].verdict == "wrong"
+        assert by_key["gdp_identity"].confidence == pytest.approx(0.7)
+        assert by_key["money_multiplier"].verdict == "clear"
+
+    def test_top_level_bare_list_of_rows_is_also_tolerated(self):
+        """Belt-and-suspenders: a top-level JSON array (no object wrapper at
+        all) of concept rows should also parse, not soft-fail."""
+        payload = [
+            {"concept_key": "a", "verdict": "clear", "evidence_span": "", "confidence": 0.9},
+            {"concept_key": "b", "verdict": "misconception", "evidence_span": "z", "confidence": 0.6},
+        ]
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+        findings = judge_concepts(
+            problem_text="p",
+            concepts=(_concept("a"), _concept("b")),
+            judge_fn=judge_fn,
+        )
+        assert len(findings) == 2
+        by_key = {f.concept_key: f for f in findings}
+        assert by_key["a"].verdict == "clear"
+        assert by_key["b"].verdict == "misconception"
+        assert by_key["b"].confidence == pytest.approx(0.6)
+
+    def test_truly_malformed_shape_still_soft_fails(self):
+        """A dict with neither 'concepts' nor concept-row keys must still
+        soft-fail cleanly -- the tolerant parse must not become a silent
+        pass-through for garbage."""
+        payload = {"unrelated_key": "nonsense", "another": 123}
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+        findings = judge_concepts(
+            problem_text="p",
+            concepts=(_concept("gdp_identity"), _concept("money_multiplier")),
+            judge_fn=judge_fn,
+        )
+        assert len(findings) == 2
+        assert all(f.verdict == "clear" and f.confidence == 0.0 for f in findings)
+
+
+class TestJsonSchemaShape:
+    """R2: locks in the Structured Outputs schema that forces the array
+    shape at the API level -- the root cause fix for the master defect."""
+
+    def test_schema_forces_top_level_concepts_array(self):
+        from apollo.overseer.misconception_detector.judge import _JSON_SCHEMA
+
+        assert _JSON_SCHEMA["strict"] is True
+        schema = _JSON_SCHEMA["schema"]
+        assert schema["type"] == "object"
+        assert schema["required"] == ["concepts"]
+        assert schema["additionalProperties"] is False
+
+        concepts_schema = schema["properties"]["concepts"]
+        assert concepts_schema["type"] == "array"
+
+        row_schema = concepts_schema["items"]
+        assert row_schema["additionalProperties"] is False
+        assert set(row_schema["required"]) == {
+            "concept_key",
+            "verdict",
+            "confidence",
+            "evidence_span",
+        }
+        # confidence must always be present so the verbalized-confidence
+        # fallback (A1) always has something to read.
+        assert "confidence" in row_schema["properties"]
+        assert row_schema["properties"]["verdict"]["enum"] == sorted(
+            {"clear", "needs_clarification", "misconception", "wrong"}
+        )
+
+
 class TestMakeOpenAIJudge:
     """Covers the logprob-extraction branch of make_openai_judge with a FAKE
     resp object — no network call is made."""
@@ -387,6 +547,11 @@ class TestMakeOpenAIJudge:
             def create(self, **kwargs):
                 assert kwargs.get("logprobs") is True
                 assert kwargs.get("top_logprobs") == 5
+                response_format = kwargs.get("response_format")
+                assert response_format.get("type") == "json_schema"
+                json_schema = response_format.get("json_schema", {})
+                assert json_schema.get("strict") is True
+                assert json_schema.get("schema", {}).get("required") == ["concepts"]
                 return fake_resp
 
         class _FakeChat:
