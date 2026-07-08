@@ -1,0 +1,24 @@
+{
+  "named_laws": [
+    "direct comparison",
+    "limit comparison",
+    "p-series",
+    "geometric series",
+    "ratio test",
+    "root test",
+    "integral test"
+  ],
+  "forbidden_concepts": [
+    "absolute convergence",
+    "conditional convergence",
+    "alternating",
+    "antiderivative",
+    "partial sums",
+    "telescoping"
+  ],
+  "forbidden_domains": [
+    "real analysis",
+    "sequences and series theory"
+  ],
+  "forbidden_units": []
+}

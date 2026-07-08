@@ -1,0 +1,128 @@
+{
+  "id": "trapezoidal_one_over_x_n4",
+  "concept_id": "numerical_integration",
+  "difficulty": "standard",
+  "given_values": {
+    "a": 1.0,
+    "b": 2.0,
+    "n": 4.0
+  },
+  "problem_text": "Use the Trapezoidal Rule with n = 4 to approximate integral_1^2 (1/x) dx. Round node values to 4 decimals and report T_4 to 5 decimals.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "step_size",
+      "trapezoidal_rule",
+      "endpoint_interior_weights",
+      "plan_compute_step_size",
+      "plan_evaluate_nodes",
+      "plan_apply_trapezoidal"
+    ]
+  ],
+  "target_unknown": "T",
+  "symbolic_mappings": {
+    "Delta x": "h",
+    "T_4": "T"
+  },
+  "reference_solution": [
+    {
+      "id": "step_size",
+      "step": 1,
+      "content": {
+        "label": "Step size Delta x = (b - a)/n",
+        "symbolic": "h - (b - a)/n",
+        "variables": [
+          "h",
+          "b",
+          "a",
+          "n"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.step_size",
+      "entry_type": "equation"
+    },
+    {
+      "id": "trapezoidal_rule",
+      "step": 2,
+      "content": {
+        "label": "Trapezoidal Rule with n=4: T = (Delta x/2)(f0 + 2 f1 + 2 f2 + 2 f3 + f4)",
+        "symbolic": "T - (h/2)*(f0 + 2*f1 + 2*f2 + 2*f3 + f4)",
+        "variables": [
+          "T",
+          "h",
+          "f0",
+          "f1",
+          "f2",
+          "f3",
+          "f4"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.trapezoidal_rule",
+      "entry_type": "equation"
+    },
+    {
+      "id": "endpoint_interior_weights",
+      "step": 3,
+      "content": {
+        "concept": "Trapezoidal weighting pattern",
+        "meaning": "The two endpoint nodes carry weight 1; every interior node carries weight 2."
+      },
+      "depends_on": [],
+      "entity_key": "def.endpoint_interior_weights",
+      "entry_type": "definition"
+    },
+    {
+      "id": "plan_compute_step_size",
+      "step": 4,
+      "content": {
+        "label": "compute Delta x = (2 - 1)/4 = 0.25 and list the nodes 1, 1.25, 1.5, 1.75, 2",
+        "order": 1,
+        "action": "compute Delta x = (2 - 1)/4 = 0.25 and list the nodes 1, 1.25, 1.5, 1.75, 2",
+        "purpose": "set the equally spaced nodes",
+        "uses_equations": [
+          "step_size"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "proc.plan_compute_step_size",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_evaluate_nodes",
+      "step": 5,
+      "content": {
+        "label": "evaluate f(x) = 1/x: f0=1, f1=0.8, f2=0.6667, f3=0.5714, f4=0.5",
+        "order": 2,
+        "action": "evaluate f(x) = 1/x: f0=1, f1=0.8, f2=0.6667, f3=0.5714, f4=0.5",
+        "purpose": "obtain the node values for the weighted sum",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_compute_step_size",
+        "endpoint_interior_weights"
+      ],
+      "entity_key": "proc.plan_evaluate_nodes",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_apply_trapezoidal",
+      "step": 6,
+      "content": {
+        "label": "compute T = (0.25/2)(1 + 2(0.8) + 2(0.6667) + 2(0.5714) + 0.5) = 0.125(5.5762) = 0.69703",
+        "order": 3,
+        "action": "compute T = (0.25/2)(1 + 2(0.8) + 2(0.6667) + 2(0.5714) + 0.5) = 0.125(5.5762) = 0.69703",
+        "purpose": "produce the trapezoidal estimate of the integral",
+        "uses_equations": [
+          "trapezoidal_rule"
+        ]
+      },
+      "depends_on": [
+        "plan_evaluate_nodes"
+      ],
+      "entity_key": "proc.plan_apply_trapezoidal",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

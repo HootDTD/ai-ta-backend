@@ -1,0 +1,33 @@
+{
+  "constants": {
+    "pi": 3.141592653589793
+  },
+  "augmented_givens": {},
+  "non_trivial_keywords": [
+    "integral",
+    "integration by parts",
+    "parts",
+    "LIATE",
+    "u dv",
+    "v du",
+    "differentiate",
+    "integrate",
+    "cyclic",
+    "solve for the integral",
+    "antiderivative",
+    "product"
+  ],
+  "plan_markers": [
+    "first",
+    "then",
+    "next",
+    "let u",
+    "choose u",
+    "choose dv",
+    "apply parts",
+    "apply again",
+    "solve for",
+    "integrate",
+    "substitute back"
+  ]
+}

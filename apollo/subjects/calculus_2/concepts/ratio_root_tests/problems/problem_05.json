@@ -1,0 +1,123 @@
+{
+  "id": "ratio_factorial_over_n_pow_n",
+  "concept_id": "ratio_root_tests",
+  "difficulty": "hard",
+  "given_values": {},
+  "problem_text": "Use the Ratio Test to determine whether sum_{n=1}^infinity n!/n^n converges or diverges.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "ratio_test",
+      "ratio",
+      "e_limit",
+      "plan_form_ratio",
+      "plan_take_limit",
+      "ratio_less_than_one",
+      "plan_conclude"
+    ]
+  ],
+  "target_unknown": "convergence verdict",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "ratio_test",
+      "step": 1,
+      "content": {
+        "concept": "Ratio Test",
+        "meaning": "L = lim |a_(n+1)/a_n|; if L < 1 the series converges, if L > 1 it diverges, and if L = 1 the test is inconclusive."
+      },
+      "depends_on": [],
+      "entity_key": "def.ratio_test",
+      "entry_type": "definition"
+    },
+    {
+      "id": "ratio",
+      "step": 2,
+      "content": {
+        "label": "Ratio a_(n+1)/a_n = (n/(n+1))^n = 1/(1 + 1/n)^n",
+        "symbolic": "r - 1/(1 + 1/n)**n",
+        "variables": [
+          "r",
+          "n"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.ratio",
+      "entry_type": "equation"
+    },
+    {
+      "id": "e_limit",
+      "step": 3,
+      "content": {
+        "concept": "Limit definition of e",
+        "meaning": "(1 + 1/n)^n -> e as n -> infinity."
+      },
+      "depends_on": [],
+      "entity_key": "def.e_limit",
+      "entry_type": "definition"
+    },
+    {
+      "id": "plan_form_ratio",
+      "step": 4,
+      "content": {
+        "label": "form a_(n+1)/a_n = (n+1) n^n/(n+1)^(n+1) = (n/(n+1))^n = 1/(1 + 1/n)^n",
+        "order": 1,
+        "action": "form a_(n+1)/a_n = (n+1) n^n/(n+1)^(n+1) = (n/(n+1))^n = 1/(1 + 1/n)^n",
+        "purpose": "build and simplify the ratio of consecutive terms",
+        "uses_equations": [
+          "ratio"
+        ]
+      },
+      "depends_on": [
+        "ratio_test"
+      ],
+      "entity_key": "proc.plan_form_ratio",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_take_limit",
+      "step": 5,
+      "content": {
+        "label": "since (1 + 1/n)^n -> e, we get L = 1/e which is about 0.368",
+        "order": 2,
+        "action": "since (1 + 1/n)^n -> e, we get L = 1/e which is about 0.368",
+        "purpose": "evaluate the ratio limit L using the e-limit",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_form_ratio",
+        "e_limit"
+      ],
+      "entity_key": "proc.plan_take_limit",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "ratio_less_than_one",
+      "step": 6,
+      "content": {
+        "label": "Ratio Test: converges (L<1)",
+        "applies_when": "L = 1/e is about 0.368 < 1."
+      },
+      "depends_on": [],
+      "entity_key": "cond.ratio_less_than_one",
+      "entry_type": "condition"
+    },
+    {
+      "id": "plan_conclude",
+      "step": 7,
+      "content": {
+        "label": "since L < 1, the series converges by the Ratio Test",
+        "order": 3,
+        "action": "since L < 1, the series converges by the Ratio Test",
+        "purpose": "reach the convergence verdict",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_take_limit",
+        "ratio_less_than_one"
+      ],
+      "entity_key": "proc.plan_conclude",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

@@ -1,0 +1,149 @@
+{
+  "id": "usub_2x_times_x2_plus_1_pow5",
+  "concept_id": "u_substitution",
+  "difficulty": "intro",
+  "given_values": {},
+  "problem_text": "Evaluate the indefinite integral  integral 2x(x^2 + 1)^5 dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "inner_derivative_present",
+      "usub_formula",
+      "substitution",
+      "power_rule",
+      "choose_u",
+      "rewrite_in_u",
+      "integrate_power",
+      "back_substitute"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "u": "x^2 + 1"
+  },
+  "reference_solution": [
+    {
+      "id": "inner_derivative_present",
+      "step": 1,
+      "content": {
+        "label": "Recognize a reverse-chain-rule pattern",
+        "applies_when": "the integrand contains an inner function g(x) = x^2 + 1 whose derivative 2x is already present as a factor"
+      },
+      "depends_on": [],
+      "entity_key": "cond.inner_derivative_present",
+      "entry_type": "condition"
+    },
+    {
+      "id": "usub_formula",
+      "step": 2,
+      "content": {
+        "label": "u-substitution (reverse chain rule)",
+        "symbolic": "integral f(g(x)) g'(x) dx = integral f(u) du  (u = g(x), du = g'(x) dx)",
+        "variables": [
+          "u",
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.usub_formula",
+      "entry_type": "equation"
+    },
+    {
+      "id": "substitution",
+      "step": 3,
+      "content": {
+        "concept": "u = x^2 + 1",
+        "meaning": "let u = x^2 + 1 so that du = 2x dx, which exactly matches the 2x dx already in the integrand"
+      },
+      "depends_on": [],
+      "entity_key": "def.substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "power_rule",
+      "step": 4,
+      "content": {
+        "label": "Power rule in u",
+        "symbolic": "integral u^n du = u^(n+1)/(n+1) + C",
+        "variables": [
+          "u",
+          "n"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.power_rule",
+      "entry_type": "equation"
+    },
+    {
+      "id": "choose_u",
+      "step": 5,
+      "content": {
+        "label": "Choose the substitution variable",
+        "order": 1,
+        "action": "identify the inner function u = x^2 + 1 because its derivative 2x already appears in the integrand",
+        "purpose": "set up a substitution that absorbs the 2x dx factor",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "inner_derivative_present",
+        "substitution"
+      ],
+      "entity_key": "proc.choose_u",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "rewrite_in_u",
+      "step": 6,
+      "content": {
+        "label": "Rewrite the whole integral in u",
+        "order": 2,
+        "action": "rewrite the integral in terms of u: integral 2x(x^2+1)^5 dx becomes integral u^5 du",
+        "purpose": "convert the whole integrand, including dx, into the single variable u",
+        "uses_equations": [
+          "usub_formula"
+        ]
+      },
+      "depends_on": [
+        "substitution",
+        "usub_formula"
+      ],
+      "entity_key": "proc.rewrite_in_u",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate_power",
+      "step": 7,
+      "content": {
+        "label": "Integrate in u",
+        "order": 3,
+        "action": "apply the power rule to integral u^5 du to get u^6/6 + C",
+        "purpose": "carry out the now-elementary integral in u",
+        "uses_equations": [
+          "power_rule"
+        ]
+      },
+      "depends_on": [
+        "rewrite_in_u",
+        "power_rule"
+      ],
+      "entity_key": "proc.integrate_power",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "back_substitute",
+      "step": 8,
+      "content": {
+        "label": "Return to the original variable",
+        "order": 4,
+        "action": "replace u with x^2 + 1 to express the antiderivative in x: (x^2 + 1)^6/6 + C",
+        "purpose": "return the answer to the original variable x",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "integrate_power"
+      ],
+      "entity_key": "proc.back_substitute",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

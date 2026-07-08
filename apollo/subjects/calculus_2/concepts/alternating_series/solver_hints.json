@@ -1,0 +1,29 @@
+{
+  "constants": {},
+  "augmented_givens": {},
+  "non_trivial_keywords": [
+    "alternating",
+    "leibniz",
+    "decreasing",
+    "converge",
+    "diverge",
+    "absolutely",
+    "conditionally",
+    "remainder",
+    "harmonic",
+    "p-series",
+    "nth-term",
+    "magnitude"
+  ],
+  "plan_markers": [
+    "first",
+    "then",
+    "next",
+    "check",
+    "test the absolute values",
+    "classify",
+    "conclude",
+    "step 1",
+    "step 2"
+  ]
+}

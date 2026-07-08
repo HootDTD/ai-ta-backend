@@ -1,0 +1,114 @@
+{
+  "id": "trigsub_1_over_sqrt_9_minus_x2",
+  "concept_id": "trigonometric_substitution",
+  "difficulty": "intro",
+  "given_values": {
+    "a": 3.0
+  },
+  "problem_text": "Evaluate  integral 1/sqrt(9 - x^2) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "identify_form",
+      "trig_substitution",
+      "simplified_integral",
+      "substitute",
+      "integrate",
+      "back_to_x"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "x": "3*sin(theta)"
+  },
+  "reference_solution": [
+    {
+      "id": "identify_form",
+      "step": 1,
+      "content": {
+        "label": "Identify sqrt(a^2 - x^2) -> x = a sin theta",
+        "applies_when": "the integrand has the form sqrt(a^2 - x^2) with a = 3, which calls for the sine substitution x = a sin theta"
+      },
+      "depends_on": [],
+      "entity_key": "cond.identify_form",
+      "entry_type": "condition"
+    },
+    {
+      "id": "trig_substitution",
+      "step": 2,
+      "content": {
+        "concept": "x = 3 sin theta",
+        "meaning": "let x = 3 sin theta so that dx = 3 cos theta dtheta and sqrt(9 - x^2) = 3 cos theta"
+      },
+      "depends_on": [],
+      "entity_key": "def.trig_substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "simplified_integral",
+      "step": 3,
+      "content": {
+        "label": "Simplified theta-integral",
+        "symbolic": "integral 1/(3 cos theta) * 3 cos theta dtheta = integral 1 dtheta",
+        "variables": [
+          "theta"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.simplified_integral",
+      "entry_type": "equation"
+    },
+    {
+      "id": "substitute",
+      "step": 4,
+      "content": {
+        "label": "Substitute and simplify the radical",
+        "order": 1,
+        "action": "substitute x = 3 sin theta, dx = 3 cos theta dtheta, and sqrt(9 - x^2) = 3 cos theta",
+        "purpose": "clear the square root by turning it into 3 cos theta",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "identify_form",
+        "trig_substitution"
+      ],
+      "entity_key": "proc.substitute",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate",
+      "step": 5,
+      "content": {
+        "label": "Integrate in theta",
+        "order": 2,
+        "action": "the integral reduces to integral 1 dtheta = theta",
+        "purpose": "carry out the now-trivial theta-integral",
+        "uses_equations": [
+          "simplified_integral"
+        ]
+      },
+      "depends_on": [
+        "substitute",
+        "simplified_integral"
+      ],
+      "entity_key": "proc.integrate",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "back_to_x",
+      "step": 6,
+      "content": {
+        "label": "Convert back from theta to x",
+        "order": 3,
+        "action": "since x = 3 sin theta, theta = arcsin(x/3), so the answer is arcsin(x/3) + C",
+        "purpose": "return the antiderivative to the original variable x",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "integrate"
+      ],
+      "entity_key": "proc.back_to_x",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

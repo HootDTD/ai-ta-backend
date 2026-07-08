@@ -1,0 +1,43 @@
+{
+  "misconceptions": [
+    {
+      "key": "misc.forgets_to_change_bounds",
+      "display_name": "Keeps the original limits after substituting",
+      "description": "In a definite integral, substitutes u = g(x) but keeps the original x-limits instead of converting them to u-limits (or forgetting to back-substitute). The limits must be expressed in the new variable u before evaluating.",
+      "opposes": "proc.change_bounds",
+      "trigger_phrases": [
+        "keep the same limits",
+        "don't change the bounds",
+        "integrate from 0 to pi/4 in u",
+        "leave the limits alone",
+        "same bounds after substitution"
+      ]
+    },
+    {
+      "key": "misc.forgets_du_differential",
+      "display_name": "Swaps dx for du without computing du",
+      "description": "Replaces the variable x by u but treats dx as if it were du, never computing du = g'(x) dx. The differential must be converted too, or the constant factor is lost.",
+      "opposes": "def.substitution",
+      "trigger_phrases": [
+        "just replace x with u",
+        "dx becomes du",
+        "ignore du",
+        "swap dx for du",
+        "forget the differential"
+      ]
+    },
+    {
+      "key": "misc.forgets_back_substitute",
+      "display_name": "Leaves the answer in terms of u",
+      "description": "Finishes the integral in u and reports u^6/6 + C without back-substituting u = g(x), leaving the antiderivative in the wrong variable.",
+      "opposes": "proc.back_substitute",
+      "trigger_phrases": [
+        "leave it in terms of u",
+        "the answer is u^6/6",
+        "forget to substitute back",
+        "keep it in u",
+        "answer in u"
+      ]
+    }
+  ]
+}

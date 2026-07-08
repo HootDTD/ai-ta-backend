@@ -1,0 +1,118 @@
+{
+  "id": "trapezoidal_error_bound_find_n",
+  "concept_id": "numerical_integration",
+  "difficulty": "hard",
+  "given_values": {
+    "a": 1.0,
+    "b": 2.0
+  },
+  "problem_text": "For integral_1^2 (1/x) dx, use the Trapezoidal Rule error bound |E_T| <= K(b - a)^3 / (12 n^2) to find the smallest number of subintervals n that guarantees an error less than 0.001.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "trapezoidal_error_bound",
+      "second_derivative_bound",
+      "error_tolerance",
+      "plan_bound_second_derivative",
+      "plan_set_inequality",
+      "plan_solve_for_n"
+    ]
+  ],
+  "target_unknown": "n",
+  "symbolic_mappings": {
+    "Delta x": "h"
+  },
+  "reference_solution": [
+    {
+      "id": "trapezoidal_error_bound",
+      "step": 1,
+      "content": {
+        "label": "Trapezoidal error bound |E_T| <= K(b-a)^3/(12 n^2)",
+        "symbolic": "Et - K*(b - a)**3/(12*n**2)",
+        "variables": [
+          "Et",
+          "K",
+          "b",
+          "a",
+          "n"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.trapezoidal_error_bound",
+      "entry_type": "equation"
+    },
+    {
+      "id": "second_derivative_bound",
+      "step": 2,
+      "content": {
+        "concept": "Second-derivative bound K",
+        "meaning": "K = max|f''| on [a,b]. For f(x)=1/x, f''(x)=2/x^3 is largest at x=1, so K=2."
+      },
+      "depends_on": [],
+      "entity_key": "def.second_derivative_bound",
+      "entry_type": "definition"
+    },
+    {
+      "id": "error_tolerance",
+      "step": 3,
+      "content": {
+        "label": "Error tolerance requirement",
+        "applies_when": "the guaranteed error must satisfy |E_T| < 0.001."
+      },
+      "depends_on": [],
+      "entity_key": "cond.error_tolerance",
+      "entry_type": "condition"
+    },
+    {
+      "id": "plan_bound_second_derivative",
+      "step": 4,
+      "content": {
+        "label": "compute f''(x)=2/x^3 and take K = max|f''| = 2 on [1,2]",
+        "order": 1,
+        "action": "compute f''(x)=2/x^3 and take K = max|f''| = 2 on [1,2]",
+        "purpose": "obtain the curvature constant K needed by the error bound",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "second_derivative_bound"
+      ],
+      "entity_key": "proc.plan_bound_second_derivative",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_set_inequality",
+      "step": 5,
+      "content": {
+        "label": "substitute K=2, b-a=1 into the bound to get 2/(12 n^2) = 1/(6 n^2), then require 1/(6 n^2) < 0.001",
+        "order": 2,
+        "action": "substitute K=2, b-a=1 into the bound to get 2/(12 n^2) = 1/(6 n^2), then require 1/(6 n^2) < 0.001",
+        "purpose": "turn the tolerance into an inequality in n",
+        "uses_equations": [
+          "trapezoidal_error_bound"
+        ]
+      },
+      "depends_on": [
+        "plan_bound_second_derivative",
+        "error_tolerance"
+      ],
+      "entity_key": "proc.plan_set_inequality",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_solve_for_n",
+      "step": 6,
+      "content": {
+        "label": "solve 6 n^2 > 1000, so n^2 > 166.67 and n > 12.91; round up to the smallest integer n = 13",
+        "order": 3,
+        "action": "solve 6 n^2 > 1000, so n^2 > 166.67 and n > 12.91; round up to the smallest integer n = 13",
+        "purpose": "produce the smallest n that guarantees the tolerance",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_set_inequality"
+      ],
+      "entity_key": "proc.plan_solve_for_n",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

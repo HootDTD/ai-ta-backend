@@ -1,0 +1,121 @@
+{
+  "id": "direct_comparison_sin_squared_over_n_squared",
+  "concept_id": "comparison_tests",
+  "difficulty": "hard",
+  "given_values": {},
+  "problem_text": "Determine whether sum_{n=1}^infinity sin^2(n)/n^2 converges or diverges.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "positive_terms",
+      "p_series",
+      "term_bound",
+      "plan_choose_comparison",
+      "plan_establish_inequality",
+      "direct_comparison_converges",
+      "plan_conclude"
+    ]
+  ],
+  "target_unknown": "convergence verdict",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "positive_terms",
+      "step": 1,
+      "content": {
+        "label": "Positive-term series",
+        "applies_when": "sin^2(n) >= 0, so the terms are nonnegative: this is a positive-term series, not an alternating one, and direct comparison applies"
+      },
+      "depends_on": [],
+      "entity_key": "cond.positive_terms",
+      "entry_type": "condition"
+    },
+    {
+      "id": "p_series",
+      "step": 2,
+      "content": {
+        "concept": "p-series test",
+        "meaning": "sum 1/n^p converges iff p > 1; the comparison series 1/n^2 has p = 2 and converges."
+      },
+      "depends_on": [],
+      "entity_key": "def.p_series",
+      "entry_type": "definition"
+    },
+    {
+      "id": "term_bound",
+      "step": 3,
+      "content": {
+        "label": "Bounding the terms above",
+        "applies_when": "0 <= sin^2(n) <= 1 for all n",
+        "transformation": "0 <= sin^2(n)/n^2 <= 1/n^2"
+      },
+      "depends_on": [
+        "positive_terms"
+      ],
+      "entity_key": "simp.term_bound",
+      "entry_type": "simplification"
+    },
+    {
+      "id": "plan_choose_comparison",
+      "step": 4,
+      "content": {
+        "label": "choose the comparison series sum 1/n^2, a convergent p-series (p=2)",
+        "order": 1,
+        "action": "choose the comparison series sum 1/n^2, a convergent p-series (p=2)",
+        "purpose": "pick a known convergent series to bound the given one",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "positive_terms",
+        "p_series"
+      ],
+      "entity_key": "proc.plan_choose_comparison",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_establish_inequality",
+      "step": 5,
+      "content": {
+        "label": "establish 0 <= sin^2(n)/n^2 <= 1/n^2 for all n",
+        "order": 2,
+        "action": "establish 0 <= sin^2(n)/n^2 <= 1/n^2 for all n",
+        "purpose": "show the given terms are dominated by the convergent series",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "term_bound",
+        "plan_choose_comparison"
+      ],
+      "entity_key": "proc.plan_establish_inequality",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "direct_comparison_converges",
+      "step": 6,
+      "content": {
+        "label": "Direct Comparison Test (convergence)",
+        "applies_when": "a nonnegative series bounded above term-by-term by a convergent series also converges."
+      },
+      "depends_on": [],
+      "entity_key": "cond.direct_comparison_converges",
+      "entry_type": "condition"
+    },
+    {
+      "id": "plan_conclude",
+      "step": 7,
+      "content": {
+        "label": "since sum 1/n^2 converges and the given terms are smaller, sum sin^2(n)/n^2 converges (absolutely) by Direct Comparison",
+        "order": 3,
+        "action": "since sum 1/n^2 converges and the given terms are smaller, sum sin^2(n)/n^2 converges (absolutely) by Direct Comparison",
+        "purpose": "reach the convergence verdict",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_establish_inequality",
+        "direct_comparison_converges"
+      ],
+      "entity_key": "proc.plan_conclude",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

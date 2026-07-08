@@ -1,0 +1,144 @@
+{
+  "topic_cluster": "alternating_series",
+  "nodes": [
+    {
+      "id": "series_terms",
+      "label": "Series Terms a_n",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "alternating_series"
+    },
+    {
+      "id": "alternating_form",
+      "label": "Alternating Form (-1)^n b_n",
+      "prerequisites": [
+        "series_terms"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "alternating_series"
+    },
+    {
+      "id": "nth_term_condition",
+      "label": "nth-Term Necessary Condition",
+      "prerequisites": [
+        "series_terms"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "alternating_series"
+    },
+    {
+      "id": "alternating_series_test",
+      "label": "Alternating Series Test (Leibniz)",
+      "prerequisites": [
+        "alternating_form",
+        "nth_term_condition"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "alternating_series"
+    },
+    {
+      "id": "absolute_series",
+      "label": "Series of Absolute Values",
+      "prerequisites": [
+        "alternating_form"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "alternating_series"
+    },
+    {
+      "id": "absolute_convergence",
+      "label": "Absolute Convergence",
+      "prerequisites": [
+        "absolute_series"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "alternating_series"
+    },
+    {
+      "id": "conditional_convergence",
+      "label": "Conditional Convergence",
+      "prerequisites": [
+        "alternating_series_test",
+        "absolute_series"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "alternating_series"
+    },
+    {
+      "id": "remainder_bound",
+      "label": "Alternating Series Remainder Bound",
+      "prerequisites": [
+        "alternating_series_test"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "alternating_series"
+    },
+    {
+      "id": "classification",
+      "label": "Convergence Classification",
+      "prerequisites": [
+        "absolute_convergence",
+        "conditional_convergence"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "alternating_series"
+    }
+  ],
+  "edges": [
+    {
+      "type": "requires",
+      "from": "alternating_form",
+      "to": "series_terms"
+    },
+    {
+      "type": "requires",
+      "from": "nth_term_condition",
+      "to": "series_terms"
+    },
+    {
+      "type": "requires",
+      "from": "alternating_series_test",
+      "to": "alternating_form"
+    },
+    {
+      "type": "requires",
+      "from": "alternating_series_test",
+      "to": "nth_term_condition"
+    },
+    {
+      "type": "requires",
+      "from": "absolute_series",
+      "to": "alternating_form"
+    },
+    {
+      "type": "requires",
+      "from": "absolute_convergence",
+      "to": "absolute_series"
+    },
+    {
+      "type": "requires",
+      "from": "conditional_convergence",
+      "to": "alternating_series_test"
+    },
+    {
+      "type": "requires",
+      "from": "conditional_convergence",
+      "to": "absolute_series"
+    },
+    {
+      "type": "extends",
+      "from": "remainder_bound",
+      "to": "alternating_series_test"
+    },
+    {
+      "type": "requires",
+      "from": "classification",
+      "to": "absolute_convergence"
+    },
+    {
+      "type": "requires",
+      "from": "classification",
+      "to": "conditional_convergence"
+    }
+  ]
+}

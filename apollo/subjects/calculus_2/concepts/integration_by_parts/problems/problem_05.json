@@ -1,0 +1,132 @@
+{
+  "id": "ibp_e_x_sin_x_cyclic",
+  "concept_id": "integration_by_parts",
+  "difficulty": "hard",
+  "given_values": {},
+  "problem_text": "Evaluate  integral e^x sin(x) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "cyclic_pattern",
+      "ibp_formula",
+      "parts_assignment",
+      "solve_for_I",
+      "first_parts",
+      "second_parts",
+      "solve_algebraically"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "u": "sin(x)",
+    "dv": "e^x dx"
+  },
+  "reference_solution": [
+    {
+      "id": "cyclic_pattern",
+      "step": 1,
+      "content": {
+        "label": "Cyclic integration by parts",
+        "applies_when": "neither e^x nor sin x terminates under repeated differentiation, so after applying parts twice the original integral I reappears and you solve for it algebraically"
+      },
+      "depends_on": [],
+      "entity_key": "cond.cyclic_pattern",
+      "entry_type": "condition"
+    },
+    {
+      "id": "ibp_formula",
+      "step": 2,
+      "content": {
+        "label": "Integration by parts",
+        "symbolic": "integral u dv = u*v - integral v du",
+        "variables": [
+          "u",
+          "v"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.ibp_formula",
+      "entry_type": "equation"
+    },
+    {
+      "id": "parts_assignment",
+      "step": 3,
+      "content": {
+        "concept": "u = sin x then u = cos x, dv = e^x dx",
+        "meaning": "first pass u = sin x, dv = e^x dx (du = cos x dx, v = e^x); second pass u = cos x, dv = e^x dx"
+      },
+      "depends_on": [],
+      "entity_key": "def.parts_assignment",
+      "entry_type": "definition"
+    },
+    {
+      "id": "solve_for_I",
+      "step": 4,
+      "content": {
+        "label": "Solve algebraically for the recurring integral I",
+        "applies_when": "the second application reproduces the original integral: I = e^x sin x - (e^x cos x + I)",
+        "transformation": "collect I on one side: 2I = e^x sin x - e^x cos x, so I = (e^x (sin x - cos x))/2 + C"
+      },
+      "depends_on": [],
+      "entity_key": "simp.solve_for_I",
+      "entry_type": "simplification"
+    },
+    {
+      "id": "first_parts",
+      "step": 5,
+      "content": {
+        "label": "First application of parts",
+        "order": 1,
+        "action": "let I = integral e^x sin x dx; parts with u = sin x, dv = e^x dx gives I = e^x sin x - integral e^x cos x dx",
+        "purpose": "expose the companion integral of e^x cos x",
+        "uses_equations": [
+          "ibp_formula"
+        ]
+      },
+      "depends_on": [
+        "cyclic_pattern",
+        "parts_assignment",
+        "ibp_formula"
+      ],
+      "entity_key": "proc.first_parts",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "second_parts",
+      "step": 6,
+      "content": {
+        "label": "Second application of parts",
+        "order": 2,
+        "action": "apply parts to integral e^x cos x dx = e^x cos x + integral e^x sin x dx = e^x cos x + I",
+        "purpose": "reproduce the original integral I so it can be solved for",
+        "uses_equations": [
+          "ibp_formula"
+        ]
+      },
+      "depends_on": [
+        "first_parts",
+        "ibp_formula"
+      ],
+      "entity_key": "proc.second_parts",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "solve_algebraically",
+      "step": 7,
+      "content": {
+        "label": "Solve for I",
+        "order": 3,
+        "action": "substitute back to get I = e^x sin x - e^x cos x - I, then solve 2I = e^x sin x - e^x cos x",
+        "purpose": "isolate I to finish without integrating further",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "second_parts",
+        "solve_for_I",
+        "cyclic_pattern"
+      ],
+      "entity_key": "proc.solve_algebraically",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

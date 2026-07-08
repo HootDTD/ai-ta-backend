@@ -1,0 +1,162 @@
+{
+  "topic_cluster": "comparison_tests",
+  "nodes": [
+    {
+      "id": "series_terms",
+      "label": "Series Terms a_n",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "comparison_tests"
+    },
+    {
+      "id": "positive_terms",
+      "label": "Positive-Term Series",
+      "prerequisites": [
+        "series_terms"
+      ],
+      "scope_boundary": [
+        "alternating_series"
+      ],
+      "topic_cluster": "comparison_tests"
+    },
+    {
+      "id": "p_series_benchmark",
+      "label": "p-series Benchmark",
+      "prerequisites": [
+        "positive_terms"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "comparison_tests"
+    },
+    {
+      "id": "geometric_benchmark",
+      "label": "Geometric Benchmark",
+      "prerequisites": [
+        "positive_terms"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "comparison_tests"
+    },
+    {
+      "id": "harmonic_benchmark",
+      "label": "Harmonic Benchmark",
+      "prerequisites": [
+        "positive_terms"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "comparison_tests"
+    },
+    {
+      "id": "term_inequality",
+      "label": "Term-by-Term Inequality",
+      "prerequisites": [
+        "positive_terms"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "comparison_tests"
+    },
+    {
+      "id": "direct_comparison",
+      "label": "Direct Comparison Test",
+      "prerequisites": [
+        "term_inequality",
+        "p_series_benchmark",
+        "geometric_benchmark"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "comparison_tests"
+    },
+    {
+      "id": "limit_ratio",
+      "label": "Limit of a_n/b_n",
+      "prerequisites": [
+        "positive_terms"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "comparison_tests"
+    },
+    {
+      "id": "limit_comparison",
+      "label": "Limit Comparison Test",
+      "prerequisites": [
+        "limit_ratio",
+        "p_series_benchmark",
+        "harmonic_benchmark"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "comparison_tests"
+    },
+    {
+      "id": "convergence_verdict",
+      "label": "Convergence / Divergence Verdict",
+      "prerequisites": [
+        "direct_comparison",
+        "limit_comparison"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "comparison_tests"
+    }
+  ],
+  "edges": [
+    {
+      "type": "requires",
+      "from": "positive_terms",
+      "to": "series_terms"
+    },
+    {
+      "type": "requires",
+      "from": "p_series_benchmark",
+      "to": "positive_terms"
+    },
+    {
+      "type": "requires",
+      "from": "geometric_benchmark",
+      "to": "positive_terms"
+    },
+    {
+      "type": "requires",
+      "from": "harmonic_benchmark",
+      "to": "positive_terms"
+    },
+    {
+      "type": "requires",
+      "from": "term_inequality",
+      "to": "positive_terms"
+    },
+    {
+      "type": "requires",
+      "from": "direct_comparison",
+      "to": "term_inequality"
+    },
+    {
+      "type": "requires",
+      "from": "direct_comparison",
+      "to": "p_series_benchmark"
+    },
+    {
+      "type": "requires",
+      "from": "limit_ratio",
+      "to": "positive_terms"
+    },
+    {
+      "type": "requires",
+      "from": "limit_comparison",
+      "to": "limit_ratio"
+    },
+    {
+      "type": "requires",
+      "from": "limit_comparison",
+      "to": "p_series_benchmark"
+    },
+    {
+      "type": "requires",
+      "from": "convergence_verdict",
+      "to": "direct_comparison"
+    },
+    {
+      "type": "requires",
+      "from": "convergence_verdict",
+      "to": "limit_comparison"
+    }
+  ]
+}

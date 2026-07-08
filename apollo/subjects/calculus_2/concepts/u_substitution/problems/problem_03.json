@@ -1,0 +1,148 @@
+{
+  "id": "usub_cos_x_e_sin_x",
+  "concept_id": "u_substitution",
+  "difficulty": "standard",
+  "given_values": {},
+  "problem_text": "Evaluate  integral cos(x) e^(sin x) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "recognize",
+      "usub_formula",
+      "substitution",
+      "exp_integral",
+      "choose_u",
+      "rewrite_in_u",
+      "integrate_exp",
+      "back_substitute"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "u": "sin(x)"
+  },
+  "reference_solution": [
+    {
+      "id": "recognize",
+      "step": 1,
+      "content": {
+        "label": "The exponent's derivative sits outside",
+        "applies_when": "the derivative of the exponent, d/dx(sin x) = cos x, appears as a factor; an integration-by-parts attack would loop, so substitution is the right tool"
+      },
+      "depends_on": [],
+      "entity_key": "cond.recognize",
+      "entry_type": "condition"
+    },
+    {
+      "id": "usub_formula",
+      "step": 2,
+      "content": {
+        "label": "u-substitution (reverse chain rule)",
+        "symbolic": "integral f(g(x)) g'(x) dx = integral f(u) du  (u = g(x), du = g'(x) dx)",
+        "variables": [
+          "u",
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.usub_formula",
+      "entry_type": "equation"
+    },
+    {
+      "id": "substitution",
+      "step": 3,
+      "content": {
+        "concept": "u = sin x",
+        "meaning": "let u = sin x so that du = cos x dx, matching the cos x dx factor"
+      },
+      "depends_on": [],
+      "entity_key": "def.substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "exp_integral",
+      "step": 4,
+      "content": {
+        "label": "Exponential integral",
+        "symbolic": "integral e^u du = e^u + C",
+        "variables": [
+          "u"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.exp_integral",
+      "entry_type": "equation"
+    },
+    {
+      "id": "choose_u",
+      "step": 5,
+      "content": {
+        "label": "Choose the substitution variable",
+        "order": 1,
+        "action": "let u = sin x because its derivative cos x is present in the integrand",
+        "purpose": "collapse the composite exponential to e^u",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "recognize",
+        "substitution"
+      ],
+      "entity_key": "proc.choose_u",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "rewrite_in_u",
+      "step": 6,
+      "content": {
+        "label": "Rewrite the integral in u",
+        "order": 2,
+        "action": "rewrite the integral as integral e^u du",
+        "purpose": "convert the whole integrand into u",
+        "uses_equations": [
+          "usub_formula"
+        ]
+      },
+      "depends_on": [
+        "substitution",
+        "usub_formula"
+      ],
+      "entity_key": "proc.rewrite_in_u",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate_exp",
+      "step": 7,
+      "content": {
+        "label": "Integrate in u",
+        "order": 3,
+        "action": "integrate integral e^u du = e^u",
+        "purpose": "carry out the elementary exponential integral",
+        "uses_equations": [
+          "exp_integral"
+        ]
+      },
+      "depends_on": [
+        "rewrite_in_u",
+        "exp_integral"
+      ],
+      "entity_key": "proc.integrate_exp",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "back_substitute",
+      "step": 8,
+      "content": {
+        "label": "Return to x",
+        "order": 4,
+        "action": "substitute u = sin x to get e^(sin x) + C",
+        "purpose": "return the answer to the original variable x",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "integrate_exp"
+      ],
+      "entity_key": "proc.back_substitute",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

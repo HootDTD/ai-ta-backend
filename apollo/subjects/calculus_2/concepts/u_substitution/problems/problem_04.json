@@ -1,0 +1,152 @@
+{
+  "id": "usub_definite_tan_sec2_0_to_piover4",
+  "concept_id": "u_substitution",
+  "difficulty": "standard",
+  "given_values": {
+    "lower": 0.0,
+    "upper": 0.7853981633974483
+  },
+  "problem_text": "Evaluate the definite integral  integral_0^(pi/4) tan(x) sec^2(x) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "recognize",
+      "usub_formula",
+      "substitution",
+      "power_rule",
+      "choose_u",
+      "change_bounds",
+      "rewrite_in_u",
+      "evaluate"
+    ]
+  ],
+  "target_unknown": "I",
+  "symbolic_mappings": {
+    "u": "tan(x)"
+  },
+  "reference_solution": [
+    {
+      "id": "recognize",
+      "step": 1,
+      "content": {
+        "label": "A clean substitution, not a trig reduction",
+        "applies_when": "sec^2(x) is the derivative of tan(x), so this is a clean substitution rather than a trigonometric-integral reduction"
+      },
+      "depends_on": [],
+      "entity_key": "cond.recognize",
+      "entry_type": "condition"
+    },
+    {
+      "id": "usub_formula",
+      "step": 2,
+      "content": {
+        "label": "u-substitution (reverse chain rule)",
+        "symbolic": "integral f(g(x)) g'(x) dx = integral f(u) du  (u = g(x), du = g'(x) dx)",
+        "variables": [
+          "u",
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.usub_formula",
+      "entry_type": "equation"
+    },
+    {
+      "id": "substitution",
+      "step": 3,
+      "content": {
+        "concept": "u = tan x",
+        "meaning": "let u = tan x so that du = sec^2 x dx"
+      },
+      "depends_on": [],
+      "entity_key": "def.substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "power_rule",
+      "step": 4,
+      "content": {
+        "label": "Power rule in u (n = 1)",
+        "symbolic": "integral u du = u^2/2 + C",
+        "variables": [
+          "u"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.power_rule",
+      "entry_type": "equation"
+    },
+    {
+      "id": "choose_u",
+      "step": 5,
+      "content": {
+        "label": "Choose the substitution variable",
+        "order": 1,
+        "action": "let u = tan x because du = sec^2 x dx is present",
+        "purpose": "reduce the integrand to a power of u",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "recognize",
+        "substitution"
+      ],
+      "entity_key": "proc.choose_u",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "change_bounds",
+      "step": 6,
+      "content": {
+        "label": "Change the limits of integration",
+        "order": 2,
+        "action": "change the limits with u = tan x: x = 0 gives u = 0 and x = pi/4 gives u = 1",
+        "purpose": "convert the definite integral's bounds to u so no back-substitution is needed",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "substitution"
+      ],
+      "entity_key": "proc.change_bounds",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "rewrite_in_u",
+      "step": 7,
+      "content": {
+        "label": "Rewrite the integral in u",
+        "order": 3,
+        "action": "rewrite as integral_0^1 u du",
+        "purpose": "express the definite integral entirely in u",
+        "uses_equations": [
+          "usub_formula"
+        ]
+      },
+      "depends_on": [
+        "substitution",
+        "usub_formula"
+      ],
+      "entity_key": "proc.rewrite_in_u",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "evaluate",
+      "step": 8,
+      "content": {
+        "label": "Evaluate the definite integral",
+        "order": 4,
+        "action": "evaluate [u^2/2] from 0 to 1 = 1/2 - 0 = 1/2",
+        "purpose": "produce the numerical value of the definite integral",
+        "uses_equations": [
+          "power_rule"
+        ]
+      },
+      "depends_on": [
+        "change_bounds",
+        "rewrite_in_u",
+        "power_rule"
+      ],
+      "entity_key": "proc.evaluate",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

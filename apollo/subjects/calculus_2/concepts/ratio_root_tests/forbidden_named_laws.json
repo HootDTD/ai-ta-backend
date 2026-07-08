@@ -1,0 +1,23 @@
+{
+  "named_laws": [
+    "ratio test",
+    "root test",
+    "d'alembert",
+    "cauchy root test",
+    "comparison test",
+    "p-series"
+  ],
+  "forbidden_concepts": [
+    "absolute convergence",
+    "power series",
+    "radius of convergence",
+    "interval of convergence",
+    "factorial identity",
+    "integral test"
+  ],
+  "forbidden_domains": [
+    "real analysis",
+    "sequences and series theory"
+  ],
+  "forbidden_units": []
+}

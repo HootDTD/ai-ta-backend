@@ -1,0 +1,150 @@
+{
+  "id": "usub_x_over_x2_plus_4",
+  "concept_id": "u_substitution",
+  "difficulty": "intro",
+  "given_values": {
+    "a": 2.0
+  },
+  "problem_text": "Evaluate  integral x/(x^2 + 4) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "recognize",
+      "usub_formula",
+      "substitution",
+      "log_integral",
+      "choose_u",
+      "rewrite_in_u",
+      "integrate_log",
+      "back_substitute"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "u": "x^2 + 4"
+  },
+  "reference_solution": [
+    {
+      "id": "recognize",
+      "step": 1,
+      "content": {
+        "label": "Numerator is the denominator's derivative",
+        "applies_when": "the numerator x is, up to a constant, the derivative of the denominator x^2 + 4; the denominator is irreducible so partial fractions does not apply"
+      },
+      "depends_on": [],
+      "entity_key": "cond.recognize",
+      "entry_type": "condition"
+    },
+    {
+      "id": "usub_formula",
+      "step": 2,
+      "content": {
+        "label": "u-substitution (reverse chain rule)",
+        "symbolic": "integral f(g(x)) g'(x) dx = integral f(u) du  (u = g(x), du = g'(x) dx)",
+        "variables": [
+          "u",
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.usub_formula",
+      "entry_type": "equation"
+    },
+    {
+      "id": "substitution",
+      "step": 3,
+      "content": {
+        "concept": "u = x^2 + 4",
+        "meaning": "let u = x^2 + 4 so that du = 2x dx, i.e. x dx = (1/2) du"
+      },
+      "depends_on": [],
+      "entity_key": "def.substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "log_integral",
+      "step": 4,
+      "content": {
+        "label": "Reciprocal integral",
+        "symbolic": "integral (1/u) du = ln|u| + C",
+        "variables": [
+          "u"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.log_integral",
+      "entry_type": "equation"
+    },
+    {
+      "id": "choose_u",
+      "step": 5,
+      "content": {
+        "label": "Choose the substitution variable",
+        "order": 1,
+        "action": "let u = x^2 + 4 because its derivative 2x matches the numerator up to a factor of 1/2",
+        "purpose": "reduce the integrand to a reciprocal form in u",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "recognize",
+        "substitution"
+      ],
+      "entity_key": "proc.choose_u",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "rewrite_in_u",
+      "step": 6,
+      "content": {
+        "label": "Rewrite the integral in u",
+        "order": 2,
+        "action": "rewrite as (1/2) integral (1/u) du using x dx = (1/2) du",
+        "purpose": "express the whole integrand in u",
+        "uses_equations": [
+          "usub_formula"
+        ]
+      },
+      "depends_on": [
+        "substitution",
+        "usub_formula"
+      ],
+      "entity_key": "proc.rewrite_in_u",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate_log",
+      "step": 7,
+      "content": {
+        "label": "Integrate in u",
+        "order": 3,
+        "action": "integrate (1/2) integral (1/u) du to (1/2) ln|u|",
+        "purpose": "carry out the reciprocal integral",
+        "uses_equations": [
+          "log_integral"
+        ]
+      },
+      "depends_on": [
+        "rewrite_in_u",
+        "log_integral"
+      ],
+      "entity_key": "proc.integrate_log",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "back_substitute",
+      "step": 8,
+      "content": {
+        "label": "Return to x",
+        "order": 4,
+        "action": "substitute u = x^2 + 4; since x^2 + 4 > 0 always, write (1/2) ln(x^2 + 4) + C",
+        "purpose": "return the answer to the original variable x",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "integrate_log"
+      ],
+      "entity_key": "proc.back_substitute",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

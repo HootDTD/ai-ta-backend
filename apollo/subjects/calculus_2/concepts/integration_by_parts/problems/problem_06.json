@@ -1,0 +1,130 @@
+{
+  "id": "ibp_definite_arctan_0_to_1",
+  "concept_id": "integration_by_parts",
+  "difficulty": "hard",
+  "given_values": {
+    "lower": 0.0,
+    "upper": 1.0
+  },
+  "problem_text": "Evaluate the definite integral  integral_0^1 arctan(x) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "liate_choice",
+      "ibp_formula",
+      "parts_assignment",
+      "inner_substitution",
+      "apply_parts",
+      "inner_integral",
+      "evaluate_bounds"
+    ]
+  ],
+  "target_unknown": "I",
+  "symbolic_mappings": {
+    "u": "arctan(x)",
+    "dv": "dx"
+  },
+  "reference_solution": [
+    {
+      "id": "liate_choice",
+      "step": 1,
+      "content": {
+        "label": "LIATE choice on a lone inverse-trig factor",
+        "applies_when": "the arctan is the integrand (this is not an integral that produces an arctan), so by LIATE let u = arctan x (Inverse-trig) and dv = dx"
+      },
+      "depends_on": [],
+      "entity_key": "cond.liate_choice",
+      "entry_type": "condition"
+    },
+    {
+      "id": "ibp_formula",
+      "step": 2,
+      "content": {
+        "label": "Integration by parts",
+        "symbolic": "integral u dv = u*v - integral v du",
+        "variables": [
+          "u",
+          "v"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.ibp_formula",
+      "entry_type": "equation"
+    },
+    {
+      "id": "parts_assignment",
+      "step": 3,
+      "content": {
+        "concept": "u = arctan x, dv = dx",
+        "meaning": "u = arctan x (du = 1/(1 + x^2) dx) and dv = dx (v = x)"
+      },
+      "depends_on": [],
+      "entity_key": "def.parts_assignment",
+      "entry_type": "definition"
+    },
+    {
+      "id": "inner_substitution",
+      "step": 4,
+      "content": {
+        "concept": "w = 1 + x^2 for the leftover integral",
+        "meaning": "for integral x/(1 + x^2) dx substitute w = 1 + x^2 (dw = 2x dx), giving (1/2) ln(1 + x^2)"
+      },
+      "depends_on": [],
+      "entity_key": "def.inner_substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "apply_parts",
+      "step": 5,
+      "content": {
+        "label": "Apply the parts formula",
+        "order": 1,
+        "action": "apply integral u dv = uv - integral v du: x arctan x - integral x/(1 + x^2) dx",
+        "purpose": "trade the inverse-trig integrand for a rational one",
+        "uses_equations": [
+          "ibp_formula"
+        ]
+      },
+      "depends_on": [
+        "liate_choice",
+        "parts_assignment",
+        "ibp_formula"
+      ],
+      "entity_key": "proc.apply_parts",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "inner_integral",
+      "step": 6,
+      "content": {
+        "label": "Evaluate the leftover integral",
+        "order": 2,
+        "action": "evaluate integral x/(1 + x^2) dx = (1/2) ln(1 + x^2) via w = 1 + x^2",
+        "purpose": "finish the rational integral so the antiderivative is complete",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "inner_substitution",
+        "apply_parts"
+      ],
+      "entity_key": "proc.inner_integral",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "evaluate_bounds",
+      "step": 7,
+      "content": {
+        "label": "Evaluate at the limits",
+        "order": 3,
+        "action": "the antiderivative is x arctan x - (1/2) ln(1 + x^2); evaluate 0 to 1: pi/4 - (1/2) ln 2",
+        "purpose": "produce the numerical value of the definite integral",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "inner_integral"
+      ],
+      "entity_key": "proc.evaluate_bounds",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

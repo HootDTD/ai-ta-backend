@@ -1,0 +1,17 @@
+{
+  "symbols": [
+    "n",
+    "a_n",
+    "L",
+    "r",
+    "e"
+  ],
+  "description": {
+    "n": "the summation index",
+    "a_n": "the general term of the series",
+    "L": "the Ratio/Root Test limit value",
+    "r": "the ratio a_(n+1)/a_n or the n-th root (a_n)^(1/n)",
+    "e": "Euler's number, the limit of (1 + 1/n)^n"
+  },
+  "subscript_convention": "Use a_n for the term and a_(n+1) for the next term; L for the limiting ratio or root."
+}

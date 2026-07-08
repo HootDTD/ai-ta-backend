@@ -1,0 +1,31 @@
+{
+  "constants": {
+    "pi": 3.141592653589793
+  },
+  "augmented_givens": {},
+  "non_trivial_keywords": [
+    "integral",
+    "trig substitution",
+    "trigonometric substitution",
+    "sine substitution",
+    "tangent substitution",
+    "secant substitution",
+    "radical",
+    "right triangle",
+    "convert back",
+    "arcsin",
+    "antiderivative"
+  ],
+  "plan_markers": [
+    "first",
+    "then",
+    "next",
+    "let x",
+    "substitute",
+    "draw the triangle",
+    "convert back",
+    "back to x",
+    "integrate",
+    "simplify the radical"
+  ]
+}

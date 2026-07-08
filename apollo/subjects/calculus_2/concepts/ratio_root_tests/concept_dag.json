@@ -1,0 +1,132 @@
+{
+  "topic_cluster": "ratio_root_tests",
+  "nodes": [
+    {
+      "id": "series_terms",
+      "label": "Series Terms a_n",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "ratio_root_tests"
+    },
+    {
+      "id": "consecutive_ratio",
+      "label": "Consecutive-Term Ratio a_(n+1)/a_n",
+      "prerequisites": [
+        "series_terms"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "ratio_root_tests"
+    },
+    {
+      "id": "nth_root",
+      "label": "n-th Root (a_n)^(1/n)",
+      "prerequisites": [
+        "series_terms"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "ratio_root_tests"
+    },
+    {
+      "id": "ratio_test",
+      "label": "Ratio Test",
+      "prerequisites": [
+        "consecutive_ratio"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "ratio_root_tests"
+    },
+    {
+      "id": "root_test",
+      "label": "Root Test",
+      "prerequisites": [
+        "nth_root"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "ratio_root_tests"
+    },
+    {
+      "id": "limit_value",
+      "label": "Limit Value L",
+      "prerequisites": [
+        "ratio_test",
+        "root_test"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "ratio_root_tests"
+    },
+    {
+      "id": "e_limit",
+      "label": "Euler Limit (1+1/n)^n -> e",
+      "prerequisites": [
+        "limit_value"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "ratio_root_tests"
+    },
+    {
+      "id": "inconclusive_case",
+      "label": "Inconclusive Case (L=1)",
+      "prerequisites": [
+        "limit_value"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "ratio_root_tests"
+    },
+    {
+      "id": "convergence_verdict",
+      "label": "Convergence / Divergence Verdict",
+      "prerequisites": [
+        "limit_value"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "ratio_root_tests"
+    }
+  ],
+  "edges": [
+    {
+      "type": "requires",
+      "from": "consecutive_ratio",
+      "to": "series_terms"
+    },
+    {
+      "type": "requires",
+      "from": "nth_root",
+      "to": "series_terms"
+    },
+    {
+      "type": "requires",
+      "from": "ratio_test",
+      "to": "consecutive_ratio"
+    },
+    {
+      "type": "requires",
+      "from": "root_test",
+      "to": "nth_root"
+    },
+    {
+      "type": "requires",
+      "from": "limit_value",
+      "to": "ratio_test"
+    },
+    {
+      "type": "requires",
+      "from": "limit_value",
+      "to": "root_test"
+    },
+    {
+      "type": "extends",
+      "from": "e_limit",
+      "to": "limit_value"
+    },
+    {
+      "type": "extends",
+      "from": "inconclusive_case",
+      "to": "limit_value"
+    },
+    {
+      "type": "requires",
+      "from": "convergence_verdict",
+      "to": "limit_value"
+    }
+  ]
+}

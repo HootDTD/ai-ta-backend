@@ -1,0 +1,21 @@
+{
+  "symbols": [
+    "x",
+    "u",
+    "F",
+    "I",
+    "C",
+    "n",
+    "theta"
+  ],
+  "description": {
+    "x": "integration variable",
+    "u": "substitution variable after peeling a factor",
+    "F": "the antiderivative being sought",
+    "I": "the value of a definite integral (or a recurring integral)",
+    "C": "constant of integration",
+    "n": "power of a trigonometric function in the integrand",
+    "theta": "angle variable (when the integrand is written in an angle)"
+  },
+  "subscript_convention": "Use I for a recurring integral (e.g. the sec^3 reduction) that is solved for algebraically."
+}

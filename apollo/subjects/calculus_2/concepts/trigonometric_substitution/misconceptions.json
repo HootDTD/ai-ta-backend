@@ -1,0 +1,43 @@
+{
+  "misconceptions": [
+    {
+      "key": "misc.forgets_convert_back",
+      "display_name": "Leaves the answer in terms of theta",
+      "description": "Finishes the integral in theta and reports theta + C without using the reference triangle to convert back to x, leaving the antiderivative in the wrong variable.",
+      "opposes": "proc.back_to_x",
+      "trigger_phrases": [
+        "answer is theta + C",
+        "leave it in theta",
+        "forget to convert back from theta",
+        "keep it in theta",
+        "final answer in theta"
+      ]
+    },
+    {
+      "key": "misc.wrong_radical_form",
+      "display_name": "Picks the wrong substitution for the radical",
+      "description": "Uses a sine substitution for x^2 + a^2, or a tangent/secant for a^2 - x^2. The radical form dictates the substitution: sqrt(a^2 - x^2) -> sine, sqrt(a^2 + x^2) -> tangent, sqrt(x^2 - a^2) -> secant.",
+      "opposes": "cond.identify_form",
+      "trigger_phrases": [
+        "use x = a sin theta for x^2 + a^2",
+        "secant for a^2 - x^2",
+        "tangent for a^2 - x^2",
+        "sine for x^2 - a^2",
+        "wrong triangle"
+      ]
+    },
+    {
+      "key": "misc.forgets_dx_differential",
+      "display_name": "Substitutes x but forgets dx",
+      "description": "Replaces x by a sin theta (or a tan/sec theta) but forgets to also replace dx with the corresponding a cos theta dtheta, dropping the differential factor.",
+      "opposes": "def.trig_substitution",
+      "trigger_phrases": [
+        "just replace x with 3 sin theta",
+        "forget dx = 3 cos theta dtheta",
+        "leave dx alone",
+        "no dtheta factor",
+        "swap x only"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "id": "divergent_nth_term_n_over_n_plus_one",
+  "concept_id": "alternating_series",
+  "difficulty": "hard",
+  "given_values": {},
+  "problem_text": "Classify sum_{n=1}^infinity (-1)^n * n/(n + 1) as absolutely convergent, conditionally convergent, or divergent.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "check_nth_term_first",
+      "nth_term_test",
+      "plan_compute_limit",
+      "ast_inapplicable",
+      "plan_conclude"
+    ]
+  ],
+  "target_unknown": "convergence classification",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "check_nth_term_first",
+      "step": 1,
+      "content": {
+        "label": "Check the necessary condition first",
+        "applies_when": "before applying the Alternating Series Test, check the necessary condition that the terms tend to 0."
+      },
+      "depends_on": [],
+      "entity_key": "cond.check_nth_term_first",
+      "entry_type": "condition"
+    },
+    {
+      "id": "nth_term_test",
+      "step": 2,
+      "content": {
+        "concept": "nth-Term Divergence Test",
+        "meaning": "if lim a_n is not 0 (or does not exist), the series diverges."
+      },
+      "depends_on": [],
+      "entity_key": "def.nth_term_test",
+      "entry_type": "definition"
+    },
+    {
+      "id": "plan_compute_limit",
+      "step": 3,
+      "content": {
+        "label": "compute the magnitude b_n = n/(n+1) -> 1, so a_n = (-1)^n n/(n+1) does not approach 0",
+        "order": 1,
+        "action": "compute the magnitude b_n = n/(n+1) -> 1, so a_n = (-1)^n n/(n+1) does not approach 0",
+        "purpose": "test the necessary condition on the terms",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "check_nth_term_first"
+      ],
+      "entity_key": "proc.plan_compute_limit",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "ast_inapplicable",
+      "step": 4,
+      "content": {
+        "label": "Alternating Series Test does not apply",
+        "applies_when": "the limit condition lim b_n = 0 fails, so the Alternating Series Test never applies."
+      },
+      "depends_on": [],
+      "entity_key": "cond.ast_inapplicable",
+      "entry_type": "condition"
+    },
+    {
+      "id": "plan_conclude",
+      "step": 5,
+      "content": {
+        "label": "since the terms do not approach 0, the series diverges by the nth-Term Divergence Test",
+        "order": 2,
+        "action": "since the terms do not approach 0, the series diverges by the nth-Term Divergence Test",
+        "purpose": "produce the final classification",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_compute_limit",
+        "nth_term_test",
+        "ast_inapplicable"
+      ],
+      "entity_key": "proc.plan_conclude",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

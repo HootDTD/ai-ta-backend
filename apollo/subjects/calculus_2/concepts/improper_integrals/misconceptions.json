@@ -1,0 +1,37 @@
+{
+  "misconceptions": [
+    {
+      "key": "misc.integrand_to_zero_implies_convergent",
+      "display_name": "Integrand tending to 0 forces convergence",
+      "description": "Assumes integral_1^infinity 1/x converges because 1/x -> 0; the p=1 tail actually diverges, so f -> 0 is not sufficient.",
+      "opposes": "simp.p_integral_borderline",
+      "trigger_phrases": [
+        "1/x goes to zero so it's finite",
+        "the integrand vanishes so it converges",
+        "since the function goes to 0 the area is finite"
+      ]
+    },
+    {
+      "key": "misc.plug_in_infinity",
+      "display_name": "Plugging infinity in directly",
+      "description": "Evaluates the antiderivative at infinity as if it were a number instead of taking a limit as t -> infinity.",
+      "opposes": "def.limit_definition",
+      "trigger_phrases": [
+        "just plug in infinity",
+        "evaluate the antiderivative at infinity",
+        "F(infinity) minus F(1)"
+      ]
+    },
+    {
+      "key": "misc.same_p_rule_at_zero_and_infinity",
+      "display_name": "Same p-rule at 0 and at infinity",
+      "description": "Uses p>1 => converges near x=0; the rule reverses at a finite singularity, where p<1 converges.",
+      "opposes": "simp.p_integral_at_zero_convergent",
+      "trigger_phrases": [
+        "p greater than 1 converges at zero too",
+        "same p test everywhere",
+        "1/sqrt(x) diverges near 0"
+      ]
+    }
+  ]
+}

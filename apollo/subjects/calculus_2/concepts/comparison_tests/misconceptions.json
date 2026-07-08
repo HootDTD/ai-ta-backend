@@ -1,0 +1,37 @@
+{
+  "misconceptions": [
+    {
+      "key": "misc.smaller_than_divergent_implies_divergent",
+      "display_name": "Smaller than a divergent series implies divergence",
+      "description": "Concludes a_n diverges because a_n < b_n with b_n divergent; being below a divergent series says nothing.",
+      "opposes": "cond.direct_comparison_converges",
+      "trigger_phrases": [
+        "it's smaller than a divergent series so it diverges",
+        "less than the harmonic series means it diverges",
+        "bounded by a divergent series"
+      ]
+    },
+    {
+      "key": "misc.wrong_direction_inequality",
+      "display_name": "Wrong-direction inequality for convergence",
+      "description": "Bounds a_n below by a convergent series (a_n > convergent) and claims convergence; direct comparison for convergence needs a_n <= a convergent series.",
+      "opposes": "simp.term_bound",
+      "trigger_phrases": [
+        "a_n is bigger than a convergent series so it converges",
+        "greater than 1/n^2 so it converges",
+        "any lower bound works"
+      ]
+    },
+    {
+      "key": "misc.limit_zero_or_infinity_still_valid",
+      "display_name": "Limit Comparison with c = 0 or infinity used carelessly",
+      "description": "Applies the standard Limit Comparison conclusion when c = 0 or c = infinity, where it requires the special one-sided forms.",
+      "opposes": "def.limit_comparison_test",
+      "trigger_phrases": [
+        "the ratio goes to zero so they behave the same",
+        "limit is infinite so both converge",
+        "any limit lets me compare"
+      ]
+    }
+  ]
+}

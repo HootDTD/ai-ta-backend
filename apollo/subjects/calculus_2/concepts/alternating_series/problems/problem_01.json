@@ -1,0 +1,118 @@
+{
+  "id": "conditional_alternating_harmonic",
+  "concept_id": "alternating_series",
+  "difficulty": "intro",
+  "given_values": {},
+  "problem_text": "Classify sum_{n=1}^infinity (-1)^(n+1)/n as absolutely convergent, conditionally convergent, or divergent.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "alternating_form",
+      "alternating_series_test",
+      "plan_check_ast",
+      "harmonic_series",
+      "plan_test_absolute",
+      "conditional_convergence",
+      "plan_classify"
+    ]
+  ],
+  "target_unknown": "convergence classification",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "alternating_form",
+      "step": 1,
+      "content": {
+        "label": "Alternating series form",
+        "applies_when": "the terms alternate in sign: a_n = (-1)^(n+1) b_n with b_n = 1/n > 0."
+      },
+      "depends_on": [],
+      "entity_key": "cond.alternating_form",
+      "entry_type": "condition"
+    },
+    {
+      "id": "alternating_series_test",
+      "step": 2,
+      "content": {
+        "concept": "Alternating Series Test (Leibniz)",
+        "meaning": "if b_n > 0, b_n is decreasing, and lim b_n = 0, then the alternating series sum (-1)^n b_n converges."
+      },
+      "depends_on": [],
+      "entity_key": "def.alternating_series_test",
+      "entry_type": "definition"
+    },
+    {
+      "id": "plan_check_ast",
+      "step": 3,
+      "content": {
+        "label": "check b_n = 1/n is positive, decreasing, and lim b_n = 0, so the series converges by the Alternating Series Test",
+        "order": 1,
+        "action": "check b_n = 1/n is positive, decreasing, and lim b_n = 0, so the series converges by the Alternating Series Test",
+        "purpose": "establish convergence of the alternating series",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "alternating_form",
+        "alternating_series_test"
+      ],
+      "entity_key": "proc.plan_check_ast",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "harmonic_series",
+      "step": 4,
+      "content": {
+        "concept": "Harmonic series",
+        "meaning": "sum 1/n is the harmonic series (p = 1) and diverges."
+      },
+      "depends_on": [],
+      "entity_key": "def.harmonic_series",
+      "entry_type": "definition"
+    },
+    {
+      "id": "plan_test_absolute",
+      "step": 5,
+      "content": {
+        "label": "test the series of absolute values sum |(-1)^(n+1)/n| = sum 1/n, the harmonic series, which diverges",
+        "order": 2,
+        "action": "test the series of absolute values sum |(-1)^(n+1)/n| = sum 1/n, the harmonic series, which diverges",
+        "purpose": "decide whether the convergence is absolute",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "harmonic_series"
+      ],
+      "entity_key": "proc.plan_test_absolute",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "conditional_convergence",
+      "step": 6,
+      "content": {
+        "label": "Conditional convergence",
+        "applies_when": "the series converges but the series of absolute values diverges."
+      },
+      "depends_on": [],
+      "entity_key": "cond.conditional_convergence",
+      "entry_type": "condition"
+    },
+    {
+      "id": "plan_classify",
+      "step": 7,
+      "content": {
+        "label": "the series converges but not absolutely, so it is conditionally convergent",
+        "order": 3,
+        "action": "the series converges but not absolutely, so it is conditionally convergent",
+        "purpose": "produce the final classification",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_check_ast",
+        "plan_test_absolute",
+        "conditional_convergence"
+      ],
+      "entity_key": "proc.plan_classify",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

@@ -1,0 +1,123 @@
+{
+  "id": "root_test_n_over_two_n_plus_one_pow_n",
+  "concept_id": "ratio_root_tests",
+  "difficulty": "standard",
+  "given_values": {},
+  "problem_text": "Use the Root Test to determine whether sum_{n=1}^infinity (n/(2n + 1))^n converges or diverges.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "root_test_indicated",
+      "root_test",
+      "nth_root",
+      "plan_take_root",
+      "plan_take_limit",
+      "root_less_than_one",
+      "plan_conclude"
+    ]
+  ],
+  "target_unknown": "convergence verdict",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "root_test_indicated",
+      "step": 1,
+      "content": {
+        "label": "Root Test indicated",
+        "applies_when": "the whole term is raised to the n-th power, so the Root Test is the natural choice."
+      },
+      "depends_on": [],
+      "entity_key": "cond.root_test_indicated",
+      "entry_type": "condition"
+    },
+    {
+      "id": "root_test",
+      "step": 2,
+      "content": {
+        "concept": "Root Test",
+        "meaning": "L = lim (|a_n|)^(1/n); if L < 1 the series converges, if L > 1 it diverges, and if L = 1 the test is inconclusive."
+      },
+      "depends_on": [],
+      "entity_key": "def.root_test",
+      "entry_type": "definition"
+    },
+    {
+      "id": "nth_root",
+      "step": 3,
+      "content": {
+        "label": "n-th root (a_n)^(1/n) = n/(2n+1)",
+        "symbolic": "r - n/(2*n + 1)",
+        "variables": [
+          "r",
+          "n"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.nth_root",
+      "entry_type": "equation"
+    },
+    {
+      "id": "plan_take_root",
+      "step": 4,
+      "content": {
+        "label": "take the n-th root: (a_n)^(1/n) = n/(2n + 1)",
+        "order": 1,
+        "action": "take the n-th root: (a_n)^(1/n) = n/(2n + 1)",
+        "purpose": "reduce the powered term to its n-th root",
+        "uses_equations": [
+          "nth_root"
+        ]
+      },
+      "depends_on": [
+        "root_test_indicated",
+        "root_test"
+      ],
+      "entity_key": "proc.plan_take_root",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_take_limit",
+      "step": 5,
+      "content": {
+        "label": "compute L = lim n/(2n + 1) = 1/2",
+        "order": 2,
+        "action": "compute L = lim n/(2n + 1) = 1/2",
+        "purpose": "evaluate the root limit L",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_take_root"
+      ],
+      "entity_key": "proc.plan_take_limit",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "root_less_than_one",
+      "step": 6,
+      "content": {
+        "label": "Root Test: converges (L<1)",
+        "applies_when": "L = 1/2 < 1."
+      },
+      "depends_on": [],
+      "entity_key": "cond.root_less_than_one",
+      "entry_type": "condition"
+    },
+    {
+      "id": "plan_conclude",
+      "step": 7,
+      "content": {
+        "label": "since L < 1, the series converges by the Root Test",
+        "order": 3,
+        "action": "since L < 1, the series converges by the Root Test",
+        "purpose": "reach the convergence verdict",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_take_limit",
+        "root_less_than_one"
+      ],
+      "entity_key": "proc.plan_conclude",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "named_laws": [
+    "trapezoidal",
+    "trapezoid",
+    "midpoint",
+    "simpson",
+    "riemann"
+  ],
+  "forbidden_concepts": [
+    "antiderivative",
+    "fundamental theorem",
+    "concavity",
+    "convex",
+    "concave",
+    "curvature",
+    "romberg",
+    "gaussian quadrature"
+  ],
+  "forbidden_domains": [
+    "numerical analysis",
+    "quadrature"
+  ],
+  "forbidden_units": []
+}

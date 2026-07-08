@@ -1,0 +1,19 @@
+{
+  "symbols": [
+    "x",
+    "A",
+    "B",
+    "C",
+    "F",
+    "r"
+  ],
+  "description": {
+    "x": "integration variable",
+    "A": "first partial-fraction coefficient",
+    "B": "second partial-fraction coefficient",
+    "C": "third coefficient (or constant of integration where noted by context)",
+    "F": "the antiderivative being sought",
+    "r": "a root / pole of the denominator"
+  },
+  "subscript_convention": "A, B, C denote the unknown numerators of the partial fractions; over an irreducible quadratic the numerator is the linear form B x + C."
+}

@@ -1,0 +1,20 @@
+{
+  "named_laws": [
+    "power-reduction identity",
+    "power reduction",
+    "double-angle identity",
+    "pythagorean identity",
+    "half-angle identity"
+  ],
+  "forbidden_concepts": [
+    "antiderivative",
+    "trigonometric identity",
+    "indefinite integral"
+  ],
+  "forbidden_domains": [
+    "calculus",
+    "trigonometry",
+    "integral calculus"
+  ],
+  "forbidden_units": []
+}

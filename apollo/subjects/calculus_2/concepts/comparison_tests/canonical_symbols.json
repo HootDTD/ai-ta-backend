@@ -1,0 +1,19 @@
+{
+  "symbols": [
+    "n",
+    "a_n",
+    "b_n",
+    "c",
+    "p",
+    "r"
+  ],
+  "description": {
+    "n": "the summation index",
+    "a_n": "the general term of the series under test",
+    "b_n": "the general term of the comparison series",
+    "c": "the limit of a_n/b_n in the Limit Comparison Test",
+    "p": "exponent of the comparison p-series 1/n^p",
+    "r": "ratio of the comparison geometric series"
+  },
+  "subscript_convention": "Use a_n for the given series' term and b_n for the chosen comparison term."
+}
