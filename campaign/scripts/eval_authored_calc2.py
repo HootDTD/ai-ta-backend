@@ -167,11 +167,19 @@ async def _upload_and_poll(
 
     deadline = time.monotonic() + poll_timeout
     while True:
-        status_resp = await client.get(f"{base_url}/apollo/authored-sets/{set_id}", headers=headers)
-        status_resp.raise_for_status()
-        row = status_resp.json()
-        if row.get("status") in ("done", "failed"):
-            return row
+        try:
+            status_resp = await client.get(
+                f"{base_url}/apollo/authored-sets/{set_id}", headers=headers
+            )
+            status_resp.raise_for_status()
+            row = status_resp.json()
+            if row.get("status") in ("done", "failed"):
+                return row
+        except (httpx.TimeoutException, httpx.TransportError):
+            # The in-process provisioning task's sync LLM calls starve the
+            # event loop for long stretches — a timed-out poll just means
+            # "still provisioning", never a run failure.
+            pass
         if time.monotonic() > deadline:
             raise TimeoutError(f"set {set_id} did not reach a terminal status")
         await asyncio.sleep(poll_interval)
