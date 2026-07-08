@@ -1,0 +1,96 @@
+{
+  "id": "trigint_tan2_x_sec2_x",
+  "concept_id": "trigonometric_integrals",
+  "difficulty": "standard",
+  "given_values": {},
+  "problem_text": "Evaluate  integral tan^2(x) sec^2(x) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "recognize",
+      "substitution",
+      "power_rule",
+      "substitute",
+      "integrate_and_back"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "u": "tan(x)"
+  },
+  "reference_solution": [
+    {
+      "id": "recognize",
+      "step": 1,
+      "content": {
+        "label": "sec^2 x is the derivative of tan x",
+        "applies_when": "in powers of tan and sec, sec^2 x is the derivative of tan x, so the natural handle is the substitution u = tan x"
+      },
+      "depends_on": [],
+      "entity_key": "cond.recognize",
+      "entry_type": "condition"
+    },
+    {
+      "id": "substitution",
+      "step": 2,
+      "content": {
+        "concept": "u = tan x",
+        "meaning": "let u = tan x so that du = sec^2 x dx"
+      },
+      "depends_on": [],
+      "entity_key": "def.substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "power_rule",
+      "step": 3,
+      "content": {
+        "label": "Power rule in u",
+        "symbolic": "integral u^n du = u^(n+1)/(n+1) + C",
+        "variables": [
+          "u",
+          "n"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.power_rule",
+      "entry_type": "equation"
+    },
+    {
+      "id": "substitute",
+      "step": 4,
+      "content": {
+        "label": "Substitute u = tan x",
+        "order": 1,
+        "action": "let u = tan x, du = sec^2 x dx, giving integral u^2 du",
+        "purpose": "collapse the integrand to a simple power of u",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "recognize",
+        "substitution"
+      ],
+      "entity_key": "proc.substitute",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate_and_back",
+      "step": 5,
+      "content": {
+        "label": "Integrate and return to x",
+        "order": 2,
+        "action": "integrate integral u^2 du = u^3/3 and back-substitute: tan^3 x/3 + C",
+        "purpose": "produce the final antiderivative in x",
+        "uses_equations": [
+          "power_rule"
+        ]
+      },
+      "depends_on": [
+        "substitute",
+        "power_rule"
+      ],
+      "entity_key": "proc.integrate_and_back",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "symbols": [
+    "x",
+    "u",
+    "v",
+    "du",
+    "dv",
+    "F",
+    "I",
+    "C"
+  ],
+  "description": {
+    "x": "integration variable",
+    "u": "the factor chosen to differentiate",
+    "v": "the antiderivative of dv",
+    "du": "differential of u",
+    "dv": "the factor chosen to integrate",
+    "F": "the antiderivative being sought",
+    "I": "the value of a definite integral (or a recurring integral in cyclic parts)",
+    "C": "constant of integration"
+  },
+  "subscript_convention": "Use I to denote a recurring integral that reappears in cyclic integration by parts and is then solved for algebraically."
+}

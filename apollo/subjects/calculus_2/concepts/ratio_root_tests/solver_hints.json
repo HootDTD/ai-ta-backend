@@ -1,0 +1,29 @@
+{
+  "constants": {},
+  "augmented_givens": {},
+  "non_trivial_keywords": [
+    "ratio",
+    "root",
+    "limit",
+    "converge",
+    "diverge",
+    "inconclusive",
+    "factorial",
+    "exponential",
+    "nth root",
+    "consecutive terms",
+    "euler",
+    "dominates"
+  ],
+  "plan_markers": [
+    "first",
+    "then",
+    "next",
+    "form the ratio",
+    "take the root",
+    "take the limit",
+    "conclude",
+    "step 1",
+    "step 2"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "term": "a_n",
+  "signed term": "a_n",
+  "magnitude": "b_n",
+  "absolute value of the term": "b_n",
+  "limit of the terms": "L",
+  "number of terms": "N",
+  "partial sum length": "N",
+  "remainder": "R",
+  "error": "R",
+  "truncation error": "R",
+  "p-series exponent": "p",
+  "index": "n"
+}

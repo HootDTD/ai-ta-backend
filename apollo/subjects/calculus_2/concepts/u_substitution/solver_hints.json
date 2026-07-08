@@ -1,0 +1,33 @@
+{
+  "constants": {
+    "pi": 3.141592653589793
+  },
+  "augmented_givens": {},
+  "non_trivial_keywords": [
+    "integral",
+    "substitution",
+    "u-substitution",
+    "let u",
+    "du",
+    "differential",
+    "inner function",
+    "chain rule",
+    "back-substitute",
+    "power rule",
+    "change the limits",
+    "antiderivative"
+  ],
+  "plan_markers": [
+    "first",
+    "then",
+    "next",
+    "after that",
+    "let u",
+    "substitute",
+    "back-substitute",
+    "substitute back",
+    "change the limits",
+    "solve for",
+    "integrate"
+  ]
+}

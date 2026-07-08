@@ -1,0 +1,142 @@
+{
+  "id": "simpson_arctan_integrand_n4",
+  "concept_id": "numerical_integration",
+  "difficulty": "standard",
+  "given_values": {
+    "a": 0.0,
+    "b": 1.0,
+    "n": 4.0
+  },
+  "problem_text": "Use Simpson's Rule with n = 4 to approximate integral_0^1 1/(1 + x^2) dx. Report S_4 to 6 decimals. (The exact value is arctan 1 = pi/4.)",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "simpson_even_n",
+      "step_size",
+      "simpson_rule",
+      "simpson_coefficient_pattern",
+      "plan_compute_step_size",
+      "plan_evaluate_nodes",
+      "plan_apply_simpson"
+    ]
+  ],
+  "target_unknown": "S",
+  "symbolic_mappings": {
+    "Delta x": "h",
+    "S_4": "S"
+  },
+  "reference_solution": [
+    {
+      "id": "simpson_even_n",
+      "step": 1,
+      "content": {
+        "label": "Even-n requirement for Simpson's Rule",
+        "applies_when": "n = 4 is even, which Simpson's Rule requires so the nodes pair into parabolic arcs."
+      },
+      "depends_on": [],
+      "entity_key": "cond.simpson_even_n",
+      "entry_type": "condition"
+    },
+    {
+      "id": "step_size",
+      "step": 2,
+      "content": {
+        "label": "Step size Delta x = (b - a)/n",
+        "symbolic": "h - (b - a)/n",
+        "variables": [
+          "h",
+          "b",
+          "a",
+          "n"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.step_size",
+      "entry_type": "equation"
+    },
+    {
+      "id": "simpson_rule",
+      "step": 3,
+      "content": {
+        "label": "Simpson's Rule (n=4): S = (Delta x/3)(f0 + 4 f1 + 2 f2 + 4 f3 + f4)",
+        "symbolic": "S - (h/3)*(f0 + 4*f1 + 2*f2 + 4*f3 + f4)",
+        "variables": [
+          "S",
+          "h",
+          "f0",
+          "f1",
+          "f2",
+          "f3",
+          "f4"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.simpson_rule",
+      "entry_type": "equation"
+    },
+    {
+      "id": "simpson_coefficient_pattern",
+      "step": 4,
+      "content": {
+        "concept": "Simpson coefficient pattern",
+        "meaning": "Coefficients run 1, 4, 2, 4, 1 for n = 4: endpoints weight 1, odd node weight 4, even interior node weight 2."
+      },
+      "depends_on": [],
+      "entity_key": "def.simpson_coefficient_pattern",
+      "entry_type": "definition"
+    },
+    {
+      "id": "plan_compute_step_size",
+      "step": 5,
+      "content": {
+        "label": "compute Delta x = 0.25 and list the nodes 0, 0.25, 0.5, 0.75, 1",
+        "order": 1,
+        "action": "compute Delta x = 0.25 and list the nodes 0, 0.25, 0.5, 0.75, 1",
+        "purpose": "set the equally spaced nodes for Simpson's Rule",
+        "uses_equations": [
+          "step_size"
+        ]
+      },
+      "depends_on": [
+        "simpson_even_n"
+      ],
+      "entity_key": "proc.plan_compute_step_size",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_evaluate_nodes",
+      "step": 6,
+      "content": {
+        "label": "evaluate f(x) = 1/(1+x^2): f0=1, f1=0.941176, f2=0.8, f3=0.64, f4=0.5",
+        "order": 2,
+        "action": "evaluate f(x) = 1/(1+x^2): f0=1, f1=0.941176, f2=0.8, f3=0.64, f4=0.5",
+        "purpose": "obtain the node values for the weighted sum",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_compute_step_size",
+        "simpson_coefficient_pattern"
+      ],
+      "entity_key": "proc.plan_evaluate_nodes",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_apply_simpson",
+      "step": 7,
+      "content": {
+        "label": "compute S = (0.25/3)(1 + 4(0.941176) + 2(0.8) + 4(0.64) + 0.5) = 0.083333(9.424706) = 0.785392",
+        "order": 3,
+        "action": "compute S = (0.25/3)(1 + 4(0.941176) + 2(0.8) + 4(0.64) + 0.5) = 0.083333(9.424706) = 0.785392",
+        "purpose": "produce the Simpson estimate of the integral",
+        "uses_equations": [
+          "simpson_rule"
+        ]
+      },
+      "depends_on": [
+        "plan_evaluate_nodes"
+      ],
+      "entity_key": "proc.plan_apply_simpson",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

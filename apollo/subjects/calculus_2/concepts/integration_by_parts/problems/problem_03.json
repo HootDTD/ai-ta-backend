@@ -1,0 +1,114 @@
+{
+  "id": "ibp_ln_x",
+  "concept_id": "integration_by_parts",
+  "difficulty": "standard",
+  "given_values": {},
+  "problem_text": "Evaluate  integral ln(x) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "liate_choice",
+      "ibp_formula",
+      "parts_assignment",
+      "choose_parts",
+      "apply_parts",
+      "finish"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "u": "ln(x)",
+    "dv": "dx"
+  },
+  "reference_solution": [
+    {
+      "id": "liate_choice",
+      "step": 1,
+      "content": {
+        "label": "LIATE choice on a single factor",
+        "applies_when": "ln x has no elementary substitution antiderivative; treat it as the product ln(x)*1 and by LIATE let u = ln x (Logarithmic) and dv = dx"
+      },
+      "depends_on": [],
+      "entity_key": "cond.liate_choice",
+      "entry_type": "condition"
+    },
+    {
+      "id": "ibp_formula",
+      "step": 2,
+      "content": {
+        "label": "Integration by parts",
+        "symbolic": "integral u dv = u*v - integral v du",
+        "variables": [
+          "u",
+          "v"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.ibp_formula",
+      "entry_type": "equation"
+    },
+    {
+      "id": "parts_assignment",
+      "step": 3,
+      "content": {
+        "concept": "u = ln x, dv = dx",
+        "meaning": "u = ln x (so du = (1/x) dx) and dv = dx (so v = x)"
+      },
+      "depends_on": [],
+      "entity_key": "def.parts_assignment",
+      "entry_type": "definition"
+    },
+    {
+      "id": "choose_parts",
+      "step": 4,
+      "content": {
+        "label": "Choose u and dv",
+        "order": 1,
+        "action": "rewrite ln x as ln(x)*1 and pick u = ln x, dv = dx, giving du = (1/x) dx and v = x",
+        "purpose": "turn the lone logarithm into a product parts can act on",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "liate_choice",
+        "parts_assignment"
+      ],
+      "entity_key": "proc.choose_parts",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "apply_parts",
+      "step": 5,
+      "content": {
+        "label": "Apply the parts formula",
+        "order": 2,
+        "action": "apply integral u dv = uv - integral v du: x ln x - integral x*(1/x) dx",
+        "purpose": "trade the logarithm for a trivial integral",
+        "uses_equations": [
+          "ibp_formula"
+        ]
+      },
+      "depends_on": [
+        "parts_assignment",
+        "ibp_formula"
+      ],
+      "entity_key": "proc.apply_parts",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "finish",
+      "step": 6,
+      "content": {
+        "label": "Finish",
+        "order": 3,
+        "action": "simplify integral x*(1/x) dx = integral 1 dx = x, so x ln x - x + C",
+        "purpose": "produce the final antiderivative",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "apply_parts"
+      ],
+      "entity_key": "proc.finish",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

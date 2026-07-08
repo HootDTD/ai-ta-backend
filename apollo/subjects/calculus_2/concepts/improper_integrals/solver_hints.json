@@ -1,0 +1,29 @@
+{
+  "constants": {},
+  "augmented_givens": {},
+  "non_trivial_keywords": [
+    "improper",
+    "infinite",
+    "limit",
+    "cutoff",
+    "converge",
+    "diverge",
+    "antiderivative",
+    "p-integral",
+    "unbounded",
+    "singularity",
+    "tends to infinity"
+  ],
+  "plan_markers": [
+    "first",
+    "then",
+    "next",
+    "rewrite",
+    "take the limit",
+    "let t",
+    "evaluate",
+    "substitute",
+    "step 1",
+    "step 2"
+  ]
+}

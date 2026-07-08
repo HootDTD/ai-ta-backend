@@ -1,0 +1,112 @@
+{
+  "id": "alternating_remainder_bound_find_N",
+  "concept_id": "alternating_series",
+  "difficulty": "hard",
+  "given_values": {},
+  "problem_text": "For the convergent alternating series sum_{n=1}^infinity (-1)^(n+1)/n^3, use the Alternating Series Remainder bound |R_N| <= b_(N+1) to find the smallest number of terms N needed so the partial sum approximates the total with error less than 0.01.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "leibniz_conditions_met",
+      "remainder_bound",
+      "error_tolerance",
+      "plan_write_bound",
+      "plan_set_inequality",
+      "plan_solve"
+    ]
+  ],
+  "target_unknown": "N",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "leibniz_conditions_met",
+      "step": 1,
+      "content": {
+        "label": "Leibniz conditions hold",
+        "applies_when": "the series meets the Alternating Series Test conditions, so the remainder bound |R_N| <= b_(N+1) applies."
+      },
+      "depends_on": [],
+      "entity_key": "cond.leibniz_conditions_met",
+      "entry_type": "condition"
+    },
+    {
+      "id": "remainder_bound",
+      "step": 2,
+      "content": {
+        "label": "Alternating series remainder |R_N| <= b_(N+1) = 1/(N+1)^3",
+        "symbolic": "R - 1/(N + 1)**3",
+        "variables": [
+          "R",
+          "N"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.remainder_bound",
+      "entry_type": "equation"
+    },
+    {
+      "id": "error_tolerance",
+      "step": 3,
+      "content": {
+        "label": "Error tolerance requirement",
+        "applies_when": "the approximation error must satisfy |R_N| < 0.01."
+      },
+      "depends_on": [],
+      "entity_key": "cond.error_tolerance",
+      "entry_type": "condition"
+    },
+    {
+      "id": "plan_write_bound",
+      "step": 4,
+      "content": {
+        "label": "the error after N terms is at most the first omitted term: |R_N| <= b_(N+1) = 1/(N+1)^3",
+        "order": 1,
+        "action": "the error after N terms is at most the first omitted term: |R_N| <= b_(N+1) = 1/(N+1)^3",
+        "purpose": "express the truncation error through the remainder bound",
+        "uses_equations": [
+          "remainder_bound"
+        ]
+      },
+      "depends_on": [
+        "leibniz_conditions_met"
+      ],
+      "entity_key": "proc.plan_write_bound",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_set_inequality",
+      "step": 5,
+      "content": {
+        "label": "require 1/(N+1)^3 < 0.01, i.e. (N+1)^3 > 100",
+        "order": 2,
+        "action": "require 1/(N+1)^3 < 0.01, i.e. (N+1)^3 > 100",
+        "purpose": "turn the tolerance into an inequality in N",
+        "uses_equations": [
+          "remainder_bound"
+        ]
+      },
+      "depends_on": [
+        "plan_write_bound",
+        "error_tolerance"
+      ],
+      "entity_key": "proc.plan_set_inequality",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_solve",
+      "step": 6,
+      "content": {
+        "label": "since 4^3 = 64 < 100 and 5^3 = 125 > 100, we need N + 1 >= 5, so the smallest number of terms is N = 4",
+        "order": 3,
+        "action": "since 4^3 = 64 < 100 and 5^3 = 125 > 100, we need N + 1 >= 5, so the smallest number of terms is N = 4",
+        "purpose": "produce the smallest N meeting the tolerance",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_set_inequality"
+      ],
+      "entity_key": "proc.plan_solve",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

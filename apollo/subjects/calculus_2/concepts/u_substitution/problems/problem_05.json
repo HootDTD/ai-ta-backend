@@ -1,0 +1,148 @@
+{
+  "id": "usub_ln_x_over_x",
+  "concept_id": "u_substitution",
+  "difficulty": "standard",
+  "given_values": {},
+  "problem_text": "Evaluate  integral (ln x)/x dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "recognize",
+      "usub_formula",
+      "substitution",
+      "power_rule",
+      "choose_u",
+      "rewrite_in_u",
+      "integrate_power",
+      "back_substitute"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "u": "ln(x)"
+  },
+  "reference_solution": [
+    {
+      "id": "recognize",
+      "step": 1,
+      "content": {
+        "label": "The factor 1/x is the derivative of ln x",
+        "applies_when": "the factor 1/x is precisely the derivative of ln x, so substitution is far cleaner than integration by parts"
+      },
+      "depends_on": [],
+      "entity_key": "cond.recognize",
+      "entry_type": "condition"
+    },
+    {
+      "id": "usub_formula",
+      "step": 2,
+      "content": {
+        "label": "u-substitution (reverse chain rule)",
+        "symbolic": "integral f(g(x)) g'(x) dx = integral f(u) du  (u = g(x), du = g'(x) dx)",
+        "variables": [
+          "u",
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.usub_formula",
+      "entry_type": "equation"
+    },
+    {
+      "id": "substitution",
+      "step": 3,
+      "content": {
+        "concept": "u = ln x",
+        "meaning": "let u = ln x so that du = (1/x) dx, matching the 1/x dx factor"
+      },
+      "depends_on": [],
+      "entity_key": "def.substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "power_rule",
+      "step": 4,
+      "content": {
+        "label": "Power rule in u (n = 1)",
+        "symbolic": "integral u du = u^2/2 + C",
+        "variables": [
+          "u"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.power_rule",
+      "entry_type": "equation"
+    },
+    {
+      "id": "choose_u",
+      "step": 5,
+      "content": {
+        "label": "Choose the substitution variable",
+        "order": 1,
+        "action": "let u = ln x because its derivative 1/x appears in the integrand",
+        "purpose": "reduce the integrand to a simple power of u",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "recognize",
+        "substitution"
+      ],
+      "entity_key": "proc.choose_u",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "rewrite_in_u",
+      "step": 6,
+      "content": {
+        "label": "Rewrite the integral in u",
+        "order": 2,
+        "action": "rewrite the integral as integral u du",
+        "purpose": "convert the whole integrand into u",
+        "uses_equations": [
+          "usub_formula"
+        ]
+      },
+      "depends_on": [
+        "substitution",
+        "usub_formula"
+      ],
+      "entity_key": "proc.rewrite_in_u",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate_power",
+      "step": 7,
+      "content": {
+        "label": "Integrate in u",
+        "order": 3,
+        "action": "integrate integral u du = u^2/2",
+        "purpose": "carry out the power-rule integral",
+        "uses_equations": [
+          "power_rule"
+        ]
+      },
+      "depends_on": [
+        "rewrite_in_u",
+        "power_rule"
+      ],
+      "entity_key": "proc.integrate_power",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "back_substitute",
+      "step": 8,
+      "content": {
+        "label": "Return to x",
+        "order": 4,
+        "action": "substitute u = ln x to get (ln x)^2/2 + C",
+        "purpose": "return the answer to the original variable x",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "integrate_power"
+      ],
+      "entity_key": "proc.back_substitute",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

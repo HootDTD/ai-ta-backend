@@ -1,0 +1,19 @@
+{
+  "named_laws": [
+    "partial fractions",
+    "partial fraction decomposition",
+    "cover-up method",
+    "Heaviside cover-up"
+  ],
+  "forbidden_concepts": [
+    "antiderivative",
+    "rational function",
+    "indefinite integral"
+  ],
+  "forbidden_domains": [
+    "calculus",
+    "algebra",
+    "integral calculus"
+  ],
+  "forbidden_units": []
+}

@@ -1,0 +1,120 @@
+{
+  "id": "pf_1_over_x2_minus_4",
+  "concept_id": "partial_fractions",
+  "difficulty": "standard",
+  "given_values": {
+    "a": 2.0
+  },
+  "problem_text": "Evaluate  integral 1/(x^2 - 4) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "factor_denominator",
+      "decomposition",
+      "log_integral",
+      "factor_first",
+      "set_up",
+      "integrate"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "factor_denominator",
+      "step": 1,
+      "content": {
+        "label": "Factor the denominator first",
+        "applies_when": "x^2 - 4 factors as a difference of squares (x - 2)(x + 2), so this is partial fractions, NOT an arctan / inverse-trig form (that would need x^2 + 4)"
+      },
+      "depends_on": [],
+      "entity_key": "cond.factor_denominator",
+      "entry_type": "condition"
+    },
+    {
+      "id": "decomposition",
+      "step": 2,
+      "content": {
+        "label": "Partial-fraction form (distinct linear factors)",
+        "symbolic": "1/((x - 2)(x + 2)) = A/(x - 2) + B/(x + 2)",
+        "variables": [
+          "A",
+          "B",
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.decomposition",
+      "entry_type": "equation"
+    },
+    {
+      "id": "log_integral",
+      "step": 3,
+      "content": {
+        "label": "Integral of a simple pole",
+        "symbolic": "integral 1/(x - r) dx = ln|x - r| + C",
+        "variables": [
+          "x",
+          "r"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.log_integral",
+      "entry_type": "equation"
+    },
+    {
+      "id": "factor_first",
+      "step": 4,
+      "content": {
+        "label": "Factor the denominator",
+        "order": 1,
+        "action": "factor x^2 - 4 = (x - 2)(x + 2)",
+        "purpose": "expose the two distinct linear factors to decompose over",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "factor_denominator"
+      ],
+      "entity_key": "proc.factor_first",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "set_up",
+      "step": 5,
+      "content": {
+        "label": "Set up and solve",
+        "order": 2,
+        "action": "clear denominators: 1 = A(x + 2) + B(x - 2); x = 2 gives A = 1/4, x = -2 gives B = -1/4",
+        "purpose": "determine A and B",
+        "uses_equations": [
+          "decomposition"
+        ]
+      },
+      "depends_on": [
+        "factor_first",
+        "decomposition"
+      ],
+      "entity_key": "proc.set_up",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate",
+      "step": 6,
+      "content": {
+        "label": "Integrate the simple fractions",
+        "order": 3,
+        "action": "integrate: (1/4) ln|x - 2| - (1/4) ln|x + 2| + C = (1/4) ln|(x - 2)/(x + 2)| + C",
+        "purpose": "produce the final antiderivative",
+        "uses_equations": [
+          "log_integral"
+        ]
+      },
+      "depends_on": [
+        "set_up",
+        "log_integral"
+      ],
+      "entity_key": "proc.integrate",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

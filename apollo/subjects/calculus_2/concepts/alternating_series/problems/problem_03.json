@@ -1,0 +1,118 @@
+{
+  "id": "conditional_alternating_one_over_sqrt_n",
+  "concept_id": "alternating_series",
+  "difficulty": "standard",
+  "given_values": {},
+  "problem_text": "Classify sum_{n=1}^infinity (-1)^n/sqrt(n) as absolutely convergent, conditionally convergent, or divergent.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "alternating_form",
+      "alternating_series_test",
+      "plan_check_ast",
+      "p_series",
+      "plan_test_absolute",
+      "conditional_convergence",
+      "plan_classify"
+    ]
+  ],
+  "target_unknown": "convergence classification",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "alternating_form",
+      "step": 1,
+      "content": {
+        "label": "Alternating series form",
+        "applies_when": "the terms alternate in sign: a_n = (-1)^n b_n with b_n = 1/sqrt(n) > 0."
+      },
+      "depends_on": [],
+      "entity_key": "cond.alternating_form",
+      "entry_type": "condition"
+    },
+    {
+      "id": "alternating_series_test",
+      "step": 2,
+      "content": {
+        "concept": "Alternating Series Test (Leibniz)",
+        "meaning": "if b_n > 0, b_n is decreasing, and lim b_n = 0, then the alternating series sum (-1)^n b_n converges."
+      },
+      "depends_on": [],
+      "entity_key": "def.alternating_series_test",
+      "entry_type": "definition"
+    },
+    {
+      "id": "plan_check_ast",
+      "step": 3,
+      "content": {
+        "label": "check b_n = 1/sqrt(n) is positive, decreasing, and lim b_n = 0, so the series converges",
+        "order": 1,
+        "action": "check b_n = 1/sqrt(n) is positive, decreasing, and lim b_n = 0, so the series converges",
+        "purpose": "establish convergence of the alternating series",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "alternating_form",
+        "alternating_series_test"
+      ],
+      "entity_key": "proc.plan_check_ast",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "p_series",
+      "step": 4,
+      "content": {
+        "concept": "p-series test",
+        "meaning": "sum 1/n^p converges iff p > 1; sum 1/n^(1/2) has p = 1/2 < 1 and diverges."
+      },
+      "depends_on": [],
+      "entity_key": "def.p_series",
+      "entry_type": "definition"
+    },
+    {
+      "id": "plan_test_absolute",
+      "step": 5,
+      "content": {
+        "label": "test sum 1/sqrt(n) = sum 1/n^(1/2), a p-series with p = 1/2 < 1, which diverges",
+        "order": 2,
+        "action": "test sum 1/sqrt(n) = sum 1/n^(1/2), a p-series with p = 1/2 < 1, which diverges",
+        "purpose": "decide whether the convergence is absolute",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "p_series"
+      ],
+      "entity_key": "proc.plan_test_absolute",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "conditional_convergence",
+      "step": 6,
+      "content": {
+        "label": "Conditional convergence",
+        "applies_when": "the series converges but the series of absolute values diverges."
+      },
+      "depends_on": [],
+      "entity_key": "cond.conditional_convergence",
+      "entry_type": "condition"
+    },
+    {
+      "id": "plan_classify",
+      "step": 7,
+      "content": {
+        "label": "the series converges but not absolutely, so it is conditionally convergent",
+        "order": 3,
+        "action": "the series converges but not absolutely, so it is conditionally convergent",
+        "purpose": "produce the final classification",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_check_ast",
+        "plan_test_absolute",
+        "conditional_convergence"
+      ],
+      "entity_key": "proc.plan_classify",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "constants": {
+    "pi": 3.141592653589793
+  },
+  "augmented_givens": {},
+  "non_trivial_keywords": [
+    "integral",
+    "sine",
+    "cosine",
+    "tangent",
+    "secant",
+    "power reduction",
+    "double angle",
+    "pythagorean identity",
+    "peel",
+    "odd power",
+    "even power",
+    "substitution",
+    "antiderivative"
+  ],
+  "plan_markers": [
+    "first",
+    "then",
+    "next",
+    "peel off",
+    "convert",
+    "let u",
+    "substitute",
+    "power-reduce",
+    "apply the identity",
+    "integrate",
+    "substitute back"
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "symbols": [
+    "n",
+    "a",
+    "b",
+    "h",
+    "T",
+    "M",
+    "S",
+    "K",
+    "Et",
+    "f"
+  ],
+  "description": {
+    "n": "number of subintervals",
+    "a": "lower limit of integration",
+    "b": "upper limit of integration",
+    "h": "step size Delta x = (b-a)/n",
+    "T": "Trapezoidal Rule estimate",
+    "M": "Midpoint Rule estimate",
+    "S": "Simpson's Rule estimate",
+    "K": "bound on the relevant derivative used in the error bound",
+    "Et": "error bound of the approximation",
+    "f": "the integrand f(x)"
+  },
+  "subscript_convention": "Use T_n / M_n / S_n and f0, f1, ..., fn for the estimate and the node values at n subintervals."
+}

@@ -1,0 +1,19 @@
+{
+  "symbols": [
+    "x",
+    "theta",
+    "a",
+    "u",
+    "F",
+    "C"
+  ],
+  "description": {
+    "x": "original integration variable",
+    "theta": "angle substitution variable",
+    "a": "the constant in the radical form (a^2 +/- x^2 or x^2 - a^2)",
+    "u": "an auxiliary substitution variable when needed",
+    "F": "the antiderivative being sought",
+    "C": "constant of integration"
+  },
+  "subscript_convention": "a denotes the constant under the radical, so that sqrt(a^2 - x^2), sqrt(a^2 + x^2), or sqrt(x^2 - a^2) selects the sine, tangent, or secant substitution respectively."
+}

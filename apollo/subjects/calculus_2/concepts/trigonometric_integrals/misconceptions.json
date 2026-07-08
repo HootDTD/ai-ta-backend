@@ -1,0 +1,43 @@
+{
+  "misconceptions": [
+    {
+      "key": "misc.wrong_parity_strategy",
+      "display_name": "Uses the wrong odd/even strategy",
+      "description": "Tries a u = sin x substitution on an even power like sin^2 x (which has no cosine factor to become du), or peels the wrong function on an odd power. The strategy depends on which power is odd.",
+      "opposes": "cond.odd_power_peel",
+      "trigger_phrases": [
+        "let u = sin x for sin^2",
+        "substitute on the even power",
+        "peel a factor from sin^2",
+        "u = cos x for cos^2",
+        "substitution on an even power"
+      ]
+    },
+    {
+      "key": "misc.forgets_power_reduction",
+      "display_name": "Integrates sin^2 as if it were a simple power",
+      "description": "Writes integral sin^2 x dx as sin^3 x/3 or -cos^2 x/2, treating sin^2 x like a power-rule integrand instead of using the power-reduction identity sin^2 x = (1 - cos 2x)/2.",
+      "opposes": "eq.power_reduction_sin",
+      "trigger_phrases": [
+        "sin^2 integrates to sin^3/3",
+        "antiderivative of sin^2 is -cos^2/2",
+        "power rule on sin^2",
+        "sin^3 over 3",
+        "just raise the power"
+      ]
+    },
+    {
+      "key": "misc.forgets_inner_factor_on_cos_2x",
+      "display_name": "Forgets the 1/2 when integrating cos(2x)",
+      "description": "Integrates cos(2x) to sin(2x) instead of sin(2x)/2, forgetting the reciprocal of the inner coefficient. integral cos(kx) dx = sin(kx)/k.",
+      "opposes": "proc.integrate_reduced",
+      "trigger_phrases": [
+        "integral of cos 2x is sin 2x",
+        "forget the one half",
+        "cos 2x integrates to sin 2x",
+        "no 1/2 factor",
+        "sin 2x without dividing"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "the variable": "x",
+  "substitution variable": "u",
+  "antiderivative": "F",
+  "integral": "F",
+  "definite value": "I",
+  "recurring integral": "I",
+  "constant of integration": "C",
+  "power": "n",
+  "exponent": "n",
+  "angle": "theta"
+}

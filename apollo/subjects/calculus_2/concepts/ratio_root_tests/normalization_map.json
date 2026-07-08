@@ -1,0 +1,12 @@
+{
+  "term": "a_n",
+  "next term": "a_(n+1)",
+  "ratio": "r",
+  "root": "r",
+  "nth root": "r",
+  "limit": "L",
+  "ratio limit": "L",
+  "root limit": "L",
+  "euler's number": "e",
+  "index": "n"
+}

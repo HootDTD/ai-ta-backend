@@ -1,0 +1,143 @@
+{
+  "id": "trigint_sec3_x",
+  "concept_id": "trigonometric_integrals",
+  "difficulty": "hard",
+  "given_values": {},
+  "problem_text": "Evaluate  integral sec^3(x) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "reduction_by_parts",
+      "ibp_formula",
+      "sec_integral",
+      "parts_assignment",
+      "solve_for_I",
+      "apply_parts",
+      "use_identity",
+      "solve_algebraically"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "reduction_by_parts",
+      "step": 1,
+      "content": {
+        "label": "Secant-cubed reduction via parts",
+        "applies_when": "write sec^3 x = sec x * sec^2 x and use integration by parts; the integral reappears and is solved algebraically"
+      },
+      "depends_on": [],
+      "entity_key": "cond.reduction_by_parts",
+      "entry_type": "condition"
+    },
+    {
+      "id": "ibp_formula",
+      "step": 2,
+      "content": {
+        "label": "Integration by parts",
+        "symbolic": "integral u dv = u*v - integral v du",
+        "variables": [
+          "u",
+          "v"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.ibp_formula",
+      "entry_type": "equation"
+    },
+    {
+      "id": "sec_integral",
+      "step": 3,
+      "content": {
+        "label": "Integral of secant",
+        "symbolic": "integral sec x dx = ln|sec x + tan x| + C",
+        "variables": [
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.sec_integral",
+      "entry_type": "equation"
+    },
+    {
+      "id": "parts_assignment",
+      "step": 4,
+      "content": {
+        "concept": "u = sec x, dv = sec^2 x dx",
+        "meaning": "u = sec x (du = sec x tan x dx) and dv = sec^2 x dx (v = tan x)"
+      },
+      "depends_on": [],
+      "entity_key": "def.parts_assignment",
+      "entry_type": "definition"
+    },
+    {
+      "id": "solve_for_I",
+      "step": 5,
+      "content": {
+        "label": "Solve algebraically for the recurring integral I",
+        "applies_when": "using tan^2 x = sec^2 x - 1 the integral reproduces itself: I = sec x tan x - I + ln|sec x + tan x|",
+        "transformation": "collect: 2I = sec x tan x + ln|sec x + tan x|, so I = (1/2)(sec x tan x + ln|sec x + tan x|) + C"
+      },
+      "depends_on": [],
+      "entity_key": "simp.solve_for_I",
+      "entry_type": "simplification"
+    },
+    {
+      "id": "apply_parts",
+      "step": 6,
+      "content": {
+        "label": "Apply parts to sec^3 x",
+        "order": 1,
+        "action": "let I = integral sec^3 x dx; parts gives I = sec x tan x - integral sec x tan^2 x dx",
+        "purpose": "expose a tan^2 x term that can be rewritten with an identity",
+        "uses_equations": [
+          "ibp_formula"
+        ]
+      },
+      "depends_on": [
+        "reduction_by_parts",
+        "parts_assignment",
+        "ibp_formula"
+      ],
+      "entity_key": "proc.apply_parts",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "use_identity",
+      "step": 7,
+      "content": {
+        "label": "Use tan^2 x = sec^2 x - 1",
+        "order": 2,
+        "action": "substitute tan^2 x = sec^2 x - 1 to get I = sec x tan x - I + ln|sec x + tan x|",
+        "purpose": "reproduce I and introduce the known integral of sec x",
+        "uses_equations": [
+          "sec_integral"
+        ]
+      },
+      "depends_on": [
+        "apply_parts",
+        "sec_integral"
+      ],
+      "entity_key": "proc.use_identity",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "solve_algebraically",
+      "step": 8,
+      "content": {
+        "label": "Solve for I",
+        "order": 3,
+        "action": "solve 2I = sec x tan x + ln|sec x + tan x| for I",
+        "purpose": "isolate I to finish the reduction",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "use_identity",
+        "solve_for_I"
+      ],
+      "entity_key": "proc.solve_algebraically",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

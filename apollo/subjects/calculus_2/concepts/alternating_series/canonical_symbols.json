@@ -1,0 +1,21 @@
+{
+  "symbols": [
+    "n",
+    "a_n",
+    "b_n",
+    "L",
+    "N",
+    "R",
+    "p"
+  ],
+  "description": {
+    "n": "the summation index",
+    "a_n": "the general (signed) term (-1)^n b_n of the alternating series",
+    "b_n": "the positive magnitude |a_n| of the term",
+    "L": "the limit of b_n (must be 0 for the Alternating Series Test)",
+    "N": "number of terms kept in a partial sum",
+    "R": "remainder / truncation error after N terms",
+    "p": "exponent of a p-series used when testing absolute convergence"
+  },
+  "subscript_convention": "Use a_n for the signed term, b_n for its magnitude, and R_N for the remainder after N terms."
+}

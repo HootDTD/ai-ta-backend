@@ -1,0 +1,127 @@
+{
+  "id": "trigsub_sqrt_x2_plus_1",
+  "concept_id": "trigonometric_substitution",
+  "difficulty": "hard",
+  "given_values": {
+    "a": 1.0
+  },
+  "problem_text": "Evaluate  integral sqrt(x^2 + 1) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "identify_form",
+      "trig_substitution",
+      "sec_cubed",
+      "back_conversion",
+      "substitute",
+      "integrate",
+      "back_to_x"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "x": "tan(theta)"
+  },
+  "reference_solution": [
+    {
+      "id": "identify_form",
+      "step": 1,
+      "content": {
+        "label": "Identify sqrt(x^2 + a^2) -> x = a tan theta",
+        "applies_when": "the integrand has the form sqrt(x^2 + a^2) with a = 1, which calls for the tangent substitution x = tan theta"
+      },
+      "depends_on": [],
+      "entity_key": "cond.identify_form",
+      "entry_type": "condition"
+    },
+    {
+      "id": "trig_substitution",
+      "step": 2,
+      "content": {
+        "concept": "x = tan theta",
+        "meaning": "let x = tan theta so that dx = sec^2 theta dtheta and sqrt(x^2 + 1) = sec theta"
+      },
+      "depends_on": [],
+      "entity_key": "def.trig_substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "sec_cubed",
+      "step": 3,
+      "content": {
+        "label": "Secant-cubed reduction result",
+        "symbolic": "integral sec^3 theta dtheta = (1/2)(sec theta tan theta + ln|sec theta + tan theta|) + C",
+        "variables": [
+          "theta"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.sec_cubed",
+      "entry_type": "equation"
+    },
+    {
+      "id": "back_conversion",
+      "step": 4,
+      "content": {
+        "concept": "tan theta = x, sec theta = sqrt(x^2 + 1)",
+        "meaning": "from x = tan theta the right triangle gives tan theta = x and sec theta = sqrt(x^2 + 1)"
+      },
+      "depends_on": [],
+      "entity_key": "def.back_conversion",
+      "entry_type": "definition"
+    },
+    {
+      "id": "substitute",
+      "step": 5,
+      "content": {
+        "label": "Substitute and simplify",
+        "order": 1,
+        "action": "substitute x = tan theta to get integral sec theta * sec^2 theta dtheta = integral sec^3 theta dtheta",
+        "purpose": "clear the radical and reduce to a secant-cubed integral",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "identify_form",
+        "trig_substitution"
+      ],
+      "entity_key": "proc.substitute",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate",
+      "step": 6,
+      "content": {
+        "label": "Apply the sec^3 reduction",
+        "order": 2,
+        "action": "apply the standard reduction integral sec^3 theta dtheta = (1/2)(sec theta tan theta + ln|sec theta + tan theta|)",
+        "purpose": "evaluate the secant-cubed integral",
+        "uses_equations": [
+          "sec_cubed"
+        ]
+      },
+      "depends_on": [
+        "substitute",
+        "sec_cubed"
+      ],
+      "entity_key": "proc.integrate",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "back_to_x",
+      "step": 7,
+      "content": {
+        "label": "Convert back from theta to x",
+        "order": 3,
+        "action": "use tan theta = x, sec theta = sqrt(x^2 + 1): (x/2) sqrt(x^2 + 1) + (1/2) ln(x + sqrt(x^2 + 1)) + C",
+        "purpose": "return the antiderivative to the original variable x",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "integrate",
+        "back_conversion"
+      ],
+      "entity_key": "proc.back_to_x",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

@@ -1,0 +1,112 @@
+{
+  "id": "improper_x_times_exp_by_parts",
+  "concept_id": "improper_integrals",
+  "difficulty": "hard",
+  "given_values": {
+    "a": 0.0
+  },
+  "problem_text": "Determine whether integral_0^infinity x e^(-x) dx converges, and if so find its value.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "improper_at_infinity",
+      "integration_by_parts",
+      "antiderivative",
+      "plan_rewrite_as_limit",
+      "plan_parts",
+      "plan_evaluate_and_limit"
+    ]
+  ],
+  "target_unknown": "I",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "improper_at_infinity",
+      "step": 1,
+      "content": {
+        "label": "Improper: infinite upper limit",
+        "applies_when": "the upper limit is infinite, so the integral is defined as a limit of proper integrals."
+      },
+      "depends_on": [],
+      "entity_key": "cond.improper_at_infinity",
+      "entry_type": "condition"
+    },
+    {
+      "id": "integration_by_parts",
+      "step": 2,
+      "content": {
+        "concept": "Integration by parts",
+        "meaning": "integral u dv = u v - integral v du; choose u = x, dv = e^(-x) dx, so du = dx, v = -e^(-x)."
+      },
+      "depends_on": [],
+      "entity_key": "def.integration_by_parts",
+      "entry_type": "definition"
+    },
+    {
+      "id": "antiderivative",
+      "step": 3,
+      "content": {
+        "label": "Antiderivative of x e^(-x) is -x e^(-x) - e^(-x)",
+        "symbolic": "F + x*exp(-x) + exp(-x)",
+        "variables": [
+          "F",
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.antiderivative",
+      "entry_type": "equation"
+    },
+    {
+      "id": "plan_rewrite_as_limit",
+      "step": 4,
+      "content": {
+        "label": "rewrite integral_0^infinity x e^(-x) dx = lim_{t->infinity} integral_0^t x e^(-x) dx",
+        "order": 1,
+        "action": "rewrite integral_0^infinity x e^(-x) dx = lim_{t->infinity} integral_0^t x e^(-x) dx",
+        "purpose": "convert the improper integral into a limit of proper integrals",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "improper_at_infinity"
+      ],
+      "entity_key": "proc.plan_rewrite_as_limit",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_parts",
+      "step": 5,
+      "content": {
+        "label": "apply integration by parts with u=x, dv=e^(-x)dx to get the antiderivative -x e^(-x) - e^(-x)",
+        "order": 2,
+        "action": "apply integration by parts with u=x, dv=e^(-x)dx to get the antiderivative -x e^(-x) - e^(-x)",
+        "purpose": "find an antiderivative before evaluating the limit",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_rewrite_as_limit",
+        "integration_by_parts"
+      ],
+      "entity_key": "proc.plan_parts",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_evaluate_and_limit",
+      "step": 6,
+      "content": {
+        "label": "evaluate [ -x e^(-x) - e^(-x) ]_0^t = 1 - t e^(-t) - e^(-t); as t->infinity both t e^(-t) and e^(-t) -> 0, so the limit is 1",
+        "order": 3,
+        "action": "evaluate [ -x e^(-x) - e^(-x) ]_0^t = 1 - t e^(-t) - e^(-t); as t->infinity both t e^(-t) and e^(-t) -> 0, so the limit is 1",
+        "purpose": "evaluate the proper integral and resolve the limit to the value 1",
+        "uses_equations": [
+          "antiderivative"
+        ]
+      },
+      "depends_on": [
+        "plan_parts"
+      ],
+      "entity_key": "proc.plan_evaluate_and_limit",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

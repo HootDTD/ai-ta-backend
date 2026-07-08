@@ -1,0 +1,21 @@
+{
+  "named_laws": [
+    "trigonometric substitution",
+    "trig substitution",
+    "sine substitution",
+    "tangent substitution",
+    "secant substitution",
+    "pythagorean identity"
+  ],
+  "forbidden_concepts": [
+    "antiderivative",
+    "right triangle",
+    "indefinite integral"
+  ],
+  "forbidden_domains": [
+    "calculus",
+    "trigonometry",
+    "integral calculus"
+  ],
+  "forbidden_units": []
+}

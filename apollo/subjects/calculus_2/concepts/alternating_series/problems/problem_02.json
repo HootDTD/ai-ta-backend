@@ -1,0 +1,100 @@
+{
+  "id": "absolute_alternating_p_series_squared",
+  "concept_id": "alternating_series",
+  "difficulty": "intro",
+  "given_values": {},
+  "problem_text": "Classify sum_{n=1}^infinity (-1)^n/n^2 as absolutely convergent, conditionally convergent, or divergent.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "alternating_form",
+      "absolute_convergence",
+      "p_series",
+      "plan_test_absolute",
+      "absolute_convergence_conclusion",
+      "plan_classify"
+    ]
+  ],
+  "target_unknown": "convergence classification",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "alternating_form",
+      "step": 1,
+      "content": {
+        "label": "Alternating series form",
+        "applies_when": "the terms alternate in sign: a_n = (-1)^n b_n with b_n = 1/n^2 > 0."
+      },
+      "depends_on": [],
+      "entity_key": "cond.alternating_form",
+      "entry_type": "condition"
+    },
+    {
+      "id": "absolute_convergence",
+      "step": 2,
+      "content": {
+        "concept": "Absolute convergence",
+        "meaning": "if sum |a_n| converges, the series converges absolutely (and hence converges); test absolute convergence first."
+      },
+      "depends_on": [],
+      "entity_key": "def.absolute_convergence",
+      "entry_type": "definition"
+    },
+    {
+      "id": "p_series",
+      "step": 3,
+      "content": {
+        "concept": "p-series test",
+        "meaning": "sum 1/n^p converges iff p > 1; sum 1/n^2 has p = 2 and converges."
+      },
+      "depends_on": [],
+      "entity_key": "def.p_series",
+      "entry_type": "definition"
+    },
+    {
+      "id": "plan_test_absolute",
+      "step": 4,
+      "content": {
+        "label": "test sum |(-1)^n/n^2| = sum 1/n^2, a convergent p-series (p = 2)",
+        "order": 1,
+        "action": "test sum |(-1)^n/n^2| = sum 1/n^2, a convergent p-series (p = 2)",
+        "purpose": "check whether the series of absolute values converges",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "absolute_convergence",
+        "p_series"
+      ],
+      "entity_key": "proc.plan_test_absolute",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "absolute_convergence_conclusion",
+      "step": 5,
+      "content": {
+        "label": "Absolutely convergent",
+        "applies_when": "the series of absolute values converges, so the original series is absolutely convergent."
+      },
+      "depends_on": [],
+      "entity_key": "cond.absolute_convergence_conclusion",
+      "entry_type": "condition"
+    },
+    {
+      "id": "plan_classify",
+      "step": 6,
+      "content": {
+        "label": "since sum |a_n| converges, the series is absolutely convergent (and therefore convergent)",
+        "order": 2,
+        "action": "since sum |a_n| converges, the series is absolutely convergent (and therefore convergent)",
+        "purpose": "produce the final classification",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_test_absolute",
+        "absolute_convergence_conclusion"
+      ],
+      "entity_key": "proc.plan_classify",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

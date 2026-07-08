@@ -1,0 +1,112 @@
+{
+  "id": "improper_log_substitution",
+  "concept_id": "improper_integrals",
+  "difficulty": "hard",
+  "given_values": {
+    "a": 2.0
+  },
+  "problem_text": "Determine whether integral_2^infinity 1/(x (ln x)^2) dx converges, and if so find its value.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "improper_at_infinity",
+      "u_substitution",
+      "antiderivative",
+      "plan_rewrite_as_limit",
+      "plan_substitute",
+      "plan_antiderivative_and_limit"
+    ]
+  ],
+  "target_unknown": "I",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "improper_at_infinity",
+      "step": 1,
+      "content": {
+        "label": "Improper: infinite upper limit",
+        "applies_when": "the upper limit is infinite, so the integral is defined as a limit of proper integrals."
+      },
+      "depends_on": [],
+      "entity_key": "cond.improper_at_infinity",
+      "entry_type": "condition"
+    },
+    {
+      "id": "u_substitution",
+      "step": 2,
+      "content": {
+        "concept": "u-substitution u = ln x",
+        "meaning": "let u = ln x, du = (1/x) dx; the limits map x=2 -> u=ln 2 and x->infinity -> u->infinity."
+      },
+      "depends_on": [],
+      "entity_key": "def.u_substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "antiderivative",
+      "step": 3,
+      "content": {
+        "label": "Antiderivative of u^-2 is -1/u",
+        "symbolic": "F + 1/u",
+        "variables": [
+          "F",
+          "u"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.antiderivative",
+      "entry_type": "equation"
+    },
+    {
+      "id": "plan_rewrite_as_limit",
+      "step": 4,
+      "content": {
+        "label": "rewrite integral_2^infinity 1/(x (ln x)^2) dx = lim_{s->infinity} integral over the transformed variable",
+        "order": 1,
+        "action": "rewrite integral_2^infinity 1/(x (ln x)^2) dx = lim_{s->infinity} integral over the transformed variable",
+        "purpose": "convert the improper integral into a limit of proper integrals",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "improper_at_infinity"
+      ],
+      "entity_key": "proc.plan_rewrite_as_limit",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_substitute",
+      "step": 5,
+      "content": {
+        "label": "substitute u = ln x to transform the integral into integral_{ln 2}^infinity u^-2 du",
+        "order": 2,
+        "action": "substitute u = ln x to transform the integral into integral_{ln 2}^infinity u^-2 du",
+        "purpose": "reduce the integrand to a simple power of u",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_rewrite_as_limit",
+        "u_substitution"
+      ],
+      "entity_key": "proc.plan_substitute",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_antiderivative_and_limit",
+      "step": 6,
+      "content": {
+        "label": "the antiderivative of u^-2 is -1/u, so [ -1/u ]_{ln 2}^s = -1/s + 1/ln 2; as s->infinity this -> 1/ln 2",
+        "order": 3,
+        "action": "the antiderivative of u^-2 is -1/u, so [ -1/u ]_{ln 2}^s = -1/s + 1/ln 2; as s->infinity this -> 1/ln 2",
+        "purpose": "evaluate and resolve the limit to the value 1/ln 2",
+        "uses_equations": [
+          "antiderivative"
+        ]
+      },
+      "depends_on": [
+        "plan_substitute"
+      ],
+      "entity_key": "proc.plan_antiderivative_and_limit",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

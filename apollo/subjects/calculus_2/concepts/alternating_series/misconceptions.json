@@ -1,0 +1,37 @@
+{
+  "misconceptions": [
+    {
+      "key": "misc.abs_diverges_implies_diverges",
+      "display_name": "Divergence of the absolute series implies divergence",
+      "description": "Thinks sum |a_n| diverging forces the alternating series to diverge; it may still converge conditionally.",
+      "opposes": "cond.conditional_convergence",
+      "trigger_phrases": [
+        "the absolute values diverge so the series diverges",
+        "sum of 1/n diverges so the alternating one does too",
+        "if it's not absolutely convergent it diverges"
+      ]
+    },
+    {
+      "key": "misc.skip_nth_term_check",
+      "display_name": "Applying the test without checking b_n -> 0",
+      "description": "Applies the Alternating Series Test even when b_n does not tend to 0; the test requires lim b_n = 0.",
+      "opposes": "cond.check_nth_term_first",
+      "trigger_phrases": [
+        "it alternates so it converges",
+        "alternating always converges",
+        "no need to check the limit of the terms"
+      ]
+    },
+    {
+      "key": "misc.alternating_needs_no_decreasing",
+      "display_name": "Ignoring the decreasing requirement",
+      "description": "Concludes convergence from lim b_n = 0 alone, skipping that b_n must be decreasing.",
+      "opposes": "def.alternating_series_test",
+      "trigger_phrases": [
+        "the terms go to zero so it converges",
+        "don't need b_n decreasing",
+        "limit zero is enough"
+      ]
+    }
+  ]
+}

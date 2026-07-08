@@ -1,0 +1,37 @@
+{
+  "misconceptions": [
+    {
+      "key": "misc.simpson_odd_n",
+      "display_name": "Simpson's Rule works with odd n",
+      "description": "Believes Simpson's Rule can use any n; in fact n must be even so nodes pair into parabolic arcs.",
+      "opposes": "cond.simpson_even_n",
+      "trigger_phrases": [
+        "use n = 5 with simpson",
+        "simpson works for any n",
+        "odd number of subintervals is fine for simpson"
+      ]
+    },
+    {
+      "key": "misc.forgot_over_two_or_three",
+      "display_name": "Dropping the Delta x/2 or Delta x/3 factor",
+      "description": "Multiplies the weighted node sum by Delta x instead of Delta x/2 (trapezoid) or Delta x/3 (Simpson).",
+      "opposes": "eq.trapezoidal_rule",
+      "trigger_phrases": [
+        "just multiply the sum by delta x",
+        "no need to divide by 2",
+        "forget the one third"
+      ]
+    },
+    {
+      "key": "misc.equal_node_weights",
+      "display_name": "All nodes weighted equally",
+      "description": "Gives every node weight 1, ignoring the 1-2-2-...-1 (trapezoid) or 1-4-2-4-...-1 (Simpson) weighting.",
+      "opposes": "def.endpoint_interior_weights",
+      "trigger_phrases": [
+        "add up all the f values equally",
+        "every node counts the same",
+        "no special weights"
+      ]
+    }
+  ]
+}

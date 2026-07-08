@@ -1,0 +1,128 @@
+{
+  "id": "improper_at_zero_one_over_sqrt_x",
+  "concept_id": "improper_integrals",
+  "difficulty": "standard",
+  "given_values": {
+    "a": 0.0,
+    "b": 1.0
+  },
+  "problem_text": "Determine whether integral_0^1 1/sqrt(x) dx converges, and if so find its value.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "improper_at_lower_endpoint",
+      "limit_definition",
+      "antiderivative",
+      "plan_identify_singularity",
+      "plan_antiderivative",
+      "plan_take_limit",
+      "p_integral_at_zero_convergent"
+    ]
+  ],
+  "target_unknown": "I",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "improper_at_lower_endpoint",
+      "step": 1,
+      "content": {
+        "label": "Improper: unbounded integrand at 0",
+        "applies_when": "the integrand blows up at x=0, so the integral is improper at the lower limit and defined as a limit t->0+."
+      },
+      "depends_on": [],
+      "entity_key": "cond.improper_at_lower_endpoint",
+      "entry_type": "condition"
+    },
+    {
+      "id": "limit_definition",
+      "step": 2,
+      "content": {
+        "concept": "Improper integral as a one-sided limit",
+        "meaning": "integral_0^b f dx = lim_{t->0+} integral_t^b f dx when f is unbounded at 0."
+      },
+      "depends_on": [],
+      "entity_key": "def.limit_definition",
+      "entry_type": "definition"
+    },
+    {
+      "id": "antiderivative",
+      "step": 3,
+      "content": {
+        "label": "Antiderivative of x^-1/2 is 2 sqrt(x)",
+        "symbolic": "F - 2*sqrt(x)",
+        "variables": [
+          "F",
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.antiderivative",
+      "entry_type": "equation"
+    },
+    {
+      "id": "plan_identify_singularity",
+      "step": 4,
+      "content": {
+        "label": "note the integrand x^-1/2 is unbounded at x=0 and rewrite integral_0^1 = lim_{t->0+} integral_t^1",
+        "order": 1,
+        "action": "note the integrand x^-1/2 is unbounded at x=0 and rewrite integral_0^1 = lim_{t->0+} integral_t^1",
+        "purpose": "convert the improper integral into a one-sided limit",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "improper_at_lower_endpoint",
+        "limit_definition"
+      ],
+      "entity_key": "proc.plan_identify_singularity",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_antiderivative",
+      "step": 5,
+      "content": {
+        "label": "the antiderivative of x^-1/2 is 2 sqrt(x), so integral_t^1 = 2 - 2 sqrt(t)",
+        "order": 2,
+        "action": "the antiderivative of x^-1/2 is 2 sqrt(x), so integral_t^1 = 2 - 2 sqrt(t)",
+        "purpose": "evaluate the proper integral from the cutoff t to 1",
+        "uses_equations": [
+          "antiderivative"
+        ]
+      },
+      "depends_on": [
+        "plan_identify_singularity"
+      ],
+      "entity_key": "proc.plan_antiderivative",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_take_limit",
+      "step": 6,
+      "content": {
+        "label": "let t -> 0+: sqrt(t) -> 0, so the limit is 2",
+        "order": 3,
+        "action": "let t -> 0+: sqrt(t) -> 0, so the limit is 2",
+        "purpose": "resolve the limit to find the value of the improper integral",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_antiderivative"
+      ],
+      "entity_key": "proc.plan_take_limit",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "p_integral_at_zero_convergent",
+      "step": 7,
+      "content": {
+        "label": "p-integral at 0 converges for p<1",
+        "applies_when": "the integral of x^-p near 0 has p = 1/2 < 1 (the rule is reversed relative to the tail case)",
+        "transformation": "at 0: p < 1 => the p-integral converges"
+      },
+      "depends_on": [
+        "plan_take_limit"
+      ],
+      "entity_key": "simp.p_integral_at_zero_convergent",
+      "entry_type": "simplification"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "the part to differentiate": "u",
+  "the part to integrate": "dv",
+  "u part": "u",
+  "dv part": "dv",
+  "antiderivative of dv": "v",
+  "differential": "du",
+  "antiderivative": "F",
+  "integral": "F",
+  "definite value": "I",
+  "recurring integral": "I",
+  "constant of integration": "C"
+}

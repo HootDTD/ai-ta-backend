@@ -1,0 +1,58 @@
+{
+  "topic_cluster": "calculus_2",
+  "nodes": [
+    {
+      "id": "antiderivative",
+      "label": "Antiderivative",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "basic_integration_rules",
+      "label": "Basic Integration Rules",
+      "prerequisites": [
+        "antiderivative"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "chain_rule",
+      "label": "Chain Rule",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "u_substitution",
+      "label": "U-Substitution",
+      "prerequisites": [
+        "basic_integration_rules",
+        "chain_rule"
+      ],
+      "scope_boundary": [
+        "trigonometric_substitution",
+        "integration_by_parts"
+      ],
+      "topic_cluster": "calculus_2"
+    }
+  ],
+  "edges": [
+    {
+      "type": "requires",
+      "from": "basic_integration_rules",
+      "to": "antiderivative"
+    },
+    {
+      "type": "requires",
+      "from": "u_substitution",
+      "to": "basic_integration_rules"
+    },
+    {
+      "type": "requires",
+      "from": "u_substitution",
+      "to": "chain_rule"
+    }
+  ]
+}

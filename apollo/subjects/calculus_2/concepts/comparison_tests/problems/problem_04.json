@@ -1,0 +1,121 @@
+{
+  "id": "limit_comparison_n_plus_two_over_n_cubed_plus_n",
+  "concept_id": "comparison_tests",
+  "difficulty": "standard",
+  "given_values": {},
+  "problem_text": "Determine whether sum_{n=1}^infinity (n + 2)/(n^3 + n) converges or diverges.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "positive_terms",
+      "p_series",
+      "limit_comparison_test",
+      "plan_pick_b",
+      "plan_compute_limit",
+      "limit_positive_finite",
+      "plan_conclude"
+    ]
+  ],
+  "target_unknown": "convergence verdict",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "positive_terms",
+      "step": 1,
+      "content": {
+        "label": "Positive-term series",
+        "applies_when": "the terms are positive, so a comparison test applies"
+      },
+      "depends_on": [],
+      "entity_key": "cond.positive_terms",
+      "entry_type": "condition"
+    },
+    {
+      "id": "p_series",
+      "step": 2,
+      "content": {
+        "concept": "p-series test",
+        "meaning": "sum 1/n^p converges iff p > 1; the comparison series 1/n^2 has p = 2 and converges."
+      },
+      "depends_on": [],
+      "entity_key": "def.p_series",
+      "entry_type": "definition"
+    },
+    {
+      "id": "limit_comparison_test",
+      "step": 3,
+      "content": {
+        "concept": "Limit Comparison Test",
+        "meaning": "if lim a_n/b_n = c is finite and positive, then sum a_n and sum b_n converge or diverge together."
+      },
+      "depends_on": [],
+      "entity_key": "def.limit_comparison_test",
+      "entry_type": "definition"
+    },
+    {
+      "id": "plan_pick_b",
+      "step": 4,
+      "content": {
+        "label": "for large n the term behaves like n/n^3 = 1/n^2, so pick b_n = 1/n^2",
+        "order": 1,
+        "action": "for large n the term behaves like n/n^3 = 1/n^2, so pick b_n = 1/n^2",
+        "purpose": "select a comparison series matching the dominant growth",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "positive_terms"
+      ],
+      "entity_key": "proc.plan_pick_b",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_compute_limit",
+      "step": 5,
+      "content": {
+        "label": "compute lim [(n+2)/(n^3+n)]/[1/n^2] = lim (n^3 + 2n^2)/(n^3 + n) = 1, finite and positive",
+        "order": 2,
+        "action": "compute lim [(n+2)/(n^3+n)]/[1/n^2] = lim (n^3 + 2n^2)/(n^3 + n) = 1, finite and positive",
+        "purpose": "form the limit ratio required by the Limit Comparison Test",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_pick_b",
+        "limit_comparison_test"
+      ],
+      "entity_key": "proc.plan_compute_limit",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "limit_positive_finite",
+      "step": 6,
+      "content": {
+        "label": "Finite positive limit",
+        "applies_when": "the limit c = 1 is finite and positive",
+        "transformation": "sum a_n and sum b_n share the same convergence behavior"
+      },
+      "depends_on": [
+        "plan_compute_limit"
+      ],
+      "entity_key": "simp.limit_positive_finite",
+      "entry_type": "simplification"
+    },
+    {
+      "id": "plan_conclude",
+      "step": 7,
+      "content": {
+        "label": "since sum 1/n^2 converges and c = 1, sum (n + 2)/(n^3 + n) converges",
+        "order": 3,
+        "action": "since sum 1/n^2 converges and c = 1, sum (n + 2)/(n^3 + n) converges",
+        "purpose": "reach the convergence verdict",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_compute_limit",
+        "p_series",
+        "limit_positive_finite"
+      ],
+      "entity_key": "proc.plan_conclude",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

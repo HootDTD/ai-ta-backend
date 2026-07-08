@@ -1,0 +1,131 @@
+{
+  "id": "trigint_cos3_x",
+  "concept_id": "trigonometric_integrals",
+  "difficulty": "intro",
+  "given_values": {},
+  "problem_text": "Evaluate  integral cos^3(x) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "odd_power_peel",
+      "pythagorean",
+      "substitution",
+      "power_rule",
+      "peel_and_convert",
+      "substitute",
+      "integrate_and_back"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "u": "sin(x)"
+  },
+  "reference_solution": [
+    {
+      "id": "odd_power_peel",
+      "step": 1,
+      "content": {
+        "label": "Odd power of cosine: peel one factor and substitute",
+        "applies_when": "an odd power of cosine: peel off one cos x and convert the rest with cos^2 x = 1 - sin^2 x, then substitute u = sin x"
+      },
+      "depends_on": [],
+      "entity_key": "cond.odd_power_peel",
+      "entry_type": "condition"
+    },
+    {
+      "id": "pythagorean",
+      "step": 2,
+      "content": {
+        "label": "Pythagorean identity",
+        "symbolic": "cos^2 x = 1 - sin^2 x",
+        "variables": [
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.pythagorean",
+      "entry_type": "equation"
+    },
+    {
+      "id": "substitution",
+      "step": 3,
+      "content": {
+        "concept": "u = sin x",
+        "meaning": "let u = sin x so that du = cos x dx"
+      },
+      "depends_on": [],
+      "entity_key": "def.substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "power_rule",
+      "step": 4,
+      "content": {
+        "label": "Power rule in u",
+        "symbolic": "integral u^n du = u^(n+1)/(n+1) + C",
+        "variables": [
+          "u",
+          "n"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.power_rule",
+      "entry_type": "equation"
+    },
+    {
+      "id": "peel_and_convert",
+      "step": 5,
+      "content": {
+        "label": "Peel a cosine and convert",
+        "order": 1,
+        "action": "write cos^3 x = cos^2 x * cos x = (1 - sin^2 x) cos x",
+        "purpose": "expose a lone cos x for du and leave the rest in sin x",
+        "uses_equations": [
+          "pythagorean"
+        ]
+      },
+      "depends_on": [
+        "odd_power_peel",
+        "pythagorean"
+      ],
+      "entity_key": "proc.peel_and_convert",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "substitute",
+      "step": 6,
+      "content": {
+        "label": "Substitute u = sin x",
+        "order": 2,
+        "action": "let u = sin x, du = cos x dx, giving integral (1 - u^2) du",
+        "purpose": "reduce the integral to a polynomial in u",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "substitution",
+        "peel_and_convert"
+      ],
+      "entity_key": "proc.substitute",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate_and_back",
+      "step": 7,
+      "content": {
+        "label": "Integrate and return to x",
+        "order": 3,
+        "action": "integrate integral (1 - u^2) du = u - u^3/3 and back-substitute: sin x - sin^3 x/3 + C",
+        "purpose": "produce the final antiderivative in x",
+        "uses_equations": [
+          "power_rule"
+        ]
+      },
+      "depends_on": [
+        "substitute",
+        "power_rule"
+      ],
+      "entity_key": "proc.integrate_and_back",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

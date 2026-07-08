@@ -1,0 +1,20 @@
+{
+  "named_laws": [
+    "u-substitution",
+    "u substitution",
+    "substitution rule",
+    "reverse chain rule",
+    "change of variables",
+    "power rule"
+  ],
+  "forbidden_concepts": [
+    "antiderivative",
+    "chain rule",
+    "indefinite integral"
+  ],
+  "forbidden_domains": [
+    "calculus",
+    "integral calculus"
+  ],
+  "forbidden_units": []
+}

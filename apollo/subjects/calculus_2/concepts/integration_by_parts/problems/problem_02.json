@@ -1,0 +1,114 @@
+{
+  "id": "ibp_x_cos_x",
+  "concept_id": "integration_by_parts",
+  "difficulty": "intro",
+  "given_values": {},
+  "problem_text": "Evaluate  integral x cos(x) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "liate_choice",
+      "ibp_formula",
+      "parts_assignment",
+      "choose_parts",
+      "apply_parts",
+      "finish"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "u": "x",
+    "dv": "cos(x) dx"
+  },
+  "reference_solution": [
+    {
+      "id": "liate_choice",
+      "step": 1,
+      "content": {
+        "label": "LIATE choice of u and dv",
+        "applies_when": "choose u and dv by LIATE: pick u as the factor higher on the Logarithmic-Inverse-Algebraic-Trig-Exponential list so that du simplifies and dv is easy to integrate"
+      },
+      "depends_on": [],
+      "entity_key": "cond.liate_choice",
+      "entry_type": "condition"
+    },
+    {
+      "id": "ibp_formula",
+      "step": 2,
+      "content": {
+        "label": "Integration by parts",
+        "symbolic": "integral u dv = u*v - integral v du",
+        "variables": [
+          "u",
+          "v"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.ibp_formula",
+      "entry_type": "equation"
+    },
+    {
+      "id": "parts_assignment",
+      "step": 3,
+      "content": {
+        "concept": "u = x, dv = cos x dx",
+        "meaning": "u = x (algebraic, so du = dx) and dv = cos x dx (so v = sin x)"
+      },
+      "depends_on": [],
+      "entity_key": "def.parts_assignment",
+      "entry_type": "definition"
+    },
+    {
+      "id": "choose_parts",
+      "step": 4,
+      "content": {
+        "label": "Choose u and dv",
+        "order": 1,
+        "action": "by LIATE pick u = x and dv = cos x dx, giving du = dx and v = sin x",
+        "purpose": "set up parts so the leftover integral is simpler",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "liate_choice",
+        "parts_assignment"
+      ],
+      "entity_key": "proc.choose_parts",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "apply_parts",
+      "step": 5,
+      "content": {
+        "label": "Apply the parts formula",
+        "order": 2,
+        "action": "apply integral u dv = uv - integral v du: x sin x - integral sin x dx",
+        "purpose": "reduce the product integral to an elementary one",
+        "uses_equations": [
+          "ibp_formula"
+        ]
+      },
+      "depends_on": [
+        "parts_assignment",
+        "ibp_formula"
+      ],
+      "entity_key": "proc.apply_parts",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "finish",
+      "step": 6,
+      "content": {
+        "label": "Finish",
+        "order": 3,
+        "action": "integrate integral sin x dx = -cos x, so x sin x + cos x + C",
+        "purpose": "produce the final antiderivative",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "apply_parts"
+      ],
+      "entity_key": "proc.finish",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

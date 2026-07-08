@@ -1,0 +1,21 @@
+{
+  "symbols": [
+    "a",
+    "b",
+    "t",
+    "p",
+    "I",
+    "L",
+    "f"
+  ],
+  "description": {
+    "a": "lower limit of integration",
+    "b": "upper limit of integration",
+    "t": "the finite cutoff used in the defining limit",
+    "p": "exponent in a p-integral of the form integral x^(-p) dx",
+    "I": "value of the improper integral (when it converges)",
+    "L": "the limit that defines the improper integral",
+    "f": "the integrand f(x)"
+  },
+  "subscript_convention": null
+}

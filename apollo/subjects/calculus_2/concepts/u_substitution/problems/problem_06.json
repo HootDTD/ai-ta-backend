@@ -1,0 +1,150 @@
+{
+  "id": "usub_x_over_sqrt_9_minus_x2",
+  "concept_id": "u_substitution",
+  "difficulty": "hard",
+  "given_values": {
+    "a": 3.0
+  },
+  "problem_text": "Evaluate  integral x/sqrt(9 - x^2) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "recognize",
+      "usub_formula",
+      "substitution",
+      "power_rule",
+      "choose_u",
+      "rewrite_in_u",
+      "integrate_power",
+      "back_substitute"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "u": "9 - x^2"
+  },
+  "reference_solution": [
+    {
+      "id": "recognize",
+      "step": 1,
+      "content": {
+        "label": "Ordinary substitution beats trig substitution here",
+        "applies_when": "sqrt(9 - x^2) looks like a trig-substitution signal, but the lone factor x in the numerator makes ordinary substitution work directly, so no trig substitution is needed"
+      },
+      "depends_on": [],
+      "entity_key": "cond.recognize",
+      "entry_type": "condition"
+    },
+    {
+      "id": "usub_formula",
+      "step": 2,
+      "content": {
+        "label": "u-substitution (reverse chain rule)",
+        "symbolic": "integral f(g(x)) g'(x) dx = integral f(u) du  (u = g(x), du = g'(x) dx)",
+        "variables": [
+          "u",
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.usub_formula",
+      "entry_type": "equation"
+    },
+    {
+      "id": "substitution",
+      "step": 3,
+      "content": {
+        "concept": "u = 9 - x^2",
+        "meaning": "let u = 9 - x^2 so that du = -2x dx, i.e. x dx = -(1/2) du"
+      },
+      "depends_on": [],
+      "entity_key": "def.substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "power_rule",
+      "step": 4,
+      "content": {
+        "label": "Power rule in u (n = -1/2)",
+        "symbolic": "integral u^(-1/2) du = 2 u^(1/2) + C",
+        "variables": [
+          "u"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.power_rule",
+      "entry_type": "equation"
+    },
+    {
+      "id": "choose_u",
+      "step": 5,
+      "content": {
+        "label": "Choose the substitution variable",
+        "order": 1,
+        "action": "let u = 9 - x^2 because its derivative -2x matches the numerator up to a factor",
+        "purpose": "convert the radical into a power of u",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "recognize",
+        "substitution"
+      ],
+      "entity_key": "proc.choose_u",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "rewrite_in_u",
+      "step": 6,
+      "content": {
+        "label": "Rewrite the integral in u",
+        "order": 2,
+        "action": "rewrite as -(1/2) integral u^(-1/2) du using x dx = -(1/2) du",
+        "purpose": "express the whole integrand in u",
+        "uses_equations": [
+          "usub_formula"
+        ]
+      },
+      "depends_on": [
+        "substitution",
+        "usub_formula"
+      ],
+      "entity_key": "proc.rewrite_in_u",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate_power",
+      "step": 7,
+      "content": {
+        "label": "Integrate in u",
+        "order": 3,
+        "action": "integrate -(1/2) integral u^(-1/2) du = -(1/2)(2 u^(1/2)) = -sqrt(u)",
+        "purpose": "carry out the power-rule integral",
+        "uses_equations": [
+          "power_rule"
+        ]
+      },
+      "depends_on": [
+        "rewrite_in_u",
+        "power_rule"
+      ],
+      "entity_key": "proc.integrate_power",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "back_substitute",
+      "step": 8,
+      "content": {
+        "label": "Return to x",
+        "order": 4,
+        "action": "substitute u = 9 - x^2 to get -sqrt(9 - x^2) + C",
+        "purpose": "return the answer to the original variable x",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "integrate_power"
+      ],
+      "entity_key": "proc.back_substitute",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

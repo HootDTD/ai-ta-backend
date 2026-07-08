@@ -1,0 +1,118 @@
+{
+  "id": "pf_1_over_x_minus_1_x_plus_1",
+  "concept_id": "partial_fractions",
+  "difficulty": "intro",
+  "given_values": {},
+  "problem_text": "Evaluate  integral 1/((x - 1)(x + 1)) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "factor_denominator",
+      "decomposition",
+      "log_integral",
+      "set_up",
+      "solve_coefficients",
+      "integrate"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "factor_denominator",
+      "step": 1,
+      "content": {
+        "label": "Factor the denominator first",
+        "applies_when": "the denominator factors into distinct linear factors, so the rational function splits into simpler partial fractions that integrate to logs"
+      },
+      "depends_on": [],
+      "entity_key": "cond.factor_denominator",
+      "entry_type": "condition"
+    },
+    {
+      "id": "decomposition",
+      "step": 2,
+      "content": {
+        "label": "Partial-fraction form (distinct linear factors)",
+        "symbolic": "1/((x - 1)(x + 1)) = A/(x - 1) + B/(x + 1)",
+        "variables": [
+          "A",
+          "B",
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.decomposition",
+      "entry_type": "equation"
+    },
+    {
+      "id": "log_integral",
+      "step": 3,
+      "content": {
+        "label": "Integral of a simple pole",
+        "symbolic": "integral 1/(x - r) dx = ln|x - r| + C",
+        "variables": [
+          "x",
+          "r"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.log_integral",
+      "entry_type": "equation"
+    },
+    {
+      "id": "set_up",
+      "step": 4,
+      "content": {
+        "label": "Set up the decomposition",
+        "order": 1,
+        "action": "write A/(x - 1) + B/(x + 1) and clear denominators: 1 = A(x + 1) + B(x - 1)",
+        "purpose": "reduce the problem to finding the constants A and B",
+        "uses_equations": [
+          "decomposition"
+        ]
+      },
+      "depends_on": [
+        "factor_denominator",
+        "decomposition"
+      ],
+      "entity_key": "proc.set_up",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "solve_coefficients",
+      "step": 5,
+      "content": {
+        "label": "Solve for the coefficients",
+        "order": 2,
+        "action": "plug in x = 1 to get A = 1/2 and x = -1 to get B = -1/2",
+        "purpose": "determine A and B by convenient substitution",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "set_up"
+      ],
+      "entity_key": "proc.solve_coefficients",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate",
+      "step": 6,
+      "content": {
+        "label": "Integrate the simple fractions",
+        "order": 3,
+        "action": "integrate each term: (1/2) ln|x - 1| - (1/2) ln|x + 1| + C = (1/2) ln|(x - 1)/(x + 1)| + C",
+        "purpose": "produce the final antiderivative",
+        "uses_equations": [
+          "log_integral"
+        ]
+      },
+      "depends_on": [
+        "solve_coefficients",
+        "log_integral"
+      ],
+      "entity_key": "proc.integrate",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

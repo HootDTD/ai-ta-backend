@@ -1,0 +1,121 @@
+{
+  "id": "limit_comparison_harmonic_one_over_two_n_plus_one",
+  "concept_id": "comparison_tests",
+  "difficulty": "standard",
+  "given_values": {},
+  "problem_text": "Use a comparison test to determine whether sum_{n=1}^infinity 1/(2n + 1) converges or diverges.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "positive_terms",
+      "harmonic_series",
+      "limit_comparison_test",
+      "plan_pick_b",
+      "plan_compute_limit",
+      "limit_positive_finite",
+      "plan_conclude"
+    ]
+  ],
+  "target_unknown": "convergence verdict",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "positive_terms",
+      "step": 1,
+      "content": {
+        "label": "Positive-term series",
+        "applies_when": "the terms are positive, so a comparison test applies"
+      },
+      "depends_on": [],
+      "entity_key": "cond.positive_terms",
+      "entry_type": "condition"
+    },
+    {
+      "id": "harmonic_series",
+      "step": 2,
+      "content": {
+        "concept": "Harmonic series",
+        "meaning": "the harmonic series sum 1/n is the p-series with p = 1 and diverges."
+      },
+      "depends_on": [],
+      "entity_key": "def.harmonic_series",
+      "entry_type": "definition"
+    },
+    {
+      "id": "limit_comparison_test",
+      "step": 3,
+      "content": {
+        "concept": "Limit Comparison Test",
+        "meaning": "if lim a_n/b_n = c is finite and positive, then sum a_n and sum b_n converge or diverge together."
+      },
+      "depends_on": [],
+      "entity_key": "def.limit_comparison_test",
+      "entry_type": "definition"
+    },
+    {
+      "id": "plan_pick_b",
+      "step": 4,
+      "content": {
+        "label": "compare with the harmonic series b_n = 1/n",
+        "order": 1,
+        "action": "compare with the harmonic series b_n = 1/n",
+        "purpose": "select a comparison series matching the 1/n growth",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "positive_terms"
+      ],
+      "entity_key": "proc.plan_pick_b",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_compute_limit",
+      "step": 5,
+      "content": {
+        "label": "compute lim [1/(2n+1)]/[1/n] = lim n/(2n + 1) = 1/2, a finite positive number",
+        "order": 2,
+        "action": "compute lim [1/(2n+1)]/[1/n] = lim n/(2n + 1) = 1/2, a finite positive number",
+        "purpose": "form the limit ratio required by the Limit Comparison Test",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_pick_b",
+        "limit_comparison_test"
+      ],
+      "entity_key": "proc.plan_compute_limit",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "limit_positive_finite",
+      "step": 6,
+      "content": {
+        "label": "Finite positive limit",
+        "applies_when": "the limit c = 1/2 is finite and positive",
+        "transformation": "sum a_n and sum b_n share the same convergence behavior"
+      },
+      "depends_on": [
+        "plan_compute_limit"
+      ],
+      "entity_key": "simp.limit_positive_finite",
+      "entry_type": "simplification"
+    },
+    {
+      "id": "plan_conclude",
+      "step": 7,
+      "content": {
+        "label": "since the harmonic series sum 1/n diverges and c = 1/2 > 0, sum 1/(2n + 1) diverges",
+        "order": 3,
+        "action": "since the harmonic series sum 1/n diverges and c = 1/2 > 0, sum 1/(2n + 1) diverges",
+        "purpose": "reach the divergence verdict",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_compute_limit",
+        "harmonic_series",
+        "limit_positive_finite"
+      ],
+      "entity_key": "proc.plan_conclude",
+      "entry_type": "procedure_step"
+    }
+  ]
+}
