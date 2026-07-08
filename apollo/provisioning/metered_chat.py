@@ -62,6 +62,11 @@ class CostBudgetExceeded(Exception):
         )
 
 
+def _is_reasoning_model(model: str) -> bool:
+    """True if the model takes reasoning_effort (mirrors ai/main_ai.py:923)."""
+    return model.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
 def _resolve_model(env_var: str, fallback: str) -> str:
     return os.getenv(env_var) or fallback
 
@@ -160,9 +165,12 @@ class MeteredChat:
         reasoning_effort: str | None = None,
     ) -> str:
         kwargs: dict[str, Any] = {"model": model, "messages": messages}
-        if reasoning_effort is not None:
+        if reasoning_effort is not None and _is_reasoning_model(model):
             # Reasoning models (gpt-5.x / o-series) take reasoning_effort and
-            # reject temperature (same convention as ai/main_ai.py:1369).
+            # reject temperature (same convention as ai/main_ai.py:1369). A
+            # non-reasoning model (e.g. the gpt-4o default) silently ignores
+            # the requested effort and keeps temperature — callers pass effort
+            # opportunistically, not as a hard requirement.
             kwargs["reasoning_effort"] = reasoning_effort
         else:
             kwargs["temperature"] = temperature
