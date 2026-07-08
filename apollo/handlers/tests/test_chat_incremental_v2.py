@@ -314,6 +314,47 @@ def test_holder_cold_attempt_has_no_snapshot():
     assert holder.latest_state(999) is None
 
 
+def test_holder_write_reapplies_a_seed_lost_to_a_stale_in_flight_job():
+    """T12 seed-loss race (fix-wave MAJOR): a `confirmed` clarification calls
+    `seed_state` for key K while an already-kicked job (captured from a
+    state that predates the seed) is still in flight. When that stale job
+    completes and calls `write`, K must NOT be silently dropped even though
+    the job's own `new_state.seeded_keys` doesn't contain it -- the freeze
+    (§6) must survive for the rest of the attempt."""
+    holder = chat._IncrementalHolder()
+    holder.write(1, _state(5), _snapshot(1))
+
+    # Turn N+1 records a confirmed clarification for K -> seeds it into the
+    # CURRENT holder state (cursor unchanged, per seed_state's contract).
+    holder.seed_state(1, ["K"])
+    assert "K" in holder.latest_state(1).seeded_keys
+    assert holder.latest_state(1).running_node_max["K"] == 1.0
+
+    # The stale job (kicked before the seed, from a state with cursor=5 and
+    # no knowledge of K) now completes with a strictly greater cursor but an
+    # empty seeded_keys -- it must not clobber the seed.
+    stale_job_state = _state(9)
+    assert stale_job_state.seeded_keys == frozenset()
+    holder.write(1, stale_job_state, _snapshot(4))
+
+    final_state = holder.latest_state(1)
+    assert final_state.window_cursor == 9  # the job's own progress IS kept
+    assert "K" in final_state.seeded_keys  # ...but the seed is NOT lost
+    assert final_state.running_node_max["K"] == 1.0
+    assert final_state.node_source["K"] == "clarification"
+
+
+def test_holder_write_without_prior_seed_is_unaffected():
+    """No seed was ever recorded -> `write` behaves exactly as before (no
+    spurious reapplication when `missed_seeds` is empty)."""
+    holder = chat._IncrementalHolder()
+    holder.write(1, _state(5), _snapshot(1))
+    holder.write(1, _state(9), _snapshot(2))
+    final_state = holder.latest_state(1)
+    assert final_state.window_cursor == 9
+    assert final_state.seeded_keys == frozenset()
+
+
 # ---------------------------------------------------------------------------
 # _run_incremental_v2_job: success writes state+snapshot, exception leaves
 # the holder at prior/none (H3), and releases in_flight either way.

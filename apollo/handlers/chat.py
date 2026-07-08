@@ -196,6 +196,19 @@ class _IncrementalHolder:
         prior_state: IncrementalState | None = entry["state"]
         if prior_state is not None and new_state.window_cursor <= prior_state.window_cursor:
             return
+        if prior_state is not None:
+            missed_seeds = prior_state.seeded_keys - new_state.seeded_keys
+            if missed_seeds:
+                # A `confirmed` clarification called `seed_state` (below) for
+                # these keys AFTER this now-completing job was kicked, so the
+                # state the job started from (and its own `new_state`)
+                # predates the seed. Reapply the freeze on top of the
+                # completed state so a content-verified seed is never
+                # silently lost across a stale in-flight job (§6 guarantee)
+                # -- this mirrors `seed_state`'s own freeze exactly (full
+                # credit + seeded_keys), it just also folds in this job's
+                # otherwise-current running scores/edges.
+                new_state = _seed_incremental_state(new_state, sorted(missed_seeds))
         entry["state"] = new_state
         entry["snapshot"] = snapshot
 
