@@ -43,6 +43,8 @@ import logging
 from apollo.grading.composite import MISC_CONFIDENCE_FLOOR, CompositeWeights, composite_score
 from apollo.graph_compare.findings import Finding, FindingKind
 from apollo.handlers.done_grading import ShadowGradeResult
+from apollo.overseer.misconception_detector.apply import apply_penalty
+from apollo.overseer.misconception_detector.types import MergeOutcome
 from apollo.resolution.candidates import METHOD_CONFIDENCE_CAP
 from apollo.resolution.nli_config import active_nli_model, nli_enabled
 from apollo.resolution.result import ResolutionResult
@@ -366,6 +368,7 @@ def build_llm_artifact(
     latency_ms: int | None,
     clarification_trace: list[dict],
     misconceptions_bank_empty: bool = False,
+    detection_outcome: MergeOutcome | None = None,
 ) -> dict:
     """Build the LLM-fallback artifact payload (spec §1/§3) from the OLD
     ``compute_coverage`` output + rubric. Coarser than the graph artifact:
@@ -408,6 +411,18 @@ def build_llm_artifact(
     which is every attempt today — the graph grader is still shadow) always
     rendered an empty clarifications block on the student/teacher scorecard
     even when the live clarification loop ran and produced real exchanges.
+
+    T11 (misconception detector wiring): ``detection_outcome`` is an OPT-IN
+    keyword — ``None`` (the default) or an EMPTY ``MergeOutcome`` (zero
+    penalty, no misconceptions) leaves ``misconception_penalty``,
+    ``misconceptions``, and ``composite`` byte-identical to today (design
+    invariant #1 — the detector's flag-OFF/found-nothing regression guard).
+    A NON-empty outcome overrides ``misconception_penalty`` with
+    ``outcome.misconception_penalty``, ``misconceptions`` with
+    ``list(outcome.misconceptions)``, and recomputes ``composite`` via
+    ``apply.apply_penalty`` on the already-computed (pre-penalty) composite —
+    the detector only ever subtracts from or ceilings the LLM-path composite;
+    it never touches ``node_coverage``/``edge_coverage`` or any other input.
     """
     per_step: dict[str, str] = coverage.get("per_step") or {}
     confidences: dict[str, float] = coverage.get("confidences") or {}
@@ -416,11 +431,26 @@ def build_llm_artifact(
     total = len(per_step)
     node_coverage = (len(covered) / total) if total else 0.0
     edge_coverage = 0.0
-    misconception_penalty = 0.0
     overall_score = (rubric or {}).get("overall", {}).get("score")
     composite = (
         _round_like_composite(float(overall_score) / 100.0) if overall_score is not None else 0.0
     )
+
+    # T11: an outcome is only "active" when it carries something to apply —
+    # None or an empty outcome (penalty 0.0, no rows) is the byte-identical
+    # no-op path (design invariant #1).
+    has_detection = detection_outcome is not None and not (
+        detection_outcome.misconception_penalty == 0.0
+        and not detection_outcome.misconceptions
+        and not detection_outcome.ceiling_applied
+    )
+    if has_detection:
+        misconception_penalty = detection_outcome.misconception_penalty
+        misconceptions_rows = list(detection_outcome.misconceptions)
+        composite = apply_penalty(composite=composite, outcome=detection_outcome)
+    else:
+        misconception_penalty = 0.0
+        misconceptions_rows = []
 
     # Q2 fix (lane B4/2026-07-02 campaign): the LLM-fallback grader produces
     # per-node coverage (``per_step``) but NO per-node student utterance —
@@ -486,7 +516,7 @@ def build_llm_artifact(
         ),
         "node_ledger": node_ledger,
         "edge_ledger": [],
-        "misconceptions": [],
+        "misconceptions": misconceptions_rows,
         "clarification_trace": list(clarification_trace),
         "scores": {
             "node_coverage": node_coverage,
