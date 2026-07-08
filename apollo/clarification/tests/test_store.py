@@ -11,6 +11,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 from apollo.clarification.store import (
+    load_asked_candidate_keys,
     load_asked_waiting,
     load_confirmed_resolutions,
     record_outcome,
@@ -174,3 +175,36 @@ async def test_load_confirmed_resolutions_empty():
 
     mapping = await load_confirmed_resolutions(db, attempt_id=99)
     assert mapping == {}
+
+
+# ---------------------------------------------------------------------------
+# load_asked_candidate_keys
+# ---------------------------------------------------------------------------
+
+
+async def test_load_asked_candidate_keys_returns_distinct_set():
+    """load_asked_candidate_keys returns the set of distinct candidate_key values
+    for any asked row this attempt (dedup + M4 attempt-cap counter)."""
+    scalars_mock = MagicMock()
+    scalars_mock.all.return_value = ["cond.bernoulli", "eq.k"]
+    result_mock = MagicMock()
+    result_mock.scalars.return_value = scalars_mock
+    db = _mock_db(execute=AsyncMock(return_value=result_mock))
+
+    keys = await load_asked_candidate_keys(db, attempt_id=7)
+
+    db.execute.assert_awaited_once()
+    assert keys == {"cond.bernoulli", "eq.k"}
+    assert isinstance(keys, set)
+
+
+async def test_load_asked_candidate_keys_empty_returns_empty_set():
+    """load_asked_candidate_keys returns an empty set when no rows exist."""
+    scalars_mock = MagicMock()
+    scalars_mock.all.return_value = []
+    result_mock = MagicMock()
+    result_mock.scalars.return_value = scalars_mock
+    db = _mock_db(execute=AsyncMock(return_value=result_mock))
+
+    keys = await load_asked_candidate_keys(db, attempt_id=99)
+    assert keys == set()

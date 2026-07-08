@@ -1,6 +1,8 @@
 """Persistence for the clarification loop. Idempotent asked_waiting writes (one
 follow-up per idea via the UNIQUE(attempt_id, node_id) constraint); terminal
-outcome recording; confirmed-resolution loading for grading."""
+outcome recording; confirmed-resolution loading for grading; distinct
+asked-candidate-key loading for the V2 reference-node-centric dedup + M4
+per-attempt cap (see load_asked_candidate_keys)."""
 
 from __future__ import annotations
 
@@ -73,6 +75,23 @@ async def record_outcome(
     row.clarification_text = clarification_text  # type: ignore[assignment]
     row.answered_turn = answered_turn  # type: ignore[assignment]
     row.updated_at = datetime.now(UTC)  # type: ignore[assignment]
+
+
+async def load_asked_candidate_keys(db: AsyncSession, *, attempt_id: int) -> set[str]:
+    """Distinct reference `candidate_key`s ever asked for this attempt (any state).
+
+    v1 dedups on student `node_id` (`UNIQUE(attempt_id, node_id)`), so the same
+    reference topic can be re-probed via a different student node. V2 selection
+    is reference-node-centric, so the natural dedup key is `candidate_key`: any
+    row that exists for this attempt means that topic was already asked, so a
+    reference topic is asked at most once per attempt. The same count also
+    drives the per-attempt cumulative cap (M4)."""
+    rows = await db.execute(
+        select(Clarification.candidate_key).where(
+            Clarification.attempt_id == attempt_id,
+        )
+    )
+    return set(rows.scalars().all())
 
 
 async def load_confirmed_resolutions(db: AsyncSession, *, attempt_id: int) -> dict[str, str]:
