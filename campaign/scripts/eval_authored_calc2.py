@@ -269,9 +269,10 @@ async def _run(args: argparse.Namespace) -> None:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    hws = [int(h) for h in str(args.hws).split(",") if h.strip()]
     set_rows: list[dict] = []
     async with httpx.AsyncClient(timeout=120.0) as client:
-        for hw in range(1, 7):
+        for hw in hws:
             problem_pdf = _CORPUS_DIR / f"hw{hw}_problem.pdf"
             solution_pdf = _CORPUS_DIR / f"hw{hw}_solution.pdf"
             print(f"uploading HW{hw} ...", flush=True)
@@ -356,6 +357,11 @@ def main() -> None:
     r.add_argument("--course-json", required=True)
     r.add_argument("--search-space-id", type=int, default=None)
     r.add_argument("--out-dir", required=True)
+    r.add_argument(
+        "--hws",
+        default="1,2,3,4,5,6",
+        help="comma-separated HW numbers to upload (resume support; scoring always covers the whole course)",
+    )
     r.add_argument("--poll-interval", type=float, default=3.0)
     r.add_argument("--poll-timeout", type=float, default=1800.0)
 
