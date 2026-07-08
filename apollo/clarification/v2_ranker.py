@@ -1,12 +1,14 @@
 """VoI (value-of-information) ranker for the clarification-v2 pipeline
-(integration spec §4, task T5).
+(integration spec §4/§2.1, tasks T5+T6).
 
-Pure module: no NLI/model calls, no DB, no env reads. Given a pool of
-``VoICandidate`` (weak/gray/missing reference nodes extracted from an
-``IncrementalSnapshot`` by ``v2_gray_candidates``, task T6 — not this
-module), ranks them by ``voi = importance * uncertainty`` so the
-clarification loop asks about the reference nodes with the highest expected
-composite-score payoff per question.
+Pure module: no NLI/model calls, no DB, no env reads (only fresh param
+reads via ``resolver_v2.config.load_params()``, mirroring the "gray band
+source" rule, §8.1). ``v2_gray_candidates`` (task T6) extracts the pool of
+``VoICandidate`` (weak/gray/missing reference nodes) straight from an
+``IncrementalSnapshot``; ``rank_by_voi`` (task T5) then ranks that pool by
+``voi = importance * uncertainty`` so the clarification loop asks about the
+reference nodes with the highest expected composite-score payoff per
+question.
 
 ``importance`` is expressed in the same currency as the live grading
 composite (``w_n * Δnode_cov + w_e * Δedge_cov``), using weights read fresh
@@ -31,6 +33,7 @@ from dataclasses import dataclass
 
 from apollo.clarification.v2_config import ClarificationV2Params
 from apollo.grading.composite import CompositeWeights
+from apollo.graph_compare.soundness import is_misconception_key
 from apollo.resolver_v2.config import load_params
 from apollo.resolver_v2.incremental_types import IncrementalSnapshot
 from apollo.resolver_v2.types import EdgeScore
@@ -213,6 +216,84 @@ def _other_endpoint_credit(
     reads straight from the snapshot's running node credits."""
     other_key = edge.to_key if edge.from_key == canonical_key else edge.from_key
     return snapshot.node_credits.get(other_key, 0.0)
+
+
+def v2_gray_candidates(
+    snapshot: IncrementalSnapshot,
+    params: ClarificationV2Params,
+) -> list[VoICandidate]:
+    """Extract the VoI ranking pool from a completed incremental snapshot
+    (design §2.1/§12, task T6): weak/gray/missing reference nodes.
+
+    Pool = ``snapshot.gray`` (already exactly the source-in-{nli,
+    lexical_skip,equation_cap}-AND-is_gray set, per
+    ``incremental.score_turn`` step 4b) UNION missing nodes (running credit
+    ``== 0.0``, i.e. never scored -- the ``source == "zero"`` default),
+    MINUS:
+
+    * any node at/above ``t_high`` (read fresh from
+      ``resolver_v2.config.load_params()``, never hardcoded here) -- a
+      defensive re-check, since a correctly-built snapshot's ``gray`` set
+      should never contain one, but the T6 acceptance criteria call it out
+      explicitly;
+    * misconception keys (``apollo.graph_compare.soundness
+      .is_misconception_key`` -- the ``misc.`` canonical-key prefix); these
+      already competed as contradictions and are never a clarification
+      target.
+
+    ``IncrementalSnapshot`` does not carry per-node ``node_type``, ``source``
+    or ``NodeScore.best`` -- only ``node_credits`` (float, for every
+    reference node) and ``edge_scores``. So candidates built here get
+    ``node_type=""`` and ``best_window_index=None`` (the smallest
+    spec-faithful placeholder for information this module cannot recover
+    from the snapshot alone); ``incident_edges`` and ``is_gray`` ARE fully
+    derivable and are populated exactly.
+
+    ``params`` is accepted for signature parity with the design's
+    ``v2_gray_candidates(snapshot, params)`` call site (§3.1) -- this
+    function reads the gray-band threshold itself, fresh, from
+    ``resolver_v2.config.load_params()`` rather than from ``params``
+    (mirrors ``rank_by_voi``'s "gray band source" rule, §8.1).
+
+    Returned in ``canonical_key`` order for determinism.
+    """
+    del params  # signature parity only (see docstring); t_high read fresh below
+    resolver_params = load_params()
+    t_high = resolver_params.t_high
+
+    def _eligible(key: str, credit: float) -> bool:
+        if credit >= t_high:
+            return False
+        if is_misconception_key(key):
+            return False
+        return True
+
+    pool_keys: set[str] = set()
+    for key in snapshot.gray:
+        if _eligible(key, snapshot.node_credits.get(key, 0.0)):
+            pool_keys.add(key)
+    for key, credit in snapshot.node_credits.items():
+        if credit == 0.0 and _eligible(key, credit):
+            pool_keys.add(key)
+
+    incident_by_key: dict[str, list[EdgeScore]] = {}
+    for edge in snapshot.edge_scores:
+        incident_by_key.setdefault(edge.from_key, []).append(edge)
+        incident_by_key.setdefault(edge.to_key, []).append(edge)
+
+    candidates = [
+        VoICandidate(
+            canonical_key=key,
+            node_type="",
+            node_credit=snapshot.node_credits.get(key, 0.0),
+            is_gray=key in snapshot.gray,
+            incident_edges=tuple(incident_by_key.get(key, ())),
+            best_window_index=None,
+        )
+        for key in pool_keys
+    ]
+    candidates.sort(key=lambda c: c.canonical_key)
+    return candidates
 
 
 def rank_by_voi(
