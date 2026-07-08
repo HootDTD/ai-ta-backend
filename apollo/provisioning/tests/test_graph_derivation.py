@@ -12,7 +12,7 @@ from apollo.provisioning.authored_sets.graph_derivation import (
 from apollo.provisioning.solution import GroundingSpan
 
 _VOCAB = {
-    "symbols": ["x", "u", "v", "du", "dv", "F", "I", "C"],
+    "symbols": ["x", "u", "v", "du", "dv", "dx", "F", "I", "C"],
     "description": {"x": "integration variable", "F": "the antiderivative"},
 }
 _NORM = {"antiderivative": "F", "constant of integration": "C"}
@@ -291,3 +291,26 @@ async def test_derive_requires_solution_spans() -> None:
             normalization_map=_NORM,
             chat_fn=_chat(["{}"]),
         )
+
+
+class TestForeignSymbols:
+    def test_foreign_symbol_in_concrete_equation_rejected(self) -> None:
+        g = _good_graph()
+        # dtheta is not in the vocabulary/givens/bound/target
+        g["reference_solution"][2]["content"]["symbolic"] = "du = 2*dtheta"
+        defects = find_derivation_defects(g, canonical_symbols=_VOCAB, normalization_map=_NORM)
+        assert any(d.startswith("foreign_symbol") and "dtheta" in d for d in defects)
+
+    def test_vocabulary_and_bound_symbols_allowed(self) -> None:
+        # du, dv are vocabulary; x is bound -> clean
+        g = _good_graph()
+        g["reference_solution"][2]["content"]["symbolic"] = "du = 2*x*dv"
+        defects = find_derivation_defects(g, canonical_symbols=_VOCAB, normalization_map=_NORM)
+        assert not any(d.startswith("foreign_symbol") for d in defects)
+
+    def test_display_formula_exempt_from_symbol_check(self) -> None:
+        # the ibp_formula display identity carries non-vocabulary tokens freely
+        defects = find_derivation_defects(
+            _good_graph(), canonical_symbols=_VOCAB, normalization_map=_NORM
+        )
+        assert not any(d.startswith("foreign_symbol") for d in defects)

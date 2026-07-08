@@ -144,8 +144,13 @@ _DERIVATION_SYSTEM_PROMPT = (
     '2. Concrete algebraic equations: "symbolic" must be machine-parseable — '
     '"LHS = RHS" with EXPLICIT multiplication everywhere (write 2*x and '
     "A*(x+1); x(x+1) would parse as a function call), ** for powers, no "
-    "unicode, no absolute-value bars (use Abs(...)), only symbols from the "
-    "concept vocabulary or the problem itself.\n"
+    "unicode, no absolute-value bars (use Abs(...)). Every symbol in a "
+    "concrete equation must come from the concept vocabulary, the problem's "
+    "givens, your declared bound_variables, or the target. NEVER coin "
+    "multi-word identifiers as symbols, and NEVER write a differential "
+    "(dx, dtheta, du) in a concrete equation unless it is a listed vocabulary "
+    "symbol — a substitution relation involving non-vocabulary differentials "
+    "belongs in symbolic_mappings and prose, or as a display:true formula.\n"
     "3. Operator-identity/pedagogical formulas (integral u dv = u*v - "
     "integral v du, a summation template, a limit definition) are DISPLAY "
     'content: keep the readable form and add "display": true inside content. '
@@ -297,6 +302,20 @@ def find_derivation_defects(
             defects.append(opaque)
 
     local = _local_dict(canonical_symbols, graph)
+    # Foreign-symbol pre-check (mirrors lint gate 4's intent so the defect
+    # feeds the derivation RETRY instead of a post-mint gate rejection): a
+    # concrete equation may only use vocabulary symbols, problem givens,
+    # declared bound variables, the target, normalizable names, or declared
+    # substitution symbols.
+    allowed_symbols: set[str] = set(local)
+    allowed_symbols |= {str(v) for v in (normalization_map or {}).values()}
+    allowed_symbols |= {str(k) for k in (graph.get("symbolic_mappings") or {}).keys()}
+    # symbols the graph itself binds via variable_mapping nodes are graph-defined
+    allowed_symbols |= {
+        str((s.get("content") or {}).get("symbol") or "")
+        for s in steps
+        if s.get("entry_type") == "variable_mapping"
+    }
     zero_forms: dict[str, Any] = {}
     for s in steps:
         if s.get("entry_type") != "equation" or _is_display(s):
@@ -308,6 +327,14 @@ def find_derivation_defects(
         expr = parse_zero_form(
             str(s["content"]["symbolic"]), entry_id=str(s.get("id")), local_dict=local
         )
+        foreign = sorted(sym.name for sym in expr.free_symbols if sym.name not in allowed_symbols)
+        if foreign:
+            defects.append(
+                f"foreign_symbol: {s.get('id')}: {foreign} not in the concept "
+                "vocabulary/givens/bound_variables/target — use vocabulary "
+                "symbols or mark the formula display:true"
+            )
+            continue
         for other_id, other_expr in zero_forms.items():
             try:
                 if sympy.simplify(expr - other_expr) == 0 or sympy.simplify(expr + other_expr) == 0:
