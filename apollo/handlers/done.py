@@ -48,10 +48,12 @@ from apollo.overseer.misconception import (
     MisconceptionSignal,
     summarize_for_rubric,
 )
+from apollo.overseer.misconception_bank import MisconceptionEntry, load_for_concept
 from apollo.overseer.misconception_detector.apply import rubric_overall_after_penalty
 from apollo.overseer.misconception_detector.centrality import compute_centrality
 from apollo.overseer.misconception_detector.config import (
     detector_enabled,
+    struct_cokey_enabled,
     trace_enabled,
 )
 from apollo.overseer.misconception_detector.detector import detect_misconceptions
@@ -385,6 +387,29 @@ async def _student_utterances(
     return tuple(rows)
 
 
+async def _load_bank_entries(
+    db: AsyncSession, *, concept_id: int | None,
+) -> tuple[MisconceptionEntry, ...]:
+    """F-struct — soft-failing bank load for ``build_opposes_index``, mirroring
+    ``misconception_detector.detector._load_bank`` (that helper is private to
+    its module, so this is a small local copy rather than an import of a
+    leading-underscore name). No ``concept_id`` -> empty bank; any load error
+    (transient DB failure) also degrades to an empty bank rather than raising
+    — an empty bank makes ``build_opposes_index`` return ``{}``, which is the
+    same no-op ``gate_findings`` already tolerates via its own
+    ``opposes_index or {}`` default."""
+    if concept_id is None:
+        return ()
+    try:
+        entries = await load_for_concept(db, concept_id=concept_id)
+    except Exception:  # noqa: BLE001
+        _LOG.exception(
+            "misconception_struct_cokey_bank_load_failed concept_id=%s", concept_id
+        )
+        return ()
+    return tuple(entries)
+
+
 def _embed_texts(texts: list[str]) -> list[list[float]]:
     """Lazy indirection over the project-wide batched embedder so importing
     ``done`` never pulls in the OpenAI SDK (mirrors
@@ -515,7 +540,27 @@ async def handle_done(
                 judge_fn=_default_judge_fn(),
                 embed_fn=_default_embed_fn,
             )
-            gated = gate_findings(detection.per_concept)
+            # F-struct (structural co-key) — DEFAULT OFF sub-flag, independent
+            # of `detector_enabled()`. When OFF, `opposes_index` stays `{}` and
+            # `gate_findings`/`trace_attempt` see the exact same empty map they
+            # always defaulted to — byte-identical. When ON, resolve the
+            # concept's misconception bank's `opposes` (an `entity_key`, F-struct
+            # migration 038) against `reference_graph` node `entity_key`s into a
+            # `node_id -> bank_code` map, so a judge finding that localizes an
+            # error (`wrong`/`misconception`, no named code) to a node the GRAPH
+            # itself names via `opposes` can still dock (gate.py's structural
+            # co-key branch, row3s_struct_cokey_dock).
+            opposes_index: dict[str, str] = {}
+            if struct_cokey_enabled():
+                from apollo.overseer.misconception_detector.opposes_index import (
+                    build_opposes_index,
+                )
+
+                bank_entries = await _load_bank_entries(
+                    db, concept_id=sess.concept_id,
+                )
+                opposes_index = build_opposes_index(reference_graph, bank_entries)
+            gated = gate_findings(detection.per_concept, opposes_index=opposes_index)
             centrality = compute_centrality(reference_graph)
             detection_outcome = merge_detections(gated, centrality=centrality)
             rubric = rubric_overall_after_penalty(rubric, detection_outcome)
@@ -545,6 +590,7 @@ async def handle_done(
                         centrality=centrality,
                         final_band=rubric["overall"].get("letter"),
                         is_control=False,
+                        opposes_index=opposes_index,
                     )
                 except Exception:
                     _LOG.exception(

@@ -109,8 +109,8 @@ Five moving parts:
 `{node.entity_key: node}` — but the gate is a pure function over findings, so the
 opposing information must be passed IN). **The clean seam:** pass an
 `opposes_index: dict[str, str]` into `gate_findings` — mapping
-`reference_node_entity_key → bank_code` for every bank entry whose `opposes`
-matches a reference node's `entity_key`. This index is built by the CALLER
+`node_id → bank_code` for every reference node whose `entity_key` is opposed by
+a bank entry's `opposes`. This index is built by the CALLER
 (`done.py` / the campaign harness / detector wiring) from the reference graph +
 the loaded bank, so the gate stays pure and node-shape-agnostic.
 
