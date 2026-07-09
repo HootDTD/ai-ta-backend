@@ -96,35 +96,41 @@ _RUN_SUCCEEDED = "succeeded"
 _RUN_FAILED = "failed"
 
 _SCRAPE_SYSTEM_PROMPT = (
-    "You extract EVERY practice problem from one SECTION of "
-    "course material (textbook prose, worked examples, and exercise sets all count; "
-    "a section may contain zero, one, or many problems). Numeric solve-for "
+    "You extract EVERY question a student could be asked to answer from one "
+    "SECTION of course material, in ANY subject (textbook prose, worked "
+    "examples, exercise sets, exam study guides, and review outlines all count; "
+    "a section may contain zero, one, or many questions). Numeric solve-for "
     "exercises, convergence/divergence determinations, show-that/verify tasks, "
-    "and qualitative determine-whether questions ALL count as problems — for "
-    'those, "target_unknown" is a short phrase (e.g. "convergence verdict").\n'
+    "true/false items, define/explain/compare prompts, and open-ended "
+    "study-guide or discussion questions ALL count as problems — for a question "
+    'with no numeric answer, "target_unknown" is a short phrase naming what is '
+    'asked (e.g. "convergence verdict", "definition of future shock") and '
+    '"given_values" is {}.\n'
     "Return ONLY a JSON array - no prose, no explanation, no markdown code fences. "
     "Each array element is an object with EXACTLY these keys:\n"
     '  "problem_text": string - the full, self-contained problem statement.\n'
     '  "given_values": object mapping each stated known quantity\'s short symbol to '
     "its NUMERIC value (numbers only - no units, no strings); use {} if none.\n"
-    '  "target_unknown": string - the single quantity the problem asks to find.\n'
+    '  "target_unknown": string - the single quantity or idea the problem asks '
+    "to find.\n"
     '  "difficulty": exactly one of "intro", "standard", "hard".\n'
     '  "concept_slug": string - a short dotted/kebab concept id, e.g. '
     '"bernoulli-equation".\n'
     '  "label": the problem\'s printed number/label exactly as shown, e.g. '
     '"Problem 3", "Q3", "3.", or null if none.\n'
-    "If the section contains no solvable problems, return []."
+    "If the section truly contains no questions, return []."
 )
 
 _TRIAGE_SYSTEM_PROMPT = (
-    "You triage a textbook's SECTIONS to find which likely contain solvable "
-    "quantitative practice problems. You receive a JSON array of sections, each with "
+    "You triage a document's SECTIONS to find which likely contain questions a "
+    "student could be asked to answer — quantitative exercises OR qualitative "
+    "review/discussion questions. You receive a JSON array of sections, each with "
     'an "index", "title", "chars", and "has_numeric_imperative" flag.\n'
     "Return ONLY a JSON array - no prose, no markdown fences. Each element is an "
     "object with EXACTLY these keys:\n"
     '  "index": integer - echo the section\'s index.\n'
-    '  "is_problem_likely": boolean - true if the section probably contains solvable '
-    "problems or worked examples.\n"
+    '  "is_problem_likely": boolean - true if the section probably contains '
+    "questions, practice problems, or worked examples.\n"
     '  "priority": integer 0-10 - higher = scrape sooner.\n'
     '  "concept_slug": string - a short dotted/kebab concept id for the section.\n'
     '  "concept_display": string - a human-readable concept label.\n'
