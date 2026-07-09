@@ -49,8 +49,11 @@ jobs:
       #   MODIFIED files → ruff check is ADVISORY (continue-on-error) so a 1-line
       #     edit to a 50-finding legacy file doesn't force fixing all 50 (which
       #     would block hotfixes). Legacy debt surfaces in logs, paid down over time.
+      # Promotion PRs (base=main) skip both tiers: their diff vs main is months of
+      # code that already passed these gates entering staging — re-judging it against
+      # the stale main baseline just re-litigates historical debt (see PR #110).
       - name: Ruff — added files (blocking)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.base_ref != 'main'
         shell: bash
         run: |
           git fetch --no-tags origin "${{ github.base_ref }}"
@@ -65,7 +68,7 @@ jobs:
           ruff check --output-format=github "${ADDED[@]}"
           ruff format --check "${ADDED[@]}"
       - name: Ruff — modified files (advisory)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.base_ref != 'main'
         continue-on-error: true
         shell: bash
         run: |
@@ -96,7 +99,7 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup
       - name: Mypy — added files (blocking)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.base_ref != 'main'
         shell: bash
         run: |
           git fetch --no-tags origin "${{ github.base_ref }}"
@@ -111,7 +114,7 @@ jobs:
           printf '  %s\n' "${ADDED[@]}"
           mypy --config-file mypy.ini "${ADDED[@]}"
       - name: Mypy — modified files (advisory)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.base_ref != 'main'
         continue-on-error: true
         shell: bash
         run: |
