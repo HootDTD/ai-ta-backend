@@ -139,13 +139,16 @@ def _run_judge(
     problem_text: str,
     reference_graph: KGGraph,
     bank_entries: tuple[MisconceptionEntry, ...],
+    student_utterances: tuple[str, ...],
     judge_fn: JudgeFn,
 ) -> tuple[ConceptFinding, ...]:
     """Soft-failing wrapper around the judge tier. ``judge_concepts`` already
     soft-fails internally (a raising ``judge_fn`` or malformed JSON both
     degrade to all-`clear`); this outer guard exists so a defect in prompt
     construction itself (e.g. a malformed ``JudgeConceptInput``) can't
-    propagate either."""
+    propagate either. ``student_utterances`` is forwarded so the judge's
+    prompt is actually grounded in what the student said (previously this
+    tier never saw the student at all -- the structural-blindness defect)."""
     concepts = _judge_concept_inputs(reference_graph, bank_entries=bank_entries)
     if not concepts:
         return ()
@@ -154,6 +157,7 @@ def _run_judge(
             problem_text=problem_text,
             concepts=concepts,
             judge_fn=judge_fn,
+            student_utterances=student_utterances,
         )
     except Exception:  # noqa: BLE001
         _LOG.exception("misconception_detector_judge_failed")
@@ -204,6 +208,7 @@ async def detect_misconceptions(
         problem_text=problem_text,
         reference_graph=reference_graph,
         bank_entries=bank_entries,
+        student_utterances=student_utterances,
         judge_fn=judge_fn,
     )
 

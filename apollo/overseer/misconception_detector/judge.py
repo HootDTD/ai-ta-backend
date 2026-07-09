@@ -99,34 +99,49 @@ _JSON_SCHEMA = {
 }
 
 _SYSTEM_PROMPT = """You are the Apollo Overseer's comparative misconception judge.
-You are given a problem, and for each of several concepts: the correct belief
-a student should hold, and (optionally) a small bank of known misconceptions
-for that concept. Compare what the student demonstrated during the teaching
-session against the correct belief.
+You are given a problem, the STUDENT'S OWN EXPLANATION from the teaching
+session (verbatim, under "student_explanation"), and for each of several
+concepts: the correct belief a student should hold, and (optionally) a small
+bank of known misconceptions for that concept. Your job is to compare what
+the student ACTUALLY SAID in student_explanation against each concept's
+correct_belief and known_misconceptions — you must ground every verdict in
+the student's own words, not in the problem or correct_belief alone.
 
 For EACH concept, output exactly one row with:
   - "concept_key": the concept's key, copied verbatim from the input.
-  - "verdict": one of "clear" (student's belief matches the correct belief),
-    "needs_clarification" (ambiguous — could be a slip or a real gap),
-    "misconception" (student's belief matches a known confusion pattern),
-    "wrong" (incorrect but does not match a known misconception pattern).
-  - "evidence_span": the shortest verbatim student utterance that grounds
-    your verdict (empty string if none).
+  - "verdict": one of "clear" (the student's explanation matches/implies the
+    correct belief for this concept), "misconception" (the student's
+    explanation matches one of the known_misconceptions for this concept),
+    "wrong" (the student's explanation is incorrect for this concept but does
+    not match any known misconception pattern), "needs_clarification" (the
+    student's explanation says nothing that bears on this concept, or is
+    genuinely too ambiguous to tell — use this ONLY when you truly cannot
+    tell, not as a default).
+  - "evidence_span": the shortest verbatim substring of student_explanation
+    that grounds your verdict (empty string only if student_explanation truly
+    says nothing relevant to this concept).
   - "confidence": your confidence in this verdict, a float in [0, 1]. This is
     a REQUIRED field on every row, independent of the verdict you choose.
-  - "misconception_code": if — and only if — the student's belief matches one
-    of the known_misconceptions you were given for this concept, put that
-    misconception's "code" verbatim in misconception_code. Otherwise put an
-    empty string. Never invent a code that was not in the
-    known_misconceptions list.
+  - "misconception_code": if — and only if — the student's explanation
+    matches one of the known_misconceptions you were given for this concept,
+    put that misconception's "code" verbatim in misconception_code.
+    Otherwise put an empty string. Never invent a code that was not in the
+    known_misconceptions list. Be decisive: when the match to a known
+    misconception is clear, NAME the code rather than hedging with
+    needs_clarification.
 
 Never invent a concept_key that was not given to you. Never omit a row for a
 concept you were given. Output ONLY the forced JSON object — no prose."""
 
 
-def _user_prompt(problem_text: str, concepts: tuple[JudgeConceptInput, ...]) -> str:
+def _user_prompt(
+    problem_text: str,
+    concepts: tuple[JudgeConceptInput, ...],
+    student_utterances: tuple[str, ...],
+) -> str:
     payload = {
         "problem": problem_text,
+        "student_explanation": "\n".join(student_utterances),
         "concepts": [
             {
                 "concept_key": c.concept_key,
@@ -282,8 +297,16 @@ def judge_concepts(
     problem_text: str,
     concepts: tuple[JudgeConceptInput, ...],
     judge_fn: JudgeFn,
+    student_utterances: tuple[str, ...] = (),
 ) -> tuple[ConceptFinding, ...]:
     """One batched comparative call across every concept.
+
+    ``student_utterances`` is the attempt's full transcript of what the
+    student actually said (NOT per-concept) — it is joined and threaded into
+    the judge's user prompt as ``student_explanation`` so the judge's verdict
+    is grounded in the student's own words instead of comparing the problem
+    against itself (the structural-blindness defect this parameter fixes;
+    docs/_archive/specs/2026-07-08-apollo-misconception-corroboration-redesign.md).
 
     Returns one ``ConceptFinding`` per input concept (source='judge').
     Confidence is ``verdict_token_prob`` when the raw call supplied one,
@@ -298,7 +321,7 @@ def judge_concepts(
     try:
         raw = judge_fn(
             system=_SYSTEM_PROMPT,
-            user=_user_prompt(problem_text, concepts),
+            user=_user_prompt(problem_text, concepts, student_utterances),
         )
     except Exception as exc:  # noqa: BLE001
         _LOG.warning("misconception judge call failed, soft-failing to clear: %s", exc)

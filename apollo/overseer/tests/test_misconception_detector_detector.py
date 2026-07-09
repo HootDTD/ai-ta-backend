@@ -232,6 +232,42 @@ async def test_bank_pattern_finding_included_when_utterance_matches(sqlite_db):
 
 
 # --------------------------------------------------------------------------- #
+# Student utterances must reach the judge (structural-blindness fix)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_student_utterances_are_forwarded_to_the_judge(sqlite_db):
+    """Previously ``detect_misconceptions`` passed ``student_utterances`` to
+    ``_run_bank_pattern`` but never to ``_run_judge`` -- the judge tier was
+    structurally blind to the student. This asserts the attempt's utterances
+    now reach the judge_fn's user prompt."""
+    student_graph = KGGraph(nodes=[])
+    reference_graph = KGGraph(
+        nodes=[_def_node("ref_gdp", "GDP", "GDP excludes transfer payments")]
+    )
+    judge_fn = _StubJudgeFn()
+    embed_fn = _StubEmbedFn()
+    distinctive = "zebras cause inflation via the reserve multiplier xyzzy-42"
+
+    await detect_misconceptions(
+        sqlite_db,
+        attempt_id=1,
+        concept_id=None,
+        student_graph=student_graph,
+        reference_graph=reference_graph,
+        problem_text="Define GDP.",
+        student_utterances=(distinctive,),
+        judge_fn=judge_fn,
+        embed_fn=embed_fn,
+    )
+
+    assert len(judge_fn.calls) == 1
+    import json as _json
+
+    user_payload = _json.loads(judge_fn.calls[0]["user"])
+    assert distinctive in user_payload["student_explanation"]
+
+
+# --------------------------------------------------------------------------- #
 # Soft-fail: a raising tier contributes 0 findings, others still returned
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio

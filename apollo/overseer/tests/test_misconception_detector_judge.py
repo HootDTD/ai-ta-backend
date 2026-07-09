@@ -200,6 +200,108 @@ class TestJudgeConceptsValidJSON:
         assert findings[0].confidence == pytest.approx(0.72)
 
 
+class TestJudgeConceptsStudentGrounding:
+    """Regression tests for the structural-blindness fix: the judge previously
+    received ONLY {problem, correct_belief, known_misconceptions} -- zero
+    student data -- so it could not possibly ground a verdict in what the
+    student actually said. ``judge_concepts`` now accepts
+    ``student_utterances`` and threads them into the user prompt as a single
+    attempt-level ``student_explanation`` field (not per-concept)."""
+
+    def test_student_utterances_reach_the_user_prompt(self):
+        payload = {
+            "concepts": [
+                {"concept_key": "gdp_identity", "verdict": "clear", "evidence_span": "", "confidence": 0.9},
+            ]
+        }
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+        distinctive = "zebras cause inflation via the reserve multiplier xyzzy-42"
+
+        judge_concepts(
+            problem_text="Explain GDP accounting.",
+            concepts=(_concept("gdp_identity"),),
+            judge_fn=judge_fn,
+            student_utterances=(distinctive,),
+        )
+
+        assert len(judge_fn.calls) == 1
+        user_payload = json.loads(judge_fn.calls[0]["user"])
+        assert distinctive in user_payload["student_explanation"]
+
+    def test_multiple_student_utterances_are_joined_attempt_level_not_per_concept(self):
+        payload = {"concepts": [{"concept_key": "a", "verdict": "clear", "evidence_span": "", "confidence": 0.9}]}
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+        utterances = ("first turn utterance", "second turn utterance")
+
+        judge_concepts(
+            problem_text="p",
+            concepts=(_concept("a"),),
+            judge_fn=judge_fn,
+            student_utterances=utterances,
+        )
+
+        user_payload = json.loads(judge_fn.calls[0]["user"])
+        assert "first turn utterance" in user_payload["student_explanation"]
+        assert "second turn utterance" in user_payload["student_explanation"]
+        # Attempt-level: one shared key, not duplicated per concept row.
+        assert "student_explanation" not in user_payload["concepts"][0]
+
+    def test_no_student_utterances_yields_empty_explanation_not_a_crash(self):
+        payload = {"concepts": [{"concept_key": "a", "verdict": "clear", "evidence_span": "", "confidence": 0.9}]}
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+
+        findings = judge_concepts(
+            problem_text="p",
+            concepts=(_concept("a"),),
+            judge_fn=judge_fn,
+        )
+
+        assert len(findings) == 1
+        user_payload = json.loads(judge_fn.calls[0]["user"])
+        assert user_payload["student_explanation"] == ""
+
+    def test_student_explanation_matching_misconception_keys_to_bank_code(self):
+        """End-to-end: a judge row that returns a valid bank code in response
+        to (simulated) grounding in the student's explanation still keys to
+        misc.<code> -- the new prompt path does not break A11 keying."""
+        entry = _bank_entry("includes_transfers")
+        concept = _concept("gdp_identity", bank_entries=(entry,))
+        payload = {
+            "concepts": [
+                {
+                    "concept_key": "gdp_identity",
+                    "verdict": "misconception",
+                    "evidence_span": "transfers count toward GDP",
+                    "confidence": 0.9,
+                    "misconception_code": "includes_transfers",
+                },
+            ]
+        }
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+
+        findings = judge_concepts(
+            problem_text="p",
+            concepts=(concept,),
+            judge_fn=judge_fn,
+            student_utterances=("I think transfers count toward GDP",),
+        )
+
+        assert len(findings) == 1
+        user_payload = json.loads(judge_fn.calls[0]["user"])
+        assert "transfers count toward GDP" in user_payload["student_explanation"]
+        assert findings[0].bank_code == "includes_transfers"
+        assert findings[0].signature == "misc.includes_transfers"
+        assert findings[0].verdict == "misconception"
+
+
 class TestJudgeConceptsSoftFail:
     def test_malformed_json_yields_all_clear_no_raise(self):
         judge_fn = _RecordingJudgeFn(
