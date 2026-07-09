@@ -56,6 +56,7 @@ def _gate_row_label(
     best_judge: ConceptFinding | None,
     corroborating_bank: ConceptFinding | None,
     gated_verdict: str | None,
+    struct_code: str | None = None,
 ) -> str:
     """Human-readable §5 truth-table row label for THIS node, re-derived
     read-only from the same signals ``gate._gate_one_concept`` uses.
@@ -64,7 +65,15 @@ def _gate_row_label(
     actual dock/clarify/drop outcome is read from ``gated_verdict`` (the real
     gate output joined by ``concept_key``), and this label only NAMES which
     branch produced it so a reader can see co-key (row 3) vs lone-solo (row 5)
-    vs else at a glance.
+    vs the F-struct structural co-key dock vs else at a glance.
+
+    ``struct_code`` (F-struct, default None) is the ``opposes_index`` lookup
+    for this node. It only changes the label when the judge is UNKEYED
+    (``bank_code is None``, no corroborating bank) AND the gate actually
+    docked — i.e. only for the structural dock path in
+    ``gate._gate_one_concept``. A non-None ``struct_code`` on a node the gate
+    did NOT dock (e.g. it failed the routed-tau/verdict guard) falls through
+    to the existing row 7/8 labels unchanged, matching the gate exactly.
     """
     if has_sympy:
         return "row1_2_sympy"
@@ -82,9 +91,53 @@ def _gate_row_label(
         if gated_verdict == "needs_clarification":
             return "row6_keyed_sub_solo_clarify"
         return "row8_keyed_sub_routed_drop"
+    if struct_code is not None and gated_verdict == "misconception":
+        return "row3s_struct_cokey_dock"
     if gated_verdict == "needs_clarification":
         return "row7_unkeyed_clarify"
     return "row8_unkeyed_drop"
+
+
+def _docked_via(
+    *,
+    gated_verdict: str | None,
+    has_sympy: bool,
+    corroborating_bank: ConceptFinding | None,
+    best_judge: ConceptFinding | None,
+    struct_code: str | None,
+) -> str:
+    """Classify HOW this node was docked, for the Task 11 re-validation run to
+    see structural docks distinctly from judge-named and deterministic docks.
+    Read-only re-derivation, same inputs as ``_gate_row_label`` — never
+    mutates the gate's actual decision (``gated_verdict``).
+
+    Three real dock kinds (F3 correction — do not collapse rows 1/2 into
+    "judge_named", they have no judge at all):
+      * ``"struct_opposes"`` — the F-struct structural co-key path: the judge
+        localized the error (unkeyed, no bank_code) but named no code, and
+        the graph named it via ``opposes_index``.
+      * ``"judge_named"`` — the judge named its OWN validated ``bank_code``
+        (rows 3/3b co-key or row 5 lone-solo) — with or without a
+        corroborating bank witness.
+      * ``"sympy"`` — a deterministic ``sympy_veto`` self-dock (rows 1/2): no
+        judge, no bank corroboration, nothing "named" by a judge at all.
+      * ``"none"`` — not docked (clarify, drop, or no judge).
+    """
+    if gated_verdict != "misconception":
+        return "none"
+    if has_sympy:
+        return "sympy"
+    if corroborating_bank is not None or (
+        best_judge is not None and best_judge.bank_code is not None
+    ):
+        return "judge_named"
+    if struct_code is not None:
+        return "struct_opposes"
+    # Docked, no sympy, no judge-named code, no struct code — should not
+    # occur given the gate's own truth-table (every dock is one of the three
+    # kinds above), but fail safe with a distinct, honest label rather than
+    # silently mislabeling it "judge_named".
+    return "other_keyed"
 
 
 def _gate_decision(gated_verdict: str | None) -> str:
@@ -117,6 +170,7 @@ def build_node_traces(
     centrality: dict[str, float],
     final_band: str | None,
     is_false_strong: bool,
+    opposes_index: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], ...]:
     """Pure. Build one trace row per reference-graph concept node.
 
@@ -128,8 +182,14 @@ def build_node_traces(
     included), even nodes the judge/gate produced nothing for (decision
     ``drop``), so a reader sees the full node inventory of an attempt.
 
+    ``opposes_index`` (F-struct, default None/empty) is the SAME
+    ``node_id -> bank_code`` map passed to ``gate_findings`` — this function
+    only READS it (via ``.get``) to label a structural dock; it never
+    re-derives or perturbs the gate's own decision.
+
     Never mutates any input (``ConceptFinding`` is frozen; the returned dicts
     are fresh)."""
+    opposes = opposes_index or {}
     per_concept = detection.per_concept
     judges_by_key: dict[str, list[ConceptFinding]] = {}
     bank_findings: list[ConceptFinding] = []
@@ -167,12 +227,21 @@ def build_node_traces(
 
         gated_rep = gated_by_key.get(key)
         gated_verdict = gated_rep.verdict if gated_rep is not None else None
+        struct_code = opposes.get(key)
 
         row_label = _gate_row_label(
             has_sympy=has_sympy,
             best_judge=best_judge,
             corroborating_bank=corroborating_bank,
             gated_verdict=gated_verdict,
+            struct_code=struct_code,
+        )
+        docked_via = _docked_via(
+            gated_verdict=gated_verdict,
+            has_sympy=has_sympy,
+            corroborating_bank=corroborating_bank,
+            best_judge=best_judge,
+            struct_code=struct_code,
         )
         rows.append(
             {
@@ -200,6 +269,8 @@ def build_node_traces(
                 "misconception_penalty": outcome.misconception_penalty,
                 "ceiling_applied": outcome.ceiling_applied,
                 "is_false_strong": is_false_strong,
+                "struct_opposes_code": struct_code,
+                "docked_via": docked_via,
             }
         )
     return tuple(rows)
@@ -273,10 +344,15 @@ def trace_attempt(
     final_band: str | None,
     is_control: bool,
     path: str | None = None,
+    opposes_index: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], ...]:
     """Convenience seam: compute the per-attempt false-Strong roll-up, build
     every node row, emit them, and return the rows (so a harness can also
     aggregate them in-process). Pure except for the ``emit_traces`` append.
+
+    ``opposes_index`` (F-struct, default None) must be the SAME map the
+    caller passed to ``gate_findings`` for this attempt, so the trace's
+    structural-dock label matches the real gate decision it is observing.
 
     Callers gate this behind ``config.trace_enabled()`` so it is never on the
     hot path when the flag is OFF."""
@@ -290,6 +366,7 @@ def trace_attempt(
         centrality=centrality,
         final_band=final_band,
         is_false_strong=false_strong,
+        opposes_index=opposes_index,
     )
     emit_traces(rows, path=path)
     return rows
