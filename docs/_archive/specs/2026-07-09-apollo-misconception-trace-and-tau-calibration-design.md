@@ -1,3 +1,5 @@
+> **SUPERSEDED (Phase 2 only) — 2026-07-09:** the tau/co-key **calibration** direction below was DISPROVEN by the Phase-1 trace + a live instrumented run — judge confidence is ~1.0 on docks, misses, AND controls alike, so NO threshold separates them. Naming is the failure, not confidence. Phase 2 is replaced by the **structural co-key ("F-struct")** design: `docs/_archive/specs/2026-07-09-apollo-misconception-struct-cokey-design.md` (judge localizes / graph names via `opposes`). Phase 1 (the trace) is still live and is extended by F-struct.
+
 # Apollo misconception detector — diagnostic trace (Phase 1) + tau/co-key calibration (Phase 2)
 
 **Date:** 2026-07-09
