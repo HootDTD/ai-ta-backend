@@ -155,10 +155,11 @@ async def _run() -> dict[str, Any]:
 
     from apollo.overseer.misconception_detector.apply import apply_penalty
     from apollo.overseer.misconception_detector.centrality import compute_centrality
-    from apollo.overseer.misconception_detector.config import detector_enabled
+    from apollo.overseer.misconception_detector.config import detector_enabled, trace_enabled
     from apollo.overseer.misconception_detector.detector import detect_misconceptions
     from apollo.overseer.misconception_detector.gate import gate_findings
     from apollo.overseer.misconception_detector.merge import merge_detections
+    from apollo.overseer.misconception_detector.trace import trace_attempt
     from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
     from apollo.persistence.neo4j_client import Neo4jClient
     from apollo.knowledge_graph.store import KGStore
@@ -271,6 +272,25 @@ async def _run() -> dict[str, Any]:
                     expected_misc = sorted((record.get("expected") or {}).get("misconceptions", []))
                     expected_cls = _expected_class(record)
                     is_control = expected_cls in ("strong", "partial")
+
+                    # Phase-1 diagnostic trace (default OFF, APOLLO_MISC_TRACE):
+                    # emit one JSONL row per reference-graph node revealing, per
+                    # node, exactly what the judge said and which gate row fired
+                    # — misconception attempts AND controls, traced identically.
+                    # Uses the SCORECARD band (`detector_band`) + the labeled
+                    # `is_control`, so `is_false_strong` is the real residual
+                    # false-Strong roll-up the recall gap targets.
+                    if trace_enabled():
+                        trace_attempt(
+                            attempt_id=attempt_id,
+                            reference_graph=reference_graph,
+                            detection=detection,
+                            gated=gated,
+                            outcome=outcome,
+                            centrality=centrality,
+                            final_band=detector_band,
+                            is_control=is_control,
+                        )
 
                     control_credit_ok = (
                         True

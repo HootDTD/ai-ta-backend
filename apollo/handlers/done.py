@@ -50,7 +50,10 @@ from apollo.overseer.misconception import (
 )
 from apollo.overseer.misconception_detector.apply import rubric_overall_after_penalty
 from apollo.overseer.misconception_detector.centrality import compute_centrality
-from apollo.overseer.misconception_detector.config import detector_enabled
+from apollo.overseer.misconception_detector.config import (
+    detector_enabled,
+    trace_enabled,
+)
 from apollo.overseer.misconception_detector.detector import detect_misconceptions
 from apollo.overseer.misconception_detector.gate import gate_findings
 from apollo.overseer.misconception_detector.judge import make_openai_judge
@@ -513,10 +516,40 @@ async def handle_done(
                 embed_fn=_default_embed_fn,
             )
             gated = gate_findings(detection.per_concept)
-            detection_outcome = merge_detections(
-                gated, centrality=compute_centrality(reference_graph),
-            )
+            centrality = compute_centrality(reference_graph)
+            detection_outcome = merge_detections(gated, centrality=centrality)
             rubric = rubric_overall_after_penalty(rubric, detection_outcome)
+            # Phase-1 diagnostic trace (default OFF, APOLLO_MISC_TRACE). When
+            # OFF this branch never imports `trace` — flag-OFF is byte-identical.
+            # Instrumentation only: it re-derives per-node judge/gate rows from
+            # the artifacts just produced and never touches the grade above. A
+            # live grade has no persona/control label, so `is_control=False` and
+            # `final_band` is the (letter) rubric band — the labeled false-Strong
+            # roll-up is the campaign harness's job (it has the scorecard band).
+            # Isolated in its OWN try/except so a trace defect can never perturb
+            # the already-computed rubric/outcome (instrumentation must not
+            # change the grade, even by soft-failing it) — the grade proceeds
+            # penalized-as-computed and only the trace is skipped.
+            if trace_enabled():
+                try:
+                    from apollo.overseer.misconception_detector.trace import (
+                        trace_attempt,
+                    )
+
+                    trace_attempt(
+                        attempt_id=int(attempt.id),
+                        reference_graph=reference_graph,
+                        detection=detection,
+                        gated=gated,
+                        outcome=detection_outcome,
+                        centrality=centrality,
+                        final_band=rubric["overall"].get("letter"),
+                        is_control=False,
+                    )
+                except Exception:
+                    _LOG.exception(
+                        "misconception_trace_failed attempt_id=%s", int(attempt.id)
+                    )
         except Exception:
             _LOG.exception(
                 "misconception_detector_failed attempt_id=%s", int(attempt.id)

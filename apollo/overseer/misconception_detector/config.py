@@ -41,6 +41,21 @@ import os
 FLAG_ENV: str = "APOLLO_MISCONCEPTION_DETECTOR"
 _TRUTHY: frozenset[str] = frozenset({"1", "true", "yes", "on"})
 
+# Phase-1 diagnostic trace (docs/_archive/specs/2026-07-09-apollo-misconception-
+# trace-and-tau-calibration-design.md). SEPARATE flag from FLAG_ENV, default
+# OFF: when OFF no trace module is imported on the hot path and behaviour/output
+# is byte-identical. When ON, ``trace.emit_traces`` writes one machine-parseable
+# JSONL row per reference-graph node so a single instrumented run reveals, per
+# node, exactly what the judge said and how the gate decided (misconception
+# attempts AND controls, traced identically). Read at call time (never cached).
+TRACE_FLAG_ENV: str = "APOLLO_MISC_TRACE"
+
+# Where ``trace.emit_traces`` appends its JSONL. Env-overridable via
+# ``APOLLO_MISC_TRACE_PATH``; defaults to a repo-relative file so a bare
+# ``APOLLO_MISC_TRACE=1`` run produces a findable artifact with no extra config.
+TRACE_PATH_ENV: str = "APOLLO_MISC_TRACE_PATH"
+TRACE_PATH_DEFAULT: str = "campaign/out/misconception_trace.jsonl"
+
 
 def detector_enabled() -> bool:
     """True iff ``APOLLO_MISCONCEPTION_DETECTOR`` is set to a truthy value.
@@ -50,6 +65,29 @@ def detector_enabled() -> bool:
     ``apollo/emergent/config.py::emergent_misconceptions_enabled``.
     """
     return os.environ.get(FLAG_ENV, "").strip().lower() in _TRUTHY
+
+
+def trace_enabled() -> bool:
+    """True iff ``APOLLO_MISC_TRACE`` is set to a truthy value (default OFF).
+
+    Read at call time (never cached), same ``_TRUTHY`` set as
+    ``detector_enabled``. Independent of ``FLAG_ENV`` so the trace can be
+    switched on for a diagnostic run without changing whether the detector's
+    penalty is applied. When False, callers must not import or invoke the
+    ``trace`` module — flag-OFF is byte-identical to today.
+    """
+    return os.environ.get(TRACE_FLAG_ENV, "").strip().lower() in _TRUTHY
+
+
+def trace_path() -> str:
+    """Filesystem path ``trace.emit_traces`` appends JSONL to.
+
+    ``APOLLO_MISC_TRACE_PATH`` overrides ``TRACE_PATH_DEFAULT``; a blank/unset
+    value falls back to the default (never an empty path)."""
+    raw = os.environ.get(TRACE_PATH_ENV)
+    if raw is None or not raw.strip():
+        return TRACE_PATH_DEFAULT
+    return raw.strip()
 
 
 def _float_env(name: str, default: float) -> float:
