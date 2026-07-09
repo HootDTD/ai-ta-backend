@@ -21,6 +21,7 @@ import json
 
 import pytest
 
+from apollo.overseer.misconception_bank import MisconceptionEntry
 from apollo.overseer.misconception_detector.judge import (
     judge_concepts,
     make_openai_judge,
@@ -31,8 +32,25 @@ from apollo.overseer.misconception_detector.types import (
 )
 
 
-def _concept(key: str = "gdp_identity", belief: str = "GDP excludes transfer payments.") -> JudgeConceptInput:
-    return JudgeConceptInput(concept_key=key, correct_belief=belief, bank_entries=())
+def _bank_entry(code: str, concept_id: int = 42) -> MisconceptionEntry:
+    return MisconceptionEntry(
+        id=1,
+        concept_id=concept_id,
+        code=code,
+        description=f"description for {code}",
+        confusion_pair=None,
+        trigger_phrases=(),
+        probe_question="q",
+        rt_steps=(),
+    )
+
+
+def _concept(
+    key: str = "gdp_identity",
+    belief: str = "GDP excludes transfer payments.",
+    bank_entries: tuple[MisconceptionEntry, ...] = (),
+) -> JudgeConceptInput:
+    return JudgeConceptInput(concept_key=key, correct_belief=belief, bank_entries=bank_entries)
 
 
 class _RecordingJudgeFn:
@@ -473,6 +491,7 @@ class TestJsonSchemaShape:
             "verdict",
             "confidence",
             "evidence_span",
+            "misconception_code",
         }
         # confidence must always be present so the verbalized-confidence
         # fallback (A1) always has something to read.
@@ -480,6 +499,181 @@ class TestJsonSchemaShape:
         assert row_schema["properties"]["verdict"]["enum"] == sorted(
             {"clear", "needs_clarification", "misconception", "wrong"}
         )
+
+
+class TestJudgeMisconceptionCodeKeying:
+    """RED tests for the judge-names-a-code / validated keying redesign (A11):
+    docs/_archive/specs/2026-07-08-apollo-misconception-corroboration-redesign.md
+    §4.3, §6.
+    """
+
+    def test_judge_names_valid_code_keys_signature(self):
+        entry = _bank_entry("includes_transfers")
+        concept = _concept("gdp_identity", bank_entries=(entry,))
+        payload = {
+            "concepts": [
+                {
+                    "concept_key": "gdp_identity",
+                    "verdict": "misconception",
+                    "evidence_span": "transfers count",
+                    "confidence": 0.9,
+                    "misconception_code": "includes_transfers",
+                },
+            ]
+        }
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+
+        findings = judge_concepts(
+            problem_text="p", concepts=(concept,), judge_fn=judge_fn
+        )
+
+        assert len(findings) == 1
+        finding = findings[0]
+        assert finding.bank_code == "includes_transfers"
+        assert finding.signature == "misc.includes_transfers"
+
+    def test_judge_empty_code_stays_unkeyed(self):
+        entry = _bank_entry("includes_transfers")
+        concept = _concept("gdp_identity", bank_entries=(entry,))
+        payload = {
+            "concepts": [
+                {
+                    "concept_key": "gdp_identity",
+                    "verdict": "clear",
+                    "evidence_span": "",
+                    "confidence": 0.9,
+                    "misconception_code": "",
+                },
+            ]
+        }
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+
+        findings = judge_concepts(
+            problem_text="p", concepts=(concept,), judge_fn=judge_fn
+        )
+
+        assert len(findings) == 1
+        assert findings[0].bank_code is None
+        assert findings[0].signature == "unkeyed:gdp_identity"
+
+    def test_judge_hallucinated_code_rejected_unkeyed(self):
+        entry = _bank_entry("includes_transfers")
+        concept = _concept("gdp_identity", bank_entries=(entry,))
+        payload = {
+            "concepts": [
+                {
+                    "concept_key": "gdp_identity",
+                    "verdict": "misconception",
+                    "evidence_span": "x",
+                    "confidence": 0.9,
+                    "misconception_code": "totally_made_up",
+                },
+            ]
+        }
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+
+        findings = judge_concepts(
+            problem_text="p", concepts=(concept,), judge_fn=judge_fn
+        )
+
+        assert len(findings) == 1
+        assert findings[0].bank_code is None
+        assert findings[0].signature == "unkeyed:gdp_identity"
+
+    def test_judge_cross_concept_code_rejected(self):
+        concept_a = _concept(
+            "concept_a", bank_entries=(_bank_entry("code_a", concept_id=1),)
+        )
+        concept_b = _concept(
+            "concept_b", bank_entries=(_bank_entry("code_b", concept_id=2),)
+        )
+        payload = {
+            "concepts": [
+                {
+                    "concept_key": "concept_a",
+                    "verdict": "misconception",
+                    "evidence_span": "x",
+                    "confidence": 0.9,
+                    # code_b is valid for concept_b, NOT concept_a.
+                    "misconception_code": "code_b",
+                },
+                {
+                    "concept_key": "concept_b",
+                    "verdict": "clear",
+                    "evidence_span": "",
+                    "confidence": 0.9,
+                    "misconception_code": "",
+                },
+            ]
+        }
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+
+        findings = judge_concepts(
+            problem_text="p",
+            concepts=(concept_a, concept_b),
+            judge_fn=judge_fn,
+        )
+
+        by_key = {f.concept_key: f for f in findings}
+        assert by_key["concept_a"].bank_code is None
+        assert by_key["concept_a"].signature == "unkeyed:concept_a"
+
+    def test_judge_missing_code_field_soft_fails_unkeyed(self):
+        entry = _bank_entry("includes_transfers")
+        concept = _concept("gdp_identity", bank_entries=(entry,))
+        payload = {
+            "concepts": [
+                {
+                    "concept_key": "gdp_identity",
+                    "verdict": "misconception",
+                    "evidence_span": "x",
+                    "confidence": 0.9,
+                    # misconception_code entirely absent
+                },
+            ]
+        }
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
+        )
+
+        findings = judge_concepts(
+            problem_text="p", concepts=(concept,), judge_fn=judge_fn
+        )
+
+        assert len(findings) == 1
+        assert findings[0].bank_code is None
+        assert findings[0].signature == "unkeyed:gdp_identity"
+        assert findings[0].verdict == "misconception"
+
+    def test_judge_all_clear_soft_fail_names_no_code(self):
+        entry = _bank_entry("includes_transfers")
+        concept = _concept("gdp_identity", bank_entries=(entry,))
+        judge_fn = _RecordingJudgeFn(
+            JudgeRaw(content="not valid json {{{", verdict_token_prob=None)
+        )
+
+        findings = judge_concepts(
+            problem_text="p", concepts=(concept,), judge_fn=judge_fn
+        )
+
+        assert len(findings) == 1
+        assert findings[0].bank_code is None
+        assert findings[0].signature == "unkeyed:gdp_identity"
+
+    def test_judge_schema_includes_misconception_code(self):
+        from apollo.overseer.misconception_detector.judge import _JSON_SCHEMA
+
+        row_schema = _JSON_SCHEMA["schema"]["properties"]["concepts"]["items"]
+        assert row_schema["properties"]["misconception_code"] == {"type": "string"}
+        assert "misconception_code" in row_schema["required"]
 
 
 class TestMakeOpenAIJudge:

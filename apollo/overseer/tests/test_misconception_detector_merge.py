@@ -48,6 +48,7 @@ def _docked(
     evidence_span: str = "student said X",
     signature: str = "misc.includes_transfers",
     source: str = "judge",
+    ceiling_eligible: bool = False,
 ) -> ConceptFinding:
     """A gate-cleared (docked) finding — the shape merge_detections consumes."""
     return ConceptFinding(
@@ -59,6 +60,7 @@ def _docked(
         signature=signature,
         source=source,
         corroborated=True,
+        ceiling_eligible=ceiling_eligible,
     )
 
 
@@ -146,8 +148,17 @@ def test_empty_input_yields_empty_outcome():
 # ceiling_applied: central docked finding -> True; peripheral-only -> False
 # --------------------------------------------------------------------------- #
 def test_central_docked_finding_sets_ceiling_applied():
-    """A docked finding on the most-central node trips the anti-dilution ceiling."""
-    central = _docked(concept_key="concept.central", confidence=0.6, signature="misc.c")
+    """A docked finding on the most-central node trips the anti-dilution
+    ceiling — but ONLY when it is ceiling_eligible (A12): this finding models
+    a corroborated/deterministic central dock (row 1/2/3 of the gate
+    truth-table), so ceiling_eligible=True here is correct, not a weakening
+    of the predicate."""
+    central = _docked(
+        concept_key="concept.central",
+        confidence=0.6,
+        signature="misc.c",
+        ceiling_eligible=True,
+    )
     peripheral = _docked(concept_key="concept.leaf", confidence=0.6, signature="misc.p")
     centrality = {"concept.central": 1.0, "concept.leaf": CENTRALITY_W_MIN}
 
@@ -173,8 +184,9 @@ def test_ceiling_uses_max_centrality_present_in_map():
 
     Here the single docked finding IS the most central node present, so even
     though its absolute centrality (0.5) is modest, it trips the ceiling
-    because nothing is more central."""
-    finding = _docked(concept_key="concept.a", confidence=0.5)
+    because nothing is more central AND it is ceiling_eligible (models a
+    corroborated/deterministic central dock, A12)."""
+    finding = _docked(concept_key="concept.a", confidence=0.5, ceiling_eligible=True)
     centrality = {"concept.a": 0.5, "concept.b": 0.4}
 
     outcome = merge_detections((finding,), centrality=centrality)
@@ -217,11 +229,17 @@ def test_canonical_key_is_never_double_prefixed():
 
 def test_unkeyed_finding_is_penalized_but_not_emitted_as_keyed_row():
     """A5: an unkeyed:* docked finding counts toward penalty/ceiling but is
-    NOT emitted as a keyed misconceptions[] row (no canonical_key row for it)."""
+    NOT emitted as a keyed misconceptions[] row (no canonical_key row for it).
+    ceiling_eligible is ORTHOGONAL to keying (A12/§4.6 note): this finding
+    models a deterministic/corroborated dock whose signature happens to be
+    unkeyed:* (e.g. a sympy_veto or a bank-corroborated-but-unvalidated-code
+    case), so ceiling_eligible=True is set explicitly — only the KEYED-ROW
+    emission is gated on the misc.<code> signature, not the ceiling."""
     unkeyed = _docked(
         concept_key="concept.unattributed",
         confidence=1.0,
         signature="unkeyed:42",
+        ceiling_eligible=True,
     )
     centrality = {"concept.unattributed": 1.0}
 
@@ -306,3 +324,123 @@ def test_misconceptions_tuple_is_immutable_tuple_of_dicts():
 
     assert isinstance(outcome.misconceptions, tuple)
     assert isinstance(outcome.ledger_findings, tuple)
+
+
+# --------------------------------------------------------------------------- #
+# A12: ceiling_applied reads ceiling_eligible, not centrality alone (the
+# severity gradient / anti-dilution ceiling policy). docs/_archive/specs/
+# 2026-07-08-apollo-misconception-corroboration-redesign.md §4.7/§8.
+# --------------------------------------------------------------------------- #
+def test_lone_judge_dock_subtracts_but_no_ceiling():
+    """A ceiling_eligible=False dock (a lone-judge penalty-only dock, gate
+    row 5) on the MAX-central concept still subtracts (the severity
+    gradient, L2) but must NOT trip the ceiling."""
+    finding = _docked(
+        concept_key="concept.central",
+        confidence=0.9,
+        signature="misc.c",
+        ceiling_eligible=False,
+    )
+    centrality = {"concept.central": 1.0}
+
+    outcome = merge_detections((finding,), centrality=centrality)
+
+    assert outcome.ceiling_applied is False
+    assert outcome.misconception_penalty > 0.0
+
+
+def test_bank_corroborated_dock_trips_ceiling():
+    """A ceiling_eligible=True dock (gate row 1/2/3) on the max-central
+    concept DOES trip the ceiling."""
+    finding = _docked(
+        concept_key="concept.central",
+        confidence=0.9,
+        signature="misc.c",
+        ceiling_eligible=True,
+    )
+    centrality = {"concept.central": 1.0}
+
+    outcome = merge_detections((finding,), centrality=centrality)
+
+    assert outcome.ceiling_applied is True
+
+
+def test_penalty_sums_all_docks_including_lone_judge():
+    """penalty math is unchanged by the eligibility gate: a mix of an
+    eligible and an ineligible dock both contribute to the summed/clamped
+    penalty (L2 — every dock subtracts, only ceiling eligibility differs)."""
+    eligible = _docked(
+        concept_key="concept.a",
+        confidence=0.5,
+        signature="misc.a",
+        ceiling_eligible=True,
+    )
+    ineligible = _docked(
+        concept_key="concept.b",
+        confidence=0.5,
+        signature="misc.b",
+        ceiling_eligible=False,
+    )
+    centrality = {"concept.a": 0.3, "concept.b": 0.3}
+
+    outcome = merge_detections((eligible, ineligible), centrality=centrality)
+
+    assert outcome.misconception_penalty == pytest.approx(0.3 * 0.5 + 0.3 * 0.5)
+
+
+def test_keyed_rows_emitted_for_now_keyable_judge_docks():
+    """A judge dock with a validated misc.<code> signature (now possible
+    after the judge-keying redesign, A11) appears in outcome.misconceptions
+    with the bare canonical_key."""
+    finding = _docked(
+        concept_key="concept.gdp",
+        confidence=0.95,
+        signature="misc.includes_transfers",
+        source="judge",
+        ceiling_eligible=False,
+    )
+
+    outcome = merge_detections((finding,), centrality={"concept.gdp": 1.0})
+
+    assert len(outcome.misconceptions) == 1
+    assert outcome.misconceptions[0]["canonical_key"] == "misc.includes_transfers"
+
+
+def test_a13_regression_node_keyed_dock_is_central():
+    """A ceiling_eligible=True dock carrying a node_id concept_key PRESENT in
+    the centrality map at max -> central -> ceiling trips (mirrors what the
+    gate hands merge for a bank-corroborated dock, A13)."""
+    finding = _docked(
+        concept_key="node.demand_curve",
+        confidence=0.9,
+        signature="misc.includes_transfers",
+        ceiling_eligible=True,
+    )
+    centrality = {"node.demand_curve": 1.0}
+
+    outcome = merge_detections((finding,), centrality=centrality)
+
+    assert outcome.ceiling_applied is True
+
+
+def test_a13_regression_str_concept_id_key_floors_not_central():
+    """The SAME ceiling_eligible=True dock but carrying a str(concept_id) key
+    ABSENT from the centrality map floors to CENTRALITY_W_MIN, is NOT
+    maximally central -> ceiling_applied is False. Documents exactly why the
+    docked representative must be node_id-keyed (A13, spec §4.7 load-bearing
+    dependency): a bank finding's str(concept_id) key would silently
+    under-report the ceiling if it were ever the docked representative."""
+    finding = _docked(
+        concept_key="42",  # str(concept_id) — absent from the centrality map
+        confidence=0.9,
+        signature="misc.includes_transfers",
+        ceiling_eligible=True,
+    )
+    # The centrality map is keyed by node_id only (mirrors production
+    # centrality.py); "42" is never a key in it, so it floors to
+    # CENTRALITY_W_MIN, which is below this map's max (1.0).
+    centrality = {"node.demand_curve": 1.0}
+
+    outcome = merge_detections((finding,), centrality=centrality)
+
+    assert outcome.ceiling_applied is False

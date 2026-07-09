@@ -48,6 +48,29 @@ class ConceptFinding:
     # Meaningless for non-judge sources; defaults True so pre-A1 constructors
     # (and deterministic/bank tiers) keep their prior gate behavior.
     verdict_token_prob_present: bool = True
+    # A11 (corroboration/keying redesign spec §4.1): the validated bank code
+    # this finding names, or None. Set ONLY after the code is validated
+    # against the concept's bank_entries (judge tier, judge.py::_finding_from_row)
+    # or taken directly from the matched entry (bank_pattern/sympy_veto).
+    # Drives whether a lone judge finding is dock-eligible (A9, gate.py) and
+    # how merge keys the row (A5). INVARIANT: ``bank_code is not None`` iff
+    # ``signature == f"misc.{bank_code}"``. Never mutated; gate.py/merge.py
+    # always build a NEW ConceptFinding (dataclasses.replace) to change it.
+    bank_code: str | None = None
+    # A10 (corroboration/keying redesign spec §4.1): for a bank_pattern
+    # finding, True iff its best-ranked match cleared BANK_SIM_FLOOR (a
+    # self-standing standalone hit) vs a below-floor corroboration-only hit.
+    # Meaningless for non-bank sources; defaults True so sympy_veto/judge
+    # constructors are unaffected.
+    bank_match_above_floor: bool = True
+    # A12 (corroboration/keying redesign spec §4.6): True only when this dock
+    # is allowed to trip the anti-dilution band ceiling on a
+    # maximally-central concept. sympy_veto docks and bank-corroborated docks
+    # set it True; a lone-judge (penalty-only) dock sets it False. merge.py
+    # reads THIS field directly (not centrality-plus-source-inference) to
+    # decide ``ceiling_applied``. Defaults False so non-dock findings (every
+    # pre-gate tier finding) and all existing tier constructors are unaffected.
+    ceiling_eligible: bool = False
 
 
 @dataclass(frozen=True)

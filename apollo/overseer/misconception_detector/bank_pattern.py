@@ -16,9 +16,17 @@ in ``apollo/emergent/store.py::record_observations_from_canonical``.
 A hit >= ``BANK_SIM_FLOOR`` yields a ``misconception`` finding with
 ``source='bank_pattern'``, ``confidence=similarity``, ``corroborated=False``
 (this tier alone never docks a misconception — it needs a second
-corroborating signal, per ``gate.py``'s contract). No match, an empty bank,
-or an embedding failure all abstain silently (soft-fail — a detector error
-must never break grading).
+corroborating signal, per ``gate.py``'s contract), tagged
+``bank_match_above_floor=True``.
+
+A10 (corroboration/keying redesign spec §4.5, §7): the best-ranked match is
+now ALSO emitted when it is below ``BANK_SIM_FLOOR`` but strictly positive
+(``bank_match_above_floor=False``) — a corroboration-only finding that
+``gate.py`` may use to co-key a judge finding sharing the same ``bank_code``,
+but which can never become a standalone dock (a lone bank_pattern finding is
+always dropped by the gate, floor-cleared or not). No match, a non-positive
+best similarity, an empty bank, or an embedding failure all abstain silently
+(soft-fail — a detector error must never break grading).
 """
 from __future__ import annotations
 
@@ -135,7 +143,11 @@ async def _postgres_match(
 
 
 def _finding_for_match(
-    utterance: str, entry: MisconceptionEntry, similarity: float
+    utterance: str,
+    entry: MisconceptionEntry,
+    similarity: float,
+    *,
+    above_floor: bool,
 ) -> ConceptFinding:
     return ConceptFinding(
         concept_key=str(entry.concept_id),
@@ -146,6 +158,8 @@ def _finding_for_match(
         signature=f"misc.{entry.code}",
         source="bank_pattern",
         corroborated=False,
+        bank_code=entry.code,
+        bank_match_above_floor=above_floor,
     )
 
 
@@ -162,14 +176,20 @@ async def detect_bank_pattern(
     Embeds each raw student utterance and runs
     ``misconception_bank.match_by_embedding`` (Postgres) or an in-memory
     cosine over ``bank_entries`` (SQLite/test — ``match_by_embedding`` is
-    pgvector-only and bypassed on SQLite per its own docstring). A hit
-    ``>= BANK_SIM_FLOOR`` yields a ``misconception`` finding,
-    ``source='bank_pattern'``, ``signature='misc.<code>'``,
-    ``confidence=similarity``, ``evidence_span=utterance``,
+    pgvector-only and bypassed on SQLite per its own docstring). The
+    best-ranked match yields a ``misconception`` finding,
+    ``source='bank_pattern'``, ``signature='misc.<code>'``, ``bank_code``
+    set, ``confidence=similarity``, ``evidence_span=utterance``,
     ``corroborated=False`` (this tier alone never docks — it needs a 2nd
-    signal, per ``gate.py``). Abstains (returns no finding for that
-    utterance) on no match, an empty bank, or any internal error
-    (soft-fail — a detector error must never break grading).
+    signal, per ``gate.py``), whenever similarity is strictly positive:
+    ``bank_match_above_floor=True`` when it clears ``BANK_SIM_FLOOR`` (a
+    standalone-eligible hit, unchanged from before), else
+    ``bank_match_above_floor=False`` (A10 — corroboration-only; the gate
+    uses it ONLY to co-key a judge finding sharing the same ``bank_code``,
+    never as a standalone dock). Abstains (returns no finding for that
+    utterance) on no match, a non-positive best similarity, an empty bank,
+    or any internal error (soft-fail — a detector error must never break
+    grading).
     """
     if not student_utterances or not bank_entries:
         return ()
@@ -195,8 +215,19 @@ async def detect_bank_pattern(
             continue
 
         entry, similarity = match
-        if similarity >= BANK_SIM_FLOOR:
-            findings.append(_finding_for_match(utterance, entry, similarity))
+        # A10: emit the best-ranked match even below BANK_SIM_FLOOR (tagged
+        # bank_match_above_floor=False), as long as it is strictly positive —
+        # a non-positive (zero/negative-cosine) "best" match is not evidence
+        # of anything and must not create a junk corroboration-only row.
+        if similarity > 0.0:
+            findings.append(
+                _finding_for_match(
+                    utterance,
+                    entry,
+                    similarity,
+                    above_floor=similarity >= BANK_SIM_FLOOR,
+                )
+            )
 
     return tuple(findings)
 

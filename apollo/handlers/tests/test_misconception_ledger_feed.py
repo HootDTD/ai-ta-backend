@@ -37,7 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apollo.handlers import artifact_writer
-from apollo.overseer.misconception_detector.types import MergeOutcome
+from apollo.overseer.misconception_detector.types import ConceptFinding, MergeOutcome
 from apollo.persistence.models import (
     ApolloSession,
     Clarification,
@@ -238,6 +238,73 @@ async def test_idempotent_regrade_of_same_attempt_adds_zero_rows(db, monkeypatch
 
     assert len(rows_after_second) == 1
     assert rows_after_second[0].signature == "misc.includes_transfers"
+
+
+def _cokeyed_judge_bank_outcome() -> MergeOutcome:
+    """A gate-cleared outcome modeling the corroboration/keying redesign's
+    row-3 dock (docs/_archive/specs/2026-07-08-apollo-misconception-
+    corroboration-redesign.md §4.4/§5): a judge finding co-keyed with a
+    bank_pattern finding on the same validated ``misc.<code>``, docked under
+    the JUDGE's (node_id-shaped) concept_key, ceiling-eligible. This is the
+    keyed-ledger-row observable the two prior validation runs could never
+    produce because judge signatures were always ``unkeyed:*`` before A11."""
+    docked = ConceptFinding(
+        concept_key="node.demand_curve",
+        verdict="misconception",
+        confidence=0.91,
+        severity=0.27,
+        evidence_span="GDP includes transfer payments",
+        signature="misc.includes_transfers",
+        source="judge",
+        corroborated=True,
+        bank_code="includes_transfers",
+        bank_match_above_floor=True,
+        ceiling_eligible=True,
+    )
+    return MergeOutcome(
+        misconception_penalty=0.27,
+        misconceptions=(
+            {
+                "canonical_key": "misc.includes_transfers",
+                "evidence_span": "GDP includes transfer payments",
+                "confidence": 0.91,
+                "opposes": None,
+            },
+        ),
+        ceiling_applied=True,
+        ledger_findings=(docked,),
+    )
+
+
+@pytest.mark.asyncio
+async def test_cokeyed_judge_bank_dock_writes_keyed_row(db, monkeypatch):
+    """A9-A13 redesign: a co-keyed judge+bank dock (row 3 of the gate
+    truth-table) now writes a NON-ZERO keyed row to
+    ``apollo_misconception_observations`` — the observable the two prior
+    validation runs could never satisfy because judge signatures were always
+    unkeyed. Both flags ON."""
+    monkeypatch.setenv("APOLLO_MISCONCEPTION_DETECTOR", "1")
+    monkeypatch.setenv("APOLLO_EMERGENT_MISCONCEPTIONS", "1")
+    sess, attempt = await _mk(db)
+
+    payload = await _run(db, sess, attempt, detection_outcome=_cokeyed_judge_bank_outcome())
+
+    assert payload is not None
+    assert payload["misconceptions"] == [
+        {
+            "canonical_key": "misc.includes_transfers",
+            "evidence_span": "GDP includes transfer payments",
+            "confidence": 0.91,
+            "opposes": None,
+        }
+    ]
+
+    rows = await _observations(db)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.signature == "misc.includes_transfers"
+    assert not row.signature.startswith("unkeyed:")
+    assert row.confidence == pytest.approx(0.91)
 
 
 @pytest.mark.asyncio

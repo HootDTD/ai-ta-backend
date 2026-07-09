@@ -25,6 +25,7 @@ def _clear_env(monkeypatch):
         "APOLLO_MISC_CENTRALITY_MIN",
         "APOLLO_MISC_CEILING",
         "APOLLO_MISC_BANK_SIM",
+        "APOLLO_MISC_TAU_SOLO_JUDGE",
     ]
     for var in env_vars:
         monkeypatch.delenv(var, raising=False)
@@ -106,6 +107,41 @@ class TestConstantsEnvOverride:
         finally:
             monkeypatch.delenv(env_var, raising=False)
             importlib.reload(detector_config)
+
+
+class TestTauSoloJudge:
+    """RED tests for TAU_SOLO_JUDGE (A9): docs/_archive/specs/
+    2026-07-08-apollo-misconception-corroboration-redesign.md §4.2."""
+
+    def test_tau_solo_judge_default(self):
+        importlib.reload(detector_config)
+        assert detector_config.TAU_SOLO_JUDGE == pytest.approx(0.90)
+
+    def test_tau_solo_judge_env_override(self, monkeypatch):
+        monkeypatch.setenv("APOLLO_MISC_TAU_SOLO_JUDGE", "0.95")
+        importlib.reload(detector_config)
+        try:
+            assert detector_config.TAU_SOLO_JUDGE == pytest.approx(0.95)
+        finally:
+            monkeypatch.delenv("APOLLO_MISC_TAU_SOLO_JUDGE", raising=False)
+            importlib.reload(detector_config)
+
+    def test_tau_solo_judge_malformed_env_falls_back(self, monkeypatch):
+        monkeypatch.setenv("APOLLO_MISC_TAU_SOLO_JUDGE", "notanum")
+        importlib.reload(detector_config)
+        try:
+            assert detector_config.TAU_SOLO_JUDGE == pytest.approx(0.90)
+        finally:
+            monkeypatch.delenv("APOLLO_MISC_TAU_SOLO_JUDGE", raising=False)
+            importlib.reload(detector_config)
+
+    def test_tau_solo_judge_at_least_tau_fire(self):
+        importlib.reload(detector_config)
+        assert detector_config.TAU_SOLO_JUDGE >= detector_config.TAU_FIRE
+
+    def test_bank_sim_floor_unchanged(self):
+        importlib.reload(detector_config)
+        assert detector_config.BANK_SIM_FLOOR == pytest.approx(0.80)
 
 
 def test_reload_restores_defaults_after_module_teardown():

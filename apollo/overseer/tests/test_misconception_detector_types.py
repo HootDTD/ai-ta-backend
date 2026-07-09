@@ -138,3 +138,44 @@ class TestJudgeConceptInput:
         jci = JudgeConceptInput(concept_key="k", correct_belief="c", bank_entries=())
         with pytest.raises(dataclasses.FrozenInstanceError):
             jci.concept_key = "other"  # type: ignore[misc]
+
+
+class TestConceptFindingCorroborationFields:
+    """RED tests for the corroboration/keying redesign (A10-A12):
+    ``docs/_archive/specs/2026-07-08-apollo-misconception-corroboration-redesign.md``
+    §4.1, §4.6. Every existing tier constructor must keep compiling with ONLY
+    the pre-existing required args — the three new fields are all defaulted.
+    """
+
+    def test_conceptfinding_new_fields_default(self):
+        """Constructing with only the pre-existing required args must still
+        work, and the three new fields must default to the documented values
+        (guards every existing tier constructor keeps compiling)."""
+        finding = _finding()
+        assert finding.bank_code is None
+        assert finding.bank_match_above_floor is True
+        assert finding.ceiling_eligible is False
+
+    def test_bank_code_signature_invariant_keyed(self):
+        """bank_code is not None <=> signature == f'misc.{bank_code}'."""
+        finding = _finding(
+            bank_code="includes_transfers",
+            signature="misc.includes_transfers",
+        )
+        assert finding.bank_code is not None
+        assert finding.signature == f"misc.{finding.bank_code}"
+
+    def test_bank_code_none_unkeyed_signature(self):
+        """bank_code=None places no constraint on signature (LHS False)."""
+        finding = _finding(bank_code=None, signature="unkeyed:node.x")
+        assert finding.bank_code is None
+        assert finding.signature == "unkeyed:node.x"
+
+    def test_new_fields_frozen_mutation_raises(self):
+        finding = _finding()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            finding.ceiling_eligible = True  # type: ignore[misc]
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            finding.bank_code = "x"  # type: ignore[misc]
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            finding.bank_match_above_floor = False  # type: ignore[misc]

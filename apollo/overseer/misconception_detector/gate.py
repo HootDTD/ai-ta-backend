@@ -1,47 +1,69 @@
 """Corroboration + dual-tau confidence gate.
 
 Contract: ``docs/_archive/plans/2026-07-08-apollo-misconception-detector-plan.md``
-section 5.5, amended by A1 (dual-tau selection for judge findings).
+section 5.5 (A1 dual-tau selection), amended by
+``docs/_archive/specs/2026-07-08-apollo-misconception-corroboration-redesign.md``
+§4.0/§4.4/§5 (A9-A13, the "authoritative judge" redesign).
 
 ``gate_findings`` groups per-concept ``ConceptFinding``s from the three
 detector tiers (``sympy_veto``, ``bank_pattern``, ``judge``) and decides, per
-``concept_key``, whether the concept:
+judge/deterministic concept, the outcome per the full §5 truth-table:
 
-  * DOCKS — rewritten to ``verdict="misconception"``, ``corroborated=True`` —
-    iff a deterministic ``sympy_veto`` finding is present (self-corroborating),
-    OR >=2 independent sources agree AND any ``judge`` finding among them
-    clears its applicable tau (``tau_fire`` for the token-probability path,
-    ``tau_fire_verbalized`` for the verbalized-confidence fallback — A1);
-  * is DOWNGRADED to ``needs_clarification`` (never docked) when the only
-    signal is a lone ``judge`` finding, regardless of its confidence — a lone
-    judge opinion routes to the clarification loop, it never docks by itself;
-  * is DROPPED otherwise (e.g. a lone sub-tau judge finding, or a judge
-    finding that fails its tau in a would-be corroborating group and leaves
-    no other deterministic/agreeing signal).
+  * **Deterministic** (``sympy_veto``) always self-docks, ceiling-eligible.
+  * **Judge + bank co-keyed** (same validated ``bank_code``, matched
+    GLOBALLY across the whole detection result — NOT by ``concept_key``,
+    A13) that clears the judge's routed tau -> DOCK, represented by the
+    JUDGE finding (node_id-keyed, so ``centrality`` resolves it),
+    ceiling-eligible.
+  * **Lone bank-keyed judge >= TAU_SOLO_JUDGE** (no bank corroboration) ->
+    DOCK, penalty-only (``ceiling_eligible=False``, A12).
+  * **Lone bank-keyed judge, routed-tau-ok but sub-solo-tau**, or **lone
+    UNKEYED judge that clears its routed tau** -> ``needs_clarification``
+    (never docks).
+  * **Lone judge sub-routed-tau**, or **lone bank_pattern finding** (no judge
+    ever names its code) -> DROP.
 
 Pure function: no IO, no LLM, no DB. Returns a NEW tuple; input findings are
-never mutated (``ConceptFinding`` is frozen, so this is enforced by the type
-system too, but we still always construct new instances for changed rows).
+never mutated (``ConceptFinding`` is frozen). Both dock/clarify builders use
+``dataclasses.replace`` (A13/§4.6.1) so no field — in particular
+``bank_code``/``bank_match_above_floor``/``signature`` — is ever silently
+dropped from a docked/clarified representative.
+
+Cross-namespace keying (A13, §4.0): the judge tier keys each finding by the
+reference-graph node's semantic ``node_id`` (a per-node string); the
+``bank_pattern`` tier keys every finding by the SESSION-scoped
+``str(concept_id)`` (one shared key for the whole attempt's bank — a
+different encoding AND a different cardinality). Grouping strictly by
+``concept_key`` therefore never lets a bank finding corroborate a judge
+finding on the same misconception in production. The fix: ``gate_findings``
+builds a ``bank_by_code`` index (every ``bank_pattern`` finding with a
+non-None ``bank_code``, keyed by that code) ONCE, and ``_gate_one_concept``
+looks up the corroborating bank finding by the judge's OWN validated
+``bank_code`` — never by ``concept_key`` equality. The docked representative
+of any bank-corroborated dock is ALWAYS the judge (or sympy) finding, never
+the bank witness, so ``centrality`` (also node_id-keyed) can resolve it.
 
 Dual-tau selection (A1): ``ConceptFinding`` carries a
 ``verdict_token_prob_present`` origin bit, set upstream in
 ``judge.py::_finding_from_row`` from ``verdict_token_prob is not None``. The
 gate routes on that bit — the token-probability path is gated at ``tau_fire``
 (0.85), the verbalized-confidence fallback at the stricter ``tau_verbalized``
-(0.90). This is a SINGLE comparison against the routed threshold; the earlier
-``>= tau_fire OR >= tau_verbalized`` formulation degenerated to the looser
-bound and made ``TAU_FIRE_VERBALIZED`` dead code on the default production path
-(a verbalized finding at 0.87 wrongly corroborated a dock). The dual constants
-remain explicit parameters so a caller can override either threshold for a
-specific batch without touching this module's logic.
+(0.90).
 """
 
 from __future__ import annotations
 
-from apollo.overseer.misconception_detector.config import TAU_FIRE, TAU_FIRE_VERBALIZED
+import dataclasses
+
+from apollo.overseer.misconception_detector.config import (
+    TAU_FIRE,
+    TAU_FIRE_VERBALIZED,
+    TAU_SOLO_JUDGE,
+)
 from apollo.overseer.misconception_detector.types import ConceptFinding
 
 _DETERMINISTIC_SOURCES = frozenset({"sympy_veto"})
+_ANCHOR_SOURCES = _DETERMINISTIC_SOURCES | frozenset({"judge"})
 
 
 def gate_findings(
@@ -49,21 +71,41 @@ def gate_findings(
     *,
     tau_fire: float = TAU_FIRE,
     tau_verbalized: float = TAU_FIRE_VERBALIZED,
+    tau_solo: float = TAU_SOLO_JUDGE,
 ) -> tuple[ConceptFinding, ...]:
-    """Group by concept_key, then dock / downgrade / drop per concept.
+    """Group deterministic/judge findings per concept_key, index bank
+    findings by validated bank_code, then dock / downgrade / drop per §5.
 
     Returns a new tuple of ``ConceptFinding`` — docked findings carry
-    ``verdict="misconception"`` and ``corroborated=True``; downgraded
-    findings carry ``verdict="needs_clarification"`` and
+    ``verdict="misconception"``, ``corroborated=True``, and an explicit
+    ``ceiling_eligible`` per the truth-table row that fired; downgraded
+    findings carry ``verdict="needs_clarification"``,
     ``corroborated=False``; dropped concepts contribute nothing.
+
+    A lone ``bank_pattern`` finding (row 9 — no judge/sympy concept ever
+    names its ``bank_code``) never anchors its own group: it is a corroboration
+    witness only, indexed in ``bank_by_code``, and is dropped by construction
+    if no anchor concept looks it up.
     """
-    by_concept: dict[str, list[ConceptFinding]] = {}
+    bank_by_code: dict[str, list[ConceptFinding]] = {}
+    anchors: dict[str, list[ConceptFinding]] = {}
     for finding in findings:
-        by_concept.setdefault(finding.concept_key, []).append(finding)
+        if finding.source == "bank_pattern":
+            if finding.bank_code is not None:
+                bank_by_code.setdefault(finding.bank_code, []).append(finding)
+            continue
+        if finding.source in _ANCHOR_SOURCES:
+            anchors.setdefault(finding.concept_key, []).append(finding)
 
     gated: list[ConceptFinding] = []
-    for concept_key, group in by_concept.items():
-        outcome = _gate_one_concept(group, tau_fire=tau_fire, tau_verbalized=tau_verbalized)
+    for group in anchors.values():
+        outcome = _gate_one_concept(
+            group,
+            bank_by_code=bank_by_code,
+            tau_fire=tau_fire,
+            tau_verbalized=tau_verbalized,
+            tau_solo=tau_solo,
+        )
         if outcome is not None:
             gated.append(outcome)
 
@@ -73,98 +115,93 @@ def gate_findings(
 def _gate_one_concept(
     group: list[ConceptFinding],
     *,
+    bank_by_code: dict[str, list[ConceptFinding]],
     tau_fire: float,
     tau_verbalized: float,
+    tau_solo: float,
 ) -> ConceptFinding | None:
-    """Decide the fate of ONE concept's findings. Returns the single
+    """Decide the fate of ONE judge/deterministic concept. Returns the single
     representative finding to keep (docked or downgraded), or None to drop
-    the concept entirely."""
+    the concept entirely. Implements the §5 truth-table exactly."""
     deterministic = [f for f in group if f.source in _DETERMINISTIC_SOURCES]
     if deterministic:
-        # Self-corroborating: deterministic veto alone (or with anything
-        # else) always docks. Prefer the deterministic finding as the base.
-        return _docked(deterministic[0])
+        # Rows 1/2: self-corroborating, always ceiling-eligible. Prefer the
+        # deterministic finding as the representative.
+        return _docked(deterministic[0], ceiling_eligible=True)
 
     judges = [f for f in group if f.source == "judge"]
-    non_judges = [f for f in group if f.source != "judge"]
-
-    judge_clears_tau = any(
-        _judge_clears_tau(j, tau_fire=tau_fire, tau_verbalized=tau_verbalized) for j in judges
-    )
-
-    independent_sources = {f.source for f in group}
-    has_corroboration = len(independent_sources) >= 2
-
-    if has_corroboration:
-        if judges:
-            # A judge is part of the group: it must clear its tau for the
-            # group to dock. Non-judge + non-judge corroboration (no judge
-            # present at all) docks regardless (handled by the `else`).
-            if judge_clears_tau:
-                return _docked(non_judges[0] if non_judges else judges[0])
-            # Judge present but fails tau: no valid corroboration from it.
-            # Fall through to lone-judge / drop logic using non-judge signals.
-        else:
-            # >=2 non-judge independent sources agreeing (e.g. bank_pattern
-            # appearing from two distinct paths, or any future tier) docks.
-            return _docked(non_judges[0])
-
-    # No valid corroboration reached. If there's a lone judge signal (with or
-    # without a failed-tau judge alongside), route the single most confident
-    # judge finding to needs_clarification rather than dropping silently —
-    # but ONLY when there is exactly one independent source overall (a lone
-    # judge opinion, unaccompanied by any other tier).
-    if judges and not non_judges:
-        best_judge = max(judges, key=lambda f: f.confidence)
-        if _judge_clears_tau(best_judge, tau_fire=tau_fire, tau_verbalized=tau_verbalized):
-            return _needs_clarification(best_judge)
+    if not judges:
         return None
 
-    # Judge present alongside non-judge signal(s) but failed tau, and no
-    # other corroboration path exists -> drop entirely (per contract: a
-    # judge below tau is dropped; the lone remaining non-judge signal is
-    # insufficient on its own to dock).
+    best_judge = max(judges, key=lambda f: f.confidence)
+    routed_ok = _judge_clears_tau(best_judge, tau_fire=tau_fire, tau_verbalized=tau_verbalized)
+    solo_ok = routed_ok and best_judge.confidence >= tau_solo
+
+    corroborating_bank = None
+    if best_judge.bank_code is not None:
+        candidates = bank_by_code.get(best_judge.bank_code)
+        if candidates:
+            corroborating_bank = max(candidates, key=lambda f: f.confidence)
+
+    if corroborating_bank is not None:
+        # Rows 3 / 3b: judge + bank agree on the same validated bank_code
+        # (floor-free — B's bank_match_above_floor is deliberately ignored).
+        if routed_ok:
+            return _docked(best_judge, ceiling_eligible=True)
+        return _needs_clarification(best_judge)
+
+    # No bank corroboration available for this judge's named code.
+    if best_judge.bank_code is not None:
+        # Row 5: lone bank-keyed judge clearing BOTH routed tau AND the
+        # stricter solo tau -> dock, penalty-only.
+        if solo_ok:
+            return _docked(best_judge, ceiling_eligible=False)
+        # Row 6: keyed but sub-solo-tau (still clears routed tau) -> clarify.
+        if routed_ok:
+            return _needs_clarification(best_judge)
+        # Row 8: keyed but sub-routed-tau -> drop.
+        return None
+
+    # Row 7: lone UNKEYED judge clearing routed tau -> clarify, never docks.
+    if routed_ok:
+        return _needs_clarification(best_judge)
+    # Row 8: lone UNKEYED judge sub-routed-tau -> drop.
     return None
 
 
 def _judge_clears_tau(finding: ConceptFinding, *, tau_fire: float, tau_verbalized: float) -> bool:
     """A judge finding clears the ONE tau applicable to its origin (A1).
 
-    ``ConceptFinding.verdict_token_prob_present`` (set upstream in
-    ``judge.py::_finding_from_row`` from ``verdict_token_prob is not None``)
-    selects the threshold: the token-probability path uses ``tau_fire`` (0.85);
-    the verbalized-confidence fallback uses the stricter ``tau_verbalized``
-    (0.90), because verbalized confidence runs overconfident. This is a SINGLE
-    comparison against the routed threshold — the old ``>= tau_fire OR >=
-    tau_verbalized`` degenerated to the looser bound and made
-    ``TAU_FIRE_VERBALIZED`` dead code on the default production path."""
+    ``ConceptFinding.verdict_token_prob_present`` selects the threshold: the
+    token-probability path uses ``tau_fire`` (0.85); the
+    verbalized-confidence fallback uses the stricter ``tau_verbalized``
+    (0.90)."""
     tau = tau_fire if finding.verdict_token_prob_present else tau_verbalized
     return finding.confidence >= tau
 
 
-def _docked(finding: ConceptFinding) -> ConceptFinding:
-    return ConceptFinding(
-        concept_key=finding.concept_key,
+def _docked(finding: ConceptFinding, *, ceiling_eligible: bool) -> ConceptFinding:
+    """Build the docked representative via ``dataclasses.replace`` (A13,
+    §4.6.1) so every field NOT explicitly named here — in particular
+    ``bank_code``, ``bank_match_above_floor``, ``signature``,
+    ``concept_key`` — is inherited verbatim from the incoming finding. A
+    forgotten ``ceiling_eligible`` at a call site is a compile-time error
+    (no default), per the branch's row in the §5 truth-table."""
+    return dataclasses.replace(
+        finding,
         verdict="misconception",
-        confidence=finding.confidence,
-        severity=finding.severity,
-        evidence_span=finding.evidence_span,
-        signature=finding.signature,
-        source=finding.source,
         corroborated=True,
-        verdict_token_prob_present=finding.verdict_token_prob_present,
+        ceiling_eligible=ceiling_eligible,
     )
 
 
 def _needs_clarification(finding: ConceptFinding) -> ConceptFinding:
-    return ConceptFinding(
-        concept_key=finding.concept_key,
+    """``ceiling_eligible`` is NOT overridden here — it inherits the incoming
+    finding's value, which is always False for a pre-gate tier finding (no
+    tier ever sets it True), so a clarification row never becomes
+    ceiling-eligible."""
+    return dataclasses.replace(
+        finding,
         verdict="needs_clarification",
-        confidence=finding.confidence,
-        severity=finding.severity,
-        evidence_span=finding.evidence_span,
-        signature=finding.signature,
-        source=finding.source,
         corroborated=False,
-        verdict_token_prob_present=finding.verdict_token_prob_present,
     )

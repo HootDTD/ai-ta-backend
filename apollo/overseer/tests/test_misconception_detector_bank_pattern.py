@@ -134,12 +134,21 @@ class TestDetectBankPattern:
         assert finding.evidence_span == utterance
         assert finding.confidence == pytest.approx(_cosine(utt_vec, bank_vec), abs=1e-6)
         assert finding.confidence >= BANK_SIM_FLOOR
+        assert finding.bank_match_above_floor is True
+        assert finding.bank_code == "includes_transfers"
 
     async def test_utterance_below_floor_yields_no_finding(self, sqlite_db):
+        """Non-positive-similarity best match (opposite-direction embedding,
+        cosine -1.0) still abstains (A10: the below-floor emission requires
+        similarity STRICTLY > 0.0, not merely < floor). NOTE: this must NOT
+        assert the old below-floor-abstains behavior for a POSITIVE
+        below-floor similarity — see TestBelowFloorEmission for that (now
+        changed) case."""
         bank_vec = _unit_vec(0.0)
         utterance = "I think dogs are great pets"
-        # 90 degrees apart -> cosine 0.0, well below BANK_SIM_FLOOR.
-        utt_vec = _unit_vec(90.0)
+        # 180 degrees apart -> cosine exactly -1.0 (unambiguously <= 0, no
+        # floating-point-near-zero ambiguity the way an exact 90deg would be).
+        utt_vec = _unit_vec(180.0)
         entry = _entry()
         embed_fn = _StubEmbedFn({utterance: utt_vec, entry.description: bank_vec})
 
@@ -187,7 +196,10 @@ class TestDetectBankPattern:
         miss_utterance = "The weather today is sunny"
         embed_fn = _StubEmbedFn({
             hit_utterance: _unit_vec(5.0),
-            miss_utterance: _unit_vec(90.0),
+            # 180deg apart -> cosine exactly -1.0, unambiguously <= 0 (A10's
+            # `> 0.0` guard) unlike an exact-90deg vector which floating-point
+            # cosine computes as a tiny POSITIVE residual, not exactly 0.
+            miss_utterance: _unit_vec(180.0),
         })
         entry = _entry()
         embed_fn._mapping[entry.description] = bank_vec
@@ -387,6 +399,156 @@ class TestDetectBankPattern:
         assert len(findings) == 1
 
 
+@pytest.mark.asyncio
+class TestBelowFloorEmission:
+    """RED tests for A10 (corroboration/keying redesign spec §4.5, §7):
+    ``detect_bank_pattern`` now emits its best-ranked match even below
+    ``BANK_SIM_FLOOR``, tagged ``bank_match_above_floor=False`` — a
+    corroboration-only finding the gate may use to co-key a judge (never as
+    a standalone dock)."""
+
+    async def test_above_floor_match_tagged_true(self, sqlite_db):
+        bank_vec = _unit_vec(0.0)
+        utterance = "GDP includes government transfer payments to households"
+        utt_vec = _unit_vec(10.0)  # cosine ~0.98, above floor
+        entry = _entry()
+        embed_fn = _StubEmbedFn({utterance: utt_vec, entry.description: bank_vec})
+
+        findings = await detect_bank_pattern(
+            sqlite_db,
+            concept_id=42,
+            student_utterances=(utterance,),
+            embed_fn=embed_fn,
+            bank_entries=(entry,),
+        )
+
+        assert len(findings) == 1
+        assert findings[0].bank_match_above_floor is True
+        assert findings[0].bank_code == "includes_transfers"
+        assert findings[0].signature == "misc.includes_transfers"
+
+    async def test_below_floor_best_match_emitted_tagged_false(self, sqlite_db):
+        """A best match with 0 < similarity < BANK_SIM_FLOOR is EMITTED
+        (not abstained), tagged bank_match_above_floor=False."""
+        bank_vec = _unit_vec(0.0)
+        utterance = "somewhat related utterance"
+        # ~60 degrees apart -> cosine 0.5, below BANK_SIM_FLOOR (0.80) but > 0.
+        utt_vec = _unit_vec(60.0)
+        entry = _entry()
+        embed_fn = _StubEmbedFn({utterance: utt_vec, entry.description: bank_vec})
+
+        findings = await detect_bank_pattern(
+            sqlite_db,
+            concept_id=42,
+            student_utterances=(utterance,),
+            embed_fn=embed_fn,
+            bank_entries=(entry,),
+        )
+
+        assert len(findings) == 1
+        finding = findings[0]
+        assert finding.bank_match_above_floor is False
+        assert finding.bank_code == "includes_transfers"
+        assert finding.signature == "misc.includes_transfers"
+        assert finding.confidence == pytest.approx(_cosine(utt_vec, bank_vec), abs=1e-6)
+        assert finding.confidence < BANK_SIM_FLOOR
+
+    async def test_no_bank_still_abstains(self, sqlite_db):
+        utterance = "GDP includes transfer payments"
+        embed_fn = _StubEmbedFn({utterance: _unit_vec(0.0)})
+
+        findings = await detect_bank_pattern(
+            sqlite_db,
+            concept_id=42,
+            student_utterances=(utterance,),
+            embed_fn=embed_fn,
+            bank_entries=(),
+        )
+
+        assert findings == ()
+
+    async def test_embed_failure_abstains(self, sqlite_db):
+        class _RaisingEmbedFn:
+            def __call__(self, text: str) -> list[float]:
+                raise RuntimeError("embedding service unavailable")
+
+        entry = _entry()
+        findings = await detect_bank_pattern(
+            sqlite_db,
+            concept_id=42,
+            student_utterances=("GDP includes transfer payments",),
+            embed_fn=_RaisingEmbedFn(),
+            bank_entries=(entry,),
+        )
+
+        assert findings == ()
+
+    async def test_zero_similarity_abstains(self, sqlite_db):
+        """A best match with similarity <= 0 must NOT emit a junk
+        corroboration-only row — the `> 0.0` guard. Uses exact axis-aligned
+        integer vectors (not trig-derived) so the cosine is EXACTLY 0.0, with
+        no floating-point residual."""
+        bank_vec = [1.0, 0.0]
+        utterance = "completely unrelated"
+        utt_vec = [0.0, 1.0]  # exactly orthogonal -> cosine exactly 0.0
+        entry = _entry()
+        embed_fn = _StubEmbedFn({utterance: utt_vec, entry.description: bank_vec})
+
+        findings = await detect_bank_pattern(
+            sqlite_db,
+            concept_id=42,
+            student_utterances=(utterance,),
+            embed_fn=embed_fn,
+            bank_entries=(entry,),
+        )
+
+        assert findings == ()
+
+    async def test_negative_similarity_abstains(self, sqlite_db):
+        bank_vec = _unit_vec(0.0)
+        utterance = "opposite direction utterance"
+        utt_vec = _unit_vec(180.0)  # cosine -1.0
+        entry = _entry()
+        embed_fn = _StubEmbedFn({utterance: utt_vec, entry.description: bank_vec})
+
+        findings = await detect_bank_pattern(
+            sqlite_db,
+            concept_id=42,
+            student_utterances=(utterance,),
+            embed_fn=embed_fn,
+            bank_entries=(entry,),
+        )
+
+        assert findings == ()
+
+    async def test_postgres_path_below_floor_now_emits_tagged_false(self, monkeypatch):
+        """The postgres/pgvector dispatch path also honors the new
+        ``above_floor`` tag: a below-floor best match from
+        ``match_by_embedding`` is now emitted (not abstained), tagged False."""
+        entry = _entry()
+
+        async def _fake_match_by_embedding(db, *, concept_id, query_embedding, k=3):
+            return [(entry, 0.55)]
+
+        monkeypatch.setattr(
+            "apollo.overseer.misconception_bank.match_by_embedding",
+            _fake_match_by_embedding,
+        )
+
+        embed_fn = _StubEmbedFn({"some utterance": _unit_vec(0.0)})
+        findings = await detect_bank_pattern(
+            _FakePostgresDb(),
+            concept_id=42,
+            student_utterances=("some utterance",),
+            embed_fn=embed_fn,
+            bank_entries=(entry,),
+        )
+
+        assert len(findings) == 1
+        assert findings[0].bank_match_above_floor is False
+        assert findings[0].confidence == pytest.approx(0.55)
+
+
 class _FakeDialect:
     def __init__(self, name: str):
         self.name = name
@@ -510,7 +672,11 @@ class TestDetectBankPatternPostgresDialectBranch:
 
         assert findings == ()
 
-    async def test_postgres_path_below_floor_yields_no_finding(self, monkeypatch):
+    async def test_postgres_path_below_floor_emits_corroboration_only_finding(self, monkeypatch):
+        """A10 (corroboration/keying redesign): a below-floor (but positive)
+        similarity is now EMITTED, tagged bank_match_above_floor=False,
+        rather than abstained — see TestBelowFloorEmission for the dedicated
+        SQLite-path coverage of this behavior change."""
         entry = _entry()
 
         async def _fake_match_by_embedding(db, *, concept_id, query_embedding, k=3):
@@ -530,7 +696,9 @@ class TestDetectBankPatternPostgresDialectBranch:
             bank_entries=(entry,),
         )
 
-        assert findings == ()
+        assert len(findings) == 1
+        assert findings[0].bank_match_above_floor is False
+        assert findings[0].confidence == pytest.approx(0.10)
 
 
 class TestCosineSimilarityHelper:

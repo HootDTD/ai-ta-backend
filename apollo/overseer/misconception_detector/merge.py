@@ -13,7 +13,9 @@ outcome into an adjusted composite/rubric. It takes the GATE-cleared findings
     ``severity_i = centrality.get(concept_key, CENTRALITY_W_MIN) * confidence_i``
     over ALL docked findings (bank-keyed AND unkeyed alike). The detector only
     ever subtracts, never adds, so this is always >= 0 and clamped from above.
-  * ``ceiling_applied`` — the anti-dilution guard: a docked finding attacking a
+  * ``ceiling_applied`` — the anti-dilution guard: a CEILING-ELIGIBLE docked
+    finding (A12 — a deterministic ``sympy_veto`` dock or a bank-corroborated
+    judge dock; NOT a lone-judge penalty-only dock) attacking a
     maximally-central concept must cap the artifact composite below the named
     Strong scorecard band, so a student cannot dilute one load-bearing
     misconception across otherwise-strong coverage. "Central" is DERIVED from
@@ -128,18 +130,27 @@ def _with_severity(finding: ConceptFinding, severity: float) -> ConceptFinding:
 def _any_central(
     findings: tuple[ConceptFinding, ...], centrality: dict[str, float]
 ) -> bool:
-    """True iff any docked finding attaches to a maximally-central concept.
+    """True iff any CEILING-ELIGIBLE docked finding attaches to a
+    maximally-central concept (A12, corroboration/keying redesign spec
+    §4.7/§8).
 
     "Central" is DERIVED from the centrality map's own maximum value (not a
     hand-authored constant) so the ceiling scales with each attempt's reference
     graph. When the map is empty (every finding fell back to CENTRALITY_W_MIN),
-    the max collapses to that floor and any docked finding trips the ceiling —
-    a conservative choice: with no graph structure to rank concepts, a
-    corroborated misconception is treated as central.
+    the max collapses to that floor and any ceiling-eligible docked finding
+    trips the ceiling — a conservative choice: with no graph structure to
+    rank concepts, a corroborated misconception is treated as central.
+
+    ``ceiling_eligible`` is stamped by ``gate.py`` per the §5 truth-table: a
+    deterministic (``sympy_veto``) dock or a bank-corroborated judge dock is
+    eligible; a lone-judge (penalty-only) dock is NOT — it may still subtract
+    from the penalty above, but a single uncorroborated LLM opinion can never
+    by itself cap the band (A12/L2, the severity gradient / anti-dilution
+    ceiling policy).
     """
     max_centrality = max(centrality.values(), default=CENTRALITY_W_MIN)
     return any(
-        centrality.get(f.concept_key, CENTRALITY_W_MIN) >= max_centrality
+        f.ceiling_eligible and centrality.get(f.concept_key, CENTRALITY_W_MIN) >= max_centrality
         for f in findings
     )
 

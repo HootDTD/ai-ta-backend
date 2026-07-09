@@ -148,6 +148,36 @@ def test_build_llm_artifact_golden_shape_pinned():
     assert golden["clarification_trace"] == []
 
 
+_NEW_CORROBORATION_FIELD_NAMES = {
+    "bank_code",
+    "bank_match_above_floor",
+    "ceiling_eligible",
+}
+
+
+def _scan_for_forbidden_keys(value, forbidden: set[str]) -> None:
+    """Recursively assert none of ``forbidden`` appear as a dict key anywhere
+    in ``value`` (the corroboration-redesign fields are internal to the
+    detector chain and must never be serialized into a flag-OFF artifact)."""
+    if isinstance(value, dict):
+        for key, sub in value.items():
+            assert key not in forbidden, f"forbidden key {key!r} found in flag-OFF artifact"
+            _scan_for_forbidden_keys(sub, forbidden)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _scan_for_forbidden_keys(item, forbidden)
+
+
+def test_build_llm_artifact_flag_off_never_serializes_new_corroboration_fields():
+    """The A10-A12 ConceptFinding fields (bank_code, bank_match_above_floor,
+    ceiling_eligible) added by the corroboration/keying redesign are internal
+    to the detector chain and must NEVER appear in any flag-OFF
+    artifact/rubric dict — they simply never reach build_llm_artifact while
+    detection_outcome is None."""
+    golden = _captured_pre_detector_golden()
+    _scan_for_forbidden_keys(golden, _NEW_CORROBORATION_FIELD_NAMES)
+
+
 # --------------------------------------------------------------------------- #
 # Layer 2: handle_done — mocked OLD-path harness, flag OFF, across both
 # personas' utterance content (proving the content never reaches the grade).

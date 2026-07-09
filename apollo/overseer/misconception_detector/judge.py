@@ -75,12 +75,19 @@ _JSON_SCHEMA = {
                         },
                         "confidence": {"type": "number"},
                         "evidence_span": {"type": "string"},
+                        # A11 (corroboration/keying redesign spec §4.3): the
+                        # bank code the judge believes matches, or "" for
+                        # none. Validated downstream against the concept's
+                        # OWN bank_entries in _finding_from_row — never
+                        # trusted verbatim.
+                        "misconception_code": {"type": "string"},
                     },
                     "required": [
                         "concept_key",
                         "verdict",
                         "confidence",
                         "evidence_span",
+                        "misconception_code",
                     ],
                     "additionalProperties": False,
                 },
@@ -107,6 +114,11 @@ For EACH concept, output exactly one row with:
     your verdict (empty string if none).
   - "confidence": your confidence in this verdict, a float in [0, 1]. This is
     a REQUIRED field on every row, independent of the verdict you choose.
+  - "misconception_code": if — and only if — the student's belief matches one
+    of the known_misconceptions you were given for this concept, put that
+    misconception's "code" verbatim in misconception_code. Otherwise put an
+    empty string. Never invent a code that was not in the
+    known_misconceptions list.
 
 Never invent a concept_key that was not given to you. Never omit a row for a
 concept you were given. Output ONLY the forced JSON object — no prose."""
@@ -152,16 +164,44 @@ def _all_clear(concepts: tuple[JudgeConceptInput, ...]) -> tuple[ConceptFinding,
     )
 
 
+def _validate_misconception_code(
+    row: dict[str, Any] | None,
+    concept_input: JudgeConceptInput | None,
+) -> str | None:
+    """A11: validate the judge-named ``misconception_code`` against the
+    SPECIFIC concept's own ``bank_entries`` — never trust it verbatim. A
+    hallucinated / empty / cross-concept / absent code returns ``None``
+    (degrading gracefully to an unkeyed signature)."""
+    if row is None or concept_input is None:
+        return None
+    code = row.get("misconception_code")
+    if not isinstance(code, str):
+        return None
+    code = code.strip()
+    if not code:
+        return None
+    allowed = {e.code for e in concept_input.bank_entries}
+    if code in allowed:
+        return code
+    return None
+
+
 def _finding_from_row(
     concept_key: str,
     row: dict[str, Any] | None,
     *,
     verdict_token_prob: float | None,
+    concept_input: JudgeConceptInput | None = None,
 ) -> ConceptFinding:
     # A1 origin bit: True when confidence is a real verdict-token probability,
     # False when it falls back to the verbalized-confidence field. gate.py routes
     # to the stricter tau on the verbalized path.
     verdict_token_prob_present = verdict_token_prob is not None
+
+    # A11: a soft-fail (row is None, e.g. the model dropped this concept's
+    # row entirely) names no code — stays unkeyed.
+    bank_code = _validate_misconception_code(row, concept_input)
+    signature = f"misc.{bank_code}" if bank_code else f"unkeyed:{concept_key}"
 
     if row is None:
         return ConceptFinding(
@@ -170,10 +210,11 @@ def _finding_from_row(
             confidence=0.0,
             severity=0.0,
             evidence_span="",
-            signature=f"unkeyed:{concept_key}",
+            signature=signature,
             source="judge",
             corroborated=False,
             verdict_token_prob_present=verdict_token_prob_present,
+            bank_code=bank_code,
         )
 
     verdict = row.get("verdict")
@@ -198,10 +239,11 @@ def _finding_from_row(
         confidence=confidence,
         severity=0.0,
         evidence_span=evidence_span,
-        signature=f"unkeyed:{concept_key}",
+        signature=signature,
         source="judge",
         corroborated=False,
         verdict_token_prob_present=verdict_token_prob_present,
+        bank_code=bank_code,
     )
 
 
@@ -282,6 +324,7 @@ def judge_concepts(
             c.concept_key,
             rows_by_key.get(c.concept_key),
             verdict_token_prob=raw.verdict_token_prob,
+            concept_input=c,
         )
         for c in concepts
     )
