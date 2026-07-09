@@ -1,0 +1,143 @@
+{
+  "topic_cluster": "improper_integrals",
+  "nodes": [
+    {
+      "id": "definite_integral",
+      "label": "Definite Integral",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "improper_integrals"
+    },
+    {
+      "id": "limit_of_a_function",
+      "label": "Limit of a Function",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "improper_integrals"
+    },
+    {
+      "id": "infinite_interval",
+      "label": "Infinite Interval of Integration",
+      "prerequisites": [
+        "definite_integral"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "improper_integrals"
+    },
+    {
+      "id": "unbounded_integrand",
+      "label": "Unbounded Integrand (interior/endpoint)",
+      "prerequisites": [
+        "definite_integral"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "improper_integrals"
+    },
+    {
+      "id": "improper_limit_definition",
+      "label": "Improper Integral as a Limit",
+      "prerequisites": [
+        "infinite_interval",
+        "unbounded_integrand",
+        "limit_of_a_function"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "improper_integrals"
+    },
+    {
+      "id": "antiderivative_evaluation",
+      "label": "Antiderivative Evaluation",
+      "prerequisites": [
+        "improper_limit_definition"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "improper_integrals"
+    },
+    {
+      "id": "limit_resolution",
+      "label": "Resolving the Limit",
+      "prerequisites": [
+        "antiderivative_evaluation",
+        "limit_of_a_function"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "improper_integrals"
+    },
+    {
+      "id": "p_integral_criterion",
+      "label": "p-integral Convergence Criterion",
+      "prerequisites": [
+        "limit_resolution"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "improper_integrals"
+    },
+    {
+      "id": "convergence_verdict",
+      "label": "Convergence / Divergence Verdict",
+      "prerequisites": [
+        "limit_resolution",
+        "p_integral_criterion"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "improper_integrals"
+    }
+  ],
+  "edges": [
+    {
+      "type": "requires",
+      "from": "infinite_interval",
+      "to": "definite_integral"
+    },
+    {
+      "type": "requires",
+      "from": "unbounded_integrand",
+      "to": "definite_integral"
+    },
+    {
+      "type": "requires",
+      "from": "improper_limit_definition",
+      "to": "infinite_interval"
+    },
+    {
+      "type": "requires",
+      "from": "improper_limit_definition",
+      "to": "unbounded_integrand"
+    },
+    {
+      "type": "requires",
+      "from": "improper_limit_definition",
+      "to": "limit_of_a_function"
+    },
+    {
+      "type": "requires",
+      "from": "antiderivative_evaluation",
+      "to": "improper_limit_definition"
+    },
+    {
+      "type": "requires",
+      "from": "limit_resolution",
+      "to": "antiderivative_evaluation"
+    },
+    {
+      "type": "requires",
+      "from": "limit_resolution",
+      "to": "limit_of_a_function"
+    },
+    {
+      "type": "requires",
+      "from": "p_integral_criterion",
+      "to": "limit_resolution"
+    },
+    {
+      "type": "requires",
+      "from": "convergence_verdict",
+      "to": "limit_resolution"
+    },
+    {
+      "type": "extends",
+      "from": "p_integral_criterion",
+      "to": "limit_resolution"
+    }
+  ]
+}

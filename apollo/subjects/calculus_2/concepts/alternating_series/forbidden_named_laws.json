@@ -1,0 +1,23 @@
+{
+  "named_laws": [
+    "alternating series test",
+    "leibniz",
+    "nth-term test",
+    "divergence test",
+    "p-series",
+    "absolute convergence"
+  ],
+  "forbidden_concepts": [
+    "conditional convergence",
+    "absolute convergence",
+    "comparison test",
+    "ratio test",
+    "power series",
+    "radius of convergence"
+  ],
+  "forbidden_domains": [
+    "real analysis",
+    "sequences and series theory"
+  ],
+  "forbidden_units": []
+}

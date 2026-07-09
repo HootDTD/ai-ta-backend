@@ -1,0 +1,156 @@
+{
+  "topic_cluster": "numerical_integration",
+  "nodes": [
+    {
+      "id": "definite_integral",
+      "label": "Definite Integral",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "numerical_integration"
+    },
+    {
+      "id": "subinterval_partition",
+      "label": "Subinterval Partition (n, Delta x)",
+      "prerequisites": [
+        "definite_integral"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "numerical_integration"
+    },
+    {
+      "id": "node_evaluation",
+      "label": "Node Evaluation f(x_i)",
+      "prerequisites": [
+        "subinterval_partition"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "numerical_integration"
+    },
+    {
+      "id": "trapezoidal_rule",
+      "label": "Trapezoidal Rule",
+      "prerequisites": [
+        "subinterval_partition",
+        "node_evaluation"
+      ],
+      "scope_boundary": [
+        "exact_integration"
+      ],
+      "topic_cluster": "numerical_integration"
+    },
+    {
+      "id": "midpoint_rule",
+      "label": "Midpoint Rule",
+      "prerequisites": [
+        "subinterval_partition",
+        "node_evaluation"
+      ],
+      "scope_boundary": [
+        "exact_integration"
+      ],
+      "topic_cluster": "numerical_integration"
+    },
+    {
+      "id": "simpsons_rule",
+      "label": "Simpson's Rule",
+      "prerequisites": [
+        "subinterval_partition",
+        "node_evaluation"
+      ],
+      "scope_boundary": [
+        "exact_integration"
+      ],
+      "topic_cluster": "numerical_integration"
+    },
+    {
+      "id": "even_n_requirement",
+      "label": "Even-n Requirement (Simpson)",
+      "prerequisites": [
+        "simpsons_rule"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "numerical_integration"
+    },
+    {
+      "id": "error_bounds",
+      "label": "Error Bounds (E_T, E_S)",
+      "prerequisites": [
+        "trapezoidal_rule",
+        "simpsons_rule"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "numerical_integration"
+    },
+    {
+      "id": "derivative_bound",
+      "label": "Derivative Bound K",
+      "prerequisites": [
+        "error_bounds"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "numerical_integration"
+    }
+  ],
+  "edges": [
+    {
+      "type": "requires",
+      "from": "subinterval_partition",
+      "to": "definite_integral"
+    },
+    {
+      "type": "requires",
+      "from": "node_evaluation",
+      "to": "subinterval_partition"
+    },
+    {
+      "type": "requires",
+      "from": "trapezoidal_rule",
+      "to": "subinterval_partition"
+    },
+    {
+      "type": "requires",
+      "from": "trapezoidal_rule",
+      "to": "node_evaluation"
+    },
+    {
+      "type": "requires",
+      "from": "midpoint_rule",
+      "to": "subinterval_partition"
+    },
+    {
+      "type": "requires",
+      "from": "midpoint_rule",
+      "to": "node_evaluation"
+    },
+    {
+      "type": "requires",
+      "from": "simpsons_rule",
+      "to": "subinterval_partition"
+    },
+    {
+      "type": "requires",
+      "from": "simpsons_rule",
+      "to": "node_evaluation"
+    },
+    {
+      "type": "requires",
+      "from": "even_n_requirement",
+      "to": "simpsons_rule"
+    },
+    {
+      "type": "requires",
+      "from": "error_bounds",
+      "to": "trapezoidal_rule"
+    },
+    {
+      "type": "requires",
+      "from": "error_bounds",
+      "to": "simpsons_rule"
+    },
+    {
+      "type": "requires",
+      "from": "derivative_bound",
+      "to": "error_bounds"
+    }
+  ]
+}

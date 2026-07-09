@@ -1,0 +1,208 @@
+{
+  "stage": "s5_misconceptions",
+  "passed": 0,
+  "total": 0,
+  "pass_rate": 0.0,
+  "verdicts": [],
+  "extra": {
+    "recall": {
+      "per_attempt": {
+        "17": {
+          "found": [],
+          "missed": [
+            "misc.density_ignored"
+          ],
+          "recall": 0.0
+        },
+        "20": {
+          "found": [],
+          "missed": [
+            "misc.density_ignored"
+          ],
+          "recall": 0.0
+        },
+        "21": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "22": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "24": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "28": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "29": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "30": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "32": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "35": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "39": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "40": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "41": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "46": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "47": {
+          "found": [],
+          "missed": [
+            "misc.includes_transfers"
+          ],
+          "recall": 0.0
+        },
+        "48": {
+          "found": [],
+          "missed": [
+            "misc.gross_for_net"
+          ],
+          "recall": 0.0
+        },
+        "49": {
+          "found": [],
+          "missed": [
+            "misc.deflate_wrong_direction"
+          ],
+          "recall": 0.0
+        },
+        "50": {
+          "found": [],
+          "missed": [
+            "misc.nominal_for_real"
+          ],
+          "recall": 0.0
+        },
+        "51": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "52": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "53": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "54": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "55": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "56": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "57": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "58": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "59": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "60": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "61": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "62": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "63": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "64": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "65": {
+          "found": [],
+          "missed": [
+            "misc.forgets_half_factor"
+          ],
+          "recall": 0.0
+        },
+        "66": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "67": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        },
+        "68": {
+          "found": [],
+          "missed": [],
+          "recall": 1.0
+        }
+      },
+      "overall_recall": 0.0
+    }
+  }
+}

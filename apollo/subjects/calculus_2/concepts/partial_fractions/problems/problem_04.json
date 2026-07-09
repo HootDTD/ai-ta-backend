@@ -1,0 +1,149 @@
+{
+  "id": "pf_3x_plus_1_over_x_plus_1_x2_plus_1",
+  "concept_id": "partial_fractions",
+  "difficulty": "hard",
+  "given_values": {},
+  "problem_text": "Evaluate  integral (3x + 1)/((x + 1)(x^2 + 1)) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "factor_denominator",
+      "irreducible_needs_linear",
+      "decomposition",
+      "log_integral",
+      "arctan_integral",
+      "set_up",
+      "solve_coefficients",
+      "integrate"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "factor_denominator",
+      "step": 1,
+      "content": {
+        "label": "Factor the denominator first",
+        "applies_when": "the denominator is already factored into a linear factor (x + 1) and an irreducible quadratic (x^2 + 1)"
+      },
+      "depends_on": [],
+      "entity_key": "cond.factor_denominator",
+      "entry_type": "condition"
+    },
+    {
+      "id": "irreducible_needs_linear",
+      "step": 2,
+      "content": {
+        "label": "Irreducible quadratic needs a linear numerator",
+        "applies_when": "the irreducible quadratic factor x^2 + 1 requires a linear numerator (Bx + C), not a constant"
+      },
+      "depends_on": [],
+      "entity_key": "cond.irreducible_needs_linear",
+      "entry_type": "condition"
+    },
+    {
+      "id": "decomposition",
+      "step": 3,
+      "content": {
+        "label": "Partial-fraction form (linear + irreducible quadratic)",
+        "symbolic": "(3*x + 1)/((x + 1)*(x^2 + 1)) = A/(x + 1) + (B*x + C)/(x^2 + 1)",
+        "variables": [
+          "A",
+          "B",
+          "C",
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.decomposition",
+      "entry_type": "equation"
+    },
+    {
+      "id": "log_integral",
+      "step": 4,
+      "content": {
+        "label": "Log integrals (simple pole and x-over-quadratic)",
+        "symbolic": "integral (x)/(x^2 + 1) dx = (1/2) ln(x^2 + 1) + C  and  integral 1/(x - r) dx = ln|x - r| + C",
+        "variables": [
+          "x",
+          "r"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.log_integral",
+      "entry_type": "equation"
+    },
+    {
+      "id": "arctan_integral",
+      "step": 5,
+      "content": {
+        "label": "Arctangent integral",
+        "symbolic": "integral 1/(x^2 + 1) dx = arctan x + C",
+        "variables": [
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.arctan_integral",
+      "entry_type": "equation"
+    },
+    {
+      "id": "set_up",
+      "step": 6,
+      "content": {
+        "label": "Set up the decomposition",
+        "order": 1,
+        "action": "clear denominators: 3x + 1 = A(x^2 + 1) + (B x + C)(x + 1)",
+        "purpose": "reduce the problem to finding A, B, and C",
+        "uses_equations": [
+          "decomposition"
+        ]
+      },
+      "depends_on": [
+        "factor_denominator",
+        "irreducible_needs_linear",
+        "decomposition"
+      ],
+      "entity_key": "proc.set_up",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "solve_coefficients",
+      "step": 7,
+      "content": {
+        "label": "Solve for the coefficients",
+        "order": 2,
+        "action": "x = -1 gives A = -1; matching x^2: A + B = 0 so B = 1; matching x^1: B + C = 3 so C = 2 (const checks: A + C = 1)",
+        "purpose": "determine A, B, and C by substitution and coefficient matching",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "set_up"
+      ],
+      "entity_key": "proc.solve_coefficients",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate",
+      "step": 8,
+      "content": {
+        "label": "Integrate each piece",
+        "order": 3,
+        "action": "integrate -1/(x + 1) + (x + 2)/(x^2 + 1): -ln|x + 1| + (1/2) ln(x^2 + 1) + 2 arctan x + C",
+        "purpose": "produce the final antiderivative, splitting the quadratic term into a log and an arctan",
+        "uses_equations": [
+          "log_integral",
+          "arctan_integral"
+        ]
+      },
+      "depends_on": [
+        "solve_coefficients",
+        "log_integral",
+        "arctan_integral"
+      ],
+      "entity_key": "proc.integrate",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

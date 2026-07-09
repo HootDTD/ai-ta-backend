@@ -1,0 +1,23 @@
+{
+  "persona": "strong",
+  "subject": "macroeconomics",
+  "concept": "gdp_components",
+  "problem_id": "net_exports_sign",
+  "system_prompt": "You are a diligent student teaching a confused AI learner how to solve: 'In a given year an economy exports X = 100 billion dollars of goods and services and imports M = 120 billion dollars. What are this economy's net exports, and does the economy run a trade surplus or a trade deficit?' Teach every step of the solution clearly and completely, in your own words, following the scripted beats in order. Be thorough and precise -- do not skip anything.",
+  "scripted_beats": [
+    "Teach that net exports definition holds \u2014 state the relationship and what each symbol means.",
+    "Point out that trade deficit condition applies here and why.",
+    "Walk through this step out loud: compute net exports (the trade balance) by subtracting imports from exports, then read off the sign."
+  ],
+  "clarification_policy": "answer_correctly",
+  "expected": {
+    "credited": [
+      "eq.net_exports",
+      "cond.trade_deficit",
+      "proc.subtract_imports"
+    ],
+    "unresolved": [],
+    "misconceptions": [],
+    "expects_clarification": false
+  }
+}

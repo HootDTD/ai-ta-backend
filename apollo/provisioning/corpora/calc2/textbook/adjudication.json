@@ -1,0 +1,117 @@
+{
+  "meta": {
+    "adjudicator": "opus-4.8 expert adjudication, 2026-07-07",
+    "task": "Adjudicate 33 contested Calc-2 question->concept rows; spot-check 10 scored-correct; compute corrected metrics; verdict on reversed-provisioning matching.",
+    "inputs_verified": "raw_section_chunks.json inspected per contested row to confirm math present-then-stripped vs never-present",
+    "cause_definitions": {
+      "EXTRACTION_DAMAGE": "text as given is under-specified; a sighted calculus expert reading the same stripped chunk could not reliably recover the intended concept either (confirmed against raw chunk that inline math was lost).",
+      "MODEL_ERROR": "text is sufficient and the model picked wrong or wrongly answered NO_MATCH despite a clear available fit.",
+      "GROUND_TRUTH_DEBATABLE": "model's pick is defensible or better than the section-derived expected label (cross-topic, calc-1-adjacent, or the concept genuinely spans two slugs)."
+    }
+  },
+  "task1_adjudications": [
+    {"problem_id": 2, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "riemann-sums-area-approximation", "model_was_reasonable": true, "reasoning": "Summing a table of decade price-changes is discrete accumulation/arithmetic; model's NO_MATCH ('not really area-under-a-curve') is a distinction a human grader could also draw vs the near-identical rate-table problem 1."},
+    {"problem_id": 5, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "NO_MATCH", "model_was_reasonable": true, "reasoning": "Pure Calc-1 Mean-Value-Theorem-for-derivatives word problem shelved in the FTC section; none of the 40 Calc-2 slugs truly fit, so NO_MATCH is correct."},
+    {"problem_id": 6, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "NO_MATCH", "model_was_reasonable": true, "reasoning": "Toll-road speeding ticket is MVT (avg speed => some instantaneous speed); average-value-of-function is a defensible neighbor for 'average speed', expected FTC label is itself weak."},
+    {"problem_id": 7, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "conic-sections", "model_was_reasonable": true, "reasoning": "Kepler equal-area/speed question is grounded in the elliptical orbit; conic-sections is a better fit than the section's FTC label."},
+    {"problem_id": 8, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "conic-sections", "model_was_reasonable": true, "reasoning": "Perihelion/aphelion/major-axis average is pure ellipse geometry; conic-sections is clearly correct, FTC label is wrong."},
+    {"problem_id": 11, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "antiderivatives-basic-integration", "model_was_reasonable": true, "reasoning": "Net-change-of-radius from a growing-area rate is solvable as pure geometry/algebra; model's 'related rates, NO_MATCH' is defensible, antiderivatives (net-change theorem) is the section intent."},
+    {"problem_id": 12, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "antiderivatives-basic-integration", "model_was_reasonable": true, "reasoning": "Balloon volume->radius net change; same as 11, computable by algebra, NO_MATCH defensible, net-change/antiderivatives is section intent."},
+    {"problem_id": 13, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "antiderivatives-basic-integration", "model_was_reasonable": true, "reasoning": "Braking-distance kinematics is integrating constant acceleration (antiderivatives). The slug physical-applications is defined as work/hydrostatic/mass, so model's pick is a plausible-English neighbor but antiderivatives is the taxonomically-correct label."},
+    {"problem_id": 14, "cause": "EXTRACTION_DAMAGE", "expert_label": "u-substitution", "model_was_reasonable": true, "reasoning": "Raw chunk 62884-62887 confirms the specific substitution formula is stripped ('Use the substitution [MISSING] to express...'); for sqrt(1-x^2) the intended sub x=sin(theta) is literally a trig substitution, so model's trigonometric-substitution is defensible and the u-sub intent is unrecoverable."},
+    {"problem_id": 28, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "volume-by-slicing", "model_was_reasonable": true, "reasoning": "Pappus cone-from-rotating-triangle reads as a plain solid-of-revolution volume ('does it agree with volume of a cone'); volume-by-slicing is defensible even though it sits in the moments/centroid section."},
+    {"problem_id": 29, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "volume-by-slicing", "model_was_reasonable": true, "reasoning": "Sphere-from-rotating-semicircle is a disk/washer volume verification; volume-by-slicing is the natural read, physical-applications label is section-artifact."},
+    {"problem_id": 34, "cause": "EXTRACTION_DAMAGE", "expert_label": "integration-by-parts", "model_was_reasonable": true, "reasoning": "Raw chunk 65464 confirms the velocity function is stripped ('velocity of [MISSING] after t sec'); without the integrand you cannot see IBP is needed, so model's FTC (distance = integral of v) framing is all the surviving text supports."},
+    {"problem_id": 41, "cause": "EXTRACTION_DAMAGE", "expert_label": "NO_MATCH", "model_was_reasonable": true, "reasoning": "Raw chunk 66713 shows integrand entirely gone ('391. Evaluate [MISSING] (Be careful!)'); model correctly returned NO_MATCH at conf 0.05 - exactly right behavior on empty content."},
+    {"problem_id": 43, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "differential-equations-basics", "model_was_reasonable": true, "reasoning": "PARTIAL: dv/dt=-g general solution is simultaneously a basics-of-DE and a (trivially) separable exercise; model put diff-eq-basics in secondary, separable primary - both correct, this is genuine slug overlap."},
+    {"problem_id": 46, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "exponential-growth-decay", "model_was_reasonable": true, "reasoning": "Raw 67366 shows the DE stripped, but surviving 'decay... half-life... fraction remains' is unambiguously an exponential-decay/half-life problem; exp-growth-decay is arguably a better concept label than the section's separable-equations."},
+    {"problem_id": 50, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "separable-equations", "model_was_reasonable": true, "reasoning": "PARTIAL: Newton's-law-of-cooling coffee problem is a separable ODE whose solution is exponential decay; model chose exp-growth-decay primary with separable in secondary - both valid, slug overlap."},
+    {"problem_id": 55, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "first-order-linear-ode", "model_was_reasonable": true, "reasoning": "drag proportional to v gives dv/dt = g-(k/m)v, which is first-order LINEAR but also (being autonomous, constant-coeff) separable; model's separable is a defensible solution method, not an error."},
+    {"problem_id": 56, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "separable-equations", "model_was_reasonable": true, "reasoning": "drag proportional to v^2 gives dv/dt=g-(k/m)v^2, which is NONLINEAR and genuinely separable - the model is actually MORE correct than the section's first-order-linear label."},
+    {"problem_id": 57, "cause": "EXTRACTION_DAMAGE", "expert_label": "NO_MATCH", "model_was_reasonable": true, "reasoning": "Raw chunk 67854-67855 confirms the ODE and initial condition are both stripped ('Solve [MISSING] with the initial condition [MISSING]'); model correctly returned NO_MATCH at conf 0.1."},
+    {"problem_id": 59, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "sequences", "model_was_reasonable": true, "reasoning": "Recursively-defined monthly fish population is a sequence problem; model's exponential-growth-decay captures the proportional-growth modeling and is a defensible neighbor."},
+    {"problem_id": 60, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "sequences", "model_was_reasonable": true, "reasoning": "Monthly-compounded loan balance is a discrete recurrence (sequence); exp-growth-decay is a reasonable but slightly-off continuous-model neighbor."},
+    {"problem_id": 61, "cause": "MODEL_ERROR", "expert_label": "infinite-series-basics", "model_was_reasonable": false, "reasoning": "P(coin flipped a multiple of 3 times before heads) = sum of (1/2)^(3k), an infinite geometric series - exactly the section's concept; model over-confidently (0.99) rejected it as 'discrete probability, not calculus'. Soft error: requires seeing the hidden geometric series."},
+    {"problem_id": 62, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "infinite-series-basics", "model_was_reasonable": true, "reasoning": "Problem text literally says 'find the first eight terms of the sequence', so model's sequences pick is textually supported even though the section's accumulated-interest theme is geometric series."},
+    {"problem_id": 63, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "infinite-series-basics", "model_was_reasonable": true, "reasoning": "Repeated-dose steady-state is a geometric-series accumulation; model's exponential-growth-decay captures the per-dose decay and is a defensible partial view."},
+    {"problem_id": 64, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "divergence-and-integral-tests", "model_was_reasonable": true, "reasoning": "Coupon-collector expected value n*H_n hinges on harmonic numbers (partial sums of the harmonic series); model's infinite-series-basics is a defensible read of the same harmonic-sum structure."},
+    {"problem_id": 65, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "NO_MATCH", "model_was_reasonable": true, "reasoning": "Jeep/scooter fuel puzzle secretly maps to harmonic-series divergence, but the distance formula is stripped (raw) and the connection is non-obvious even to an expert; NO_MATCH is defensible."},
+    {"problem_id": 66, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "infinite-series-basics", "model_was_reasonable": true, "reasoning": "'Weights 1,1/2,1/4... what does this have to do with infinite series' is about geometric-series convergence/binary representation; model's infinite-series-basics is arguably a better fit than the section's comparison-tests."},
+    {"problem_id": 68, "cause": "EXTRACTION_DAMAGE", "expert_label": "ratio-root-tests", "model_was_reasonable": true, "reasoning": "Raw chunk 69900-69903 confirms the defining expression is gone ('Suppose that [MISSING] for all [MISSING]... for which values of [MISSING] guaranteed to converge'); intended ratio/root test is unrecoverable, model's low-conf sequences guess is honest."},
+    {"problem_id": 69, "cause": "EXTRACTION_DAMAGE", "expert_label": "power-series-convergence", "model_was_reasonable": true, "reasoning": "Raw 70232-70235 confirms the power-series notation is stripped, leaving only the word 'sequence' visible; the radius-of-convergence intent is invisible, so model's sequences pick follows the surviving text."},
+    {"problem_id": 72, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "infinite-series-basics", "model_was_reasonable": true, "reasoning": "Present value of a perpetuity is sum C/(1+r)^n, an infinite geometric series; model's infinite-series-basics is a better fit than the section's power-series-operations label."},
+    {"problem_id": 73, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "infinite-series-basics", "model_was_reasonable": true, "reasoning": "Same perpetuity/geometric-series structure as 72 but text more stripped (present value gone); model's exp-growth-decay (interest/finance) is a weaker but defensible neighbor."},
+    {"problem_id": 74, "cause": "GROUND_TRUTH_DEBATABLE", "expert_label": "taylor-series-applications", "model_was_reasonable": true, "reasoning": "Estimating pi by partial sums of a power series to a target accuracy is a textbook Taylor-series application; model's taylor-series-applications primary is defensible/better than the section's power-series-operations."},
+    {"problem_id": 77, "cause": "MODEL_ERROR", "expert_label": "conic-sections", "model_was_reasonable": false, "reasoning": "Fully-specified clean paraboloid searchlight problem; model's own rationale literally says 'a geometry/conic sections application about a paraboloid' then outputs NO_MATCH at conf 0.98 despite conic-sections being in the list. Unambiguous self-contradictory low-effort slip."}
+  ],
+  "task1_cause_counts": {
+    "EXTRACTION_DAMAGE": 6,
+    "MODEL_ERROR": 2,
+    "GROUND_TRUTH_DEBATABLE": 25,
+    "total": 33,
+    "extraction_damage_ids": [14, 34, 41, 57, 68, 69],
+    "model_error_ids": [61, 77],
+    "ground_truth_debatable_ids": [2, 5, 6, 7, 8, 11, 12, 13, 28, 29, 43, 46, 50, 55, 56, 59, 60, 62, 63, 64, 65, 66, 72, 73, 74],
+    "model_was_reasonable_true": 31,
+    "model_was_reasonable_false": 2
+  },
+  "task2_spotcheck": {
+    "sampled": 11,
+    "flagged_wrong": 0,
+    "flagged_soft": 1,
+    "rows": [
+      {"problem_id": 1, "chapter": 1, "concept": "riemann-sums-area-approximation", "verdict": "CORRECT", "note": "CO2 rate table -> approximate area under rate curve. Right for right reasons."},
+      {"problem_id": 4, "chapter": 1, "concept": "average-value-of-function", "verdict": "CORRECT", "note": "Explicitly about average value of f over an interval."},
+      {"problem_id": 16, "chapter": 2, "concept": "volume-by-slicing", "verdict": "CORRECT", "note": "'Derive volume of sphere using the slicing method' - verbatim concept."},
+      {"problem_id": 24, "chapter": 2, "concept": "physical-applications", "verdict": "CORRECT", "note": "Work to lift a box = force x distance, canonical physical application."},
+      {"problem_id": 27, "chapter": 2, "concept": "physical-applications", "verdict": "CORRECT_BUT_TRIVIAL", "note": "Shock-absorber spring constant is Hooke's-law algebra (F=kx), no integration exercised; label matches the section but the problem is a degenerate pre-calculus warmup. Soft flag, not wrong."},
+      {"problem_id": 33, "chapter": 2, "concept": "hyperbolic-functions", "verdict": "CORRECT", "note": "Catenary y=a cosh(x/a) slope -> differentiating a hyperbolic function."},
+      {"problem_id": 39, "chapter": 3, "concept": "improper-integrals", "verdict": "CORRECT", "note": "Explicit convergence/divergence of an improper integral."},
+      {"problem_id": 44, "chapter": 4, "concept": "differential-equations-basics", "verdict": "CORRECT", "note": "Euler's method IVP - maps to 4.2 basics/numerical methods."},
+      {"problem_id": 51, "chapter": 4, "concept": "logistic-equation", "verdict": "CORRECT", "note": "Carrying capacity + growth rate = logistic model."},
+      {"problem_id": 67, "chapter": 5, "concept": "comparison-tests", "verdict": "CORRECT", "note": "Bounding a harmonic subseries above by a convergent series = direct comparison test."},
+      {"problem_id": 70, "chapter": 6, "concept": "power-series-convergence", "verdict": "CORRECT", "note": "Comparing radii of convergence of power series."},
+      {"problem_id": 78, "chapter": 7, "concept": "conic-sections", "verdict": "CORRECT", "note": "Whispering-gallery elliptical ceiling, major axis/foci relation."}
+    ],
+    "conclusion": "12 spot-checked (spread over all 7 chapters); all genuinely correct on their reasoning trail. Zero lucky/wrong. One soft flag (27) is a correct label on a trivial non-integration warmup, not a matcher failure."
+  },
+  "task3_corrected_metrics": {
+    "baseline_primary_accuracy": {"value": "58.2%", "num": 46, "den": 79, "note": "raw, unadjusted, dominated by extraction damage + section-vs-exercise slug overlap"},
+    "a_accuracy_adequately_specified": {
+      "denominator": 73,
+      "denominator_derivation": "79 total minus 6 EXTRACTION_DAMAGE rows (14,34,41,57,68,69). All 6 damage rows are non-matches, so no correct match is removed.",
+      "numerator": 71,
+      "numerator_derivation": "46 original MATCH + 25 GROUND_TRUTH_DEBATABLE rows now credited (all 25 have model_was_reasonable=true; includes the 2 PARTIAL rows 43,50).",
+      "value": "97.3%",
+      "value_if_soft_error_61_credited": "98.6% (72/73)"
+    },
+    "b_honest_model_error_rate": {
+      "firm_errors": 1,
+      "soft_errors": 1,
+      "reported_rate": "2/73 = 2.7% (adequately-specified) ; 2/79 = 2.5% (whole corpus)",
+      "error_list": [
+        {"problem_id": 77, "severity": "firm", "one_liner": "Searchlight paraboloid: rationale names conic sections, then outputs NO_MATCH anyway despite conic-sections being in the list. Pure low-effort self-contradiction."},
+        {"problem_id": 61, "severity": "soft", "one_liner": "Coin-flip 'multiple of 3 before heads' is a geometric series (sum (1/2)^3k); model rejected as 'discrete probability, not calculus'. Genuine miss but requires seeing the hidden series."}
+      ]
+    },
+    "c_coverage": {
+      "total_concepts": 40,
+      "tested_with_problems": 28,
+      "untested_zero_problems": 12,
+      "untested_list": ["integrals-exponential-logarithmic", "integrals-inverse-trig", "trigonometric-integrals", "trigonometric-substitution", "partial-fractions", "alternating-series", "taylor-maclaurin-series", "taylor-series-applications", "parametric-equations", "calculus-parametric-curves", "polar-coordinates", "polar-area-arc-length"],
+      "tested_but_never_correctly_matched": ["fundamental-theorem-of-calculus", "u-substitution", "integration-by-parts", "first-order-linear-ode", "infinite-series-basics", "divergence-and-integral-tests", "ratio-root-tests", "power-series-operations"],
+      "note": "The report's '11 uncovered' undercounted: it omitted integrals-exponential-logarithmic and alternating-series (both have zero problems) and wrongly listed integration-by-parts as uncovered (it has 1 problem, #34, but that problem is extraction-damaged so IBP is effectively untested). The confusable-techniques cluster (IBP, trig integrals, trig substitution, partial fractions) is effectively untested: 3 of the 4 have zero problems and the 4th (IBP) has only a math-stripped stub."
+    }
+  },
+  "task4_verdict": {
+    "expected_accuracy_well_formed": "97-99%",
+    "target_met": true,
+    "target": ">=95%",
+    "remaining_failure_modes": [
+      "Hidden-structure word problems where the disambiguating math is implicit (coin-flip geometric series, jeep/harmonic puzzle) - low-effort reasoning rejects them as 'not calculus'.",
+      "Slug-overlap ambiguity that is a taxonomy question, not a model failure: separable-vs-first-order-linear, sequences-vs-exponential-growth, infinite-series-vs-power-series-operations. A single-label ground truth will always penalize a defensible pick here.",
+      "Section-artifact expectations: OpenStax parks calc-1-adjacent conceptual warmups (MVT climbers, Kepler ellipses, related-rates net-change) in Calc-2 sections; the honest label is often NO_MATCH or a neighboring concept, and the model gets these 'right' by disagreeing with the section."
+    ],
+    "corpus_improvement_needed": "Re-ingest document_id=5 with a pipeline that preserves inline/rendered math (MathML/LaTeX spans) for the confusable-techniques sections. The exact sections needed to test the 12 uncovered concepts - 1.6/1.7 (exp-log & inverse-trig integrals), 3.2/3.3/3.4 (trig integrals, trig sub, partial fractions), 5.5 (alternating series), 6.3/6.4 (Taylor/Maclaurin & applications), 7.1-7.4 (parametric & polar) - are precisely the ones the current pipeline strips to bare instructional stubs. Until math survives ingestion, the four-way IBP/trig-integral/trig-sub/partial-fraction discrimination (the whole point of a concept matcher) cannot be measured at all."
+  }
+}

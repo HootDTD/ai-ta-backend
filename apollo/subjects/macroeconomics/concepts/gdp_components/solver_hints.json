@@ -1,0 +1,14 @@
+{
+  "constants": {},
+  "augmented_givens": {},
+  "non_trivial_keywords": [
+    "gdp", "consumption", "investment", "government", "exports", "imports",
+    "net exports", "expenditure", "identity", "final goods", "intermediate",
+    "transfer", "gnp", "nnp", "depreciation", "trade", "deficit", "surplus"
+  ],
+  "plan_markers": [
+    "first", "then", "next", "after that", "after this",
+    "step 1", "step 2", "solve for", "add up", "sum",
+    "subtract", "compute", "plug in", "plug into"
+  ]
+}

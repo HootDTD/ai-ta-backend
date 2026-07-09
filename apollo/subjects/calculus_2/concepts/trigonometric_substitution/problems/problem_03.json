@@ -1,0 +1,127 @@
+{
+  "id": "trigsub_1_over_x2_plus_4_pow_3over2",
+  "concept_id": "trigonometric_substitution",
+  "difficulty": "standard",
+  "given_values": {
+    "a": 2.0
+  },
+  "problem_text": "Evaluate  integral 1/(x^2 + 4)^(3/2) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "identify_form",
+      "trig_substitution",
+      "simplified_integral",
+      "back_conversion",
+      "substitute",
+      "integrate",
+      "back_to_x"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "x": "2*tan(theta)"
+  },
+  "reference_solution": [
+    {
+      "id": "identify_form",
+      "step": 1,
+      "content": {
+        "label": "Identify a^2 + x^2 -> x = a tan theta",
+        "applies_when": "the integrand has the form a^2 + x^2 with a = 2, which calls for the tangent substitution x = a tan theta"
+      },
+      "depends_on": [],
+      "entity_key": "cond.identify_form",
+      "entry_type": "condition"
+    },
+    {
+      "id": "trig_substitution",
+      "step": 2,
+      "content": {
+        "concept": "x = 2 tan theta",
+        "meaning": "let x = 2 tan theta so that dx = 2 sec^2 theta dtheta and x^2 + 4 = 4 sec^2 theta, hence (x^2 + 4)^(3/2) = 8 sec^3 theta"
+      },
+      "depends_on": [],
+      "entity_key": "def.trig_substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "simplified_integral",
+      "step": 3,
+      "content": {
+        "label": "Simplified theta-integral",
+        "symbolic": "integral (2 sec^2 theta)/(8 sec^3 theta) dtheta = (1/4) integral cos theta dtheta",
+        "variables": [
+          "theta"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.simplified_integral",
+      "entry_type": "equation"
+    },
+    {
+      "id": "back_conversion",
+      "step": 4,
+      "content": {
+        "concept": "sin theta = x/sqrt(x^2 + 4)",
+        "meaning": "from x = 2 tan theta the right triangle gives sin theta = x/sqrt(x^2 + 4)"
+      },
+      "depends_on": [],
+      "entity_key": "def.back_conversion",
+      "entry_type": "definition"
+    },
+    {
+      "id": "substitute",
+      "step": 5,
+      "content": {
+        "label": "Substitute and simplify",
+        "order": 1,
+        "action": "substitute x = 2 tan theta to get (1/4) integral cos theta dtheta",
+        "purpose": "clear the (x^2 + 4)^(3/2) power into secants and reduce to cosine",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "identify_form",
+        "trig_substitution"
+      ],
+      "entity_key": "proc.substitute",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate",
+      "step": 6,
+      "content": {
+        "label": "Integrate in theta",
+        "order": 2,
+        "action": "integrate (1/4) integral cos theta dtheta = (1/4) sin theta",
+        "purpose": "carry out the elementary theta-integral",
+        "uses_equations": [
+          "simplified_integral"
+        ]
+      },
+      "depends_on": [
+        "substitute",
+        "simplified_integral"
+      ],
+      "entity_key": "proc.integrate",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "back_to_x",
+      "step": 7,
+      "content": {
+        "label": "Convert back from theta to x",
+        "order": 3,
+        "action": "use sin theta = x/sqrt(x^2 + 4): x/(4 sqrt(x^2 + 4)) + C",
+        "purpose": "return the antiderivative to the original variable x",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "integrate",
+        "back_conversion"
+      ],
+      "entity_key": "proc.back_to_x",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

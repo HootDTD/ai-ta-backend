@@ -1,0 +1,28 @@
+{
+  "misconceptions": [
+    {
+      "key": "misc.nominal_for_real",
+      "display_name": "Uses nominal GDP as real GDP",
+      "description": "Treats nominal GDP as if it were real GDP, forgetting to deflate, so price changes are mistaken for changes in real output (real GDP is inflation-adjusted; nominal is not).",
+      "opposes": "def.real_basis",
+      "trigger_phrases": [
+        "nominal gdp is the same as real gdp",
+        "no need to adjust for inflation",
+        "just use nominal gdp",
+        "real and nominal are basically equal"
+      ]
+    },
+    {
+      "key": "misc.deflate_wrong_direction",
+      "display_name": "Deflates in the wrong direction",
+      "description": "Multiplies nominal GDP by the price index (or by the deflator) instead of dividing, inverting the deflation and inflating real GDP instead of adjusting it down — a polarity error against the GDP deflator definition.",
+      "opposes": "eq.gdp_deflator",
+      "trigger_phrases": [
+        "multiply nominal gdp by the price index",
+        "multiply by the deflator",
+        "real gdp = nominal gdp times the deflator",
+        "scale up by the price index"
+      ]
+    }
+  ]
+}

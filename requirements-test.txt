@@ -1,0 +1,34 @@
+# Test-only dependencies for the AI-TA backend.
+#
+# These are NEVER imported by production code or shipped to Heroku — keep them
+# out of requirements.txt. Install locally / in CI with:
+#
+#     pip install -r requirements-test.txt
+#
+# Approved for Phase 1 of docs/TESTING-CI-PLAN.md (full set).
+
+# --- core test runner plugins ---------------------------------------------
+pytest>=8.0              # the runner itself — was only transitive (via -asyncio/-cov); pin explicitly
+pytest-cov>=5.0          # coverage measurement + gating (diff-cover feeds off this)
+pytest-mock>=3.14        # mocker fixture (thin wrapper over unittest.mock)
+pytest-xdist>=3.6        # parallel test execution (-n auto)
+pytest-timeout>=2.3      # hard per-test timeouts (LLM-path tests must be sub-second)
+pytest-randomly>=3.15    # randomize test order to surface inter-test coupling
+
+# --- HTTP / LLM mocking + replay ------------------------------------------
+httpx>=0.27              # AsyncClient + ASGITransport for the async app under test
+respx>=0.21              # mock httpx calls (OpenAI SDK transport) at the transport layer
+vcrpy>=6.0               # record/replay HTTP cassettes for integration LLM calls
+
+# --- deterministic data / time -------------------------------------------
+freezegun>=1.5           # freeze time in tests
+hypothesis>=6.100        # property-based testing (chunker, RRF math)
+factory-boy>=3.3         # model factories (tests/factories/)
+
+# --- real Postgres + pgvector test harness --------------------------------
+testcontainers[postgres]>=4.0   # ephemeral pgvector/pgvector:pg16 container per session
+
+# --- coverage gating / quality -------------------------------------------
+diff-cover>=9.0          # patch-coverage gate vs origin/staging
+ruff>=0.6                # lint + format
+mypy>=1.10               # static type checking

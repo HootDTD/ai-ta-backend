@@ -1,0 +1,18 @@
+{
+  "constants": {
+    "g": 9.81
+  },
+  "augmented_givens": {
+    "g": 9.81
+  },
+  "non_trivial_keywords": [
+    "pressure", "velocity", "density", "area", "height", "flow",
+    "fluid", "equation", "bernoulli", "continuity", "energy",
+    "incompressible", "horizontal", "pipe"
+  ],
+  "plan_markers": [
+    "first", "then", "next", "after that", "after this",
+    "step 1", "step 2", "solve for",
+    "substitute", "plug in", "plug into"
+  ]
+}

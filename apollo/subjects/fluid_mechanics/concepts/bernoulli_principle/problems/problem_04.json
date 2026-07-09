@@ -1,0 +1,54 @@
+{
+  "id": "volumetric_flow_rate_find_Q",
+  "concept_id": "volumetric_flow_rate",
+  "difficulty": "intro",
+  "given_values": {
+    "A": 0.015,
+    "v": 4.0
+  },
+  "problem_text": "Water flows through a pipe of cross-sectional area 0.015 m² at a velocity of 4.0 m/s. What is the volumetric flow rate?",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "flow_rate_definition",
+      "plan_apply_flow_rate_definition"
+    ]
+  ],
+  "target_unknown": "Q",
+  "reference_solution": [
+    {
+      "id": "flow_rate_definition",
+      "step": 1,
+      "content": {
+        "label": "Volumetric flow rate",
+        "symbolic": "Q - A*v",
+        "variables": [
+          "Q",
+          "A",
+          "v"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.flow_rate_definition",
+      "entry_type": "equation"
+    },
+    {
+      "id": "plan_apply_flow_rate_definition",
+      "step": 2,
+      "content": {
+        "order": 1,
+        "label": "Evaluate the volumetric flow rate Q = A times v by substituting the given area and velocity",
+        "action": "substitute A = 0.015 m² and v = 4.0 m/s into the volumetric flow rate equation Q = A*v and evaluate",
+        "purpose": "directly compute the volumetric flow rate Q from the given area and velocity",
+        "uses_equations": [
+          "flow_rate_definition"
+        ]
+      },
+      "depends_on": [
+        "flow_rate_definition"
+      ],
+      "entity_key": "proc.plan_apply_flow_rate_definition",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

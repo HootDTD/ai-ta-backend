@@ -221,6 +221,97 @@ def get_supabase_db_url() -> str:
     return os.getenv("SUPABASE_DB_URL", "")
 
 
+# ---------------------------------------------------------------------------
+# Neo4j (ApolloV3 KG layer)
+# ---------------------------------------------------------------------------
+
+def get_neo4j_uri() -> str:
+    return os.getenv("NEO4J_URI", "")
+
+
+def get_neo4j_username() -> str:
+    return os.getenv("NEO4J_USERNAME", "")
+
+
+def get_neo4j_password() -> str:
+    return os.getenv("NEO4J_PASSWORD", "")
+
+
+def get_neo4j_database() -> str:
+    return os.getenv("NEO4J_DATABASE", "")
+
+
+def neo4j_configured() -> bool:
+    """True when all four NEO4J_* vars are present (used by health checks/tests)."""
+    return all([
+        get_neo4j_uri(),
+        get_neo4j_username(),
+        get_neo4j_password(),
+        get_neo4j_database(),
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Apollo NLI resolution flags
+# ---------------------------------------------------------------------------
+
+
+def apollo_nli_misc_positive_certify() -> bool:
+    """DEFAULT-OFF flag ``APOLLO_NLI_MISC_POSITIVE_CERTIFY``.
+
+    When ON, the NLI resolution tier POSITIVELY resolves a student utterance to
+    the ``misc.*`` candidate whose hypothesis it entails at/above the
+    misconception-veto threshold (instead of only vetoing reference credit and
+    returning no match). Reference credit stays blocked in that case regardless
+    of the flag — this only adds the positive resolution. Unset or any
+    non-truthy value means OFF (byte-identical veto-only behavior); truthy is
+    ``1``/``true``/``yes`` (same acceptance set as ``APOLLO_NLI_ENABLED``).
+    Flipping this ON is a grading-behavior change — a human decision."""
+    raw = os.getenv("APOLLO_NLI_MISC_POSITIVE_CERTIFY")
+    if raw is None:
+        return False
+    return raw.strip().lower() in ("1", "true", "yes")
+
+
+def apollo_abstention_composite_enabled() -> bool:
+    """DEFAULT-OFF flag ``APOLLO_ABSTENTION_COMPOSITE`` (spec §10).
+
+    When ON, the graph-grader abstention gate is replaced by the CONTENT-based
+    composite signal: grade iff the resolver credited >=
+    :func:`apollo_composite_coverage_min` of the problem's expected reference
+    set (``GradeResult.node_coverage_score`` — already reference-denominated),
+    regardless of ``unresolved_rate``/``normalization_confidence`` (the volume
+    signals the §10 decision memo proved cannot separate strong attempts from
+    misconception controls). Detected contradiction findings are recorded in
+    the artifact's ``abstention.composite`` block for audit but do NOT force
+    abstention on their own — a detected misconception is informative
+    feedback, not grading uncertainty.
+
+    Unset or any non-truthy value means OFF (byte-identical to the existing
+    ``unresolved_rate``/``normalization_confidence`` gates); truthy is
+    ``1``/``true``/``yes`` (same acceptance set as the other ``APOLLO_*``
+    flags). Flipping this ON is a grading-behavior change — a human decision."""
+    raw = os.getenv("APOLLO_ABSTENTION_COMPOSITE")
+    if raw is None:
+        return False
+    return raw.strip().lower() in ("1", "true", "yes")
+
+
+def apollo_composite_coverage_min() -> float:
+    """The §10 composite gate's coverage threshold (``APOLLO_COMPOSITE_COVERAGE_MIN``).
+
+    Grade iff ``node_coverage_score >= this value`` when
+    :func:`apollo_abstention_composite_enabled` is True. Default ``0.6``
+    (spec §10); malformed/missing values fall back to the default."""
+    raw = os.getenv("APOLLO_COMPOSITE_COVERAGE_MIN")
+    if raw is None:
+        return 0.6
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.6
+
+
 def rerankers_enabled() -> bool:
     """Return True when the optional reranking step is active."""
     return os.getenv("RERANKERS_ENABLED", "false").lower() not in {
@@ -247,4 +338,15 @@ __all__ = [
     "get_supabase_db_url",
     "rerankers_enabled",
     "get_reranker_model",
+    # Apollo NLI resolution flags
+    "apollo_nli_misc_positive_certify",
+    # Apollo abstention composite gate (spec §10)
+    "apollo_abstention_composite_enabled",
+    "apollo_composite_coverage_min",
+    # Neo4j (ApolloV3)
+    "get_neo4j_uri",
+    "get_neo4j_username",
+    "get_neo4j_password",
+    "get_neo4j_database",
+    "neo4j_configured",
 ]

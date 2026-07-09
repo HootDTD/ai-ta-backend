@@ -1,0 +1,127 @@
+{
+  "id": "trigsub_1_over_sqrt_x2_minus_9",
+  "concept_id": "trigonometric_substitution",
+  "difficulty": "standard",
+  "given_values": {
+    "a": 3.0
+  },
+  "problem_text": "Evaluate  integral 1/sqrt(x^2 - 9) dx  (for x > 3).",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "identify_form",
+      "trig_substitution",
+      "sec_integral",
+      "back_conversion",
+      "substitute",
+      "integrate",
+      "back_to_x"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "x": "3*sec(theta)"
+  },
+  "reference_solution": [
+    {
+      "id": "identify_form",
+      "step": 1,
+      "content": {
+        "label": "Identify sqrt(x^2 - a^2) -> x = a sec theta",
+        "applies_when": "a plain u = x^2 - 9 stalls because there is no x factor in the numerator; the form sqrt(x^2 - a^2) with a = 3 calls for the secant substitution x = a sec theta"
+      },
+      "depends_on": [],
+      "entity_key": "cond.identify_form",
+      "entry_type": "condition"
+    },
+    {
+      "id": "trig_substitution",
+      "step": 2,
+      "content": {
+        "concept": "x = 3 sec theta",
+        "meaning": "let x = 3 sec theta so that dx = 3 sec theta tan theta dtheta and sqrt(x^2 - 9) = 3 tan theta for theta in [0, pi/2)"
+      },
+      "depends_on": [],
+      "entity_key": "def.trig_substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "sec_integral",
+      "step": 3,
+      "content": {
+        "label": "Integral of secant",
+        "symbolic": "integral sec theta dtheta = ln|sec theta + tan theta| + C",
+        "variables": [
+          "theta"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.sec_integral",
+      "entry_type": "equation"
+    },
+    {
+      "id": "back_conversion",
+      "step": 4,
+      "content": {
+        "concept": "sec theta = x/3, tan theta = sqrt(x^2 - 9)/3",
+        "meaning": "from x = 3 sec theta the right triangle gives sec theta = x/3 and tan theta = sqrt(x^2 - 9)/3"
+      },
+      "depends_on": [],
+      "entity_key": "def.back_conversion",
+      "entry_type": "definition"
+    },
+    {
+      "id": "substitute",
+      "step": 5,
+      "content": {
+        "label": "Substitute and simplify",
+        "order": 1,
+        "action": "substitute x = 3 sec theta to get integral (3 sec theta tan theta)/(3 tan theta) dtheta = integral sec theta dtheta",
+        "purpose": "clear the radical and reduce to the integral of secant",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "identify_form",
+        "trig_substitution"
+      ],
+      "entity_key": "proc.substitute",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate",
+      "step": 6,
+      "content": {
+        "label": "Integrate in theta",
+        "order": 2,
+        "action": "integrate integral sec theta dtheta = ln|sec theta + tan theta|",
+        "purpose": "carry out the secant integral",
+        "uses_equations": [
+          "sec_integral"
+        ]
+      },
+      "depends_on": [
+        "substitute",
+        "sec_integral"
+      ],
+      "entity_key": "proc.integrate",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "back_to_x",
+      "step": 7,
+      "content": {
+        "label": "Convert back from theta to x",
+        "order": 3,
+        "action": "use sec theta = x/3, tan theta = sqrt(x^2 - 9)/3 and absorb the constant ln 3: ln|x + sqrt(x^2 - 9)| + C",
+        "purpose": "return the antiderivative to the original variable x",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "integrate",
+        "back_conversion"
+      ],
+      "entity_key": "proc.back_to_x",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

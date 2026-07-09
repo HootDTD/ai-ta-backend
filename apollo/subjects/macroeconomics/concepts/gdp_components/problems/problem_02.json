@@ -1,0 +1,69 @@
+{
+  "id": "net_exports_sign",
+  "concept_id": "gdp_components",
+  "difficulty": "standard",
+  "given_values": {
+    "M": 120.0,
+    "X": 100.0
+  },
+  "problem_text": "In a given year an economy exports X = 100 billion dollars of goods and services and imports M = 120 billion dollars. What are this economy's net exports, and does the economy run a trade surplus or a trade deficit?",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "net_exports",
+      "trade_deficit",
+      "subtract_imports"
+    ]
+  ],
+  "target_unknown": "NX",
+  "reference_solution": [
+    {
+      "id": "net_exports",
+      "step": 1,
+      "content": {
+        "label": "Net exports definition",
+        "symbolic": "NX - (X - M)",
+        "variables": [
+          "NX",
+          "X",
+          "M"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.net_exports",
+      "entry_type": "equation"
+    },
+    {
+      "id": "trade_deficit",
+      "step": 2,
+      "content": {
+        "label": "Trade deficit condition",
+        "applies_when": "imports exceed exports, so net exports are negative and the economy runs a trade deficit rather than a trade surplus"
+      },
+      "depends_on": [
+        "net_exports"
+      ],
+      "entity_key": "cond.trade_deficit",
+      "entry_type": "condition"
+    },
+    {
+      "id": "subtract_imports",
+      "step": 3,
+      "content": {
+        "order": 1,
+        "label": "Compute net exports (the trade balance) by subtracting imports from exports, then read off the sign",
+        "action": "subtract imports M from exports X to get net exports NX = X - M, then note the sign of the result",
+        "purpose": "compute net exports and determine whether the economy runs a trade surplus or a trade deficit",
+        "uses_equations": [
+          "net_exports"
+        ]
+      },
+      "depends_on": [
+        "net_exports",
+        "trade_deficit"
+      ],
+      "entity_key": "proc.subtract_imports",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

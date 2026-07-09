@@ -1,0 +1,127 @@
+{
+  "id": "trigsub_sqrt_9_minus_x2",
+  "concept_id": "trigonometric_substitution",
+  "difficulty": "standard",
+  "given_values": {
+    "a": 3.0
+  },
+  "problem_text": "Evaluate  integral sqrt(9 - x^2) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "identify_form",
+      "trig_substitution",
+      "power_reduction_cos",
+      "back_conversion",
+      "substitute",
+      "integrate",
+      "back_to_x"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "x": "3*sin(theta)"
+  },
+  "reference_solution": [
+    {
+      "id": "identify_form",
+      "step": 1,
+      "content": {
+        "label": "Identify sqrt(a^2 - x^2) -> x = a sin theta",
+        "applies_when": "the integrand has the form sqrt(a^2 - x^2) with a = 3, which calls for the sine substitution x = a sin theta"
+      },
+      "depends_on": [],
+      "entity_key": "cond.identify_form",
+      "entry_type": "condition"
+    },
+    {
+      "id": "trig_substitution",
+      "step": 2,
+      "content": {
+        "concept": "x = 3 sin theta",
+        "meaning": "let x = 3 sin theta so that dx = 3 cos theta dtheta and sqrt(9 - x^2) = 3 cos theta"
+      },
+      "depends_on": [],
+      "entity_key": "def.trig_substitution",
+      "entry_type": "definition"
+    },
+    {
+      "id": "power_reduction_cos",
+      "step": 3,
+      "content": {
+        "label": "Power-reduction identity for cos^2",
+        "symbolic": "cos^2 theta = (1 + cos(2 theta))/2",
+        "variables": [
+          "theta"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.power_reduction_cos",
+      "entry_type": "equation"
+    },
+    {
+      "id": "back_conversion",
+      "step": 4,
+      "content": {
+        "concept": "sin theta = x/3, cos theta = sqrt(9 - x^2)/3",
+        "meaning": "recover the triangle: sin theta = x/3, cos theta = sqrt(9 - x^2)/3, theta = arcsin(x/3)"
+      },
+      "depends_on": [],
+      "entity_key": "def.back_conversion",
+      "entry_type": "definition"
+    },
+    {
+      "id": "substitute",
+      "step": 5,
+      "content": {
+        "label": "Substitute and simplify",
+        "order": 1,
+        "action": "substitute x = 3 sin theta to get 9 integral cos^2 theta dtheta",
+        "purpose": "clear the radical and reduce to a power of cosine",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "identify_form",
+        "trig_substitution"
+      ],
+      "entity_key": "proc.substitute",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate",
+      "step": 6,
+      "content": {
+        "label": "Power-reduce and integrate",
+        "order": 2,
+        "action": "power-reduce: 9 integral (1 + cos 2theta)/2 dtheta = (9/2)(theta + sin(2theta)/2) = (9/2) theta + (9/2) sin theta cos theta",
+        "purpose": "carry out the theta-integral using the double angle",
+        "uses_equations": [
+          "power_reduction_cos"
+        ]
+      },
+      "depends_on": [
+        "substitute",
+        "power_reduction_cos"
+      ],
+      "entity_key": "proc.integrate",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "back_to_x",
+      "step": 7,
+      "content": {
+        "label": "Convert back from theta to x",
+        "order": 3,
+        "action": "use sin theta = x/3, cos theta = sqrt(9 - x^2)/3, theta = arcsin(x/3): (x/2) sqrt(9 - x^2) + (9/2) arcsin(x/3) + C",
+        "purpose": "return the antiderivative to the original variable x",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "integrate",
+        "back_conversion"
+      ],
+      "entity_key": "proc.back_to_x",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

@@ -7,5 +7,45 @@ runtime/
 artifacts/
 .env
 .env.*
-/chats/
+!.env.example
 .DS_Store
+
+# Logs
+*.log
+uvicorn.log
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Generated knowledge-store artifacts (pgvector is authoritative; km_* dirs are
+# rebuildable FAISS/SQLite/embedding outputs, far too large for git)
+subjects/**/km_*/
+
+# Raw source PDFs dropped into subjects/ (belong in Supabase Storage, not git)
+subjects/**/*.pdf
+
+# Locally installed agent skills (personal tooling)
+.agents/
+.claude/skills/
+skills-lock.json
+
+# Feller workflow task artifacts (transient scratchpads / verification reports)
+.feller/
+
+# Apollo local-run helpers + transient artifacts (machine-specific paths; not for commit)
+apollo_run_env.sh
+apollo_run_launch.py
+bundle.json
+parsed_task.json
+auth.users
+RUNBOOK.md
+
+# SDD / Superpowers scratch artifacts (transient scratchpads)
+.superpowers/
+
+# Local HF model cache for the campaign harness's NLI pre-warm step
+# (campaign/infra/prewarm_nli.py) — large binary checkpoint files, never git.
+.hf-cache/

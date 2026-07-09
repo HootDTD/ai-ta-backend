@@ -1,0 +1,31 @@
+# Dependabot — keep Actions pins and Python deps current.
+# Actions updates arrive as SHA bumps with the version comment preserved.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+    # Group the noisy test-tool churn into one PR; keep runtime deps individual.
+    groups:
+      test-tooling:
+        patterns:
+          - "pytest*"
+          - "ruff"
+          - "mypy"
+          - "diff-cover"
+          - "hypothesis"
+          - "factory-boy"
+          - "respx"
+          - "vcrpy"

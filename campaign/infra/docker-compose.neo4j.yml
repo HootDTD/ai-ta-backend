@@ -1,0 +1,33 @@
+# Local Neo4j for the Apollo E2E grading campaign (Phase C1).
+#
+# Port deviation from the plan draft: the plan sketch used the Neo4j defaults
+# (7687/7474). This machine may have other local services (Neo4j Desktop, a
+# developer's own bolt listener) bound to those defaults, and the task
+# instructions require picking non-default ports when there's any collision
+# risk and recording the choice. We use 57687/57474 instead — set
+# NEO4J_BOLT_PORT / NEO4J_HTTP_PORT to override. Container name is namespaced
+# `apollo-campaign-neo4j` so `docker compose -f campaign/infra/docker-compose.neo4j.yml down`
+# only ever touches this stack.
+services:
+  neo4j:
+    image: neo4j:5.25
+    container_name: apollo-campaign-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/campaignpass
+      # Keep the campaign graph small and fast; no APOC/GDS needed today.
+      NEO4J_dbms_memory_pagecache_size: 256M
+      NEO4J_server_memory_heap_max__size: 512M
+    ports:
+      - "${NEO4J_BOLT_PORT:-57687}:7687"
+      - "${NEO4J_HTTP_PORT:-57474}:7474"
+    volumes:
+      - apollo_campaign_neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  apollo_campaign_neo4j_data:
+    name: apollo_campaign_neo4j_data

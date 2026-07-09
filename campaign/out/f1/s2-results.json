@@ -1,0 +1,28 @@
+{
+  "stage": "s2_ingestion",
+  "passed": 2,
+  "total": 4,
+  "pass_rate": 0.5,
+  "verdicts": [
+    {
+      "item_id": "set2:Problem 1(a)",
+      "ok": true,
+      "reason": "The label 'Problem 1(a)' matches the reference 'authored-set 2 / Problem 1(a)'. The lack of diagnostic information and details about the text or solution does not affect the correctness of the label match. Without contradicting evidence, the outcome 'promoted' from the solution source 'extracted' seems reasonable within the retrieval context described."
+    },
+    {
+      "item_id": "set2:Problem 1(b)",
+      "ok": false,
+      "reason": "The label 'Problem 1(b)' matches the page reference, indicating that this is likely discussing the second part of the first problem. However, the problem-solution pairing seems to address a specific issue related to a 'foreign symbol 'x'' and an outcome of 'rejected'. It is difficult to verify if this OCR-retrieved diagnostic is relevant to Problem 1(b) without more context. There's no direct evidence showing that the diagnostic matches the specific problem mentioned in 'Problem 1(b)'. The OCR text does not provide enough information to verify if this problem is accurately matched to its solution."
+    },
+    {
+      "item_id": "set3:Problem 1(a)",
+      "ok": true,
+      "reason": "The label 'Problem 1(a)' matches the page reference 'authored-set 3 / Problem 1(a)', indicating that the scraper accurately matched the label. The diagnostic information suggests a duplicate problem was found, which resulted in the problem being rejected. This outcome is consistent with a duplicate detection system functioning correctly, based on the hash provided. Given the details, the OCR text was correctly processed to identify a duplicate, which justifies the outcome."
+    },
+    {
+      "item_id": "set3:Problem 1(b)",
+      "ok": false,
+      "reason": "The scraped label 'Problem 1(b)' correctly matches the page reference. However, there is insufficient information to judge whether the problem-solution pairing is correct, as there is no problem text or solution text provided. Additionally, the OCR text is entirely missing."
+    }
+  ]
+}

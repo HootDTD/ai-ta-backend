@@ -20,6 +20,9 @@ def get_ocr_provider_from_env() -> Optional[OCRProvider]:
         if cfg is not None:
             return MathpixOCRProvider(cfg)
         return None
+    if provider == "openai":
+        from .openai_vision import OpenAIVisionOCRProvider
+
+        return OpenAIVisionOCRProvider.from_env()
     # Unknown or empty provider -> disabled
     return None
-

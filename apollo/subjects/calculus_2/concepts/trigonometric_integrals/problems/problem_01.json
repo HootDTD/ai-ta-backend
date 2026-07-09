@@ -1,0 +1,99 @@
+{
+  "id": "trigint_sin2_x",
+  "concept_id": "trigonometric_integrals",
+  "difficulty": "intro",
+  "given_values": {},
+  "problem_text": "Evaluate  integral sin^2(x) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "even_power",
+      "power_reduction_sin",
+      "cos_integral",
+      "apply_identity",
+      "integrate_reduced"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "even_power",
+      "step": 1,
+      "content": {
+        "label": "Even power of sine needs power reduction",
+        "applies_when": "an even power of sine has no single factor to peel for a substitution, so use a power-reduction identity"
+      },
+      "depends_on": [],
+      "entity_key": "cond.even_power",
+      "entry_type": "condition"
+    },
+    {
+      "id": "power_reduction_sin",
+      "step": 2,
+      "content": {
+        "label": "Power-reduction identity for sin^2",
+        "symbolic": "sin^2 x = (1 - cos(2x))/2",
+        "variables": [
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.power_reduction_sin",
+      "entry_type": "equation"
+    },
+    {
+      "id": "cos_integral",
+      "step": 3,
+      "content": {
+        "label": "Integral of cosine",
+        "symbolic": "integral cos(k x) dx = sin(k x)/k + C",
+        "variables": [
+          "x",
+          "k"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.cos_integral",
+      "entry_type": "equation"
+    },
+    {
+      "id": "apply_identity",
+      "step": 4,
+      "content": {
+        "label": "Apply the power-reduction identity",
+        "order": 1,
+        "action": "replace sin^2 x with (1 - cos 2x)/2",
+        "purpose": "turn an even power into terms that integrate directly",
+        "uses_equations": [
+          "power_reduction_sin"
+        ]
+      },
+      "depends_on": [
+        "even_power",
+        "power_reduction_sin"
+      ],
+      "entity_key": "proc.apply_identity",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate_reduced",
+      "step": 5,
+      "content": {
+        "label": "Integrate the reduced integrand",
+        "order": 2,
+        "action": "integrate (1/2) integral 1 dx - (1/2) integral cos 2x dx = x/2 - sin(2x)/4 + C",
+        "purpose": "produce the antiderivative, keeping the 1/2 chain-rule factor on cos 2x",
+        "uses_equations": [
+          "cos_integral"
+        ]
+      },
+      "depends_on": [
+        "apply_identity",
+        "cos_integral"
+      ],
+      "entity_key": "proc.integrate_reduced",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

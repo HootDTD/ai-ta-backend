@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
 from ocr.mathpix import MathpixConfig, MathpixOCRProvider
-from ocr.provider import OCRResult
+from ocr.provider import OCRProvider, OCRResult
 
 try:  # pragma: no cover - import is exercised indirectly in tests
     import fitz  # type: ignore
@@ -348,7 +348,7 @@ class TeacherPDFIngestor:
         self,
         config: Optional[TeacherPDFIngestionConfig] = None,
         *,
-        mathpix_provider: Optional[MathpixOCRProvider] = None,
+        mathpix_provider: Optional[OCRProvider] = None,
     ) -> None:
         self.config = config or TeacherPDFIngestionConfig.from_env()
         self.mathpix_provider = mathpix_provider if mathpix_provider is not None else build_teacher_mathpix_provider(

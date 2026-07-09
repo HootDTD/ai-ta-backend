@@ -1,0 +1,25 @@
+{
+  "persona": "strong",
+  "subject": "fluid_mechanics",
+  "concept": "bernoulli_principle",
+  "problem_id": "bernoulli_height_change_find_v2",
+  "system_prompt": "You are a diligent student teaching a confused AI learner how to solve: 'Water (density 1000 kg/m\u00b3) flows from a wide reservoir at the top of a hill (elevation 20 m, velocity \u2248 0 m/s, pressure 101 325 Pa) down a pipe to ground level (elevation 0 m, pressure 101 325 Pa). What is the water's velocity at the bottom? Assume g = 9.81 m/s\u00b2.' Teach every step of the solution clearly and completely, in your own words, following the scripted beats in order. Be thorough and precise -- do not skip anything.",
+  "scripted_beats": [
+    "Teach that bernoulli's equation holds \u2014 state the relationship and what each symbol means.",
+    "Explain that both ends are open to the atmosphere so the pressures are equal, and the pressure terms cancel in bernoulli's equation.",
+    "Walk through this step out loud: recognize that both ends are at atmospheric pressure, so the pressure terms cancel in bernoulli's equation.",
+    "Walk through this step out loud: set the reservoir inlet velocity to zero and solve the simplified bernoulli equation for the outlet velocity v2."
+  ],
+  "clarification_policy": "answer_correctly",
+  "expected": {
+    "credited": [
+      "eq.bernoulli",
+      "simp.equal_pressure_simplification",
+      "proc.plan_apply_equal_pressure_simplification",
+      "proc.plan_set_v1_zero_and_solve_bernoulli"
+    ],
+    "unresolved": [],
+    "misconceptions": [],
+    "expects_clarification": false
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "id": "nnp_chain",
+  "concept_id": "gdp_components",
+  "difficulty": "hard",
+  "given_values": {
+    "DEP": 40.0,
+    "GDP": 560.0,
+    "RIN": 10.0,
+    "ROUT": 8.0
+  },
+  "problem_text": "An economy has GDP = 560 billion dollars. Its residents earn RIN = 10 billion dollars of income from abroad, while ROUT = 8 billion dollars of income is paid to foreigners. Depreciation of capital over the year is DEP = 40 billion dollars. Compute the economy's net national product (NNP).",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "gnp",
+      "nnp",
+      "depreciation",
+      "compute_gnp",
+      "subtract_depreciation"
+    ]
+  ],
+  "target_unknown": "NNP",
+  "reference_solution": [
+    {
+      "id": "gnp",
+      "step": 1,
+      "content": {
+        "label": "Gross national product",
+        "symbolic": "GNP - (GDP + RIN - ROUT)",
+        "variables": [
+          "GNP",
+          "GDP",
+          "RIN",
+          "ROUT"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.gnp",
+      "entry_type": "equation"
+    },
+    {
+      "id": "nnp",
+      "step": 2,
+      "content": {
+        "label": "Net national product",
+        "symbolic": "NNP - (GNP - DEP)",
+        "variables": [
+          "NNP",
+          "GNP",
+          "DEP"
+        ]
+      },
+      "depends_on": [
+        "gnp"
+      ],
+      "entity_key": "eq.nnp",
+      "entry_type": "equation"
+    },
+    {
+      "id": "depreciation",
+      "step": 3,
+      "content": {
+        "label": "Depreciation is the value of capital used up during the year; subtracting it from a gross measure yields the corresponding net measure",
+        "concept": "depreciation",
+        "meaning": "the value of capital worn out or used up during the year; it is subtracted from gross national product to obtain net national product, which is why net measures are smaller than gross measures"
+      },
+      "depends_on": [],
+      "entity_key": "def.depreciation",
+      "entry_type": "definition"
+    },
+    {
+      "id": "compute_gnp",
+      "step": 4,
+      "content": {
+        "order": 1,
+        "label": "Add net income earned from abroad to GDP to obtain gross national product (GNP)",
+        "action": "start from GDP and add net income earned from abroad, RIN minus ROUT, to obtain gross national product GNP",
+        "purpose": "convert the domestic measure GDP into the national measure GNP before depreciation is removed",
+        "uses_equations": [
+          "gnp"
+        ]
+      },
+      "depends_on": [
+        "gnp"
+      ],
+      "entity_key": "proc.compute_gnp",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "subtract_depreciation",
+      "step": 5,
+      "content": {
+        "order": 2,
+        "label": "Subtract depreciation from GNP to obtain net national product (NNP)",
+        "action": "subtract depreciation DEP from gross national product GNP to obtain net national product NNP",
+        "purpose": "remove the capital worn out over the year so the result reflects net rather than gross output",
+        "uses_equations": [
+          "nnp"
+        ]
+      },
+      "depends_on": [
+        "nnp",
+        "depreciation",
+        "compute_gnp"
+      ],
+      "entity_key": "proc.subtract_depreciation",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

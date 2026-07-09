@@ -1,0 +1,319 @@
+"""WU-3C2 — content tiers: the strong content signal that seeds anchor matches.
+
+Matching order is content-first (§5 step 1): exact key/content -> SymPy
+structural equivalence (sign-exact, under declared mappings like ``d = 2r``,
+REUSES ``parse_zero_form``) -> normalized alias / ``normalization_map`` ->
+RapidFuzz >= 0.9. Each matcher is a pure function
+``(student_node, candidates, ...) -> (Candidate, method, raw_score) | None``.
+
+The symbolic tier extends ``sympy_exec._local_dict()`` with the equation's free
+variables plus any declared-mapping symbols WITHOUT modifying the solver
+(``sympy_exec.py`` is consumed, never edited): the extra symbols are registered
+locally in ``_symbolic_equiv`` and the mapping is substituted before the
+sign-exact ``simplify(a - b) == 0`` comparison.
+
+``_fuzzy_ratio`` is the ONLY RapidFuzz site: ``token_set_ratio`` normalized to
+0..1. ``token_set_ratio`` (not bare ``ratio``) is used because student
+paraphrases reorder and pad words ("the density stays constant throughout" vs
+"density is constant"); the set ratio is order-insensitive while still
+discriminating disjoint phrases below the 0.9 threshold.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+from rapidfuzz import fuzz
+from sympy import Symbol, simplify
+
+from apollo.errors import MalformedEquationError
+from apollo.ontology.nodes import Node, NodeType
+from apollo.resolution.candidates import Candidate
+from apollo.solver.sympy_exec import _local_dict, parse_zero_form
+
+# Tier result type: (winning candidate, method, raw 0..1 score) or None.
+TierHit = tuple[Candidate, str, float]
+
+
+@dataclass(frozen=True)
+class TierHitAll:
+    """One above-threshold lexical (alias/fuzzy) hit, carrying the RAW 0..1
+    proximity AND the specific alias that produced it. Immutable.
+
+    The ``_all`` tiers return EVERY type-compatible above-threshold candidate
+    (not just a global best) so a competing misconception is never discarded
+    before :func:`apply_misconception_competition` runs (§5 / §6.11). The raw
+    score is the competition signal; the §3 method cap is the reported
+    confidence (re-applied downstream)."""
+
+    candidate: Candidate
+    method: str
+    score: float
+    winning_alias: str
+
+
+# ---------------------------------------------------------------------------
+# Student surface text — the comparable string for each node type.
+# ---------------------------------------------------------------------------
+
+
+def student_surface_text(node: Node) -> str:
+    """The text the alias/fuzzy tiers compare for a student node.
+
+    Equation -> symbolic; condition/simplification -> applies_when (+
+    transformation); definition -> concept + meaning; procedure_step -> action;
+    variable_mapping -> term. Falls back to an empty string for an unknown
+    shape (a non-match is data, never a crash)."""
+    c = node.content
+    node_type: NodeType = node.node_type
+    if node_type == "equation":
+        return getattr(c, "symbolic", "") or ""
+    if node_type == "condition":
+        return getattr(c, "applies_when", "") or ""
+    if node_type == "simplification":
+        applies = getattr(c, "applies_when", "") or ""
+        transform = getattr(c, "transformation", "") or ""
+        return f"{applies} {transform}".strip()
+    if node_type == "definition":
+        concept = getattr(c, "concept", "") or ""
+        meaning = getattr(c, "meaning", "") or ""
+        return f"{concept} {meaning}".strip()
+    if node_type == "procedure_step":
+        return getattr(c, "action", "") or ""
+    if node_type == "variable_mapping":
+        return getattr(c, "term", "") or ""
+    return ""  # pragma: no cover - exhaustive over the six node types
+
+
+def _normalize(text: str) -> str:
+    """Lowercase + collapse whitespace + strip surrounding punctuation for the
+    alias tier's exact-after-normalization comparison."""
+    return re.sub(r"\s+", " ", text.strip().lower()).strip(".,;:!?")
+
+
+# ---------------------------------------------------------------------------
+# Tier 1 — exact key / identical content.
+# ---------------------------------------------------------------------------
+
+
+def match_exact(node: Node, candidates: tuple[Candidate, ...]) -> TierHit | None:
+    """Exact match: the node's display label OR normalized surface text equals
+    a candidate's ``canonical_key`` or (for equations) its ``symbolic``.
+
+    This fires when the parser already emitted a canonical key (label) or the
+    student typed the reference equation verbatim."""
+    label = _normalize(getattr(node.content, "label", "") or "")
+    surface = _normalize(student_surface_text(node))
+    for cand in candidates:
+        if cand.node_type != node.node_type:
+            continue
+        if label and label == _normalize(cand.canonical_key):
+            return (cand, "exact", 1.0)
+        if cand.symbolic is not None and surface and surface == _normalize(cand.symbolic):
+            return (cand, "exact", 1.0)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Tier 2 — SymPy structural equivalence (sign-exact, declared mappings).
+# ---------------------------------------------------------------------------
+
+# Names parse_expr should resolve to SymPy callables/constants, never plain
+# Symbols — keep them OUT of the extended locals so `pi`, `Rational`, etc.
+# retain their meaning.
+_SYMPY_RESERVED = {"pi", "E", "I", "oo", "Rational", "sqrt", "exp", "log"}
+
+
+def _extended_locals(*expressions: str) -> dict:
+    """``sympy_exec._local_dict()`` extended with every free-looking symbol in
+    the given expressions (letters + optional trailing digits). Lets the
+    symbolic tier parse equations with variables outside the canonical fluid
+    set (e.g. circle ``r`` / ``d``) WITHOUT editing the solver. SymPy reserved
+    names (``pi``, ``Rational``, ...) are never shadowed."""
+    ld = dict(_local_dict())
+    for expr in expressions:
+        for name in re.findall(r"[A-Za-z]+[0-9]*", expr):
+            if name in ld or name in _SYMPY_RESERVED:
+                continue
+            ld[name] = Symbol(name)
+    return ld
+
+
+def _zero_form(symbolic: str, local_dict: dict):
+    """Parse 'LHS = RHS', a CHAINED equality ('A = B = C = ...'), or a bare
+    expression to the LHS - RHS zero-form under ``local_dict``. Returns None on any
+    parse failure (a non-parse is a non-match, never a crash).
+
+    SINGLE PARSER (WU-AAS lane B2.2 Finding 1): delegates to the mint-time
+    ``parse_zero_form`` rather than re-implementing the split/parse. This closes a
+    recall gap — the mint now accepts ``^`` exponents and chained equalities and
+    stores those RAW forms in the reference graph, so the resolver MUST parse the
+    identical notations or a minted subject silently fails to match here. The
+    ``MalformedEquationError`` the mint parser raises is swallowed to ``None`` to
+    preserve this tier's non-crash contract (a genuinely malformed reference is a
+    non-match, not an error). ``entry_id`` is a fixed sentinel (unused once the
+    error is discarded). Byte-identical to the old behaviour on every previously
+    parseable form: ``standard_transformations`` is the ``parse_expr`` default, so
+    ``convert_xor`` only changes inputs that literally contain ``^``."""
+    try:
+        return parse_zero_form(symbolic, entry_id="<resolution>", local_dict=local_dict)
+    except MalformedEquationError:
+        return None
+
+
+def _symbolic_equiv(student: str, reference: str, *, mappings: dict[str, str]) -> bool:
+    """True iff the two equations are structurally equivalent (sign-exact)
+    after applying the declared variable ``mappings`` (e.g. ``{'d': '2*r'}``).
+
+    Comparison is ``simplify(a - b) == 0`` over the zero-forms — sign-exact, so
+    an inverted equation does NOT match."""
+    ld = _extended_locals(student, reference, *mappings.values())
+    a = _zero_form(student, ld)
+    b = _zero_form(reference, ld)
+    if a is None or b is None:
+        return False
+    for sym, repl in mappings.items():
+        repl_expr = _zero_form(repl, ld)
+        if repl_expr is None:
+            continue
+        b = b.subs(Symbol(sym), repl_expr)
+        a = a.subs(Symbol(sym), repl_expr)
+    try:
+        return bool(simplify(a - b) == 0)
+    except Exception:  # noqa: BLE001 - comparison failure is a non-match  # pragma: no cover - defensive
+        return False
+
+
+def match_symbolic(
+    node: Node,
+    candidates: tuple[Candidate, ...],
+    *,
+    mappings: dict[str, str] | None = None,
+) -> TierHit | None:
+    """Symbolic tier: equation nodes only. Returns the first candidate whose
+    ``symbolic`` is structurally equivalent (sign-exact, under ``mappings``)."""
+    if node.node_type != "equation":
+        return None
+    student_sym = student_surface_text(node)
+    if not student_sym:  # pragma: no cover - defensive: valid equation nodes always have symbolic
+        return None
+    maps = mappings or {}
+    for cand in candidates:
+        if cand.node_type != "equation" or cand.symbolic is None:
+            continue
+        if _symbolic_equiv(student_sym, cand.symbolic, mappings=maps):
+            return (cand, "symbolic", 1.0)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Tier 3 — normalized alias match.
+# ---------------------------------------------------------------------------
+
+
+def match_alias_all(node: Node, candidates: tuple[Candidate, ...]) -> list[TierHitAll]:
+    """EVERY type-compatible candidate with an exact normalized-alias hit.
+
+    Returns one :class:`TierHitAll` per matching candidate (raw score 1.0,
+    carrying the winning alias), so a misconception sharing the student's exact
+    phrase is never discarded before competition (§5). Order: candidate, then
+    alias.
+
+    Reads BOTH ``cand.exact_aliases`` (Phase 1b — curated reference phrasings)
+    AND ``cand.aliases`` (misconception trigger phrases / normalization map),
+    with ``exact_aliases`` first so a curated phrasing wins the ``winning_alias``
+    provenance slot deterministically. Matching is exact-normalized equality —
+    the precision asymmetry: ``exact_aliases`` resolve here but NEVER through the
+    fuzzy tier (:func:`match_fuzzy_all`)."""
+    surface = _normalize(student_surface_text(node))
+    if not surface:  # pragma: no cover - defensive: valid nodes always have surface text
+        return []
+    hits: list[TierHitAll] = []
+    for cand in candidates:
+        if cand.node_type != node.node_type:
+            continue
+        for alias in (*cand.exact_aliases, *cand.aliases):
+            if surface == _normalize(alias):
+                hits.append(TierHitAll(cand, "alias", 1.0, alias))
+                break  # one hit per candidate (the first matching alias)
+    return hits
+
+
+def match_alias(node: Node, candidates: tuple[Candidate, ...]) -> TierHit | None:
+    """Single-best alias tier (back-compat wrapper over :func:`match_alias_all`):
+    the node's normalized surface text equals one of a type-compatible
+    candidate's normalized aliases (WU-3B converted the ``normalization_map`` +
+    ``trigger_phrases`` into ``entity.aliases``). Returns the FIRST hit."""
+    hits = match_alias_all(node, candidates)
+    if not hits:
+        return None
+    return (hits[0].candidate, "alias", 1.0)
+
+
+# Tier 4 — RapidFuzz >= 0.9 (the only RapidFuzz site).
+
+
+def _fuzzy_ratio(a: str, b: str) -> float:
+    """Order-insensitive token-set similarity, normalized to 0..1."""
+    return fuzz.token_set_ratio(a, b) / 100.0
+
+
+def match_fuzzy(
+    node: Node,
+    candidates: tuple[Candidate, ...],
+    *,
+    threshold: float = 0.9,
+) -> TierHit | None:
+    """Single-best fuzzy tier (back-compat wrapper over :func:`match_fuzzy_all`):
+    the best alias whose ``_fuzzy_ratio`` >= ``threshold``.
+
+    Below the threshold returns None — never snaps (§5 below-threshold ->
+    unresolved). Among above-threshold candidates the highest score wins;
+    deterministic tie-break on ``canonical_key`` so re-runs are identical."""
+    hits = match_fuzzy_all(node, candidates, threshold=threshold)
+    if not hits:
+        return None
+    best = hits[0]  # sorted descending score, then canonical_key
+    return (best.candidate, "fuzzy", best.score)
+
+
+def match_fuzzy_all(
+    node: Node,
+    candidates: tuple[Candidate, ...],
+    *,
+    threshold: float = 0.9,
+) -> list[TierHitAll]:
+    """EVERY type-compatible candidate whose best alias ``_fuzzy_ratio`` >=
+    ``threshold``, each carrying that RAW score AND the specific alias that
+    produced it.
+
+    One :class:`TierHitAll` per qualifying candidate (its highest-scoring above-
+    threshold alias). Returning ALL of them — not just a global best — lets a
+    competing misconception reach :func:`apply_misconception_competition` even
+    when a reference is the lexically closer match (§5 / §6.11). Below threshold
+    a candidate is omitted (no snap, §5). Order: descending score, then key.
+
+    INVARIANT (Phase 1b): this tier reads ONLY ``cand.aliases``. It deliberately
+    does NOT read ``cand.exact_aliases`` — curated reference phrasings are
+    EXACT-only (resolved in :func:`match_alias_all`) and must never gain free
+    coverage credit through ``token_set_ratio`` hand-wave matching."""
+    surface = student_surface_text(node)
+    if not surface:  # pragma: no cover - defensive: valid nodes always have surface text
+        return []
+    hits: list[TierHitAll] = []
+    for cand in candidates:
+        if cand.node_type != node.node_type:
+            continue
+        best_alias: str | None = None
+        best_score = threshold
+        for alias in cand.aliases:
+            score = _fuzzy_ratio(surface, alias)
+            if score < threshold:
+                continue
+            if best_alias is None or score > best_score:
+                best_alias, best_score = alias, score
+        if best_alias is not None:
+            hits.append(TierHitAll(cand, "fuzzy", best_score, best_alias))
+    hits.sort(key=lambda h: (-h.score, h.candidate.canonical_key))
+    return hits

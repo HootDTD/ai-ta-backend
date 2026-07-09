@@ -106,6 +106,8 @@ async def append_turn(
     tool_name: str | None = None,
     tool_inputs: Dict[str, Any] | None = None,
     attachments: List[Dict[str, Any]] | None = None,
+    citations: List[Dict[str, Any]] | None = None,
+    keywords: List[str] | None = None,
 ) -> ChatTurn:
     # Lock the parent chat session row so concurrent writers serialize turn indexes.
     lock_result = await db_session.execute(
@@ -140,6 +142,8 @@ async def append_turn(
         tool_name=tool_name,
         tool_inputs=tool_inputs,
         attachments=attachments or [],
+        citations=citations or [],
+        keywords=keywords or [],  # §10 RQ5 hedge — write-only; defaults to [] (never None)
     )
     db_session.add(turn)
     return turn
@@ -210,6 +214,7 @@ async def serialize_chat_session(
                 "tool_name": t.tool_name,
                 "tool_inputs": t.tool_inputs,
                 "attachments": t.attachments or [],
+                "citations": t.citations or [],
             }
             for t in turns
         ],

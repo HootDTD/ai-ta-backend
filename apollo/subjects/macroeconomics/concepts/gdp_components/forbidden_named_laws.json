@@ -1,0 +1,31 @@
+{
+  "named_laws": [
+    "expenditure approach",
+    "expenditure identity",
+    "income approach",
+    "value added",
+    "circular flow"
+  ],
+  "forbidden_concepts": [
+    "final goods",
+    "intermediate goods",
+    "transfer payments",
+    "net exports",
+    "depreciation",
+    "value added",
+    "double counting",
+    "national income",
+    "disposable income"
+  ],
+  "forbidden_domains": [
+    "macroeconomics",
+    "economics",
+    "national accounts",
+    "national income accounting"
+  ],
+  "forbidden_units": [
+    "dollars",
+    "billions of dollars",
+    "trillions of dollars"
+  ]
+}

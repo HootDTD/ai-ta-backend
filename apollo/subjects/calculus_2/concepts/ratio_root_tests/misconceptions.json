@@ -1,0 +1,37 @@
+{
+  "misconceptions": [
+    {
+      "key": "misc.L_equals_one_means_diverge",
+      "display_name": "L = 1 means divergence",
+      "description": "Treats a Ratio/Root Test limit of 1 as proof of divergence; L = 1 is inconclusive and requires another method.",
+      "opposes": "cond.ratio_equals_one",
+      "trigger_phrases": [
+        "L equals 1 so it diverges",
+        "the ratio is 1 so it diverges",
+        "limit of 1 means it fails to converge"
+      ]
+    },
+    {
+      "key": "misc.forgot_reciprocal_in_ratio",
+      "display_name": "Not inverting a_n when forming the ratio",
+      "description": "Writes a_(n+1) * a_n instead of a_(n+1)/a_n (or forgets to flip factorials/powers), corrupting the ratio.",
+      "opposes": "eq.ratio",
+      "trigger_phrases": [
+        "multiply the two terms",
+        "a_(n+1) times a_n",
+        "don't flip the factorial"
+      ]
+    },
+    {
+      "key": "misc.ratio_greater_one_forgotten",
+      "display_name": "L > 1 mistaken for convergence",
+      "description": "Concludes convergence when L > 1; a limit exceeding 1 forces divergence.",
+      "opposes": "cond.ratio_greater_than_one",
+      "trigger_phrases": [
+        "L is 2 so it converges",
+        "bigger ratio still converges",
+        "L greater than 1 is fine"
+      ]
+    }
+  ]
+}

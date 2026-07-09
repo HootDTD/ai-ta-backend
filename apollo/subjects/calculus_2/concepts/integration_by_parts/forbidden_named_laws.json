@@ -1,0 +1,19 @@
+{
+  "named_laws": [
+    "integration by parts",
+    "parts",
+    "LIATE",
+    "product rule",
+    "tabular integration"
+  ],
+  "forbidden_concepts": [
+    "antiderivative",
+    "product rule",
+    "indefinite integral"
+  ],
+  "forbidden_domains": [
+    "calculus",
+    "integral calculus"
+  ],
+  "forbidden_units": []
+}

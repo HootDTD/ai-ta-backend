@@ -1,0 +1,127 @@
+{
+  "id": "p_integral_one_over_x_squared",
+  "concept_id": "improper_integrals",
+  "difficulty": "intro",
+  "given_values": {
+    "a": 1.0
+  },
+  "problem_text": "Determine whether integral_1^infinity 1/x^2 dx converges, and if so find its value.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "improper_at_infinity",
+      "limit_definition",
+      "antiderivative",
+      "plan_rewrite_as_limit",
+      "plan_antiderivative",
+      "plan_take_limit",
+      "p_integral_convergent"
+    ]
+  ],
+  "target_unknown": "I",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "improper_at_infinity",
+      "step": 1,
+      "content": {
+        "label": "Improper: infinite upper limit",
+        "applies_when": "the upper limit is infinite, so the integral is defined as a limit of proper integrals."
+      },
+      "depends_on": [],
+      "entity_key": "cond.improper_at_infinity",
+      "entry_type": "condition"
+    },
+    {
+      "id": "limit_definition",
+      "step": 2,
+      "content": {
+        "concept": "Improper integral as a limit",
+        "meaning": "integral_a^infinity f dx = lim_{t->infinity} integral_a^t f dx."
+      },
+      "depends_on": [],
+      "entity_key": "def.limit_definition",
+      "entry_type": "definition"
+    },
+    {
+      "id": "antiderivative",
+      "step": 3,
+      "content": {
+        "label": "Antiderivative of x^-2 is -1/x",
+        "symbolic": "F + 1/x",
+        "variables": [
+          "F",
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.antiderivative",
+      "entry_type": "equation"
+    },
+    {
+      "id": "plan_rewrite_as_limit",
+      "step": 4,
+      "content": {
+        "label": "rewrite integral_1^infinity x^-2 dx = lim_{t->infinity} integral_1^t x^-2 dx",
+        "order": 1,
+        "action": "rewrite integral_1^infinity x^-2 dx = lim_{t->infinity} integral_1^t x^-2 dx",
+        "purpose": "convert the improper integral into a limit of proper integrals",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "improper_at_infinity",
+        "limit_definition"
+      ],
+      "entity_key": "proc.plan_rewrite_as_limit",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_antiderivative",
+      "step": 5,
+      "content": {
+        "label": "the antiderivative of x^-2 is -1/x, so integral_1^t = [-1/x]_1^t = 1 - 1/t",
+        "order": 2,
+        "action": "the antiderivative of x^-2 is -1/x, so integral_1^t = [-1/x]_1^t = 1 - 1/t",
+        "purpose": "evaluate the proper integral up to the cutoff t",
+        "uses_equations": [
+          "antiderivative"
+        ]
+      },
+      "depends_on": [
+        "plan_rewrite_as_limit"
+      ],
+      "entity_key": "proc.plan_antiderivative",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_take_limit",
+      "step": 6,
+      "content": {
+        "label": "let t -> infinity: 1/t -> 0, so the limit is 1",
+        "order": 3,
+        "action": "let t -> infinity: 1/t -> 0, so the limit is 1",
+        "purpose": "resolve the limit to find the value of the improper integral",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_antiderivative"
+      ],
+      "entity_key": "proc.plan_take_limit",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "p_integral_convergent",
+      "step": 7,
+      "content": {
+        "label": "p-integral at infinity converges for p>1",
+        "applies_when": "the tail integral of x^-p on [1,infinity) has p=2 > 1",
+        "transformation": "p > 1 => the p-integral converges"
+      },
+      "depends_on": [
+        "plan_take_limit"
+      ],
+      "entity_key": "simp.p_integral_convergent",
+      "entry_type": "simplification"
+    }
+  ]
+}

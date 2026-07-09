@@ -1,0 +1,25 @@
+{
+  "symbols": [
+    "x",
+    "u",
+    "du",
+    "dx",
+    "F",
+    "C",
+    "n",
+    "a",
+    "b"
+  ],
+  "description": {
+    "x": "original integration variable",
+    "u": "substitution variable (the chosen inner function)",
+    "du": "differential of u",
+    "dx": "differential of x",
+    "F": "the antiderivative being sought",
+    "C": "constant of integration",
+    "n": "exponent in a power-rule integrand",
+    "a": "lower limit of a definite integral (or a constant coefficient)",
+    "b": "upper limit of a definite integral"
+  },
+  "subscript_convention": "For a definite integral use a and b for the original x-limits; when the substitution changes them, evaluate against the transformed u-limits instead of converting back."
+}

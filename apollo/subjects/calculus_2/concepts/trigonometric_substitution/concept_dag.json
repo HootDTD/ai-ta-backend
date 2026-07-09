@@ -1,0 +1,57 @@
+{
+  "topic_cluster": "calculus_2",
+  "nodes": [
+    {
+      "id": "antiderivative",
+      "label": "Antiderivative",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "right_triangle_trig",
+      "label": "Right-Triangle Trigonometry",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "u_substitution",
+      "label": "U-Substitution",
+      "prerequisites": [
+        "antiderivative"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "trigonometric_substitution",
+      "label": "Trigonometric Substitution",
+      "prerequisites": [
+        "right_triangle_trig",
+        "u_substitution"
+      ],
+      "scope_boundary": [
+        "hyperbolic_substitution"
+      ],
+      "topic_cluster": "calculus_2"
+    }
+  ],
+  "edges": [
+    {
+      "type": "requires",
+      "from": "u_substitution",
+      "to": "antiderivative"
+    },
+    {
+      "type": "requires",
+      "from": "trigonometric_substitution",
+      "to": "right_triangle_trig"
+    },
+    {
+      "type": "requires",
+      "from": "trigonometric_substitution",
+      "to": "u_substitution"
+    }
+  ]
+}

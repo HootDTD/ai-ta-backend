@@ -1,0 +1,22 @@
+{
+  "named_laws": [
+    "p-test",
+    "p-integral",
+    "comparison test",
+    "limit comparison"
+  ],
+  "forbidden_concepts": [
+    "antiderivative",
+    "fundamental theorem",
+    "convergence",
+    "divergence",
+    "integration by parts",
+    "substitution",
+    "residue"
+  ],
+  "forbidden_domains": [
+    "real analysis",
+    "measure theory"
+  ],
+  "forbidden_units": []
+}

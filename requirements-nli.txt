@@ -1,0 +1,19 @@
+# Apollo NLI resolver tier (local NLI adjudicator) dependencies.
+#
+# SUPERSEDED: as of cc942f0 these pins were moved into the main requirements.txt
+# (the tier is now default-ON, so CI/deploy always install transformers/torch/
+# sentencepiece from there) — nothing installs from this file anymore. Kept
+# around as a standalone reference/rehearsal list for the NLI tier's deps; if
+# you need to install just the NLI subset in isolation (e.g. a minimal venv),
+# it still works:
+#
+#   pip install -r requirements-nli.txt
+#
+# NOTE (Windows local dev): torch 2.12.1+cpu ships a c10.dll that fails to load
+# with WinError 1114; torch 2.6.0+cpu is verified working. Install the CPU wheel
+# from the pytorch index if you don't need CUDA:
+#   pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.6.0"
+# Linux CI is unaffected by the Windows wheel issue.
+transformers>=4.44,<5
+torch>=2.2
+sentencepiece

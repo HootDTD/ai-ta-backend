@@ -1,0 +1,43 @@
+{
+  "misconceptions": [
+    {
+      "key": "misc.constant_over_irreducible_quadratic",
+      "display_name": "Uses a constant over an irreducible quadratic",
+      "description": "Writes A/(x^2 + 1) instead of (B x + C)/(x^2 + 1) for an irreducible quadratic factor. An irreducible quadratic needs a full linear numerator, not a constant.",
+      "opposes": "cond.irreducible_needs_linear",
+      "trigger_phrases": [
+        "A over x^2 + 1",
+        "constant over the quadratic",
+        "B/(x^2 + 1)",
+        "just a number over x^2 + 1",
+        "single constant on the quadratic"
+      ]
+    },
+    {
+      "key": "misc.forgets_repeated_factor",
+      "display_name": "Uses one term for a repeated factor",
+      "description": "For (x - 1)^2 writes only B/(x - 1) and omits the C/(x - 1)^2 term. Each power of a repeated linear factor needs its own term.",
+      "opposes": "cond.repeated_factor",
+      "trigger_phrases": [
+        "just A/(x-1)",
+        "one term for the squared factor",
+        "skip the (x-1)^2 term",
+        "only B/(x-1)",
+        "no term for the square"
+      ]
+    },
+    {
+      "key": "misc.decompose_irreducible_denominator",
+      "display_name": "Tries partial fractions on an irreducible denominator",
+      "description": "Attempts to split x^2 + 4 into real linear partial fractions even though it does not factor over the reals. An irreducible quadratic (like x^2 + 4) is an arctan form, not a partial-fractions target.",
+      "opposes": "cond.factor_denominator",
+      "trigger_phrases": [
+        "split x^2 + 4",
+        "partial fractions on x^2 + 4",
+        "factor x^2 + 4 into linears",
+        "decompose x^2 + 4",
+        "A/(x^2+4) + B"
+      ]
+    }
+  ]
+}

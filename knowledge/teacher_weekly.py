@@ -45,7 +45,14 @@ from vendors.supabase_storage import SupabaseStorageClient
 log = logging.getLogger(__name__)
 
 TOTAL_WEEKS_DEFAULT = 16
-VALID_KINDS = {"notes", "slides"}
+# Weekly materials are pinned to a week (1..total_weeks). Course-wide materials
+# (e.g. a textbook) belong to the class as a whole — their tracking row uses the
+# COURSE_WIDE_WEEK sentinel and their indexed document stores week=NULL so it
+# stays visible across every week (see retrieval/document_visibility.py).
+WEEKLY_KINDS = {"notes", "slides"}
+COURSE_WIDE_KINDS = {"textbook"}
+VALID_KINDS = WEEKLY_KINDS | COURSE_WIDE_KINDS
+COURSE_WIDE_WEEK = 0
 _INACTIVE_STATUS = {"state": "inactive"}
 UPLOAD_STATUS_QUEUED = "queued"
 UPLOAD_STATUS_PROCESSING = "processing"
@@ -100,6 +107,36 @@ def _sha256_file(path: Path) -> str:
 def _safe_filename(name: str) -> str:
     token = re.sub(r"[^A-Za-z0-9._-]+", "-", (name or "").strip()).strip("-")
     return token or "teacher-upload.pdf"
+
+
+def _normalize_upload_week(kind: str, week: Any, total_weeks: int) -> int:
+    """Resolve the tracking-row week for an upload.
+
+    Course-wide kinds (e.g. ``textbook``) are not tied to a week and use the
+    ``COURSE_WIDE_WEEK`` sentinel. Weekly kinds must fall in ``1..total_weeks``.
+    Raises ``ValueError`` on an unknown kind or out-of-range weekly week.
+    """
+    kind_norm = (kind or "").strip().lower()
+    if kind_norm not in VALID_KINDS:
+        raise ValueError("kind must be 'notes', 'slides', or 'textbook'")
+    if kind_norm in COURSE_WIDE_KINDS:
+        return COURSE_WIDE_WEEK
+    week_val = int(week)
+    if week_val < 1 or week_val > total_weeks:
+        raise ValueError(f"week must be between 1 and {total_weeks}")
+    return week_val
+
+
+def _document_week(kind: str, tracking_week: int) -> Optional[int]:
+    """Week stored on the indexed ``AITADocument``.
+
+    Course-wide materials store ``NULL`` so they remain visible for every week
+    (the weekly activate/deactivate cycle only touches rows where week IS NOT
+    NULL). Weekly materials store their tracking week unchanged.
+    """
+    if (kind or "").strip().lower() in COURSE_WIDE_KINDS:
+        return None
+    return int(tracking_week)
 
 
 def _truncate_error(message: str | None) -> Optional[str]:
@@ -209,6 +246,7 @@ class TeacherWeeklyStorage:
         self.job_lease_seconds = max(30, _env_int("TEACHER_UPLOAD_JOB_LEASE_SECONDS", DEFAULT_JOB_LEASE_SECONDS))
         self.job_poll_seconds = max(0.5, _env_float("TEACHER_UPLOAD_JOB_POLL_SECONDS", DEFAULT_JOB_POLL_SECONDS))
         self.storage = storage_client or SupabaseStorageClient()
+        self._buckets_ensured = False
         self.root.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
@@ -378,19 +416,18 @@ class TeacherWeeklyStorage:
         pdf_path: Path,
         title: Optional[str],
     ) -> tuple[int, str, Path, str]:
-        week_val = int(week)
-        if week_val < 1 or week_val > self.total_weeks:
-            raise ValueError(f"week must be between 1 and {self.total_weeks}")
-
         kind_norm = (kind or "").strip().lower()
-        if kind_norm not in VALID_KINDS:
-            raise ValueError("kind must be 'notes' or 'slides'")
+        week_val = _normalize_upload_week(kind_norm, week, self.total_weeks)
 
         pdf_resolved = Path(pdf_path).expanduser().resolve()
         if not pdf_resolved.is_file():
             raise FileNotFoundError(f"Teacher upload file not found: {pdf_resolved}")
 
-        resolved_title = (title or f"Week {week_val} {kind_norm.title()}").strip() or f"Week {week_val} {kind_norm.title()}"
+        if kind_norm in COURSE_WIDE_KINDS:
+            default_title = kind_norm.title()
+        else:
+            default_title = f"Week {week_val} {kind_norm.title()}"
+        resolved_title = (title or default_title).strip() or default_title
         return week_val, kind_norm, pdf_resolved, resolved_title
 
     def _build_storage_key(
@@ -409,6 +446,32 @@ class TeacherWeeklyStorage:
             f"{_safe_filename(source_name)}"
         )
 
+    def _ensure_buckets(self) -> None:
+        """Create the upload/pages buckets on first storage use (memoized).
+
+        Skipped for injected clients without ``ensure_bucket`` (test doubles).
+        """
+        if self._buckets_ensured:
+            return
+        ensure = getattr(self.storage, "ensure_bucket", None)
+        if callable(ensure):
+            ensure(bucket=self.upload_bucket, public=False)
+            ensure(bucket=self.pages_bucket, public=False)
+        self._buckets_ensured = True
+
+    def _upload_source_pdf(self, *, storage_key: str, payload: bytes) -> None:
+        self._ensure_buckets()
+        self.storage.upload_bytes(
+            bucket=self.upload_bucket,
+            object_key=storage_key,
+            data=payload,
+            content_type="application/pdf",
+        )
+
+    def _download_source_pdf(self, storage_key: str) -> bytes:
+        self._ensure_buckets()
+        return self.storage.download_bytes(bucket=self.upload_bucket, object_key=storage_key)
+
     def _store_page_asset(
         self,
         *,
@@ -422,11 +485,15 @@ class TeacherWeeklyStorage:
             f"teacher-uploads/{int(upload_id)}/"
             f"page-{int(page_number):04d}.png"
         )
+        self._ensure_buckets()
+        # upsert: worker retries re-render the same pages; overwriting beats
+        # collecting hundreds of duplicate-object warnings per attempt.
         self.storage.upload_bytes(
             bucket=self.pages_bucket,
             object_key=object_key,
             data=image_bytes,
             content_type="image/png",
+            upsert=True,
         )
         return {
             "bucket": self.pages_bucket,
@@ -471,6 +538,10 @@ class TeacherWeeklyStorage:
         if reindex_marker:
             source_md = f"{source_md}\n<!-- reindex:{reindex_marker} -->"
 
+        # Course-wide materials (textbook) index with week=NULL so retrieval keeps
+        # them visible for every week; weekly materials keep their week.
+        doc_week = _document_week(claimed.kind, claimed.week)
+
         connector_doc = AITAConnectorDocument(
             title=claimed.title,
             source_markdown=source_md,
@@ -480,7 +551,7 @@ class TeacherWeeklyStorage:
             material_kind=claimed.kind,
             should_summarize=False,
             page_count=ingestion.page_count,
-            week=claimed.week,
+            week=doc_week,
             metadata={
                 "teacher_upload_id": str(claimed.upload_id),
                 "source_name": pdf_resolved.name,
@@ -490,7 +561,7 @@ class TeacherWeeklyStorage:
                 "source_pdf_sha256": source_sha256,
                 "kind": claimed.kind,
                 "material_kind": claimed.kind,
-                "week": claimed.week,
+                "week": doc_week,
                 "uploaded_via": "teacher_weekly_hybrid_ingestor",
                 "ocr_degraded": ocr_degraded,
                 "ocr_provider": ingestion.ocr_provider,
@@ -516,7 +587,7 @@ class TeacherWeeklyStorage:
         work_dir = Path(tempfile.mkdtemp(prefix=f"teacher_worker_{claimed.upload_id}_", dir=str(self.root)))
         pdf_path = work_dir / _safe_filename(claimed.source_name)
         try:
-            payload = self.storage.download_bytes(bucket=self.upload_bucket, object_key=claimed.storage_key)
+            payload = self._download_source_pdf(claimed.storage_key)
             pdf_path.write_bytes(payload)
             # Check if this is a re-index request; pass marker to bust content hash
             reindex_marker = run_async(self._get_reindex_marker_async(claimed.upload_id))
@@ -616,12 +687,7 @@ class TeacherWeeklyStorage:
             kind=kind_norm,
             source_name=source_name,
         )
-        self.storage.upload_bytes(
-            bucket=self.upload_bucket,
-            object_key=storage_key,
-            data=pdf_resolved.read_bytes(),
-            content_type="application/pdf",
-        )
+        self._upload_source_pdf(storage_key=storage_key, payload=pdf_resolved.read_bytes())
 
         now = _utc_now()
         async with get_async_session() as session:
@@ -955,45 +1021,91 @@ class TeacherWeeklyStorage:
         ingestion: TeacherPDFIngestionResult,
         source_sha256: str,
     ) -> None:
+        from indexing.checkpoint_indexer import (
+            embed_and_persist_chunks, build_doc_content, finalize_document,
+        )
+        from indexing.document_chunker import items_to_chunk_texts
+        from indexing.document_embedder import embed_text
+
+        # --- Phase 1: document upsert (short session) ---
         async with get_async_session() as session:
             upload = await session.get(TeacherUpload, int(claimed.upload_id))
             if upload is None:
                 raise ValueError(f"Unknown teacher upload: {claimed.upload_id}")
-
             service = AITAIndexingService(session)
             docs = await service.prepare_for_indexing([connector_doc])
-
-            indexed_doc: Optional[AITADocument] = None
             if docs:
-                indexed_doc = await service.index_from_items(docs[0], connector_doc, items)
+                document_id = int(docs[0].id)
             else:
                 uid_hash = compute_unique_identifier_hash(connector_doc)
                 content_hash = compute_content_hash(connector_doc)
                 result = await session.execute(
-                    select(AITADocument)
-                    .where(
+                    select(AITADocument).where(
                         or_(
                             AITADocument.unique_identifier_hash == uid_hash,
                             AITADocument.content_hash == content_hash,
                         )
-                    )
-                    .order_by(AITADocument.updated_at.desc())
+                    ).order_by(AITADocument.updated_at.desc())
                 )
-                indexed_doc = result.scalars().first()
+                existing = result.scalars().first()
+                if existing is None:
+                    raise RuntimeError("Failed to resolve indexed document for teacher upload")
+                document_id = int(existing.id)
+                existing.status = DocumentStatus.processing()
+                await session.commit()
+            manifest = dict(upload.artifact_manifest or {})
 
-            if indexed_doc is None:
-                raise RuntimeError("Failed to resolve indexed document for teacher upload")
-            if not DocumentStatus.is_state(indexed_doc.status, DocumentStatus.READY):
-                reason = DocumentStatus.get_failure_reason(indexed_doc.status) or "Indexing failed for teacher upload"
-                raise RuntimeError(reason)
+        after_page = int(
+            (manifest.get("embed_progress") or {}).get("last_completed_page", 0) or 0
+        )
+        chunk_pairs = items_to_chunk_texts(items)
+        if not chunk_pairs:
+            raise ValueError("No chunk texts extracted from items — document may be empty.")
 
+        # --- Phase 2: checkpointed embed + persist (short session per batch) ---
+        async def _on_progress(last_page: int) -> None:
+            async with get_async_session() as s:
+                up = await s.get(TeacherUpload, int(claimed.upload_id))
+                if up is not None:
+                    m = dict(up.artifact_manifest or {})
+                    m["embed_progress"] = {"last_completed_page": int(last_page)}
+                    up.artifact_manifest = m
+                    up.updated_at = _utc_now()
+                job = await s.get(TeacherUploadJob, int(claimed.job_id))
+                if job is not None:
+                    job.lease_expires_at = _utc_now() + timedelta(seconds=self.job_lease_seconds)
+                    job.attempt_count = 0
+                    job.updated_at = _utc_now()
+                await s.commit()
+
+        await embed_and_persist_chunks(
+            session_factory=get_async_session,
+            document_id=document_id,
+            chunk_pairs=chunk_pairs,
+            after_page=after_page,
+            on_progress=_on_progress,
+        )
+
+        # --- Phase 3: finalize (fresh short session) ---
+        doc_content = build_doc_content(chunk_pairs, fallback_title=connector_doc.title)
+        doc_embedding = embed_text(doc_content)
+        async with get_async_session() as session:
+            upload = await session.get(TeacherUpload, int(claimed.upload_id))
+            await finalize_document(
+                session,
+                document_id=document_id,
+                chunk_pairs=chunk_pairs,
+                doc_content=doc_content,
+                doc_embedding=doc_embedding,
+                page_count=ingestion.page_count,
+            )
+            indexed_doc = await session.get(AITADocument, document_id)
             course_row = await self._get_or_create_teacher_course(
                 session, search_space_id=int(upload.search_space_id)
             )
             now = _utc_now()
             previous_upload_rows = await session.execute(
-                select(TeacherUpload.id, TeacherUpload.doc_id)
-                .where(
+                select(TeacherUpload.id, TeacherUpload.doc_id).where(
                     TeacherUpload.search_space_id == int(upload.search_space_id),
                     TeacherUpload.week == int(upload.week),
                     TeacherUpload.kind == str(upload.kind),
@@ -1001,35 +1113,22 @@ class TeacherWeeklyStorage:
                     TeacherUpload.id != int(upload.id),
                 )
             )
-            previous_doc_ids = [
-                int(doc_id)
-                for _, doc_id in previous_upload_rows.all()
-                if doc_id is not None
-            ]
-
+            previous_doc_ids = [int(d) for _, d in previous_upload_rows.all() if d is not None]
             await session.execute(
-                update(TeacherUpload)
-                .where(
+                update(TeacherUpload).where(
                     TeacherUpload.search_space_id == int(upload.search_space_id),
                     TeacherUpload.week == int(upload.week),
                     TeacherUpload.kind == str(upload.kind),
                     TeacherUpload.is_latest.is_(True),
                     TeacherUpload.id != int(upload.id),
-                )
-                .values(
-                    is_latest=False,
-                    status=UPLOAD_STATUS_SUPERSEDED,
-                    updated_at=now,
-                )
+                ).values(is_latest=False, status=UPLOAD_STATUS_SUPERSEDED, updated_at=now)
             )
             if previous_doc_ids:
                 await session.execute(
-                    update(AITADocument)
-                    .where(AITADocument.id.in_(previous_doc_ids))
+                    update(AITADocument).where(AITADocument.id.in_(previous_doc_ids))
                     .values(status=_INACTIVE_STATUS, updated_at=now)
                 )
-
-            upload.doc_id = int(indexed_doc.id) if indexed_doc.id is not None else None
+            upload.doc_id = document_id
             upload.page_count = ingestion.page_count or indexed_doc.page_count
             upload.is_latest = True
             upload.status = UPLOAD_STATUS_READY
@@ -1051,7 +1150,7 @@ class TeacherWeeklyStorage:
             )
             upload.metadata_ = {
                 **(upload.metadata_ or {}),
-                "material_id": f"doc-{indexed_doc.id}" if indexed_doc.id is not None else None,
+                "material_id": f"doc-{document_id}",
                 "source_pdf_sha256": source_sha256,
                 "storage_bucket": self.upload_bucket,
                 "pages_bucket": self.pages_bucket,
@@ -1061,7 +1160,6 @@ class TeacherWeeklyStorage:
                 "ocr_summary": ingestion.ocr_summary,
                 "artifact_manifest": ingestion.artifact_manifest,
             }
-
             job = await session.get(TeacherUploadJob, int(claimed.job_id))
             if job is not None:
                 job.state = JOB_STATE_COMPLETED
@@ -1069,11 +1167,25 @@ class TeacherWeeklyStorage:
                 job.lease_expires_at = None
                 job.last_error = None
                 job.updated_at = now
-
             await self._sync_week_activation(
+                session, search_space_id=int(upload.search_space_id),
+                current_week=int(course_row.current_week or 1),
+            )
+            # WU-3B2g §8B: enqueue Apollo auto-provisioning for this finished
+            # document. Idempotent (content-hash short-circuit + partial-unique-
+            # index) and rides this SAME commit so a job is never visible for a
+            # doc that did not finish indexing. A no-op for the upload path: with
+            # APOLLO_AUTOPROVISION_ENABLED OFF nothing DRAINS the job, so upload
+            # behavior is byte-identical to today. The enqueue can never raise out
+            # of this commit (an index collision is swallowed via a SAVEPOINT).
+            # Local import: keep ``apollo`` off the teacher_weekly import path at
+            # module load (matches the deferred-import pattern at this seam).
+            from apollo.provisioning.enqueue import enqueue_provisioning_job
+            await enqueue_provisioning_job(
                 session,
                 search_space_id=int(upload.search_space_id),
-                current_week=int(course_row.current_week or 1),
+                document_id=document_id,
+                content_hash=getattr(indexed_doc, "content_hash", None),
             )
             await session.commit()
 
@@ -1156,26 +1268,13 @@ class TeacherWeeklyStorage:
             )
             uploads = uploads_result.scalars().all()
 
-        weeks: List[Dict[str, Any]] = []
-        for week_num in range(1, self.total_weeks + 1):
-            week_rows = [row for row in uploads if int(row.week or 0) == week_num]
-            notes_rows = [row for row in week_rows if (row.kind or "").strip().lower() == "notes"]
-            slides_rows = [row for row in week_rows if (row.kind or "").strip().lower() == "slides"]
-            weeks.append(
-                {
-                    "week": week_num,
-                    "notes": self._build_section(notes_rows),
-                    "slides": self._build_section(slides_rows),
-                }
-            )
-
-        return {
-            "search_space_id": int(search_space_id),
-            "course": str(space.name),
-            "slug": str(space.slug),
-            "current_week": int(course_row.current_week or 1),
-            "weeks": weeks,
-        }
+        return self._assemble_course_payload(
+            search_space_id=int(search_space_id),
+            course=str(space.name),
+            slug=str(space.slug),
+            current_week=int(course_row.current_week or 1),
+            uploads=uploads,
+        )
 
     async def _set_current_week_by_search_space_async(self, search_space_id: int, week: int) -> Dict[str, Any]:
         async with get_async_session() as session:
@@ -1234,6 +1333,48 @@ class TeacherWeeklyStorage:
             course_row.updated_at = _utc_now()
             await session.commit()
             return updated
+
+    def _assemble_course_payload(
+        self,
+        *,
+        search_space_id: int,
+        course: str,
+        slug: str,
+        current_week: int,
+        uploads: List[TeacherUpload],
+    ) -> Dict[str, Any]:
+        """Build the teacher course payload from upload rows.
+
+        Weekly kinds (notes/slides) populate the per-week grid; course-wide
+        textbook rows populate a single course-level ``textbook`` section. Pure
+        (no I/O) so it is unit-testable without a database.
+        """
+        def _kind_of(row: TeacherUpload) -> str:
+            return (row.kind or "").strip().lower()
+
+        weeks: List[Dict[str, Any]] = []
+        for week_num in range(1, self.total_weeks + 1):
+            week_rows = [row for row in uploads if int(row.week or 0) == week_num]
+            notes_rows = [row for row in week_rows if _kind_of(row) == "notes"]
+            slides_rows = [row for row in week_rows if _kind_of(row) == "slides"]
+            weeks.append(
+                {
+                    "week": week_num,
+                    "notes": self._build_section(notes_rows),
+                    "slides": self._build_section(slides_rows),
+                }
+            )
+
+        textbook_rows = [row for row in uploads if _kind_of(row) in COURSE_WIDE_KINDS]
+
+        return {
+            "search_space_id": int(search_space_id),
+            "course": str(course),
+            "slug": str(slug),
+            "current_week": int(current_week or 1),
+            "weeks": weeks,
+            "textbook": self._build_section(textbook_rows),
+        }
 
     def _build_section(self, rows: List[TeacherUpload]) -> Dict[str, Any]:
         history: List[Dict[str, Any]] = []

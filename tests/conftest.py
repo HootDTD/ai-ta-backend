@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,125 +30,234 @@ class _DummyEmbeddings:
         return types.SimpleNamespace(data=[types.SimpleNamespace(embedding=[0.0])])
 
 
+class _DummyResponses:
+    """Minimal Responses API stand-in for the streaming solver path.
+
+    solve_with_bundle_stream dispatches on event.type and parses the solver
+    JSON from response.output_text.delta payloads, so the stub must emit
+    valid solver JSON (steps/final_answers/equations_used/assumptions).
+    """
+
+    _SOLVER_JSON = (
+        '{"steps": "Stub answer.", "final_answers": {}, '
+        '"equations_used": [], "assumptions": [], "not_relevant": false}'
+    )
+
+    def create(self, *args, **kwargs):
+        if kwargs.get("stream"):
+            return iter(
+                [
+                    types.SimpleNamespace(
+                        type="response.output_text.delta", delta=self._SOLVER_JSON
+                    ),
+                    types.SimpleNamespace(type="response.completed"),
+                ]
+            )
+        return types.SimpleNamespace(output_text=self._SOLVER_JSON)
+
+
 class _DummyOpenAI:
     def __init__(self, *args, **kwargs):
         self.chat = types.SimpleNamespace(completions=_DummyCompletions())
         self.embeddings = _DummyEmbeddings()
+        self.responses = _DummyResponses()
 
 
 openai_stub.OpenAI = _DummyOpenAI
+# Async client stub for the retrieval-mode router (ai/router/wiring.py).
+# Sync attributes suffice: router tests inject their own AsyncMock clients;
+# this only needs to make `from openai import AsyncOpenAI` importable.
+openai_stub.AsyncOpenAI = _DummyOpenAI
 sys.modules["openai"] = openai_stub
-
-
-_sb_store: dict[str, list[dict]] = {}
-
-
-def _sb_reset() -> None:
-    _sb_store.clear()
-
-
-def _sb_select(table: str, params: dict | None = None):
-    params = params or {}
-    rows = list(_sb_store.get(table, []))
-    for key, val in params.items():
-        if key in ("select", "order", "limit", "on_conflict"):
-            continue
-        if isinstance(val, str) and val.startswith("eq."):
-            target = val[3:]
-            rows = [r for r in rows if str(r.get(key, "")) == target]
-    order = params.get("order", "")
-    if order:
-        field = order.split(".")[0]
-        desc = "desc" in order
-        rows.sort(key=lambda r: r.get(field, ""), reverse=desc)
-    limit = params.get("limit")
-    if limit:
-        rows = rows[: int(limit)]
-    return rows
-
-
-def _sb_select_one(table: str, params: dict | None = None):
-    rows = _sb_select(table, params)
-    return rows[0] if rows else None
-
-
-def _sb_insert(table: str, data):
-    if isinstance(data, dict):
-        data = [data]
-    _sb_store.setdefault(table, [])
-    for row in data:
-        _sb_store[table].append(dict(row))
-    return list(data)
-
-
-def _sb_upsert(table: str, data, on_conflict: str = "id"):
-    if isinstance(data, dict):
-        data = [data]
-    rows = _sb_store.setdefault(table, [])
-    for row in data:
-        found = None
-        for idx, existing in enumerate(rows):
-            if existing.get(on_conflict) == row.get(on_conflict):
-                found = idx
-                break
-        if found is None:
-            rows.append(dict(row))
-        else:
-            rows[found].update(row)
-    return list(data)
-
-
-def _sb_update(table: str, match_params: dict, data: dict):
-    rows = _sb_store.get(table, [])
-    out = []
-    for row in rows:
-        matched = True
-        for key, val in match_params.items():
-            if isinstance(val, str) and val.startswith("eq."):
-                if str(row.get(key, "")) != val[3:]:
-                    matched = False
-                    break
-        if matched:
-            row.update(data)
-            out.append(row)
-    return out
-
-
-def _sb_delete(table: str, match_params: dict):
-    rows = _sb_store.get(table, [])
-    keep = []
-    for row in rows:
-        matched = True
-        for key, val in match_params.items():
-            if isinstance(val, str) and val.startswith("eq."):
-                if str(row.get(key, "")) != val[3:]:
-                    matched = False
-                    break
-        if not matched:
-            keep.append(row)
-    _sb_store[table] = keep
-
-
-def _sb_rpc(function_name: str, params: dict, *, timeout: int = 30):
-    return []
 
 
 @pytest.fixture(autouse=True)
 def _mock_supabase(monkeypatch):
+    """Route vendors.supabase_client through the shared in-memory mock.
+
+    The PostgREST-style mock now lives in tests/support/supabase_mock.py (shared
+    with tests/functions-tests/conftest.py). The root suite uses the no-auto-id
+    variant to preserve its historical insert/upsert behaviour.
+    """
     monkeypatch.setenv("TEST_FAKE_OPENAI", "1")
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.setenv("SUPABASE_URL", "http://localhost:54321")
     monkeypatch.setenv("SUPABASE_API_KEY", "test-key")
     monkeypatch.setenv("SUPABASE_DB_URL", "sqlite+aiosqlite:///:memory:")
-    _sb_reset()
-    import vendors.supabase_client as sb_mod
 
-    monkeypatch.setattr(sb_mod, "select", _sb_select)
-    monkeypatch.setattr(sb_mod, "select_one", _sb_select_one)
-    monkeypatch.setattr(sb_mod, "insert", _sb_insert)
-    monkeypatch.setattr(sb_mod, "upsert", _sb_upsert)
-    monkeypatch.setattr(sb_mod, "update", _sb_update)
-    monkeypatch.setattr(sb_mod, "delete", _sb_delete)
-    monkeypatch.setattr(sb_mod, "rpc", _sb_rpc)
+    from tests.support.supabase_mock import SupabaseMock
+
+    mock = SupabaseMock(auto_id=False)
+    mock.install(monkeypatch)
     yield
-    _sb_reset()
+    mock.reset()
+
+
+@pytest.fixture(autouse=True)
+def _force_nli_off(monkeypatch):
+    """Force ``APOLLO_NLI_ENABLED=0`` for the whole (non-apollo) suite.
+
+    The NLI tier is now DEFAULT-ON in production (``nli_config.nli_enabled``), but
+    the real adjudicator pulls ``transformers``/``torch`` and downloads a model on
+    first use. Integration tests under ``tests/database/`` drive the real
+    Done-grade path (``handle_done`` → ``_nli_context``), so without this guard
+    they would build + download the model in CI. Mirrors ``apollo/conftest.py``'s
+    guard; a test that exercises NLI sets the flag itself (a function-scoped
+    ``monkeypatch.setenv`` runs after this and wins)."""
+    monkeypatch.setenv("APOLLO_NLI_ENABLED", "0")
+
+
+# ---------------------------------------------------------------------------
+# Real Postgres + pgvector test harness (Phase 1, docs/TESTING-CI-PLAN.md).
+#
+# pgvector's `<=>` / `<->` operators and HNSW indexes do not exist in SQLite,
+# so the retrieval/indexing layer can only be tested against real Postgres.
+# We spin up one ephemeral `pgvector/pgvector:pg16` container per test session
+# (Testcontainers), create the schema once, then give each test a
+# transactionally-isolated session that rolls back on teardown.
+#
+# If Docker isn't running, the `_pg_url` fixture skips cleanly so the rest of
+# the suite stays green — DB tests light up automatically once Docker is up.
+# ---------------------------------------------------------------------------
+
+PGVECTOR_IMAGE = "pgvector/pgvector:pg16"
+
+# NOTE: we deliberately do NOT call pgvector.asyncpg.register_vector here.
+# pgvector's SQLAlchemy `Vector` type already serializes lists to the pgvector
+# text wire format (e.g. '[1.0,0.0,...]') and parses results back. Registering
+# the asyncpg binary codec on top of that double-encodes the value and asyncpg
+# raises "could not convert string to float". register_vector is only for RAW
+# asyncpg queries that bind Python lists directly, which the ORM never does.
+
+
+@pytest.fixture(scope="session")
+def _pg_url() -> str:
+    """Start a pgvector container and create the schema once per session.
+
+    Returns an asyncpg SQLAlchemy URL. Skips the whole DB-backed test set if
+    Docker is unavailable.
+    """
+    try:
+        from testcontainers.postgres import PostgresContainer
+    except ImportError:  # pragma: no cover - dependency guard
+        pytest.skip("testcontainers not installed (pip install -r requirements-test.txt)")
+
+    try:
+        container = PostgresContainer(PGVECTOR_IMAGE)
+        container.start()
+    except Exception as exc:  # Docker daemon down / image pull failure
+        pytest.skip(f"Docker not available for pgvector test container: {exc}")
+
+    url = container.get_connection_url(driver="asyncpg")
+
+    async def _setup() -> None:
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        from database.models import Base
+
+        # No vector codec on the setup engine: its first connection is the one
+        # that runs CREATE EXTENSION, so the `vector` type doesn't exist yet at
+        # connect time. DDL is plain text and needs no codec anyway.
+        engine = create_async_engine(url, poolclass=NullPool)
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.run_sync(Base.metadata.create_all)
+        await engine.dispose()
+
+    asyncio.run(_setup())
+    try:
+        yield url
+    finally:
+        container.stop()
+
+
+@pytest_asyncio.fixture
+async def db_session(_pg_url):
+    """Function-scoped AsyncSession on real pgvector, rolled back after each test.
+
+    Uses a per-test engine (NullPool) so the connection is created on the
+    current test's event loop — avoiding the cross-loop pool issues documented
+    in ``database/session.py``. The outer transaction is never committed:
+    ``join_transaction_mode="create_savepoint"`` lets test code call
+    ``commit()`` (it commits to a SAVEPOINT), and teardown rolls the whole
+    thing back, leaving the schema pristine for the next test.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    engine = create_async_engine(_pg_url, poolclass=NullPool)
+
+    conn = await engine.connect()
+    trans = await conn.begin()
+    session = AsyncSession(
+        bind=conn,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    try:
+        yield session
+    finally:
+        await session.close()
+        if trans.is_active:
+            await trans.rollback()
+        await conn.close()
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Neo4j test harness for apollo KG integration (prod uses Neo4j Aura).
+# Same Docker-guarded skip pattern as pgvector. Each test gets a wiped graph.
+# ---------------------------------------------------------------------------
+
+NEO4J_IMAGE = "neo4j:5.25"
+
+
+@pytest.fixture(scope="session")
+def _neo4j_conn():
+    """Start a Neo4j container once per session. Skips if Docker is unavailable."""
+    try:
+        from testcontainers.neo4j import Neo4jContainer
+    except ImportError:  # pragma: no cover - dependency guard
+        pytest.skip("testcontainers neo4j module unavailable")
+
+    try:
+        container = Neo4jContainer(NEO4J_IMAGE)
+        container.start()
+    except Exception as exc:  # Docker daemon down / image pull failure
+        pytest.skip(f"Docker not available for neo4j test container: {exc}")
+
+    try:
+        yield {
+            "uri": container.get_connection_url(),
+            "user": getattr(container, "username", "neo4j"),
+            "password": getattr(container, "password", "password"),
+            "database": "neo4j",
+        }
+    finally:
+        container.stop()
+
+
+@pytest_asyncio.fixture
+async def neo4j_client(_neo4j_conn):
+    """Function-scoped apollo Neo4jClient on a freshly-wiped graph."""
+    from apollo.persistence.neo4j_client import Neo4jClient
+
+    client = Neo4jClient(
+        uri=_neo4j_conn["uri"],
+        user=_neo4j_conn["user"],
+        password=_neo4j_conn["password"],
+        database=_neo4j_conn["database"],
+    )
+
+    async def _wipe() -> None:
+        async with client.session() as s:
+            await s.run("MATCH (n) DETACH DELETE n")
+
+    try:
+        await _wipe()
+        yield client
+    finally:
+        await _wipe()
+        await client.close()

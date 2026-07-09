@@ -1,0 +1,137 @@
+{
+  "id": "trigint_definite_sin2_cos2_0_to_piover2",
+  "concept_id": "trigonometric_integrals",
+  "difficulty": "standard",
+  "given_values": {
+    "lower": 0.0,
+    "upper": 1.5707963267948966
+  },
+  "problem_text": "Evaluate the definite integral  integral_0^(pi/2) sin^2(x) cos^2(x) dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "even_power",
+      "double_angle",
+      "power_reduction_sin",
+      "cos_integral",
+      "rewrite_identity",
+      "power_reduce",
+      "integrate_and_evaluate"
+    ]
+  ],
+  "target_unknown": "I",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "even_power",
+      "step": 1,
+      "content": {
+        "label": "Even powers of both sine and cosine",
+        "applies_when": "even powers of both sine and cosine call for a double-angle identity followed by power reduction"
+      },
+      "depends_on": [],
+      "entity_key": "cond.even_power",
+      "entry_type": "condition"
+    },
+    {
+      "id": "double_angle",
+      "step": 2,
+      "content": {
+        "label": "Double-angle identity",
+        "symbolic": "sin x cos x = (1/2) sin(2x)",
+        "variables": [
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.double_angle",
+      "entry_type": "equation"
+    },
+    {
+      "id": "power_reduction_sin",
+      "step": 3,
+      "content": {
+        "label": "Power-reduction identity",
+        "symbolic": "sin^2(2x) = (1 - cos(4x))/2",
+        "variables": [
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.power_reduction_sin",
+      "entry_type": "equation"
+    },
+    {
+      "id": "cos_integral",
+      "step": 4,
+      "content": {
+        "label": "Integral of cosine",
+        "symbolic": "integral cos(k x) dx = sin(k x)/k + C",
+        "variables": [
+          "x",
+          "k"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.cos_integral",
+      "entry_type": "equation"
+    },
+    {
+      "id": "rewrite_identity",
+      "step": 5,
+      "content": {
+        "label": "Apply the double-angle identity",
+        "order": 1,
+        "action": "use sin x cos x = (1/2) sin 2x so that sin^2 x cos^2 x = (1/4) sin^2(2x)",
+        "purpose": "compress the product of squares into a single squared sine",
+        "uses_equations": [
+          "double_angle"
+        ]
+      },
+      "depends_on": [
+        "even_power",
+        "double_angle"
+      ],
+      "entity_key": "proc.rewrite_identity",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "power_reduce",
+      "step": 6,
+      "content": {
+        "label": "Power-reduce the squared sine",
+        "order": 2,
+        "action": "power-reduce sin^2(2x) = (1 - cos 4x)/2 to get (1/8)(1 - cos 4x)",
+        "purpose": "turn the remaining even power into directly integrable terms",
+        "uses_equations": [
+          "power_reduction_sin"
+        ]
+      },
+      "depends_on": [
+        "rewrite_identity",
+        "power_reduction_sin"
+      ],
+      "entity_key": "proc.power_reduce",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "integrate_and_evaluate",
+      "step": 7,
+      "content": {
+        "label": "Integrate and evaluate",
+        "order": 3,
+        "action": "integrate (1/8)[x - sin(4x)/4] from 0 to pi/2 = (1/8)(pi/2) = pi/16",
+        "purpose": "produce the numerical value of the definite integral",
+        "uses_equations": [
+          "cos_integral"
+        ]
+      },
+      "depends_on": [
+        "power_reduce",
+        "cos_integral"
+      ],
+      "entity_key": "proc.integrate_and_evaluate",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

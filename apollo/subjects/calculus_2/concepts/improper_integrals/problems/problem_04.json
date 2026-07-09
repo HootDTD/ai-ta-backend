@@ -1,0 +1,112 @@
+{
+  "id": "improper_exponential_decay",
+  "concept_id": "improper_integrals",
+  "difficulty": "standard",
+  "given_values": {
+    "a": 0.0
+  },
+  "problem_text": "Determine whether integral_0^infinity e^(-2x) dx converges, and if so find its value.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "improper_at_infinity",
+      "limit_definition",
+      "antiderivative",
+      "plan_rewrite_as_limit",
+      "plan_antiderivative",
+      "plan_take_limit"
+    ]
+  ],
+  "target_unknown": "I",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "improper_at_infinity",
+      "step": 1,
+      "content": {
+        "label": "Improper: infinite upper limit",
+        "applies_when": "the upper limit is infinite, so the integral is defined as a limit of proper integrals."
+      },
+      "depends_on": [],
+      "entity_key": "cond.improper_at_infinity",
+      "entry_type": "condition"
+    },
+    {
+      "id": "limit_definition",
+      "step": 2,
+      "content": {
+        "concept": "Improper integral as a limit",
+        "meaning": "integral_a^infinity f dx = lim_{t->infinity} integral_a^t f dx."
+      },
+      "depends_on": [],
+      "entity_key": "def.limit_definition",
+      "entry_type": "definition"
+    },
+    {
+      "id": "antiderivative",
+      "step": 3,
+      "content": {
+        "label": "Antiderivative of e^(-2x) is -(1/2) e^(-2x)",
+        "symbolic": "F + Rational(1,2)*exp(-2*x)",
+        "variables": [
+          "F",
+          "x"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.antiderivative",
+      "entry_type": "equation"
+    },
+    {
+      "id": "plan_rewrite_as_limit",
+      "step": 4,
+      "content": {
+        "label": "rewrite integral_0^infinity e^(-2x) dx = lim_{t->infinity} integral_0^t e^(-2x) dx",
+        "order": 1,
+        "action": "rewrite integral_0^infinity e^(-2x) dx = lim_{t->infinity} integral_0^t e^(-2x) dx",
+        "purpose": "convert the improper integral into a limit of proper integrals",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "improper_at_infinity",
+        "limit_definition"
+      ],
+      "entity_key": "proc.plan_rewrite_as_limit",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_antiderivative",
+      "step": 5,
+      "content": {
+        "label": "the antiderivative is -(1/2) e^(-2x), so integral_0^t = 1/2 - (1/2) e^(-2t)",
+        "order": 2,
+        "action": "the antiderivative is -(1/2) e^(-2x), so integral_0^t = 1/2 - (1/2) e^(-2t)",
+        "purpose": "evaluate the proper integral up to the cutoff t",
+        "uses_equations": [
+          "antiderivative"
+        ]
+      },
+      "depends_on": [
+        "plan_rewrite_as_limit"
+      ],
+      "entity_key": "proc.plan_antiderivative",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_take_limit",
+      "step": 6,
+      "content": {
+        "label": "let t -> infinity: e^(-2t) -> 0, so the limit is 1/2",
+        "order": 3,
+        "action": "let t -> infinity: e^(-2t) -> 0, so the limit is 1/2",
+        "purpose": "resolve the limit to find the value of the improper integral",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_antiderivative"
+      ],
+      "entity_key": "proc.plan_take_limit",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

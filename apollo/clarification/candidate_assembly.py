@@ -1,0 +1,146 @@
+"""Shared candidate-set assembly. The closed candidate set recipe lives HERE
+and BOTH the chat (clarification) path and the Done (grading) path call it —
+``load_problem_candidates_with_soundness`` is the single entry point (load bank
+→ dict → specs → build_problem_candidates); ``load_problem_candidates`` is a
+thin chat-path delegate so the candidate set is identical by construction."""
+
+from __future__ import annotations
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from apollo.emergent.config import emergent_misconceptions_enabled
+from apollo.emergent.store import load_promoted_misconceptions_dict
+from apollo.graph_compare.problem_inputs import ProblemInputs, build_problem_candidates
+from apollo.knowledge_graph.canon_projection import load_entity_specs
+from apollo.overseer.misconception_bank import load_for_concept
+
+
+def _bank_applicable(entries: list, concept_id: int | None) -> bool:
+    """The D5/D6 soundness-applicability predicate in isolation: True iff the
+    concept has a non-empty misconception bank AND a non-NULL ``concept_id`` (a
+    NULL concept can never have a bank, so soundness would fail-open). The SINGLE
+    definition of "bank applicable", shared by the candidate-set recipe below and
+    the artifact-path ``misconception_bank_applicable`` helper — they can never
+    drift."""
+    return bool(entries) and concept_id is not None
+
+
+def _misconceptions_dict(entries: list) -> dict:
+    """Map ``MisconceptionEntry`` rows onto the dict shape
+    ``candidates_from_misconceptions`` reads: ``{"misconceptions": [{key,
+    trigger_phrases, opposes, display_name}, ...]}``.
+
+    Field translation (§3.1 step 1 / Risk #2): ``code -> misc.<code>`` (key),
+    ``description -> display_name``. The bank carries no ``opposes`` column today,
+    so ``opposes`` is ``None`` (a missing opposes-link just disables conflict-pair
+    detection for that misconception — tolerated; WU-4C1 writes no events anyway).
+
+    Re-prefix invariant (lane B4/Q1): the seeder
+    (``misconception_bank_seed.misconception_entry_to_bank_spec``) STRIPS the
+    ``misc.`` prefix into the DB ``code`` column (``key.removeprefix("misc.")``),
+    e.g. ``density_ignored``. But the CANONICAL misconception key form everywhere
+    downstream of candidate assembly is ``misc.<code>``: ``is_misconception_key``
+    (soundness.py) keys contradiction detection on that prefix, the KG-entity
+    ``canon_key`` projection is keyed on the prefixed ``entity_key``, and the
+    ``misconceptions.json`` authoring source itself uses ``misc.*``. Emitting the
+    bare ``code`` here left every candidate's ``canonical_key`` failing
+    ``is_misconception_key`` → the node routed to ``unsupported_extra`` instead of
+    ``contradiction_finding`` → no misconception was EVER detectable course-wide
+    (the vacuous-S5 defect). Re-prefix so the candidate carries the canonical key.
+    The bank code is always stripped (never ``misc.``-prefixed), so a plain
+    ``f"misc.{code}"`` cannot double-prefix.
+    """
+    return {
+        "misconceptions": [
+            {
+                "key": f"misc.{e.code}",
+                "trigger_phrases": list(e.trigger_phrases),
+                "opposes": None,
+                "display_name": e.description,
+            }
+            for e in entries
+        ]
+    }
+
+
+async def load_problem_candidates_with_soundness(
+    db: AsyncSession,
+    *,
+    search_space_id: int,
+    concept_id: int | None,
+    problem_payload: dict,
+) -> tuple[ProblemInputs, bool]:
+    """THE single candidate-set recipe used by BOTH the chat (clarification) path and
+    the Done (grading) path, so both consume a byte-identical closed candidate set.
+    Returns (inputs, bank_applicable). ``bank_applicable`` is the D5/D6 soundness
+    applicability flag: True iff the misconception bank is non-empty AND concept_id is
+    not None (a NULL concept can never have a bank, so soundness would fail-open)."""
+    entries = await load_for_concept(db, concept_id=concept_id)  # type: ignore[arg-type]
+    misconceptions = _misconceptions_dict(entries)
+
+    # Emergent misconception store (memo 2026-07-05, increment 1). DORMANT unless
+    # APOLLO_EMERGENT_MISCONCEPTIONS is ON: flag OFF, `emergent_miscs` stays [],
+    # the candidate set + bank_applicable are byte-identical to the hand-authored-
+    # only behavior. Flag ON: promoted (trust >= TAU_ASSERT, keyed, not muted)
+    # class-misconceptions become `misc.*` candidates exactly like bank entries.
+    # Hand-authored keys WIN on a collision (dedup by key) so the emergent store
+    # is strictly additive over the existing bank (OQ5 co-existence).
+    emergent_miscs: list[dict] = []
+    if emergent_misconceptions_enabled():
+        promoted = await load_promoted_misconceptions_dict(
+            db, search_space_id=search_space_id, concept_id=concept_id
+        )
+        authored_keys = {m["key"] for m in misconceptions["misconceptions"]}
+        emergent_miscs = [
+            m for m in promoted["misconceptions"] if m["key"] not in authored_keys
+        ]
+        misconceptions["misconceptions"].extend(emergent_miscs)
+
+    specs = await load_entity_specs(db, search_space_id=search_space_id, concept_id=concept_id)
+    canon_key_by_canonical_key = {spec.canonical_key: spec.key for spec in specs}
+    inputs = build_problem_candidates(
+        problem_payload, misconceptions, canon_key_by_canonical_key=canon_key_by_canonical_key
+    )
+    # bank_applicable stays the D5/D6 soundness gate: True iff SOME assertable
+    # misconception (hand-authored or promoted-emergent) exists AND concept_id is
+    # not None. Flag OFF, emergent_miscs is [], so this reduces to the shared
+    # _bank_applicable predicate exactly (byte-identical).
+    bank_applicable = _bank_applicable(entries, concept_id) or (
+        bool(emergent_miscs) and concept_id is not None
+    )
+    return inputs, bank_applicable
+
+
+async def misconception_bank_applicable(db: AsyncSession, *, concept_id: int | None) -> bool:
+    """The D5/D6 soundness-applicability flag in ISOLATION — the bank-empty fact
+    without building the closed candidate set. The LLM artifact path
+    (``artifact_writer.write_artifacts`` on a shadow-off / LLM-served Done-click)
+    needs to know whether the concept's misconception bank is empty so
+    ``build_llm_artifact`` can stamp the lane-B3a/D1 ``misconceptions_status``
+    marker, but has no ``problem_payload`` to build candidates from and does not
+    need one (``bank_applicable`` depends only on ``load_for_concept`` +
+    ``concept_id``). Same source, same predicate as
+    ``load_problem_candidates_with_soundness`` — so the graph and LLM paths can
+    never disagree about whether the bank was empty."""
+    if concept_id is None:
+        # A NULL concept can never own a bank — short-circuit before the query
+        # (``_bank_applicable`` would return False regardless of its result).
+        return False
+    entries = await load_for_concept(db, concept_id=concept_id)
+    return _bank_applicable(entries, concept_id)
+
+
+async def load_problem_candidates(
+    db: AsyncSession,
+    *,
+    search_space_id: int,
+    concept_id: int | None,
+    problem_payload: dict,
+) -> ProblemInputs:
+    """Chat-path entry point: the closed candidate set only (no soundness flag).
+    Delegates to load_problem_candidates_with_soundness so the candidate set is
+    identical to the grading path by construction (no recipe duplication)."""
+    inputs, _ = await load_problem_candidates_with_soundness(
+        db, search_space_id=search_space_id, concept_id=concept_id, problem_payload=problem_payload
+    )
+    return inputs

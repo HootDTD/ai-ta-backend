@@ -11,15 +11,18 @@ from ai.prompts.relevance_guard import relevance_guard_prompt
 
 def test_tutor_has_anti_redundancy_rule():
     prompt = tutor_prompt()
-    assert "ANTI-REDUNDANCY" in prompt
+    # Rule intent: each point must add new info; no repeating the same fact.
+    assert "Each point must add new information" in prompt
+    assert "Do not repeat the same fact" in prompt
 
 
 def test_tutor_has_type_specific_length_rules():
     prompt = tutor_prompt()
     assert "Yes/No" in prompt
     assert "2-4 sentences" in prompt
-    # Should NOT have the old blanket-only word count
-    assert "match response length to question complexity" in prompt
+    # Should NOT have the old blanket-only word count rule (fixed: assertion now
+    # matches the comment's intent — it was previously asserting presence).
+    assert "match response length to question complexity" not in prompt
 
 
 def test_tutor_has_partial_relevance_handling():
@@ -31,7 +34,7 @@ def test_tutor_has_partial_relevance_handling():
 def test_tutor_has_short_question_handling():
     prompt = tutor_prompt()
     assert "SHORT / SIMPLE QUESTION HANDLING" in prompt
-    assert "MOST LIKELY interpretation" in prompt
+    assert "most likely interpretation" in prompt
 
 
 def test_tutor_has_relevance_note_reference():
@@ -41,7 +44,7 @@ def test_tutor_has_relevance_note_reference():
 
 def test_tutor_preserves_citation_requirement():
     prompt = tutor_prompt()
-    assert "Cite every factual statement" in prompt
+    assert "Every factual claim must have a citation" in prompt
 
 
 def test_tutor_preserves_three_section_structure():

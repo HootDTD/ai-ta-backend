@@ -1,0 +1,88 @@
+{
+  "id": "real_gdp_growth",
+  "concept_id": "nominal_vs_real_gdp",
+  "difficulty": "hard",
+  "given_values": {
+    "g1": 2859.5,
+    "g2": 13598.5
+  },
+  "problem_text": "Real GDP (in constant base-year dollars) was 2859.5 (billion dollars) in an early year and 13598.5 (billion dollars) in a later year. Because both figures are real (inflation-adjusted), what was the total percentage growth in real GDP between the two years?",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "growth_rate",
+      "real_basis",
+      "compute_real_change",
+      "apply_percent_change"
+    ]
+  ],
+  "target_unknown": "growth",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "growth_rate",
+      "step": 1,
+      "content": {
+        "label": "Percentage growth rate",
+        "symbolic": "growth - ((g2 - g1)/g1)*100",
+        "variables": [
+          "growth",
+          "g1",
+          "g2"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.growth_rate",
+      "entry_type": "equation"
+    },
+    {
+      "id": "real_basis",
+      "step": 2,
+      "content": {
+        "label": "Real GDP is inflation-adjusted, so a change in it reflects a change in the quantity of output produced",
+        "concept": "real GDP",
+        "meaning": "real GDP is inflation-adjusted (valued in constant base-year prices), so a change in real GDP reflects a change in quantity of output, not a change in the price level"
+      },
+      "depends_on": [],
+      "entity_key": "def.real_basis",
+      "entry_type": "definition"
+    },
+    {
+      "id": "compute_real_change",
+      "step": 3,
+      "content": {
+        "label": "Compute the absolute change in real GDP by subtracting the earlier value from the later value",
+        "order": 1,
+        "action": "subtract the earlier real GDP g1 = 2859.5 from the later real GDP g2 = 13598.5 to get the absolute change in real GDP",
+        "purpose": "isolate the real (quantity) change in output before converting it to a percentage",
+        "uses_equations": [
+          "growth_rate"
+        ]
+      },
+      "depends_on": [
+        "growth_rate",
+        "real_basis"
+      ],
+      "entity_key": "proc.compute_real_change",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "apply_percent_change",
+      "step": 4,
+      "content": {
+        "label": "Convert the real change to a percentage by dividing by the earlier value and multiplying by 100",
+        "order": 2,
+        "action": "divide the change in real GDP by the earlier value g1 and multiply by 100 to express the real growth as a percentage",
+        "purpose": "convert the absolute real change into the percentage growth in real output",
+        "uses_equations": [
+          "growth_rate"
+        ]
+      },
+      "depends_on": [
+        "compute_real_change"
+      ],
+      "entity_key": "proc.apply_percent_change",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

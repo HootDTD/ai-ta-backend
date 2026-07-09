@@ -1,0 +1,240 @@
+"""Tests for campaign.config: snapshot/freeze/reload of every campaign tunable.
+
+Covers: snapshot round-trip, config_sha stability + tamper detection, and the
+gate-phase divergence guard (campaign.runctx tests exercise the RunContext
+wiring; here we test the pure config-layer primitives).
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from campaign.config import (
+    CampaignConfig,
+    ConfigDivergedError,
+    assert_live_matches_frozen,
+    config_sha,
+    freeze,
+    load_frozen,
+    snapshot_flags,
+    snapshot_int_flags,
+)
+
+
+def test_capture_live_reflects_current_defaults(monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_ENABLED", raising=False)
+    monkeypatch.delenv("APOLLO_CLARIFICATION_ENABLED", raising=False)
+    cfg = CampaignConfig.capture_live()
+
+    assert cfg.flags["APOLLO_NLI_ENABLED"] is True  # default-on
+    assert cfg.flags["APOLLO_CLARIFICATION_ENABLED"] is False  # default-off
+    assert set(cfg.axis_weights.keys()) == {
+        "procedure",
+        "justification",
+        "simplification",
+        "misconception_corrected",
+    }
+    assert cfg.letter_bands[0] == (97, "A+")
+    assert cfg.abstention_thresholds["unresolved_rate"] == pytest.approx(0.35)
+    assert cfg.nli_model  # non-empty
+    assert cfg.nli_params.min_entailment > 0
+
+
+def test_snapshot_flags_reads_env_overrides(monkeypatch):
+    monkeypatch.setenv("APOLLO_CLARIFICATION_ENABLED", "1")
+    monkeypatch.setenv("APOLLO_NLI_ENABLED", "0")
+
+    flags = snapshot_flags()
+
+    assert flags["APOLLO_CLARIFICATION_ENABLED"] is True
+    assert flags["APOLLO_NLI_ENABLED"] is False
+
+
+def test_snapshot_round_trips_through_from_snapshot(monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_ENABLED", raising=False)
+    cfg = CampaignConfig.capture_live()
+
+    restored = CampaignConfig.from_snapshot(cfg.snapshot())
+
+    assert restored == cfg
+    assert restored.snapshot() == cfg.snapshot()
+
+
+def test_config_sha_is_stable_for_identical_snapshot(monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_ENABLED", raising=False)
+    cfg = CampaignConfig.capture_live()
+
+    sha_a = config_sha(cfg.snapshot())
+    sha_b = config_sha(CampaignConfig.from_snapshot(cfg.snapshot()).snapshot())
+
+    assert sha_a == sha_b
+    assert len(sha_a) == 64  # sha256 hex digest
+
+
+def test_config_sha_changes_when_a_tunable_changes(monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_ENABLED", raising=False)
+    cfg = CampaignConfig.capture_live()
+    sha_before = config_sha(cfg.snapshot())
+
+    monkeypatch.setenv("APOLLO_NLI_MIN_ENTAILMENT", "0.42")
+    cfg_after = CampaignConfig.capture_live()
+    sha_after = config_sha(cfg_after.snapshot())
+
+    assert sha_before != sha_after
+
+
+def test_freeze_then_load_frozen_round_trips(tmp_path, monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_ENABLED", raising=False)
+    cfg = CampaignConfig.capture_live()
+    path = tmp_path / "nested" / "config.json"
+
+    frozen = freeze(cfg, path)
+
+    assert path.exists()
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["config_sha"] == frozen["config_sha"]
+
+    loaded_cfg, loaded_sha = load_frozen(path)
+
+    assert loaded_cfg == cfg
+    assert loaded_sha == frozen["config_sha"]
+
+
+def test_load_frozen_rejects_tampered_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_ENABLED", raising=False)
+    cfg = CampaignConfig.capture_live()
+    path = tmp_path / "config.json"
+    freeze(cfg, path)
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["config"]["axis_weights"]["procedure"] = 0.99
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="config_sha mismatch"):
+        load_frozen(path)
+
+
+def test_assert_live_matches_frozen_passes_when_unchanged(monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_ENABLED", raising=False)
+    frozen_cfg = CampaignConfig.capture_live()
+
+    assert_live_matches_frozen(frozen_cfg)  # must not raise
+
+
+def test_assert_live_matches_frozen_raises_on_divergence(monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_ENABLED", raising=False)
+    frozen_cfg = CampaignConfig.capture_live()
+
+    monkeypatch.setenv("APOLLO_NLI_MIN_ENTAILMENT", "0.01")
+
+    with pytest.raises(ConfigDivergedError):
+        assert_live_matches_frozen(frozen_cfg)
+
+
+# ---------------------------------------------------------------------------
+# 2026-07 routing Fix 1 (revised opt-in shape) — int_flags snapshot audit of
+# APOLLO_NLI_GRADING_MAX_NODES (campaign runs opt into 40; prod default 15).
+# ---------------------------------------------------------------------------
+
+
+def test_int_flags_default_when_env_unset(monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_GRADING_MAX_NODES", raising=False)
+    assert snapshot_int_flags() == {"APOLLO_NLI_GRADING_MAX_NODES": 15}
+
+
+def test_int_flags_read_env_override(monkeypatch):
+    monkeypatch.setenv("APOLLO_NLI_GRADING_MAX_NODES", "40")
+    cfg = CampaignConfig.capture_live()
+    assert cfg.int_flags["APOLLO_NLI_GRADING_MAX_NODES"] == 40
+    # and the value participates in the frozen snapshot + sha
+    assert cfg.snapshot()["int_flags"]["APOLLO_NLI_GRADING_MAX_NODES"] == 40
+
+
+def test_int_flags_malformed_env_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("APOLLO_NLI_GRADING_MAX_NODES", "not-a-number")
+    assert snapshot_int_flags()["APOLLO_NLI_GRADING_MAX_NODES"] == 15
+
+
+def test_int_flags_change_the_config_sha(monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_ENABLED", raising=False)
+    monkeypatch.delenv("APOLLO_NLI_GRADING_MAX_NODES", raising=False)
+    sha_default = config_sha(CampaignConfig.capture_live().snapshot())
+    monkeypatch.setenv("APOLLO_NLI_GRADING_MAX_NODES", "40")
+    sha_forty = config_sha(CampaignConfig.capture_live().snapshot())
+    assert sha_default != sha_forty
+
+
+def test_from_snapshot_backfills_int_flags_for_pre_int_flags_snapshots(monkeypatch):
+    """A frozen config.json written BEFORE int_flags existed (f1/f1c/f2)
+    reconstructs with each tracked tunable's documented default — the value
+    those runs actually graded under."""
+    monkeypatch.delenv("APOLLO_NLI_GRADING_MAX_NODES", raising=False)
+    old = CampaignConfig.capture_live().snapshot()
+    del old["int_flags"]  # simulate the pre-int_flags snapshot shape
+    restored = CampaignConfig.from_snapshot(old)
+    assert restored.int_flags == {"APOLLO_NLI_GRADING_MAX_NODES": 15}
+
+
+# --- flag-audit gap fix (certify-zero-fire-trace.md): the snapshot must track
+# APOLLO_NLI_MISC_POSITIVE_CERTIFY + APOLLO_ABSTENTION_COMPOSITE +
+# APOLLO_COMPOSITE_COVERAGE_MIN so a run whose server env silently lacks a
+# grading-behavior flag is visible in the frozen config.json (the f1c run had
+# NO audit trail for the certify flag, which is how it shipped "on in code,
+# off in every live request" undetected).
+
+
+def test_snapshot_tracks_misc_positive_certify_flag(monkeypatch):
+    monkeypatch.delenv("APOLLO_NLI_MISC_POSITIVE_CERTIFY", raising=False)
+    assert snapshot_flags()["APOLLO_NLI_MISC_POSITIVE_CERTIFY"] is False  # default OFF
+
+    monkeypatch.setenv("APOLLO_NLI_MISC_POSITIVE_CERTIFY", "1")
+    assert snapshot_flags()["APOLLO_NLI_MISC_POSITIVE_CERTIFY"] is True
+
+
+def test_snapshot_tracks_abstention_composite_flag(monkeypatch):
+    monkeypatch.delenv("APOLLO_ABSTENTION_COMPOSITE", raising=False)
+    assert snapshot_flags()["APOLLO_ABSTENTION_COMPOSITE"] is False  # default OFF
+
+    monkeypatch.setenv("APOLLO_ABSTENTION_COMPOSITE", "1")
+    assert snapshot_flags()["APOLLO_ABSTENTION_COMPOSITE"] is True
+
+
+def test_capture_live_snapshots_composite_coverage_min(monkeypatch):
+    monkeypatch.delenv("APOLLO_COMPOSITE_COVERAGE_MIN", raising=False)
+    cfg = CampaignConfig.capture_live()
+    assert cfg.composite_coverage_min == pytest.approx(0.6)  # settings default
+    assert cfg.snapshot()["composite_coverage_min"] == pytest.approx(0.6)
+
+    monkeypatch.setenv("APOLLO_COMPOSITE_COVERAGE_MIN", "0.8")
+    cfg2 = CampaignConfig.capture_live()
+    assert cfg2.composite_coverage_min == pytest.approx(0.8)
+
+
+def test_config_sha_changes_when_composite_tunables_change(monkeypatch):
+    monkeypatch.delenv("APOLLO_ABSTENTION_COMPOSITE", raising=False)
+    monkeypatch.delenv("APOLLO_COMPOSITE_COVERAGE_MIN", raising=False)
+    sha_base = config_sha(CampaignConfig.capture_live().snapshot())
+
+    monkeypatch.setenv("APOLLO_ABSTENTION_COMPOSITE", "1")
+    sha_flag = config_sha(CampaignConfig.capture_live().snapshot())
+    assert sha_flag != sha_base
+
+    monkeypatch.setenv("APOLLO_COMPOSITE_COVERAGE_MIN", "0.75")
+    sha_thr = config_sha(CampaignConfig.capture_live().snapshot())
+    assert sha_thr != sha_flag
+
+
+def test_from_snapshot_backward_compatible_with_pre_composite_files(monkeypatch):
+    """A frozen config.json written BEFORE composite_coverage_min existed (e.g.
+    campaign/out/f1c/config.json) must still reconstruct — the field falls back
+    to the settings default instead of raising KeyError."""
+    monkeypatch.delenv("APOLLO_COMPOSITE_COVERAGE_MIN", raising=False)
+    cfg = CampaignConfig.capture_live()
+    legacy = cfg.snapshot()
+    del legacy["composite_coverage_min"]  # simulate a pre-composite snapshot
+
+    restored = CampaignConfig.from_snapshot(legacy)
+
+    assert restored.composite_coverage_min == pytest.approx(0.6)

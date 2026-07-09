@@ -7,10 +7,11 @@ import logging
 import math
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -285,6 +286,14 @@ def _pick_concept_term(snippet: Any) -> str:
     return ""
 
 
+def _citation_pool_size(n_snippets: int) -> int:
+    """Thread pool width for parallel snippet scoring.
+
+    Default cap 24 > default snippet count (K_SEM=20) so all snippets score
+    in a single wave — wall time ≈ slowest single call instead of two waves.
+    """
+    cap = int(os.getenv("CITATION_WORKERS", "24"))
+    return max(1, min(cap, n_snippets))
 
 
 def _score_and_answer_snippet(
@@ -297,9 +306,10 @@ def _score_and_answer_snippet(
 ) -> Dict[str, Any]:
     """Score relevance AND extract answer from a single snippet in one LLM call."""
     client = _client()
-    model = model or os.getenv(
-        "CITATION_SCORER_MODEL", os.getenv("PARSER_MODEL", "gpt-4o")
-    )
+    # Default stays gpt-4o: measured A/B showed gpt-4o-mini is ~30% slower
+    # per call with identical scores, and parallel scoring's wall time is the
+    # slowest call. CITATION_SCORER_MODEL is the single override knob.
+    model = model or os.getenv("CITATION_SCORER_MODEL", "gpt-4o")
     marker = getattr(snippet, "citation_marker", None) or getattr(snippet, "marker", None)
     if not isinstance(marker, str) or not marker.strip():
         marker = _fallback_citation_marker(snippet, citation_label)
@@ -785,7 +795,10 @@ def extract_and_filter_keywords(
 
     try:
         resp = client.chat.completions.create(
-            model=os.getenv("PARSER_MODEL", "gpt-4o"),
+            # Default stays gpt-4o: measured 1.3-2.1s vs 3.0-4.2s on gpt-4o-mini
+            # (mini emits more terms at lower tokens/s). KEYWORD_MODEL is the
+            # override knob if pricing/latency tradeoffs change.
+            model=os.getenv("KEYWORD_MODEL", "gpt-4o"),
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -907,13 +920,72 @@ def parse_question(user_query: str, subject: str | None = None) -> ParsedTask:
     return task
 
 
-def solve_with_bundle(
+def _is_reasoning_model(model: str) -> bool:
+    """True if the model takes a `reasoning` param (gpt-5 family)."""
+    gpt5_allow = {"gpt-5", "gpt-5-chat-latest", "gpt-5-mini"}
+    return model.startswith("gpt-5") or model in gpt5_allow
+
+
+def _build_solution_from_data(data: Dict[str, Any]) -> ProposedSolution:
+    """Map a solver JSON dict to a ProposedSolution. Pure; no I/O.
+
+    Shared by the blocking solve_with_bundle and the streaming
+    solve_with_bundle_stream so both produce identical solutions.
+    """
+    if data.get("not_relevant", False):
+        return ProposedSolution(
+            steps="This question is not relevant to the course scope.",
+            final_answers={},
+            equations_used=[],
+            assumptions=[],
+            code=None,
+            code_output=None,
+            code_hash=None,
+            vars_created=[],
+        )
+
+    raw_steps = data.get("steps", "")
+    if isinstance(raw_steps, list):
+        # Join list elements as paragraphs instead of JSON-serialising them.
+        raw_steps = "\n\n".join(
+            elem if isinstance(elem, str) else str(elem) for elem in raw_steps
+        )
+    elif not isinstance(raw_steps, str):
+        raw_steps = str(raw_steps)
+
+    # Enforce conceptual-only mode regardless of model output.
+    final_answers_output: Dict[str, Any] = {}
+    equations_used = data.get("equations_used", [])
+    assumptions = data.get("assumptions", [])
+
+    # Ensure structured fields are in expected shapes.
+    if not isinstance(equations_used, list):
+        equations_used = [equations_used] if equations_used else []
+    if not isinstance(assumptions, list):
+        assumptions = [assumptions] if assumptions else []
+
+    return ProposedSolution(
+        steps=raw_steps,
+        final_answers=final_answers_output,
+        equations_used=equations_used,
+        assumptions=assumptions,
+        code=None,
+        code_output=None,
+        code_hash=None,
+        vars_created=[],
+    )
+
+
+def _prepare_solve_prompt(
     parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None,
     subject: str | None = None,
-) -> ProposedSolution:
-    """Solve the parsed task using only information from the provided bundle."""
+) -> Tuple[str, str, str]:
+    """Run snippet scoring and build the solver prompt.
 
-    client = _client()
+    Returns (system, user_base, model). All side effects (miniresponse files,
+    provenance 'citation_rankings', debug dumps) are preserved exactly as in the
+    original solve_with_bundle. Shared by the blocking and streaming solve paths.
+    """
     question_text = ""
     try:
         question_text = getattr(bundle.metadata, "question", "") or getattr(
@@ -924,51 +996,76 @@ def solve_with_bundle(
         question_text = ""
 
     q = question_text or parsed_task.problem_type
-    scorer_model = os.getenv(
-        "CITATION_SCORER_MODEL", os.getenv("PARSER_MODEL", "gpt-4o")
-    )
+    scorer_model = os.getenv("CITATION_SCORER_MODEL", "gpt-4o")
+
+    # Cached scoring rows from the session bundle cache (retrieval-mode
+    # orchestrator). Snippets with a cached row skip the scoring pool —
+    # combined_results MUST stay index-aligned with bundle.snippets.
+    cached_scores: Dict[str, Dict[str, Any]] = {}
+    try:
+        raw_cached = (getattr(bundle, "provenance", {}) or {}).get(
+            "cached_citation_scores"
+        ) or {}
+        cached_scores = {
+            str(k): v for k, v in raw_cached.items()
+            if isinstance(v, dict) and "score" in v
+        }
+    except Exception:
+        cached_scores = {}
 
     # Build per-snippet args before submitting to the pool
-    snippet_args: List[Tuple[Any, float, str]] = []
-    for sn in bundle.snippets:
+    combined_results: List[Optional[Dict[str, Any]]] = [None] * len(bundle.snippets)
+    snippet_args: List[Tuple[int, Any, float, str]] = []
+    for i, sn in enumerate(bundle.snippets):
+        cached_row = cached_scores.get(str(getattr(sn, "id", "")))
+        if cached_row is not None:
+            combined_results[i] = {**cached_row, "answer": cached_row.get("answer", "(cached)")}
+            continue
         focus_term = _pick_concept_term(sn)
         importance = _importance_from_snippet(sn)
-        snippet_args.append((sn, importance, focus_term))
+        snippet_args.append((i, sn, importance, focus_term))
 
     # Run merged score+answer in parallel (Phase 2+3)
-    max_workers = min(
-        int(os.getenv("CITATION_WORKERS", "12")),
-        max(len(snippet_args), 1),
+    _t_score = time.perf_counter()
+    if snippet_args:
+        max_workers = _citation_pool_size(len(snippet_args))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = [
+                (
+                    i,
+                    pool.submit(
+                        _score_and_answer_snippet,
+                        q, sn, importance, focus_term,
+                        model=scorer_model,
+                    ),
+                )
+                for i, sn, importance, focus_term in snippet_args
+            ]
+            for i, future in futures:
+                try:
+                    combined_results[i] = future.result()
+                except Exception:
+                    log.error("Parallel snippet processing failed", exc_info=True)
+                    combined_results[i] = {
+                        "marker": "?",
+                        "page": None,
+                        "snippet_id": "",
+                        "concept_term": "",
+                        "importance": 0.0,
+                        "relevance": 0.0,
+                        "directness": 0.0,
+                        "base_score": 0.0,
+                        "score": 0.0,
+                        "context": "",
+                        "why": "",
+                        "answer": "Not Relevant",
+                    }
+
+    log.info(
+        "[timing] snippet_scoring=%.2fs n=%d reused=%d",
+        time.perf_counter() - _t_score, len(snippet_args),
+        len(bundle.snippets) - len(snippet_args),
     )
-    combined_results: List[Dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = [
-            pool.submit(
-                _score_and_answer_snippet,
-                q, sn, importance, focus_term,
-                model=scorer_model,
-            )
-            for sn, importance, focus_term in snippet_args
-        ]
-        for future in futures:
-            try:
-                combined_results.append(future.result())
-            except Exception:
-                log.error("Parallel snippet processing failed", exc_info=True)
-                combined_results.append({
-                    "marker": "?",
-                    "page": None,
-                    "snippet_id": "",
-                    "concept_term": "",
-                    "importance": 0.0,
-                    "relevance": 0.0,
-                    "directness": 0.0,
-                    "base_score": 0.0,
-                    "score": 0.0,
-                    "context": "",
-                    "why": "",
-                    "answer": "Not Relevant",
-                })
 
     # Split into citation_analyses (score fields) and per_citation_answers (answer fields)
     citation_analyses: List[Dict[str, Any]] = []
@@ -1251,69 +1348,141 @@ def solve_with_bundle(
 
     _maybe_debug_dump(system, user_base, bundle, proof_bundle, citation_analyses)
 
+    return system, user_base, model
+
+
+def solve_with_bundle(
+    parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None,
+    subject: str | None = None,
+) -> ProposedSolution:
+    """Solve the parsed task using only information from the provided bundle."""
+    client = _client()
+    system, user_base, model = _prepare_solve_prompt(parsed_task, bundle, hint, subject)
+
     def _chat(msgs: List[dict]) -> dict:
         kwargs = {
             "model": model,
             "messages": msgs,
             "response_format": {"type": "json_object"},
         }
-        gpt5_allow = {"gpt-5", "gpt-5-chat-latest", "gpt-5-mini"}
-        if model.startswith("gpt-5") or model in gpt5_allow:
+        if _is_reasoning_model(model):
             kwargs["reasoning_effort"] = os.getenv("MAIN_REASONING_EFFORT", "high")
         else:
             kwargs["temperature"] = 0
+        kwargs["prompt_cache_key"] = os.getenv(
+            "PROMPT_CACHE_KEY", f"aita-solver:{model}"
+        )
+        service_tier = (os.getenv("OPENAI_SERVICE_TIER") or "").strip()
+        if service_tier:
+            kwargs["service_tier"] = service_tier
         resp = client.chat.completions.create(**kwargs)
         content = resp.choices[0].message.content
         return json.loads(content)
 
+    _t_solve = time.perf_counter()
     data = _chat([
         {"role": "system", "content": system},
         {"role": "user", "content": user_base},
     ])
+    log.info("[timing] solve=%.2fs model=%s", time.perf_counter() - _t_solve, model)
 
-    # Short-circuit for off-topic questions
-    if data.get("not_relevant", False):
-        return ProposedSolution(
-            steps="This question is not relevant to the course scope.",
-            final_answers={},
-            equations_used=[],
-            assumptions=[],
-            code=None,
-            code_output=None,
-            code_hash=None,
-            vars_created=[],
-        )
+    return _build_solution_from_data(data)
 
-    raw_steps = data.get("steps", "")
-    if isinstance(raw_steps, list):
-        # Join list elements as paragraphs instead of JSON-serialising them.
-        raw_steps = "\n\n".join(
-            elem if isinstance(elem, str) else str(elem) for elem in raw_steps
-        )
-    elif not isinstance(raw_steps, str):
-        raw_steps = str(raw_steps)
 
-    # Enforce conceptual-only mode regardless of model output.
-    final_answers_output: Dict[str, Any] = {}
-    equations_used = data.get("equations_used", [])
-    assumptions = data.get("assumptions", [])
+def solve_with_bundle_stream(
+    parsed_task: ParsedTask, bundle: ResearchBundle, hint: str | None = None,
+    subject: str | None = None,
+) -> "Iterator[Tuple[str, Any]]":
+    """Generator: yields ("reasoning", str) summary deltas during the think
+    phase, ("token", str) decoded answer deltas, then ("solution",
+    ProposedSolution). Uses the Responses API so reasoning summaries stream.
 
-    # Ensure structured fields are in expected shapes.
-    if not isinstance(equations_used, list):
-        equations_used = [equations_used] if equations_used else []
-    if not isinstance(assumptions, list):
-        assumptions = [assumptions] if assumptions else []
+    Dispatches on event.type and ignores unknown events, so if the account does
+    not emit reasoning summaries it degrades to answer-only streaming.
+    """
+    from ai.streaming import JsonStringFieldStreamer
 
-    return ProposedSolution(
-        steps=raw_steps,
-        final_answers=final_answers_output,
-        equations_used=equations_used,
-        assumptions=assumptions,
-        code=None,
-        code_output=None,
-        code_hash=None,
-        vars_created=[],
+    client = _client()
+    system, user_base, model = _prepare_solve_prompt(parsed_task, bundle, hint, subject)
+
+    kwargs: Dict[str, Any] = {
+        "model": model,
+        "instructions": system,
+        "input": user_base,
+        "text": {"format": {"type": "json_object"}},
+        "stream": True,
+    }
+    if _is_reasoning_model(model):
+        kwargs["reasoning"] = {
+            "effort": os.getenv("MAIN_REASONING_EFFORT", "high"),
+            "summary": "auto",
+        }
+    else:
+        kwargs["temperature"] = 0
+
+    # Prompt-cache routing: tutor_prompt() instructions are the static prefix;
+    # a stable cache key routes repeat requests to the same cache (per-key
+    # throughput limit ~15 RPM — fine at current traffic).
+    kwargs["prompt_cache_key"] = os.getenv(
+        "PROMPT_CACHE_KEY", f"aita-solver:{model}"
     )
+    service_tier = (os.getenv("OPENAI_SERVICE_TIER") or "").strip()
+    if service_tier:
+        kwargs["service_tier"] = service_tier
+    verbosity = (os.getenv("MAIN_VERBOSITY") or "").strip()
+    if verbosity and _is_reasoning_model(model):
+        kwargs["text"]["verbosity"] = verbosity
+
+    streamer = JsonStringFieldStreamer(field="steps")
+    json_buf: List[str] = []
+
+    seen_types: set[str] = set()
+    _t_solve = time.perf_counter()
+    for event in client.responses.create(**kwargs):
+        etype = getattr(event, "type", "")
+        seen_types.add(etype)
+        if etype == "response.reasoning_summary_text.delta":
+            delta = getattr(event, "delta", "") or ""
+            if delta:
+                yield ("reasoning", delta)
+        elif etype == "response.output_text.delta":
+            delta = getattr(event, "delta", "") or ""
+            if not delta:
+                continue
+            json_buf.append(delta)
+            text = streamer.feed(delta)
+            if text:
+                yield ("token", text)
+
+    log.info("[stream] response event types seen: %s", sorted(seen_types))
+    log.info("[timing] solve_stream=%.2fs model=%s", time.perf_counter() - _t_solve, model)
+
+    full = "".join(json_buf)
+    try:
+        data = json.loads(full)
+    except Exception:
+        log.error("Streaming solve produced unparseable JSON; empty solution")
+        data = {}
+    yield ("solution", _build_solution_from_data(data))
+
+
+# Zero-width characters and their HTML entities (decimal and hex, with or
+# without the trailing semicolon). gpt-5 models sporadically emit a literal
+# "&#8203;" (zero-width space) before citation markers — a web-text artifact
+# that renders as visible garbage since answers are plain text, not HTML.
+# Once one answer in a session contains it, chat memory feeds it back and the
+# model repeats it for the rest of the conversation.
+_ZERO_WIDTH_RE = re.compile(
+    r"&#(?:8203|8204|8205|65279);?"
+    r"|&#x(?:200b|200c|200d|feff);?"
+    r"|[\u200b\u200c\u200d\ufeff]",
+    re.IGNORECASE,
+)
+
+
+def _strip_zero_width(text: str) -> str:
+    """Remove zero-width characters/entities from model-generated text."""
+    return _ZERO_WIDTH_RE.sub("", text)
 
 
 def format_answer(
@@ -1348,7 +1517,7 @@ def format_answer(
             return "\n".join(parts)
         return str(val)
 
-    text_str = _to_str(text)
+    text_str = _strip_zero_width(_to_str(text))
     fa = getattr(solution, "final_answers", {}) or {}
     if isinstance(fa, dict) and fa:
         results_lines = [f"- {k} = {v}" for k, v in fa.items()]
@@ -1687,6 +1856,7 @@ def _write_miniresponses(
 __all__ = [
     "parse_question",
     "solve_with_bundle",
+    "solve_with_bundle_stream",
     "format_answer",
     "normalize_query",
     "is_question_subject_relevant",

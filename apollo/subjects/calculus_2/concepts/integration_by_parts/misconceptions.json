@@ -1,0 +1,43 @@
+{
+  "misconceptions": [
+    {
+      "key": "misc.forgets_minus_sign",
+      "display_name": "Drops the minus sign in the parts formula",
+      "description": "Writes integral u dv = uv + integral v du, adding the second integral instead of subtracting it. The correct formula is uv MINUS integral v du.",
+      "opposes": "eq.ibp_formula",
+      "trigger_phrases": [
+        "uv plus integral v du",
+        "add the second integral",
+        "forget the minus",
+        "uv + integral v du",
+        "plus v du"
+      ]
+    },
+    {
+      "key": "misc.wrong_liate_choice",
+      "display_name": "Chooses u and dv backwards",
+      "description": "Assigns u to the factor that should be dv (e.g. lets dv be the algebraic factor and u be the exponential), so the leftover integral gets harder, not easier. LIATE says pick u from the earliest matching category.",
+      "opposes": "cond.liate_choice",
+      "trigger_phrases": [
+        "let u be e^x",
+        "choose dv = x dx",
+        "pick u as the exponential",
+        "u equals the exponential",
+        "dv is the polynomial"
+      ]
+    },
+    {
+      "key": "misc.cyclic_never_terminates",
+      "display_name": "Keeps applying parts forever",
+      "description": "In a cyclic integral like integral e^x sin x dx, keeps applying integration by parts indefinitely instead of recognizing the original integral has reappeared and solving for it algebraically.",
+      "opposes": "simp.solve_for_I",
+      "trigger_phrases": [
+        "apply parts again and again",
+        "it never ends",
+        "keep integrating forever",
+        "loops forever",
+        "do parts a third time"
+      ]
+    }
+  ]
+}

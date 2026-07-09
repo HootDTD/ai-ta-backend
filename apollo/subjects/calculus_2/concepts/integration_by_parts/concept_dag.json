@@ -1,0 +1,57 @@
+{
+  "topic_cluster": "calculus_2",
+  "nodes": [
+    {
+      "id": "antiderivative",
+      "label": "Antiderivative",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "product_rule",
+      "label": "Product Rule",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "basic_integration_rules",
+      "label": "Basic Integration Rules",
+      "prerequisites": [
+        "antiderivative"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "integration_by_parts",
+      "label": "Integration by Parts",
+      "prerequisites": [
+        "product_rule",
+        "basic_integration_rules"
+      ],
+      "scope_boundary": [
+        "reduction_formulas"
+      ],
+      "topic_cluster": "calculus_2"
+    }
+  ],
+  "edges": [
+    {
+      "type": "requires",
+      "from": "basic_integration_rules",
+      "to": "antiderivative"
+    },
+    {
+      "type": "requires",
+      "from": "integration_by_parts",
+      "to": "product_rule"
+    },
+    {
+      "type": "requires",
+      "from": "integration_by_parts",
+      "to": "basic_integration_rules"
+    }
+  ]
+}

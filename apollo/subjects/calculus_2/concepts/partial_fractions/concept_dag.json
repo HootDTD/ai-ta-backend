@@ -1,0 +1,57 @@
+{
+  "topic_cluster": "calculus_2",
+  "nodes": [
+    {
+      "id": "antiderivative",
+      "label": "Antiderivative",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "polynomial_factoring",
+      "label": "Polynomial Factoring",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "log_integral",
+      "label": "Integral of 1/(x - r)",
+      "prerequisites": [
+        "antiderivative"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "partial_fractions",
+      "label": "Partial Fractions",
+      "prerequisites": [
+        "polynomial_factoring",
+        "log_integral"
+      ],
+      "scope_boundary": [
+        "irreducible_quadratic_completing_square"
+      ],
+      "topic_cluster": "calculus_2"
+    }
+  ],
+  "edges": [
+    {
+      "type": "requires",
+      "from": "log_integral",
+      "to": "antiderivative"
+    },
+    {
+      "type": "requires",
+      "from": "partial_fractions",
+      "to": "polynomial_factoring"
+    },
+    {
+      "type": "requires",
+      "from": "partial_fractions",
+      "to": "log_integral"
+    }
+  ]
+}

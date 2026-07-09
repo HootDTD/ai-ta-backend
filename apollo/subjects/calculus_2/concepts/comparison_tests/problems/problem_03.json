@@ -1,0 +1,121 @@
+{
+  "id": "direct_comparison_geometric_two_pow_n",
+  "concept_id": "comparison_tests",
+  "difficulty": "standard",
+  "given_values": {},
+  "problem_text": "Use a comparison test to determine whether sum_{n=1}^infinity 1/(2^n + n) converges or diverges.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "positive_terms",
+      "geometric_series",
+      "term_bound",
+      "plan_choose_comparison",
+      "plan_establish_inequality",
+      "direct_comparison_converges",
+      "plan_conclude"
+    ]
+  ],
+  "target_unknown": "convergence verdict",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "positive_terms",
+      "step": 1,
+      "content": {
+        "label": "Positive-term series",
+        "applies_when": "the terms are positive, so a comparison test applies"
+      },
+      "depends_on": [],
+      "entity_key": "cond.positive_terms",
+      "entry_type": "condition"
+    },
+    {
+      "id": "geometric_series",
+      "step": 2,
+      "content": {
+        "concept": "Geometric series test",
+        "meaning": "sum r^n converges iff |r| < 1; the comparison series (1/2)^n has r = 1/2 and converges."
+      },
+      "depends_on": [],
+      "entity_key": "def.geometric_series",
+      "entry_type": "definition"
+    },
+    {
+      "id": "term_bound",
+      "step": 3,
+      "content": {
+        "label": "Bounding the terms above",
+        "applies_when": "2^n + n > 2^n for all n >= 1",
+        "transformation": "0 < 1/(2^n + n) < 1/2^n = (1/2)^n"
+      },
+      "depends_on": [
+        "positive_terms"
+      ],
+      "entity_key": "simp.term_bound",
+      "entry_type": "simplification"
+    },
+    {
+      "id": "plan_choose_comparison",
+      "step": 4,
+      "content": {
+        "label": "choose the convergent geometric series sum (1/2)^n (ratio 1/2)",
+        "order": 1,
+        "action": "choose the convergent geometric series sum (1/2)^n (ratio 1/2)",
+        "purpose": "pick a known convergent series to bound the given one",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "positive_terms",
+        "geometric_series"
+      ],
+      "entity_key": "proc.plan_choose_comparison",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_establish_inequality",
+      "step": 5,
+      "content": {
+        "label": "establish 0 < 1/(2^n + n) < (1/2)^n for all n >= 1",
+        "order": 2,
+        "action": "establish 0 < 1/(2^n + n) < (1/2)^n for all n >= 1",
+        "purpose": "show the given terms are dominated by the convergent geometric series",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "term_bound",
+        "plan_choose_comparison"
+      ],
+      "entity_key": "proc.plan_establish_inequality",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "direct_comparison_converges",
+      "step": 6,
+      "content": {
+        "label": "Direct Comparison Test (convergence)",
+        "applies_when": "a nonnegative series bounded above term-by-term by a convergent series also converges."
+      },
+      "depends_on": [],
+      "entity_key": "cond.direct_comparison_converges",
+      "entry_type": "condition"
+    },
+    {
+      "id": "plan_conclude",
+      "step": 7,
+      "content": {
+        "label": "since sum (1/2)^n converges and the given terms are smaller, sum 1/(2^n + n) converges by Direct Comparison",
+        "order": 3,
+        "action": "since sum (1/2)^n converges and the given terms are smaller, sum 1/(2^n + n) converges by Direct Comparison",
+        "purpose": "reach the convergence verdict",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "plan_establish_inequality",
+        "direct_comparison_converges"
+      ],
+      "entity_key": "proc.plan_conclude",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "constants": {
+    "pi": 3.141592653589793
+  },
+  "augmented_givens": {},
+  "non_trivial_keywords": [
+    "integral",
+    "partial fractions",
+    "decompose",
+    "decomposition",
+    "clear denominators",
+    "coefficients",
+    "linear factor",
+    "irreducible quadratic",
+    "repeated factor",
+    "cover-up",
+    "antiderivative"
+  ],
+  "plan_markers": [
+    "first",
+    "then",
+    "next",
+    "factor",
+    "decompose",
+    "clear denominators",
+    "solve for",
+    "plug in",
+    "match coefficients",
+    "integrate"
+  ]
+}

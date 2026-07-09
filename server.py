@@ -2,6 +2,7 @@ import importlib
 import io
 import os
 import re
+import time
 import uuid
 import base64
 import logging
@@ -9,7 +10,7 @@ import shutil
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import List, Optional, Sequence, Iterator, Iterable, Union, Dict, Any
+from typing import List, Optional, Sequence, Iterator, Iterable, Tuple, Union, Dict, Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +26,7 @@ from config.settings import get_runtime_dir, set_subject_name, RequestConfig
 from ai.orchestrator import Orchestrator
 from knowledge.manager import KnowledgeManager
 from config.weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
-from ai.main_ai import extract_keywords, parse_question, solve_with_bundle, format_answer
+from ai.main_ai import extract_keywords, parse_question, solve_with_bundle, solve_with_bundle_stream, format_answer
 from config.contracts import ParsedTask
 from citations.formatter import format_citations
 from knowledge.teacher_weekly import TeacherWeeklyStorage
@@ -51,6 +52,7 @@ from chats.service import (
     list_recent_turns,
     refresh_memory_summary,
 )
+from apollo.api import router as apollo_router, register_exception_handlers as _register_apollo_exception_handlers
 
 try:  # pragma: no cover - optional dependency detection
     importlib.import_module("python_multipart")
@@ -246,6 +248,9 @@ class TeacherCourseOut(BaseModel):
     slug: str
     current_week: int
     weeks: List[TeacherWeekOut]
+    # Course-wide textbook (not pinned to a week). Always present; empty section
+    # when no textbook has been uploaded.
+    textbook: TeacherSectionOut
 
 
 class TeacherCurrentWeekIn(BaseModel):
@@ -293,12 +298,15 @@ def _serialize_course_payload(payload: Dict[str, Any]) -> TeacherCourseOut:
         slides = _serialize_section(block.get("slides"))
         weeks_out.append(TeacherWeekOut(week=week_num, notes=notes, slides=slides))
     weeks_out.sort(key=lambda w: w.week)
+    # Tolerate payloads without a textbook key — serialize to an empty section.
+    textbook = _serialize_section(payload.get("textbook"))
     return TeacherCourseOut(
         search_space_id=int(payload.get("search_space_id", 0) or 0),
         course=str(payload.get("course", "")),
         slug=str(payload.get("slug", "")),
         current_week=int(payload.get("current_week", 1) or 1),
         weeks=weeks_out,
+        textbook=textbook,
     )
 
 
@@ -429,7 +437,10 @@ async def _load_memory_and_append_user_turn_async(
             meta=meta or {},
         )
         if meta:
-            session.meta = meta
+            # Merge, don't replace: meta also carries orchestrator state
+            # (bundle_cache fingerprint) written by persist_turn_outcome —
+            # a blind overwrite here invalidated the session cache every turn.
+            session.meta = {**(session.meta or {}), **meta}
 
         recent_turns = await list_recent_turns(
             db_session,
@@ -477,12 +488,27 @@ def _debug_error_detail(prefix: str, exc: Exception) -> str:
     return f"{prefix}: {type(exc).__name__}: {exc}"
 
 
+def _keywords_from_bundle(bundle: Any) -> List[str]:
+    """Robustly pull the ≤8-term keyword list off a ResearchBundle for write-only
+    persistence (§10 RQ5 hedge). Returns [] for a None/AUGMENT/cache bundle that
+    carries no found_terms. Does NOT re-cap at 8 — the bound is upstream in
+    extract_and_filter_keywords."""
+    terms = (
+        getattr(bundle, "found_terms", None)
+        or getattr(getattr(bundle, "metadata", None), "found_terms", None)
+        or []
+    )
+    return [str(t) for t in terms]
+
+
 async def _append_assistant_turn_and_refresh_async(
     *,
     auth: AuthContext,
     chat_id: str,
     search_space_id: int,
     assistant_content: str,
+    citations: Optional[List[Dict[str, Any]]] = None,
+    keywords: Optional[List[str]] = None,  # §10 RQ5 hedge — write-only chat keywords
 ) -> None:
     async with get_async_session() as db_session:
         session = await get_chat_session_for_user(
@@ -508,6 +534,8 @@ async def _append_assistant_turn_and_refresh_async(
             role="assistant",
             content=assistant_content,
             model=os.getenv("SOLVER_MODEL", "gpt-4o"),
+            citations=list(citations) if citations else None,
+            keywords=list(keywords) if keywords else None,  # None/empty -> [] in append_turn
         )
         await refresh_memory_summary(db_session, chat_session=session)
         session.updated_at = datetime.now(UTC)
@@ -520,6 +548,8 @@ def _append_assistant_turn_and_refresh(
     chat_id: str,
     search_space_id: int,
     assistant_content: str,
+    citations: Optional[List[Dict[str, Any]]] = None,
+    keywords: Optional[List[str]] = None,  # §10 RQ5 hedge — write-only chat keywords
 ) -> None:
     run_async(
         _append_assistant_turn_and_refresh_async(
@@ -527,6 +557,8 @@ def _append_assistant_turn_and_refresh(
             chat_id=chat_id,
             search_space_id=search_space_id,
             assistant_content=assistant_content,
+            citations=citations,
+            keywords=keywords,
         )
     )
 
@@ -637,11 +669,41 @@ def _structured_citations_from_bundle(
 
 # -------- App --------
 app = FastAPI(title="AI-TA HTTP Server", version="0.1.0")
+app.include_router(apollo_router)
+_register_apollo_exception_handlers(app)
 
 
 @app.on_event("startup")
 def _validate_startup_env() -> None:
     validate_required_env()
+
+
+def _apollo_nli_prewarm_enabled() -> bool:
+    """``APOLLO_NLI_PREWARM=1`` (or true/yes) opts boot into the NLI
+    pre-warm hook (campaign C2). Default OFF — prod boot behavior is
+    unchanged unless a deployment (or the local campaign harness) sets it."""
+    raw = os.environ.get("APOLLO_NLI_PREWARM")
+    return raw is not None and raw.strip().lower() in ("1", "true", "yes")
+
+
+@app.on_event("startup")
+def _prewarm_nli_on_startup() -> None:
+    """When enabled, force the NLI checkpoint to load at boot so the first
+    live grading/chat request never triggers a lazy first-load / Hugging
+    Face download on the request path (spec: "no first-request HF
+    download"). A prewarm failure (missing ``transformers``, no network on
+    a cold cache, OOM, ...) must never block server boot — it only means
+    the FIRST live NLI call pays the lazy-load cost instead."""
+    if not _apollo_nli_prewarm_enabled():
+        return
+    try:
+        from apollo.resolution.nli_adjudicator import prewarm
+
+        t0 = time.monotonic()
+        prewarm()
+        log.info("apollo_nli_prewarm_complete seconds=%.2f", time.monotonic() - t0)
+    except Exception:
+        log.exception("apollo_nli_prewarm_failed")
 
 # CORS
 cors_origins = os.getenv("CORS_ALLOW_ORIGINS", "*")
@@ -1423,10 +1485,15 @@ def list_my_classes(request: Request):
 # pgvector retrieval helper
 # ---------------------------------------------------------------------------
 
-def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "ResearchBundle":
+def _ask_pgvector(
+    q_effective: str, workspace, weight_overrides: dict, cfg,
+    top_k: Optional[int] = None, token_budget: Optional[int] = None,
+) -> "ResearchBundle":
     """Run the pgvector retrieval pipeline and return a ResearchBundle.
 
     Uses the shared background event loop so asyncpg connections stay alive.
+    ``top_k``/``token_budget`` default to env (K_SEM/TOKEN_BUDGET); the
+    retrieval-mode orchestrator passes smaller values for AUGMENT top-ups.
     """
     from config.contracts import ResearchBundle, ResearchMetadata
     from retrieval.pipeline import retrieve_for_question
@@ -1441,12 +1508,15 @@ def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "
             "set USE_PGVECTOR_RETRIEVAL=true only after seeding the DB."
         )
 
-    token_budget = int(os.getenv("TOKEN_BUDGET", "6000"))
+    if token_budget is None:
+        token_budget = int(os.getenv("TOKEN_BUDGET", "6000"))
 
     # Extract keywords (role: hints appended to original question, not standalone targets)
     # extract_and_filter_keywords returns (context_summary, term_list)
     try:
+        _t_kw = time.perf_counter()
         _ctx_summary, raw_keywords = extract_and_filter_keywords(q_effective)
+        log.info("[timing] keyword_extraction=%.2fs", time.perf_counter() - _t_kw)
         keywords: List[str] = []
         for entry in (raw_keywords or []):
             if isinstance(entry, dict):
@@ -1466,11 +1536,13 @@ def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "
                 search_space_id=search_space_id,
                 db_session=db_session,
                 weight_overrides=weight_overrides or {},
-                top_k=int(os.getenv("K_SEM", "20")),
+                top_k=top_k if top_k is not None else int(os.getenv("K_SEM", "20")),
                 token_budget=token_budget,
             )
 
+    _t_retr = time.perf_counter()
     snippets, diagnostics = run_async(_run())
+    log.info("[timing] retrieval_total=%.2fs", time.perf_counter() - _t_retr)
 
     # Extract structured knowledge from snippet text (equations, glossary, etc.)
     equations, glossary, assumptions, _ = _summarize_snippets(snippets)
@@ -1511,6 +1583,108 @@ def _ask_pgvector(q_effective: str, workspace, weight_overrides: dict, cfg) -> "
         attempted_terms=[q_effective],
         subject=cfg.subject_name if cfg else "",
     )
+
+
+# ---------------------------------------------------------------------------
+# Retrieval-mode orchestrator hooks (ROUTER_ENABLED, default off)
+# ---------------------------------------------------------------------------
+
+def _prepare_router_context_sync(
+    *, auth, chat_id: str, search_space_id: int, question: str, has_attachments: bool,
+):
+    """Decide NONE/AUGMENT/FRESH for this turn. Returns None (= legacy FRESH
+    path) when the router is disabled or anything fails."""
+    from ai.router import wiring as router_wiring
+
+    if not router_wiring.router_enabled():
+        return None
+    try:
+        return run_async(
+            router_wiring.prepare_router_context(
+                chat_id=chat_id,
+                user_id=auth.user_id,
+                search_space_id=search_space_id,
+                question=question,
+                has_attachments=has_attachments,
+            )
+        )
+    except Exception:
+        log.warning("Router context preparation failed — legacy path", exc_info=True)
+        return None
+
+
+def _retrieve_bundle_with_router(
+    *, router_ctx, q_effective: str, workspace, weight_overrides: dict, cfg,
+) -> Tuple["ResearchBundle", int]:
+    """Pick the retrieval path from the router decision.
+
+    NONE → rebuild bundle from the session cache (no retrieval, cached
+    citation scores skip the scoring wave). AUGMENT → small top-up retrieval
+    merged with the cache. FRESH / no router → legacy path unchanged.
+    Returns (bundle, retrieval_latency_ms).
+    """
+    from ai.router import wiring as router_wiring
+
+    _t = time.perf_counter()
+    decision_mode = router_ctx.decision.mode if router_ctx else "FRESH"
+    cached = router_ctx.cached if router_ctx else None
+    subject = cfg.subject_name if cfg else ""
+
+    if decision_mode == "NONE" and cached is not None:
+        bundle = router_wiring.bundle_from_cache(
+            cached,
+            q_effective=q_effective,
+            subject=subject,
+            reason=router_ctx.decision.reason,
+        )
+    elif decision_mode == "AUGMENT" and cached is not None:
+        fresh = _ask_pgvector(
+            q_effective=q_effective,
+            workspace=workspace,
+            weight_overrides=weight_overrides,
+            cfg=cfg,
+            top_k=router_wiring.augment_top_k(),
+            token_budget=router_wiring.augment_token_budget(),
+        )
+        bundle = router_wiring.merge_augment_bundle(
+            cached,
+            fresh,
+            q_effective=q_effective,
+            subject=subject,
+            reason=router_ctx.decision.reason,
+        )
+    else:
+        bundle = _ask_pgvector(
+            q_effective=q_effective,
+            workspace=workspace,
+            weight_overrides=weight_overrides,
+            cfg=cfg,
+        )
+    return bundle, int((time.perf_counter() - _t) * 1000)
+
+
+def _persist_router_outcome_sync(
+    *, auth, chat_id: str, router_ctx, bundle, question: str,
+    retrieval_ms: Optional[int], answer_ms: Optional[int],
+) -> None:
+    """Save the answered bundle into the session cache + telemetry row.
+    Never raises."""
+    from ai.router import wiring as router_wiring
+
+    try:
+        run_async(
+            router_wiring.persist_turn_outcome(
+                chat_id=chat_id,
+                user_id=auth.user_id,
+                ctx=router_ctx,
+                bundle=bundle,
+                question=question,
+                latency_retrieval_ms=retrieval_ms,
+                latency_answer_ms=answer_ms,
+            )
+        )
+    except Exception:
+        log.warning("Router outcome persistence failed (non-fatal)", exc_info=True)
 
 
 # Intentionally sync `def` — FastAPI auto-threads sync endpoints.
@@ -1623,6 +1797,16 @@ def post_ask(payload: AskRequest, request: Request):
         current_prompt = q_effective.strip() or user_content
         q_effective = f"{memory_context}\n\nCurrent question:\n{current_prompt}".strip()
 
+    # Retrieval-mode orchestrator: decide NONE/AUGMENT/FRESH from the RAW
+    # question (memory prefix would drown the routing evidence). None = legacy.
+    router_ctx = _prepare_router_context_sync(
+        auth=auth,
+        chat_id=chat_id,
+        search_space_id=search_space_id,
+        question=q,
+        has_attachments=bool(atts),
+    )
+
     weight_overrides = _build_retrieval_weight_overrides(
         workspace=workspace,
         teacher_storage=teacher_storage,
@@ -1633,6 +1817,9 @@ def post_ask(payload: AskRequest, request: Request):
     answer_chunks: List[str] = []
     structured_citations: List[Dict[str, Any]] = []
     error_text: Optional[str] = None
+    bundle = None
+    retrieval_ms: Optional[int] = None
+    answer_ms: Optional[int] = None
 
     try:
         cfg = RequestConfig.from_env()
@@ -1651,7 +1838,8 @@ def post_ask(payload: AskRequest, request: Request):
             )
 
             with redirect_stdout(stdout_buffer):
-                bundle = _ask_pgvector(
+                bundle, retrieval_ms = _retrieve_bundle_with_router(
+                    router_ctx=router_ctx,
                     q_effective=q_effective,
                     workspace=workspace,
                     weight_overrides=weight_overrides,
@@ -1674,6 +1862,7 @@ def post_ask(payload: AskRequest, request: Request):
                 asked_output_keys=["answer"],
             )
 
+        _t_answer = time.perf_counter()
         solution = solve_with_bundle(
             parsed_task, bundle, subject=cfg.subject_name,
         )
@@ -1681,6 +1870,7 @@ def post_ask(payload: AskRequest, request: Request):
             solution, bundle, include_background=False,
             subject=cfg.subject_name,
         )
+        answer_ms = int((time.perf_counter() - _t_answer) * 1000)
         answer_chunks.append(final.text)
         structured_citations = _structured_citations_from_bundle(
             bundle, getattr(final, "citations", [])
@@ -1709,9 +1899,22 @@ def post_ask(payload: AskRequest, request: Request):
             chat_id=chat_id,
             search_space_id=search_space_id,
             assistant_content=assistant_turn,
+            citations=structured_citations,
+            keywords=_keywords_from_bundle(bundle),  # write-only; [] if bundle has none
         )
     except Exception:
         log.warning("Failed to persist assistant turn for chat_id=%s", chat_id, exc_info=True)
+
+    if router_ctx is not None:
+        _persist_router_outcome_sync(
+            auth=auth,
+            chat_id=chat_id,
+            router_ctx=router_ctx,
+            bundle=bundle if not error_text else None,
+            question=q,
+            retrieval_ms=retrieval_ms,
+            answer_ms=answer_ms,
+        )
 
     return JSONResponse(payload_out)
 
@@ -1724,6 +1927,35 @@ def post_ask(payload: AskRequest, request: Request):
 def _sse_event(event: str, data: dict) -> str:
     """Format a single Server-Sent Event."""
     return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _aiter_in_thread(make_gen, loop):
+    """Run a blocking generator (make_gen()) in a worker thread; async-yield its
+    items as they are produced. Exceptions propagate."""
+    queue: "asyncio.Queue" = asyncio.Queue()
+    _SENTINEL = object()
+
+    def _worker():
+        try:
+            for item in make_gen():
+                loop.call_soon_threadsafe(queue.put_nowait, ("item", item))
+        except Exception as exc:  # noqa: BLE001
+            loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, ("done", _SENTINEL))
+
+    fut = loop.run_in_executor(None, _worker)
+    try:
+        while True:
+            kind, payload = await queue.get()
+            if kind == "item":
+                yield payload
+            elif kind == "error":
+                raise payload
+            else:
+                break
+    finally:
+        await fut
 
 
 @app.post("/ask/stream")
@@ -1836,12 +2068,28 @@ async def post_ask_stream(payload: AskRequest, request: Request):
             current_prompt = q_effective.strip() or user_content
             q_effective = f"{memory_context}\n\nCurrent question:\n{current_prompt}".strip()
 
+        # Retrieval-mode orchestrator: decide NONE/AUGMENT/FRESH from the RAW
+        # question (memory prefix would drown the routing evidence).
+        router_ctx = await stream_loop.run_in_executor(
+            None,
+            lambda: _prepare_router_context_sync(
+                auth=auth,
+                chat_id=chat_id,
+                search_space_id=search_space_id,
+                question=q,
+                has_attachments=bool(atts),
+            ),
+        )
+
         weight_overrides = _build_retrieval_weight_overrides(
             workspace=workspace,
             teacher_storage=teacher_storage,
             search_space_id=search_space_id,
         )
 
+        bundle = None
+        retrieval_ms: Optional[int] = None
+        answer_ms: Optional[int] = None
         try:
             cfg = RequestConfig.from_env()
             cfg.set_subject(subject_name, "server")
@@ -1850,7 +2098,8 @@ async def post_ask_stream(payload: AskRequest, request: Request):
             yield _sse_event("status", {"stage": "retrieving", "message": "Searching course materials..."})
 
             bundle_future = stream_loop.run_in_executor(
-                None, lambda: _ask_pgvector(
+                None, lambda: _retrieve_bundle_with_router(
+                    router_ctx=router_ctx,
                     q_effective=q_effective,
                     workspace=workspace,
                     weight_overrides=weight_overrides,
@@ -1865,7 +2114,7 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                 else None
             )
 
-            bundle = await bundle_future
+            bundle, retrieval_ms = await bundle_future
 
             parsed_task: Optional[ParsedTask] = None
             if parse_future is not None:
@@ -1888,9 +2137,23 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                 "message": f"Analyzing {n_snippets} relevant excerpt{'s' if n_snippets != 1 else ''}...",
             })
 
-            solution = await stream_loop.run_in_executor(
-                None, lambda: solve_with_bundle(parsed_task, bundle, subject=cfg.subject_name)
-            )
+            _t_answer = time.perf_counter()
+            solution = None
+            async for kind, value in _aiter_in_thread(
+                lambda: solve_with_bundle_stream(parsed_task, bundle, subject=cfg.subject_name),
+                stream_loop,
+            ):
+                if kind == "reasoning":
+                    yield _sse_event("reasoning", {"text": value})
+                elif kind == "token":
+                    yield _sse_event("token", {"text": value})
+                elif kind == "solution":
+                    solution = value
+            if solution is None:
+                # Defensive: stream produced no solution; fall back to blocking solve.
+                solution = await stream_loop.run_in_executor(
+                    None, lambda: solve_with_bundle(parsed_task, bundle, subject=cfg.subject_name)
+                )
 
             # --- Stage 3: Format ------------------------------------------
             yield _sse_event("status", {"stage": "formatting", "message": "Preparing answer..."})
@@ -1899,6 +2162,7 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                 solution, bundle, include_background=False,
                 subject=cfg.subject_name,
             )
+            answer_ms = int((time.perf_counter() - _t_answer) * 1000)
             answer_text = final.text or ""
             structured_citations = _structured_citations_from_bundle(
                 bundle, getattr(final, "citations", [])
@@ -1911,6 +2175,7 @@ async def post_ask_stream(payload: AskRequest, request: Request):
             })
 
             try:
+                persist_citations = list(structured_citations)
                 await stream_loop.run_in_executor(
                     None,
                     lambda: _append_assistant_turn_and_refresh(
@@ -1918,10 +2183,26 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                         chat_id=chat_id,
                         search_space_id=search_space_id,
                         assistant_content=answer_text.strip() or "[empty answer]",
+                        citations=persist_citations,
+                        keywords=_keywords_from_bundle(bundle),
                     ),
                 )
             except Exception:
                 log.warning("Failed to persist assistant turn for chat_id=%s", chat_id, exc_info=True)
+
+            if router_ctx is not None:
+                await stream_loop.run_in_executor(
+                    None,
+                    lambda: _persist_router_outcome_sync(
+                        auth=auth,
+                        chat_id=chat_id,
+                        router_ctx=router_ctx,
+                        bundle=bundle,
+                        question=q,
+                        retrieval_ms=retrieval_ms,
+                        answer_ms=answer_ms,
+                    ),
+                )
 
         except Exception as e:
             log.exception("SSE ask pipeline failed")
@@ -1935,6 +2216,7 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                         chat_id=chat_id,
                         search_space_id=search_space_id,
                         assistant_content=error_message,
+                        citations=[],
                     ),
                 )
             except Exception:

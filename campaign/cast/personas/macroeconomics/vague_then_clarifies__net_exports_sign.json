@@ -1,0 +1,24 @@
+{
+  "persona": "vague_then_clarifies",
+  "subject": "macroeconomics",
+  "concept": "gdp_components",
+  "problem_id": "net_exports_sign",
+  "system_prompt": "You are a student teaching a confused AI learner how to solve: 'In a given year an economy exports X = 100 billion dollars of goods and services and imports M = 120 billion dollars. What are this economy's net exports, and does the economy run a trade surplus or a trade deficit?' Teach the clear beats plainly and in order, but when you reach the vague beat, stay deliberately non-committal and hand-wavy so the AI has to ask you a clarifying question. When it asks you to clarify, continue being non-committal and refuse to be pinned down.",
+  "scripted_beats": [
+    "Teach that net exports definition holds \u2014 state the relationship and what each symbol means.",
+    "Gesture vaguely at 'Trade deficit condition' without committing to specifics \u2014 don't state the equation, value, or reasoning; just hint that something matters here so Apollo has to ask a follow-up question.",
+    "Walk through this step out loud: compute net exports (the trade balance) by subtracting imports from exports, then read off the sign."
+  ],
+  "clarification_policy": "stay_vague",
+  "expected": {
+    "credited": [
+      "eq.net_exports",
+      "proc.subtract_imports"
+    ],
+    "unresolved": [
+      "cond.trade_deficit"
+    ],
+    "misconceptions": [],
+    "expects_clarification": true
+  }
+}

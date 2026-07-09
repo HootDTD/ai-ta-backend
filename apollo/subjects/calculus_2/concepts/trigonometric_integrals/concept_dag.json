@@ -1,0 +1,57 @@
+{
+  "topic_cluster": "calculus_2",
+  "nodes": [
+    {
+      "id": "antiderivative",
+      "label": "Antiderivative",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "trig_identities",
+      "label": "Trigonometric Identities",
+      "prerequisites": [],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "u_substitution",
+      "label": "U-Substitution",
+      "prerequisites": [
+        "antiderivative"
+      ],
+      "scope_boundary": [],
+      "topic_cluster": "calculus_2"
+    },
+    {
+      "id": "trigonometric_integrals",
+      "label": "Trigonometric Integrals",
+      "prerequisites": [
+        "trig_identities",
+        "u_substitution"
+      ],
+      "scope_boundary": [
+        "fourier_series"
+      ],
+      "topic_cluster": "calculus_2"
+    }
+  ],
+  "edges": [
+    {
+      "type": "requires",
+      "from": "u_substitution",
+      "to": "antiderivative"
+    },
+    {
+      "type": "requires",
+      "from": "trigonometric_integrals",
+      "to": "trig_identities"
+    },
+    {
+      "type": "requires",
+      "from": "trigonometric_integrals",
+      "to": "u_substitution"
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "id": "bernoulli_full_find_p2",
+  "concept_id": "bernoulli_principle",
+  "difficulty": "standard",
+  "given_values": {
+    "g": 9.81,
+    "A1": 0.02,
+    "A2": 0.005,
+    "P1": 150000.0,
+    "h1": 5.0,
+    "h2": 2.0,
+    "v1": 1.5,
+    "rho": 1000.0
+  },
+  "problem_text": "Water (density 1000 kg/m³) enters a pipe at elevation 5 m with pressure 150 000 Pa, area 0.02 m², velocity 1.5 m/s. The pipe narrows to area 0.005 m² at elevation 2 m. What is the pressure at the narrow section? Use g = 9.81 m/s².",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "incompressibility",
+      "continuity",
+      "bernoulli",
+      "plan_apply_continuity_for_v2",
+      "plan_substitute_into_bernoulli"
+    ]
+  ],
+  "target_unknown": "P2",
+  "reference_solution": [
+    {
+      "id": "incompressibility",
+      "step": 1,
+      "content": {
+        "label": "Incompressibility assumption",
+        "applies_when": "density is constant"
+      },
+      "depends_on": [],
+      "entity_key": "cond.incompressibility",
+      "entry_type": "condition"
+    },
+    {
+      "id": "continuity",
+      "step": 2,
+      "content": {
+        "label": "Continuity (for incompressible flow)",
+        "symbolic": "A1*v1 - A2*v2",
+        "variables": [
+          "A1",
+          "v1",
+          "A2",
+          "v2"
+        ]
+      },
+      "depends_on": [
+        "incompressibility"
+      ],
+      "entity_key": "eq.continuity",
+      "entry_type": "equation"
+    },
+    {
+      "id": "bernoulli",
+      "step": 3,
+      "content": {
+        "label": "Bernoulli's equation",
+        "symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
+        "variables": [
+          "P1",
+          "rho",
+          "v1",
+          "g",
+          "h1",
+          "P2",
+          "v2",
+          "h2"
+        ]
+      },
+      "depends_on": [
+        "incompressibility"
+      ],
+      "entity_key": "eq.bernoulli",
+      "entry_type": "equation"
+    },
+    {
+      "id": "plan_apply_continuity_for_v2",
+      "step": 4,
+      "content": {
+        "order": 1,
+        "label": "Apply the continuity equation with the known areas and inlet velocity to solve for the outlet velocity v2",
+        "action": "use the continuity equation with A1 = 0.02, v1 = 1.5, and A2 = 0.005 to solve for v2",
+        "purpose": "obtain v2 at the narrow section so it can be substituted into bernoulli",
+        "uses_equations": [
+          "continuity"
+        ]
+      },
+      "depends_on": [
+        "continuity"
+      ],
+      "entity_key": "proc.plan_apply_continuity_for_v2",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_substitute_into_bernoulli",
+      "step": 5,
+      "content": {
+        "order": 2,
+        "label": "Substitute the known quantities into Bernoulli's equation and solve for the pressure P2 at the narrow section",
+        "action": "substitute P1, rho, v1, h1, v2, h2, and g into bernoulli's equation and solve for P2",
+        "purpose": "account for both the velocity increase and the elevation drop to find the pressure at the narrow section",
+        "uses_equations": [
+          "bernoulli"
+        ]
+      },
+      "depends_on": [
+        "bernoulli",
+        "plan_apply_continuity_for_v2"
+      ],
+      "entity_key": "proc.plan_substitute_into_bernoulli",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "persona": "partial",
+  "subject": "fluid_mechanics",
+  "concept": "bernoulli_principle",
+  "problem_id": "volumetric_flow_rate_find_Q",
+  "system_prompt": "You are a rushed student teaching a confused AI learner how to solve: 'Water flows through a pipe of cross-sectional area 0.015 m\u00b2 at a velocity of 4.0 m/s. What is the volumetric flow rate?' You only have time to cover part of the solution. Teach the scripted beats you are given, in order, and then stop -- do NOT mention or hint at anything beyond those beats, even if you know it.",
+  "scripted_beats": [
+    "Teach that volumetric flow rate holds \u2014 state the relationship and what each symbol means."
+  ],
+  "clarification_policy": "answer_correctly",
+  "expected": {
+    "credited": [
+      "eq.flow_rate_definition"
+    ],
+    "unresolved": [
+      "proc.plan_apply_flow_rate_definition"
+    ],
+    "misconceptions": [],
+    "expects_clarification": false
+  }
+}

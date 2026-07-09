@@ -1,0 +1,74 @@
+{
+  "id": "real_gdp_from_deflator",
+  "concept_id": "nominal_vs_real_gdp",
+  "difficulty": "standard",
+  "given_values": {
+    "PI": 19.0,
+    "nomGDP": 543.3
+  },
+  "problem_text": "In 1960 nominal GDP was 543.3 (billion dollars) and the GDP deflator (price index) for that year was 19.0 (with the base year set to 100). Using the GDP deflator, what was real GDP in 1960 expressed in base-year dollars?",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "gdp_deflator",
+      "deflator_is_price_index",
+      "rearrange_for_real_gdp"
+    ]
+  ],
+  "target_unknown": "realGDP",
+  "symbolic_mappings": {},
+  "reference_solution": [
+    {
+      "id": "gdp_deflator",
+      "step": 1,
+      "content": {
+        "label": "GDP deflator definition",
+        "symbolic": "deflator - (nomGDP/realGDP)*100",
+        "variables": [
+          "deflator",
+          "nomGDP",
+          "realGDP"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.gdp_deflator",
+      "entry_type": "equation"
+    },
+    {
+      "id": "deflator_is_price_index",
+      "step": 2,
+      "content": {
+        "label": "Treat the quoted price index as the GDP deflator so the deflator definition can be solved for real GDP",
+        "applies_when": "the price index quoted for the year is the GDP deflator itself",
+        "substitution": {
+          "PI": "deflator"
+        },
+        "transformation": "treat the given price index PI as the GDP deflator so the deflator definition can be solved for real GDP"
+      },
+      "depends_on": [
+        "gdp_deflator"
+      ],
+      "entity_key": "simp.deflator_is_price_index",
+      "entry_type": "simplification"
+    },
+    {
+      "id": "rearrange_for_real_gdp",
+      "step": 3,
+      "content": {
+        "order": 1,
+        "label": "Rearrange the GDP deflator definition to real GDP = nominal GDP divided by (PI/100) and substitute the given values",
+        "action": "rearrange the GDP deflator definition to realGDP = nomGDP/(PI/100) and substitute nomGDP = 543.3 and PI = 19.0 to solve for real GDP",
+        "purpose": "deflate nominal GDP by the price index to obtain real GDP in base-year dollars",
+        "uses_equations": [
+          "gdp_deflator"
+        ]
+      },
+      "depends_on": [
+        "gdp_deflator",
+        "deflator_is_price_index"
+      ],
+      "entity_key": "proc.rearrange_for_real_gdp",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "symbols": ["P", "rho", "v", "A", "h", "g", "Q"],
+  "description": {
+    "P": "pressure",
+    "rho": "fluid density",
+    "v": "fluid velocity",
+    "A": "cross-sectional area",
+    "h": "elevation / height",
+    "g": "gravitational acceleration",
+    "Q": "volumetric flow rate"
+  },
+  "subscript_convention": "Use P1/v1/A1/h1 vs P2/v2/A2/h2 when the student is comparing two points or states (Bernoulli-style equality)."
+}

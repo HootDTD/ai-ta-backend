@@ -1,0 +1,87 @@
+{
+  "id": "continuity_area_change_find_v2",
+  "concept_id": "continuity_equation",
+  "difficulty": "intro",
+  "given_values": {
+    "A1": 0.02,
+    "A2": 0.008,
+    "v1": 3.0
+  },
+  "problem_text": "Water flows through a pipe. At section 1 the area is 0.02 m² and the velocity is 3.0 m/s. At section 2 the area is 0.008 m². What is the velocity at section 2?",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "incompressibility",
+      "continuity",
+      "plan_invoke_incompressibility",
+      "plan_solve_continuity_for_v2"
+    ]
+  ],
+  "target_unknown": "v2",
+  "reference_solution": [
+    {
+      "id": "incompressibility",
+      "step": 1,
+      "content": {
+        "label": "Incompressibility assumption",
+        "applies_when": "density is constant"
+      },
+      "depends_on": [],
+      "entity_key": "cond.incompressibility",
+      "entry_type": "condition"
+    },
+    {
+      "id": "continuity",
+      "step": 2,
+      "content": {
+        "label": "Continuity (for incompressible flow)",
+        "symbolic": "A1*v1 - A2*v2",
+        "variables": [
+          "A1",
+          "v1",
+          "A2",
+          "v2"
+        ]
+      },
+      "depends_on": [
+        "incompressibility"
+      ],
+      "entity_key": "eq.continuity",
+      "entry_type": "equation"
+    },
+    {
+      "id": "plan_invoke_incompressibility",
+      "step": 3,
+      "content": {
+        "order": 1,
+        "label": "Invoke the incompressibility assumption so the continuity equation reduces to A1 times v1 equals A2 times v2",
+        "action": "state the incompressibility assumption so that the continuity equation simplifies to A1*v1 = A2*v2 (density cancels)",
+        "purpose": "justify using the area-velocity form of continuity rather than the full mass-flux form",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "incompressibility"
+      ],
+      "entity_key": "proc.plan_invoke_incompressibility",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_solve_continuity_for_v2",
+      "step": 4,
+      "content": {
+        "order": 2,
+        "label": "Substitute the known areas and inlet velocity into the continuity equation and solve for the outlet velocity v2",
+        "action": "substitute A1 = 0.02, v1 = 3.0, and A2 = 0.008 into the continuity equation and solve for v2",
+        "purpose": "compute the velocity at section 2 directly from mass conservation",
+        "uses_equations": [
+          "continuity"
+        ]
+      },
+      "depends_on": [
+        "plan_invoke_incompressibility"
+      ],
+      "entity_key": "proc.plan_solve_continuity_for_v2",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

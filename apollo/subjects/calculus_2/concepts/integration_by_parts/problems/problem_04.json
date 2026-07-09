@@ -1,0 +1,131 @@
+{
+  "id": "ibp_x2_e_x",
+  "concept_id": "integration_by_parts",
+  "difficulty": "standard",
+  "given_values": {},
+  "problem_text": "Evaluate  integral x^2 e^x dx.",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "liate_choice",
+      "ibp_formula",
+      "parts_assignment_first",
+      "parts_assignment_second",
+      "first_parts",
+      "second_parts",
+      "combine"
+    ]
+  ],
+  "target_unknown": "F",
+  "symbolic_mappings": {
+    "u": "x^2",
+    "dv": "e^x dx"
+  },
+  "reference_solution": [
+    {
+      "id": "liate_choice",
+      "step": 1,
+      "content": {
+        "label": "LIATE choice, applied twice",
+        "applies_when": "by LIATE let u = x^2 (algebraic) and dv = e^x dx; because du still carries a power of x, parts must be applied a second time"
+      },
+      "depends_on": [],
+      "entity_key": "cond.liate_choice",
+      "entry_type": "condition"
+    },
+    {
+      "id": "ibp_formula",
+      "step": 2,
+      "content": {
+        "label": "Integration by parts",
+        "symbolic": "integral u dv = u*v - integral v du",
+        "variables": [
+          "u",
+          "v"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.ibp_formula",
+      "entry_type": "equation"
+    },
+    {
+      "id": "parts_assignment_first",
+      "step": 3,
+      "content": {
+        "concept": "First pass: u = x^2, dv = e^x dx",
+        "meaning": "u = x^2 (du = 2x dx) and dv = e^x dx (v = e^x)"
+      },
+      "depends_on": [],
+      "entity_key": "def.parts_assignment_first",
+      "entry_type": "definition"
+    },
+    {
+      "id": "parts_assignment_second",
+      "step": 4,
+      "content": {
+        "concept": "Second pass: u = 2x, dv = e^x dx",
+        "meaning": "for the leftover integral 2x e^x dx let u = 2x (du = 2 dx) and dv = e^x dx (v = e^x)"
+      },
+      "depends_on": [],
+      "entity_key": "def.parts_assignment_second",
+      "entry_type": "definition"
+    },
+    {
+      "id": "first_parts",
+      "step": 5,
+      "content": {
+        "label": "First application of parts",
+        "order": 1,
+        "action": "apply parts with u = x^2, dv = e^x dx: x^2 e^x - integral 2x e^x dx",
+        "purpose": "lower the power of x from 2 to 1",
+        "uses_equations": [
+          "ibp_formula"
+        ]
+      },
+      "depends_on": [
+        "liate_choice",
+        "parts_assignment_first",
+        "ibp_formula"
+      ],
+      "entity_key": "proc.first_parts",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "second_parts",
+      "step": 6,
+      "content": {
+        "label": "Second application of parts",
+        "order": 2,
+        "action": "apply parts again to integral 2x e^x dx = 2x e^x - integral 2 e^x dx = 2x e^x - 2 e^x",
+        "purpose": "eliminate the remaining power of x",
+        "uses_equations": [
+          "ibp_formula"
+        ]
+      },
+      "depends_on": [
+        "parts_assignment_second",
+        "first_parts",
+        "ibp_formula"
+      ],
+      "entity_key": "proc.second_parts",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "combine",
+      "step": 7,
+      "content": {
+        "label": "Combine and factor",
+        "order": 3,
+        "action": "combine: x^2 e^x - (2x e^x - 2 e^x) + C = (x^2 - 2x + 2) e^x + C",
+        "purpose": "assemble the final antiderivative",
+        "uses_equations": []
+      },
+      "depends_on": [
+        "first_parts",
+        "second_parts"
+      ],
+      "entity_key": "proc.combine",
+      "entry_type": "procedure_step"
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "id": "bernoulli_height_change_find_v2",
+  "concept_id": "bernoulli_principle",
+  "difficulty": "intro",
+  "given_values": {
+    "g": 9.81,
+    "P1": 101325.0,
+    "P2": 101325.0,
+    "h1": 20.0,
+    "h2": 0.0,
+    "v1": 0.0,
+    "rho": 1000.0
+  },
+  "problem_text": "Water (density 1000 kg/m³) flows from a wide reservoir at the top of a hill (elevation 20 m, velocity ≈ 0 m/s, pressure 101 325 Pa) down a pipe to ground level (elevation 0 m, pressure 101 325 Pa). What is the water's velocity at the bottom? Assume g = 9.81 m/s².",
+  "layer1_seeded": true,
+  "declared_paths": [
+    [
+      "bernoulli",
+      "equal_pressure_simplification",
+      "plan_apply_equal_pressure_simplification",
+      "plan_set_v1_zero_and_solve_bernoulli"
+    ]
+  ],
+  "target_unknown": "v2",
+  "reference_solution": [
+    {
+      "id": "bernoulli",
+      "step": 1,
+      "content": {
+        "label": "Bernoulli's equation",
+        "symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
+        "variables": [
+          "P1",
+          "rho",
+          "v1",
+          "g",
+          "h1",
+          "P2",
+          "v2",
+          "h2"
+        ]
+      },
+      "depends_on": [],
+      "entity_key": "eq.bernoulli",
+      "entry_type": "equation"
+    },
+    {
+      "id": "equal_pressure_simplification",
+      "step": 2,
+      "content": {
+        "label": "Both ends are open to the atmosphere so the pressures are equal, and the pressure terms cancel in Bernoulli's equation",
+        "applies_when": "P1 == P2",
+        "substitution": {
+          "P2": "P1"
+        },
+        "transformation": "pressure terms cancel"
+      },
+      "depends_on": [
+        "bernoulli"
+      ],
+      "entity_key": "simp.equal_pressure_simplification",
+      "entry_type": "simplification"
+    },
+    {
+      "id": "plan_apply_equal_pressure_simplification",
+      "step": 3,
+      "content": {
+        "order": 1,
+        "label": "Recognize that both ends are at atmospheric pressure, so the pressure terms cancel in Bernoulli's equation",
+        "action": "recognize that both ends are open to the atmosphere so P1 equals P2, causing the pressure terms in bernoulli to cancel",
+        "purpose": "eliminate P1 and P2 from bernoulli, leaving only the kinetic and potential energy terms",
+        "uses_equations": [
+          "bernoulli"
+        ]
+      },
+      "depends_on": [
+        "bernoulli",
+        "equal_pressure_simplification"
+      ],
+      "entity_key": "proc.plan_apply_equal_pressure_simplification",
+      "entry_type": "procedure_step"
+    },
+    {
+      "id": "plan_set_v1_zero_and_solve_bernoulli",
+      "step": 4,
+      "content": {
+        "order": 2,
+        "label": "Set the reservoir inlet velocity to zero and solve the simplified Bernoulli equation for the outlet velocity v2",
+        "action": "substitute v1 = 0 (wide reservoir approximation), h1 = 20, h2 = 0, and g = 9.81 into the simplified bernoulli and solve for v2",
+        "purpose": "obtain the exit velocity v2 at the bottom of the pipe",
+        "uses_equations": [
+          "bernoulli"
+        ]
+      },
+      "depends_on": [
+        "plan_apply_equal_pressure_simplification"
+      ],
+      "entity_key": "proc.plan_set_v1_zero_and_solve_bernoulli",
+      "entry_type": "procedure_step"
+    }
+  ]
+}
