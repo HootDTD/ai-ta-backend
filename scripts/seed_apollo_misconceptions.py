@@ -155,6 +155,7 @@ async def _seed_concept(
             trigger_phrases=list(spec.trigger_phrases),
             probe_question=spec.probe_question,
             rt_steps=list(spec.rt_steps),
+            opposes=spec.opposes,
         )
     return len(specs)
 

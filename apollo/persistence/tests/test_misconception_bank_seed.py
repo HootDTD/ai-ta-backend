@@ -150,3 +150,20 @@ def test_real_gdp_components_misconceptions_convert_cleanly():
     for spec in specs:
         assert spec.description
         assert spec.probe_question
+
+
+def test_bank_spec_carries_opposes() -> None:
+    spec = misconception_entry_to_bank_spec(
+        {
+            "key": "misc.nominal_for_real",
+            "description": "d",
+            "opposes": "def.real_basis",
+        }
+    )
+    assert spec.code == "nominal_for_real"
+    assert spec.opposes == "def.real_basis"
+
+
+def test_bank_spec_opposes_defaults_none() -> None:
+    spec = misconception_entry_to_bank_spec({"key": "misc.x", "description": "d"})
+    assert spec.opposes is None
