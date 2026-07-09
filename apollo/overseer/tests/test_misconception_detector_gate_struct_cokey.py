@@ -49,9 +49,14 @@ def test_clear_verdict_never_structural_docks() -> None:
     # test_clear_verdict_identical_with_and_without_opposes), which is the
     # control-safety guarantee that matters (a control is never DOCKED).
     findings = (_judge("real_basis", "clear", 1.0, bank_code=None),)
-    out = gate_findings(findings, opposes_index={"real_basis": "nominal_for_real"})
-    assert not any(f.verdict == "misconception" for f in out)
-    assert not any(f.corroborated for f in out)
+    with_opposes = gate_findings(findings, opposes_index={"real_basis": "nominal_for_real"})
+    without_opposes = gate_findings(findings, opposes_index={})
+    assert not any(f.verdict == "misconception" for f in with_opposes)
+    assert not any(f.corroborated for f in with_opposes)
+    # Isolates the VERDICT guard specifically: presence of an opposing bank
+    # entry makes no difference for this verdict, so it is the verdict check
+    # (not the index) excluding it from the structural branch.
+    assert with_opposes == without_opposes
 
 
 def test_needs_clarification_never_structural_docks() -> None:
@@ -59,9 +64,14 @@ def test_needs_clarification_never_structural_docks() -> None:
     # non-wrong/non-misconception, so the structural branch's verdict guard
     # excludes it — it is never structural-docked.
     findings = (_judge("real_basis", "needs_clarification", 1.0, bank_code=None),)
-    out = gate_findings(findings, opposes_index={"real_basis": "nominal_for_real"})
-    assert not any(f.verdict == "misconception" for f in out)
-    assert not any(f.corroborated for f in out)
+    with_opposes = gate_findings(findings, opposes_index={"real_basis": "nominal_for_real"})
+    without_opposes = gate_findings(findings, opposes_index={})
+    assert not any(f.verdict == "misconception" for f in with_opposes)
+    assert not any(f.corroborated for f in with_opposes)
+    # Isolates the VERDICT guard specifically: presence of an opposing bank
+    # entry makes no difference for this verdict, so it is the verdict check
+    # (not the index) excluding it from the structural branch.
+    assert with_opposes == without_opposes
 
 
 def test_clear_verdict_identical_with_and_without_opposes() -> None:
@@ -113,8 +123,6 @@ def test_empty_index_byte_identical_to_pre_change_defaults() -> None:
         findings = (_judge("real_basis", verdict, conf, bank_code=None),)
         default_call = gate_findings(findings)
         explicit_empty = gate_findings(findings, opposes_index={})
-        # And a populated index must NOT change a NON-triggering (clear/
-        # needs_clarification/sub-tau) case relative to the empty one.
         assert default_call == explicit_empty
 
 

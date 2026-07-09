@@ -12,6 +12,11 @@
 -- DEPLOY-TIME RECONCILIATION: numbered migration; agents apply to LOCAL Docker
 -- Postgres only. Test-project rehearsal then prod is a human/CI step. DO NOT
 -- auto-apply to any remote Supabase project.
+--
+-- ROLLBACK: dropping opposes loses the structural co-key link; the bank's
+-- existing embedding-match path is unaffected (opposes is read only by the
+-- F-struct gate path). Safe direction: after rollback every entry reads as
+-- "no structural scope" (pre-038 behavior).
 
 BEGIN;
 

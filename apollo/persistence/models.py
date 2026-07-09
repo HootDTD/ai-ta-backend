@@ -226,10 +226,10 @@ class AuthoredSet(Base):
 
 class Misconception(Base):
     """Per-concept misconception bank backing the misconception-inference
-    channel. See migration 019. The description_embedding column is the
-    pgvector field used at retrieval; SQLAlchemy stores it as the raw
-    Postgres vector type — the runtime queries it via raw SQL because
-    pgvector's SQLAlchemy adapter isn't a hard dep here."""
+    channel. See migration 019. description_embedding (vector(3072) on
+    Postgres) is NOT declared as a Column here — SQLAlchemy has no built-in
+    pgvector adapter, so the seeder + runtime read/write it via raw SQL
+    instead; this model intentionally omits it."""
 
     __tablename__ = "apollo_misconceptions"
 
@@ -238,10 +238,6 @@ class Misconception(Base):
                         nullable=False, index=True)
     code = Column(Text, nullable=False)
     description = Column(Text, nullable=False)
-    # description_embedding is vector(3072) on Postgres. SQLAlchemy doesn't
-    # have a built-in adapter; the seeder + runtime use raw SQL for
-    # this column. Modeling it here keeps the metadata table-mapping
-    # complete for tests that introspect the schema.
     confusion_pair_a = Column(Text, nullable=True)
     confusion_pair_b = Column(Text, nullable=True)
     trigger_phrases = Column(_JSONType, nullable=False, default=list)

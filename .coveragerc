@@ -21,6 +21,7 @@ omit =
     .venv/*
     */__pycache__/*
     database/migrations/*
+    campaign/*
 
 [report]
 show_missing = true

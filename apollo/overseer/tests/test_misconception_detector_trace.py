@@ -42,14 +42,16 @@ from apollo.overseer.misconception_detector.types import (
 # --------------------------------------------------------------------------- #
 # Fixtures / builders
 # --------------------------------------------------------------------------- #
-def _def_node(node_id: str, *, entity_key: str | None = None) -> object:
+def _def_node(node_id: str) -> object:
+    # opposes_index is keyed by node_id (not entity_key) — see
+    # build_node_traces's `opposes.get(key)` where `key = node.node_id` — so
+    # these fixtures don't need an entity_key.
     return build_node(
         node_type="definition",
         node_id=node_id,
         attempt_id=1,
         source="reference",
         content={"concept": node_id, "meaning": f"meaning of {node_id}"},
-        entity_key=entity_key,
     )
 
 

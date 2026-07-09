@@ -88,8 +88,13 @@ STRUCT_COKEY_FLAG_ENV: str = "APOLLO_MISC_STRUCT_COKEY"
 
 
 def struct_cokey_enabled() -> bool:
-    """True iff APOLLO_MISC_STRUCT_COKEY is truthy (default OFF). Read at call
-    time (never cached), same _TRUTHY set as detector_enabled."""
+    """True iff ``APOLLO_MISC_STRUCT_COKEY`` is set to a truthy value (default OFF).
+
+    Read at call time (never cached), same ``_TRUTHY`` set as
+    ``detector_enabled``. Independent of ``FLAG_ENV`` so the sub-flag can be
+    switched on for a diagnostic run without changing whether the base
+    detector is enabled.
+    """
     return os.environ.get(STRUCT_COKEY_FLAG_ENV, "").strip().lower() in _TRUTHY
 
 
