@@ -34,6 +34,29 @@ Applies to all three repos (`ai-ta-backend`, `ai-ta-student-ui`, `ai-ta-teacher-
    renames/drops), so the old prod code can boot against the newer schema during the
    deploy window.
 
+## When main and staging need different things
+
+Example: pilot grading. The pilot wants the LLM grader improved *now*; staging is
+transitioning grading to a graph-grounded approach. Do NOT resolve this with
+divergent branches — resolve it with a **strategy seam**:
+
+- The two behaviors live in **separate modules** behind a runtime switch
+  (e.g. `APOLLO_GRADING_MODE=llm|graph`, same pattern as
+  `APOLLO_GRAPH_SIM_SHADOW_ENABLED`). Prod runs `llm`; staging runs `graph`
+  (or shadow-mode: run both, grade with `llm`, log the diff).
+- LLM-grader improvements land on staging (they touch only the `llm` module, so
+  they never collide with graph work) and promote normally; urgent ones go
+  `hotfix/*` off main, and the back-merge stays clean because both branches share
+  the same lineage for those files.
+- The graph transition promotes to main as dead code and ships to students as a
+  **config flip**, with the LLM grader still in the tree as instant rollback.
+
+**The invariant: staging is always a SUPERSET of main.** Work may *originate* on
+main when the pilot demands it — the backmerge guard flows it back within a day.
+What is never allowed: code on main that staging will never get, or the same file
+evolving differently on both branches. That is the merge-hell state, and it is
+always avoidable by putting the two behaviors in two modules with a switch.
+
 ## Enforcement
 
 - GitHub branch protection on `main` (all three repos): PRs only, no force pushes.
