@@ -1,0 +1,45 @@
+# Hotfix back-merge guard (branching model: docs/branching.md).
+#
+# main is the pilot release branch: it only moves via staging→main promotion
+# PRs and hotfix/* PRs. After a hotfix lands on main, it MUST be back-merged
+# into staging or the next promotion re-breaks prod. This workflow makes that
+# step impossible to forget: on every push to main it opens (or reuses) a
+# main→staging PR whenever main carries non-merge commits staging lacks.
+# A pure promotion merge adds no such commits, so promotions stay silent.
+name: backmerge
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  backmerge-reminder:
+    name: back-merge main into staging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Open main→staging PR when hotfix commits exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          git fetch --no-tags origin staging
+          COUNT=$(git rev-list origin/staging..HEAD --no-merges --count)
+          if [ "$COUNT" -eq 0 ]; then
+            echo "main has no unique non-merge commits — nothing to back-merge."
+            exit 0
+          fi
+          OPEN=$(gh pr list --head main --base staging --state open --json number --jq 'length')
+          if [ "$OPEN" != "0" ]; then
+            echo "Back-merge PR already open — nothing to do."
+            exit 0
+          fi
+          gh pr create --head main --base staging \
+            --title "Back-merge main into staging (hotfix sync)" \
+            --body "main carries ${COUNT} hotfix commit(s) that staging lacks. Merge this before the next staging→main promotion, or the promotion will re-break the pilot. (Opened automatically by .github/workflows/backmerge.yml.)"
