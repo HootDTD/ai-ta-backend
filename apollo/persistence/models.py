@@ -247,6 +247,10 @@ class Misconception(Base):
     trigger_phrases = Column(_JSONType, nullable=False, default=list)
     probe_question = Column(Text, nullable=False)
     rt_steps = Column(_JSONType, nullable=False, default=list)
+    # F-struct (migration 038): canonical entity_key of the reference node this
+    # misconception opposes (e.g. "def.real_basis"), or NULL. Read by the
+    # structural co-key gate path.
+    opposes = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 

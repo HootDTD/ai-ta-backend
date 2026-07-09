@@ -40,6 +40,7 @@ class MisconceptionEntry:
     trigger_phrases: tuple[str, ...]
     probe_question: str
     rt_steps: tuple[str, ...]
+    opposes: str | None = None
 
 
 def _from_row(row: Misconception) -> MisconceptionEntry:
@@ -65,6 +66,7 @@ def _from_row(row: Misconception) -> MisconceptionEntry:
         trigger_phrases=tuple(triggers),
         probe_question=row.probe_question,
         rt_steps=tuple(rt),
+        opposes=row.opposes,
     )
 
 
@@ -126,6 +128,7 @@ async def match_by_embedding(
             m.trigger_phrases,
             m.probe_question,
             m.rt_steps,
+            m.opposes,
             (m.description_embedding::halfvec(3072))
                 <=> (:emb)::halfvec(3072) AS distance
         FROM apollo_misconceptions m
@@ -165,6 +168,7 @@ async def match_by_embedding(
             trigger_phrases=tuple(triggers),
             probe_question=r["probe_question"],
             rt_steps=tuple(rt),
+            opposes=r["opposes"],
         )
         similarity = 1.0 - float(r["distance"])
         out.append((entry, similarity))
@@ -183,6 +187,7 @@ async def upsert_entry(
     trigger_phrases: list[str],
     probe_question: str,
     rt_steps: list[str],
+    opposes: str | None = None,
 ) -> int:
     """Curriculum-author-facing INSERT-or-UPDATE. Returns the row id.
 
@@ -200,13 +205,13 @@ async def upsert_entry(
         INSERT INTO apollo_misconceptions (
             concept_id, code, description, description_embedding,
             confusion_pair_a, confusion_pair_b,
-            trigger_phrases, probe_question, rt_steps
+            trigger_phrases, probe_question, rt_steps, opposes
         )
         VALUES (
             :concept_id, :code, :description,
             CAST(:embedding AS vector(3072)),
             :pair_a, :pair_b,
-            CAST(:triggers AS jsonb), :probe, CAST(:rt AS jsonb)
+            CAST(:triggers AS jsonb), :probe, CAST(:rt AS jsonb), :opposes
         )
         ON CONFLICT (concept_id, code) DO UPDATE SET
             description = EXCLUDED.description,
@@ -216,6 +221,7 @@ async def upsert_entry(
             trigger_phrases = EXCLUDED.trigger_phrases,
             probe_question = EXCLUDED.probe_question,
             rt_steps = EXCLUDED.rt_steps,
+            opposes = EXCLUDED.opposes,
             updated_at = now()
         RETURNING id
         """
@@ -232,6 +238,7 @@ async def upsert_entry(
             "triggers": json.dumps(trigger_phrases),
             "probe": probe_question,
             "rt": json.dumps(rt_steps),
+            "opposes": opposes,
         },
     )
     return int(result.scalar_one())
