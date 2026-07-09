@@ -69,6 +69,7 @@ _ANCHOR_SOURCES = _DETERMINISTIC_SOURCES | frozenset({"judge"})
 def gate_findings(
     findings: tuple[ConceptFinding, ...],
     *,
+    opposes_index: dict[str, str] | None = None,
     tau_fire: float = TAU_FIRE,
     tau_verbalized: float = TAU_FIRE_VERBALIZED,
     tau_solo: float = TAU_SOLO_JUDGE,
@@ -86,7 +87,17 @@ def gate_findings(
     names its ``bank_code``) never anchors its own group: it is a corroboration
     witness only, indexed in ``bank_by_code``, and is dropped by construction
     if no anchor concept looks it up.
+
+    ``opposes_index`` (F-struct, default empty) maps a reference node's
+    ``concept_key`` (``node_id``) to the ``bank_code`` a bank entry ``opposes``
+    for that node. When non-empty (only under the ``APOLLO_MISC_STRUCT_COKEY``
+    sub-flag; the caller passes ``{}`` otherwise), a confident
+    ``wrong``/``misconception`` judge verdict at a node the judge could NOT
+    name (``bank_code is None``) docks structurally — the graph names the
+    misconception the judge only localized. An EMPTY index is byte-identical
+    to pre-F-struct behavior.
     """
+    opposes = opposes_index or {}
     bank_by_code: dict[str, list[ConceptFinding]] = {}
     anchors: dict[str, list[ConceptFinding]] = {}
     for finding in findings:
@@ -102,6 +113,7 @@ def gate_findings(
         outcome = _gate_one_concept(
             group,
             bank_by_code=bank_by_code,
+            opposes_index=opposes,
             tau_fire=tau_fire,
             tau_verbalized=tau_verbalized,
             tau_solo=tau_solo,
@@ -116,13 +128,17 @@ def _gate_one_concept(
     group: list[ConceptFinding],
     *,
     bank_by_code: dict[str, list[ConceptFinding]],
+    opposes_index: dict[str, str] | None = None,
     tau_fire: float,
     tau_verbalized: float,
     tau_solo: float,
 ) -> ConceptFinding | None:
     """Decide the fate of ONE judge/deterministic concept. Returns the single
     representative finding to keep (docked or downgraded), or None to drop
-    the concept entirely. Implements the §5 truth-table exactly."""
+    the concept entirely. Implements the §5 truth-table exactly, plus the
+    F-struct structural co-key branch (default-empty ``opposes_index`` ⇒
+    byte-identical to the §5 truth-table)."""
+    opposes = opposes_index or {}
     deterministic = [f for f in group if f.source in _DETERMINISTIC_SOURCES]
     if deterministic:
         # Rows 1/2: self-corroborating, always ceiling-eligible. Prefer the
@@ -162,6 +178,25 @@ def _gate_one_concept(
         # Row 8: keyed but sub-routed-tau -> drop.
         return None
 
+    # F-struct structural co-key (D4 mutual exclusion): this branch is reached
+    # ONLY when ``best_judge.bank_code is None`` — the judge LOCALIZED an error
+    # to this node (``wrong``/``misconception``) but named NO validated code.
+    # If a bank entry opposes this node's entity_key (resolved into
+    # ``opposes_index`` by the caller), the GRAPH names it and we dock via the
+    # existing co-key semantics. Control-safe: ``clear``/``needs_clarification``
+    # are excluded by the explicit verdict guard (and controls only ever return
+    # ``clear``). Confidence floor (D2): gated on ``routed_ok`` — the SAME dual-
+    # tau routing used everywhere — so a hedged low-confidence localization can
+    # never dock. Empty ``opposes_index`` ⇒ this lookup misses and prior
+    # behavior (rows 7/8 below) is byte-identical.
+    struct_code = opposes.get(best_judge.concept_key)
+    if (
+        struct_code is not None
+        and routed_ok
+        and best_judge.verdict in ("wrong", "misconception")
+    ):
+        return _struct_docked(best_judge, bank_code=struct_code)
+
     # Row 7: lone UNKEYED judge clearing routed tau -> clarify, never docks.
     if routed_ok:
         return _needs_clarification(best_judge)
@@ -192,6 +227,23 @@ def _docked(finding: ConceptFinding, *, ceiling_eligible: bool) -> ConceptFindin
         verdict="misconception",
         corroborated=True,
         ceiling_eligible=ceiling_eligible,
+    )
+
+
+def _struct_docked(finding: ConceptFinding, *, bank_code: str) -> ConceptFinding:
+    """Structural co-key dock (F-struct): the judge localized the error to this
+    node and the graph named it via a bank entry's ``opposes``. Reuses row-3
+    co-key semantics — ceiling-eligible + bank-keyed so merge emits the artifact
+    ``misconceptions[]`` row. Sets ``bank_code`` + ``signature`` so
+    ``merge._is_bank_keyed`` picks it up (the exact shape ``merge._keyed_row``
+    and the ``docked`` filter already consume — no merge change needed)."""
+    return dataclasses.replace(
+        finding,
+        verdict="misconception",
+        corroborated=True,
+        ceiling_eligible=True,
+        bank_code=bank_code,
+        signature=f"misc.{bank_code}",
     )
 
 
