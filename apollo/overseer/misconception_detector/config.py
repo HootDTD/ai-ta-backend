@@ -79,6 +79,20 @@ def trace_enabled() -> bool:
     return os.environ.get(TRACE_FLAG_ENV, "").strip().lower() in _TRUTHY
 
 
+# F-struct sub-flag (structural co-key). SEPARATE from FLAG_ENV, default OFF:
+# when OFF, gate_findings receives an empty opposes_index and behavior/output is
+# byte-identical. When ON (and APOLLO_MISCONCEPTION_DETECTOR is ON), a confident
+# wrong/misconception judge verdict at a reference node whose entity_key is
+# opposed by a bank entry docks via the existing co-key machinery.
+STRUCT_COKEY_FLAG_ENV: str = "APOLLO_MISC_STRUCT_COKEY"
+
+
+def struct_cokey_enabled() -> bool:
+    """True iff APOLLO_MISC_STRUCT_COKEY is truthy (default OFF). Read at call
+    time (never cached), same _TRUTHY set as detector_enabled."""
+    return os.environ.get(STRUCT_COKEY_FLAG_ENV, "").strip().lower() in _TRUTHY
+
+
 def trace_path() -> str:
     """Filesystem path ``trace.emit_traces`` appends JSONL to.
 
