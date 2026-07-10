@@ -29,6 +29,7 @@ from apollo.ontology import (
     NodeType,
     build_node,
 )
+from apollo.persistence.learner_model_seed import derive_entity_key
 
 EntryType = Literal[
     "equation",
@@ -125,13 +126,20 @@ class Problem(BaseModel):
         nodes: list[Node] = []
         for step in self.reference_solution:
             content = self._strip_legacy_proc_fields(step)
+            # T1 (emergent-map §5.1): a step that already carries entity_key is
+            # never re-derived (byte-identical for hand-authored problems); a
+            # step that omits it gets one derived here so every reference node
+            # has a stable, promotable key.
+            ek = step.entity_key if step.entity_key is not None else derive_entity_key(
+                step.entry_type, step.id
+            )
             node = build_node(
                 node_type=step.entry_type,  # type: ignore[arg-type]
                 node_id=step.id,
                 attempt_id=attempt_id,
                 source="reference",
                 content=content,
-                entity_key=step.entity_key,
+                entity_key=ek,
             )
             nodes.append(node)
 

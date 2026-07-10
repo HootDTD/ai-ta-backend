@@ -989,6 +989,12 @@ class MisconceptionObservation(Base):
     confidence = Column(Float, nullable=True)
     opposes = Column(Text, nullable=True)
     evidence_span = Column(Text, nullable=True)
+    # 'grading_artifact' (role=canonical Done-grade ledger feed, unchanged) |
+    # 'detector_unkeyed' (emergent-map birth signal — judge confidently wrong
+    # at a keyed reference node it cannot name) | 'clarification_refuted'
+    # (emergent-map upgrade signal — a clarification rescore confirms the
+    # misconception). Domain enforced by ck_misconception_obs_source
+    # (migration 040; emergent-map design 2026-07-10 §5.3/§5.4).
     source = Column(Text, nullable=False, server_default=text("'grading_artifact'"),
                     default="grading_artifact")
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))

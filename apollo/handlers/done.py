@@ -22,6 +22,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.emergent.capture import record_detector_births
+from apollo.emergent.config import emergent_map_capture_enabled
+from apollo.emergent.materialize import materialize_if_promotable
 from apollo.errors import (
     ResolutionUnavailableError,
     ReviewRequiredError,
@@ -53,6 +56,7 @@ from apollo.overseer.misconception_detector.apply import rubric_overall_after_pe
 from apollo.overseer.misconception_detector.centrality import compute_centrality
 from apollo.overseer.misconception_detector.config import (
     detector_enabled,
+    grader_positive_focus_enabled,
     struct_cokey_enabled,
     trace_enabled,
 )
@@ -504,6 +508,16 @@ async def handle_done(
     misconception_scores = await _attempt_misconception_scores(
         db, attempt_id=attempt.id,
     )
+    # T-W5a (P4) — grader positive-focus. Default OFF: byte-identical, every
+    # detected code (resolved 1.0 or unresolved 0.5) enters the axis exactly
+    # as before. When ON, drop unresolved (0.5) contributions before the
+    # axis is computed — the "you corrected it" resolved credit (1.0) still
+    # counts, but an unresolved misconception no longer drags `overall` down
+    # relative to the axis being absent (credit-only, memo §3).
+    if grader_positive_focus_enabled():
+        misconception_scores = {
+            code: score for code, score in misconception_scores.items() if score >= 1.0
+        }
     rubric = compute_rubric(
         coverage,
         reference_graph.nodes,
@@ -563,7 +577,16 @@ async def handle_done(
             gated = gate_findings(detection.per_concept, opposes_index=opposes_index)
             centrality = compute_centrality(reference_graph)
             detection_outcome = merge_detections(gated, centrality=centrality)
-            rubric = rubric_overall_after_penalty(rubric, detection_outcome)
+            # T-W5a (P1) — grader positive-focus (2026-07-10 design memo).
+            # Default OFF: byte-identical, the served rubric band is docked
+            # exactly as before. When ON, this dock is skipped — the served
+            # rubric/band/XP become credit-only, while `detection_outcome`
+            # is STILL threaded to `write_artifacts` below unchanged, so the
+            # composite dock (P2, `artifact_build.py`, UNCONDITIONAL — the
+            # single retained penalty channel) and the feedback record
+            # (`misconceptions[]`) both retain full fidelity.
+            if not grader_positive_focus_enabled():
+                rubric = rubric_overall_after_penalty(rubric, detection_outcome)
             # Phase-1 diagnostic trace (default OFF, APOLLO_MISC_TRACE). When
             # OFF this branch never imports `trace` — flag-OFF is byte-identical.
             # Instrumentation only: it re-derives per-node judge/gate rows from
@@ -596,6 +619,80 @@ async def handle_done(
                     _LOG.exception(
                         "misconception_trace_failed attempt_id=%s", int(attempt.id)
                     )
+            # Emergent misconception map — capture seam 1: detector-unkeyed
+            # birth (2026-07-10 design §5.3.1, plan Wave 2 T2). Independently
+            # flag-gated from `detector_enabled()` (that flag only gates
+            # whether the detector STAGE runs at all; this flag gates only
+            # whether a birth observation is WRITTEN once it does). When OFF
+            # (the only prod state today) this branch never runs — no
+            # collector call, no store write, byte-identical. `collect_
+            # unkeyed_births` replays the gate's own row7/row8 unkeyed
+            # predicate (pure, no IO) over the SAME `detection.per_concept`
+            # + `opposes_index` the gate just consumed; `record_detector_
+            # births` resolves each birth's `concept_key` (a reference-graph
+            # node_id) to its `entity_key` via a map built from `reference_
+            # graph.nodes` (the inverse of opposes_index.py's
+            # `key_to_node_id` — ConceptFinding carries no entity_key of its
+            # own, design correction #2) and appends the observation.
+            # OWN failure domain (own try/except -> log + rollback, own
+            # commit on success — artifact_writer.py:236-256 pattern): a
+            # capture-write failure must NEVER affect the returned grade,
+            # which is already fully computed above this point.
+            if emergent_map_capture_enabled():
+                try:
+                    from apollo.overseer.misconception_detector.gate import (
+                        collect_unkeyed_births,
+                    )
+
+                    node_entity_key = {
+                        n.node_id: n.entity_key
+                        for n in reference_graph.nodes
+                        if n.entity_key
+                    }
+                    births = collect_unkeyed_births(
+                        detection.per_concept, opposes_index=opposes_index
+                    )
+                    await record_detector_births(
+                        db,
+                        search_space_id=int(sess.search_space_id),
+                        concept_id=sess.concept_id,
+                        user_id=str(sess.user_id),
+                        attempt_id=int(attempt.id),
+                        births=births,
+                        node_entity_key=node_entity_key,
+                    )
+                    # T7 (plan Wave 3, spec §5.5 Q3): eager tau_project
+                    # materialization, INSIDE this same failure domain, right
+                    # after the observation write succeeds and before the
+                    # commit. One signature per birth's resolved entity_key —
+                    # a no-op below TAU_PROJECT, idempotent at/above it. `neo`
+                    # is the handler's own client (already threaded in) — the
+                    # :Canon map materializes eagerly from this seam.
+                    for entity_key in {
+                        node_entity_key[b.concept_key]
+                        for b in births
+                        if b.concept_key in node_entity_key
+                    }:
+                        await materialize_if_promotable(
+                            db,
+                            neo,
+                            search_space_id=int(sess.search_space_id),
+                            concept_id=sess.concept_id,
+                            signature=f"emergent.{entity_key}",
+                            opposes_entity_key=entity_key,
+                        )
+                    await db.commit()
+                except Exception:
+                    _LOG.exception(
+                        "emergent_birth_capture_failed attempt_id=%s", int(attempt.id)
+                    )
+                    try:
+                        await db.rollback()
+                    except Exception:  # pragma: no cover - defensive
+                        _LOG.exception(
+                            "emergent_birth_capture_rollback_failed attempt_id=%s",
+                            int(attempt.id),
+                        )
         except Exception:
             _LOG.exception(
                 "misconception_detector_failed attempt_id=%s", int(attempt.id)

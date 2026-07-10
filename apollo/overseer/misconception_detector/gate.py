@@ -200,6 +200,82 @@ def _gate_one_concept(
     return None
 
 
+_BIRTH_VERDICTS = frozenset({"wrong", "misconception"})
+
+
+def collect_unkeyed_births(
+    findings: tuple[ConceptFinding, ...],
+    *,
+    opposes_index: dict[str, str] | None = None,
+    tau_fire: float = TAU_FIRE,
+    tau_verbalized: float = TAU_FIRE_VERBALIZED,
+) -> tuple[ConceptFinding, ...]:
+    """Pure collector alongside ``gate_findings`` (2026-07-10 emergent
+    misconception map plan, T2 / design correction #1).
+
+    ``gate_findings`` is a pure function that DROPS a row8 (unkeyed judge,
+    sub-routed-tau) finding with no observable side effect — a
+    post-``gate_findings`` scan in the caller can never see it. This collector
+    replays the EXACT SAME per-concept anchor grouping as ``gate_findings``
+    (every ``_ANCHOR_SOURCES`` finding — sympy_veto AND judge — grouped by
+    ``concept_key``, matching the loop at the top of ``gate_findings``) plus
+    the rows 7/8 predicate chain (``best_judge.bank_code is None`` + no
+    struct-opposes match + a dockable ``wrong``/``misconception`` verdict),
+    and returns the ``best_judge`` finding for every concept that CLEARS its
+    routed tau — i.e. row7 only. A row8 (sub-routed-tau) finding is
+    deliberately EXCLUDED: the birth must clear the same routed tau a dock
+    would need, so a hedged, low-confidence localization can never seed the
+    emergent map. This is the collector's confidence floor, mirroring the
+    gate's own tau-gating.
+
+    Grouping by the full anchor set (not just judge findings) matters: when a
+    concept_key carries BOTH a sympy_veto finding and a judge finding,
+    ``_gate_one_concept`` ALWAYS takes the deterministic branch (rows 1/2)
+    and never independently evaluates the judge finding on that concept_key.
+    A collector that grouped by judge-only findings would miss that
+    precedence and birth a row the gate itself never reaches — a spurious
+    ``emergent.<key>`` observation for a concept the gate already resolved
+    deterministically. Excluding any concept_key whose anchor group contains
+    a ``sympy_veto`` finding keeps this collector's precedence identical to
+    the gate's.
+
+    Findings are returned VERBATIM (no ``dataclasses.replace`` — the caller
+    resolves ``concept_key`` -> ``entity_key`` and builds the emergent
+    signature; this collector's job is only to name which findings qualify).
+    No mutation, no IO; an empty/None ``opposes_index`` makes this a pure
+    function of ``findings`` alone, matching ``gate_findings``'s own default.
+    """
+    opposes = opposes_index or {}
+    anchors: dict[str, list[ConceptFinding]] = {}
+    for finding in findings:
+        if finding.source in _ANCHOR_SOURCES:
+            anchors.setdefault(finding.concept_key, []).append(finding)
+
+    births: list[ConceptFinding] = []
+    for group in anchors.values():
+        if any(f.source in _DETERMINISTIC_SOURCES for f in group):
+            # A sympy_veto anchor on this concept_key preempts the judge
+            # branch entirely (rows 1/2) -- the gate never independently
+            # considers the judge finding, so this collector must not either.
+            continue
+        # No deterministic finding in this group -> every member is a judge
+        # finding (the only other _ANCHOR_SOURCES member) -- `group` is
+        # guaranteed non-empty (anchors.setdefault only creates an entry when
+        # appending a finding), so `best_judge` always resolves.
+        best_judge = max(group, key=lambda f: f.confidence)
+        if best_judge.bank_code is not None:
+            continue
+        if opposes.get(best_judge.concept_key) is not None:
+            continue
+        if best_judge.verdict not in _BIRTH_VERDICTS:
+            continue
+        if not _judge_clears_tau(best_judge, tau_fire=tau_fire, tau_verbalized=tau_verbalized):
+            continue
+        births.append(best_judge)
+
+    return tuple(births)
+
+
 def _judge_clears_tau(finding: ConceptFinding, *, tau_fire: float, tau_verbalized: float) -> bool:
     """A judge finding clears the ONE tau applicable to its origin (A1).
 

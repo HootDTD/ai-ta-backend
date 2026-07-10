@@ -27,6 +27,7 @@ def _clear_env(monkeypatch):
         "APOLLO_MISC_BANK_SIM",
         "APOLLO_MISC_TAU_SOLO_JUDGE",
         "APOLLO_MISC_STRUCT_COKEY",
+        "APOLLO_GRADER_POSITIVE_FOCUS",
     ]
     for var in env_vars:
         monkeypatch.delenv(var, raising=False)
@@ -176,6 +177,40 @@ class TestStructCokeyEnabled:
         assert detector_config.struct_cokey_enabled() is True
         monkeypatch.delenv(detector_config.STRUCT_COKEY_FLAG_ENV)
         assert detector_config.struct_cokey_enabled() is False
+
+
+class TestGraderPositiveFocusEnabled:
+    """RED tests for the positive-focus flag (T-W5a): docs/_archive/specs/
+    2026-07-10-grader-positive-focus-design.md."""
+
+    def test_default_is_false_when_unset(self, monkeypatch):
+        monkeypatch.delenv(detector_config.POSITIVE_FOCUS_FLAG_ENV, raising=False)
+        assert detector_config.grader_positive_focus_enabled() is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "on", "YES", "TRUE", "On"])
+    def test_true_for_each_truthy_value(self, monkeypatch, value):
+        monkeypatch.setenv(detector_config.POSITIVE_FOCUS_FLAG_ENV, value)
+        assert detector_config.grader_positive_focus_enabled() is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "no", "off", "", "garbage"])
+    def test_false_for_non_truthy_values(self, monkeypatch, value):
+        monkeypatch.setenv(detector_config.POSITIVE_FOCUS_FLAG_ENV, value)
+        assert detector_config.grader_positive_focus_enabled() is False
+
+    def test_is_read_at_call_time_not_cached(self, monkeypatch):
+        assert detector_config.grader_positive_focus_enabled() is False
+        monkeypatch.setenv(detector_config.POSITIVE_FOCUS_FLAG_ENV, "true")
+        assert detector_config.grader_positive_focus_enabled() is True
+        monkeypatch.delenv(detector_config.POSITIVE_FOCUS_FLAG_ENV)
+        assert detector_config.grader_positive_focus_enabled() is False
+
+    def test_independent_of_detector_and_struct_cokey_flags(self, monkeypatch):
+        """Flipping positive-focus must not change the OTHER two flags'
+        readers, and vice versa — three independent env keys."""
+        monkeypatch.setenv(detector_config.POSITIVE_FOCUS_FLAG_ENV, "true")
+        assert detector_config.detector_enabled() is False
+        assert detector_config.struct_cokey_enabled() is False
+        assert detector_config.grader_positive_focus_enabled() is True
 
 
 def test_reload_restores_defaults_after_module_teardown():
