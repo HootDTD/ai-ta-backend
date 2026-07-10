@@ -30,7 +30,7 @@ import json
 import logging
 import math
 import os
-from typing import Any
+from typing import Any, cast
 
 from openai import OpenAI
 
@@ -39,13 +39,12 @@ from apollo.overseer.misconception_detector.types import (
     JudgeConceptInput,
     JudgeFn,
     JudgeRaw,
+    Verdict,
 )
 
 _LOG = logging.getLogger(__name__)
 
-_VALID_VERDICTS = frozenset(
-    {"clear", "needs_clarification", "misconception", "wrong"}
-)
+_VALID_VERDICTS = frozenset({"clear", "needs_clarification", "misconception", "wrong"})
 
 # R2 (belt-and-suspenders fix, docs/_archive/experiments/2026-07-08-misconception-detector-validation.md):
 # live gpt-4o at temperature=0.0 deterministically collapses a free-form
@@ -147,8 +146,7 @@ def _user_prompt(
                 "concept_key": c.concept_key,
                 "correct_belief": c.correct_belief,
                 "known_misconceptions": [
-                    {"code": e.code, "description": e.description}
-                    for e in c.bank_entries
+                    {"code": e.code, "description": e.description} for e in c.bank_entries
                 ],
             }
             for c in concepts
@@ -250,7 +248,7 @@ def _finding_from_row(
 
     return ConceptFinding(
         concept_key=concept_key,
-        verdict=verdict,
+        verdict=cast(Verdict, verdict),
         confidence=confidence,
         severity=0.0,
         evidence_span=evidence_span,
@@ -335,9 +333,7 @@ def judge_concepts(
                 "response has neither a 'concepts' array, a single concept "
                 "row, nor a top-level array of rows"
             )
-        rows_by_key = {
-            row.get("concept_key"): row for row in rows if isinstance(row, dict)
-        }
+        rows_by_key = {row.get("concept_key"): row for row in rows if isinstance(row, dict)}
     except Exception as exc:  # noqa: BLE001
         _LOG.warning("misconception judge returned malformed JSON, soft-failing: %s", exc)
         return _all_clear(concepts)
@@ -420,7 +416,7 @@ def make_openai_judge(model: str | None = None) -> JudgeFn:
         client = OpenAI()
         try:
             resp = client.chat.completions.create(  # pragma: no cover - live call
-                model=resolved_model,
+                model=cast(str, resolved_model),
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -428,7 +424,7 @@ def make_openai_judge(model: str | None = None) -> JudgeFn:
                 temperature=0.0,
                 logprobs=True,
                 top_logprobs=5,
-                response_format={"type": "json_schema", "json_schema": _JSON_SCHEMA},
+                response_format=cast(Any, {"type": "json_schema", "json_schema": _JSON_SCHEMA}),
             )
         except Exception as exc:  # noqa: BLE001
             _LOG.warning("misconception judge OpenAI call failed: %s", exc)

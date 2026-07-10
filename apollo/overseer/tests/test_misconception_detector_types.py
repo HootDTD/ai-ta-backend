@@ -7,6 +7,7 @@ section 2, amended by A1/A5 in the task prompt.
 from __future__ import annotations
 
 import dataclasses
+from typing import Any
 
 import pytest
 
@@ -19,8 +20,8 @@ from apollo.overseer.misconception_detector.types import (
 )
 
 
-def _finding(**overrides) -> ConceptFinding:
-    base = dict(
+def _finding(**overrides: Any) -> ConceptFinding:
+    base: dict[str, Any] = dict(
         concept_key="gdp_identity",
         verdict="misconception",
         confidence=0.9,
@@ -85,7 +86,14 @@ class TestMergeOutcome:
         finding = _finding(corroborated=True)
         outcome = MergeOutcome(
             misconception_penalty=0.12,
-            misconceptions=({"canonical_key": "misc.includes_transfers", "evidence_span": "x", "confidence": 0.9, "opposes": None},),
+            misconceptions=(
+                {
+                    "canonical_key": "misc.includes_transfers",
+                    "evidence_span": "x",
+                    "confidence": 0.9,
+                    "opposes": None,
+                },
+            ),
             ceiling_applied=True,
             ledger_findings=(finding,),
         )

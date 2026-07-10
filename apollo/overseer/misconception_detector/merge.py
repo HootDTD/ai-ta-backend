@@ -42,8 +42,8 @@ from __future__ import annotations
 import dataclasses
 
 from apollo.overseer.misconception_detector.config import (
-    CENTRALITY_W_MIN,
     CEILING_COMPOSITE,
+    CENTRALITY_W_MIN,
     SEVERITY_CLAMP,
 )
 from apollo.overseer.misconception_detector.types import ConceptFinding, MergeOutcome
@@ -83,9 +83,7 @@ def merge_detections(
     # returns only docked/clarification rows, so a stray non-corroborated or
     # non-misconception row (a needs_clarification downgrade that leaked, or a
     # future caller passing raw findings) must not be treated as a dock.
-    docked = tuple(
-        f for f in gated if f.corroborated and f.verdict == "misconception"
-    )
+    docked = tuple(f for f in gated if f.corroborated and f.verdict == "misconception")
 
     if not docked:
         return MergeOutcome(
@@ -95,18 +93,14 @@ def merge_detections(
             ledger_findings=(),
         )
 
-    ledger_findings = tuple(
-        _with_severity(f, _severity_for(f, centrality)) for f in docked
-    )
+    ledger_findings = tuple(_with_severity(f, _severity_for(f, centrality)) for f in docked)
 
     total_severity = sum(f.severity for f in ledger_findings)
     penalty = min(clamp, total_severity)
 
     ceiling_applied = _any_central(ledger_findings, centrality)
 
-    misconceptions = tuple(
-        _keyed_row(f) for f in ledger_findings if _is_bank_keyed(f.signature)
-    )
+    misconceptions = tuple(_keyed_row(f) for f in ledger_findings if _is_bank_keyed(f.signature))
 
     return MergeOutcome(
         misconception_penalty=penalty,
@@ -127,9 +121,7 @@ def _with_severity(finding: ConceptFinding, severity: float) -> ConceptFinding:
     return dataclasses.replace(finding, severity=severity)
 
 
-def _any_central(
-    findings: tuple[ConceptFinding, ...], centrality: dict[str, float]
-) -> bool:
+def _any_central(findings: tuple[ConceptFinding, ...], centrality: dict[str, float]) -> bool:
     """True iff any CEILING-ELIGIBLE docked finding attaches to a
     maximally-central concept (A12, corroboration/keying redesign spec
     §4.7/§8).
@@ -161,9 +153,7 @@ def _is_bank_keyed(signature: str) -> bool:
     An ``unkeyed:<concept_id>`` placeholder is NOT bank-keyed and never becomes
     a keyed ledger row.
     """
-    return signature.startswith(_MISC_PREFIX) and not signature.startswith(
-        _UNKEYED_PREFIX
-    )
+    return signature.startswith(_MISC_PREFIX) and not signature.startswith(_UNKEYED_PREFIX)
 
 
 def _keyed_row(finding: ConceptFinding) -> dict:

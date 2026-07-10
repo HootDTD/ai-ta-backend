@@ -52,15 +52,32 @@ import asyncio
 import json
 import logging
 import os
-import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 _LOG = logging.getLogger("validate_misconception_detector")
 
 ATTEMPT_IDS: tuple[int, ...] = (
-    75, 77, 81, 88, 89, 95, 97, 100, 102, 105,
-    106, 108, 109, 110, 111, 112, 113, 114, 115, 116,
+    75,
+    77,
+    81,
+    88,
+    89,
+    95,
+    97,
+    100,
+    102,
+    105,
+    106,
+    108,
+    109,
+    110,
+    111,
+    112,
+    113,
+    114,
+    115,
+    116,
 )
 
 REPLAY_DIRS = (
@@ -153,6 +170,7 @@ async def _run() -> dict[str, Any]:
     # import time, e.g. misconception_detector/config.py's calibration knobs).
     from sqlalchemy import select
 
+    from apollo.knowledge_graph.store import KGStore
     from apollo.overseer.misconception_detector.apply import apply_penalty
     from apollo.overseer.misconception_detector.centrality import compute_centrality
     from apollo.overseer.misconception_detector.config import detector_enabled, trace_enabled
@@ -160,11 +178,10 @@ async def _run() -> dict[str, Any]:
     from apollo.overseer.misconception_detector.gate import gate_findings
     from apollo.overseer.misconception_detector.merge import merge_detections
     from apollo.overseer.misconception_detector.trace import trace_attempt
+    from apollo.overseer.problem_selector import list_problems_for_concept
     from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
     from apollo.persistence.neo4j_client import Neo4jClient
-    from apollo.knowledge_graph.store import KGStore
-    from apollo.overseer.problem_selector import list_problems_for_concept
-    from apollo.projections.scorecard import load_bands, _band_for
+    from apollo.projections.scorecard import _band_for, load_bands
     from database.session import get_db_session
     from indexing.document_embedder import embed_texts
 
@@ -204,7 +221,9 @@ async def _run() -> dict[str, Any]:
                     store = KGStore(db, neo)
                     student_graph = await store.read_graph(attempt_id=int(attempt.id))
 
-                    problems = await list_problems_for_concept(db, concept_id=sess.concept_id)
+                    problems = await list_problems_for_concept(
+                        db, concept_id=cast(int, sess.concept_id)
+                    )
                     problem = None
                     for p in problems:
                         if p.id == str(attempt.problem_id):
@@ -230,7 +249,9 @@ async def _run() -> dict[str, Any]:
                         .all()
                     )
 
-                    report = attempt.diagnostic_report or {}
+                    report: dict[str, Any] = (
+                        cast(dict[str, Any] | None, attempt.diagnostic_report) or {}
+                    )
                     rubric = report.get("rubric") or {}
                     overall = rubric.get("overall") or {}
                     baseline_score = overall.get("score")
@@ -251,7 +272,7 @@ async def _run() -> dict[str, Any]:
                     detection = await detect_misconceptions(
                         db,
                         attempt_id=int(attempt.id),
-                        concept_id=sess.concept_id,
+                        concept_id=cast(int, sess.concept_id),
                         student_graph=student_graph,
                         reference_graph=reference_graph,
                         problem_text=problem.problem_text,
@@ -320,13 +341,20 @@ async def _run() -> dict[str, Any]:
                     _LOG.info(
                         "attempt=%s expected=%s baseline=%s(%.4f) detector=%s(%.4f) "
                         "penalty=%.4f misc=%s",
-                        attempt_id, expected_cls, baseline_band, composite_before,
-                        detector_band, composite_after, outcome.misconception_penalty,
+                        attempt_id,
+                        expected_cls,
+                        baseline_band,
+                        composite_before,
+                        detector_band,
+                        composite_after,
+                        outcome.misconception_penalty,
                         misconceptions_found,
                     )
                 except Exception as exc:  # noqa: BLE001
                     _LOG.exception("attempt %s failed", attempt_id)
-                    errors.append({"attempt_id": attempt_id, "error": f"{type(exc).__name__}: {exc}"})
+                    errors.append(
+                        {"attempt_id": attempt_id, "error": f"{type(exc).__name__}: {exc}"}
+                    )
             break
     finally:
         await neo.close()
@@ -343,7 +371,9 @@ def _summarize(result: dict[str, Any]) -> str:
     rows = result["rows"]
     lines: list[str] = []
     lines.append(f"mode={result['mode']} used_real_judge={result['used_real_judge']}")
-    lines.append(f"attempts attempted={len(rows) + len(result['errors'])} ok={len(rows)} errors={len(result['errors'])}")
+    lines.append(
+        f"attempts attempted={len(rows) + len(result['errors'])} ok={len(rows)} errors={len(result['errors'])}"
+    )
 
     misconception_rows = [r for r in rows if not r["is_control"]]
     control_rows = [r for r in rows if r["is_control"]]

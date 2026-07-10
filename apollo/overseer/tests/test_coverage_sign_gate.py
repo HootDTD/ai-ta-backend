@@ -20,6 +20,7 @@ Behavior change lives entirely inside ``_batch_binary_match`` for
     equivalent." must no longer appear in the prompt text (replaced with
     sign-NOT-equivalent wording).
 """
+
 from __future__ import annotations
 
 import json
@@ -86,9 +87,13 @@ def test_sign_reversed_pair_forced_uncovered_when_flag_on(mock_client_cls):
 
     # LLM (mocked) WRONGLY says covered=True with high confidence — the
     # pre-gate must override this.
-    payload = json.dumps({"matches": [
-        {"ref_id": "ref_si", "covered": True, "confidence": 0.95},
-    ]})
+    payload = json.dumps(
+        {
+            "matches": [
+                {"ref_id": "ref_si", "covered": True, "confidence": 0.95},
+            ]
+        }
+    )
     mock_client_cls.return_value = _mock_openai_always(payload)
 
     result = _batch_binary_match(
@@ -116,9 +121,13 @@ def test_equals_bearing_sign_reversed_pair_forced_uncovered_when_flag_on(mock_cl
     ref = _eq_node("ref_nx", "NX = X - M", "Net exports identity")
     student = _eq_node("stu_nx", "NX = M - X")
 
-    payload = json.dumps({"matches": [
-        {"ref_id": "ref_nx", "covered": True, "confidence": 0.95},
-    ]})
+    payload = json.dumps(
+        {
+            "matches": [
+                {"ref_id": "ref_nx", "covered": True, "confidence": 0.95},
+            ]
+        }
+    )
     mock_client_cls.return_value = _mock_openai_always(payload)
 
     result = _batch_binary_match(
@@ -139,9 +148,13 @@ def test_equals_bearing_side_swap_still_covered_when_flag_on(mock_client_cls):
     ref = _eq_node("ref_nx", "NX = X - M", "Net exports identity")
     student = _eq_node("stu_nx", "X - M = NX")
 
-    payload = json.dumps({"matches": [
-        {"ref_id": "ref_nx", "covered": True, "confidence": 0.9},
-    ]})
+    payload = json.dumps(
+        {
+            "matches": [
+                {"ref_id": "ref_nx", "covered": True, "confidence": 0.9},
+            ]
+        }
+    )
     mock_client_cls.return_value = _mock_openai_always(payload)
 
     result = _batch_binary_match(
@@ -160,9 +173,13 @@ def test_sign_preserving_rearrangement_still_covered_when_flag_on(mock_client_cl
     ref = _eq_node("ref_si", "S - I", "Savings-investment identity")
     student = _eq_node("stu_si", "S - I + 0")
 
-    payload = json.dumps({"matches": [
-        {"ref_id": "ref_si", "covered": True, "confidence": 0.9},
-    ]})
+    payload = json.dumps(
+        {
+            "matches": [
+                {"ref_id": "ref_si", "covered": True, "confidence": 0.9},
+            ]
+        }
+    )
     mock_client_cls.return_value = _mock_openai_always(payload)
 
     result = _batch_binary_match(
@@ -181,9 +198,13 @@ def test_llm_says_not_covered_stays_not_covered_when_flag_on(mock_client_cls):
     ref = _eq_node("ref_si", "S - I", "Savings-investment identity")
     student = _eq_node("stu_si", "S - I + 0")
 
-    payload = json.dumps({"matches": [
-        {"ref_id": "ref_si", "covered": False, "confidence": 0.7},
-    ]})
+    payload = json.dumps(
+        {
+            "matches": [
+                {"ref_id": "ref_si", "covered": False, "confidence": 0.7},
+            ]
+        }
+    )
     mock_client_cls.return_value = _mock_openai_always(payload)
 
     result = _batch_binary_match(
@@ -213,9 +234,13 @@ def test_non_equation_entry_type_untouched_by_gate(mock_client_cls):
         source="parser",
         content={"applies_when": "the flow is steady", "label": ""},
     )
-    payload = json.dumps({"matches": [
-        {"ref_id": "ref_c1", "covered": True, "confidence": 0.9},
-    ]})
+    payload = json.dumps(
+        {
+            "matches": [
+                {"ref_id": "ref_c1", "covered": True, "confidence": 0.9},
+            ]
+        }
+    )
     mock_client_cls.return_value = _mock_openai_always(payload)
 
     result = _batch_binary_match(
@@ -240,9 +265,13 @@ def test_flag_off_sign_reversed_pair_verdict_unchanged(mock_client_cls):
     ref = _eq_node("ref_si", "S - I", "Savings-investment identity")
     student = _eq_node("stu_si", "I - S")
 
-    payload = json.dumps({"matches": [
-        {"ref_id": "ref_si", "covered": True, "confidence": 0.95},
-    ]})
+    payload = json.dumps(
+        {
+            "matches": [
+                {"ref_id": "ref_si", "covered": True, "confidence": 0.95},
+            ]
+        }
+    )
     mock_client_cls.return_value = _mock_openai_always(payload)
 
     result = _batch_binary_match(
@@ -261,9 +290,13 @@ def test_flag_off_prompt_payload_byte_identical(mock_client_cls):
     prompt)."""
     ref = _eq_node("ref_si", "S - I", "Savings-investment identity")
     student = _eq_node("stu_si", "S - I + 0")
-    payload = json.dumps({"matches": [
-        {"ref_id": "ref_si", "covered": True, "confidence": 0.9},
-    ]})
+    payload = json.dumps(
+        {
+            "matches": [
+                {"ref_id": "ref_si", "covered": True, "confidence": 0.9},
+            ]
+        }
+    )
     client = _mock_openai_always(payload)
     mock_client_cls.return_value = client
 

@@ -52,9 +52,7 @@ async def _load_bank(db: AsyncSession, *, concept_id: int | None) -> tuple[Misco
     try:
         entries = await load_for_concept(db, concept_id=concept_id)
     except Exception:  # noqa: BLE001
-        _LOG.exception(
-            "misconception_detector_bank_load_failed concept_id=%s", concept_id
-        )
+        _LOG.exception("misconception_detector_bank_load_failed concept_id=%s", concept_id)
         return ()
     return tuple(entries)
 
@@ -194,9 +192,7 @@ async def detect_misconceptions(
     """
     bank_entries = await _load_bank(db, concept_id=concept_id)
 
-    sympy_findings = _run_sympy_veto(
-        student_graph, reference_graph, bank_entries=bank_entries
-    )
+    sympy_findings = _run_sympy_veto(student_graph, reference_graph, bank_entries=bank_entries)
     bank_pattern_findings = await _run_bank_pattern(
         db,
         concept_id=concept_id,

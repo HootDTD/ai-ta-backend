@@ -28,10 +28,9 @@ mirroring the resolver's tier-3 code path.
 from __future__ import annotations
 
 from apollo.ontology.graph import KGGraph
-from apollo.resolution.tiers import _symbolic_equiv, student_surface_text
-
 from apollo.overseer.misconception_bank import MisconceptionEntry
 from apollo.overseer.misconception_detector.types import ConceptFinding
+from apollo.resolution.tiers import _symbolic_equiv, student_surface_text
 
 _EQ_MUTANT_PREFIX = "eq:"
 
@@ -44,7 +43,7 @@ def _mutant_equations(bank_entries: tuple[MisconceptionEntry, ...]) -> tuple[tup
     for entry in bank_entries:
         for phrase in entry.trigger_phrases:
             if phrase.startswith(_EQ_MUTANT_PREFIX):
-                mutant = phrase[len(_EQ_MUTANT_PREFIX):].strip()
+                mutant = phrase[len(_EQ_MUTANT_PREFIX) :].strip()
                 if mutant:
                     pairs.append((entry.code, mutant))
     return tuple(pairs)

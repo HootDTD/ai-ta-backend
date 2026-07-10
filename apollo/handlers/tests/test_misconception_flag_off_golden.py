@@ -34,7 +34,6 @@ import pytest
 
 from apollo.grading.artifact_build import build_llm_artifact
 from apollo.grading.composite import load_weights
-from apollo.handlers import done as done_mod
 from apollo.handlers.done import handle_done
 from apollo.handlers.tests.test_done_shadow_flag import _old_path_patches
 
@@ -42,11 +41,7 @@ pytestmark = pytest.mark.unit
 
 _FLAG = "APOLLO_MISCONCEPTION_DETECTOR"
 _PERSONAS_DIR = (
-    Path(__file__).resolve().parents[3]
-    / "campaign"
-    / "cast"
-    / "personas"
-    / "macroeconomics"
+    Path(__file__).resolve().parents[3] / "campaign" / "cast" / "personas" / "macroeconomics"
 )
 
 
@@ -254,9 +249,7 @@ def _captured_pre_detector_done_golden(out: dict) -> None:
     "persona_file",
     ["strong__gdp_identity.json", "misconception__gdp_identity.json"],
 )
-async def test_handle_done_flag_off_byte_identical_across_personas(
-    monkeypatch, persona_file
-):
+async def test_handle_done_flag_off_byte_identical_across_personas(monkeypatch, persona_file):
     """flag OFF -> detect_misconceptions NEVER called and the student-facing
     payload is byte-identical to the pre-detector golden, whether the
     underlying student utterance is a correct teaching turn (strong) or a
@@ -278,9 +271,7 @@ async def test_handle_done_flag_off_goldens_identical_between_personas(monkeypat
     strong = _load_persona("strong__gdp_identity.json")
     misconception = _load_persona("misconception__gdp_identity.json")
 
-    out_strong, _ = await _run_flag_off(
-        monkeypatch, utterance=_persona_utterance(strong)
-    )
+    out_strong, _ = await _run_flag_off(monkeypatch, utterance=_persona_utterance(strong))
     out_misconception, _ = await _run_flag_off(
         monkeypatch, utterance=_persona_utterance(misconception)
     )
@@ -292,9 +283,7 @@ async def test_handle_done_flag_explicit_false_is_also_byte_identical(monkeypatc
     monkeypatch.setenv(_FLAG, "false")
 
     db, _sess, _attempt, patches = _old_path_patches()
-    detect_mock = AsyncMock(
-        side_effect=AssertionError("must not be called when flag='false'")
-    )
+    detect_mock = AsyncMock(side_effect=AssertionError("must not be called when flag='false'"))
     patches = _patches_with_rubric(patches, _OLD_RUBRIC)
     patches += [
         patch("apollo.handlers.done.detect_misconceptions", new=detect_mock),
@@ -324,9 +313,7 @@ async def test_handle_done_flag_off_write_artifacts_receives_none_outcome(monkey
 
     db, _sess, _attempt, patches = _old_path_patches()
     write_mock = AsyncMock(return_value=None)
-    detect_mock = AsyncMock(
-        side_effect=AssertionError("must not be called while flag is OFF")
-    )
+    detect_mock = AsyncMock(side_effect=AssertionError("must not be called while flag is OFF"))
 
     patches = _patches_with_rubric(patches, _OLD_RUBRIC)
     patches += [
