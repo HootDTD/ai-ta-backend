@@ -332,6 +332,16 @@ async def test_promoted_demoted_by_recency(db):
 
 
 @pytest.mark.asyncio
+async def test_insert_observations_idempotent_empty_values_is_noop(db):
+    # Direct unit test of the shared helper's empty-list guard (both current
+    # callers already short-circuit before reaching it; this pins the
+    # defensive fallback itself).
+    n = await store._insert_observations_idempotent(db, [])
+    assert n == 0
+    assert await _count(db) == 0
+
+
+@pytest.mark.asyncio
 async def test_record_observation_inserts_one_row(db):
     n = await store.record_observation(
         db,
