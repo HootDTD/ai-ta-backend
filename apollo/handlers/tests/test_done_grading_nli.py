@@ -482,3 +482,79 @@ async def test_run_graph_simulation_import_failure_does_not_arm_retry(monkeypatc
 
     assert result is not None
     assert attempt.learner_update_pending is False
+
+
+# ---------------------------------------------------------------------------
+# L4 (real seam) — ``TransformersNLIAdjudicator._load()`` is lazy: it is only
+# ever invoked from INSIDE ``classify()``, mid-resolution (deep inside
+# ``resolve_attempt`` -> ``_content_match`` -> ``match_nli_semantic`` /
+# ``match_nli_misconception_certify``). Every test above mocks
+# ``resolve_attempt`` wholesale, so none of them prove the ImportError
+# actually survives that real call stack before reaching
+# ``_resolve_attempt_async``'s guard. This test exercises the REAL resolver
+# + REAL ``TransformersNLIAdjudicator.classify`` (only ``_load`` patched) end
+# to end, reproducing the live 2026-07-10 macro e2e defect: an
+# ImportError/ModuleNotFoundError raised by the lazy ``transformers`` import
+# (numpy/scipy ABI mismatch) escaping mid-resolution and 500ing the
+# ``/done`` endpoint.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_attempt_async_degrades_when_real_classify_load_fails(monkeypatch, caplog):
+    """L4 (real seam): a REAL ``resolve_attempt`` call against a REAL
+    ``TransformersNLIAdjudicator`` (only the lazy ``_load()`` patched to
+    raise ``ModuleNotFoundError``, exactly as a broken ``transformers``
+    install would) must still degrade to no-NLI and return a normal
+    ``ResolutionResult`` — never letting the ImportError escape through
+    ``classify()`` -> ``match_nli_semantic`` -> ``_content_match`` ->
+    ``resolve_attempt`` -> ``_resolve_attempt_async``."""
+    import asyncio
+
+    from apollo.ontology.nodes import build_node
+    from apollo.resolution.candidates import Candidate
+    from apollo.resolution.embedding import CandidateEmbeddingCache
+    from apollo.resolution.nli_adjudicator import TransformersNLIAdjudicator
+    from apollo.resolution.nli_config import load_nli_params
+
+    monkeypatch.setattr(dg, "_NLI_IMPORT_UNAVAILABLE_LOGGED", False)
+
+    def boom(self):
+        raise ModuleNotFoundError("No module named 'transformers'")
+
+    monkeypatch.setattr(TransformersNLIAdjudicator, "_load", boom)
+
+    adjudicator = TransformersNLIAdjudicator("fake-model")
+    # embedder=None -> shortlist falls back to Jaccard token-overlap, so this
+    # test never touches the OpenAI SDK; classify() is still reached because
+    # the student text overlaps the candidate's display_name/aliases.
+    ctx = NLIContext(
+        nli=adjudicator, embedder=None, cache=CandidateEmbeddingCache(), params=load_nli_params()
+    )
+
+    node = build_node(
+        node_type="definition",
+        node_id="n1",
+        attempt_id=1,
+        source="parser",
+        content={"concept": "density", "meaning": "density stays constant"},
+    )
+    candidate = Candidate(
+        "def.const_density", -1, "definition", False, None, (), "density stays constant", None, ()
+    )
+    graph = KGGraph(nodes=[node])
+
+    with caplog.at_level("WARNING", logger="apollo.handlers.done_grading"):
+        result = asyncio.run(
+            dg._resolve_attempt_async(
+                graph,
+                (candidate,),
+                confirmed_resolutions={},
+                fuzzy_threshold=0.9,
+                symbolic_mappings={},
+                nli_ctx=ctx,
+            )
+        )
+
+    assert result is not None
+    assert result.tier_counts.get("unresolved") == 1 or "resolved" in result.tier_counts
+    assert "apollo_nli_transformers_unavailable" in caplog.text
