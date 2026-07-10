@@ -4,7 +4,16 @@ The diagnostic LLM does NOT decide the grade. The rubric (computed in
 apollo/overseer/rubric.py) is the verdict. This module produces a short
 natural-language report that explains the verdict — leading with the
 lowest-scoring axis, calling out what broke, and ending with a concrete
-next step."""
+next step.
+
+2026-07-10 (topic-score design spec section 4): when a ``TopicScoreResult``
+is passed in AND ``APOLLO_TOPIC_SCORE_SERVED`` is on, ``generate_diagnostic``
+replaces the axis-based prompt above with the ledger-grounded prompt built by
+``apollo.overseer.topic_narrative.build_topic_narrative_prompt`` — every claim
+in the narrative is traceable to a topic/misconception the deterministic
+ledger actually holds (kills the axis path's hallucination class). Flag OFF
+(or no ``topic_score`` argument) leaves this function's prompt/output
+byte-identical to today."""
 from __future__ import annotations
 
 import json
@@ -13,6 +22,10 @@ import os
 from typing import Any, Dict, List
 
 from openai import OpenAI
+
+from apollo.overseer.misconception_detector.config import topic_score_served_enabled
+from apollo.overseer.topic_narrative import build_topic_narrative_prompt
+from apollo.overseer.topic_score import TopicScoreResult
 
 _LOG = logging.getLogger(__name__)
 
@@ -50,31 +63,51 @@ def generate_diagnostic(
     problem_text: str,
     rubric: Dict[str, Any],
     model: str | None = None,
+    topic_score: TopicScoreResult | None = None,
 ) -> str:
+    """Generate the student-facing diagnostic narrative.
+
+    ``topic_score`` (2026-07-10 spec §4) is an OPT-IN keyword: when it is
+    provided AND ``APOLLO_TOPIC_SCORE_SERVED`` is on, the ledger-grounded
+    prompt (``topic_narrative.build_topic_narrative_prompt``) REPLACES the
+    axis-based ``_SYSTEM_PROMPT``/``user_payload`` below — no other branch of
+    this function changes. When the flag is off (or ``topic_score`` is
+    ``None``, the default), this function's prompt assembly and output are
+    byte-identical to pre-topic-score behavior, including the misconception/
+    negotiation recap lines appended below (those read ``rubric``/``coverage``
+    directly and are unaffected by which prompt generated ``narrative``)."""
     model = model or os.getenv("MAIN_MODEL", "gpt-4o")
     client = OpenAI()
 
-    user_payload = {
-        "problem": problem_text,
-        "rubric": rubric,
-        "coverage": coverage,
-        "reference_required_entries": [
-            {
-                "id": s["id"],
-                "type": s["entry_type"],
-                "label": s.get("content", {}).get("label"),
-                "action": s.get("content", {}).get("action"),
-            }
-            for s in reference_steps
-        ],
-    }
+    use_topic_prompt = topic_score is not None and topic_score_served_enabled()
+    if use_topic_prompt:
+        system_prompt, user_content = build_topic_narrative_prompt(
+            topic_score, problem_text=problem_text
+        )
+    else:
+        system_prompt = _SYSTEM_PROMPT
+        user_payload = {
+            "problem": problem_text,
+            "rubric": rubric,
+            "coverage": coverage,
+            "reference_required_entries": [
+                {
+                    "id": s["id"],
+                    "type": s["entry_type"],
+                    "label": s.get("content", {}).get("label"),
+                    "action": s.get("content", {}).get("action"),
+                }
+                for s in reference_steps
+            ],
+        }
+        user_content = json.dumps(user_payload)
 
     try:
         resp = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(user_payload)},
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
             ],
             temperature=0.4,
         )
