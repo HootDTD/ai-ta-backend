@@ -47,7 +47,9 @@ def test_to_kg_graph_reference_nodes_carry_entity_key() -> None:
     assert by_id["do_it"].entity_key == "proc.do_it"
 
 
-def test_missing_entity_key_defaults_none() -> None:
+def test_missing_entity_key_is_derived() -> None:
+    """T1: a step that omits entity_key now gets it derived at graph-build time
+    (population case) instead of defaulting to None."""
     payload = {
         "id": "p2",
         "concept_id": "c",
@@ -63,4 +65,26 @@ def test_missing_entity_key_defaults_none() -> None:
         ],
     }
     graph = Problem.model_validate(payload).to_kg_graph(attempt_id=1)
-    assert graph.nodes[0].entity_key is None
+    assert graph.nodes[0].entity_key == "eq.e"
+
+
+def test_authored_entity_key_is_never_rederived() -> None:
+    """Byte-identity: a step that already carries entity_key keeps exactly that
+    value even if it does not match what derivation would produce."""
+    payload = {
+        "id": "p3",
+        "concept_id": "c",
+        "difficulty": "hard",
+        "problem_text": "x",
+        "reference_solution": [
+            {
+                "step": 1,
+                "entry_type": "equation",
+                "id": "e",
+                "content": {"symbolic": "a-b"},
+                "entity_key": "eq.custom_authored_value",
+            }
+        ],
+    }
+    graph = Problem.model_validate(payload).to_kg_graph(attempt_id=1)
+    assert graph.nodes[0].entity_key == "eq.custom_authored_value"
