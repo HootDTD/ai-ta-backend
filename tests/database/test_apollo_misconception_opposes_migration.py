@@ -1,6 +1,6 @@
-"""Real-Postgres test for apollo_misconceptions.opposes (migration 038).
+"""Real-Postgres test for apollo_misconceptions.opposes (migration 039).
 
-Applies 019 then 038 verbatim to a fresh DB on the session pgvector container
+Applies 019 then 039 verbatim to a fresh DB on the session pgvector container
 and asserts the opposes column exists, is nullable, defaults NULL, and accepts a
 value — enumerating the column's add/nullable/insert behaviors per the DB test
 contract. Mirrors test_apollo_misconception_observations_migration.py.
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.integration
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "database" / "migrations"
 MIGRATED_DB_NAME = "apollo_misconception_opposes_migrations"
 MIGRATION_019 = MIGRATIONS_DIR / "019_apollo_misconceptions.sql"
-MIGRATION_038 = MIGRATIONS_DIR / "038_apollo_misconception_opposes.sql"
+MIGRATION_039 = MIGRATIONS_DIR / "039_apollo_misconception_opposes.sql"
 
 # 019 references apollo_concepts + needs pgvector; stub the concept parent and
 # create the extension (the container image ships pgvector).
@@ -54,7 +54,7 @@ def _migrated_dsn(_pg_url: str):
         try:
             await conn.execute(_STUB_DDL)
             await conn.execute(MIGRATION_019.read_text(encoding="utf-8"))
-            await conn.execute(MIGRATION_038.read_text(encoding="utf-8"))
+            await conn.execute(MIGRATION_039.read_text(encoding="utf-8"))
         finally:
             await conn.close()
 

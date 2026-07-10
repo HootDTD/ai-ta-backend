@@ -1,4 +1,4 @@
--- 038_apollo_misconception_opposes.sql
+-- 039_apollo_misconception_opposes.sql
 -- F-struct (structural co-key): add the per-entry `opposes` link to the
 -- RUNTIME misconception bank (apollo_misconceptions, migration 019). The link
 -- already exists in the on-disk misconceptions.json source and in the emergent
@@ -7,7 +7,7 @@
 -- lacked it. Nullable: most banks have no opposes; NULL means "no structural
 -- scope" and the structural co-key gate path never fires for that entry.
 --
--- Numbering: on-disk max was 037; this takes 038.
+-- Numbering: on-disk max was 038 (038_apollo_concept_description.sql on staging); this takes 039.
 --
 -- DEPLOY-TIME RECONCILIATION: numbered migration; agents apply to LOCAL Docker
 -- Postgres only. Test-project rehearsal then prod is a human/CI step. DO NOT
@@ -16,7 +16,7 @@
 -- ROLLBACK: dropping opposes loses the structural co-key link; the bank's
 -- existing embedding-match path is unaffected (opposes is read only by the
 -- F-struct gate path). Safe direction: after rollback every entry reads as
--- "no structural scope" (pre-038 behavior).
+-- "no structural scope" (pre-039 behavior).
 
 BEGIN;
 
