@@ -118,6 +118,11 @@ def _mint_plan(concept_id: int) -> MintPlan:
 
 
 def _patch_common_stages(monkeypatch, *, candidate: CandidateQuestion, concept_id: int):
+    # These tests pin the LEGACY (LLM-tag-draft) path; the seeded concept would
+    # otherwise flip the run into reversed mode. Reversed-mode behavior has its
+    # own tests below.
+    monkeypatch.setenv("APOLLO_REVERSED_PROVISIONING", "0")
+
     async def _resolve_prov(db, *, search_space_id):  # noqa: ANN001
         return concept_id
 
@@ -336,9 +341,7 @@ class _TagMintFakeMC:
         return "{}"
 
     def cheap(self, *, purpose=None, **_k):
-        return json.dumps(
-            {"concept_slug": "savepoint", "display_name": "Savepoint", "prereqs": []}
-        )
+        return json.dumps({"concept_slug": "savepoint", "display_name": "Savepoint", "prereqs": []})
 
 
 def _savepoint_candidate(*, document_id: int, label: str, chash: str) -> CandidateQuestion:
@@ -386,6 +389,7 @@ async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, mon
     from apollo.provisioning import tag_mint as tm
     from apollo.provisioning.tag_mint_persist import link_opposes as real_link_opposes
 
+    monkeypatch.setenv("APOLLO_REVERSED_PROVISIONING", "0")
     space = await _seed_search_space(db_session, slug="savepoint")
     concept_id = await _seed_concept(db_session, search_space_id=space, slug="savepoint")
     prob_doc = await _seed_doc_with_chunk(
@@ -459,11 +463,7 @@ async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, mon
     # (orphaned KG rows unreachable by any promoted ConceptProblem, yet a live
     # dedup target for a later mint, is exactly the defect M1 fixes).
     fail_rows = (
-        (
-            await db_session.execute(
-                select(KGEntity).where(KGEntity.canonical_key == "eq.eq-fail")
-            )
-        )
+        (await db_session.execute(select(KGEntity).where(KGEntity.canonical_key == "eq.eq-fail")))
         .scalars()
         .all()
     )

@@ -265,7 +265,9 @@ async def test_approve_409_when_not_held(db_session, monkeypatch):
         search_space_id=space,
         set_index=1,
         status="done",
-        result_summary={"problems": [{"concept_problem_id": prob.id, "outcome": "held_for_review"}]},
+        result_summary={
+            "problems": [{"concept_problem_id": prob.id, "outcome": "held_for_review"}]
+        },
     )
     db_session.add(aset)
     await db_session.flush()
@@ -307,7 +309,9 @@ async def test_approve_422_when_chosen_reference_missing(db_session, monkeypatch
         search_space_id=space,
         set_index=1,
         status="done",
-        result_summary={"problems": [{"concept_problem_id": prob.id, "outcome": "held_for_review"}]},
+        result_summary={
+            "problems": [{"concept_problem_id": prob.id, "outcome": "held_for_review"}]
+        },
     )
     db_session.add(aset)
     await db_session.flush()
@@ -399,7 +403,9 @@ async def test_approve_404_when_problem_in_different_search_space(db_session, mo
         search_space_id=space_b,
         set_index=1,
         status="done",
-        result_summary={"problems": [{"concept_problem_id": prob.id, "outcome": "held_for_review"}]},
+        result_summary={
+            "problems": [{"concept_problem_id": prob.id, "outcome": "held_for_review"}]
+        },
     )
     db_session.add(aset)
     await db_session.flush()
@@ -576,7 +582,9 @@ async def test_approve_held_problem_promotes_chosen_reference(db_session, monkey
         search_space_id=search_space_id,
         set_index=1,
         status="done",
-        result_summary={"problems": [{"concept_problem_id": problem.id, "outcome": "held_for_review"}]},
+        result_summary={
+            "problems": [{"concept_problem_id": problem.id, "outcome": "held_for_review"}]
+        },
     )
     db_session.add(aset)
     await db_session.flush()
@@ -664,35 +672,72 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
     space_id, concept_id = await _seed_course(db_session, slug="aas-del")
 
     # Two reference docs for the target set, each with a chunk.
-    pdoc = AITADocument(title="p", content="c", content_hash="ph", unique_identifier_hash="pu",
-                        search_space_id=space_id, status={"state": "apollo_reference"})
-    sdoc = AITADocument(title="s", content="c", content_hash="sh", unique_identifier_hash="su",
-                        search_space_id=space_id, status={"state": "apollo_reference"})
+    pdoc = AITADocument(
+        title="p",
+        content="c",
+        content_hash="ph",
+        unique_identifier_hash="pu",
+        search_space_id=space_id,
+        status={"state": "apollo_reference"},
+    )
+    sdoc = AITADocument(
+        title="s",
+        content="c",
+        content_hash="sh",
+        unique_identifier_hash="su",
+        search_space_id=space_id,
+        status={"state": "apollo_reference"},
+    )
     db_session.add_all([pdoc, sdoc])
     await db_session.flush()
-    db_session.add_all([
-        AITAChunk(document_id=pdoc.id, content="pc"),
-        AITAChunk(document_id=sdoc.id, content="sc"),
-    ])
+    db_session.add_all(
+        [
+            AITAChunk(document_id=pdoc.id, content="pc"),
+            AITAChunk(document_id=sdoc.id, content="sc"),
+        ]
+    )
 
     # Two ConceptProblems minted by the target set, one by a sibling set.
-    cp1 = ConceptProblem(concept_id=concept_id, problem_code="scrape.a", difficulty="m",
-                         payload={}, tier=2, search_space_id=space_id)
-    cp2 = ConceptProblem(concept_id=concept_id, problem_code="scrape.b", difficulty="m",
-                         payload={}, tier=2, search_space_id=space_id)
-    sibling = ConceptProblem(concept_id=concept_id, problem_code="scrape.z", difficulty="m",
-                             payload={}, tier=2, search_space_id=space_id)
+    cp1 = ConceptProblem(
+        concept_id=concept_id,
+        problem_code="scrape.a",
+        difficulty="m",
+        payload={},
+        tier=2,
+        search_space_id=space_id,
+    )
+    cp2 = ConceptProblem(
+        concept_id=concept_id,
+        problem_code="scrape.b",
+        difficulty="m",
+        payload={},
+        tier=2,
+        search_space_id=space_id,
+    )
+    sibling = ConceptProblem(
+        concept_id=concept_id,
+        problem_code="scrape.z",
+        difficulty="m",
+        payload={},
+        tier=2,
+        search_space_id=space_id,
+    )
     db_session.add_all([cp1, cp2, sibling])
     await db_session.flush()
 
     target = AuthoredSet(
-        search_space_id=space_id, set_index=1, status="done",
-        problem_document_id=pdoc.id, solution_document_id=sdoc.id,
-        result_summary={"problems": [
-            {"concept_problem_id": cp1.id, "outcome": "promoted"},
-            {"concept_problem_id": cp2.id, "outcome": "held_for_review"},
-            {"concept_problem_id": None, "outcome": "rejected"},
-        ]},
+        search_space_id=space_id,
+        set_index=1,
+        status="done",
+        problem_document_id=pdoc.id,
+        solution_document_id=sdoc.id,
+        result_summary={
+            "problems": [
+                {"concept_problem_id": cp1.id, "outcome": "promoted"},
+                {"concept_problem_id": cp2.id, "outcome": "held_for_review"},
+                {"concept_problem_id": None, "outcome": "rejected"},
+            ]
+        },
     )
     db_session.add(target)
     await db_session.flush()
@@ -710,9 +755,13 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
     assert await db_session.get(ConceptProblem, cp1_id) is None
     assert await db_session.get(ConceptProblem, cp2_id) is None
     # Chunks cascade with their document.
-    remaining_chunks = (await db_session.execute(
-        select(func.count()).select_from(AITAChunk).where(AITAChunk.document_id.in_([pdoc_id, sdoc_id]))
-    )).scalar_one()
+    remaining_chunks = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(AITAChunk)
+            .where(AITAChunk.document_id.in_([pdoc_id, sdoc_id]))
+        )
+    ).scalar_one()
     assert remaining_chunks == 0
     # Sibling problem survives.
     assert await db_session.get(ConceptProblem, sibling_id) is not None
@@ -729,15 +778,20 @@ async def test_delete_failed_set_with_no_problems(db_session, monkeypatch):
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     space_id, _ = await _seed_course(db_session, slug="aas-del-failed")
 
-    row = AuthoredSet(search_space_id=space_id, set_index=1, status="failed",
-                      result_summary={"error": "boom"})
+    row = AuthoredSet(
+        search_space_id=space_id, set_index=1, status="failed", result_summary={"error": "boom"}
+    )
     db_session.add(row)
     await db_session.flush()
     set_id = int(row.id)
 
     resp = await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
-    assert resp == {"deleted": True, "removed_problems": 0, "removed_documents": 0,
-                    "removed_concepts": 0}
+    assert resp == {
+        "deleted": True,
+        "removed_problems": 0,
+        "removed_documents": 0,
+        "removed_concepts": 0,
+    }
     assert await db_session.get(AuthoredSet, set_id) is None
 
 
@@ -815,23 +869,51 @@ async def _seed_orphanable_concept_kg(db, monkeypatch, *, slug):
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     space_id, concept_id = await _seed_course(db, slug=slug)
 
-    e1 = KGEntity(concept_id=concept_id, canonical_key="eq.a", kind="equation",
-                  display_name="a", payload={}, aliases=[])
-    e2 = KGEntity(concept_id=concept_id, canonical_key="proc.b", kind="procedure",
-                  display_name="b", payload={}, aliases=[])
+    e1 = KGEntity(
+        concept_id=concept_id,
+        canonical_key="eq.a",
+        kind="equation",
+        display_name="a",
+        payload={},
+        aliases=[],
+    )
+    e2 = KGEntity(
+        concept_id=concept_id,
+        canonical_key="proc.b",
+        kind="procedure",
+        display_name="b",
+        payload={},
+        aliases=[],
+    )
     db.add_all([e1, e2])
     await db.flush()
     db.add(EntityPrereq(from_entity_id=e2.id, to_entity_id=e1.id))
-    db.add(DedupDecision(search_space_id=space_id, concept_id=concept_id,
-                         candidate_key="eq.a", method="slug", similarity=None, verdict="distinct"))
-    cp = ConceptProblem(concept_id=concept_id, problem_code="scrape.a", difficulty="m",
-                        payload={}, tier=2, search_space_id=space_id)
+    db.add(
+        DedupDecision(
+            search_space_id=space_id,
+            concept_id=concept_id,
+            candidate_key="eq.a",
+            method="slug",
+            similarity=None,
+            verdict="distinct",
+        )
+    )
+    cp = ConceptProblem(
+        concept_id=concept_id,
+        problem_code="scrape.a",
+        difficulty="m",
+        payload={},
+        tier=2,
+        search_space_id=space_id,
+    )
     db.add(cp)
     await db.flush()
     entity_ids = (int(e1.id), int(e2.id))
 
     target = AuthoredSet(
-        search_space_id=space_id, set_index=1, status="done",
+        search_space_id=space_id,
+        set_index=1,
+        status="done",
         result_summary={"problems": [{"concept_problem_id": cp.id, "outcome": "promoted"}]},
     )
     db.add(target)
@@ -859,13 +941,21 @@ async def test_delete_authored_set_tears_down_orphaned_concept(db_session, monke
     assert await db_session.get(Concept, concept_id) is None
     assert await db_session.get(KGEntity, e1_id) is None
     assert await db_session.get(KGEntity, e2_id) is None
-    remaining_prereqs = (await db_session.execute(
-        select(func.count()).select_from(EntityPrereq).where(EntityPrereq.from_entity_id == e2_id)
-    )).scalar_one()
+    remaining_prereqs = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(EntityPrereq)
+            .where(EntityPrereq.from_entity_id == e2_id)
+        )
+    ).scalar_one()
     assert remaining_prereqs == 0
-    remaining_dedup = (await db_session.execute(
-        select(func.count()).select_from(DedupDecision).where(DedupDecision.concept_id == concept_id)
-    )).scalar_one()
+    remaining_dedup = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(DedupDecision)
+            .where(DedupDecision.concept_id == concept_id)
+        )
+    ).scalar_one()
     assert remaining_dedup == 0
     # A guarded :Canon DETACH DELETE was issued for this concept.
     assert any(
@@ -892,9 +982,13 @@ async def test_delete_authored_set_spares_concept_with_student_history(db_sessio
 
     assert await db_session.get(Concept, concept_id) is not None
     assert await db_session.get(KGEntity, e1_id) is not None
-    remaining_dedup = (await db_session.execute(
-        select(func.count()).select_from(DedupDecision).where(DedupDecision.concept_id == concept_id)
-    )).scalar_one()
+    remaining_dedup = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(DedupDecision)
+            .where(DedupDecision.concept_id == concept_id)
+        )
+    ).scalar_one()
     assert remaining_dedup == 1
     # The guard spares it: NO DETACH DELETE was issued.
     assert not any("DETACH DELETE" in cypher for cypher, _p in fake_neo.calls)
@@ -927,9 +1021,13 @@ async def test_delete_authored_set_spares_concept_with_session(db_session, monke
     aapi, space_id, concept_id, _entities, set_id = await _seed_orphanable_concept_kg(
         db_session, monkeypatch, slug="aas-session"
     )
-    db_session.add(ApolloSession(user_id=_STUDENT_UUID, search_space_id=space_id, concept_id=concept_id))
+    db_session.add(
+        ApolloSession(user_id=_STUDENT_UUID, search_space_id=space_id, concept_id=concept_id)
+    )
     await db_session.flush()
-    await _assert_concept_spared(db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id)
+    await _assert_concept_spared(
+        db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id
+    )
 
 
 @pytest.mark.asyncio
@@ -941,12 +1039,20 @@ async def test_delete_authored_set_spares_concept_with_learner_state(db_session,
     aapi, space_id, concept_id, (e1_id, _e2_id), set_id = await _seed_orphanable_concept_kg(
         db_session, monkeypatch, slug="aas-lstate"
     )
-    db_session.add(LearnerState(
-        user_id=_STUDENT_UUID, search_space_id=space_id, entity_id=e1_id,
-        belief=[0.33, 0.33, 0.34], mastery=0.5, confidence=0.5,
-    ))
+    db_session.add(
+        LearnerState(
+            user_id=_STUDENT_UUID,
+            search_space_id=space_id,
+            entity_id=e1_id,
+            belief=[0.33, 0.33, 0.34],
+            mastery=0.5,
+            confidence=0.5,
+        )
+    )
     await db_session.flush()
-    await _assert_concept_spared(db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id)
+    await _assert_concept_spared(
+        db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id
+    )
 
 
 @pytest.mark.asyncio
@@ -959,13 +1065,21 @@ async def test_delete_authored_set_spares_concept_with_mastery_event(db_session,
     aapi, space_id, concept_id, (e1_id, _e2_id), set_id = await _seed_orphanable_concept_kg(
         db_session, monkeypatch, slug="aas-mevent"
     )
-    db_session.add(MasteryEvent(
-        user_id=_STUDENT_UUID, search_space_id=space_id, entity_id=e1_id,
-        event_kind="missing", prior_belief=[0.33, 0.33, 0.34],
-        posterior_belief=[0.3, 0.3, 0.4], mastery_after=0.4,
-    ))
+    db_session.add(
+        MasteryEvent(
+            user_id=_STUDENT_UUID,
+            search_space_id=space_id,
+            entity_id=e1_id,
+            event_kind="missing",
+            prior_belief=[0.33, 0.33, 0.34],
+            posterior_belief=[0.3, 0.3, 0.4],
+            mastery_after=0.4,
+        )
+    )
     await db_session.flush()
-    await _assert_concept_spared(db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id)
+    await _assert_concept_spared(
+        db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id
+    )
 
 
 @pytest.mark.asyncio
@@ -977,12 +1091,18 @@ async def test_delete_authored_set_spares_concept_with_misconceptions(db_session
     aapi, _space_id, concept_id, _entities, set_id = await _seed_orphanable_concept_kg(
         db_session, monkeypatch, slug="aas-misc"
     )
-    db_session.add(Misconception(
-        concept_id=concept_id, code="mc.speed_pressure", description="thinks faster=higher P",
-        probe_question="what happens to pressure?",
-    ))
+    db_session.add(
+        Misconception(
+            concept_id=concept_id,
+            code="mc.speed_pressure",
+            description="thinks faster=higher P",
+            probe_question="what happens to pressure?",
+        )
+    )
     await db_session.flush()
-    await _assert_concept_spared(db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id)
+    await _assert_concept_spared(
+        db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id
+    )
 
 
 @pytest.mark.asyncio
@@ -996,20 +1116,33 @@ async def test_delete_authored_set_spares_concept_depended_on_by_another(db_sess
         db_session, monkeypatch, slug="aas-depended"
     )
     # A DIFFERENT concept whose entity depends on this concept's entity e1.
-    subj_id = (await db_session.execute(
-        select(Concept.subject_id).where(Concept.id == concept_id)
-    )).scalar_one()
-    other = Concept(subject_id=subj_id, slug="concept-dependent", display_name="Dependent",
-                    canonical_symbols={}, normalization_map={})
+    subj_id = (
+        await db_session.execute(select(Concept.subject_id).where(Concept.id == concept_id))
+    ).scalar_one()
+    other = Concept(
+        subject_id=subj_id,
+        slug="concept-dependent",
+        display_name="Dependent",
+        canonical_symbols={},
+        normalization_map={},
+    )
     db_session.add(other)
     await db_session.flush()
-    other_entity = KGEntity(concept_id=other.id, canonical_key="eq.dep", kind="equation",
-                            display_name="dep", payload={}, aliases=[])
+    other_entity = KGEntity(
+        concept_id=other.id,
+        canonical_key="eq.dep",
+        kind="equation",
+        display_name="dep",
+        payload={},
+        aliases=[],
+    )
     db_session.add(other_entity)
     await db_session.flush()
     db_session.add(EntityPrereq(from_entity_id=other_entity.id, to_entity_id=e1_id))
     await db_session.flush()
-    await _assert_concept_spared(db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id)
+    await _assert_concept_spared(
+        db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id
+    )
 
 
 @pytest.mark.asyncio
@@ -1038,32 +1171,70 @@ async def test_delete_authored_set_tears_down_mutually_linked_orphans(db_session
     subject = Subject(slug="subject-link", display_name="Physics", search_space_id=space.id)
     db_session.add(subject)
     await db_session.flush()
-    ca = Concept(subject_id=subject.id, slug="concept-a", display_name="A",
-                 canonical_symbols={}, normalization_map={})
-    cb = Concept(subject_id=subject.id, slug="concept-b", display_name="B",
-                 canonical_symbols={}, normalization_map={})
+    ca = Concept(
+        subject_id=subject.id,
+        slug="concept-a",
+        display_name="A",
+        canonical_symbols={},
+        normalization_map={},
+    )
+    cb = Concept(
+        subject_id=subject.id,
+        slug="concept-b",
+        display_name="B",
+        canonical_symbols={},
+        normalization_map={},
+    )
     db_session.add_all([ca, cb])
     await db_session.flush()
-    ea = KGEntity(concept_id=ca.id, canonical_key="eq.a", kind="equation",
-                  display_name="a", payload={}, aliases=[])
-    eb = KGEntity(concept_id=cb.id, canonical_key="eq.b", kind="equation",
-                  display_name="b", payload={}, aliases=[])
+    ea = KGEntity(
+        concept_id=ca.id,
+        canonical_key="eq.a",
+        kind="equation",
+        display_name="a",
+        payload={},
+        aliases=[],
+    )
+    eb = KGEntity(
+        concept_id=cb.id,
+        canonical_key="eq.b",
+        kind="equation",
+        display_name="b",
+        payload={},
+        aliases=[],
+    )
     db_session.add_all([ea, eb])
     await db_session.flush()
     # Cross-concept prereq BETWEEN the two set-owned concepts (ca depends on cb).
     db_session.add(EntityPrereq(from_entity_id=ea.id, to_entity_id=eb.id))
-    cpa = ConceptProblem(concept_id=ca.id, problem_code="scrape.a", difficulty="m",
-                         payload={}, tier=2, search_space_id=space.id)
-    cpb = ConceptProblem(concept_id=cb.id, problem_code="scrape.b", difficulty="m",
-                         payload={}, tier=2, search_space_id=space.id)
+    cpa = ConceptProblem(
+        concept_id=ca.id,
+        problem_code="scrape.a",
+        difficulty="m",
+        payload={},
+        tier=2,
+        search_space_id=space.id,
+    )
+    cpb = ConceptProblem(
+        concept_id=cb.id,
+        problem_code="scrape.b",
+        difficulty="m",
+        payload={},
+        tier=2,
+        search_space_id=space.id,
+    )
     db_session.add_all([cpa, cpb])
     await db_session.flush()
     target = AuthoredSet(
-        search_space_id=space.id, set_index=1, status="done",
-        result_summary={"problems": [
-            {"concept_problem_id": cpa.id, "outcome": "promoted"},
-            {"concept_problem_id": cpb.id, "outcome": "promoted"},
-        ]},
+        search_space_id=space.id,
+        set_index=1,
+        status="done",
+        result_summary={
+            "problems": [
+                {"concept_problem_id": cpa.id, "outcome": "promoted"},
+                {"concept_problem_id": cpb.id, "outcome": "promoted"},
+            ]
+        },
     )
     db_session.add(target)
     await db_session.flush()
@@ -1104,34 +1275,72 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
     subject = Subject(slug="subject-prqspare", display_name="Physics", search_space_id=space.id)
     db_session.add(subject)
     await db_session.flush()
-    cc = Concept(subject_id=subject.id, slug="concept-c", display_name="C",
-                 canonical_symbols={}, normalization_map={})
-    cd = Concept(subject_id=subject.id, slug="concept-d", display_name="D",
-                 canonical_symbols={}, normalization_map={})
+    cc = Concept(
+        subject_id=subject.id,
+        slug="concept-c",
+        display_name="C",
+        canonical_symbols={},
+        normalization_map={},
+    )
+    cd = Concept(
+        subject_id=subject.id,
+        slug="concept-d",
+        display_name="D",
+        canonical_symbols={},
+        normalization_map={},
+    )
     db_session.add_all([cc, cd])
     await db_session.flush()
-    ec = KGEntity(concept_id=cc.id, canonical_key="eq.c", kind="equation",
-                  display_name="c", payload={}, aliases=[])
-    ed = KGEntity(concept_id=cd.id, canonical_key="eq.d", kind="equation",
-                  display_name="d", payload={}, aliases=[])
+    ec = KGEntity(
+        concept_id=cc.id,
+        canonical_key="eq.c",
+        kind="equation",
+        display_name="c",
+        payload={},
+        aliases=[],
+    )
+    ed = KGEntity(
+        concept_id=cd.id,
+        canonical_key="eq.d",
+        kind="equation",
+        display_name="d",
+        payload={},
+        aliases=[],
+    )
     db_session.add_all([ec, ed])
     await db_session.flush()
     # D depends on C (from=D's entity, to=C's entity).
     db_session.add(EntityPrereq(from_entity_id=ed.id, to_entity_id=ec.id))
     # D is spared by a student session; C has no signal of its own.
     db_session.add(ApolloSession(user_id=_STUDENT_UUID, search_space_id=space.id, concept_id=cd.id))
-    cpc = ConceptProblem(concept_id=cc.id, problem_code="scrape.c", difficulty="m",
-                         payload={}, tier=2, search_space_id=space.id)
-    cpd = ConceptProblem(concept_id=cd.id, problem_code="scrape.d", difficulty="m",
-                         payload={}, tier=2, search_space_id=space.id)
+    cpc = ConceptProblem(
+        concept_id=cc.id,
+        problem_code="scrape.c",
+        difficulty="m",
+        payload={},
+        tier=2,
+        search_space_id=space.id,
+    )
+    cpd = ConceptProblem(
+        concept_id=cd.id,
+        problem_code="scrape.d",
+        difficulty="m",
+        payload={},
+        tier=2,
+        search_space_id=space.id,
+    )
     db_session.add_all([cpc, cpd])
     await db_session.flush()
     target = AuthoredSet(
-        search_space_id=space.id, set_index=1, status="done",
-        result_summary={"problems": [
-            {"concept_problem_id": cpc.id, "outcome": "promoted"},
-            {"concept_problem_id": cpd.id, "outcome": "promoted"},
-        ]},
+        search_space_id=space.id,
+        set_index=1,
+        status="done",
+        result_summary={
+            "problems": [
+                {"concept_problem_id": cpc.id, "outcome": "promoted"},
+                {"concept_problem_id": cpd.id, "outcome": "promoted"},
+            ]
+        },
     )
     db_session.add(target)
     await db_session.flush()
@@ -1177,7 +1386,9 @@ async def test_create_authored_set_student_gets_403(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi
 
     space_id, _concept_id = await _seed_course(db_session, slug="h1-create")
-    await _seed_membership(db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student")
+    await _seed_membership(
+        db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student"
+    )
     _as_real_user(monkeypatch, aapi, _STUDENT_USER)
 
     with pytest.raises(aapi.HTTPException) as exc:
@@ -1197,7 +1408,9 @@ async def test_create_authored_set_teacher_passes(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi
 
     space_id, _concept_id = await _seed_course(db_session, slug="h1-create-ok")
-    await _seed_membership(db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher")
+    await _seed_membership(
+        db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher"
+    )
     _as_real_user(monkeypatch, aapi, _TEACHER_USER)
     bg = _BG()
 
@@ -1217,11 +1430,15 @@ async def test_list_authored_sets_student_gets_403(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi
 
     space_id, _concept_id = await _seed_course(db_session, slug="h1-list")
-    await _seed_membership(db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student")
+    await _seed_membership(
+        db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student"
+    )
     _as_real_user(monkeypatch, aapi, _STUDENT_USER)
 
     with pytest.raises(aapi.HTTPException) as exc:
-        await aapi.list_authored_sets(request=_FakeRequest(), search_space_id=space_id, db=db_session)
+        await aapi.list_authored_sets(
+            request=_FakeRequest(), search_space_id=space_id, db=db_session
+        )
     assert exc.value.status_code == 403
 
 
@@ -1230,10 +1447,14 @@ async def test_list_authored_sets_teacher_passes(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi
 
     space_id, _concept_id = await _seed_course(db_session, slug="h1-list-ok")
-    await _seed_membership(db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher")
+    await _seed_membership(
+        db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher"
+    )
     _as_real_user(monkeypatch, aapi, _TEACHER_USER)
 
-    resp = await aapi.list_authored_sets(request=_FakeRequest(), search_space_id=space_id, db=db_session)
+    resp = await aapi.list_authored_sets(
+        request=_FakeRequest(), search_space_id=space_id, db=db_session
+    )
     assert resp == {"sets": []}
 
 
@@ -1243,7 +1464,9 @@ async def test_get_authored_set_student_gets_403(db_session, monkeypatch):
     from apollo.persistence.models import AuthoredSet
 
     space_id, _concept_id = await _seed_course(db_session, slug="h1-get")
-    await _seed_membership(db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student")
+    await _seed_membership(
+        db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student"
+    )
     _as_real_user(monkeypatch, aapi, _STUDENT_USER)
     row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
     db_session.add(row)
@@ -1260,7 +1483,9 @@ async def test_get_authored_set_teacher_passes(db_session, monkeypatch):
     from apollo.persistence.models import AuthoredSet
 
     space_id, _concept_id = await _seed_course(db_session, slug="h1-get-ok")
-    await _seed_membership(db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher")
+    await _seed_membership(
+        db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher"
+    )
     _as_real_user(monkeypatch, aapi, _TEACHER_USER)
     row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
     db_session.add(row)
@@ -1276,7 +1501,9 @@ async def test_delete_authored_set_student_gets_403(db_session, monkeypatch):
     from apollo.persistence.models import AuthoredSet
 
     space_id, _concept_id = await _seed_course(db_session, slug="h1-delete")
-    await _seed_membership(db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student")
+    await _seed_membership(
+        db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student"
+    )
     _as_real_user(monkeypatch, aapi, _STUDENT_USER)
     row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
     db_session.add(row)
@@ -1295,7 +1522,9 @@ async def test_delete_authored_set_teacher_passes(db_session, monkeypatch):
     from apollo.persistence.models import AuthoredSet
 
     space_id, _concept_id = await _seed_course(db_session, slug="h1-delete-ok")
-    await _seed_membership(db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher")
+    await _seed_membership(
+        db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher"
+    )
     _as_real_user(monkeypatch, aapi, _TEACHER_USER)
     row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
     db_session.add(row)
@@ -1313,7 +1542,9 @@ async def test_approve_held_problem_student_gets_403(db_session, monkeypatch):
     from apollo.persistence.models import AuthoredSet
 
     space_id, _concept_id = await _seed_course(db_session, slug="h1-approve")
-    await _seed_membership(db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student")
+    await _seed_membership(
+        db_session, user_id=_STUDENT_USER, search_space_id=space_id, role="student"
+    )
     _as_real_user(monkeypatch, aapi, _STUDENT_USER)
     row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
     db_session.add(row)
@@ -1338,7 +1569,9 @@ async def test_approve_held_problem_teacher_clears_gate(db_session, monkeypatch)
     from apollo.persistence.models import AuthoredSet
 
     space_id, _concept_id = await _seed_course(db_session, slug="h1-approve-ok")
-    await _seed_membership(db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher")
+    await _seed_membership(
+        db_session, user_id=_TEACHER_USER, search_space_id=space_id, role="teacher"
+    )
     _as_real_user(monkeypatch, aapi, _TEACHER_USER)
     row = AuthoredSet(search_space_id=space_id, set_index=1, status="done")
     db_session.add(row)
@@ -1353,3 +1586,228 @@ async def test_approve_held_problem_teacher_clears_gate(db_session, monkeypatch)
             db=db_session,
         )
     assert exc.value.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Reversed provisioning: approve-path savepoint + matched-concept threading.
+# --------------------------------------------------------------------------- #
+
+
+def _held_draft_payload() -> dict:
+    return {
+        "solution_source": "extracted",
+        "reference_solution": [
+            {
+                "step": 1,
+                "id": "governing_relation",
+                "entry_type": "equation",
+                "content": {"symbolic": "M - w*L**2/8", "label": "Governing relation"},
+                "depends_on": [],
+            }
+        ],
+        "grounding": [],
+        "provenance": {},
+    }
+
+
+async def _seed_held_problem(db, *, slug: str, review_extra: dict | None = None):
+    from apollo.persistence.models import AuthoredSet, ConceptProblem
+
+    space, concept = await _seed_course(db, slug=slug)
+    prob = ConceptProblem(
+        concept_id=concept,
+        problem_code=f"held-{slug}",
+        difficulty="intro",
+        tier=1,
+        payload={
+            "problem_text": "A beam length L, load w. Find max moment M.",
+            "given_values": {"L": 2.0, "w": 3.0},
+            "target_unknown": "M",
+            "difficulty": "intro",
+        },
+        search_space_id=space,
+        provenance={
+            "chunk_content_hash": f"held-{slug}",
+            "authored_review": {
+                "required": True,
+                "reason": "ocr_divergence",
+                "ocr_draft": _held_draft_payload(),
+                "generated_alt": None,
+                **(review_extra or {}),
+            },
+        },
+    )
+    db.add(prob)
+    await db.flush()
+    aset = AuthoredSet(
+        search_space_id=space,
+        set_index=1,
+        status="done",
+        result_summary={
+            "problems": [{"concept_problem_id": prob.id, "outcome": "held_for_review"}]
+        },
+    )
+    db.add(aset)
+    await db.flush()
+    return space, concept, prob, aset
+
+
+@pytest.mark.asyncio
+async def test_approve_no_matching_concept_hold_409s(db_session, monkeypatch):
+    from fastapi import HTTPException
+
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    _space, _concept, prob, aset = await _seed_held_problem(
+        db_session, slug="approve-nomatch", review_extra={"reason": "no_matching_concept"}
+    )
+    with pytest.raises(HTTPException) as exc:
+        await aapi.approve_held_problem(
+            set_id=int(aset.id),
+            problem_id=int(prob.id),
+            body=aapi.ApproveBody(reference="ocr"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+    assert exc.value.status_code == 409
+    assert "no registered concept" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_approve_threads_stored_concept_match(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.provisioning.promote import PromoteResult
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    space, concept, prob, aset = await _seed_held_problem(
+        db_session,
+        slug="approve-thread",
+        review_extra={
+            "concept_match": {
+                "concept_id": None,  # placeholder, patched below
+                "slug": None,
+            }
+        },
+    )
+    # point the stored match at the seeded concept
+    prov = dict(prob.provenance)
+    prov["authored_review"]["concept_match"] = {
+        "concept_id": concept,
+        "slug": "concept-approve-thread",
+    }
+    prob.provenance = prov
+    await db_session.flush()
+
+    captured: dict = {}
+
+    async def _tag_and_mint(db, pair, *, chat_fn, embed_fn, resolved_concept=None):
+        captured["resolved_concept"] = resolved_concept
+        from apollo.provisioning.tag_mint import MintPlan
+
+        return MintPlan(
+            concept_id=resolved_concept.concept_id,
+            concept_slug=resolved_concept.slug,
+            authored_symbols=[],
+            minted_entity_ids={},
+            merged_entity_keys=[],
+            prereq_pairs=[],
+            misconception_keys=[],
+        )
+
+    async def _promote(db, neo, **kwargs):
+        return PromoteResult(promoted=True)
+
+    monkeypatch.setattr(aapi, "tag_and_mint", _tag_and_mint)
+    monkeypatch.setattr(aapi, "promote", _promote)
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: None)
+    monkeypatch.setattr(aapi, "_make_metered_chat", lambda **_k: object())
+
+    out = await aapi.approve_held_problem(
+        set_id=int(aset.id),
+        problem_id=int(prob.id),
+        body=aapi.ApproveBody(reference="ocr"),
+        request=_FakeRequest(),
+        db=db_session,
+    )
+    assert out["promoted"] is True
+    assert captured["resolved_concept"].concept_id == concept
+
+
+@pytest.mark.asyncio
+async def test_approve_gate_rejection_rolls_back_mint(db_session, monkeypatch):
+    """The approve path shares the orchestrator's transactional-mint contract:
+    a lint rejection rolls back every KG row the REAL tag_and_mint flushed."""
+    from sqlalchemy import func, select
+
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import KGEntity
+    from apollo.provisioning.promote import PromoteResult
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    space, concept, prob, aset = await _seed_held_problem(db_session, slug="approve-gate8")
+    prov = dict(prob.provenance)
+    prov["authored_review"]["concept_match"] = {
+        "concept_id": concept,
+        "slug": "concept-approve-gate8",
+    }
+    prob.provenance = prov
+    await db_session.flush()
+
+    async def _promote(db, neo, **kwargs):
+        return PromoteResult(promoted=False, failed_gate=8, diagnostic="gate 8: duplicate")
+
+    monkeypatch.setattr(aapi, "promote", _promote)
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: None)
+    monkeypatch.setattr(aapi, "embed_text", lambda _t: [0.0])
+    monkeypatch.setattr(aapi, "_make_metered_chat", lambda **_k: object())
+
+    out = await aapi.approve_held_problem(
+        set_id=int(aset.id),
+        problem_id=int(prob.id),
+        body=aapi.ApproveBody(reference="ocr"),
+        request=_FakeRequest(),
+        db=db_session,
+    )
+    assert out["promoted"] is False and out["failed_gate"] == 8
+    n = (
+        await db_session.execute(
+            select(func.count()).select_from(KGEntity).where(KGEntity.concept_id == concept)
+        )
+    ).scalar_one()
+    assert n == 0  # the real mint's entity was rolled back with the savepoint
+    # the hold is preserved (still requires review)
+    fresh = await db_session.get(type(prob), int(prob.id))
+    assert fresh.provenance["authored_review"]["required"] is True
+
+
+@pytest.mark.asyncio
+async def test_approve_tag_mint_error_reports_without_committing(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.provisioning.tag_mint import TagMintError
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    _space, _concept, prob, aset = await _seed_held_problem(db_session, slug="approve-tme")
+
+    async def _raise_tme(*_a, **_k):
+        raise TagMintError("opposes an unknown entity key")
+
+    monkeypatch.setattr(aapi, "tag_and_mint", _raise_tme)
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: None)
+    monkeypatch.setattr(aapi, "_make_metered_chat", lambda **_k: object())
+
+    out = await aapi.approve_held_problem(
+        set_id=int(aset.id),
+        problem_id=int(prob.id),
+        body=aapi.ApproveBody(reference="ocr"),
+        request=_FakeRequest(),
+        db=db_session,
+    )
+    assert out["promoted"] is False
+    assert out["diagnostic"].startswith("tag_mint_error")
+    fresh = await db_session.get(type(prob), int(prob.id))
+    assert fresh.provenance["authored_review"]["required"] is True  # hold preserved

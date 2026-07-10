@@ -77,7 +77,7 @@ pytest tests/test_main_ai.py -v     # Run specific test module
 
 ## What NOT To Do
 - Never modify .env files or commit secrets
-- Never push directly to main — always use a feature branch
+- Never push directly to main — always use a feature branch. `main` is the pilot release branch: it moves only via staging→main promotion PRs and `hotfix/*` PRs (see `docs/branching.md`)
 - Never bypass the semantic filter — scope enforcement is a core product requirement
 - Never install new packages without confirming with me first
 - Never remove or bypass citation marker generation — citations are non-negotiable
