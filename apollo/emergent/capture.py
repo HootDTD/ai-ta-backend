@@ -70,4 +70,39 @@ async def record_detector_births(
     return inserted
 
 
-__all__ = ["record_detector_births"]
+async def record_clarification_refuted(
+    db: AsyncSession,
+    *,
+    search_space_id: int,
+    concept_id: int | None,
+    user_id: str,
+    attempt_id: int,
+    signature: str,
+    opposes: str,
+    confidence: float,
+    evidence_span: str | None,
+) -> int:
+    """Write one ``source='clarification_refuted'`` observation (spec
+    §5.3.2). Thin wrapper over ``record_observation`` — the caller
+    (``apollo.clarification.resolve_turn``) has already resolved
+    ``signature``/``opposes`` from the refuted candidate/clarification row
+    (R2: the emergent signature is ALWAYS ``emergent.<entity_key of the
+    opposed reference node>`` — see ``resolve_turn.py`` for the exact
+    resolution). Returns the number of rows INSERTED (0 or 1, idempotent on
+    ``(attempt_id, signature)``). Does NOT commit and does NOT swallow
+    exceptions — the caller owns its own failure domain."""
+    return await record_observation(
+        db,
+        search_space_id=search_space_id,
+        concept_id=concept_id,
+        user_id=user_id,
+        attempt_id=attempt_id,
+        signature=signature,
+        confidence=confidence,
+        opposes=opposes,
+        evidence_span=evidence_span,
+        source="clarification_refuted",
+    )
+
+
+__all__ = ["record_detector_births", "record_clarification_refuted"]

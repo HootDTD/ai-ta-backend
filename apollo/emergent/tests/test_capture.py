@@ -7,6 +7,13 @@ caller-supplied map, and appends a ``source='detector_unkeyed'`` observation
 via ``apollo.emergent.store.record_observation`` — the same idempotent insert
 core used by the existing write paths.
 
+``record_clarification_refuted`` (T3) is the write side of the
+clarification-refuted upgrade signal: the caller (``resolve_turn.py``) has
+already resolved ``signature``/``opposes`` from the refuted candidate/
+clarification row (R2 — see ``test_resolve_turn.py`` for the exact mapping
+proof); this function is a thin, single-purpose wrapper over
+``record_observation`` with ``source='clarification_refuted'``.
+
 In-memory SQLite harness, mirroring ``apollo/emergent/tests/test_store.py``.
 """
 
@@ -192,3 +199,86 @@ async def test_record_detector_births_distinct_concepts_write_distinct_signature
         r.signature for r in (await db.execute(select(MisconceptionObservation))).scalars().all()
     }
     assert sigs == {"emergent.def.a", "emergent.eq.b"}
+
+
+# --------------------------------------------------------------------------- #
+# record_clarification_refuted (T3, spec §5.3.2)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_record_clarification_refuted_writes_one_observation(db):
+    n = await capture.record_clarification_refuted(
+        db,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        user_id=_USER,
+        attempt_id=910,
+        signature="emergent.def.real_basis",
+        opposes="def.real_basis",
+        confidence=0.8,
+        evidence_span="no, real GDP includes price changes",
+    )
+    await db.commit()
+
+    assert n == 1
+    row = (await db.execute(select(MisconceptionObservation))).scalars().one()
+    assert row.signature == "emergent.def.real_basis"
+    assert row.opposes == "def.real_basis"
+    assert row.confidence == pytest.approx(0.8)
+    assert row.evidence_span == "no, real GDP includes price changes"
+    assert row.source == "clarification_refuted"
+    assert row.attempt_id == 910
+
+
+@pytest.mark.asyncio
+async def test_record_clarification_refuted_idempotent_on_recall(db):
+    kwargs = dict(
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        user_id=_USER,
+        attempt_id=911,
+        signature="emergent.eq.newton2",
+        opposes="eq.newton2",
+        confidence=0.6,
+        evidence_span="span",
+    )
+    first = await capture.record_clarification_refuted(db, **kwargs)
+    await db.commit()
+    second = await capture.record_clarification_refuted(db, **kwargs)
+    await db.commit()
+
+    assert first == 1
+    assert second == 0
+    assert await _count(db) == 1
+
+
+@pytest.mark.asyncio
+async def test_record_clarification_refuted_propagates_store_errors(db):
+    """The capture function itself does no failure-swallowing — that is the
+    CALLER's own-failure-domain job (resolve_turn.py). A bad source would be
+    a programmer error here since 'clarification_refuted' is hardcoded, but a
+    store-level failure (e.g. a DB error) must propagate uncaught so the
+    caller's try/except can see it."""
+    import apollo.emergent.capture as capture_mod
+
+    async def _boom(*_a, **_kw):
+        raise RuntimeError("db exploded")
+
+    original = capture_mod.record_observation
+    capture_mod.record_observation = _boom  # type: ignore[assignment]
+    try:
+        with pytest.raises(RuntimeError, match="db exploded"):
+            await capture.record_clarification_refuted(
+                db,
+                search_space_id=_SPACE,
+                concept_id=_CONCEPT,
+                user_id=_USER,
+                attempt_id=912,
+                signature="emergent.def.x",
+                opposes="def.x",
+                confidence=0.5,
+                evidence_span="span",
+            )
+    finally:
+        capture_mod.record_observation = original

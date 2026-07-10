@@ -2,18 +2,27 @@
 
 No live model calls: rescore_clarification uses a DI'd judge stub in the brief's
 tests; default_clarification_judge tests monkeypatch apollo.clarification.rescorer.main_chat.
+
+2026-07-10 emergent misconception map plan (T3/Q2): ``rescore_clarification``
+now returns a frozen ``RescoreResult{outcome, confidence}`` instead of the
+bare ``RescoreOutcome`` literal, so the ``refuted`` capture seam can carry a
+confidence weight. A literal-returning judge stub (every pre-existing test's
+shape) still works via a back-compat shim (``confidence=1.0``); a judge that
+returns a ``RescoreResult`` directly is passed through unchanged.
 """
 
 import pytest
 
 from apollo.clarification.rescorer import (
     ClarificationRequest,
+    RescoreResult,
     default_clarification_judge,
     rescore_clarification,
 )
 
 # ---------------------------------------------------------------------------
-# Brief's tests (verbatim from task-11-brief.md)
+# Brief's tests (verbatim from task-11-brief.md) — literal-stub judges must
+# keep working unchanged (R3 back-compat).
 # ---------------------------------------------------------------------------
 
 
@@ -33,7 +42,37 @@ def test_passes_through_three_way_verdict(outcome):
         candidate_display="inverse pressure-velocity",
         judge=_judge(outcome),
     )
-    assert got == outcome
+    assert isinstance(got, RescoreResult)
+    assert got.outcome == outcome
+
+
+@pytest.mark.parametrize("outcome", ["confirmed", "refuted", "vague"])
+def test_literal_stub_judge_yields_confidence_one(outcome):
+    """Back-compat shim (R3): a judge returning a bare literal (every
+    pre-existing test stub's shape) is wrapped with confidence=1.0."""
+    got = rescore_clarification(
+        original_statement="o",
+        clarification_text="c",
+        candidate_display="d",
+        judge=_judge(outcome),
+    )
+    assert got.confidence == 1.0
+
+
+def test_judge_returning_rescore_result_passes_through_unchanged():
+    """A judge that already returns a RescoreResult (the new native shape) is
+    NOT re-wrapped — its confidence is preserved verbatim."""
+
+    def judge(request):
+        return RescoreResult(outcome="refuted", confidence=0.42)
+
+    got = rescore_clarification(
+        original_statement="o",
+        clarification_text="c",
+        candidate_display="d",
+        judge=judge,
+    )
+    assert got == RescoreResult(outcome="refuted", confidence=0.42)
 
 
 def test_judge_failure_propagates_named_error():
@@ -49,6 +88,12 @@ def test_judge_failure_propagates_named_error():
             candidate_display="d",
             judge=boom,
         )
+
+
+def test_rescore_result_is_frozen():
+    result = RescoreResult(outcome="confirmed", confidence=1.0)
+    with pytest.raises(Exception):  # dataclasses.FrozenInstanceError
+        result.confidence = 0.5  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -67,17 +112,38 @@ def _request():
 def test_default_judge_parses_confirmed(monkeypatch):
     monkeypatch.setattr(
         "apollo.clarification.rescorer.main_chat",
-        lambda **kwargs: '{"verdict": "confirmed"}',
+        lambda **kwargs: '{"verdict": "confirmed", "confidence": 0.9}',
     )
-    assert default_clarification_judge(_request()) == "confirmed"
+    result = default_clarification_judge(_request())
+    assert result == RescoreResult(outcome="confirmed", confidence=0.9)
 
 
 def test_default_judge_unknown_verdict_defaults_to_vague(monkeypatch):
     monkeypatch.setattr(
         "apollo.clarification.rescorer.main_chat",
-        lambda **kwargs: '{"verdict": "banana"}',
+        lambda **kwargs: '{"verdict": "banana", "confidence": 0.9}',
     )
-    assert default_clarification_judge(_request()) == "vague"
+    result = default_clarification_judge(_request())
+    assert result.outcome == "vague"
+    assert result.confidence == 0.0  # unknown verdict -> no-weight, per Q2
+
+
+def test_default_judge_missing_confidence_defaults_to_zero(monkeypatch):
+    monkeypatch.setattr(
+        "apollo.clarification.rescorer.main_chat",
+        lambda **kwargs: '{"verdict": "refuted"}',
+    )
+    result = default_clarification_judge(_request())
+    assert result == RescoreResult(outcome="refuted", confidence=0.0)
+
+
+def test_default_judge_non_numeric_confidence_defaults_to_zero(monkeypatch):
+    monkeypatch.setattr(
+        "apollo.clarification.rescorer.main_chat",
+        lambda **kwargs: '{"verdict": "refuted", "confidence": "high"}',
+    )
+    result = default_clarification_judge(_request())
+    assert result == RescoreResult(outcome="refuted", confidence=0.0)
 
 
 def test_default_judge_wraps_infra_failure(monkeypatch):
