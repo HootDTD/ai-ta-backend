@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.emergent.capture import record_detector_births
 from apollo.emergent.config import emergent_map_capture_enabled
+from apollo.emergent.materialize import materialize_if_promotable
 from apollo.errors import (
     ResolutionUnavailableError,
     ReviewRequiredError,
@@ -640,6 +641,26 @@ async def handle_done(
                         births=births,
                         node_entity_key=node_entity_key,
                     )
+                    # T7 (plan Wave 3, spec §5.5 Q3): eager tau_project
+                    # materialization, INSIDE this same failure domain, right
+                    # after the observation write succeeds and before the
+                    # commit. One signature per birth's resolved entity_key —
+                    # a no-op below TAU_PROJECT, idempotent at/above it. `neo`
+                    # is the handler's own client (already threaded in) — the
+                    # :Canon map materializes eagerly from this seam.
+                    for entity_key in {
+                        node_entity_key[b.concept_key]
+                        for b in births
+                        if b.concept_key in node_entity_key
+                    }:
+                        await materialize_if_promotable(
+                            db,
+                            neo,
+                            search_space_id=int(sess.search_space_id),
+                            concept_id=sess.concept_id,
+                            signature=f"emergent.{entity_key}",
+                            opposes_entity_key=entity_key,
+                        )
                     await db.commit()
                 except Exception:
                     _LOG.exception(

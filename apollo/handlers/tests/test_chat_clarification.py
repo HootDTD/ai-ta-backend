@@ -258,6 +258,51 @@ async def test_clarification_hints_reach_draft_reply(db_session_attempt, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_resolve_pending_clarifications_receives_handler_neo_client(
+    db_session_attempt, monkeypatch
+):
+    """T7 (plan Wave 3, spec §5.5 Q3): handle_chat's own `neo` client is
+    threaded into resolve_pending_clarifications so the emergent map's
+    clarification-refuted seam can eagerly materialize :Canon. Verifies the
+    exact object identity reaches the call, not just that some neo is
+    passed."""
+    monkeypatch.setenv("APOLLO_CLARIFICATION_ENABLED", "1")
+    db, session_id, attempt_id = db_session_attempt
+    store = _fake_store()
+    mock_draft = MagicMock(return_value="ok")
+    ps = _patches(store, mock_draft_reply=mock_draft)
+
+    neo_sentinel = MagicMock(name="neo_client")
+
+    with (
+        ps[0],
+        ps[1],
+        ps[2],
+        ps[3],
+        ps[4],
+        ps[5],
+        ps[6],
+        ps[7],
+        ps[8],
+        ps[9],
+        patch(
+            "apollo.handlers.chat.guard_clarification_reply",
+            new=MagicMock(side_effect=lambda **kw: kw["draft"]),
+        ),
+        patch(
+            "apollo.handlers.chat.resolve_pending_clarifications",
+            new=AsyncMock(),
+        ) as mock_resolve,
+    ):
+        from apollo.handlers.chat import handle_chat
+
+        await handle_chat(db=db, neo=neo_sentinel, session_id=session_id, message="hi")
+
+    mock_resolve.assert_awaited_once()
+    assert mock_resolve.await_args.kwargs["neo"] is neo_sentinel
+
+
+@pytest.mark.asyncio
 async def test_clarification_guard_redrafts_on_leak(db_session_attempt, monkeypatch):
     """When guard_clarification_reply invokes regenerate_without_probes, draft_reply
     is called a second time (covering the regenerate lambda body in chat.py).

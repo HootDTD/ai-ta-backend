@@ -514,3 +514,169 @@ async def test_refuted_capture_uses_nested_savepoint(monkeypatch):
 
     assert len(capture_calls) == 1
     assert nested_calls["n"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# T7 (plan Wave 3, spec §5.5 Q3): materialize_if_promotable is invoked from
+# THIS capture seam's own success path, inside the same nested savepoint +
+# try/except as the observation write. `neo` is threaded from the caller
+# (handle_chat -> resolve_pending_clarifications -> _capture_refuted) with a
+# backward-compatible default of None.
+# --------------------------------------------------------------------------- #
+
+
+async def test_refuted_capture_invokes_materialize_with_resolved_signature(monkeypatch):
+    """After record_clarification_refuted succeeds, materialize_if_promotable
+    is called with the SAME (signature, opposes) pair and the threaded neo
+    client."""
+    monkeypatch.setenv("APOLLO_EMERGENT_MAP_CAPTURE", "1")
+
+    async def fake_load(db, *, attempt_id):
+        return [_Row("s1", "cond.bernoulli", "pressure and speed are related")]
+
+    async def fake_record(db, *, clarification_id, state, clarification_text, answered_turn):
+        pass
+
+    async def fake_capture(db, **kwargs):
+        return 1
+
+    materialize_mock = AsyncMock()
+    neo_sentinel = object()
+
+    monkeypatch.setattr(resolve_turn, "load_asked_waiting", fake_load)
+    monkeypatch.setattr(resolve_turn, "record_outcome", fake_record)
+    monkeypatch.setattr(resolve_turn, "record_clarification_refuted", fake_capture)
+    monkeypatch.setattr(resolve_turn, "materialize_if_promotable", materialize_mock)
+    db = _db_mock()
+
+    await resolve_turn.resolve_pending_clarifications(
+        db=db,
+        attempt_id=1,
+        student_message="higher where faster",
+        candidates=(_cand("cond.bernoulli", "inverse p-v", is_misconception=False),),
+        judge=lambda req: "refuted",
+        answered_turn=4,
+        neo=neo_sentinel,
+    )
+
+    materialize_mock.assert_awaited_once()
+    args, kwargs = materialize_mock.await_args
+    assert args[0] is db
+    assert args[1] is neo_sentinel
+    assert kwargs["signature"] == "emergent.cond.bernoulli"
+    assert kwargs["opposes_entity_key"] == "cond.bernoulli"
+    assert kwargs["search_space_id"] == _SPACE
+    assert kwargs["concept_id"] == _CONCEPT
+
+
+async def test_refuted_capture_neo_defaults_to_none_backward_compatible(monkeypatch):
+    """resolve_pending_clarifications callers that omit `neo` (every
+    pre-T7 caller/test) still work -- materialize_if_promotable receives
+    neo=None, which its own contract treats as a projection-skip, not an
+    error (eventual-consistency: the entity/link still land in Postgres and
+    :Canon picks it up at the next projection for that concept)."""
+    monkeypatch.setenv("APOLLO_EMERGENT_MAP_CAPTURE", "1")
+
+    async def fake_load(db, *, attempt_id):
+        return [_Row("s1", "cond.bernoulli", "o")]
+
+    async def fake_record(db, *, clarification_id, state, clarification_text, answered_turn):
+        pass
+
+    async def fake_capture(db, **kwargs):
+        return 1
+
+    materialize_mock = AsyncMock()
+    monkeypatch.setattr(resolve_turn, "load_asked_waiting", fake_load)
+    monkeypatch.setattr(resolve_turn, "record_outcome", fake_record)
+    monkeypatch.setattr(resolve_turn, "record_clarification_refuted", fake_capture)
+    monkeypatch.setattr(resolve_turn, "materialize_if_promotable", materialize_mock)
+    db = _db_mock()
+
+    await resolve_turn.resolve_pending_clarifications(
+        db=db,
+        attempt_id=1,
+        student_message="m",
+        candidates=(_cand("cond.bernoulli", "d", is_misconception=False),),
+        judge=lambda req: "refuted",
+        answered_turn=4,
+        # neo omitted -- defaults to None.
+    )
+
+    materialize_mock.assert_awaited_once()
+    _args, kwargs = materialize_mock.await_args
+    assert _args[1] is None
+
+
+async def test_refuted_capture_materialize_failure_own_failure_domain(monkeypatch):
+    """A materialize-step failure is swallowed by the SAME except as a
+    capture-write failure -- resolution stays recorded, no exception
+    escapes."""
+    monkeypatch.setenv("APOLLO_EMERGENT_MAP_CAPTURE", "1")
+
+    async def fake_load(db, *, attempt_id):
+        return [_Row("s1", "cond.bernoulli", "o")]
+
+    recorded = {}
+
+    async def fake_record(db, *, clarification_id, state, clarification_text, answered_turn):
+        recorded.update(state=state)
+
+    async def fake_capture(db, **kwargs):
+        return 1
+
+    async def fake_materialize(db, neo, **kwargs):
+        raise RuntimeError("materialize exploded")
+
+    monkeypatch.setattr(resolve_turn, "load_asked_waiting", fake_load)
+    monkeypatch.setattr(resolve_turn, "record_outcome", fake_record)
+    monkeypatch.setattr(resolve_turn, "record_clarification_refuted", fake_capture)
+    monkeypatch.setattr(resolve_turn, "materialize_if_promotable", fake_materialize)
+    db = _db_mock()
+
+    # Must not raise.
+    await resolve_turn.resolve_pending_clarifications(
+        db=db,
+        attempt_id=7,
+        student_message="m",
+        candidates=(_cand("cond.bernoulli", "d", is_misconception=False),),
+        judge=lambda req: "refuted",
+        answered_turn=4,
+    )
+
+    assert recorded["state"] == "refuted"
+
+
+async def test_refuted_capture_materialize_not_called_when_not_captured(monkeypatch):
+    """Scope boundary: when _refuted_signature resolves nothing (no
+    resolvable entity_key), materialize_if_promotable is never invoked --
+    mirrors record_clarification_refuted's own not-called assertion."""
+    monkeypatch.setenv("APOLLO_EMERGENT_MAP_CAPTURE", "1")
+
+    async def fake_load(db, *, attempt_id):
+        return [_Row("s1", "misc.unlinked", "o")]
+
+    async def fake_record(db, *, clarification_id, state, clarification_text, answered_turn):
+        pass
+
+    capture_mock = AsyncMock()
+    materialize_mock = AsyncMock()
+    monkeypatch.setattr(resolve_turn, "load_asked_waiting", fake_load)
+    monkeypatch.setattr(resolve_turn, "record_outcome", fake_record)
+    monkeypatch.setattr(resolve_turn, "record_clarification_refuted", capture_mock)
+    monkeypatch.setattr(resolve_turn, "materialize_if_promotable", materialize_mock)
+    db = _db_mock()
+
+    await resolve_turn.resolve_pending_clarifications(
+        db=db,
+        attempt_id=1,
+        student_message="m",
+        candidates=(
+            _cand("misc.unlinked", "unlinked misconception", is_misconception=True, opposes_key=None),
+        ),
+        judge=lambda req: "refuted",
+        answered_turn=4,
+    )
+
+    capture_mock.assert_not_awaited()
+    materialize_mock.assert_not_awaited()

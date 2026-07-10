@@ -772,3 +772,158 @@ async def test_capture_flag_on_no_births_calls_nothing_extra(monkeypatch):
         record_births_mock=births_mock,
     )
     assert "rubric" in out
+
+
+# --------------------------------------------------------------------------- #
+# T7 (plan Wave 3, spec §5.5 Q3): materialize_if_promotable is invoked from
+# THIS capture seam's own success path, inside the same failure domain.
+# --------------------------------------------------------------------------- #
+
+
+async def test_capture_flag_on_invokes_materialize_for_each_birth_entity_key(monkeypatch):
+    """After record_detector_births succeeds, materialize_if_promotable is
+    called once per distinct resolved entity_key, BEFORE the commit, with the
+    handler's own `neo` client threaded through (Q3 eager materialization)."""
+    births_mock = AsyncMock(return_value=1)
+    materialize_mock = AsyncMock()
+    db, _sess, _attempt, patches = _old_path_patches()
+    neo_sentinel = MagicMock(name="neo_client")
+
+    graph = _reference_graph_with_entity_key()
+
+    async def _find_problem_with_graph(_db, _cid, _code):
+        problem = MagicMock()
+        problem.id = "p_code"
+        problem.problem_text = "text"
+        problem.reference_solution = []
+        problem.to_kg_graph.return_value = graph
+        return problem
+
+    detection = DetectionResult(per_concept=(_unkeyed_birth_finding(),))
+    monkeypatch.setenv(_FLAG, "true")
+    monkeypatch.setenv(_CAPTURE_FLAG, "true")
+
+    patches = [p for p in patches if getattr(p, "attribute", None) != "_find_problem"]
+    patches = _patches_with_rubric(patches, _OLD_RUBRIC)
+    patches += [
+        patch(
+            "apollo.handlers.done._find_problem",
+            new=AsyncMock(side_effect=_find_problem_with_graph),
+        ),
+        patch(
+            "apollo.handlers.done.detect_misconceptions",
+            new=AsyncMock(return_value=detection),
+        ),
+        patch("apollo.handlers.done.make_openai_judge", new=MagicMock()),
+        patch("apollo.handlers.done._default_embed_fn", new=MagicMock()),
+        patch(
+            "apollo.handlers.done._student_utterances",
+            new=AsyncMock(return_value=("real GDP already includes inflation",)),
+        ),
+        patch("apollo.handlers.done.record_detector_births", new=births_mock),
+        patch("apollo.handlers.done.materialize_if_promotable", new=materialize_mock),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        await handle_done(db=db, neo=neo_sentinel, session_id=11)
+    finally:
+        for p in reversed(patches):
+            p.stop()
+
+    materialize_mock.assert_awaited_once()
+    args, kwargs = materialize_mock.await_args
+    assert args[0] is db
+    assert args[1] is neo_sentinel
+    assert kwargs["signature"] == f"emergent.{_BIRTH_ENTITY_KEY}"
+    assert kwargs["opposes_entity_key"] == _BIRTH_ENTITY_KEY
+    # materialize ran BEFORE the commit that follows the write (order proof:
+    # the mock was awaited at least once by the time commit was reached —
+    # both mocks are on the same call sequence inside the try block).
+    assert db.commit.await_count >= 1
+
+
+async def test_capture_flag_off_materialize_never_called(monkeypatch):
+    """Flag OFF -> neither record_detector_births NOR materialize_if_promotable
+    is invoked -- byte-identity extends to the materialize step too."""
+    materialize_mock = AsyncMock(
+        side_effect=AssertionError("materialize_if_promotable must not be called while flag is OFF")
+    )
+    with patch("apollo.handlers.done.materialize_if_promotable", new=materialize_mock):
+        out, births_mock = await _run_capture(monkeypatch, capture_flag=None)
+
+    births_mock.assert_not_awaited()
+    materialize_mock.assert_not_awaited()
+    assert "rubric" in out
+
+
+async def test_capture_materialize_failure_own_failure_domain_grade_byte_identical(monkeypatch):
+    """A materialize-step failure (e.g. Neo4j hiccup surfacing up through
+    materialize_if_promotable) is swallowed by the SAME try/except as the
+    write -- the returned grade is byte-identical to a clean run, and the
+    birth observation write itself already succeeded before materialize ran."""
+    boom = AsyncMock(side_effect=RuntimeError("materialize exploded"))
+    clean = AsyncMock()
+
+    db_boom, _sess, _attempt, patches_boom = _old_path_patches()
+    graph = _reference_graph_with_entity_key()
+
+    async def _find_problem_with_graph(_db, _cid, _code):
+        problem = MagicMock()
+        problem.id = "p_code"
+        problem.problem_text = "text"
+        problem.reference_solution = []
+        problem.to_kg_graph.return_value = graph
+        return problem
+
+    detection = DetectionResult(per_concept=(_unkeyed_birth_finding(),))
+
+    def _build(db, patches, materialize_mock):
+        patches = [p for p in patches if getattr(p, "attribute", None) != "_find_problem"]
+        patches = _patches_with_rubric(patches, _OLD_RUBRIC)
+        patches += [
+            patch(
+                "apollo.handlers.done._find_problem",
+                new=AsyncMock(side_effect=_find_problem_with_graph),
+            ),
+            patch(
+                "apollo.handlers.done.detect_misconceptions",
+                new=AsyncMock(return_value=detection),
+            ),
+            patch("apollo.handlers.done.make_openai_judge", new=MagicMock()),
+            patch("apollo.handlers.done._default_embed_fn", new=MagicMock()),
+            patch(
+                "apollo.handlers.done._student_utterances",
+                new=AsyncMock(return_value=("real GDP already includes inflation",)),
+            ),
+            patch("apollo.handlers.done.record_detector_births", new=AsyncMock(return_value=1)),
+            patch("apollo.handlers.done.materialize_if_promotable", new=materialize_mock),
+        ]
+        return patches
+
+    monkeypatch.setenv(_FLAG, "true")
+    monkeypatch.setenv(_CAPTURE_FLAG, "true")
+
+    patches = _build(db_boom, patches_boom, boom)
+    for p in patches:
+        p.start()
+    try:
+        out_boom = await handle_done(db=db_boom, neo=MagicMock(), session_id=11)
+    finally:
+        for p in reversed(patches):
+            p.stop()
+
+    db_clean, _sess2, _attempt2, patches_clean_raw = _old_path_patches()
+    patches_clean = _build(db_clean, patches_clean_raw, clean)
+    for p in patches_clean:
+        p.start()
+    try:
+        out_clean = await handle_done(db=db_clean, neo=MagicMock(), session_id=11)
+    finally:
+        for p in reversed(patches_clean):
+            p.stop()
+
+    boom.assert_awaited_once()
+    assert out_boom["rubric"] == out_clean["rubric"]
+    assert out_boom["diagnostic_narrative"] == out_clean["diagnostic_narrative"]
+    assert out_boom["xp_earned"] == out_clean["xp_earned"]
