@@ -366,6 +366,38 @@ async def test_confirmed_and_vague_never_capture(monkeypatch):
     capture_mock.assert_not_awaited()
 
 
+async def test_refuted_row_with_no_matching_candidate_not_captured(monkeypatch):
+    """Defensive scope boundary: a refuted row whose candidate_key no longer
+    matches any candidate in THIS turn's closed set (candidate_by_key misses)
+    resolves candidate=None -> _refuted_signature returns None -> not
+    captured, no crash."""
+    monkeypatch.setenv("APOLLO_EMERGENT_MAP_CAPTURE", "1")
+
+    async def fake_load(db, *, attempt_id):
+        return [_Row("s1", "cond.vanished", "o")]
+
+    async def fake_record(db, *, clarification_id, state, clarification_text, answered_turn):
+        pass
+
+    capture_mock = AsyncMock()
+    monkeypatch.setattr(resolve_turn, "load_asked_waiting", fake_load)
+    monkeypatch.setattr(resolve_turn, "record_outcome", fake_record)
+    monkeypatch.setattr(resolve_turn, "record_clarification_refuted", capture_mock)
+    db = _db_mock()
+
+    await resolve_turn.resolve_pending_clarifications(
+        db=db,
+        attempt_id=9,
+        student_message="m",
+        # The probed candidate is no longer in this turn's candidate set.
+        candidates=(_cand("cond.bernoulli", "d", is_misconception=False),),
+        judge=lambda req: "refuted",
+        answered_turn=4,
+    )
+
+    capture_mock.assert_not_awaited()
+
+
 async def test_refuted_capture_flag_off_not_called(monkeypatch):
     """Flag-off byte-identity: APOLLO_EMERGENT_MAP_CAPTURE unset -> the
     capture seam is never invoked, even on a refuted outcome, and
