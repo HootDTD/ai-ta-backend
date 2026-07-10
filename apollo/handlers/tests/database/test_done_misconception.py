@@ -97,6 +97,9 @@ def _clear_flag(monkeypatch):
     # them off so only the detector stage under test is active.
     monkeypatch.delenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", raising=False)
     monkeypatch.delenv("APOLLO_GRADING_ARTIFACT_ENABLED", raising=False)
+    # Phase-1 diagnostic trace flag — OFF by default so the byte-identical
+    # goldens below hold; the trace-ON goldens set it explicitly.
+    monkeypatch.delenv("APOLLO_MISC_TRACE", raising=False)
     yield
 
 
@@ -384,3 +387,123 @@ def test_embed_texts_lazy_wraps_project_batched_embedder():
         out = _embed_texts(["a"])
     batched.assert_called_once_with(["a"])
     assert out == [[1.0, 2.0]]
+
+
+# ── Phase-1 diagnostic trace (APOLLO_MISC_TRACE, default OFF) ─────────────────
+# Instrumentation only. Flag OFF => the trace module is never imported/invoked
+# and handle_done's output is byte-identical; flag ON => trace_attempt runs once
+# inside the existing detector soft-fail envelope, changing NOTHING about the
+# grade. `trace_attempt` is patched at its SOURCE module because done.py imports
+# it lazily inside the guarded branch.
+_TRACE_SRC = "apollo.overseer.misconception_detector.trace.trace_attempt"
+
+
+async def _run_with_trace_patch(monkeypatch, *, detector_flag, trace_flag, trace_mock):
+    """Drive handle_done with the detector ON (a docked finding so the detect->
+    gate->merge chain fully runs), trace_attempt patched at its source, and the
+    trace flag set per-case. Returns `out`."""
+    if detector_flag is not None:
+        monkeypatch.setenv(_FLAG, detector_flag)
+    if trace_flag is not None:
+        monkeypatch.setenv("APOLLO_MISC_TRACE", trace_flag)
+
+    db, _sess, _attempt, patches = _old_path_patches()
+    detection = DetectionResult(per_concept=(_docked_finding(),))
+    patches = _patches_with_rubric(patches, _OLD_RUBRIC)
+    patches += [
+        patch(
+            "apollo.handlers.done.detect_misconceptions",
+            new=AsyncMock(return_value=detection),
+        ),
+        patch("apollo.handlers.done.make_openai_judge", new=MagicMock()),
+        patch("apollo.handlers.done._default_embed_fn", new=MagicMock()),
+        patch(
+            "apollo.handlers.done._student_utterances",
+            new=AsyncMock(return_value=("net exports are always positive",)),
+        ),
+        patch(_TRACE_SRC, new=trace_mock),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        out = await handle_done(db=db, neo=MagicMock(), session_id=11)
+    finally:
+        for p in reversed(patches):
+            p.stop()
+    return out
+
+
+async def test_trace_flag_off_trace_never_called_and_output_unchanged(monkeypatch):
+    """GOLDEN: detector ON but trace OFF -> trace_attempt is NEVER called and
+    the student-facing rubric is exactly what it is WITHOUT the trace (the
+    penalized OLD-path score), i.e. the trace adds nothing. Byte-identical
+    guard for the trace flag."""
+    trace_mock = MagicMock(name="trace_attempt")
+    out = await _run_with_trace_patch(
+        monkeypatch, detector_flag="true", trace_flag=None, trace_mock=trace_mock
+    )
+    trace_mock.assert_not_called()
+    # The detector still docked (penalty applied) — the trace flag does not
+    # touch the grade either way.
+    assert out["rubric"]["overall"]["score"] < 90
+
+
+async def test_trace_flag_explicit_false_never_calls_trace(monkeypatch):
+    trace_mock = MagicMock(name="trace_attempt")
+    await _run_with_trace_patch(
+        monkeypatch, detector_flag="true", trace_flag="false", trace_mock=trace_mock
+    )
+    trace_mock.assert_not_called()
+
+
+async def test_trace_flag_on_calls_trace_once_without_changing_grade(monkeypatch):
+    """Flag ON -> trace_attempt is invoked exactly once with the real per-attempt
+    inputs, and the grade is IDENTICAL to the trace-OFF run (instrumentation
+    only — the trace never feeds back into scoring)."""
+    trace_mock = MagicMock(name="trace_attempt")
+    out_on = await _run_with_trace_patch(
+        monkeypatch, detector_flag="true", trace_flag="true", trace_mock=trace_mock
+    )
+    trace_mock.assert_called_once()
+    kwargs = trace_mock.call_args.kwargs
+    # The trace receives the live artifacts, not a re-run.
+    assert set(kwargs) >= {
+        "attempt_id",
+        "reference_graph",
+        "detection",
+        "gated",
+        "outcome",
+        "centrality",
+        "final_band",
+        "is_control",
+    }
+    assert kwargs["is_control"] is False
+
+    # Grade parity: a trace-OFF run yields the SAME rubric score.
+    trace_off = MagicMock(name="trace_attempt")
+    out_off = await _run_with_trace_patch(
+        monkeypatch, detector_flag="true", trace_flag="false", trace_mock=trace_off
+    )
+    assert out_on["rubric"] == out_off["rubric"]
+
+
+async def test_trace_raising_does_not_perturb_grade(monkeypatch):
+    """A trace defect must never break grading AND must not change it: the
+    trace has its OWN try/except (isolated from the detector's), so a raising
+    trace_attempt leaves the already-computed PENALIZED rubric exactly as it
+    was — instrumentation never rolls back or alters the grade — and no
+    exception escapes (HTTP 200)."""
+    boom = MagicMock(name="trace_attempt", side_effect=RuntimeError("trace boom"))
+    out_boom = await _run_with_trace_patch(
+        monkeypatch, detector_flag="true", trace_flag="true", trace_mock=boom
+    )
+    boom.assert_called_once()
+
+    # A clean trace-ON run produces the SAME rubric — the raising trace changed
+    # nothing about the grade (it was penalized to <90 either way).
+    clean = MagicMock(name="trace_attempt")
+    out_clean = await _run_with_trace_patch(
+        monkeypatch, detector_flag="true", trace_flag="true", trace_mock=clean
+    )
+    assert out_boom["rubric"] == out_clean["rubric"]
+    assert out_boom["rubric"]["overall"]["score"] < 90  # penalty stands
