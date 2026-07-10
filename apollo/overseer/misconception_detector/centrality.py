@@ -99,9 +99,7 @@ def _precedes_position_scores(graph: KGGraph, node_ids: list[str]) -> dict[str, 
 
     # Restrict to nodes actually touched by a PRECEDES edge; untouched nodes
     # (e.g. equations in a mixed graph) keep a 0.0 positional contribution.
-    chain_ids = {e.from_node_id for e in precedes_edges} | {
-        e.to_node_id for e in precedes_edges
-    }
+    chain_ids = {e.from_node_id for e in precedes_edges} | {e.to_node_id for e in precedes_edges}
     ordered_ids = [n.node_id for n in ordered if n.node_id in chain_ids]
     scores = {nid: 0.0 for nid in node_ids}
     if len(ordered_ids) <= 1:

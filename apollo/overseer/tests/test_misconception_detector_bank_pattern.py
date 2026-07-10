@@ -12,6 +12,7 @@ it falls back to an in-memory cosine computed directly against the supplied
 ``bank_entries`` tuple — so these tests exercise the offline path with a
 stub ``EmbedFn`` and zero network/pgvector dependency.
 """
+
 from __future__ import annotations
 
 import math
@@ -48,16 +49,16 @@ async def sqlite_db():
         Misconception.__table__,
     ]
     async with engine.begin() as conn:
-        await conn.run_sync(
-            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables)
-        )
+        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables))
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         yield s
     await engine.dispose()
 
 
-def _entry(code: str = "includes_transfers", embedding: tuple[float, float] = (1.0, 0.0)) -> MisconceptionEntry:
+def _entry(
+    code: str = "includes_transfers", embedding: tuple[float, float] = (1.0, 0.0)
+) -> MisconceptionEntry:
     return MisconceptionEntry(
         id=1,
         concept_id=42,
@@ -194,13 +195,15 @@ class TestDetectBankPattern:
         bank_vec = _unit_vec(0.0)
         hit_utterance = "GDP includes transfer payments to households"
         miss_utterance = "The weather today is sunny"
-        embed_fn = _StubEmbedFn({
-            hit_utterance: _unit_vec(5.0),
-            # 180deg apart -> cosine exactly -1.0, unambiguously <= 0 (A10's
-            # `> 0.0` guard) unlike an exact-90deg vector which floating-point
-            # cosine computes as a tiny POSITIVE residual, not exactly 0.
-            miss_utterance: _unit_vec(180.0),
-        })
+        embed_fn = _StubEmbedFn(
+            {
+                hit_utterance: _unit_vec(5.0),
+                # 180deg apart -> cosine exactly -1.0, unambiguously <= 0 (A10's
+                # `> 0.0` guard) unlike an exact-90deg vector which floating-point
+                # cosine computes as a tiny POSITIVE residual, not exactly 0.
+                miss_utterance: _unit_vec(180.0),
+            }
+        )
         entry = _entry()
         embed_fn._mapping[entry.description] = bank_vec
 
@@ -237,11 +240,13 @@ class TestDetectBankPattern:
             probe_question="q2",
             rt_steps=(),
         )
-        embed_fn = _StubEmbedFn({
-            utterance: _unit_vec(2.0),
-            close_entry.description: _unit_vec(0.0),
-            far_entry.description: _unit_vec(60.0),
-        })
+        embed_fn = _StubEmbedFn(
+            {
+                utterance: _unit_vec(2.0),
+                close_entry.description: _unit_vec(0.0),
+                far_entry.description: _unit_vec(60.0),
+            }
+        )
 
         findings = await detect_bank_pattern(
             sqlite_db,
@@ -382,11 +387,13 @@ class TestDetectBankPattern:
             rt_steps=(),
         )
         utterance = "GDP includes transfer payments"
-        embed_fn = _StubEmbedFn({
-            utterance: _unit_vec(1.0),
-            entry_a.description: _unit_vec(0.0),
-            entry_b.description: _unit_vec(0.0),
-        })
+        embed_fn = _StubEmbedFn(
+            {
+                utterance: _unit_vec(1.0),
+                entry_a.description: _unit_vec(0.0),
+                entry_b.description: _unit_vec(0.0),
+            }
+        )
 
         findings = await detect_bank_pattern(
             sqlite_db,
@@ -745,7 +752,7 @@ class TestDialectNameHelper:
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
     if norm_a == 0 or norm_b == 0:

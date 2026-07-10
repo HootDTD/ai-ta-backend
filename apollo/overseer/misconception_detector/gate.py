@@ -190,11 +190,7 @@ def _gate_one_concept(
     # never dock. Empty ``opposes_index`` ⇒ this lookup misses and prior
     # behavior (rows 7/8 below) is byte-identical.
     struct_code = opposes.get(best_judge.concept_key)
-    if (
-        struct_code is not None
-        and routed_ok
-        and best_judge.verdict in ("wrong", "misconception")
-    ):
+    if struct_code is not None and routed_ok and best_judge.verdict in ("wrong", "misconception"):
         return _struct_docked(best_judge, bank_code=struct_code)
 
     # Row 7: lone UNKEYED judge clearing routed tau -> clarify, never docks.

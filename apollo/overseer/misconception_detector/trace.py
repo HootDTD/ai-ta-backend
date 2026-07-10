@@ -80,11 +80,7 @@ def _gate_row_label(
     if best_judge is None:
         return "no_judge"
     if corroborating_bank is not None:
-        return (
-            "row3_cokey_dock"
-            if gated_verdict == "misconception"
-            else "row3b_cokey_clarify"
-        )
+        return "row3_cokey_dock" if gated_verdict == "misconception" else "row3b_cokey_clarify"
     if best_judge.bank_code is not None:
         if gated_verdict == "misconception":
             return "row5_lone_solo_dock"
@@ -214,9 +210,7 @@ def build_node_traces(
     for node in reference_graph.nodes:
         key = node.node_id
         node_judges = judges_by_key.get(key, [])
-        best_judge = (
-            max(node_judges, key=lambda f: f.confidence) if node_judges else None
-        )
+        best_judge = max(node_judges, key=lambda f: f.confidence) if node_judges else None
         has_sympy = key in sympy_keys
 
         corroborating_bank: ConceptFinding | None = None
@@ -249,22 +243,16 @@ def build_node_traces(
                 "node_id": key,
                 "node_type": node.node_type,
                 "judge": _judge_payload(best_judge),
-                "finding_signature": (
-                    best_judge.signature if best_judge is not None else None
-                ),
+                "finding_signature": (best_judge.signature if best_judge is not None else None),
                 "bank_code": best_judge.bank_code if best_judge is not None else None,
                 "bank_pattern_top1": _bank_top1_payload(bank_top1),
                 "cokey_bank_code": (
-                    corroborating_bank.bank_code
-                    if corroborating_bank is not None
-                    else None
+                    corroborating_bank.bank_code if corroborating_bank is not None else None
                 ),
                 "centrality": centrality.get(key),
                 "gate_decision": _gate_decision(gated_verdict),
                 "gate_row": row_label,
-                "ceiling_eligible": (
-                    gated_rep.ceiling_eligible if gated_rep is not None else None
-                ),
+                "ceiling_eligible": (gated_rep.ceiling_eligible if gated_rep is not None else None),
                 "final_band": final_band,
                 "misconception_penalty": outcome.misconception_penalty,
                 "ceiling_applied": outcome.ceiling_applied,

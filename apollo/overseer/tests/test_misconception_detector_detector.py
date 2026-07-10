@@ -30,7 +30,6 @@ from sqlalchemy.ext.asyncio import (
 
 from apollo.ontology.graph import KGGraph
 from apollo.ontology.nodes import build_node
-from apollo.overseer.misconception_bank import MisconceptionEntry
 from apollo.overseer.misconception_detector.detector import detect_misconceptions
 from apollo.overseer.misconception_detector.types import DetectionResult, JudgeRaw
 from apollo.persistence.models import Concept, Misconception, Subject
@@ -54,9 +53,7 @@ async def sqlite_db():
         Misconception.__table__,
     ]
     async with engine.begin() as conn:
-        await conn.run_sync(
-            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables)
-        )
+        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables))
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         yield s
@@ -162,9 +159,7 @@ async def test_aggregates_all_three_tiers_into_one_detection_result(sqlite_db):
     )
 
     student_graph = KGGraph(nodes=[_eq_node("stu_eq1", "A2*v2 - A1*v1")])
-    reference_graph = KGGraph(
-        nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")]
-    )
+    reference_graph = KGGraph(nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")])
 
     judge_fn = _StubJudgeFn(
         JudgeRaw(
@@ -205,9 +200,7 @@ async def test_bank_pattern_finding_included_when_utterance_matches(sqlite_db):
     await _seed_bank_entry(sqlite_db, concept_id=42, code="includes_transfers")
 
     student_graph = KGGraph(nodes=[])
-    reference_graph = KGGraph(
-        nodes=[_def_node("ref_gdp", "GDP", "GDP excludes transfer payments")]
-    )
+    reference_graph = KGGraph(nodes=[_def_node("ref_gdp", "GDP", "GDP excludes transfer payments")])
 
     judge_fn = _StubJudgeFn()
     # Same vector for utterance + bank entry description -> cosine similarity 1.0,
@@ -241,9 +234,7 @@ async def test_student_utterances_are_forwarded_to_the_judge(sqlite_db):
     structurally blind to the student. This asserts the attempt's utterances
     now reach the judge_fn's user prompt."""
     student_graph = KGGraph(nodes=[])
-    reference_graph = KGGraph(
-        nodes=[_def_node("ref_gdp", "GDP", "GDP excludes transfer payments")]
-    )
+    reference_graph = KGGraph(nodes=[_def_node("ref_gdp", "GDP", "GDP excludes transfer payments")])
     judge_fn = _StubJudgeFn()
     embed_fn = _StubEmbedFn()
     distinctive = "zebras cause inflation via the reserve multiplier xyzzy-42"
@@ -287,9 +278,7 @@ async def test_judge_raising_yields_all_clear_judge_findings_others_unaffected(s
     )
 
     student_graph = KGGraph(nodes=[_eq_node("stu_eq1", "A2*v2 - A1*v1")])
-    reference_graph = KGGraph(
-        nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")]
-    )
+    reference_graph = KGGraph(nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")])
 
     judge_fn = _StubJudgeFn(raises=True)
     embed_fn = _StubEmbedFn()
@@ -327,9 +316,7 @@ async def test_embed_fn_raising_yields_zero_bank_pattern_findings_others_unaffec
     )
 
     student_graph = KGGraph(nodes=[_eq_node("stu_eq1", "A2*v2 - A1*v1")])
-    reference_graph = KGGraph(
-        nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")]
-    )
+    reference_graph = KGGraph(nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")])
 
     judge_fn = _StubJudgeFn(
         JudgeRaw(
@@ -372,9 +359,7 @@ async def test_bank_load_raising_still_returns_judge_and_sympy_findings(sqlite_d
     monkeypatch.setattr(detector_module, "load_for_concept", _boom)
 
     student_graph = KGGraph(nodes=[_eq_node("stu_eq1", "A2*v2 - A1*v1")])
-    reference_graph = KGGraph(
-        nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")]
-    )
+    reference_graph = KGGraph(nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")])
 
     judge_fn = _StubJudgeFn(
         JudgeRaw(
@@ -412,9 +397,7 @@ async def test_empty_bank_yields_judge_only_findings(sqlite_db):
     """No concept_id / no bank rows -> sympy_veto and bank_pattern abstain
     entirely; the judge tier still runs and contributes findings."""
     student_graph = KGGraph(nodes=[_eq_node("stu_eq1", "A1*v1 - A2*v2")])
-    reference_graph = KGGraph(
-        nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")]
-    )
+    reference_graph = KGGraph(nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")])
 
     judge_fn = _StubJudgeFn(
         JudgeRaw(
@@ -471,9 +454,7 @@ async def test_di_seam_never_touches_openai(sqlite_db):
     """Passing plain-object stubs (not `OpenAI` instances) must work end to
     end with zero network access -- this IS the DI-seam contract."""
     student_graph = KGGraph(nodes=[])
-    reference_graph = KGGraph(
-        nodes=[_def_node("ref_gdp", "GDP", "GDP excludes transfer payments")]
-    )
+    reference_graph = KGGraph(nodes=[_def_node("ref_gdp", "GDP", "GDP excludes transfer payments")])
     judge_fn = _StubJudgeFn()
     embed_fn = _StubEmbedFn()
 
@@ -525,9 +506,7 @@ async def test_sympy_veto_raising_is_soft_failed_by_the_wrapper(sqlite_db, monke
         attempt_id=1,
         concept_id=None,
         student_graph=KGGraph(nodes=[_eq_node("stu_eq1", "A1*v1 - A2*v2")]),
-        reference_graph=KGGraph(
-            nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")]
-        ),
+        reference_graph=KGGraph(nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")]),
         problem_text="Apply the continuity equation.",
         student_utterances=(),
         judge_fn=judge_fn,
@@ -563,9 +542,7 @@ async def test_bank_pattern_raising_is_soft_failed_by_the_wrapper(sqlite_db, mon
         attempt_id=1,
         concept_id=None,
         student_graph=KGGraph(nodes=[]),
-        reference_graph=KGGraph(
-            nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")]
-        ),
+        reference_graph=KGGraph(nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")]),
         problem_text="Apply the continuity equation.",
         student_utterances=("some student utterance",),
         judge_fn=judge_fn,
@@ -594,9 +571,7 @@ async def test_judge_concepts_raising_is_soft_failed_by_the_wrapper(sqlite_db, m
         attempt_id=1,
         concept_id=None,
         student_graph=KGGraph(nodes=[_eq_node("stu_eq1", "A2*v2 - A1*v1")]),
-        reference_graph=KGGraph(
-            nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")]
-        ),
+        reference_graph=KGGraph(nodes=[_eq_node("ref_continuity", "A1*v1 - A2*v2", "Continuity")]),
         problem_text="Apply the continuity equation.",
         student_utterances=(),
         judge_fn=_StubJudgeFn(),

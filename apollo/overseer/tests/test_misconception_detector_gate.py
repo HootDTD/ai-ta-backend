@@ -22,18 +22,22 @@ from apollo.overseer.misconception_detector.config import (
     TAU_SOLO_JUDGE,
 )
 from apollo.overseer.misconception_detector.gate import _gate_one_concept, gate_findings
-from apollo.overseer.misconception_detector.types import ConceptFinding
+from apollo.overseer.misconception_detector.types import (
+    ConceptFinding,
+    DetectorSource,
+    Verdict,
+)
 
 
 def _finding(
     *,
     concept_key: str = "concept.demand_curve",
-    verdict: str = "misconception",
+    verdict: Verdict = "misconception",
     confidence: float = 1.0,
     severity: float = 0.0,
     evidence_span: str = "student said X",
     signature: str = "misc.some_code",
-    source: str = "sympy_veto",
+    source: DetectorSource = "sympy_veto",
     corroborated: bool = False,
     verdict_token_prob_present: bool = True,
     bank_code: str | None = None,

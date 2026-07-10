@@ -88,10 +88,16 @@ class DetectionResult:
 class MergeOutcome:
     """The merge stage's product: the live penalty + ledger-feed rows + ceiling flag."""
 
-    misconception_penalty: float  # Sigma severity over corroborated findings, clamped (SEVERITY_CLAMP)
-    misconceptions: tuple[dict, ...]  # artifact misconceptions[] rows: {canonical_key, evidence_span, confidence, opposes}
+    misconception_penalty: (
+        float  # Sigma severity over corroborated findings, clamped (SEVERITY_CLAMP)
+    )
+    misconceptions: tuple[
+        dict, ...
+    ]  # artifact misconceptions[] rows: {canonical_key, evidence_span, confidence, opposes}
     ceiling_applied: bool  # a central corroborated misconception caps the artifact composite below the named Strong band (A4)
-    ledger_findings: tuple[ConceptFinding, ...]  # gate-cleared corroborated findings for the emergent store
+    ledger_findings: tuple[
+        ConceptFinding, ...
+    ]  # gate-cleared corroborated findings for the emergent store
 
 
 @dataclass(frozen=True)

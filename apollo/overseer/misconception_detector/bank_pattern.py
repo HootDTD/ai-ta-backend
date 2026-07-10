@@ -28,6 +28,7 @@ always dropped by the gate, floor-cleared or not). No match, a non-positive
 best similarity, an empty bank, or an embedding failure all abstain silently
 (soft-fail — a detector error must never break grading).
 """
+
 from __future__ import annotations
 
 import logging
@@ -47,7 +48,7 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     (degenerate embedding) instead of raising a ZeroDivisionError."""
     if not a or not b or len(a) != len(b):
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
     if norm_a == 0.0 or norm_b == 0.0:
@@ -99,9 +100,7 @@ async def _in_memory_cosine_match(
         try:
             bank_embeddings.append((entry, embed_fn(entry.description)))
         except Exception:
-            _LOG.exception(
-                "bank_pattern_bank_embed_failed code=%s", entry.code
-            )
+            _LOG.exception("bank_pattern_bank_embed_failed code=%s", entry.code)
             continue
 
     if not bank_embeddings:

@@ -121,9 +121,7 @@ async def _run(monkeypatch, *, flag, detect_return=None, detect_side_effect=None
         detect_kwargs["side_effect"] = detect_side_effect
     else:
         detect_kwargs["return_value"] = (
-            detect_return
-            if detect_return is not None
-            else DetectionResult(per_concept=())
+            detect_return if detect_return is not None else DetectionResult(per_concept=())
         )
     detect_mock = AsyncMock(**detect_kwargs)
 
@@ -201,9 +199,7 @@ async def test_flag_on_docked_finding_reduces_rubric_score(monkeypatch):
     # rubric dict, never the mocked OLD one mutated in place.
     from apollo.overseer.rubric import score_to_letter
 
-    assert out["rubric"]["overall"]["letter"] == score_to_letter(
-        out["rubric"]["overall"]["score"]
-    )
+    assert out["rubric"]["overall"]["letter"] == score_to_letter(out["rubric"]["overall"]["score"])
 
 
 async def test_flag_on_docked_finding_threads_penalty_to_write_artifacts(monkeypatch):
@@ -365,9 +361,7 @@ def test_default_embed_fn_returns_single_vector_for_single_text():
     """_default_embed_fn(text) -> list[float] (a SINGLE vector), wrapping the
     batched embed_texts (which returns a list of vectors). The batched call is
     patched so no OpenAI request is made."""
-    with patch(
-        "apollo.handlers.done._embed_texts", return_value=[[0.1, 0.2, 0.3]]
-    ) as embed:
+    with patch("apollo.handlers.done._embed_texts", return_value=[[0.1, 0.2, 0.3]]) as embed:
         vec = _default_embed_fn("some student utterance")
     embed.assert_called_once()
     assert vec == [0.1, 0.2, 0.3]
@@ -389,9 +383,7 @@ def test_embed_texts_lazy_wraps_project_batched_embedder():
     — no network)."""
     from apollo.handlers.done import _embed_texts
 
-    with patch(
-        "indexing.document_embedder.embed_texts", return_value=[[1.0, 2.0]]
-    ) as batched:
+    with patch("indexing.document_embedder.embed_texts", return_value=[[1.0, 2.0]]) as batched:
         out = _embed_texts(["a"])
     batched.assert_called_once_with(["a"])
     assert out == [[1.0, 2.0]]
