@@ -50,9 +50,7 @@ from apollo.provisioning.tag_mint_persist import link_opposes, upsert_entity
 _LOG = logging.getLogger(__name__)
 
 
-async def _find_entity_id(
-    db: AsyncSession, *, concept_id: int, canonical_key: str
-) -> int | None:
+async def _find_entity_id(db: AsyncSession, *, concept_id: int, canonical_key: str) -> int | None:
     row = (
         await db.execute(
             select(KGEntity.id)
@@ -63,9 +61,7 @@ async def _find_entity_id(
     return int(row) if row is not None else None
 
 
-async def _resolve_full_opposes_key_to_id(
-    db: AsyncSession, *, concept_id: int
-) -> dict[str, int]:
+async def _resolve_full_opposes_key_to_id(db: AsyncSession, *, concept_id: int) -> dict[str, int]:
     """Build the COMPLETE ``key_to_id`` map ``link_opposes`` needs (fix for
     the Finding-1 KeyError, 2026-07-10 fix wave).
 
@@ -98,9 +94,7 @@ async def _resolve_full_opposes_key_to_id(
         .all()
     )
     opposes_keys = {
-        key
-        for payload in misconception_rows
-        if (key := (payload or {}).get("opposes_entity_key"))
+        key for payload in misconception_rows if (key := (payload or {}).get("opposes_entity_key"))
     }
     if not opposes_keys:
         return {}
@@ -163,9 +157,7 @@ async def materialize_if_promotable(
         db, concept_id=concept_id, spec=spec, scope_summary=None
     )
 
-    opposed_id = await _find_entity_id(
-        db, concept_id=concept_id, canonical_key=opposes_entity_key
-    )
+    opposed_id = await _find_entity_id(db, concept_id=concept_id, canonical_key=opposes_entity_key)
     if opposed_id is None:
         _LOG.warning(
             "opposes_entity_missing signature=%s opposes_entity_key=%s concept_id=%s "

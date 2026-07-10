@@ -143,7 +143,12 @@ async def test_each_valid_source_inserts(mig_conn, source):
     concept = await _new_concept(mig_conn)
     attempt = await _new_attempt(mig_conn)
     obs_id = await _insert_obs(
-        mig_conn, space=space, concept=concept, attempt=attempt, signature=f"sig.{source}", source=source
+        mig_conn,
+        space=space,
+        concept=concept,
+        attempt=attempt,
+        signature=f"sig.{source}",
+        source=source,
     )
     assert obs_id is not None
     got = await mig_conn.fetchval(

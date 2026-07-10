@@ -128,9 +128,7 @@ async def _seed_reference_entity(db: AsyncSession, *, canonical_key: str) -> int
 
 async def _misconception_entities(db: AsyncSession) -> list[KGEntity]:
     rows = (
-        (await db.execute(select(KGEntity).where(KGEntity.kind == "misconception")))
-        .scalars()
-        .all()
+        (await db.execute(select(KGEntity).where(KGEntity.kind == "misconception"))).scalars().all()
     )
     return list(rows)
 
@@ -513,10 +511,7 @@ async def test_emergent_materialization_coexists_with_preexisting_authored_misco
     # resolves every misconception row it walks, not just the newly-minted
     # one) and its own key -> id resolution is correct, not disturbed/altered.
     assert minted["misc.authored_bernoulli_confusion"].id == authored_id
-    assert (
-        minted["misc.authored_bernoulli_confusion"].payload["opposes_entity_id"]
-        == ref_authored
-    )
+    assert minted["misc.authored_bernoulli_confusion"].payload["opposes_entity_id"] == ref_authored
 
 
 # --------------------------------------------------------------------------- #
@@ -571,7 +566,9 @@ async def test_canon_projection_idempotent_second_call_same_node_count(db, tc_ne
 
     async with tc_neo4j.session() as s:
         rec = await (
-            await s.run("MATCH (c:Canon {canonical_key: $k}) RETURN c AS c", k="emergent.def.real_basis")
+            await s.run(
+                "MATCH (c:Canon {canonical_key: $k}) RETURN c AS c", k="emergent.def.real_basis"
+            )
         ).single()
         node = dict(rec["c"])
     assert node["kind"] == "misconception"
