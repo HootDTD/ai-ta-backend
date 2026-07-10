@@ -22,6 +22,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.emergent.capture import record_detector_births
+from apollo.emergent.config import emergent_map_capture_enabled
 from apollo.errors import (
     ResolutionUnavailableError,
     ReviewRequiredError,
@@ -596,6 +598,60 @@ async def handle_done(
                     _LOG.exception(
                         "misconception_trace_failed attempt_id=%s", int(attempt.id)
                     )
+            # Emergent misconception map — capture seam 1: detector-unkeyed
+            # birth (2026-07-10 design §5.3.1, plan Wave 2 T2). Independently
+            # flag-gated from `detector_enabled()` (that flag only gates
+            # whether the detector STAGE runs at all; this flag gates only
+            # whether a birth observation is WRITTEN once it does). When OFF
+            # (the only prod state today) this branch never runs — no
+            # collector call, no store write, byte-identical. `collect_
+            # unkeyed_births` replays the gate's own row7/row8 unkeyed
+            # predicate (pure, no IO) over the SAME `detection.per_concept`
+            # + `opposes_index` the gate just consumed; `record_detector_
+            # births` resolves each birth's `concept_key` (a reference-graph
+            # node_id) to its `entity_key` via a map built from `reference_
+            # graph.nodes` (the inverse of opposes_index.py's
+            # `key_to_node_id` — ConceptFinding carries no entity_key of its
+            # own, design correction #2) and appends the observation.
+            # OWN failure domain (own try/except -> log + rollback, own
+            # commit on success — artifact_writer.py:236-256 pattern): a
+            # capture-write failure must NEVER affect the returned grade,
+            # which is already fully computed above this point.
+            if emergent_map_capture_enabled():
+                try:
+                    from apollo.overseer.misconception_detector.gate import (
+                        collect_unkeyed_births,
+                    )
+
+                    node_entity_key = {
+                        n.node_id: n.entity_key
+                        for n in reference_graph.nodes
+                        if n.entity_key
+                    }
+                    births = collect_unkeyed_births(
+                        detection.per_concept, opposes_index=opposes_index
+                    )
+                    await record_detector_births(
+                        db,
+                        search_space_id=int(sess.search_space_id),
+                        concept_id=sess.concept_id,
+                        user_id=str(sess.user_id),
+                        attempt_id=int(attempt.id),
+                        births=births,
+                        node_entity_key=node_entity_key,
+                    )
+                    await db.commit()
+                except Exception:
+                    _LOG.exception(
+                        "emergent_birth_capture_failed attempt_id=%s", int(attempt.id)
+                    )
+                    try:
+                        await db.rollback()
+                    except Exception:  # pragma: no cover - defensive
+                        _LOG.exception(
+                            "emergent_birth_capture_rollback_failed attempt_id=%s",
+                            int(attempt.id),
+                        )
         except Exception:
             _LOG.exception(
                 "misconception_detector_failed attempt_id=%s", int(attempt.id)

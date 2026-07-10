@@ -200,6 +200,59 @@ def _gate_one_concept(
     return None
 
 
+_BIRTH_VERDICTS = frozenset({"wrong", "misconception"})
+
+
+def collect_unkeyed_births(
+    findings: tuple[ConceptFinding, ...],
+    *,
+    opposes_index: dict[str, str] | None = None,
+    tau_fire: float = TAU_FIRE,
+    tau_verbalized: float = TAU_FIRE_VERBALIZED,
+) -> tuple[ConceptFinding, ...]:
+    """Pure collector alongside ``gate_findings`` (2026-07-10 emergent
+    misconception map plan, T2 / design correction #1).
+
+    ``gate_findings`` is a pure function that DROPS a row8 (unkeyed judge,
+    sub-routed-tau) finding with no observable side effect — a
+    post-``gate_findings`` scan in the caller can never see it. This collector
+    replays the EXACT SAME per-concept anchor grouping and the rows 7/8
+    predicate chain (``best_judge.bank_code is None`` + no struct-opposes
+    match + a dockable ``wrong``/``misconception`` verdict) and returns the
+    ``best_judge`` finding for every concept that CLEARS its routed tau —
+    i.e. row7 only. A row8 (sub-routed-tau) finding is deliberately EXCLUDED:
+    the birth must clear the same routed tau a dock would need, so a hedged,
+    low-confidence localization can never seed the emergent map. This is the
+    collector's confidence floor, mirroring the gate's own tau-gating.
+
+    Findings are returned VERBATIM (no ``dataclasses.replace`` — the caller
+    resolves ``concept_key`` -> ``entity_key`` and builds the emergent
+    signature; this collector's job is only to name which findings qualify).
+    No mutation, no IO; an empty/None ``opposes_index`` makes this a pure
+    function of ``findings`` alone, matching ``gate_findings``'s own default.
+    """
+    opposes = opposes_index or {}
+    anchors: dict[str, list[ConceptFinding]] = {}
+    for finding in findings:
+        if finding.source == "judge":
+            anchors.setdefault(finding.concept_key, []).append(finding)
+
+    births: list[ConceptFinding] = []
+    for group in anchors.values():
+        best_judge = max(group, key=lambda f: f.confidence)
+        if best_judge.bank_code is not None:
+            continue
+        if opposes.get(best_judge.concept_key) is not None:
+            continue
+        if best_judge.verdict not in _BIRTH_VERDICTS:
+            continue
+        if not _judge_clears_tau(best_judge, tau_fire=tau_fire, tau_verbalized=tau_verbalized):
+            continue
+        births.append(best_judge)
+
+    return tuple(births)
+
+
 def _judge_clears_tau(finding: ConceptFinding, *, tau_fire: float, tau_verbalized: float) -> bool:
     """A judge finding clears the ONE tau applicable to its origin (A1).
 

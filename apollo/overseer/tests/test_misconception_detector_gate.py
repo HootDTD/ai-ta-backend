@@ -21,7 +21,11 @@ from apollo.overseer.misconception_detector.config import (
     TAU_FIRE_VERBALIZED,
     TAU_SOLO_JUDGE,
 )
-from apollo.overseer.misconception_detector.gate import _gate_one_concept, gate_findings
+from apollo.overseer.misconception_detector.gate import (
+    _gate_one_concept,
+    collect_unkeyed_births,
+    gate_findings,
+)
 from apollo.overseer.misconception_detector.types import (
     ConceptFinding,
     DetectorSource,
@@ -715,4 +719,230 @@ def test_result_is_new_tuple_not_mutated_input():
     result = gate_findings(original)
 
     assert result is not original
+
+
+# --------------------------------------------------------------------------- #
+# collect_unkeyed_births (2026-07-10 emergent misconception map plan, T2 /
+# spec §5.3.1, design correction #1). A PURE collector alongside
+# ``gate_findings`` — the gate itself stays pure/non-emitting, so a row8
+# (sub-tau) drop is otherwise unobservable to any caller. ``collect_unkeyed_
+# births`` replays the SAME per-concept anchor grouping + ``_judge_clears_tau``
+# + ``best_judge.bank_code is None`` + ``opposes.get(concept_key) is None`` +
+# ``verdict in ("wrong", "misconception")`` predicate rows 7/8 use, and
+# returns the qualifying ``best_judge`` findings (row7 ∪ row8-that-would-have-
+# cleared-tau -- see the tau-floor test below for the deliberate exclusion).
+# --------------------------------------------------------------------------- #
+def test_collect_unkeyed_births_returns_row7_confident_unkeyed_wrong():
+    """A lone unkeyed judge finding that CLEARS routed tau and carries a
+    dockable verdict (wrong/misconception) is a birth candidate — this is
+    exactly gate.py's row7 (clarify, never docks) input, captured here instead
+    of discarded."""
+    judge = _finding(
+        concept_key="node.real_basis",
+        source="judge",
+        verdict="wrong",
+        confidence=0.95,
+        corroborated=False,
+        bank_code=None,
+    )
+
+    births = collect_unkeyed_births((judge,))
+
+    assert births == (judge,)
+
+
+def test_collect_unkeyed_births_accepts_misconception_verdict_too():
+    judge = _finding(
+        concept_key="node.real_basis",
+        source="judge",
+        verdict="misconception",
+        confidence=0.95,
+        corroborated=False,
+        bank_code=None,
+    )
+
+    births = collect_unkeyed_births((judge,))
+
+    assert births == (judge,)
+
+
+def test_collect_unkeyed_births_excludes_row8_sub_tau():
+    """Row8 (sub-routed-tau unkeyed judge, dropped by the gate) is EXCLUDED
+    from births too — the birth must clear the SAME routed tau as a
+    dock-eligible finding to be a credible signal. This is the deliberate
+    confidence floor (plan T2): a birth is never captured from a hedged,
+    low-confidence localization."""
+    judge = _finding(
+        concept_key="node.real_basis",
+        source="judge",
+        verdict="wrong",
+        confidence=TAU_FIRE - 0.10,
+        corroborated=False,
+        bank_code=None,
+    )
+
+    births = collect_unkeyed_births((judge,))
+
+    assert births == ()
+
+
+def test_collect_unkeyed_births_excludes_clear_verdict_controls():
+    """Control-safety (mirrors F-struct's control argument): a clear@1.0
+    control finding never births, regardless of confidence — only
+    wrong/misconception verdicts qualify."""
+    control = _finding(
+        concept_key="node.real_basis",
+        source="judge",
+        verdict="clear",
+        confidence=1.0,
+        corroborated=False,
+        bank_code=None,
+    )
+
+    births = collect_unkeyed_births((control,))
+
+    assert births == ()
+
+
+def test_collect_unkeyed_births_excludes_needs_clarification_verdict():
+    judge = _finding(
+        concept_key="node.real_basis",
+        source="judge",
+        verdict="needs_clarification",
+        confidence=0.95,
+        corroborated=False,
+        bank_code=None,
+    )
+
+    births = collect_unkeyed_births((judge,))
+
+    assert births == ()
+
+
+def test_collect_unkeyed_births_excludes_bank_keyed_judge():
+    """A judge finding that named a bank_code is not "unkeyed" — it is the
+    existing dock/clarify machinery's territory, not a birth."""
+    judge = _finding(
+        concept_key="node.real_basis",
+        source="judge",
+        verdict="misconception",
+        confidence=0.99,
+        corroborated=False,
+        bank_code="some_code",
+        signature="misc.some_code",
+    )
+
+    births = collect_unkeyed_births((judge,))
+
+    assert births == ()
+
+
+def test_collect_unkeyed_births_excludes_struct_opposes_hit():
+    """A node whose finding has a struct-opposes match (F-struct) is not a
+    birth — the graph already names it, so it docks via the existing co-key
+    path, not the emergent map."""
+    key = "node.real_basis"
+    judge = _finding(
+        concept_key=key,
+        source="judge",
+        verdict="wrong",
+        confidence=0.95,
+        corroborated=False,
+        bank_code=None,
+    )
+
+    births = collect_unkeyed_births((judge,), opposes_index={key: "nominal_for_real"})
+
+    assert births == ()
+
+
+def test_collect_unkeyed_births_excludes_deterministic_and_bank_pattern_sources():
+    """Only the judge tier can produce an "unkeyed birth" — sympy_veto always
+    self-docks (never unkeyed) and a lone bank_pattern finding never anchors
+    its own group (row 9), so neither source contributes births."""
+    veto = _finding(
+        concept_key="node.a",
+        source="sympy_veto",
+        verdict="misconception",
+        confidence=1.0,
+        bank_code="a_code",
+        signature="misc.a_code",
+    )
+    bank_only = _finding(
+        concept_key="42",
+        source="bank_pattern",
+        verdict="misconception",
+        confidence=0.9,
+        bank_code="c",
+        signature="misc.c",
+    )
+
+    births = collect_unkeyed_births((veto, bank_only))
+
+    assert births == ()
+
+
+def test_collect_unkeyed_births_multiple_concepts_independent():
+    """Mirrors gate_findings' per-concept independence: a births collector
+    over multiple concepts returns one entry per qualifying concept."""
+    key_a, key_b = "node.a", "node.b"
+    birth_a = _finding(
+        concept_key=key_a, source="judge", verdict="wrong", confidence=0.95, bank_code=None
+    )
+    dock_b = _finding(
+        concept_key=key_b,
+        source="sympy_veto",
+        verdict="misconception",
+        confidence=1.0,
+        bank_code="b_code",
+        signature="misc.b_code",
+    )
+    clear_c = _finding(
+        concept_key="node.c", source="judge", verdict="clear", confidence=1.0, bank_code=None
+    )
+
+    births = collect_unkeyed_births((birth_a, dock_b, clear_c))
+
+    assert len(births) == 1
+    assert births[0].concept_key == key_a
+
+
+def test_collect_unkeyed_births_empty_input_returns_empty_tuple():
+    assert collect_unkeyed_births(()) == ()
+
+
+def test_collect_unkeyed_births_verbalized_confidence_uses_verbalized_tau():
+    """Dual-tau routing (A1) is replayed identically: a verbalized-origin
+    finding must clear the STRICTER TAU_FIRE_VERBALIZED, not the looser
+    TAU_FIRE, to qualify as a birth."""
+    mid_confidence = (TAU_FIRE + TAU_FIRE_VERBALIZED) / 2
+    judge = _finding(
+        concept_key="node.real_basis",
+        source="judge",
+        verdict="wrong",
+        confidence=mid_confidence,
+        corroborated=False,
+        bank_code=None,
+        verdict_token_prob_present=False,  # routes at the stricter tau
+    )
+
+    births = collect_unkeyed_births((judge,))
+
+    assert births == ()
+
+
+def test_collect_unkeyed_births_does_not_mutate_or_alias_input():
+    judge = _finding(
+        concept_key="node.real_basis",
+        source="judge",
+        verdict="wrong",
+        confidence=0.95,
+        bank_code=None,
+    )
+    original = (judge,)
+
+    births = collect_unkeyed_births(original)
+
+    assert births is not original
+    assert births[0] is judge  # findings themselves are returned verbatim (no replace)
     assert original[0].corroborated is False  # input untouched (immutability)

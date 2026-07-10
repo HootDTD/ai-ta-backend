@@ -42,6 +42,7 @@ from apollo.handlers.done import (
     handle_done,
 )
 from apollo.handlers.tests.test_done_shadow_flag import _old_path_patches
+from apollo.ontology import KGGraph, build_node
 from apollo.overseer.misconception_detector.types import (
     ConceptFinding,
     DetectionResult,
@@ -507,3 +508,267 @@ async def test_trace_raising_does_not_perturb_grade(monkeypatch):
     )
     assert out_boom["rubric"] == out_clean["rubric"]
     assert out_boom["rubric"]["overall"]["score"] < 90  # penalty stands
+
+
+# ── Emergent map capture seam 1: detector-unkeyed birth (T2, APOLLO_EMERGENT_ #
+# MAP_CAPTURE, default OFF) ───────────────────────────────────────────────────
+# Independently flag-gated from detector_enabled() (that flag only gates
+# whether the detector STAGE runs at all; this new flag gates only whether a
+# BIRTH observation is written once it does). Own failure domain: a capture
+# write failure must never perturb the returned grade.
+
+_CAPTURE_FLAG = "APOLLO_EMERGENT_MAP_CAPTURE"
+_BIRTH_NODE_ID = "node.real_basis"
+_BIRTH_ENTITY_KEY = "def.real_basis"
+
+
+def _unkeyed_birth_finding() -> ConceptFinding:
+    """A lone judge finding at a keyed reference node, confident + unkeyed
+    (no bank_code) — clears routed tau, so gate.py routes it to
+    needs_clarification (row7) while collect_unkeyed_births independently
+    captures it as a birth candidate."""
+    return ConceptFinding(
+        concept_key=_BIRTH_NODE_ID,
+        verdict="wrong",
+        confidence=0.95,
+        severity=0.0,
+        evidence_span="real GDP already includes inflation",
+        signature=f"unkeyed:{_BIRTH_NODE_ID}",
+        source="judge",
+        corroborated=False,
+        bank_code=None,
+    )
+
+
+def _reference_graph_with_entity_key() -> KGGraph:
+    node = build_node(
+        node_type="definition",
+        node_id=_BIRTH_NODE_ID,
+        attempt_id=99,
+        source="reference",
+        content={"concept": "real GDP", "meaning": "GDP adjusted for inflation"},
+        entity_key=_BIRTH_ENTITY_KEY,
+    )
+    return KGGraph(nodes=[node], edges=[])
+
+
+async def _run_capture(
+    monkeypatch,
+    *,
+    capture_flag,
+    detect_return=None,
+    record_births_mock=None,
+    reference_graph=None,
+):
+    """Drive handle_done with the detector ON (real gate/merge chain), the
+    reference graph carrying an entity_key-bearing node, and the capture
+    seam's write function patched. Returns (out, record_births_mock)."""
+    monkeypatch.setenv(_FLAG, "true")
+    if capture_flag is not None:
+        monkeypatch.setenv(_CAPTURE_FLAG, capture_flag)
+    else:
+        monkeypatch.delenv(_CAPTURE_FLAG, raising=False)
+
+    db, _sess, _attempt, patches = _old_path_patches()
+
+    graph = reference_graph if reference_graph is not None else _reference_graph_with_entity_key()
+
+    async def _find_problem_with_graph(_db, _cid, _code):
+        problem = MagicMock()
+        problem.id = "p_code"
+        problem.problem_text = "text"
+        problem.reference_solution = []
+        problem.to_kg_graph.return_value = graph
+        return problem
+
+    detection = detect_return if detect_return is not None else DetectionResult(
+        per_concept=(_unkeyed_birth_finding(),)
+    )
+    births_mock = record_births_mock if record_births_mock is not None else AsyncMock(return_value=1)
+
+    patches = [p for p in patches if getattr(p, "attribute", None) != "_find_problem"]
+    patches = _patches_with_rubric(patches, _OLD_RUBRIC)
+    patches += [
+        patch(
+            "apollo.handlers.done._find_problem",
+            new=AsyncMock(side_effect=_find_problem_with_graph),
+        ),
+        patch(
+            "apollo.handlers.done.detect_misconceptions",
+            new=AsyncMock(return_value=detection),
+        ),
+        patch("apollo.handlers.done.make_openai_judge", new=MagicMock()),
+        patch("apollo.handlers.done._default_embed_fn", new=MagicMock()),
+        patch(
+            "apollo.handlers.done._student_utterances",
+            new=AsyncMock(return_value=("real GDP already includes inflation",)),
+        ),
+        patch("apollo.handlers.done.record_detector_births", new=births_mock),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        out = await handle_done(db=db, neo=MagicMock(), session_id=11)
+    finally:
+        for p in reversed(patches):
+            p.stop()
+    return out, births_mock
+
+
+async def test_capture_flag_off_record_detector_births_never_called(monkeypatch):
+    """Capture flag OFF (default) -> record_detector_births is never invoked,
+    even though the detector itself is ON and produced an unkeyed finding."""
+    never = AsyncMock(
+        side_effect=AssertionError("record_detector_births must not be called while flag is OFF")
+    )
+    out, births_mock = await _run_capture(monkeypatch, capture_flag=None, record_births_mock=never)
+
+    births_mock.assert_not_awaited()
+    # Detector still ran and produced its OWN grade effect independent of capture.
+    assert "rubric" in out
+
+
+async def test_capture_flag_on_writes_birth_and_commits(monkeypatch):
+    """Capture flag ON -> the birth seam fires: record_detector_births is
+    called with the resolved node_entity_key map and the collector's births,
+    and the write is committed (own commit, per plan T2)."""
+    births_mock = AsyncMock(return_value=1)
+    db, _sess, _attempt, patches = _old_path_patches()
+
+    graph = _reference_graph_with_entity_key()
+
+    async def _find_problem_with_graph(_db, _cid, _code):
+        problem = MagicMock()
+        problem.id = "p_code"
+        problem.problem_text = "text"
+        problem.reference_solution = []
+        problem.to_kg_graph.return_value = graph
+        return problem
+
+    detection = DetectionResult(per_concept=(_unkeyed_birth_finding(),))
+    monkeypatch.setenv(_FLAG, "true")
+    monkeypatch.setenv(_CAPTURE_FLAG, "true")
+
+    patches = [p for p in patches if getattr(p, "attribute", None) != "_find_problem"]
+    patches = _patches_with_rubric(patches, _OLD_RUBRIC)
+    patches += [
+        patch(
+            "apollo.handlers.done._find_problem",
+            new=AsyncMock(side_effect=_find_problem_with_graph),
+        ),
+        patch(
+            "apollo.handlers.done.detect_misconceptions",
+            new=AsyncMock(return_value=detection),
+        ),
+        patch("apollo.handlers.done.make_openai_judge", new=MagicMock()),
+        patch("apollo.handlers.done._default_embed_fn", new=MagicMock()),
+        patch(
+            "apollo.handlers.done._student_utterances",
+            new=AsyncMock(return_value=("real GDP already includes inflation",)),
+        ),
+        patch("apollo.handlers.done.record_detector_births", new=births_mock),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        await handle_done(db=db, neo=MagicMock(), session_id=11)
+    finally:
+        for p in reversed(patches):
+            p.stop()
+
+    births_mock.assert_awaited_once()
+    kwargs = births_mock.await_args.kwargs
+    assert kwargs["node_entity_key"] == {_BIRTH_NODE_ID: _BIRTH_ENTITY_KEY}
+    births = kwargs["births"]
+    assert len(births) == 1
+    assert births[0].concept_key == _BIRTH_NODE_ID
+    # db.commit is called at least once more beyond the pre-detector commits —
+    # the shared MagicMock db.commit records every call; assert it was awaited
+    # (own-commit-on-success per the artifact_writer.py pattern).
+    assert db.commit.await_count >= 1
+
+
+async def test_capture_own_failure_domain_grade_byte_identical(monkeypatch):
+    """A capture-write failure (store raises) is swallowed + logged, and the
+    grade returned by handle_done is BYTE-IDENTICAL to a clean capture-ON run
+    — the load-bearing own-failure-domain guarantee (student grading outcomes
+    must never be perturbed by a capture defect)."""
+    boom = AsyncMock(side_effect=RuntimeError("store exploded"))
+    out_boom, _ = await _run_capture(monkeypatch, capture_flag="true", record_births_mock=boom)
+
+    clean = AsyncMock(return_value=1)
+    out_clean, _ = await _run_capture(monkeypatch, capture_flag="true", record_births_mock=clean)
+
+    assert out_boom["rubric"] == out_clean["rubric"]
+    assert out_boom["diagnostic_narrative"] == out_clean["diagnostic_narrative"]
+    assert out_boom["xp_earned"] == out_clean["xp_earned"]
+
+
+async def test_capture_own_failure_domain_rolls_back(monkeypatch):
+    """The capture seam's own try/except calls db.rollback() on a write
+    failure (artifact_writer.py:236-256 pattern) — verified via the shared
+    MagicMock db used by the OLD-path harness."""
+    boom = AsyncMock(side_effect=RuntimeError("store exploded"))
+    db, _sess, _attempt, patches = _old_path_patches()
+    db.rollback = AsyncMock()
+
+    graph = _reference_graph_with_entity_key()
+
+    async def _find_problem_with_graph(_db, _cid, _code):
+        problem = MagicMock()
+        problem.id = "p_code"
+        problem.problem_text = "text"
+        problem.reference_solution = []
+        problem.to_kg_graph.return_value = graph
+        return problem
+
+    detection = DetectionResult(per_concept=(_unkeyed_birth_finding(),))
+    monkeypatch.setenv(_FLAG, "true")
+    monkeypatch.setenv(_CAPTURE_FLAG, "true")
+
+    patches = [p for p in patches if getattr(p, "attribute", None) != "_find_problem"]
+    patches = _patches_with_rubric(patches, _OLD_RUBRIC)
+    patches += [
+        patch(
+            "apollo.handlers.done._find_problem",
+            new=AsyncMock(side_effect=_find_problem_with_graph),
+        ),
+        patch(
+            "apollo.handlers.done.detect_misconceptions",
+            new=AsyncMock(return_value=detection),
+        ),
+        patch("apollo.handlers.done.make_openai_judge", new=MagicMock()),
+        patch("apollo.handlers.done._default_embed_fn", new=MagicMock()),
+        patch(
+            "apollo.handlers.done._student_utterances",
+            new=AsyncMock(return_value=("real GDP already includes inflation",)),
+        ),
+        patch("apollo.handlers.done.record_detector_births", new=boom),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        out = await handle_done(db=db, neo=MagicMock(), session_id=11)
+    finally:
+        for p in reversed(patches):
+            p.stop()
+
+    boom.assert_awaited_once()
+    assert db.rollback.await_count >= 1
+    assert "rubric" in out  # HTTP 200 shape — no exception escaped
+
+
+async def test_capture_flag_on_no_births_calls_nothing_extra(monkeypatch):
+    """Capture ON but the detector's findings produce zero births (e.g. a
+    clean/clear finding set) -> record_detector_births still may be called
+    with an empty births tuple (a no-op write) OR not at all; either way the
+    grade is unaffected. This pins that the wiring does not crash on the
+    empty-births path."""
+    births_mock = AsyncMock(return_value=0)
+    out, _ = await _run_capture(
+        monkeypatch,
+        capture_flag="true",
+        detect_return=DetectionResult(per_concept=()),
+        record_births_mock=births_mock,
+    )
+    assert "rubric" in out
