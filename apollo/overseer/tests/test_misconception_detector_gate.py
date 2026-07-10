@@ -856,6 +856,66 @@ def test_collect_unkeyed_births_excludes_struct_opposes_hit():
     assert births == ()
 
 
+def test_collect_unkeyed_births_excludes_sympy_veto_anchored_concept():
+    """gate_findings' anchor grouping is BY concept_key across BOTH
+    sympy_veto and judge sources (_ANCHOR_SOURCES) -- when a concept_key has
+    a sympy_veto finding, `_gate_one_concept` always docks via the
+    deterministic branch and the judge finding on that SAME concept_key is
+    never independently evaluated (rows 1/2). The collector must replay that
+    SAME precedence: a concept_key resolved by a sympy_veto anchor must not
+    also birth from an unkeyed confident-wrong judge finding on that same
+    concept_key."""
+    key = "node.shared_concept"
+    veto = _finding(
+        concept_key=key,
+        source="sympy_veto",
+        verdict="misconception",
+        confidence=1.0,
+        bank_code="some_code",
+        signature="misc.some_code",
+    )
+    judge = _finding(
+        concept_key=key,
+        source="judge",
+        verdict="wrong",
+        confidence=0.95,
+        corroborated=False,
+        bank_code=None,
+    )
+
+    births = collect_unkeyed_births((veto, judge))
+
+    assert births == ()
+
+    # Control: the SAME judge finding, without the sympy_veto anchor on its
+    # concept_key, still births (proves the exclusion is precedence-driven,
+    # not a blanket judge+sympy_veto co-occurrence ban).
+    births_without_veto = collect_unkeyed_births((judge,))
+
+    assert len(births_without_veto) == 1
+    assert births_without_veto[0].concept_key == key
+
+
+def test_collect_unkeyed_births_sympy_veto_solo_anchor_no_judge_births_nothing():
+    """A concept_key anchored ONLY by a sympy_veto finding (no judge finding
+    at all on that concept_key) must not birth -- covers the `judges` empty
+    branch reached after a sympy_veto-bearing group is excluded by the
+    deterministic-anchor check but genuinely has no judge finding to fall
+    back to."""
+    veto = _finding(
+        concept_key="node.solo_veto",
+        source="sympy_veto",
+        verdict="misconception",
+        confidence=1.0,
+        bank_code="solo_code",
+        signature="misc.solo_code",
+    )
+
+    births = collect_unkeyed_births((veto,))
+
+    assert births == ()
+
+
 def test_collect_unkeyed_births_excludes_deterministic_and_bank_pattern_sources():
     """Only the judge tier can produce an "unkeyed birth" — sympy_veto always
     self-docks (never unkeyed) and a lone bank_pattern finding never anchors
