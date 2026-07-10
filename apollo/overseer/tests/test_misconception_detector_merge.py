@@ -36,6 +36,7 @@ from apollo.overseer.misconception_detector.config import (
 from apollo.overseer.misconception_detector.merge import merge_detections
 from apollo.overseer.misconception_detector.types import (
     ConceptFinding,
+    DetectorSource,
     MergeOutcome,
 )
 
@@ -47,7 +48,7 @@ def _docked(
     severity: float = 0.0,
     evidence_span: str = "student said X",
     signature: str = "misc.includes_transfers",
-    source: str = "judge",
+    source: DetectorSource = "judge",
     ceiling_eligible: bool = False,
 ) -> ConceptFinding:
     """A gate-cleared (docked) finding — the shape merge_detections consumes."""
@@ -114,8 +115,7 @@ def test_penalty_clamped_at_severity_clamp():
     # Three maximally-central, high-confidence docked findings would sum to
     # 3 * (1.0 * 1.0) = 3.0 without the clamp.
     findings = tuple(
-        _docked(concept_key=f"concept.{i}", confidence=1.0, signature=f"misc.{i}")
-        for i in range(3)
+        _docked(concept_key=f"concept.{i}", confidence=1.0, signature=f"misc.{i}") for i in range(3)
     )
     centrality = {f"concept.{i}": 1.0 for i in range(3)}
 
@@ -246,15 +246,14 @@ def test_unkeyed_finding_is_penalized_but_not_emitted_as_keyed_row():
     outcome = merge_detections((unkeyed,), centrality=centrality)
 
     # Penalty and ceiling DO reflect the unkeyed finding.
-    assert outcome.misconception_penalty == pytest.approx(1.0 * 1.0 - (1.0 - SEVERITY_CLAMP))  # clamped
+    assert outcome.misconception_penalty == pytest.approx(
+        1.0 * 1.0 - (1.0 - SEVERITY_CLAMP)
+    )  # clamped
     assert outcome.ceiling_applied is True
     # But no keyed row is emitted for an unkeyed:* signature.
-    assert all(
-        row.get("canonical_key") != "unkeyed:42" for row in outcome.misconceptions
-    )
+    assert all(row.get("canonical_key") != "unkeyed:42" for row in outcome.misconceptions)
     assert not any(
-        (row.get("canonical_key") or "").startswith("unkeyed:")
-        for row in outcome.misconceptions
+        (row.get("canonical_key") or "").startswith("unkeyed:") for row in outcome.misconceptions
     )
     # It is still carried in the ledger_findings (gate-cleared docked set).
     assert any(f.signature == "unkeyed:42" for f in outcome.ledger_findings)

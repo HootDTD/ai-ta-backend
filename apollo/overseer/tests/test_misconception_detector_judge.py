@@ -95,9 +95,7 @@ class TestJudgeConceptsValidJSON:
                 },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
         concepts = (
             _concept("gdp_identity"),
             _concept("net_exports_sign"),
@@ -141,9 +139,7 @@ class TestJudgeConceptsValidJSON:
                 {"concept_key": "c", "verdict": "clear", "evidence_span": "", "confidence": 0.9},
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
         concepts = (_concept("a"), _concept("b"), _concept("c"))
 
         findings = judge_concepts(
@@ -166,9 +162,7 @@ class TestJudgeConceptsValidJSON:
                 },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=0.97)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=0.97))
         findings = judge_concepts(
             problem_text="p",
             concepts=(_concept("gdp_identity"),),
@@ -188,9 +182,7 @@ class TestJudgeConceptsValidJSON:
                 },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
         findings = judge_concepts(
             problem_text="p",
             concepts=(_concept("gdp_identity"),),
@@ -211,12 +203,15 @@ class TestJudgeConceptsStudentGrounding:
     def test_student_utterances_reach_the_user_prompt(self):
         payload = {
             "concepts": [
-                {"concept_key": "gdp_identity", "verdict": "clear", "evidence_span": "", "confidence": 0.9},
+                {
+                    "concept_key": "gdp_identity",
+                    "verdict": "clear",
+                    "evidence_span": "",
+                    "confidence": 0.9,
+                },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
         distinctive = "zebras cause inflation via the reserve multiplier xyzzy-42"
 
         judge_concepts(
@@ -231,10 +226,12 @@ class TestJudgeConceptsStudentGrounding:
         assert distinctive in user_payload["student_explanation"]
 
     def test_multiple_student_utterances_are_joined_attempt_level_not_per_concept(self):
-        payload = {"concepts": [{"concept_key": "a", "verdict": "clear", "evidence_span": "", "confidence": 0.9}]}
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        payload = {
+            "concepts": [
+                {"concept_key": "a", "verdict": "clear", "evidence_span": "", "confidence": 0.9}
+            ]
+        }
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
         utterances = ("first turn utterance", "second turn utterance")
 
         judge_concepts(
@@ -251,10 +248,12 @@ class TestJudgeConceptsStudentGrounding:
         assert "student_explanation" not in user_payload["concepts"][0]
 
     def test_no_student_utterances_yields_empty_explanation_not_a_crash(self):
-        payload = {"concepts": [{"concept_key": "a", "verdict": "clear", "evidence_span": "", "confidence": 0.9}]}
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        payload = {
+            "concepts": [
+                {"concept_key": "a", "verdict": "clear", "evidence_span": "", "confidence": 0.9}
+            ]
+        }
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
 
         findings = judge_concepts(
             problem_text="p",
@@ -283,9 +282,7 @@ class TestJudgeConceptsStudentGrounding:
                 },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
 
         findings = judge_concepts(
             problem_text="p",
@@ -352,12 +349,15 @@ class TestJudgeConceptsSoftFail:
         back as an unfound/clear finding."""
         payload = {
             "concepts": [
-                {"concept_key": "gdp_identity", "verdict": "misconception", "evidence_span": "x", "confidence": 0.9},
+                {
+                    "concept_key": "gdp_identity",
+                    "verdict": "misconception",
+                    "evidence_span": "x",
+                    "confidence": 0.9,
+                },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
         concepts = (_concept("gdp_identity"), _concept("money_multiplier"))
         findings = judge_concepts(
             problem_text="p",
@@ -380,12 +380,15 @@ class TestJudgeConceptsSoftFail:
     def test_confidence_out_of_range_clamped(self):
         payload = {
             "concepts": [
-                {"concept_key": "gdp_identity", "verdict": "misconception", "evidence_span": "x", "confidence": 1.5},
+                {
+                    "concept_key": "gdp_identity",
+                    "verdict": "misconception",
+                    "evidence_span": "x",
+                    "confidence": 1.5,
+                },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
         findings = judge_concepts(
             problem_text="p",
             concepts=(_concept("gdp_identity"),),
@@ -396,12 +399,15 @@ class TestJudgeConceptsSoftFail:
     def test_non_numeric_confidence_defaults_to_zero(self):
         payload = {
             "concepts": [
-                {"concept_key": "gdp_identity", "verdict": "misconception", "evidence_span": "x", "confidence": "not-a-number"},
+                {
+                    "concept_key": "gdp_identity",
+                    "verdict": "misconception",
+                    "evidence_span": "x",
+                    "confidence": "not-a-number",
+                },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
         findings = judge_concepts(
             problem_text="p",
             concepts=(_concept("gdp_identity"),),
@@ -412,12 +418,15 @@ class TestJudgeConceptsSoftFail:
     def test_non_string_evidence_span_is_coerced(self):
         payload = {
             "concepts": [
-                {"concept_key": "gdp_identity", "verdict": "misconception", "evidence_span": 12345, "confidence": 0.8},
+                {
+                    "concept_key": "gdp_identity",
+                    "verdict": "misconception",
+                    "evidence_span": 12345,
+                    "confidence": 0.8,
+                },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
         findings = judge_concepts(
             problem_text="p",
             concepts=(_concept("gdp_identity"),),
@@ -428,12 +437,15 @@ class TestJudgeConceptsSoftFail:
     def test_unknown_verdict_token_soft_fails_to_clear(self):
         payload = {
             "concepts": [
-                {"concept_key": "gdp_identity", "verdict": "totally_bogus", "evidence_span": "x", "confidence": 0.9},
+                {
+                    "concept_key": "gdp_identity",
+                    "verdict": "totally_bogus",
+                    "evidence_span": "x",
+                    "confidence": 0.9,
+                },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
         findings = judge_concepts(
             problem_text="p",
             concepts=(_concept("gdp_identity"),),
@@ -462,9 +474,7 @@ class TestJudgeConceptsFlatCollapseRegression:
             "evidence_span": "",
             "confidence": 0.5,
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
 
         findings = judge_concepts(
             problem_text="Explain net exports in the GDP identity.",
@@ -489,9 +499,7 @@ class TestJudgeConceptsFlatCollapseRegression:
             "evidence_span": "imports add to GDP",
             "confidence": 0.88,
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
 
         findings = judge_concepts(
             problem_text="Explain GDP accounting.",
@@ -515,9 +523,7 @@ class TestJudgeConceptsFlatCollapseRegression:
             "evidence_span": "y",
             "confidence": 0.7,
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
         concepts = (_concept("gdp_identity"), _concept("money_multiplier"))
 
         findings = judge_concepts(
@@ -537,11 +543,14 @@ class TestJudgeConceptsFlatCollapseRegression:
         all) of concept rows should also parse, not soft-fail."""
         payload = [
             {"concept_key": "a", "verdict": "clear", "evidence_span": "", "confidence": 0.9},
-            {"concept_key": "b", "verdict": "misconception", "evidence_span": "z", "confidence": 0.6},
+            {
+                "concept_key": "b",
+                "verdict": "misconception",
+                "evidence_span": "z",
+                "confidence": 0.6,
+            },
         ]
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
         findings = judge_concepts(
             problem_text="p",
             concepts=(_concept("a"), _concept("b")),
@@ -558,9 +567,7 @@ class TestJudgeConceptsFlatCollapseRegression:
         soft-fail cleanly -- the tolerant parse must not become a silent
         pass-through for garbage."""
         payload = {"unrelated_key": "nonsense", "another": 123}
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
         findings = judge_concepts(
             problem_text="p",
             concepts=(_concept("gdp_identity"), _concept("money_multiplier")),
@@ -623,13 +630,9 @@ class TestJudgeMisconceptionCodeKeying:
                 },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
 
-        findings = judge_concepts(
-            problem_text="p", concepts=(concept,), judge_fn=judge_fn
-        )
+        findings = judge_concepts(problem_text="p", concepts=(concept,), judge_fn=judge_fn)
 
         assert len(findings) == 1
         finding = findings[0]
@@ -650,13 +653,9 @@ class TestJudgeMisconceptionCodeKeying:
                 },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
 
-        findings = judge_concepts(
-            problem_text="p", concepts=(concept,), judge_fn=judge_fn
-        )
+        findings = judge_concepts(problem_text="p", concepts=(concept,), judge_fn=judge_fn)
 
         assert len(findings) == 1
         assert findings[0].bank_code is None
@@ -676,25 +675,17 @@ class TestJudgeMisconceptionCodeKeying:
                 },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
 
-        findings = judge_concepts(
-            problem_text="p", concepts=(concept,), judge_fn=judge_fn
-        )
+        findings = judge_concepts(problem_text="p", concepts=(concept,), judge_fn=judge_fn)
 
         assert len(findings) == 1
         assert findings[0].bank_code is None
         assert findings[0].signature == "unkeyed:gdp_identity"
 
     def test_judge_cross_concept_code_rejected(self):
-        concept_a = _concept(
-            "concept_a", bank_entries=(_bank_entry("code_a", concept_id=1),)
-        )
-        concept_b = _concept(
-            "concept_b", bank_entries=(_bank_entry("code_b", concept_id=2),)
-        )
+        concept_a = _concept("concept_a", bank_entries=(_bank_entry("code_a", concept_id=1),))
+        concept_b = _concept("concept_b", bank_entries=(_bank_entry("code_b", concept_id=2),))
         payload = {
             "concepts": [
                 {
@@ -714,9 +705,7 @@ class TestJudgeMisconceptionCodeKeying:
                 },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
 
         findings = judge_concepts(
             problem_text="p",
@@ -742,13 +731,9 @@ class TestJudgeMisconceptionCodeKeying:
                 },
             ]
         }
-        judge_fn = _RecordingJudgeFn(
-            JudgeRaw(content=json.dumps(payload), verdict_token_prob=None)
-        )
+        judge_fn = _RecordingJudgeFn(JudgeRaw(content=json.dumps(payload), verdict_token_prob=None))
 
-        findings = judge_concepts(
-            problem_text="p", concepts=(concept,), judge_fn=judge_fn
-        )
+        findings = judge_concepts(problem_text="p", concepts=(concept,), judge_fn=judge_fn)
 
         assert len(findings) == 1
         assert findings[0].bank_code is None
@@ -762,9 +747,7 @@ class TestJudgeMisconceptionCodeKeying:
             JudgeRaw(content="not valid json {{{", verdict_token_prob=None)
         )
 
-        findings = judge_concepts(
-            problem_text="p", concepts=(concept,), judge_fn=judge_fn
-        )
+        findings = judge_concepts(problem_text="p", concepts=(concept,), judge_fn=judge_fn)
 
         assert len(findings) == 1
         assert findings[0].bank_code is None
@@ -833,7 +816,11 @@ class TestMakeOpenAIJudge:
         )
         verdict_logprob = math.log(0.93)
         fake_content_tokens = [
-            _FakeTokenLogprob("misconception", verdict_logprob, [_FakeTopLogprob("misconception", verdict_logprob)]),
+            _FakeTokenLogprob(
+                "misconception",
+                verdict_logprob,
+                [_FakeTopLogprob("misconception", verdict_logprob)],
+            ),
         ]
         fake_resp = _FakeResp(
             choices=[_FakeChoice(_FakeMessage(body), _FakeLogprobs(fake_content_tokens))]

@@ -20,8 +20,6 @@ from __future__ import annotations
 
 import copy
 
-import pytest
-
 from apollo.overseer.misconception_detector.apply import (
     apply_penalty,
     rubric_overall_after_penalty,

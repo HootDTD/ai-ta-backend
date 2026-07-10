@@ -26,6 +26,8 @@ Pure module: no IO, no LLM, no DB. Every assertion below is offline.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from apollo.grading.artifact_build import build_llm_artifact
@@ -73,9 +75,9 @@ def _docked_finding(
     )
 
 
-def _non_empty_outcome(**overrides) -> MergeOutcome:
+def _non_empty_outcome(**overrides: Any) -> MergeOutcome:
     finding = _docked_finding()
-    kwargs = dict(
+    kwargs: dict[str, Any] = dict(
         misconception_penalty=0.27,
         misconceptions=(
             {
@@ -183,9 +185,7 @@ def test_ceiling_applied_caps_composite_below_named_band():
     high_rubric = {"overall": {"score": 95}}
     outcome = _non_empty_outcome(misconception_penalty=0.05, ceiling_applied=True)
 
-    art = build_llm_artifact(
-        **_base_kwargs(rubric=high_rubric), detection_outcome=outcome
-    )
+    art = build_llm_artifact(**_base_kwargs(rubric=high_rubric), detection_outcome=outcome)
 
     expected = apply_penalty(composite=0.95, outcome=outcome)
     assert art["scores"]["composite"] == pytest.approx(expected)
@@ -206,9 +206,7 @@ def test_ceiling_only_zero_penalty_outcome_still_applies_ceiling():
         ledger_findings=(),
     )
 
-    art = build_llm_artifact(
-        **_base_kwargs(rubric=high_rubric), detection_outcome=outcome
-    )
+    art = build_llm_artifact(**_base_kwargs(rubric=high_rubric), detection_outcome=outcome)
 
     # ceiling honored: composite capped at CEILING_COMPOSITE, not the raw 0.95
     assert art["scores"]["composite"] <= 0.84 + 1e-9
