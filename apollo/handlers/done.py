@@ -48,6 +48,14 @@ from apollo.overseer.misconception import (
     MisconceptionSignal,
     summarize_for_rubric,
 )
+from apollo.overseer.misconception_detector.apply import rubric_overall_after_penalty
+from apollo.overseer.misconception_detector.centrality import compute_centrality
+from apollo.overseer.misconception_detector.config import detector_enabled
+from apollo.overseer.misconception_detector.detector import detect_misconceptions
+from apollo.overseer.misconception_detector.gate import gate_findings
+from apollo.overseer.misconception_detector.judge import make_openai_judge
+from apollo.overseer.misconception_detector.merge import merge_detections
+from apollo.overseer.misconception_detector.types import JudgeFn, MergeOutcome
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.overseer.rubric import compute_rubric
 from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
@@ -128,6 +136,19 @@ _GRAPH_SIM_ARTIFACT_FLAG: str = "APOLLO_GRADING_ARTIFACT_ENABLED"
 # cost a student their grade). When OFF, a named infra error in the shadow
 # chain still re-raises (today's NO-FALLBACK diagnostics, unchanged).
 _GRAPH_GRADER_LIVE_FLAG: str = "APOLLO_GRAPH_GRADER_LIVE"
+
+# T13 — the misconception-detector flag (default OFF everywhere). Pinned here so
+# the route/config key matches the spec; the reader lives in
+# `apollo/overseer/misconception_detector/config.py::detector_enabled` (imported
+# above). When OFF, the parallel detection stage in `handle_done` never runs and
+# the student-facing payload is byte-identical to today (design invariant #1).
+_MISCONCEPTION_DETECTOR_FLAG: str = "APOLLO_MISCONCEPTION_DETECTOR"
+
+# T13 — the raw student-turn role for `_student_utterances` (R6, RESOLVED): live
+# transcript roles are exactly {"apollo", "student"}; the Apollo learner turns
+# (read by `_attempt_misconception_scores`) are "apollo", the student's raw
+# teaching utterances (which feed the bank_pattern tier) are "student".
+_STUDENT_ROLE: str = "student"
 
 # Lane B1 / G3 — the shadow-failure marker prefix stamped onto the canonical
 # LLM artifact's `abstention.graph_failure` when a SHADOW-mode (LIVE off)
@@ -339,6 +360,58 @@ async def _attempt_misconception_scores(
     return summarize_for_rubric(signals)
 
 
+async def _student_utterances(
+    db: AsyncSession, *, attempt_id: int,
+) -> tuple[str, ...]:
+    """T13 — the raw student teaching utterances for this attempt, in turn
+    order, that feed the misconception detector's ``bank_pattern`` tier.
+
+    Reads ``Message.content`` where ``Message.role == "student"`` (R6 —
+    the CONFIRMED student-turn role, distinct from the "apollo" learner
+    turns ``_attempt_misconception_scores`` reads) ordered by
+    ``turn_index``. Returns a tuple (immutable) so the detector's frozen
+    value objects stay list-free end to end. Empty tuple when the student
+    never spoke (a valid, common case — the detector's tiers all abstain on
+    empty utterances)."""
+    rows = (await db.execute(
+        select(Message.content)
+        .where(Message.attempt_id == attempt_id)
+        .where(Message.role == _STUDENT_ROLE)
+        .order_by(Message.turn_index)
+    )).scalars().all()
+    return tuple(rows)
+
+
+def _embed_texts(texts: list[str]) -> list[list[float]]:
+    """Lazy indirection over the project-wide batched embedder so importing
+    ``done`` never pulls in the OpenAI SDK (mirrors
+    ``apollo/resolution/embedding.py::default_embedder``). Split out as its
+    own module-level name so tests can patch the batched call without
+    touching ``_default_embed_fn``'s single-vector wrapper logic."""
+    from indexing.document_embedder import embed_texts
+
+    return embed_texts(texts)
+
+
+def _default_embed_fn(text: str) -> list[float]:
+    """Production ``EmbedFn`` (DI seam for the ``bank_pattern`` tier). Wraps the
+    batched ``embed_texts`` (which returns a list of vectors) into the
+    single-text -> single-vector shape the ``EmbedFn`` Protocol declares
+    (``types.py``: ``__call__(text: str) -> list[float]``). Degrades to an
+    empty vector on an empty batch result rather than raising IndexError —
+    the ``bank_pattern`` tier treats a zero-norm/empty vector as "no match"."""
+    vectors = _embed_texts([text])
+    return vectors[0] if vectors else []
+
+
+def _default_judge_fn() -> JudgeFn:
+    """Production ``JudgeFn`` factory for the detector's Tier-2 judge. Thin
+    indirection over ``make_openai_judge`` so the call site in ``handle_done``
+    reads symmetrically with ``_default_embed_fn`` and so a test can patch the
+    factory without patching the OpenAI-touching builder itself."""
+    return make_openai_judge()
+
+
 async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) -> Problem:
     for p in await list_problems_for_concept(db, concept_id=concept_id):
         if p.id == problem_code:
@@ -408,6 +481,47 @@ async def handle_done(
         reference_graph.nodes,
         misconception_scores=misconception_scores,
     )
+
+    # T13 — the DEFAULT-OFF parallel misconception-detection stage. Runs after
+    # the rubric so it can dock its LIVE score, and before the diagnostic so
+    # the narrative already reflects the penalized band. When
+    # `detector_enabled()` is OFF (the only prod state today) this whole block
+    # is skipped and `handle_done` is byte-identical to pre-T13 (design
+    # invariant #1). SOFT-FAIL (invariant #5): ANY exception in the
+    # detect -> gate -> merge chain is logged and swallowed — the grade then
+    # proceeds with the UNPENALIZED rubric and a `None` outcome, served HTTP
+    # 200. `detection_outcome` (the MergeOutcome) is threaded into
+    # `write_artifacts` below so the artifact's `misconception_penalty` /
+    # `misconceptions[]` are populated and the emergent ledger feed picks them
+    # up. The reassigned `rubric` (a NEW dict from `rubric_overall_after_penalty`
+    # — never a mutation of the original) flows into `xp_earned`, the
+    # diagnostic, `student_response["rubric"]`, and `attempt.diagnostic_report`,
+    # moving the real band + XP a student sees.
+    detection_outcome: MergeOutcome | None = None
+    if detector_enabled():
+        try:
+            utterances = await _student_utterances(db, attempt_id=attempt.id)
+            detection = await detect_misconceptions(
+                db,
+                attempt_id=attempt.id,
+                concept_id=sess.concept_id,
+                student_graph=student_graph,
+                reference_graph=reference_graph,
+                problem_text=problem.problem_text,
+                student_utterances=utterances,
+                judge_fn=_default_judge_fn(),
+                embed_fn=_default_embed_fn,
+            )
+            gated = gate_findings(detection.per_concept)
+            detection_outcome = merge_detections(
+                gated, centrality=compute_centrality(reference_graph),
+            )
+            rubric = rubric_overall_after_penalty(rubric, detection_outcome)
+        except Exception:
+            _LOG.exception(
+                "misconception_detector_failed attempt_id=%s", int(attempt.id)
+            )
+            detection_outcome = None  # soft-fail: grade proceeds unpenalized
 
     diagnostic_narrative = generate_diagnostic(
         coverage=coverage,
@@ -659,6 +773,7 @@ async def handle_done(
             served=served_grade,
             graph_failure=graph_failure,
             latency_ms=artifact_latency_ms,
+            detection_outcome=detection_outcome,
         )
         if canonical_payload is not None:
             student_response["scorecard"] = render_scorecard(canonical_payload)

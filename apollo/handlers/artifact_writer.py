@@ -39,6 +39,7 @@ from apollo.grading.artifact_build import (
 )
 from apollo.grading.composite import load_weights
 from apollo.handlers.done_grading import ShadowGradeResult
+from apollo.overseer.misconception_detector.types import MergeOutcome
 from apollo.persistence.models import ApolloSession, Clarification, GradingArtifact, ProblemAttempt
 
 _LOG = logging.getLogger(__name__)
@@ -123,12 +124,25 @@ async def write_artifacts(
     served: str,
     graph_failure: str | None,
     latency_ms: int | None,
+    detection_outcome: MergeOutcome | None = None,
 ) -> dict | None:
     """Write the canonical (+ paired, when both grades exist) artifact rows for
     this Done-click. ``served`` is the ``grader_used`` value of the grade
     actually shown to the student (``"graph"`` or ``"llm_fallback"``) — Task
     A4 is the only caller that can pass ``"graph"``; this build always passes
     ``"llm_fallback"``.
+
+    T12 (misconception detector wiring): ``detection_outcome`` is a NEW
+    OPT-IN keyword — ``None`` (the default) leaves every existing caller
+    byte-identical (design invariant #1). When provided it is threaded
+    straight into ``build_llm_artifact`` (§6.3), which is the only builder
+    that currently applies it — ``build_graph_artifact`` keeps its own real
+    graph-derived penalty math untouched (the plan's §6.3 note: accept the
+    param for future parity, do not touch the graph builder's math). Because
+    the emergent-store call below (§6.5) already feeds off whichever payload
+    ends up ``canonical``, a non-empty outcome landing in the LLM payload's
+    ``misconceptions[]`` is picked up by the EXISTING
+    ``record_observations_from_canonical`` call with no further change here.
 
     Returns the CANONICAL artifact payload dict (the same shape persisted to
     the ``canonical`` row) on success, so the caller can hand it straight to
@@ -175,6 +189,7 @@ async def write_artifacts(
             latency_ms=latency_ms,
             clarification_trace=clarification_trace,
             misconceptions_bank_empty=misconceptions_bank_empty,
+            detection_outcome=detection_outcome,
         )
 
         payloads_by_grader = {
