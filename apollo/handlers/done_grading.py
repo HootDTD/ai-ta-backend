@@ -80,6 +80,11 @@ from apollo.resolution.nli_config import NLI_DEVICE, active_nli_model, load_nli_
 from apollo.resolution.nli_resolution import NLIContext
 from apollo.resolution.result import ResolutionResult
 
+# Resolver V2 (T7): the flag reader ONLY — tiny, env-read, no heavy deps. The
+# engine/integration stack is imported LAZILY inside the flag-ON branch below,
+# so flag-OFF import cost and behavior stay byte-identical.
+from apollo.resolver_v2.config import resolver_v2_enabled
+
 _LOG = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -169,6 +174,70 @@ def _nli_grading_node_cap() -> int:
         return int(raw) if raw is not None else _NLI_GRADING_NODE_CAP_DEFAULT
     except (ValueError, TypeError):
         return _NLI_GRADING_NODE_CAP_DEFAULT
+
+
+# Clarification-v2 incremental/batch diff trace (spec §7, task T13). DEFAULT
+# OFF, observability only: when ON and a live (process-local, per-attempt)
+# incremental snapshot exists at Done, logs how far the chat-turn incremental
+# approximation drifted from the from-scratch batch V2 result. NEVER reads
+# back into ``grade`` -- see ``_log_clarification_v2_diff_trace`` below.
+_CLARIFICATION_V2_DIFF_TRACE_FLAG: str = "APOLLO_CLARIFICATION_V2_DIFF_TRACE"
+
+
+def _clarification_v2_diff_trace_enabled() -> bool:
+    return os.environ.get(_CLARIFICATION_V2_DIFF_TRACE_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _log_clarification_v2_diff_trace(
+    *, attempt_id: int, grade, resolver_v2_trace: dict | None
+) -> None:
+    """Compare the chat-turn incremental snapshot (process-local holder in
+    ``chat.py``) against the from-scratch batch V2 result already substituted
+    into ``grade``/``resolver_v2_trace`` (spec §7). Logs
+    ``clarification_v2_diff_trace {incremental_node_cov, batch_node_cov,
+    max_abs_node_delta}`` and returns -- this function never mutates
+    ``grade`` or raises; any failure (including "no snapshot yet") is a
+    silent no-op, since this is pure observability, never a grading input.
+
+    ``max_abs_node_delta`` is the largest per-node |incremental credit -
+    batch credit| across the union of both node sets (the per-node audit is
+    only available via ``resolver_v2_trace["nodes"]``, T7's ``ResolverV2Result
+    .trace()`` output); when that trace is unavailable (V2 failed/fell back
+    this turn), it degrades to the aggregate node-coverage delta."""
+    try:
+        from apollo.handlers.chat import _INCREMENTAL_HOLDER  # noqa: PLC0415 - lazy, avoid cycle
+
+        snapshot = _INCREMENTAL_HOLDER.latest_snapshot(attempt_id)
+        if snapshot is None:
+            return
+        batch_node_cov = grade.node_coverage_score
+
+        batch_nodes = (resolver_v2_trace or {}).get("nodes") or []
+        if batch_nodes:
+            batch_credits = {n["canonical_key"]: n["credit"] for n in batch_nodes}
+            all_keys = set(snapshot.node_credits) | set(batch_credits)
+            max_abs_node_delta = max(
+                (
+                    abs(snapshot.node_credits.get(k, 0.0) - batch_credits.get(k, 0.0))
+                    for k in all_keys
+                ),
+                default=0.0,
+            )
+        else:
+            max_abs_node_delta = abs(snapshot.node_cov - batch_node_cov)
+
+        _LOG.info(
+            "clarification_v2_diff_trace attempt_id=%s incremental_node_cov=%.4f "
+            "batch_node_cov=%.4f max_abs_node_delta=%.4f",
+            attempt_id,
+            snapshot.node_cov,
+            batch_node_cov,
+            max_abs_node_delta,
+        )
+    except Exception:  # noqa: BLE001 - observability only, never touches grading
+        _LOG.warning(
+            "clarification_v2_diff_trace_failed attempt_id=%s", attempt_id, exc_info=True
+        )
 
 
 async def _resolve_attempt_async(
@@ -289,6 +358,15 @@ class ShadowGradeResult:
     # graph-sim node-type map could not consume, so those steps were dropped
     # (never a KeyError). Defaulted so every existing construction stays valid.
     degradation: GraphSimDegradation | None = None
+    # Resolver V2 (T7) — OPTIONAL trace from the flagged shadow scoring engine
+    # (``APOLLO_RESOLVER_V2``). ``None`` = V2 did not run (flag OFF, or the
+    # engine failed and grading fell back to v1 scores — the common case).
+    # When present, ``grade``'s coverage/node/edge scores are ALREADY the V2
+    # numbers (substituted in step 8b, before the audit) and
+    # ``build_graph_artifact`` nests ``resolver_v2_trace["summary"]`` under
+    # ``scores.resolver_v2``. Defaulted LAST so every existing construction
+    # stays valid.
+    resolver_v2_trace: dict | None = None
 
 
 def build_graph_sim_degradation(problem_payload: dict) -> GraphSimDegradation | None:
@@ -441,6 +519,35 @@ async def run_graph_simulation(
         # Step 8 — grade (pure).
         grade = grade_attempt(student_canonical, reference_graph, bank_applicable=bank_applicable)
 
+        # Step 8b — Resolver V2 (APOLLO_RESOLVER_V2, default OFF: flag-off is
+        # byte-identical — this branch never runs and the lazy import below
+        # never happens). When ON, the shadow engine substitutes EXACTLY three
+        # GradeResult numbers (coverage/node/edge) BEFORE the audit, so the
+        # §10 gate + artifact + replay read V2 scores with zero further edits
+        # (build_audited_grade carries grade unchanged). An engine failure is
+        # logged inside apply_resolver_v2 and falls back to the v1 grade —
+        # the prototype never crashes grading.
+        resolver_v2_trace: dict | None = None
+        if resolver_v2_enabled():
+            from apollo.resolver_v2.integration import apply_resolver_v2
+
+            grade, resolver_v2_trace = await apply_resolver_v2(
+                db,
+                attempt_id=int(attempt.id),
+                grade=grade,
+                student_canonical=student_canonical,
+                reference_graph=reference_graph,
+                problem_payload=problem_payload,
+            )
+            # Optional (default OFF) observability-only diff trace -- spec §7,
+            # task T13. Never touches `grade`; failures are swallowed inside.
+            if _clarification_v2_diff_trace_enabled():
+                _log_clarification_v2_diff_trace(
+                    attempt_id=int(attempt.id),
+                    grade=grade,
+                    resolver_v2_trace=resolver_v2_trace,
+                )
+
         # Step 9 — transcript audit (live auditor; suppress-all-missing on infra
         # failure is handled INSIDE build_audited_grade).
         transcript = await _read_transcript(db, attempt_id=int(attempt.id))
@@ -522,6 +629,7 @@ async def run_graph_simulation(
             diagnostic=diagnostic,
             resolution=resolution,
             degradation=degradation,
+            resolver_v2_trace=resolver_v2_trace,
         )
     except ReferenceGraphInvalidError:
         # §6.6 in SHADOW v1: a bad reference blocks only the shadow run (the OLD

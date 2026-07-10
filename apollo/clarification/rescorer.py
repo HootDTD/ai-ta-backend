@@ -49,6 +49,19 @@ def _build_messages(request: ClarificationRequest) -> list[dict[str, str]]:
 
 
 def default_clarification_judge(request: ClarificationRequest) -> RescoreOutcome:
+    # PRECONDITION PINNED (integration spec §6, B-HIGH-2): chat.py seeds the V2
+    # incremental view (running_node_max[key] = 1.0, selection-space freeze +
+    # hub edge lift) ONLY on a `confirmed` outcome from THIS judge -- i.e. only
+    # when this LLM has adjudicated that the student's committed clarification
+    # text correctly expresses the target idea ("Judge meaning, not wording").
+    # `confirmed` is never reachable from a bare student self-report (a "yes"),
+    # only from this content adjudication. If this function is ever changed to
+    # let `confirmed` be reached without judging the clarification text, the
+    # seed path in apollo/handlers/chat.py MUST be disabled -- seeding grants
+    # full (1.0) selection credit and the VoI ranker deliberately steers
+    # confirmations at the highest-composite-gain hub nodes, so any weakness in
+    # confirmation adjudication is amplified at the nodes with maximum grade
+    # blast radius.
     try:
         raw = main_chat(
             purpose=_PURPOSE,

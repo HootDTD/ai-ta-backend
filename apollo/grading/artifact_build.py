@@ -349,6 +349,14 @@ def build_graph_artifact(
     # None otherwise) — so a flag-OFF artifact stays byte-identical.
     if shadow.audited.composite is not None:
         artifact["abstention"]["composite"] = shadow.audited.composite
+    # Resolver V2 (T7, APOLLO_RESOLVER_V2): nest the shadow engine's trace
+    # summary under ``scores.resolver_v2`` ONLY when V2 actually ran for this
+    # attempt (``resolver_v2_trace`` is non-None: flag ON + engine succeeded).
+    # The scores block's coverage numbers are ALREADY the substituted V2
+    # values in that case (done_grading step 8b). Flag-OFF artifact stays
+    # byte-identical (no key).
+    if shadow.resolver_v2_trace is not None:
+        artifact["scores"]["resolver_v2"] = shadow.resolver_v2_trace.get("summary")
     return artifact
 
 

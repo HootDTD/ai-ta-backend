@@ -15,8 +15,10 @@ explicit handlers for restart/next/return-to-hoot.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import select
@@ -29,6 +31,9 @@ from apollo.clarification.leak_guard import guard_clarification_reply
 from apollo.clarification.rescorer import default_clarification_judge
 from apollo.clarification.resolve_turn import resolve_pending_clarifications
 from apollo.clarification.turn import run_clarification_detection
+from apollo.clarification.v2_config import clarification_v2_ranker_enabled
+from apollo.graph_compare import build_reference_canonical
+from apollo.graph_compare.soundness import is_misconception_key
 from apollo.handlers.done_inputs import _find_problem_payload
 from apollo.handlers.history import load_windowed_history
 from apollo.handlers.intent import (
@@ -43,6 +48,16 @@ from apollo.parser.graph_context import build_graph_context
 from apollo.parser.parser_llm import parse_utterance
 from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
 from apollo.persistence.neo4j_client import Neo4jClient
+from apollo.resolution.resolver import resolve_attempt
+from apollo.resolver_v2.config import grayzone_enabled, load_params, resolver_v2_enabled
+from apollo.resolver_v2.grayzone import main_chat_grayzone
+from apollo.resolver_v2.incremental import score_turn
+from apollo.resolver_v2.incremental import seed as _seed_incremental_state
+from apollo.resolver_v2.incremental_types import IncrementalSnapshot, IncrementalState
+from apollo.resolver_v2.integration import load_student_turns
+from apollo.resolver_v2.nli_provider import get_adjudicator
+from apollo.resolver_v2.prefilter import select_windows
+from apollo.resolver_v2.views import build_ref_nodes, load_views
 from apollo.schemas.problem import Problem
 from apollo.subjects.curriculum_db import load_concept_definition
 
@@ -74,6 +89,320 @@ def _nli_chat_node_cap() -> int:
         return int(raw) if raw is not None else _NLI_CHAT_NODE_CAP_DEFAULT
     except (ValueError, TypeError):
         return _NLI_CHAT_NODE_CAP_DEFAULT
+
+
+def _v2_ranker_active() -> bool:
+    """H1 gating predicate for the ENTIRE background V2-incremental kick
+    (integration spec §2.2/§8.2): only when ALL THREE flags -- clarification,
+    resolver_v2, and the v2 ranker -- are ON does chat.py start a background
+    thread, mutate session state, or spend any NLI budget. Fresh-read, no
+    caching. Mirrors ``apollo.clarification.turn._v2_ranker_active`` exactly
+    (duplicated rather than imported: that name is module-private there, and
+    turn.py already imports this module's sibling collaborators)."""
+    return (
+        clarification_v2_ranker_enabled()
+        and resolver_v2_enabled()
+        and _clarification_enabled()
+    )
+
+
+def _confirmed_seed_keys(outcomes: Sequence[tuple[str, str]]) -> tuple[str, ...]:
+    """B-HIGH-2 / spec §6: the V2 seed path is gated ONLY on a content-verified
+    `confirmed` outcome (see the precondition pinned on
+    ``rescorer.default_clarification_judge``) -- never on `refuted` or `vague`,
+    and never on a bare student self-report. Explicitly asserts the gate on
+    every key it selects rather than trusting the filter alone."""
+    keys: list[str] = []
+    for candidate_key, outcome in outcomes:
+        if outcome != "confirmed":
+            continue
+        assert outcome == "confirmed"  # seed path MUST be gated on this outcome
+        keys.append(candidate_key)
+    return tuple(keys)
+
+
+def _empty_incremental_state() -> IncrementalState:
+    """The cold-start / turn-1 state (spec §5.1): no windows scored yet, no
+    running credit, no budget spent."""
+    return IncrementalState(
+        window_cursor=0,
+        global_window_count=0,
+        running_node_max={},
+        node_source={},
+        running_edge_evidence={},
+        seeded_keys=frozenset(),
+        pair_count_total=0,
+    )
+
+
+class _IncrementalHolder:
+    """Process-local, per-attempt accelerator for the V2 incremental score
+    (spec §5.1). Session state, NOT the DB -- intra-worker only, never shared
+    across Railway replicas; a cold worker simply has no completed snapshot
+    and falls back to v1 (fail-open, not a correctness mechanism).
+
+    Single writer per attempt: at most one incremental job is in flight per
+    ``attempt_id`` at a time (``try_acquire``/``release``), so the
+    read-modify-write in ``write`` is always serialized for a given attempt.
+    ``write`` is additionally monotone-guarded: a state whose
+    ``window_cursor`` is not strictly greater than the one already stored is
+    discarded (defensive against reordering).
+    """
+
+    def __init__(self, maxsize: int = 256) -> None:
+        self._maxsize = maxsize
+        self._entries: dict[int, dict[str, Any]] = {}
+
+    def _entry(self, attempt_id: int) -> dict[str, Any]:
+        entry = self._entries.get(attempt_id)
+        if entry is not None:
+            return entry
+        entry = {"state": None, "snapshot": None, "in_flight": False}
+        self._entries[attempt_id] = entry
+        if len(self._entries) > self._maxsize:
+            for oldest_key in self._entries:
+                if oldest_key != attempt_id:
+                    self._entries.pop(oldest_key, None)
+                break
+        return entry
+
+    def latest_snapshot(self, attempt_id: int) -> IncrementalSnapshot | None:
+        return self._entry(attempt_id)["snapshot"]
+
+    def latest_state(self, attempt_id: int) -> IncrementalState | None:
+        return self._entry(attempt_id)["state"]
+
+    def try_acquire(self, attempt_id: int) -> bool:
+        """One-in-flight-per-attempt (spec §5.5 M1/M2): returns True iff this
+        call claimed the slot (no prior job for this attempt is still
+        running); returns False when a prior job is still in flight, in
+        which case the caller must kick nothing this turn."""
+        entry = self._entry(attempt_id)
+        if entry["in_flight"]:
+            return False
+        entry["in_flight"] = True
+        return True
+
+    def release(self, attempt_id: int) -> None:
+        self._entry(attempt_id)["in_flight"] = False
+
+    def write(
+        self,
+        attempt_id: int,
+        new_state: IncrementalState,
+        snapshot: IncrementalSnapshot,
+    ) -> None:
+        entry = self._entry(attempt_id)
+        prior_state: IncrementalState | None = entry["state"]
+        if prior_state is not None and new_state.window_cursor <= prior_state.window_cursor:
+            return
+        if prior_state is not None:
+            missed_seeds = prior_state.seeded_keys - new_state.seeded_keys
+            if missed_seeds:
+                # A `confirmed` clarification called `seed_state` (below) for
+                # these keys AFTER this now-completing job was kicked, so the
+                # state the job started from (and its own `new_state`)
+                # predates the seed. Reapply the freeze on top of the
+                # completed state so a content-verified seed is never
+                # silently lost across a stale in-flight job (§6 guarantee)
+                # -- this mirrors `seed_state`'s own freeze exactly (full
+                # credit + seeded_keys), it just also folds in this job's
+                # otherwise-current running scores/edges.
+                new_state = _seed_incremental_state(new_state, sorted(missed_seeds))
+        entry["state"] = new_state
+        entry["snapshot"] = snapshot
+
+    def seed_state(self, attempt_id: int, keys: Sequence[str]) -> None:
+        """Freeze ``keys`` into this attempt's persisted state (spec §6,
+        T12): a content-verified `confirmed` clarification outcome calls this
+        so the background job kicked later THIS SAME TURN
+        (``_maybe_kick_incremental_v2``) starts from a state where those keys
+        are already ``running_node_max=1.0`` / ``seeded_keys`` -- the next
+        completed snapshot reflects the freeze (and the seeded node's own
+        edge-credit lift) naturally via the normal ``score_turn`` recompute.
+        No-op on an empty ``keys`` (never touches the holder when nothing was
+        confirmed this turn).
+
+        Unlike ``write``, this does NOT gate on ``window_cursor`` -- seeding
+        is an out-of-band credit grant, not a new window score, so it must
+        apply even when no job has completed yet (cold worker / turn 1) and
+        must never regress an existing state's cursor. The stored snapshot is
+        left untouched; only the next completed job replaces it.
+        """
+        if not keys:
+            return
+        entry = self._entry(attempt_id)
+        state = entry["state"] or _empty_incremental_state()
+        entry["state"] = _seed_incremental_state(state, keys)
+
+
+_INCREMENTAL_HOLDER = _IncrementalHolder()
+# Keeps a strong reference to fire-and-forget background tasks so they are
+# never garbage-collected mid-flight; each task discards itself on completion.
+_INCREMENTAL_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _v1_resolved_keys_for_turn(student_graph, candidates, symbolic_mappings) -> frozenset[str]:
+    """The turn's v1 resolution (spec §5.3: "v1_resolved_keys ... IS
+    available at turn time"), reusing the existing (non-misconception) v1
+    resolver over the full taught-so-far graph rather than building a new
+    matcher or a from-scratch student canonical inline (A-MAJOR-4 keeps the
+    edge triples empty; this is the node-side counterpart that IS cheap
+    enough to compute per turn). Mirrors
+    ``integration.v1_inputs_from_canonical``'s node-key derivation
+    (misconception keys excluded -- a resolved misconception must never floor
+    a reference node's credit)."""
+    result = resolve_attempt(student_graph, candidates, symbolic_mappings=symbolic_mappings)
+    return frozenset(
+        node.resolved_key
+        for node in result.resolved
+        if node.resolution == "resolved"
+        and node.resolved_key is not None
+        and not is_misconception_key(node.resolved_key)
+    )
+
+
+def _build_incremental_v2_job_inputs(
+    *,
+    problem_payload: dict,
+    student_graph,
+    candidates,
+    symbolic_mappings,
+) -> tuple[frozenset[str], Any, Any]:
+    """CPU-bound setup for the incremental V2 background job (spec §5.5
+    MINOR fix): ``_v1_resolved_keys_for_turn`` reruns v1 resolution over the
+    full taught-so-far graph, and ``build_reference_canonical`` +
+    ``load_views`` + ``build_ref_nodes`` build the reference-side inputs
+    ``score_turn`` needs. None of this touches the DB/``AsyncSession`` -- it
+    is pure/sync -- so ``_maybe_kick_incremental_v2`` runs it via
+    ``asyncio.to_thread`` rather than synchronously on the event loop,
+    keeping this per-turn setup off the teaching-reply path exactly like the
+    NLI scoring itself ("the reply must never block on V2").
+    """
+    v1_resolved_keys = _v1_resolved_keys_for_turn(student_graph, candidates, symbolic_mappings)
+    reference_graph = build_reference_canonical(problem_payload)
+    concept_id = str(problem_payload.get("concept_id") or "")
+    problem_id = str(problem_payload.get("id") or "")
+    views_by_key = load_views(concept_id, problem_id)
+    ref_nodes = build_ref_nodes(reference_graph, problem_payload, views_by_key)
+    return v1_resolved_keys, reference_graph, ref_nodes
+
+
+async def _run_incremental_v2_job(
+    *,
+    attempt_id: int,
+    state: IncrementalState,
+    all_student_turns: tuple[str, ...],
+    reference_graph,
+    problem_payload: dict,
+    v1_resolved_keys: frozenset[str],
+    ref_nodes,
+    params,
+    nli,
+    grayzone_fn,
+) -> None:
+    """The background per-turn incremental V2 score (spec §3.1/§5.5).
+
+    Fire-and-forget: nothing in ``handle_chat``'s reply path ever awaits this
+    coroutine, so an exception here can NEVER propagate into the reply (H3).
+    On success the new state + completed snapshot are persisted to the
+    process-local holder (single-writer, monotone-guarded); on any exception
+    the holder is left at its last good value (prior snapshot, or none) and
+    the failure is logged.
+    """
+    try:
+        new_state, snapshot = await asyncio.to_thread(
+            score_turn,
+            state,
+            all_student_turns=all_student_turns,
+            reference_graph=reference_graph,
+            problem_payload=problem_payload,
+            v1_resolved_keys=v1_resolved_keys,
+            nli=nli,
+            grayzone_fn=grayzone_fn,
+            select_fn=select_windows,
+            params=params,
+            ref_nodes=ref_nodes,
+        )
+        _INCREMENTAL_HOLDER.write(attempt_id, new_state, snapshot)
+    except Exception as exc:  # noqa: BLE001 - H3: never let this escape; keep last-good snapshot
+        _LOG.warning(
+            "clarification_v2_incremental_failed attempt_id=%s exception_class=%s",
+            attempt_id,
+            type(exc).__name__,
+        )
+    finally:
+        _INCREMENTAL_HOLDER.release(attempt_id)
+
+
+async def _maybe_kick_incremental_v2(
+    db: AsyncSession,
+    *,
+    attempt_id: int,
+    message: str,
+    student_graph,
+    candidates,
+    symbolic_mappings,
+    problem_payload: dict,
+) -> IncrementalSnapshot | None:
+    """Caller must have already checked ``_v2_ranker_active()`` (H1) -- this
+    function assumes the gate is ON.
+
+    Returns the most-recent COMPLETED snapshot (never the current turn's --
+    spec §5.5: the reply must never await/block on this turn's job). Kicks a
+    new background job only when no prior job for this attempt is still
+    running (one-in-flight-per-attempt, M1/M2) -- a still-running job just
+    means this turn kicks nothing, and the running job's result becomes
+    available to a later turn. Any setup failure here is caught and logged
+    (H3); the prior snapshot is returned unchanged and teaching is never
+    blocked.
+    """
+    prior_snapshot = _INCREMENTAL_HOLDER.latest_snapshot(attempt_id)
+
+    if not _INCREMENTAL_HOLDER.try_acquire(attempt_id):
+        return prior_snapshot
+
+    try:
+        state = _INCREMENTAL_HOLDER.latest_state(attempt_id) or _empty_incremental_state()
+        prior_turns = await load_student_turns(db, attempt_id)
+        all_student_turns = tuple(prior_turns) + (message,)
+        v1_resolved_keys, reference_graph, ref_nodes = await asyncio.to_thread(
+            _build_incremental_v2_job_inputs,
+            problem_payload=problem_payload,
+            student_graph=student_graph,
+            candidates=candidates,
+            symbolic_mappings=symbolic_mappings,
+        )
+        params = load_params()
+        nli = get_adjudicator()
+        grayzone_fn = main_chat_grayzone if grayzone_enabled() else None
+    except Exception as exc:  # noqa: BLE001 - H3: setup failure must never block teaching
+        _LOG.warning(
+            "clarification_v2_incremental_failed attempt_id=%s exception_class=%s",
+            attempt_id,
+            type(exc).__name__,
+        )
+        _INCREMENTAL_HOLDER.release(attempt_id)
+        return prior_snapshot
+
+    task = asyncio.create_task(
+        _run_incremental_v2_job(
+            attempt_id=attempt_id,
+            state=state,
+            all_student_turns=all_student_turns,
+            reference_graph=reference_graph,
+            problem_payload=problem_payload,
+            v1_resolved_keys=v1_resolved_keys,
+            ref_nodes=ref_nodes,
+            params=params,
+            nli=nli,
+            grayzone_fn=grayzone_fn,
+        )
+    )
+    _INCREMENTAL_BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_INCREMENTAL_BACKGROUND_TASKS.discard)
+
+    return prior_snapshot
 
 
 async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) -> Problem:
@@ -368,7 +697,7 @@ async def handle_chat(
                     concept_id=sess.concept_id,
                     problem_payload=problem_payload,
                 )
-                await resolve_pending_clarifications(
+                clarification_outcomes = await resolve_pending_clarifications(
                     db=db,
                     attempt_id=current_attempt.id,
                     student_message=message,
@@ -376,6 +705,41 @@ async def handle_chat(
                     judge=default_clarification_judge,
                     answered_turn=next_idx,
                 )
+
+                # ---- V2 feedback seeding (spec §6, T12). Gated on BOTH the H1
+                # ranker-active predicate (no session-state mutation at all when
+                # OFF) AND, within that, only `confirmed` outcomes (B-HIGH-2 --
+                # see the precondition pinned on
+                # rescorer.default_clarification_judge). `refuted`/`vague` are
+                # never seeded: the node stays in the unresolved pool, but its
+                # topic key is already asked so the existing dedup prevents a
+                # re-probe. Seeding only freezes the node itself -- it must NOT
+                # be read by chat.py as a signal to resolve any OTHER node (M5).
+                if _v2_ranker_active():
+                    _seed_keys = _confirmed_seed_keys(clarification_outcomes)
+                    if _seed_keys:
+                        _INCREMENTAL_HOLDER.seed_state(current_attempt.id, _seed_keys)
+
+                # ---- V2 incremental score (H1: gated on ALL THREE flags). When
+                # OFF (including the RESOLVER_V2=ON/RANKER=OFF row), this branch
+                # never runs: no background thread starts, no session state is
+                # mutated, no NLI budget is spent (integration spec §2.2/§8.2).
+                # When ON, this kicks a background job for the NEXT turn's
+                # selection and returns the MOST-RECENT COMPLETED snapshot from a
+                # prior turn (never this turn's — §5.5, the reply never awaits
+                # it). Turn 1 / a cold worker -> no completed snapshot -> v1.
+                v2_snapshot: IncrementalSnapshot | None = None
+                if _v2_ranker_active():
+                    v2_snapshot = await _maybe_kick_incremental_v2(
+                        db,
+                        attempt_id=current_attempt.id,
+                        message=message,
+                        student_graph=student_graph,
+                        candidates=inputs.candidates,
+                        symbolic_mappings=inputs.symbolic_mappings,
+                        problem_payload=problem_payload,
+                    )
+
                 # NLI context (budget-gated): reuse done_grading's process
                 # singleton so the transformer model loads once per process.
                 # Per-turn cost is synchronous model inference per residual
@@ -393,6 +757,15 @@ async def handle_chat(
                         session_id,
                     )
                     _nli_ctx = None
+                # H1: only reads (never creates/mutates) the holder's entry when the
+                # ranker is fully active -- mirrors the `_maybe_kick_incremental_v2`
+                # gate above so a gate-OFF turn leaves `_INCREMENTAL_HOLDER._entries`
+                # untouched (`latest_state` lazily creates an entry on first access).
+                _incr_state = (
+                    _INCREMENTAL_HOLDER.latest_state(current_attempt.id)
+                    if _v2_ranker_active()
+                    else None
+                )
                 clarification_hints = await run_clarification_detection(
                     db=db,
                     parsed_nodes=nodes,
@@ -407,6 +780,20 @@ async def handle_chat(
                     concept_id=sess.concept_id,
                     asked_turn=next_idx + 1,
                     nli_ctx=_nli_ctx,
+                    snapshot=v2_snapshot,
+                    # Trace-only (spec §7, T13): _maybe_kick_incremental_v2 never
+                    # returns THIS turn's job result (fire-and-forget, §5.5), so a
+                    # non-None snapshot here is always a prior turn's completed
+                    # score. pair_count_total/seeded_keys mirror the process-local
+                    # holder's current state for the attempt, defaulting to the
+                    # cold-start values when no state has been written yet.
+                    snapshot_source="prior_turn",
+                    pair_count_total=(
+                        _incr_state.pair_count_total if _incr_state is not None else 0
+                    ),
+                    seeded_keys=(
+                        _incr_state.seeded_keys if _incr_state is not None else frozenset()
+                    ),
                 )
         except Exception as exc:  # noqa: BLE001 - savepoint rolled back; never block teaching
             _LOG.warning("clarification_setup_failed session_id=%s error=%s", session_id, exc)

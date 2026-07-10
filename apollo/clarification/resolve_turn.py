@@ -22,8 +22,15 @@ async def resolve_pending_clarifications(
     candidates: tuple[Candidate, ...],
     judge: ClarificationJudge,
     answered_turn: int,
-) -> None:
+) -> tuple[tuple[str, str], ...]:
+    """Returns the ``(candidate_key, outcome)`` pairs actually recorded this
+    call (a judge failure records nothing and leaves that row
+    ``asked_waiting``). Callers (chat.py, integration spec §6) use this to
+    seed the V2 incremental view for content-verified ``confirmed`` outcomes
+    only -- see ``rescorer.default_clarification_judge`` for the
+    content-adjudication precondition that ``outcome`` depends on."""
     display_by_key = {c.canonical_key: c.display_name for c in candidates}
+    recorded: list[tuple[str, str]] = []
     for row in await load_asked_waiting(db, attempt_id=attempt_id):
         candidate_key = str(row.candidate_key)
         try:
@@ -43,3 +50,5 @@ async def resolve_pending_clarifications(
             clarification_text=student_message,
             answered_turn=answered_turn,
         )
+        recorded.append((candidate_key, outcome))
+    return tuple(recorded)
