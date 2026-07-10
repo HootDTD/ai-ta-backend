@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.emergent.config import emergent_misconceptions_enabled
+from apollo.emergent.config import emergent_map_assert_enabled
 from apollo.emergent.store import load_promoted_misconceptions_dict
 from apollo.graph_compare.problem_inputs import ProblemInputs, build_problem_candidates
 from apollo.knowledge_graph.canon_projection import load_entity_specs
@@ -31,9 +31,13 @@ def _misconceptions_dict(entries: list) -> dict:
     trigger_phrases, opposes, display_name}, ...]}``.
 
     Field translation (§3.1 step 1 / Risk #2): ``code -> misc.<code>`` (key),
-    ``description -> display_name``. The bank carries no ``opposes`` column today,
-    so ``opposes`` is ``None`` (a missing opposes-link just disables conflict-pair
-    detection for that misconception — tolerated; WU-4C1 writes no events anyway).
+    ``description -> display_name``. ``opposes`` is threaded straight from the
+    ORM ``MisconceptionEntry.opposes`` (migration 039, loaded by
+    ``load_for_concept``) — an entry with no authored opposes-link keeps
+    ``None`` (disables conflict-pair detection for that one misconception,
+    same as before); an authored link now reaches the candidate set instead
+    of being discarded (2026-07-10 emergent map plan T8(a) — the spec-named
+    bug: this used to hardcode ``None`` regardless of the DB column).
 
     Re-prefix invariant (lane B4/Q1): the seeder
     (``misconception_bank_seed.misconception_entry_to_bank_spec``) STRIPS the
@@ -55,7 +59,7 @@ def _misconceptions_dict(entries: list) -> dict:
             {
                 "key": f"misc.{e.code}",
                 "trigger_phrases": list(e.trigger_phrases),
-                "opposes": None,
+                "opposes": e.opposes,
                 "display_name": e.description,
             }
             for e in entries
@@ -78,15 +82,22 @@ async def load_problem_candidates_with_soundness(
     entries = await load_for_concept(db, concept_id=concept_id)  # type: ignore[arg-type]
     misconceptions = _misconceptions_dict(entries)
 
-    # Emergent misconception store (memo 2026-07-05, increment 1). DORMANT unless
-    # APOLLO_EMERGENT_MISCONCEPTIONS is ON: flag OFF, `emergent_miscs` stays [],
-    # the candidate set + bank_applicable are byte-identical to the hand-authored-
-    # only behavior. Flag ON: promoted (trust >= TAU_ASSERT, keyed, not muted)
-    # class-misconceptions become `misc.*` candidates exactly like bank entries.
-    # Hand-authored keys WIN on a collision (dedup by key) so the emergent store
-    # is strictly additive over the existing bank (OQ5 co-existence).
+    # Emergent misconception MAP — grade-feedback read (2026-07-10 design §5.5,
+    # plan T8(b)). Gated on the NEW `APOLLO_EMERGENT_MAP_ASSERT` flag, NOT the
+    # legacy `APOLLO_EMERGENT_MISCONCEPTIONS` flag (which now controls ONLY the
+    # increment-1 artifact-derived ledger WRITE feed in artifact_writer.py — a
+    # separate, untouched path; investigated per plan T8(b)). ASSERT flag OFF:
+    # `emergent_miscs` stays [], the candidate set + bank_applicable are byte-
+    # identical to the hand-authored-only behavior. ASSERT flag ON: promoted
+    # (trust >= TAU_ASSERT, keyed, not muted) class-misconceptions become
+    # candidates carrying their own `emergent.<entity_key>` signature (never
+    # re-keyed to `misc.*` — see `is_misconception_key`, which accepts both
+    # prefixes so the promoted candidate still docks structurally via F-struct's
+    # `build_opposes_map`, R1). Hand-authored keys WIN on a collision (dedup by
+    # key) so the emergent store is strictly additive over the existing bank
+    # (OQ5 co-existence).
     emergent_miscs: list[dict] = []
-    if emergent_misconceptions_enabled():
+    if emergent_map_assert_enabled():
         promoted = await load_promoted_misconceptions_dict(
             db, search_space_id=search_space_id, concept_id=concept_id
         )

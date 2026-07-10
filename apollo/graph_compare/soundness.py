@@ -23,7 +23,17 @@ never needs ``opposes``, so ``grade_attempt`` does not receive the Candidate set
 
 The unit penalty is a documented v1 calibration constant (NOT "TBD") and is
 exactly ``0.5`` here. Pure + deterministic.
-"""
+
+2026-07-10 emergent misconception map plan (T8, R1): a promoted emergent
+misconception is minted (``apollo.emergent.materialize.materialize_if_
+promotable``) and asserted (``candidate_assembly.py``) under its OWN
+``emergent.<entity_key>`` signature — never re-keyed to ``misc.*`` — because
+that is also its real ``apollo_kg_entities.canonical_key`` (remapping the
+candidate's key string here would silently break the ``canon_key`` lookup,
+the exact "vacuous" failure mode this module already warns about for the bank
+case). :data:`EMERGENT_MISCONCEPTION_KEY_PREFIX` is therefore a SECOND
+accepted prefix so a resolved student node keyed ``emergent.*`` is still a
+contradiction (never ``unsupported_extra`` — R1's load-bearing risk)."""
 
 from __future__ import annotations
 
@@ -33,14 +43,22 @@ from apollo.graph_compare.canonical import CanonicalGraph, CanonicalNode
 # detection). Spec prose `canon.misc.*` maps to the actual `misc.*` mint.
 MISCONCEPTION_KEY_PREFIX: str = "misc."
 
+# The emergent map's own signature prefix (apollo/emergent/capture.py's
+# `_SIGNATURE_PREFIX`) — a SECOND accepted misconception-key prefix (T8/R1).
+EMERGENT_MISCONCEPTION_KEY_PREFIX: str = "emergent."
+
 # v1 calibration knob (§6.6 "hand-set v1"): each contradiction subtracts this
 # from soundness, capped so 2+ contradictions floor soundness at 0.0.
 CONTRADICTION_UNIT_PENALTY: float = 0.5
 
 
 def is_misconception_key(key: str) -> bool:
-    """True iff ``key`` is a minted misconception key (prefix ``misc.``)."""
-    return key.startswith(MISCONCEPTION_KEY_PREFIX)
+    """True iff ``key`` is a minted misconception key: prefix ``misc.``
+    (hand-authored bank entries) OR ``emergent.`` (a promoted emergent
+    misconception's own signature, T8/R1)."""
+    return key.startswith(MISCONCEPTION_KEY_PREFIX) or key.startswith(
+        EMERGENT_MISCONCEPTION_KEY_PREFIX
+    )
 
 
 def contradiction_nodes(student: CanonicalGraph) -> tuple[CanonicalNode, ...]:
