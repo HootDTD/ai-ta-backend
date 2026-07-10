@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 
-from apollo.ontology import KGGraph, build_node
+from apollo.ontology import KGGraph, Node, build_node
 from apollo.overseer.misconception_detector import config as detector_config
 from apollo.overseer.misconception_detector import trace as trace_mod
 from apollo.overseer.misconception_detector.gate import gate_findings
@@ -35,13 +35,14 @@ from apollo.overseer.misconception_detector.types import (
     ConceptFinding,
     DetectionResult,
     MergeOutcome,
+    Verdict,
 )
 
 
 # --------------------------------------------------------------------------- #
 # Fixtures / builders
 # --------------------------------------------------------------------------- #
-def _def_node(node_id: str) -> object:
+def _def_node(node_id: str) -> Node:
     return build_node(
         node_type="definition",
         node_id=node_id,
@@ -60,7 +61,7 @@ def _judge(
     concept_key: str,
     confidence: float,
     bank_code: str | None,
-    verdict: str = "misconception",
+    verdict: Verdict = "misconception",
     verdict_token_prob_present: bool = True,
     evidence_span: str = "student said X",
 ) -> ConceptFinding:
@@ -139,9 +140,7 @@ def _run(findings: tuple[ConceptFinding, ...], graph: KGGraph, **kw):
 # --------------------------------------------------------------------------- #
 def test_row_has_all_documented_fields():
     graph = _graph("node.real_basis")
-    judge = _judge(
-        concept_key="node.real_basis", confidence=0.95, bank_code="nominal_for_real"
-    )
+    judge = _judge(concept_key="node.real_basis", confidence=0.95, bank_code="nominal_for_real")
     bank = _bank(bank_code="nominal_for_real", confidence=0.582, above_floor=False)
 
     rows = _run((judge, bank), graph, centrality={"node.real_basis": 0.7})
@@ -210,9 +209,7 @@ def test_verbalized_path_bit_is_reported():
 # --------------------------------------------------------------------------- #
 def test_row3_cokey_dock():
     graph = _graph("node.real_basis")
-    judge = _judge(
-        concept_key="node.real_basis", confidence=0.95, bank_code="nominal_for_real"
-    )
+    judge = _judge(concept_key="node.real_basis", confidence=0.95, bank_code="nominal_for_real")
     bank = _bank(bank_code="nominal_for_real", confidence=0.582, above_floor=False)
 
     rows = _run((judge, bank), graph)
@@ -225,9 +222,7 @@ def test_row3_cokey_dock():
 
 def test_row3b_cokey_clarify_when_judge_sub_routed_tau():
     graph = _graph("node.real_basis")
-    judge = _judge(
-        concept_key="node.real_basis", confidence=0.50, bank_code="nominal_for_real"
-    )
+    judge = _judge(concept_key="node.real_basis", confidence=0.50, bank_code="nominal_for_real")
     bank = _bank(bank_code="nominal_for_real", confidence=0.582, above_floor=False)
 
     rows = _run((judge, bank), graph)
@@ -238,9 +233,7 @@ def test_row3b_cokey_clarify_when_judge_sub_routed_tau():
 
 def test_row5_lone_solo_dock_penalty_only():
     graph = _graph("node.real_basis")
-    judge = _judge(
-        concept_key="node.real_basis", confidence=0.95, bank_code="nominal_for_real"
-    )
+    judge = _judge(concept_key="node.real_basis", confidence=0.95, bank_code="nominal_for_real")
 
     rows = _run((judge,), graph)
 
@@ -252,9 +245,7 @@ def test_row5_lone_solo_dock_penalty_only():
 
 def test_row6_keyed_sub_solo_clarify():
     graph = _graph("n")
-    judge = _judge(
-        concept_key="n", confidence=0.86, bank_code="c"
-    )  # >=TAU_FIRE, <TAU_SOLO
+    judge = _judge(concept_key="n", confidence=0.86, bank_code="c")  # >=TAU_FIRE, <TAU_SOLO
 
     rows = _run((judge,), graph)
 
@@ -360,9 +351,7 @@ def test_multiple_nodes_each_get_a_row():
 # --------------------------------------------------------------------------- #
 def test_is_false_strong_misconception_class_in_strong_band():
     assert is_false_strong(is_control=False, final_band="Strong") is True
-    assert (
-        is_false_strong(is_control=False, final_band="strong") is True
-    )  # case-insensitive
+    assert is_false_strong(is_control=False, final_band="strong") is True  # case-insensitive
 
 
 def test_is_false_strong_control_never_flagged():
@@ -429,9 +418,7 @@ def test_emit_traces_serializes_non_json_default(tmp_path):
 def test_trace_attempt_emits_and_returns_rows(tmp_path):
     target = tmp_path / "trace.jsonl"
     graph = _graph("node.real_basis")
-    judge = _judge(
-        concept_key="node.real_basis", confidence=0.95, bank_code="nominal_for_real"
-    )
+    judge = _judge(concept_key="node.real_basis", confidence=0.95, bank_code="nominal_for_real")
     bank = _bank(bank_code="nominal_for_real", confidence=0.582, above_floor=False)
     findings = (judge, bank)
     gated = gate_findings(findings)
@@ -516,9 +503,7 @@ def test_emit_default_path_used_when_none(monkeypatch, tmp_path):
     target = tmp_path / "resolved.jsonl"
     monkeypatch.setenv(detector_config.TRACE_PATH_ENV, str(target))
     emit_traces(({"node_id": "a"},))
-    assert (
-        json.loads(target.read_text(encoding="utf-8").splitlines()[0])["node_id"] == "a"
-    )
+    assert json.loads(target.read_text(encoding="utf-8").splitlines()[0])["node_id"] == "a"
 
 
 def test_trace_module_exports():
