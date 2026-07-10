@@ -332,6 +332,121 @@ async def test_promoted_demoted_by_recency(db):
 
 
 @pytest.mark.asyncio
+async def test_record_observation_inserts_one_row(db):
+    n = await store.record_observation(
+        db,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        user_id=_U1,
+        attempt_id=500,
+        signature="emergent.def.real_basis",
+        confidence=0.7,
+        opposes="def.real_basis",
+        evidence_span="student said real GDP includes inflation",
+        source="detector_unkeyed",
+    )
+    await db.commit()
+    assert n == 1
+    row = (await db.execute(select(MisconceptionObservation))).scalars().one()
+    assert row.signature == "emergent.def.real_basis"
+    assert row.confidence == pytest.approx(0.7)
+    assert row.opposes == "def.real_basis"
+    assert row.evidence_span == "student said real GDP includes inflation"
+    assert row.source == "detector_unkeyed"
+
+
+@pytest.mark.asyncio
+async def test_record_observation_is_idempotent_on_attempt_signature(db):
+    kwargs = dict(
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        user_id=_U1,
+        attempt_id=501,
+        signature="emergent.eq.newton2",
+        confidence=0.6,
+        opposes="eq.newton2",
+        evidence_span="span",
+        source="clarification_refuted",
+    )
+    first = await store.record_observation(db, **kwargs)
+    await db.commit()
+    second = await store.record_observation(db, **kwargs)
+    await db.commit()
+    assert first == 1
+    assert second == 0
+    assert await _count(db) == 1
+
+
+@pytest.mark.asyncio
+async def test_record_observation_rejects_out_of_domain_source(db):
+    with pytest.raises(ValueError, match="source"):
+        await store.record_observation(
+            db,
+            search_space_id=_SPACE,
+            concept_id=_CONCEPT,
+            user_id=_U1,
+            attempt_id=502,
+            signature="emergent.def.x",
+            confidence=0.5,
+            opposes="def.x",
+            evidence_span="span",
+            source="bogus",
+        )
+    assert await _count(db) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["grading_artifact", "detector_unkeyed", "clarification_refuted"])
+async def test_record_observation_accepts_every_domain_value(db, source):
+    n = await store.record_observation(
+        db,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        user_id=_U1,
+        attempt_id=503,
+        signature=f"emergent.def.{source}",
+        confidence=0.5,
+        opposes=f"def.{source}",
+        evidence_span="span",
+        source=source,
+    )
+    await db.commit()
+    assert n == 1
+
+
+@pytest.mark.asyncio
+async def test_record_observations_from_canonical_output_unchanged(db):
+    # Regression: record_observation's extraction must not alter the existing
+    # canonical write path's behavior (dedup, unkeyed bucket, source default).
+    payload = _payload(
+        misconceptions=[
+            {
+                "canonical_key": "misc.sign_error",
+                "evidence_span": "flipped the sign",
+                "confidence": 0.9,
+                "opposes": "eq.newton2",
+            }
+        ]
+    )
+    n = await store.record_observations_from_canonical(
+        db,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        user_id=_U1,
+        attempt_id=600,
+        canonical_payload=payload,
+    )
+    await db.commit()
+    assert n == 1
+    row = (await db.execute(select(MisconceptionObservation))).scalars().one()
+    assert row.signature == "misc.sign_error"
+    assert row.confidence == pytest.approx(0.9)
+    assert row.opposes == "eq.newton2"
+    assert row.evidence_span == "flipped the sign"
+    assert row.source == "grading_artifact"
+
+
+@pytest.mark.asyncio
 async def test_class_misconceptions_full_gradient_sorted_by_trust(db):
     for i, u in enumerate((_U1, _U2, _U3)):
         await _seed(db, attempt_id=50 + i, user_id=u, key="misc.high", conf=1.0)

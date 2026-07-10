@@ -37,6 +37,12 @@ from apollo.persistence.models import MisconceptionObservation
 
 _LOG = logging.getLogger(__name__)
 
+# Python-boundary domain for `source` (mirrors the migration-040 DB CHECK —
+# fail fast before the round-trip, per the repo's input-validation convention).
+ALLOWED_SOURCES: frozenset[str] = frozenset(
+    {"grading_artifact", "detector_unkeyed", "clarification_refuted"}
+)
+
 
 @dataclass(frozen=True)
 class _ObservationRow:
@@ -99,6 +105,43 @@ def _derive_observation_rows(
     return list(by_signature.values())
 
 
+async def _insert_observations_idempotent(
+    db: AsyncSession, values: list[dict[str, Any]]
+) -> int:
+    """Shared idempotent-insert core (``ON CONFLICT (attempt_id, signature) DO
+    NOTHING``) used by both the canonical-artifact write path and the
+    pre-derived single-observation write path. Does NOT commit — the caller
+    owns the transaction boundary. Returns the number of rows INSERTED."""
+    if not values:
+        return 0
+
+    dialect = db.bind.dialect.name if db.bind is not None else "postgresql"
+    if dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        insert_fn: Any = sqlite_insert
+    else:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        insert_fn = pg_insert
+
+    stmt = (
+        insert_fn(MisconceptionObservation)
+        .values(values)
+        .on_conflict_do_nothing(
+            index_elements=[
+                MisconceptionObservation.attempt_id,
+                MisconceptionObservation.signature,
+            ]
+        )
+    )
+    result = await db.execute(stmt)
+    # rowcount is the number actually inserted (conflicts skipped). Fall back to
+    # len(values) if the driver does not report it (defensive, non-load-bearing).
+    rowcount = getattr(result, "rowcount", None)
+    return rowcount if isinstance(rowcount, int) and rowcount >= 0 else len(values)
+
+
 async def record_observations_from_canonical(
     db: AsyncSession,
     *,
@@ -116,16 +159,6 @@ async def record_observations_from_canonical(
     if not rows:
         return 0
 
-    dialect = db.bind.dialect.name if db.bind is not None else "postgresql"
-    if dialect == "sqlite":
-        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
-        insert_fn: Any = sqlite_insert
-    else:
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-
-        insert_fn = pg_insert
-
     values = [
         {
             "search_space_id": search_space_id,
@@ -140,21 +173,52 @@ async def record_observations_from_canonical(
         }
         for r in rows
     ]
-    stmt = (
-        insert_fn(MisconceptionObservation)
-        .values(values)
-        .on_conflict_do_nothing(
-            index_elements=[
-                MisconceptionObservation.attempt_id,
-                MisconceptionObservation.signature,
-            ]
+    return await _insert_observations_idempotent(db, values)
+
+
+async def record_observation(
+    db: AsyncSession,
+    *,
+    search_space_id: int,
+    concept_id: int | None,
+    user_id: str,
+    attempt_id: int,
+    signature: str,
+    confidence: float | None,
+    opposes: str | None,
+    evidence_span: str | None,
+    source: str,
+) -> int:
+    """Append a single, pre-derived observation (not artifact-derived) — the
+    write path for the emergent-map capture seams (``detector_unkeyed`` /
+    ``clarification_refuted``; spec §5.3/§5.4). Reuses the same idempotent
+    insert core as ``record_observations_from_canonical``
+    (``ON CONFLICT (attempt_id, signature) DO NOTHING``). Returns 1 if a row
+    was inserted, 0 if the (attempt_id, signature) pair already existed.
+
+    Validates ``source`` against ``ALLOWED_SOURCES`` at the Python boundary
+    (fail-fast) so a bad source is caught before it reaches the DB CHECK
+    constraint (migration 040). Does NOT commit — the caller owns the
+    transaction boundary."""
+    if source not in ALLOWED_SOURCES:
+        raise ValueError(
+            f"source {source!r} is not in the allowed domain {sorted(ALLOWED_SOURCES)}"
         )
-    )
-    result = await db.execute(stmt)
-    # rowcount is the number actually inserted (conflicts skipped). Fall back to
-    # len(values) if the driver does not report it (defensive, non-load-bearing).
-    rowcount = getattr(result, "rowcount", None)
-    return rowcount if isinstance(rowcount, int) and rowcount >= 0 else len(values)
+
+    values = [
+        {
+            "search_space_id": search_space_id,
+            "concept_id": concept_id,
+            "signature": signature,
+            "user_id": user_id,
+            "attempt_id": attempt_id,
+            "confidence": confidence,
+            "opposes": opposes,
+            "evidence_span": evidence_span,
+            "source": source,
+        }
+    ]
+    return await _insert_observations_idempotent(db, values)
 
 
 @dataclass(frozen=True)
@@ -315,6 +379,8 @@ async def load_promoted_misconceptions_dict(
 __all__ = [
     "SignatureAggregate",
     "ClassMisconception",
+    "ALLOWED_SOURCES",
+    "record_observation",
     "record_observations_from_canonical",
     "aggregate_signatures",
     "load_class_misconceptions",
