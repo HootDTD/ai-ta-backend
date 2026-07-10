@@ -63,6 +63,58 @@ async def _find_entity_id(
     return int(row) if row is not None else None
 
 
+async def _resolve_full_opposes_key_to_id(
+    db: AsyncSession, *, concept_id: int
+) -> dict[str, int]:
+    """Build the COMPLETE ``key_to_id`` map ``link_opposes`` needs (fix for
+    the Finding-1 KeyError, 2026-07-10 fix wave).
+
+    ``tag_mint_persist.link_opposes`` iterates EVERY ``kind='misconception'``
+    ``KGEntity`` row in the concept and does a hard ``key_to_id[opposes_key]``
+    lookup for each one's ``payload.opposes_entity_key`` — not just the
+    single signature this call is materializing. A caller that passes a
+    single-entry map (as this module used to) raises ``KeyError`` the moment
+    the concept has >= 2 misconceptions with distinct ``opposes_entity_key``s
+    (including an AUTHORED one minted at provisioning time, whose
+    ``opposes_entity_key`` was never queried here before). This resolves the
+    SAME set ``link_opposes`` will walk: every misconception entity's
+    ``opposes_entity_key``, each looked up by ``canonical_key`` in one extra
+    query. A key with no matching entity is simply absent from the returned
+    map (mirrors ``_find_entity_id``'s own miss-is-None contract) —
+    ``link_opposes`` still raises for that key, preserving provisioning's
+    fail-closed KeyError semantics; this helper only widens the map to cover
+    every key that legitimately resolves, so a healthy multi-misconception
+    concept no longer trips a KeyError for keys that DO resolve.
+    """
+    misconception_rows = (
+        (
+            await db.execute(
+                select(KGEntity.payload)
+                .where(KGEntity.concept_id == concept_id)
+                .where(KGEntity.kind == "misconception")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    opposes_keys = {
+        key
+        for payload in misconception_rows
+        if (key := (payload or {}).get("opposes_entity_key"))
+    }
+    if not opposes_keys:
+        return {}
+
+    rows = (
+        await db.execute(
+            select(KGEntity.canonical_key, KGEntity.id)
+            .where(KGEntity.concept_id == concept_id)
+            .where(KGEntity.canonical_key.in_(opposes_keys))
+        )
+    ).all()
+    return {str(key): int(entity_id) for key, entity_id in rows}
+
+
 async def materialize_if_promotable(
     db: AsyncSession,
     neo: Neo4jClient | None,
@@ -123,9 +175,14 @@ async def materialize_if_promotable(
             concept_id,
         )
     else:
-        await link_opposes(
-            db, concept_id=concept_id, key_to_id={opposes_entity_key: opposed_id}
-        )
+        # Finding 1 fix: link_opposes re-walks EVERY misconception entity in
+        # the concept (not just the one just upserted) and hard-looks-up each
+        # one's opposes_entity_key in key_to_id -- a single-entry map raises
+        # KeyError the moment a second misconception (emergent or authored)
+        # already exists on this concept. Resolve the full map first.
+        key_to_id = await _resolve_full_opposes_key_to_id(db, concept_id=concept_id)
+        key_to_id.setdefault(opposes_entity_key, opposed_id)
+        await link_opposes(db, concept_id=concept_id, key_to_id=key_to_id)
 
     if neo is None:
         _LOG.info(

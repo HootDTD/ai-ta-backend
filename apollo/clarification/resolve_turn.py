@@ -22,9 +22,13 @@ to the detector-birth seam.
 The capture write runs inside its own ``db.begin_nested()`` savepoint (the
 clarification loop's own precedent — ``apollo/handlers/chat.py`` wraps this
 whole function in a nested transaction) with its own try/except, so a capture
-failure can never poison the resolution transaction: ``record_outcome`` has
-already committed to the session by the time capture runs, and a capture
-exception is swallowed + logged, never re-raised.
+failure can never poison the resolution transaction: isolation holds via
+savepoint STACKING, not an early commit — ``record_outcome`` only mutates
+the ORM row (no commit of its own), ``_capture_refuted``'s
+``db.begin_nested()`` opens a savepoint INSIDE ``chat.py``'s own outer
+``begin_nested()``, so a capture rollback releases only the inner savepoint
+and leaves the outer transaction (and ``record_outcome``'s mutation within
+it) intact; the exception is swallowed + logged, never re-raised.
 
 2026-07-10 plan T7 (spec §5.5 Q3): after the observation write succeeds,
 this module also eagerly materializes the signature's :Canon opposes-entity

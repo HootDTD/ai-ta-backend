@@ -373,6 +373,153 @@ async def test_project_canon_failure_is_swallowed_entity_still_committed(db, cap
 
 
 # --------------------------------------------------------------------------- #
+# Finding 1 (2026-07-10 fix wave): link_opposes iterates EVERY kind=
+# 'misconception' entity in the concept and does a hard key_to_id[opposes_key]
+# lookup -- a single-entry key_to_id (this module's old behavior) raised
+# KeyError the moment a SECOND misconception with a distinct opposes_entity_key
+# already existed on the concept. These regression tests cover both reachable
+# shapes: two emergent misconceptions materializing in sequence, and a
+# PRE-EXISTING AUTHORED misconception (payload.opposes_entity_key set at
+# provisioning time, as learner_model_seed.misconceptions_to_entities mints)
+# coexisting with a newly-materializing emergent one.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_resolve_full_opposes_key_to_id_empty_when_no_misconception_rows(db):
+    """Direct unit coverage of the helper's defensive early return: a concept
+    with zero kind='misconception' entities (or none carrying an
+    opposes_entity_key) yields an empty map rather than issuing the second
+    lookup query. Not reachable through materialize_if_promotable's own call
+    site today (it always upserts an entity with a non-empty
+    opposes_entity_key first) -- this is the helper's own safety net for any
+    future/direct caller."""
+    await _seed_subject_concept(db)
+    await db.commit()
+
+    result = await materialize._resolve_full_opposes_key_to_id(db, concept_id=_CONCEPT)
+
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_second_emergent_misconception_materializes_without_keyerror(db):
+    """Two DISTINCT emergent misconceptions on the same concept, each opposing
+    a different reference entity. The first materializes cleanly (single
+    entity in the concept so far); the second must not KeyError just because
+    the first misconception entity now also exists in the concept's
+    kind='misconception' set."""
+    await _seed_subject_concept(db)
+    ref_a = await _seed_reference_entity(db, canonical_key="def.real_basis")
+    ref_b = await _seed_reference_entity(db, canonical_key="def.other_basis")
+    await _seed_observations(
+        db,
+        signature="emergent.def.real_basis",
+        opposes="def.real_basis",
+        students=(_U1, _U2, _U3),
+    )
+    await _seed_observations(
+        db,
+        signature="emergent.def.other_basis",
+        opposes="def.other_basis",
+        students=(_U1, _U2, _U3),
+    )
+    await db.commit()
+
+    await materialize.materialize_if_promotable(
+        db,
+        None,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        signature="emergent.def.real_basis",
+        opposes_entity_key="def.real_basis",
+    )
+    await db.commit()
+
+    # Second materialization must NOT raise KeyError even though the concept
+    # now has one persisted kind='misconception' entity (from the first call)
+    # whose opposes_entity_key ("def.real_basis") is absent from a
+    # single-entry key_to_id built only for THIS signature's own key.
+    await materialize.materialize_if_promotable(
+        db,
+        None,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        signature="emergent.def.other_basis",
+        opposes_entity_key="def.other_basis",
+    )
+    await db.commit()
+
+    minted = {e.canonical_key: e for e in await _misconception_entities(db)}
+    assert set(minted) == {"emergent.def.real_basis", "emergent.def.other_basis"}
+    assert minted["emergent.def.real_basis"].payload["opposes_entity_id"] == ref_a
+    assert minted["emergent.def.other_basis"].payload["opposes_entity_id"] == ref_b
+
+
+@pytest.mark.asyncio
+async def test_emergent_materialization_coexists_with_preexisting_authored_misconception(db):
+    """A PRE-EXISTING AUTHORED misconception entity (payload.opposes_entity_key
+    set, mirroring learner_model_seed.misconceptions_to_entities' mint shape)
+    must not break a NEW emergent materialization on the same concept, and the
+    authored entity's own opposes link must be left undisturbed."""
+    await _seed_subject_concept(db)
+    ref_authored = await _seed_reference_entity(db, canonical_key="def.pressure_velocity_tradeoff")
+    ref_emergent = await _seed_reference_entity(db, canonical_key="def.real_basis")
+
+    # Authored misconception entity minted "at provisioning time" -- payload
+    # carries opposes_entity_key but NOT YET opposes_entity_id (mirrors
+    # upsert_entity's pre-link_opposes state).
+    authored = KGEntity(
+        concept_id=_CONCEPT,
+        canonical_key="misc.authored_bernoulli_confusion",
+        kind="misconception",
+        display_name="Authored misconception",
+        payload={"opposes_entity_key": "def.pressure_velocity_tradeoff"},
+        aliases=[],
+    )
+    db.add(authored)
+    await db.flush()
+    authored_id = int(authored.id)
+
+    await _seed_observations(
+        db,
+        signature="emergent.def.real_basis",
+        opposes="def.real_basis",
+        students=(_U1, _U2, _U3),
+    )
+    await db.commit()
+
+    # Must not raise -- the authored entity's opposes_entity_key
+    # ("def.pressure_velocity_tradeoff") must resolve alongside the new
+    # emergent signature's own key.
+    await materialize.materialize_if_promotable(
+        db,
+        None,
+        search_space_id=_SPACE,
+        concept_id=_CONCEPT,
+        signature="emergent.def.real_basis",
+        opposes_entity_key="def.real_basis",
+    )
+    await db.commit()
+
+    minted = {e.canonical_key: e for e in await _misconception_entities(db)}
+    assert set(minted) == {
+        "misc.authored_bernoulli_confusion",
+        "emergent.def.real_basis",
+    }
+    # The new emergent entity links correctly.
+    assert minted["emergent.def.real_basis"].payload["opposes_entity_id"] == ref_emergent
+    # The pre-existing authored entity is now ALSO linked (link_opposes
+    # resolves every misconception row it walks, not just the newly-minted
+    # one) and its own key -> id resolution is correct, not disturbed/altered.
+    assert minted["misc.authored_bernoulli_confusion"].id == authored_id
+    assert (
+        minted["misc.authored_bernoulli_confusion"].payload["opposes_entity_id"]
+        == ref_authored
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Real-Neo4j container: idempotent :Canon MERGE (second call -> same node
 # count) — the genuine graph-write proof the SQLite-only tests above cannot
 # give.
