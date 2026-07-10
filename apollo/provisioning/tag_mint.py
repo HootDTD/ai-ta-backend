@@ -61,7 +61,7 @@ from apollo.persistence.learner_model_seed import (
     misconceptions_to_entities,
     reference_solution_to_entities,
 )
-from apollo.persistence.models import KGEntity
+from apollo.persistence.models import Concept, KGEntity
 from apollo.provisioning.dedup import resolve_candidate
 from apollo.provisioning.tag_mint_persist import (
     author_concept_symbols,
@@ -95,6 +95,17 @@ class ApprovedPair(BaseModel):
     search_space_id: int
     solution_source: str  # 'extracted' | 'generated'
     misconceptions: list[dict] = []
+
+
+class ResolvedConcept(BaseModel):
+    """A PRE-MATCHED course concept (reversed provisioning): ``tag_and_mint``
+    uses it verbatim — no LLM tag draft, no concept creation, and prereq edges
+    derived deterministically from the reference graph's ``depends_on``. The
+    concept row must already exist (premade list); a missing id is a
+    fail-closed ``TagMintError``."""
+
+    concept_id: int
+    slug: str
 
 
 class MintPlan(BaseModel):
@@ -444,6 +455,7 @@ async def tag_and_mint(
     *,
     chat_fn: Callable[..., str],
     embed_fn: Callable[[str], Sequence[float]],
+    resolved_concept: ResolvedConcept | None = None,
 ) -> MintPlan:
     """Tag the concept, author its canonical symbols, dedup + mint the reference
     and misconception entities, insert the drafted prereq edges, and return a
@@ -455,16 +467,30 @@ async def tag_and_mint(
     problem = pair.problem
     search_space_id = pair.search_space_id
 
-    tag = _parse_tag(chat_fn, problem)
-    concept_slug = tag["concept_slug"]
-    display_name = tag.get("display_name") or concept_slug
+    if resolved_concept is not None:
+        # Reversed provisioning: the closed-list matcher already resolved the
+        # concept against the course's PREMADE list — no LLM tag draft, no
+        # concept creation. The registered row must exist (fail-closed).
+        concept_row = await db.get(Concept, resolved_concept.concept_id)
+        if concept_row is None:
+            raise TagMintError(
+                f"resolved concept {resolved_concept.concept_id} not found — "
+                "reversed provisioning requires a registered premade concept"
+            )
+        concept_id = int(concept_row.id)
+        concept_slug = resolved_concept.slug
+        tag: dict = {}  # no draft: prereqs are graph-derived below
+    else:
+        tag = _parse_tag(chat_fn, problem)
+        concept_slug = tag["concept_slug"]
+        display_name = tag.get("display_name") or concept_slug
 
-    concept_id = await resolve_or_create_concept(
-        db,
-        search_space_id=search_space_id,
-        slug=concept_slug,
-        display_name=display_name,
-    )
+        concept_id = await resolve_or_create_concept(
+            db,
+            search_space_id=search_space_id,
+            slug=concept_slug,
+            display_name=display_name,
+        )
 
     # --- 3. Author canonical symbols (gate-4 non-vacuity) ------------------- #
     symbols, normalization = _author_symbol_set(problem)
@@ -586,7 +612,22 @@ async def tag_and_mint(
     # anyway; dropping it keeps the (otherwise valid) problem promotable instead
     # of failing it. Scoped to prereqs ONLY — entity minting and misconception
     # ``opposes`` (5a) stay fail-closed (a mislinked entity corrupts grading).
-    raw_pairs = tag.get("prereqs", []) or []
+    if resolved_concept is not None:
+        # Deterministic reference-graph edges: step X depends_on Y ==> the
+        # apollo_entity_prereqs row (from=X, to=Y) — FROM depends on TO,
+        # exactly what the S1 judge scores as DEPENDS_ON. Replaces the LLM
+        # prereq draft (the source of reversed/spurious edges). Keys are the
+        # frozen prefixed canonical keys, so the resolvable-key filter,
+        # concept-scope partition, and acyclicity guard below run unchanged.
+        steps_by_id = {s["id"]: s for s in problem.get("reference_solution", [])}
+        raw_pairs: list = [
+            (_entity_key_for_step(step), _entity_key_for_step(steps_by_id[dep]))
+            for step in problem.get("reference_solution", [])
+            for dep in (step.get("depends_on") or [])
+            if dep in steps_by_id
+        ]
+    else:
+        raw_pairs = tag.get("prereqs", []) or []
     parsed_pairs: list[tuple[str, str]] = []
     for entry in raw_pairs:
         if isinstance(entry, (list, tuple)) and len(entry) == 2:

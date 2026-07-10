@@ -1,0 +1,127 @@
+{
+  "id": "aae333_232",
+  "concept_id": "drag_ratio",
+  "difficulty": "standard",
+  "given_values": {},
+  "problem_text": "Fluid flows past a flat plate with drag D1. The free-stream velocity is doubled, giving D2. Determine the ratio D2/D1 (laminar).",
+  "target_unknown": "D2/D1 ratio",
+  "declared_paths": [
+    [
+      "dragU",
+      "dragU2",
+      "doubled",
+      "ratio",
+      "p1",
+      "p2",
+      "p3"
+    ]
+  ],
+  "reference_solution": [
+    {
+      "id": "dragU",
+      "step": 1,
+      "entry_type": "equation",
+      "entity_key": "eq.dragU",
+      "content": {
+        "label": "laminar plate drag scaling",
+        "symbolic": "D1 - C*U1**Rational(3,2)",
+        "variables": []
+      },
+      "depends_on": []
+    },
+    {
+      "id": "dragU2",
+      "step": 2,
+      "entry_type": "equation",
+      "entity_key": "eq.dragU2",
+      "content": {
+        "label": "drag at doubled velocity",
+        "symbolic": "D2 - C*U2**Rational(3,2)",
+        "variables": []
+      },
+      "depends_on": []
+    },
+    {
+      "id": "doubled",
+      "step": 3,
+      "entry_type": "equation",
+      "entity_key": "eq.doubled",
+      "content": {
+        "label": "velocity doubled",
+        "symbolic": "U2 - 2*U1",
+        "variables": []
+      },
+      "depends_on": []
+    },
+    {
+      "id": "ratio",
+      "step": 4,
+      "entry_type": "equation",
+      "entity_key": "eq.ratio",
+      "content": {
+        "label": "drag ratio",
+        "symbolic": "R - D2/D1",
+        "variables": []
+      },
+      "depends_on": [
+        "dragU",
+        "dragU2"
+      ]
+    },
+    {
+      "id": "p1",
+      "step": 5,
+      "entry_type": "procedure_step",
+      "entity_key": "proc.p1",
+      "content": {
+        "order": 1,
+        "action": "express both drags via the laminar scaling",
+        "purpose": "express both drags via the laminar scaling",
+        "uses_equations": [
+          "dragU",
+          "dragU2"
+        ]
+      },
+      "depends_on": [
+        "dragU",
+        "dragU2"
+      ]
+    },
+    {
+      "id": "p2",
+      "step": 6,
+      "entry_type": "procedure_step",
+      "entity_key": "proc.p2",
+      "content": {
+        "order": 2,
+        "action": "apply U2=2*U1",
+        "purpose": "apply U2=2*U1",
+        "uses_equations": [
+          "doubled"
+        ]
+      },
+      "depends_on": [
+        "doubled",
+        "p1"
+      ]
+    },
+    {
+      "id": "p3",
+      "step": 7,
+      "entry_type": "procedure_step",
+      "entity_key": "proc.p3",
+      "content": {
+        "order": 3,
+        "action": "form the ratio R=D2/D1",
+        "purpose": "form the ratio R=D2/D1",
+        "uses_equations": [
+          "ratio"
+        ]
+      },
+      "depends_on": [
+        "ratio",
+        "p2"
+      ]
+    }
+  ]
+}

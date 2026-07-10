@@ -147,6 +147,9 @@ class Concept(Base):
                         nullable=False, index=True)
     slug = Column(Text, nullable=False)
     display_name = Column(Text, nullable=False)
+    # Migration 038 (reversed provisioning): the closed-list concept-matcher
+    # prompt line is "slug — display_name: description". Empty for legacy rows.
+    description = Column(Text, nullable=False, default="")
     canonical_symbols = Column(_JSONType, nullable=False, default=dict)
     normalization_map = Column(_JSONType, nullable=False, default=dict)
     parser_prompt_template = Column(Text, nullable=False, default="")
