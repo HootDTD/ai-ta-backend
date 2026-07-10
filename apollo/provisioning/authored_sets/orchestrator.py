@@ -3,10 +3,20 @@
 Scrape a problem document, ground each candidate against ONLY its paired
 solution document, verify OCR-suspect extractions, and promote trusted references.
 Generated or suspect references stay tier-1 for teacher review.
+
+REVERSED PROVISIONING (default when the course has registered concepts): each
+candidate is first CLASSIFIED against the course's premade concept list
+(``concept_match``, NO_MATCH held for teacher review — never force-matched),
+then its reference graph is DERIVED from the paired solution spans anchored to
+the matched concept's vocabulary (``graph_derivation``). The mint + promote
+pair runs inside ONE savepoint, so a lint rejection rolls back every KG row
+the mint flushed (no orphaned entities). ``APOLLO_REVERSED_PROVISIONING=0``
+reverts to the legacy LLM-tag-draft path.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -14,7 +24,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import ConceptProblem
+from apollo.persistence.models import Concept, ConceptProblem
+from apollo.provisioning.authored_sets.graph_derivation import (
+    DerivationError,
+    derive_reference_graph,
+)
 from apollo.provisioning.authored_sets.label_match import build_solution_label_index
 from apollo.provisioning.authored_sets.paired_retrieval import (
     chunk_ocr_confidence,
@@ -22,6 +36,7 @@ from apollo.provisioning.authored_sets.paired_retrieval import (
     make_paired_solution_retrieve_fn,
 )
 from apollo.provisioning.authored_sets.verification import verify_against_generated
+from apollo.provisioning.concept_match import ConceptMatch, match_concept
 from apollo.provisioning.orchestrator import (
     _SCRAPE_SYSTEM_PROMPT,
     _TAG_MINT_SYSTEM_PROMPT,
@@ -41,16 +56,43 @@ from apollo.provisioning.scrape import (
     write_tier1_problems,
 )
 from apollo.provisioning.solution import (
+    ReferenceSolutionDraft,
     SolutionDraftError,
     build_approved_pair,
     find_or_generate,
 )
-from apollo.provisioning.tag_mint import TagMintError, tag_and_mint
+from apollo.provisioning.tag_mint import ResolvedConcept, TagMintError, tag_and_mint
 from apollo.schemas.problem import Problem
+from apollo.subjects.curriculum_db import RegisteredConcept, list_registered_concepts
 
-__all__ = ["ProblemResult", "ProvisioningReport", "run_authored_set_provisioning"]
+__all__ = [
+    "MintRejected",
+    "ProblemResult",
+    "ProvisioningReport",
+    "reversed_provisioning_enabled",
+    "run_authored_set_provisioning",
+]
 
 _DEFAULT_CONF_THRESHOLD = 0.6
+
+
+def reversed_provisioning_enabled() -> bool:
+    """Kill switch: ``APOLLO_REVERSED_PROVISIONING=0`` reverts to the legacy
+    (LLM-tag-draft) authored path. Default ON — reversed is the product model;
+    it additionally activates only when the course has registered concepts."""
+    return os.getenv("APOLLO_REVERSED_PROVISIONING", "1") != "0"
+
+
+class MintRejected(Exception):
+    """Internal control flow: ``promote`` returned a lint rejection INSIDE the
+    mint+promote savepoint — raising unwinds the savepoint so the mint's
+    flushed concept/KGEntity/prereq/dedup rows do NOT survive as orphans (the
+    verified 17->33 entity-doubling bug), then the except arm reports the
+    rejection normally."""
+
+    def __init__(self, result: PromoteResult) -> None:
+        super().__init__(result.diagnostic)
+        self.result = result
 
 
 class ProblemResult(BaseModel):
@@ -148,6 +190,8 @@ async def run_authored_set_provisioning(
     assert embed_fn is not None
 
     concept_id = await resolve_or_create_provisional_concept(db, search_space_id=search_space_id)
+    registered = await list_registered_concepts(db, search_space_id=search_space_id)
+    reversed_mode = reversed_provisioning_enabled() and bool(registered)
     solution_chunks = await load_solution_chunks(db, solution_document_id=solution_document_id)
     label_index = build_solution_label_index(solution_chunks)
     solution_page_conf = await chunk_ocr_confidence(db, document_id=solution_document_id)
@@ -186,6 +230,8 @@ async def run_authored_set_provisioning(
                 metered_chat=metered_chat,
                 embed_fn=embed_fn,
                 conf_threshold=conf_threshold,
+                registered=registered,
+                reversed_mode=reversed_mode,
             )
         )
 
@@ -209,6 +255,8 @@ async def _process_authored_candidate(
     metered_chat: Any,
     embed_fn: Callable[[str], Sequence[float]],
     conf_threshold: float,
+    registered: Sequence[RegisteredConcept] = (),
+    reversed_mode: bool = False,
 ) -> ProblemResult:
     label = getattr(candidate, "label", None)
     retrieve_fn = make_paired_solution_retrieve_fn(
@@ -218,16 +266,102 @@ async def _process_authored_candidate(
         page_conf=page_conf,
     )
 
-    try:
-        draft = await find_or_generate(
-            db, candidate, retrieve_fn=retrieve_fn, chat_fn=metered_chat.main
+    # --- Reversed provisioning: closed-list concept match FIRST ------------- #
+    match: ConceptMatch | None = None
+    resolved: ResolvedConcept | None = None
+    if reversed_mode:
+        match = await match_concept(
+            getattr(candidate, "problem_text", "") or "",
+            registered,
+            chat_fn=metered_chat.main,
         )
-    except SolutionDraftError as exc:
-        return ProblemResult(
-            label=label,
-            outcome="rejected",
-            diagnostic=f"solution_draft_error: {exc}",
-        )
+        if match.no_match:
+            # NEVER force-matched: hold for teacher review with the match
+            # evidence; no draft, no mint, no KG mutation.
+            tier1 = await _find_tier1_row(
+                db, concept_id=concept_id, chunk_content_hash=candidate.chunk_content_hash
+            )
+            if tier1 is not None:
+                tier1.provenance = {  # type: ignore[assignment]
+                    **(tier1.provenance or {}),
+                    "authored_review": {
+                        "required": True,
+                        "reason": "no_matching_concept",
+                        "concept_match": match.model_dump(),
+                    },
+                }
+                await db.flush()
+            return ProblemResult(
+                label=label,
+                outcome="held_for_review",
+                review_required=True,
+                reason="no_matching_concept",
+                concept_problem_id=int(tier1.id) if tier1 is not None else None,
+            )
+        resolved = ResolvedConcept(concept_id=int(match.concept_id or 0), slug=str(match.slug))
+
+    # --- Draft: derive from the paired solution (reversed) or legacy F-o-G -- #
+    derived_extras: dict[str, Any] = {}
+    draft: ReferenceSolutionDraft | None = None
+    if reversed_mode and resolved is not None:
+        spans = tuple(await retrieve_fn(candidate))
+        solution_spans = tuple(s for s in spans if s.carries_solution)
+        if solution_spans:
+            concept_row = await db.get(Concept, resolved.concept_id)
+            try:
+                derived = await derive_reference_graph(
+                    candidate,
+                    solution_spans,
+                    concept_slug=resolved.slug,
+                    concept_display_name=(
+                        str(concept_row.display_name) if concept_row is not None else resolved.slug
+                    ),
+                    canonical_symbols=(
+                        dict(concept_row.canonical_symbols or {}) if concept_row is not None else {}
+                    ),
+                    normalization_map=(
+                        dict(concept_row.normalization_map or {}) if concept_row is not None else {}
+                    ),
+                    chat_fn=metered_chat.main,
+                )
+            except DerivationError as exc:
+                return ProblemResult(
+                    label=label,
+                    outcome="rejected",
+                    match_method=getattr(retrieve_fn, "last_match_method", None),
+                    ocr_confidence=getattr(retrieve_fn, "last_min_conf", None),
+                    diagnostic=f"derivation_error: {exc}",
+                )
+            draft = ReferenceSolutionDraft(
+                solution_source="extracted",
+                reference_solution=derived.reference_solution,
+                grounding=solution_spans,
+                provenance={
+                    "chunk_content_hash": getattr(candidate, "chunk_content_hash", None),
+                    "derivation": {"retried": derived.retried},
+                },
+            )
+            derived_extras = {
+                "concept_id": resolved.slug,
+                "target_unknown": derived.target_unknown
+                or (getattr(candidate, "target_unknown", "") or ""),
+                "symbolic_mappings": derived.symbolic_mappings,
+                "bound_variables": derived.bound_variables,
+            }
+        # No paired-solution span found: fall through to the legacy path below
+        # (its generated draft is held for review — today's semantics).
+
+    if draft is None:
+        try:
+            draft = await find_or_generate(
+                db, candidate, retrieve_fn=retrieve_fn, chat_fn=metered_chat.main
+            )
+        except SolutionDraftError as exc:
+            return ProblemResult(
+                label=label,
+                outcome="rejected",
+                diagnostic=f"solution_draft_error: {exc}",
+            )
 
     match_method = getattr(retrieve_fn, "last_match_method", None)
     min_conf = getattr(retrieve_fn, "last_min_conf", None)
@@ -279,6 +413,9 @@ async def _process_authored_candidate(
                     "match_method": match_method,
                     "ocr_draft": draft.model_dump(),
                     "generated_alt": verdict.generated_alt if verdict is not None else None,
+                    # Reversed provisioning: the matched concept rides along so
+                    # the approve path can thread it as resolved_concept.
+                    "concept_match": match.model_dump() if match is not None else None,
                 },
             }
             await db.flush()
@@ -294,6 +431,12 @@ async def _process_authored_candidate(
         )
 
     pair = build_approved_pair(candidate, draft, search_space_id=search_space_id)
+    if derived_extras:
+        # The derived top-level keys (matched concept slug, target_unknown,
+        # symbolic_mappings, bound_variables) ride the problem dict so
+        # promote's annotate spreads them into the persisted payload and lint
+        # gate 7 sees bound_variables.
+        pair = pair.model_copy(update={"problem": {**pair.problem, **derived_extras}})
     if tier1 is None:
         return ProblemResult(
             label=label,
@@ -305,20 +448,46 @@ async def _process_authored_candidate(
         )
 
     try:
-        # The whole mint attempt rides ONE nested SAVEPOINT so a fail-closed
-        # TagMintError (raised AFTER tag_mint has already flushed concept /
-        # KGEntity / apollo_dedup_decisions rows for this candidate — steps
-        # 3/4/5a/5b) rolls back exactly those partial writes instead of
-        # surviving into the caller's end-of-run commit as orphaned KG rows
-        # (unreachable by any promoted ConceptProblem, yet live dedup targets
-        # for the NEXT candidate). Mirrors the enqueue.py / chat.py
-        # ``begin_nested`` idiom. A ``CanonProjectionError`` from ``promote``
-        # below is intentionally OUTSIDE this block — it must still propagate
-        # as a run-level failure.
+        # Mint AND promote ride ONE nested SAVEPOINT — mint is TRANSACTIONAL
+        # with promotion. Two rollback triggers:
+        #   * a fail-closed TagMintError (raised AFTER tag_mint has already
+        #     flushed concept / KGEntity / apollo_dedup_decisions rows for this
+        #     candidate);
+        #   * a LINT REJECTION from ``promote`` (e.g. the gate-8 duplicate
+        #     check) — previously the mint's flushed rows survived the run's
+        #     end-of-run commit as orphaned KG rows (unreachable by any
+        #     promoted ConceptProblem, yet live dedup targets for the NEXT
+        #     candidate; verified as a 17->33 entity doubling). ``MintRejected``
+        #     unwinds the savepoint, then the except arm reports the rejection.
+        # A ``CanonProjectionError`` from ``promote`` still propagates as a
+        # run-level failure: its PG writes roll back with the savepoint and the
+        # already-MERGEd ``:Canon`` nodes are idempotent/node-only (harmless).
         async with db.begin_nested():
-            mint_plan = await tag_and_mint(
-                db, pair, chat_fn=_tag_mint_chat_fn(metered_chat), embed_fn=embed_fn
+            mint_kwargs: dict[str, Any] = (
+                {"resolved_concept": resolved} if resolved is not None else {}
             )
+            mint_plan = await tag_and_mint(
+                db,
+                pair,
+                chat_fn=_tag_mint_chat_fn(metered_chat),
+                embed_fn=embed_fn,
+                **mint_kwargs,
+            )
+            existing_problem_hashes = await _authored_concept_dup_hashes(
+                db, concept_id=mint_plan.concept_id
+            )
+            result: PromoteResult = await promote(
+                db,
+                neo,
+                problem=pair.problem,
+                mint_plan=mint_plan,
+                search_space_id=search_space_id,
+                concept_problem_id=int(tier1.id),
+                existing_problem_hashes=existing_problem_hashes,
+                solution_source=pair.solution_source,
+            )
+            if not result.promoted:
+                raise MintRejected(result)
     except TagMintError as exc:
         # The mint draft for THIS problem is unusable (e.g. the LLM prereq draft
         # names an unminted entity key). Reject just this candidate — mirroring
@@ -334,20 +503,8 @@ async def _process_authored_candidate(
             diagnostic=f"tag_mint_error: {exc}",
             concept_problem_id=int(tier1.id),
         )
-    existing_problem_hashes = await _authored_concept_dup_hashes(
-        db, concept_id=mint_plan.concept_id
-    )
-    result: PromoteResult = await promote(
-        db,
-        neo,
-        problem=pair.problem,
-        mint_plan=mint_plan,
-        search_space_id=search_space_id,
-        concept_problem_id=int(tier1.id),
-        existing_problem_hashes=existing_problem_hashes,
-        solution_source=pair.solution_source,
-    )
-    if not result.promoted:
+    except MintRejected as rejected:
+        result = rejected.result
         return ProblemResult(
             label=label,
             outcome="rejected",

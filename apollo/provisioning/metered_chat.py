@@ -62,6 +62,11 @@ class CostBudgetExceeded(Exception):
         )
 
 
+def _is_reasoning_model(model: str) -> bool:
+    """True if the model takes reasoning_effort (mirrors ai/main_ai.py:923)."""
+    return model.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
 def _resolve_model(env_var: str, fallback: str) -> str:
     return os.getenv(env_var) or fallback
 
@@ -99,6 +104,7 @@ class MeteredChat:
         response_format: dict | None = None,
         temperature: float = 0.0,
         model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> str:
         """Cheap-tier (gpt-4o-mini default) metered call. cheap_chat-shaped."""
         used_model = model or _resolve_model("APOLLO_CHEAP_MODEL", _CHEAP_MODEL_DEFAULT)
@@ -108,6 +114,7 @@ class MeteredChat:
             messages=messages,
             response_format=response_format,
             temperature=temperature,
+            reasoning_effort=reasoning_effort,
         )
 
     def main(
@@ -118,6 +125,7 @@ class MeteredChat:
         response_format: dict | None = None,
         temperature: float = 0.0,
         model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> str:
         """Main-tier (gpt-4o default) metered call. main_chat-shaped."""
         used_model = model or _resolve_model("MAIN_MODEL", _MAIN_MODEL_DEFAULT)
@@ -127,6 +135,7 @@ class MeteredChat:
             messages=messages,
             response_format=response_format,
             temperature=temperature,
+            reasoning_effort=reasoning_effort,
         )
 
     def scrape_chat_fn(self, system_prompt: str) -> Callable[[str], str]:
@@ -153,12 +162,18 @@ class MeteredChat:
         messages: list[dict],
         response_format: dict | None,
         temperature: float,
+        reasoning_effort: str | None = None,
     ) -> str:
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-        }
+        kwargs: dict[str, Any] = {"model": model, "messages": messages}
+        if reasoning_effort is not None and _is_reasoning_model(model):
+            # Reasoning models (gpt-5.x / o-series) take reasoning_effort and
+            # reject temperature (same convention as ai/main_ai.py:1369). A
+            # non-reasoning model (e.g. the gpt-4o default) silently ignores
+            # the requested effort and keeps temperature — callers pass effort
+            # opportunistically, not as a hard requirement.
+            kwargs["reasoning_effort"] = reasoning_effort
+        else:
+            kwargs["temperature"] = temperature
         if response_format is not None:
             kwargs["response_format"] = response_format
         resp = self._client.chat.completions.create(**kwargs)

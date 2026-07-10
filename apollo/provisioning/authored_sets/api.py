@@ -51,6 +51,7 @@ from apollo.provisioning.authored_sets.observability import (
     start_ingest_run,
 )
 from apollo.provisioning.authored_sets.orchestrator import (
+    MintRejected,
     _authored_concept_dup_hashes,
     _tag_mint_chat_fn,
     run_authored_set_provisioning,
@@ -58,7 +59,7 @@ from apollo.provisioning.authored_sets.orchestrator import (
 from apollo.provisioning.metered_chat import MeteredChat
 from apollo.provisioning.promote import promote
 from apollo.provisioning.solution import ReferenceSolutionDraft, build_approved_pair
-from apollo.provisioning.tag_mint import tag_and_mint
+from apollo.provisioning.tag_mint import ResolvedConcept, TagMintError, tag_and_mint
 from database.models import AITADocument
 from database.session import get_async_session, get_db_session
 from indexing.document_embedder import embed_text
@@ -322,16 +323,20 @@ def _make_metered_chat(*, document_id: int, ingest_run: IngestRun | None = None)
     aggregates persist. The approve endpoint has no run row, so it falls back to a
     throwaway namespace whose metering is discarded.
     """
-    run = ingest_run if ingest_run is not None else SimpleNamespace(
-        id=None,
-        llm_calls=0,
-        llm_tokens_in=0,
-        llm_tokens_out=0,
-        # Decimal, not float: ``cost_usd_for`` returns Decimal and ``record_usage``
-        # does ``llm_cost_usd += <Decimal>`` — a float seed raises
-        # "unsupported operand type(s) for +=: 'float' and 'decimal.Decimal'"
-        # on the first metered LLM call, failing the whole authored-set run.
-        llm_cost_usd=Decimal("0"),
+    run = (
+        ingest_run
+        if ingest_run is not None
+        else SimpleNamespace(
+            id=None,
+            llm_calls=0,
+            llm_tokens_in=0,
+            llm_tokens_out=0,
+            # Decimal, not float: ``cost_usd_for`` returns Decimal and ``record_usage``
+            # does ``llm_cost_usd += <Decimal>`` — a float seed raises
+            # "unsupported operand type(s) for +=: 'float' and 'decimal.Decimal'"
+            # on the first metered LLM call, failing the whole authored-set run.
+            llm_cost_usd=Decimal("0"),
+        )
     )
     return MeteredChat(ingest_run=run, document_id=document_id)
 
@@ -406,9 +411,7 @@ async def get_authored_set(
     if row is None:
         raise HTTPException(status_code=404, detail="authored set not found")
     await require_course_teacher(db=db, auth=auth, search_space_id=int(row.search_space_id))
-    ingest_run, pages = await _load_ingest_evidence(
-        db, row.problem_document_id, full_ocr=full_ocr
-    )
+    ingest_run, pages = await _load_ingest_evidence(db, row.problem_document_id, full_ocr=full_ocr)
     return {
         "set_id": int(row.id),
         "set_index": row.set_index,
@@ -525,19 +528,13 @@ async def _protected_concepts(db: AsyncSession, concept_ids: list[int]) -> set[i
     protected: set[int] = set()
 
     async def _collect(stmt) -> None:
-        protected.update(
-            int(c) for c in (await db.execute(stmt)).scalars().all() if c is not None
-        )
+        protected.update(int(c) for c in (await db.execute(stmt)).scalars().all() if c is not None)
 
     await _collect(
-        select(ApolloSession.concept_id)
-        .where(ApolloSession.concept_id.in_(concept_ids))
-        .distinct()
+        select(ApolloSession.concept_id).where(ApolloSession.concept_id.in_(concept_ids)).distinct()
     )
     await _collect(
-        select(Misconception.concept_id)
-        .where(Misconception.concept_id.in_(concept_ids))
-        .distinct()
+        select(Misconception.concept_id).where(Misconception.concept_id.in_(concept_ids)).distinct()
     )
     await _collect(
         select(KGEntity.concept_id)
@@ -685,16 +682,10 @@ async def delete_authored_set(
             .scalars()
             .all()
         ]
-        res = await db.execute(
-            delete(ConceptProblem).where(ConceptProblem.id.in_(problem_ids))
-        )
+        res = await db.execute(delete(ConceptProblem).where(ConceptProblem.id.in_(problem_ids)))
         removed_problems = res.rowcount or 0
 
-    doc_ids = [
-        int(d)
-        for d in (row.problem_document_id, row.solution_document_id)
-        if d is not None
-    ]
+    doc_ids = [int(d) for d in (row.problem_document_id, row.solution_document_id) if d is not None]
     removed_documents = 0
     if doc_ids:
         res = await db.execute(delete(AITADocument).where(AITADocument.id.in_(doc_ids)))
@@ -727,9 +718,7 @@ async def delete_authored_set(
             db, [cid for cid in affected_concept_ids if cid not in surviving]
         )
         candidates = [
-            cid
-            for cid in affected_concept_ids
-            if cid not in surviving and cid not in protected
+            cid for cid in affected_concept_ids if cid not in surviving and cid not in protected
         ]
         if candidates:
             neo = get_neo4j_client()
@@ -741,13 +730,9 @@ async def delete_authored_set(
                 # apollo_entity_prereqs. apollo_sessions (the only RESTRICT FK) is
                 # already spared by _protected_concepts, so this never hard-fails.
                 await db.execute(
-                    delete(DedupDecision).where(
-                        DedupDecision.concept_id.in_(orphaned_concept_ids)
-                    )
+                    delete(DedupDecision).where(DedupDecision.concept_id.in_(orphaned_concept_ids))
                 )
-                await db.execute(
-                    delete(Concept).where(Concept.id.in_(orphaned_concept_ids))
-                )
+                await db.execute(delete(Concept).where(Concept.id.in_(orphaned_concept_ids)))
 
     await db.delete(row)
     await db.commit()
@@ -806,6 +791,14 @@ async def approve_held_problem(
     review = (row.provenance or {}).get("authored_review")  # type: ignore[call-overload]
     if not review or not review.get("required"):
         raise HTTPException(status_code=409, detail="problem is not held for review")
+    if review.get("reason") == "no_matching_concept":
+        # A NO_MATCH hold stores no draft to promote — the teacher must add the
+        # concept to the course's premade list and re-upload the set.
+        raise HTTPException(
+            status_code=409,
+            detail="problem matched no registered concept; add the concept to "
+            "the course list and re-upload the set",
+        )
 
     chosen = (
         review.get("generated_alt") if body.reference == "generated" else review.get("ocr_draft")
@@ -820,24 +813,53 @@ async def approve_held_problem(
         draft,
         search_space_id=int(authored_set.search_space_id),
     )
+    # Reversed provisioning: a hold that carries the closed-list match threads
+    # it as resolved_concept so the approve-time mint never re-drafts a tag.
+    stored_match = review.get("concept_match") or {}
+    resolved = (
+        ResolvedConcept(
+            concept_id=int(stored_match["concept_id"]), slug=str(stored_match.get("slug") or "")
+        )
+        if stored_match.get("concept_id") is not None
+        else None
+    )
     metered_chat = _make_metered_chat(document_id=int(authored_set.problem_document_id or 0))
-    mint_plan = await tag_and_mint(
-        db,
-        pair,
-        chat_fn=_tag_mint_chat_fn(metered_chat),
-        embed_fn=embed_text,
-    )
-    existing_hashes = await _authored_concept_dup_hashes(db, concept_id=mint_plan.concept_id)
-    result = await promote(
-        db,
-        get_neo4j_client(),
-        problem=pair.problem,
-        mint_plan=mint_plan,
-        search_space_id=int(authored_set.search_space_id),
-        concept_problem_id=problem_id,
-        existing_problem_hashes=existing_hashes,
-        solution_source=pair.solution_source,
-    )
+    try:
+        # Mint + promote ride ONE savepoint (mirrors the orchestrator): a lint
+        # rejection or fail-closed TagMintError rolls back every KG row the
+        # mint flushed instead of orphaning it into the commit below.
+        async with db.begin_nested():
+            mint_kwargs: dict = {"resolved_concept": resolved} if resolved is not None else {}
+            mint_plan = await tag_and_mint(
+                db,
+                pair,
+                chat_fn=_tag_mint_chat_fn(metered_chat),
+                embed_fn=embed_text,
+                **mint_kwargs,
+            )
+            existing_hashes = await _authored_concept_dup_hashes(
+                db, concept_id=mint_plan.concept_id
+            )
+            result = await promote(
+                db,
+                get_neo4j_client(),
+                problem=pair.problem,
+                mint_plan=mint_plan,
+                search_space_id=int(authored_set.search_space_id),
+                concept_problem_id=problem_id,
+                existing_problem_hashes=existing_hashes,
+                solution_source=pair.solution_source,
+            )
+            if not result.promoted:
+                raise MintRejected(result)
+    except TagMintError as exc:
+        return {
+            "promoted": False,
+            "failed_gate": None,
+            "diagnostic": f"tag_mint_error: {exc}",
+        }
+    except MintRejected as rejected:
+        result = rejected.result
     if result.promoted:
         row.provenance = {  # type: ignore[assignment]
             **(row.provenance or {}),

@@ -1,0 +1,78 @@
+{
+  "aae333_01": {
+    "failed_gate": 5,
+    "canonical_symbols": [
+      "L",
+      "Re",
+      "U",
+      "W",
+      "delta",
+      "nu",
+      "rho",
+      "tau",
+      "x"
+    ],
+    "normalization_map": {
+      "boundary layer thickness and wall shear stress": "tau"
+    }
+  },
+  "aae333_02": {
+    "failed_gate": 5,
+    "canonical_symbols": [
+      "Re",
+      "U",
+      "d",
+      "deltastar",
+      "dnew",
+      "nu",
+      "x"
+    ],
+    "normalization_map": {
+      "size of the duct d(x)": "dnew"
+    }
+  },
+  "aae333_03": {
+    "failed_gate": 5,
+    "canonical_symbols": [
+      "C",
+      "D1",
+      "D2",
+      "R",
+      "U1",
+      "U2"
+    ],
+    "normalization_map": {
+      "D2/D1 ratio": "R"
+    }
+  },
+  "aae333_04": {
+    "failed_gate": 5,
+    "canonical_symbols": [
+      "Re",
+      "U",
+      "delta",
+      "nu",
+      "x"
+    ],
+    "normalization_map": {
+      "boundary layer thickness": "delta"
+    }
+  },
+  "aae333_05": {
+    "failed_gate": 5,
+    "canonical_symbols": [
+      "Re",
+      "U",
+      "nu",
+      "xt"
+    ],
+    "normalization_map": {
+      "location downstream": "xt"
+    }
+  },
+  "aae333_06": {
+    "failed_gate": 4,
+    "canonical_symbols": [],
+    "normalization_map": {}
+  }
+}
