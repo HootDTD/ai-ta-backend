@@ -1,9 +1,6 @@
 from unittest.mock import AsyncMock
 
-import pytest
-
 from apollo.clarification import resolve_turn
-from apollo.clarification.rescorer import RescoreResult
 from apollo.resolution.candidates import Candidate
 
 _SPACE = 1

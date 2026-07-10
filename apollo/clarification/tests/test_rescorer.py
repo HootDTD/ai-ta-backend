@@ -11,6 +11,8 @@ shape) still works via a back-compat shim (``confidence=1.0``); a judge that
 returns a ``RescoreResult`` directly is passed through unchanged.
 """
 
+import dataclasses
+
 import pytest
 
 from apollo.clarification.rescorer import (
@@ -92,7 +94,7 @@ def test_judge_failure_propagates_named_error():
 
 def test_rescore_result_is_frozen():
     result = RescoreResult(outcome="confirmed", confidence=1.0)
-    with pytest.raises(Exception):  # dataclasses.FrozenInstanceError
+    with pytest.raises(dataclasses.FrozenInstanceError):
         result.confidence = 0.5  # type: ignore[misc]
 
 

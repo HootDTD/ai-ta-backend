@@ -31,10 +31,10 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from openai import OpenAI
-
 from sympy import simplify
 from sympy.parsing.sympy_parser import (
     convert_xor,

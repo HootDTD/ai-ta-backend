@@ -33,6 +33,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from apollo.grading.artifact_build import build_llm_artifact
+from apollo.grading.composite import load_weights
 from apollo.handlers import done as done_mod
 from apollo.handlers.done import (
     _default_embed_fn,
@@ -47,8 +49,6 @@ from apollo.overseer.misconception_detector.types import (
     ConceptFinding,
     DetectionResult,
 )
-from apollo.grading.artifact_build import build_llm_artifact
-from apollo.grading.composite import load_weights
 
 pytestmark = pytest.mark.unit
 
