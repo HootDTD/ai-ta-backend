@@ -171,12 +171,18 @@ async def _run() -> dict[str, Any]:
     from sqlalchemy import select
 
     from apollo.knowledge_graph.store import KGStore
+    from apollo.overseer.misconception_bank import load_for_concept
     from apollo.overseer.misconception_detector.apply import apply_penalty
     from apollo.overseer.misconception_detector.centrality import compute_centrality
-    from apollo.overseer.misconception_detector.config import detector_enabled, trace_enabled
+    from apollo.overseer.misconception_detector.config import (
+        detector_enabled,
+        struct_cokey_enabled,
+        trace_enabled,
+    )
     from apollo.overseer.misconception_detector.detector import detect_misconceptions
     from apollo.overseer.misconception_detector.gate import gate_findings
     from apollo.overseer.misconception_detector.merge import merge_detections
+    from apollo.overseer.misconception_detector.opposes_index import build_opposes_index
     from apollo.overseer.misconception_detector.trace import trace_attempt
     from apollo.overseer.problem_selector import list_problems_for_concept
     from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
@@ -280,7 +286,20 @@ async def _run() -> dict[str, Any]:
                         judge_fn=judge_fn,
                         embed_fn=_embed_fn,
                     )
-                    gated = gate_findings(detection.per_concept)
+                    # F-struct (structural co-key) — DEFAULT OFF sub-flag,
+                    # gated exactly like done.py: when OFF, `opposes_index`
+                    # stays `{}` and gate/trace see the same empty map they
+                    # always defaulted to (byte-identical to pre-F-struct).
+                    # When ON, resolve the concept bank's `opposes` links
+                    # (each an `entity_key`) against the reference graph so a
+                    # judge-localized-but-unnamed error can dock structurally.
+                    opposes_index: dict[str, str] = {}
+                    if struct_cokey_enabled():
+                        bank_entries = tuple(
+                            await load_for_concept(db, concept_id=cast(int, sess.concept_id))
+                        )
+                        opposes_index = build_opposes_index(reference_graph, bank_entries)
+                    gated = gate_findings(detection.per_concept, opposes_index=opposes_index)
                     centrality = compute_centrality(reference_graph)
                     outcome = merge_detections(gated, centrality=centrality)
                     composite_after = apply_penalty(composite=composite_before, outcome=outcome)
@@ -311,6 +330,7 @@ async def _run() -> dict[str, Any]:
                             centrality=centrality,
                             final_band=detector_band,
                             is_control=is_control,
+                            opposes_index=opposes_index,
                         )
 
                     control_credit_ok = (

@@ -26,6 +26,7 @@ def _clear_env(monkeypatch):
         "APOLLO_MISC_CEILING",
         "APOLLO_MISC_BANK_SIM",
         "APOLLO_MISC_TAU_SOLO_JUDGE",
+        "APOLLO_MISC_STRUCT_COKEY",
     ]
     for var in env_vars:
         monkeypatch.delenv(var, raising=False)
@@ -142,6 +143,39 @@ class TestTauSoloJudge:
     def test_bank_sim_floor_unchanged(self):
         importlib.reload(detector_config)
         assert detector_config.BANK_SIM_FLOOR == pytest.approx(0.80)
+
+
+class TestStructCokeyEnabled:
+    """RED tests for the F-struct sub-flag (Task 6): docs/_archive/specs/
+    2026-07-09-apollo-misconception-struct-cokey-design.md D7."""
+
+    def test_default_is_false_when_unset(self, monkeypatch):
+        monkeypatch.delenv(detector_config.STRUCT_COKEY_FLAG_ENV, raising=False)
+        assert detector_config.struct_cokey_enabled() is False
+
+    @pytest.mark.parametrize(
+        "val,expected", [("1", True), ("true", True), ("on", True), ("0", False), ("", False)]
+    )
+    def test_struct_cokey_flag_truthy(self, monkeypatch, val, expected):
+        monkeypatch.setenv(detector_config.STRUCT_COKEY_FLAG_ENV, val)
+        assert detector_config.struct_cokey_enabled() is expected
+
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "on", "YES", "TRUE", "On"])
+    def test_true_for_each_truthy_value(self, monkeypatch, value):
+        monkeypatch.setenv(detector_config.STRUCT_COKEY_FLAG_ENV, value)
+        assert detector_config.struct_cokey_enabled() is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "no", "off", "garbage"])
+    def test_false_for_non_truthy_values(self, monkeypatch, value):
+        monkeypatch.setenv(detector_config.STRUCT_COKEY_FLAG_ENV, value)
+        assert detector_config.struct_cokey_enabled() is False
+
+    def test_is_read_at_call_time_not_cached(self, monkeypatch):
+        assert detector_config.struct_cokey_enabled() is False
+        monkeypatch.setenv(detector_config.STRUCT_COKEY_FLAG_ENV, "true")
+        assert detector_config.struct_cokey_enabled() is True
+        monkeypatch.delenv(detector_config.STRUCT_COKEY_FLAG_ENV)
+        assert detector_config.struct_cokey_enabled() is False
 
 
 def test_reload_restores_defaults_after_module_teardown():

@@ -26,6 +26,7 @@ from apollo.overseer.misconception_detector import config as detector_config
 from apollo.overseer.misconception_detector import trace as trace_mod
 from apollo.overseer.misconception_detector.gate import gate_findings
 from apollo.overseer.misconception_detector.trace import (
+    _docked_via,
     build_node_traces,
     emit_traces,
     is_false_strong,
@@ -43,6 +44,9 @@ from apollo.overseer.misconception_detector.types import (
 # Fixtures / builders
 # --------------------------------------------------------------------------- #
 def _def_node(node_id: str) -> Node:
+    # opposes_index is keyed by node_id (not entity_key) — see
+    # build_node_traces's `opposes.get(key)` where `key = node.node_id` — so
+    # these fixtures don't need an entity_key.
     return build_node(
         node_type="definition",
         node_id=node_id,
@@ -122,7 +126,8 @@ def _run(findings: tuple[ConceptFinding, ...], graph: KGGraph, **kw):
     """Gate the findings the SAME way the live chain does, then build rows so
     each test observes the trace against the real gate output (no re-implemented
     gate)."""
-    gated = gate_findings(findings)
+    opposes_index = kw.get("opposes_index")
+    gated = gate_findings(findings, opposes_index=opposes_index)
     return build_node_traces(
         attempt_id=kw.get("attempt_id", 88),
         reference_graph=graph,
@@ -132,6 +137,7 @@ def _run(findings: tuple[ConceptFinding, ...], graph: KGGraph, **kw):
         centrality=kw.get("centrality", {}),
         final_band=kw.get("final_band", "Strong"),
         is_false_strong=kw.get("is_false_strong", False),
+        opposes_index=opposes_index,
     )
 
 
@@ -164,6 +170,8 @@ def test_row_has_all_documented_fields():
         "misconception_penalty",
         "ceiling_applied",
         "is_false_strong",
+        "struct_opposes_code",
+        "docked_via",
     }
     assert set(row.keys()) == expected_top_level
     # Judge sub-object shape.
@@ -294,6 +302,131 @@ def test_row1_2_sympy_dock():
     assert rows[0]["gate_row"] == "row1_2_sympy"
     assert rows[0]["gate_decision"] == "dock"
     assert rows[0]["ceiling_eligible"] is True
+
+
+def test_row3s_struct_cokey_dock():
+    """A judge that LOCALIZES an error (wrong/misconception, no bank_code) at
+    a node the graph structurally opposes (F-struct) docks via
+    ``row3s_struct_cokey_dock``, with ``docked_via == "struct_opposes"`` and
+    ``struct_opposes_code`` naming the graph-resolved code. A sibling control
+    node with no judge finding traces ``docked_via == "none"``."""
+    graph = _graph("node.real_basis", "node.control")
+    judge = _judge(
+        concept_key="node.real_basis",
+        confidence=0.95,
+        bank_code=None,
+        verdict="wrong",
+    )
+    opposes_index = {"node.real_basis": "nominal_for_real"}
+
+    rows = _run((judge,), graph, opposes_index=opposes_index)
+
+    by_node = {r["node_id"]: r for r in rows}
+    struct_row = by_node["node.real_basis"]
+    assert struct_row["gate_row"] == "row3s_struct_cokey_dock"
+    assert struct_row["gate_decision"] == "dock"
+    assert struct_row["docked_via"] == "struct_opposes"
+    assert struct_row["struct_opposes_code"] == "nominal_for_real"
+    assert struct_row["ceiling_eligible"] is True
+
+    control_row = by_node["node.control"]
+    assert control_row["docked_via"] == "none"
+    assert control_row["struct_opposes_code"] is None
+
+
+def test_docked_via_judge_named_on_cokey_dock():
+    """A judge+bank co-key dock (row 3) is docked via ``judge_named`` — the
+    bank corroborates the judge's OWN named code, distinct from the
+    structural path."""
+    graph = _graph("node.real_basis")
+    judge = _judge(concept_key="node.real_basis", confidence=0.95, bank_code="nominal_for_real")
+    bank = _bank(bank_code="nominal_for_real", confidence=0.582, above_floor=False)
+
+    rows = _run((judge, bank), graph)
+
+    assert rows[0]["docked_via"] == "judge_named"
+    assert rows[0]["struct_opposes_code"] is None
+
+
+def test_docked_via_judge_named_on_lone_solo_dock():
+    """A lone bank-keyed judge dock (row 5 — the judge names its own code,
+    no bank corroboration) is ALSO ``judge_named`` — ``best_judge.bank_code``
+    is set even without a corroborating bank witness."""
+    graph = _graph("node.real_basis")
+    judge = _judge(concept_key="node.real_basis", confidence=0.95, bank_code="nominal_for_real")
+
+    rows = _run((judge,), graph)
+
+    assert rows[0]["gate_row"] == "row5_lone_solo_dock"
+    assert rows[0]["docked_via"] == "judge_named"
+    assert rows[0]["struct_opposes_code"] is None
+
+
+def test_docked_via_sympy_self_dock_is_not_judge_named():
+    """F3 correction: a deterministic sympy_veto self-dock (rows 1/2) has NO
+    corroborating bank and NO judge at all — it must NOT be mislabeled
+    ``judge_named``. It gets its own distinct label."""
+    graph = _graph("node.eq")
+    veto = _sympy(concept_key="node.eq", bank_code="sign_flip")
+
+    rows = _run((veto,), graph)
+
+    assert rows[0]["gate_row"] == "row1_2_sympy"
+    assert rows[0]["docked_via"] != "judge_named"
+    assert rows[0]["docked_via"] == "sympy"
+    assert rows[0]["struct_opposes_code"] is None
+
+
+def test_docked_via_none_when_not_docked():
+    """A clarify/drop/no-judge row is never "docked via" anything."""
+    graph = _graph("n")
+    judge = _judge(concept_key="n", confidence=0.99, bank_code=None)  # clarify
+
+    rows = _run((judge,), graph)
+
+    assert rows[0]["gate_decision"] == "needs_clarification"
+    assert rows[0]["docked_via"] == "none"
+
+
+def test_struct_dock_requires_struct_cokey_flag_on_gate():
+    """Without ``opposes_index`` (the pre-F-struct / flag-OFF default), the
+    same wrong-but-unkeyed judge finding does NOT structurally dock — it
+    falls through to row 7 (unkeyed clarify), and the trace reports
+    ``docked_via == "none"`` with no struct code. This is the flag-OFF
+    byte-identical guarantee at the trace layer."""
+    graph = _graph("node.real_basis")
+    judge = _judge(
+        concept_key="node.real_basis",
+        confidence=0.95,
+        bank_code=None,
+        verdict="wrong",
+    )
+
+    rows = _run((judge,), graph)  # no opposes_index
+
+    assert rows[0]["gate_row"] == "row7_unkeyed_clarify"
+    assert rows[0]["docked_via"] == "none"
+    assert rows[0]["struct_opposes_code"] is None
+
+
+def test_docked_via_fail_safe_label_when_nothing_named():
+    """Direct unit test of the ``_docked_via`` defensive fallback: per the
+    gate's own §5 truth-table a ``misconception`` verdict is ALWAYS backed by
+    either a deterministic finding, a judge-named code, or a struct code — so
+    this branch is unreachable via real gate output. It is still tested
+    directly (not by faking a lying ``gated`` tuple through the public API)
+    so a future truth-table regression fails loud with a distinct label
+    instead of silently defaulting to "judge_named" (the F3 bug this task
+    corrects)."""
+    label = _docked_via(
+        gated_verdict="misconception",
+        has_sympy=False,
+        corroborating_bank=None,
+        best_judge=None,
+        struct_code=None,
+    )
+    assert label == "other_keyed"
+    assert label != "judge_named"
 
 
 def test_node_with_no_judge_is_dropped_with_null_judge():

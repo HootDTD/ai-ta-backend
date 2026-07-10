@@ -186,6 +186,11 @@ async def test_seed_bernoulli_upserts_both_authored_misconceptions(db_url, monke
     }
     for c in calls:
         assert c["description_embedding"] is None  # embed=False
+    opposes_by_code = {c["code"]: c["opposes"] for c in calls}
+    assert opposes_by_code == {
+        "pressure_velocity_same_direction": "def.pressure_velocity_tradeoff",
+        "density_ignored": "cond.incompressibility",
+    }
 
 
 @pytest.mark.asyncio
