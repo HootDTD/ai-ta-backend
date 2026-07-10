@@ -44,7 +44,10 @@ from sympy.parsing.sympy_parser import (
 
 from apollo.errors import CoverageGradingError
 from apollo.ontology import EdgeType, KGGraph, Node
-from apollo.overseer.misconception_detector.config import detector_enabled
+from apollo.overseer.misconception_detector.config import (
+    detector_enabled,
+    grader_positive_focus_enabled,
+)
 from apollo.resolution.tiers import (
     _extended_locals,
     _symbolic_equiv,
@@ -212,7 +215,16 @@ def _batch_binary_match(
             out.setdefault(
                 n.node_id, {"covered": False, "confidence": 0.0},
             )
-        if entry_type == "equation" and detector_enabled():
+        # T-W5a (P3) — grader positive-focus. Default OFF: the sign pre-gate
+        # runs exactly as before (byte-identical). When ON, skip it — the
+        # coverage grader credits the produced equation and stops
+        # credit-denying on wrongness; the detector's sympy_veto tier still
+        # names the sign error in the feedback channel independently.
+        if (
+            entry_type == "equation"
+            and detector_enabled()
+            and not grader_positive_focus_enabled()
+        ):
             out = _sign_gate_equation_verdicts(
                 verdicts=out,
                 reference_nodes=reference_nodes,

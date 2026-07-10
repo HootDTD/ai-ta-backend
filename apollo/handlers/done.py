@@ -56,6 +56,7 @@ from apollo.overseer.misconception_detector.apply import rubric_overall_after_pe
 from apollo.overseer.misconception_detector.centrality import compute_centrality
 from apollo.overseer.misconception_detector.config import (
     detector_enabled,
+    grader_positive_focus_enabled,
     struct_cokey_enabled,
     trace_enabled,
 )
@@ -507,6 +508,16 @@ async def handle_done(
     misconception_scores = await _attempt_misconception_scores(
         db, attempt_id=attempt.id,
     )
+    # T-W5a (P4) — grader positive-focus. Default OFF: byte-identical, every
+    # detected code (resolved 1.0 or unresolved 0.5) enters the axis exactly
+    # as before. When ON, drop unresolved (0.5) contributions before the
+    # axis is computed — the "you corrected it" resolved credit (1.0) still
+    # counts, but an unresolved misconception no longer drags `overall` down
+    # relative to the axis being absent (credit-only, memo §3).
+    if grader_positive_focus_enabled():
+        misconception_scores = {
+            code: score for code, score in misconception_scores.items() if score >= 1.0
+        }
     rubric = compute_rubric(
         coverage,
         reference_graph.nodes,
@@ -566,7 +577,16 @@ async def handle_done(
             gated = gate_findings(detection.per_concept, opposes_index=opposes_index)
             centrality = compute_centrality(reference_graph)
             detection_outcome = merge_detections(gated, centrality=centrality)
-            rubric = rubric_overall_after_penalty(rubric, detection_outcome)
+            # T-W5a (P1) — grader positive-focus (2026-07-10 design memo).
+            # Default OFF: byte-identical, the served rubric band is docked
+            # exactly as before. When ON, this dock is skipped — the served
+            # rubric/band/XP become credit-only, while `detection_outcome`
+            # is STILL threaded to `write_artifacts` below unchanged, so the
+            # composite dock (P2, `artifact_build.py`, UNCONDITIONAL — the
+            # single retained penalty channel) and the feedback record
+            # (`misconceptions[]`) both retain full fidelity.
+            if not grader_positive_focus_enabled():
+                rubric = rubric_overall_after_penalty(rubric, detection_outcome)
             # Phase-1 diagnostic trace (default OFF, APOLLO_MISC_TRACE). When
             # OFF this branch never imports `trace` — flag-OFF is byte-identical.
             # Instrumentation only: it re-derives per-node judge/gate rows from

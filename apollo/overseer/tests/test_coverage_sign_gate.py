@@ -40,17 +40,23 @@ from apollo.overseer.coverage import (
 from apollo.resolution.tiers import _extended_locals
 
 _FLAG = "APOLLO_MISCONCEPTION_DETECTOR"
+_POSITIVE_FOCUS_FLAG = "APOLLO_GRADER_POSITIVE_FOCUS"
 
 
 @pytest.fixture(autouse=True)
 def _clean_flag_env():
-    """Never leak the flag across tests regardless of pass/fail."""
+    """Never leak either flag across tests regardless of pass/fail."""
     prior = os.environ.pop(_FLAG, None)
+    prior_pf = os.environ.pop(_POSITIVE_FOCUS_FLAG, None)
     yield
     if prior is None:
         os.environ.pop(_FLAG, None)
     else:
         os.environ[_FLAG] = prior
+    if prior_pf is None:
+        os.environ.pop(_POSITIVE_FOCUS_FLAG, None)
+    else:
+        os.environ[_POSITIVE_FOCUS_FLAG] = prior_pf
 
 
 def _eq_node(node_id: str, symbolic: str, label: str = "", *, attempt_id: int = 1):
@@ -324,6 +330,81 @@ def test_prompt_states_sign_not_equivalent():
     lowered = _BATCH_BINARY_PROMPT.lower()
     assert "sign" in lowered
     assert "not equivalent" in lowered or "not the same" in lowered or "different" in lowered
+
+
+# ---------------------------------------------------------------------------
+# (d.1) T-W5a (P3) — grader positive-focus neutralizes the sign pre-gate.
+# ---------------------------------------------------------------------------
+
+
+@patch("apollo.overseer.coverage.OpenAI")
+def test_positive_focus_on_skips_sign_gate_sign_reversed_stays_covered(mock_client_cls):
+    """Detector ON + positive-focus ON: the sign pre-gate is skipped, so a
+    sign-reversed equation the LLM (wrongly) marked covered=True stays
+    covered=True — coverage credits the produced equation; the detector's
+    own sympy_veto tier is responsible for naming the sign error instead."""
+    os.environ[_FLAG] = "true"
+    os.environ[_POSITIVE_FOCUS_FLAG] = "true"
+    ref = _eq_node("ref_si", "S - I", "Savings-investment identity")
+    student = _eq_node("stu_si", "I - S")
+
+    payload = json.dumps(
+        {"matches": [{"ref_id": "ref_si", "covered": True, "confidence": 0.95}]}
+    )
+    mock_client_cls.return_value = _mock_openai_always(payload)
+
+    result = _batch_binary_match(
+        entry_type="equation",
+        reference_nodes=[ref],
+        student_nodes=[student],
+    )
+    assert result["ref_si"]["covered"] is True
+    assert result["ref_si"]["confidence"] == 0.95
+
+
+@patch("apollo.overseer.coverage.OpenAI")
+def test_positive_focus_off_sign_gate_still_fires_when_detector_on(mock_client_cls):
+    """Detector ON + positive-focus explicitly OFF: byte-identical to the
+    pre-T-W5a behavior — the sign-reversed pair is still forced uncovered."""
+    os.environ[_FLAG] = "true"
+    os.environ[_POSITIVE_FOCUS_FLAG] = "false"
+    ref = _eq_node("ref_si", "S - I", "Savings-investment identity")
+    student = _eq_node("stu_si", "I - S")
+
+    payload = json.dumps(
+        {"matches": [{"ref_id": "ref_si", "covered": True, "confidence": 0.95}]}
+    )
+    mock_client_cls.return_value = _mock_openai_always(payload)
+
+    result = _batch_binary_match(
+        entry_type="equation",
+        reference_nodes=[ref],
+        student_nodes=[student],
+    )
+    assert result["ref_si"]["covered"] is False
+
+
+@patch("apollo.overseer.coverage.OpenAI")
+def test_positive_focus_on_without_detector_is_a_no_op(mock_client_cls):
+    """Positive-focus ON but the base detector flag OFF: the sign-gate was
+    never going to run anyway (it is nested inside `detector_enabled()`), so
+    this must be identical to detector-off behavior — no crash, no gate."""
+    os.environ.pop(_FLAG, None)
+    os.environ[_POSITIVE_FOCUS_FLAG] = "true"
+    ref = _eq_node("ref_si", "S - I", "Savings-investment identity")
+    student = _eq_node("stu_si", "I - S")
+
+    payload = json.dumps(
+        {"matches": [{"ref_id": "ref_si", "covered": True, "confidence": 0.95}]}
+    )
+    mock_client_cls.return_value = _mock_openai_always(payload)
+
+    result = _batch_binary_match(
+        entry_type="equation",
+        reference_nodes=[ref],
+        student_nodes=[student],
+    )
+    assert result["ref_si"]["covered"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -98,6 +98,30 @@ def struct_cokey_enabled() -> bool:
     return os.environ.get(STRUCT_COKEY_FLAG_ENV, "").strip().lower() in _TRUTHY
 
 
+# Grader positive-focus (2026-07-10 design memo
+# docs/_archive/specs/2026-07-10-grader-positive-focus-design.md, plan task
+# T-W5a). SEPARATE flag from FLAG_ENV, default OFF: when OFF, every P1-P4
+# penalty path (see the memo's §2 table) runs exactly as it does today —
+# byte-identical. When ON, penalty authority flows exclusively through the
+# detector's composite dock (P2, `apollo/grading/artifact_build.py`,
+# UNCONDITIONALLY retained as the single penalty channel — deliberately not
+# gated by this flag): the served rubric band (P1), the coverage sign-gate
+# (P3), and the misconception rubric axis (P4) become credit-only.
+POSITIVE_FOCUS_FLAG_ENV: str = "APOLLO_GRADER_POSITIVE_FOCUS"
+
+
+def grader_positive_focus_enabled() -> bool:
+    """True iff ``APOLLO_GRADER_POSITIVE_FOCUS`` is set to a truthy value
+    (default OFF).
+
+    Read at call time (never cached), same ``_TRUTHY`` set as
+    ``detector_enabled``/``struct_cokey_enabled``. Independent of both other
+    flags: it only decides which SERVED surfaces the detector's already-
+    computed penalty touches, never whether the detector runs at all.
+    """
+    return os.environ.get(POSITIVE_FOCUS_FLAG_ENV, "").strip().lower() in _TRUTHY
+
+
 def trace_path() -> str:
     """Filesystem path ``trace.emit_traces`` appends JSONL to.
 
