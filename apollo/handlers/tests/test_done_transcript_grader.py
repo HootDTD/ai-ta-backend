@@ -111,8 +111,12 @@ async def _run(
     from apollo.handlers.done import handle_done
 
     with ExitStack() as stack:
-        stack.enter_context(patch("apollo.handlers.done.compute_transcript_coverage", new=coverage_mock))
-        stack.enter_context(patch("apollo.handlers.done.build_rerun_inputs", new=AsyncMock(return_value=rerun)))
+        stack.enter_context(
+            patch("apollo.handlers.done.compute_transcript_coverage", new=coverage_mock)
+        )
+        stack.enter_context(
+            patch("apollo.handlers.done.build_rerun_inputs", new=AsyncMock(return_value=rerun))
+        )
         for p in patches:
             stack.enter_context(p)
         out = await handle_done(db=db, neo=MagicMock(), session_id=11)

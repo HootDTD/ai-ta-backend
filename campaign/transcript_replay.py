@@ -11,9 +11,8 @@ import asyncio
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from unittest.mock import patch
-
 from typing import cast
+from unittest.mock import patch
 
 from apollo.overseer.misconception_detector.centrality import compute_centrality
 from apollo.overseer.topic_score import compute_topic_score
@@ -46,7 +45,11 @@ async def replay_fixture(path: Path) -> ReplayOutcome:
     )
     credited = sum(topic.credit > 0 for topic in topic_score.topics)
     student_messages = [content for role, content in transcript if role == "student"]
-    spans = [v.get("evidence_span") for v in fixture["adjudicator_output"]["verdicts"] if v.get("credit", 0) > 0]
+    spans = [
+        v.get("evidence_span")
+        for v in fixture["adjudicator_output"]["verdicts"]
+        if v.get("credit", 0) > 0
+    ]
     # Reuse the serving-lane rail — a private reimplementation here would
     # silently drift from the per-message check it is supposed to mirror.
     validated = all(validate_span(span, student_messages) for span in spans)

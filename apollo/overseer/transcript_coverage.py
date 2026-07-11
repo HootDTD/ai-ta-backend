@@ -112,7 +112,9 @@ def build_system_prompt(problem: Any) -> str:
     )
 
 
-def build_user_message(problem: Any, reference_items: Sequence[dict], transcript: Sequence[tuple[str, str]]) -> str:
+def build_user_message(
+    problem: Any, reference_items: Sequence[dict], transcript: Sequence[tuple[str, str]]
+) -> str:
     dialogue = "\n".join(f"{role}: {content}" for role, content in transcript)
     return (
         f"PROBLEM:\n{problem.problem_text}\n\n"
@@ -152,9 +154,13 @@ def _call_adjudication(system_prompt: str, user_message: str, *, model: str) -> 
     return response.choices[0].message.content or "{}"
 
 
-def _to_coverage_verdict(verdicts: Sequence[NodeVerdict], reference_graph: KGGraph) -> CoverageVerdict:
+def _to_coverage_verdict(
+    verdicts: Sequence[NodeVerdict], reference_graph: KGGraph
+) -> CoverageVerdict:
     by_id = {verdict.node_id: verdict for verdict in verdicts}
-    graded_ids = [node.node_id for node in reference_graph.nodes if node.node_type in _GRADED_NODE_TYPES]
+    graded_ids = [
+        node.node_id for node in reference_graph.nodes if node.node_type in _GRADED_NODE_TYPES
+    ]
     result: CoverageVerdict = {
         "per_step": {},
         "procedure_scores": {},

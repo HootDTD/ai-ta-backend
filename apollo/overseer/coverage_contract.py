@@ -28,7 +28,11 @@ def _validate_score_map(value: object, *, key: str) -> None:
     if not isinstance(value, dict):
         raise ValueError(f"{key} must be a dict")
     for node_id, score in value.items():
-        if not isinstance(node_id, str) or isinstance(score, bool) or not isinstance(score, (int, float)):
+        if (
+            not isinstance(node_id, str)
+            or isinstance(score, bool)
+            or not isinstance(score, (int, float))
+        ):
             raise ValueError(f"{key} must map string node ids to numbers")
         numeric = float(score)
         if not math.isfinite(numeric) or not 0.0 <= numeric <= 1.0:
