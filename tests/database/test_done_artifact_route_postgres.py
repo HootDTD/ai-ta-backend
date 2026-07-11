@@ -163,6 +163,9 @@ async def test_both_flags_off_writes_zero_rows_response_unchanged(db_session, mo
         "level_before",
         "level_after",
         "level_up",
+        # Part 1 transcript grader: provenance ships in BOTH flag states
+        # (spec §3.7.3) — present even with every apollo flag off.
+        "grading_provenance",
     }
     rows = await _artifact_rows(db_session, attempt.id)
     assert rows == []

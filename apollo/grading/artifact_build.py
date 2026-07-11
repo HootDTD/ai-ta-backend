@@ -64,6 +64,7 @@ CREDITED_METHODS: frozenset[str] = frozenset(
 
 GRADER_USED_GRAPH = "graph"
 GRADER_USED_LLM_FALLBACK = "llm_fallback"
+GRADER_USED_LLM_TRANSCRIPT = "llm_transcript"
 
 _GRADER_VERSION_LLM_FALLBACK = "llm-fallback-v1"
 

@@ -437,7 +437,7 @@ def test_distinct_canonical_keys_both_dock():
     assert len(result.topics[0].misconceptions) == 2
 
 
-def test_dock_clamped_at_severity_clamp():
+def test_localized_dock_is_capped_by_the_topic_contribution():
     refs = [_eq_node("a")]
     coverage = {"per_step": {"a": "covered"}, "procedure_scores": {}}
     findings = tuple(
@@ -451,10 +451,10 @@ def test_dock_clamped_at_severity_clamp():
         detection_outcome=_outcome(*findings),
     )
 
-    assert result.misconception_dock == pytest.approx(SEVERITY_CLAMP)
+    assert result.misconception_dock == pytest.approx(1.0)
 
 
-def test_dock_points_scale_to_reconcile_with_clamped_total():
+def test_dock_points_scale_to_reconcile_with_localized_total():
     """When the clamp binds, per-finding dock_points are scaled
     proportionally so the "−N pts" lines a student sees sum EXACTLY to the
     dock actually subtracted — unscaled shares would over-claim. Raw shares
@@ -472,7 +472,7 @@ def test_dock_points_scale_to_reconcile_with_clamped_total():
         detection_outcome=_outcome(big, small),
     )
 
-    assert result.misconception_dock == pytest.approx(SEVERITY_CLAMP)
+    assert result.misconception_dock == pytest.approx(1.0)
     shown = {m.canonical_key: m.dock_points for m in result.topics[0].misconceptions}
     assert sum(shown.values()) == pytest.approx(result.misconception_dock)
     assert shown["misc.big"] == pytest.approx(shown["misc.small"] * 2)
@@ -512,7 +512,7 @@ def test_score_floor_clamps_at_zero_when_dock_exceeds_coverage():
     )
 
     assert result.coverage_component == 0.0
-    assert result.misconception_dock == pytest.approx(SEVERITY_CLAMP)
+    assert result.misconception_dock == pytest.approx(0.0)
     assert result.score == 0
     assert result.letter == "F"
 
@@ -642,7 +642,7 @@ def test_mixed_topics_full_partial_missing_with_dock():
         + by_key["p1"].weight * 0.5
     )
     assert result.coverage_component == pytest.approx(expected_coverage)
-    expected_dock = min(SEVERITY_CLAMP, 1.0 * 0.5)
+    expected_dock = by_key["eq1"].weight * 0.5
     assert result.misconception_dock == pytest.approx(expected_dock)
     expected_score = int(round(max(0.0, min(1.0, expected_coverage - expected_dock)) * 100))
     assert result.score == expected_score

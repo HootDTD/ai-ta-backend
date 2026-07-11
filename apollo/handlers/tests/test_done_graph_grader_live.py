@@ -148,6 +148,15 @@ async def test_flag_off_byte_identical_to_shadow_golden(monkeypatch):
         "level_before": 1,
         "level_after": 1,
         "level_up": False,
+        "grading_provenance": {
+            "grader_used": "llm_fallback",
+            "evidence_source": "graph_nodes",
+            "transcript_grader_failure": None,
+            "score_before_dock": 0.0,
+            "topics": [],
+            "docks": [],
+            "graph_lane": {"abstained": False, "reasons": ["normalization_confidence"]},
+        },
     }
     write_artifacts_mock.assert_not_awaited()
 
