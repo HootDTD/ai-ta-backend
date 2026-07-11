@@ -1,0 +1,53 @@
+# .graphifyignore — keep the knowledge graph focused on backend source, supabase/ SQL, and durable docs/.
+# gitignore syntax. Excludes dependency trees, generated artifacts, and other noise.
+
+# --- Python bytecode / tool caches ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Virtualenvs / dependency trees ---
+.venv*/
+venv/
+node_modules/
+
+# --- VCS & tooling internals ---
+.git/
+.github/
+.vscode/
+.claude/
+.agents/
+.feller/
+
+# --- Env & secrets (never index) ---
+.env
+.env.*
+
+# --- Test / coverage artifacts ---
+.coverage
+coverage.xml
+htmlcov/
+
+# --- Generated data & run artifacts (rebuildable, not source structure) ---
+runtime/
+artifacts/
+tmp_uploads/
+campaign/out/
+subjects/**/km_*/
+ai_ta.db
+*.pdf
+*.log
+*.jsonl
+/out11-run1.json
+/out11.json
+
+# --- Transient docs (handoffs/plans/specs archive — durable docs stay in the graph) ---
+docs/_archive/
+
+# --- Graphify's own output ---
+graphify-out/
+
+# --- Misc ---
+.DS_Store
