@@ -248,6 +248,66 @@ async def test_authored_set_no_solution_doc_falls_through_to_generate(db_session
     assert result.reason == "generated_no_match"
 
 
+@pytest.mark.asyncio
+async def test_generated_draft_skips_pairing_gate(db_session, monkeypatch):
+    """A generated draft has no pair to validate (no grounding spans): the
+    pairing-gate judge must NEVER be invoked for it, and the candidate must
+    flow straight to held_for_review with the authored_review provenance
+    written. Before the fix, ``validate_pair`` ran unconditionally and its
+    Phase-B faithfulness check failed-closed on the empty grounding, rejecting
+    every generated candidate outright."""
+    space = await _seed_search_space(db_session, slug="aas-genskip")
+    concept_id = await _seed_concept(db_session, search_space_id=space, slug="genskip")
+    prob_doc = await _seed_doc_with_chunk(
+        db_session,
+        space,
+        "1. A beam length L, load w. Find max moment M.",
+        title="Problems",
+    )
+    candidate = _candidate(document_id=prob_doc)
+    _patch_common_stages(monkeypatch, candidate=candidate, concept_id=concept_id)
+
+    validate_pair_calls = {"n": 0}
+
+    async def _validate_pair_spy(question, draft, *, retrieve_fn, judge_fn):  # noqa: ANN001
+        validate_pair_calls["n"] += 1
+        return PairingVerdict(paired=True, faithful=True, confidence=1.0)
+
+    # Overrides _patch_common_stages' blanket-approve mock with a call-counting one.
+    monkeypatch.setattr(orch, "validate_pair", _validate_pair_spy)
+
+    async def _find_or_generate(db, question, *, retrieve_fn, chat_fn):  # noqa: ANN001
+        spans = await retrieve_fn(question)
+        assert spans == ()
+        return _draft(source="generated")
+
+    monkeypatch.setattr(orch, "find_or_generate", _find_or_generate)
+
+    report = await run_authored_set_provisioning(
+        db_session,
+        neo=None,
+        search_space_id=space,
+        problem_document_id=prob_doc,
+        solution_document_id=None,
+        metered_chat=_FakeAuthoredMC(),
+        embed_fn=lambda _text: [0.0],
+    )
+
+    assert validate_pair_calls["n"] == 0
+    assert report.counts == {"promoted": 0, "rejected": 0, "held_for_review": 1}
+    result = report.problems[0]
+    assert result.outcome == "held_for_review"
+    assert result.review_required is True
+    assert result.reason == "generated_no_match"
+    assert result.concept_problem_id is not None
+
+    row = await db_session.get(ConceptProblem, result.concept_problem_id)
+    authored_review = row.provenance["authored_review"]
+    assert authored_review["required"] is True
+    assert authored_review["reason"] == "generated_no_match"
+    assert authored_review["ocr_draft"]["solution_source"] == "generated"
+
+
 def test_doc_is_low_conf_helper():
     from apollo.provisioning.authored_sets.orchestrator import _doc_is_low_conf
 

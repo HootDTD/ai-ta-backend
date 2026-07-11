@@ -382,22 +382,23 @@ async def _process_authored_candidate(
             conf_threshold=conf_threshold,
         )
 
-    pair_verdict = await validate_pair(
-        candidate,
-        draft,
-        retrieve_fn=retrieve_fn,
-        judge_fn=metered_chat.cheap,
-    )
-    rejection = rejection_from_verdict(pair_verdict)
-    if rejection is not None:
-        return ProblemResult(
-            label=label,
-            outcome="rejected",
-            solution_source=draft.solution_source,
-            match_method=match_method,
-            ocr_confidence=min_conf,
-            diagnostic=rejection.diagnostic,
+    if draft.solution_source == "extracted":
+        pair_verdict = await validate_pair(
+            candidate,
+            draft,
+            retrieve_fn=retrieve_fn,
+            judge_fn=metered_chat.cheap,
         )
+        rejection = rejection_from_verdict(pair_verdict)
+        if rejection is not None:
+            return ProblemResult(
+                label=label,
+                outcome="rejected",
+                solution_source=draft.solution_source,
+                match_method=match_method,
+                ocr_confidence=min_conf,
+                diagnostic=rejection.diagnostic,
+            )
 
     review_required = draft.solution_source == "generated" or bool(
         verdict and verdict.review_required
