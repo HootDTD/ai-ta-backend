@@ -94,7 +94,7 @@ async def persist_page_evidence(
     *,
     ingest_run: IngestRun,
     search_space_id: int,
-    document_id: int,
+    document_id: int | None,
     role: str,
     pages: Sequence[Any],
     conf_threshold: float = DEFAULT_CONF_THRESHOLD,
