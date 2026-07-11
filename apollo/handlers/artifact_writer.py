@@ -40,6 +40,7 @@ from apollo.grading.artifact_build import (
 from apollo.grading.composite import load_weights
 from apollo.handlers.done_grading import ShadowGradeResult
 from apollo.overseer.misconception_detector.types import MergeOutcome
+from apollo.overseer.topic_score import TopicScoreResult
 from apollo.persistence.models import ApolloSession, Clarification, GradingArtifact, ProblemAttempt
 
 _LOG = logging.getLogger(__name__)
@@ -125,6 +126,7 @@ async def write_artifacts(
     graph_failure: str | None,
     latency_ms: int | None,
     detection_outcome: MergeOutcome | None = None,
+    topic_score: TopicScoreResult | None = None,
 ) -> dict | None:
     """Write the canonical (+ paired, when both grades exist) artifact rows for
     this Done-click. ``served`` is the ``grader_used`` value of the grade
@@ -152,6 +154,14 @@ async def write_artifacts(
     that case rather than templating over a payload that never made it to
     disk.
 
+    2026-07-10 topic-score spec §2/§3: ``topic_score`` is a NEW OPT-IN
+    keyword, threaded UNCONDITIONALLY (flag-independent — the point is
+    telemetry ahead of any serving flip) into BOTH ``build_graph_artifact``
+    and ``build_llm_artifact``, so whichever payload becomes ``canonical``
+    (or ``pair``) carries the same ``scores.topic_score`` block. ``None``
+    (the default, or whenever ``done.py``'s own soft-fail wrapper returned
+    ``None``) leaves both builders' ``scores`` byte-identical to today.
+
     Own failure domain: ANY exception (payload build, DB write) is logged and
     swallowed. The artifact is telemetry — it must never cost a student their
     already-committed grade."""
@@ -166,6 +176,7 @@ async def write_artifacts(
                 weights=weights,
                 clarification_trace=clarification_trace,
                 latency_ms=latency_ms,
+                topic_score=topic_score,
             )
 
         # Lane B3a/D1 — the empty-bank fact for the LLM artifact's
@@ -190,6 +201,7 @@ async def write_artifacts(
             clarification_trace=clarification_trace,
             misconceptions_bank_empty=misconceptions_bank_empty,
             detection_outcome=detection_outcome,
+            topic_score=topic_score,
         )
 
         payloads_by_grader = {
@@ -245,9 +257,7 @@ async def write_artifacts(
                 )
                 await db.commit()
             except Exception:
-                _LOG.exception(
-                    "emergent_observation_write_failed attempt_id=%s", int(attempt.id)
-                )
+                _LOG.exception("emergent_observation_write_failed attempt_id=%s", int(attempt.id))
                 try:
                     await db.rollback()
                 except Exception:  # pragma: no cover - defensive

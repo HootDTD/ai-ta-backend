@@ -20,6 +20,12 @@ centrality map, and produces the ``MergeOutcome``:
   * ``ledger_findings`` — the docked findings with ``severity`` now filled in
     (new immutable copies), for the emergent store.
 
+Also covers the 2026-07-10 live bug fix: docked findings sharing a
+``signature`` are deduplicated (max-confidence wins) BEFORE severity/penalty
+accumulation, so an identical repeated finding docks once, not twice
+(production defect: staging session 43 / attempt 44,
+``misc.forgets_minus_sign`` appeared twice and doubled the dock).
+
 Pure module: no IO, no LLM, no DB. Every assertion below is offline.
 """
 
@@ -420,6 +426,109 @@ def test_a13_regression_node_keyed_dock_is_central():
     outcome = merge_detections((finding,), centrality=centrality)
 
     assert outcome.ceiling_applied is True
+
+
+# --------------------------------------------------------------------------- #
+# Dedup (2026-07-10 live bug fix, staging session 43 / attempt 44): two docked
+# findings sharing a ``signature`` must dock ONCE, not twice.
+# --------------------------------------------------------------------------- #
+def test_identical_duplicate_finding_docks_once_not_twice():
+    """The production defect: the SAME finding (same signature, same
+    evidence_span) appears twice in the gated set -> penalty must equal the
+    SINGLE-finding penalty, not double it.
+
+    Weights chosen so the single-instance severity (0.5 * 0.5 = 0.25) stays
+    UNDER SEVERITY_CLAMP (0.30) — without dedup, two copies would sum to 0.50
+    and clamp at 0.30, masking the fix behind the clamp (the exact production
+    shape: one error hit the 0.30 clamp when it should have docked ~0.15-0.25).
+    """
+    single = _docked(
+        concept_key="concept.gdp_identity",
+        confidence=0.5,
+        signature="misc.forgets_minus_sign",
+        evidence_span="student wrote C - I instead of C + I",
+    )
+    duplicate = _docked(
+        concept_key="concept.gdp_identity",
+        confidence=0.5,
+        signature="misc.forgets_minus_sign",
+        evidence_span="student wrote C - I instead of C + I",
+    )
+    centrality = {"concept.gdp_identity": 0.5}
+
+    single_outcome = merge_detections((single,), centrality=centrality)
+    duplicate_outcome = merge_detections((single, duplicate), centrality=centrality)
+
+    assert duplicate_outcome.misconception_penalty == pytest.approx(
+        single_outcome.misconception_penalty
+    )
+    assert duplicate_outcome.misconception_penalty == pytest.approx(0.5 * 0.5)
+    assert len(duplicate_outcome.ledger_findings) == 1
+    assert len(duplicate_outcome.misconceptions) == 1
+
+
+def test_duplicate_finding_keeps_max_confidence_instance():
+    """When two same-signature findings carry different confidences, the
+    deduped survivor is the MAX-confidence one (not the first or last).
+
+    Confidences kept low enough that 0.5 * 0.6 = 0.30 stays AT (not over) the
+    clamp, so the assertion isolates "which instance survives", not the
+    clamp math."""
+    lower = _docked(
+        concept_key="concept.gdp_identity",
+        confidence=0.4,
+        signature="misc.forgets_minus_sign",
+        evidence_span="lower-confidence phrasing",
+    )
+    higher = _docked(
+        concept_key="concept.gdp_identity",
+        confidence=0.6,
+        signature="misc.forgets_minus_sign",
+        evidence_span="higher-confidence phrasing",
+    )
+    centrality = {"concept.gdp_identity": 0.5}
+
+    outcome = merge_detections((lower, higher), centrality=centrality)
+
+    assert len(outcome.ledger_findings) == 1
+    assert outcome.ledger_findings[0].confidence == pytest.approx(0.6)
+    assert outcome.misconceptions[0]["evidence_span"] == "higher-confidence phrasing"
+    assert outcome.misconception_penalty == pytest.approx(0.5 * 0.6)
+
+
+def test_two_different_codes_both_dock():
+    """Two DIFFERENT signatures are distinct misconceptions and must BOTH
+    dock — dedup must not collapse across different codes."""
+    a = _docked(
+        concept_key="concept.a",
+        confidence=0.5,
+        signature="misc.forgets_minus_sign",
+    )
+    b = _docked(
+        concept_key="concept.b",
+        confidence=0.5,
+        signature="misc.includes_transfers",
+    )
+    centrality = {"concept.a": 0.3, "concept.b": 0.3}
+
+    outcome = merge_detections((a, b), centrality=centrality)
+
+    assert len(outcome.ledger_findings) == 2
+    assert len(outcome.misconceptions) == 2
+    keys = {row["canonical_key"] for row in outcome.misconceptions}
+    assert keys == {"misc.forgets_minus_sign", "misc.includes_transfers"}
+    assert outcome.misconception_penalty == pytest.approx(0.3 * 0.5 + 0.3 * 0.5)
+
+
+def test_dedup_does_not_mutate_input_findings():
+    """Dedup must not mutate either input finding — only ever select/replace."""
+    a = _docked(signature="misc.dup", confidence=0.5, severity=0.0)
+    b = _docked(signature="misc.dup", confidence=0.9, severity=0.0)
+
+    merge_detections((a, b), centrality={"concept.gdp_identity": 0.5})
+
+    assert a.severity == 0.0
+    assert b.severity == 0.0
 
 
 def test_a13_regression_str_concept_id_key_floors_not_central():

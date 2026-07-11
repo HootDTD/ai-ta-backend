@@ -45,6 +45,8 @@ from apollo.graph_compare.findings import Finding, FindingKind
 from apollo.handlers.done_grading import ShadowGradeResult
 from apollo.overseer.misconception_detector.apply import apply_penalty
 from apollo.overseer.misconception_detector.types import MergeOutcome
+from apollo.overseer.topic_score import TopicScoreResult
+from apollo.overseer.topic_score_serialize import serialize_topic_score
 from apollo.resolution.candidates import METHOD_CONFIDENCE_CAP
 from apollo.resolution.nli_config import active_nli_model, nli_enabled
 from apollo.resolution.result import ResolutionResult
@@ -287,6 +289,7 @@ def build_graph_artifact(
     weights: CompositeWeights,
     clarification_trace: list[dict],
     latency_ms: int | None,
+    topic_score: TopicScoreResult | None = None,
 ) -> dict:
     """Build the graph-grader artifact payload (spec §1) from an already-graded
     ``ShadowGradeResult``. Pure — reshapes ``shadow``'s frozen fields only.
@@ -297,7 +300,15 @@ def build_graph_artifact(
     artifact's ``abstention`` block (no misconceptions were assessed) — the one
     persisted JSONB slot that reaches the row and the served scorecard. On the
     seeded path (the default) NO marker key is added, so the artifact is
-    byte-identical."""
+    byte-identical.
+
+    2026-07-10 topic-score spec §3: ``topic_score`` is a NEW OPT-IN keyword —
+    ``None`` (the default) leaves ``scores`` byte-identical to today (no extra
+    key). When provided (the topic score is computed unconditionally in
+    ``done.py``, flag-independent), ``scores["topic_score"]`` is nested via
+    the shared ``topic_score_serialize.serialize_topic_score`` — the SAME
+    serializer the LLM-path builder and the served ``student_response``
+    payload use, so all three surfaces stay byte-for-byte in sync."""
     findings = shadow.audited.findings
     node_ledger = build_node_ledger(findings, shadow.resolution)
     edge_ledger = build_edge_ledger(findings)
@@ -349,6 +360,8 @@ def build_graph_artifact(
     # None otherwise) — so a flag-OFF artifact stays byte-identical.
     if shadow.audited.composite is not None:
         artifact["abstention"]["composite"] = shadow.audited.composite
+    if topic_score is not None:
+        artifact["scores"]["topic_score"] = serialize_topic_score(topic_score)
     return artifact
 
 
@@ -369,6 +382,7 @@ def build_llm_artifact(
     clarification_trace: list[dict],
     misconceptions_bank_empty: bool = False,
     detection_outcome: MergeOutcome | None = None,
+    topic_score: TopicScoreResult | None = None,
 ) -> dict:
     """Build the LLM-fallback artifact payload (spec §1/§3) from the OLD
     ``compute_coverage`` output + rubric. Coarser than the graph artifact:
@@ -423,6 +437,11 @@ def build_llm_artifact(
     ``apply.apply_penalty`` on the already-computed (pre-penalty) composite —
     the detector only ever subtracts from or ceilings the LLM-path composite;
     it never touches ``node_coverage``/``edge_coverage`` or any other input.
+
+    2026-07-10 topic-score spec §3: ``topic_score`` is a NEW OPT-IN keyword,
+    same contract as on ``build_graph_artifact`` — ``None`` (the default)
+    leaves ``scores`` byte-identical to today; a provided result nests
+    ``scores["topic_score"]`` via the shared serializer.
     """
     per_step: dict[str, str] = coverage.get("per_step") or {}
     confidences: dict[str, float] = coverage.get("confidences") or {}
@@ -509,7 +528,7 @@ def build_llm_artifact(
     if misconceptions_bank_empty:
         abstention[MISCONCEPTIONS_STATUS_KEY] = _empty_bank_misconceptions_marker()
 
-    return {
+    artifact = {
         "grader_used": GRADER_USED_LLM_FALLBACK,
         "versions": _versions_block(
             grader=_GRADER_VERSION_LLM_FALLBACK, reference_graph_hash=None, weights=weights
@@ -529,3 +548,6 @@ def build_llm_artifact(
         "abstention": abstention,
         "grading_latency_ms": latency_ms,
     }
+    if topic_score is not None:
+        artifact["scores"]["topic_score"] = serialize_topic_score(topic_score)
+    return artifact

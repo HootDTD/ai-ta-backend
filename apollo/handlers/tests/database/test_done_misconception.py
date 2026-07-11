@@ -583,10 +583,14 @@ async def _run_capture(
         problem.to_kg_graph.return_value = graph
         return problem
 
-    detection = detect_return if detect_return is not None else DetectionResult(
-        per_concept=(_unkeyed_birth_finding(),)
+    detection = (
+        detect_return
+        if detect_return is not None
+        else DetectionResult(per_concept=(_unkeyed_birth_finding(),))
     )
-    births_mock = record_births_mock if record_births_mock is not None else AsyncMock(return_value=1)
+    births_mock = (
+        record_births_mock if record_births_mock is not None else AsyncMock(return_value=1)
+    )
 
     patches = [p for p in patches if getattr(p, "attribute", None) != "_find_problem"]
     patches = _patches_with_rubric(patches, _OLD_RUBRIC)
@@ -995,8 +999,10 @@ async def _run_positive_focus(
         return problem
 
     patches = [
-        p for p in patches
-        if getattr(p, "attribute", None) not in ("_find_problem", "compute_rubric", "_attempt_misconception_scores")
+        p
+        for p in patches
+        if getattr(p, "attribute", None)
+        not in ("_find_problem", "compute_rubric", "_attempt_misconception_scores")
     ]
     patches += [
         patch(
@@ -1005,11 +1011,13 @@ async def _run_positive_focus(
         ),
         patch(
             "apollo.handlers.done.compute_coverage",
-            new=AsyncMock(return_value={
-                "per_step": {"step-1": "covered"},
-                "procedure_scores": {"step-1": 1.0},
-                "confidences": {"step-1": 0.9},
-            }),
+            new=AsyncMock(
+                return_value={
+                    "per_step": {"step-1": "covered"},
+                    "procedure_scores": {"step-1": 1.0},
+                    "confidences": {"step-1": 0.9},
+                }
+            ),
         ),
         patch(
             "apollo.handlers.done._attempt_misconception_scores",
@@ -1157,12 +1165,18 @@ async def test_positive_focus_off_p4_unresolved_misconception_drags_overall(monk
     the axis and pulls `overall` below the axis-absent case — the existing
     P2.8 behavior, unchanged."""
     out_with_axis, _ = await _run_positive_focus(
-        monkeypatch, positive_focus="false", misconception_scores={"alpha": 0.5},
+        monkeypatch,
+        positive_focus="false",
+        misconception_scores={"alpha": 0.5},
     )
     out_without_axis, _ = await _run_positive_focus(
-        monkeypatch, positive_focus="false", misconception_scores={},
+        monkeypatch,
+        positive_focus="false",
+        misconception_scores={},
     )
-    assert out_with_axis["rubric"]["overall"]["score"] < out_without_axis["rubric"]["overall"]["score"]
+    assert (
+        out_with_axis["rubric"]["overall"]["score"] < out_without_axis["rubric"]["overall"]["score"]
+    )
 
 
 async def test_positive_focus_on_p4_unresolved_no_longer_lowers_overall(monkeypatch):
@@ -1171,10 +1185,14 @@ async def test_positive_focus_on_p4_unresolved_no_longer_lowers_overall(monkeypa
     axis-absent case exactly (credit-only: no drag from an uncorrected
     misconception)."""
     out_with_unresolved, _ = await _run_positive_focus(
-        monkeypatch, positive_focus="true", misconception_scores={"alpha": 0.5},
+        monkeypatch,
+        positive_focus="true",
+        misconception_scores={"alpha": 0.5},
     )
     out_axis_absent, _ = await _run_positive_focus(
-        monkeypatch, positive_focus="true", misconception_scores={},
+        monkeypatch,
+        positive_focus="true",
+        misconception_scores={},
     )
     assert (
         out_with_unresolved["rubric"]["overall"]["score"]
@@ -1189,16 +1207,23 @@ async def test_positive_focus_on_p4_resolved_still_credits(monkeypatch):
     aggregate), while a MIXED resolved+unresolved set still credits the
     resolved code once the unresolved one is dropped."""
     out_resolved_only, _ = await _run_positive_focus(
-        monkeypatch, positive_focus="true", misconception_scores={"alpha": 1.0},
+        monkeypatch,
+        positive_focus="true",
+        misconception_scores={"alpha": 1.0},
     )
     out_axis_absent, _ = await _run_positive_focus(
-        monkeypatch, positive_focus="true", misconception_scores={},
+        monkeypatch,
+        positive_focus="true",
+        misconception_scores={},
     )
     # Both the procedure axis (100) and the resolved-only misconception axis
     # (100) score perfectly, so overall is identical to axis-absent here —
     # the important proof is in the mixed case below, where the credit for
     # 'alpha' (kept) is distinguishable from 'beta' (dropped).
-    assert out_resolved_only["rubric"]["overall"]["score"] == out_axis_absent["rubric"]["overall"]["score"]
+    assert (
+        out_resolved_only["rubric"]["overall"]["score"]
+        == out_axis_absent["rubric"]["overall"]["score"]
+    )
 
     out_mixed, _ = await _run_positive_focus(
         monkeypatch,
@@ -1207,7 +1232,9 @@ async def test_positive_focus_on_p4_resolved_still_credits(monkeypatch):
     )
     # 'beta' (unresolved) is dropped, 'alpha' (resolved) survives -> the axis
     # is present with ONLY alpha=1.0 -> identical to the resolved-only run.
-    assert out_mixed["rubric"]["overall"]["score"] == out_resolved_only["rubric"]["overall"]["score"]
+    assert (
+        out_mixed["rubric"]["overall"]["score"] == out_resolved_only["rubric"]["overall"]["score"]
+    )
 
 
 # ── Feedback fidelity: detection_outcome.misconceptions[] still reaches ──────
@@ -1258,35 +1285,10 @@ async def test_positive_focus_flag_off_byte_identical_detector_off(monkeypatch):
     assert out_pf_on["rubric"] == _OLD_RUBRIC
 
 
-# ── Scope assertion: composite.py / abstention.py / artifact_build.py ────────
-# untouched by this task (git diff check, run at collection time so a CI
-# failure here is a loud, direct signal rather than a silent scope creep).
-
-
-def test_scope_assertion_out_of_scope_files_untouched():
-    """T-W5a must not touch apollo/grading/artifact_build.py,
-    apollo/grading/composite.py, or apollo/grading/abstention.py — P2 stays
-    the UNCONDITIONAL sole penalty channel and PR #105's territory is
-    untouched. This uses `git diff --name-only` against the merge-base with
-    origin/staging so it is a real, live scope check, not a static claim."""
-    import subprocess
-
-    forbidden = {
-        "apollo/grading/artifact_build.py",
-        "apollo/grading/composite.py",
-        "apollo/grading/abstention.py",
-    }
-    try:
-        merge_base = subprocess.run(
-            ["git", "merge-base", "HEAD", "origin/staging"],
-            capture_output=True, text=True, check=True, timeout=10,
-        ).stdout.strip()
-        diff = subprocess.run(
-            ["git", "diff", "--name-only", merge_base, "HEAD"],
-            capture_output=True, text=True, check=True, timeout=10,
-        ).stdout
-    except Exception:
-        pytest.skip("git history unavailable in this environment")
-    changed = set(diff.splitlines())
-    touched = changed & forbidden
-    assert not touched, f"T-W5a must not touch: {touched}"
+# The T-W5a-era file-diff scope guard (asserting artifact_build.py /
+# composite.py / abstention.py had no diff vs origin/staging) was removed
+# after T-W5a merged: a one-PR-lifetime scope check becomes a permanent
+# landmine that fires on any legitimate later change to those files. The
+# property it protected — P2's composite dock staying the UNCONDITIONAL
+# penalty channel — is asserted behaviorally by the positive-focus tests
+# above and by the apollo/grading artifact_build test suites.

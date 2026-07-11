@@ -122,6 +122,32 @@ def grader_positive_focus_enabled() -> bool:
     return os.environ.get(POSITIVE_FOCUS_FLAG_ENV, "").strip().lower() in _TRUTHY
 
 
+# Topic-score serving (2026-07-10 design spec
+# docs/superpowers/specs/2026-07-10-apollo-topic-score-design.md, §3).
+# SEPARATE flag from every flag above: it gates only whether the deterministic
+# `apollo.overseer.topic_score.compute_topic_score` result is SERVED to the
+# student (`student_response["rubric"]["overall"]` replaced + a new
+# `student_response["topics"]` key) and whether the topic-grounded narrative
+# replaces the axis-narration prompt. The score itself is ALWAYS computed (flag-
+# independent) and always written into the canonical artifact's
+# `scores.topic_score` block, so staging gets telemetry before any flip.
+# Default OFF everywhere: when OFF, `handle_done`'s served payload and the
+# diagnostic-narrative prompt are byte-identical to today.
+TOPIC_SCORE_SERVED_FLAG_ENV: str = "APOLLO_TOPIC_SCORE_SERVED"
+
+
+def topic_score_served_enabled() -> bool:
+    """True iff ``APOLLO_TOPIC_SCORE_SERVED`` is set to a truthy value
+    (default OFF).
+
+    Read at call time (never cached), same ``_TRUTHY`` set as
+    ``detector_enabled``. Independent of every other flag in this module: it
+    only decides whether the ALREADY-COMPUTED topic score replaces the served
+    rubric/narrative — never whether the detector or the score itself runs.
+    """
+    return os.environ.get(TOPIC_SCORE_SERVED_FLAG_ENV, "").strip().lower() in _TRUTHY
+
+
 def trace_path() -> str:
     """Filesystem path ``trace.emit_traces`` appends JSONL to.
 

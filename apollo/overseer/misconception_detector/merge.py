@@ -33,6 +33,18 @@ outcome into an adjusted composite/rubric. It takes the GATE-cleared findings
     ``severity`` (filled via a NEW immutable copy; the input finding is never
     mutated), for the emergent store to persist.
 
+Dedup (2026-07-10 live bug fix, staging session 43 / attempt 44): before any
+penalty accumulation, docked findings are deduplicated by ``signature`` (the
+artifact's ``canonical_key`` -- see ``_keyed_row``), keeping the MAX-confidence
+instance per signature. Production observed the SAME finding
+(``misc.forgets_minus_sign``, same ``evidence_span``) appear twice in one
+attempt's gated set, doubling its severity into ``SEVERITY_CLAMP`` when a
+single dock should have applied. This is a flag-independent behavior change
+(one error, one dock) -- no new flag is introduced; see
+``docs/superpowers/specs/2026-07-10-apollo-topic-score-design.md`` section 2,
+which calls it out explicitly as intentionally not byte-identical to prior
+flag-off behavior.
+
 Pure module: no IO, no LLM, no DB. Immutable throughout — returns a new
 ``MergeOutcome`` and never mutates the input findings or centrality map.
 """
@@ -67,6 +79,9 @@ def merge_detections(
     Args:
         gated: docked findings from ``gate.py`` (``verdict="misconception"``,
             ``corroborated=True``). An empty tuple yields the empty outcome.
+            Findings sharing a ``signature`` are deduplicated (max-confidence
+            wins) before severity/penalty accumulation — see
+            ``_dedup_by_signature``.
         centrality: ``{concept_key: 0..1}`` from ``centrality.py``. A finding on
             a concept absent here weights at ``CENTRALITY_W_MIN``.
         clamp: max total penalty (defaults to ``SEVERITY_CLAMP``).
@@ -93,7 +108,9 @@ def merge_detections(
             ledger_findings=(),
         )
 
-    ledger_findings = tuple(_with_severity(f, _severity_for(f, centrality)) for f in docked)
+    deduped = _dedup_by_signature(docked)
+
+    ledger_findings = tuple(_with_severity(f, _severity_for(f, centrality)) for f in deduped)
 
     total_severity = sum(f.severity for f in ledger_findings)
     penalty = min(clamp, total_severity)
@@ -108,6 +125,32 @@ def merge_detections(
         ceiling_applied=ceiling_applied,
         ledger_findings=ledger_findings,
     )
+
+
+def _dedup_by_signature(
+    findings: tuple[ConceptFinding, ...],
+) -> tuple[ConceptFinding, ...]:
+    """Collapse docked findings that share a ``signature`` to ONE instance,
+    keeping the max-confidence one (2026-07-10 live bug fix).
+
+    ``signature`` is the same field ``_keyed_row`` copies verbatim into the
+    artifact row's ``canonical_key`` (bare ``misc.<code>``) or the
+    ``unkeyed:<concept_id>`` placeholder — the identity a repeated detector
+    finding shares when it names the same misconception twice in one attempt
+    (production case: two ``misc.forgets_minus_sign`` rows, same
+    ``evidence_span``, doubling the dock). Order of first appearance is
+    preserved for determinism; does not mutate any input finding.
+    """
+    best_by_signature: dict[str, ConceptFinding] = {}
+    for finding in findings:
+        current = best_by_signature.get(finding.signature)
+        if current is None or finding.confidence > current.confidence:
+            # dict insertion order tracks FIRST assignment of a key, so a
+            # later same-signature finding (even the winning higher-
+            # confidence one) does not reorder its slot — first-appearance
+            # order is preserved without a second pass.
+            best_by_signature[finding.signature] = finding
+    return tuple(best_by_signature.values())
 
 
 def _severity_for(finding: ConceptFinding, centrality: dict[str, float]) -> float:
