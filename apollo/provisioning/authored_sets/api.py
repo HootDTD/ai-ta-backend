@@ -462,19 +462,94 @@ async def get_authored_set(
         raise HTTPException(status_code=404, detail="authored set not found")
     await require_course_teacher(db=db, auth=auth, search_space_id=int(row.search_space_id))
     ingest_run, pages = await _load_ingest_evidence(db, row.problem_document_id, full_ocr=full_ocr)
+    summary: dict = dict(row.result_summary or {})
+    if isinstance(summary.get("problems"), list):
+        summary["problems"] = await _enrich_problem_reviews(db, summary["problems"])
     return {
         "set_id": int(row.id),
         "set_index": row.set_index,
         "status": row.status,
         "problem_document_id": row.problem_document_id,
         "solution_document_id": row.solution_document_id,
-        "result_summary": row.result_summary or {},
+        "result_summary": summary,
         # WU-AAS observability: the ingest run + per-page OCR evidence so the S2
         # audit consumes REAL inputs (page_ref, ocr text, confidence,
         # verify_path_fired) instead of thin/absent ones.
         "ingest_run": ingest_run,
         "pages": pages,
     }
+
+
+# The stored draft dicts (``ReferenceSolutionDraft.model_dump()``) carry grounding
+# spans (raw chunk text) and internal provenance; the review surface exposes ONLY
+# what the teacher must read to decide — the draft's nature and its steps.
+_REVIEW_DRAFT_KEYS = ("solution_source", "reference_solution")
+
+
+def _trim_review_draft(draft: object) -> dict | None:
+    if not isinstance(draft, dict):
+        return None
+    return {key: draft.get(key) for key in _REVIEW_DRAFT_KEYS}
+
+
+def _review_dict(provenance: dict | None) -> dict | None:
+    """Whitelisted ``provenance["authored_review"]`` projection for the GET
+    surface: the CURRENT hold state (``required`` flips false on approval, so the
+    UI can recompute counts instead of trusting the frozen ``result_summary``)
+    plus, only while the hold is active, the trimmed stored draft(s) the teacher
+    is choosing between. Nothing else in provenance leaks into the response."""
+    review = (provenance or {}).get("authored_review")
+    if not isinstance(review, dict):
+        return None
+    out: dict = {
+        "required": bool(review.get("required")),
+        "reason": review.get("reason"),
+        "approved_reference": review.get("approved_reference"),
+    }
+    if out["required"]:
+        out["ocr_draft"] = _trim_review_draft(review.get("ocr_draft"))
+        out["generated_alt"] = _trim_review_draft(review.get("generated_alt"))
+    return out
+
+
+async def _enrich_problem_reviews(db: AsyncSession, problems: list) -> list:
+    """Join each ``result_summary`` problem entry against its live
+    ``ConceptProblem`` row, adding ``problem_text`` (capped to
+    ``_LIST_OCR_TEXT_CAP`` with a ``problem_text_truncated`` flag — same size
+    discipline as the page evidence) and the whitelisted ``review`` projection.
+    Entries with no ``concept_problem_id`` (or whose row has since been deleted)
+    pass through unchanged, so pre-enrichment sets keep their old shape."""
+    ids = [
+        int(p["concept_problem_id"])
+        for p in problems
+        if isinstance(p, dict) and p.get("concept_problem_id") is not None
+    ]
+    rows: dict[int, ConceptProblem] = {}
+    if ids:
+        rows = {
+            int(r.id): r
+            for r in (
+                await db.execute(select(ConceptProblem).where(ConceptProblem.id.in_(ids)))
+            ).scalars()
+        }
+    enriched: list = []
+    for problem in problems:
+        cp_id = problem.get("concept_problem_id") if isinstance(problem, dict) else None
+        row = rows.get(int(cp_id)) if cp_id is not None else None
+        if row is None:
+            enriched.append(problem)
+            continue
+        text = str((row.payload or {}).get("problem_text") or "")  # type: ignore[union-attr]
+        truncated = len(text) > _LIST_OCR_TEXT_CAP
+        enriched.append(
+            {
+                **problem,
+                "problem_text": text[:_LIST_OCR_TEXT_CAP] if truncated else text,
+                "problem_text_truncated": truncated,
+                "review": _review_dict(row.provenance),  # type: ignore[arg-type]
+            }
+        )
+    return enriched
 
 
 async def _load_ingest_evidence(
