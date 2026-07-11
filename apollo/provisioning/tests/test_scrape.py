@@ -31,6 +31,7 @@ from apollo.provisioning.scrape import (
     CandidateQuestion,
     ScrapeResult,
     _normalize,
+    _split_oversized_sections,
     chunk_content_hash,
     resolve_or_create_provisional_concept,
     scrape_document,
@@ -38,7 +39,7 @@ from apollo.provisioning.scrape import (
     scrape_section,
     write_tier1_problems,
 )
-from apollo.provisioning.section_grouping import Section
+from apollo.provisioning.section_grouping import Section, group_into_sections
 from database.models import SearchSpace
 
 # pytest.ini sets asyncio_mode = auto.
@@ -615,6 +616,43 @@ def test_scrape_document_page_splits_any_oversized_section():
     )
 
     assert scrape_calls == ["short body", "A" * 1400, "B" * 1400]
+
+
+def test_split_oversized_section_aggregates_rows_and_windows_a_single_large_page():
+    """Rows from one page stay together before an over-cap page falls back to
+    overlapping character windows; a following small page remains intact."""
+
+    @dataclass
+    class _Row:
+        id: int
+        content: str
+        page_number: int
+        chunk_type: str = "body"
+        document_id: int = 5
+        section_path: str | None = None
+
+    rows = [
+        _Row(id=1, content="A" * 70, page_number=1),
+        _Row(id=2, content="B" * 70, page_number=1),
+        _Row(id=3, content="C" * 20, page_number=2),
+    ]
+    sections = group_into_sections(rows)
+
+    windows = _split_oversized_sections(sections, rows, char_cap=100)
+
+    assert [len(window.text) for window in windows] == [100, 66, 20]
+    assert [(window.page_start, window.page_end) for window in windows] == [
+        (1, 1),
+        (1, 1),
+        (2, 2),
+    ]
+    assert [window.member_chunk_ids for window in windows] == [(1, 2), (1, 2), (3,)]
+
+
+def test_split_oversized_sections_disabled_returns_original_sections():
+    section = _section(text="A" * 100)
+
+    assert _split_oversized_sections([section], [], char_cap=0) == [section]
 
 
 # --------------------------------------------------------------------------- #

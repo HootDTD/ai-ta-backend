@@ -15,7 +15,7 @@ from knowledge.teacher_pdf_ingestion import (
 from ocr.provider import OCRBlock, OCRResult
 
 
-def _native_text_block(text: str, *, size: float = 12.0, flags: int = 0) -> dict:
+def _native_text_block(text: str, *, size: float | str = 12.0, flags: int | str = 0) -> dict:
     return {
         "type": 0,
         "bbox": [0.0, 0.0, 500.0, 20.0],
@@ -140,7 +140,9 @@ def test_mgmt_body_size_numbered_headers_group_without_promoting_sample_question
                 _native_text_block(
                     "1. The standardization and distribution of shared culture is referred to as massification."
                 ),
-                _native_text_block("Answer: Massification describes the spread of standardized culture."),
+                _native_text_block(
+                    "Answer: Massification describes the spread of standardized culture."
+                ),
                 _native_text_block("2) Which perspective emphasizes social choices?"),
                 _native_text_block("- Social construction of technology."),
                 _native_text_block("3. Shared standardized culture is called massification."),
@@ -197,3 +199,45 @@ def test_existing_large_font_heading_detection_is_unchanged():
         _NativePage([_native_text_block("Course Overview", size=14.0)])
     )
     assert blocks[0].chunk_type == "heading"
+
+
+def test_malformed_font_metadata_falls_back_to_plain_body_text():
+    ingestor = TeacherPDFIngestor()
+
+    blocks, _, _ = ingestor._extract_native_page(
+        _NativePage(
+            [_native_text_block("Metadata-free body text", size="unknown", flags="unknown")]
+        )
+    )
+
+    assert blocks == [
+        NativeBlock(
+            text="Metadata-free body text",
+            bbox=[0.0, 0.0, 500.0, 20.0],
+            font_size=0.0,
+            chunk_type="body",
+        )
+    ]
+
+
+def test_strong_numbered_heading_ends_sample_question_context():
+    ingestor = TeacherPDFIngestor()
+
+    blocks, _, _ = ingestor._extract_native_page(
+        _NativePage(
+            [
+                _native_text_block("Sample Questions"),
+                _native_text_block("1. Brief prompt"),
+                _native_text_block("- Supporting choice"),
+                _native_text_block("2. Strategy", flags=16),
+                _native_text_block("Discussion of strategic frameworks."),
+                _native_text_block("3. Next Topic"),
+                _native_text_block("Ordinary body text."),
+            ]
+        )
+    )
+
+    chunk_types = {block.text: block.chunk_type for block in blocks}
+    assert chunk_types["1. Brief prompt"] == "body"
+    assert chunk_types["2. Strategy"] == "heading"
+    assert chunk_types["3. Next Topic"] == "heading"
