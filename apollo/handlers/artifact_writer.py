@@ -257,9 +257,7 @@ async def write_artifacts(
                 )
                 await db.commit()
             except Exception:
-                _LOG.exception(
-                    "emergent_observation_write_failed attempt_id=%s", int(attempt.id)
-                )
+                _LOG.exception("emergent_observation_write_failed attempt_id=%s", int(attempt.id))
                 try:
                     await db.rollback()
                 except Exception:  # pragma: no cover - defensive

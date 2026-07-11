@@ -6,12 +6,14 @@ else score-related invented."""
 
 from __future__ import annotations
 
+import dataclasses
+
 from apollo.overseer.topic_narrative import build_topic_narrative_prompt
 from apollo.overseer.topic_score import TopicCredit, TopicMisconception, TopicScoreResult
 
 
-def _result(**overrides) -> TopicScoreResult:
-    kwargs = dict(
+def _result(**overrides: object) -> TopicScoreResult:
+    base = TopicScoreResult(
         score=72,
         letter="B-",
         coverage_component=0.8,
@@ -50,8 +52,7 @@ def _result(**overrides) -> TopicScoreResult:
             ),
         ),
     )
-    kwargs.update(overrides)
-    return TopicScoreResult(**kwargs)
+    return dataclasses.replace(base, **overrides)  # type: ignore[arg-type]
 
 
 def test_prompt_contains_every_topic_canonical_key():

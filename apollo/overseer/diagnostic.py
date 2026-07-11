@@ -14,12 +14,13 @@ in the narrative is traceable to a topic/misconception the deterministic
 ledger actually holds (kills the axis path's hallucination class). Flag OFF
 (or no ``topic_score`` argument) leaves this function's prompt/output
 byte-identical to today."""
+
 from __future__ import annotations
 
 import json
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any
 
 from openai import OpenAI
 
@@ -58,10 +59,10 @@ physics beyond what the reference solution and coverage tell you."""
 
 def generate_diagnostic(
     *,
-    coverage: Dict[str, Any],
-    reference_steps: List[Dict[str, Any]],
+    coverage: dict[str, Any],
+    reference_steps: list[dict[str, Any]],
     problem_text: str,
-    rubric: Dict[str, Any],
+    rubric: dict[str, Any],
     model: str | None = None,
     topic_score: TopicScoreResult | None = None,
 ) -> str:
@@ -114,16 +115,14 @@ def generate_diagnostic(
         narrative = resp.choices[0].message.content or ""
     except Exception as exc:  # noqa: BLE001
         _LOG.warning("diagnostic LLM soft-fail: %s", exc)
-        narrative = (
-            "[Diagnostic narrative unavailable — the grade above is still accurate.]"
-        )
+        narrative = "[Diagnostic narrative unavailable — the grade above is still accurate.]"
 
     narrative = _append_misconception_line(narrative, rubric)
     narrative = _append_negotiation_line(narrative, coverage)
     return narrative
 
 
-def _append_negotiation_line(narrative: str, coverage: Dict[str, Any]) -> str:
+def _append_negotiation_line(narrative: str, coverage: dict[str, Any]) -> str:
     """Append a one-line summary of how many KG entries the student
     negotiated.
 
@@ -154,16 +153,13 @@ def _append_negotiation_line(narrative: str, coverage: Dict[str, Any]) -> str:
         parts.append(f"{disputed} disputed")
     breakdown = ", ".join(parts)
 
-    line = (
-        f"You negotiated {total} entr{'y' if total == 1 else 'ies'} with "
-        f"Apollo: {breakdown}."
-    )
+    line = f"You negotiated {total} entr{'y' if total == 1 else 'ies'} with Apollo: {breakdown}."
     if narrative and not narrative.endswith("\n"):
         narrative += "\n\n"
     return narrative + line
 
 
-def _append_misconception_line(narrative: str, rubric: Dict[str, Any]) -> str:
+def _append_misconception_line(narrative: str, rubric: dict[str, Any]) -> str:
     """Append a deterministic one-liner about misconceptions navigated.
 
     Class 2 Phase 2 (P2.9). Visible to the student only when at least

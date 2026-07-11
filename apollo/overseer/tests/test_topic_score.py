@@ -171,7 +171,10 @@ def test_full_credit_when_covered():
     coverage = {"per_step": {"eq1": "covered"}, "procedure_scores": {}}
 
     result = compute_topic_score(
-        coverage=coverage, reference_nodes=refs, centrality={"eq1": 1.0}, detection_outcome=None,
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"eq1": 1.0},
+        detection_outcome=None,
     )
 
     assert len(result.topics) == 1
@@ -189,7 +192,10 @@ def test_partial_credit_from_procedure_scores():
     coverage = {"per_step": {"p1": "missing"}, "procedure_scores": {"p1": 0.6}}
 
     result = compute_topic_score(
-        coverage=coverage, reference_nodes=refs, centrality={"p1": 1.0}, detection_outcome=None,
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"p1": 1.0},
+        detection_outcome=None,
     )
 
     topic = result.topics[0]
@@ -206,7 +212,10 @@ def test_partial_credit_zero_is_missing_not_partial():
     coverage = {"per_step": {"p1": "missing"}, "procedure_scores": {"p1": 0.0}}
 
     result = compute_topic_score(
-        coverage=coverage, reference_nodes=refs, centrality={"p1": 1.0}, detection_outcome=None,
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"p1": 1.0},
+        detection_outcome=None,
     )
 
     topic = result.topics[0]
@@ -219,7 +228,10 @@ def test_missing_credit_when_absent_from_both_maps():
     coverage = {"per_step": {}, "procedure_scores": {}}
 
     result = compute_topic_score(
-        coverage=coverage, reference_nodes=refs, centrality={"c1": 1.0}, detection_outcome=None,
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"c1": 1.0},
+        detection_outcome=None,
     )
 
     topic = result.topics[0]
@@ -236,7 +248,10 @@ def test_malformed_procedure_score_coerces_to_zero():
     coverage = {"per_step": {"p1": "missing"}, "procedure_scores": {"p1": float("nan")}}
 
     result = compute_topic_score(
-        coverage=coverage, reference_nodes=refs, centrality={"p1": 1.0}, detection_outcome=None,
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"p1": 1.0},
+        detection_outcome=None,
     )
 
     topic = result.topics[0]
@@ -305,7 +320,10 @@ def test_single_topic_weight_is_one():
     coverage = {"per_step": {"a": "covered"}, "procedure_scores": {}}
 
     result = compute_topic_score(
-        coverage=coverage, reference_nodes=refs, centrality={"a": 0.37}, detection_outcome=None,
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"a": 0.37},
+        detection_outcome=None,
     )
 
     assert result.topics[0].weight == pytest.approx(1.0)
@@ -319,7 +337,10 @@ def test_detection_outcome_none_docks_zero():
     coverage = {"per_step": {"a": "covered"}, "procedure_scores": {}}
 
     result = compute_topic_score(
-        coverage=coverage, reference_nodes=refs, centrality={"a": 1.0}, detection_outcome=None,
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"a": 1.0},
+        detection_outcome=None,
     )
 
     assert result.misconception_dock == 0.0
@@ -570,7 +591,10 @@ def test_band_mapping_matches_rubric_letter_bands(credit, expected_score, expect
     coverage = {"per_step": {"p1": "missing"}, "procedure_scores": {"p1": credit}}
 
     result = compute_topic_score(
-        coverage=coverage, reference_nodes=refs, centrality={"p1": 1.0}, detection_outcome=None,
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"p1": 1.0},
+        detection_outcome=None,
     )
 
     assert result.score == expected_score
@@ -629,20 +653,31 @@ def test_mixed_topics_full_partial_missing_with_dock():
 # --------------------------------------------------------------------------- #
 def test_dataclasses_are_frozen():
     misc = TopicMisconception(
-        canonical_key="misc.x", resolved=False, dock_points=0.1, evidence_span=None,
+        canonical_key="misc.x",
+        resolved=False,
+        dock_points=0.1,
+        evidence_span=None,
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         misc.dock_points = 0.5  # type: ignore[misc]
 
     credit = TopicCredit(
-        canonical_key="a", display_name=None, credit=1.0, status="covered",
-        weight=1.0, misconceptions=(),
+        canonical_key="a",
+        display_name=None,
+        credit=1.0,
+        status="covered",
+        weight=1.0,
+        misconceptions=(),
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         credit.credit = 0.5  # type: ignore[misc]
 
     result = TopicScoreResult(
-        score=100, letter="A+", coverage_component=1.0, misconception_dock=0.0, topics=(),
+        score=100,
+        letter="A+",
+        coverage_component=1.0,
+        misconception_dock=0.0,
+        topics=(),
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         result.score = 0  # type: ignore[misc]
@@ -682,19 +717,37 @@ def test_dedup_keeps_first_when_later_confidence_not_greater():
     arm: a later duplicate with EQUAL or LOWER confidence does not replace
     the kept instance."""
     first = ConceptFinding(
-        concept_key="a", verdict="misconception", confidence=0.5, severity=0.0,
-        evidence_span="first", signature="misc.dup", source="judge",
-        corroborated=True, ceiling_eligible=False,
+        concept_key="a",
+        verdict="misconception",
+        confidence=0.5,
+        severity=0.0,
+        evidence_span="first",
+        signature="misc.dup",
+        source="judge",
+        corroborated=True,
+        ceiling_eligible=False,
     )
     same_confidence = ConceptFinding(
-        concept_key="a", verdict="misconception", confidence=0.5, severity=0.0,
-        evidence_span="second", signature="misc.dup", source="judge",
-        corroborated=True, ceiling_eligible=False,
+        concept_key="a",
+        verdict="misconception",
+        confidence=0.5,
+        severity=0.0,
+        evidence_span="second",
+        signature="misc.dup",
+        source="judge",
+        corroborated=True,
+        ceiling_eligible=False,
     )
     lower_confidence = ConceptFinding(
-        concept_key="a", verdict="misconception", confidence=0.2, severity=0.0,
-        evidence_span="third", signature="misc.dup", source="judge",
-        corroborated=True, ceiling_eligible=False,
+        concept_key="a",
+        verdict="misconception",
+        confidence=0.2,
+        severity=0.0,
+        evidence_span="third",
+        signature="misc.dup",
+        source="judge",
+        corroborated=True,
+        ceiling_eligible=False,
     )
 
     result = _dedup_findings_by_canonical_key((first, same_confidence, lower_confidence))

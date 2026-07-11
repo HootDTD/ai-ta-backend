@@ -149,7 +149,9 @@ def _weights_for(node_ids: list[str], centrality: dict[str, float]) -> dict[str,
     """
     if not node_ids:
         return {}
-    floored = {nid: max(CENTRALITY_W_MIN, centrality.get(nid, CENTRALITY_W_MIN)) for nid in node_ids}
+    floored = {
+        nid: max(CENTRALITY_W_MIN, centrality.get(nid, CENTRALITY_W_MIN)) for nid in node_ids
+    }
     total = sum(floored.values())
     if total <= 0.0:  # pragma: no cover - defensive
         # CENTRALITY_W_MIN > 0 in every real configuration, so this only
