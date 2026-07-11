@@ -229,10 +229,10 @@ class AuthoredSet(Base):
 
 class Misconception(Base):
     """Per-concept misconception bank backing the misconception-inference
-    channel. See migration 019. The description_embedding column is the
-    pgvector field used at retrieval; SQLAlchemy stores it as the raw
-    Postgres vector type — the runtime queries it via raw SQL because
-    pgvector's SQLAlchemy adapter isn't a hard dep here."""
+    channel. See migration 019. description_embedding (vector(3072) on
+    Postgres) is NOT declared as a Column here — SQLAlchemy has no built-in
+    pgvector adapter, so the seeder + runtime read/write it via raw SQL
+    instead; this model intentionally omits it."""
 
     __tablename__ = "apollo_misconceptions"
 
@@ -241,15 +241,15 @@ class Misconception(Base):
                         nullable=False, index=True)
     code = Column(Text, nullable=False)
     description = Column(Text, nullable=False)
-    # description_embedding is vector(3072) on Postgres. SQLAlchemy doesn't
-    # have a built-in adapter; the seeder + runtime use raw SQL for
-    # this column. Modeling it here keeps the metadata table-mapping
-    # complete for tests that introspect the schema.
     confusion_pair_a = Column(Text, nullable=True)
     confusion_pair_b = Column(Text, nullable=True)
     trigger_phrases = Column(_JSONType, nullable=False, default=list)
     probe_question = Column(Text, nullable=False)
     rt_steps = Column(_JSONType, nullable=False, default=list)
+    # F-struct (migration 038): canonical entity_key of the reference node this
+    # misconception opposes (e.g. "def.real_basis"), or NULL. Read by the
+    # structural co-key gate path.
+    opposes = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
@@ -989,6 +989,12 @@ class MisconceptionObservation(Base):
     confidence = Column(Float, nullable=True)
     opposes = Column(Text, nullable=True)
     evidence_span = Column(Text, nullable=True)
+    # 'grading_artifact' (role=canonical Done-grade ledger feed, unchanged) |
+    # 'detector_unkeyed' (emergent-map birth signal — judge confidently wrong
+    # at a keyed reference node it cannot name) | 'clarification_refuted'
+    # (emergent-map upgrade signal — a clarification rescore confirms the
+    # misconception). Domain enforced by ck_misconception_obs_source
+    # (migration 040; emergent-map design 2026-07-10 §5.3/§5.4).
     source = Column(Text, nullable=False, server_default=text("'grading_artifact'"),
                     default="grading_artifact")
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))

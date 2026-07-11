@@ -117,3 +117,45 @@ async def test_pg_write_idempotent_and_promotes(db_session):
     )
     keys = {m["key"] for m in promoted["misconceptions"]}
     assert keys == {"misc.sign"}
+
+
+@pytest.mark.asyncio
+async def test_pg_record_observation_idempotent_and_new_sources(db_session):
+    """T6: the new single-row write path against real Postgres, for both new
+    source values (the capture seams' write path)."""
+    space_id, concept_id, sess_id, attempt_id = await _seed(db_session, slug="emg-obs")
+
+    n1 = await store.record_observation(
+        db_session,
+        search_space_id=space_id,
+        concept_id=concept_id,
+        user_id=TEST_USER_ID,
+        attempt_id=attempt_id,
+        signature="emergent.def.real_basis",
+        confidence=0.8,
+        opposes="def.real_basis",
+        evidence_span="span",
+        source="detector_unkeyed",
+    )
+    n1_again = await store.record_observation(
+        db_session,
+        search_space_id=space_id,
+        concept_id=concept_id,
+        user_id=TEST_USER_ID,
+        attempt_id=attempt_id,
+        signature="emergent.def.real_basis",
+        confidence=0.8,
+        opposes="def.real_basis",
+        evidence_span="span",
+        source="detector_unkeyed",
+    )
+    await db_session.commit()
+
+    assert n1 == 1
+    assert n1_again == 0
+
+    aggs = await store.aggregate_signatures(
+        db_session, search_space_id=space_id, concept_id=concept_id
+    )
+    assert len(aggs) == 1
+    assert aggs[0].signature == "emergent.def.real_basis"

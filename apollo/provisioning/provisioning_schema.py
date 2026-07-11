@@ -78,6 +78,9 @@ def build_solution_schema() -> dict:
                             # open per-type dict (Pydantic validates the inner shape).
                             "content": {"type": "object"},
                             "depends_on": {"type": "array", "items": {"type": "string"}},
+                            # F-struct: authored canonical entity key (nullable —
+                            # ReferenceStep.entity_key defaults to None).
+                            "entity_key": {"type": ["string", "null"]},
                         },
                     },
                 },

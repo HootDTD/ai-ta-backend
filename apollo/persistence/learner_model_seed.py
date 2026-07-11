@@ -200,10 +200,32 @@ def symbols_to_entities(symbols: dict, normalization: dict) -> list[EntitySpec]:
 # ---------------------------------------------------------------------------
 
 
+def derive_entity_key(entry_type: str, node_id: str) -> str | None:
+    """Pure, never-raising entity_key derivation (emergent-map design §5.1).
+
+    Returns ``f"{prefix}.{node_id}"`` for an ``entry_type`` present in the
+    frozen ``_ENTRY_TYPE_TO_KIND_PREFIX`` mint map, else ``None`` for an
+    unknown/unrecognized entry_type (guard — never raises).
+    """
+    entry = _ENTRY_TYPE_TO_KIND_PREFIX.get(entry_type)
+    if entry is None:
+        return None
+    _kind, prefix = entry
+    return f"{prefix}.{node_id}"
+
+
 def _entity_key_for_step(step: dict) -> str:
+    """Delegates to ``derive_entity_key`` for known entry types.
+
+    Behavior unchanged for every existing caller (all pass a known
+    ``entry_type``): raises ``KeyError`` via the same mint-map lookup for an
+    unrecognized ``entry_type`` rather than silently returning ``None`` —
+    those callers rely on a definite ``str`` result.
+    """
     entry_type = step["entry_type"]
-    _kind, prefix = _ENTRY_TYPE_TO_KIND_PREFIX[entry_type]
-    return f"{prefix}.{step['id']}"
+    if entry_type not in _ENTRY_TYPE_TO_KIND_PREFIX:
+        raise KeyError(entry_type)
+    return derive_entity_key(entry_type, step["id"])  # type: ignore[return-value]
 
 
 def reference_solution_to_entities(problem: dict) -> list[EntitySpec]:

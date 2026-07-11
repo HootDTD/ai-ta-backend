@@ -74,8 +74,47 @@ RECENCY_HALFLIFE_DAYS: float = _float_env("APOLLO_EMERGENT_RECENCY_HALFLIFE_DAYS
 # per-concept bucket keyed with this prefix; they NEVER promote (memo §4 / OQ1).
 UNKEYED_PREFIX: str = "unkeyed:"
 
+# Emergent misconception MAP flags (2026-07-10 design, Q1 — split adopted).
+# Two new, independent, call-time-read flags — both default OFF — mirroring
+# the detector's `detector_enabled`/`struct_cokey_enabled` sub-flag convention
+# (apollo/overseer/misconception_detector/config.py). The legacy
+# `APOLLO_EMERGENT_MISCONCEPTIONS` flag above is UNTOUCHED: it keeps gating the
+# increment-1 artifact-derived ledger feed (record_observations_from_canonical)
+# and the promoted-emergent read in candidate_assembly. The new flags gate the
+# increment-2 map's OWN seams:
+#
+#   * APOLLO_EMERGENT_MAP_CAPTURE — the two new write seams (detector-unkeyed
+#     birth + clarification-refuted) and eager tau_project materialization.
+#     Lets staging observe the ledger + the :Canon map with zero grade effect.
+#   * APOLLO_EMERGENT_MAP_ASSERT — the tau_assert grade-feedback read (promoted
+#     emergent -> live detector candidate). Independent env key so ASSERT can
+#     be flipped only after CAPTURE has been validated on staging.
+#
+# Both OFF => byte-identical (no capture, no materialization, no candidate).
+_MAP_CAPTURE_FLAG_ENV: str = "APOLLO_EMERGENT_MAP_CAPTURE"
+_MAP_ASSERT_FLAG_ENV: str = "APOLLO_EMERGENT_MAP_ASSERT"
+
+
+def emergent_map_capture_enabled() -> bool:
+    """True iff ``APOLLO_EMERGENT_MAP_CAPTURE`` is set to a truthy value
+    (default OFF). Read at call time (never cached), same ``_TRUTHY`` set as
+    ``emergent_misconceptions_enabled``, so a test can flip it per-case and a
+    deploy can flip it without a restart."""
+    return os.environ.get(_MAP_CAPTURE_FLAG_ENV, "").strip().lower() in _TRUTHY
+
+
+def emergent_map_assert_enabled() -> bool:
+    """True iff ``APOLLO_EMERGENT_MAP_ASSERT`` is set to a truthy value
+    (default OFF). Read at call time (never cached). Independent of
+    ``emergent_map_capture_enabled`` — asserting is meaningless without prior
+    capture, but the two are separate env keys by design (Q1)."""
+    return os.environ.get(_MAP_ASSERT_FLAG_ENV, "").strip().lower() in _TRUTHY
+
+
 __all__ = [
     "emergent_misconceptions_enabled",
+    "emergent_map_capture_enabled",
+    "emergent_map_assert_enabled",
     "K_DISTINCT_STUDENTS",
     "TAU_ASSERT",
     "TAU_PROJECT",

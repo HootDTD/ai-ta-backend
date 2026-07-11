@@ -43,6 +43,10 @@ import logging
 from apollo.grading.composite import MISC_CONFIDENCE_FLOOR, CompositeWeights, composite_score
 from apollo.graph_compare.findings import Finding, FindingKind
 from apollo.handlers.done_grading import ShadowGradeResult
+from apollo.overseer.misconception_detector.apply import apply_penalty
+from apollo.overseer.misconception_detector.types import MergeOutcome
+from apollo.overseer.topic_score import TopicScoreResult
+from apollo.overseer.topic_score_serialize import serialize_topic_score
 from apollo.resolution.candidates import METHOD_CONFIDENCE_CAP
 from apollo.resolution.nli_config import active_nli_model, nli_enabled
 from apollo.resolution.result import ResolutionResult
@@ -285,6 +289,7 @@ def build_graph_artifact(
     weights: CompositeWeights,
     clarification_trace: list[dict],
     latency_ms: int | None,
+    topic_score: TopicScoreResult | None = None,
 ) -> dict:
     """Build the graph-grader artifact payload (spec §1) from an already-graded
     ``ShadowGradeResult``. Pure — reshapes ``shadow``'s frozen fields only.
@@ -295,7 +300,15 @@ def build_graph_artifact(
     artifact's ``abstention`` block (no misconceptions were assessed) — the one
     persisted JSONB slot that reaches the row and the served scorecard. On the
     seeded path (the default) NO marker key is added, so the artifact is
-    byte-identical."""
+    byte-identical.
+
+    2026-07-10 topic-score spec §3: ``topic_score`` is a NEW OPT-IN keyword —
+    ``None`` (the default) leaves ``scores`` byte-identical to today (no extra
+    key). When provided (the topic score is computed unconditionally in
+    ``done.py``, flag-independent), ``scores["topic_score"]`` is nested via
+    the shared ``topic_score_serialize.serialize_topic_score`` — the SAME
+    serializer the LLM-path builder and the served ``student_response``
+    payload use, so all three surfaces stay byte-for-byte in sync."""
     findings = shadow.audited.findings
     node_ledger = build_node_ledger(findings, shadow.resolution)
     edge_ledger = build_edge_ledger(findings)
@@ -347,6 +360,8 @@ def build_graph_artifact(
     # None otherwise) — so a flag-OFF artifact stays byte-identical.
     if shadow.audited.composite is not None:
         artifact["abstention"]["composite"] = shadow.audited.composite
+    if topic_score is not None:
+        artifact["scores"]["topic_score"] = serialize_topic_score(topic_score)
     return artifact
 
 
@@ -366,6 +381,8 @@ def build_llm_artifact(
     latency_ms: int | None,
     clarification_trace: list[dict],
     misconceptions_bank_empty: bool = False,
+    detection_outcome: MergeOutcome | None = None,
+    topic_score: TopicScoreResult | None = None,
 ) -> dict:
     """Build the LLM-fallback artifact payload (spec §1/§3) from the OLD
     ``compute_coverage`` output + rubric. Coarser than the graph artifact:
@@ -408,6 +425,23 @@ def build_llm_artifact(
     which is every attempt today — the graph grader is still shadow) always
     rendered an empty clarifications block on the student/teacher scorecard
     even when the live clarification loop ran and produced real exchanges.
+
+    T11 (misconception detector wiring): ``detection_outcome`` is an OPT-IN
+    keyword — ``None`` (the default) or an EMPTY ``MergeOutcome`` (zero
+    penalty, no misconceptions) leaves ``misconception_penalty``,
+    ``misconceptions``, and ``composite`` byte-identical to today (design
+    invariant #1 — the detector's flag-OFF/found-nothing regression guard).
+    A NON-empty outcome overrides ``misconception_penalty`` with
+    ``outcome.misconception_penalty``, ``misconceptions`` with
+    ``list(outcome.misconceptions)``, and recomputes ``composite`` via
+    ``apply.apply_penalty`` on the already-computed (pre-penalty) composite —
+    the detector only ever subtracts from or ceilings the LLM-path composite;
+    it never touches ``node_coverage``/``edge_coverage`` or any other input.
+
+    2026-07-10 topic-score spec §3: ``topic_score`` is a NEW OPT-IN keyword,
+    same contract as on ``build_graph_artifact`` — ``None`` (the default)
+    leaves ``scores`` byte-identical to today; a provided result nests
+    ``scores["topic_score"]`` via the shared serializer.
     """
     per_step: dict[str, str] = coverage.get("per_step") or {}
     confidences: dict[str, float] = coverage.get("confidences") or {}
@@ -416,11 +450,26 @@ def build_llm_artifact(
     total = len(per_step)
     node_coverage = (len(covered) / total) if total else 0.0
     edge_coverage = 0.0
-    misconception_penalty = 0.0
     overall_score = (rubric or {}).get("overall", {}).get("score")
     composite = (
         _round_like_composite(float(overall_score) / 100.0) if overall_score is not None else 0.0
     )
+
+    # T11: an outcome is only "active" when it carries something to apply —
+    # None or an empty outcome (penalty 0.0, no rows) is the byte-identical
+    # no-op path (design invariant #1).
+    has_detection = detection_outcome is not None and not (
+        detection_outcome.misconception_penalty == 0.0
+        and not detection_outcome.misconceptions
+        and not detection_outcome.ceiling_applied
+    )
+    if has_detection:
+        misconception_penalty = detection_outcome.misconception_penalty
+        misconceptions_rows = list(detection_outcome.misconceptions)
+        composite = apply_penalty(composite=composite, outcome=detection_outcome)
+    else:
+        misconception_penalty = 0.0
+        misconceptions_rows = []
 
     # Q2 fix (lane B4/2026-07-02 campaign): the LLM-fallback grader produces
     # per-node coverage (``per_step``) but NO per-node student utterance —
@@ -479,14 +528,14 @@ def build_llm_artifact(
     if misconceptions_bank_empty:
         abstention[MISCONCEPTIONS_STATUS_KEY] = _empty_bank_misconceptions_marker()
 
-    return {
+    artifact = {
         "grader_used": GRADER_USED_LLM_FALLBACK,
         "versions": _versions_block(
             grader=_GRADER_VERSION_LLM_FALLBACK, reference_graph_hash=None, weights=weights
         ),
         "node_ledger": node_ledger,
         "edge_ledger": [],
-        "misconceptions": [],
+        "misconceptions": misconceptions_rows,
         "clarification_trace": list(clarification_trace),
         "scores": {
             "node_coverage": node_coverage,
@@ -499,3 +548,6 @@ def build_llm_artifact(
         "abstention": abstention,
         "grading_latency_ms": latency_ms,
     }
+    if topic_score is not None:
+        artifact["scores"]["topic_score"] = serialize_topic_score(topic_score)
+    return artifact

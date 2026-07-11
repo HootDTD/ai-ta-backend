@@ -13,6 +13,7 @@ V3 changes:
 - to_kg_graph(attempt_id) -> KGGraph derives a typed reference subgraph
   from the validated problem
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,10 +29,15 @@ from apollo.ontology import (
     NodeType,
     build_node,
 )
+from apollo.persistence.learner_model_seed import derive_entity_key
 
 EntryType = Literal[
-    "equation", "definition", "condition", "simplification",
-    "variable_mapping", "procedure_step",
+    "equation",
+    "definition",
+    "condition",
+    "simplification",
+    "variable_mapping",
+    "procedure_step",
 ]
 Difficulty = Literal["intro", "standard", "hard"]
 
@@ -42,6 +48,10 @@ class ReferenceStep(BaseModel):
     id: str = Field(min_length=1)
     content: dict[str, Any]
     depends_on: list[str] = Field(default_factory=list)
+    # F-struct: canonical entity key authored per step (e.g. "def.real_basis").
+    # Optional so pre-seeded / non-layer1 problems validate unchanged; when
+    # present it flows onto the reference Node in to_kg_graph.
+    entity_key: str | None = None
 
 
 class Problem(BaseModel):
@@ -68,10 +78,7 @@ class Problem(BaseModel):
     @model_validator(mode="after")
     def _resolve_references(self) -> Problem:
         ids = {step.id for step in self.reference_solution}
-        eq_ids = {
-            step.id for step in self.reference_solution
-            if step.entry_type == "equation"
-        }
+        eq_ids = {step.id for step in self.reference_solution if step.entry_type == "equation"}
 
         for step in self.reference_solution:
             for dep in step.depends_on:
@@ -91,9 +98,7 @@ class Problem(BaseModel):
                             f"in this problem (have: {sorted(eq_ids)})"
                         )
 
-        proc_steps = [
-            s for s in self.reference_solution if s.entry_type == "procedure_step"
-        ]
+        proc_steps = [s for s in self.reference_solution if s.entry_type == "procedure_step"]
         proc_steps.sort(key=lambda s: int(s.content.get("order", 0)))
         for i, step in enumerate(proc_steps, start=1):
             order = step.content.get("order")
@@ -121,12 +126,20 @@ class Problem(BaseModel):
         nodes: list[Node] = []
         for step in self.reference_solution:
             content = self._strip_legacy_proc_fields(step)
+            # T1 (emergent-map §5.1): a step that already carries entity_key is
+            # never re-derived (byte-identical for hand-authored problems); a
+            # step that omits it gets one derived here so every reference node
+            # has a stable, promotable key.
+            ek = step.entity_key if step.entity_key is not None else derive_entity_key(
+                step.entry_type, step.id
+            )
             node = build_node(
                 node_type=step.entry_type,  # type: ignore[arg-type]
                 node_id=step.id,
                 attempt_id=attempt_id,
                 source="reference",
                 content=content,
+                entity_key=ek,
             )
             nodes.append(node)
 

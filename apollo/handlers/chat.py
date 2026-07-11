@@ -375,6 +375,7 @@ async def handle_chat(
                     candidates=inputs.candidates,
                     judge=default_clarification_judge,
                     answered_turn=next_idx,
+                    neo=neo,
                 )
                 # NLI context (budget-gated): reuse done_grading's process
                 # singleton so the transformer model loads once per process.

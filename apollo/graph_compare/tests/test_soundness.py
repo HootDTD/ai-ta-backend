@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from apollo.graph_compare.soundness import (
     CONTRADICTION_UNIT_PENALTY,
+    EMERGENT_MISCONCEPTION_KEY_PREFIX,
     MISCONCEPTION_KEY_PREFIX,
     contradiction_nodes,
     contradiction_penalty,
@@ -72,6 +73,24 @@ def test_is_misconception_key_prefix():
     assert is_misconception_key("cond.incompressibility") is False
     assert is_misconception_key("misc") is False  # needs the dot
     assert MISCONCEPTION_KEY_PREFIX == "misc."
+
+
+def test_is_misconception_key_accepts_emergent_prefix():
+    """T8/R1: a promoted emergent misconception's own signature
+    (``emergent.<entity_key>``) is ALSO a misconception key — it is never
+    re-keyed to ``misc.*`` (see candidate_assembly.py / materialize.py)."""
+    assert is_misconception_key("emergent.eq.newton2") is True
+    assert is_misconception_key("emergent") is False  # needs the dot
+    assert EMERGENT_MISCONCEPTION_KEY_PREFIX == "emergent."
+
+
+def test_emergent_contradiction_penalized_same_as_bank():
+    # A resolved emergent-keyed node is a contradiction exactly like a
+    # bank-keyed one — same detection path, same penalty math.
+    student = snorm(
+        nodes=(cnode("eq.a"), cnode("emergent.eq.newton2", node_type="misconception"))
+    )
+    assert soundness_score(student) == 0.5  # 1 - 0.5, identical to misc.* case
 
 
 def test_contradiction_nodes_returns_only_misc_nodes():
