@@ -13,7 +13,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-07-10
+last_verified: 2026-07-11
 stub: false
 ---
 
@@ -26,7 +26,15 @@ Postgres (Supabase) owns sessions/messages/attempts/progress; Neo4j owns the per
 subgraph. The current architecture is "diff-at-Done v1" (spec: workspace
 `docs/superpowers/specs/2026-06-09-apollo-diff-at-done-design.md`, outside this repo):
 the per-turn loop is just **nodify + dumb reply**; the output filter and SymPy solver were
-unwired (code still present), and grading is the Done-time LLM semantic diff.
+unwired (code still present). Done grading has two default-OFF served evidence sources:
+the legacy graph-node semantic diff, and the transcript-first adjudicator selected by
+`APOLLO_TRANSCRIPT_GRADER`. The latter makes one strict structured-output call over the
+full both-role dialogue, validates every credited quote against student messages, and
+then emits the frozen legacy coverage dict consumed by rubric, topic score, diagnostic,
+XP, and artifacts. The response always includes `grading_provenance`, naming the served
+evidence source and exposing pre-dock score, per-topic docks, and graph-lane abstention.
+Misconception arithmetic is localized: attached findings subtract only inside their
+topic contribution; unattached findings retain the global `SEVERITY_CLAMP` cap.
 
 ## Module map and file landmarks
 

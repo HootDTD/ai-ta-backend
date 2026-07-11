@@ -47,6 +47,7 @@ from apollo.handlers.learner_update import run_learner_update
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph, Node
 from apollo.overseer.coverage import compute_coverage
+from apollo.overseer.transcript_coverage import compute_transcript_coverage
 from apollo.overseer.diagnostic import generate_diagnostic
 from apollo.overseer.misconception import (
     MisconceptionSignal,
@@ -60,6 +61,7 @@ from apollo.overseer.misconception_detector.config import (
     grader_positive_focus_enabled,
     struct_cokey_enabled,
     topic_score_served_enabled,
+    transcript_grader_enabled,
     trace_enabled,
 )
 from apollo.overseer.misconception_detector.detector import detect_misconceptions
@@ -425,6 +427,22 @@ async def _student_utterances(
     return tuple(rows)
 
 
+async def _full_transcript(
+    db: AsyncSession,
+    *,
+    attempt_id: int,
+) -> tuple[tuple[str, str], ...]:
+    """Return both-role attempt messages in canonical turn order."""
+    rows = (
+        await db.execute(
+            select(Message.role, Message.content)
+            .where(Message.attempt_id == attempt_id)
+            .order_by(Message.turn_index)
+        )
+    ).all()
+    return tuple((role, content) for role, content in rows)
+
+
 async def _load_bank_entries(
     db: AsyncSession,
     *,
@@ -571,7 +589,16 @@ async def handle_done(
     # chain, when it runs) — not just one half of it.
     _artifact_t0 = time.monotonic()
 
-    coverage = await compute_coverage(student_graph, reference_graph)
+    use_transcript_grader = transcript_grader_enabled()
+    if use_transcript_grader:
+        transcript = await _full_transcript(db, attempt_id=attempt.id)
+        coverage = await compute_transcript_coverage(
+            transcript=transcript,
+            reference_graph=reference_graph,
+            problem=problem,
+        )
+    else:
+        coverage = await compute_coverage(student_graph, reference_graph)
 
     # Class 2 Phase 2 (P2.8): pull per-attempt misconception signals from
     # apollo_messages.metadata and reduce them to the per-bank-code score
@@ -1084,5 +1111,33 @@ async def handle_done(
                 )
             else:
                 await _project_mastery(db, attempt_id=int(attempt.id))
+
+    serialized_topics = serialize_topics(topic_score) if topic_score is not None else []
+    student_response["grading_provenance"] = {
+        "grader_used": "llm_transcript" if use_transcript_grader else served_grade,
+        "evidence_source": "transcript" if use_transcript_grader else "graph_nodes",
+        "score_before_dock": (
+            topic_score.coverage_component if topic_score is not None else None
+        ),
+        "topics": serialized_topics,
+        "docks": [
+            {
+                "key": misconception["canonical_key"],
+                "points": misconception["dock_points"],
+                "evidence_span": misconception["evidence_span"],
+                "resolved": misconception["resolved"],
+            }
+            for topic in serialized_topics
+            for misconception in topic["misconceptions"]
+        ],
+        "graph_lane": (
+            {
+                "abstained": shadow.audited.abstained,
+                "reasons": list(shadow.audited.abstention_reasons),
+            }
+            if shadow is not None
+            else None
+        ),
+    }
 
     return student_response

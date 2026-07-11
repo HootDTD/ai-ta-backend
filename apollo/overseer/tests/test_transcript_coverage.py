@@ -1,0 +1,76 @@
+import json
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from apollo.errors import CoverageGradingError
+from apollo.ontology import KGGraph, build_node
+from apollo.overseer.coverage_contract import validate_coverage_verdict
+from apollo.overseer.transcript_coverage import (
+    _quantize_credit,
+    build_transcript_grader_schema,
+    compute_transcript_coverage,
+    validate_span,
+)
+
+
+def _graph():
+    return KGGraph(nodes=[build_node(node_type="procedure_step", node_id="p1", attempt_id=1, source="reference", content={"action": "Integrate", "purpose": ""})])
+
+
+def _problem():
+    return SimpleNamespace(problem_text="Evaluate the integral")
+
+
+def _client(payload):
+    client = MagicMock()
+    client.chat.completions.create.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+    )
+    return client
+
+
+def test_schema_fresh_strict_and_quantization_boundary():
+    one = build_transcript_grader_schema()
+    two = build_transcript_grader_schema()
+    assert one is not two
+    assert one["strict"] is True
+    assert one["schema"]["additionalProperties"] is False
+    assert _quantize_credit(0.55) == 0.4
+    assert _quantize_credit(0.9) == 1.0
+
+
+def test_span_validation_is_student_only_and_normalizes_whitespace():
+    assert validate_span("a  b\nc", ["a b c"])
+    assert not validate_span("Apollo quote", ["student quote"])
+    assert not validate_span(None, ["student quote"])
+
+
+@pytest.mark.asyncio
+async def test_full_credit_maps_to_contract_and_calls_once():
+    payload = {"verdicts": [{"node_id": "p1", "covered": True, "credit": 1.0, "confidence": 0.9, "evidence_span": "I integrate", "prompted": False, "corrected_later": False}]}
+    client = _client(payload)
+    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=client):
+        result = await compute_transcript_coverage([("student", "I integrate now")], _graph(), _problem())
+    validate_coverage_verdict(result)
+    assert result["per_step"]["p1"] == "covered"
+    assert result["procedure_scores"]["p1"] == 1.0
+    assert not any(result["negotiation_counts"].values())
+    client.chat.completions.create.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_unverified_span_downgrades_partial_to_zero():
+    payload = {"verdicts": [{"node_id": "p1", "covered": False, "credit": 0.7, "confidence": 0.8, "evidence_span": "Apollo only", "prompted": True, "corrected_later": False}]}
+    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_client(payload)):
+        result = await compute_transcript_coverage([("apollo", "Apollo only"), ("student", "no")], _graph(), _problem())
+    assert result["procedure_scores"]["p1"] == 0.0
+    assert result["per_step"]["p1"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_empty_output_raises_named_error():
+    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_client({})):
+        with pytest.raises(CoverageGradingError):
+            await compute_transcript_coverage([], _graph(), _problem())

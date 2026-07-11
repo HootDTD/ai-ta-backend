@@ -273,16 +273,31 @@ def compute_topic_score(
         0.0 if resolved else _finding_penalty_share(finding, centrality)
         for finding, resolved in zip(deduped, resolved_flags, strict=True)
     )
-    total_dock = sum(raw_shares)
-    misconception_dock = min(SEVERITY_CLAMP, total_dock)
+    keyed = tuple(_topic_key_for_finding(finding, topic_keys) for finding in deduped)
+    topic_raw_docks = {
+        nid: sum(share for key, share in zip(keyed, raw_shares, strict=True) if key == nid)
+        for nid in topic_keys
+    }
+    topic_actual_docks = {
+        nid: weights[nid] * min(credits[nid], topic_raw_docks[nid]) for nid in topic_keys
+    }
+    general_raw = sum(
+        share for key, share in zip(keyed, raw_shares, strict=True) if key == _GENERAL_KEY
+    )
+    general_dock = min(SEVERITY_CLAMP, general_raw)
+    misconception_dock = sum(topic_actual_docks.values()) + general_dock
     # When the clamp binds, scale each finding's displayed dock_points
     # proportionally so the per-misconception "−N pts" lines shown to the
     # student sum exactly to the dock actually subtracted from the score —
     # unscaled shares would over-claim relative to the clamped total.
-    scale = misconception_dock / total_dock if total_dock > SEVERITY_CLAMP else 1.0
+    scale = 1.0
 
-    for finding, resolved, raw_share in zip(deduped, resolved_flags, raw_shares, strict=True):
-        topic_key = _topic_key_for_finding(finding, topic_keys)
+    for finding, resolved, raw_share, topic_key in zip(
+        deduped, resolved_flags, raw_shares, keyed, strict=True
+    ):
+        bucket_raw = general_raw if topic_key == _GENERAL_KEY else topic_raw_docks[topic_key]
+        bucket_actual = general_dock if topic_key == _GENERAL_KEY else topic_actual_docks[topic_key]
+        scale = bucket_actual / bucket_raw if bucket_raw > 0.0 else 0.0
         misconceptions_by_topic.setdefault(topic_key, []).append(
             TopicMisconception(
                 canonical_key=finding.signature,
@@ -319,7 +334,11 @@ def compute_topic_score(
             )
         )
 
-    score = int(round(_clamp01(coverage_component - misconception_dock) * 100))
+    localized_component = sum(
+        weights[nid] * max(0.0, credits[nid] - topic_raw_docks[nid])
+        for nid in topic_keys
+    )
+    score = int(round(_clamp01(localized_component - general_dock) * 100))
     letter = score_to_letter(score)
 
     return TopicScoreResult(

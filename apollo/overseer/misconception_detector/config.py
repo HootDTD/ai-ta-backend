@@ -134,6 +134,7 @@ def grader_positive_focus_enabled() -> bool:
 # Default OFF everywhere: when OFF, `handle_done`'s served payload and the
 # diagnostic-narrative prompt are byte-identical to today.
 TOPIC_SCORE_SERVED_FLAG_ENV: str = "APOLLO_TOPIC_SCORE_SERVED"
+TRANSCRIPT_GRADER_FLAG_ENV: str = "APOLLO_TRANSCRIPT_GRADER"
 
 
 def topic_score_served_enabled() -> bool:
@@ -146,6 +147,14 @@ def topic_score_served_enabled() -> bool:
     rubric/narrative — never whether the detector or the score itself runs.
     """
     return os.environ.get(TOPIC_SCORE_SERVED_FLAG_ENV, "").strip().lower() in _TRUTHY
+
+
+def transcript_grader_enabled() -> bool:
+    """True iff ``APOLLO_TRANSCRIPT_GRADER`` is truthy (default OFF).
+
+    Read at call time and use the same accepted values as the adjacent flags.
+    """
+    return os.environ.get(TRANSCRIPT_GRADER_FLAG_ENV, "").strip().lower() in _TRUTHY
 
 
 def trace_path() -> str:
