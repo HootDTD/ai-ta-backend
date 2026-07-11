@@ -8,6 +8,40 @@ from apollo.provisioning.authored_sets.paired_retrieval import make_paired_solut
 
 
 @pytest.mark.asyncio
+async def test_no_solution_document_returns_no_spans():
+    """B1: no paired solution doc (``solution_document_id=None``) must always
+    yield no spans, regardless of label match, so the caller falls through to
+    generation instead of querying a document that doesn't exist."""
+    chunks = [(10, "Solution 1\nM = wL^2/8", 2)]
+    index = build_solution_label_index(chunks)
+    retrieve = make_paired_solution_retrieve_fn(
+        db=None,
+        solution_document_id=None,
+        label_index=index,
+        page_conf={2: 0.9},
+    )
+    q = SimpleNamespace(label="Problem 1", problem_text="1. beam ...")
+    spans = await retrieve(q)
+    assert spans == ()
+    assert retrieve.last_min_conf is None
+    assert retrieve.last_match_method is None
+
+
+@pytest.mark.asyncio
+async def test_load_solution_chunks_none_returns_empty_without_query():
+    from apollo.provisioning.authored_sets.paired_retrieval import load_solution_chunks
+
+    assert await load_solution_chunks(None, solution_document_id=None) == []
+
+
+@pytest.mark.asyncio
+async def test_chunk_ocr_confidence_none_returns_empty_without_query():
+    from apollo.provisioning.authored_sets.paired_retrieval import chunk_ocr_confidence
+
+    assert await chunk_ocr_confidence(None, document_id=None) == {}
+
+
+@pytest.mark.asyncio
 async def test_chunk_ocr_confidence_skips_malformed_entries(db_session):
     from apollo.provisioning.authored_sets.paired_retrieval import chunk_ocr_confidence
     from database.models import AITADocument, SearchSpace
@@ -148,6 +182,9 @@ async def test_retrieval_branch_is_solution_document_scoped(db_session, monkeypa
     assert spans
     assert {span.document_id for span in spans} == {solution_doc.id}
     assert all("unpaired" not in span.text for span in spans)
-    assert all(span.carries_solution is True for span in spans)
+    # B3: the semantic top-k fallback is an unconfirmed guess, not a label match,
+    # so it must NOT be flagged as a printed/worked solution (find_or_generate's
+    # extract branch is reserved for confirmed label-matched spans).
+    assert all(span.carries_solution is False for span in spans)
     assert retrieve.last_match_method == "retrieval"
     assert retrieve.last_min_conf == 0.76

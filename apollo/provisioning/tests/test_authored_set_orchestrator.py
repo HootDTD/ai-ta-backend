@@ -204,6 +204,50 @@ async def test_authored_set_label_extract_promotes(db_session, monkeypatch):
     assert result.concept_problem_id is not None
 
 
+@pytest.mark.asyncio
+async def test_authored_set_no_solution_doc_falls_through_to_generate(db_session, monkeypatch):
+    """B1: no paired solution document (``solution_document_id=None``, e.g. the
+    teacher never uploaded one) must retrieve NO spans and fall through to
+    ``find_or_generate``'s generate branch — which is ALWAYS held for review
+    (the product policy: a generated reference solution needs teacher
+    approval before students see it) regardless of the reversed/legacy mode."""
+    space = await _seed_search_space(db_session, slug="aas-nosol")
+    concept_id = await _seed_concept(db_session, search_space_id=space)
+    prob_doc = await _seed_doc_with_chunk(
+        db_session,
+        space,
+        "1. A beam length L, load w. Find max moment M.",
+        title="Problems",
+    )
+    candidate = _candidate(document_id=prob_doc)
+    _patch_common_stages(monkeypatch, candidate=candidate, concept_id=concept_id)
+
+    async def _find_or_generate(db, question, *, retrieve_fn, chat_fn):  # noqa: ANN001
+        spans = await retrieve_fn(question)
+        assert spans == ()
+        return _draft(source="generated")
+
+    monkeypatch.setattr(orch, "find_or_generate", _find_or_generate)
+
+    report = await run_authored_set_provisioning(
+        db_session,
+        neo=None,
+        search_space_id=space,
+        problem_document_id=prob_doc,
+        solution_document_id=None,
+        metered_chat=_FakeAuthoredMC(),
+        embed_fn=lambda _text: [0.0],
+    )
+
+    assert report.counts == {"promoted": 0, "rejected": 0, "held_for_review": 1}
+    assert len(report.problems) == 1
+    result = report.problems[0]
+    assert result.outcome == "held_for_review"
+    assert result.solution_source == "generated"
+    assert result.review_required is True
+    assert result.reason == "generated_no_match"
+
+
 def test_doc_is_low_conf_helper():
     from apollo.provisioning.authored_sets.orchestrator import _doc_is_low_conf
 
