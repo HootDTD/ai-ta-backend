@@ -136,6 +136,33 @@ async def test_create_set_persists_and_schedules(db_session, monkeypatch):
     assert row.status == "pending"
 
 
+@pytest.mark.asyncio
+async def test_create_set_without_solution_schedules_background(db_session, monkeypatch):
+    """B1: the solution PDF is optional — a POST with no solution part must still
+    schedule the background task, passing ``solution_bytes=None``."""
+    import apollo.provisioning.authored_sets.api as aapi
+
+    search_space_id, _concept_id = await _seed_course(db_session, slug="create-nosol")
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    bg = _BG()
+
+    resp = await aapi.create_authored_set(
+        request=_FakeRequest(),
+        background=bg,
+        problem=_FakeUpload(b"%PDF p", "problems.pdf"),
+        solution=None,
+        search_space_id=search_space_id,
+        db=db_session,
+    )
+
+    assert resp["status"] == "pending"
+    assert len(bg.tasks) == 1
+    _fn, _args, kwargs = bg.tasks[0]
+    assert kwargs["solution_bytes"] is None
+    assert kwargs["solution_title"] is None
+
+
 def test_get_neo4j_client_delegates(monkeypatch):
     import apollo.api as apollo_api
     import apollo.provisioning.authored_sets.api as aapi
@@ -495,6 +522,168 @@ async def test_background_runner_indexes_and_persists_report(db_session, monkeyp
     assert refreshed.solution_document_id == 102
     assert refreshed.status == "done"
     assert refreshed.result_summary["counts"] == {"promoted": 0}
+
+
+@pytest.mark.asyncio
+async def test_background_runner_without_solution_leaves_solution_document_id_null(
+    db_session, monkeypatch
+):
+    """B1: ``solution_bytes=None`` (no solution PDF uploaded) must skip
+    solution-role indexing entirely, persist a NULL ``solution_document_id``,
+    and hand provisioning ``solution_document_id=None``."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+    from apollo.provisioning.authored_sets.orchestrator import ProvisioningReport
+
+    search_space_id, _concept_id = await _seed_course(db_session, slug="background-nosol")
+    row = AuthoredSet(search_space_id=search_space_id, set_index=1, status="pending")
+    db_session.add(row)
+    await db_session.flush()
+    set_id = int(row.id)
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield db_session
+
+    indexed_roles: list[str] = []
+
+    async def _index_authored_doc(db, *, role, **_kwargs):
+        indexed_roles.append(role)
+        assert role == "problem"  # solution indexing must be skipped entirely
+        return 101
+
+    async def _run_provisioning(db, neo, **kwargs):
+        assert kwargs["solution_document_id"] is None
+        return ProvisioningReport(problems=[], counts={"promoted": 0})
+
+    monkeypatch.setattr(aapi, "get_async_session", _session_cm)
+    monkeypatch.setattr(aapi, "index_authored_doc", _index_authored_doc)
+    monkeypatch.setattr(aapi, "run_authored_set_provisioning", _run_provisioning)
+    monkeypatch.setattr(aapi, "MeteredChat", lambda **_kwargs: "metered")
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: "neo")
+
+    await aapi._run_set_background(
+        set_id=set_id,
+        search_space_id=search_space_id,
+        set_index=1,
+        problem_bytes=b"%PDF p",
+        problem_title="problems.pdf",
+        solution_bytes=None,
+        solution_title=None,
+    )
+
+    assert indexed_roles == ["problem"]
+    refreshed = await db_session.get(AuthoredSet, set_id)
+    assert refreshed.problem_document_id == 101
+    assert refreshed.solution_document_id is None
+    assert refreshed.status == "done"
+
+
+@pytest.mark.asyncio
+async def test_background_runner_same_doc_guard_treats_solution_as_absent(
+    db_session, monkeypatch
+):
+    """B2: a solution upload whose content_hash matches the problem doc's (the
+    teacher uploaded the SAME file for both roles) must be treated as absent —
+    NULL ``solution_document_id``, a structured warning log, and a note in
+    ``result_summary`` — instead of grounding questions against their own prose."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+    from apollo.provisioning.authored_sets.orchestrator import ProvisioningReport
+
+    search_space_id, _concept_id = await _seed_course(db_session, slug="background-samedoc")
+    row = AuthoredSet(search_space_id=search_space_id, set_index=1, status="pending")
+    db_session.add(row)
+    await db_session.flush()
+    set_id = int(row.id)
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield db_session
+
+    async def _index_authored_doc(db, *, role, **_kwargs):
+        return 101 if role == "problem" else 102
+
+    async def _doc_content_hash(db, document_id):
+        # Both docs hash identically -- the same PDF uploaded as both roles.
+        return "identical-hash"
+
+    async def _run_provisioning(db, neo, **kwargs):
+        assert kwargs["solution_document_id"] is None
+        return ProvisioningReport(problems=[], counts={"promoted": 0})
+
+    monkeypatch.setattr(aapi, "get_async_session", _session_cm)
+    monkeypatch.setattr(aapi, "index_authored_doc", _index_authored_doc)
+    monkeypatch.setattr(aapi, "_doc_content_hash", _doc_content_hash)
+    monkeypatch.setattr(aapi, "run_authored_set_provisioning", _run_provisioning)
+    monkeypatch.setattr(aapi, "MeteredChat", lambda **_kwargs: "metered")
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: "neo")
+
+    await aapi._run_set_background(
+        set_id=set_id,
+        search_space_id=search_space_id,
+        set_index=1,
+        problem_bytes=b"%PDF p",
+        problem_title="problems.pdf",
+        solution_bytes=b"%PDF p",  # same bytes as the problem doc
+        solution_title="problems.pdf",
+    )
+
+    refreshed = await db_session.get(AuthoredSet, set_id)
+    assert refreshed.problem_document_id == 101
+    assert refreshed.solution_document_id is None
+    assert refreshed.status == "done"
+    assert "same_doc_solution_guard" in refreshed.result_summary
+    assert "identical content" in refreshed.result_summary["same_doc_solution_guard"]
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_surfaces_rejected_and_held_for_review(db_session, monkeypatch):
+    """B4: the per-set GET must pass through rejected AND held_for_review
+    candidates (with their outcome + diagnostic) from ``result_summary`` — the
+    review queue the teacher UI renders. Verifies the existing passthrough
+    (``result_summary`` is returned verbatim) already carries this."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    search_space_id, _concept_id = await _seed_course(db_session, slug="get-review-queue")
+    row = AuthoredSet(
+        search_space_id=search_space_id,
+        set_index=1,
+        status="done",
+        result_summary={
+            "problems": [
+                {
+                    "concept_problem_id": 1,
+                    "outcome": "promoted",
+                },
+                {
+                    "concept_problem_id": 2,
+                    "outcome": "held_for_review",
+                    "reason": "generated_no_match",
+                    "diagnostic": "",
+                },
+                {
+                    "concept_problem_id": None,
+                    "outcome": "rejected",
+                    "diagnostic": "pairing_gate: not faithful to grounding",
+                },
+            ],
+            "counts": {"promoted": 1, "rejected": 1, "held_for_review": 1},
+        },
+    )
+    db_session.add(row)
+    await db_session.flush()
+
+    detail = await aapi.get_authored_set(set_id=int(row.id), request=_FakeRequest(), db=db_session)
+
+    problems = detail["result_summary"]["problems"]
+    held = next(p for p in problems if p["outcome"] == "held_for_review")
+    rejected = next(p for p in problems if p["outcome"] == "rejected")
+    assert held["reason"] == "generated_no_match"
+    assert rejected["diagnostic"] == "pairing_gate: not faithful to grounding"
 
 
 @pytest.mark.asyncio

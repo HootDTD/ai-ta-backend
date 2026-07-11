@@ -96,15 +96,19 @@ async def create_authored_set(
     request: Request,
     background: BackgroundTasks,
     problem: UploadFile = File(...),
-    solution: UploadFile = File(...),
+    solution: UploadFile | None = File(None),
     search_space_id: int = Form(...),
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    """A solution PDF is optional: the intended teacher flow (product decision)
+    is upload a problem doc WITHOUT solutions and let the pipeline auto-generate
+    reference solutions, which stay held-for-review for teacher approval. A
+    solution PDF, when provided, still enables the label-matched extract path."""
     auth = await require_user(request)
     await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
 
     problem_bytes = await problem.read()
-    solution_bytes = await solution.read()
+    solution_bytes = await solution.read() if solution is not None else None
     set_index = await _next_set_index(db, search_space_id)
 
     row = AuthoredSet(search_space_id=search_space_id, set_index=set_index, status="pending")
@@ -121,7 +125,7 @@ async def create_authored_set(
         problem_bytes=problem_bytes,
         problem_title=problem.filename or f"Problem Set {set_index}",
         solution_bytes=solution_bytes,
-        solution_title=solution.filename or f"Solution Set {set_index}",
+        solution_title=solution.filename if solution is not None else None,
     )
     return {"set_id": set_id, "set_index": set_index, "status": "pending"}
 
@@ -133,10 +137,15 @@ async def _run_set_background(
     set_index: int,
     problem_bytes: bytes,
     problem_title: str,
-    solution_bytes: bytes,
-    solution_title: str,
+    solution_bytes: bytes | None,
+    solution_title: str | None,
 ) -> None:
-    """Own a fresh session; request-scoped sessions are closed before this runs."""
+    """Own a fresh session; request-scoped sessions are closed before this runs.
+
+    ``solution_bytes`` is optional (B1): the teacher may upload a problem PDF
+    alone, in which case solution-role indexing is skipped entirely and
+    provisioning grounds every candidate against no solution spans, falling
+    through to ``find_or_generate``'s generate branch (held for review)."""
     ingest_run_id: int | None = None
     # OCR-observability: capture each doc's transient per-page OCR pass so the
     # ingest run + page-level evidence tables (empty before WU-AAS observability)
@@ -147,7 +156,12 @@ async def _run_set_background(
     problem_pages: list = []
     solution_pages: list = []
     problem_document_id: int | None = None
+    # The raw id solution indexing produced (even if the same-doc guard below
+    # discards it for pairing) — kept so page evidence still reflects what was
+    # actually OCR'd. ``solution_document_id`` (below) is the PAIRING decision.
+    indexed_solution_document_id: int | None = None
     solution_document_id: int | None = None
+    same_doc_guard_note: str | None = None
     evidence_persisted = False
     try:
         async with get_async_session() as db:
@@ -176,17 +190,48 @@ async def _run_set_background(
             # path + what the GET surface looks it up by). Stamp it now that it
             # exists; committed with the provisioning-status transition below.
             ingest_run.document_id = problem_document_id
-            ingest_run.content_hash = await _doc_content_hash(db, problem_document_id)
+            problem_content_hash = await _doc_content_hash(db, problem_document_id)
+            ingest_run.content_hash = problem_content_hash
 
-            solution_document_id = await index_authored_doc(
-                db,
-                search_space_id=search_space_id,
-                file_bytes=solution_bytes,
-                title=solution_title,
-                set_index=set_index,
-                role="solution",
-                page_sink=solution_pages,
-            )
+            if solution_bytes is not None:
+                indexed_solution_document_id = await index_authored_doc(
+                    db,
+                    search_space_id=search_space_id,
+                    file_bytes=solution_bytes,
+                    title=solution_title or f"Solution Set {set_index}",
+                    set_index=set_index,
+                    role="solution",
+                    page_sink=solution_pages,
+                )
+                # B2: a solution upload identical to the problem doc (teacher
+                # uploaded the SAME file as both roles) grounds questions against
+                # their own prose instead of a real worked solution. Reuse the
+                # content_hash the ingest already computed to detect it and treat
+                # the pairing as absent (never NULL out of caution: only an EXACT
+                # content match).
+                solution_content_hash = await _doc_content_hash(db, indexed_solution_document_id)
+                if (
+                    problem_content_hash is not None
+                    and solution_content_hash == problem_content_hash
+                ):
+                    _LOG.warning(
+                        "authored_set_same_doc_solution_guard",
+                        extra={
+                            "event": "authored_set_same_doc_solution_guard",
+                            "set_id": set_id,
+                            "search_space_id": search_space_id,
+                            "problem_document_id": problem_document_id,
+                            "solution_document_id": indexed_solution_document_id,
+                            "content_hash": problem_content_hash,
+                        },
+                    )
+                    same_doc_guard_note = (
+                        "solution PDF ignored: identical content to the problem PDF "
+                        "(content_hash match) — treated as no solution provided, "
+                        "so reference solutions are generated and held for review"
+                    )
+                else:
+                    solution_document_id = indexed_solution_document_id
 
             n_pages = await persist_page_evidence(
                 db,
@@ -196,14 +241,15 @@ async def _run_set_background(
                 role="problem",
                 pages=problem_pages,
             )
-            n_pages += await persist_page_evidence(
-                db,
-                ingest_run=ingest_run,
-                search_space_id=search_space_id,
-                document_id=solution_document_id,
-                role="solution",
-                pages=solution_pages,
-            )
+            if solution_bytes is not None:
+                n_pages += await persist_page_evidence(
+                    db,
+                    ingest_run=ingest_run,
+                    search_space_id=search_space_id,
+                    document_id=indexed_solution_document_id,
+                    role="solution",
+                    pages=solution_pages,
+                )
             # Set n_pages here so it is committed with the evidence below and stays
             # correct even if provisioning later fails (the success finalize does
             # NOT re-write it — avoids the redundant double-write).
@@ -243,7 +289,10 @@ async def _run_set_background(
             row = await db.get(AuthoredSet, set_id)
             if row is None:
                 return
-            row.result_summary = report.model_dump()
+            result_summary = report.model_dump()
+            if same_doc_guard_note is not None:
+                result_summary["same_doc_solution_guard"] = same_doc_guard_note
+            row.result_summary = result_summary
             row.status = "done"
             row.updated_at = datetime.now(UTC)
             await db.commit()
@@ -269,14 +318,15 @@ async def _run_set_background(
                             role="problem",
                             pages=problem_pages,
                         )
-                        failed_pages += await persist_page_evidence(
-                            db,
-                            ingest_run=failed_run,
-                            search_space_id=search_space_id,
-                            document_id=solution_document_id,
-                            role="solution",
-                            pages=solution_pages,
-                        )
+                        if solution_bytes is not None:
+                            failed_pages += await persist_page_evidence(
+                                db,
+                                ingest_run=failed_run,
+                                search_space_id=search_space_id,
+                                document_id=indexed_solution_document_id,
+                                role="solution",
+                                pages=solution_pages,
+                            )
                     if failed_run.status != "failed":
                         await finalize_ingest_run(
                             db, ingest_run=failed_run, status="failed", n_pages=failed_pages
