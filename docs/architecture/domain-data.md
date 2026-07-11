@@ -10,8 +10,7 @@ related:
   - shared/supabase
   - shared/security
   - ai-ta-backend/rag-pipeline
-last_verified: 2026-07-03
-last_verified: 2026-07-02
+last_verified: 2026-07-11
 stub: false
 ---
 
@@ -29,7 +28,7 @@ stub: false
 | `knowledge/manager.py` | `KnowledgeManager` — subject/store CRUD over `aita_search_spaces`/`aita_documents`, legacy FAISS index dirs under `knowledge/text-embeder/knowledge/`, and pgvector dual-write `_index_items_to_pgvector()` |
 | `knowledge/db.py` | `DBKnowledgeManager` — pgvector-only mirror of the manager interface; defined but currently has **no importers** outside its own file |
 | `knowledge/teacher_weekly.py` | `TeacherWeeklyStorage` — teacher weekly uploads (Supabase Storage + DB job queue with leases), current-week + retrieval-weight controls, week-based document activation. `list_course_by_search_space` returns the per-week notes/slides grid plus a course-level `textbook` section (course-wide material, `_assemble_course_payload`). Storage access goes through ensure-first seams: memoized `_ensure_buckets()` auto-creates the upload/pages buckets (via `SupabaseStorageClient.ensure_bucket`) before `_upload_source_pdf`/`_download_source_pdf`/`_store_page_asset`; page PNGs upload with `upsert=True` so worker retries overwrite instead of collecting duplicate-object warnings. **WU-3B2g §8B enqueue hook:** the `_index_existing_upload_async` finalize block (after `upload.status = UPLOAD_STATUS_READY`, before its `session.commit()`) calls the THIN `enqueue_provisioning_job(session, search_space_id, document_id, content_hash=indexed_doc.content_hash)` (a deferred local import of `apollo.provisioning.enqueue`, keeping `apollo` off the module import path) — riding the SAME commit so a provisioning job is never visible for a doc that did not finish indexing. It is idempotent (content-hash short-circuit on a `status='succeeded'` `apollo_ingest_runs` row + the migration-030 partial-unique-index) and a NO-OP for the upload path: the enqueue runs inside ONE nested SAVEPOINT and swallows ANY error so it can NEVER wedge the upload commit, and with `APOLLO_AUTOPROVISION_ENABLED` OFF nothing DRAINS the job (the `apollo-provision` worker is dormant + scaled to 0), so the upload READY/COMPLETED path is byte-identical to today. At runtime WU-3B2g WRITES `apollo_ingest_runs` / `apollo_provisioning_jobs` (here, at enqueue) and `apollo_rejected_problems` / `apollo_ingest_errors` (in the worker's orchestrator) — the migration-030 tables the §8B narration above declares (see `apollo.md` for the orchestrator/worker/promote interfaces) |
-| `knowledge/teacher_pdf_ingestion.py` | `TeacherPDFIngestor` — PyMuPDF native extraction with per-page heuristic Mathpix OCR fallback, fuzzy trigram dedupe, page→chunk items |
+| `knowledge/teacher_pdf_ingestion.py` | `TeacherPDFIngestor` — PyMuPDF native extraction with per-page heuristic Mathpix OCR fallback, fuzzy trigram dedupe, and page→chunk items. Native heading detection keeps the existing short `>=14pt` rule and also recognizes short body-size bold lines plus conservative numbered-outline headers; numbered questions (long, question-mark terminated, answer-followed, or inside a Sample Questions list) remain body chunks so authored study guides do not gain false sections. |
 | `reports/ai_use/models.py` | Pydantic `AIUseReport` schema + Supabase **REST** CRUD on `ai_use_reports` (via `vendors.supabase_client`, not SQLAlchemy) |
 | `reports/ai_use/service.py` | Evidence pack assembly (redaction, prompt hashing, tool-call dedupe, token budget) + `generate_report()` LLM call |
 | `reports/ai_use/pdf.py` | Markdown → HTML (python-markdown) → PDF (WeasyPrint) with print CSS |

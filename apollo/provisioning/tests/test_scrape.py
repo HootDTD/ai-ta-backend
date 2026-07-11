@@ -26,6 +26,7 @@ from sqlalchemy import select
 
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.persistence.models import Concept, ConceptProblem, Subject
+from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.scrape import (
     CandidateQuestion,
     ScrapeResult,
@@ -516,6 +517,104 @@ def test_scrape_document_structured_false_uses_legacy_per_chunk():
     assert result.scraped_count == 1
     # legacy path stamps the CHUNK content hash (no ".ordinal" section suffix)
     assert result.candidates[0].chunk_content_hash == chunk_content_hash("legacy chunk")
+
+
+def test_scrape_document_splits_oversized_section_and_overlap_dedups_downstream():
+    """A flat 6k section is scraped in overlapping windows. Every question is
+    recovered; the overlap-straddling one has one downstream problem hash."""
+
+    @dataclass
+    class _Row:
+        id: int
+        content: str
+        document_id: int = 5
+        page_number: int | None = None
+        section_path: str | None = None
+        chunk_type: str | None = "body"
+
+    chars = ["x"] * 6000
+    markers = {
+        500: "[QUESTION_ONE]",
+        2400: "[OVERLAP_QUESTION]",
+        3500: "[QUESTION_TWO]",
+        5500: "[QUESTION_THREE]",
+    }
+    for offset, marker in markers.items():
+        chars[offset : offset + len(marker)] = marker
+    rows = [_Row(id=1, content="".join(chars))]
+    scrape_calls: list[str] = []
+
+    def _scrape(text: str) -> str:
+        scrape_calls.append(text)
+        records = []
+        for marker in markers.values():
+            if marker in text:
+                records.append(_well_formed_record(problem_text=f"Recover {marker}"))
+        return json.dumps(records)
+
+    result = _run(
+        scrape_document(
+            rows,
+            chat_fn=_scrape,
+            triage_chat_fn=lambda _payload: "not-json",
+            max_sections=120,
+            min_candidates=99,
+            section_char_cap=2500,
+        )
+    )
+
+    assert len(scrape_calls) == 3
+    assert {candidate.problem_text for candidate in result.candidates} == {
+        f"Recover {marker}" for marker in markers.values()
+    }
+    overlap = [
+        candidate
+        for candidate in result.candidates
+        if candidate.problem_text == "Recover [OVERLAP_QUESTION]"
+    ]
+    assert len(overlap) == 2
+    deduped = {problem_dup_hash(candidate): candidate for candidate in result.candidates}
+    assert len(deduped) == 4
+
+
+def test_scrape_document_page_splits_any_oversized_section():
+    """The guard applies to an oversized section even when another section is
+    present, and keeps complete pages together instead of introducing overlap."""
+
+    @dataclass
+    class _Row:
+        id: int
+        content: str
+        page_number: int
+        chunk_type: str = "body"
+        document_id: int = 5
+        section_path: str | None = None
+
+    rows = [
+        _Row(id=1, content="1. Short", page_number=1, chunk_type="heading"),
+        _Row(id=2, content="short body", page_number=1),
+        _Row(id=3, content="2. Large", page_number=2, chunk_type="heading"),
+        _Row(id=4, content="A" * 1400, page_number=2),
+        _Row(id=5, content="B" * 1400, page_number=3),
+    ]
+    scrape_calls: list[str] = []
+
+    def _scrape(text: str) -> str:
+        scrape_calls.append(text)
+        return "[]"
+
+    _run(
+        scrape_document(
+            rows,
+            chat_fn=_scrape,
+            triage_chat_fn=lambda _payload: "not-json",
+            max_sections=120,
+            min_candidates=99,
+            section_char_cap=2000,
+        )
+    )
+
+    assert scrape_calls == ["short body", "A" * 1400, "B" * 1400]
 
 
 # --------------------------------------------------------------------------- #

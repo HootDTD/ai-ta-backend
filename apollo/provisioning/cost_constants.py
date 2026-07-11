@@ -37,6 +37,9 @@ MAX_ATTEMPTS: int = int(os.getenv("APOLLO_PROVISION_MAX_ATTEMPTS", "3"))
 # problem-likely sections.
 APOLLO_SCRAPE_MAX_SECTIONS: int = int(os.getenv("APOLLO_SCRAPE_MAX_SECTIONS", "120"))
 APOLLO_SCRAPE_MIN_CANDIDATES: int = int(os.getenv("APOLLO_SCRAPE_MIN_CANDIDATES", "3"))
+APOLLO_SCRAPE_SECTION_CHAR_CAP: int = int(
+    os.getenv("APOLLO_SCRAPE_SECTION_CHAR_CAP", "2500")
+)
 
 
 def structured_scrape_enabled() -> bool:

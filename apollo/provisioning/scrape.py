@@ -42,7 +42,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.persistence.models import Concept, ConceptProblem, Subject
-from apollo.provisioning.section_grouping import group_into_sections
+from apollo.provisioning.cost_constants import APOLLO_SCRAPE_SECTION_CHAR_CAP
+from apollo.provisioning.section_grouping import Section, group_into_sections, section_content_hash
 from apollo.provisioning.section_triage import triage_sections
 from apollo.schemas.problem import Difficulty
 
@@ -61,6 +62,7 @@ __all__ = [
 # The reserved per-course inventory concept slug (the SEAM resolution: a Tier-1
 # row needs a NOT-NULL concept_id before stage-4 tagging exists).
 PROVISIONAL_CONCEPT_SLUG = "provisional.inventory"
+_SECTION_CHAR_OVERLAP = 200
 
 
 def _normalize(text: str) -> str:
@@ -242,6 +244,139 @@ def scrape_section(
     return finalized, failures
 
 
+def _section_window(
+    section: Section,
+    *,
+    text: str,
+    member_chunk_ids: Sequence[int],
+    pages: Sequence[int],
+) -> Section:
+    return Section(
+        title=section.title,
+        document_id=section.document_id,
+        page_start=min(pages) if pages else section.page_start,
+        page_end=max(pages) if pages else section.page_end,
+        text=text,
+        source_content_hash=section_content_hash(text or section.title),
+        member_chunk_ids=tuple(member_chunk_ids),
+    )
+
+
+def _character_windows(section: Section, *, char_cap: int) -> list[Section]:
+    overlap = min(_SECTION_CHAR_OVERLAP, max(0, char_cap // 4))
+    step = max(1, char_cap - overlap)
+    windows: list[Section] = []
+    start = 0
+    while start < len(section.text):
+        text = section.text[start : start + char_cap]
+        windows.append(
+            _section_window(
+                section,
+                text=text,
+                member_chunk_ids=section.member_chunk_ids,
+                pages=(),
+            )
+        )
+        if start + char_cap >= len(section.text):
+            break
+        start += step
+    return windows
+
+
+def _split_oversized_section(
+    section: Section,
+    *,
+    rows_by_id: dict[int, Any],
+    char_cap: int,
+) -> list[Section]:
+    if len(section.text) <= char_cap:
+        return [section]
+
+    member_rows = [
+        rows_by_id[chunk_id]
+        for chunk_id in section.member_chunk_ids
+        if chunk_id in rows_by_id
+    ]
+    body_rows = [
+        row
+        for row in member_rows
+        if getattr(row, "chunk_type", None) != "heading"
+        and str(getattr(row, "content", "") or "").strip()
+    ]
+    if not body_rows or any(getattr(row, "page_number", None) is None for row in body_rows):
+        return _character_windows(section, char_cap=char_cap)
+
+    pages: list[tuple[int, str, tuple[int, ...]]] = []
+    for row in body_rows:
+        page = int(row.page_number)
+        content = str(row.content).strip()
+        row_id = int(row.id)
+        if pages and pages[-1][0] == page:
+            old_page, old_text, old_ids = pages[-1]
+            pages[-1] = (old_page, f"{old_text}\n{content}", (*old_ids, row_id))
+        else:
+            pages.append((page, content, (row_id,)))
+
+    windows: list[Section] = []
+    current_pages: list[int] = []
+    current_texts: list[str] = []
+    current_ids: list[int] = []
+
+    def _flush() -> None:
+        if not current_texts:
+            return
+        windows.append(
+            _section_window(
+                section,
+                text="\n".join(current_texts),
+                member_chunk_ids=current_ids,
+                pages=current_pages,
+            )
+        )
+        current_pages.clear()
+        current_texts.clear()
+        current_ids.clear()
+
+    for page, page_text, page_ids in pages:
+        if len(page_text) > char_cap:
+            _flush()
+            page_section = _section_window(
+                section,
+                text=page_text,
+                member_chunk_ids=page_ids,
+                pages=(page,),
+            )
+            windows.extend(_character_windows(page_section, char_cap=char_cap))
+            continue
+        combined_length = len(page_text) + sum(len(text) for text in current_texts)
+        combined_length += len(current_texts)  # joining newlines
+        if current_texts and combined_length > char_cap:
+            _flush()
+        current_pages.append(page)
+        current_texts.append(page_text)
+        current_ids.extend(page_ids)
+    _flush()
+    return windows
+
+
+def _split_oversized_sections(
+    sections: Sequence[Section], chunk_rows: Sequence, *, char_cap: int
+) -> list[Section]:
+    if char_cap <= 0:
+        return list(sections)
+    rows_by_id = {int(row.id): row for row in chunk_rows}
+    windows: list[Section] = []
+    for section in sections:
+        windows.extend(
+            _split_oversized_section(
+                section,
+                rows_by_id=rows_by_id,
+                char_cap=char_cap,
+            )
+        )
+    return windows
+
+
 async def scrape_document(
     chunk_rows: Sequence,
     *,
@@ -250,18 +385,25 @@ async def scrape_document(
     max_sections: int,
     min_candidates: int,
     structured: bool = True,
+    section_char_cap: int = APOLLO_SCRAPE_SECTION_CHAR_CAP,
 ) -> ScrapeResult:
     """Structure-aware stage-1 scrape. Reconstructs sections, triages them once, then
     scrapes problem-likely sections first; a NOT-likely section is scraped only while
     candidates remain under ``min_candidates`` (the bounded exhaustive fallback), and
-    no more than ``max_sections`` sections are scraped per document.
+    no more than ``max_sections`` sections are scraped per document. Before triage,
+    every section over ``section_char_cap`` is split on page boundaries, with
+    overlapping character windows as the no-page/single-oversized-page fallback.
 
     When ``structured`` is False, delegates to the legacy per-chunk
     ``scrape_questions`` (the ``APOLLO_STRUCTURED_SCRAPE`` revert path)."""
     if not structured:
         return await scrape_questions(chunk_rows, chat_fn=chat_fn)
 
-    sections = group_into_sections(chunk_rows)
+    sections = _split_oversized_sections(
+        group_into_sections(chunk_rows),
+        chunk_rows,
+        char_cap=section_char_cap,
+    )
     if not sections:
         return ScrapeResult(candidates=(), scraped_count=0, parse_failures=0)
 
