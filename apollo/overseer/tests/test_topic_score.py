@@ -433,6 +433,47 @@ def test_dock_clamped_at_severity_clamp():
     assert result.misconception_dock == pytest.approx(SEVERITY_CLAMP)
 
 
+def test_dock_points_scale_to_reconcile_with_clamped_total():
+    """When the clamp binds, per-finding dock_points are scaled
+    proportionally so the "−N pts" lines a student sees sum EXACTLY to the
+    dock actually subtracted — unscaled shares would over-claim. Raw shares
+    here are 1.0*1.0 + 1.0*0.5 = 1.5 > SEVERITY_CLAMP, so each is scaled by
+    clamp/1.5 while keeping their 2:1 ratio."""
+    refs = [_eq_node("a")]
+    coverage = {"per_step": {"a": "covered"}, "procedure_scores": {}}
+    big = _finding(concept_key="a", confidence=1.0, signature="misc.big")
+    small = _finding(concept_key="a", confidence=0.5, signature="misc.small")
+
+    result = compute_topic_score(
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"a": 1.0},
+        detection_outcome=_outcome(big, small),
+    )
+
+    assert result.misconception_dock == pytest.approx(SEVERITY_CLAMP)
+    shown = {m.canonical_key: m.dock_points for m in result.topics[0].misconceptions}
+    assert sum(shown.values()) == pytest.approx(result.misconception_dock)
+    assert shown["misc.big"] == pytest.approx(shown["misc.small"] * 2)
+
+
+def test_dock_points_unscaled_when_clamp_does_not_bind():
+    """Below the clamp, dock_points are the raw shares untouched (scale=1)."""
+    refs = [_eq_node("a")]
+    coverage = {"per_step": {"a": "covered"}, "procedure_scores": {}}
+    f1 = _finding(concept_key="a", confidence=0.3, signature="misc.one")
+
+    result = compute_topic_score(
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"a": 0.5},
+        detection_outcome=_outcome(f1),
+    )
+
+    assert result.misconception_dock == pytest.approx(0.15)
+    assert result.topics[0].misconceptions[0].dock_points == pytest.approx(0.15)
+
+
 def test_score_floor_clamps_at_zero_when_dock_exceeds_coverage():
     """A near-zero coverage_component with the max dock never yields a
     negative score — clamp01 floors the pre-scale value at 0."""

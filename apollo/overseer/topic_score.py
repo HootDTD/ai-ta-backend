@@ -266,22 +266,29 @@ def compute_topic_score(
     misconceptions_by_topic: dict[str, list[TopicMisconception]] = {nid: [] for nid in topic_keys}
     misconceptions_by_topic[_GENERAL_KEY] = []
 
-    total_dock = 0.0
-    for finding in deduped:
-        resolved = _finding_resolved(finding)
-        share = 0.0 if resolved else _finding_penalty_share(finding, centrality)
-        total_dock += share
+    resolved_flags = tuple(_finding_resolved(f) for f in deduped)
+    raw_shares = tuple(
+        0.0 if resolved else _finding_penalty_share(finding, centrality)
+        for finding, resolved in zip(deduped, resolved_flags, strict=True)
+    )
+    total_dock = sum(raw_shares)
+    misconception_dock = min(SEVERITY_CLAMP, total_dock)
+    # When the clamp binds, scale each finding's displayed dock_points
+    # proportionally so the per-misconception "−N pts" lines shown to the
+    # student sum exactly to the dock actually subtracted from the score —
+    # unscaled shares would over-claim relative to the clamped total.
+    scale = misconception_dock / total_dock if total_dock > SEVERITY_CLAMP else 1.0
+
+    for finding, resolved, raw_share in zip(deduped, resolved_flags, raw_shares, strict=True):
         topic_key = _topic_key_for_finding(finding, topic_keys)
         misconceptions_by_topic.setdefault(topic_key, []).append(
             TopicMisconception(
                 canonical_key=finding.signature,
                 resolved=resolved,
-                dock_points=share,
+                dock_points=raw_share * scale,
                 evidence_span=finding.evidence_span or None,
             )
         )
-
-    misconception_dock = min(SEVERITY_CLAMP, total_dock)
 
     topics: list[TopicCredit] = []
     for node in graded_nodes:
