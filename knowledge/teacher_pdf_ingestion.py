@@ -68,6 +68,29 @@ def _math_symbol_ratio(text: str) -> float:
     return float(symbols) / float(max(1, len(normalized)))
 
 
+_NUMBERED_OUTLINE_RE = re.compile(r"^\d{1,2}[.)]\s+\S")
+_SAMPLE_QUESTIONS_RE = re.compile(r"\bsample\s+questions?\b", re.IGNORECASE)
+_ANSWER_LINE_RE = re.compile(r"^(?:answer|ans\.?)(?:\s*[:.)-]|\s+)", re.IGNORECASE)
+
+
+def _median(values: List[float]) -> float:
+    ordered = sorted(value for value in values if value > 0.0)
+    if not ordered:
+        return 0.0
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+def _is_numbered_outline(text: str) -> bool:
+    return bool(_NUMBERED_OUTLINE_RE.match(text))
+
+
+def _is_sub_bullet(text: str) -> bool:
+    return bool(re.match(r"^(?:[-–—•▪◦]|[a-zA-Z][.)])\s+\S", text))
+
+
 def _bbox_list(bbox: Any) -> Optional[List[float]]:
     if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
         return None
@@ -474,7 +497,8 @@ class TeacherPDFIngestor:
 
     def _extract_native_page(self, page: Any) -> tuple[List[NativeBlock], str, float]:
         page_dict = page.get_text("dict") or {}
-        blocks: List[NativeBlock] = []
+        block_candidates: List[dict[str, Any]] = []
+        page_font_sizes: List[float] = []
         image_area = 0.0
         page_area = max(1.0, float(page.rect.width * page.rect.height))
 
@@ -490,6 +514,7 @@ class TeacherPDFIngestor:
 
             line_texts: List[str] = []
             font_sizes: List[float] = []
+            bold = False
             for line in block.get("lines") or []:
                 parts: List[str] = []
                 for span in line.get("spans") or []:
@@ -497,9 +522,16 @@ class TeacherPDFIngestor:
                     if text:
                         parts.append(text)
                     try:
-                        font_sizes.append(float(span.get("size") or 0.0))
+                        font_size = float(span.get("size") or 0.0)
+                        font_sizes.append(font_size)
+                        if font_size > 0.0:
+                            page_font_sizes.append(font_size)
                     except (TypeError, ValueError):
-                        continue
+                        pass
+                    try:
+                        bold = bold or bool(int(span.get("flags") or 0) & 16)
+                    except (TypeError, ValueError):
+                        pass
                 joined = "".join(parts).strip()
                 if joined:
                     line_texts.append(joined)
@@ -509,21 +541,85 @@ class TeacherPDFIngestor:
                 continue
 
             avg_font_size = float(sum(font_sizes) / len(font_sizes)) if font_sizes else 0.0
-            chunk_type = "body"
             normalized = _normalize_text(block_text)
-            if avg_font_size >= 14.0 and len(normalized) <= 140:
+            block_candidates.append(
+                {
+                    "text": block_text,
+                    "bbox": bbox,
+                    "font_size": avg_font_size,
+                    "normalized": normalized,
+                    "bold": bold,
+                    "single_line": len(line_texts) == 1,
+                }
+            )
+
+        median_font_size = _median(page_font_sizes)
+        positive_sizes = [size for size in page_font_sizes if size > 0.0]
+        font_metadata_flat = not positive_sizes or max(positive_sizes) - min(positive_sizes) <= 0.25
+        blocks: List[NativeBlock] = []
+        inside_sample_questions = False
+
+        for index, candidate in enumerate(block_candidates):
+            normalized = candidate["normalized"]
+            numbered = candidate["single_line"] and _is_numbered_outline(normalized)
+            sample_questions_label = bool(_SAMPLE_QUESTIONS_RE.search(normalized))
+            next_text = (
+                block_candidates[index + 1]["normalized"]
+                if index + 1 < len(block_candidates)
+                else ""
+            )
+            larger_than_median = (
+                median_font_size > 0.0 and candidate["font_size"] > median_font_size
+            )
+            has_strong_numbered_signal = (
+                candidate["bold"]
+                or larger_than_median
+                or candidate["font_size"] >= 14.0
+            )
+            numbered_question = numbered and (
+                len(normalized) > 80
+                or normalized.endswith("?")
+                or bool(_ANSWER_LINE_RE.match(next_text))
+                or (inside_sample_questions and _is_sub_bullet(next_text))
+                or (inside_sample_questions and not has_strong_numbered_signal)
+            )
+            numbered_heading = (
+                numbered
+                and len(normalized) <= 80
+                and not numbered_question
+                and (
+                    font_metadata_flat
+                    or candidate["bold"]
+                    or larger_than_median
+                )
+            )
+            short_line = candidate["single_line"] and len(normalized) <= 140
+            existing_large_heading = candidate["font_size"] >= 14.0 and len(normalized) <= 140
+            bold_heading = candidate["bold"] and short_line
+
+            chunk_type = "body"
+            # "Sample Questions" identifies a list context; treating the label as
+            # a semantic section would split one authored section into a false third
+            # section and makes its numbered questions more likely to be promoted.
+            if not sample_questions_label and not numbered_question and (
+                existing_large_heading or bold_heading or numbered_heading
+            ):
                 chunk_type = "heading"
             elif _math_symbol_ratio(normalized) >= 0.12:
                 chunk_type = "equation"
 
             blocks.append(
                 NativeBlock(
-                    text=block_text,
-                    bbox=bbox,
-                    font_size=avg_font_size,
+                    text=candidate["text"],
+                    bbox=candidate["bbox"],
+                    font_size=candidate["font_size"],
                     chunk_type=chunk_type,
                 )
             )
+            if sample_questions_label:
+                inside_sample_questions = True
+            elif numbered_heading and has_strong_numbered_signal:
+                inside_sample_questions = False
 
         native_text = "\n\n".join(block.text for block in blocks).strip()
         return blocks, native_text, float(image_area / page_area)
