@@ -29,9 +29,14 @@ the per-turn loop is just **nodify + dumb reply**; the output filter and SymPy s
 unwired (code still present). Done grading has two default-OFF served evidence sources:
 the legacy graph-node semantic diff, and the transcript-first adjudicator selected by
 `APOLLO_TRANSCRIPT_GRADER`. The latter makes one strict structured-output call over the
-full both-role dialogue, validates every credited quote against student messages, and
-then emits the frozen legacy coverage dict consumed by rubric, topic score, diagnostic,
-XP, and artifacts. The response always includes `grading_provenance`, naming the served
+full both-role dialogue and grades knowledge demonstrated by the student's own words:
+an item may be explicitly `stated`, correctly `used`, clearly `implied`, or `absent`.
+Stated/used evidence may earn full credit, implied evidence is capped at 0.7, ambiguous
+hints at 0.4, and absent or uncorrected contradictory evidence earns zero. Every positive
+credit still requires one verbatim span from one student message; Apollo restatements are
+never evidence. The adjudicator then emits the frozen legacy coverage dict consumed by
+rubric, topic score, diagnostic, XP, and artifacts. The response always includes
+`grading_provenance`, naming the served
 evidence source and exposing pre-dock score, per-topic docks, and graph-lane abstention.
 Misconception arithmetic is localized: attached findings subtract only inside their
 topic contribution; unattached findings retain the global `SEVERITY_CLAMP` cap.
