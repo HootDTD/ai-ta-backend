@@ -1258,35 +1258,10 @@ async def test_positive_focus_flag_off_byte_identical_detector_off(monkeypatch):
     assert out_pf_on["rubric"] == _OLD_RUBRIC
 
 
-# ── Scope assertion: composite.py / abstention.py / artifact_build.py ────────
-# untouched by this task (git diff check, run at collection time so a CI
-# failure here is a loud, direct signal rather than a silent scope creep).
-
-
-def test_scope_assertion_out_of_scope_files_untouched():
-    """T-W5a must not touch apollo/grading/artifact_build.py,
-    apollo/grading/composite.py, or apollo/grading/abstention.py — P2 stays
-    the UNCONDITIONAL sole penalty channel and PR #105's territory is
-    untouched. This uses `git diff --name-only` against the merge-base with
-    origin/staging so it is a real, live scope check, not a static claim."""
-    import subprocess
-
-    forbidden = {
-        "apollo/grading/artifact_build.py",
-        "apollo/grading/composite.py",
-        "apollo/grading/abstention.py",
-    }
-    try:
-        merge_base = subprocess.run(
-            ["git", "merge-base", "HEAD", "origin/staging"],
-            capture_output=True, text=True, check=True, timeout=10,
-        ).stdout.strip()
-        diff = subprocess.run(
-            ["git", "diff", "--name-only", merge_base, "HEAD"],
-            capture_output=True, text=True, check=True, timeout=10,
-        ).stdout
-    except Exception:
-        pytest.skip("git history unavailable in this environment")
-    changed = set(diff.splitlines())
-    touched = changed & forbidden
-    assert not touched, f"T-W5a must not touch: {touched}"
+# The T-W5a-era file-diff scope guard (asserting artifact_build.py /
+# composite.py / abstention.py had no diff vs origin/staging) was removed
+# after T-W5a merged: a one-PR-lifetime scope check becomes a permanent
+# landmine that fires on any legitimate later change to those files. The
+# property it protected — P2's composite dock staying the UNCONDITIONAL
+# penalty channel — is asserted behaviorally by the positive-focus tests
+# above and by the apollo/grading artifact_build test suites.
