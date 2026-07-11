@@ -68,14 +68,17 @@ def test_ceiling_env_override(monkeypatch):
     # The env-override branch: a reimport with the env var set reads the override.
     monkeypatch.setenv("APOLLO_PROVISION_TOKEN_CEILING", "10")
     monkeypatch.setenv("APOLLO_PROVISION_MAX_ATTEMPTS", "7")
+    monkeypatch.setenv("APOLLO_SCRAPE_SECTION_CHAR_CAP", "9000")
     reloaded = importlib.reload(cost_constants)
     try:
         assert reloaded.PER_DOCUMENT_TOKEN_CEILING == 10
         assert reloaded.MAX_ATTEMPTS == 7
+        assert reloaded.APOLLO_SCRAPE_SECTION_CHAR_CAP == 9000
     finally:
         # Restore the committed defaults for every other test in the session.
         monkeypatch.delenv("APOLLO_PROVISION_TOKEN_CEILING", raising=False)
         monkeypatch.delenv("APOLLO_PROVISION_MAX_ATTEMPTS", raising=False)
+        monkeypatch.delenv("APOLLO_SCRAPE_SECTION_CHAR_CAP", raising=False)
         importlib.reload(cost_constants)
 
 
@@ -88,6 +91,7 @@ def test_scrape_section_bounds_defaults():
     importlib.reload(cc)
     assert cc.APOLLO_SCRAPE_MAX_SECTIONS == 120
     assert cc.APOLLO_SCRAPE_MIN_CANDIDATES == 3
+    assert cc.APOLLO_SCRAPE_SECTION_CHAR_CAP == 2500
 
 
 def test_structured_scrape_enabled_default_on_and_overridable(monkeypatch):
