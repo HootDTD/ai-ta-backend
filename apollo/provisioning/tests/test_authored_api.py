@@ -580,9 +580,7 @@ async def test_background_runner_without_solution_leaves_solution_document_id_nu
 
 
 @pytest.mark.asyncio
-async def test_background_runner_same_doc_guard_treats_solution_as_absent(
-    db_session, monkeypatch
-):
+async def test_background_runner_same_doc_guard_treats_solution_as_absent(db_session, monkeypatch):
     """B2: a solution upload whose content_hash matches the problem doc's (the
     teacher uploaded the SAME file for both roles) must be treated as absent —
     NULL ``solution_document_id``, a structured warning log, and a note in
@@ -2000,3 +1998,256 @@ async def test_approve_tag_mint_error_reports_without_committing(db_session, mon
     assert out["diagnostic"].startswith("tag_mint_error")
     fresh = await db_session.get(type(prob), int(prob.id))
     assert fresh.provenance["authored_review"]["required"] is True  # hold preserved
+
+
+# --------------------------------------------------------------------------- #
+# Per-set GET review enrichment (teacher review UI surface)
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_enrichment_set(db, *, slug: str, payload: dict, provenance: dict):
+    """One held problem + its authored set, returning ``(space, prob, aset)``."""
+    from apollo.persistence.models import AuthoredSet, ConceptProblem
+
+    space, concept = await _seed_course(db, slug=slug)
+    prob = ConceptProblem(
+        concept_id=concept,
+        problem_code=f"enrich-{slug}",
+        difficulty="intro",
+        tier=1,
+        payload=payload,
+        search_space_id=space,
+        provenance=provenance,
+    )
+    db.add(prob)
+    await db.flush()
+    aset = AuthoredSet(
+        search_space_id=space,
+        set_index=1,
+        status="done",
+        result_summary={
+            "problems": [
+                {
+                    "concept_problem_id": int(prob.id),
+                    "outcome": "held_for_review",
+                    "reason": provenance.get("authored_review", {}).get("reason"),
+                }
+            ],
+            "counts": {"held_for_review": 1},
+        },
+    )
+    db.add(aset)
+    await db.flush()
+    return space, prob, aset
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_enriches_held_problem(db_session, monkeypatch):
+    """A held problem's GET entry carries the question text and the WHITELISTED
+    review projection — trimmed drafts only (no grounding spans, no concept_match
+    or any other provenance key leaking into the response)."""
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    steps = [{"step": 1, "entry_type": "equation", "id": "eq1", "content": {"latex": "F=ma"}}]
+    _space, _prob, aset = await _seed_enrichment_set(
+        db_session,
+        slug="enrich-held",
+        payload={"problem_text": "What force accelerates the cart?"},
+        provenance={
+            "authored_review": {
+                "required": True,
+                "reason": "generated_no_match",
+                "ocr_confidence": 0.42,
+                "match_method": "label",
+                "ocr_draft": {
+                    "solution_source": "generated",
+                    "reference_solution": steps,
+                    "grounding": [{"chunk_id": 9, "text": "secret solution chunk"}],
+                    "provenance": {"chunk_content_hash": "abc"},
+                },
+                "generated_alt": None,
+                "concept_match": {"concept_id": 5, "slug": "forces", "rationale": "internal"},
+            }
+        },
+    )
+
+    detail = await aapi.get_authored_set(set_id=int(aset.id), request=_FakeRequest(), db=db_session)
+
+    (problem,) = detail["result_summary"]["problems"]
+    assert problem["problem_text"] == "What force accelerates the cart?"
+    assert problem["problem_text_truncated"] is False
+    review = problem["review"]
+    assert set(review) == {"required", "reason", "approved_reference", "ocr_draft", "generated_alt"}
+    assert review["required"] is True
+    assert review["reason"] == "generated_no_match"
+    assert review["generated_alt"] is None
+    draft = review["ocr_draft"]
+    assert set(draft) == {"solution_source", "reference_solution"}
+    assert draft["solution_source"] == "generated"
+    assert draft["reference_solution"] == steps
+    # The frozen counts stay verbatim; the UI recomputes from live review state.
+    assert detail["result_summary"]["counts"] == {"held_for_review": 1}
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_review_after_approval_omits_drafts(db_session, monkeypatch):
+    """Once approved (``required`` flipped false), the review projection exposes
+    the CURRENT state + which reference was approved, but no draft bodies."""
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    _space, _prob, aset = await _seed_enrichment_set(
+        db_session,
+        slug="enrich-approved",
+        payload={"problem_text": "Q"},
+        provenance={
+            "authored_review": {
+                "required": False,
+                "reason": "generated_no_match",
+                "approved_reference": "ocr",
+                "ocr_draft": {"solution_source": "generated", "reference_solution": []},
+            }
+        },
+    )
+
+    detail = await aapi.get_authored_set(set_id=int(aset.id), request=_FakeRequest(), db=db_session)
+
+    review = detail["result_summary"]["problems"][0]["review"]
+    assert review == {
+        "required": False,
+        "reason": "generated_no_match",
+        "approved_reference": "ocr",
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_enriches_no_match_hold(db_session, monkeypatch):
+    """A ``no_matching_concept`` hold stores no draft: the projection still carries
+    the reason + question text (so the UI can render the concept-gap card) with
+    both draft slots null — and nothing from ``concept_match`` leaks."""
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    _space, _prob, aset = await _seed_enrichment_set(
+        db_session,
+        slug="enrich-nomatch",
+        payload={"problem_text": "Explain the unmatched idea."},
+        provenance={
+            "authored_review": {
+                "required": True,
+                "reason": "no_matching_concept",
+                "concept_match": {"no_match": True, "rationale": "nothing registered fits"},
+            }
+        },
+    )
+
+    detail = await aapi.get_authored_set(set_id=int(aset.id), request=_FakeRequest(), db=db_session)
+
+    problem = detail["result_summary"]["problems"][0]
+    assert problem["problem_text"] == "Explain the unmatched idea."
+    review = problem["review"]
+    assert review["required"] is True
+    assert review["reason"] == "no_matching_concept"
+    assert review["ocr_draft"] is None
+    assert review["generated_alt"] is None
+    assert "concept_match" not in review
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_caps_problem_text(db_session, monkeypatch):
+    """``problem_text`` obeys the ``_LIST_OCR_TEXT_CAP`` size discipline."""
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    long_text = "x" * (aapi._LIST_OCR_TEXT_CAP + 50)
+    _space, _prob, aset = await _seed_enrichment_set(
+        db_session,
+        slug="enrich-cap",
+        payload={"problem_text": long_text},
+        provenance={"authored_review": {"required": True, "reason": "generated_no_match"}},
+    )
+
+    detail = await aapi.get_authored_set(set_id=int(aset.id), request=_FakeRequest(), db=db_session)
+
+    problem = detail["result_summary"]["problems"][0]
+    assert problem["problem_text_truncated"] is True
+    assert len(problem["problem_text"]) == aapi._LIST_OCR_TEXT_CAP
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_enrichment_null_safety(db_session, monkeypatch):
+    """Entries with no ``concept_problem_id``, a deleted row, a malformed entry, or
+    a row with no ``authored_review`` provenance pass through without enrichment
+    errors (old-shape sets keep working)."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, ConceptProblem
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    space, concept = await _seed_course(db_session, slug="enrich-null")
+    prob = ConceptProblem(
+        concept_id=concept,
+        problem_code="enrich-null",
+        difficulty="intro",
+        tier=1,
+        payload={},
+        search_space_id=space,
+        provenance={},
+    )
+    db_session.add(prob)
+    await db_session.flush()
+    aset = AuthoredSet(
+        search_space_id=space,
+        set_index=1,
+        status="done",
+        result_summary={
+            "problems": [
+                {"concept_problem_id": None, "outcome": "rejected", "diagnostic": "gate"},
+                {"concept_problem_id": 987654, "outcome": "promoted"},
+                "malformed-entry",
+                {"concept_problem_id": int(prob.id), "outcome": "promoted"},
+            ]
+        },
+    )
+    db_session.add(aset)
+    await db_session.flush()
+
+    detail = await aapi.get_authored_set(set_id=int(aset.id), request=_FakeRequest(), db=db_session)
+
+    problems = detail["result_summary"]["problems"]
+    assert problems[0] == {"concept_problem_id": None, "outcome": "rejected", "diagnostic": "gate"}
+    assert problems[1] == {"concept_problem_id": 987654, "outcome": "promoted"}
+    assert problems[2] == "malformed-entry"
+    # The live row exists but has no authored_review: text enriches, review null.
+    assert problems[3]["problem_text"] == ""
+    assert problems[3]["review"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_no_ids_skips_lookup(db_session, monkeypatch):
+    """A problems list carrying no concept_problem_ids never queries ConceptProblem."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    space, _concept = await _seed_course(db_session, slug="enrich-noids")
+    aset = AuthoredSet(
+        search_space_id=space,
+        set_index=1,
+        status="done",
+        result_summary={"problems": [{"concept_problem_id": None, "outcome": "rejected"}]},
+    )
+    db_session.add(aset)
+    await db_session.flush()
+
+    detail = await aapi.get_authored_set(set_id=int(aset.id), request=_FakeRequest(), db=db_session)
+
+    assert detail["result_summary"]["problems"] == [
+        {"concept_problem_id": None, "outcome": "rejected"}
+    ]

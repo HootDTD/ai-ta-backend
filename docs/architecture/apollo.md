@@ -116,7 +116,7 @@ HTTP routes (all defined in `apollo/api.py`):
 | `GET /apollo/problems?search_space_id=&concept_id=[&difficulty=intro\|standard\|hard]` | `handlers.browse.handle_list_problems` | Student browse surface — one concept's TEACHABLE problem pool (`list_problems_for_concept`: tier-2, non-quarantined), optionally difficulty-filtered, each flagged `attempted` by the caller's own `ProblemAttempt` rows in this course. **Student-safety invariant:** each item carries ONLY `{id, difficulty, problem_text, attempted}` — never `reference_solution` / `given_values` / `target_unknown`. A `concept_id` outside the course's candidate set (`list_course_concepts`) raises `NoMatchingConceptError` (409) rather than leaking cross-course problems. Membership-gated (`require_course_member`). |
 | `POST /apollo/sessions/{id}/kg/{entry_id}/challenge` / `paraphrase` / `skip`, `GET .../trace` | `handlers.negotiate` | Negotiable-OLM moves (P3). 404 `kg_entry_not_found` on stale entry ids. Owner-gated (`require_session_owner`). |
 | `GET /apollo/teacher/concepts?search_space_id=`, `POST /apollo/teacher/concepts`, `PATCH /apollo/teacher/concepts/{concept_id}`, `DELETE /apollo/teacher/concepts/{concept_id}` | `provisioning.concepts_api` | WU-TCA teacher concept authoring, gated by `require_course_teacher`. A teacher writes the course's concept list (display_name + migration-038 `description`) ahead of content: create mints an underscore slug (`mint_slug`), 409s on a `norm_slug`-duplicate within the course, and reuses `tag_mint_persist.resolve_or_create_concept` (auto-creates the course's first `Subject`); list returns every non-provisional concept with `problem_count`/`has_teachable_problems` (authored-but-empty concepts are matcher targets via `list_registered_concepts` but invisible to students until a tier-2 problem attaches); update edits name/description only — the slug is stable across renames; delete 409s when ANY `ConceptProblem`s or `KGEntity`s exist (provisioned-content teardown belongs to the authored-set delete flow). The reserved `provisional.inventory` row is invisible here (404/list-excluded). Tests: `apollo/provisioning/tests/test_concepts_api.py`. |
-| `POST /apollo/authored-sets`, `GET /apollo/authored-sets`, `GET /apollo/authored-sets/{set_id}`, `POST /apollo/authored-sets/{set_id}/problems/{problem_id}/approve`, `DELETE /apollo/authored-sets/{set_id}` | `provisioning.authored_sets.api` | WU-AAS paired problem/solution set surface, gated by `require_course_teacher` (role='teacher'; no auto-enroll fallback) — a plain course member can no longer call these. Create accepts multipart `problem` PDF (required) + `solution` PDF (optional, `File(None)` — PR B: the intended teacher flow is problem-only, letting the pipeline auto-generate held-for-review reference solutions) and `search_space_id`, writes an `AuthoredSet`, indexes the problem doc (and the solution doc when provided) hidden, then schedules in-process background provisioning. Poll endpoints return status + bounded `result_summary`. Approve promotes a held Tier-1 problem using the teacher-selected OCR or generated reference. Delete is terminal-status only (`done`/`failed`) — 409 while `pending`/`indexing`/`provisioning` (the in-flight background task writes Neo4j `:Canon` nodes outside the PG transaction, so a mid-run delete would orphan them); on success it removes the `AuthoredSet`, the `ConceptProblem`s it minted (ids read from `result_summary["problems"]`), and the two hidden reference docs (chunks cascade); the shared per-concept `:Canon` projection is deliberately left intact. |
+| `POST /apollo/authored-sets`, `GET /apollo/authored-sets`, `GET /apollo/authored-sets/{set_id}`, `POST /apollo/authored-sets/{set_id}/problems/{problem_id}/approve`, `DELETE /apollo/authored-sets/{set_id}` | `provisioning.authored_sets.api` | WU-AAS paired problem/solution set surface, gated by `require_course_teacher` (role='teacher'; no auto-enroll fallback) — a plain course member can no longer call these. Create accepts multipart `problem` PDF (required) + `solution` PDF (optional, `File(None)` — PR B: the intended teacher flow is problem-only, letting the pipeline auto-generate held-for-review reference solutions) and `search_space_id`, writes an `AuthoredSet`, indexes the problem doc (and the solution doc when provided) hidden, then schedules in-process background provisioning. Poll endpoints return status + bounded `result_summary`; the per-set GET enriches each live problem entry with capped `problem_text` + the whitelisted `authored_review` projection (`review`: current `required`, `reason`, `approved_reference`, and trimmed drafts while held) for the teacher review UI. Approve promotes a held Tier-1 problem using the teacher-selected OCR or generated reference. Delete is terminal-status only (`done`/`failed`) — 409 while `pending`/`indexing`/`provisioning` (the in-flight background task writes Neo4j `:Canon` nodes outside the PG transaction, so a mid-run delete would orphan them); on success it removes the `AuthoredSet`, the `ConceptProblem`s it minted (ids read from `result_summary["problems"]`), and the two hidden reference docs (chunks cascade); the shared per-concept `:Canon` projection is deliberately left intact. |
 
 Key service entry points:
 - `parse_utterance(utterance, *, concept: ConceptDefinition, attempt_id: int, graph_context: GraphContext | None = None, model=None) -> tuple[list[Node], list[Edge]]` — one strict-json_schema GPT-4o call → typed nodes + all four typed edges (provenance-tagged); `graph_context` (optional) supplies prior-attempt nodes for cross-turn edge linking — `chat.py` builds and threads it on every turn (WU-2B). Raises `ParserCouldNotExtractError` only when a *non-trivial* utterance yields zero entries.
@@ -261,11 +261,26 @@ Pairing state lives in `apollo_authored_sets` via `AuthoredSet`: one
 (`pending|indexing|provisioning|done|failed`), and bounded `result_summary`
 JSON. Candidate results are `promoted`, `rejected`, or `held_for_review`, each
 with `outcome`/`diagnostic`/`reason` fields; the per-set `GET
-/apollo/authored-sets/{set_id}` returns `result_summary` verbatim (including
-the full `problems` list, not just `promoted` rows), so rejected and
-held_for_review candidates are already visible to the teacher UI as a review
+/apollo/authored-sets/{set_id}` returns `result_summary` with the full
+`problems` list (not just `promoted` rows), so rejected and
+held_for_review candidates are visible to the teacher UI as a review
 queue — `test_get_authored_set_surfaces_rejected_and_held_for_review` (PR B4)
-pins this passthrough. `solution_source='extracted'` means a paired,
+pins this. Each `problems` entry whose `ConceptProblem` row still exists is
+additionally ENRICHED in the response (review-UI surface, 2026-07-11;
+`_enrich_problem_reviews` — the stored row/`result_summary` are never mutated)
+with `problem_text` (from the row's payload, capped to `_LIST_OCR_TEXT_CAP`
+chars with a `problem_text_truncated` flag — the same size discipline as the
+page-evidence surface) and a WHITELISTED `review` projection of
+`provenance["authored_review"]`: the CURRENT `required` flag (flips false on
+approval, so the UI recomputes displayed counts from live problem state instead
+of trusting the frozen `counts`), `reason`, `approved_reference`, and — only
+while the hold is active — `ocr_draft`/`generated_alt` each trimmed to
+`solution_source` + `reference_solution` (grounding spans, `concept_match`,
+`ocr_confidence`, and every other provenance key are deliberately NOT exposed).
+Entries with no `concept_problem_id`, a since-deleted row, or malformed shape
+pass through unchanged, so pre-enrichment sets keep their old response shape
+(`test_get_authored_set_enriches_held_problem` and its sibling tests pin the
+whitelist, the cap, the post-approval draft omission, and null-safety). `solution_source='extracted'` means a paired,
 label-matched solution span was used; trusted extracted references may
 promote to tier 2. Generated references (including every candidate when no
 solution doc is paired), or OCR references that materially diverge from
@@ -313,7 +328,9 @@ fallback — a plain course member 403s): `POST /apollo/authored-sets` accepts m
 problem PDF (required) + solution PDF (optional) and starts in-process background provisioning,
 `GET /apollo/authored-sets?search_space_id=` lists set statuses,
 `GET /apollo/authored-sets/{set_id}` returns detail, per-problem
-`result_summary`, and the ingestion observability surface (`ingest_run` +
+`result_summary` (each live problem enriched with capped `problem_text` and the
+whitelisted `review` projection — see the enrichment note above), and the
+ingestion observability surface (`ingest_run` +
 per-page `pages`: `page_ref`, `ocr_text`, `ocr_confidence`,
 `verify_path_fired`), and
 `POST /apollo/authored-sets/{set_id}/problems/{problem_id}/approve` promotes a
