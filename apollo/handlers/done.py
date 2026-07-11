@@ -11,6 +11,7 @@ proceed if any of them have not been touched with a negotiation move
 (challenge / paraphrase / skip). Behind env flag
 `APOLLO_DONE_GATE_ENABLED` (default off) until manual UX verification.
 """
+
 from __future__ import annotations
 
 import logging
@@ -22,6 +23,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apollo.emergent.capture import record_detector_births
+from apollo.emergent.config import emergent_map_capture_enabled
+from apollo.emergent.materialize import materialize_if_promotable
 from apollo.errors import (
     ResolutionUnavailableError,
     ReviewRequiredError,
@@ -48,8 +52,25 @@ from apollo.overseer.misconception import (
     MisconceptionSignal,
     summarize_for_rubric,
 )
+from apollo.overseer.misconception_bank import MisconceptionEntry, load_for_concept
+from apollo.overseer.misconception_detector.apply import rubric_overall_after_penalty
+from apollo.overseer.misconception_detector.centrality import compute_centrality
+from apollo.overseer.misconception_detector.config import (
+    detector_enabled,
+    grader_positive_focus_enabled,
+    struct_cokey_enabled,
+    topic_score_served_enabled,
+    trace_enabled,
+)
+from apollo.overseer.misconception_detector.detector import detect_misconceptions
+from apollo.overseer.misconception_detector.gate import gate_findings
+from apollo.overseer.misconception_detector.judge import make_openai_judge
+from apollo.overseer.misconception_detector.merge import merge_detections
+from apollo.overseer.misconception_detector.types import JudgeFn, MergeOutcome
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.overseer.rubric import compute_rubric
+from apollo.overseer.topic_score import TopicScoreResult, compute_topic_score
+from apollo.overseer.topic_score_serialize import serialize_topics
 from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
 from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
@@ -128,6 +149,19 @@ _GRAPH_SIM_ARTIFACT_FLAG: str = "APOLLO_GRADING_ARTIFACT_ENABLED"
 # cost a student their grade). When OFF, a named infra error in the shadow
 # chain still re-raises (today's NO-FALLBACK diagnostics, unchanged).
 _GRAPH_GRADER_LIVE_FLAG: str = "APOLLO_GRAPH_GRADER_LIVE"
+
+# T13 — the misconception-detector flag (default OFF everywhere). Pinned here so
+# the route/config key matches the spec; the reader lives in
+# `apollo/overseer/misconception_detector/config.py::detector_enabled` (imported
+# above). When OFF, the parallel detection stage in `handle_done` never runs and
+# the student-facing payload is byte-identical to today (design invariant #1).
+_MISCONCEPTION_DETECTOR_FLAG: str = "APOLLO_MISCONCEPTION_DETECTOR"
+
+# T13 — the raw student-turn role for `_student_utterances` (R6, RESOLVED): live
+# transcript roles are exactly {"apollo", "student"}; the Apollo learner turns
+# (read by `_attempt_misconception_scores`) are "apollo", the student's raw
+# teaching utterances (which feed the bank_pattern tier) are "student".
+_STUDENT_ROLE: str = "student"
 
 # Lane B1 / G3 — the shadow-failure marker prefix stamped onto the canonical
 # LLM artifact's `abstention.graph_failure` when a SHADOW-mode (LIVE off)
@@ -264,20 +298,30 @@ def _node_summary_for_review(node: Node) -> str:
 
 
 async def _entries_with_moves(
-    db: AsyncSession, *, attempt_id: int,
+    db: AsyncSession,
+    *,
+    attempt_id: int,
 ) -> set[str]:
     """Return the set of `entry_id`s that have at least one negotiation
     move recorded for this attempt. The Done-gate clears once every
     flagged entry is in this set."""
-    rows = (await db.execute(
-        select(KGNegotiation.entry_id)
-        .where(KGNegotiation.attempt_id == attempt_id)
-    )).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(KGNegotiation.entry_id).where(KGNegotiation.attempt_id == attempt_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     return set(rows)
 
 
 async def _enforce_done_gate(
-    db: AsyncSession, *, attempt_id: int, graph: KGGraph,
+    db: AsyncSession,
+    *,
+    attempt_id: int,
+    graph: KGGraph,
 ) -> None:
     """Raises ReviewRequiredError if any flagged entry lacks a negotiation
     move. Caller invokes this before freeze so failures don't lock the
@@ -291,18 +335,22 @@ async def _enforce_done_gate(
     for node, reason in flagged:
         if node.node_id in moved:
             continue
-        review_required.append({
-            "entry_id": node.node_id,
-            "type": node.node_type,
-            "reason": reason,
-            "summary": _node_summary_for_review(node),
-        })
+        review_required.append(
+            {
+                "entry_id": node.node_id,
+                "type": node.node_type,
+                "reason": reason,
+                "summary": _node_summary_for_review(node),
+            }
+        )
     if review_required:
         raise ReviewRequiredError(entries=review_required)
 
 
 async def _attempt_misconception_scores(
-    db: AsyncSession, *, attempt_id: int,
+    db: AsyncSession,
+    *,
+    attempt_id: int,
 ) -> dict[str, float]:
     """Read every Apollo turn for this attempt and reduce misconception
     signals to a per-bank-code score map for the rubric's axis.
@@ -312,12 +360,18 @@ async def _attempt_misconception_scores(
     empty dict when nothing fired — the rubric treats that as
     axis-absent and falls back to the pre-P2.8 60/25/15 weights.
     """
-    rows = (await db.execute(
-        select(Message.message_metadata)
-        .where(Message.attempt_id == attempt_id)
-        .where(Message.role == "apollo")
-        .order_by(Message.turn_index)
-    )).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(Message.message_metadata)
+                .where(Message.attempt_id == attempt_id)
+                .where(Message.role == "apollo")
+                .order_by(Message.turn_index)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     signals: list[MisconceptionSignal] = []
     for payload in rows:
@@ -329,14 +383,132 @@ async def _attempt_misconception_scores(
         state = raw.get("state", "default")
         if state not in {"default", "probe", "socratic"}:
             continue
-        signals.append(MisconceptionSignal(
-            fired=bool(raw.get("fired", False)),
-            state=state,  # type: ignore[arg-type]
-            bank_code=raw.get("bank_code"),
-            confidence=float(raw.get("confidence", 0.0) or 0.0),
-        ))
+        signals.append(
+            MisconceptionSignal(
+                fired=bool(raw.get("fired", False)),
+                state=state,  # type: ignore[arg-type]
+                bank_code=raw.get("bank_code"),
+                confidence=float(raw.get("confidence", 0.0) or 0.0),
+            )
+        )
 
     return summarize_for_rubric(signals)
+
+
+async def _student_utterances(
+    db: AsyncSession,
+    *,
+    attempt_id: int,
+) -> tuple[str, ...]:
+    """T13 — the raw student teaching utterances for this attempt, in turn
+    order, that feed the misconception detector's ``bank_pattern`` tier.
+
+    Reads ``Message.content`` where ``Message.role == "student"`` (R6 —
+    the CONFIRMED student-turn role, distinct from the "apollo" learner
+    turns ``_attempt_misconception_scores`` reads) ordered by
+    ``turn_index``. Returns a tuple (immutable) so the detector's frozen
+    value objects stay list-free end to end. Empty tuple when the student
+    never spoke (a valid, common case — the detector's tiers all abstain on
+    empty utterances)."""
+    rows = (
+        (
+            await db.execute(
+                select(Message.content)
+                .where(Message.attempt_id == attempt_id)
+                .where(Message.role == _STUDENT_ROLE)
+                .order_by(Message.turn_index)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return tuple(rows)
+
+
+async def _load_bank_entries(
+    db: AsyncSession,
+    *,
+    concept_id: int | None,
+) -> tuple[MisconceptionEntry, ...]:
+    """F-struct — soft-failing bank load for ``build_opposes_index``, mirroring
+    ``misconception_detector.detector._load_bank`` (that helper is private to
+    its module, so this is a small local copy rather than an import of a
+    leading-underscore name). No ``concept_id`` -> empty bank; any load error
+    (transient DB failure) also degrades to an empty bank rather than raising
+    — an empty bank makes ``build_opposes_index`` return ``{}``, which is the
+    same no-op ``gate_findings`` already tolerates via its own
+    ``opposes_index or {}`` default."""
+    if concept_id is None:
+        return ()
+    try:
+        entries = await load_for_concept(db, concept_id=concept_id)
+    except Exception:  # noqa: BLE001
+        _LOG.exception("misconception_struct_cokey_bank_load_failed concept_id=%s", concept_id)
+        return ()
+    return tuple(entries)
+
+
+def _embed_texts(texts: list[str]) -> list[list[float]]:
+    """Lazy indirection over the project-wide batched embedder so importing
+    ``done`` never pulls in the OpenAI SDK (mirrors
+    ``apollo/resolution/embedding.py::default_embedder``). Split out as its
+    own module-level name so tests can patch the batched call without
+    touching ``_default_embed_fn``'s single-vector wrapper logic."""
+    from indexing.document_embedder import embed_texts
+
+    return embed_texts(texts)
+
+
+def _default_embed_fn(text: str) -> list[float]:
+    """Production ``EmbedFn`` (DI seam for the ``bank_pattern`` tier). Wraps the
+    batched ``embed_texts`` (which returns a list of vectors) into the
+    single-text -> single-vector shape the ``EmbedFn`` Protocol declares
+    (``types.py``: ``__call__(text: str) -> list[float]``). Degrades to an
+    empty vector on an empty batch result rather than raising IndexError —
+    the ``bank_pattern`` tier treats a zero-norm/empty vector as "no match"."""
+    vectors = _embed_texts([text])
+    return vectors[0] if vectors else []
+
+
+def _default_judge_fn() -> JudgeFn:
+    """Production ``JudgeFn`` factory for the detector's Tier-2 judge. Thin
+    indirection over ``make_openai_judge`` so the call site in ``handle_done``
+    reads symmetrically with ``_default_embed_fn`` and so a test can patch the
+    factory without patching the OpenAI-touching builder itself."""
+    return make_openai_judge()
+
+
+def _compute_topic_score_safe(
+    *,
+    coverage: dict,
+    reference_graph: KGGraph,
+    centrality: dict[str, float] | None,
+    detection_outcome: MergeOutcome | None,
+    attempt_id: int,
+) -> TopicScoreResult | None:
+    """Soft-failing wrapper around ``compute_topic_score`` (2026-07-10 spec
+    §3): computed ALWAYS (flag-independent — the artifact gets telemetry
+    before any serving flip), but any exception here must never break a Done.
+    ``centrality`` may be ``None`` when the detector stage never ran; it is
+    then computed fresh from ``reference_graph`` here (``compute_centrality``
+    is pure and cheap, so recomputing rather than threading an Optional
+    through the detector-off branch keeps the call site simple). Any
+    exception anywhere in this function (including centrality recomputation)
+    is logged and swallowed — the caller receives ``None`` and proceeds with
+    ``topic_score`` absent from both the artifact and the served payload."""
+    try:
+        resolved_centrality = (
+            centrality if centrality is not None else compute_centrality(reference_graph)
+        )
+        return compute_topic_score(
+            coverage=coverage,
+            reference_nodes=reference_graph.nodes,
+            centrality=resolved_centrality,
+            detection_outcome=detection_outcome,
+        )
+    except Exception:
+        _LOG.exception("topic_score_computation_failed attempt_id=%s", attempt_id)
+        return None
 
 
 async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) -> Problem:
@@ -354,21 +526,25 @@ async def handle_done(
 ) -> dict[str, Any]:
     store = KGStore(db, neo)
 
-    sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+    sess = (
+        await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+    ).scalar_one()
     problem = await _find_problem(db, sess.concept_id, sess.current_problem_id)
 
     attempt = (
-        await db.execute(
-            select(ProblemAttempt)
-            .where(ProblemAttempt.session_id == session_id)
-            .where(ProblemAttempt.problem_id == problem.id)
-            .order_by(ProblemAttempt.id.desc())
+        (
+            await db.execute(
+                select(ProblemAttempt)
+                .where(ProblemAttempt.session_id == session_id)
+                .where(ProblemAttempt.problem_id == problem.id)
+                .order_by(ProblemAttempt.id.desc())
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if attempt is None:
-        raise RuntimeError(
-            f"no ProblemAttempt for session {session_id} / problem {problem.id}"
-        )
+        raise RuntimeError(f"no ProblemAttempt for session {session_id} / problem {problem.id}")
 
     # P3.6 — Done-gate. Read the graph BEFORE freezing so a 422 doesn't
     # lock the student into PROBLEM_REVEAL. When the master flag is off,
@@ -376,7 +552,9 @@ async def handle_done(
     pre_freeze_graph = await store.read_graph(attempt_id=attempt.id)
     if _done_gate_enabled():
         await _enforce_done_gate(
-            db, attempt_id=attempt.id, graph=pre_freeze_graph,
+            db,
+            attempt_id=attempt.id,
+            graph=pre_freeze_graph,
         )
 
     await store.freeze(session_id)
@@ -401,19 +579,236 @@ async def handle_done(
     # existing 60/25/15. When no misconceptions fired, the dict is empty
     # and the rubric is byte-identical to its pre-P2.8 output.
     misconception_scores = await _attempt_misconception_scores(
-        db, attempt_id=attempt.id,
+        db,
+        attempt_id=attempt.id,
     )
+    # T-W5a (P4) — grader positive-focus. Default OFF: byte-identical, every
+    # detected code (resolved 1.0 or unresolved 0.5) enters the axis exactly
+    # as before. When ON, drop unresolved (0.5) contributions before the
+    # axis is computed — the "you corrected it" resolved credit (1.0) still
+    # counts, but an unresolved misconception no longer drags `overall` down
+    # relative to the axis being absent (credit-only, memo §3).
+    if grader_positive_focus_enabled():
+        misconception_scores = {
+            code: score for code, score in misconception_scores.items() if score >= 1.0
+        }
     rubric = compute_rubric(
         coverage,
         reference_graph.nodes,
         misconception_scores=misconception_scores,
     )
 
+    # T13 — the DEFAULT-OFF parallel misconception-detection stage. Runs after
+    # the rubric so it can dock its LIVE score, and before the diagnostic so
+    # the narrative already reflects the penalized band. When
+    # `detector_enabled()` is OFF (the only prod state today) this whole block
+    # is skipped and `handle_done` is byte-identical to pre-T13 (design
+    # invariant #1). SOFT-FAIL (invariant #5): ANY exception in the
+    # detect -> gate -> merge chain is logged and swallowed — the grade then
+    # proceeds with the UNPENALIZED rubric and a `None` outcome, served HTTP
+    # 200. `detection_outcome` (the MergeOutcome) is threaded into
+    # `write_artifacts` below so the artifact's `misconception_penalty` /
+    # `misconceptions[]` are populated and the emergent ledger feed picks them
+    # up. The reassigned `rubric` (a NEW dict from `rubric_overall_after_penalty`
+    # — never a mutation of the original) flows into `xp_earned`, the
+    # diagnostic, `student_response["rubric"]`, and `attempt.diagnostic_report`,
+    # moving the real band + XP a student sees.
+    detection_outcome: MergeOutcome | None = None
+    # Topic-score (2026-07-10 spec §2/§3) reuses the detector's own centrality
+    # computation when the detector stage ran, rather than paying for it
+    # twice. `None` here means "not computed yet" — `_compute_topic_score_safe`
+    # (called after this block, flag-independent) recomputes it fresh when
+    # the detector never ran (flag off, or the detector's own soft-fail fired
+    # before reaching the centrality line below).
+    centrality_for_topic_score: dict[str, float] | None = None
+    if detector_enabled():
+        try:
+            utterances = await _student_utterances(db, attempt_id=attempt.id)
+            detection = await detect_misconceptions(
+                db,
+                attempt_id=attempt.id,
+                concept_id=sess.concept_id,
+                student_graph=student_graph,
+                reference_graph=reference_graph,
+                problem_text=problem.problem_text,
+                student_utterances=utterances,
+                judge_fn=_default_judge_fn(),
+                embed_fn=_default_embed_fn,
+            )
+            # F-struct (structural co-key) — DEFAULT OFF sub-flag, independent
+            # of `detector_enabled()`. When OFF, `opposes_index` stays `{}` and
+            # `gate_findings`/`trace_attempt` see the exact same empty map they
+            # always defaulted to — byte-identical. When ON, resolve the
+            # concept's misconception bank's `opposes` (an `entity_key`, F-struct
+            # migration 038) against `reference_graph` node `entity_key`s into a
+            # `node_id -> bank_code` map, so a judge finding that localizes an
+            # error (`wrong`/`misconception`, no named code) to a node the GRAPH
+            # itself names via `opposes` can still dock (gate.py's structural
+            # co-key branch, row3s_struct_cokey_dock).
+            opposes_index: dict[str, str] = {}
+            if struct_cokey_enabled():
+                from apollo.overseer.misconception_detector.opposes_index import (
+                    build_opposes_index,
+                )
+
+                bank_entries = await _load_bank_entries(
+                    db,
+                    concept_id=sess.concept_id,
+                )
+                opposes_index = build_opposes_index(reference_graph, bank_entries)
+            gated = gate_findings(detection.per_concept, opposes_index=opposes_index)
+            centrality = compute_centrality(reference_graph)
+            centrality_for_topic_score = centrality
+            detection_outcome = merge_detections(gated, centrality=centrality)
+            # T-W5a (P1) — grader positive-focus (2026-07-10 design memo).
+            # Default OFF: byte-identical, the served rubric band is docked
+            # exactly as before. When ON, this dock is skipped — the served
+            # rubric/band/XP become credit-only, while `detection_outcome`
+            # is STILL threaded to `write_artifacts` below unchanged, so the
+            # composite dock (P2, `artifact_build.py`, UNCONDITIONAL — the
+            # single retained penalty channel) and the feedback record
+            # (`misconceptions[]`) both retain full fidelity.
+            if not grader_positive_focus_enabled():
+                rubric = rubric_overall_after_penalty(rubric, detection_outcome)
+            # Phase-1 diagnostic trace (default OFF, APOLLO_MISC_TRACE). When
+            # OFF this branch never imports `trace` — flag-OFF is byte-identical.
+            # Instrumentation only: it re-derives per-node judge/gate rows from
+            # the artifacts just produced and never touches the grade above. A
+            # live grade has no persona/control label, so `is_control=False` and
+            # `final_band` is the (letter) rubric band — the labeled false-Strong
+            # roll-up is the campaign harness's job (it has the scorecard band).
+            # Isolated in its OWN try/except so a trace defect can never perturb
+            # the already-computed rubric/outcome (instrumentation must not
+            # change the grade, even by soft-failing it) — the grade proceeds
+            # penalized-as-computed and only the trace is skipped.
+            if trace_enabled():
+                try:
+                    from apollo.overseer.misconception_detector.trace import (
+                        trace_attempt,
+                    )
+
+                    trace_attempt(
+                        attempt_id=int(attempt.id),
+                        reference_graph=reference_graph,
+                        detection=detection,
+                        gated=gated,
+                        outcome=detection_outcome,
+                        centrality=centrality,
+                        final_band=rubric["overall"].get("letter"),
+                        is_control=False,
+                        opposes_index=opposes_index,
+                    )
+                except Exception:
+                    _LOG.exception("misconception_trace_failed attempt_id=%s", int(attempt.id))
+            # Emergent misconception map — capture seam 1: detector-unkeyed
+            # birth (2026-07-10 design §5.3.1, plan Wave 2 T2). Independently
+            # flag-gated from `detector_enabled()` (that flag only gates
+            # whether the detector STAGE runs at all; this flag gates only
+            # whether a birth observation is WRITTEN once it does). When OFF
+            # (the only prod state today) this branch never runs — no
+            # collector call, no store write, byte-identical. `collect_
+            # unkeyed_births` replays the gate's own row7/row8 unkeyed
+            # predicate (pure, no IO) over the SAME `detection.per_concept`
+            # + `opposes_index` the gate just consumed; `record_detector_
+            # births` resolves each birth's `concept_key` (a reference-graph
+            # node_id) to its `entity_key` via a map built from `reference_
+            # graph.nodes` (the inverse of opposes_index.py's
+            # `key_to_node_id` — ConceptFinding carries no entity_key of its
+            # own, design correction #2) and appends the observation.
+            # OWN failure domain (own try/except -> log + rollback, own
+            # commit on success — artifact_writer.py:236-256 pattern): a
+            # capture-write failure must NEVER affect the returned grade,
+            # which is already fully computed above this point.
+            if emergent_map_capture_enabled():
+                try:
+                    from apollo.overseer.misconception_detector.gate import (
+                        collect_unkeyed_births,
+                    )
+
+                    node_entity_key = {
+                        n.node_id: n.entity_key for n in reference_graph.nodes if n.entity_key
+                    }
+                    births = collect_unkeyed_births(
+                        detection.per_concept, opposes_index=opposes_index
+                    )
+                    await record_detector_births(
+                        db,
+                        search_space_id=int(sess.search_space_id),
+                        concept_id=sess.concept_id,
+                        user_id=str(sess.user_id),
+                        attempt_id=int(attempt.id),
+                        births=births,
+                        node_entity_key=node_entity_key,
+                    )
+                    # T7 (plan Wave 3, spec §5.5 Q3): eager tau_project
+                    # materialization, INSIDE this same failure domain, right
+                    # after the observation write succeeds and before the
+                    # commit. One signature per birth's resolved entity_key —
+                    # a no-op below TAU_PROJECT, idempotent at/above it. `neo`
+                    # is the handler's own client (already threaded in) — the
+                    # :Canon map materializes eagerly from this seam.
+                    for entity_key in {
+                        node_entity_key[b.concept_key]
+                        for b in births
+                        if b.concept_key in node_entity_key
+                    }:
+                        await materialize_if_promotable(
+                            db,
+                            neo,
+                            search_space_id=int(sess.search_space_id),
+                            concept_id=sess.concept_id,
+                            signature=f"emergent.{entity_key}",
+                            opposes_entity_key=entity_key,
+                        )
+                    await db.commit()
+                except Exception:
+                    _LOG.exception("emergent_birth_capture_failed attempt_id=%s", int(attempt.id))
+                    try:
+                        await db.rollback()
+                    except Exception:  # pragma: no cover - defensive
+                        _LOG.exception(
+                            "emergent_birth_capture_rollback_failed attempt_id=%s",
+                            int(attempt.id),
+                        )
+        except Exception:
+            _LOG.exception("misconception_detector_failed attempt_id=%s", int(attempt.id))
+            detection_outcome = None  # soft-fail: grade proceeds unpenalized
+
+    # Topic-score (2026-07-10 spec §2/§3) — COMPUTED ALWAYS, flag-independent:
+    # the canonical artifact (below) gets `scores.topic_score` telemetry
+    # before `APOLLO_TOPIC_SCORE_SERVED` is ever flipped. Soft-fail contract:
+    # `_compute_topic_score_safe` never raises — `topic_score` is `None` on
+    # any failure, and every downstream use below is guarded on that.
+    topic_score: TopicScoreResult | None = _compute_topic_score_safe(
+        coverage=coverage,
+        reference_graph=reference_graph,
+        centrality=centrality_for_topic_score,
+        detection_outcome=detection_outcome,
+        attempt_id=int(attempt.id),
+    )
+
+    # Serving (spec §3): under the flag, `served_rubric` REPLACES `overall`
+    # with the topic score/letter while every legacy axis block is carried
+    # over UNCHANGED (mid-deploy safety for older UI clients). This builds a
+    # NEW dict — `rubric` itself (the object `attempt.diagnostic_report` and
+    # `write_artifacts` below both still receive) is never mutated. Flag off,
+    # or a soft-failed `topic_score`, leaves `served_rubric is rubric`
+    # (byte-identical downstream).
+    serve_topic_score = topic_score is not None and topic_score_served_enabled()
+    if serve_topic_score:
+        served_rubric = {
+            **rubric,
+            "overall": {"score": topic_score.score, "letter": topic_score.letter},
+        }
+    else:
+        served_rubric = rubric
+
     diagnostic_narrative = generate_diagnostic(
         coverage=coverage,
         reference_steps=[s.model_dump() for s in problem.reference_solution],
         problem_text=problem.problem_text,
         rubric=rubric,
+        topic_score=topic_score,
     )
 
     # Re-attempt detection (unchanged from V2).
@@ -426,8 +821,13 @@ async def handle_done(
     )
     is_reattempt = is_reattempt_in_session or is_reattempt_cross_session
 
+    # XP ordering (spec §3: "XP continues to derive from rubric.overall (now
+    # the topic score)"): `served_rubric` is already the REPLACED overall by
+    # this point, so under the flag XP is earned against the topic score, not
+    # the axis blend — this line MUST stay after the `served_rubric`
+    # assignment above and before any use of `xp_earned`.
     xp_earned = compute_xp_earned(
-        overall_score=rubric["overall"]["score"],
+        overall_score=served_rubric["overall"]["score"],
         difficulty=attempt.difficulty,
         is_reattempt=is_reattempt,
     )
@@ -467,11 +867,15 @@ async def handle_done(
     done_ts = datetime.now(UTC)
     await store.stamp_graded_at(attempt_id=attempt.id, ts=done_ts)
 
-    # The student-facing payload is constructed from OLD-path values ONLY. It is
-    # byte-identical whether the shadow flag is on or off and whether the shadow
-    # chain succeeds — the shadow result is NEVER merged into it (WU-4C1).
+    # The student-facing payload is constructed from OLD-path values ONLY,
+    # EXCEPT for `rubric`, which is `served_rubric` — byte-identical to
+    # `rubric` (same object) unless `APOLLO_TOPIC_SCORE_SERVED` is on AND
+    # `topic_score` computed successfully (spec §3). It is otherwise
+    # byte-identical whether the shadow flag is on or off and whether the
+    # shadow chain succeeds — the shadow result is NEVER merged into it
+    # (WU-4C1).
     student_response = {
-        "rubric": rubric,
+        "rubric": served_rubric,
         "diagnostic_narrative": diagnostic_narrative,
         "coverage": coverage,
         # Item #9: structured progress envelope is the single source of
@@ -495,6 +899,12 @@ async def handle_done(
         "level_after": envelope.level_after,
         "level_up": envelope.level_up,
     }
+    # Spec §3: `student_response["topics"]` is served ONLY under the flag +
+    # a successfully-computed topic_score — same shape as the artifact's
+    # `scores.topic_score.topics` (serialize_topics is the single shared
+    # serializer, `topic_score_serialize.py`). Absent (not null) otherwise.
+    if serve_topic_score:
+        student_response["topics"] = serialize_topics(topic_score)
 
     # WU-4C1 — SHADOW graph-simulation chain. Runs AFTER the OLD grade/XP/retention
     # are fully durable, so any failure here surfaces a named error (the right HTTP
@@ -524,7 +934,8 @@ async def handle_done(
             # later. student_graph + old_rubric stay the LIVE values (unchanged grade).
             rerun = await build_rerun_inputs(db, neo, attempt=attempt, sess=sess)
             shadow = await run_graph_simulation(
-                db, neo,
+                db,
+                neo,
                 attempt=attempt,
                 sess=sess,
                 student_graph=student_graph,
@@ -584,9 +995,7 @@ async def handle_done(
                 # the artifact, and serve the already-committed OLD/LLM values.
                 # (UNCHANGED — pre-G3 Task A4 semantics; the shadow-isolation
                 # branch below is the ONLY behavioral change in G3.)
-                _LOG.exception(
-                    "apollo_graph_grader_live_failure attempt_id=%s", int(attempt.id)
-                )
+                _LOG.exception("apollo_graph_grader_live_failure attempt_id=%s", int(attempt.id))
                 graph_failure = repr(e)[:500]
                 shadow = None
                 served_grade = GRADER_USED_LLM_FALLBACK
@@ -659,6 +1068,8 @@ async def handle_done(
             served=served_grade,
             graph_failure=graph_failure,
             latency_ms=artifact_latency_ms,
+            detection_outcome=detection_outcome,
+            topic_score=topic_score,
         )
         if canonical_payload is not None:
             student_response["scorecard"] = render_scorecard(canonical_payload)

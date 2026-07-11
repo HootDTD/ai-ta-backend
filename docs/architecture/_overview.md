@@ -25,7 +25,7 @@ related:
   - shared/conventions
   - shared/security
   - shared/supabase
-last_verified: 2026-07-07
+last_verified: 2026-07-09
 stub: false
 ---
 
@@ -131,6 +131,7 @@ uploads, and FastAPI `BackgroundTasks`.
 6. `TeacherWeeklyStorage` and the `WorkspaceManager` are lazy module-level singletons created on first use, not at boot.
 
 ### /ask request lifecycle
+0. Kill switch: `HOOT_QA_ENABLED=0` (`config/settings.py::hoot_qa_enabled`, default ON, read per-request) 403s before validation — Apollo-only deployments (the MGMT pilot's prod) close the Q&A surface at the HTTP boundary while teacher uploads/indexing/Apollo stay live. Tests: `tests/integration/test_hoot_qa_flag.py`.
 1. Validate: non-empty `question` OR attachments; `chat_id` required; `doc_sets` overrides are rejected with 400 (deprecated).
 2. `_require_course_membership()` → `resolve_auth_context()` (Bearer token → Supabase) then membership check on `search_space_id`; for student-level access, missing membership triggers auto-enroll. 403 otherwise.
 3. Workspace resolution: `WorkspaceManager.get(str(search_space_id))` → `DBWorkspaceRepository` (404 `WorkspaceNotFound`, 500 on config errors). The workspace supplies `class_name`, `subject_name`, materials, and weight overrides.

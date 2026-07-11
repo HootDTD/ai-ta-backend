@@ -9,9 +9,10 @@ Procedure-step `order` and `uses_equations` fields are gone — order is
 derivable from the PRECEDES edge chain, and equation links are real USES
 edges (see apollo.ontology.edges).
 """
+
 from __future__ import annotations
 
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -55,9 +56,17 @@ class _NodeBase(BaseModel):
     # uses this for DUAL entries; ACCEPTED entries ignore it (the parser's
     # `content` is operative).
     student_belief: str | None = Field(default=None)
+    # F-struct: the canonical entity/concept key this node maps to
+    # (authoring name `entity_key`, e.g. "def.real_basis"). Populated on
+    # REFERENCE nodes only (Problem.to_kg_graph); parser/system/legacy nodes
+    # stay None. Lets the structural co-key gate name the misconception a bank
+    # entry `opposes` for this node. Default None keeps every non-reference and
+    # pre-F-struct node byte-identical.
+    entity_key: str | None = Field(default=None)
 
 
 # --- Per-type content payloads ---------------------------------------------
+
 
 class EquationContent(BaseModel):
     symbolic: str = Field(min_length=1)
@@ -92,6 +101,7 @@ class ProcedureStepContent(BaseModel):
 
 # --- Discriminated node union ----------------------------------------------
 
+
 class EquationNode(_NodeBase):
     node_type: Literal["equation"] = "equation"
     content: EquationContent
@@ -123,14 +133,12 @@ class ProcedureStepNode(_NodeBase):
 
 
 Node = Annotated[
-    Union[
-        EquationNode,
-        ConditionNode,
-        SimplificationNode,
-        DefinitionNode,
-        VariableMappingNode,
-        ProcedureStepNode,
-    ],
+    EquationNode
+    | ConditionNode
+    | SimplificationNode
+    | DefinitionNode
+    | VariableMappingNode
+    | ProcedureStepNode,
     Field(discriminator="node_type"),
 ]
 
@@ -170,6 +178,7 @@ def build_node(
     parser_confidence: float = 1.0,
     status: NodeStatus = "ACCEPTED",
     student_belief: str | None = None,
+    entity_key: str | None = None,
 ) -> Node:
     """Construct a typed node from a (type, content_dict) pair."""
     cls_map: dict[NodeType, type[_NodeBase]] = {
@@ -188,5 +197,6 @@ def build_node(
         parser_confidence=parser_confidence,
         status=status,
         student_belief=student_belief,
+        entity_key=entity_key,
         content=content,  # type: ignore[arg-type]
     )

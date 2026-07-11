@@ -31,12 +31,33 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from openai import OpenAI
+from sympy import simplify
+from sympy.parsing.sympy_parser import (
+    convert_xor,
+    parse_expr,
+    standard_transformations,
+)
 
 from apollo.errors import CoverageGradingError
 from apollo.ontology import EdgeType, KGGraph, Node
+from apollo.overseer.misconception_detector.config import (
+    detector_enabled,
+    grader_positive_focus_enabled,
+)
+from apollo.resolution.tiers import (
+    _extended_locals,
+    _symbolic_equiv,
+    _zero_form,
+    student_surface_text,
+)
+
+# Same transformation set the single mint/resolution parser uses so ``^`` and
+# chained equalities are handled identically here.
+_SIGN_TRANSFORMATIONS = standard_transformations + (convert_xor,)
 
 _LOG = logging.getLogger(__name__)
 
@@ -100,7 +121,10 @@ There must be exactly one entry per reference entry, in the same order.
 
 Guidance by entry_type:
 - equation: two equations are equivalent if they express the same physical
-  relationship. Sign flips and algebraic rearrangements are equivalent.
+  relationship. Algebraic rearrangements (same sign, reshuffled terms) are
+  equivalent, but a SIGN FLIP changes the relationship and is NOT
+  equivalent — e.g. "NX = X - M" and "NX = M - X" are different, not
+  interchangeable rearrangements, even though they look similar.
   A student equation that omits a common non-zero factor still covers.
 - condition: any student condition asserting the same physical assumption
   covers the reference.
@@ -191,9 +215,129 @@ def _batch_binary_match(
             out.setdefault(
                 n.node_id, {"covered": False, "confidence": 0.0},
             )
+        # T-W5a (P3) — grader positive-focus. Default OFF: the sign pre-gate
+        # runs exactly as before (byte-identical). When ON, skip it — the
+        # coverage grader credits the produced equation and stops
+        # credit-denying on wrongness; the detector's sympy_veto tier still
+        # names the sign error in the feedback channel independently.
+        if (
+            entry_type == "equation"
+            and detector_enabled()
+            and not grader_positive_focus_enabled()
+        ):
+            out = _sign_gate_equation_verdicts(
+                verdicts=out,
+                reference_nodes=reference_nodes,
+                student_nodes=student_nodes,
+            )
         return out
 
     return _with_retry(_call, stage=f"binary_match:{entry_type}")
+
+
+def _sign_reversed_zero_form(symbolic: str, local_dict: dict):
+    """Zero-form of the SIGN-REVERSED equation for ``symbolic``.
+
+    The relationship-level sign flip is NOT ``-1 *`` the whole zero-form once an
+    equation carries an '=' — only the RHS flips. For ``LHS = RHS`` the reversed
+    relationship is ``LHS = -RHS``, whose zero-form is ``LHS - (-RHS) = LHS +
+    RHS``. For a bare expression ``E`` (implicitly ``E = 0``) the reversed form
+    is ``-E = 0``, zero-form ``-E`` — the same result the (now-removed) ``-1*``
+    wrap produced for the no-'=' fixtures, so the bare-expression fixtures are
+    unaffected. Chained equalities normalize to the FIRST equality, matching
+    ``parse_zero_form``. Returns ``None`` on any parse failure (a non-parse is a
+    non-match, never a crash)."""
+    s = symbolic.strip()
+    if "=" in s:
+        # Chained (A = B = C = ...): keep the first equality, mirroring
+        # apollo.solver.sympy_exec.parse_zero_form.
+        parts = s.split("=")
+        lhs, rhs = parts[0], parts[1]
+        try:
+            l_expr = parse_expr(
+                lhs.strip(), local_dict=local_dict, transformations=_SIGN_TRANSFORMATIONS,
+            )
+            r_expr = parse_expr(
+                rhs.strip(), local_dict=local_dict, transformations=_SIGN_TRANSFORMATIONS,
+            )
+        except Exception:  # noqa: BLE001 - a non-parse is a non-match, never a crash
+            return None
+        return simplify(l_expr + r_expr)
+    zf = _zero_form(s, local_dict)
+    return None if zf is None else simplify(-zf)
+
+
+def _sign_gate_equation_verdicts(
+    *,
+    verdicts: dict[str, dict[str, Any]],
+    reference_nodes: list[Node],
+    student_nodes: list[Node],
+) -> dict[str, dict[str, Any]]:
+    """D4 fix (T10): SymPy sign pre-gate over LLM equation verdicts.
+
+    Flag-gated (``detector_enabled()``) and equation-only — the caller
+    already checked both before invoking this. For every reference the
+    LLM marked ``covered=True``, re-check sign-exactness with
+    ``apollo.resolution.tiers._symbolic_equiv``: if NO student equation is
+    sign-exact equivalent to the reference, but at least one student
+    equation IS sign-exact equivalent to the reference's negation, the
+    LLM's "covered" is a false positive on a sign-reversed mutant — force
+    it to ``covered=False``. This is a DOWNGRADE-ONLY gate: it never
+    upgrades an LLM ``covered=False`` verdict (no over-correction), and a
+    genuine sign-preserving rearrangement stays sign-exact equivalent to
+    the reference itself so it is left untouched.
+
+    Returns a NEW dict (immutable-value-object convention) — the input
+    ``verdicts`` mapping is never mutated in place.
+    """
+    ref_by_id = {n.node_id: n for n in reference_nodes}
+    student_texts = [
+        text for text in (student_surface_text(n) for n in student_nodes) if text
+    ]
+    if not student_texts:
+        return verdicts
+
+    gated: dict[str, dict[str, Any]] = dict(verdicts)
+    for ref_id, verdict in verdicts.items():
+        if not verdict.get("covered"):
+            continue
+        ref_node = ref_by_id.get(ref_id)
+        if ref_node is None:
+            continue
+        ref_symbolic = student_surface_text(ref_node)
+        if not ref_symbolic:
+            continue
+
+        sign_exact_match = any(
+            _symbolic_equiv(student_text, ref_symbolic, mappings={})
+            for student_text in student_texts
+        )
+        if sign_exact_match:
+            continue  # genuine (sign-preserving) match — leave as covered.
+
+        # Detect a sign-reversed relationship on PARSED zero-forms rather than
+        # round-tripping a synthetic "-1*(...)" string through the '='-splitting
+        # parser (which mangled real '='-bearing references such as
+        # ``NX = X - M`` into garbage). Compare each student's zero-form against
+        # the reference's SIGN-REVERSED zero-form (RHS flipped, not the whole
+        # zero-form negated — those differ once an '=' is present).
+        sign_reversed_match = False
+        for student_text in student_texts:
+            local_dict = _extended_locals(student_text, ref_symbolic)
+            student_zf = _zero_form(student_text, local_dict)
+            reversed_ref_zf = _sign_reversed_zero_form(ref_symbolic, local_dict)
+            if student_zf is None or reversed_ref_zf is None:
+                continue
+            try:
+                if bool(simplify(student_zf - reversed_ref_zf) == 0):
+                    sign_reversed_match = True
+                    break
+            except Exception:  # noqa: BLE001 - comparison failure is a non-match  # pragma: no cover - defensive
+                continue
+        if sign_reversed_match:
+            gated[ref_id] = {**verdict, "covered": False}
+
+    return gated
 
 
 _PROCEDURE_MATCHER_PROMPT = """You are grading whether a student's procedure step

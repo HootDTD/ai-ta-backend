@@ -24,6 +24,16 @@ class _Entry:
     code = "density_ignored"
     trigger_phrases = ["density doesn't matter"]
     description = "Student ignored density"
+    # migration 039: a real ``MisconceptionEntry`` row always carries this
+    # field (default None). Mirrored here so the byte-identity case (no
+    # opposes authored) and the opposes-carried case (below) are both real.
+    opposes: str | None = None
+
+
+class _EntryWithOpposes(_Entry):
+    """A bank entry with an authored ``opposes`` link (migration 039)."""
+
+    opposes = "def.real_basis"
 
 
 _PROBLEM = {
@@ -113,6 +123,7 @@ def test_misconceptions_dict_reprefixes_stripped_code():
         code = "pressure_velocity_same_direction"
         trigger_phrases: list[str] = []
         description = "P and v point the same way"
+        opposes: str | None = None
 
     m = _misconceptions_dict([_Stripped()])["misconceptions"][0]
     assert m["key"] == "misc.pressure_velocity_same_direction"
@@ -125,9 +136,19 @@ def test_misconceptions_dict_maps_description_to_display_name():
 
 
 def test_misconceptions_dict_opposes_is_none():
+    """Byte-identity: an entry with no authored opposes stays None."""
     result = _misconceptions_dict([_Entry()])
     m = result["misconceptions"][0]
     assert m["opposes"] is None
+
+
+def test_misconceptions_dict_carries_authored_opposes():
+    """T8(a) — the spec-named bug fix: an entry WITH an authored ``opposes``
+    (migration 039) must reach the candidate dict instead of being discarded
+    as a hardcoded None, so F-struct's ``build_opposes_map`` can see it."""
+    result = _misconceptions_dict([_EntryWithOpposes()])
+    m = result["misconceptions"][0]
+    assert m["opposes"] == "def.real_basis"
 
 
 def test_misconceptions_dict_trigger_phrases():

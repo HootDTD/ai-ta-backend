@@ -31,6 +31,9 @@ source file backs both stores with no additional authoring burden:
                        ``confusion_pair`` 2-tuple/list, else both ``None``
                        (the column pair is nullable — analytics-only).
   * ``trigger_phrases`` <- copied verbatim (already the right shape).
+  * ``opposes``      <- copied verbatim (already authored on the source entry
+                       for the KG opposes-link graph, e.g. ``"def.real_basis"``);
+                       ``None`` when absent (the column is nullable).
 
 DB-free, LLM-free, embedding-free: this module returns a list of
 ``MisconceptionBankSpec`` (frozen) for the caller (``scripts/
@@ -55,6 +58,7 @@ class MisconceptionBankSpec:
     trigger_phrases: tuple[str, ...] = ()
     probe_question: str = ""
     rt_steps: tuple[str, ...] = field(default_factory=tuple)
+    opposes: str | None = None
 
 
 def _default_probe_question(description: str) -> str:
@@ -87,6 +91,7 @@ def misconception_entry_to_bank_spec(entry: dict) -> MisconceptionBankSpec:
         trigger_phrases=tuple(entry.get("trigger_phrases", [])),
         probe_question=entry.get("probe_question") or _default_probe_question(description),
         rt_steps=tuple(entry.get("rt_steps", [])),
+        opposes=entry.get("opposes"),
     )
 
 
