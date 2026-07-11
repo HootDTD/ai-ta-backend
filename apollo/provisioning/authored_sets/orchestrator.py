@@ -179,12 +179,16 @@ async def run_authored_set_provisioning(
     *,
     search_space_id: int,
     problem_document_id: int,
-    solution_document_id: int,
+    solution_document_id: int | None,
     metered_chat: Any,
     embed_fn: Callable[[str], Sequence[float]] | None = None,
     conf_threshold: float = _DEFAULT_CONF_THRESHOLD,
 ) -> ProvisioningReport:
-    """Run trigger-agnostic provisioning for one problem/solution document pair."""
+    """Run trigger-agnostic provisioning for one problem document, optionally
+    paired with a solution document. ``solution_document_id=None`` (no solution
+    PDF uploaded, or a same-content-hash upload the caller already discarded as
+    a duplicate of the problem doc) means every candidate grounds against no
+    solution spans, so ``find_or_generate`` always takes its generate branch."""
     if embed_fn is None:
         from indexing.document_embedder import embed_text as embed_fn  # type: ignore
     assert embed_fn is not None
@@ -248,7 +252,7 @@ async def _process_authored_candidate(
     candidate: Any,
     concept_id: int,
     search_space_id: int,
-    solution_document_id: int,
+    solution_document_id: int | None,
     label_index: dict,
     page_conf: dict[int | None, float | None],
     problem_low_conf: bool,
