@@ -151,6 +151,7 @@ async def test_flag_off_byte_identical_to_shadow_golden(monkeypatch):
         "grading_provenance": {
             "grader_used": "llm_fallback",
             "evidence_source": "graph_nodes",
+            "transcript_grader_failure": None,
             "score_before_dock": 0.0,
             "topics": [],
             "docks": [],

@@ -286,12 +286,10 @@ def compute_topic_score(
     )
     general_dock = min(SEVERITY_CLAMP, general_raw)
     misconception_dock = sum(topic_actual_docks.values()) + general_dock
-    # When the clamp binds, scale each finding's displayed dock_points
+    # When a bucket's cap binds, scale each finding's displayed dock_points
     # proportionally so the per-misconception "−N pts" lines shown to the
     # student sum exactly to the dock actually subtracted from the score —
-    # unscaled shares would over-claim relative to the clamped total.
-    scale = 1.0
-
+    # unscaled shares would over-claim relative to the capped total.
     for finding, resolved, raw_share, topic_key in zip(
         deduped, resolved_flags, raw_shares, keyed, strict=True
     ):

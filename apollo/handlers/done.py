@@ -27,6 +27,7 @@ from apollo.emergent.capture import record_detector_births
 from apollo.emergent.config import emergent_map_capture_enabled
 from apollo.emergent.materialize import materialize_if_promotable
 from apollo.errors import (
+    CoverageGradingError,
     ResolutionUnavailableError,
     ReviewRequiredError,
     TranscriptAuditUnavailableError,
@@ -47,7 +48,6 @@ from apollo.handlers.learner_update import run_learner_update
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph, Node
 from apollo.overseer.coverage import compute_coverage
-from apollo.overseer.transcript_coverage import compute_transcript_coverage
 from apollo.overseer.diagnostic import generate_diagnostic
 from apollo.overseer.misconception import (
     MisconceptionSignal,
@@ -61,8 +61,8 @@ from apollo.overseer.misconception_detector.config import (
     grader_positive_focus_enabled,
     struct_cokey_enabled,
     topic_score_served_enabled,
-    transcript_grader_enabled,
     trace_enabled,
+    transcript_grader_enabled,
 )
 from apollo.overseer.misconception_detector.detector import detect_misconceptions
 from apollo.overseer.misconception_detector.gate import gate_findings
@@ -73,6 +73,7 @@ from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.overseer.rubric import compute_rubric
 from apollo.overseer.topic_score import TopicScoreResult, compute_topic_score
 from apollo.overseer.topic_score_serialize import serialize_topics
+from apollo.overseer.transcript_coverage import compute_transcript_coverage
 from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
 from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
@@ -590,14 +591,24 @@ async def handle_done(
     _artifact_t0 = time.monotonic()
 
     use_transcript_grader = transcript_grader_enabled()
+    transcript_grader_failure: str | None = None
     if use_transcript_grader:
-        transcript = await _full_transcript(db, attempt_id=attempt.id)
-        coverage = await compute_transcript_coverage(
-            transcript=transcript,
-            reference_graph=reference_graph,
-            problem=problem,
-        )
-    else:
+        try:
+            transcript = await _full_transcript(db, attempt_id=int(attempt.id))
+            coverage = await compute_transcript_coverage(
+                transcript=transcript,
+                reference_graph=reference_graph,
+                problem=problem,
+            )
+        except CoverageGradingError as exc:
+            # A transcript-grader failure must never cost the student their
+            # Done: fall back to the legacy lane and say so in provenance.
+            transcript_grader_failure = str(exc)
+            use_transcript_grader = False
+            _LOG.exception(
+                "apollo_transcript_grader_fallback attempt_id=%s", int(attempt.id)
+            )
+    if not use_transcript_grader:
         coverage = await compute_coverage(student_graph, reference_graph)
 
     # Class 2 Phase 2 (P2.8): pull per-attempt misconception signals from
@@ -1112,10 +1123,21 @@ async def handle_done(
             else:
                 await _project_mastery(db, attempt_id=int(attempt.id))
 
-    serialized_topics = serialize_topics(topic_score) if topic_score is not None else []
+    # Provenance must report what was ACTUALLY served: the GRAPH_GRADER_LIVE
+    # promotion branch can replace the served rubric even when the transcript
+    # grader fed the legacy lane, and the topic/dock payload (which quotes the
+    # student) may only ship when APOLLO_TOPIC_SCORE_SERVED allows topics into
+    # the response at all — provenance must not bypass that serve gate.
+    transcript_served = use_transcript_grader and served_grade != GRADER_USED_GRAPH
+    serialized_topics = (
+        serialize_topics(topic_score)
+        if topic_score is not None and serve_topic_score
+        else []
+    )
     student_response["grading_provenance"] = {
-        "grader_used": "llm_transcript" if use_transcript_grader else served_grade,
-        "evidence_source": "transcript" if use_transcript_grader else "graph_nodes",
+        "grader_used": "llm_transcript" if transcript_served else served_grade,
+        "evidence_source": "transcript" if transcript_served else "graph_nodes",
+        "transcript_grader_failure": transcript_grader_failure,
         "score_before_dock": (
             topic_score.coverage_component if topic_score is not None else None
         ),

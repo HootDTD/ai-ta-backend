@@ -13,9 +13,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from unittest.mock import patch
 
+from typing import cast
+
 from apollo.overseer.misconception_detector.centrality import compute_centrality
 from apollo.overseer.topic_score import compute_topic_score
-from apollo.overseer.transcript_coverage import compute_transcript_coverage
+from apollo.overseer.transcript_coverage import compute_transcript_coverage, validate_span
 from apollo.schemas.problem import Problem
 
 
@@ -37,15 +39,17 @@ async def replay_fixture(path: Path) -> ReplayOutcome:
     with patch("apollo.overseer.transcript_coverage._call_adjudication", return_value=recorded):
         coverage = await compute_transcript_coverage(transcript, graph, problem)
     topic_score = compute_topic_score(
-        coverage=coverage,
+        coverage=cast(dict, coverage),
         reference_nodes=graph.nodes,
         centrality=compute_centrality(graph),
         detection_outcome=None,
     )
     credited = sum(topic.credit > 0 for topic in topic_score.topics)
-    student_text = " ".join(content for role, content in transcript if role == "student")
+    student_messages = [content for role, content in transcript if role == "student"]
     spans = [v.get("evidence_span") for v in fixture["adjudicator_output"]["verdicts"] if v.get("credit", 0) > 0]
-    validated = all(span and " ".join(span.split()) in " ".join(student_text.split()) for span in spans)
+    # Reuse the serving-lane rail — a private reimplementation here would
+    # silently drift from the per-message check it is supposed to mirror.
+    validated = all(validate_span(span, student_messages) for span in spans)
     return ReplayOutcome(path.stem, topic_score.score, topic_score.letter, credited, validated)
 
 
