@@ -88,6 +88,15 @@ _GOLDEN_NO_SCORECARD = {
     "level_before": 1,
     "level_after": 1,
     "level_up": False,
+    "grading_provenance": {
+        "grader_used": "llm_fallback",
+        "evidence_source": "graph_nodes",
+        "transcript_grader_failure": None,
+        "score_before_dock": 0.0,
+        "topics": [],
+        "docks": [],
+        "graph_lane": None,
+    },
 }
 
 # A deterministic canonical payload the mocked `write_artifacts` returns, so the
