@@ -33,8 +33,11 @@ HARD RULES — never violate:
 - Explain ONLY the components listed in the ledger below. Do not claim the student covered,
   missed, or was tested on anything not present in the topics list.
 - For every misconception in the ledger, quote its evidence span verbatim (or close
-  paraphrase of the quoted text) and state its point cost. If it is marked resolved, praise the
-  correction explicitly — do not describe it as still wrong.
+  paraphrase of the quoted text). If it is marked corrected, praise the correction
+  explicitly — do not describe it as still wrong.
+- NEVER surface internal identifiers (snake_case keys), decimal credit/weight/dock
+  values, or any hint of how the score is computed internally. You may cite the same
+  whole-number percentages the ledger shows (e.g. "80%").
 - Do not invent physics/math/economics beyond what the ledger's topic names and evidence spans
   say. No claims beyond this ledger.
 - Use inline math delimited ONLY as `$...$` (a single dollar sign on each side) — never
@@ -53,17 +56,29 @@ def _status_label(status: str) -> str:
     )
 
 
+def _humanize_key(key: str) -> str:
+    """Presentation fallback when a topic has no display_name.
+
+    The narrator quotes whatever it sees, so the raw snake_case key must
+    never reach the prompt — degrade to a readable phrase instead.
+    """
+    tail = key.rsplit(".", 1)[-1]
+    for prefix in ("def_", "proc_", "eq_", "cond_"):
+        if tail.startswith(prefix):
+            tail = tail[len(prefix):]
+            break
+    return tail.replace("_", " ").strip() or "this topic"
+
+
 def _format_topic_line(topic) -> str:  # noqa: ANN001 - TopicCredit, avoid import cycle noise
-    name = topic.display_name or topic.canonical_key
-    line = f"- Topic `{topic.canonical_key}` ({name}): {_status_label(topic.status)}, credit={topic.credit:.2f}, weight={topic.weight:.2f}"
+    name = topic.display_name or _humanize_key(topic.canonical_key)
+    pct = round(topic.credit * 100)
+    line = f'- Topic "{name}": {_status_label(topic.status)} — {pct}%'
     if topic.misconceptions:
         for m in topic.misconceptions:
             resolved = "corrected" if m.resolved else "uncorrected"
             span = m.evidence_span if m.evidence_span else "(no evidence span)"
-            line += (
-                f"\n  * Misconception `{m.canonical_key}` ({resolved}, "
-                f'-{m.dock_points:.2f} points): "{span}"'
-            )
+            line += f'\n  * Misconception ({resolved}): "{span}"'
     return line
 
 
@@ -72,18 +87,18 @@ def build_topic_narrative_prompt(result: TopicScoreResult, *, problem_text: str)
 
     Pure: no IO. ``user`` enumerates every topic (in ``result.topics`` order,
     including the synthetic ``_general`` bucket last, matching
-    ``compute_topic_score``'s own ordering) with its status/credit/weight and
-    any attached misconceptions (evidence span + dock points + resolved flag).
-    Nothing outside ``result`` and ``problem_text`` is referenced, so the
-    generated prompt can never smuggle in claims the ledger does not support.
+    ``compute_topic_score``'s own ordering) with its status and whole-number
+    percentage (display names only — internals never reach the prompt; see
+    ``sanitize_narrative`` for the output-side gate) and any attached
+    misconceptions (evidence span + resolved flag). Nothing outside
+    ``result`` and ``problem_text`` is referenced, so the generated prompt
+    can never smuggle in claims the ledger does not support.
     """
     topic_lines = "\n".join(_format_topic_line(t) for t in result.topics) or "(no topics graded)"
 
     user = (
         f"Problem: {problem_text}\n\n"
-        f"Score: {result.score} ({result.letter})\n"
-        f"Coverage component: {result.coverage_component:.3f}\n"
-        f"Misconception dock: {result.misconception_dock:.3f}\n\n"
+        f"Score: {result.score} ({result.letter})\n\n"
         f"Ledger:\n{topic_lines}\n"
     )
     return _TOPIC_SYSTEM_PROMPT, user

@@ -1,8 +1,14 @@
 """2026-07-10 topic-score design spec §4 — the ledger-grounded narrative
 prompt. Pure module (no IO): ``build_topic_narrative_prompt`` must assemble a
 prompt that names every topic + misconception in the ledger, with the exact
-evidence spans and dock points, `$...$`-only math delimiters, and nothing
-else score-related invented."""
+evidence spans, `$...$`-only math delimiters, and nothing else score-related
+invented.
+
+2026-07-11 feedback spec §2 updated the contract: canonical keys and decimal
+credit/weight/dock values are internals and must NOT reach the prompt (see
+``test_topic_narrative_prompt.py` for the dedicated internals-leak suite).
+This file keeps the broader structural/shape assertions (problem text,
+score/letter, math delimiters, next-step line, degrade-gracefully paths)."""
 
 from __future__ import annotations
 
@@ -55,12 +61,21 @@ def _result(**overrides: object) -> TopicScoreResult:
     return dataclasses.replace(base, **overrides)  # type: ignore[arg-type]
 
 
-def test_prompt_contains_every_topic_canonical_key():
+def test_prompt_contains_every_topic_display_name_or_humanized_fallback():
+    # 2026-07-11 feedback spec §2: canonical keys never reach the prompt as
+    # ledger internals — display name (or its humanized fallback) is the
+    # topic's identity. `_humanize_key` degrades snake_case/prefixed keys to
+    # readable phrases; a bare short key like "c1" has no prefix/underscore
+    # to strip and so round-trips unchanged, which is fine since it no
+    # longer reads as an internal identifier in that form.
     result = _result()
     _system, user = build_topic_narrative_prompt(result, problem_text="Water flows...")
 
-    for topic in result.topics:
-        assert topic.canonical_key in user
+    assert "Bernoulli equation" in user
+    assert "apply continuity" in user
+    # The prefixed/underscored keys must never appear verbatim.
+    assert "eq1" not in user
+    assert "p1" not in user
 
 
 def test_prompt_contains_display_name_when_present():
@@ -69,13 +84,15 @@ def test_prompt_contains_display_name_when_present():
     assert "Bernoulli equation" in user
 
 
-def test_prompt_contains_every_misconception_evidence_span_and_dock_points():
+def test_prompt_contains_every_misconception_evidence_span_but_not_key_or_dock():
+    # 2026-07-11 feedback spec §2: evidence span survives; canonical key and
+    # decimal dock points are internals and must not reach the prompt.
     result = _result()
     _system, user = build_topic_narrative_prompt(result, problem_text="p")
 
     assert "pressure always increases downstream" in user
-    assert "misc.sign_flip" in user
-    assert "0.08" in user  # dock_points formatted
+    assert "misc.sign_flip" not in user
+    assert "0.08" not in user  # dock_points no longer formatted into the prompt
 
 
 def test_prompt_marks_resolved_vs_uncorrected():
@@ -109,13 +126,15 @@ def test_prompt_includes_problem_text():
     assert "SENTINEL_PROBLEM" in user
 
 
-def test_prompt_includes_score_and_letter_and_components():
+def test_prompt_includes_score_and_letter_but_not_component_decimals():
+    # 2026-07-11 feedback spec §2: coverage_component / misconception_dock
+    # decimals are internals and no longer appear in the prompt.
     result = _result()
     _system, user = build_topic_narrative_prompt(result, problem_text="p")
     assert "72" in user
     assert "B-" in user
-    assert "0.8" in user
-    assert "0.08" in user
+    assert "Coverage component" not in user
+    assert "Misconception dock" not in user
 
 
 def test_system_prompt_instructs_dollar_delimiter_only():
