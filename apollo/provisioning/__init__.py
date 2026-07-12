@@ -1,7 +1,7 @@
 """Apollo §8B auto-provisioning promotion-lint package (WU-3B2b).
 
 The SAFETY CORE of the auto-provisioning pipeline: before any auto-scraped
-problem is promoted Tier-1 -> Tier-2 (teachable), it must pass the eight §8B.4
+problem is promoted Tier-1 -> Tier-2 (teachable), it must pass the nine §8B.4
 gates run IN ORDER, short-circuiting on the first failure. This package is PURE
 by design — NO LLM, NO DB, NO Neo4j, NO containers, NO migration:
 

@@ -713,6 +713,42 @@ async def test_candidate_promote_failure_is_rejected(db_session, monkeypatch):
     assert report.problems[0].failed_gate == 8
 
 
+@pytest.mark.asyncio
+async def test_candidate_gate9_unresolved_is_held_for_review(db_session, monkeypatch):
+    from apollo.provisioning.promote import PromoteHeldForReview
+
+    async def _fog(db, question, *, retrieve_fn, chat_fn, augment_recall=False):
+        spans = await retrieve_fn(question)
+        return _draft(source="extracted").model_copy(update={"grounding": spans})
+
+    async def _tag_and_mint(db, pair, *, chat_fn, embed_fn):
+        return _mint_plan(0)
+
+    async def _promote(db, neo, **kwargs):
+        return PromoteHeldForReview(
+            promoted=False,
+            failed_gate=9,
+            diagnostic="gate 9: unresolved: solver timeout",
+        )
+
+    report = await _run_single_candidate(
+        db_session,
+        monkeypatch,
+        slug="gate9hold",
+        find_or_generate=_fog,
+        tag_and_mint=_tag_and_mint,
+        promote=_promote,
+        _authored_concept_dup_hashes=_noop_hashes,
+    )
+    assert report.counts == {"promoted": 0, "rejected": 0, "held_for_review": 1}
+    result = report.problems[0]
+    assert result.outcome == "held_for_review"
+    assert result.reason == "promotion_lint_unresolved"
+    row = await db_session.get(ConceptProblem, result.concept_problem_id)
+    assert row.tier == 1
+    assert row.provenance["authored_review"]["reason"] == "promotion_lint_unresolved"
+
+
 async def _noop_hashes(db, *, concept_id):
     return set()
 

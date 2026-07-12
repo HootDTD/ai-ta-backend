@@ -45,18 +45,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from apollo.persistence.learner_model_seed import _ENTRY_TYPE_TO_KIND_PREFIX
-from apollo.provisioning.provisioning_schema import (
-    build_solution_schema,
-    solution_content_field_hints,
-)
+from apollo.provisioning.generation_contract import ontology_block
+from apollo.provisioning.provisioning_schema import build_solution_schema
 from apollo.provisioning.tag_mint import ApprovedPair
 from apollo.schemas.problem import Problem
+
+_LOG = logging.getLogger(__name__)
 
 __all__ = [
     "GroundingSpan",
@@ -73,29 +74,15 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 # Schema-explicit Stage-2 system prompts (the prompt↔parser contract).
 #
-# Both prompts declare the EXACT output shape ``_parse_reference_solution`` +
-# ``Problem.model_validate`` require, so a real model emits a Problem-valid
-# ``reference_solution`` instead of free-form steps. The per-``entry_type``
-# ``content`` field hints are sourced ONCE from the ontology
-# (``solution_content_field_hints()``) so the prose can never drift from
-# ``NODE_CONTENT_TYPES``. JSON object ONLY — no prose, no markdown fences.
+# Each prompt keeps its own FRAMING + top-level-key envelope; the shared
+# per-step contract is sourced ONCE from ``generation_contract.ontology_block``
+# (DAG-3) so a rule added there propagates to EVERY generation prompt and the
+# prose can never drift from ``NODE_CONTENT_TYPES``.
 # --------------------------------------------------------------------------- #
 _SOLUTION_OUTPUT_CONTRACT = (
-    "Output a single JSON object with EXACTLY one key, \"reference_solution\", whose "
-    "value is a NON-EMPTY array of step objects. Each step object has EXACTLY these "
-    "keys:\n"
-    '  "step": integer >= 1 (1-based position).\n'
-    '  "entry_type": exactly one of "equation", "condition", "simplification", '
-    '"definition", "variable_mapping", "procedure_step".\n'
-    '  "id": a non-empty string, UNIQUE within the solution.\n'
-    '  "content": an object whose fields depend on "entry_type" -- '
-    f"{solution_content_field_hints()}.\n"
-    '  "depends_on": an array of step "id" strings ([] if none).\n'
-    "Cross-step rules the validator enforces: every \"depends_on\" id must be a real "
-    "step \"id\" in this solution; a procedure_step's content.uses_equations must list "
-    "real equation step \"id\"s; procedure_step content.order values must be 1..N "
-    "contiguous across the procedure_steps.\n"
-    "Return the JSON object ONLY -- no prose, no explanation, no markdown code fences."
+    'Output a single JSON object whose key "reference_solution" is a NON-EMPTY '
+    'array of step objects (plus, optionally, the "symbol_table" key described '
+    "below). No other keys.\n" + ontology_block()
 )
 
 _SOLUTION_EXTRACT_SYSTEM_PROMPT = (
@@ -127,12 +114,12 @@ _SOLUTION_GENERATE_AUGMENT_INSTRUCTION = (
     "fields and do not rewrite it.\n"
 )
 
-_SOLUTION_GENERATE_AUGMENT_OUTPUT_CONTRACT = _SOLUTION_OUTPUT_CONTRACT.replace(
-    'Output a single JSON object with EXACTLY one key, "reference_solution", whose ',
-    "Output a single JSON object with EXACTLY three keys: \"reference_solution\", "
-    '"augmented_problem_text", and "augmented_target_unknown". The two augmented '
-    "fields must each be a string or null. The \"reference_solution\" key's ",
-    1,
+_SOLUTION_GENERATE_AUGMENT_OUTPUT_CONTRACT = (
+    'Output a single JSON object with the keys "reference_solution" (a NON-EMPTY '
+    'array of step objects), "augmented_problem_text", and '
+    '"augmented_target_unknown" (the two augmented fields each a string or '
+    'null), plus, optionally, the "symbol_table" key described below. No other '
+    "keys.\n" + ontology_block()
 )
 
 _SOLUTION_GENERATE_AUGMENT_SYSTEM_PROMPT = (
@@ -242,9 +229,7 @@ def _parse_generated(raw: str) -> tuple[list[dict] | None, str | None, str | Non
     augmented_target = parsed.get("augmented_target_unknown")
     return (
         steps,
-        augmented_text
-        if isinstance(augmented_text, str) and augmented_text.strip()
-        else None,
+        augmented_text if isinstance(augmented_text, str) and augmented_text.strip() else None,
         augmented_target
         if isinstance(augmented_target, str) and augmented_target.strip()
         else None,
@@ -253,8 +238,60 @@ def _parse_generated(raw: str) -> tuple[list[dict] | None, str | None, str | Non
 
 def _has_procedure_step(steps: list[dict]) -> bool:
     return any(
-        isinstance(step, dict) and step.get("entry_type") == "procedure_step"
-        for step in steps
+        isinstance(step, dict) and step.get("entry_type") == "procedure_step" for step in steps
+    )
+
+
+def _parse_symbol_table(raw: str) -> dict | None:
+    """Extract the OPTIONAL top-level ``symbol_table`` object (DAG-3); ``None``
+    when absent or malformed — an absent table is legacy content, never an error."""
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    table = parsed.get("symbol_table") if isinstance(parsed, dict) else None
+    return table if isinstance(table, dict) else None
+
+
+# DAG-3 defect-retry harness depth: the initial draft plus up to this many
+# feedback retries. Mirrors the derivation path's detect→retry loop; on
+# exhaustion the draft is FLAGGED (provenance) and returned, never crashed —
+# generated solutions are auto-held for teacher review downstream (PR #127).
+_GENERATION_DEFECT_RETRIES = 2
+
+
+def _generation_defects(
+    question: Any,
+    reference_solution: list[dict],
+    symbol_table: dict | None,
+    *,
+    problem_text: str | None,
+    target_unknown: str | None,
+) -> list[str]:
+    """Run the vocabulary-independent defect classes over a draft.
+
+    Imports lazily: ``graph_derivation`` imports this module at module level,
+    so the reverse import must happen at call time. ``find_or_generate`` has no
+    concept vocabulary, hence ``GENERATION_DEFECT_CLASSES`` (no foreign_symbol,
+    no node_count) — every symbolic class self-deactivates on prose drafts."""
+    from apollo.provisioning.authored_sets.graph_derivation import (
+        GENERATION_DEFECT_CLASSES,
+        find_derivation_defects,
+    )
+
+    graph = _problem_dict(
+        question,
+        reference_solution,
+        problem_text=problem_text,
+        target_unknown=target_unknown,
+    )
+    if symbol_table is not None:
+        graph["symbol_table"] = symbol_table
+    return find_derivation_defects(
+        graph,
+        canonical_symbols={},
+        normalization_map={},
+        classes=GENERATION_DEFECT_CLASSES,
     )
 
 
@@ -302,9 +339,7 @@ def _problem_dict(
         "concept_id": concept_slug,
         "difficulty": getattr(question, "difficulty", "intro"),
         "problem_text": (
-            problem_text
-            if problem_text is not None
-            else getattr(question, "problem_text", "")
+            problem_text if problem_text is not None else getattr(question, "problem_text", "")
         ),
         "given_values": dict(getattr(question, "given_values", {}) or {}),
         "target_unknown": (
@@ -358,24 +393,27 @@ async def find_or_generate(
 
     if has_printed:
         source: Literal["extracted", "generated"] = "extracted"
+        harness_purpose = "solution_extract"
+        harness_schema = build_solution_schema()
+        harness_messages = [
+            {
+                "role": "system",
+                "content": _SOLUTION_EXTRACT_SYSTEM_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": _canonical_json(
+                    {
+                        "problem_text": getattr(question, "problem_text", ""),
+                        "context": context,
+                    }
+                ),
+            },
+        ]
         raw = chat_fn(
-            purpose="solution_extract",
-            messages=[
-                {
-                    "role": "system",
-                    "content": _SOLUTION_EXTRACT_SYSTEM_PROMPT,
-                },
-                {
-                    "role": "user",
-                    "content": _canonical_json(
-                        {
-                            "problem_text": getattr(question, "problem_text", ""),
-                            "context": context,
-                        }
-                    ),
-                },
-            ],
-            response_format={"type": "json_schema", "json_schema": build_solution_schema()},
+            purpose=harness_purpose,
+            messages=harness_messages,
+            response_format={"type": "json_schema", "json_schema": harness_schema},
             temperature=0.0,
         )
         reference_solution = _parse_reference_solution(raw)
@@ -406,6 +444,9 @@ async def find_or_generate(
             },
         ]
         gen_schema = build_solution_schema(augmentation=augment_recall)
+        harness_purpose = "solution_generate"
+        harness_schema = gen_schema
+        harness_messages = gen_messages
         raw = chat_fn(
             purpose="solution_generate",
             messages=gen_messages,
@@ -429,8 +470,11 @@ async def find_or_generate(
                     reference_solution = retry_steps
                     augmented_text = retry_text
                     augmented_target = retry_target
-            augmented = bool(augmented_text) and bool(reference_solution) and _has_procedure_step(
-                reference_solution or []
+                    raw = retry_raw
+            augmented = (
+                bool(augmented_text)
+                and bool(reference_solution)
+                and _has_procedure_step(reference_solution or [])
             )
         else:
             reference_solution = _parse_reference_solution(raw)
@@ -444,14 +488,81 @@ async def find_or_generate(
             "unparseable or empty (fail-closed, never an empty-step draft)"
         )
 
+    # ------------------------------------------------------------------ #
+    # DAG-3 defect-retry harness (ported from the derivation path): run the
+    # vocabulary-independent defect classes over the draft and feed the
+    # localized defect list back for up to _GENERATION_DEFECT_RETRIES more
+    # attempts. On exhaustion the draft is FLAGGED via provenance and
+    # returned (never crashed) — the schema-invalid case alone still
+    # fail-closes below in _validate_problem_shape, exactly as before.
+    # Prose drafts produce zero symbolic defects (self-deactivation).
+    # ------------------------------------------------------------------ #
+    symbol_table = _parse_symbol_table(raw)
+
+    def _current_defects() -> list[str]:
+        return _generation_defects(
+            question,
+            reference_solution,
+            symbol_table,
+            problem_text=augmented_text if augmented else None,
+            target_unknown=(
+                (augmented_target or getattr(question, "target_unknown", None))
+                if augmented
+                else None
+            ),
+        )
+
+    generation_defects = _current_defects()
+    defect_retries = 0
+    while generation_defects and defect_retries < _GENERATION_DEFECT_RETRIES:
+        defect_retries += 1
+        feedback = (
+            "Your previous draft failed mechanical validation. Fix ONLY these "
+            "defects and re-emit the COMPLETE JSON object:\n- "
+            + "\n- ".join(generation_defects[:8])
+        )
+        retry_raw = chat_fn(
+            purpose=harness_purpose,
+            messages=[
+                *harness_messages,
+                {"role": "assistant", "content": raw},
+                {"role": "user", "content": feedback},
+            ],
+            response_format={"type": "json_schema", "json_schema": harness_schema},
+            temperature=0.0,
+        )
+        if augment_recall and not has_printed:
+            retry_steps, retry_text, retry_target = _parse_generated(retry_raw)
+            if retry_steps:
+                reference_solution = retry_steps
+                augmented_text = retry_text
+                augmented_target = retry_target
+                augmented = bool(retry_text) and _has_procedure_step(retry_steps)
+                raw = retry_raw
+                symbol_table = _parse_symbol_table(raw)
+        else:
+            retry_steps = _parse_reference_solution(retry_raw)
+            if retry_steps:
+                reference_solution = retry_steps
+                raw = retry_raw
+                symbol_table = _parse_symbol_table(raw)
+        generation_defects = _current_defects()
+    if generation_defects:
+        _LOG.warning(
+            "generation_defects_flagged",
+            extra={
+                "event": "generation_defects_flagged",
+                "retries": defect_retries,
+                "defects": generation_defects[:8],
+            },
+        )
+
     if not augmented:
         augmented_text = None
         augmented_target = None
 
     original_target = getattr(question, "target_unknown", None)
-    effective_augmented_target = (
-        (augmented_target or original_target) if augmented else None
-    )
+    effective_augmented_target = (augmented_target or original_target) if augmented else None
     _validate_problem_shape(
         question,
         reference_solution,
@@ -462,6 +573,10 @@ async def find_or_generate(
     provenance = _provenance(question, retrieval_hits=len(spans))
     if augmented:
         provenance["augmented"] = "explain_why"
+    if generation_defects:
+        provenance["generation_defects"] = generation_defects[:8]
+    if symbol_table:
+        provenance["symbol_table"] = symbol_table
 
     return ReferenceSolutionDraft(
         solution_source=source,
@@ -530,19 +645,14 @@ def _authored_output_contract() -> str:
     """The output contract over the UNIVERSAL node vocab (the 6 mint-map entry
     types). Subject-agnostic: no per-subject vocab restriction and NO forced target
     shape — the construction LLM uses equations / symbols ONLY where the method
-    genuinely requires them (a prose argument is free of them)."""
-    allowed = ", ".join(f'"{t}"' for t in sorted(_ENTRY_TYPE_TO_KIND_PREFIX))
+    genuinely requires them (a prose argument is free of them). The per-step
+    contract is the shared ``ontology_block`` (DAG-3) — a prose argument simply
+    has no equations, so the symbolic rules are vacuous for it."""
     return (
-        'Output a single JSON object with EXACTLY one key, "reference_solution", whose '
-        "value is a NON-EMPTY array of step objects. Each step object has EXACTLY these "
-        'keys: "step" (integer >= 1), "entry_type" (one of ' + allowed + "), "
-        '"id" (a non-empty string, unique within the solution), "content" (an object '
-        "whose fields depend on entry_type), and "
-        '"depends_on" (array of step ids, [] if none). '
-        "Use equations / symbols ONLY where the method genuinely requires them; a prose "
-        "argument needs none. Every depends_on id must be a real step id; procedure_step "
-        "content.order must be 1..N contiguous across the procedure_steps. Return the JSON "
-        "object ONLY — no prose, no markdown fences."
+        'Output a single JSON object whose key "reference_solution" is a NON-EMPTY '
+        'array of step objects (plus, optionally, the "symbol_table" key described '
+        "below). No other keys. Use equations / symbols ONLY where the method "
+        "genuinely requires them; a prose argument needs none.\n" + ontology_block()
     )
 
 
@@ -637,9 +747,7 @@ async def construct_authored_reference(
             f"authored reference_solution is not Problem-valid: {exc}"
         ) from exc
 
-    grounding = (
-        GroundingSpan(text=_authored_grounding_text(authored), carries_solution=True),
-    )
+    grounding = (GroundingSpan(text=_authored_grounding_text(authored), carries_solution=True),)
     # worked/answer_only are grounded on the professor's solution -> 'authored';
     # 'none' has no authored solution to extract from -> 'generated' (and flagged).
     source: Literal["extracted", "generated", "authored"] = (
