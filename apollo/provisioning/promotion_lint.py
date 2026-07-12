@@ -1,7 +1,7 @@
-"""§8B.4 PURE eight-gate promotion lint (WU-3B2b) — the auto-provisioning SAFETY CORE.
+"""§8B.4 PURE nine-gate promotion lint (WU-3B2b) — the auto-provisioning SAFETY CORE.
 
 Before an auto-scraped problem is promoted Tier-1 -> Tier-2 (teachable), it must
-pass eight gates run IN ORDER. ``run_promotion_lint`` short-circuits on the FIRST
+pass nine gates run IN ORDER. ``run_promotion_lint`` short-circuits on the FIRST
 failure and returns a frozen ``PromotionResult(ok, failed_gate, diagnostic)``;
 the orchestrator (3B2g, NOT this unit) maps a failure to a rejection row and a
 pass to promotion. The gates:
@@ -31,6 +31,10 @@ pass to promotion. The gates:
   8. Duplicate  — ``problem_dup_hash(problem)`` NOT in the caller-supplied
                   concept-scoped ``existing_problem_hashes`` (keyed on the BIGINT
                   concept; the lint never queries the DB).
+  9. Solve/check — when a separate target-isolating answer equation exists, solve
+                  the governing system and compare solved-vs-stated residuals.
+                  The verdict is verified / refuted / unresolved; unresolved is a
+                  distinguished non-pass for the authored-set orchestrator to hold.
 
 PURE / DB-free / LLM-free: ``canonical_symbols`` / ``normalization_map`` (gate 4)
 and ``existing_problem_hashes`` (gate 8) are PASSED IN by the caller. This unit
@@ -40,11 +44,16 @@ owns the gate logic + diagnostic ONLY — it does NOT promote, call
 
 from __future__ import annotations
 
+import logging
+import math
+import multiprocessing
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import ValidationError
+from sympy import Rational, Symbol, fraction, simplify, solve, together
 from sympy.core.cache import clear_cache
 
 from apollo.errors import MalformedEquationError
@@ -58,12 +67,15 @@ from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.schemas.problem import Problem
 from apollo.solver.sympy_exec import parse_zero_form
 
+_LOG = logging.getLogger(__name__)
+
 # Attempt-agnostic: ``to_kg_graph`` uses attempt_id only to stamp nodes/edges,
 # never for gate logic. Any fixed int is fine.
 _LINT_ATTEMPT_ID = 0
 
-# The full gate universe (1..8). The DEFAULT ``active_gates`` for
-# ``run_promotion_lint`` — passing it (or omitting it) reproduces the all-8-gates
+# The full gate universe (1..9). The DEFAULT ``active_gates`` for
+# ``run_promotion_lint`` runs every gate (gate 9 still self-deactivates unless a
+# governing system and a stated target answer are both present).
 # behavior EXACTLY. The CALLER (``promote``) computes a CONTENT-DERIVED subset via
 # ``content_active_gates`` (structural core {1,2,3,5,8} always; the symbolic rigor
 # gates {4,6,7} only when a parseable equation is present); gate 1 is the structural
@@ -71,17 +83,38 @@ _LINT_ATTEMPT_ID = 0
 # so it is not gated here. This module owns the gate vocabulary and stays ORM-free /
 # pure / DB-free / LLM-free — applicability is decided by content, never a stored
 # subject profile.
-ALL_PROMOTION_GATES: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8})
+ALL_PROMOTION_GATES: frozenset[int] = frozenset(range(1, 10))
 
 
 @dataclass(frozen=True)
 class PromotionResult:
-    """Outcome of the 8-gate lint. ``failed_gate`` is 1..8 on failure, None on
+    """Outcome of the 9-gate lint. ``failed_gate`` is 1..9 on failure, None on
     pass; ``diagnostic`` is human-readable ("" on pass)."""
 
     ok: bool
     failed_gate: int | None
     diagnostic: str
+
+
+@dataclass(frozen=True)
+class PromotionVerified(PromotionResult):
+    """Gate 9 ran and mechanically verified the stated answer."""
+
+    verdict: Literal["verified"] = "verified"
+
+
+@dataclass(frozen=True)
+class PromotionRefuted(PromotionResult):
+    """Gate 9 solved the system and contradicted the stated answer."""
+
+    verdict: Literal["refuted"] = "refuted"
+
+
+@dataclass(frozen=True)
+class PromotionUnresolved(PromotionResult):
+    """Gate 9 applied but could not decide; this is deliberately not a pass."""
+
+    verdict: Literal["unresolved"] = "unresolved"
 
 
 # --------------------------------------------------------------------------- #
@@ -170,6 +203,7 @@ STRUCTURAL_CORE_GATES: frozenset[int] = frozenset({1, 2, 3, 5, 8})
 # The rigor gates whose validity theory is "a closed system of symbolic equations":
 # they SELF-ACTIVATE only when the graph carries >=1 parseable equation step.
 _SYMBOLIC_GATES: frozenset[int] = frozenset({4, 6, 7})
+_SOLVE_CHECK_GATES: frozenset[int] = frozenset({9})
 
 
 def _has_parseable_equation(graph: dict) -> bool:
@@ -193,10 +227,95 @@ def _symbolic_layer_applies(graph: dict) -> bool:
     return _has_parseable_equation(graph)
 
 
+def _target_symbol(problem: Problem, graph: dict) -> str | None:
+    """Return the explicit symbolic target, falling back to the lone graph answer."""
+    explicit = problem.target_unknown.strip()
+    equation_symbols = _all_equation_symbols(problem)
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", explicit) and explicit in equation_symbols:
+        return explicit
+    answer = (
+        _derive_symbolic_answer(problem)
+        - set(_declared_bound_variables(graph))
+        - _assumption_symbol_names(problem, equation_symbols)
+    )
+    return next(iter(answer)) if len(answer) == 1 else None
+
+
+def _answer_equation_step(problem: Problem, graph: dict):
+    """Find a target-isolating stated answer and at least one governing equation.
+
+    A statement such as ``Q = 0.06`` is answer-bearing when one side is exactly
+    the target and the other side does not contain it.  It is deliberately kept
+    out of the governing system so a wrong key cannot make the system merely
+    inconsistent; the system is solved independently and then compared with it.
+    """
+    target = _target_symbol(problem, graph)
+    if target is None:
+        return None
+    target_sym = Symbol(target)
+    candidates = []
+    for step in _equation_steps(problem):
+        symbolic = step.content.get("symbolic")
+        if not symbolic or step.content.get("display") is True or "=" not in str(symbolic):
+            continue
+        lhs_text, rhs_text = str(symbolic).split("=", 1)
+        try:
+            lhs = parse_zero_form(lhs_text, entry_id=step.id)
+            rhs = parse_zero_form(rhs_text, entry_id=step.id)
+        except MalformedEquationError:
+            continue
+        if lhs == target_sym and target_sym not in rhs.free_symbols:
+            candidates.append((step, rhs))
+        elif rhs == target_sym and target_sym not in lhs.free_symbols:
+            candidates.append((step, lhs))
+    if not candidates:
+        return None
+    marked = [
+        candidate
+        for candidate in candidates
+        if re.search(
+            r"\b(answer|final|result|solution|stated)\b",
+            f"{candidate[0].id} {candidate[0].content.get('label', '')}",
+            flags=re.IGNORECASE,
+        )
+    ]
+    numeric = [candidate for candidate in candidates if not candidate[1].free_symbols]
+    if len(marked) == 1:
+        answer_step, stated = marked[0]
+    elif len(numeric) == 1:
+        answer_step, stated = numeric[0]
+    elif len(candidates) == 1:
+        answer_step, stated = candidates[0]
+    else:
+        # Multiple target-isolating formulae without one distinguishable answer
+        # are not enough evidence to check. Gate 9 remains inactive rather than
+        # guessing which equation is the teacher's stated answer.
+        return None
+    governing = [
+        step
+        for step in _equation_steps(problem)
+        if step.id != answer_step.id
+        and step.content.get("display") is not True
+        and step.content.get("symbolic")
+    ]
+    if not governing:
+        return None
+    return target, answer_step, stated, governing
+
+
+def _solve_check_layer_applies(graph: dict) -> bool:
+    """Gate 9 is stricter than the symbolic layer: system AND stated answer."""
+    try:
+        problem = Problem.model_validate(graph)
+    except (ValidationError, ValueError):
+        return True  # gate 1 will fail first; retain fail-closed activation.
+    return _answer_equation_step(problem, graph) is not None
+
+
 # 2. RIGOR LAYERS — additive mechanical oracles, each a pair
-#    ``(applies?(graph), gate_numbers)``. v1 ships EXACTLY ONE: the symbolic layer
-#    (today's gates 4/6/7 + the symbolic half of gate 5, which self-activates inside
-#    the gate). A layer's gates enter the active set ONLY when ``applies?`` is True,
+#    ``(applies?(graph), gate_numbers)``. The symbolic syntax/closure layer owns
+#    gates 4/6/7; the stricter solve-and-check layer owns gate 9. A layer's gates
+#    enter the active set ONLY when ``applies?`` is True,
 #    so a missing/inapplicable oracle NEVER blocks a subject — the safety property is
 #    structurally enforced (spec §4 the additive-oracle guarantee). The next
 #    mechanical oracle (units-checking, code-execution, ...) is a new layer here with
@@ -204,7 +323,10 @@ def _symbolic_layer_applies(graph: dict) -> bool:
 # 3. FAITHFULNESS — the semantic oracle (``apollo/provisioning/pairing_gate.py``),
 #    run by the orchestrator; named here for the legible three-tier model but NOT
 #    invoked from this pure module (it is LLM-bearing).
-RIGOR_LAYERS: list[tuple] = [(_symbolic_layer_applies, _SYMBOLIC_GATES)]
+RIGOR_LAYERS: list[tuple] = [
+    (_symbolic_layer_applies, _SYMBOLIC_GATES),
+    (_solve_check_layer_applies, _SOLVE_CHECK_GATES),
+]
 
 
 def content_active_gates(graph: dict) -> frozenset[int]:
@@ -569,13 +691,290 @@ def _gate_7(problem: Problem, bound_variables: frozenset[str] = frozenset()) -> 
     ``_intermediate_symbols``) keeps this INTENTIONALLY CONSERVATIVE — it
     rejects-on-doubt, the safe direction for a promotion gate (a false-RED
     quarantines a good problem; never a false-GREEN)."""
-    answer = _derive_symbolic_answer(problem) - set(bound_variables)
+    # This remains a paper-count check: declared parameter assumptions join the
+    # pre-existing given/bound/cancelled knowns, but no solver runs in gate 7.
+    answer = (
+        _derive_symbolic_answer(problem)
+        - set(bound_variables)
+        - _assumption_symbol_names(problem, _all_equation_symbols(problem))
+    )
     if len(answer) > 1:
         return (
             f"gate 7: equation system is under-determined (paper check): "
             f"{len(answer)} free unknowns remain {sorted(answer)}"
         )
     return None
+
+
+@dataclass(frozen=True)
+class _Gate9Decision:
+    verdict: Literal["verified", "refuted", "unresolved"]
+    reason: str
+    target: str
+    solved: str | None = None
+    stated: str | None = None
+
+
+_GATE9_SOLVE_TIMEOUT_SECONDS = 2.0
+_GATE9_ATOL = 1e-9
+_GATE9_RTOL = 1e-6
+
+
+def _solve_worker(sender, equations, unknowns) -> None:
+    """Child-process body; process isolation makes timeout termination hard."""
+    try:
+        sender.send(("ok", solve(equations, unknowns, dict=True)))
+    except BaseException as exc:  # noqa: BLE001 - serialized as unresolved data
+        sender.send(("error", f"{type(exc).__name__}: {exc}"))
+    finally:
+        sender.close()
+
+
+def _solve_with_timeout(equations: list, unknowns: list):
+    """Run one SymPy solve in a killable child process."""
+    methods = multiprocessing.get_all_start_methods()
+    ctx = multiprocessing.get_context("fork" if "fork" in methods else "spawn")
+    receiver, sender = ctx.Pipe(duplex=False)
+    proc = ctx.Process(target=_solve_worker, args=(sender, equations, unknowns), daemon=True)
+    proc.start()
+    sender.close()
+    if receiver.poll(_GATE9_SOLVE_TIMEOUT_SECONDS):
+        # A child that dies without sending trips poll() via EOF too, so the
+        # recv() must tolerate it — an EOFError is a solver error, not a crash.
+        try:
+            status, payload = receiver.recv()
+        except EOFError:
+            receiver.close()
+            proc.join(0.25)
+            return "error", f"solver child exited without a result (code {proc.exitcode})"
+        receiver.close()
+        proc.join(0.25)
+        if proc.is_alive():  # child sent a result but did not exit cleanly
+            proc.terminate()
+            proc.join()
+        return status, payload
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(0.25)
+        if proc.is_alive():  # pragma: no cover - terminate is sufficient on CI OSes
+            proc.kill()
+            proc.join()
+        receiver.close()
+        return "timeout", None
+    receiver.close()
+    return "error", f"solver child exited with code {proc.exitcode}"
+
+
+_ASSUMPTION_SYMBOL_ALIASES = {"ρ": "rho"}
+
+
+def _assumption_symbol_names(
+    problem: Problem,
+    equation_names: set[str],
+    normalization_map: Mapping[str, str] | None = None,
+) -> set[str]:
+    """Symbols explicitly carried by assumptions are known parameters.
+
+    Condition nodes are assumption-bearing by construction.  The problem prose
+    also counts, but only clauses that actually state an assumption/constancy;
+    merely naming the requested target must not turn it into a known.
+    """
+    aliases = {**_ASSUMPTION_SYMBOL_ALIASES, **dict(normalization_map or {})}
+
+    def _symbols_in(text: str) -> set[str]:
+        tokens = set(re.findall(r"[^\W\d][\w]*", text, flags=re.UNICODE))
+        normalized = tokens | {aliases[token] for token in tokens if token in aliases}
+        return normalized & equation_names
+
+    out: set[str] = set()
+    for step in problem.reference_solution:
+        if step.entry_type != "condition":
+            continue
+        text = " ".join(str(v) for v in step.content.values())
+        out |= _symbols_in(text)
+        out |= {str(v) for v in (step.content.get("variables") or []) if str(v) in equation_names}
+    for clause in re.split(r"[.;\n]", problem.problem_text):
+        lowered = clause.lower()
+        if "assum" in lowered or "constant" in lowered or "fixed" in lowered:
+            out |= _symbols_in(clause)
+    return out
+
+
+def _gate9_local_dict(
+    problem: Problem,
+    graph: dict,
+    normalization_map: Mapping[str, str],
+) -> tuple[dict, set[str]]:
+    names = _all_equation_symbols(problem)
+    assumptions = _assumption_symbol_names(problem, names, normalization_map)
+    positive_text = " ".join(
+        str(v)
+        for step in problem.reference_solution
+        if step.entry_type == "condition"
+        for v in step.content.values()
+        if "positive" in str(v).lower()
+    )
+    positive_names = set(re.findall(r"[A-Za-z][A-Za-z0-9_]*", positive_text)) & names
+    local = {
+        name: Symbol(name, real=True, **({"positive": True} if name in positive_names else {}))
+        for name in names
+    }
+    local["Rational"] = Rational
+    known = (
+        set(problem.given_values)
+        | set(_declared_bound_variables(graph))
+        | _cancelled_symbols(problem)
+        | assumptions
+    )
+    return local, known
+
+
+def _numeric_compare(solved_value, stated_value) -> Literal["verified", "refuted", "unresolved"]:
+    """Deterministic numeric fallback with explicit denominator/pole avoidance."""
+    free = sorted(solved_value.free_symbols | stated_value.free_symbols, key=lambda s: s.name)
+    _, solved_denominator = fraction(together(solved_value))
+    _, stated_denominator = fraction(together(stated_value))
+    denominator = solved_denominator * stated_denominator
+    successful = 0
+    sample_bases = (2.0, 3.0, 5.0, 7.0, 11.0, 13.0, 17.0)
+    for attempt in range(30):
+        substitutions = {
+            sym: sample_bases[(attempt + index) % len(sample_bases)] + 0.125 * index
+            for index, sym in enumerate(free)
+        }
+        try:
+            den_value = complex(denominator.evalf(30, subs=substitutions))
+            if not math.isfinite(den_value.real) or not math.isfinite(den_value.imag):
+                continue
+            if abs(den_value) <= 1e-8:
+                continue
+            solved_num = complex(solved_value.evalf(30, subs=substitutions))
+            stated_num = complex(stated_value.evalf(30, subs=substitutions))
+            if any(
+                not math.isfinite(part)
+                for part in (solved_num.real, solved_num.imag, stated_num.real, stated_num.imag)
+            ):
+                continue
+            if abs(solved_num.imag) > 1e-10 or abs(stated_num.imag) > 1e-10:
+                continue
+        except (ArithmeticError, TypeError, ValueError):
+            continue
+        successful += 1
+        scale = max(abs(solved_num.real), abs(stated_num.real))
+        if abs(solved_num.real - stated_num.real) > max(_GATE9_ATOL, _GATE9_RTOL * scale):
+            return "refuted"
+        if successful >= 5:
+            return "verified"
+    return "unresolved"
+
+
+def _compare_answer(solved_value, stated_value) -> Literal["verified", "refuted", "unresolved"]:
+    try:
+        residual = simplify(solved_value - stated_value)
+    except Exception:  # noqa: BLE001 - numeric fallback may still decide
+        residual = solved_value - stated_value
+    if residual == 0:
+        return "verified"
+    if not residual.free_symbols:
+        try:
+            solved_num = float(solved_value)
+            stated_num = float(stated_value)
+        except (TypeError, ValueError):
+            return "unresolved"
+        return (
+            "verified"
+            if math.isclose(solved_num, stated_num, rel_tol=_GATE9_RTOL, abs_tol=_GATE9_ATOL)
+            else "refuted"
+        )
+    return _numeric_compare(solved_value, stated_value)
+
+
+def _gate_9(
+    problem: Problem,
+    graph: dict,
+    normalization_map: Mapping[str, str],
+) -> _Gate9Decision:
+    answer = _answer_equation_step(problem, graph)
+    if answer is None:  # active predicate prevents this; defensive non-pass
+        return _Gate9Decision("unresolved", "stated answer/system disappeared", "unknown")
+    target, answer_step, _stated_default, governing_steps = answer
+    local, known_names = _gate9_local_dict(problem, graph, normalization_map)
+    target_sym = local[target]
+    equations = []
+    try:
+        for step in governing_steps:
+            equations.append(
+                parse_zero_form(str(step.content["symbolic"]), entry_id=step.id, local_dict=local)
+            )
+        symbolic = str(answer_step.content["symbolic"])
+        lhs_text, rhs_text = symbolic.split("=", 1)
+        lhs = parse_zero_form(lhs_text, entry_id=answer_step.id, local_dict=local)
+        rhs = parse_zero_form(rhs_text, entry_id=answer_step.id, local_dict=local)
+        stated = rhs if lhs == target_sym else lhs
+    except (MalformedEquationError, KeyError, ValueError) as exc:
+        return _Gate9Decision("unresolved", f"parse failure: {exc}", target)
+
+    numeric_subs = {
+        local[name]: value for name, value in problem.given_values.items() if name in local
+    }
+    equations = [eq.subs(numeric_subs) for eq in equations]
+    stated = stated.subs(numeric_subs)
+    all_names = {sym.name for eq in equations for sym in eq.free_symbols}
+    unknown_set = {
+        sym for eq in equations for sym in eq.free_symbols if sym.name not in known_names
+    }
+    # SymPy may choose which variable to isolate in an underdetermined system;
+    # putting the declared target first makes the returned residual parameters
+    # explicit so gate 9 can classify them as unresolved.
+    unknowns = ([target_sym] if target_sym in unknown_set else []) + sorted(
+        unknown_set - {target_sym}, key=lambda sym: sym.name
+    )
+    if target_sym not in unknowns and target not in all_names:
+        return _Gate9Decision("unresolved", "target absent from governing system", target)
+
+    status, payload = _solve_with_timeout(equations, unknowns)
+    if status != "ok":
+        return _Gate9Decision(
+            "unresolved", f"solver {status}: {payload or 'time limit exceeded'}", target
+        )
+    target_values = [solution[target_sym] for solution in payload if target_sym in solution]
+    if not target_values:
+        return _Gate9Decision(
+            "unresolved", "solver produced no target value", target, stated=str(stated)
+        )
+    residual_unknowns = sorted(
+        {
+            symbol.name
+            for value in target_values
+            for symbol in value.free_symbols
+            if symbol.name not in known_names
+        }
+    )
+    if residual_unknowns:
+        return _Gate9Decision(
+            "unresolved",
+            f"{len(residual_unknowns)} residual unknowns after knowns: {residual_unknowns}",
+            target,
+            solved=", ".join(str(value) for value in target_values),
+            stated=str(stated),
+        )
+    comparisons = [_compare_answer(value, stated) for value in target_values]
+    solved_text = ", ".join(str(value) for value in target_values)
+    if comparisons and all(value == "verified" for value in comparisons):
+        return _Gate9Decision(
+            "verified", "all solution branches match", target, solved_text, str(stated)
+        )
+    if comparisons and all(value == "refuted" for value in comparisons):
+        return _Gate9Decision(
+            "refuted", "all solution branches contradict", target, solved_text, str(stated)
+        )
+    return _Gate9Decision(
+        "unresolved",
+        "solution branches disagree or comparison was inconclusive",
+        target,
+        solved_text,
+        str(stated),
+    )
 
 
 def _cancelled_symbols(problem: Problem) -> set[str]:
@@ -674,5 +1073,31 @@ def run_promotion_lint(
         diagnostic = gate()  # type: ignore[operator]
         if diagnostic is not None:
             return PromotionResult(ok=False, failed_gate=number, diagnostic=diagnostic)
+
+    # Applicability is enforced here as well as by ``content_active_gates`` so a
+    # legacy caller that omits/passes the all-gates default cannot accidentally
+    # turn absent solve/check evidence into an unresolved verdict.
+    if 9 in active_gates and _solve_check_layer_applies(graph):
+        decision = _gate_9(problem, graph, normalization_map)
+        _LOG.info(
+            "promotion_gate_9_decision",
+            extra={
+                "event": "promotion_gate_9_decision",
+                "verdict": decision.verdict,
+                "reason": decision.reason,
+                "target": decision.target,
+                "solved": decision.solved,
+                "stated": decision.stated,
+            },
+        )
+        diagnostic = (
+            f"gate 9: {decision.verdict}: {decision.reason}; target={decision.target!r}; "
+            f"solved={decision.solved!r}; stated={decision.stated!r}"
+        )
+        if decision.verdict == "verified":
+            return PromotionVerified(ok=True, failed_gate=None, diagnostic="")
+        if decision.verdict == "refuted":
+            return PromotionRefuted(ok=False, failed_gate=9, diagnostic=diagnostic)
+        return PromotionUnresolved(ok=False, failed_gate=9, diagnostic=diagnostic)
 
     return PromotionResult(ok=True, failed_gate=None, diagnostic="")

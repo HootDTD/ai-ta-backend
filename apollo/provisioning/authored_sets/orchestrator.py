@@ -48,7 +48,7 @@ from apollo.provisioning.orchestrator import (
 )
 from apollo.provisioning.pairing_gate import rejection_from_verdict, validate_pair
 from apollo.provisioning.problem_hash import problem_dup_hash
-from apollo.provisioning.promote import PromoteResult, promote
+from apollo.provisioning.promote import PromoteHeldForReview, PromoteResult, promote
 from apollo.provisioning.provisioning_schema import build_tag_schema
 from apollo.provisioning.scrape import (
     resolve_or_create_provisional_concept,
@@ -121,9 +121,7 @@ class ProvisioningReport(BaseModel):
     counts: dict[str, int] = Field(default_factory=dict)
 
 
-def _augmented_hold_payload(
-    payload: dict | None, draft: ReferenceSolutionDraft
-) -> dict | None:
+def _augmented_hold_payload(payload: dict | None, draft: ReferenceSolutionDraft) -> dict | None:
     """Apply accepted explain-why text; preserve the object on plain holds."""
     if not draft.augmented_problem_text:
         return payload
@@ -445,9 +443,7 @@ async def _process_authored_candidate(
                     # Reversed provisioning: the matched concept rides along so
                     # the approve path can thread it as resolved_concept.
                     "concept_match": match.model_dump() if match is not None else None,
-                    "augmented": (
-                        "explain_why" if draft.augmented_problem_text else None
-                    ),
+                    "augmented": ("explain_why" if draft.augmented_problem_text else None),
                 },
             }
             await db.flush()
@@ -537,6 +533,35 @@ async def _process_authored_candidate(
         )
     except MintRejected as rejected:
         result = rejected.result
+        if isinstance(result, PromoteHeldForReview):
+            tier1.provenance = {  # type: ignore[assignment]
+                **(tier1.provenance or {}),
+                "authored_review": {
+                    "required": True,
+                    "reason": "promotion_lint_unresolved",
+                    "failed_gate": result.failed_gate,
+                    "diagnostic": result.diagnostic,
+                    "ocr_confidence": min_conf,
+                    "match_method": match_method,
+                    "ocr_draft": draft.model_dump(),
+                    "generated_alt": verdict.generated_alt if verdict is not None else None,
+                    "concept_match": match.model_dump() if match is not None else None,
+                    "augmented": "explain_why" if draft.augmented_problem_text else None,
+                },
+            }
+            await db.flush()
+            return ProblemResult(
+                label=label,
+                outcome="held_for_review",
+                solution_source=draft.solution_source,
+                match_method=match_method,
+                ocr_confidence=min_conf,
+                failed_gate=result.failed_gate,
+                diagnostic=result.diagnostic,
+                review_required=True,
+                reason="promotion_lint_unresolved",
+                concept_problem_id=int(tier1.id),
+            )
         return ProblemResult(
             label=label,
             outcome="rejected",
