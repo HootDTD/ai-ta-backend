@@ -6,7 +6,7 @@ related:
   - ai-ta-backend/_overview
   - ai-ta-backend/domain-data
   - shared/security
-last_verified: 2026-07-01
+last_verified: 2026-07-12
 stub: false
 ---
 
@@ -17,15 +17,31 @@ Storage for teacher upload assets. The Apollo subsystem's knowledge graph lives 
 Supabase on Neo4j Aura (instance `791f9ced`, configured via `NEO4J_*` env vars in
 `ai-ta-backend/config/settings.py`) — only Apollo's relational state is in Supabase.
 
+**Neo4j environment split (2026-07-12):** the Aura instance is **prod-only** — it was
+wiped to an empty graph and dedicated to the production Railway environment at the
+staging→prod cutover. Staging's Railway backend points at an unreachable
+`bolt://localhost:7687` and runs in Neo4j degraded mode (PR #139) by design; all
+staging/dev Neo4j testing happens on **local Docker** (the Testcontainers harness or a
+local `neo4j:5.x`). Never point staging back at Aura — it would pollute the prod KG.
+
 ## Projects: prod vs test
 
 | Project | Ref | Use |
 |---|---|---|
-| Prod | `uduxdniieeqbljtwocxy` | Live data; what Railway (`ApolloV3` branch; `Procfile` runs `web` uvicorn + `worker` teacher-upload worker) points at |
+| Prod | `uinkseewnxvumrxksnew` | Live pilot data (fresh project created 2026-07-11; us-east-2, `aws-1` session pooler). What the production Railway environment points at — prod services deploy `main`; `Procfile` runs `web` uvicorn + `worker` teacher-upload worker |
+| Old prod (DEAD) | `uduxdniieeqbljtwocxy` | Decommissioned/paused — all API and DB calls time out. Referenced by stale docs/configs only; never use |
 | Test | `hjevtxdtrkxjcaaexdxt` | Schema rehearsal + integration testing; migrations are mirrored here (see header of `database/migrations/022_enable_rls_stopgap.sql`). **Railway's `staging` environment backend/worker point HERE, not at prod** (verified 2026-06-11 by correlating staging worker/request timestamps with `pg_stat_activity`) |
 
 Two MCP servers (`supabase` = prod, `supabase-test` = test) are wired into the workspace;
-apply changes to test first, then prod.
+apply changes to test first, then prod. **Check that `.mcp.json`'s `supabase` server URL
+carries `project_ref=uinkseewnxvumrxksnew`** — as of 2026-07-12 it still pointed at the
+dead old ref (every call times out, which looks like an MCP outage but isn't).
+
+**Prod migration state (2026-07-12):** the fresh prod project came with a model-derived
+schema covering roughly migrations 001–038 (RLS enabled on all public tables), but was
+missing `029, 031, 039, 040, 041, 042` — live users hit `apollo_misconceptions.opposes
+does not exist` until those six were applied directly and verified at the cutover. Prod
+now matches the code through migration **042**.
 
 **Known drift (2026-06-11)**: the test project's `teacher_uploads` carries only
 `teacher_uploads_status_check` — the `week`/`kind` checks from migration 004 are absent
@@ -55,7 +71,7 @@ All tables created by `ai-ta-backend/database/migrations/`; ORM models for the c
   `apollo_misconceptions` (019, embedded), `apollo_kg_negotiations` (021),
   `apollo_clarifications` (033), `apollo_grading_artifacts` (034 — canonical
   grading artifact, one immutable row per Done-click per grader role;
-  LOCAL-Docker-verified only, not applied to any remote project yet; see
+  present on test AND prod as of 2026-07-12; see
   `docs/architecture/apollo.md` persistence row for the full shape).
 - **Reporting**: `ai_use_reports` (012) — the only table accessed via the anon-key REST
   client instead of SQLAlchemy (see shared/security).

@@ -56,7 +56,7 @@ editing code, update the owner doc in the same commit and bump
 - Vector search: pgvector (PostgreSQL) + FAISS. Do not introduce other vector stores.
 - LLM: GPT-4o via MAIN_MODEL env var. Vision fallback: Tesseract if GPT-4V unavailable.
 - Database: Supabase PostgreSQL + pgvector, async via SQLAlchemy + asyncpg
-- Deployment: Railway (GitHub integration, deploys `ApolloV3`; Procfile defines web + worker processes). Heroku is abandoned — do not re-wire it.
+- Deployment: Railway (GitHub integration; the production environment deploys `main`, the staging environment deploys `staging` — see `docs/branching.md`; Procfile defines web + worker processes). Heroku is abandoned — do not re-wire it.
 
 ## Environment
 Config via `config/settings.py`. Copy `.env.example` to `.env` for required variables.
