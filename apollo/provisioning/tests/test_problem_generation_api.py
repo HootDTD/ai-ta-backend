@@ -537,3 +537,66 @@ async def test_generation_run_defaults_and_jsonb_round_trip(db_session):
     await db_session.flush()
     await db_session.refresh(run)
     assert run.result_summary["dropped"] == {"duplicate": 1}
+
+
+@pytest.mark.asyncio
+async def test_seeds_lists_teachable_problems_only(db_session, monkeypatch):
+    """Tier-2 non-quarantined rows only, ordered by id, text capped — and the
+    route serves with the generation flag unset (deliberately not gated)."""
+    from datetime import UTC, datetime
+
+    import apollo.provisioning.problem_generation.api as gapi
+    from apollo.persistence.models import ConceptProblem
+
+    space_id, concept_id = await _seed_course(db_session, slug="gen4-seeds")
+    monkeypatch.setattr(gapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(gapi, "require_course_teacher", _fake_require_teacher)
+    monkeypatch.delenv("APOLLO_PROBLEM_GENERATION", raising=False)
+
+    first = await _seed_problem(
+        db_session, space_id=space_id, concept_id=concept_id, generated=False
+    )
+    long_text = "x" * 2500
+    second = await _seed_problem(
+        db_session,
+        space_id=space_id,
+        concept_id=concept_id,
+        generated=False,
+        problem_text=long_text,
+    )
+    # Excluded: tier-1 (generated inventory) and quarantined tier-2.
+    await _seed_problem(db_session, space_id=space_id, concept_id=concept_id, generated=True)
+    quarantined = await _seed_problem(
+        db_session,
+        space_id=space_id,
+        concept_id=concept_id,
+        generated=False,
+        problem_text="quarantined",
+    )
+    quarantined.quarantined_at = datetime.now(UTC)
+    await db_session.flush()
+
+    resp = await gapi.list_generation_seeds(
+        concept_id=concept_id, request=_FakeRequest(), db=db_session
+    )
+    seeds = resp["seeds"]
+    assert [s["concept_problem_id"] for s in seeds] == [int(first.id), int(second.id)]
+    assert seeds[0]["problem_text"] == "Find M."
+    assert seeds[0]["difficulty"] == "intro"
+    assert len(seeds[1]["problem_text"]) == 2000
+
+    # Quarantined row exists but is excluded (guard the fixture, not the dust).
+    assert await db_session.get(ConceptProblem, int(quarantined.id)) is not None
+
+
+@pytest.mark.asyncio
+async def test_seeds_unknown_concept_404(db_session, monkeypatch):
+    from fastapi import HTTPException
+
+    import apollo.provisioning.problem_generation.api as gapi
+
+    monkeypatch.setattr(gapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(gapi, "require_course_teacher", _fake_require_teacher)
+    with pytest.raises(HTTPException) as missing:
+        await gapi.list_generation_seeds(concept_id=999_999, request=_FakeRequest(), db=db_session)
+    assert missing.value.status_code == 404
