@@ -56,7 +56,7 @@ from apollo.persistence.learner_model_seed import (
 )
 from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.schemas.problem import Problem
-from apollo.solver.sympy_exec import parse_zero_form
+from apollo.solver.sympy_exec import parse_zero_form, solve_system
 
 # Attempt-agnostic: ``to_kg_graph`` uses attempt_id only to stamp nodes/edges,
 # never for gate logic. Any fixed int is fine.
@@ -575,6 +575,31 @@ def _gate_7(problem: Problem, bound_variables: frozenset[str] = frozenset()) -> 
             f"gate 7: equation system is under-determined (paper check): "
             f"{len(answer)} free unknowns remain {sorted(answer)}"
         )
+    if len(answer) == 1:
+        target_sym_name = list(answer)[0]
+        equations = []
+        for step in problem.reference_solution:
+            if step.entry_type == "equation":
+                symbolic = step.content.get("symbolic")
+                if symbolic and not step.content.get("display"):
+                    try:
+                        expr = parse_zero_form(symbolic, entry_id=step.id)
+                        equations.append(expr)
+                    except Exception:
+                        pass
+        if equations:
+            # Treat given values, cancelled symbols, and bound variables as known/given
+            knowns = {**problem.given_values}
+            for sym in _cancelled_symbols(problem):
+                knowns[sym] = 1.0
+            for sym in bound_variables:
+                knowns[sym] = 1.0
+            res = solve_system(equations, knowns, target_sym_name)
+            if res.get("status") != "solved":
+                return (
+                    f"gate 7: equation system cannot be solved for target '{target_sym_name}' using SymPy: "
+                    f"{res.get('status')} (missing variables: {res.get('missing_variables')})"
+                )
     return None
 
 

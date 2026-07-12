@@ -1249,6 +1249,26 @@ def test_gate7_rejects_two_independent_unknowns_via_derive():
     assert _gate_7(problem) is not None
 
 
+def test_gate7_rejects_mathematically_contradictory_system():
+    """Gate 7 solve check rejects mathematically contradictory systems (e.g. no real solution due to imaginary sqrt)
+    even if they pass the static paper-closure check (Resolves Gap a)."""
+    graph = copy.deepcopy(_bernoulli_graph())
+    # Make Bernoulli equation have no real solution by introducing sqrt of a negative value under test inputs
+    _step(graph, "bernoulli")["content"]["symbolic"] = (
+        "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + sqrt(P2 - 300000) + Rational(1,2)*rho*v2**2 + rho*g*h2)"
+    )
+    r = run_promotion_lint(
+        graph,
+        canonical_symbols=_canonical_symbols(),
+        normalization_map=_normalization_map(),
+        existing_problem_hashes=set(),
+    )
+    assert r.ok is False
+    assert r.failed_gate == 7
+    assert "cannot be solved" in r.diagnostic
+
+
+
 # --------------------------------------------------------------------------- #
 # WU-AAS lane B2.2 / G4.2 — mint-time equation parser tolerance
 #

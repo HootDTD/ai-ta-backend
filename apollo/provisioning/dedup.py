@@ -29,6 +29,7 @@ quarantine (3B2h). This unit reads the inventory + writes ONE audit row.
 """
 
 from __future__ import annotations
+import re
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -42,7 +43,8 @@ from apollo.provisioning.dedup_constants import (
     EMBED_MERGE_THRESHOLD,
 )
 
-__all__ = ["DedupVerdict", "resolve_candidate"]
+__all__ = ["DedupVerdict", "resolve_candidate", "is_false_merge_risk"]
+
 
 
 @dataclass(frozen=True)
@@ -159,6 +161,41 @@ async def _record_decision(
     await db.flush()
 
 
+def is_false_merge_risk(candidate_key: str, existing_key: str) -> bool:
+    """True if variable/concept keys differ in casing, subscripts, or numbers
+    while sharing the same base symbol, indicating they represent distinct quantities
+    that embedding models might falsely collapse.
+    Example: 'm' vs 'M', 'v_1' vs 'V_1', 'v_1' vs 'v_2', 'v' vs 'v_1'.
+    """
+    cand_cleaned = candidate_key.split(".")[-1]
+    exist_cleaned = existing_key.split(".")[-1]
+
+    # Extract alphabetical base (ignoring digits and underscores)
+    cand_base = "".join(re.findall(r"[A-Za-z]+", cand_cleaned))
+    exist_base = "".join(re.findall(r"[A-Za-z]+", exist_cleaned))
+
+    # If they don't even share the same base character(s) (case-insensitive), they are not a risk of false merge
+    # because the embedding model or text representation is different enough (e.g., 'm' vs 'v' is fine).
+    if cand_base.lower() != exist_base.lower():
+        return False
+
+    # Extract numeric parts or suffixes
+    cand_nums = "".join(re.findall(r"\d+", cand_cleaned))
+    exist_nums = "".join(re.findall(r"\d+", exist_cleaned))
+
+    # If the base characters are the same (case-insensitive):
+    # Case 1: They have different casing (e.g. 'm' vs 'M', 'v_1' vs 'V_1')
+    if cand_cleaned != exist_cleaned:
+        # If they differ in alphabetical casing
+        if cand_base != exist_base:
+            return True
+        # Case 2: They have different numbers/subscripts (e.g. 'v_1' vs 'v_2', 'v' vs 'v_1')
+        if cand_nums != exist_nums:
+            return True
+
+    return False
+
+
 async def resolve_candidate(
     db: AsyncSession,
     *,
@@ -215,13 +252,17 @@ async def resolve_candidate(
             )
 
     # --- EMBEDDING tier ----------------------------------------------------- #
-    embed_pool = await _in_course_entities(
+    raw_embed_pool = await _in_course_entities(
         db,
         search_space_id=search_space_id,
         concept_id=concept_id,
         require_summary=True,
         exclude_entity_ids=exclude_entity_ids,
     )
+    embed_pool = [
+        ent for ent in raw_embed_pool
+        if not is_false_merge_risk(candidate_key, ent.canonical_key)
+    ]
     if not embed_pool:
         # Nothing to compare against -> distinct (similarity unknown).
         await _record_decision(
@@ -241,6 +282,7 @@ async def resolve_candidate(
             similarity=None,
             matched_entity_id=None,
         )
+
 
     cand_vec = embed_fn(candidate.scope_summary)
     # Pick the MAX cosine; ties break to the LOWEST entity id (-id maximised).

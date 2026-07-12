@@ -65,8 +65,8 @@
       "id": "plan_apply_equal_pressure_simplification",
       "step": 3,
       "content": {
-        "order": 1,
         "label": "Recognize that both ends are at atmospheric pressure, so the pressure terms cancel in Bernoulli's equation",
+        "order": 1,
         "action": "recognize that both ends are open to the atmosphere so P1 equals P2, causing the pressure terms in bernoulli to cancel",
         "purpose": "eliminate P1 and P2 from bernoulli, leaving only the kinetic and potential energy terms",
         "uses_equations": [
@@ -84,8 +84,8 @@
       "id": "plan_set_v1_zero_and_solve_bernoulli",
       "step": 4,
       "content": {
-        "order": 2,
         "label": "Set the reservoir inlet velocity to zero and solve the simplified Bernoulli equation for the outlet velocity v2",
+        "order": 2,
         "action": "substitute v1 = 0 (wide reservoir approximation), h1 = 20, h2 = 0, and g = 9.81 into the simplified bernoulli and solve for v2",
         "purpose": "obtain the exit velocity v2 at the bottom of the pipe",
         "uses_equations": [

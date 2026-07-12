@@ -4,7 +4,8 @@
   "difficulty": "standard",
   "given_values": {
     "U": 0.5,
-    "nu": 1.12e-06
+    "nu": 1.12e-06,
+    "x": 1.0
   },
   "problem_text": "Water (nu=1.12e-6 m^2/s) flows past a flat plate at U=0.5 m/s. What is the boundary layer thickness at this location?",
   "target_unknown": "boundary layer thickness",
