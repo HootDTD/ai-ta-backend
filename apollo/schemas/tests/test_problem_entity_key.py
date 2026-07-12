@@ -47,6 +47,12 @@ def test_to_kg_graph_reference_nodes_carry_entity_key() -> None:
     assert by_id["do_it"].entity_key == "proc.do_it"
 
 
+def test_to_kg_graph_depends_on_is_prerequisite_then_dependent() -> None:
+    graph = Problem.model_validate(_PROBLEM).to_kg_graph(attempt_id=7)
+    dependency = next(edge for edge in graph.edges if edge.edge_type.value == "DEPENDS_ON")
+    assert (dependency.from_node_id, dependency.to_node_id) == ("real_basis", "do_it")
+
+
 def test_missing_entity_key_is_derived() -> None:
     """T1: a step that omits entity_key now gets it derived at graph-build time
     (population case) instead of defaulting to None."""

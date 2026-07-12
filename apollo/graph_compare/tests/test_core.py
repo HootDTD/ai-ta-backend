@@ -62,7 +62,7 @@ def test_comparison_confidence_is_one_in_v1():
 def test_comparison_version_constant():
     student = snorm(nodes=(cnode("eq.a"),))
     result = grade_attempt(student, _ref_three())
-    assert result.comparison_version == COMPARISON_VERSION == "graph-compare-v1"
+    assert result.comparison_version == COMPARISON_VERSION == "graph-compare-v2"
 
 
 def test_empty_student_graph_degenerate():

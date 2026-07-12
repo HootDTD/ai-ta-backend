@@ -373,6 +373,9 @@ def annotate_reference_solution(problem: dict, key_for_node: Callable[[str], str
 def validate_reference_graph(problem: dict) -> ReferenceGraphValidation:
     """Validate an annotated problem's reference graph (spec §6.1).
 
+    This gate is DEPENDS_ON-direction-invariant: it validates entity links and
+    declared-path membership only and never reads reference edges.
+
     ``ok`` is True iff ALL hold:
       (a) every reference-solution step has a non-empty ``entity_key``;
       (b) ``declared_paths`` is present and non-empty;

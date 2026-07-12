@@ -8,8 +8,8 @@ section 8 (T2), amended by A6 (cycle safety).
 bearing the concept it attacks is (``severity = centrality * confidence``).
 Two structural signals feed the score:
 
-  * **DEPENDS_ON in-degree** — a node many other nodes depend on is more
-    central than a leaf nobody points at.
+  * **DEPENDS_ON out-degree** — under the canonical prerequisite -> dependent
+    direction, a node many other nodes depend on is more central than a leaf.
   * **PRECEDES position** — earlier steps in a procedure chain are more
     central than later ones (an error early in a procedure poisons
     everything downstream).
@@ -44,11 +44,11 @@ def compute_centrality(reference_graph: KGGraph) -> dict[str, float]:
     if len(node_ids) == 1:
         return {node_ids[0]: 1.0}
 
-    depends_on_scores = _depends_on_in_degree_scores(reference_graph, node_ids)
+    depends_on_scores = _depends_on_out_degree_scores(reference_graph, node_ids)
     precedes_scores = _precedes_position_scores(reference_graph, node_ids)
 
     # Combine additively (not via max()): a node with a real DEPENDS_ON
-    # in-degree signal must never be masked by an incidental PRECEDES
+    # out-degree signal must never be masked by an incidental PRECEDES
     # position assigned to unrelated, edge-less nodes (or vice versa). Each
     # sub-score is already scaled to [0, 1], so summing and clamping keeps
     # the combined raw score in [0, 1] while letting both signals count.
@@ -62,19 +62,19 @@ def compute_centrality(reference_graph: KGGraph) -> dict[str, float]:
     return _rescale(combined, node_ids)
 
 
-def _depends_on_in_degree_scores(graph: KGGraph, node_ids: list[str]) -> dict[str, float]:
-    """Raw (unscaled, [0,1]) in-degree signal over the DEPENDS_ON subgraph."""
-    in_degree = {nid: 0 for nid in node_ids}
+def _depends_on_out_degree_scores(graph: KGGraph, node_ids: list[str]) -> dict[str, float]:
+    """Raw [0,1] out-degree signal for prerequisite -> dependent edges."""
+    out_degree = {nid: 0 for nid in node_ids}
     for edge in graph.edges:
         if edge.edge_type != EdgeType.DEPENDS_ON:
             continue
-        if edge.to_node_id in in_degree:
-            in_degree[edge.to_node_id] += 1
+        if edge.from_node_id in out_degree and edge.to_node_id in out_degree:
+            out_degree[edge.from_node_id] += 1
 
-    max_degree = max(in_degree.values(), default=0)
+    max_degree = max(out_degree.values(), default=0)
     if max_degree == 0:
         return {nid: 0.0 for nid in node_ids}
-    return {nid: degree / max_degree for nid, degree in in_degree.items()}
+    return {nid: degree / max_degree for nid, degree in out_degree.items()}
 
 
 def _precedes_position_scores(graph: KGGraph, node_ids: list[str]) -> dict[str, float]:

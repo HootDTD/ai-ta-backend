@@ -46,7 +46,7 @@ from apollo.graph_compare.soundness import (
 # The constant for the apollo_graph_comparison_runs.comparison_version column. A
 # re-run at the same version is a supersede (UNIQUE constraint). Single source of
 # truth; WU-4B reads it off GradeResult.comparison_version.
-COMPARISON_VERSION: str = "graph-compare-v1"
+COMPARISON_VERSION: str = "graph-compare-v2"
 
 
 @dataclass(frozen=True)

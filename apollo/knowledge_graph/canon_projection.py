@@ -23,6 +23,9 @@ rebuildable at any time via :func:`project_canon` (or ``scripts/seed_canon_proje
 The ``MERGE`` on ``key`` makes re-runs idempotent: a second projection over the
 same entities yields the SAME node count (the ``SET`` re-applies identical
 properties; no duplicates).
+
+This is a node-only projection. It does not copy Layer-1 ``EntityPrereq`` rows
+or mint any Neo4j DEPENDS_ON relationship, so no direction translation occurs.
 """
 
 from __future__ import annotations
