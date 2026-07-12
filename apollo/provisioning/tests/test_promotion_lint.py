@@ -1715,3 +1715,212 @@ def test_gate4_table_less_still_grounds_via_prose_meaning():
     d["content"] = {"concept": "pressure drop", "meaning": "the change P2 across the pipe"}
     grounded = _internal_grounded_symbols(Problem.model_validate(graph))
     assert "P2" in grounded  # answer symbol grounded (also a prose token here)
+
+
+# --------------------------------------------------------------------------- #
+# Gate-9 defensive branches — the pure helpers' edge contracts, pinned
+# directly so the coverage of the safety core is not left to integration
+# accidents (child-process bodies, pole/imaginary sampling, orientation).
+# --------------------------------------------------------------------------- #
+
+
+def test_gate9_reversed_answer_orientation_is_verified():
+    """A stated key written ``0.06 = Q`` (value on the left) still checks."""
+    graph = _gate9_graph(governing="Q - A*v", stated="0.06", givens={"A": 0.015, "v": 4.0})
+    _step(graph, "answer_key")["content"]["symbolic"] = "0.06 = Q"
+    result = _lint_gate9(graph)
+    assert result.ok
+    assert result.verdict == "verified"
+
+
+def test_gate9_prefers_the_lone_numeric_candidate_among_marked_equations():
+    """Two marked target-isolating equations: the numeric one is the stated key."""
+    graph = _gate9_graph(governing="Q - A*v", stated="0.06", givens={"A": 0.015, "v": 4.0})
+    steps = graph["reference_solution"]
+    steps.insert(
+        2,
+        {
+            "id": "final_expression",
+            "step": 99,
+            "entry_type": "equation",
+            "entity_key": "eq.final_expression",
+            "content": {"label": "Final formula", "symbolic": "Q = A*v"},
+            "depends_on": ["governing"],
+        },
+    )
+    for index, step in enumerate(steps, start=1):
+        step["step"] = index
+    graph["declared_paths"] = [[step["id"] for step in steps]]
+    result = _lint_gate9(graph)
+    assert result.ok
+    assert result.verdict == "verified"
+
+
+def test_gate9_two_indistinguishable_symbolic_keys_deactivate_the_gate():
+    """No lone marked/numeric candidate -> not enough evidence; gate 9 inactive."""
+    graph = _gate9_graph(governing="Q - A*v", stated="A*v", givens={"A": 0.015, "v": 4.0})
+    steps = graph["reference_solution"]
+    steps.insert(
+        2,
+        {
+            "id": "final_expression",
+            "step": 99,
+            "entry_type": "equation",
+            "entity_key": "eq.final_expression",
+            "content": {"label": "Final formula", "symbolic": "Q = v*A"},
+            "depends_on": ["governing"],
+        },
+    )
+    for index, step in enumerate(steps, start=1):
+        step["step"] = index
+    graph["declared_paths"] = [[step["id"] for step in steps]]
+    result = _lint_gate9(graph)
+    assert result.ok
+    assert type(result) is PromotionResult  # no gate-9 verdict subtype
+
+
+class _FakeSender:
+    def __init__(self):
+        self.sent = []
+        self.closed = False
+
+    def send(self, payload):
+        self.sent.append(payload)
+
+    def close(self):
+        self.closed = True
+
+
+def test_solve_worker_body_serializes_success_and_failure():
+    from sympy import Symbol
+
+    import apollo.provisioning.promotion_lint as lint
+
+    q = Symbol("Q")
+    ok_sender = _FakeSender()
+    lint._solve_worker(ok_sender, [q - 3], [q])
+    status, payload = ok_sender.sent[0]
+    assert status == "ok"
+    assert payload == [{q: 3}]
+    assert ok_sender.closed
+
+    err_sender = _FakeSender()
+    lint._solve_worker(err_sender, object(), [q])  # solve() rejects the input
+    status, message = err_sender.sent[0]
+    assert status == "error"
+    assert message
+    assert err_sender.closed
+
+
+def test_solve_with_timeout_child_that_sends_then_hangs_is_terminated(monkeypatch):
+    import apollo.provisioning.promotion_lint as lint
+
+    if "fork" not in multiprocessing.get_all_start_methods():
+        pytest.skip("monkeypatched solver worker is inherited only under fork")
+
+    def _send_then_hang(sender, _equations, _unknowns):
+        sender.send(("ok", []))
+        time.sleep(5)
+
+    monkeypatch.setattr(lint, "_solve_worker", _send_then_hang)
+    started = time.monotonic()
+    status, payload = lint._solve_with_timeout([], [])
+    assert (status, payload) == ("ok", [])
+    assert time.monotonic() - started < 2.0
+
+
+def test_solve_with_timeout_child_that_exits_silently_is_an_error(monkeypatch):
+    import apollo.provisioning.promotion_lint as lint
+
+    if "fork" not in multiprocessing.get_all_start_methods():
+        pytest.skip("monkeypatched solver worker is inherited only under fork")
+
+    def _exit_without_sending(_sender, _equations, _unknowns):
+        return None
+
+    monkeypatch.setattr(lint, "_solve_worker", _exit_without_sending)
+    monkeypatch.setattr(lint, "_GATE9_SOLVE_TIMEOUT_SECONDS", 0.5)
+    status, payload = lint._solve_with_timeout([], [])
+    assert status == "error"
+    assert "exited" in payload
+
+
+def test_numeric_compare_verifies_equivalent_and_refutes_offset_expressions():
+    from sympy import Symbol
+
+    import apollo.provisioning.promotion_lint as lint
+
+    x = Symbol("x", real=True)
+    assert lint._numeric_compare(x * (x + 1), x**2 + x) == "verified"
+    assert lint._numeric_compare(x, x + 1) == "refuted"
+
+
+def test_numeric_compare_pole_and_imaginary_samples():
+    from sympy import Symbol, sqrt
+
+    import apollo.provisioning.promotion_lint as lint
+
+    x = Symbol("x", real=True)
+    # Rational pair: pole samples are skipped, agreeing samples verify.
+    assert lint._numeric_compare(1 / (x - 2), (x - 1) / (x - 2) - 1) == "verified"
+    # Every sample is imaginary -> nothing decidable -> unresolved.
+    assert lint._numeric_compare(sqrt(-1 - x**2), sqrt(-1 - x**2)) == "unresolved"
+
+
+def test_compare_answer_non_float_constant_residual_is_unresolved():
+    from sympy import I, Integer
+
+    import apollo.provisioning.promotion_lint as lint
+
+    assert lint._compare_answer(I, Integer(0)) == "unresolved"
+
+
+def test_gate_9_direct_call_without_stated_answer_is_defensively_unresolved():
+    import apollo.provisioning.promotion_lint as lint
+
+    graph = _gate9_graph(governing="Q - A*v", stated="0.06", givens={"A": 0.015, "v": 4.0})
+    del graph["reference_solution"][1:]  # governing only; no stated answer remains
+    graph["declared_paths"] = [["governing"]]
+    problem = Problem.model_validate(graph)
+    decision = lint._gate_9(problem, graph, {})
+    assert decision.verdict == "unresolved"
+    assert "disappeared" in decision.reason
+
+
+def test_solve_with_timeout_child_that_closes_pipe_without_sending(monkeypatch):
+    import apollo.provisioning.promotion_lint as lint
+
+    if "fork" not in multiprocessing.get_all_start_methods():
+        pytest.skip("monkeypatched solver worker is inherited only under fork")
+
+    def _close_then_linger(sender, _equations, _unknowns):
+        sender.close()
+        time.sleep(0.4)
+
+    monkeypatch.setattr(lint, "_solve_worker", _close_then_linger)
+    status, payload = lint._solve_with_timeout([], [])
+    assert status == "error"
+    assert "without a result" in payload
+
+
+def test_gate9_target_absent_from_governing_system_is_unresolved():
+    graph = _gate9_graph(governing="A - v", stated="5", givens={"A": 4.0, "v": 4.0})
+    result = _lint_gate9(graph)
+    assert not result.ok
+    assert result.verdict == "unresolved"
+    assert "target absent" in result.diagnostic
+
+
+def test_gate9_system_with_no_real_solution_is_unresolved():
+    graph = _gate9_graph(governing="Q**2 + 1", stated="1")
+    result = _lint_gate9(graph)
+    assert not result.ok
+    assert result.verdict == "unresolved"
+
+
+def test_gate9_disagreeing_solution_branches_are_unresolved():
+    graph = _gate9_graph(governing="Q**2 - 4", stated="2")
+    result = _lint_gate9(graph)
+    assert not result.ok
+    assert result.verdict == "unresolved"
+    assert "branches" in result.diagnostic

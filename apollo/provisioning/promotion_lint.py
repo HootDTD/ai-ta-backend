@@ -739,7 +739,14 @@ def _solve_with_timeout(equations: list, unknowns: list):
     proc.start()
     sender.close()
     if receiver.poll(_GATE9_SOLVE_TIMEOUT_SECONDS):
-        status, payload = receiver.recv()
+        # A child that dies without sending trips poll() via EOF too, so the
+        # recv() must tolerate it — an EOFError is a solver error, not a crash.
+        try:
+            status, payload = receiver.recv()
+        except EOFError:
+            receiver.close()
+            proc.join(0.25)
+            return "error", f"solver child exited without a result (code {proc.exitcode})"
         receiver.close()
         proc.join(0.25)
         if proc.is_alive():  # child sent a result but did not exit cleanly

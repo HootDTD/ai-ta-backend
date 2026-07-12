@@ -766,3 +766,10 @@ async def test_resolve_candidate_prevents_false_merge(db_session):
     # Cosine is 1.0 but it's a false-merge risk, so it should stay distinct
     assert verdict.verdict == "distinct"
     assert verdict.matched_entity_id is None
+
+
+def test_identical_cleaned_keys_are_not_a_false_merge_risk():
+    from apollo.provisioning.dedup import is_false_merge_risk
+
+    # Same base, same casing, same subscript: a true duplicate, not a risk.
+    assert is_false_merge_risk("energy.v_1", "kinematics.v_1") is False
