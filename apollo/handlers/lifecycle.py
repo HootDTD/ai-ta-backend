@@ -1,6 +1,7 @@
 """Session lifecycle handlers for Slice 0a: /retry, /end, GET /sessions/{id}."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
 from sqlalchemy import select
@@ -9,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.knowledge_graph.store import KGStore
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.persistence.models import ApolloSession, Message, ProblemAttempt, SessionPhase, SessionStatus
-from apollo.persistence.neo4j_client import Neo4jClient
+from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
+
+_LOG = logging.getLogger(__name__)
 
 
 async def handle_retry(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
@@ -23,7 +26,7 @@ async def handle_retry(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
 async def handle_end(
     *,
     db: AsyncSession,
-    neo: Neo4jClient,
+    neo: Neo4jClient | None,
     session_id: int,
 ) -> Dict[str, Any]:
     """Student clicked 'End session' — mark the session ended.
@@ -47,7 +50,7 @@ async def handle_end(
 async def handle_get_session(
     *,
     db: AsyncSession,
-    neo: Neo4jClient,
+    neo: Neo4jClient | None,
     session_id: int,
 ) -> Dict[str, Any]:
     sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
@@ -63,8 +66,15 @@ async def handle_get_session(
 
     store = KGStore(db, neo)
     if current_attempt_id is not None:
-        graph = await store.read_graph(attempt_id=current_attempt_id)
-        kg = graph.model_dump(mode="json")
+        try:
+            graph = await store.read_graph(attempt_id=current_attempt_id)
+            kg = graph.model_dump(mode="json")
+        except KG_DEGRADED_ERRORS as exc:
+            _LOG.warning(
+                "apollo_neo4j_degraded stage=get_session attempt_id=%s error=%s",
+                current_attempt_id, exc,
+            )
+            kg = {"nodes": [], "edges": []}
         msgs = (await db.execute(
             select(Message)
             .where(Message.attempt_id == current_attempt_id)

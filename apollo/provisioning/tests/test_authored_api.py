@@ -2136,7 +2136,13 @@ async def test_approve_threads_stored_concept_match(db_session, monkeypatch):
 
     monkeypatch.setattr(aapi, "tag_and_mint", _tag_and_mint)
     monkeypatch.setattr(aapi, "promote", _promote)
-    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: None)
+    # Non-None sentinel (matches convention elsewhere in this file, e.g. line
+    # 170/508): approve_held_problem now requires a live Neo4j client
+    # (WU Neo4j-degraded design contract §4 — authored-set provisioning is
+    # Neo4j-native) via `_require_neo`, which is evaluated as a `promote(...)`
+    # call argument and therefore raises before the mocked `promote` even
+    # runs if this resolves to None.
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: "neo")
     monkeypatch.setattr(aapi, "_make_metered_chat", lambda **_k: object())
 
     out = await aapi.approve_held_problem(
@@ -2175,7 +2181,8 @@ async def test_approve_gate_rejection_rolls_back_mint(db_session, monkeypatch):
         return PromoteResult(promoted=False, failed_gate=8, diagnostic="gate 8: duplicate")
 
     monkeypatch.setattr(aapi, "promote", _promote)
-    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: None)
+    # Non-None sentinel — see comment on test_approve_threads_stored_concept_match.
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: "neo")
     monkeypatch.setattr(aapi, "embed_text", lambda _t: [0.0])
     monkeypatch.setattr(aapi, "_make_metered_chat", lambda **_k: object())
 
@@ -2211,7 +2218,10 @@ async def test_approve_tag_mint_error_reports_without_committing(db_session, mon
         raise TagMintError("opposes an unknown entity key")
 
     monkeypatch.setattr(aapi, "tag_and_mint", _raise_tme)
-    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: None)
+    # Non-None sentinel — see comment on test_approve_threads_stored_concept_match.
+    # (tag_and_mint raises before _require_neo is reached here, but keep the
+    # fixture consistent/future-proof with the other two approve tests.)
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: "neo")
     monkeypatch.setattr(aapi, "_make_metered_chat", lambda **_k: object())
 
     out = await aapi.approve_held_problem(
@@ -2225,6 +2235,63 @@ async def test_approve_tag_mint_error_reports_without_committing(db_session, mon
     assert out["diagnostic"].startswith("tag_mint_error")
     fresh = await db_session.get(type(prob), int(prob.id))
     assert fresh.provenance["authored_review"]["required"] is True  # hold preserved
+
+
+@pytest.mark.asyncio
+async def test_approve_held_problem_degraded_neo4j_raises_kg_unavailable(db_session, monkeypatch):
+    """WU Neo4j-degraded design contract §4: authored-set provisioning is
+    Neo4j-native, so approve_held_problem must fail structured (503
+    kg_unavailable) rather than silently promote when the client is down —
+    unlike the other approve_* tests, this one asserts the None case."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.errors import KGUnavailableError
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    space, concept, prob, aset = await _seed_held_problem(db_session, slug="approve-degraded")
+    prov = dict(prob.provenance)
+    prov["authored_review"]["concept_match"] = {
+        "concept_id": concept,
+        "slug": "concept-approve-degraded",
+    }
+    prob.provenance = prov
+    await db_session.flush()
+
+    promote_called = False
+
+    async def _tag_and_mint(db, pair, *, chat_fn, embed_fn, resolved_concept=None):
+        from apollo.provisioning.tag_mint import MintPlan
+
+        return MintPlan(
+            concept_id=resolved_concept.concept_id,
+            concept_slug=resolved_concept.slug,
+            authored_symbols=[],
+            minted_entity_ids={},
+            merged_entity_keys=[],
+            prereq_pairs=[],
+            misconception_keys=[],
+        )
+
+    async def _promote(db, neo, **kwargs):
+        nonlocal promote_called
+        promote_called = True
+        raise AssertionError("promote must not run when the Neo4j client is unavailable")
+
+    monkeypatch.setattr(aapi, "tag_and_mint", _tag_and_mint)
+    monkeypatch.setattr(aapi, "promote", _promote)
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: None)
+    monkeypatch.setattr(aapi, "_make_metered_chat", lambda **_k: object())
+
+    with pytest.raises(KGUnavailableError) as exc_info:
+        await aapi.approve_held_problem(
+            set_id=int(aset.id),
+            problem_id=int(prob.id),
+            body=aapi.ApproveBody(reference="ocr"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+    assert exc_info.value.stage == "approve_held_problem"
+    assert promote_called is False
 
 
 # --------------------------------------------------------------------------- #

@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from apollo.auth_deps import require_course_teacher, require_user
+from apollo.errors import KGUnavailableError
 from apollo.persistence.models import (
     ApolloSession,
     AuthoredSet,
@@ -74,10 +75,29 @@ class ApproveBody(BaseModel):
 
 
 def get_neo4j_client():
-    """Late import avoids a module cycle while keeping a test patch seam."""
+    """Late import avoids a module cycle while keeping a test patch seam.
+
+    Returns `Neo4jClient | None` — degraded mode (WU Neo4j-degraded): the
+    process-wide client may fail to construct. Authored-set provisioning is
+    Neo4j-native (teacher-facing, no meaningful Postgres-only fallback), so
+    every call site below routes the result through `_require_neo` to raise
+    a structured `KGUnavailableError` (503 `kg_unavailable`) on `None`,
+    rather than silently operating on a missing client."""
     from apollo.api import get_neo4j_client as _get_neo4j_client
 
     return _get_neo4j_client()
+
+
+def _require_neo(neo, *, stage: str):
+    """Raise `KGUnavailableError` when `get_neo4j_client()` degraded to
+    `None`. A thin, synchronous, easily-patched guard (mirrors
+    `KGStore._require_neo`) — kept local rather than importing
+    `apollo.api.require_neo4j_client` because that dependency is `async def`
+    and shaped for FastAPI's `Depends` resolution, not a plain call from a
+    background task or a route body."""
+    if neo is None:
+        raise KGUnavailableError(stage=stage, last_error="client unavailable")
+    return neo
 
 
 async def _next_set_index(db: AsyncSession, search_space_id: int) -> int:
@@ -269,7 +289,7 @@ async def _run_set_background(
 
             report = await run_authored_set_provisioning(
                 db,
-                get_neo4j_client(),
+                _require_neo(get_neo4j_client(), stage="run_authored_set_provisioning"),
                 search_space_id=search_space_id,
                 problem_document_id=problem_document_id,
                 solution_document_id=solution_document_id,
@@ -867,7 +887,7 @@ async def delete_authored_set(
             cid for cid in affected_concept_ids if cid not in surviving and cid not in protected
         ]
         if candidates:
-            neo = get_neo4j_client()
+            neo = _require_neo(get_neo4j_client(), stage="delete_authored_set")
             with_history = await _concepts_with_canon_history(neo, candidates)
             orphaned_concept_ids = [cid for cid in candidates if cid not in with_history]
             if orphaned_concept_ids:
@@ -988,7 +1008,7 @@ async def approve_held_problem(
             )
             result = await promote(
                 db,
-                get_neo4j_client(),
+                _require_neo(get_neo4j_client(), stage="approve_held_problem"),
                 problem=pair.problem,
                 mint_plan=mint_plan,
                 search_space_id=int(authored_set.search_space_id),

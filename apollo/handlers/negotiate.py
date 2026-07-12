@@ -24,16 +24,19 @@ dialogue. Future v2 adds OFFER-EVIDENCE and EDIT-DIRECT.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.errors import InvalidPhaseError
+from apollo.errors import InvalidPhaseError, KGUnavailableError
 from apollo.knowledge_graph.store import KGStore
 from apollo.persistence.models import ApolloSession, ProblemAttempt, SessionPhase
-from apollo.persistence.neo4j_client import Neo4jClient
+from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
+
+_LOG = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +122,7 @@ async def _kg_snapshot(*, store: KGStore, attempt_id: int) -> Dict[str, Any]:
 async def handle_challenge(
     *,
     db: AsyncSession,
-    neo: Neo4jClient,
+    neo: Neo4jClient | None,
     session_id: int,
     entry_id: str,
     body: ChallengeRequest,
@@ -127,10 +130,17 @@ async def handle_challenge(
     """CHALLENGE: status -> DISPUTED. Returns updated entry + KG envelope."""
     attempt = await _resolve_active_attempt(db=db, session_id=session_id)
     store = KGStore(db, neo)
-    updated = await store.mark_node_disputed(
-        attempt_id=attempt.id, node_id=entry_id, reason=body.reason,
-    )
-    kg = await _kg_snapshot(store=store, attempt_id=attempt.id)
+    try:
+        updated = await store.mark_node_disputed(
+            attempt_id=attempt.id, node_id=entry_id, reason=body.reason,
+        )
+        kg = await _kg_snapshot(store=store, attempt_id=attempt.id)
+    except KG_DEGRADED_ERRORS as exc:
+        _LOG.warning(
+            "apollo_neo4j_degraded stage=challenge attempt_id=%s error=%s",
+            attempt.id, exc,
+        )
+        raise KGUnavailableError(stage="challenge", last_error=str(exc)) from exc
     return {
         "entry": updated.model_dump(mode="python"),
         "kg": kg,
@@ -141,7 +151,7 @@ async def handle_challenge(
 async def handle_paraphrase(
     *,
     db: AsyncSession,
-    neo: Neo4jClient,
+    neo: Neo4jClient | None,
     session_id: int,
     entry_id: str,
     body: ParaphraseRequest,
@@ -149,10 +159,17 @@ async def handle_paraphrase(
     """SUPPLY-PARAPHRASE: status -> DUAL, student_belief = surface_form."""
     attempt = await _resolve_active_attempt(db=db, session_id=session_id)
     store = KGStore(db, neo)
-    updated = await store.paraphrase_node(
-        attempt_id=attempt.id, node_id=entry_id, surface_form=body.surface_form,
-    )
-    kg = await _kg_snapshot(store=store, attempt_id=attempt.id)
+    try:
+        updated = await store.paraphrase_node(
+            attempt_id=attempt.id, node_id=entry_id, surface_form=body.surface_form,
+        )
+        kg = await _kg_snapshot(store=store, attempt_id=attempt.id)
+    except KG_DEGRADED_ERRORS as exc:
+        _LOG.warning(
+            "apollo_neo4j_degraded stage=paraphrase attempt_id=%s error=%s",
+            attempt.id, exc,
+        )
+        raise KGUnavailableError(stage="paraphrase", last_error=str(exc)) from exc
     return {
         "entry": updated.model_dump(mode="python"),
         "kg": kg,
@@ -163,15 +180,22 @@ async def handle_paraphrase(
 async def handle_skip(
     *,
     db: AsyncSession,
-    neo: Neo4jClient,
+    neo: Neo4jClient | None,
     session_id: int,
     entry_id: str,
 ) -> Dict[str, Any]:
     """SKIP: status -> DUAL with no edits. Flags for grader."""
     attempt = await _resolve_active_attempt(db=db, session_id=session_id)
     store = KGStore(db, neo)
-    updated = await store.skip_node(attempt_id=attempt.id, node_id=entry_id)
-    kg = await _kg_snapshot(store=store, attempt_id=attempt.id)
+    try:
+        updated = await store.skip_node(attempt_id=attempt.id, node_id=entry_id)
+        kg = await _kg_snapshot(store=store, attempt_id=attempt.id)
+    except KG_DEGRADED_ERRORS as exc:
+        _LOG.warning(
+            "apollo_neo4j_degraded stage=skip attempt_id=%s error=%s",
+            attempt.id, exc,
+        )
+        raise KGUnavailableError(stage="skip", last_error=str(exc)) from exc
     return {
         "entry": updated.model_dump(mode="python"),
         "kg": kg,
@@ -182,7 +206,7 @@ async def handle_skip(
 async def handle_get_trace(
     *,
     db: AsyncSession,
-    neo: Neo4jClient,
+    neo: Neo4jClient | None,
     session_id: int,
     entry_id: str,
 ) -> Dict[str, Any]:

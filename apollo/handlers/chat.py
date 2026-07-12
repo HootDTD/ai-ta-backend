@@ -37,13 +37,15 @@ from apollo.handlers.intent import (
     confirmation_prompt_for,
     detect_confirmation,
 )
-from apollo.knowledge_graph.store import KGStore
+from apollo.knowledge_graph.store import _EMPTY_SUMMARY, KGStore
+from apollo.ontology import KGGraph
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.parser.graph_context import build_graph_context
 from apollo.parser.parser_llm import parse_utterance
 from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
-from apollo.persistence.neo4j_client import Neo4jClient
+from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 from apollo.schemas.problem import Problem
+from apollo.smart_questions import plan_next_question
 from apollo.subjects.curriculum_db import load_concept_definition
 
 _LOG = logging.getLogger(__name__)
@@ -55,6 +57,7 @@ _CLARIFICATION_CACHE = CandidateEmbeddingCache()
 # extra LLM/embedding round-trips, draft_reply gets clarification_hints=None. Flip ON only
 # after rollout/cost review (same posture as APOLLO_GRAPH_SIM_* in done.py).
 _CLARIFICATION_ENABLED_FLAG: str = "APOLLO_CLARIFICATION_ENABLED"
+_SMART_QUESTIONS_FLAG: str = "APOLLO_SMART_QUESTIONS_ENABLED"
 # Per-turn NLI node budget: when more than this many nodes are parsed in a
 # single utterance, NLI is skipped for that turn (degrades to lexical-only).
 # Synchronous model inference runs per residual node, so uncapped utterances
@@ -65,6 +68,10 @@ _NLI_CHAT_NODE_CAP_DEFAULT: int = 15
 
 def _clarification_enabled() -> bool:
     return os.environ.get(_CLARIFICATION_ENABLED_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _smart_questions_enabled() -> bool:
+    return os.environ.get(_SMART_QUESTIONS_FLAG, "").lower() in ("1", "true", "yes")
 
 
 def _nli_chat_node_cap() -> int:
@@ -140,10 +147,74 @@ async def _persist_turn(
     await db.commit()
 
 
+async def _read_graph_or_empty(store: KGStore, *, attempt_id: int, stage: str):
+    """Degraded-mode KG read: `store.read_graph` failing with a
+    `KG_DEGRADED_ERRORS` member (Neo4j missing / unreachable / broken
+    connection) degrades to an empty `KGGraph` instead of 500ing the chat
+    turn — the conversational reply (Postgres + OpenAI) always proceeds.
+    """
+    try:
+        return await store.read_graph(attempt_id=attempt_id)
+    except KG_DEGRADED_ERRORS as exc:
+        _LOG.warning(
+            "apollo_neo4j_degraded stage=%s attempt_id=%s error=%s",
+            stage, attempt_id, exc,
+        )
+        return KGGraph()
+
+
+async def _write_kg_or_skip(
+    store: KGStore,
+    *,
+    attempt_id: int,
+    nodes: list,
+    edges: list,
+    source: str,
+) -> int:
+    """Degraded-mode KG write: `write_nodes`/`write_edges` failing with a
+    `KG_DEGRADED_ERRORS` member skips the write entirely (`nodes_added=0`)
+    rather than 500ing the turn. Edges are only attempted when nodes wrote
+    successfully (mirrors the healthy-path ordering: edges need their
+    endpoints to exist)."""
+    try:
+        nodes_added = await store.write_nodes(
+            attempt_id=attempt_id, nodes=nodes, source=source,
+        )
+    except KG_DEGRADED_ERRORS as exc:
+        _LOG.warning(
+            "apollo_neo4j_degraded stage=write_nodes attempt_id=%s error=%s",
+            attempt_id, exc,
+        )
+        return 0
+    try:
+        await store.write_edges(attempt_id=attempt_id, edges=edges, source=source)
+    except KG_DEGRADED_ERRORS as exc:
+        _LOG.warning(
+            "apollo_neo4j_degraded stage=write_edges attempt_id=%s error=%s",
+            attempt_id, exc,
+        )
+    return nodes_added
+
+
+async def _summarize_or_empty(store: KGStore, *, attempt_id: int) -> str:
+    """Degraded-mode KG summary: `summarize_for_apollo` reads through
+    `read_graph`, so a degraded Neo4j call falls back to the store's own
+    empty-KG summary constant — identical to what a real empty graph would
+    produce, so Apollo's context is byte-identical to "nothing taught yet"."""
+    try:
+        return await store.summarize_for_apollo(attempt_id=attempt_id)
+    except KG_DEGRADED_ERRORS as exc:
+        _LOG.warning(
+            "apollo_neo4j_degraded stage=summarize_for_apollo attempt_id=%s error=%s",
+            attempt_id, exc,
+        )
+        return _EMPTY_SUMMARY
+
+
 async def _handle_pending_done(
     *,
     db: AsyncSession,
-    neo: Neo4jClient,
+    neo: Neo4jClient | None,
     sess: ApolloSession,
     attempt_id: int,
     message: str,
@@ -179,7 +250,9 @@ async def _handle_pending_done(
         apollo_msg=apollo_reply,
     )
 
-    graph = await store.read_graph(attempt_id=attempt_id)
+    graph = await _read_graph_or_empty(
+        store, attempt_id=attempt_id, stage="handle_pending_done",
+    )
     return {
         "apollo_reply": apollo_reply,
         "kg_entries_added": 0,
@@ -226,7 +299,9 @@ async def _maybe_intent_confirmation(
         student_msg=message,
         apollo_msg=prompt,
     )
-    graph = await store.read_graph(attempt_id=attempt_id)
+    graph = await _read_graph_or_empty(
+        store, attempt_id=attempt_id, stage="maybe_intent_confirmation",
+    )
     return {
         "apollo_reply": prompt,
         "kg_entries_added": 0,
@@ -241,7 +316,7 @@ async def _maybe_intent_confirmation(
 async def handle_chat(
     *,
     db: AsyncSession,
-    neo: Neo4jClient,
+    neo: Neo4jClient | None,
     session_id: int,
     message: str,
 ) -> dict[str, Any]:
@@ -306,7 +381,9 @@ async def handle_chat(
     # so far this attempt — the new turn's nodes aren't written until after
     # parsing) and project it into a GraphContext the parser threads in so it
     # can emit edges referencing prior-turn node ids.
-    prior_graph = await store.read_graph(attempt_id=current_attempt.id)
+    prior_graph = await _read_graph_or_empty(
+        store, attempt_id=current_attempt.id, stage="prior_graph",
+    )
     graph_context = build_graph_context(prior_graph)
     nodes, edges = parse_utterance(
         message,
@@ -316,18 +393,13 @@ async def handle_chat(
     )
     # write_nodes de-dups cross-turn re-assertions by id (WU-2B): a node whose
     # id already exists is reused, not re-minted, so the returned count is the
-    # genuinely-new entries only.
-    nodes_added = await store.write_nodes(
+    # genuinely-new entries only. Degraded Neo4j -> writes are skipped
+    # entirely and nodes_added=0 (see `_write_kg_or_skip`); the conversational
+    # reply below always proceeds regardless.
+    nodes_added = await _write_kg_or_skip(
+        store,
         attempt_id=current_attempt.id,
         nodes=nodes,
-        source="parser",
-    )
-    # Edges must be written AFTER nodes — the CREATE needs both endpoints to
-    # exist. write_edges validates endpoint existence + EDGE_ALLOWED_PAIRS and
-    # logs any drop/invalid (no silent drop); the structured log is the
-    # observable, so the result is intentionally not captured here.
-    await store.write_edges(
-        attempt_id=current_attempt.id,
         edges=edges,
         source="parser",
     )
@@ -341,13 +413,62 @@ async def handle_chat(
     # misconception, OLM-invite, or output filter. Apollo is fed only the
     # student's own KG + the problem, so it cannot leak an un-taught concept
     # (structural anti-leak replaces the deleted filter).
-    student_graph = await store.read_graph(attempt_id=current_attempt.id)
+    student_graph = await _read_graph_or_empty(
+        store, attempt_id=current_attempt.id, stage="student_graph",
+    )
     problem = await _find_problem(db, sess.concept_id, sess.current_problem_id)
-    kg_summary = await store.summarize_for_apollo(attempt_id=current_attempt.id)
+    kg_summary = await _summarize_or_empty(store, attempt_id=current_attempt.id)
     history_for_llm = raw_window + [{"role": "user", "content": message}]
 
     # next_idx is needed before the clarification block (asked_turn = next_idx + 1).
     next_idx = await _next_turn_index(db, session_id)
+
+    # Reference-driven smart-question controller. Unlike the legacy
+    # clarification loop, this judges the full student transcript against the
+    # authored reference graph and gives each unresolved reference node at
+    # most one question opportunity. No student-KG summary reaches the
+    # question writer. When no eligible target remains, grade automatically.
+    if _smart_questions_enabled():
+        full_transcript = [
+            ("student" if item["role"] == "user" else "apollo", item["content"])
+            for item in history_pre
+        ] + [("student", message)]
+        decision = await plan_next_question(
+            db,
+            attempt_id=int(current_attempt.id),
+            session_id=session_id,
+            problem=problem,
+            transcript=full_transcript,
+            turn_index=next_idx,
+        )
+        if decision.action == "ask":
+            validated = decision.question or "Can you explain that part one more time?"
+        else:
+            validated = "Thanks — I have enough to grade what you taught me."
+
+        await _persist_turn(
+            db,
+            session_id=session_id,
+            attempt_id=int(current_attempt.id),
+            student_msg=message,
+            apollo_msg=validated,
+        )
+        if decision.action == "done":
+            from apollo.handlers.done import handle_done  # noqa: PLC0415
+
+            done_result = await handle_done(db=db, neo=neo, session_id=session_id)
+            return {
+                "apollo_reply": validated,
+                "kg_entries_added": nodes_added,
+                "kg": student_graph.model_dump(mode="json"),
+                "intent_executed": {"intent": "done", "result": done_result},
+            }
+        return {
+            "apollo_reply": validated,
+            "kg_entries_added": nodes_added,
+            "kg": student_graph.model_dump(mode="json"),
+            "question_target": decision.target_node_id,
+        }
 
     # ---- Clarification loop: detect ambiguous residual ideas, weave answer-blind
     # probes into Apollo's reply (spec §6). Gated (default OFF) + fail-safe — never blocks
