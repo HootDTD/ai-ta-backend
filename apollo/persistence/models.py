@@ -30,7 +30,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, REAL, UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 
 from database.models import Base
 
@@ -190,6 +190,34 @@ class ConceptProblem(Base):
     # authority where it exists.
     search_space_id = Column(Integer, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    @staticmethod
+    def _validate_solution_provenance(*, provenance: dict | None, solution_source: str | None):
+        """Keep machine-generated problems out of teacher-grounded source lanes."""
+        if (provenance or {}).get("source") == "generated" and solution_source in {
+            "extracted",
+            "authored",
+        }:
+            raise ValueError(
+                "machine-generated problem provenance requires "
+                "solution_source='generated' (or unset pending generation)"
+            )
+
+    @validates("solution_source")
+    def _validate_solution_source(self, _key: str, value: str | None):
+        self._validate_solution_provenance(
+            provenance=self.provenance,
+            solution_source=value,
+        )
+        return value
+
+    @validates("provenance")
+    def _validate_provenance(self, _key: str, value: dict | None):
+        self._validate_solution_provenance(
+            provenance=value,
+            solution_source=self.solution_source,
+        )
+        return value
 
 
 class AuthoredSet(Base):
