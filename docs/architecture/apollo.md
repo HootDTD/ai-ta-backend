@@ -96,7 +96,15 @@ through the existing
 `provenance.authored_review.ocr_draft` handoff; GEN-2 never promotes content or
 changes the approve → lint → promote chain. Per-run token ceilings are exposed
 for the caller's `MeteredChat`, and a mid-run budget breach returns already
-written rows as a partial result.
+written rows as a partial result. GEN-4 exposes that library through the
+teacher-gated `/apollo/problem-generation` API: POSTing a concept batch creates
+an `apollo_generation_runs` row and processes it in an in-process background
+task, the run list/detail endpoints expose bounded status, cost, and generated
+problem review projections, and the generated-problem approve endpoint reuses
+the authored-set approve core to mint, lint, and promote a selected held draft.
+`GenerationRun` links the course and concept to the optional `IngestRun` that
+owns LLM call/token/cost aggregates; generation remains default-OFF while run
+reads and approval of already-generated content remain available.
 
 ## Module map and file landmarks
 

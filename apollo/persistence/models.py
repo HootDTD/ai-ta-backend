@@ -255,6 +255,43 @@ class AuthoredSet(Base):
     )
 
 
+class GenerationRun(Base):
+    """Teacher-initiated problem-generation batch and its bounded result ledger."""
+
+    __tablename__ = "apollo_generation_runs"
+
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    concept_id = Column(
+        BigInteger,
+        ForeignKey("apollo_concepts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status = Column(Text, nullable=False, server_default=text("'pending'"), default="pending")
+    result_summary = Column(
+        _JSONType,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+        default=dict,
+    )
+    ingest_run_id = Column(
+        BigInteger,
+        ForeignKey("apollo_ingest_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
 class Misconception(Base):
     """Per-concept misconception bank backing the misconception-inference
     channel. See migration 019. description_embedding (vector(3072) on

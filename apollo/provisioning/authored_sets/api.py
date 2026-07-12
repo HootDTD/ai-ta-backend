@@ -971,14 +971,6 @@ async def approve_held_problem(
     )
     if chosen is None:
         raise HTTPException(status_code=422, detail=f"no '{body.reference}' reference stored")
-    draft = ReferenceSolutionDraft.model_validate(chosen)
-
-    candidate = _candidate_from_row(row)
-    pair = build_approved_pair(
-        candidate,
-        draft,
-        search_space_id=int(authored_set.search_space_id),
-    )
     # Reversed provisioning: a hold that carries the closed-list match threads
     # it as resolved_concept so the approve-time mint never re-drafts a tag.
     stored_match = review.get("concept_match") or {}
@@ -989,13 +981,48 @@ async def approve_held_problem(
         if stored_match.get("concept_id") is not None
         else None
     )
-    metered_chat = _make_metered_chat(document_id=int(authored_set.problem_document_id or 0))
+    return await approve_held_row(
+        db,
+        row=row,
+        review=review,
+        reference=body.reference,
+        search_space_id=int(authored_set.search_space_id),
+        resolved_concept=resolved,
+        document_id=int(authored_set.problem_document_id or 0),
+        stage="approve_held_problem",
+    )
+
+
+async def approve_held_row(
+    db: AsyncSession,
+    *,
+    row: ConceptProblem,
+    review: dict,
+    reference: Literal["ocr", "generated"],
+    search_space_id: int,
+    resolved_concept: ResolvedConcept | None,
+    document_id: int,
+    stage: str,
+) -> dict:
+    """Mint and promote one validated held row within a rollback savepoint."""
+    chosen = review.get("generated_alt") if reference == "generated" else review.get("ocr_draft")
+    if chosen is None:
+        raise HTTPException(status_code=422, detail=f"no '{reference}' reference stored")
+    draft = ReferenceSolutionDraft.model_validate(chosen)
+    pair = build_approved_pair(
+        _candidate_from_row(row),
+        draft,
+        search_space_id=search_space_id,
+    )
+    metered_chat = _make_metered_chat(document_id=document_id)
     try:
         # Mint + promote ride ONE savepoint (mirrors the orchestrator): a lint
         # rejection or fail-closed TagMintError rolls back every KG row the
         # mint flushed instead of orphaning it into the commit below.
         async with db.begin_nested():
-            mint_kwargs: dict = {"resolved_concept": resolved} if resolved is not None else {}
+            mint_kwargs: dict = (
+                {"resolved_concept": resolved_concept} if resolved_concept is not None else {}
+            )
             mint_plan = await tag_and_mint(
                 db,
                 pair,
@@ -1008,11 +1035,11 @@ async def approve_held_problem(
             )
             result = await promote(
                 db,
-                _require_neo(get_neo4j_client(), stage="approve_held_problem"),
+                _require_neo(get_neo4j_client(), stage=stage),
                 problem=pair.problem,
                 mint_plan=mint_plan,
-                search_space_id=int(authored_set.search_space_id),
-                concept_problem_id=problem_id,
+                search_space_id=search_space_id,
+                concept_problem_id=int(row.id),
                 existing_problem_hashes=existing_hashes,
                 solution_source=pair.solution_source,
             )
@@ -1032,7 +1059,7 @@ async def approve_held_problem(
             "authored_review": {
                 **review,
                 "required": False,
-                "approved_reference": body.reference,
+                "approved_reference": reference,
             },
         }
         await db.commit()
