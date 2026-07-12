@@ -15,7 +15,9 @@ from apollo.overseer.topic_score import TopicCredit, TopicMisconception, TopicSc
 pytestmark = pytest.mark.unit
 
 
-def _result(display_name: str | None = "Explain causality in directional systems") -> TopicScoreResult:
+def _result(
+    display_name: str | None = "Explain causality in directional systems",
+) -> TopicScoreResult:
     return TopicScoreResult(
         score=64,
         letter="C",
@@ -42,7 +44,9 @@ def _result(display_name: str | None = "Explain causality in directional systems
 
 
 def test_user_prompt_has_no_canonical_keys_or_decimals():
-    _system, user = build_topic_narrative_prompt(_result(), problem_text="Explain upstream vs downstream.")
+    _system, user = build_topic_narrative_prompt(
+        _result(), problem_text="Explain upstream vs downstream."
+    )
     assert "proc_explain_causality" not in user
     assert "misc.wrong_direction" not in user
     assert "credit=" not in user and "weight=" not in user

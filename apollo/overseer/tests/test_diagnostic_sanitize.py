@@ -50,8 +50,7 @@ def _client_returning(text: str) -> MagicMock:
 def test_topic_output_is_sanitized(mock_openai, monkeypatch):
     monkeypatch.setenv("APOLLO_TOPIC_SCORE_SERVED", "true")
     mock_openai.return_value = _client_returning(
-        "Great work (proc_explain_causality, credit 0.90, weight 0.23). "
-        "Misconception dock: 0.000."
+        "Great work (proc_explain_causality, credit 0.90, weight 0.23). Misconception dock: 0.000."
     )
 
     out = generate_diagnostic(
