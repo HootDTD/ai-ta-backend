@@ -17,6 +17,9 @@ for the actual completion call, exactly like the existing axis-based path.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
+
 from apollo.overseer.topic_score import TopicScoreResult
 
 _TOPIC_SYSTEM_PROMPT = """You are the Overseer's diagnostic narrator. The student just taught an
@@ -86,4 +89,42 @@ def build_topic_narrative_prompt(result: TopicScoreResult, *, problem_text: str)
     return _TOPIC_SYSTEM_PROMPT, user
 
 
-__all__ = ["build_topic_narrative_prompt"]
+# Scoring internals are 0-1 decimals (credit 0.80, weight 0.77, dock 0.000).
+# Requiring that shape keeps legitimate prose like "weight = mg" or
+# "$0.5 \rho v^2$" intact while still catching every ledger-shaped leak.
+_SCORING_NUM = r"-?[01]?\.\d+"
+_SCORING_TERM = (
+    rf"\b(?:credit|weight|dock(?:ed)?|misconception[ _]dock)\b\s*[:=]?\s*{_SCORING_NUM}"
+)
+_SCORING_PAREN_RE = re.compile(rf"\(\s*[^()]*?{_SCORING_TERM}[^()]*?\)", re.IGNORECASE)
+_SCORING_INLINE_RE = re.compile(_SCORING_TERM, re.IGNORECASE)
+_EMPTY_PAREN_RE = re.compile(r"\(\s*[,;\s]*\)")
+_DANGLING_COMMA_RE = re.compile(r",\s*(?=[,.;:)])")
+_SPACE_BEFORE_PUNCT_RE = re.compile(r"[ \t]+([,.;:!?])")
+_MULTI_SPACE_RE = re.compile(r"[ \t]{2,}")
+
+
+def sanitize_narrative(text: str, canonical_keys: Sequence[str] = ()) -> str:
+    """Deterministic gate: strip ledger internals from a narrative.
+
+    Belt-and-suspenders under the prompt fix (2026-07-11 feedback spec §2) —
+    the prompt no longer contains canonical keys/weights, but the narrative is
+    LLM output, so the served text is scrubbed regardless. Pure + idempotent;
+    returns a new string. Whole-number percentages (the topic list's own
+    numbers) are deliberately preserved.
+    """
+    cleaned = text
+    for key in canonical_keys:
+        if not key or key == "_general":
+            continue
+        cleaned = re.sub(rf"`?\b{re.escape(key)}\b`?", "", cleaned)
+    cleaned = _SCORING_PAREN_RE.sub("", cleaned)
+    cleaned = _SCORING_INLINE_RE.sub("", cleaned)
+    cleaned = _EMPTY_PAREN_RE.sub("", cleaned)
+    cleaned = _DANGLING_COMMA_RE.sub("", cleaned)
+    cleaned = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", cleaned)
+    cleaned = _MULTI_SPACE_RE.sub(" ", cleaned)
+    return cleaned
+
+
+__all__ = ["build_topic_narrative_prompt", "sanitize_narrative"]
