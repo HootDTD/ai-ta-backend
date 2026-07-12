@@ -2306,9 +2306,17 @@ async def test_get_authored_set_enriches_held_problem(db_session, monkeypatch):
     assert problem["problem_text"] == "What force accelerates the cart?"
     assert problem["problem_text_truncated"] is False
     review = problem["review"]
-    assert set(review) == {"required", "reason", "approved_reference", "ocr_draft", "generated_alt"}
+    assert set(review) == {
+        "required",
+        "reason",
+        "approved_reference",
+        "augmented",
+        "ocr_draft",
+        "generated_alt",
+    }
     assert review["required"] is True
     assert review["reason"] == "generated_no_match"
+    assert review["augmented"] is None
     assert review["generated_alt"] is None
     draft = review["ocr_draft"]
     assert set(draft) == {"solution_source", "reference_solution"}
@@ -2347,7 +2355,24 @@ async def test_get_authored_set_review_after_approval_omits_drafts(db_session, m
         "required": False,
         "reason": "generated_no_match",
         "approved_reference": "ocr",
+        "augmented": None,
     }
+
+
+def test_review_dict_exposes_augmented_flag():
+    from apollo.provisioning.authored_sets.api import _review_dict
+
+    out = _review_dict(
+        {
+            "authored_review": {
+                "required": True,
+                "reason": "generated_no_match",
+                "augmented": "explain_why",
+            }
+        }
+    )
+    assert out is not None
+    assert out["augmented"] == "explain_why"
 
 
 @pytest.mark.asyncio

@@ -49,7 +49,7 @@ ENTRY_TYPES: tuple[str, ...] = tuple(NODE_CONTENT_TYPES.keys())
 _PROCEDURE_STEP_RAW_EXTRAS: tuple[str, ...] = ("order", "uses_equations")
 
 
-def build_solution_schema() -> dict:
+def build_solution_schema(*, augmentation: bool = False) -> dict:
     """Return the Stage-2 ``json_schema`` payload (a FRESH dict per call).
 
     The OUTER envelope ``{reference_solution: [ <ReferenceStep>... ]}`` is pinned
@@ -59,7 +59,7 @@ def build_solution_schema() -> dict:
     The ``items`` ``required``/``properties`` key set == ``REFERENCE_STEP_FIELDS``
     (the contract test pins this).
     """
-    return {
+    schema = {
         "name": "reference_solution",
         # content is an open per-type dict; cannot be strict-closed (Decision #2).
         "strict": False,
@@ -88,6 +88,16 @@ def build_solution_schema() -> dict:
             "required": ["reference_solution"],
         },
     }
+    if augmentation:
+        properties = schema["schema"]["properties"]
+        properties["augmented_problem_text"] = {"type": ["string", "null"]}
+        properties["augmented_target_unknown"] = {"type": ["string", "null"]}
+        schema["schema"]["required"] = [
+            "reference_solution",
+            "augmented_problem_text",
+            "augmented_target_unknown",
+        ]
+    return schema
 
 
 def build_tag_schema() -> dict:

@@ -505,6 +505,7 @@ def _review_dict(provenance: dict | None) -> dict | None:
         "required": bool(review.get("required")),
         "reason": review.get("reason"),
         "approved_reference": review.get("approved_reference"),
+        "augmented": review.get("augmented"),
     }
     if out["required"]:
         out["ocr_draft"] = _trim_review_draft(review.get("ocr_draft"))

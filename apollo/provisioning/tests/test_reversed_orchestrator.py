@@ -308,7 +308,7 @@ async def test_kill_switch_falls_back_to_legacy(db_session, monkeypatch):
     monkeypatch.setenv("APOLLO_REVERSED_PROVISIONING", "0")
     from apollo.provisioning.solution import SolutionDraftError
 
-    async def _legacy_fog(db, question, *, retrieve_fn, chat_fn):
+    async def _legacy_fog(db, question, *, retrieve_fn, chat_fn, augment_recall=False):
         raise SolutionDraftError("legacy path exercised")
 
     monkeypatch.setattr(orch, "find_or_generate", _legacy_fog)
@@ -341,7 +341,7 @@ async def test_no_registered_concepts_falls_back_to_legacy(db_session, monkeypat
     async def _match_never(*_a, **_k):
         raise AssertionError("match_concept must not run without registered concepts")
 
-    async def _legacy_fog(db, question, *, retrieve_fn, chat_fn):
+    async def _legacy_fog(db, question, *, retrieve_fn, chat_fn, augment_recall=False):
         raise SolutionDraftError("legacy path exercised")
 
     monkeypatch.setattr(orch, "scrape_document", _scrape)

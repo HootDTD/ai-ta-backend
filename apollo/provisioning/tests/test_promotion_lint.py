@@ -18,6 +18,8 @@ from apollo.ontology.graph import KGGraph
 from apollo.ontology.nodes import build_node
 from apollo.provisioning import PromotionResult, problem_dup_hash, run_promotion_lint
 from apollo.provisioning.promotion_lint import _normalize_symbol
+from apollo.provisioning.scrape import CandidateQuestion
+from apollo.provisioning.solution import ReferenceSolutionDraft, build_approved_pair
 from apollo.schemas.problem import Problem
 
 # --------------------------------------------------------------------------- #
@@ -584,6 +586,99 @@ def test_gate5_passes_on_real_bernoulli():
     problem = Problem.model_validate(_bernoulli_graph())
     kg = problem.to_kg_graph(attempt_id=0)
     assert _gate_5(problem, kg) is None
+
+
+def test_augmented_definition_draft_passes_gates_5_to_7():
+    """Explain-why augmentation turns a recall draft into a lintable prose chain."""
+    candidate = CandidateQuestion(
+        problem_text="Define Future Shock.",
+        given_values={},
+        target_unknown="Future Shock",
+        difficulty="intro",
+        document_id=7,
+        page=1,
+        chunk_content_hash="future-shock",
+        concept_slug="future_shock",
+    )
+    definition = {
+        "step": 1,
+        "entry_type": "definition",
+        "id": "d1",
+        "content": {
+            "concept": "future shock",
+            "meaning": "Disorientation caused by too much change in too little time.",
+        },
+        "depends_on": [],
+    }
+    augmented_steps = [
+        definition,
+        {
+            "step": 2,
+            "entry_type": "procedure_step",
+            "id": "p1",
+            "content": {
+                "action": "Identify how accelerating change outpaces adaptation.",
+                "purpose": "state the driving mechanism",
+                "order": 1,
+            },
+            "depends_on": ["d1"],
+        },
+        {
+            "step": 3,
+            "entry_type": "procedure_step",
+            "id": "p2",
+            "content": {
+                "action": "Infer the resulting individual and organizational disorientation.",
+                "purpose": "explain why future shock occurs",
+                "order": 2,
+            },
+            "depends_on": ["p1"],
+        },
+    ]
+
+    def annotate(problem: dict) -> dict:
+        graph = copy.deepcopy(problem)
+        graph["declared_paths"] = [
+            [step["id"] for step in graph["reference_solution"]]
+        ]
+        for step in graph["reference_solution"]:
+            step["entity_key"] = f"{step['entry_type']}.{step['id']}"
+        return graph
+
+    pair = build_approved_pair(
+        candidate,
+        ReferenceSolutionDraft(
+            solution_source="generated",
+            reference_solution=augmented_steps,
+            augmented_problem_text="Define Future Shock and explain why it occurs.",
+            augmented_target_unknown="why future shock occurs",
+            provenance={"augmented": "explain_why"},
+        ),
+        search_space_id=1,
+    )
+    result = run_promotion_lint(
+        annotate(pair.problem),
+        canonical_symbols=frozenset(),
+        normalization_map={},
+        existing_problem_hashes=frozenset(),
+    )
+    assert result.ok, result.diagnostic
+
+    bare = build_approved_pair(
+        candidate,
+        ReferenceSolutionDraft(
+            solution_source="generated", reference_solution=[definition]
+        ),
+        search_space_id=1,
+    )
+    bare_result = run_promotion_lint(
+        annotate(bare.problem),
+        canonical_symbols=frozenset(),
+        normalization_map={},
+        existing_problem_hashes=frozenset(),
+    )
+    assert not bare_result.ok and bare_result.failed_gate == 5
+    assert "found 0" in bare_result.diagnostic
 
 
 # --------------------------------------------------------------------------- #
