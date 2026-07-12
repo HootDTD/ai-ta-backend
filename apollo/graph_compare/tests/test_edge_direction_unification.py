@@ -22,6 +22,7 @@ is (edge_type, from_key, to_key); node content never enters edge matching.
 
 Original capture: repository-root ``hypothesis_dag0_edge_direction.py``.
 """
+
 from __future__ import annotations
 
 from apollo.graph_compare.canonical import (
@@ -104,16 +105,36 @@ PROBLEM = {
 # --------------------------------------------------------------------------- #
 _A4 = 4
 ATTEMPT4_NODES = [
-    ("stu_d348d3c91c94", "definition", {"concept": "bernoulli", "meaning": "energy conservation along a streamline"}),
+    (
+        "stu_d348d3c91c94",
+        "definition",
+        {"concept": "bernoulli", "meaning": "energy conservation along a streamline"},
+    ),
     ("stu_a13a91e6b7b1", "condition", {"applies_when": "steady flow"}),
-    ("stu_770825200223", "equation", {"symbolic": "P + Rational(1,2)*rho*v**2 + rho*g*h - constant"}),
+    (
+        "stu_770825200223",
+        "equation",
+        {"symbolic": "P + Rational(1,2)*rho*v**2 + rho*g*h - constant"},
+    ),
     ("stu_a099691b4914", "equation", {"symbolic": "P + Rational(1,2)*rho*v**2 - constant"}),
     ("stu_3505a649dd21", "condition", {"applies_when": "incompressible"}),
-    ("stu_8c6af8e04826", "simplification", {"applies_when": "P1 == P2", "transformation": "pressure terms cancel"}),
+    (
+        "stu_8c6af8e04826",
+        "simplification",
+        {"applies_when": "P1 == P2", "transformation": "pressure terms cancel"},
+    ),
     ("stu_9f3bddc2f683", "equation", {"symbolic": "A1*v1 - A2*v2"}),
     ("stu_7045c7699e95", "condition", {"applies_when": "along a streamline"}),
-    ("stu_0820e52a924e", "definition", {"concept": "pressure-velocity", "meaning": "pressure and velocity move together"}),
-    ("stu_fbab0a848253", "equation", {"symbolic": "P1 + Rational(1,2)*rho*v1**2 - (P2 + Rational(1,2)*rho*v2**2)"}),
+    (
+        "stu_0820e52a924e",
+        "definition",
+        {"concept": "pressure-velocity", "meaning": "pressure and velocity move together"},
+    ),
+    (
+        "stu_fbab0a848253",
+        "equation",
+        {"symbolic": "P1 + Rational(1,2)*rho*v1**2 - (P2 + Rational(1,2)*rho*v2**2)"},
+    ),
     ("stu_0ac12190d250", "procedure_step", {"action": "set v1 to zero and solve for v2"}),
 ]
 ATTEMPT4_EDGES = [
@@ -144,16 +165,32 @@ ATTEMPT4_RESOLUTION = {
 # --------------------------------------------------------------------------- #
 _A5 = 5
 ATTEMPT5_NODES = [
-    ("stu_3490bf1a0bd5", "definition", {"concept": "bernoulli", "meaning": "energy conservation along a streamline"}),
+    (
+        "stu_3490bf1a0bd5",
+        "definition",
+        {"concept": "bernoulli", "meaning": "energy conservation along a streamline"},
+    ),
     ("stu_443746a79dd5", "condition", {"applies_when": "steady flow"}),
     ("stu_b7be9a7e957d", "equation", {"symbolic": "P + Rational(1,2)*rho*v**2 + rho*g*h - C"}),
     ("stu_e95c9d797750", "equation", {"symbolic": "P + Rational(1,2)*rho*v**2 - C"}),
     ("stu_ec9d6a6bafa0", "condition", {"applies_when": "open to atmosphere at both ends"}),
-    ("stu_a21ba3cbaaea", "simplification", {"applies_when": "P1 == P2", "transformation": "pressure terms cancel"}),
+    (
+        "stu_a21ba3cbaaea",
+        "simplification",
+        {"applies_when": "P1 == P2", "transformation": "pressure terms cancel"},
+    ),
     ("stu_b1fa1bde38f8", "equation", {"symbolic": "A1*v1 - A2*v2"}),
     ("stu_ee2926c8dc51", "condition", {"applies_when": "incompressible"}),
-    ("stu_67e7fefd70bb", "definition", {"concept": "pressure-velocity", "meaning": "pressure and velocity move together"}),
-    ("stu_040ca3889113", "equation", {"symbolic": "P1 + Rational(1,2)*rho*v1**2 - (P2 + Rational(1,2)*rho*v2**2)"}),
+    (
+        "stu_67e7fefd70bb",
+        "definition",
+        {"concept": "pressure-velocity", "meaning": "pressure and velocity move together"},
+    ),
+    (
+        "stu_040ca3889113",
+        "equation",
+        {"symbolic": "P1 + Rational(1,2)*rho*v1**2 - (P2 + Rational(1,2)*rho*v2**2)"},
+    ),
     ("stu_e18d5469aa6b", "procedure_step", {"action": "set v1 to zero and solve for v2"}),
 ]
 ATTEMPT5_EDGES = [
@@ -181,9 +218,7 @@ ATTEMPT5_RESOLUTION = {
 
 def _kg(attempt_id, node_rows, edge_rows) -> KGGraph:
     nodes = [
-        build_node(
-            node_type=t, node_id=nid, attempt_id=attempt_id, source="parser", content=c
-        )
+        build_node(node_type=t, node_id=nid, attempt_id=attempt_id, source="parser", content=c)
         for nid, t, c in node_rows
     ]
     idx = {n.node_id: n for n in nodes}
@@ -222,10 +257,7 @@ def _canonical_edges(attempt_id, node_rows, edge_rows, resolved_map):
         _kg(attempt_id, node_rows, edge_rows),
         _resolution(node_rows, resolved_map),
     )
-    return {
-        (edge.edge_type, edge.from_key, edge.to_key)
-        for edge in student.edges
-    }
+    return {(edge.edge_type, edge.from_key, edge.to_key) for edge in student.edges}
 
 
 def _depends_on_match_count(attempt_id, node_rows, edge_rows, resolved_map) -> int:
@@ -255,9 +287,7 @@ def test_attempt_4_credits_correct_raw_edge_not_backwards_assertion():
         and row[1] == EdgeType.DEPENDS_ON
         and row[2] == "stu_770825200223"
     ]
-    assert _canonical_edges(
-        _A4, ATTEMPT4_NODES, correct_raw, ATTEMPT4_RESOLUTION
-    ) == {target}
+    assert _canonical_edges(_A4, ATTEMPT4_NODES, correct_raw, ATTEMPT4_RESOLUTION) == {target}
 
     # Raw backwards assertion: Bernoulli depends on the simplification. It now
     # normalizes to the inverse tuple and cannot source the reference match.
@@ -268,9 +298,7 @@ def test_attempt_4_credits_correct_raw_edge_not_backwards_assertion():
         and row[1] == EdgeType.DEPENDS_ON
         and row[2] == "stu_8c6af8e04826"
     ]
-    assert _canonical_edges(
-        _A4, ATTEMPT4_NODES, backwards_raw, ATTEMPT4_RESOLUTION
-    ) == {
+    assert _canonical_edges(_A4, ATTEMPT4_NODES, backwards_raw, ATTEMPT4_RESOLUTION) == {
         (
             EdgeType.DEPENDS_ON,
             "simp.equal_pressure_simplification",
@@ -283,12 +311,8 @@ def test_attempt_4_credits_correct_raw_edge_not_backwards_assertion():
         for edge in build_reference_canonical(PROBLEM).edges
     }
     assert target in reference_edges
-    assert _depends_on_match_count(
-        _A4, ATTEMPT4_NODES, ATTEMPT4_EDGES, ATTEMPT4_RESOLUTION
-    ) == 1
+    assert _depends_on_match_count(_A4, ATTEMPT4_NODES, ATTEMPT4_EDGES, ATTEMPT4_RESOLUTION) == 1
 
 
 def test_attempt_5_still_has_zero_depends_on_matches():
-    assert _depends_on_match_count(
-        _A5, ATTEMPT5_NODES, ATTEMPT5_EDGES, ATTEMPT5_RESOLUTION
-    ) == 0
+    assert _depends_on_match_count(_A5, ATTEMPT5_NODES, ATTEMPT5_EDGES, ATTEMPT5_RESOLUTION) == 0
