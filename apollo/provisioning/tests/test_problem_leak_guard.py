@@ -263,3 +263,104 @@ def test_qualitative_judge_parse_failure_passes_open():
     assert verdict.method == "judge"
     assert verdict.confidence == 0.0
     assert "judge unavailable (advisory)" in verdict.reasons
+
+
+# ---------------------------------------------------------------------------
+# Defensive-branch coverage: the guard's edge paths are part of its contract
+# (never crash, never false-positive on junk inputs), so pin them explicitly.
+# ---------------------------------------------------------------------------
+
+
+def _symbolic_problem(problem_text: str) -> Problem:
+    """Problem whose reference answer is symbolic (no numeric value)."""
+    return Problem.model_validate(
+        {
+            "id": "symbolic-leak-fixture",
+            "concept_id": "continuity_equation",
+            "difficulty": "standard",
+            "problem_text": problem_text,
+            "given_values": {},
+            "target_unknown": "v2",
+            "reference_solution": [
+                {
+                    "step": 1,
+                    "entry_type": "equation",
+                    "id": "continuity",
+                    "content": {"symbolic": "A1*v1 = A2*v2"},
+                },
+                {
+                    "step": 2,
+                    "entry_type": "equation",
+                    "id": "isolated-answer",
+                    "content": {"symbolic": "v2 = A1*v1/A2"},
+                    "depends_on": ["continuity"],
+                },
+            ],
+        }
+    )
+
+
+def test_symbolic_answer_expression_in_statement_is_a_leak():
+    verdict = check_problem_leak(
+        _symbolic_problem("Show that v2 = A1*v1/A2 for the nozzle, then find v2.")
+    )
+
+    assert verdict.leaked is True
+    assert verdict.method == "deterministic"
+
+
+def test_result_word_phrasing_in_final_step_is_extracted():
+    problem = _calc_problem("Given the inlet conditions, the result is 44.29 m/s. Find v2.")
+
+    verdict = check_problem_leak(problem)
+
+    assert verdict.leaked is True
+    assert verdict.method == "deterministic"
+
+
+def test_overlong_and_prose_answer_candidates_are_ignored():
+    from apollo.provisioning.problem_leak_guard import _clean_symbolic
+
+    assert _clean_symbolic("v " * 90) is None  # >120 chars of non-math prose
+    assert _clean_symbolic("downstream") is None  # ordinary English word
+    assert _clean_symbolic("multi\nline = 3") is None
+
+
+def test_number_parsing_rejects_overflow_and_junk():
+    from apollo.provisioning.problem_leak_guard import _as_number, _numeric_result
+
+    assert _as_number("1e999") is None  # parses but is not finite
+    assert _as_number("no digits") is None
+    assert _numeric_result("44.29 m/s and then some very long trailing prose" + " x" * 40) is None
+
+
+def test_contains_symbolic_handles_empty_answers():
+    from apollo.provisioning.problem_leak_guard import _contains_symbolic
+
+    assert _contains_symbolic("any statement", "   ") is False
+
+
+def test_target_equation_with_unparseable_rhs_is_skipped():
+    problem = _calc_problem(
+        "Find v2 = " + "definitely not an answer just words " * 5 + ". Use the given areas."
+    )
+
+    verdict = check_problem_leak(problem)
+
+    assert verdict.leaked is False
+
+
+def test_judge_confidence_clamping_is_robust():
+    from apollo.provisioning.problem_leak_guard import _clamp_confidence
+
+    assert _clamp_confidence("not a float") == 0.0
+    assert _clamp_confidence(float("inf")) == 0.0
+    assert _clamp_confidence(-3.0) == 0.0
+    assert _clamp_confidence(7.0) == 1.0
+
+
+def test_judge_non_object_json_fails_open():
+    verdict = check_problem_leak(_qualitative_problem(), chat_fn=lambda **_: "[1, 2, 3]")
+
+    assert verdict.leaked is False
+    assert "judge unavailable (advisory)" in verdict.reasons
