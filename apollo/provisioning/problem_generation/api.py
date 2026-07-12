@@ -58,6 +58,49 @@ async def _course_concept_or_404(db: AsyncSession, concept_id: int) -> tuple[Con
     return row[0], int(row[1])
 
 
+@router.get("/problem-generation/concepts/{concept_id}/seeds")
+async def list_generation_seeds(
+    concept_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """Selectable seeds for a generation run: the concept's teachable problems.
+
+    Deliberately NOT flag-gated (read-only, mirrors the runs GETs) — the UI
+    seed picker must work even while generation itself is toggled off.
+    """
+    _concept, search_space_id = await _course_concept_or_404(db, concept_id)
+    auth = await require_user(request)
+    await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
+    rows = (
+        (
+            await db.execute(
+                select(ConceptProblem)
+                .where(
+                    ConceptProblem.concept_id == concept_id,
+                    ConceptProblem.tier == 2,
+                    ConceptProblem.quarantined_at.is_(None),
+                )
+                .order_by(ConceptProblem.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "seeds": [
+            {
+                "concept_problem_id": int(row.id),
+                "problem_text": str((row.payload or {}).get("problem_text") or "")[
+                    :_PROBLEM_TEXT_CAP
+                ],
+                "difficulty": row.difficulty,
+            }
+            for row in rows
+        ]
+    }
+
+
 @router.post("/problem-generation/concepts/{concept_id}/variants")
 async def create_generation_run(
     concept_id: int,

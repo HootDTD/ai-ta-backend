@@ -100,7 +100,9 @@ written rows as a partial result. GEN-4 exposes that library through the
 teacher-gated `/apollo/problem-generation` API: POSTing a concept batch creates
 an `apollo_generation_runs` row and processes it in an in-process background
 task, the run list/detail endpoints expose bounded status, cost, and generated
-problem review projections, and the generated-problem approve endpoint reuses
+problem review projections, a seeds endpoint lists the concept's teachable
+(tier-2, non-quarantined) problems for the UI's seed picker (not flag-gated,
+like the run reads), and the generated-problem approve endpoint reuses
 the authored-set approve core to mint, lint, and promote a selected held draft.
 `GenerationRun` links the course and concept to the optional `IngestRun` that
 owns LLM call/token/cost aggregates; generation remains default-OFF while run
