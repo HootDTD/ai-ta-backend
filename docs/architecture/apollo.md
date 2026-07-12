@@ -80,6 +80,19 @@ enforces the provenance invariant that `provenance.source="generated"` may carry
 teacher-grounded `extracted` or `authored` labels. The validation is assignment-order
 independent, so it covers insert-time stamping and later promotion updates.
 
+**GEN-2 problem-generation authoring stage (2026-07-12).**
+`apollo/provisioning/problem_generation/` provides the teacher-initiated
+“generate N more problems like these” library behind the per-call,
+default-OFF `APOLLO_PROBLEM_GENERATION` flag. It cycles valid Tier-2 seed
+problems through subject-agnostic variation operators, generates a statement,
+reuses `find_or_generate` for a reference DAG, rejects normalized duplicates
+and answer leaks, then writes explicit Tier-1 `solution_source="generated"`
+rows. Every written row is held for teacher review through the existing
+`provenance.authored_review.ocr_draft` handoff; GEN-2 never promotes content or
+changes the approve → lint → promote chain. Per-run token ceilings are exposed
+for the caller's `MeteredChat`, and a mid-run budget breach returns already
+written rows as a partial result.
+
 ## Module map and file landmarks
 
 | Subpackage | Key files | Role |
