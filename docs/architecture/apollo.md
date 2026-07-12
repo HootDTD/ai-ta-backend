@@ -13,7 +13,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-07-11
+last_verified: 2026-07-12
 stub: false
 ---
 
@@ -54,6 +54,19 @@ shape, so its topic score is affected identically). The response always includes
 evidence source and exposing pre-dock score, per-topic docks, and graph-lane abstention.
 Misconception arithmetic is localized: attached findings subtract only inside their
 topic contribution; unattached findings retain the global `SEVERITY_CLAMP` cap.
+
+The default-off `APOLLO_SMART_QUESTIONS_ENABLED` path replaces the per-turn dumb reply
+with three reference-driven stages: `smart_questions.evaluator` judges the cumulative
+student-only transcript against **every** authored reference node; the pure planner chooses
+one prerequisite-ready `partial`/`missing`/`misconceived` node that has never been asked;
+and the answer-blind writer asks one short question without receiving the student KG. A
+private-target phrase guard falls back to a generic probe if wording leaks an answer. The
+`apollo_reference_question_opportunities` ledger enforces one opportunity per
+`(attempt_id, reference_node_id)`. After the response, that opportunity is terminal even
+when coverage remains insufficient. When all nodes are covered or every remaining gap has
+already had its opportunity, chat persists a closing turn and invokes the existing Done
+handler; its embedded result uses the existing UI auto-report seam. Flag OFF leaves the
+legacy chat and clarification paths unchanged.
 
 ## Module map and file landmarks
 
