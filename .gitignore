@@ -20,12 +20,13 @@ uvicorn.log
 coverage.xml
 htmlcov/
 
-# Generated knowledge-store artifacts (pgvector is authoritative; km_* dirs are
-# rebuildable FAISS/SQLite/embedding outputs, far too large for git)
-subjects/**/km_*/
+# Generated knowledge-store artifacts (pgvector is authoritative; km_* dirs,
+# FAISS/SQLite/embedding outputs, and source PDFs are rebuildable or belong in
+# Supabase Storage — never git)
+subjects/
 
-# Raw source PDFs dropped into subjects/ (belong in Supabase Storage, not git)
-subjects/**/*.pdf
+# Sample PDF inputs for the layout embedder CLI (large binaries, not code)
+text-embeder/*.pdf
 
 # Locally installed agent skills (personal tooling)
 .agents/
