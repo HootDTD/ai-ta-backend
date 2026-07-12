@@ -29,8 +29,18 @@ on:
 permissions: {}
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Cancel superseded PR runs only — never cancel a post-merge run.
+  # SHA-keyed so a promotion PR (head = staging) dedupes against the push run
+  # that already fired for the same commit when its last PR merged into staging:
+  # both runs resolve to the same head SHA → same group, and the PR run (a
+  # strict superset — it tests the merge preview into the target) cancels the
+  # in-flight push twin. Distinct SHAs never share a group, so post-merge trunk
+  # runs are never cancelled by unrelated work. Trade-off vs the old ref-keyed
+  # group: a superseded PR run for an OLD sha now completes instead of being
+  # cancelled (repo is public → Actions minutes are free; ci-passed is per-SHA,
+  # so a stale green can't be mistaken for the new push's status).
+  group: ci-${{ github.event.pull_request.head.sha || github.sha }}
+  # Only a pull_request run may cancel its same-SHA twin — a push run never
+  # cancels anything.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
