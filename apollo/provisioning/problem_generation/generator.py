@@ -22,6 +22,10 @@ from apollo.provisioning.problem_generation.operators import (
     VARIATION_OPERATORS,
     VariationOperator,
 )
+from apollo.provisioning.problem_generation.verifiers import (
+    qualitative_rubric,
+    round_trip_check,
+)
 from apollo.provisioning.problem_leak_guard import check_problem_leak
 from apollo.provisioning.solution import SolutionDraftError, find_or_generate
 from apollo.schemas.problem import Difficulty, Problem
@@ -41,6 +45,7 @@ _DROP_REASONS = (
     "invalid_seed",
     "invalid_variant",
     "budget_exceeded",
+    "refuted",
 )
 
 
@@ -283,6 +288,17 @@ async def generate_problem_variants(
                 target_unknown=candidate.target_unknown,
                 reference_solution=draft.reference_solution,
             )
+            round_trip = round_trip_check(problem)
+            if round_trip.verdict == "refuted":
+                _drop(
+                    dropped,
+                    records,
+                    "refuted",
+                    seed_id=int(seed_row.id),
+                    operator=operator.name,
+                    details=(round_trip.diagnostic,),
+                )
+                continue
             # The leak judge is intentionally advisory/fail-open and catches broad
             # chat exceptions. Preserve that policy while ensuring the metering
             # circuit break remains visible to this run-level partial-result seam.
@@ -296,31 +312,52 @@ async def generate_problem_variants(
                     leak_budget_error = exc
                     return json.dumps({"leaked": False, "confidence": 0.0, "quoted_span": None})
 
-            verdict = check_problem_leak(problem, chat_fn=_metered_leak_chat)
+            leak_verdict = check_problem_leak(problem, chat_fn=_metered_leak_chat)
             if leak_budget_error is not None:
                 raise leak_budget_error
-            if verdict.leaked:
+            if leak_verdict.leaked:
                 _drop(
                     dropped,
                     records,
                     "leaked",
                     seed_id=int(seed_row.id),
                     operator=operator.name,
-                    details=verdict.reasons,
+                    details=leak_verdict.reasons,
                 )
                 continue
+
+            rubric = None
+            if round_trip.verdict == "inapplicable":
+                rubric = qualitative_rubric(problem, chat_fn=metered_chat.cheap)
 
             provenance: dict[str, Any] = {
                 "source": "generated",
                 "aig_seed_id": int(seed_row.id),
                 "variation_operator": operator.name,
                 "model": model,
+                "round_trip": {
+                    "verdict": round_trip.verdict,
+                    "diagnostic": round_trip.diagnostic,
+                },
                 "authored_review": {
                     "required": True,
                     "reason": "generated_variant",
                     "ocr_draft": draft.model_dump(),
                 },
             }
+            if rubric is not None:
+                provenance["qualitative_rubric"] = {
+                    "claims": [
+                        {
+                            "claim": claim.claim,
+                            "supported": claim.supported,
+                            "note": claim.note,
+                        }
+                        for claim in rubric.claims
+                    ],
+                    "unsupported_count": rubric.unsupported_count,
+                    "ceiling": rubric.ceiling,
+                }
             for key in ("generation_defects", "symbol_table"):
                 if key in draft.provenance:
                     provenance[key] = draft.provenance[key]

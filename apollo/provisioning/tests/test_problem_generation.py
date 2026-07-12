@@ -78,12 +78,34 @@ def _draft(*, provenance: dict | None = None) -> ReferenceSolutionDraft:
     )
 
 
-def _candidate(text: str, *, givens: dict[str, float] | None = None) -> str:
+def _quantitative_draft(*, governing: str = "Q = A*v", stated: str = "0.06"):
+    return ReferenceSolutionDraft(
+        solution_source="generated",
+        reference_solution=[
+            {
+                "step": 1,
+                "entry_type": "equation",
+                "id": "governing",
+                "content": {"label": "Flow relation", "symbolic": governing},
+                "depends_on": [],
+            },
+            {
+                "step": 2,
+                "entry_type": "equation",
+                "id": "answer_key",
+                "content": {"label": "Stated answer", "symbolic": f"Q = {stated}"},
+                "depends_on": ["governing"],
+            },
+        ],
+    )
+
+
+def _candidate(text: str, *, givens: dict[str, float] | None = None, target: str = "m") -> str:
     return json.dumps(
         {
             "problem_text": text,
             "given_values": {"V": 12.0} if givens is None else givens,
-            "target_unknown": "m",
+            "target_unknown": target,
             "difficulty": "standard",
         }
     )
@@ -332,6 +354,197 @@ async def test_leaked_variant_is_dropped_with_reasons(enabled, clean_pipeline, m
     assert result.dropped["leaked"] == 1
     assert result.records[-1].reasons == ("problem_text contains final answer",)
     assert db.added == []
+
+
+async def test_refuted_variant_is_dropped_before_leak_guard(enabled, clean_pipeline, monkeypatch):
+    async def find(_db, _candidate, **_kwargs):
+        return _quantitative_draft(governing="Q = A*v", stated="0.07")
+
+    def unexpected_leak_check(*_args, **_kwargs):
+        raise AssertionError("leak guard must not run for a refuted variant")
+
+    monkeypatch.setattr(clean_pipeline, "find_or_generate", find)
+    monkeypatch.setattr(clean_pipeline, "check_problem_leak", unexpected_leak_check)
+    db = _FakeDB([_seed(140, givens={"A": 0.015, "v": 4.0}, target="Q")])
+    result = await generate_problem_variants(
+        db,
+        concept_id=41,
+        seed_problem_ids=[140],
+        count=1,
+        metered_chat=_Chat(
+            [
+                _candidate(
+                    "Find flow Q for a new section.",
+                    givens={"A": 0.015, "v": 4.0},
+                    target="Q",
+                )
+            ]
+        ),
+        search_space_id=7,
+    )
+
+    assert result.written == []
+    assert result.dropped["refuted"] == 1
+    assert "all solution branches contradict" in result.records[-1].reasons[0]
+    assert db.added == []
+
+
+async def test_quantitative_round_trip_verdict_is_stamped(enabled, clean_pipeline, monkeypatch):
+    async def find(_db, _candidate, **_kwargs):
+        return _quantitative_draft()
+
+    monkeypatch.setattr(clean_pipeline, "find_or_generate", find)
+    db = _FakeDB([_seed(141, givens={"A": 0.015, "v": 4.0}, target="Q")])
+    chat = _Chat(
+        [
+            _candidate(
+                "Compute Q for the changed section.",
+                givens={"A": 0.015, "v": 4.0},
+                target="Q",
+            )
+        ]
+    )
+    result = await generate_problem_variants(
+        db,
+        concept_id=41,
+        seed_problem_ids=[141],
+        count=1,
+        metered_chat=chat,
+        search_space_id=7,
+    )
+
+    assert result.written == [1001]
+    assert db.added[0].provenance["round_trip"]["verdict"] == "verified"
+    assert "all solution branches match" in db.added[0].provenance["round_trip"]["diagnostic"]
+    assert "qualitative_rubric" not in db.added[0].provenance
+    assert chat.cheap_calls == []
+
+
+async def test_unresolved_quantitative_variant_is_written_with_verdict(
+    enabled, clean_pipeline, monkeypatch
+):
+    async def find(_db, _candidate, **_kwargs):
+        return _quantitative_draft(governing="Q + cos(Q)", stated="0")
+
+    monkeypatch.setattr(clean_pipeline, "find_or_generate", find)
+    db = _FakeDB([_seed(146, givens={}, target="Q")])
+    chat = _Chat([_candidate("Solve the transcendental relation for Q.", givens={}, target="Q")])
+    result = await generate_problem_variants(
+        db,
+        concept_id=41,
+        seed_problem_ids=[146],
+        count=1,
+        metered_chat=chat,
+        search_space_id=7,
+    )
+
+    assert result.written == [1001]
+    diagnostic = db.added[0].provenance["round_trip"]["diagnostic"]
+    assert db.added[0].provenance["round_trip"]["verdict"] == "unresolved"
+    assert "NotImplementedError" in diagnostic or "timeout" in diagnostic
+    assert chat.cheap_calls == []
+
+
+async def test_qualitative_judge_runs_only_after_inapplicable_variant_passes_leak(
+    enabled, clean_pipeline
+):
+    db = _FakeDB([_seed(142, givens={}, target="institutional trust")])
+
+    class _RubricChat(_Chat):
+        def cheap(self, **kwargs):
+            self.cheap_calls.append(kwargs)
+            return json.dumps(
+                {
+                    "claims": [
+                        {
+                            "claim": "Transparency may support trust.",
+                            "supported": True,
+                            "note": "Supported by the scenario.",
+                        },
+                        {
+                            "claim": "Trust is guaranteed.",
+                            "supported": False,
+                            "note": "The statement gives no guarantee.",
+                        },
+                    ]
+                }
+            )
+
+    chat = _RubricChat([_candidate("Analyze transparency and trust.", givens={})])
+    result = await generate_problem_variants(
+        db,
+        concept_id=41,
+        seed_problem_ids=[142],
+        count=1,
+        metered_chat=chat,
+        search_space_id=7,
+    )
+
+    assert result.written == [1001]
+    assert len(chat.cheap_calls) == 1
+    rubric = db.added[0].provenance["qualitative_rubric"]
+    assert rubric["unsupported_count"] == 1
+    assert rubric["ceiling"] == "faithfulness_only"
+
+
+async def test_qualitative_judge_is_not_called_when_leak_guard_drops_variant(
+    enabled, clean_pipeline, monkeypatch
+):
+    monkeypatch.setattr(
+        clean_pipeline,
+        "check_problem_leak",
+        lambda _problem, **_kwargs: ProblemLeakVerdict(True, 1.0, ["leaked"], "judge"),
+    )
+    db = _FakeDB([_seed(143, givens={}, target="institutional trust")])
+    chat = _Chat([_candidate("The leaked prose answer.", givens={})])
+    result = await generate_problem_variants(
+        db,
+        concept_id=41,
+        seed_problem_ids=[143],
+        count=1,
+        metered_chat=chat,
+        search_space_id=7,
+    )
+
+    assert result.dropped["leaked"] == 1
+    assert chat.cheap_calls == []
+
+
+async def test_malformed_qualitative_judge_output_still_writes_row(enabled, clean_pipeline):
+    db = _FakeDB([_seed(144, givens={}, target="institutional trust")])
+    chat = _Chat([_candidate("Discuss trust without unsupported conclusions.", givens={})])
+    result = await generate_problem_variants(
+        db,
+        concept_id=41,
+        seed_problem_ids=[144],
+        count=1,
+        metered_chat=chat,
+        search_space_id=7,
+    )
+
+    assert result.written == [1001]
+    assert db.added[0].provenance["round_trip"]["verdict"] == "inapplicable"
+    assert "qualitative_rubric" not in db.added[0].provenance
+
+
+async def test_qualitative_judge_budget_breach_reaches_partial_run_seam(enabled, clean_pipeline):
+    class _RubricBudgetChat(_Chat):
+        def cheap(self, **_kwargs):
+            raise CostBudgetExceeded(tokens=401, ceiling=400, document_id=None)
+
+    db = _FakeDB([_seed(145, givens={}, target="institutional trust")])
+    result = await generate_problem_variants(
+        db,
+        concept_id=41,
+        seed_problem_ids=[145],
+        count=1,
+        metered_chat=_RubricBudgetChat([_candidate("Explain institutional trust.", givens={})]),
+        search_space_id=7,
+    )
+
+    assert result.written == []
+    assert result.dropped["budget_exceeded"] == 1
+    assert "401 > 400" in result.records[-1].reasons[0]
 
 
 async def test_solution_failure_drops_one_and_run_continues(enabled, clean_pipeline, monkeypatch):
