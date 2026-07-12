@@ -48,6 +48,10 @@ from apollo.provisioning.pairing_gate import (
     validate_pair,
 )
 from apollo.provisioning.problem_hash import problem_dup_hash
+from apollo.provisioning.problem_leak_guard import (
+    ProblemLeakVerdict,
+    check_problem_leak,
+)
 from apollo.provisioning.promote import PromoteResult, promote
 from apollo.provisioning.promotion_lint import PromotionResult, run_promotion_lint
 from apollo.provisioning.queue import (
@@ -85,6 +89,9 @@ __all__ = [
     "PromotionResult",
     "run_promotion_lint",
     "problem_dup_hash",
+    # GEN-1 — standalone generated-problem answer-leak guard
+    "ProblemLeakVerdict",
+    "check_problem_leak",
     "DedupVerdict",
     "resolve_candidate",
     # WU-3B2d — scrape (stage 1) public surface
