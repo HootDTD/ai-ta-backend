@@ -8,7 +8,6 @@ from apollo.errors import CoverageGradingError
 from apollo.ontology import KGGraph, build_node
 from apollo.overseer.coverage_contract import validate_coverage_verdict
 from apollo.overseer.transcript_coverage import (
-    _quantize_credit,
     build_system_prompt,
     build_transcript_grader_schema,
     compute_transcript_coverage,
@@ -42,7 +41,7 @@ def _client(payload):
     return client
 
 
-def test_schema_fresh_strict_and_quantization_boundary():
+def test_schema_fresh_strict_and_basis_enum():
     one = build_transcript_grader_schema()
     two = build_transcript_grader_schema()
     assert one is not two
@@ -54,8 +53,6 @@ def test_schema_fresh_strict_and_quantization_boundary():
         "enum": ["stated", "used", "implied", "absent"],
     }
     assert "basis" in verdict_schema["required"]
-    assert _quantize_credit(0.55) == 0.4
-    assert _quantize_credit(0.9) == 1.0
 
 
 def test_prompt_uses_knowledge_demonstration_basis_and_preserves_evidence_rails():
@@ -63,7 +60,13 @@ def test_prompt_uses_knowledge_demonstration_basis_and_preserves_evidence_rails(
     assert "explicitly stated, correctly used in their reasoning, or clearly implied" in prompt
     assert 'Set basis to "stated"' in prompt
     assert "Apollo's restatements, completions, and corrections are NOT evidence" in prompt
-    assert "verbatim evidence span from a single student message" in prompt
+
+
+def test_prompt_states_grader_of_record_and_guidance_only_no_verbatim_requirement():
+    prompt = build_system_prompt(_problem())
+    assert "grader of record" in prompt
+    assert "guidelines, not" in prompt
+    assert "must quote a verbatim evidence span" not in prompt
 
 
 def test_span_validation_is_student_only_and_normalizes_whitespace():
@@ -101,13 +104,16 @@ async def test_full_credit_maps_to_contract_and_calls_once():
 
 
 @pytest.mark.asyncio
-async def test_unverified_span_downgrades_partial_to_zero():
+async def test_span_mismatch_does_not_zero_credit():
+    """Span validation is diagnostic-only now: a positive credit whose span
+    isn't a verbatim student quote still flows through to procedure_scores
+    untouched."""
     payload = {
         "verdicts": [
             {
                 "node_id": "p1",
-                "covered": False,
-                "credit": 0.7,
+                "covered": True,
+                "credit": 0.9,
                 "confidence": 0.8,
                 "evidence_span": "Apollo only",
                 "prompted": True,
@@ -120,8 +126,8 @@ async def test_unverified_span_downgrades_partial_to_zero():
         result = await compute_transcript_coverage(
             [("apollo", "Apollo only"), ("student", "no")], _graph(), _problem()
         )
-    assert result["procedure_scores"]["p1"] == 0.0
-    assert result["per_step"]["p1"] == "missing"
+    assert result["procedure_scores"]["p1"] == pytest.approx(0.9)
+    assert result["per_step"]["p1"] == "covered"
 
 
 @pytest.mark.asyncio
@@ -132,13 +138,15 @@ async def test_empty_output_raises_named_error():
 
 
 @pytest.mark.asyncio
-async def test_implied_full_credit_is_capped_to_point_seven_and_remains_covered():
+async def test_continuous_credit_passes_through_untouched():
+    """The LLM's continuous credit in [0, 1] flows through to procedure_scores
+    unmodified — no quantization to {0, 0.4, 0.7, 1.0}."""
     payload = {
         "verdicts": [
             {
                 "node_id": "p1",
                 "covered": True,
-                "credit": 1.0,
+                "credit": 0.79,
                 "confidence": 0.9,
                 "evidence_span": "I integrate both sides",
                 "prompted": False,
@@ -151,18 +159,20 @@ async def test_implied_full_credit_is_capped_to_point_seven_and_remains_covered(
         result = await compute_transcript_coverage(
             [("student", "I integrate both sides")], _graph(), _problem()
         )
-    assert result["procedure_scores"]["p1"] == 0.7
+    assert result["procedure_scores"]["p1"] == pytest.approx(0.79)
     assert result["per_step"]["p1"] == "covered"
 
 
 @pytest.mark.asyncio
-async def test_absent_basis_forces_positive_credit_to_zero_and_missing():
+async def test_basis_no_longer_overrides_credit():
+    """basis == "absent" no longer force-zeroes a positive credit — basis is
+    provenance/logging only, never a code rule."""
     payload = {
         "verdicts": [
             {
                 "node_id": "p1",
                 "covered": True,
-                "credit": 1.0,
+                "credit": 0.3,
                 "confidence": 0.9,
                 "evidence_span": "I integrate",
                 "prompted": False,
@@ -175,8 +185,31 @@ async def test_absent_basis_forces_positive_credit_to_zero_and_missing():
         result = await compute_transcript_coverage(
             [("student", "I integrate")], _graph(), _problem()
         )
-    assert result["procedure_scores"]["p1"] == 0.0
+    assert result["procedure_scores"]["p1"] == pytest.approx(0.3)
+
+
+@pytest.mark.asyncio
+async def test_sub_half_credit_is_missing_in_per_step_but_raw_in_procedure_scores():
+    payload = {
+        "verdicts": [
+            {
+                "node_id": "p1",
+                "covered": True,
+                "credit": 0.3,
+                "confidence": 0.9,
+                "evidence_span": "I integrate",
+                "prompted": False,
+                "corrected_later": False,
+                "basis": "implied",
+            }
+        ]
+    }
+    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_client(payload)):
+        result = await compute_transcript_coverage(
+            [("student", "I integrate")], _graph(), _problem()
+        )
     assert result["per_step"]["p1"] == "missing"
+    assert result["procedure_scores"]["p1"] == pytest.approx(0.3)
 
 
 @pytest.mark.asyncio
@@ -197,30 +230,6 @@ async def test_missing_basis_raises_named_error():
     with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_client(payload)):
         with pytest.raises(CoverageGradingError):
             await compute_transcript_coverage([("student", "I integrate")], _graph(), _problem())
-
-
-@pytest.mark.asyncio
-async def test_stated_basis_with_non_verbatim_span_is_still_zeroed():
-    payload = {
-        "verdicts": [
-            {
-                "node_id": "p1",
-                "covered": True,
-                "credit": 1.0,
-                "confidence": 0.9,
-                "evidence_span": "fabricated restatement",
-                "prompted": False,
-                "corrected_later": False,
-                "basis": "stated",
-            }
-        ]
-    }
-    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=_client(payload)):
-        result = await compute_transcript_coverage(
-            [("student", "I integrate")], _graph(), _problem()
-        )
-    assert result["procedure_scores"]["p1"] == 0.0
-    assert result["per_step"]["p1"] == "missing"
 
 
 @pytest.mark.asyncio
