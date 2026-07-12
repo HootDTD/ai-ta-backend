@@ -117,6 +117,34 @@ def _mint_plan(concept_id: int) -> MintPlan:
     )
 
 
+def test_augmented_hold_payload_transform_is_conditional_and_preserves_originals():
+    original = {"problem_text": "Define X.", "target_unknown": "X", "other": 1}
+    plain = _draft(source="generated")
+    assert orch._augmented_hold_payload(original, plain) is original
+
+    augmented = plain.model_copy(
+        update={
+            "augmented_problem_text": "Define X and explain why it occurs.",
+            "augmented_target_unknown": "why X occurs",
+        }
+    )
+    assert orch._augmented_hold_payload(original, augmented) == {
+        "problem_text": "Define X and explain why it occurs.",
+        "problem_text_original": "Define X.",
+        "target_unknown": "why X occurs",
+        "target_unknown_original": "X",
+        "augmented": "explain_why",
+        "other": 1,
+    }
+
+    no_target = augmented.model_copy(update={"augmented_target_unknown": None})
+    assert orch._augmented_hold_payload(None, no_target) == {
+        "problem_text": "Define X and explain why it occurs.",
+        "problem_text_original": None,
+        "augmented": "explain_why",
+    }
+
+
 def _patch_common_stages(monkeypatch, *, candidate: CandidateQuestion, concept_id: int):
     # These tests pin the LEGACY (LLM-tag-draft) path; the seeded concept would
     # otherwise flip the run into reversed mode. Reversed-mode behavior has its
@@ -158,7 +186,10 @@ async def test_authored_set_label_extract_promotes(db_session, monkeypatch):
     candidate = _candidate(document_id=prob_doc)
     _patch_common_stages(monkeypatch, candidate=candidate, concept_id=concept_id)
 
-    async def _find_or_generate(db, question, *, retrieve_fn, chat_fn):  # noqa: ANN001
+    async def _find_or_generate(  # noqa: ANN001
+        db, question, *, retrieve_fn, chat_fn, augment_recall=False
+    ):
+        assert augment_recall is True
         spans = await retrieve_fn(question)
         assert len(spans) == 1
         assert spans[0].carries_solution is True
@@ -205,7 +236,7 @@ async def test_authored_set_label_extract_promotes(db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_authored_set_no_solution_doc_falls_through_to_generate(db_session, monkeypatch):
+async def test_unaugmented_hold_payload_untouched(db_session, monkeypatch):
     """B1: no paired solution document (``solution_document_id=None``, e.g. the
     teacher never uploaded one) must retrieve NO spans and fall through to
     ``find_or_generate``'s generate branch — which is ALWAYS held for review
@@ -222,7 +253,10 @@ async def test_authored_set_no_solution_doc_falls_through_to_generate(db_session
     candidate = _candidate(document_id=prob_doc)
     _patch_common_stages(monkeypatch, candidate=candidate, concept_id=concept_id)
 
-    async def _find_or_generate(db, question, *, retrieve_fn, chat_fn):  # noqa: ANN001
+    async def _find_or_generate(  # noqa: ANN001
+        db, question, *, retrieve_fn, chat_fn, augment_recall=False
+    ):
+        assert augment_recall is True
         spans = await retrieve_fn(question)
         assert spans == ()
         return _draft(source="generated")
@@ -246,10 +280,19 @@ async def test_authored_set_no_solution_doc_falls_through_to_generate(db_session
     assert result.solution_source == "generated"
     assert result.review_required is True
     assert result.reason == "generated_no_match"
+    row = await db_session.get(ConceptProblem, result.concept_problem_id)
+    assert row.payload == {
+        "id": f"scrape.{candidate.chunk_content_hash}",
+        "concept_id": candidate.concept_slug,
+        "difficulty": candidate.difficulty,
+        "problem_text": candidate.problem_text,
+        "given_values": candidate.given_values,
+        "target_unknown": candidate.target_unknown,
+    }
 
 
 @pytest.mark.asyncio
-async def test_generated_draft_skips_pairing_gate(db_session, monkeypatch):
+async def test_hold_arm_applies_augmentation_to_tier1_payload(db_session, monkeypatch):
     """A generated draft has no pair to validate (no grounding spans): the
     pairing-gate judge must NEVER be invoked for it, and the candidate must
     flow straight to held_for_review with the authored_review provenance
@@ -276,10 +319,19 @@ async def test_generated_draft_skips_pairing_gate(db_session, monkeypatch):
     # Overrides _patch_common_stages' blanket-approve mock with a call-counting one.
     monkeypatch.setattr(orch, "validate_pair", _validate_pair_spy)
 
-    async def _find_or_generate(db, question, *, retrieve_fn, chat_fn):  # noqa: ANN001
+    async def _find_or_generate(  # noqa: ANN001
+        db, question, *, retrieve_fn, chat_fn, augment_recall=False
+    ):
+        assert augment_recall is True
         spans = await retrieve_fn(question)
         assert spans == ()
-        return _draft(source="generated")
+        return _draft(source="generated").model_copy(
+            update={
+                "augmented_problem_text": "Define beam moment and explain why it peaks.",
+                "augmented_target_unknown": "why beam moment peaks",
+                "provenance": {"augmented": "explain_why"},
+            }
+        )
 
     monkeypatch.setattr(orch, "find_or_generate", _find_or_generate)
 
@@ -303,8 +355,14 @@ async def test_generated_draft_skips_pairing_gate(db_session, monkeypatch):
 
     row = await db_session.get(ConceptProblem, result.concept_problem_id)
     authored_review = row.provenance["authored_review"]
+    assert row.payload["problem_text"] == "Define beam moment and explain why it peaks."
+    assert row.payload["target_unknown"] == "why beam moment peaks"
+    assert row.payload["problem_text_original"] == candidate.problem_text
+    assert row.payload["target_unknown_original"] == candidate.target_unknown
+    assert row.payload["augmented"] == "explain_why"
     assert authored_review["required"] is True
     assert authored_review["reason"] == "generated_no_match"
+    assert authored_review["augmented"] == "explain_why"
     assert authored_review["ocr_draft"]["solution_source"] == "generated"
 
 
@@ -394,7 +452,7 @@ async def _run_single_candidate(db, monkeypatch, *, slug, find_or_generate, **ov
 async def test_candidate_solution_draft_error_is_rejected(db_session, monkeypatch):
     from apollo.provisioning.solution import SolutionDraftError
 
-    async def _fog(db, question, *, retrieve_fn, chat_fn):
+    async def _fog(db, question, *, retrieve_fn, chat_fn, augment_recall=False):
         await retrieve_fn(question)
         raise SolutionDraftError("boom")
 
@@ -410,7 +468,7 @@ async def test_candidate_tag_mint_error_is_rejected(db_session, monkeypatch):
     not propagate out and fail the entire authored set."""
     from apollo.provisioning.tag_mint import TagMintError
 
-    async def _fog(db, question, *, retrieve_fn, chat_fn):
+    async def _fog(db, question, *, retrieve_fn, chat_fn, augment_recall=False):
         spans = await retrieve_fn(question)
         draft = _draft(source="extracted")
         return draft.model_copy(update={"grounding": spans})
@@ -519,7 +577,7 @@ async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, mon
 
         return VerificationVerdict(review_required=False)
 
-    async def _fog(db, question, *, retrieve_fn, chat_fn):
+    async def _fog(db, question, *, retrieve_fn, chat_fn, augment_recall=False):
         step_id = "eq-fail" if question.label == "1" else "eq-ok"
         return _savepoint_draft(step_id=step_id)
 
@@ -599,7 +657,7 @@ async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, mon
 async def test_candidate_pair_rejection_is_rejected(db_session, monkeypatch):
     from apollo.provisioning.pairing_gate import PairingVerdict
 
-    async def _fog(db, question, *, retrieve_fn, chat_fn):
+    async def _fog(db, question, *, retrieve_fn, chat_fn, augment_recall=False):
         spans = await retrieve_fn(question)
         return _draft(source="extracted").model_copy(update={"grounding": spans})
 
@@ -614,7 +672,7 @@ async def test_candidate_pair_rejection_is_rejected(db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_candidate_missing_tier1_row_is_rejected(db_session, monkeypatch):
-    async def _fog(db, question, *, retrieve_fn, chat_fn):
+    async def _fog(db, question, *, retrieve_fn, chat_fn, augment_recall=False):
         spans = await retrieve_fn(question)
         return _draft(source="extracted").model_copy(update={"grounding": spans})
 
@@ -632,7 +690,7 @@ async def test_candidate_missing_tier1_row_is_rejected(db_session, monkeypatch):
 async def test_candidate_promote_failure_is_rejected(db_session, monkeypatch):
     from apollo.provisioning.promote import PromoteResult
 
-    async def _fog(db, question, *, retrieve_fn, chat_fn):
+    async def _fog(db, question, *, retrieve_fn, chat_fn, augment_recall=False):
         spans = await retrieve_fn(question)
         return _draft(source="extracted").model_copy(update={"grounding": spans})
 
@@ -685,7 +743,10 @@ async def test_authored_set_low_confidence_divergence_holds_without_minting(
     minted = False
     promoted = False
 
-    async def _find_or_generate(db, question, *, retrieve_fn, chat_fn):  # noqa: ANN001
+    async def _find_or_generate(  # noqa: ANN001
+        db, question, *, retrieve_fn, chat_fn, augment_recall=False
+    ):
+        assert augment_recall is True
         spans = await retrieve_fn(question)
         return _draft(source="extracted", symbolic="M = w*L^2/9").model_copy(
             update={"grounding": spans}

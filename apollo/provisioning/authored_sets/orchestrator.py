@@ -121,6 +121,22 @@ class ProvisioningReport(BaseModel):
     counts: dict[str, int] = Field(default_factory=dict)
 
 
+def _augmented_hold_payload(
+    payload: dict | None, draft: ReferenceSolutionDraft
+) -> dict | None:
+    """Apply accepted explain-why text; preserve the object on plain holds."""
+    if not draft.augmented_problem_text:
+        return payload
+    updated = dict(payload or {})
+    updated.setdefault("problem_text_original", updated.get("problem_text"))
+    updated["problem_text"] = draft.augmented_problem_text
+    if draft.augmented_target_unknown:
+        updated.setdefault("target_unknown_original", updated.get("target_unknown"))
+        updated["target_unknown"] = draft.augmented_target_unknown
+    updated["augmented"] = "explain_why"
+    return updated
+
+
 def _tag_mint_chat_fn(metered_chat: Any) -> Callable[[str], str]:
     def _chat_fn(prompt: str) -> str:
         return metered_chat.cheap(
@@ -358,7 +374,11 @@ async def _process_authored_candidate(
     if draft is None:
         try:
             draft = await find_or_generate(
-                db, candidate, retrieve_fn=retrieve_fn, chat_fn=metered_chat.main
+                db,
+                candidate,
+                retrieve_fn=retrieve_fn,
+                chat_fn=metered_chat.main,
+                augment_recall=True,
             )
         except SolutionDraftError as exc:
             return ProblemResult(
@@ -409,6 +429,10 @@ async def _process_authored_candidate(
     if review_required:
         reason = verdict.reason if verdict is not None else "generated_no_match"
         if tier1 is not None:
+            if draft.augmented_problem_text:
+                tier1.payload = _augmented_hold_payload(  # type: ignore[assignment]
+                    tier1.payload, draft
+                )
             tier1.provenance = {  # type: ignore[assignment]
                 **(tier1.provenance or {}),
                 "authored_review": {
@@ -421,6 +445,9 @@ async def _process_authored_candidate(
                     # Reversed provisioning: the matched concept rides along so
                     # the approve path can thread it as resolved_concept.
                     "concept_match": match.model_dump() if match is not None else None,
+                    "augmented": (
+                        "explain_why" if draft.augmented_problem_text else None
+                    ),
                 },
             }
             await db.flush()

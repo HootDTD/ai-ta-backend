@@ -166,7 +166,9 @@ def test_reference_graph_with_only_ungraded_types_is_empty():
 # --------------------------------------------------------------------------- #
 # Per-topic credit: full / partial / missing
 # --------------------------------------------------------------------------- #
-def test_full_credit_when_covered():
+def test_full_credit_when_covered_and_absent_from_procedure_scores():
+    """A node absent from procedure_scores falls back to the binary per_step
+    signal: covered -> 1.0."""
     refs = [_eq_node("eq1")]
     coverage = {"per_step": {"eq1": "covered"}, "procedure_scores": {}}
 
@@ -185,6 +187,53 @@ def test_full_credit_when_covered():
     assert result.coverage_component == pytest.approx(1.0)
     assert result.score == 100
     assert result.letter == score_to_letter(100)
+
+
+def test_covered_with_lower_procedure_score_yields_that_credit_not_one():
+    """The grader's number IS the grade: a covered node whose
+    procedure_scores entry is 0.7 yields credit 0.7 (status stays "covered"),
+    not a promoted 1.0."""
+    refs = [_eq_node("eq1")]
+    coverage = {"per_step": {"eq1": "covered"}, "procedure_scores": {"eq1": 0.7}}
+
+    result = compute_topic_score(
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"eq1": 1.0},
+        detection_outcome=None,
+    )
+
+    topic = result.topics[0]
+    assert topic.credit == pytest.approx(0.7)
+    assert topic.status == "covered"
+    assert result.coverage_component == pytest.approx(0.7)
+    assert result.score == 70
+
+
+def test_covered_credit_flows_continuously_into_topic_weighting():
+    """A covered node with procedure_scores 0.79 propagates that exact value
+    into the weighted score arithmetic."""
+    refs = [_eq_node("eq1"), _eq_node("eq2")]
+    coverage = {
+        "per_step": {"eq1": "covered", "eq2": "covered"},
+        "procedure_scores": {"eq1": 0.79},
+    }
+
+    result = compute_topic_score(
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"eq1": 1.0, "eq2": 1.0},
+        detection_outcome=None,
+    )
+
+    by_key = {t.canonical_key: t for t in result.topics}
+    assert by_key["eq1"].credit == pytest.approx(0.79)
+    assert by_key["eq1"].status == "covered"
+    assert by_key["eq2"].credit == pytest.approx(1.0)
+
+    expected_coverage = by_key["eq1"].weight * 0.79 + by_key["eq2"].weight * 1.0
+    assert result.coverage_component == pytest.approx(expected_coverage)
+    assert result.score == int(round(expected_coverage * 100))
 
 
 def test_partial_credit_from_procedure_scores():

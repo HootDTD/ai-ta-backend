@@ -75,6 +75,19 @@ def test_solution_schema_wrapper_key_is_reference_solution():
     assert schema["properties"]["reference_solution"]["type"] == "array"
 
 
+def test_solution_schema_augmentation_variant_adds_nullable_required_fields():
+    schema = build_solution_schema(augmentation=True)["schema"]
+    assert schema["required"] == [
+        "reference_solution",
+        "augmented_problem_text",
+        "augmented_target_unknown",
+    ]
+    assert schema["properties"]["augmented_problem_text"] == {"type": ["string", "null"]}
+    assert schema["properties"]["augmented_target_unknown"] == {
+        "type": ["string", "null"]
+    }
+
+
 def test_solution_schema_entry_type_enum_is_six_ontology_types():
     """The entry_type enum == the six ontology entry types (== EntryType literal)."""
     item = build_solution_schema()["schema"]["properties"]["reference_solution"]["items"]
