@@ -539,6 +539,41 @@ async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) ->
     raise RuntimeError(f"problem {problem_code!r} not in bank for cluster {concept_id!r}")
 
 
+async def _fetch_attempt_transcript(
+    db: AsyncSession, attempt_id: int
+) -> list[dict[str, Any]]:
+    """Return the graded attempt's ordered chat turns for report display."""
+    try:
+        messages = (
+            (
+                await db.execute(
+                    select(Message)
+                    .where(Message.attempt_id == attempt_id)
+                    .where(Message.role.in_(("student", "apollo")))
+                    .order_by(Message.turn_index)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            {
+                "role": message.role,
+                "content": message.content,
+                "turn_index": message.turn_index,
+            }
+            for message in messages
+        ]
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning(
+            "transcript fetch soft-fail for attempt %s: %s",
+            attempt_id,
+            exc,
+            exc_info=True,
+        )
+        return []
+
+
 async def handle_done(
     *,
     db: AsyncSession,
@@ -992,6 +1027,8 @@ async def handle_done(
     # serializer, `topic_score_serialize.py`). Absent (not null) otherwise.
     if serve_topic_score:
         student_response["topics"] = serialize_topics(topic_score)
+
+    student_response["transcript"] = await _fetch_attempt_transcript(db, int(attempt.id))
 
     # WU-4C1 — SHADOW graph-simulation chain. Runs AFTER the OLD grade/XP/retention
     # are fully durable, so any failure here surfaces a named error (the right HTTP

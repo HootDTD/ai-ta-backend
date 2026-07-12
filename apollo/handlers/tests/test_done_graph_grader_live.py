@@ -148,6 +148,7 @@ async def test_flag_off_byte_identical_to_shadow_golden(monkeypatch):
         "level_before": 1,
         "level_after": 1,
         "level_up": False,
+        "transcript": [],
         "grading_provenance": {
             "grader_used": "llm_fallback",
             "evidence_source": "graph_nodes",

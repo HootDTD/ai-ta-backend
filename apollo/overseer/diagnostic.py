@@ -12,8 +12,8 @@ replaces the axis-based prompt above with the ledger-grounded prompt built by
 ``apollo.overseer.topic_narrative.build_topic_narrative_prompt`` — every claim
 in the narrative is traceable to a topic/misconception the deterministic
 ledger actually holds (kills the axis path's hallucination class). Flag OFF
-(or no ``topic_score`` argument) leaves this function's prompt/output
-byte-identical to today."""
+(or no ``topic_score`` argument) leaves this function's prompt/output unchanged
+apart from the final internals sanitizer, which is a no-op on clean prose."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from typing import Any
 from openai import OpenAI
 
 from apollo.overseer.misconception_detector.config import topic_score_served_enabled
-from apollo.overseer.topic_narrative import build_topic_narrative_prompt
+from apollo.overseer.topic_narrative import build_topic_narrative_prompt, sanitize_narrative
 from apollo.overseer.topic_score import TopicScoreResult
 
 _LOG = logging.getLogger(__name__)
@@ -74,9 +74,10 @@ def generate_diagnostic(
     axis-based ``_SYSTEM_PROMPT``/``user_payload`` below — no other branch of
     this function changes. When the flag is off (or ``topic_score`` is
     ``None``, the default), this function's prompt assembly and output are
-    byte-identical to pre-topic-score behavior, including the misconception/
+    unchanged from pre-topic-score behavior, including the misconception/
     negotiation recap lines appended below (those read ``rubric``/``coverage``
-    directly and are unaffected by which prompt generated ``narrative``)."""
+    directly and are unaffected by which prompt generated ``narrative``),
+    modulo the final internals sanitizer, which is a no-op on clean prose."""
     model = model or os.getenv("MAIN_MODEL", "gpt-4o")
     client = OpenAI()
 
@@ -119,7 +120,12 @@ def generate_diagnostic(
 
     narrative = _append_misconception_line(narrative, rubric)
     narrative = _append_negotiation_line(narrative, coverage)
-    return narrative
+    ledger_keys = (
+        tuple(topic.canonical_key for topic in topic_score.topics)
+        if topic_score is not None
+        else ()
+    )
+    return sanitize_narrative(narrative, canonical_keys=ledger_keys)
 
 
 def _append_negotiation_line(narrative: str, coverage: dict[str, Any]) -> str:

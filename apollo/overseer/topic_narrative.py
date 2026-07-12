@@ -6,9 +6,9 @@ and can hallucinate claims beyond the coverage map (staging session 43: the
 narrative invented "expression involving ∫sin x dx", never taught). This
 module builds the REPLACEMENT prompt when ``APOLLO_TOPIC_SCORE_SERVED`` is on:
 it is built entirely from an already-computed ``TopicScoreResult`` — every
-topic's status/credit and every misconception's evidence span + dock points
-are named explicitly in the prompt, with a hard instruction not to claim
-anything beyond that ledger.
+topic's status and whole-number percentage and every misconception's evidence
+span + correction state are named explicitly in the prompt. Internal scoring
+details never reach the narrator.
 
 Pure module: no IO, no LLM call. ``build_topic_narrative_prompt`` returns the
 ``(system, user)`` message pair; the caller (``diagnostic.py``) is responsible
@@ -26,7 +26,7 @@ _TOPIC_SYSTEM_PROMPT = """You are the Overseer's diagnostic narrator. The studen
 ignorant agent (Apollo) to solve a specific problem. A deterministic topic-based score has
 already graded the student — you have the full ledger: every topic (equation / condition /
 simplification / procedure step) with its coverage status and credit, and every misconception
-finding with its evidence quote and point cost. Your job is to NARRATE this ledger — not to
+finding with its evidence quote and whether it was corrected. Your job is to NARRATE this ledger — not to
 re-grade it and not to introduce anything the ledger does not contain.
 
 HARD RULES — never violate:
@@ -116,6 +116,7 @@ _SCORING_PAREN_RE = re.compile(rf"\(\s*[^()]*?{_SCORING_TERM}[^()]*?\)", re.IGNO
 _SCORING_INLINE_RE = re.compile(_SCORING_TERM, re.IGNORECASE)
 _EMPTY_PAREN_RE = re.compile(r"\(\s*[,;\s]*\)")
 _DANGLING_COMMA_RE = re.compile(r",\s*(?=[,.;:)])")
+_EMPTY_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+[.!?](?=\s|$)")
 _SPACE_BEFORE_PUNCT_RE = re.compile(r"[ \t]+([,.;:!?])")
 _MULTI_SPACE_RE = re.compile(r"[ \t]{2,}")
 
@@ -138,6 +139,7 @@ def sanitize_narrative(text: str, canonical_keys: Sequence[str] = ()) -> str:
     cleaned = _SCORING_INLINE_RE.sub("", cleaned)
     cleaned = _EMPTY_PAREN_RE.sub("", cleaned)
     cleaned = _DANGLING_COMMA_RE.sub("", cleaned)
+    cleaned = _EMPTY_SENTENCE_RE.sub("", cleaned)
     cleaned = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", cleaned)
     cleaned = _MULTI_SPACE_RE.sub(" ", cleaned)
     return cleaned.strip()

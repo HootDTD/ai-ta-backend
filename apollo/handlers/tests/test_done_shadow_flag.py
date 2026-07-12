@@ -140,6 +140,10 @@ def _old_path_patches():
             new=AsyncMock(return_value={"xp_before": 0, "xp_after": 10}),
         ),
         patch("apollo.handlers.done.compute_progress_envelope", return_value=_envelope()),
+        patch(
+            "apollo.handlers.done._fetch_attempt_transcript",
+            new=AsyncMock(return_value=[]),
+        ),
     ]
     return db, sess, attempt, patches
 
