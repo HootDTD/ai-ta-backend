@@ -28,7 +28,9 @@ from apollo.emergent.config import emergent_map_capture_enabled
 from apollo.emergent.materialize import materialize_if_promotable
 from apollo.errors import (
     CoverageGradingError,
+    KGUnavailableError,
     ResolutionUnavailableError,
+    RetentionError,
     ReviewRequiredError,
     TranscriptAuditUnavailableError,
 )
@@ -84,7 +86,7 @@ from apollo.persistence.models import (
     ProblemAttempt,
     SessionPhase,
 )
-from apollo.persistence.neo4j_client import Neo4jClient
+from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 from apollo.persistence.progress_repo import apply_xp
 from apollo.projections.mastery import update_mastery_from_artifact
 from apollo.projections.scorecard import render_scorecard
@@ -540,7 +542,7 @@ async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) ->
 async def handle_done(
     *,
     db: AsyncSession,
-    neo: Neo4jClient,
+    neo: Neo4jClient | None,
     session_id: int,
 ) -> dict[str, Any]:
     store = KGStore(db, neo)
@@ -568,13 +570,34 @@ async def handle_done(
     # P3.6 — Done-gate. Read the graph BEFORE freezing so a 422 doesn't
     # lock the student into PROBLEM_REVEAL. When the master flag is off,
     # we skip the gate entirely; behavior is byte-identical to pre-P3.6.
-    pre_freeze_graph = await store.read_graph(attempt_id=attempt.id)
-    if _done_gate_enabled():
-        await _enforce_done_gate(
-            db,
-            attempt_id=attempt.id,
-            graph=pre_freeze_graph,
+    #
+    # Degraded mode: a KG_DEGRADED_ERRORS failure here means Neo4j is down —
+    # student_graph degrades to an empty KGGraph and the gate is SKIPPED
+    # (fail-open; there is nothing meaningful to flag for review without the
+    # graph). Everything downstream (transcript-grader branch) checks
+    # `kg_degraded` to avoid silently grading an empty graph as a false F.
+    kg_degraded = False
+    try:
+        pre_freeze_graph = await store.read_graph(attempt_id=attempt.id)
+    except KG_DEGRADED_ERRORS as exc:
+        kg_degraded = True
+        pre_freeze_graph = KGGraph()
+        _LOG.warning(
+            "apollo_neo4j_degraded stage=pre_freeze_graph attempt_id=%s error=%s",
+            attempt.id, exc,
         )
+    if _done_gate_enabled():
+        if kg_degraded:
+            _LOG.warning(
+                "apollo_neo4j_degraded stage=done_gate_skipped attempt_id=%s",
+                attempt.id,
+            )
+        else:
+            await _enforce_done_gate(
+                db,
+                attempt_id=attempt.id,
+                graph=pre_freeze_graph,
+            )
 
     await store.freeze(session_id)
 
@@ -609,6 +632,17 @@ async def handle_done(
                 "apollo_transcript_grader_fallback attempt_id=%s", int(attempt.id)
             )
     if not use_transcript_grader:
+        if kg_degraded:
+            # Neo4j is down AND the transcript grader is off/failed: grading
+            # `compute_coverage` against the empty `student_graph` above would
+            # silently produce a false F (every reference node reads as
+            # "missing"). Raise a NAMED, retryable error instead — the
+            # existing CoverageGradingError -> 503 handler tells the student
+            # "try again" rather than serving a fabricated zero grade.
+            raise CoverageGradingError(
+                stage="kg_unavailable_fallback",
+                last_error="Neo4j unavailable and no transcript grader result",
+            )
         coverage = await compute_coverage(student_graph, reference_graph)
 
     # Class 2 Phase 2 (P2.8): pull per-attempt misconception signals from
@@ -902,8 +936,23 @@ async def handle_done(
     # WU-5A2: capture ONE `done_ts` and thread it into BOTH `stamp_graded_at`
     # (Neo4j `graded_at`) AND `run_learner_update` (Postgres `last_evidence_at`)
     # so the two stores stamp the IDENTICAL freeze instant (no second clock).
+    #
+    # Degraded-mode relaxation (NEO4J-DEGRADED, deliberate NO-FALLBACK carve-
+    # out — documented in the owner doc): catch (KGUnavailableError,
+    # RetentionError) UNCONDITIONALLY, not just when kg_degraded — the real
+    # failure mode is a connection dying DURING the ~4-minute grading
+    # pipeline, so a HEALTHY read at the top of this function does not
+    # guarantee a healthy stamp at the end. RetentionError has no registered
+    # HTTP handler today, so letting it propagate 500s a fully successful,
+    # already-committed grade; log-and-continue instead.
     done_ts = datetime.now(UTC)
-    await store.stamp_graded_at(attempt_id=attempt.id, ts=done_ts)
+    try:
+        await store.stamp_graded_at(attempt_id=attempt.id, ts=done_ts)
+    except (KGUnavailableError, RetentionError) as exc:
+        _LOG.warning(
+            "apollo_neo4j_degraded stage=stamp_graded_at attempt_id=%s error=%s",
+            attempt.id, exc,
+        )
 
     # The student-facing payload is constructed from OLD-path values ONLY,
     # EXCEPT for `rubric`, which is `served_rubric` — byte-identical to
@@ -961,7 +1010,25 @@ async def handle_done(
     shadow: ShadowGradeResult | None = None
     graph_failure: str | None = None
     served_grade = GRADER_USED_LLM_FALLBACK
-    if _graph_sim_shadow_enabled():
+    if _graph_sim_shadow_enabled() and (kg_degraded or neo is None):
+        # Degraded mode: Neo4j is down (either the pre-freeze read already
+        # failed, or the client never constructed at all). The shadow chain
+        # is Neo4j-native end to end (build_rerun_inputs/run_graph_simulation
+        # both read/write the graph) — skip it entirely rather than let it
+        # crash mid-chain, and stamp the SAME shadow-failure marker the
+        # mid-chain isolation branch below uses, so paired analysis sees a
+        # consistent reason for the missing `pair` row.
+        _LOG.warning(
+            "apollo_neo4j_degraded stage=shadow_chain_skipped attempt_id=%s session_id=%s",
+            int(attempt.id), int(session_id),
+        )
+        graph_failure = f"{_SHADOW_FAILURE_MARKER}neo4j_unavailable"
+    elif _graph_sim_shadow_enabled():
+        # Reached only when NOT (kg_degraded or neo is None) — see the
+        # sibling `if` above — so `neo` is a healthy client here. Bind a
+        # locally-narrowed name: mypy cannot narrow `Neo4jClient | None`
+        # across the `if`/`elif` split of a compound `or` condition.
+        assert neo is not None
         live = _graph_grader_live_enabled()
         try:
             # WU-5B3a-0: source the shadow problem_payload through the SHARED builder
