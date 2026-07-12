@@ -20,7 +20,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sympy import latex
 
-from apollo.errors import KGEntryNotFoundError, RetentionError, SessionFrozenError
+from apollo.errors import (
+    KGEntryNotFoundError,
+    KGUnavailableError,
+    RetentionError,
+    SessionFrozenError,
+)
 from apollo.ontology import (
     EDGE_ALLOWED_PAIRS,
     NODE_CONTENT_TYPES,
@@ -219,11 +224,28 @@ def _edge_repr(edge: Edge) -> str:
 # ---------------------------------------------------------------------------
 
 class KGStore:
-    """Per-request store. Postgres for session/freeze state, Neo4j for graph."""
+    """Per-request store. Postgres for session/freeze state, Neo4j for graph.
 
-    def __init__(self, db: AsyncSession, neo: Neo4jClient) -> None:
+    Degraded mode: `neo` may be `None` (Neo4j unreachable / failed to
+    construct — see `apollo.api.get_neo4j_client`). Every Neo4j-backed
+    method below calls `_require_neo` at entry, which raises
+    `KGUnavailableError` when `self.neo is None`. Postgres-only methods
+    (freeze/unfreeze/_session_id_for_attempt/_ensure_unfrozen/
+    _log_negotiation/get_node_trace) never touch `self.neo` and keep
+    working unconditionally.
+    """
+
+    def __init__(self, db: AsyncSession, neo: Neo4jClient | None) -> None:
         self.db = db
         self.neo = neo
+
+    def _require_neo(self, *, stage: str) -> Neo4jClient:
+        """Raise `KGUnavailableError` when the client degraded to `None`.
+        Called at the entry of every Neo4j-backed method, BEFORE any
+        Postgres pre-check, so a degraded call fails fast and uniformly."""
+        if self.neo is None:
+            raise KGUnavailableError(stage=stage, last_error="client unavailable")
+        return self.neo
 
     # ------- Postgres-backed freeze / metadata ------------------------------
 
@@ -290,13 +312,14 @@ class KGStore:
         `None`-omission convention — omitted when None rather than written as a
         literal "None" — so existing callers are unchanged.
         """
+        neo = self._require_neo(stage="write_nodes")
         session_id = await self._session_id_for_attempt(attempt_id)
         await self._ensure_unfrozen(session_id)
         if not nodes:
             return 0
 
         total = 0
-        async with self.neo.session() as s:
+        async with neo.session() as s:
             present = await self._existing_node_ids(
                 s, attempt_id, [n.node_id for n in nodes],
             )
@@ -374,6 +397,7 @@ class KGStore:
         (written/dropped/invalid + per-rejection reasons; `int()`-coercible to
         `written` for back-compat). Rejections are data, not exceptions.
         """
+        neo = self._require_neo(stage="write_edges")
         session_id = await self._session_id_for_attempt(attempt_id)
         await self._ensure_unfrozen(session_id)
         if not edges:
@@ -386,7 +410,7 @@ class KGStore:
         invalid = 0
         reasons: list[tuple[str, str]] = []
 
-        async with self.neo.session() as s:
+        async with neo.session() as s:
             present = await self._existing_node_ids(s, attempt_id, endpoint_ids)
 
             rows_by_type: dict[str, list[dict[str, Any]]] = {}
@@ -430,7 +454,8 @@ class KGStore:
 
     async def read_graph(self, *, attempt_id: int) -> KGGraph:
         """Read the full per-attempt subgraph."""
-        async with self.neo.session() as s:
+        neo = self._require_neo(stage="read_graph")
+        async with neo.session() as s:
             nodes_res = await s.run(
                 "MATCH (n:_KGNode {attempt_id: $aid}) "
                 "RETURN n AS props, labels(n) AS labels",
@@ -480,7 +505,8 @@ class KGStore:
         absent (pre-WU-3C1 legacy) is OMITTED from the map so the caller's group
         logic treats it as an absent key (events.py tolerates via ``_SENTINEL_TURN``).
         """
-        async with self.neo.session() as s:
+        neo = self._require_neo(stage="read_node_created_at")
+        async with neo.session() as s:
             result = await s.run(
                 "MATCH (n:_KGNode {attempt_id: $aid}) "
                 "RETURN n.node_id AS node_id, n.created_at AS created_at",
@@ -508,7 +534,8 @@ class KGStore:
         subgraph was never stamped → the janitor dead-letters
         (``graded_at_missing``). Mirrors ``read_node_created_at``; NOT a schema
         change."""
-        async with self.neo.session() as s:
+        neo = self._require_neo(stage="read_node_graded_at")
+        async with neo.session() as s:
             result = await s.run(
                 "MATCH (n:_KGNode {attempt_id: $aid}) "
                 "RETURN n.node_id AS node_id, n.graded_at AS graded_at",
@@ -531,6 +558,7 @@ class KGStore:
         max_depth: int = 20,
     ) -> list[Node]:
         """Cypher-backed traversal from a start node along the given edge types."""
+        neo = self._require_neo(stage="walk_chain")
         if not edge_types:
             return []
         edge_pattern = "|".join(et.value for et in edge_types)
@@ -539,7 +567,7 @@ class KGStore:
             f"MATCH (start)-[:{edge_pattern}*1..{max_depth}]->(n:_KGNode) "
             f"RETURN DISTINCT n AS props, labels(n) AS labels"
         )
-        async with self.neo.session() as s:
+        async with neo.session() as s:
             result = await s.run(cypher, aid=attempt_id, sid=start_node_id)
             out: list[Node] = []
             async for record in result:
@@ -556,7 +584,8 @@ class KGStore:
         subgraphs now PERSIST. This stays as the future janitor's pruning
         primitive AND `restart_problem`'s explicit student wipe.
         """
-        async with self.neo.session() as s:
+        neo = self._require_neo(stage="delete_subgraph")
+        async with neo.session() as s:
             await s.run(
                 "MATCH (n:_KGNode {attempt_id: $aid}) DETACH DELETE n",
                 aid=attempt_id,
@@ -580,13 +609,19 @@ class KGStore:
         carry the IDENTICAL instant. A `datetime` is normalized via `.isoformat()`;
         a string passes through verbatim; `None` (the legacy callers) falls back to
         a fresh `_utc_now_iso()`.
+
+        Degraded mode: a `None` client raises `KGUnavailableError` BEFORE the
+        try/except below — it must NOT be wrapped into `RetentionError` (the
+        Done handler's stamp call site catches both, unconditionally, so the
+        distinct type is for logging/telemetry clarity, not routing).
         """
+        neo = self._require_neo(stage="stamp_graded_at")
         if ts is None:
             ts = _utc_now_iso()
         elif isinstance(ts, datetime):
             ts = ts.isoformat()
         try:
-            async with self.neo.session() as s:
+            async with neo.session() as s:
                 result = await s.run(
                     "MATCH (n:_KGNode {attempt_id: $aid}) "
                     "SET n.graded_at = $ts "
@@ -679,13 +714,14 @@ class KGStore:
         and read it back through here to avoid duplicating reconstruction
         logic three times.
         """
+        neo = self._require_neo(stage="_set_node_status_neo4j")
         cypher = (
             "MATCH (n:_KGNode {attempt_id: $aid, node_id: $nid}) "
             f"SET {set_clause} "
             "RETURN n AS props, labels(n) AS labels"
         )
         all_params = {"aid": attempt_id, "nid": node_id, **params}
-        async with self.neo.session() as s:
+        async with neo.session() as s:
             result = await s.run(cypher, **all_params)
             rec = await result.single()
         if rec is None:

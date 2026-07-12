@@ -10,6 +10,7 @@ structured JSON response — NO FALLBACK behavior, just visible failure.
 
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
@@ -28,6 +29,7 @@ from apollo.errors import (
     FilterRejectedError,
     InvalidPhaseError,
     KGEntryNotFoundError,
+    KGUnavailableError,
     MalformedEquationError,
     NoMatchingConceptError,
     ParserCouldNotExtractError,
@@ -69,19 +71,45 @@ from apollo.subjects.curriculum_db import list_course_concepts
 from auth import AuthContext
 from database.session import get_db_session
 
+_LOG = logging.getLogger(__name__)
+
 # ----------------------------------------------------------------------
 # Neo4j client — process singleton, lazily constructed.
 # Used by handlers that need to read/write the per-attempt KG subgraph.
+#
+# Degraded mode: Neo4j is optional infrastructure for the student
+# interaction (the served grade is the transcript LLM grader; the graph
+# lane is shadow-only). `get_neo4j_client` therefore never raises — a
+# construction failure (missing/bad env, Aura unreachable) is logged and
+# returns None. NO NEGATIVE CACHING: a failure does not poison the
+# singleton, so the next request retries construction fresh (env may be
+# fixed / Aura may return). Handlers + KGStore degrade explicitly on None.
 # ----------------------------------------------------------------------
 
 _neo4j_client_singleton: Neo4jClient | None = None
 
 
-def get_neo4j_client() -> Neo4jClient:
+def get_neo4j_client() -> Neo4jClient | None:
     global _neo4j_client_singleton
     if _neo4j_client_singleton is None:
-        _neo4j_client_singleton = Neo4jClient.from_env()
+        try:
+            _neo4j_client_singleton = Neo4jClient.from_env()
+        except Exception as exc:  # noqa: BLE001 - degrade, never 500 the request
+            _LOG.warning("apollo_neo4j_client_construction_failed error=%s", exc)
+            return None
     return _neo4j_client_singleton
+
+
+async def require_neo4j_client(
+    neo: Neo4jClient | None = Depends(get_neo4j_client),
+) -> Neo4jClient:
+    """Dependency for KG-native routes (authored-set provisioning) where a
+    missing Neo4j client should surface a structured 503 rather than degrade
+    silently — there is no meaningful Postgres-only fallback for teacher
+    provisioning."""
+    if neo is None:
+        raise KGUnavailableError(stage="get_neo4j_client", last_error="client unavailable")
+    return neo
 
 
 async def close_neo4j_client() -> None:
@@ -167,7 +195,7 @@ async def create_session(
 async def get_session(
     session_id: int,
     db: AsyncSession = Depends(get_db_session),
-    neo: Neo4jClient = Depends(get_neo4j_client),
+    neo: Neo4jClient | None = Depends(get_neo4j_client),
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_get_session(db=db, neo=neo, session_id=session_id)
@@ -178,7 +206,7 @@ async def chat(
     session_id: int,
     body: ChatRequest,
     db: AsyncSession = Depends(get_db_session),
-    neo: Neo4jClient = Depends(get_neo4j_client),
+    neo: Neo4jClient | None = Depends(get_neo4j_client),
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_chat(db=db, neo=neo, session_id=session_id, message=body.message)
@@ -188,7 +216,7 @@ async def chat(
 async def done(
     session_id: int,
     db: AsyncSession = Depends(get_db_session),
-    neo: Neo4jClient = Depends(get_neo4j_client),
+    neo: Neo4jClient | None = Depends(get_neo4j_client),
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_done(db=db, neo=neo, session_id=session_id)
@@ -219,7 +247,7 @@ async def next_problem(
 async def restart_problem(
     session_id: int,
     db: AsyncSession = Depends(get_db_session),
-    neo: Neo4jClient = Depends(get_neo4j_client),
+    neo: Neo4jClient | None = Depends(get_neo4j_client),
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     from apollo.handlers.restart_problem import handle_restart_problem
@@ -231,7 +259,7 @@ async def restart_problem(
 async def end(
     session_id: int,
     db: AsyncSession = Depends(get_db_session),
-    neo: Neo4jClient = Depends(get_neo4j_client),
+    neo: Neo4jClient | None = Depends(get_neo4j_client),
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_end(db=db, neo=neo, session_id=session_id)
@@ -301,7 +329,7 @@ async def negotiate_challenge(
     entry_id: str,
     body: ChallengeRequest,
     db: AsyncSession = Depends(get_db_session),
-    neo: Neo4jClient = Depends(get_neo4j_client),
+    neo: Neo4jClient | None = Depends(get_neo4j_client),
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_challenge(
@@ -319,7 +347,7 @@ async def negotiate_paraphrase(
     entry_id: str,
     body: ParaphraseRequest,
     db: AsyncSession = Depends(get_db_session),
-    neo: Neo4jClient = Depends(get_neo4j_client),
+    neo: Neo4jClient | None = Depends(get_neo4j_client),
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_paraphrase(
@@ -336,7 +364,7 @@ async def negotiate_skip(
     session_id: int,
     entry_id: str,
     db: AsyncSession = Depends(get_db_session),
-    neo: Neo4jClient = Depends(get_neo4j_client),
+    neo: Neo4jClient | None = Depends(get_neo4j_client),
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_skip(
@@ -352,7 +380,7 @@ async def negotiate_trace(
     session_id: int,
     entry_id: str,
     db: AsyncSession = Depends(get_db_session),
-    neo: Neo4jClient = Depends(get_neo4j_client),
+    neo: Neo4jClient | None = Depends(get_neo4j_client),
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
     return await handle_get_trace(
@@ -536,6 +564,24 @@ async def problem_not_found_handler(request: Request, exc: ProblemNotFoundError)
     )
 
 
+async def kg_unavailable_handler(request: Request, exc: KGUnavailableError) -> JSONResponse:
+    """Degraded mode: Neo4j is unreachable / mid-call driver failure on a
+    KG-native route (negotiation moves, restart_problem, authored-set
+    provisioning). Distinct from the NO-FALLBACK family — this is
+    infrastructure optionality, not a grading bug — but still a loud,
+    structured 503 rather than a silent downgrade."""
+    return JSONResponse(
+        status_code=503,
+        content=_err_payload(
+            "kg_unavailable",
+            "The knowledge-graph panel is temporarily unavailable — your "
+            "session is unaffected; try again shortly.",
+            stage=exc.stage,
+            last_error=exc.last_error,
+        ),
+    )
+
+
 async def coverage_grading_handler(request: Request, exc: CoverageGradingError) -> JSONResponse:
     """Item #10: 503 surfaces the no-fallback contract — the UI shows
     "grading unavailable, try again" instead of receiving a downgraded
@@ -653,6 +699,7 @@ def register_exception_handlers(app) -> None:
     app.add_exception_handler(NoMatchingConceptError, no_matching_concept_handler)
     app.add_exception_handler(PoolExhaustedError, pool_exhausted_handler)
     app.add_exception_handler(CoverageGradingError, coverage_grading_handler)
+    app.add_exception_handler(KGUnavailableError, kg_unavailable_handler)
     # ContextOverflowError lives in apollo.agent.apollo_llm; import lazily
     # to avoid a circular import in api.py's top-level module load.
     from apollo.agent.apollo_llm import ContextOverflowError

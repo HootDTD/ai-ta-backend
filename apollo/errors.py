@@ -252,6 +252,25 @@ class TranscriptAuditUnavailableError(ApolloError):
         )
 
 
+class KGUnavailableError(ApolloError):
+    """Neo4j is unreachable / mid-call driver failure — DEGRADED-MODE, not the
+    NO-FALLBACK loud-crash family. The served grade is the transcript LLM
+    grader; Neo4j is optional infrastructure for the student interaction, so
+    this error is the structured signal a KG-native route (negotiation,
+    restart_problem, authored-set provisioning) or the `KGStore` guard raises
+    when there is no client to operate on. Surfaces as a 503 `kg_unavailable`
+    ("try again shortly") via `apollo.api`'s exception handler. `stage`
+    identifies the call site (e.g. "read_graph", "write_nodes", "challenge");
+    `last_error` carries the underlying driver/construction failure text."""
+
+    def __init__(self, *, stage: str, last_error: str) -> None:
+        self.stage = stage
+        self.last_error = last_error
+        super().__init__(
+            f"Knowledge graph unavailable at stage {stage!r}: {last_error}"
+        )
+
+
 class ResolutionInvalidOutputError(ApolloError):
     """The one LLM adjudication call returned a key that is NOT in the closed
     candidate set (a hallucination).

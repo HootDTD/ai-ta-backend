@@ -5,11 +5,32 @@ Required env vars: NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD, NEO4J_DATABASE.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncSession
+from neo4j.exceptions import AuthError, DatabaseUnavailable, DriverError, TransientError
+
+from apollo.errors import KGUnavailableError
+
+# Degraded-mode exception tuple — Neo4j missing / unreachable / broken
+# connection, NOT a Cypher/data-shape bug. Installed neo4j 5.28.3 hierarchy:
+# ServiceUnavailable/SessionExpired -> DriverError -> GqlError;
+# AuthError -> ClientError -> Neo4jError -> GqlError. There is no common
+# ancestor below Exception across DriverError and Neo4jError except GqlError
+# (which also covers CypherSyntaxError etc. — those must NOT be swallowed),
+# so this tuple names the specific infra-failure branches instead.
+KG_DEGRADED_ERRORS: tuple[type[BaseException], ...] = (
+    KGUnavailableError,
+    DriverError,       # ServiceUnavailable, SessionExpired, session/config errors
+    AuthError,         # bad credentials
+    TransientError,    # server-side transient
+    DatabaseUnavailable,
+    OSError,
+    asyncio.TimeoutError,
+)
 
 
 class Neo4jClient:
