@@ -7,7 +7,7 @@ It REUSES three frozen primitives and re-implements none of their logic:
     reference-solution step with its ``entity_key`` + a top-level
     ``declared_paths`` (the §6.1 annotated-graph contract the lint's gate 2
     requires);
-  * ``run_promotion_lint`` (3B2b) — the eight §8B.4 gates, reading the concept's
+  * ``run_promotion_lint`` (3B2b) — the nine §8B.4 gates, reading the concept's
     AUTHORED ``canonical_symbols`` / ``normalization_map`` (gate 4 non-vacuity)
     plus the caller-supplied ``existing_problem_hashes`` (gate 8 dedup);
   * ``project_canon`` (3C1) — the idempotent ``:Canon`` MERGE for the concept's
@@ -35,6 +35,7 @@ re-projected on the next attempt.
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,10 +46,14 @@ from apollo.persistence.learner_model_seed import (
     annotate_reference_solution,
 )
 from apollo.persistence.models import Concept, ConceptProblem
-from apollo.provisioning.promotion_lint import content_active_gates, run_promotion_lint
+from apollo.provisioning.promotion_lint import (
+    PromotionUnresolved,
+    content_active_gates,
+    run_promotion_lint,
+)
 from apollo.provisioning.tag_mint import MintPlan
 
-__all__ = ["promote", "PromoteResult"]
+__all__ = ["promote", "PromoteHeldForReview", "PromoteResult"]
 
 _LOG = logging.getLogger(__name__)
 
@@ -57,11 +62,17 @@ _SOLUTION_SOURCE_DEFAULT = "generated"
 
 class PromoteResult(BaseModel):
     """The promote outcome (the 3B2g orchestrator handoff). ``failed_gate`` is the
-    1..8 gate number on a lint failure, ``None`` on a pass."""
+    1..9 gate number on a lint failure, ``None`` on a pass."""
 
     promoted: bool
     failed_gate: int | None = None
     diagnostic: str = ""
+
+
+class PromoteHeldForReview(PromoteResult):
+    """Distinguished gate-9 unresolved outcome; still a non-pass to old callers."""
+
+    verdict: Literal["unresolved"] = "unresolved"
 
 
 def _annotate(problem: dict, mint_plan: MintPlan) -> dict:
@@ -164,7 +175,10 @@ async def promote(
                 "failed_gate": result.failed_gate,
             },
         )
-        return PromoteResult(
+        result_type = (
+            PromoteHeldForReview if isinstance(result, PromotionUnresolved) else PromoteResult
+        )
+        return result_type(
             promoted=False,
             failed_gate=result.failed_gate,
             diagnostic=result.diagnostic,

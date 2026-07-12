@@ -29,8 +29,8 @@ quarantine (3B2h). This unit reads the inventory + writes ONE audit row.
 """
 
 from __future__ import annotations
-import re
 
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -44,7 +44,6 @@ from apollo.provisioning.dedup_constants import (
 )
 
 __all__ = ["DedupVerdict", "resolve_candidate", "is_false_merge_risk"]
-
 
 
 @dataclass(frozen=True)
@@ -260,8 +259,7 @@ async def resolve_candidate(
         exclude_entity_ids=exclude_entity_ids,
     )
     embed_pool = [
-        ent for ent in raw_embed_pool
-        if not is_false_merge_risk(candidate_key, ent.canonical_key)
+        ent for ent in raw_embed_pool if not is_false_merge_risk(candidate_key, ent.canonical_key)
     ]
     if not embed_pool:
         # Nothing to compare against -> distinct (similarity unknown).
@@ -282,7 +280,6 @@ async def resolve_candidate(
             similarity=None,
             matched_entity_id=None,
         )
-
 
     cand_vec = embed_fn(candidate.scope_summary)
     # Pick the MAX cosine; ties break to the LOWEST entity id (-id maximised).

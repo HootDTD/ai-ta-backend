@@ -36,8 +36,8 @@
       "id": "plan_apply_flow_rate_definition",
       "step": 2,
       "content": {
-        "label": "Evaluate the volumetric flow rate Q = A times v by substituting the given area and velocity",
         "order": 1,
+        "label": "Evaluate the volumetric flow rate Q = A times v by substituting the given area and velocity",
         "action": "substitute A = 0.015 m² and v = 4.0 m/s into the volumetric flow rate equation Q = A*v and evaluate",
         "purpose": "directly compute the volumetric flow rate Q from the given area and velocity",
         "uses_equations": [

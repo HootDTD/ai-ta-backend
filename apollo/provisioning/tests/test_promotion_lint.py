@@ -1,4 +1,4 @@
-"""Pure fixture tests for the §8B.4 eight-gate promotion lint.
+"""Pure fixture tests for the §8B.4 nine-gate promotion lint.
 
 No DB, no LLM, no mocks, no containers. The POSITIVE fixture is the seeded
 bernoulli problem (the problem_01.json shape, inlined so mutations are visible
@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import copy
 import json
+import multiprocessing
 import pathlib
+import time
+
+import pytest
 
 from apollo.ontology.graph import KGGraph
 from apollo.ontology.nodes import build_node
@@ -202,9 +206,10 @@ def _lint(graph: dict, *, existing_hashes=None) -> PromotionResult:
 # --------------------------------------------------------------------------- #
 
 
-def test_seeded_bernoulli_passes_all_eight_gates():
+def test_seeded_bernoulli_without_stated_answer_is_byte_identical():
     result = _lint(_bernoulli_graph())
     assert result == PromotionResult(ok=True, failed_gate=None, diagnostic="")
+    assert type(result) is PromotionResult
 
 
 # --------------------------------------------------------------------------- #
@@ -638,9 +643,7 @@ def test_augmented_definition_draft_passes_gates_5_to_7():
 
     def annotate(problem: dict) -> dict:
         graph = copy.deepcopy(problem)
-        graph["declared_paths"] = [
-            [step["id"] for step in graph["reference_solution"]]
-        ]
+        graph["declared_paths"] = [[step["id"] for step in graph["reference_solution"]]]
         for step in graph["reference_solution"]:
             step["entity_key"] = f"{step['entry_type']}.{step['id']}"
         return graph
@@ -666,9 +669,7 @@ def test_augmented_definition_draft_passes_gates_5_to_7():
 
     bare = build_approved_pair(
         candidate,
-        ReferenceSolutionDraft(
-            solution_source="generated", reference_solution=[definition]
-        ),
+        ReferenceSolutionDraft(solution_source="generated", reference_solution=[definition]),
         search_space_id=1,
     )
     bare_result = run_promotion_lint(
@@ -698,8 +699,7 @@ def _argument_graph() -> dict:
         "difficulty": "standard",
         "given_values": {},
         "problem_text": (
-            "Argue whether a federal system strengthens or weakens democratic "
-            "accountability."
+            "Argue whether a federal system strengthens or weakens democratic accountability."
         ),
         "target_unknown": "whether federalism strengthens accountability",
         "declared_paths": [
@@ -792,7 +792,7 @@ def test_argument_graph_promotes_under_qualitative_active_gates():
     assert result.failed_gate is None
 
 
-def test_default_active_gates_is_all_eight_back_compat():
+def test_default_active_gates_is_all_nine_back_compat():
     """Explicitly passing ALL_PROMOTION_GATES is identical to omitting active_gates
     (the back-compat contract): the seeded bernoulli still passes all eight."""
     from apollo.provisioning.promotion_lint import ALL_PROMOTION_GATES
@@ -890,7 +890,9 @@ def _seed_anchor_inputs() -> list[tuple[dict, set, dict]]:
 
 
 def _anchor_inputs() -> list[tuple[dict, set, dict]]:
-    return [(_bernoulli_graph(), _canonical_symbols(), _normalization_map())] + _seed_anchor_inputs()
+    return [
+        (_bernoulli_graph(), _canonical_symbols(), _normalization_map())
+    ] + _seed_anchor_inputs()
 
 
 def _old_lint(g: dict, canon: set, norm: dict) -> PromotionResult:
@@ -944,8 +946,15 @@ def _load_aae333() -> list[tuple[str, dict, set, dict, int]]:
     out: list[tuple[str, dict, set, dict, int]] = []
     for name, meta in sorted(expected.items()):
         g = json.loads((_FIXTURE_DIR / f"{name}.json").read_text())
-        out.append((name, g, set(meta["canonical_symbols"]), meta["normalization_map"],
-                    int(meta["failed_gate"])))
+        out.append(
+            (
+                name,
+                g,
+                set(meta["canonical_symbols"]),
+                meta["normalization_map"],
+                int(meta["failed_gate"]),
+            )
+        )
     return out
 
 
@@ -994,10 +1003,10 @@ def test_content_active_gates_equationless_graph_drops_symbolic():
     assert content_active_gates(_argument_graph()) == frozenset({1, 2, 3, 5, 8})
 
 
-def test_content_active_gates_symbolic_graph_keeps_all_eight():
+def test_content_active_gates_symbolic_graph_activates_syntax_layer_not_gate9():
     """A symbolic graph (>=1 parseable equation) self-activates the symbolic rigor
-    gates {4,6,7}, so the content-derived active set is all eight — byte-identical
-    to today's default for the back-compat anchor."""
+    gates {4,6,7}. Gate 9 remains inactive because this graph has no separate
+    target-isolating stated-answer equation."""
     from apollo.provisioning.promotion_lint import content_active_gates
 
     assert content_active_gates(_bernoulli_graph()) == frozenset({1, 2, 3, 4, 5, 6, 7, 8})
@@ -1010,31 +1019,35 @@ def test_content_active_gates_schema_broken_graph_keeps_all_gates():
 
     broken = copy.deepcopy(_bernoulli_graph())
     broken["reference_solution"] = "not a list"  # ValidationError on model_validate
-    assert content_active_gates(broken) == frozenset({1, 2, 3, 4, 5, 6, 7, 8})
+    assert content_active_gates(broken) == frozenset(range(1, 10))
 
 
 # --------------------------------------------------------------------------- #
 # WU-3B2b-SA Phase 3 — Direction-B named tiers (structural core + rigor layers)
 #
 # The lint's three tiers are NAMED in code: a STRUCTURAL CORE (always-on floor) +
-# a list of RIGOR LAYERS (each a pair (applies?, gate_numbers); v1 ships exactly
-# one — the symbolic layer) + the faithfulness oracle (pairing_gate, run by the
+# a list of RIGOR LAYERS (each a pair (applies?, gate_numbers): symbolic closure
+# plus solve-and-check) + the faithfulness oracle (pairing_gate, run by the
 # orchestrator). content_active_gates is DRIVEN by this surface, so the safety
 # property — a rigor layer's gates activate ONLY when it applies — is structurally
 # enforced (a layer physically cannot block content it does not apply to).
 # --------------------------------------------------------------------------- #
 
 
-def test_direction_b_named_tiers_exist_and_symbolic_layer_is_the_only_one():
+def test_direction_b_named_tiers_include_solve_check_layer():
     from apollo.provisioning.promotion_lint import RIGOR_LAYERS, STRUCTURAL_CORE_GATES
 
     assert STRUCTURAL_CORE_GATES == frozenset({1, 2, 3, 5, 8})
-    assert len(RIGOR_LAYERS) == 1  # v1 ships exactly the symbolic layer
+    assert len(RIGOR_LAYERS) == 2
     applies, gates = RIGOR_LAYERS[0]
+    solve_applies, solve_gates = RIGOR_LAYERS[1]
     assert set(gates) == {4, 6, 7}
+    assert set(solve_gates) == {9}
     # the symbolic layer APPLIES iff parseable equations are present
     assert applies(_bernoulli_graph()) is True
     assert applies(_argument_graph()) is False
+    assert solve_applies(_bernoulli_graph()) is False
+    assert solve_applies(_argument_graph()) is False
 
 
 def test_rigor_layer_gates_activate_only_when_applicable():
@@ -1249,24 +1262,230 @@ def test_gate7_rejects_two_independent_unknowns_via_derive():
     assert _gate_7(problem) is not None
 
 
-def test_gate7_rejects_mathematically_contradictory_system():
-    """Gate 7 solve check rejects mathematically contradictory systems (e.g. no real solution due to imaginary sqrt)
-    even if they pass the static paper-closure check (Resolves Gap a)."""
-    graph = copy.deepcopy(_bernoulli_graph())
-    # Make Bernoulli equation have no real solution by introducing sqrt of a negative value under test inputs
-    _step(graph, "bernoulli")["content"]["symbolic"] = (
-        "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + sqrt(P2 - 300000) + Rational(1,2)*rho*v2**2 + rho*g*h2)"
+def _gate9_graph(
+    *,
+    governing: str,
+    stated: str,
+    givens=None,
+    assumption=None,
+    target: str = "Q",
+) -> dict:
+    steps = []
+    path = []
+    if assumption is not None:
+        steps.append(
+            {
+                "id": "assumption",
+                "step": 1,
+                "entry_type": "condition",
+                "entity_key": "cond.assumption",
+                "content": {"label": "Assumption", "applies_when": assumption},
+                "depends_on": [],
+            }
+        )
+        path.append("assumption")
+    offset = len(steps)
+    steps.extend(
+        [
+            {
+                "id": "governing",
+                "step": offset + 1,
+                "entry_type": "equation",
+                "entity_key": "eq.governing",
+                "content": {"label": "Governing equation", "symbolic": governing},
+                "depends_on": ["assumption"] if assumption is not None else [],
+            },
+            {
+                "id": "answer_key",
+                "step": offset + 2,
+                "entry_type": "equation",
+                "entity_key": "eq.answer_key",
+                "content": {"label": "Stated answer", "symbolic": f"{target} = {stated}"},
+                "depends_on": ["governing"],
+            },
+            {
+                "id": "solve",
+                "step": offset + 3,
+                "entry_type": "procedure_step",
+                "entity_key": "proc.solve",
+                "content": {
+                    "order": 1,
+                    "action": f"solve the governing equation and report {target}",
+                    "purpose": "obtain the stated answer",
+                    "uses_equations": ["answer_key"],
+                },
+                "depends_on": ["answer_key"],
+            },
+        ]
     )
-    r = run_promotion_lint(
-        graph,
-        canonical_symbols=_canonical_symbols(),
-        normalization_map=_normalization_map(),
-        existing_problem_hashes=set(),
-    )
-    assert r.ok is False
-    assert r.failed_gate == 7
-    assert "cannot be solved" in r.diagnostic
+    path.extend(["governing", "answer_key", "solve"])
+    return {
+        "id": "gate9",
+        "concept_id": "flow_rate",
+        "difficulty": "intro",
+        "given_values": givens or {},
+        "problem_text": f"Solve for {target}.",
+        "target_unknown": target,
+        "declared_paths": [path],
+        "reference_solution": steps,
+    }
 
+
+def _lint_gate9(graph: dict):
+    from apollo.provisioning.promotion_lint import content_active_gates
+
+    return run_promotion_lint(
+        graph,
+        canonical_symbols={"Q", "A", "B", "v", "rho", "u", "U", "f_half"},
+        normalization_map={},
+        existing_problem_hashes=set(),
+        active_gates=content_active_gates(graph),
+    )
+
+
+def test_gate9_correct_answer_is_verified():
+    graph = _gate9_graph(governing="Q = A*v", stated="0.06", givens={"A": 0.015, "v": 4.0})
+    result = _lint_gate9(graph)
+    assert result.ok is True
+    assert result.verdict == "verified"
+
+
+def test_gate9_wrong_answer_is_refuted_with_solved_vs_stated_diagnostic():
+    graph = _gate9_graph(governing="Q - A*v", stated="0.07", givens={"A": 0.015, "v": 4.0})
+    result = _lint_gate9(graph)
+    assert result.ok is False
+    assert result.failed_gate == 9
+    assert result.verdict == "refuted"
+    assert "solved='0.0600000000000000'" in result.diagnostic
+    assert "stated='0.0700000000000000'" in result.diagnostic
+
+
+def test_gate9_symbolic_residual_and_assumption_parameter_are_verified():
+    graph = _gate9_graph(
+        governing="Q - 2*rho",
+        stated="rho + rho",
+        assumption="assume ρ constant and positive",
+    )
+    result = _lint_gate9(graph)
+    assert result.ok is True
+    assert result.verdict == "verified"
+
+
+def test_gate9_unsupported_transcendental_system_is_unresolved():
+    graph = _gate9_graph(governing="Q + cos(Q)", stated="0")
+    result = _lint_gate9(graph)
+    assert result.ok is False
+    assert result.failed_gate == 9
+    assert result.verdict == "unresolved"
+    assert "NotImplementedError" in result.diagnostic
+
+
+def test_gate9_timeout_is_unresolved(monkeypatch):
+    import apollo.provisioning.promotion_lint as lint
+
+    graph = _gate9_graph(governing="Q - 1", stated="1")
+    monkeypatch.setattr(lint, "_solve_with_timeout", lambda *_args: ("timeout", None))
+    result = _lint_gate9(graph)
+    assert result.verdict == "unresolved"
+    assert "timeout" in result.diagnostic
+
+
+def test_gate9_solver_timeout_hard_terminates_hanging_child(monkeypatch):
+    from sympy import Symbol
+
+    import apollo.provisioning.promotion_lint as lint
+
+    if "fork" not in multiprocessing.get_all_start_methods():
+        pytest.skip("monkeypatched solver is inherited only by the fork worker")
+
+    def _hang(*_args, **_kwargs):
+        time.sleep(5)
+
+    monkeypatch.setattr(lint, "solve", _hang)
+    monkeypatch.setattr(lint, "_GATE9_SOLVE_TIMEOUT_SECONDS", 0.05)
+    q = Symbol("Q")
+    started = time.monotonic()
+    status, payload = lint._solve_with_timeout([q - 1], [q])
+    assert status == "timeout"
+    assert payload is None
+    assert time.monotonic() - started < 1.0
+
+
+def test_gate9_more_than_one_residual_unknown_is_unresolved_not_refuted():
+    from apollo.provisioning.promotion_lint import content_active_gates
+
+    graph = _gate9_graph(governing="Q + A + B - 1", stated="1")
+    # Gate 7 intentionally remains the earlier paper-count brake in the normal
+    # active set. Isolate gate 9 here to pin its own three-valued contract for a
+    # caller/layer configuration that delegates under-determination to solving.
+    result = run_promotion_lint(
+        graph,
+        canonical_symbols={"Q", "A", "B"},
+        normalization_map={},
+        existing_problem_hashes=set(),
+        active_gates=content_active_gates(graph) - {7},
+    )
+    assert result.failed_gate == 9
+    assert result.verdict == "unresolved"
+    assert "2 residual unknowns" in result.diagnostic
+
+
+def test_gate9_calc_corpora_correct_and_wrong_answer_keys():
+    """Exercise committed Bernoulli and AAE equations, not invented algebra."""
+    root = pathlib.Path(__file__).resolve().parents[2]
+    cases = [
+        (
+            root / "subjects/fluid_mechanics/concepts/bernoulli_principle/problems/problem_04.json",
+            "flow_rate_definition",
+            "Q",
+            "0.06",
+        ),
+        (root / "provisioning/tests/fixtures/aae333_06.json", "profile", "u", "0.3965"),
+    ]
+    for path, equation_id, target, correct in cases:
+        fixture = json.loads(path.read_text())
+        governing = next(
+            step["content"]["symbolic"]
+            for step in fixture["reference_solution"]
+            if step["id"] == equation_id
+        )
+        correct_result = _lint_gate9(
+            _gate9_graph(
+                governing=governing,
+                stated=correct,
+                givens=fixture["given_values"],
+                target=target,
+            )
+        )
+        wrong_result = _lint_gate9(
+            _gate9_graph(
+                governing=governing,
+                stated="999",
+                givens=fixture["given_values"],
+                target=target,
+            )
+        )
+        assert correct_result.verdict == "verified", path
+        assert wrong_result.verdict == "refuted", path
+
+
+def test_gate9_numeric_fallback_skips_denominator_poles():
+    from sympy import Symbol
+
+    from apollo.provisioning.promotion_lint import _numeric_compare
+
+    x = Symbol("x", real=True)
+    # The first deterministic sample is x=2, a pole; five later safe samples agree.
+    assert _numeric_compare(1 / (x - 2), 1 / (x - 2)) == "verified"
+
+
+def test_gate9_inactive_qualitative_result_is_byte_identical():
+    graph = _argument_graph()
+    result = _lint_gate9(graph)
+    expected = PromotionResult(ok=True, failed_gate=None, diagnostic="")
+    assert type(result) is PromotionResult
+    assert result == expected
+    assert repr(result) == repr(expected)
 
 
 # --------------------------------------------------------------------------- #

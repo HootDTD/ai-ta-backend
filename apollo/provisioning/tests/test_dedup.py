@@ -30,8 +30,8 @@ from apollo.persistence.models import Concept, DedupDecision, KGEntity, Subject
 from apollo.provisioning.dedup import (
     DedupVerdict,
     _cosine,
-    resolve_candidate,
     is_false_merge_risk,
+    resolve_candidate,
 )
 from apollo.provisioning.dedup_constants import (
     EMBED_JUDGE_BAND,
@@ -590,9 +590,7 @@ async def test_exclude_entity_ids_forces_distinct(db_session):
     a candidate cannot dedup against an entity minted earlier in the SAME mint --
     what keeps two distinct nodes of one problem (m, M) from fusing. RED without the
     param (slug-merges into the excluded entity)."""
-    ss, concept_id, ids = await _seed_course(
-        db_session, slug="excl", entities=[("ent.x", "BASE")]
-    )
+    ss, concept_id, ids = await _seed_course(db_session, slug="excl", entities=[("ent.x", "BASE")])
     cand = _Candidate(canonical_key="ent.x", scope_summary="BASE")
     verdict = await resolve_candidate(
         db_session,
@@ -732,16 +730,16 @@ def test_is_false_merge_risk():
     assert is_false_merge_risk("var.m", "var.M") is True
     assert is_false_merge_risk("var.v1", "var.V1") is True
     assert is_false_merge_risk("var.v_1", "var.V_2") is True
-    
+
     # Subscript / number differences should trigger merge risk
     assert is_false_merge_risk("var.v_1", "var.v_2") is True
     assert is_false_merge_risk("var.v", "var.v_1") is True
     assert is_false_merge_risk("var.v1", "var.v2") is True
-    
+
     # Completely different variable names should not trigger merge risk
     assert is_false_merge_risk("var.v", "var.u") is False
     assert is_false_merge_risk("var.v_1", "var.u_1") is False
-    
+
     # Concept names shouldn't trigger unless they only differ by case
     assert is_false_merge_risk("eq.bernoulli", "eq.Bernoulli") is True
     assert is_false_merge_risk("eq.bernoulli", "eq.continuity") is False
@@ -756,7 +754,7 @@ async def test_resolve_candidate_prevents_false_merge(db_session):
     # Target existing entity is 'var.m' with vector BASE.
     # Candidate is 'var.M' with summary BASE (cos == 1.0).
     cand = _Candidate(canonical_key="var.M", scope_summary="BASE")
-    
+
     verdict = await resolve_candidate(
         db_session,
         search_space_id=ss_id,
@@ -768,4 +766,3 @@ async def test_resolve_candidate_prevents_false_merge(db_session):
     # Cosine is 1.0 but it's a false-merge risk, so it should stay distinct
     assert verdict.verdict == "distinct"
     assert verdict.matched_entity_id is None
-
