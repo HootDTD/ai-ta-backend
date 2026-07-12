@@ -85,9 +85,14 @@ independent, so it covers insert-time stamping and later promotion updates.
 “generate N more problems like these” library behind the per-call,
 default-OFF `APOLLO_PROBLEM_GENERATION` flag. It cycles valid Tier-2 seed
 problems through subject-agnostic variation operators, generates a statement,
-reuses `find_or_generate` for a reference DAG, rejects normalized duplicates
-and answer leaks, then writes explicit Tier-1 `solution_source="generated"`
-rows. Every written row is held for teacher review through the existing
+reuses `find_or_generate` for a reference DAG, rejects normalized duplicates,
+runs a pure SymPy round-trip verifier, and rejects answer leaks before writing
+explicit Tier-1 `solution_source="generated"` rows. Self-refuting variants are
+dropped; verified, unresolved, and inapplicable verdicts are retained in
+provenance. Inapplicable prose variants that pass the leak guard also receive a
+fail-open, advisory claim-decomposition rubric whose validation ceiling is
+explicitly `faithfulness_only`. Every written row is held for teacher review
+through the existing
 `provenance.authored_review.ocr_draft` handoff; GEN-2 never promotes content or
 changes the approve → lint → promote chain. Per-run token ceilings are exposed
 for the caller's `MeteredChat`, and a mid-run budget breach returns already
