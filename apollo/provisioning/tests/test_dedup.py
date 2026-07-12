@@ -26,7 +26,7 @@ from dataclasses import FrozenInstanceError, dataclass
 import pytest
 from sqlalchemy import select
 
-from apollo.persistence.models import Concept, DedupDecision, KGEntity, Subject
+from apollo.persistence.models import Concept, DedupDecision, IngestRun, KGEntity, Subject
 from apollo.provisioning.dedup import (
     DedupVerdict,
     _cosine,
@@ -271,6 +271,44 @@ async def test_embedding_at_threshold_merges(db_session):
     assert rows[0].method == "embedding"
     assert rows[0].similarity == pytest.approx(0.92)
     assert rows[0].verdict == "merged"
+
+
+async def test_dedup_pressure_aggregates_and_persists_per_ingest_run(db_session):
+    """Exact + embedding merge + embedding distinct update one queryable gauge."""
+    ss_id, concept_id, _ids = await _seed_course(
+        db_session,
+        slug="c-pressure",
+        entities=[("ent.exact", "BASE"), ("ent.embedding", "BASE")],
+    )
+    run = IngestRun(search_space_id=ss_id, document_id=901, status="running")
+    db_session.add(run)
+    await db_session.flush()
+
+    scripted = (
+        _Candidate(canonical_key="ent.exact", scope_summary="MERGE_0_98"),
+        _Candidate(canonical_key="cand.merge", scope_summary="MERGE_0_98"),
+        _Candidate(canonical_key="cand.distinct", scope_summary="BELOW_0_50"),
+    )
+    for candidate in scripted:
+        await resolve_candidate(
+            db_session,
+            search_space_id=ss_id,
+            concept_id=concept_id,
+            candidate=candidate,
+            embed_fn=_embed,
+            judge_fn=_judge_explodes,
+            ingest_run_id=int(run.id),
+        )
+
+    await db_session.refresh(run)
+    assert run.dedup_pressure == {
+        "total_candidates": 3,
+        "exact_merges": 1,
+        "embedding_merges": 1,
+        "embedding_distinct": 1,
+        "embedding_merge_ratio": 0.5,
+        "per_concept": {str(concept_id): 1},
+    }
 
 
 async def test_embedding_in_band_escalates_to_judge(db_session):

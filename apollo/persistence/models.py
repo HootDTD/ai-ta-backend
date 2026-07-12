@@ -737,8 +737,9 @@ class GraphComparisonFinding(Base):
 
 class IngestRun(Base):
     """Per-document auto-provisioning run: scrape/promote/reject/merge counts plus
-    LLM call/token/cost aggregates (migration 030, §8B). ``content_hash`` lets an
-    unchanged re-upload short-circuit (3B2g). ``status`` vocabulary is
+    LLM call/token/cost aggregates (migration 030, §8B) and the mint-time
+    dedup-pressure gauge (migration 043). ``content_hash`` lets an unchanged
+    re-upload short-circuit (3B2g). ``status`` vocabulary is
     queued/running/succeeded/failed — DISTINCT from the job ``state`` vocabulary
     (the CHECK is in SQL only; the ORM declares none, repo convention)."""
 
@@ -764,6 +765,22 @@ class IngestRun(Base):
     n_promoted = Column(Integer, nullable=False, server_default=text("0"), default=0)
     n_rejected = Column(Integer, nullable=False, server_default=text("0"), default=0)
     n_dedup_merged = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    dedup_pressure = Column(
+        _JSONType,
+        nullable=False,
+        # server_default stays '{}' — a richer JSON literal here would need its
+        # colons escaped for text() (":0" parses as a bind param and renders
+        # DEFAULT '..."total_candidates"NULL...'); readers .get() every key.
+        server_default=text("'{}'::jsonb"),
+        default=lambda: {
+            "total_candidates": 0,
+            "exact_merges": 0,
+            "embedding_merges": 0,
+            "embedding_distinct": 0,
+            "embedding_merge_ratio": 0.0,
+            "per_concept": {},
+        },
+    )
     llm_calls = Column(Integer, nullable=False, server_default=text("0"), default=0)
     llm_tokens_in = Column(BigInteger, nullable=False, server_default=text("0"), default=0)
     llm_tokens_out = Column(BigInteger, nullable=False, server_default=text("0"), default=0)

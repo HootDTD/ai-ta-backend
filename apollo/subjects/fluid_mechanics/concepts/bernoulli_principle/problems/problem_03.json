@@ -53,8 +53,8 @@
       "id": "plan_invoke_incompressibility",
       "step": 3,
       "content": {
-        "order": 1,
         "label": "Invoke the incompressibility assumption so the continuity equation reduces to A1 times v1 equals A2 times v2",
+        "order": 1,
         "action": "state the incompressibility assumption so that the continuity equation simplifies to A1*v1 = A2*v2 (density cancels)",
         "purpose": "justify using the area-velocity form of continuity rather than the full mass-flux form",
         "uses_equations": []
@@ -69,8 +69,8 @@
       "id": "plan_solve_continuity_for_v2",
       "step": 4,
       "content": {
-        "order": 2,
         "label": "Substitute the known areas and inlet velocity into the continuity equation and solve for the outlet velocity v2",
+        "order": 2,
         "action": "substitute A1 = 0.02, v1 = 3.0, and A2 = 0.008 into the continuity equation and solve for v2",
         "purpose": "compute the velocity at section 2 directly from mass conservation",
         "uses_equations": [

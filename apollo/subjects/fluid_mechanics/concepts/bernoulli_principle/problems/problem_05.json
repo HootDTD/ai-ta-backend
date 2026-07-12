@@ -82,8 +82,8 @@
       "id": "plan_apply_continuity_for_v2",
       "step": 4,
       "content": {
-        "order": 1,
         "label": "Apply the continuity equation with the known areas and inlet velocity to solve for the outlet velocity v2",
+        "order": 1,
         "action": "use the continuity equation with A1 = 0.02, v1 = 1.5, and A2 = 0.005 to solve for v2",
         "purpose": "obtain v2 at the narrow section so it can be substituted into bernoulli",
         "uses_equations": [
@@ -100,8 +100,8 @@
       "id": "plan_substitute_into_bernoulli",
       "step": 5,
       "content": {
-        "order": 2,
         "label": "Substitute the known quantities into Bernoulli's equation and solve for the pressure P2 at the narrow section",
+        "order": 2,
         "action": "substitute P1, rho, v1, h1, v2, h2, and g into bernoulli's equation and solve for P2",
         "purpose": "account for both the velocity increase and the elevation drop to find the pressure at the narrow section",
         "uses_equations": [
