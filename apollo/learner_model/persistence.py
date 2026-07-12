@@ -84,6 +84,7 @@ from apollo.persistence.models import (
     MasteryEvent,
     ProblemAttempt,
 )
+from apollo.persistence.problem_linkage import resolve_concept_problem_id
 
 # v1 comparison_confidence (§3 line 432-435): grader_confidence is the shadow
 # normalization_confidence scaled by 1.0 (the per-comparison confidence is a
@@ -124,7 +125,7 @@ class LearnerUpdateResult:
     abstained: bool  # True when convert_findings_to_events() == ()
 
 
-def _mastery_event_orm_from_spec(spec) -> MasteryEvent:
+def _mastery_event_orm_from_spec(spec, *, concept_problem_id: int | None) -> MasteryEvent:
     """Build the ``apollo_mastery_events`` ORM row from a ``MasteryEventRowSpec``
     (belief tuples list-ified for the ``REAL[]`` columns; node-id tuple list-ified
     for the JSONB column)."""
@@ -133,6 +134,7 @@ def _mastery_event_orm_from_spec(spec) -> MasteryEvent:
         search_space_id=spec.search_space_id,
         entity_id=spec.entity_id,
         attempt_id=spec.attempt_id,
+        concept_problem_id=concept_problem_id,
         event_kind=spec.event_kind,
         score=spec.score,
         misconception_code=spec.misconception_code,
@@ -292,6 +294,17 @@ async def persist_learner_update(
 
     grader_confidence = shadow.normalization_confidence * _COMPARISON_CONFIDENCE
 
+    # GEN-5: one problem-bank lookup per update, shared by every event row.
+    # Legacy sessions/attempts can have no resolvable bank row; NULL linkage is
+    # additive and must never suppress their otherwise-valid mastery events.
+    concept_problem_id = None
+    if sess.concept_id is not None:
+        concept_problem_id = await resolve_concept_problem_id(
+            db,
+            concept_id=int(sess.concept_id),
+            problem_code=str(attempt.problem_id),
+        )
+
     # Attempt-wide supersede FIRST: a retry of this attempt drops ALL its prior
     # events (every entity/kind) so a kind change (misconception->corrected) does
     # not leave residue. Same txn as the re-inserts below -> atomic.
@@ -318,6 +331,7 @@ async def persist_learner_update(
             db,
             sess=sess,
             attempt=attempt,
+            concept_problem_id=concept_problem_id,
             entity_id=entity_id,
             entity_events=entity_events,
             done_ts=done_ts,
@@ -418,6 +432,7 @@ async def _persist_entity_group(
     *,
     sess: ApolloSession,
     attempt: ProblemAttempt,
+    concept_problem_id: int | None,
     entity_id: int,
     entity_events: list,
     done_ts: datetime,
@@ -496,7 +511,12 @@ async def _persist_entity_group(
         # site — immutable via dataclasses.replace. ``None`` reproduces the
         # existing None -> byte-identical to WU-5B1.
         mastery_spec = replace(mastery_spec, negotiation_move=negotiation_move)
-        db.add(_mastery_event_orm_from_spec(mastery_spec))
+        db.add(
+            _mastery_event_orm_from_spec(
+                mastery_spec,
+                concept_problem_id=concept_problem_id,
+            )
+        )
 
     # state_spec carries the combined posterior — upsert the state ONCE.
     _upsert_learner_state(
