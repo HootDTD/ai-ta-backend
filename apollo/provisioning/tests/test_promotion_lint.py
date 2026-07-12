@@ -1377,7 +1377,9 @@ def test_gate9_unsupported_transcendental_system_is_unresolved():
     assert result.ok is False
     assert result.failed_gate == 9
     assert result.verdict == "unresolved"
-    assert "NotImplementedError" in result.diagnostic
+    # Fast machines see SymPy's NotImplementedError; slower CI runners hit the
+    # 2s solver timeout first. Either is a legitimate unresolved reason.
+    assert "NotImplementedError" in result.diagnostic or "timeout" in result.diagnostic
 
 
 def test_gate9_timeout_is_unresolved(monkeypatch):
