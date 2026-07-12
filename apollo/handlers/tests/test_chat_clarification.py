@@ -38,6 +38,7 @@ from apollo.persistence.models import (
     SessionStatus,
 )
 from apollo.resolution.candidates import Candidate
+from apollo.smart_questions import QuestionDecision
 from database.models import Base
 
 # ---------------------------------------------------------------------------
@@ -187,6 +188,12 @@ def test_clarification_flag_name():
     assert chat._CLARIFICATION_ENABLED_FLAG == "APOLLO_CLARIFICATION_ENABLED"
 
 
+def test_smart_question_flag_defaults_off(monkeypatch):
+    assert chat._SMART_QUESTIONS_FLAG == "APOLLO_SMART_QUESTIONS_ENABLED"
+    monkeypatch.delenv(chat._SMART_QUESTIONS_FLAG, raising=False)
+    assert chat._smart_questions_enabled() is False
+
+
 def test_clarification_enabled_default_off(monkeypatch):
     monkeypatch.delenv(chat._CLARIFICATION_ENABLED_FLAG, raising=False)
     assert chat._clarification_enabled() is False
@@ -207,6 +214,58 @@ def test_clarification_enabled_falsey(monkeypatch, raw):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_smart_question_path_bypasses_kg_drafter(db_session_attempt, monkeypatch):
+    monkeypatch.setenv("APOLLO_SMART_QUESTIONS_ENABLED", "1")
+    db, session_id, _ = db_session_attempt
+    store = _fake_store()
+    mock_draft = MagicMock(return_value="must not be used")
+    ps = _patches(store, mock_draft_reply=mock_draft)
+    planner = AsyncMock(
+        return_value=QuestionDecision(
+            action="ask", question="What would you do next?", target_node_id="step_2"
+        )
+    )
+    with ExitStack() as stack:
+        for item in ps:
+            stack.enter_context(item)
+        stack.enter_context(patch("apollo.handlers.chat.plan_next_question", new=planner))
+        result = await chat.handle_chat(
+            db=db, neo=MagicMock(), session_id=session_id, message="I start here."
+        )
+
+    assert result["apollo_reply"] == "What would you do next?"
+    assert result["question_target"] == "step_2"
+    assert mock_draft.call_count == 0
+    assert "kg_summary" not in planner.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_smart_question_stop_executes_done(db_session_attempt, monkeypatch):
+    monkeypatch.setenv("APOLLO_SMART_QUESTIONS_ENABLED", "1")
+    db, session_id, _ = db_session_attempt
+    store = _fake_store()
+    ps = _patches(store)
+    done = AsyncMock(return_value={"rubric": {"overall": {"score": 80}}})
+    with ExitStack() as stack:
+        for item in ps:
+            stack.enter_context(item)
+        stack.enter_context(
+            patch(
+                "apollo.handlers.chat.plan_next_question",
+                new=AsyncMock(return_value=QuestionDecision(action="done")),
+            )
+        )
+        stack.enter_context(patch("apollo.handlers.done.handle_done", new=done))
+        result = await chat.handle_chat(
+            db=db, neo=MagicMock(), session_id=session_id, message="That is all."
+        )
+
+    assert result["intent_executed"]["intent"] == "done"
+    assert result["intent_executed"]["result"]["rubric"]["overall"]["score"] == 80
+    done.assert_awaited_once()
 
 
 @pytest.mark.asyncio

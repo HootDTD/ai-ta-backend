@@ -44,6 +44,7 @@ from apollo.parser.parser_llm import parse_utterance
 from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.schemas.problem import Problem
+from apollo.smart_questions import plan_next_question
 from apollo.subjects.curriculum_db import load_concept_definition
 
 _LOG = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ _CLARIFICATION_CACHE = CandidateEmbeddingCache()
 # extra LLM/embedding round-trips, draft_reply gets clarification_hints=None. Flip ON only
 # after rollout/cost review (same posture as APOLLO_GRAPH_SIM_* in done.py).
 _CLARIFICATION_ENABLED_FLAG: str = "APOLLO_CLARIFICATION_ENABLED"
+_SMART_QUESTIONS_FLAG: str = "APOLLO_SMART_QUESTIONS_ENABLED"
 # Per-turn NLI node budget: when more than this many nodes are parsed in a
 # single utterance, NLI is skipped for that turn (degrades to lexical-only).
 # Synchronous model inference runs per residual node, so uncapped utterances
@@ -65,6 +67,10 @@ _NLI_CHAT_NODE_CAP_DEFAULT: int = 15
 
 def _clarification_enabled() -> bool:
     return os.environ.get(_CLARIFICATION_ENABLED_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _smart_questions_enabled() -> bool:
+    return os.environ.get(_SMART_QUESTIONS_FLAG, "").lower() in ("1", "true", "yes")
 
 
 def _nli_chat_node_cap() -> int:
@@ -348,6 +354,53 @@ async def handle_chat(
 
     # next_idx is needed before the clarification block (asked_turn = next_idx + 1).
     next_idx = await _next_turn_index(db, session_id)
+
+    # Reference-driven smart-question controller. Unlike the legacy
+    # clarification loop, this judges the full student transcript against the
+    # authored reference graph and gives each unresolved reference node at
+    # most one question opportunity. No student-KG summary reaches the
+    # question writer. When no eligible target remains, grade automatically.
+    if _smart_questions_enabled():
+        full_transcript = [
+            ("student" if item["role"] == "user" else "apollo", item["content"])
+            for item in history_pre
+        ] + [("student", message)]
+        decision = await plan_next_question(
+            db,
+            attempt_id=int(current_attempt.id),
+            session_id=session_id,
+            problem=problem,
+            transcript=full_transcript,
+            turn_index=next_idx,
+        )
+        if decision.action == "ask":
+            validated = decision.question or "Can you explain that part one more time?"
+        else:
+            validated = "Thanks — I have enough to grade what you taught me."
+
+        await _persist_turn(
+            db,
+            session_id=session_id,
+            attempt_id=int(current_attempt.id),
+            student_msg=message,
+            apollo_msg=validated,
+        )
+        if decision.action == "done":
+            from apollo.handlers.done import handle_done  # noqa: PLC0415
+
+            done_result = await handle_done(db=db, neo=neo, session_id=session_id)
+            return {
+                "apollo_reply": validated,
+                "kg_entries_added": nodes_added,
+                "kg": student_graph.model_dump(mode="json"),
+                "intent_executed": {"intent": "done", "result": done_result},
+            }
+        return {
+            "apollo_reply": validated,
+            "kg_entries_added": nodes_added,
+            "kg": student_graph.model_dump(mode="json"),
+            "question_target": decision.target_node_id,
+        }
 
     # ---- Clarification loop: detect ambiguous residual ideas, weave answer-blind
     # probes into Apollo's reply (spec §6). Gated (default OFF) + fail-safe — never blocks

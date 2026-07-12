@@ -300,6 +300,35 @@ class Clarification(Base):
     )
 
 
+class ReferenceQuestionOpportunity(Base):
+    """One question opportunity for one authored reference node per attempt."""
+
+    __tablename__ = "apollo_reference_question_opportunities"
+
+    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    attempt_id = Column(
+        BigInteger, ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"), nullable=False,
+        index=True,
+    )
+    session_id = Column(
+        BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False,
+        index=True,
+    )
+    reference_node_id = Column(Text, nullable=False)
+    state = Column(Text, nullable=False, server_default=text("'asked_waiting'"))
+    question = Column(Text, nullable=False)
+    asked_turn = Column(Integer, nullable=False)
+    answered_turn = Column(Integer, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "attempt_id", "reference_node_id",
+            name="apollo_reference_question_opportunities_attempt_node_uniq",
+        ),
+    )
+
+
 class ApolloSession(Base):
     __tablename__ = "apollo_sessions"
 
