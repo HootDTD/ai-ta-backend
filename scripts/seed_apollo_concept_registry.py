@@ -140,6 +140,8 @@ async def _upsert_problem(
             problem_code=problem_code,
             difficulty=difficulty,
             payload=payload,
+            # EXPLICIT: ORM default=2 but SQL server_default=1; never inherit the trap.
+            tier=2,
         )
         session.add(row)
     else:

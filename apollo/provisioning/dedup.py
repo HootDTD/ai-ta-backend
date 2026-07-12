@@ -25,7 +25,8 @@ wiring (3B2d/3B2f) supplies ``embed_text`` and a ``cheap_chat`` adapter.
 Out of scope (downstream units — NOT here): scrape/mint/upsert of entities or
 problems (3B2d), solution pairing (3B2e), metering/queue-drain (3B2f), the
 ``apollo_ingest_runs.n_dedup_merged`` aggregate and the worker shell (3B2g),
-quarantine (3B2h). This unit reads the inventory + writes ONE audit row.
+quarantine (3B2h). This unit reads the inventory, writes ONE audit row, and
+increments the run's JSON dedup-pressure gauge in the same flow.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import Concept, DedupDecision, KGEntity, Subject
+from apollo.persistence.models import Concept, DedupDecision, IngestRun, KGEntity, Subject
 from apollo.provisioning.dedup_constants import (
     EMBED_JUDGE_BAND,
     EMBED_MERGE_THRESHOLD,
@@ -138,7 +139,7 @@ async def _record_decision(
     matched_entity_id: int | None,
     ingest_run_id: int | None,
 ) -> None:
-    """Construct and flush EXACTLY ONE ``apollo_dedup_decisions`` row.
+    """Construct one audit row and increment its run's dedup-pressure gauge.
 
     Immutable: builds a new ORM row, never mutates its inputs. ``flush`` (not
     ``commit``) suffices — the savepoint test fixture rolls back, and 3B2d/3B2g
@@ -156,6 +157,32 @@ async def _record_decision(
             matched_entity_id=matched_entity_id,
         )
     )
+    if ingest_run_id is not None:
+        run = await db.get(IngestRun, ingest_run_id, with_for_update=True)
+        if run is None:
+            raise RuntimeError(f"dedup ingest_run {ingest_run_id} not found")
+
+        pressure = dict(run.dedup_pressure or {})
+        pressure["total_candidates"] = int(pressure.get("total_candidates", 0)) + 1
+        if method == "slug" and verdict == "merged":
+            pressure["exact_merges"] = int(pressure.get("exact_merges", 0)) + 1
+        if method == "embedding":
+            counter = "embedding_merges" if verdict == "merged" else "embedding_distinct"
+            pressure[counter] = int(pressure.get(counter, 0)) + 1
+            if verdict == "merged":
+                per_concept = dict(pressure.get("per_concept", {}))
+                concept_key = str(concept_id)
+                per_concept[concept_key] = int(per_concept.get(concept_key, 0)) + 1
+                pressure["per_concept"] = per_concept
+
+        embedding_merges = int(pressure.get("embedding_merges", 0))
+        embedding_distinct = int(pressure.get("embedding_distinct", 0))
+        embedding_decisions = embedding_merges + embedding_distinct
+        pressure["embedding_merge_ratio"] = (
+            embedding_merges / embedding_decisions if embedding_decisions else 0.0
+        )
+        pressure.setdefault("per_concept", {})
+        run.dedup_pressure = pressure  # type: ignore[assignment]
     await db.flush()
 
 

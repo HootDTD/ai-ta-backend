@@ -13,7 +13,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-07-11
+last_verified: 2026-07-12
 stub: false
 ---
 
@@ -341,7 +341,12 @@ mutated before approval.
 running→succeeded/failed, `started_at`/`finished_at`, `n_pages`,
 `n_questions_scraped`/`n_promoted`/`n_rejected`), and the run is the SAME row
 `MeteredChat` accrues LLM call/token/cost onto (so those aggregates persist instead
-of being discarded on a throwaway namespace). **The run is opened AND committed
+of being discarded on a throwaway namespace). Migration 043 adds the queryable
+`dedup_pressure` JSONB gauge, updated inside `_record_decision` with total candidates,
+exact merges, embedding merges/distincts, embedding merge share, and embedding
+merges per concept. Both generic and authored terminal run logs include the complete
+gauge, so abnormal false-merge pressure is visible without replaying audit rows.
+**The run is opened AND committed
 BEFORE indexing** (with `document_id=NULL`, migration 036) so that an OCR/indexing
 stage failure — a bad PDF, or `index_authored_doc` raising "no chunks produced" —
 still leaves a durable run row + `apollo_ingest_errors` row + whatever page evidence

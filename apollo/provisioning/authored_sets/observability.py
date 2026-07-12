@@ -171,6 +171,7 @@ async def finalize_ingest_run(
             "n_pages": ingest_run.n_pages,
             "n_promoted": ingest_run.n_promoted,
             "n_rejected": ingest_run.n_rejected,
+            "dedup_pressure": ingest_run.dedup_pressure,
         },
     )
 
