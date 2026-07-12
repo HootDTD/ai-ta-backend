@@ -684,6 +684,11 @@ class MasteryEvent(Base):
         ForeignKey("apollo_problem_attempts.id", ondelete="SET NULL"),
         nullable=True,
     )
+    concept_problem_id = Column(
+        BigInteger,
+        ForeignKey("apollo_concept_problems.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     event_kind = Column(Text, nullable=False)
     score = Column(Float, nullable=True)
     misconception_code = Column(Text, nullable=True)
