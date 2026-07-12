@@ -30,9 +30,13 @@ from apollo.provisioning.scrape import CandidateQuestion
 
 # The not-yet-existing public names (RED on import until solution.py exists).
 from apollo.provisioning.solution import (
+    _SOLUTION_EXTRACT_SYSTEM_PROMPT,
+    _SOLUTION_GENERATE_AUGMENT_SYSTEM_PROMPT,
+    _SOLUTION_GENERATE_SYSTEM_PROMPT,
     GroundingSpan,
     ReferenceSolutionDraft,
     SolutionDraftError,
+    _parse_generated,
     build_approved_pair,
     find_or_generate,
     solution_hash,
@@ -130,6 +134,58 @@ def _reference_solution() -> list[dict]:
                 "uses_equations": ["bernoulli"],
             },
             "depends_on": ["bernoulli"],
+        },
+    ]
+
+
+def _recall_question() -> CandidateQuestion:
+    return _candidate(
+        problem_text="Define Future Shock.",
+        given_values={},
+        target_unknown="Future Shock",
+        concept_slug="future_shock",
+    )
+
+
+def _definition_only() -> list[dict]:
+    return [
+        {
+            "step": 1,
+            "entry_type": "definition",
+            "id": "d1",
+            "content": {
+                "concept": "future shock",
+                "meaning": "Disorientation caused by too much change in too little time.",
+            },
+            "depends_on": [],
+        }
+    ]
+
+
+def _augmented_steps() -> list[dict]:
+    return [
+        *_definition_only(),
+        {
+            "step": 2,
+            "entry_type": "procedure_step",
+            "id": "p1",
+            "content": {
+                "action": "State that accelerating change outpaces adaptation.",
+                "purpose": "identify the driving mechanism",
+                "order": 1,
+            },
+            "depends_on": ["d1"],
+        },
+        {
+            "step": 3,
+            "entry_type": "procedure_step",
+            "id": "p2",
+            "content": {
+                "action": "Infer the resulting disorientation.",
+                "purpose": "explain why the phenomenon follows",
+                "order": 2,
+            },
+            "depends_on": ["p1"],
         },
     ]
 
@@ -389,6 +445,166 @@ async def test_find_or_generate_provenance_records_chunk_hash():
     assert draft.provenance["chunk_content_hash"] == "deadbeefhash"
 
 
+async def test_generate_augments_on_deterministic_retry():
+    calls = []
+
+    def chat(*_a, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return json.dumps(
+                {
+                    "reference_solution": _definition_only(),
+                    "augmented_problem_text": None,
+                    "augmented_target_unknown": None,
+                }
+            )
+        return json.dumps(
+            {
+                "reference_solution": _augmented_steps(),
+                "augmented_problem_text": "Define Future Shock and explain why it occurs.",
+                "augmented_target_unknown": "why future shock occurs",
+            }
+        )
+
+    draft = await find_or_generate(
+        None,
+        _recall_question(),
+        retrieve_fn=_retrieve_returning([]),
+        chat_fn=chat,
+        augment_recall=True,
+    )
+    assert len(calls) == 2
+    assert len(calls[1]["messages"]) == len(calls[0]["messages"]) + 1
+    assert draft.augmented_problem_text == "Define Future Shock and explain why it occurs."
+    assert draft.provenance["augmented"] == "explain_why"
+
+
+async def test_generate_augments_prompt_first_single_call():
+    chat = _recording_chat(
+        {
+            "reference_solution": _augmented_steps(),
+            "augmented_problem_text": "Define Future Shock and explain why it occurs.",
+            "augmented_target_unknown": "why future shock occurs",
+        }
+    )
+    draft = await find_or_generate(
+        None,
+        _recall_question(),
+        retrieve_fn=_retrieve_returning([]),
+        chat_fn=chat,
+        augment_recall=True,
+    )
+    assert len(chat.calls) == 1  # type: ignore[attr-defined]
+    assert draft.augmented_problem_text is not None
+
+
+async def test_generate_retries_once_then_returns_unaugmented():
+    chat = _recording_chat(
+        {
+            "reference_solution": _definition_only(),
+            "augmented_problem_text": None,
+            "augmented_target_unknown": None,
+        }
+    )
+    draft = await find_or_generate(
+        None,
+        _recall_question(),
+        retrieve_fn=_retrieve_returning([]),
+        chat_fn=chat,
+        augment_recall=True,
+    )
+    assert len(chat.calls) == 2  # type: ignore[attr-defined]
+    assert draft.augmented_problem_text is None
+    assert draft.augmented_target_unknown is None
+    assert "augmented" not in draft.provenance
+
+
+async def test_generate_discards_rewrite_without_procedure_steps():
+    chat = _recording_chat(
+        {
+            "reference_solution": _definition_only(),
+            "augmented_problem_text": "Define Future Shock and explain why it occurs.",
+            "augmented_target_unknown": "why future shock occurs",
+        }
+    )
+    draft = await find_or_generate(
+        None,
+        _recall_question(),
+        retrieve_fn=_retrieve_returning([]),
+        chat_fn=chat,
+        augment_recall=True,
+    )
+    assert len(chat.calls) == 2  # type: ignore[attr-defined]
+    assert draft.augmented_problem_text is None
+    assert draft.augmented_target_unknown is None
+
+
+async def test_generate_default_flag_off_is_byte_identical():
+    chat = _recording_chat({"reference_solution": _definition_only()})
+    draft = await find_or_generate(
+        None,
+        _recall_question(),
+        retrieve_fn=_retrieve_returning([]),
+        chat_fn=chat,
+    )
+    assert len(chat.calls) == 1  # type: ignore[attr-defined]
+    call = chat.calls[0]["kwargs"]  # type: ignore[attr-defined]
+    assert call["messages"][0]["content"] == _SOLUTION_GENERATE_SYSTEM_PROMPT
+    schema = call["response_format"]["json_schema"]["schema"]
+    assert schema["required"] == ["reference_solution"]
+    assert set(schema["properties"]) == {"reference_solution"}
+    assert draft.augmented_problem_text is None
+    assert draft.augmented_target_unknown is None
+    assert "augmented" not in draft.provenance
+
+
+def test_generate_augment_prompt_epistemic_honesty_and_no_solvable_framing():
+    assert "according to the course" in _SOLUTION_GENERATE_AUGMENT_SYSTEM_PROMPT
+    assert "as discussed in class" in _SOLUTION_GENERATE_AUGMENT_SYSTEM_PROMPT
+    assert "first principles" in _SOLUTION_GENERATE_AUGMENT_SYSTEM_PROMPT
+    for prompt in (
+        _SOLUTION_GENERATE_AUGMENT_SYSTEM_PROMPT,
+        _SOLUTION_GENERATE_SYSTEM_PROMPT,
+        _SOLUTION_EXTRACT_SYSTEM_PROMPT,
+    ):
+        assert "solvable problem" not in prompt.lower()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["not-json", json.dumps([]), json.dumps({"reference_solution": "not-a-list"})],
+)
+def test_parse_generated_rejects_malformed_envelopes(raw):
+    assert _parse_generated(raw) == (None, None, None)
+
+
+async def test_augmented_target_falls_back_to_original_target():
+    draft = await find_or_generate(
+        None,
+        _recall_question(),
+        retrieve_fn=_retrieve_returning([]),
+        chat_fn=_chat_returning(
+            {
+                "reference_solution": _augmented_steps(),
+                "augmented_problem_text": "Define Future Shock and explain why it occurs.",
+                "augmented_target_unknown": None,
+            }
+        ),
+        augment_recall=True,
+    )
+    assert draft.augmented_target_unknown == "Future Shock"
+    assert draft.augmented_target_unknown != draft.augmented_problem_text
+
+
+def test_old_stored_drafts_still_validate():
+    old = _draft().model_dump()
+    old.pop("augmented_problem_text", None)
+    old.pop("augmented_target_unknown", None)
+    restored = ReferenceSolutionDraft.model_validate(old)
+    assert restored.augmented_problem_text is None
+    assert restored.augmented_target_unknown is None
+
+
 # --------------------------------------------------------------------------- #
 # Step 11 — build_approved_pair round-trip against the REAL tag_mint.ApprovedPair
 # --------------------------------------------------------------------------- #
@@ -419,3 +635,15 @@ def test_build_approved_pair_extracted_vs_generated_source():
     pair_gen = build_approved_pair(q, _draft(solution_source="generated"), search_space_id=1)
     assert pair_ext.solution_source == "extracted"
     assert pair_gen.solution_source == "generated"
+
+
+def test_build_approved_pair_uses_augmented_text():
+    draft = ReferenceSolutionDraft(
+        solution_source="generated",
+        reference_solution=_augmented_steps(),
+        augmented_problem_text="Define Future Shock and explain why it occurs.",
+        augmented_target_unknown="why future shock occurs",
+    )
+    pair = build_approved_pair(_recall_question(), draft, search_space_id=1)
+    assert pair.problem["problem_text"] == draft.augmented_problem_text
+    assert pair.problem["target_unknown"] == draft.augmented_target_unknown

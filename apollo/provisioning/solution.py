@@ -108,6 +108,46 @@ _SOLUTION_GENERATE_SYSTEM_PROMPT = (
     + _SOLUTION_OUTPUT_CONTRACT
 )
 
+_SOLUTION_GENERATE_AUGMENT_INSTRUCTION = (
+    "RECALL QUESTIONS -- explain-why extension:\n"
+    "If the problem only asks to recall, define, state, list, or identify something "
+    "(or is a declarative statement rather than a question), EXTEND it into an "
+    "explain-why problem instead of producing a definition-only solution:\n"
+    '  * Rewrite the problem so it ALSO asks WHY (for example, "Define X and explain '
+    'why it occurs"); return the rewritten text as "augmented_problem_text" and the '
+    'new target as "augmented_target_unknown".\n'
+    "  * The reference_solution MUST then include procedure_step entries carrying "
+    "the explanation's reasoning.\n"
+    "  * Ground the WHY in the provided passages and general reasoning of the "
+    "discipline. NEVER fabricate course-specific claims: never write phrases like "
+    '"according to the course" or "as discussed in class", and never attribute a '
+    "position to the course or instructor. If the passages state no reason, argue "
+    "from first principles of the discipline.\n"
+    "If the problem already requires reasoning, return null for both augmented "
+    "fields and do not rewrite it.\n"
+)
+
+_SOLUTION_GENERATE_AUGMENT_OUTPUT_CONTRACT = _SOLUTION_OUTPUT_CONTRACT.replace(
+    'Output a single JSON object with EXACTLY one key, "reference_solution", whose ',
+    "Output a single JSON object with EXACTLY three keys: \"reference_solution\", "
+    '"augmented_problem_text", and "augmented_target_unknown". The two augmented '
+    "fields must each be a string or null. The \"reference_solution\" key's ",
+    1,
+)
+
+_SOLUTION_GENERATE_AUGMENT_SYSTEM_PROMPT = (
+    "Using ONLY the provided course passages, produce the reference solution.\n"
+    + _SOLUTION_GENERATE_AUGMENT_INSTRUCTION
+    + _SOLUTION_GENERATE_AUGMENT_OUTPUT_CONTRACT
+)
+
+_SOLUTION_AUGMENT_RETRY_DIRECTIVE = (
+    "Your draft contained no procedure_step entries, so it cannot be used as a "
+    "reference. Apply the explain-why extension now: rewrite the problem to also "
+    "ask WHY (fill augmented_problem_text / augmented_target_unknown) and produce "
+    "procedure_step entries carrying the reasoning, following every rule above."
+)
+
 
 class SolutionDraftError(RuntimeError):
     """Raised when a draft cannot be built without guessing (retrieve empty AND
@@ -144,6 +184,8 @@ class ReferenceSolutionDraft(BaseModel):
     reference_solution: list[dict]
     grounding: tuple[GroundingSpan, ...] = ()
     provenance: dict = Field(default_factory=dict)
+    augmented_problem_text: str | None = None
+    augmented_target_unknown: str | None = None
 
     @field_validator("grounding", mode="before")
     @classmethod
@@ -185,21 +227,71 @@ def _parse_reference_solution(raw: str) -> list[dict] | None:
     return steps
 
 
-def _validate_problem_shape(question: Any, reference_solution: list[dict]) -> None:
+def _parse_generated(raw: str) -> tuple[list[dict] | None, str | None, str | None]:
+    """Parse the augmentation envelope, normalizing malformed optional fields."""
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None, None, None
+    if not isinstance(parsed, dict):
+        return None, None, None
+    steps = parsed.get("reference_solution")
+    if not isinstance(steps, list):
+        return None, None, None
+    augmented_text = parsed.get("augmented_problem_text")
+    augmented_target = parsed.get("augmented_target_unknown")
+    return (
+        steps,
+        augmented_text
+        if isinstance(augmented_text, str) and augmented_text.strip()
+        else None,
+        augmented_target
+        if isinstance(augmented_target, str) and augmented_target.strip()
+        else None,
+    )
+
+
+def _has_procedure_step(steps: list[dict]) -> bool:
+    return any(
+        isinstance(step, dict) and step.get("entry_type") == "procedure_step"
+        for step in steps
+    )
+
+
+def _validate_problem_shape(
+    question: Any,
+    reference_solution: list[dict],
+    *,
+    problem_text: str | None = None,
+    target_unknown: str | None = None,
+) -> None:
     """Validate the (question + ``reference_solution``) against the ``Problem``
     schema BEFORE returning a draft. A malformed/empty solution raises
     ``SolutionDraftError`` (fail-closed) — never a half-built draft reaches the
     gate. ``Problem`` enforces ``reference_solution`` min_length=1, depends_on
     resolution, and the procedure-step order contract."""
     try:
-        Problem.model_validate(_problem_dict(question, reference_solution))
+        Problem.model_validate(
+            _problem_dict(
+                question,
+                reference_solution,
+                problem_text=problem_text,
+                target_unknown=target_unknown,
+            )
+        )
     except Exception as exc:  # noqa: BLE001 - any validation failure → fail-closed
         raise SolutionDraftError(
             f"generated reference_solution is not Problem-valid: {exc}"
         ) from exc
 
 
-def _problem_dict(question: Any, reference_solution: list[dict]) -> dict:
+def _problem_dict(
+    question: Any,
+    reference_solution: list[dict],
+    *,
+    problem_text: str | None = None,
+    target_unknown: str | None = None,
+) -> dict:
     """Assemble a ``Problem``-shaped dict from a ``CandidateQuestion`` (duck-typed)
     + a ``reference_solution``. ``id``/``concept_id`` are derived from the
     question's provenance (content-hash keyed, deterministic)."""
@@ -209,9 +301,17 @@ def _problem_dict(question: Any, reference_solution: list[dict]) -> dict:
         "id": f"scrape.{chunk_hash}",
         "concept_id": concept_slug,
         "difficulty": getattr(question, "difficulty", "intro"),
-        "problem_text": getattr(question, "problem_text", ""),
+        "problem_text": (
+            problem_text
+            if problem_text is not None
+            else getattr(question, "problem_text", "")
+        ),
         "given_values": dict(getattr(question, "given_values", {}) or {}),
-        "target_unknown": getattr(question, "target_unknown", ""),
+        "target_unknown": (
+            target_unknown
+            if target_unknown is not None
+            else getattr(question, "target_unknown", "")
+        ),
         "reference_solution": reference_solution,
     }
 
@@ -239,6 +339,7 @@ async def find_or_generate(
     *,
     retrieve_fn: Callable[..., Awaitable[Sequence[GroundingSpan]]],
     chat_fn: Callable[..., str],
+    augment_recall: bool = False,
 ) -> ReferenceSolutionDraft:
     """Retrieve-first-then-RAG-generate a reference solution. See the module
     docstring for the full contract. ``db`` is accepted for signature parity /
@@ -277,45 +378,98 @@ async def find_or_generate(
             response_format={"type": "json_schema", "json_schema": build_solution_schema()},
             temperature=0.0,
         )
+        reference_solution = _parse_reference_solution(raw)
+        augmented_text = None
+        augmented_target = None
+        augmented = False
     else:
         source = "generated"
+        gen_messages = [
+            {
+                "role": "system",
+                "content": (
+                    _SOLUTION_GENERATE_AUGMENT_SYSTEM_PROMPT
+                    if augment_recall
+                    else _SOLUTION_GENERATE_SYSTEM_PROMPT
+                ),
+            },
+            {
+                "role": "user",
+                "content": _canonical_json(
+                    {
+                        "problem_text": getattr(question, "problem_text", ""),
+                        "given_values": dict(getattr(question, "given_values", {}) or {}),
+                        "target_unknown": getattr(question, "target_unknown", ""),
+                        "context": context,
+                    }
+                ),
+            },
+        ]
+        gen_schema = build_solution_schema(augmentation=augment_recall)
         raw = chat_fn(
             purpose="solution_generate",
-            messages=[
-                {
-                    "role": "system",
-                    "content": _SOLUTION_GENERATE_SYSTEM_PROMPT,
-                },
-                {
-                    "role": "user",
-                    "content": _canonical_json(
-                        {
-                            "problem_text": getattr(question, "problem_text", ""),
-                            "given_values": dict(getattr(question, "given_values", {}) or {}),
-                            "target_unknown": getattr(question, "target_unknown", ""),
-                            "context": context,
-                        }
-                    ),
-                },
-            ],
-            response_format={"type": "json_schema", "json_schema": build_solution_schema()},
+            messages=gen_messages,
+            response_format={"type": "json_schema", "json_schema": gen_schema},
             temperature=0.0,
         )
+        if augment_recall:
+            reference_solution, augmented_text, augmented_target = _parse_generated(raw)
+            if reference_solution and not _has_procedure_step(reference_solution):
+                retry_raw = chat_fn(
+                    purpose="solution_generate",
+                    messages=[
+                        *gen_messages,
+                        {"role": "user", "content": _SOLUTION_AUGMENT_RETRY_DIRECTIVE},
+                    ],
+                    response_format={"type": "json_schema", "json_schema": gen_schema},
+                    temperature=0.0,
+                )
+                retry_steps, retry_text, retry_target = _parse_generated(retry_raw)
+                if retry_steps and _has_procedure_step(retry_steps):
+                    reference_solution = retry_steps
+                    augmented_text = retry_text
+                    augmented_target = retry_target
+            augmented = bool(augmented_text) and bool(reference_solution) and _has_procedure_step(
+                reference_solution or []
+            )
+        else:
+            reference_solution = _parse_reference_solution(raw)
+            augmented_text = None
+            augmented_target = None
+            augmented = False
 
-    reference_solution = _parse_reference_solution(raw)
     if not reference_solution:
         raise SolutionDraftError(
             "no usable reference_solution: the generate/extract response was "
             "unparseable or empty (fail-closed, never an empty-step draft)"
         )
 
-    _validate_problem_shape(question, reference_solution)
+    if not augmented:
+        augmented_text = None
+        augmented_target = None
+
+    original_target = getattr(question, "target_unknown", None)
+    effective_augmented_target = (
+        (augmented_target or original_target) if augmented else None
+    )
+    _validate_problem_shape(
+        question,
+        reference_solution,
+        problem_text=augmented_text if augmented else None,
+        target_unknown=effective_augmented_target,
+    )
+
+    provenance = _provenance(question, retrieval_hits=len(spans))
+    if augmented:
+        provenance["augmented"] = "explain_why"
 
     return ReferenceSolutionDraft(
         solution_source=source,
         reference_solution=reference_solution,
         grounding=grounding,
-        provenance=_provenance(question, retrieval_hits=len(spans)),
+        provenance=provenance,
+        augmented_problem_text=augmented_text if augmented else None,
+        augmented_target_unknown=effective_augmented_target,
     )
 
 
@@ -327,7 +481,12 @@ def build_approved_pair(
     ``solution_source`` is carried from the draft; ``misconceptions=[]`` (3B2d/3B2g
     may enrich later); ``search_space_id`` is supplied by the caller (3B2g) from
     the job scope. IMPORTS the real ``ApprovedPair`` — never mocked/redefined."""
-    problem = _problem_dict(question, draft.reference_solution)
+    problem = _problem_dict(
+        question,
+        draft.reference_solution,
+        problem_text=draft.augmented_problem_text,
+        target_unknown=draft.augmented_target_unknown,
+    )
     return ApprovedPair(
         problem=problem,
         search_space_id=search_space_id,
