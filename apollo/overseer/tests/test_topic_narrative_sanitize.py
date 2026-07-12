@@ -91,3 +91,18 @@ def test_empty_and_placeholder_text_untouched():
     assert sanitize_narrative("", canonical_keys=[]) == ""
     placeholder = "[Diagnostic narrative unavailable — the grade above is still accurate.]"
     assert sanitize_narrative(placeholder, canonical_keys=[]) == placeholder
+
+
+def test_out_of_range_decimals_survive():
+    text = "The weight 1.5 factor was applied to a weight 2.5 kg mass."
+    assert sanitize_narrative(text, canonical_keys=[]) == text
+
+
+def test_full_credit_scoring_decimals_stripped():
+    out = sanitize_narrative("That topic had credit 1.00 and weight 1.0.", canonical_keys=[])
+    assert "1.00" not in out and "1.0" not in out
+    assert "credit" not in out.lower() and "weight" not in out.lower()
+
+
+def test_boundary_fragment_leaves_no_stray_whitespace():
+    assert sanitize_narrative("Text ends with weight 0.5", canonical_keys=[]) == "Text ends with"

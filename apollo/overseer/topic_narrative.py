@@ -89,10 +89,11 @@ def build_topic_narrative_prompt(result: TopicScoreResult, *, problem_text: str)
     return _TOPIC_SYSTEM_PROMPT, user
 
 
-# Scoring internals are 0-1 decimals (credit 0.80, weight 0.77, dock 0.000).
-# Requiring that shape keeps legitimate prose like "weight = mg" or
-# "$0.5 \rho v^2$" intact while still catching every ledger-shaped leak.
-_SCORING_NUM = r"-?[01]?\.\d+"
+# Scoring internals are 0-1 decimals (credit 0.80, weight 0.77, dock 0.000,
+# credit 1.00). Requiring that shape keeps legitimate prose like "weight = mg",
+# "weight 1.5" or "$0.5 \rho v^2$" intact while still catching every
+# ledger-shaped leak.
+_SCORING_NUM = r"-?(?:0?\.\d+|1\.0+)"
 _SCORING_TERM = (
     rf"\b(?:credit|weight|dock(?:ed)?|misconception[ _]dock)\b\s*[:=]?\s*{_SCORING_NUM}"
 )
@@ -124,7 +125,7 @@ def sanitize_narrative(text: str, canonical_keys: Sequence[str] = ()) -> str:
     cleaned = _DANGLING_COMMA_RE.sub("", cleaned)
     cleaned = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", cleaned)
     cleaned = _MULTI_SPACE_RE.sub(" ", cleaned)
-    return cleaned
+    return cleaned.strip()
 
 
 __all__ = ["build_topic_narrative_prompt", "sanitize_narrative"]
