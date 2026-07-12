@@ -244,6 +244,11 @@ def build_student_canonical(student_graph: KGGraph, resolution: ResolutionResult
     an unresolved endpoint, counting it in ``dropped_edge_count``), and RETAINS
     unresolved student nodes as ``unresolved_nodes`` findings-input (§6.3).
 
+    The parser-layer DEPENDS_ON contract is ``dependent -> prerequisite``
+    ("from relies on to"). Canonical graphs use the opposite, single KG grading
+    convention: ``prerequisite -> dependent``. This builder therefore flips
+    only DEPENDS_ON endpoints; PRECEDES/USES/SCOPES remain verbatim.
+
     Pure + deterministic: the same inputs always yield an equal CanonicalGraph
     (merged node-ids sorted, nodes ordered by canonical_key).
     """
@@ -321,6 +326,11 @@ def build_student_canonical(student_graph: KGGraph, resolution: ResolutionResult
         if from_key == to_key:  # post-merge self-loop (D3)
             dropped += 1
             continue
+        # Parser prompts define DEPENDS_ON as "from relies on to"
+        # (dependent -> prerequisite). Canonical comparison is uniformly
+        # prerequisite -> dependent, matching reference canonical edges.
+        if edge.edge_type == EdgeType.DEPENDS_ON:
+            from_key, to_key = to_key, from_key
         edges.append(
             CanonicalEdge(
                 edge_type=edge.edge_type,

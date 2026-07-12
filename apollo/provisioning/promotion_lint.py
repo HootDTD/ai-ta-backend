@@ -403,6 +403,8 @@ def _gate_2(problem: Problem, graph: dict) -> str | None:
 
 def _gate_3(problem: Problem, kg: KGGraph) -> str | None:
     try:
+        # Reversing every edge preserves cycles. The returned order is discarded,
+        # so this gate has no direction-sensitive downstream consumer.
         kg.topological_order(EdgeType.DEPENDS_ON)
     except ValueError as exc:
         return f"gate 3: DEPENDS_ON is not acyclic: {exc}"

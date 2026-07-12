@@ -527,8 +527,15 @@ class KGEntity(Base):
 
 
 class EntityPrereq(Base):
-    """Prerequisite DAG edges between Layer-1 entities (spec §2). from depends on
-    to. Composite PK (from_entity_id, to_entity_id)."""
+    """Prerequisite DAG edges between Layer-1 entities (spec §2).
+
+    LEGACY LAYER-1 EXCEPTION: ``from_entity_id`` depends on ``to_entity_id``
+    (dependent -> prerequisite). Do not conflate these persistence rows with KG
+    or canonical DEPENDS_ON edges, whose direction is prerequisite -> dependent.
+    Migrating existing Layer-1 rows is explicitly outside DAG-0 scope.
+
+    Composite PK (from_entity_id, to_entity_id).
+    """
 
     __tablename__ = "apollo_entity_prereqs"
 

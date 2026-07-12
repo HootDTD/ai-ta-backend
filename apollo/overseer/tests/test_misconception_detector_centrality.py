@@ -58,34 +58,36 @@ def _precedes(from_id: str, to_id: str, attempt_id: int = 1) -> Edge:
 
 
 class TestDependsOnCentrality:
-    def test_node_with_more_incoming_depends_on_scores_higher_than_leaf(self):
-        # hub <- a, hub <- b, hub <- c ; leaf has no incoming edges at all.
+    def test_prerequisite_with_more_dependents_scores_higher_than_leaf(self):
+        # hub -> a, hub -> b, hub -> c; leaf has no dependents at all.
         hub = _equation("hub")
         a, b, c = _equation("a"), _equation("b"), _equation("c")
         leaf = _equation("leaf")
         graph = KGGraph(
             nodes=[hub, a, b, c, leaf],
             edges=[
-                _depends_on("a", "hub"),
-                _depends_on("b", "hub"),
-                _depends_on("c", "hub"),
+                _depends_on("hub", "a"),
+                _depends_on("hub", "b"),
+                _depends_on("hub", "c"),
             ],
         )
 
         scores = compute_centrality(graph)
 
         assert scores["hub"] > scores["leaf"]
+        assert scores["hub"] == 1.0
+        assert scores["leaf"] == CENTRALITY_W_MIN
 
-    def test_more_incoming_edges_strictly_increases_score(self):
-        one_incoming = _equation("one")
-        two_incoming = _equation("two")
-        src_a, src_b, src_c = _equation("sa"), _equation("sb"), _equation("sc")
+    def test_more_outgoing_edges_strictly_increases_score(self):
+        one_dependent = _equation("one")
+        two_dependents = _equation("two")
+        dep_a, dep_b, dep_c = _equation("da"), _equation("db"), _equation("dc")
         graph = KGGraph(
-            nodes=[one_incoming, two_incoming, src_a, src_b, src_c],
+            nodes=[one_dependent, two_dependents, dep_a, dep_b, dep_c],
             edges=[
-                _depends_on("sa", "one"),
-                _depends_on("sb", "two"),
-                _depends_on("sc", "two"),
+                _depends_on("one", "da"),
+                _depends_on("two", "db"),
+                _depends_on("two", "dc"),
             ],
         )
 
@@ -132,8 +134,8 @@ class TestScoreBounds:
         graph = KGGraph(
             nodes=[hub, a, b, leaf, head, tail],
             edges=[
-                _depends_on("a", "hub"),
-                _depends_on("b", "hub"),
+                _depends_on("hub", "a"),
+                _depends_on("hub", "b"),
                 _precedes("h1", "h2"),
             ],
         )
@@ -182,8 +184,8 @@ class TestCyclicPrecedesSafety:
             edges=[
                 _precedes("c1", "c2"),
                 _precedes("c2", "c1"),  # cycle
-                _depends_on("a", "hub"),
-                _depends_on("b", "hub"),
+                _depends_on("hub", "a"),
+                _depends_on("hub", "b"),
             ],
         )
 
@@ -206,7 +208,7 @@ class TestEmptyGraph:
 class TestDefensiveEdgeCases:
     def test_depends_on_edge_pointing_outside_graph_is_ignored(self):
         # `to_node_id` "ghost" is not among reference_graph.nodes; the
-        # in-degree scan must skip it rather than KeyError.
+        # out-degree scan must skip it rather than crediting a dangling edge.
         a = _equation("a")
         b = _equation("b")
         graph = KGGraph(

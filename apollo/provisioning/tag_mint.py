@@ -615,8 +615,9 @@ async def tag_and_mint(
     if resolved_concept is not None:
         # Deterministic reference-graph edges: step X depends_on Y ==> the
         # apollo_entity_prereqs row (from=X, to=Y) — FROM depends on TO,
-        # exactly what the S1 judge scores as DEPENDS_ON. Replaces the LLM
-        # prereq draft (the source of reversed/spurious edges). Keys are the
+        # retaining Layer-1's legacy dependent -> prerequisite convention. This
+        # is intentionally NOT the KG/canonical prerequisite -> dependent
+        # convention. Replaces the LLM prereq draft. Keys are the
         # frozen prefixed canonical keys, so the resolvable-key filter,
         # concept-scope partition, and acyclicity guard below run unchanged.
         steps_by_id = {s["id"]: s for s in problem.get("reference_solution", [])}

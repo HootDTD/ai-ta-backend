@@ -21,6 +21,8 @@ emits an event** (§6.2 edge demotion + §6.5 seam). The seven dimensions:
   * ``dependency`` — LOWEST weight; direction-loose any->any DEPENDS_ON: matched
     (unordered key-pair) reference DEPENDS_ON edges / total. The weighting is a
     downstream rubric-aggregation concern (WU-4C); here it is just computed.
+    DAG-0 leaves this intentionally direction-invariant; the separate
+    ``edge_coverage`` dimension above compares unified directed tuples exactly.
   * ``contradiction`` — the soundness contradiction dimension surfaced as a
     [0,1] sub-score (intentionally equal to soundness in v1).
 
