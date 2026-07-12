@@ -22,6 +22,10 @@ omit =
     */__pycache__/*
     database/migrations/*
     campaign/*
+    # Live-LLM smoke harness: costs money + hits the network, so it can never
+    # run in CI — unmeasured under source=. it would starve the diff-cover
+    # patch gate (same failure mode that got campaign/* omitted above).
+    scripts/wave1_live_smoke.py
 
 [report]
 show_missing = true
