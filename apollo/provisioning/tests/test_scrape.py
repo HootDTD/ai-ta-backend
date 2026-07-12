@@ -26,7 +26,6 @@ from sqlalchemy import select
 
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.persistence.models import Concept, ConceptProblem, Subject
-from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.scrape import (
     CandidateQuestion,
     ScrapeResult,
@@ -281,11 +280,16 @@ def test_scrape_prompt_declares_candidate_question_fields():
 
 
 def _section(
-    *, title="6.2 Exercises", text="Find P2 in the pipe.", doc=7, page=3, shash="a" * 64
+    *,
+    title="6.2 Exercises",
+    text="Find P2 in the pipe.",
+    document_id=7,
+    page=3,
+    shash="a" * 64,
 ) -> Section:
     return Section(
         title=title,
-        document_id=doc,
+        document_id=document_id,
         page_start=page,
         page_end=page,
         text=text,
@@ -294,28 +298,54 @@ def _section(
     )
 
 
-def test_scrape_section_stamps_section_scoped_hash():
-    """A section yielding two problems stamps chunk_content_hash =
-    '<section_hash>.<ordinal>' with a DETERMINISTIC ordinal (sorted by problem_text
-    hash), and provenance (document_id/page) comes from the SECTION."""
-    sec = _section(shash="b" * 64, doc=7, page=3)
-    chat = lambda _text: json.dumps(  # noqa: E731
-        [
-            _well_formed_record(problem_text="Zebra problem find P2."),
-            _well_formed_record(problem_text="Apple problem find P2."),
-        ]
+def test_scrape_section_stamps_content_derived_key():
+    """Keys are '<document_id>.q<32hex(problem_text)>' — order-INDEPENDENT: a re-run
+    whose LLM emits the same questions in a different order maps every key to the
+    SAME problem_text (the prod cross-run misalignment regression)."""
+    recs = [
+        _well_formed_record(problem_text="Define rarity."),
+        _well_formed_record(problem_text="Define value."),
+    ]
+    sec = _section(document_id=7)
+    cands, failures = scrape_section(
+        sec, concept_hint="mgmt", chat_fn=lambda _text: json.dumps(recs)
     )
-    cands, failures = scrape_section(sec, concept_hint="fluids", chat_fn=chat)
     assert failures == 0
-    assert len(cands) == 2
-    assert {c.chunk_content_hash for c in cands} == {f"{'b' * 64}.0", f"{'b' * 64}.1"}
-    assert all(c.document_id == 7 for c in cands)
-    assert all(c.page == 3 for c in cands)
-    # ordinal is deterministic: re-running yields the SAME hash↔problem mapping
-    cands2, _ = scrape_section(sec, concept_hint="fluids", chat_fn=chat)
-    map1 = {c.problem_text: c.chunk_content_hash for c in cands}
-    map2 = {c.problem_text: c.chunk_content_hash for c in cands2}
-    assert map1 == map2
+    expected = {
+        f"7.q{chunk_content_hash('Define rarity.')[:32]}",
+        f"7.q{chunk_content_hash('Define value.')[:32]}",
+    }
+    assert {c.chunk_content_hash for c in cands} == expected
+    # REORDERED re-run (the LLM is not order-stable): same key <-> same text.
+    cands2, _ = scrape_section(
+        sec, concept_hint="mgmt", chat_fn=lambda _text: json.dumps(recs[::-1])
+    )
+    assert {(c.chunk_content_hash, c.problem_text) for c in cands} == {
+        (c.chunk_content_hash, c.problem_text) for c in cands2
+    }
+
+
+def test_scrape_section_different_text_mints_different_key():
+    sec = _section(document_id=7)
+    a, _ = scrape_section(
+        sec,
+        concept_hint="m",
+        chat_fn=lambda _text: json.dumps(
+            [_well_formed_record(problem_text="Define rarity.")]
+        ),
+    )
+    b, _ = scrape_section(
+        sec,
+        concept_hint="m",
+        chat_fn=lambda _text: json.dumps(
+            [
+                _well_formed_record(
+                    problem_text="Define what makes an advantage rare and why."
+                )
+            ]
+        ),
+    )
+    assert a[0].chunk_content_hash != b[0].chunk_content_hash
 
 
 def test_scrape_section_uses_concept_hint_when_llm_omits():
@@ -382,8 +412,9 @@ def test_scrape_document_groups_triages_and_scrapes():
     assert result.scraped_count == 1
     assert len(result.candidates) == 1
     assert result.candidates[0].concept_slug == "area"
-    # the section-scoped key namespace
-    assert result.candidates[0].chunk_content_hash.endswith(".0")
+    assert result.candidates[0].chunk_content_hash == (
+        f"5.q{chunk_content_hash(result.candidates[0].problem_text)[:32]}"
+    )
 
 
 def test_scrape_document_respects_max_sections():
@@ -520,9 +551,9 @@ def test_scrape_document_structured_false_uses_legacy_per_chunk():
     assert result.candidates[0].chunk_content_hash == chunk_content_hash("legacy chunk")
 
 
-def test_scrape_document_splits_oversized_section_and_overlap_dedups_downstream():
+def test_scrape_document_dedupes_same_question_across_windows():
     """A flat 6k section is scraped in overlapping windows. Every question is
-    recovered; the overlap-straddling one has one downstream problem hash."""
+    recovered; the same-key overlap candidate is returned once (first wins)."""
 
     @dataclass
     class _Row:
@@ -573,9 +604,8 @@ def test_scrape_document_splits_oversized_section_and_overlap_dedups_downstream(
         for candidate in result.candidates
         if candidate.problem_text == "Recover [OVERLAP_QUESTION]"
     ]
-    assert len(overlap) == 2
-    deduped = {problem_dup_hash(candidate): candidate for candidate in result.candidates}
-    assert len(deduped) == 4
+    assert len(overlap) == 1
+    assert len(result.candidates) == 4
 
 
 def test_scrape_document_page_splits_any_oversized_section():
@@ -662,6 +692,7 @@ def test_split_oversized_sections_disabled_returns_original_sections():
 
 def _candidate(
     *,
+    problem_text: str = "Find the downstream pressure P2.",
     document_id: int = 11,
     page: int | None = 2,
     content_hash: str = "hash-aaa",
@@ -669,7 +700,7 @@ def _candidate(
     difficulty: str = "intro",
 ) -> CandidateQuestion:
     return CandidateQuestion(
-        problem_text="Find the downstream pressure P2.",
+        problem_text=problem_text,
         given_values={"P1": 200000.0, "v1": 2.0},
         target_unknown="P2",
         difficulty=difficulty,  # type: ignore[arg-type]
@@ -813,6 +844,54 @@ async def test_scrape_rerun_is_noop(db_session):
     assert second == 0
     rows = await _rows_for(db_session, concept_id=cid)
     assert len(rows) == 1
+
+
+async def test_rerun_with_different_segmentation_does_not_adopt_stale_rows(db_session):
+    """Run A mints a row for text T1. Run B scrapes the same doc but segments the
+    question differently (text T2). B must mint a NEW row; A's row keeps T1; a
+    _find_tier1_row-style lookup with B's key returns the row whose payload text
+    is T2 (never A's row)."""
+    ss_id = await _seed_course(db_session, slug="c-segmentation-rerun")
+    cid = await resolve_or_create_provisional_concept(db_session, search_space_id=ss_id)
+    text_a = "Define what makes a competitive advantage rare?"
+    text_b = "Define non-substitutability of resources."
+    run_a = _candidate(
+        problem_text=text_a,
+        document_id=7,
+        content_hash=f"7.q{chunk_content_hash(text_a)[:32]}",
+    )
+    assert (
+        await write_tier1_problems(
+            db_session, [run_a], concept_id=cid, search_space_id=ss_id
+        )
+        == 1
+    )
+    run_b = _candidate(
+        problem_text=text_b,
+        document_id=7,
+        content_hash=f"7.q{chunk_content_hash(text_b)[:32]}",
+    )
+    assert (
+        await write_tier1_problems(
+            db_session, [run_b], concept_id=cid, search_space_id=ss_id
+        )
+        == 1
+    )
+    # Identical re-run of B inserts ZERO (idempotency preserved).
+    assert (
+        await write_tier1_problems(
+            db_session, [run_b], concept_id=cid, search_space_id=ss_id
+        )
+        == 0
+    )
+    row = (
+        await db_session.execute(
+            select(ConceptProblem).where(
+                ConceptProblem.problem_code == f"scrape.{run_b.chunk_content_hash}"
+            )
+        )
+    ).scalar_one()
+    assert row.payload["problem_text"] == run_b.problem_text
 
 
 async def test_scrape_rerun_after_reindex_is_noop(db_session):

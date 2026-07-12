@@ -159,6 +159,26 @@ documents the 2026-07-07 Calculus 2 assessment (hand-authored 40-concept list,
 79 textbook-extracted + 60 original authored problems, blind gpt-5.1 matching
 results: ~97% on well-formed text).
 
+**Tier-1 authored-set identity and teardown (2026-07-11).** Structured scraping
+stamps every candidate with a content-derived, document-scoped key:
+`<document_id>.q<sha256(normalized problem_text)[:32]>`, producing
+`problem_code = scrape.<document_id>.q<text_hash32>`. The key is independent of
+LLM output order and section/window boundaries, while remaining re-index-safe
+because a re-index preserves the document row even when it re-mints chunk rows.
+Identical questions emitted by overlapping windows are deduplicated on this key
+(first candidate wins). The legacy per-chunk `scrape_questions` path is unchanged.
+Old positional rows (`scrape.<64hex>.<ordinal>`) are format-disjoint and inert:
+new authored-set runs never look them up or adopt them, so no migration or
+read-compatibility shim is required.
+
+Deleting a terminal authored set unions its `result_summary` problem ids with a
+set-scoped sweep of every Tier-1 row in the same course whose
+`provenance.document_id` equals the set's problem document id. This includes
+rejected candidates and dead-run inventory that never received a
+`concept_problem_id`; Tier-2 rows and rows owned by other documents are spared.
+The existing affected-concept orphan/protection checks apply to the union, and
+`removed_problems` counts both referenced rows and swept Tier-1 leftovers.
+
 **Reversed provisioning (2026-07-08, default path).** When a course carries
 REGISTERED concepts (a premade list — `scripts/seed_premade_concepts.py`
 registers a `concepts.json` into `apollo_subjects`/`apollo_concepts`,

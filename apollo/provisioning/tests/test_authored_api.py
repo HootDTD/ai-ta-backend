@@ -955,6 +955,233 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
 
 
 @pytest.mark.asyncio
+async def test_delete_sweeps_unreferenced_tier1_leftovers(db_session, monkeypatch):
+    """A rejected candidate's Tier-1 row records no concept_problem_id in
+    result_summary, but must still die with its authored set."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from apollo.provisioning.scrape import resolve_or_create_provisional_concept
+    from database.models import AITADocument
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    space_id, _ = await _seed_course(db_session, slug="aas-del-leftover")
+    concept_id = await resolve_or_create_provisional_concept(
+        db_session, search_space_id=space_id
+    )
+    problem_doc = AITADocument(
+        title="problems",
+        content="c",
+        content_hash="leftover-ph",
+        unique_identifier_hash="leftover-pu",
+        search_space_id=space_id,
+        status={"state": "apollo_reference"},
+    )
+    db_session.add(problem_doc)
+    await db_session.flush()
+    authored_set = AuthoredSet(
+        search_space_id=space_id,
+        set_index=1,
+        status="done",
+        problem_document_id=problem_doc.id,
+        result_summary={"problems": []},
+    )
+    leftover = ConceptProblem(
+        concept_id=concept_id,
+        problem_code=f"scrape.{'a' * 64}.3",  # OLD format on purpose
+        difficulty="intro",
+        payload={"problem_text": "orphaned"},
+        tier=1,
+        provenance={"document_id": int(problem_doc.id), "page": 1},
+        search_space_id=space_id,
+    )
+    # Keep the shared inventory concept alive so this test stays focused on the
+    # Tier-1 sweep rather than exercising Neo4j orphan teardown.
+    survivor = ConceptProblem(
+        concept_id=concept_id,
+        problem_code="scrape.promoted-survivor",
+        difficulty="intro",
+        payload={"problem_text": "promoted"},
+        tier=2,
+        provenance={"document_id": int(problem_doc.id), "page": 1},
+        search_space_id=space_id,
+    )
+    db_session.add_all([authored_set, leftover, survivor])
+    await db_session.flush()
+    set_id, leftover_id = int(authored_set.id), int(leftover.id)
+
+    resp = await aapi.delete_authored_set(
+        set_id=set_id, request=_FakeRequest(), db=db_session
+    )
+
+    assert resp["removed_problems"] == 1
+    assert await db_session.get(ConceptProblem, leftover_id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_spares_tier2_and_foreign_document_rows(db_session, monkeypatch):
+    """The sweep is limited to this set's Tier-1 inventory, and surviving sibling
+    inventory prevents teardown of the shared provisional concept."""
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, Concept, ConceptProblem
+    from apollo.provisioning.scrape import resolve_or_create_provisional_concept
+    from database.models import AITADocument
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    space_id, _ = await _seed_course(db_session, slug="aas-del-scope")
+    concept_id = await resolve_or_create_provisional_concept(
+        db_session, search_space_id=space_id
+    )
+    target_doc = AITADocument(
+        title="target problems",
+        content="target",
+        content_hash="scope-target-ph",
+        unique_identifier_hash="scope-target-pu",
+        search_space_id=space_id,
+        status={"state": "apollo_reference"},
+    )
+    sibling_doc = AITADocument(
+        title="sibling problems",
+        content="sibling",
+        content_hash="scope-sibling-ph",
+        unique_identifier_hash="scope-sibling-pu",
+        search_space_id=space_id,
+        status={"state": "apollo_reference"},
+    )
+    db_session.add_all([target_doc, sibling_doc])
+    await db_session.flush()
+    authored_set = AuthoredSet(
+        search_space_id=space_id,
+        set_index=1,
+        status="done",
+        problem_document_id=target_doc.id,
+        result_summary={"problems": []},
+    )
+    target_tier1 = ConceptProblem(
+        concept_id=concept_id,
+        problem_code="scrape.target-tier1",
+        difficulty="intro",
+        payload={"problem_text": "target inventory"},
+        tier=1,
+        provenance={"document_id": int(target_doc.id)},
+        search_space_id=space_id,
+    )
+    same_doc_tier2 = ConceptProblem(
+        concept_id=concept_id,
+        problem_code="scrape.target-tier2",
+        difficulty="intro",
+        payload={"problem_text": "promoted"},
+        tier=2,
+        provenance={"document_id": int(target_doc.id)},
+        search_space_id=space_id,
+    )
+    sibling_tier1 = ConceptProblem(
+        concept_id=concept_id,
+        problem_code="scrape.sibling-tier1",
+        difficulty="intro",
+        payload={"problem_text": "sibling inventory"},
+        tier=1,
+        provenance={"document_id": int(sibling_doc.id)},
+        search_space_id=space_id,
+    )
+    db_session.add_all(
+        [authored_set, target_tier1, same_doc_tier2, sibling_tier1]
+    )
+    await db_session.flush()
+    set_id = int(authored_set.id)
+    target_id = int(target_tier1.id)
+    tier2_id = int(same_doc_tier2.id)
+    sibling_id = int(sibling_tier1.id)
+
+    resp = await aapi.delete_authored_set(
+        set_id=set_id, request=_FakeRequest(), db=db_session
+    )
+
+    assert resp["removed_problems"] == 1
+    assert await db_session.get(ConceptProblem, target_id) is None
+    assert await db_session.get(ConceptProblem, tier2_id) is not None
+    assert await db_session.get(ConceptProblem, sibling_id) is not None
+    assert await db_session.get(Concept, concept_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_sweep_document_scope_without_database(monkeypatch):
+    """Exercise the endpoint's provenance sweep without requiring Docker; the
+    integration tests above remain the persistence/teardown proof."""
+    from types import SimpleNamespace
+
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    authored_set = SimpleNamespace(
+        id=77,
+        search_space_id=5,
+        status="done",
+        problem_document_id=42,
+        solution_document_id=None,
+        result_summary={"problems": []},
+    )
+
+    class _Result:
+        def __init__(self, rows=(), *, rowcount=None):
+            self._rows = list(rows)
+            self.rowcount = rowcount
+
+        def all(self):
+            return self._rows
+
+        def scalars(self):
+            return self
+
+    class _DB:
+        def __init__(self):
+            self.results = [
+                _Result(
+                    [
+                        SimpleNamespace(id=101, provenance={"document_id": 42}),
+                        SimpleNamespace(id=202, provenance={"document_id": 999}),
+                    ]
+                ),
+                _Result([11]),  # affected concept ids
+                _Result(rowcount=1),  # ConceptProblem delete
+                _Result(rowcount=1),  # AITADocument delete
+                _Result([11]),  # surviving problem keeps the concept protected
+                *[_Result() for _ in range(5)],  # _protected_concepts' five reads
+            ]
+            self.deleted = []
+            self.committed = False
+
+        async def get(self, _model, _row_id):
+            return authored_set
+
+        async def execute(self, _statement):
+            return self.results.pop(0)
+
+        async def delete(self, row):
+            self.deleted.append(row)
+
+        async def commit(self):
+            self.committed = True
+
+    db = _DB()
+    resp = await aapi.delete_authored_set(
+        set_id=77, request=_FakeRequest(), db=db  # type: ignore[arg-type]
+    )
+
+    assert resp == {
+        "deleted": True,
+        "removed_problems": 1,
+        "removed_documents": 1,
+        "removed_concepts": 0,
+    }
+    assert db.deleted == [authored_set]
+    assert db.committed is True
+    assert db.results == []
+
+
+@pytest.mark.asyncio
 async def test_delete_failed_set_with_no_problems(db_session, monkeypatch):
     """A failed run (error summary, no problems, no doc ids) deletes cleanly —
     the core motivation: clearing failed sets off the console."""

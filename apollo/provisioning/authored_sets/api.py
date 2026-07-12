@@ -753,8 +753,10 @@ async def delete_authored_set(
     update. Cascade for the terminal-state delete that IS allowed:
 
       * the ConceptProblems this set minted (recorded per-problem in
-        ``result_summary``) — deleting the rows is what pulls the content out of
-        tutoring (the student selector filters ``tier == 2 AND concept_id``);
+        ``result_summary``), plus unreferenced Tier-1 leftovers whose provenance
+        pins them to this set's problem document — deleting the rows is what pulls
+        the content out of tutoring (the student selector filters ``tier == 2 AND
+        concept_id``). ``removed_problems`` counts both referenced and swept rows;
       * the two hidden reference documents (chunks cascade via the
         ``aita_chunks`` ON DELETE CASCADE FK);
       * the ``apollo_authored_sets`` row itself.
@@ -790,6 +792,24 @@ async def delete_authored_set(
             if isinstance(p, dict) and p.get("concept_problem_id") is not None
         }
     )
+    # Sweep set-scoped Tier-1 leftovers result_summary never referenced (rejected
+    # candidates and dead runs record no concept_problem_id): inventory rows whose
+    # provenance pins them to THIS set's problem document. Promoted rows are tier=2
+    # by the promote flip, so the tier==1 filter can never touch live content.
+    if row.problem_document_id is not None:
+        tier1_rows = (
+            await db.execute(
+                select(ConceptProblem.id, ConceptProblem.provenance)
+                .where(ConceptProblem.tier == 1)
+                .where(ConceptProblem.search_space_id == int(row.search_space_id))
+            )
+        ).all()
+        leftover_ids = {
+            int(r.id)
+            for r in tier1_rows
+            if (r.provenance or {}).get("document_id") == int(row.problem_document_id)
+        }
+        problem_ids = sorted({*problem_ids, *leftover_ids})
     removed_problems = 0
     # Capture the concepts these problems belong to BEFORE deleting the rows — once
     # they are gone the concept link is unrecoverable.

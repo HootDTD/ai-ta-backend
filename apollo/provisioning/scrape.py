@@ -8,14 +8,14 @@ that are explicitly ``tier=1`` and therefore NOT teachable (the §8B safety trap
 the ORM ``tier`` default is 2, so an omitted explicit value would silently make
 scraped inventory selectable).
 
-Idempotency key: a CONTENT hash of the chunk text (``chunk_content_hash``), NOT
-the volatile ``aita_chunks.id`` — so a re-index that re-mints chunk ids is a
-no-op. The hash is folded into a deterministic ``problem_code`` and the writer
-SKIPS a row whose ``(concept_id, problem_code)`` already exists (a re-run inserts
-ZERO rows). The provisional-inventory concept (slug ``provisional.inventory``,
-created once per ``(subject, search_space)``) satisfies the NOT-NULL
-``concept_id`` at scrape time; stage-4 ``tag_and_mint`` re-homes a promoted
-problem onto its real tagged concept.
+Idempotency key: structured scraping stamps each candidate from the stable document
+id plus a CONTENT hash of its own normalized problem text, NOT a section ordinal or
+the volatile ``aita_chunks.id``. The composite is folded into a deterministic
+``problem_code`` and the writer SKIPS a row whose ``(concept_id, problem_code)``
+already exists (an identical re-run inserts ZERO rows). The provisional-inventory
+concept (slug ``provisional.inventory``, created once per ``(subject,
+search_space)``) satisfies the NOT-NULL ``concept_id`` at scrape time; stage-4
+``tag_and_mint`` re-homes a promoted problem onto its real tagged concept.
 
 Failure mode (per chunk, fail-SOFT): a malformed/empty LLM JSON, or a candidate
 that fails ``CandidateQuestion`` validation (e.g. an out-of-range difficulty),
@@ -188,9 +188,9 @@ def _coerce_section_candidate(raw: Any, *, section, concept_hint: str) -> Candid
     """Build a CandidateQuestion from one LLM record scraped from a whole SECTION.
     Provenance (document_id/page) comes from the SECTION; concept_slug falls back to
     the triage hint then the provisional concept. ``chunk_content_hash`` is a
-    placeholder here — ``scrape_section`` re-stamps it with the section-scoped
-    ``<section_hash>.<ordinal>`` key after deterministic ordering. Returns None
-    (fail-soft) on any validation error."""
+    placeholder here — ``scrape_section`` re-stamps it with the content-derived
+    ``<document_id>.q<problem_text_hash32>`` key after deterministic ordering.
+    Returns None (fail-soft) on any validation error."""
     if not isinstance(raw, dict):
         return None
     try:
@@ -216,9 +216,9 @@ def scrape_section(
     ``(candidates, parse_failures)``. Fail-soft: malformed JSON / a non-array / an
     invalid candidate drops that record and increments ``parse_failures``. Each
     surviving candidate's ``chunk_content_hash`` is stamped
-    ``'<section_hash>.<ordinal>'`` with the ordinal assigned over candidates sorted
-    by the content hash of their normalized ``problem_text`` (so a re-run yields the
-    SAME key↔problem mapping — re-index/replay idempotent)."""
+    ``'<document_id>.q<problem_text_hash32>'``. Candidates remain sorted by the
+    content hash of normalized ``problem_text`` for stable output order, while the
+    key itself is order-independent across LLM replays."""
     raw = chat_fn(section.text)
     try:
         records = json.loads(raw)
@@ -238,8 +238,18 @@ def scrape_section(
 
     built.sort(key=lambda c: chunk_content_hash(c.problem_text))
     finalized = [
-        c.model_copy(update={"chunk_content_hash": f"{section.source_content_hash}.{i}"})
-        for i, c in enumerate(built)
+        c.model_copy(
+            update={
+                # Content-derived, order-INDEPENDENT key: document scope + the
+                # question's own text hash. NOT the section ordinal — the LLM is
+                # not order-stable across runs, so a positional key re-binds old
+                # rows to different questions (the prod cross-run misalignment).
+                "chunk_content_hash": (
+                    f"{c.document_id}.q{chunk_content_hash(c.problem_text)[:32]}"
+                )
+            }
+        )
+        for c in built
     ]
     return finalized, failures
 
@@ -436,6 +446,16 @@ async def scrape_document(
             scraped_count += 1
             candidates.extend(section_cands)
 
+    # Same-key candidates (an identical question scraped from two overlapping
+    # windows) map to ONE tier-1 row — keep the first so the row is processed once.
+    seen: set[str] = set()
+    deduped = [
+        c
+        for c in candidates
+        if not (c.chunk_content_hash in seen or seen.add(c.chunk_content_hash))
+    ]
+    candidates = deduped
+
     _LOG.info(
         "provisioning_scrape_document",
         extra={
@@ -508,10 +528,14 @@ async def resolve_or_create_provisional_concept(
 
 
 def _problem_code_for(candidate: CandidateQuestion) -> str:
-    """A deterministic, content-derived problem_code so the no-op uses the
-    EXISTING ``(concept_id, problem_code)`` uniqueness (migration 018) as the
-    idempotency target — NO new index, NO migration. Does NOT embed
-    ``aita_chunks.id`` (that would break re-index idempotency)."""
+    """A deterministic ``scrape.<candidate key>`` problem_code — for the structured
+    path ``scrape.<document_id>.q<problem_text_hash32>``; the legacy per-chunk path
+    still stamps the plain chunk content hash.
+
+    The document-scoped content key uses the EXISTING ``(concept_id,
+    problem_code)`` uniqueness (migration 018) as the idempotency target — NO new
+    index or migration. It does not embed ``aita_chunks.id``: a re-index may re-mint
+    chunks, while the document row and normalized question text remain stable."""
     return f"scrape.{candidate.chunk_content_hash}"
 
 
