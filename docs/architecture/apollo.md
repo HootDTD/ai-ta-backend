@@ -68,6 +68,18 @@ already had its opportunity, chat persists a closing turn and invokes the existi
 handler; its embedded result uses the existing UI auto-report seam. Flag OFF leaves the
 legacy chat and clarification paths unchanged.
 
+**GEN-0 selector/provenance hardening (2026-07-12).** The shared
+`overseer.problem_selector.list_problems_for_concept` chokepoint validates Tier-2
+payloads one row at a time. A malformed row emits the structured warning
+`apollo_problem_selector_invalid_payload_skipped` with concept, tier, row id, and a
+bounded validation summary, then is skipped; valid siblings remain selectable by both
+standard and personalized selection. An entirely malformed pool therefore reaches the
+existing `PoolExhaustedError` path. At the persistence boundary, `ConceptProblem`
+enforces the provenance invariant that `provenance.source="generated"` may carry only
+`solution_source="generated"` (or remain unset while generation is pending), never the
+teacher-grounded `extracted` or `authored` labels. The validation is assignment-order
+independent, so it covers insert-time stamping and later promotion updates.
+
 ## Module map and file landmarks
 
 | Subpackage | Key files | Role |

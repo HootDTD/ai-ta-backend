@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,19 +49,35 @@ async def list_problems_for_concept(db: AsyncSession, *, concept_id: int) -> lis
     this is where its filter is applied. Reversible: the sweep clears
     ``quarantined_at`` and the problem becomes selectable again."""
     rows = (
-        (
-            await db.execute(
-                select(ConceptProblem.payload).where(
-                    ConceptProblem.concept_id == concept_id,
-                    ConceptProblem.tier == 2,
-                    ConceptProblem.quarantined_at.is_(None),
-                )
+        await db.execute(
+            select(ConceptProblem.id, ConceptProblem.tier, ConceptProblem.payload).where(
+                ConceptProblem.concept_id == concept_id,
+                ConceptProblem.tier == 2,
+                ConceptProblem.quarantined_at.is_(None),
             )
         )
-        .scalars()
-        .all()
-    )
-    problems = [Problem.model_validate(payload) for payload in rows]
+    ).all()
+    problems: list[Problem] = []
+    for row in rows:
+        try:
+            problems.append(Problem.model_validate(row.payload))
+        except ValidationError as exc:
+            first_error = exc.errors(include_input=False)[0]
+            location = ".".join(str(part) for part in first_error["loc"])
+            summary = (
+                f"{exc.error_count()} validation error(s); first={location}: "
+                f"{first_error['msg']} [{first_error['type']}]"
+            )
+            _LOG.warning(
+                "apollo_problem_selector_invalid_payload_skipped",
+                extra={
+                    "event": "apollo_problem_selector_invalid_payload_skipped",
+                    "concept_id": concept_id,
+                    "problem_tier": row.tier,
+                    "concept_problem_id": row.id,
+                    "validation_error": summary,
+                },
+            )
     return sorted(problems, key=lambda p: p.id)
 
 
