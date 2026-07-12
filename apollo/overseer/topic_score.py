@@ -118,26 +118,25 @@ def _topic_status(credit: float, *, in_per_step: bool) -> TopicStatus:
 
 
 def _credit_for_node(node_id: str, coverage: dict) -> tuple[float, TopicStatus]:
-    """Per-topic credit ``c_i`` in [0, 1] + status, per the spec's rule:
+    """Per-topic credit ``c_i`` in [0, 1] + status:
 
-    - ``1.0`` if ``per_step[node_id] == "covered"``.
-    - else the node's ``procedure_scores[node_id]`` value when present
-      (partial credit) — status "partial" iff ``0 < credit < 1``.
-    - else ``0.0`` ("missing").
+    - credit is the adjudicator's ``procedure_scores[node_id]`` whenever the
+      node is present there — the grader's number IS the grade; "covered"
+      status no longer promotes credit to 1.0.
+    - a node absent from ``procedure_scores`` falls back to the binary
+      ``per_step`` signal: covered -> 1.0, else 0.0.
     """
     per_step = coverage.get("per_step", {}) or {}
     procedure_scores = coverage.get("procedure_scores", {}) or {}
 
     covered = per_step.get(node_id) == "covered"
-    if covered:
-        return 1.0, "covered"
-
     if node_id in procedure_scores:
         credit = _finite_score(procedure_scores[node_id])
-        in_per_step = node_id in per_step
-        return credit, _topic_status(credit, in_per_step=in_per_step)
+        if covered:
+            return credit, "covered"
+        return credit, _topic_status(credit, in_per_step=node_id in per_step)
 
-    return 0.0, "missing"
+    return (1.0, "covered") if covered else (0.0, "missing")
 
 
 def _weights_for(node_ids: list[str], centrality: dict[str, float]) -> dict[str, float]:
