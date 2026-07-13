@@ -86,13 +86,14 @@ def _turn_position(finding: Finding, turn_order: Mapping[str, int]) -> float:
 
 def _bucket_findings(
     findings: tuple[Finding, ...],
-) -> tuple[dict[str, Finding], set[str], list[Finding]]:
-    """Partition findings into (covered_by_key, missing_keys, contradictions).
+) -> tuple[dict[str, Finding], set[str], set[str], list[Finding]]:
+    """Partition findings into covered, missing, neutral, and contradiction bags.
 
-    A covered finding wins its key (audit-upgraded covered carries the same
-    COVERED_NODE kind, so it is honored here automatically)."""
+    Covered-by-contraction shares the covered bag; not-demonstrated stays
+    distinct so the rubric input can expose the neutral status."""
     covered: dict[str, Finding] = {}
     missing: set[str] = set()
+    not_demonstrated: set[str] = set()
     contradictions: list[Finding] = []
     for finding in findings:
         key = finding.canonical_key
@@ -101,11 +102,16 @@ def _bucket_findings(
             continue
         if key is None:
             continue
-        if finding.kind == FindingKind.COVERED_NODE:
+        if finding.kind in (
+            FindingKind.COVERED_NODE,
+            FindingKind.COVERED_BY_CONTRACTION,
+        ):
             covered[key] = finding
         elif finding.kind == FindingKind.MISSING_NODE:
             missing.add(key)
-    return covered, missing, contradictions
+        elif finding.kind == FindingKind.NOT_DEMONSTRATED:
+            not_demonstrated.add(key)
+    return covered, missing, not_demonstrated, contradictions
 
 
 def _coverage_for_node(
@@ -177,7 +183,7 @@ def findings_to_rubric_input(
     """Map ``AuditedGrade.findings`` + the graph-sim ``ReferenceGraph`` into the
     ``compute_rubric`` input bag (keyed on ``canonical_key``). PURE — builds NEW
     dicts/tuples; never mutates the inputs."""
-    covered, missing, contradictions = _bucket_findings(audited.findings)
+    covered, missing, not_demonstrated, contradictions = _bucket_findings(audited.findings)
 
     per_step: dict[str, str] = {}
     procedure_scores: dict[str, float] = {}
@@ -186,6 +192,8 @@ def findings_to_rubric_input(
         canonical_key = ref.canonical_key
         node_type = ref.node_type
         status, proc_score = _coverage_for_node(canonical_key, node_type, covered)
+        if canonical_key in not_demonstrated:
+            status = "not_demonstrated"
         per_step[canonical_key] = status
         if proc_score is not None:
             procedure_scores[canonical_key] = proc_score
