@@ -109,6 +109,10 @@ _DONE_GATE_FLAG: str = "APOLLO_DONE_GATE_ENABLED"
 # NOT the promote-to-live flag (that is WU-4C2's APOLLO_GRAPH_SIM_LIVE_ENABLED).
 _GRAPH_SIM_SHADOW_FLAG: str = "APOLLO_GRAPH_SIM_SHADOW_ENABLED"
 
+# DAG-5 — edge-contraction grading inside the shadow comparer. Default OFF;
+# read per Done call so flag-off preserves the existing comparison byte-for-byte.
+_GRAPH_CONTRACTION_FLAG: str = "APOLLO_GRAPH_CONTRACTION_ENABLED"
+
 # WU-4C2 — the PROMOTE-to-live flag (default OFF EVERYWHERE incl. test; flipped
 # only after human calibration review, NEVER in this build). When OFF, the
 # student-facing rubric/diagnostic are the OLD-path values (byte-identical to
@@ -207,6 +211,10 @@ def _done_gate_enabled() -> bool:
 
 def _graph_sim_shadow_enabled() -> bool:
     return os.environ.get(_GRAPH_SIM_SHADOW_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _graph_contraction_enabled() -> bool:
+    return os.environ.get(_GRAPH_CONTRACTION_FLAG, "").lower() in ("1", "true", "yes")
 
 
 def _graph_sim_live_enabled() -> bool:
@@ -1083,6 +1091,7 @@ async def handle_done(
                 student_graph=student_graph,
                 problem_payload=rerun.problem_payload,
                 old_rubric=rubric,  # the OLD student-facing rubric, for §6.7 calibration
+                contraction_enabled=_graph_contraction_enabled(),
             )
             # WU-4C2 — LIVE promotion (DORMANT; flag OFF in this build). Built + tested,
             # never active. When ON, the graph-sim rubric + constrained-diagnostic

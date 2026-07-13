@@ -141,6 +141,38 @@ def test_reference_canonical_multi_path_views():
     assert graph.paths[1].canonical_keys == ("eq.b", "cond.c")
 
 
+def test_reference_canonical_object_path_maps_strategy_milestones_and_g4_drops():
+    problem = {
+        "reference_solution": [
+            {
+                "id": "known",
+                "entry_type": "equation",
+                "entity_key": "eq.known",
+                "content": {"symbolic": "x = 1"},
+                "depends_on": [],
+            },
+            {
+                "id": "degraded",
+                "entry_type": "future_type",
+                "entity_key": "future.degraded",
+                "content": {},
+                "depends_on": [],
+            },
+        ],
+        "declared_paths": [
+            {
+                "strategy_id": "direct",
+                "nodes": ["known", "degraded"],
+                "milestones": ["known", "degraded"],
+            }
+        ],
+    }
+    graph = build_reference_canonical(problem)
+    assert graph.paths[0].strategy_id == "direct"
+    assert graph.paths[0].canonical_keys == ("eq.known",)
+    assert graph.paths[0].milestone_keys == ("eq.known",)
+
+
 def test_reference_canonical_uses_own_reference_solution_not_dedup():
     """REGRESSION GUARD (Decision 3): two problems both minting eq.continuity
     with DIFFERENT symbolic forms -> each R_norm carries ITS OWN symbolic, never

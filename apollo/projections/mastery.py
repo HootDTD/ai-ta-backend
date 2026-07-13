@@ -55,7 +55,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.knowledge_graph.canon_projection import load_entity_specs
-from apollo.persistence.models import GradingArtifact, LearnerState, MasteryEvent
+from apollo.persistence.models import (
+    ApolloSession,
+    GradingArtifact,
+    LearnerState,
+    MasteryEvent,
+    ProblemAttempt,
+)
+from apollo.persistence.problem_linkage import resolve_concept_problem_id
 
 # Env var name (Task B2). Default matches the plan's named constant.
 _ENV_EWMA_ALPHA = "APOLLO_MASTERY_EWMA_ALPHA"
@@ -227,6 +234,29 @@ async def update_mastery_from_artifact(db: AsyncSession, *, artifact_row: Gradin
     user_id = str(artifact_row.user_id)
     search_space_id = int(artifact_row.search_space_id)
 
+    # GEN-5: recover the durable problem-bank key from the attempt's session.
+    # Missing legacy rows/codes deliberately produce NULL without suppressing
+    # the composite event or its learner-state update.
+    linkage_result = await db.execute(
+        select(ApolloSession.concept_id, ProblemAttempt.problem_id)
+        .select_from(ProblemAttempt)
+        .join(ApolloSession, ApolloSession.id == ProblemAttempt.session_id)
+        .where(ProblemAttempt.id == attempt_id)
+    )
+    # The existing pure projection tests use a deliberately minimal result
+    # duck that represents every lookup as a miss. Preserve that contract while
+    # real SQLAlchemy results take the joined-row path.
+    attempt_linkage = (
+        linkage_result.one_or_none() if hasattr(linkage_result, "one_or_none") else None
+    )
+    concept_problem_id = None
+    if attempt_linkage is not None and attempt_linkage.concept_id is not None:
+        concept_problem_id = await resolve_concept_problem_id(
+            db,
+            concept_id=int(attempt_linkage.concept_id),
+            problem_code=str(attempt_linkage.problem_id),
+        )
+
     for key in keys:
         # Exact namespaced match first (graph artifacts); fall back to the bare
         # suffix map (llm_fallback artifacts carry unprefixed reference ids).
@@ -252,6 +282,7 @@ async def update_mastery_from_artifact(db: AsyncSession, *, artifact_row: Gradin
                 search_space_id=search_space_id,
                 entity_id=entity_id,
                 attempt_id=attempt_id,
+                concept_problem_id=concept_problem_id,
                 event_kind=EVENT_KIND,
                 score=composite,
                 misconception_code=None,

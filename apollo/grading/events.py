@@ -110,7 +110,8 @@ def _bucket_by_kind(
     """Partition the event-bearing findings by entity key into
     (contradictions, covered, missing). Diagnostic-only kinds (edge /
     unsupported_extra / unresolved / matched_edge / missing_edge /
-    alternative_path) are skipped — they never produce an event."""
+    alternative_path / not_demonstrated) are skipped — they never produce an
+    event."""
     contradictions: dict[str, Finding] = {}
     covered: dict[str, Finding] = {}
     missing: dict[str, Finding] = {}
@@ -120,7 +121,10 @@ def _bucket_by_kind(
             continue
         if finding.kind == FindingKind.CONTRADICTION:
             contradictions[key] = finding
-        elif finding.kind == FindingKind.COVERED_NODE:
+        elif finding.kind in (
+            FindingKind.COVERED_NODE,
+            FindingKind.COVERED_BY_CONTRACTION,
+        ):
             covered[key] = finding
         elif finding.kind == FindingKind.MISSING_NODE:
             missing[key] = finding

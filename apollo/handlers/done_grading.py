@@ -76,7 +76,14 @@ from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.resolution import resolve_attempt
 from apollo.resolution.candidates import unknown_reference_entry_types
 from apollo.resolution.embedding import CandidateEmbeddingCache, default_embedder
-from apollo.resolution.nli_config import NLI_DEVICE, active_nli_model, load_nli_params, nli_enabled
+from apollo.resolution.nli_adjudicator import NLIAdjudicator, NLIResult
+from apollo.resolution.nli_config import (
+    NLI_DEVICE,
+    NLIParams,
+    active_nli_model,
+    load_nli_params,
+    nli_enabled,
+)
 from apollo.resolution.nli_resolution import NLIContext
 from apollo.resolution.result import ResolutionResult
 
@@ -117,6 +124,44 @@ _NLI_GRADING_NODE_CAP_FLAG: str = "APOLLO_NLI_GRADING_MAX_NODES"
 # ``campaign/infra/env.campaign.example``; the live value is snapshot-audited
 # by ``campaign/config.py``), while prod default behavior stays byte-identical.
 _NLI_GRADING_NODE_CAP_DEFAULT: int = 15
+_GRAPH_CONTRACTION_FLAG: str = "APOLLO_GRAPH_CONTRACTION_ENABLED"
+
+
+class _UnavailableContractionAdjudicator:
+    """Non-loading adjudicator used to make enabled contraction fail closed."""
+
+    def classify(self, premise: str, hypothesis: str) -> NLIResult:
+        return NLIResult(
+            label="neutral",
+            entailment=0.0,
+            contradiction=0.0,
+            neutral=1.0,
+            model_name="unavailable",
+        )
+
+
+_UNAVAILABLE_CONTRACTION_ADJUDICATOR = _UnavailableContractionAdjudicator()
+
+
+@dataclass(frozen=True)
+class _ConfiguredContractionAdjudicator:
+    adjudicator: NLIAdjudicator
+    params: NLIParams
+
+    def classify(self, premise: str, hypothesis: str) -> NLIResult:
+        return self.adjudicator.classify(premise=premise, hypothesis=hypothesis)
+
+
+def _graph_contraction_enabled() -> bool:
+    return os.environ.get(_GRAPH_CONTRACTION_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _contraction_adjudicator(
+    nli_ctx: NLIContext | None,
+) -> NLIAdjudicator:
+    if nli_ctx is not None and nli_ctx.nli is not None:
+        return _ConfiguredContractionAdjudicator(nli_ctx.nli, nli_ctx.params)
+    return _UNAVAILABLE_CONTRACTION_ADJUDICATOR
 
 
 def _build_adjudicator():  # pragma: no cover — constructs the real model (Task 12 probe)
@@ -350,6 +395,7 @@ async def run_graph_simulation(
     student_graph: KGGraph,
     problem_payload: dict,
     old_rubric: dict,
+    contraction_enabled: bool | None = None,
 ) -> ShadowGradeResult | None:
     """Run the full §6.4 chain in SHADOW and persist the comparison run + findings.
 
@@ -407,6 +453,7 @@ async def run_graph_simulation(
         # M3(b) — grading-path node budget: cap large attempts the same way the
         # chat path caps large utterances (both share the same NLI cost model).
         nli_ctx = _nli_context()
+        contraction_nli_ctx = nli_ctx
         student_node_count = len(student_graph.nodes)
         grading_cap = _nli_grading_node_cap()
         if nli_ctx is not None and student_node_count > grading_cap:
@@ -439,7 +486,17 @@ async def run_graph_simulation(
         reference_graph = build_reference_canonical(problem_payload)
 
         # Step 8 — grade (pure).
-        grade = grade_attempt(student_canonical, reference_graph, bank_applicable=bank_applicable)
+        use_contraction = (
+            _graph_contraction_enabled() if contraction_enabled is None else contraction_enabled
+        )
+        grade = grade_attempt(
+            student_canonical,
+            reference_graph,
+            bank_applicable=bank_applicable,
+            contraction_adjudicator=(
+                _contraction_adjudicator(contraction_nli_ctx) if use_contraction else None
+            ),
+        )
 
         # Step 9 — transcript audit (live auditor; suppress-all-missing on infra
         # failure is handled INSIDE build_audited_grade).

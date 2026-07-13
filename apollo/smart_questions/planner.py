@@ -32,7 +32,9 @@ def choose_target(
     dependencies: dict[str, set[str]] = {node.node_id: set() for node in reference_graph.nodes}
     for edge in reference_graph.edges:
         if edge.edge_type.value == "DEPENDS_ON":
-            dependencies.setdefault(edge.from_node_id, set()).add(edge.to_node_id)
+            # Canonical reference direction is prerequisite -> dependent, while
+            # this lookup needs dependent -> {prerequisites}.
+            dependencies.setdefault(edge.to_node_id, set()).add(edge.from_node_id)
 
     eligible = []
     for node in reference_graph.nodes:

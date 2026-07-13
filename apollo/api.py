@@ -67,6 +67,7 @@ from apollo.projections.classroom import (
 )
 from apollo.provisioning.authored_sets.api import router as authored_sets_router
 from apollo.provisioning.concepts_api import router as teacher_concepts_router
+from apollo.provisioning.problem_generation.api import router as problem_generation_router
 from apollo.subjects.curriculum_db import list_course_concepts
 from auth import AuthContext
 from database.session import get_db_session
@@ -123,6 +124,7 @@ async def close_neo4j_client() -> None:
 router = APIRouter(prefix="/apollo", tags=["apollo"])
 
 router.include_router(authored_sets_router)
+router.include_router(problem_generation_router)
 router.include_router(teacher_concepts_router)
 
 

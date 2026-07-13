@@ -25,24 +25,26 @@ wiring (3B2d/3B2f) supplies ``embed_text`` and a ``cheap_chat`` adapter.
 Out of scope (downstream units — NOT here): scrape/mint/upsert of entities or
 problems (3B2d), solution pairing (3B2e), metering/queue-drain (3B2f), the
 ``apollo_ingest_runs.n_dedup_merged`` aggregate and the worker shell (3B2g),
-quarantine (3B2h). This unit reads the inventory + writes ONE audit row.
+quarantine (3B2h). This unit reads the inventory, writes ONE audit row, and
+increments the run's JSON dedup-pressure gauge in the same flow.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import Concept, DedupDecision, KGEntity, Subject
+from apollo.persistence.models import Concept, DedupDecision, IngestRun, KGEntity, Subject
 from apollo.provisioning.dedup_constants import (
     EMBED_JUDGE_BAND,
     EMBED_MERGE_THRESHOLD,
 )
 
-__all__ = ["DedupVerdict", "resolve_candidate"]
+__all__ = ["DedupVerdict", "resolve_candidate", "is_false_merge_risk"]
 
 
 @dataclass(frozen=True)
@@ -138,7 +140,7 @@ async def _record_decision(
     matched_entity_id: int | None,
     ingest_run_id: int | None,
 ) -> None:
-    """Construct and flush EXACTLY ONE ``apollo_dedup_decisions`` row.
+    """Construct one audit row and increment its run's dedup-pressure gauge.
 
     Immutable: builds a new ORM row, never mutates its inputs. ``flush`` (not
     ``commit``) suffices — the savepoint test fixture rolls back, and 3B2d/3B2g
@@ -156,7 +158,68 @@ async def _record_decision(
             matched_entity_id=matched_entity_id,
         )
     )
+    if ingest_run_id is not None:
+        run = await db.get(IngestRun, ingest_run_id, with_for_update=True)
+        if run is None:
+            raise RuntimeError(f"dedup ingest_run {ingest_run_id} not found")
+
+        pressure = dict(run.dedup_pressure or {})
+        pressure["total_candidates"] = int(pressure.get("total_candidates", 0)) + 1
+        if method == "slug" and verdict == "merged":
+            pressure["exact_merges"] = int(pressure.get("exact_merges", 0)) + 1
+        if method == "embedding":
+            counter = "embedding_merges" if verdict == "merged" else "embedding_distinct"
+            pressure[counter] = int(pressure.get(counter, 0)) + 1
+            if verdict == "merged":
+                per_concept = dict(pressure.get("per_concept", {}))
+                concept_key = str(concept_id)
+                per_concept[concept_key] = int(per_concept.get(concept_key, 0)) + 1
+                pressure["per_concept"] = per_concept
+
+        embedding_merges = int(pressure.get("embedding_merges", 0))
+        embedding_distinct = int(pressure.get("embedding_distinct", 0))
+        embedding_decisions = embedding_merges + embedding_distinct
+        pressure["embedding_merge_ratio"] = (
+            embedding_merges / embedding_decisions if embedding_decisions else 0.0
+        )
+        pressure.setdefault("per_concept", {})
+        run.dedup_pressure = pressure  # type: ignore[assignment]
     await db.flush()
+
+
+def is_false_merge_risk(candidate_key: str, existing_key: str) -> bool:
+    """True if variable/concept keys differ in casing, subscripts, or numbers
+    while sharing the same base symbol, indicating they represent distinct quantities
+    that embedding models might falsely collapse.
+    Example: 'm' vs 'M', 'v_1' vs 'V_1', 'v_1' vs 'v_2', 'v' vs 'v_1'.
+    """
+    cand_cleaned = candidate_key.split(".")[-1]
+    exist_cleaned = existing_key.split(".")[-1]
+
+    # Extract alphabetical base (ignoring digits and underscores)
+    cand_base = "".join(re.findall(r"[A-Za-z]+", cand_cleaned))
+    exist_base = "".join(re.findall(r"[A-Za-z]+", exist_cleaned))
+
+    # If they don't even share the same base character(s) (case-insensitive), they are not a risk of false merge
+    # because the embedding model or text representation is different enough (e.g., 'm' vs 'v' is fine).
+    if cand_base.lower() != exist_base.lower():
+        return False
+
+    # Extract numeric parts or suffixes
+    cand_nums = "".join(re.findall(r"\d+", cand_cleaned))
+    exist_nums = "".join(re.findall(r"\d+", exist_cleaned))
+
+    # If the base characters are the same (case-insensitive):
+    # Case 1: They have different casing (e.g. 'm' vs 'M', 'v_1' vs 'V_1')
+    if cand_cleaned != exist_cleaned:
+        # If they differ in alphabetical casing
+        if cand_base != exist_base:
+            return True
+        # Case 2: They have different numbers/subscripts (e.g. 'v_1' vs 'v_2', 'v' vs 'v_1')
+        if cand_nums != exist_nums:
+            return True
+
+    return False
 
 
 async def resolve_candidate(
@@ -215,13 +278,16 @@ async def resolve_candidate(
             )
 
     # --- EMBEDDING tier ----------------------------------------------------- #
-    embed_pool = await _in_course_entities(
+    raw_embed_pool = await _in_course_entities(
         db,
         search_space_id=search_space_id,
         concept_id=concept_id,
         require_summary=True,
         exclude_entity_ids=exclude_entity_ids,
     )
+    embed_pool = [
+        ent for ent in raw_embed_pool if not is_false_merge_risk(candidate_key, ent.canonical_key)
+    ]
     if not embed_pool:
         # Nothing to compare against -> distinct (similarity unknown).
         await _record_decision(

@@ -63,11 +63,13 @@ async def start_ingest_run(
     db: AsyncSession,
     *,
     search_space_id: int,
-    document_id: int,
+    document_id: int | None,
     content_hash: str | None = None,
 ) -> IngestRun:
     """Open an ``apollo_ingest_runs`` row (``status='running'``, ``started_at`` now)
-    for one authored-set ingestion and flush so ``run.id`` is assigned."""
+    for one authored-set ingestion and flush so ``run.id`` is assigned.
+    ``document_id`` is None for runs with no source document (problem
+    generation) — the column is nullable since migration 036."""
     run = IngestRun(
         search_space_id=search_space_id,
         document_id=document_id,
@@ -171,6 +173,7 @@ async def finalize_ingest_run(
             "n_pages": ingest_run.n_pages,
             "n_promoted": ingest_run.n_promoted,
             "n_rejected": ingest_run.n_rejected,
+            "dedup_pressure": ingest_run.dedup_pressure,
         },
     )
 
