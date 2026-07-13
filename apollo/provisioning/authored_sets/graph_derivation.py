@@ -14,8 +14,10 @@ independently judges faithfulness against the same spans.
 
 Validation (``find_derivation_defects``, pure):
   * Problem-schema validity (``Problem.model_validate``)
-  * 5-9 typed nodes; unique, MEANINGFUL snake_case ids (entity keys derive
-    from entry_type + id, so "meaningful keys like eq.ibp_formula" == the id)
+  * 5-9 typed nodes in legacy mode, or 3-15 knowledge-component-grained nodes
+    when ``APOLLO_KC_GRANULARITY`` is enabled; unique, MEANINGFUL snake_case ids
+    (entity keys derive from entry_type + id, so "meaningful keys like
+    eq.ibp_formula" == the id)
   * concrete equations parse under BOTH ``sympy.sympify`` and
     ``parse_zero_form``, with a local_dict built from the concept's canonical
     symbols (reserved names N, S, E, I collide otherwise; explicit ``*``
@@ -40,6 +42,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -63,12 +66,16 @@ __all__ = [
     "DerivedGraph",
     "derive_reference_graph",
     "find_derivation_defects",
+    "kc_granularity_enabled",
 ]
 
 _LOG = logging.getLogger(__name__)
 
-_MIN_NODES = 5
-_MAX_NODES = 9
+_KC_GRANULARITY_FLAG = "APOLLO_KC_GRANULARITY"
+_LEGACY_MIN_NODES = 5
+_LEGACY_MAX_NODES = 9
+_KC_MIN_NODES = 3
+_KC_MAX_NODES = 15
 
 # Tokens whose presence in a symbolic string marks a pedagogical operator
 # identity (display content) rather than a concrete algebraic equation. The
@@ -106,7 +113,7 @@ class DerivedGraph(BaseModel):
 # The derivation prompt — the productized dress-rehearsal procedure.
 # --------------------------------------------------------------------------- #
 
-_DERIVATION_SYSTEM_PROMPT = (
+_DERIVATION_SYSTEM_PROMPT_LEGACY = (
     "You convert ONE problem and its TEACHER-PROVIDED worked solution into a "
     "teachable reference graph a student will later reconstruct by teaching it "
     "back. Derive the graph FROM THE WORKED SOLUTION ONLY — every node's "
@@ -156,6 +163,36 @@ _DERIVATION_SYSTEM_PROMPT = (
     "choices it makes, the reductions it performs, and 2-4 procedure_steps "
     "that walk its execution. 5-9 nodes total."
 )
+# Backward-compatible private alias used by the DAG-3 prompt contract tests.
+_DERIVATION_SYSTEM_PROMPT = _DERIVATION_SYSTEM_PROMPT_LEGACY
+
+_DERIVATION_SYSTEM_PROMPT_KC = _DERIVATION_SYSTEM_PROMPT_LEGACY.replace(
+    '"reference_solution": array of 5 to 9 step objects',
+    '"reference_solution": array of 3 to 15 step objects',
+).replace(
+    "6. Include the governing equation/criterion the solution relies on, the "
+    "choices it makes, the reductions it performs, and 2-4 procedure_steps "
+    "that walk its execution. 5-9 nodes total.",
+    "6. Granularity: one node per KNOWLEDGE COMPONENT — a single fact, concept "
+    "application, or procedure step a learner masters (and can be assessed on) "
+    "separately. Split a step when its parts are separately assessable; merge "
+    "two statements only when they are inseparable as evidence of "
+    "understanding. Include the governing equation/criterion the solution "
+    "relies on, the choices it makes, the reductions it performs, and the "
+    "procedure_steps that walk its execution. Let the solution determine the "
+    "natural node count; stay within 3-15 nodes.",
+)
+
+
+def kc_granularity_enabled() -> bool:
+    """Read per call so a flag flip does not require a process restart."""
+    return os.getenv(_KC_GRANULARITY_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _node_bounds() -> tuple[int, int]:
+    if kc_granularity_enabled():
+        return _KC_MIN_NODES, _KC_MAX_NODES
+    return _LEGACY_MIN_NODES, _LEGACY_MAX_NODES
 
 
 def _spans_text(spans: Sequence[GroundingSpan]) -> str:
@@ -449,10 +486,9 @@ def find_derivation_defects(
             defects.append(f"schema: {exc}")
         return defects  # structure unusable; deeper checks would throw
 
-    if "node_count" in active and not (_MIN_NODES <= len(steps) <= _MAX_NODES):
-        defects.append(
-            f"node_count: {len(steps)} nodes (gold standard is {_MIN_NODES}-{_MAX_NODES})"
-        )
+    min_nodes, max_nodes = _node_bounds()
+    if "node_count" in active and not (min_nodes <= len(steps) <= max_nodes):
+        defects.append(f"node_count: {len(steps)} nodes (gold standard is {min_nodes}-{max_nodes})")
 
     seen_ids: set[str] = set()
     for s in steps:
@@ -606,6 +642,11 @@ async def derive_reference_graph(
         "vocabulary": _vocab_block(canonical_symbols, normalization_map),
         "worked_solution": solution_text,
     }
+    system_prompt = (
+        _DERIVATION_SYSTEM_PROMPT_KC
+        if kc_granularity_enabled()
+        else _DERIVATION_SYSTEM_PROMPT_LEGACY
+    )
 
     def _ask(effort: str, feedback: list[str] | None) -> dict | None:
         user: dict[str, Any] = dict(base_user)
@@ -614,7 +655,7 @@ async def derive_reference_graph(
         raw = chat_fn(
             purpose="graph_derivation",
             messages=[
-                {"role": "system", "content": _DERIVATION_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(user, sort_keys=True)},
             ],
             response_format={"type": "json_object"},
