@@ -303,9 +303,7 @@ def _split_oversized_section(
         return [section]
 
     member_rows = [
-        rows_by_id[chunk_id]
-        for chunk_id in section.member_chunk_ids
-        if chunk_id in rows_by_id
+        rows_by_id[chunk_id] for chunk_id in section.member_chunk_ids if chunk_id in rows_by_id
     ]
     body_rows = [
         row
@@ -394,15 +392,17 @@ async def scrape_document(
     triage_chat_fn: Callable[..., str],
     max_sections: int,
     min_candidates: int,
+    exhaustive: bool = False,
     structured: bool = True,
     section_char_cap: int = APOLLO_SCRAPE_SECTION_CHAR_CAP,
 ) -> ScrapeResult:
     """Structure-aware stage-1 scrape. Reconstructs sections, triages them once, then
     scrapes problem-likely sections first; a NOT-likely section is scraped only while
-    candidates remain under ``min_candidates`` (the bounded exhaustive fallback), and
-    no more than ``max_sections`` sections are scraped per document. Before triage,
-    every section over ``section_char_cap`` is split on page boundaries, with
-    overlapping character windows as the no-page/single-oversized-page fallback.
+    candidates remain under ``min_candidates`` (the bounded exhaustive fallback),
+    unless ``exhaustive`` is true. No more than ``max_sections`` sections are scraped
+    per document. Before triage, every section over ``section_char_cap`` is split on
+    page boundaries, with overlapping character windows as the
+    no-page/single-oversized-page fallback.
 
     When ``structured`` is False, delegates to the legacy per-chunk
     ``scrape_questions`` (the ``APOLLO_STRUCTURED_SCRAPE`` revert path)."""
@@ -435,7 +435,7 @@ async def scrape_document(
         verdict = verdicts[i]
         # Fallback gate: once the problem-likely sections are exhausted, only keep
         # widening into NOT-likely sections while we are still below min_candidates.
-        if not verdict.is_problem_likely and len(candidates) >= min_candidates:
+        if not exhaustive and not verdict.is_problem_likely and len(candidates) >= min_candidates:
             break
         section_cands, failures = scrape_section(
             verdict.section, concept_hint=verdict.concept_slug, chat_fn=chat_fn

@@ -375,6 +375,56 @@ def test_doc_is_low_conf_helper():
 
 
 @pytest.mark.asyncio
+async def test_authored_set_scrape_is_exhaustive(monkeypatch):
+    """Teacher-declared problem sets bypass the autoprovision min-candidate guard."""
+    scrape_kwargs = {}
+
+    async def _resolve(db, *, search_space_id):
+        return 1
+
+    async def _registered(db, *, search_space_id):
+        return []
+
+    async def _solution_chunks(db, *, solution_document_id):
+        return []
+
+    async def _confidence(db, *, document_id):
+        return {}
+
+    async def _problem_chunks(db, *, document_id):
+        return [object()]
+
+    async def _scrape(chunk_rows, **kwargs):
+        assert chunk_rows
+        scrape_kwargs.update(kwargs)
+        return ScrapeResult(candidates=(), scraped_count=0, parse_failures=0)
+
+    async def _write(db, candidates, *, concept_id, search_space_id):
+        assert candidates == ()
+        return 0
+
+    monkeypatch.setattr(orch, "resolve_or_create_provisional_concept", _resolve)
+    monkeypatch.setattr(orch, "list_registered_concepts", _registered)
+    monkeypatch.setattr(orch, "load_solution_chunks", _solution_chunks)
+    monkeypatch.setattr(orch, "chunk_ocr_confidence", _confidence)
+    monkeypatch.setattr(orch, "_load_chunks", _problem_chunks)
+    monkeypatch.setattr(orch, "scrape_document", _scrape)
+    monkeypatch.setattr(orch, "write_tier1_problems", _write)
+
+    await run_authored_set_provisioning(
+        object(),
+        neo=None,
+        search_space_id=1,
+        problem_document_id=2,
+        solution_document_id=None,
+        metered_chat=_FakeAuthoredMC(),
+        embed_fn=lambda _text: [0.0],
+    )
+
+    assert scrape_kwargs["exhaustive"] is True
+
+
+@pytest.mark.asyncio
 async def test_authored_concept_dup_hashes_skips_invalid_payload(db_session):
     from apollo.provisioning.authored_sets.orchestrator import _authored_concept_dup_hashes
 

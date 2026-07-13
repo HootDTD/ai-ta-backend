@@ -223,6 +223,9 @@ async def run_authored_set_provisioning(
         triage_chat_fn=metered_chat.scrape_chat_fn(_TRIAGE_SYSTEM_PROMPT),
         max_sections=APOLLO_SCRAPE_MAX_SECTIONS,
         min_candidates=APOLLO_SCRAPE_MIN_CANDIDATES,
+        # A teacher-declared problem set must be drained fully; min_candidates is
+        # an autoprovision cost guard, not a correctness bound.
+        exhaustive=True,
         structured=structured_scrape_enabled(),
     )
     await write_tier1_problems(
