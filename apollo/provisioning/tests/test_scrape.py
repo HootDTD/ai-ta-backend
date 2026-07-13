@@ -330,19 +330,13 @@ def test_scrape_section_different_text_mints_different_key():
     a, _ = scrape_section(
         sec,
         concept_hint="m",
-        chat_fn=lambda _text: json.dumps(
-            [_well_formed_record(problem_text="Define rarity.")]
-        ),
+        chat_fn=lambda _text: json.dumps([_well_formed_record(problem_text="Define rarity.")]),
     )
     b, _ = scrape_section(
         sec,
         concept_hint="m",
         chat_fn=lambda _text: json.dumps(
-            [
-                _well_formed_record(
-                    problem_text="Define what makes an advantage rare and why."
-                )
-            ]
+            [_well_formed_record(problem_text="Define what makes an advantage rare and why.")]
         ),
     )
     assert a[0].chunk_content_hash != b[0].chunk_content_hash
@@ -520,6 +514,132 @@ def test_scrape_document_stops_widening_once_min_met():
     assert scrape_calls["n"] == 1
     assert result.scraped_count == 1
     assert len(result.candidates) == 1
+
+
+def test_scrape_document_exhaustive_scrapes_all_not_likely_sections():
+    """An exhaustive authored-set scrape drains NOT-likely sections even after
+    the first section has already satisfied min_candidates."""
+
+    @dataclass
+    class _Row:
+        id: int
+        content: str
+        chunk_type: str
+        document_id: int = 5
+        page_number: int | None = 1
+        section_path: str | None = None
+
+    rows = [
+        row
+        for i in range(3)
+        for row in (
+            _Row(id=2 * i, content=f"Section {i}", chunk_type="heading"),
+            _Row(id=2 * i + 1, content=f"Question {i}", chunk_type="body"),
+        )
+    ]
+    scrape_calls: list[str] = []
+
+    def _scrape(text):
+        scrape_calls.append(text)
+        return json.dumps([_well_formed_record(problem_text=f"Extract {text}")])
+
+    def _triage(_payload):
+        return json.dumps(
+            [{"index": i, "is_problem_likely": False, "priority": 0} for i in range(3)]
+        )
+
+    result = _run(
+        scrape_document(
+            rows,
+            chat_fn=_scrape,
+            triage_chat_fn=_triage,
+            max_sections=120,
+            min_candidates=1,
+            exhaustive=True,
+        )
+    )
+
+    assert scrape_calls == ["Question 0", "Question 1", "Question 2"]
+    assert result.scraped_count == 3
+    assert len(result.candidates) == 3
+
+
+def test_scrape_document_exhaustive_still_respects_max_sections():
+    """Exhaustive bypasses only the min_candidates fallback gate; max_sections
+    remains the hard runaway bound."""
+
+    @dataclass
+    class _Row:
+        id: int
+        content: str
+        document_id: int = 5
+        page_number: int | None = 1
+        section_path: str | None = None
+        chunk_type: str | None = "heading"
+
+    rows = [_Row(id=i, content=f"Section {i}") for i in range(3)]
+    scrape_calls = {"n": 0}
+
+    def _scrape(_text):
+        scrape_calls["n"] += 1
+        return json.dumps([_well_formed_record()])
+
+    def _triage(_payload):
+        return json.dumps(
+            [{"index": i, "is_problem_likely": False, "priority": 0} for i in range(3)]
+        )
+
+    _run(
+        scrape_document(
+            rows,
+            chat_fn=_scrape,
+            triage_chat_fn=_triage,
+            max_sections=2,
+            min_candidates=1,
+            exhaustive=True,
+        )
+    )
+
+    assert scrape_calls["n"] == 2
+
+
+def test_scrape_document_non_exhaustive_stops_at_min_candidates():
+    """The default autoprovision behavior remains cost-bounded once an all-
+    NOT-likely document reaches min_candidates."""
+
+    @dataclass
+    class _Row:
+        id: int
+        content: str
+        document_id: int = 5
+        page_number: int | None = 1
+        section_path: str | None = None
+        chunk_type: str | None = "heading"
+
+    rows = [_Row(id=i, content=f"Section {i}") for i in range(3)]
+    scrape_calls = {"n": 0}
+
+    def _scrape(_text):
+        scrape_calls["n"] += 1
+        return json.dumps([_well_formed_record()])
+
+    def _triage(_payload):
+        return json.dumps(
+            [{"index": i, "is_problem_likely": False, "priority": 0} for i in range(3)]
+        )
+
+    _run(
+        scrape_document(
+            rows,
+            chat_fn=_scrape,
+            triage_chat_fn=_triage,
+            max_sections=120,
+            min_candidates=1,
+            exhaustive=False,
+        )
+    )
+
+    assert scrape_calls["n"] == 1
 
 
 def test_scrape_document_structured_false_uses_legacy_per_chunk():
@@ -861,10 +981,7 @@ async def test_rerun_with_different_segmentation_does_not_adopt_stale_rows(db_se
         content_hash=f"7.q{chunk_content_hash(text_a)[:32]}",
     )
     assert (
-        await write_tier1_problems(
-            db_session, [run_a], concept_id=cid, search_space_id=ss_id
-        )
-        == 1
+        await write_tier1_problems(db_session, [run_a], concept_id=cid, search_space_id=ss_id) == 1
     )
     run_b = _candidate(
         problem_text=text_b,
@@ -872,17 +989,11 @@ async def test_rerun_with_different_segmentation_does_not_adopt_stale_rows(db_se
         content_hash=f"7.q{chunk_content_hash(text_b)[:32]}",
     )
     assert (
-        await write_tier1_problems(
-            db_session, [run_b], concept_id=cid, search_space_id=ss_id
-        )
-        == 1
+        await write_tier1_problems(db_session, [run_b], concept_id=cid, search_space_id=ss_id) == 1
     )
     # Identical re-run of B inserts ZERO (idempotency preserved).
     assert (
-        await write_tier1_problems(
-            db_session, [run_b], concept_id=cid, search_space_id=ss_id
-        )
-        == 0
+        await write_tier1_problems(db_session, [run_b], concept_id=cid, search_space_id=ss_id) == 0
     )
     row = (
         await db_session.execute(
