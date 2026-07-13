@@ -26,6 +26,9 @@ omit =
     # run in CI — unmeasured under source=. it would starve the diff-cover
     # patch gate (same failure mode that got campaign/* omitted above).
     scripts/wave1_live_smoke.py
+    # DAG-4 live-LLM evaluation harness: same network/cost exclusion as the
+    # wave-1 smoke above; the conductor runs it manually before merge.
+    scripts/dag4_granularity_eval.py
 
 [report]
 show_missing = true
