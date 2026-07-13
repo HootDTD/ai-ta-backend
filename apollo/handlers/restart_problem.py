@@ -9,7 +9,7 @@ V3: KG wipe is now a Neo4j subgraph DETACH DELETE via KGStore.delete_subgraph.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,7 +41,7 @@ async def handle_restart_problem(
     db: AsyncSession,
     neo: Neo4jClient | None,
     session_id: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     # Row lock on Postgres to serialize concurrent restart + chat writes.
     # SQLite silently ignores it.
     sess = (await db.execute(
@@ -85,6 +85,9 @@ async def handle_restart_problem(
     await db.execute(delete(Message).where(Message.attempt_id == current_attempt.id))
 
     sess.phase = SessionPhase.TEACHING.value
+    sess.pending_intent = None
+    sess.history_summary = None
+    sess.history_summary_up_to_turn = None
     await db.commit()
 
     return {"ok": True}

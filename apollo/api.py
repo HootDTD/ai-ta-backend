@@ -37,7 +37,6 @@ from apollo.errors import (
     ProblemNotFoundError,
     ResolutionInvalidOutputError,
     ResolutionUnavailableError,
-    ReviewRequiredError,
     SessionFrozenError,
     TranscriptAuditUnavailableError,
 )
@@ -523,19 +522,6 @@ async def invalid_phase_handler(request: Request, exc: InvalidPhaseError) -> JSO
     )
 
 
-async def review_required_handler(request: Request, exc: ReviewRequiredError) -> JSONResponse:
-    """P3.6 OLM Done-gate. Flagged entries need a negotiation move before
-    grading proceeds. The FE renders a review modal listing each entry."""
-    return JSONResponse(
-        status_code=422,
-        content=_err_payload(
-            "review_required",
-            str(exc),
-            review_required=exc.entries,
-        ),
-    )
-
-
 async def kg_entry_not_found_handler(request: Request, exc: KGEntryNotFoundError) -> JSONResponse:
     """P3 — Negotiable OLM. Targeted entry doesn't exist in the per-attempt
     subgraph (stale FE state, race with parser, or bad entry_id)."""
@@ -708,7 +694,6 @@ def register_exception_handlers(app) -> None:
     app.add_exception_handler(SessionFrozenError, session_frozen_handler)
     app.add_exception_handler(KGEntryNotFoundError, kg_entry_not_found_handler)
     app.add_exception_handler(ProblemNotFoundError, problem_not_found_handler)
-    app.add_exception_handler(ReviewRequiredError, review_required_handler)
     # WU-4C1 — the five Done shadow-chain named errors.
     app.add_exception_handler(ResolutionUnavailableError, resolution_unavailable_handler)
     app.add_exception_handler(TranscriptAuditUnavailableError, transcript_audit_unavailable_handler)

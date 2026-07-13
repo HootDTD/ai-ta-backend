@@ -4,16 +4,10 @@ The legacy `test_e2e_smoke.py` is module-skipped pending a V3 rewrite.
 This smoke verifies the OLM chain end-to-end across modules with stubbed
 LLM and Neo4j boundaries:
 
-    1. Student starts an attempt; parser writes a low-confidence node.
-    2. Done-gate (P3.6 enabled) blocks with `review_required` listing
-       that node.
-    3. Student paraphrases the node — status flips to DUAL with a
-       student_belief.
-    4. Student skips a second flagged node — status DUAL, no belief.
-    5. Coverage payload (P3.4) carries the student_belief for the
-       paraphrased entry into the LLM payload.
-    6. Done-gate clears (every flagged entry has a move).
-    7. Diagnostic narration (P3.11) mentions the negotiation totals.
+    1. Student starts an attempt; parser writes graph nodes.
+    2. Student optionally paraphrases one node and skips another.
+    3. Coverage carries the paraphrased student belief into its LLM payload.
+    4. Diagnostic narration mentions the optional negotiation totals.
 
 If any link breaks, the failing assertion pinpoints which join.
 """
@@ -29,8 +23,6 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
-from apollo.errors import ReviewRequiredError
-from apollo.handlers.done import _enforce_done_gate, _flagged_entries
 from apollo.handlers.negotiate import (
     ParaphraseRequest,
     handle_paraphrase,
@@ -93,7 +85,8 @@ class _Sess:
             aid = int(params["aid"])
             recs = []
             for (a, _), n in self._n.items():
-                if a != aid: continue
+                if a != aid:
+                    continue
                 recs.append(_Rec({
                     "props": dict(n["_bag"]) | {
                         "status": n.get("status", "ACCEPTED"),
@@ -106,7 +99,8 @@ class _Sess:
                 async def single(_self): return recs[0] if recs else None
                 def __aiter__(_self):
                     async def gen():
-                        for r in recs: yield r
+                        for r in recs:
+                            yield r
                     return gen()
             return _R()
         # Edges + everything else: empty.
@@ -114,7 +108,8 @@ class _Sess:
             async def single(_self): return None
             def __aiter__(_self):
                 async def gen():
-                    if False: yield
+                    if False:
+                        yield
                 return gen()
         return _R()
 
@@ -164,9 +159,13 @@ async def attempt(db: AsyncSession):
         user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_id=1,
         status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
     )
-    db.add(sess); await db.flush()
+    db.add(sess)
+    await db.flush()
     a = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro")
-    db.add(a); await db.commit(); await db.refresh(sess); await db.refresh(a)
+    db.add(a)
+    await db.commit()
+    await db.refresh(sess)
+    await db.refresh(a)
     return sess, a
 
 
@@ -175,13 +174,11 @@ async def attempt(db: AsyncSession):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_negotiable_olm_chain_done_gate_to_coverage_to_narration(
+async def test_negotiable_olm_chain_to_coverage_to_narration(
     monkeypatch, db, attempt,
 ):
     """One pass through every join in the OLM chain. Each assertion
     pinpoints exactly which join broke if a regression lands."""
-    monkeypatch.setenv("APOLLO_DONE_GATE_ENABLED", "1")
-
     sess, att = attempt
     neo = _Neo()
 
@@ -209,20 +206,6 @@ async def test_negotiable_olm_chain_done_gate_to_coverage_to_narration(
     for n in (low_conf, disputed, high_conf):
         neo.add_node(attempt_id=att.id, node=n)
 
-    # ---- Stage 2: pre-move done-gate must block.
-    pre_graph = await _read_graph(neo, att.id)
-    flagged = _flagged_entries(pre_graph)
-    assert {fid for n, _ in flagged for fid in [n.node_id]} == {"eq_low", "def_disp"}
-
-    with pytest.raises(ReviewRequiredError) as exc_info:
-        await _enforce_done_gate(db, attempt_id=att.id, graph=pre_graph)
-    blocked_ids = {e["entry_id"] for e in exc_info.value.entries}
-    assert blocked_ids == {"eq_low", "def_disp"}
-    # Reasons surface correctly.
-    reasons = {e["entry_id"]: e["reason"] for e in exc_info.value.entries}
-    assert reasons["eq_low"] == "low_confidence"
-    assert reasons["def_disp"] == "disputed"
-
     # ---- Stage 3: paraphrase the low-conf entry.
     out = await handle_paraphrase(
         db=db, neo=neo, session_id=sess.id, entry_id="eq_low",
@@ -238,11 +221,9 @@ async def test_negotiable_olm_chain_done_gate_to_coverage_to_narration(
     assert out["entry"]["status"] == "DUAL"
     assert out["entry"]["student_belief"] is None
 
-    # ---- Stage 5: done-gate clears.
+    # Negotiation remains an optional correction tool; grading no longer
+    # requires a move on low-confidence or disputed entries.
     post_graph = await _read_graph(neo, att.id)
-    # After moves, both flagged entries are now DUAL — _flagged_entries skips DUAL.
-    assert _flagged_entries(post_graph) == []
-    await _enforce_done_gate(db, attempt_id=att.id, graph=post_graph)  # no raise
 
     # ---- Stage 6: coverage payload carries student_belief into the LLM call.
     captured: dict = {}
