@@ -104,9 +104,14 @@ async def _next_turn_index(db: AsyncSession, session_id: int) -> int:
     return (latest + 1) if latest is not None else 0
 
 
-async def _load_history(db: AsyncSession, session_id: int) -> list[dict[str, str]]:
+async def _load_history(
+    db: AsyncSession, session_id: int, attempt_id: int,
+) -> list[dict[str, str]]:
     result = await db.execute(
-        select(Message).where(Message.session_id == session_id).order_by(Message.turn_index)
+        select(Message)
+        .where(Message.session_id == session_id)
+        .where(Message.attempt_id == attempt_id)
+        .order_by(Message.turn_index)
     )
     rows = result.scalars().all()
     out = []
@@ -363,7 +368,7 @@ async def handle_chat(
 
     # Step 2: classify new utterance. Above-threshold non-teaching ->
     # confirmation prompt + pending_intent set.
-    history_pre = await _load_history(db, session_id)
+    history_pre = await _load_history(db, session_id, int(current_attempt.id))
     intent_response = await _maybe_intent_confirmation(
         db=db,
         sess=sess,
@@ -407,6 +412,7 @@ async def handle_chat(
     history_summary, raw_window = await load_windowed_history(
         db=db,
         session=sess,
+        attempt_id=int(current_attempt.id),
     )
 
     # v1 (diff-at-Done): per turn = nodify + dumb reply. No sufficiency,
