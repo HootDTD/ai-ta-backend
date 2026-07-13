@@ -264,6 +264,105 @@ def _mint_plan(concept_id: int) -> MintPlan:
     )
 
 
+def _valid_bernoulli_strategy_paths() -> list[dict]:
+    """Two distinct routes that jointly cover all seven steps and share the sink."""
+    return [
+        {
+            "strategy_id": "continuity_route",
+            "nodes": [
+                "continuity",
+                "incompressibility",
+                "plan_apply_continuity",
+                "plan_solve_bernoulli_for_p2",
+            ],
+            "milestones": ["plan_solve_bernoulli_for_p2"],
+        },
+        {
+            "strategy_id": "bernoulli_route",
+            "nodes": [
+                "bernoulli",
+                "horizontal_simplification",
+                "plan_apply_horizontal_simplification",
+                "plan_solve_bernoulli_for_p2",
+            ],
+            "milestones": ["plan_solve_bernoulli_for_p2"],
+        },
+    ]
+
+
+def test_enumerated_paths_helper_is_inert_when_flag_off(monkeypatch):
+    monkeypatch.delenv("APOLLO_MULTI_PATH", raising=False)
+    annotated = promote_mod._annotate(_bernoulli_problem(), _mint_plan(1))
+
+    def enumerator(_problem):
+        raise AssertionError("flag-off enumerator must not run")
+
+    assert (
+        promote_mod._with_enumerated_paths(
+            annotated,
+            enumerator,
+            concept_problem_id=1,
+        )
+        is annotated
+    )
+
+
+def test_enumerated_paths_helper_falls_back_on_error_and_invalid_combination(monkeypatch, caplog):
+    monkeypatch.setenv("APOLLO_MULTI_PATH", "1")
+    problem = _bernoulli_problem()
+    annotated = promote_mod._annotate(problem, _mint_plan(1))
+
+    def raises(_problem):
+        raise RuntimeError("stubbed outage")
+
+    assert promote_mod._with_enumerated_paths(annotated, raises, concept_problem_id=7) is annotated
+    assert "provisioning_path_enumeration_fallback" in caplog.text
+
+    def strict_subset(_problem):
+        return [{"strategy_id": "short", "nodes": ["continuity"], "milestones": ["continuity"]}]
+
+    assert (
+        promote_mod._with_enumerated_paths(
+            annotated,
+            strict_subset,
+            concept_problem_id=8,
+        )
+        is annotated
+    )
+
+    incomplete = _valid_bernoulli_strategy_paths()
+    incomplete[0] = {
+        **incomplete[0],
+        "nodes": ["continuity", "plan_apply_continuity", "plan_solve_bernoulli_for_p2"],
+    }
+    assert (
+        promote_mod._with_enumerated_paths(
+            annotated,
+            lambda _problem: incomplete,
+            concept_problem_id=9,
+        )
+        is annotated
+    )
+
+
+def test_enumerated_paths_helper_replaces_legacy_path_with_valid_object_set(monkeypatch):
+    monkeypatch.setenv("APOLLO_MULTI_PATH", "1")
+    annotated = promote_mod._annotate(_bernoulli_problem(), _mint_plan(1))
+    enumerated = _valid_bernoulli_strategy_paths()
+
+    candidate = promote_mod._with_enumerated_paths(
+        annotated,
+        lambda _problem: enumerated,
+        concept_problem_id=10,
+    )
+
+    assert candidate is not annotated
+    assert candidate["declared_paths"] == enumerated
+    assert all(isinstance(path, dict) for path in candidate["declared_paths"])
+    assert promote_mod.validate_reference_graph(candidate).ok
+    assert isinstance(annotated["declared_paths"][0], list)
+
+
 # --------------------------------------------------------------------------- #
 # T-PR1 — pass flips tier + payload + calls project_canon
 # --------------------------------------------------------------------------- #
@@ -318,6 +417,108 @@ async def test_promote_pass_calls_project_canon_with_concept_id(db_session, monk
     assert len(calls) == 1
     assert calls[0]["concept_id"] == concept_id
     assert calls[0]["search_space_id"] == space
+
+
+async def test_multi_path_flag_off_never_calls_enumerator_and_preserves_legacy_payload(
+    db_session, monkeypatch
+):
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="mp-off")
+    monkeypatch.delenv("APOLLO_MULTI_PATH", raising=False)
+    original_problem = _bernoulli_problem()
+
+    def enumerator(_problem):
+        raise AssertionError("flag-off enumerator must not be called")
+
+    result = await promote(
+        db_session,
+        AsyncMock(),
+        problem=original_problem,
+        mint_plan=_mint_plan(concept_id),
+        search_space_id=space,
+        concept_problem_id=problem_id,
+        existing_problem_hashes=set(),
+        path_enumerator=enumerator,
+    )
+    assert result.promoted
+    row = await db_session.get(ConceptProblem, problem_id)
+    assert row.payload["declared_paths"] == [
+        [step["id"] for step in original_problem["reference_solution"]]
+    ]
+
+
+async def test_multi_path_enumerator_failure_falls_back_and_promotion_succeeds(
+    db_session, monkeypatch
+):
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="mp-fail")
+    monkeypatch.setenv("APOLLO_MULTI_PATH", "1")
+
+    def enumerator(_problem):
+        raise RuntimeError("stubbed enumeration failure")
+
+    result = await promote(
+        db_session,
+        AsyncMock(),
+        problem=_bernoulli_problem(),
+        mint_plan=_mint_plan(concept_id),
+        search_space_id=space,
+        concept_problem_id=problem_id,
+        existing_problem_hashes=set(),
+        path_enumerator=enumerator,
+    )
+    assert result.promoted
+    row = await db_session.get(ConceptProblem, problem_id)
+    assert len(row.payload["declared_paths"]) == 1
+    assert isinstance(row.payload["declared_paths"][0], list)
+
+
+async def test_multi_path_valid_replacement_writes_only_object_paths(db_session, monkeypatch):
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="mp-valid")
+    monkeypatch.setenv("APOLLO_MULTI_PATH", "1")
+    enumerated = _valid_bernoulli_strategy_paths()
+
+    result = await promote(
+        db_session,
+        AsyncMock(),
+        problem=_bernoulli_problem(),
+        mint_plan=_mint_plan(concept_id),
+        search_space_id=space,
+        concept_problem_id=problem_id,
+        existing_problem_hashes=set(),
+        path_enumerator=lambda _problem: enumerated,
+    )
+
+    assert result.promoted
+    row = await db_session.get(ConceptProblem, problem_id)
+    assert row.payload["declared_paths"] == enumerated
+    assert all(isinstance(path, dict) for path in row.payload["declared_paths"])
+    assert promote_mod.validate_reference_graph(row.payload).ok
+
+
+async def test_multi_path_joint_cover_failure_falls_back_to_legacy_path(db_session, monkeypatch):
+    space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="mp-cover")
+    monkeypatch.setenv("APOLLO_MULTI_PATH", "1")
+    incomplete = _valid_bernoulli_strategy_paths()
+    incomplete[0] = {
+        **incomplete[0],
+        "nodes": ["continuity", "plan_apply_continuity", "plan_solve_bernoulli_for_p2"],
+    }
+
+    result = await promote(
+        db_session,
+        AsyncMock(),
+        problem=_bernoulli_problem(),
+        mint_plan=_mint_plan(concept_id),
+        search_space_id=space,
+        concept_problem_id=problem_id,
+        existing_problem_hashes=set(),
+        path_enumerator=lambda _problem: incomplete,
+    )
+
+    assert result.promoted
+    row = await db_session.get(ConceptProblem, problem_id)
+    assert row.payload["declared_paths"] == [
+        [step["id"] for step in _bernoulli_problem()["reference_solution"]]
+    ]
 
 
 # --------------------------------------------------------------------------- #

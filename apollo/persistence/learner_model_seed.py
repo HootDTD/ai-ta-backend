@@ -22,7 +22,9 @@ source files into migration-026 Layer-1 row specs:
 
 It also exposes ``validate_reference_graph`` — the executable §6.1 contract that
 WU-4A's grading core consumes (every reference node must carry an entity link
-AND a non-empty declared path that covers every node).
+AND a non-empty declared path that covers every node). Object-shaped strategy
+paths additionally require a non-empty milestone set containing a mechanically
+derived DEPENDS_ON sink (a final-result step); legacy list paths are unchanged.
 
 NO SQLAlchemy import lives here: the conversion functions take plain dicts (the
 parsed JSON) and return frozen dataclasses / new dicts, so the fast unit suite
@@ -67,6 +69,16 @@ class ReferenceGraphValidation:
     missing_entity_links: tuple[str, ...]
     undeclared_paths: bool
     errors: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class NormalizedPath:
+    """One legacy or object-shaped declared path in a common immutable form."""
+
+    strategy_id: str
+    node_ids: tuple[str, ...]
+    milestone_ids: tuple[str, ...]
+    is_object: bool = False
 
 
 class SeedError(RuntimeError):
@@ -337,7 +349,10 @@ def authored_definitions_from_spec(entries: list[dict]) -> list[EntitySpec]:
 # ---------------------------------------------------------------------------
 
 
-def annotate_reference_solution(problem: dict, key_for_node: Callable[[str], str]) -> dict:
+def annotate_reference_solution(
+    problem: dict,
+    key_for_node: Callable[[str], str],
+) -> dict:
     """Return a NEW problem dict with each reference-solution step carrying an
     ``entity_key`` and the problem carrying ``declared_paths`` (one complete
     ordered path, D6) + ``layer1_seeded: True``.
@@ -370,17 +385,70 @@ def annotate_reference_solution(problem: dict, key_for_node: Callable[[str], str
 # ---------------------------------------------------------------------------
 
 
+def normalize_declared_paths(raw: object) -> tuple[NormalizedPath, ...]:
+    """Normalize legacy lists and strategy objects without problem-specific checks.
+
+    Shape errors raise ``ValueError`` with a path-indexed diagnostic. Reference
+    node membership and cross-path distinctness belong to
+    :func:`validate_reference_graph`, which has the problem's node set.
+    """
+    if not isinstance(raw, list):
+        raise ValueError("declared_paths must be a list")
+
+    normalized: list[NormalizedPath] = []
+    for index, entry in enumerate(raw):
+        if isinstance(entry, list):
+            if not all(isinstance(node_id, str) for node_id in entry):
+                raise ValueError(f"declared_paths[{index}] legacy nodes must all be strings")
+            normalized.append(
+                NormalizedPath(
+                    strategy_id=f"path_{index}",
+                    node_ids=tuple(entry),
+                    milestone_ids=(),
+                )
+            )
+            continue
+
+        if not isinstance(entry, dict):
+            raise ValueError(f"declared_paths[{index}] must be a legacy node list or a path object")
+        unexpected = set(entry) - {"strategy_id", "nodes", "milestones"}
+        if unexpected:
+            raise ValueError(f"declared_paths[{index}] has unexpected fields: {sorted(unexpected)}")
+        strategy_id = entry.get("strategy_id")
+        nodes = entry.get("nodes")
+        milestones = entry.get("milestones")
+        if not isinstance(strategy_id, str):
+            raise ValueError(f"declared_paths[{index}].strategy_id must be a string")
+        if not isinstance(nodes, list) or not all(isinstance(node_id, str) for node_id in nodes):
+            raise ValueError(f"declared_paths[{index}].nodes must be a list of strings")
+        if not isinstance(milestones, list) or not all(
+            isinstance(node_id, str) for node_id in milestones
+        ):
+            raise ValueError(f"declared_paths[{index}].milestones must be a list of strings")
+        normalized.append(
+            NormalizedPath(
+                strategy_id=strategy_id,
+                node_ids=tuple(nodes),
+                milestone_ids=tuple(milestones),
+                is_object=True,
+            )
+        )
+    return tuple(normalized)
+
+
 def validate_reference_graph(problem: dict) -> ReferenceGraphValidation:
     """Validate an annotated problem's reference graph (spec §6.1).
-
-    This gate is DEPENDS_ON-direction-invariant: it validates entity links and
-    declared-path membership only and never reads reference edges.
 
     ``ok`` is True iff ALL hold:
       (a) every reference-solution step has a non-empty ``entity_key``;
       (b) ``declared_paths`` is present and non-empty;
       (c) every node id in every declared path is a real reference-node id;
       (d) every reference-node id appears on >= 1 declared path.
+      (e) every object path has at least one milestone, and at least one of its
+          milestones is a DEPENDS_ON sink (a step no other step depends on).
+
+    Rule (e) is object-only. Legacy node-id list paths retain their historical
+    validation semantics.
 
     Any failure populates the relevant reason field/tuple — this is what would
     "block grading" at WU-4A pipeline step 3.
@@ -388,6 +456,13 @@ def validate_reference_graph(problem: dict) -> ReferenceGraphValidation:
     steps = problem.get("reference_solution", [])
     node_ids = [step.get("id") for step in steps]
     node_id_set = set(node_ids)
+    depended_on_ids = {
+        dependency
+        for step in steps
+        for dependency in step.get("depends_on", [])
+        if isinstance(dependency, str)
+    }
+    sink_ids = node_id_set - depended_on_ids
 
     errors: list[str] = []
 
@@ -401,18 +476,63 @@ def validate_reference_graph(problem: dict) -> ReferenceGraphValidation:
 
     # (b) declared paths present + non-empty
     raw_declared = problem.get("declared_paths")
-    declared_paths: list = raw_declared if isinstance(raw_declared, list) else []
+    try:
+        declared_paths = normalize_declared_paths(raw_declared)
+    except ValueError as exc:
+        declared_paths = ()
+        errors.append(str(exc))
     undeclared = len(declared_paths) == 0
     if undeclared:
         errors.append("declared_paths is empty or absent (blocks grading at step 3)")
 
-    # (c) paths reference only real nodes
+    # (c) paths are well-formed and reference only real nodes
     covered: set[str] = set()
-    for path in declared_paths:
-        for nid in path:
+    strategy_ids: set[str] = set()
+    for path_index, path in enumerate(declared_paths):
+        if not path.strategy_id:
+            errors.append(f"declared_paths[{path_index}].strategy_id must be non-empty")
+        if path.strategy_id in strategy_ids:
+            errors.append(f"duplicate declared path strategy_id: {path.strategy_id!r}")
+        strategy_ids.add(path.strategy_id)
+        if not path.node_ids:
+            errors.append(f"declared_paths[{path_index}].nodes must be non-empty")
+        for nid in path.node_ids:
             covered.add(nid)
             if nid not in node_id_set:
                 errors.append(f"declared path references unknown node id: {nid!r}")
+        milestone_set = set(path.milestone_ids)
+        node_set = set(path.node_ids)
+        if path.is_object and not path.milestone_ids:
+            errors.append(f"declared_paths[{path_index}].milestones must be non-empty")
+        if not milestone_set <= node_set:
+            errors.append(
+                f"declared_paths[{path_index}] milestones are not on the path: "
+                f"{sorted(milestone_set - node_set)}"
+            )
+        if path.is_object and not milestone_set & sink_ids:
+            errors.append(
+                f"declared_paths[{path_index}].milestones must include a reference graph sink: "
+                f"{sorted(sink_ids)}"
+            )
+
+    # Multi-path MAX is safe only when paths are genuinely distinct and none is
+    # an easier strict subset of another.
+    if len(declared_paths) >= 2:
+        node_sets = [set(path.node_ids) for path in declared_paths]
+        for left in range(len(node_sets)):
+            for right in range(left + 1, len(node_sets)):
+                if node_sets[left] == node_sets[right]:
+                    errors.append(
+                        f"declared paths have identical node sets: indexes {left} and {right}"
+                    )
+                elif node_sets[left] < node_sets[right]:
+                    errors.append(
+                        f"declared path index {left} is a strict subset of path index {right}"
+                    )
+                elif node_sets[right] < node_sets[left]:
+                    errors.append(
+                        f"declared path index {right} is a strict subset of path index {left}"
+                    )
 
     # (d) every node covered by >= 1 path (only meaningful when paths exist)
     if not undeclared:

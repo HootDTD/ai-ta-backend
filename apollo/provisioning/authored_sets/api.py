@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
+from functools import partial
 from types import SimpleNamespace
 from typing import Literal
 
@@ -58,6 +59,7 @@ from apollo.provisioning.authored_sets.orchestrator import (
     run_authored_set_provisioning,
 )
 from apollo.provisioning.metered_chat import MeteredChat
+from apollo.provisioning.path_enumeration import enumerate_strategy_paths
 from apollo.provisioning.promote import promote
 from apollo.provisioning.solution import ReferenceSolutionDraft, build_approved_pair
 from apollo.provisioning.tag_mint import ResolvedConcept, TagMintError, tag_and_mint
@@ -1042,6 +1044,11 @@ async def approve_held_row(
                 concept_problem_id=int(row.id),
                 existing_problem_hashes=existing_hashes,
                 solution_source=pair.solution_source,
+                path_enumerator=(
+                    partial(enumerate_strategy_paths, chat_fn=metered_chat.cheap)
+                    if hasattr(metered_chat, "cheap")
+                    else None
+                ),
             )
             if not result.promoted:
                 raise MintRejected(result)
