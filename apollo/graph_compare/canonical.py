@@ -36,6 +36,7 @@ from apollo.graph_compare.validator import (
 from apollo.ontology.edges import EdgeProvenance, EdgeType
 from apollo.ontology.graph import KGGraph
 from apollo.ontology.nodes import NodeType
+from apollo.persistence.learner_model_seed import normalize_declared_paths
 
 # Import (don't duplicate) the resolution-layer entry_type -> NodeType resolver
 # (importing the `_`-private helper beats duplicating the table and risking
@@ -95,6 +96,8 @@ class ReferencePathView:
     """One declared acceptable solution path, as an ordered tuple of canonical keys."""
 
     canonical_keys: tuple[str, ...]
+    strategy_id: str = ""
+    milestone_keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -220,10 +223,16 @@ def build_reference_canonical(problem: dict) -> ReferenceGraph:
     # was degraded (unmapped entry_type) is dropped from the path, keeping the
     # remaining known subsequence rather than KeyError-ing.
     paths: list[ReferencePathView] = []
-    for path in problem["declared_paths"]:
+    for path in normalize_declared_paths(problem["declared_paths"]):
         paths.append(
             ReferencePathView(
-                canonical_keys=tuple(key_for_step[nid] for nid in path if nid in key_for_step)
+                canonical_keys=tuple(
+                    key_for_step[nid] for nid in path.node_ids if nid in key_for_step
+                ),
+                strategy_id=path.strategy_id,
+                milestone_keys=tuple(
+                    key_for_step[nid] for nid in path.milestone_ids if nid in key_for_step
+                ),
             )
         )
 

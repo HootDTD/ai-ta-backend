@@ -9,7 +9,13 @@ asserts every seeded bernoulli problem returns ``ok=True``. No DB, no LLM.
 
 from __future__ import annotations
 
-from apollo.persistence.learner_model_seed import validate_reference_graph
+import pytest
+
+from apollo.persistence.learner_model_seed import (
+    NormalizedPath,
+    normalize_declared_paths,
+    validate_reference_graph,
+)
 
 
 def _problem(steps, declared_paths) -> dict:
@@ -20,8 +26,14 @@ def _problem(steps, declared_paths) -> dict:
     }
 
 
-def _step(node_id: str, entity_key: str | None) -> dict:
-    step: dict = {"step": 1, "id": node_id, "entry_type": "equation", "content": {}}
+def _step(node_id: str, entity_key: str | None, depends_on: list[str] | None = None) -> dict:
+    step: dict = {
+        "step": 1,
+        "id": node_id,
+        "entry_type": "equation",
+        "content": {},
+        "depends_on": depends_on or [],
+    }
     if entity_key is not None:
         step["entity_key"] = entity_key
     return step
@@ -98,3 +110,132 @@ def test_validate_collects_multiple_failures():
     assert result.ok is False
     assert "n1" in result.missing_entity_links
     assert result.undeclared_paths is True
+
+
+def test_normalize_declared_paths_supports_legacy_object_and_mixed():
+    assert normalize_declared_paths(
+        [
+            ["n1", "n2"],
+            {"strategy_id": "alternate", "nodes": ["n1", "n3"], "milestones": ["n3"]},
+        ]
+    ) == (
+        NormalizedPath("path_0", ("n1", "n2"), ()),
+        NormalizedPath("alternate", ("n1", "n3"), ("n3",), is_object=True),
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        ("not-a-list", "must be a list"),
+        ([42], "legacy node list or a path object"),
+        ([["n1", 2]], "legacy nodes"),
+        ([{"strategy_id": 2, "nodes": ["n1"], "milestones": []}], "strategy_id"),
+        ([{"strategy_id": "x", "nodes": "n1", "milestones": []}], ".nodes"),
+        ([{"strategy_id": "x", "nodes": ["n1"], "milestones": "n1"}], "milestones"),
+        ([{"strategy_id": "x", "nodes": ["n1"], "milestones": [], "extra": 1}], "extra"),
+    ],
+)
+def test_normalize_declared_paths_rejects_bad_shapes(raw, message):
+    with pytest.raises(ValueError, match=message):
+        normalize_declared_paths(raw)
+
+
+def test_validate_rejects_duplicate_node_sets():
+    problem = _fully_annotated()
+    problem["declared_paths"] = [
+        {"strategy_id": "one", "nodes": ["n1", "n2", "n3"], "milestones": ["n3"]},
+        {"strategy_id": "two", "nodes": ["n3", "n2", "n1"], "milestones": ["n3"]},
+    ]
+    result = validate_reference_graph(problem)
+    assert not result.ok
+    assert any("identical node sets" in error for error in result.errors)
+
+
+def test_validate_rejects_strict_subset_and_bad_milestone():
+    problem = _fully_annotated()
+    problem["declared_paths"] = [
+        {"strategy_id": "full", "nodes": ["n1", "n2"], "milestones": ["ghost"]},
+        {"strategy_id": "alternate", "nodes": ["n1", "n2", "n3"], "milestones": ["n3"]},
+    ]
+    result = validate_reference_graph(problem)
+    assert not result.ok
+    assert any("strict subset" in error for error in result.errors)
+    assert any("milestones are not on the path" in error for error in result.errors)
+
+
+def test_validate_rejects_duplicate_or_empty_strategy_ids():
+    problem = _fully_annotated()
+    problem["declared_paths"] = [
+        {"strategy_id": "", "nodes": ["n1", "n2"], "milestones": []},
+        {"strategy_id": "", "nodes": ["n1", "n3"], "milestones": []},
+    ]
+    result = validate_reference_graph(problem)
+    assert not result.ok
+    assert any("non-empty" in error for error in result.errors)
+    assert any("duplicate" in error for error in result.errors)
+
+
+def test_validate_rejects_empty_path_and_reverse_subset_order():
+    problem = _fully_annotated()
+    problem["declared_paths"] = [
+        {"strategy_id": "wide", "nodes": ["n1", "n2", "n3"], "milestones": []},
+        {"strategy_id": "empty", "nodes": [], "milestones": []},
+    ]
+    result = validate_reference_graph(problem)
+    assert not result.ok
+    assert any("nodes must be non-empty" in error for error in result.errors)
+    assert any("path index 1 is a strict subset" in error for error in result.errors)
+
+
+def test_validate_accepts_jointly_covering_object_paths_with_sink_milestones():
+    problem = _problem(
+        [
+            _step("n1", "eq.n1"),
+            _step("n2", "eq.n2"),
+            _step("n3", "eq.n3", ["n1", "n2"]),
+        ],
+        [
+            {"strategy_id": "left", "nodes": ["n1", "n3"], "milestones": ["n3"]},
+            {"strategy_id": "right", "nodes": ["n2", "n3"], "milestones": ["n3"]},
+        ],
+    )
+    assert validate_reference_graph(problem).ok
+
+
+def test_validate_rejects_object_path_with_empty_milestones():
+    problem = _fully_annotated()
+    problem["declared_paths"] = [
+        {"strategy_id": "empty", "nodes": ["n1", "n2", "n3"], "milestones": []}
+    ]
+    result = validate_reference_graph(problem)
+    assert not result.ok
+    assert any("milestones must be non-empty" in error for error in result.errors)
+
+
+def test_validate_rejects_object_path_without_sink_milestone():
+    problem = _problem(
+        [
+            _step("n1", "eq.n1"),
+            _step("n2", "eq.n2", ["n1"]),
+            _step("n3", "eq.n3", ["n2"]),
+        ],
+        [
+            {
+                "strategy_id": "no_final_result",
+                "nodes": ["n1", "n2", "n3"],
+                "milestones": ["n2"],
+            }
+        ],
+    )
+    result = validate_reference_graph(problem)
+    assert not result.ok
+    assert any("must include a reference graph sink" in error for error in result.errors)
+
+
+def test_validate_leaves_legacy_list_paths_exempt_from_milestone_floor():
+    problem = _problem(
+        [_step("n1", "eq.n1"), _step("n2", "eq.n2", ["n1"])],
+        [["n1", "n2"]],
+    )
+    assert validate_reference_graph(problem).ok

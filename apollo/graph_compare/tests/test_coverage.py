@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 
+from apollo.graph_compare.canonical import ReferencePathView
 from apollo.graph_compare.coverage import (
     PathCoverage,
     coverage_per_path,
@@ -101,3 +102,44 @@ def test_coverage_is_pure_same_input_same_output():
 def test_path_coverage_is_frozen():
     pc = PathCoverage(path_index=0, covered_keys=(), missing_keys=("a",), score=0.0)
     assert pc.score == 0.0
+
+
+def test_milestone_cap_flips_winning_path_and_records_raw_score():
+    ref = rgraph(
+        nodes=tuple(rnode(key) for key in ("a", "b", "c", "d", "e", "f")),
+        paths=(
+            ReferencePathView(
+                canonical_keys=("a", "b", "c", "d"),
+                strategy_id="peripheral",
+                milestone_keys=("d",),
+            ),
+            ReferencePathView(
+                canonical_keys=("a", "e", "f"),
+                strategy_id="demonstrated",
+                milestone_keys=("a",),
+            ),
+        ),
+    )
+    student = snorm(nodes=(cnode("a"), cnode("b"), cnode("c"), cnode("e")))
+    score, winning, all_paths = coverage_result(student, ref)
+    assert all_paths[0].raw_score == 0.75
+    assert all_paths[0].milestone_cap == 0.0
+    assert all_paths[0].score == 0.0
+    assert winning.path_index == 1
+    assert score == 2 / 3
+
+
+def test_no_milestones_is_uncapped_and_contraction_covers_milestone():
+    uncapped = _ref_two_keys()
+    assert coverage_per_path(snorm(nodes=(cnode("eq.a"),)), uncapped)[0].score == 0.5
+
+    capped = rgraph(
+        nodes=(rnode("a"), rnode("b")),
+        paths=(ReferencePathView(("a", "b"), "route", ("b",)),),
+    )
+    pc = coverage_per_path(
+        snorm(nodes=(cnode("a"),)),
+        capped,
+        contracted_keys_by_path={0: frozenset({"b"})},
+    )[0]
+    assert pc.raw_score == pc.milestone_cap == pc.score == 1.0

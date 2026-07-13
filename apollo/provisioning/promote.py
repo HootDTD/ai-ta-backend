@@ -20,6 +20,12 @@ flip is idempotent (a re-run flips an already-``tier=2`` row to ``2``, a no-op)
 and the ``:Canon`` MERGE is idempotent, so a re-claimed job's re-promote is
 replay-safe (§2c).
 
+With the default-OFF multi-path flag enabled, promotion replaces the legacy
+all-node ``declared_paths`` value with the enumerated object paths only when the
+entire replacement set passes ``validate_reference_graph``. That validation
+includes joint graph coverage and the object-path sink-milestone floor. Empty,
+malformed, invalid, or failed enumeration leaves the legacy single path intact.
+
 On a FAIL it returns ``PromoteResult(promoted=False, failed_gate, diagnostic)``
 WITHOUT touching the row. ``promote`` does NOT write the
 ``apollo_rejected_problems`` row — the orchestrator is the SINGLE rejection-write
@@ -35,6 +41,7 @@ re-projected on the next attempt.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Literal
 
 from pydantic import BaseModel
@@ -44,8 +51,10 @@ from apollo.knowledge_graph.canon_projection import project_canon
 from apollo.persistence.learner_model_seed import (
     _entity_key_for_step,
     annotate_reference_solution,
+    validate_reference_graph,
 )
 from apollo.persistence.models import Concept, ConceptProblem
+from apollo.provisioning.path_enumeration import multi_path_enabled
 from apollo.provisioning.promotion_lint import (
     PromotionUnresolved,
     content_active_gates,
@@ -75,7 +84,10 @@ class PromoteHeldForReview(PromoteResult):
     verdict: Literal["unresolved"] = "unresolved"
 
 
-def _annotate(problem: dict, mint_plan: MintPlan) -> dict:
+def _annotate(
+    problem: dict,
+    mint_plan: MintPlan,
+) -> dict:
     """Return the annotated reference graph the lint consumes: each step carries
     its ``entity_key`` (derived from the step's ``entry_type``/``id`` via the
     frozen §8 D5 mapping, the SAME key ``tag_and_mint`` minted under) + a
@@ -95,6 +107,40 @@ def _annotate(problem: dict, mint_plan: MintPlan) -> dict:
     return annotate_reference_solution(problem, _key_for_node)
 
 
+def _with_enumerated_paths(
+    annotated: dict,
+    path_enumerator: Callable[[dict], list[dict]] | None,
+    *,
+    concept_problem_id: int,
+) -> dict:
+    """Replace the legacy path with a valid object-path set, or return it unchanged."""
+    if not multi_path_enabled() or path_enumerator is None:
+        return annotated
+    try:
+        enumerated_paths = path_enumerator(annotated)
+        if (
+            not isinstance(enumerated_paths, list)
+            or len(enumerated_paths) < 2
+            or not all(isinstance(path, dict) for path in enumerated_paths)
+        ):
+            raise ValueError("enumeration must return at least two object paths")
+        candidate = {**annotated, "declared_paths": enumerated_paths}
+        validation = validate_reference_graph(candidate)
+        if not validation.ok:
+            raise ValueError("; ".join(validation.errors))
+        return candidate
+    except Exception:  # noqa: BLE001 - enumeration must never block promotion
+        _LOG.warning(
+            "provisioning_path_enumeration_fallback",
+            exc_info=True,
+            extra={
+                "event": "provisioning_path_enumeration_fallback",
+                "concept_problem_id": concept_problem_id,
+            },
+        )
+        return annotated
+
+
 async def promote(
     db: AsyncSession,
     neo,
@@ -105,6 +151,7 @@ async def promote(
     concept_problem_id: int,
     existing_problem_hashes: set[str] | frozenset[str],
     solution_source: str | None = None,
+    path_enumerator: Callable[[dict], list[dict]] | None = None,
 ) -> PromoteResult:
     """Annotate -> lint -> (on PASS) flip tier 1->2 + store payload +
     ``project_canon``. See the module docstring for the full contract.
@@ -141,6 +188,12 @@ async def promote(
             failed_gate=1,
             diagnostic=f"gate 1: malformed problem rejected before annotation: {exc}",
         )
+
+    annotated = _with_enumerated_paths(
+        annotated,
+        path_enumerator,
+        concept_problem_id=concept_problem_id,
+    )
 
     # Read the concept's AUTHORED symbol set (gate-4 non-vacuity). The shape is
     # {"symbols": [...], ...} (author_concept_symbols, 3B2d); a vacuous set makes

@@ -31,6 +31,8 @@ class PathCoverage:
     covered_keys: tuple[str, ...]  # reference keys on this path present in S_norm (path order)
     missing_keys: tuple[str, ...]  # reference keys on this path absent from S_norm (path order)
     score: float  # covered / total for THIS path (vacuous 1.0 if the path is empty)
+    raw_score: float = 0.0
+    milestone_cap: float = 1.0
 
 
 def coverage_per_path(
@@ -57,13 +59,22 @@ def coverage_per_path(
         total = len(path.canonical_keys)
         # total == 0 never happens for a real declared path; guard to avoid a
         # div-by-zero and score a degenerate empty path 1.0 vacuously.
-        score = (len(covered) / total) if total else 1.0
+        raw_score = (len(covered) / total) if total else 1.0
+        milestone_cap = 1.0
+        if path.milestone_keys:
+            covered_milestones = sum(
+                key in student_keys or key in contracted for key in path.milestone_keys
+            )
+            milestone_cap = covered_milestones / len(path.milestone_keys)
+        score = min(raw_score, milestone_cap)
         out.append(
             PathCoverage(
                 path_index=path_index,
                 covered_keys=covered,
                 missing_keys=missing,
                 score=score,
+                raw_score=raw_score,
+                milestone_cap=milestone_cap,
             )
         )
     return tuple(out)
