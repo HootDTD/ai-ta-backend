@@ -139,4 +139,6 @@ def test_mastery_event_and_finding_kinds_documented():
         "contradiction",
         "unresolved",
         "alternative_path",
+        "covered_by_contraction",
+        "not_demonstrated",
     }

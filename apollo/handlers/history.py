@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,11 +44,12 @@ student has not named. Return ONLY a JSON object: {"summary": "..."}.
 
 
 async def _all_messages(
-    db: AsyncSession, session_id: int,
+    db: AsyncSession, session_id: int, attempt_id: int | None,
 ) -> list[Message]:
     result = await db.execute(
         select(Message)
         .where(Message.session_id == session_id)
+        .where(Message.attempt_id == attempt_id)
         .order_by(Message.turn_index)
     )
     return list(result.scalars().all())
@@ -98,13 +98,14 @@ async def load_windowed_history(
     *,
     db: AsyncSession,
     session: ApolloSession,
+    attempt_id: int | None,
 ) -> tuple[str | None, list[dict[str, str]]]:
-    """Return `(summary_or_none, raw_window)` for the given session.
+    """Return `(summary_or_none, raw_window)` for one attempt only.
 
     Side effect: refreshes `session.history_summary` /
     `session.history_summary_up_to_turn` and commits when a refresh fires.
     """
-    messages = await _all_messages(db, session.id)
+    messages = await _all_messages(db, session.id, attempt_id)
     total = len(messages)
 
     if total <= RAW_WINDOW_TURNS:

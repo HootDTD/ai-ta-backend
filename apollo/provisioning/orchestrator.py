@@ -786,6 +786,7 @@ async def _finalize(
             "status": status,
             "n_promoted": promoted,
             "n_rejected": rejected,
+            "dedup_pressure": run.dedup_pressure,
         },
     )
     return ProvisioningOutcome(

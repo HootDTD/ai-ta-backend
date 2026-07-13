@@ -95,6 +95,9 @@ async def handle_next(
 
     sess.current_problem_id = problem.id
     sess.phase = SessionPhase.TEACHING.value
+    sess.pending_intent = None
+    sess.history_summary = None
+    sess.history_summary_up_to_turn = None
     await db.commit()
 
     return {

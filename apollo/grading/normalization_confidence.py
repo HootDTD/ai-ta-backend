@@ -7,7 +7,8 @@ comparison_confidence`` (§3 line 431), so a single shaky resolution should damp
 the whole run — hence MIN (weakest-link), never mean.
 
 "Scored" findings are exactly the ones that move a top-line score: a
-``covered_node`` (positive coverage) and a ``contradiction`` (soundness penalty).
+``covered_node`` or safeguarded ``covered_by_contraction`` (positive coverage)
+and a ``contradiction`` (soundness penalty).
 ``unsupported_extra`` / ``unresolved`` / edge findings are diagnostic-only and
 carry ZERO score weight, so their backing nodes are EXCLUDED — a low-confidence
 extra must not falsely damp a confident grade.
@@ -44,11 +45,15 @@ if TYPE_CHECKING:
     # otherwise introduce (audited_grade imports the helper below at runtime).
     from apollo.grading.audited_grade import AuditedGrade  # pragma: no cover
 
-# The two finding kinds that MOVE a top-line score (positive coverage /
-# soundness penalty). Named so "what backs a score" is ONE symbol, not literals
+# The finding kinds that MOVE a top-line score (positive coverage / soundness
+# penalty). Named so "what backs a score" is ONE symbol, not literals
 # scattered through the body.
 _SCORED_FINDING_KINDS: frozenset[FindingKind] = frozenset(
-    {FindingKind.COVERED_NODE, FindingKind.CONTRADICTION}
+    {
+        FindingKind.COVERED_NODE,
+        FindingKind.COVERED_BY_CONTRACTION,
+        FindingKind.CONTRADICTION,
+    }
 )
 
 # Calibration knob: when NO scored finding has a backing resolved node (a
@@ -140,6 +145,4 @@ def compute_normalization_confidence(
     ``apollo_graph_comparison_runs.normalization_confidence`` value is this return.
     Returns :data:`NORMALIZATION_CONFIDENCE_FLOOR_WHEN_NO_SCORED_NODES` (1.0) when
     no scored finding has a resolved backing node."""
-    return _normalization_confidence_over(
-        audited_grade.findings, resolution, node_type_by_id
-    )
+    return _normalization_confidence_over(audited_grade.findings, resolution, node_type_by_id)

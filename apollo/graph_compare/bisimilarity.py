@@ -4,6 +4,9 @@ The harmonic mean rewards a graph that is BOTH sound and complete (a high score
 requires both dimensions high). The single binding edge case (§6.1): when
 ``a + b == 0`` the mean is ``0.0``, NEVER NaN — a NaN written to a
 ``REAL NOT NULL`` column poisons downstream aggregates. There is no other branch.
+
+This score consumes node coverage and contradiction soundness only; it never
+traverses DEPENDS_ON edges and is therefore direction-invariant.
 """
 
 from __future__ import annotations

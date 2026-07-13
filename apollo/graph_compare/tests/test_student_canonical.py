@@ -152,6 +152,33 @@ def test_resolved_edge_endpoints_normalized_to_keys():
     assert edge.from_key != edge.to_key
 
 
+def test_parser_depends_on_is_flipped_to_prerequisite_then_dependent():
+    """Parser DEPENDS_ON says dependent -> prerequisite ("from relies on to").
+    Canonical grading flips it to prerequisite -> dependent and leaves other
+    edge types untouched."""
+    graph = KGGraph(
+        nodes=[
+            _node("dependent", "procedure_step", {"action": "apply", "purpose": ""}),
+            _node("prerequisite", "procedure_step", {"action": "prepare", "purpose": ""}),
+        ],
+        edges=[
+            _edge(EdgeType.DEPENDS_ON, "dependent", "prerequisite"),
+            _edge(EdgeType.PRECEDES, "dependent", "prerequisite"),
+        ],
+    )
+    resolution = _resolution(
+        _resolved("dependent", "proc.apply"),
+        _resolved("prerequisite", "proc.prepare"),
+    )
+
+    student = build_student_canonical(graph, resolution)
+    endpoints = {
+        edge.edge_type: (edge.from_key, edge.to_key) for edge in student.edges
+    }
+    assert endpoints[EdgeType.DEPENDS_ON] == ("proc.prepare", "proc.apply")
+    assert endpoints[EdgeType.PRECEDES] == ("proc.apply", "proc.prepare")
+
+
 def test_post_merge_self_loop_edge_is_dropped_and_counted():
     """PHASE 0 / 0.3 (D3): two student nodes resolving to the SAME key merge into
     one canonical node; a PRECEDES edge BETWEEN them collapses to from_key ==

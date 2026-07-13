@@ -19,12 +19,12 @@ def _graph() -> KGGraph:
     )
     edge = Edge(
         edge_type=EdgeType.DEPENDS_ON,
-        from_node_id="second",
-        to_node_id="first",
+        from_node_id="first",
+        to_node_id="second",
         attempt_id=1,
         source="reference",
-        from_node_type="procedure_step",
-        to_node_type="definition",
+        from_node_type="definition",
+        to_node_type="procedure_step",
     )
     return KGGraph(nodes=[first, second], edges=[edge])
 

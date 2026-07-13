@@ -133,8 +133,7 @@ async def _artifact_rows(db, attempt_id: int):
 
 
 async def test_both_flags_off_writes_zero_rows_response_unchanged(db_session, monkeypatch):
-    """Byte-identity guard: with both flags off, the response dict is the same
-    shape as the pre-A3 golden (no new keys) and zero artifact rows exist."""
+    """With artifact flags off, only unconditional response fields are added."""
     sid, cid, codes = await seed_course(
         db_session,
         subject_slug="fluid_mechanics",
@@ -163,6 +162,9 @@ async def test_both_flags_off_writes_zero_rows_response_unchanged(db_session, mo
         "level_before",
         "level_after",
         "level_up",
+        # Feedback transcript: unconditional presentation data; [] on
+        # retrieval soft-fail and independent of artifact/shadow flags.
+        "transcript",
         # Part 1 transcript grader: provenance ships in BOTH flag states
         # (spec §3.7.3) — present even with every apollo flag off.
         "grading_provenance",

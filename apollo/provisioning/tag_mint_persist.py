@@ -11,6 +11,10 @@ ALL persistence keys on the BIGINT ``apollo_concepts.id`` (resolved from the LLM
 slug), never the slug (the §6 namespace contract). Idempotent: entity upsert on
 ``(concept_id, canonical_key)``; prereqs ``(from_entity_id, to_entity_id)``
 SELECT-then-skip; concept symbol authoring first-writer-wins UNION.
+
+Layer-1 prereqs deliberately retain the legacy dependent -> prerequisite
+(``from depends on to``) direction. This module does not copy them into KG or
+canonical DEPENDS_ON edges, whose unified direction is prerequisite -> dependent.
 """
 
 from __future__ import annotations

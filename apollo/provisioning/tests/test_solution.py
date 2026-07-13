@@ -152,7 +152,7 @@ def _definition_only() -> list[dict]:
         {
             "step": 1,
             "entry_type": "definition",
-            "id": "d1",
+            "id": "future_shock_definition",
             "content": {
                 "concept": "future shock",
                 "meaning": "Disorientation caused by too much change in too little time.",
@@ -168,24 +168,24 @@ def _augmented_steps() -> list[dict]:
         {
             "step": 2,
             "entry_type": "procedure_step",
-            "id": "p1",
+            "id": "state_accelerating_change",
             "content": {
                 "action": "State that accelerating change outpaces adaptation.",
                 "purpose": "identify the driving mechanism",
                 "order": 1,
             },
-            "depends_on": ["d1"],
+            "depends_on": ["future_shock_definition"],
         },
         {
             "step": 3,
             "entry_type": "procedure_step",
-            "id": "p2",
+            "id": "infer_disorientation",
             "content": {
                 "action": "Infer the resulting disorientation.",
                 "purpose": "explain why the phenomenon follows",
                 "order": 2,
             },
-            "depends_on": ["p1"],
+            "depends_on": ["state_accelerating_change"],
         },
     ]
 
@@ -418,7 +418,7 @@ async def test_find_or_generate_problem_invalid_solution_raises():
         {
             "step": 1,
             "entry_type": "procedure_step",
-            "id": "p1",
+            "id": "state_accelerating_change",
             "content": {"action": "do", "purpose": "why", "order": 5},
             "depends_on": [],
         }
@@ -552,7 +552,9 @@ async def test_generate_default_flag_off_is_byte_identical():
     assert call["messages"][0]["content"] == _SOLUTION_GENERATE_SYSTEM_PROMPT
     schema = call["response_format"]["json_schema"]["schema"]
     assert schema["required"] == ["reference_solution"]
-    assert set(schema["properties"]) == {"reference_solution"}
+    # DAG-3: the optional symbol_table property is additive (never required).
+    assert set(schema["properties"]) == {"reference_solution", "symbol_table"}
+    assert "symbol_table" not in schema["required"]
     assert draft.augmented_problem_text is None
     assert draft.augmented_target_unknown is None
     assert "augmented" not in draft.provenance

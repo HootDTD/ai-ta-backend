@@ -151,8 +151,11 @@ def test_flag_on_with_topic_score_uses_ledger_grounded_prompt(mock_client_cls, m
     user_msg = next(m for m in called.kwargs["messages"] if m["role"] == "user")
 
     assert "ledger" in system_msg["content"].lower()
-    assert "p1" in user_msg["content"]
+    # 2026-07-11 feedback spec §2: canonical keys never reach the prompt —
+    # the display name is the topic's only identity in the ledger text.
     assert "apply continuity" in user_msg["content"]
+    assert "credit=" not in user_msg["content"]
+    assert "weight=" not in user_msg["content"]
     # The axis-path payload shape must be gone.
     assert "reference_required_entries" not in user_msg["content"]
 

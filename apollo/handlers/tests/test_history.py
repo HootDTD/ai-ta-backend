@@ -12,6 +12,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
+from apollo.handlers.chat import _load_history
 from apollo.handlers.history import (
     RAW_WINDOW_TURNS,
     REFRESH_EVERY_K_TURNS,
@@ -75,7 +76,7 @@ async def test_short_session_returns_no_summary(db_with_session):
     s, sess = db_with_session
     await _seed_messages(s, sess.id, 5)
 
-    summary, window = await load_windowed_history(db=s, session=sess)
+    summary, window = await load_windowed_history(db=s, session=sess, attempt_id=None)
 
     assert summary is None
     assert len(window) == 5
@@ -88,7 +89,7 @@ async def test_at_window_size_returns_no_summary(db_with_session):
     s, sess = db_with_session
     await _seed_messages(s, sess.id, RAW_WINDOW_TURNS)
 
-    summary, window = await load_windowed_history(db=s, session=sess)
+    summary, window = await load_windowed_history(db=s, session=sess, attempt_id=None)
     assert summary is None
     assert len(window) == RAW_WINDOW_TURNS
 
@@ -102,7 +103,7 @@ async def test_above_window_size_triggers_summary(mock_chat, db_with_session):
     n = RAW_WINDOW_TURNS + 5
     await _seed_messages(s, sess.id, n)
 
-    summary, window = await load_windowed_history(db=s, session=sess)
+    summary, window = await load_windowed_history(db=s, session=sess, attempt_id=None)
 
     assert summary == "early turns happened"
     # Window should be exactly RAW_WINDOW_TURNS most recent turns.
@@ -127,7 +128,7 @@ async def test_subsequent_turns_within_K_dont_resummarize(
     await _seed_messages(s, sess.id, n)
 
     # First call — produces summary.
-    await load_windowed_history(db=s, session=sess)
+    await load_windowed_history(db=s, session=sess, attempt_id=None)
     assert mock_chat.call_count == 1
 
     # Add 2 more turns (under K threshold of 8) and call again.
@@ -141,7 +142,7 @@ async def test_subsequent_turns_within_K_dont_resummarize(
     ))
     await s.commit()
 
-    await load_windowed_history(db=s, session=sess)
+    await load_windowed_history(db=s, session=sess, attempt_id=None)
     assert mock_chat.call_count == 1, "should NOT re-summarize within K"
 
 
@@ -157,7 +158,7 @@ async def test_summary_refreshes_after_K_new_older_turns(
     n = RAW_WINDOW_TURNS + 5
     await _seed_messages(s, sess.id, n)
 
-    await load_windowed_history(db=s, session=sess)
+    await load_windowed_history(db=s, session=sess, attempt_id=None)
     first_covered = sess.history_summary_up_to_turn
     assert mock_chat.call_count == 1
 
@@ -171,7 +172,7 @@ async def test_summary_refreshes_after_K_new_older_turns(
         ))
     await s.commit()
 
-    await load_windowed_history(db=s, session=sess)
+    await load_windowed_history(db=s, session=sess, attempt_id=None)
     assert mock_chat.call_count == 2
     assert sess.history_summary_up_to_turn > first_covered
 
@@ -187,7 +188,7 @@ async def test_summarizer_failure_falls_back_to_raw_window(
     n = RAW_WINDOW_TURNS + 3
     await _seed_messages(s, sess.id, n)
 
-    summary, window = await load_windowed_history(db=s, session=sess)
+    summary, window = await load_windowed_history(db=s, session=sess, attempt_id=None)
     assert summary is None  # never set
     assert len(window) == RAW_WINDOW_TURNS
 
@@ -200,5 +201,35 @@ async def test_summarizer_malformed_json_falls_back(
 ):
     s, sess = db_with_session
     await _seed_messages(s, sess.id, RAW_WINDOW_TURNS + 3)
-    summary, window = await load_windowed_history(db=s, session=sess)
+    summary, window = await load_windowed_history(db=s, session=sess, attempt_id=None)
     assert summary is None
+
+
+@pytest.mark.asyncio
+async def test_history_is_scoped_to_attempt(db_with_session):
+    s, sess = db_with_session
+    first = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro")
+    second = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro")
+    s.add_all([first, second])
+    await s.flush()
+    s.add_all([
+        Message(
+            session_id=sess.id, attempt_id=first.id, role="student",
+            content="old attempt secret", turn_index=0,
+        ),
+        Message(
+            session_id=sess.id, attempt_id=second.id, role="student",
+            content="new attempt only", turn_index=1,
+        ),
+    ])
+    await s.commit()
+
+    summary, window = await load_windowed_history(
+        db=s, session=sess, attempt_id=second.id,
+    )
+
+    assert summary is None
+    assert [turn["content"] for turn in window] == ["new attempt only"]
+    assert await _load_history(s, sess.id, second.id) == [
+        {"role": "user", "content": "new attempt only"},
+    ]

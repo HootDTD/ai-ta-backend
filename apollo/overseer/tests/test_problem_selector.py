@@ -9,6 +9,8 @@ deterministic (sorted by ``Problem.id``). The §6 grading core reads
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from apollo.errors import PoolExhaustedError
@@ -68,7 +70,9 @@ async def test_list_problems_for_concept_scoped_to_concept(db_session):
 async def test_select_problem_intro_excludes_attempted(db_session):
     """T2.3 — ≥2 intro problems; selecting with the first attempted returns a
     different problem."""
-    intro_payloads = [p for p in load_bernoulli_problem_payloads() if p["difficulty"] == "intro"]
+    intro_payloads = [
+        p for p in load_bernoulli_problem_payloads() if p["difficulty"] == "intro"
+    ]
     assert len(intro_payloads) >= 2
     _sid, cid, _codes = await seed_course(
         db_session,
@@ -171,9 +175,7 @@ async def test_select_problem_personalized_also_tier_gated(db_session):
     Seed one Tier-1 + one Tier-2 intro problem; the personalized selector returns
     the Tier-2 problem.
     """
-    intro_payloads = [
-        p for p in load_bernoulli_problem_payloads() if p["difficulty"] == "intro"
-    ]
+    intro_payloads = [p for p in load_bernoulli_problem_payloads() if p["difficulty"] == "intro"]
     assert len(intro_payloads) >= 2
     tier1_payload, tier2_payload = intro_payloads[0], intro_payloads[1]
     sid = await seed_search_space(db_session)
@@ -192,3 +194,81 @@ async def test_select_problem_personalized_also_tier_gated(db_session):
         attempted_ids=[],
     )
     assert chosen.id == tier2_payload["id"]
+
+
+# ---------------------------------------------------------------------------
+# GEN-0 — malformed rows are isolated at the shared selector chokepoint.
+# ---------------------------------------------------------------------------
+
+
+async def test_malformed_problem_is_logged_and_skipped_for_both_selectors(db_session, caplog):
+    """One bad Tier-2 payload cannot take down the concept's valid pool."""
+    intro_payloads = [p for p in load_bernoulli_problem_payloads() if p["difficulty"] == "intro"][
+        :2
+    ]
+    assert len(intro_payloads) == 2
+    malformed = {
+        **intro_payloads[0],
+        "id": "malformed.selector.payload",
+        "reference_solution": [],
+    }
+    sid = await seed_search_space(db_session)
+    cid = await seed_concept(
+        db_session,
+        search_space_id=sid,
+        subject_slug="s_skip",
+        concept_slug="c_skip",
+    )
+    await seed_problems(db_session, concept_id=cid, payloads=[*intro_payloads, malformed])
+
+    with caplog.at_level(logging.WARNING, logger="apollo.overseer.problem_selector"):
+        problems = await list_problems_for_concept(db_session, concept_id=cid)
+        chosen = await select_problem_personalized(
+            db_session,
+            user_id="00000000-0000-4000-8000-000000000001",
+            search_space_id=sid,
+            concept_id=cid,
+            difficulty="intro",
+            attempted_ids=[],
+        )
+
+    assert [problem.id for problem in problems] == sorted(p["id"] for p in intro_payloads)
+    assert chosen.id == min(p["id"] for p in intro_payloads)
+    records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "apollo_problem_selector_invalid_payload_skipped"
+    ]
+    assert len(records) == 2  # direct listing + personalized path share the chokepoint
+    assert all(record.concept_id == cid for record in records)
+    assert all(record.problem_tier == 2 for record in records)
+    assert all(record.concept_problem_id is not None for record in records)
+    assert all("validation error" in record.validation_error for record in records)
+
+
+async def test_all_malformed_problems_yield_pool_exhausted(db_session, caplog):
+    """An all-invalid pool degrades to the selector's existing empty-pool error."""
+    payload = load_bernoulli_problem_payloads()[0]
+    malformed = {**payload, "reference_solution": []}
+    _sid, cid, _codes = await seed_course(
+        db_session,
+        subject_slug="s_all_bad",
+        concept_slug="c_all_bad",
+        problems=[malformed],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="apollo.overseer.problem_selector"):
+        with pytest.raises(PoolExhaustedError) as exc_info:
+            await select_problem(
+                db_session,
+                concept_id=cid,
+                difficulty=payload["difficulty"],
+                attempted_ids=[],
+            )
+
+    assert exc_info.value.concept_cluster_id == str(cid)
+    assert exc_info.value.difficulty == payload["difficulty"]
+    assert any(
+        getattr(record, "event", None) == "apollo_problem_selector_invalid_payload_skipped"
+        for record in caplog.records
+    )

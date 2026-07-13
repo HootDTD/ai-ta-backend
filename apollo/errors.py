@@ -102,24 +102,6 @@ class InvalidPhaseError(ApolloError):
         )
 
 
-class ReviewRequiredError(ApolloError):
-    """P3 OLM Done-gate (P3.6). The student tried to submit Done while the
-    KG had flagged entries (low parser_confidence or DISPUTED) that have
-    not been touched with a negotiation move. The frontend renders a
-    review modal; the student must clear each flag before re-submitting.
-
-    Surfaces as 422 with `error_code: "review_required"` and a list of
-    `entries` shaped as:
-        {entry_id, type, reason: "low_confidence" | "disputed", summary}
-    """
-
-    def __init__(self, *, entries: list[dict]) -> None:
-        self.entries = entries
-        super().__init__(
-            f"{len(entries)} KG entries need review before grading"
-        )
-
-
 class KGEntryNotFoundError(ApolloError):
     """Negotiation move targeted a KG entry that does not exist in the
     per-attempt subgraph. P3 — Negotiable OLM. Surfaces as 404 to the FE."""

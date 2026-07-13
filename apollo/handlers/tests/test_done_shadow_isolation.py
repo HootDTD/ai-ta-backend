@@ -88,6 +88,7 @@ _GOLDEN_NO_SCORECARD = {
     "level_before": 1,
     "level_after": 1,
     "level_up": False,
+    "transcript": [],
     "grading_provenance": {
         "grader_used": "llm_fallback",
         "evidence_source": "graph_nodes",

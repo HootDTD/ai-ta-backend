@@ -5,11 +5,6 @@ from the problem via Problem.to_kg_graph(); coverage walks both graphs;
 rubric consumes Node objects directly. Hardcoded `g=9.81` and per-problem
 augmentations come from the concept registry, not from this file.
 
-P3.6: before freezing the session, the Done-gate scans the KG for entries
-with `parser_confidence < 0.6` or `status == DISPUTED` and refuses to
-proceed if any of them have not been touched with a negotiation move
-(challenge / paraphrase / skip). Behind env flag
-`APOLLO_DONE_GATE_ENABLED` (default off) until manual UX verification.
 """
 
 from __future__ import annotations
@@ -31,7 +26,6 @@ from apollo.errors import (
     KGUnavailableError,
     ResolutionUnavailableError,
     RetentionError,
-    ReviewRequiredError,
     TranscriptAuditUnavailableError,
 )
 from apollo.grading.abstention import min_parser_confidence_of
@@ -48,7 +42,7 @@ from apollo.handlers.done_inputs import (
 )
 from apollo.handlers.learner_update import run_learner_update
 from apollo.knowledge_graph.store import KGStore
-from apollo.ontology import KGGraph, Node
+from apollo.ontology import KGGraph
 from apollo.overseer.coverage import compute_coverage
 from apollo.overseer.diagnostic import generate_diagnostic
 from apollo.overseer.misconception import (
@@ -81,7 +75,6 @@ from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
     ApolloSession,
     GradingArtifact,
-    KGNegotiation,
     Message,
     ProblemAttempt,
     SessionPhase,
@@ -94,20 +87,16 @@ from apollo.schemas.problem import Problem
 
 _LOG = logging.getLogger(__name__)
 
-# P3.6 — Done-gate constants. The conf threshold (0.6) is intentionally
-# below the OLM-invite threshold (0.7): the invite is opportunistic;
-# the Done-gate is the final brake. Dropping below 0.6 means "the parser
-# was unsure enough that it'd be reckless to grade against it without
-# the student's eyes."
-_DONE_GATE_LOW_CONF: float = 0.6
-_DONE_GATE_FLAG: str = "APOLLO_DONE_GATE_ENABLED"
-
 # WU-4C1 — the SHADOW graph-simulation flag (default OFF in prod, ON in test).
 # When OFF, handle_done is byte-identical to today (the chain is never called).
 # When ON, the chain runs AFTER the OLD grade/XP/retention commit and persists a
 # comparison run + findings ALONGSIDE the unchanged student-facing grade. This is
 # NOT the promote-to-live flag (that is WU-4C2's APOLLO_GRAPH_SIM_LIVE_ENABLED).
 _GRAPH_SIM_SHADOW_FLAG: str = "APOLLO_GRAPH_SIM_SHADOW_ENABLED"
+
+# DAG-5 — edge-contraction grading inside the shadow comparer. Default OFF;
+# read per Done call so flag-off preserves the existing comparison byte-for-byte.
+_GRAPH_CONTRACTION_FLAG: str = "APOLLO_GRAPH_CONTRACTION_ENABLED"
 
 # WU-4C2 — the PROMOTE-to-live flag (default OFF EVERYWHERE incl. test; flipped
 # only after human calibration review, NEVER in this build). When OFF, the
@@ -201,12 +190,12 @@ _SHADOW_PROPAGATE_ERRORS: tuple[type[Exception], ...] = (
 )
 
 
-def _done_gate_enabled() -> bool:
-    return os.environ.get(_DONE_GATE_FLAG, "").lower() in ("1", "true", "yes")
-
-
 def _graph_sim_shadow_enabled() -> bool:
     return os.environ.get(_GRAPH_SIM_SHADOW_FLAG, "").lower() in ("1", "true", "yes")
+
+
+def _graph_contraction_enabled() -> bool:
+    return os.environ.get(_GRAPH_CONTRACTION_FLAG, "").lower() in ("1", "true", "yes")
 
 
 def _graph_sim_live_enabled() -> bool:
@@ -255,101 +244,6 @@ async def _project_mastery(db: AsyncSession, *, attempt_id: int) -> None:
             await db.rollback()
         except Exception:  # pragma: no cover - defensive, rollback itself failing
             _LOG.exception("mastery_projection_rollback_failed attempt_id=%s", attempt_id)
-
-
-def _flagged_entries(graph: KGGraph) -> list[tuple[Node, str]]:
-    """Return (node, reason) pairs for every entry that the Done-gate
-    cares about. `reason` is "disputed" | "low_confidence" — disputed
-    wins when both apply (it's the more specific signal).
-
-    Only parser-sourced nodes are checked: reference and system-sourced
-    nodes are never user-authored, so they can't be wrong about what the
-    student said.
-    """
-    flagged: list[tuple[Node, str]] = []
-    for n in graph.nodes:
-        if n.source != "parser":
-            continue
-        # DUAL means the student already engaged via challenge / paraphrase /
-        # skip, OR via the lower-level kg-store path. Either way, the gate
-        # has nothing to add — coverage handles DUAL via student_belief.
-        if n.status == "DUAL":
-            continue
-        if n.status == "DISPUTED":
-            flagged.append((n, "disputed"))
-        elif n.parser_confidence < _DONE_GATE_LOW_CONF:
-            flagged.append((n, "low_confidence"))
-    return flagged
-
-
-def _node_summary_for_review(node: Node) -> str:
-    """Short surface form of a node for the FE's review modal. Mirrors
-    the OLM-invite summary helper but lives here to avoid the chat
-    handler import path. Capped to one line."""
-    c = node.content.model_dump()
-    if node.node_type == "equation":
-        return c.get("symbolic", "")[:120]
-    if node.node_type == "condition":
-        return (c.get("applies_when") or c.get("label") or "")[:120]
-    if node.node_type == "simplification":
-        return (c.get("transformation") or "")[:120]
-    if node.node_type == "definition":
-        return f"{c.get('concept', '')} = {c.get('meaning', '')}"[:120]
-    if node.node_type == "variable_mapping":
-        return f"{c.get('term', '')} → {c.get('symbol', '')}"[:120]
-    if node.node_type == "procedure_step":
-        return (c.get("action") or "")[:120]
-    return ""
-
-
-async def _entries_with_moves(
-    db: AsyncSession,
-    *,
-    attempt_id: int,
-) -> set[str]:
-    """Return the set of `entry_id`s that have at least one negotiation
-    move recorded for this attempt. The Done-gate clears once every
-    flagged entry is in this set."""
-    rows = (
-        (
-            await db.execute(
-                select(KGNegotiation.entry_id).where(KGNegotiation.attempt_id == attempt_id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    return set(rows)
-
-
-async def _enforce_done_gate(
-    db: AsyncSession,
-    *,
-    attempt_id: int,
-    graph: KGGraph,
-) -> None:
-    """Raises ReviewRequiredError if any flagged entry lacks a negotiation
-    move. Caller invokes this before freeze so failures don't lock the
-    session into an unrecoverable state."""
-    flagged = _flagged_entries(graph)
-    if not flagged:
-        return
-    moved = await _entries_with_moves(db, attempt_id=attempt_id)
-
-    review_required = []
-    for node, reason in flagged:
-        if node.node_id in moved:
-            continue
-        review_required.append(
-            {
-                "entry_id": node.node_id,
-                "type": node.node_type,
-                "reason": reason,
-                "summary": _node_summary_for_review(node),
-            }
-        )
-    if review_required:
-        raise ReviewRequiredError(entries=review_required)
 
 
 async def _attempt_misconception_scores(
@@ -539,6 +433,41 @@ async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) ->
     raise RuntimeError(f"problem {problem_code!r} not in bank for cluster {concept_id!r}")
 
 
+async def _fetch_attempt_transcript(
+    db: AsyncSession, attempt_id: int
+) -> list[dict[str, Any]]:
+    """Return the graded attempt's ordered chat turns for report display."""
+    try:
+        messages = (
+            (
+                await db.execute(
+                    select(Message)
+                    .where(Message.attempt_id == attempt_id)
+                    .where(Message.role.in_(("student", "apollo")))
+                    .order_by(Message.turn_index)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            {
+                "role": message.role,
+                "content": message.content,
+                "turn_index": message.turn_index,
+            }
+            for message in messages
+        ]
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning(
+            "transcript fetch soft-fail for attempt %s: %s",
+            attempt_id,
+            exc,
+            exc_info=True,
+        )
+        return []
+
+
 async def handle_done(
     *,
     db: AsyncSession,
@@ -567,15 +496,9 @@ async def handle_done(
     if attempt is None:
         raise RuntimeError(f"no ProblemAttempt for session {session_id} / problem {problem.id}")
 
-    # P3.6 — Done-gate. Read the graph BEFORE freezing so a 422 doesn't
-    # lock the student into PROBLEM_REVEAL. When the master flag is off,
-    # we skip the gate entirely; behavior is byte-identical to pre-P3.6.
-    #
-    # Degraded mode: a KG_DEGRADED_ERRORS failure here means Neo4j is down —
-    # student_graph degrades to an empty KGGraph and the gate is SKIPPED
-    # (fail-open; there is nothing meaningful to flag for review without the
-    # graph). Everything downstream (transcript-grader branch) checks
-    # `kg_degraded` to avoid silently grading an empty graph as a false F.
+    # Read the student graph before freezing. Degraded mode falls back to an
+    # empty graph; downstream transcript-grader branches check `kg_degraded`
+    # so an unavailable KG is never silently graded as a false F.
     kg_degraded = False
     try:
         pre_freeze_graph = await store.read_graph(attempt_id=attempt.id)
@@ -586,19 +509,6 @@ async def handle_done(
             "apollo_neo4j_degraded stage=pre_freeze_graph attempt_id=%s error=%s",
             attempt.id, exc,
         )
-    if _done_gate_enabled():
-        if kg_degraded:
-            _LOG.warning(
-                "apollo_neo4j_degraded stage=done_gate_skipped attempt_id=%s",
-                attempt.id,
-            )
-        else:
-            await _enforce_done_gate(
-                db,
-                attempt_id=attempt.id,
-                graph=pre_freeze_graph,
-            )
-
     await store.freeze(session_id)
 
     student_graph = pre_freeze_graph
@@ -993,6 +903,8 @@ async def handle_done(
     if serve_topic_score:
         student_response["topics"] = serialize_topics(topic_score)
 
+    student_response["transcript"] = await _fetch_attempt_transcript(db, int(attempt.id))
+
     # WU-4C1 — SHADOW graph-simulation chain. Runs AFTER the OLD grade/XP/retention
     # are fully durable, so any failure here surfaces a named error (the right HTTP
     # status) WITHOUT voiding the already-committed student grade (NO-FALLBACK,
@@ -1046,6 +958,7 @@ async def handle_done(
                 student_graph=student_graph,
                 problem_payload=rerun.problem_payload,
                 old_rubric=rubric,  # the OLD student-facing rubric, for §6.7 calibration
+                contraction_enabled=_graph_contraction_enabled(),
             )
             # WU-4C2 — LIVE promotion (DORMANT; flag OFF in this build). Built + tested,
             # never active. When ON, the graph-sim rubric + constrained-diagnostic

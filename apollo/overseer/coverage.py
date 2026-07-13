@@ -1,9 +1,10 @@
 """Coverage: compare a frozen student KGGraph against a reference KGGraph.
 
-V3 contract: both inputs are KGGraph (apollo.ontology.graph). The matcher
-walks the reference graph in topological order along PRECEDES (procedure)
-and DEPENDS_ON (everything else), so the order of LLM calls follows the
-authored teaching plan.
+V3 contract: both inputs are KGGraph (apollo.ontology.graph). The concurrent
+matcher is DEPENDS_ON-direction-invariant: it compares reference/student nodes
+by content and consults only outgoing USES neighbors for procedure evidence.
+Procedure scheduling uses PRECEDES; no DEPENDS_ON traversal or order is
+consumed.
 
 For procedure_step entries, the matcher gets BOTH the action text AND the
 USES edges (real equation node_ids on both sides) so it can reward exact

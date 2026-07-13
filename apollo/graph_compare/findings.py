@@ -35,6 +35,8 @@ class FindingKind(StrEnum):
     CONTRADICTION = "contradiction"
     UNRESOLVED = "unresolved"
     ALTERNATIVE_PATH = "alternative_path"
+    COVERED_BY_CONTRACTION = "covered_by_contraction"
+    NOT_DEMONSTRATED = "not_demonstrated"
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,34 @@ def missing_finding(ref_node: CanonicalNode) -> Finding:
         canonical_key=ref_node.canonical_key,
         reference_node_ids=ref_node.source_node_ids,
         score=0.0,
+    )
+
+
+def contraction_finding(
+    ref_node: CanonicalNode,
+    *,
+    kind: FindingKind,
+    student_node_ids: tuple[str, ...],
+    evidence_spans: tuple[str, ...],
+    predecessor_key: str,
+    successor_key: str,
+    bridge_provenance: tuple[str, ...],
+    entailment: float | None,
+    decision_channel: str,
+) -> Finding:
+    """An eligible bridge's safeguarded contraction outcome with provenance."""
+    return Finding(
+        kind=kind,
+        canonical_key=ref_node.canonical_key,
+        student_node_ids=student_node_ids,
+        reference_node_ids=ref_node.source_node_ids,
+        evidence_spans=evidence_spans,
+        score=entailment,
+        message=(
+            f"chain {predecessor_key} -> {ref_node.canonical_key} -> {successor_key}; "
+            f"bridge {', '.join(bridge_provenance) or 'merged-student-node'}; "
+            f"decision {decision_channel}"
+        ),
     )
 
 
