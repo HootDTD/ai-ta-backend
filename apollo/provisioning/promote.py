@@ -7,7 +7,7 @@ It REUSES three frozen primitives and re-implements none of their logic:
     reference-solution step with its ``entity_key`` + a top-level
     ``declared_paths`` (the §6.1 annotated-graph contract the lint's gate 2
     requires);
-  * ``run_promotion_lint`` (3B2b) — the eight §8B.4 gates, reading the concept's
+  * ``run_promotion_lint`` (3B2b) — the nine §8B.4 gates, reading the concept's
     AUTHORED ``canonical_symbols`` / ``normalization_map`` (gate 4 non-vacuity)
     plus the caller-supplied ``existing_problem_hashes`` (gate 8 dedup);
   * ``project_canon`` (3C1) — the idempotent ``:Canon`` MERGE for the concept's
@@ -19,6 +19,12 @@ existing row id — NEVER an insert), flushes, then projects ``:Canon``. The tie
 flip is idempotent (a re-run flips an already-``tier=2`` row to ``2``, a no-op)
 and the ``:Canon`` MERGE is idempotent, so a re-claimed job's re-promote is
 replay-safe (§2c).
+
+With the default-OFF multi-path flag enabled, promotion replaces the legacy
+all-node ``declared_paths`` value with the enumerated object paths only when the
+entire replacement set passes ``validate_reference_graph``. That validation
+includes joint graph coverage and the object-path sink-milestone floor. Empty,
+malformed, invalid, or failed enumeration leaves the legacy single path intact.
 
 On a FAIL it returns ``PromoteResult(promoted=False, failed_gate, diagnostic)``
 WITHOUT touching the row. ``promote`` does NOT write the
@@ -35,6 +41,8 @@ re-projected on the next attempt.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from typing import Literal
 
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,12 +51,18 @@ from apollo.knowledge_graph.canon_projection import project_canon
 from apollo.persistence.learner_model_seed import (
     _entity_key_for_step,
     annotate_reference_solution,
+    validate_reference_graph,
 )
 from apollo.persistence.models import Concept, ConceptProblem
-from apollo.provisioning.promotion_lint import content_active_gates, run_promotion_lint
+from apollo.provisioning.path_enumeration import multi_path_enabled
+from apollo.provisioning.promotion_lint import (
+    PromotionUnresolved,
+    content_active_gates,
+    run_promotion_lint,
+)
 from apollo.provisioning.tag_mint import MintPlan
 
-__all__ = ["promote", "PromoteResult"]
+__all__ = ["promote", "PromoteHeldForReview", "PromoteResult"]
 
 _LOG = logging.getLogger(__name__)
 
@@ -57,14 +71,23 @@ _SOLUTION_SOURCE_DEFAULT = "generated"
 
 class PromoteResult(BaseModel):
     """The promote outcome (the 3B2g orchestrator handoff). ``failed_gate`` is the
-    1..8 gate number on a lint failure, ``None`` on a pass."""
+    1..9 gate number on a lint failure, ``None`` on a pass."""
 
     promoted: bool
     failed_gate: int | None = None
     diagnostic: str = ""
 
 
-def _annotate(problem: dict, mint_plan: MintPlan) -> dict:
+class PromoteHeldForReview(PromoteResult):
+    """Distinguished gate-9 unresolved outcome; still a non-pass to old callers."""
+
+    verdict: Literal["unresolved"] = "unresolved"
+
+
+def _annotate(
+    problem: dict,
+    mint_plan: MintPlan,
+) -> dict:
     """Return the annotated reference graph the lint consumes: each step carries
     its ``entity_key`` (derived from the step's ``entry_type``/``id`` via the
     frozen §8 D5 mapping, the SAME key ``tag_and_mint`` minted under) + a
@@ -84,6 +107,40 @@ def _annotate(problem: dict, mint_plan: MintPlan) -> dict:
     return annotate_reference_solution(problem, _key_for_node)
 
 
+def _with_enumerated_paths(
+    annotated: dict,
+    path_enumerator: Callable[[dict], list[dict]] | None,
+    *,
+    concept_problem_id: int,
+) -> dict:
+    """Replace the legacy path with a valid object-path set, or return it unchanged."""
+    if not multi_path_enabled() or path_enumerator is None:
+        return annotated
+    try:
+        enumerated_paths = path_enumerator(annotated)
+        if (
+            not isinstance(enumerated_paths, list)
+            or len(enumerated_paths) < 2
+            or not all(isinstance(path, dict) for path in enumerated_paths)
+        ):
+            raise ValueError("enumeration must return at least two object paths")
+        candidate = {**annotated, "declared_paths": enumerated_paths}
+        validation = validate_reference_graph(candidate)
+        if not validation.ok:
+            raise ValueError("; ".join(validation.errors))
+        return candidate
+    except Exception:  # noqa: BLE001 - enumeration must never block promotion
+        _LOG.warning(
+            "provisioning_path_enumeration_fallback",
+            exc_info=True,
+            extra={
+                "event": "provisioning_path_enumeration_fallback",
+                "concept_problem_id": concept_problem_id,
+            },
+        )
+        return annotated
+
+
 async def promote(
     db: AsyncSession,
     neo,
@@ -94,6 +151,7 @@ async def promote(
     concept_problem_id: int,
     existing_problem_hashes: set[str] | frozenset[str],
     solution_source: str | None = None,
+    path_enumerator: Callable[[dict], list[dict]] | None = None,
 ) -> PromoteResult:
     """Annotate -> lint -> (on PASS) flip tier 1->2 + store payload +
     ``project_canon``. See the module docstring for the full contract.
@@ -131,6 +189,12 @@ async def promote(
             diagnostic=f"gate 1: malformed problem rejected before annotation: {exc}",
         )
 
+    annotated = _with_enumerated_paths(
+        annotated,
+        path_enumerator,
+        concept_problem_id=concept_problem_id,
+    )
+
     # Read the concept's AUTHORED symbol set (gate-4 non-vacuity). The shape is
     # {"symbols": [...], ...} (author_concept_symbols, 3B2d); a vacuous set makes
     # gate 4 reject every foreign symbol.
@@ -164,7 +228,10 @@ async def promote(
                 "failed_gate": result.failed_gate,
             },
         )
-        return PromoteResult(
+        result_type = (
+            PromoteHeldForReview if isinstance(result, PromotionUnresolved) else PromoteResult
+        )
+        return result_type(
             promoted=False,
             failed_gate=result.failed_gate,
             diagnostic=result.diagnostic,

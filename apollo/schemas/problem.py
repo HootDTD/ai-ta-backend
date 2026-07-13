@@ -119,9 +119,14 @@ class Problem(BaseModel):
         """Derive a typed reference subgraph from this problem.
 
         Edges:
-        - DEPENDS_ON for every depends_on entry
+        - DEPENDS_ON prerequisite -> dependent for every depends_on entry
         - USES (procedure_step -> equation) for every uses_equations entry
         - PRECEDES chain across procedure_steps in `order`
+
+        KG/reference DEPENDS_ON uses the canonical prerequisite -> dependent
+        direction. The parser layer intentionally emits the inverse linguistic
+        convention (dependent -> prerequisite); ``build_student_canonical`` is
+        the boundary that flips those student edges into this convention.
         """
         nodes: list[Node] = []
         for step in self.reference_solution:
@@ -151,8 +156,8 @@ class Problem(BaseModel):
         # DEPENDS_ON edges
         for step in self.reference_solution:
             for dep in step.depends_on:
-                from_t = node_type_lookup[step.id]
-                to_t = node_type_lookup[dep]
+                from_t = node_type_lookup[dep]
+                to_t = node_type_lookup[step.id]
                 # Ontology forbids same-type self-edge of DEPENDS_ON only when
                 # ids match; node-type sameness is allowed.
                 if step.id == dep:
@@ -160,8 +165,8 @@ class Problem(BaseModel):
                 edges.append(
                     Edge(
                         edge_type=EdgeType.DEPENDS_ON,
-                        from_node_id=step.id,
-                        to_node_id=dep,
+                        from_node_id=dep,
+                        to_node_id=step.id,
                         attempt_id=attempt_id,
                         source="reference",
                         from_node_type=from_t,

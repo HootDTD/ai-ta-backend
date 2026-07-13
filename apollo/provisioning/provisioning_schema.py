@@ -88,6 +88,10 @@ def build_solution_schema(*, augmentation: bool = False) -> dict:
             "required": ["reference_solution"],
         },
     }
+    # DAG-3: optional problem-local symbol table (symbol -> role/ontology
+    # key/unit). Not in ``required`` — absent means legacy content; the
+    # generation defect validator checks coverage only when present.
+    schema["schema"]["properties"]["symbol_table"] = {"type": "object"}
     if augmentation:
         properties = schema["schema"]["properties"]
         properties["augmented_problem_text"] = {"type": ["string", "null"]}

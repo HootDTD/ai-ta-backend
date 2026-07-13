@@ -30,7 +30,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, REAL, UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 
 from database.models import Base
 
@@ -72,6 +72,8 @@ FINDING_KINDS = (
     "contradiction",
     "unresolved",
     "alternative_path",
+    "covered_by_contraction",
+    "not_demonstrated",
 )
 
 # Allowed values for apollo_problem_attempts.result. The DB CHECK constraint is
@@ -191,6 +193,34 @@ class ConceptProblem(Base):
     search_space_id = Column(Integer, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
+    @staticmethod
+    def _validate_solution_provenance(*, provenance: dict | None, solution_source: str | None):
+        """Keep machine-generated problems out of teacher-grounded source lanes."""
+        if (provenance or {}).get("source") == "generated" and solution_source in {
+            "extracted",
+            "authored",
+        }:
+            raise ValueError(
+                "machine-generated problem provenance requires "
+                "solution_source='generated' (or unset pending generation)"
+            )
+
+    @validates("solution_source")
+    def _validate_solution_source(self, _key: str, value: str | None):
+        self._validate_solution_provenance(
+            provenance=self.provenance,
+            solution_source=value,
+        )
+        return value
+
+    @validates("provenance")
+    def _validate_provenance(self, _key: str, value: dict | None):
+        self._validate_solution_provenance(
+            provenance=value,
+            solution_source=self.solution_source,
+        )
+        return value
+
 
 class AuthoredSet(Base):
     """Problem-doc plus solution-doc pairing for authored-set provisioning
@@ -225,6 +255,43 @@ class AuthoredSet(Base):
     __table_args__ = (
         UniqueConstraint("search_space_id", "set_index", name="uq_authored_set_per_space"),
     )
+
+
+class GenerationRun(Base):
+    """Teacher-initiated problem-generation batch and its bounded result ledger."""
+
+    __tablename__ = "apollo_generation_runs"
+
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    concept_id = Column(
+        BigInteger,
+        ForeignKey("apollo_concepts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status = Column(Text, nullable=False, server_default=text("'pending'"), default="pending")
+    result_summary = Column(
+        _JSONType,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+        default=dict,
+    )
+    ingest_run_id = Column(
+        BigInteger,
+        ForeignKey("apollo_ingest_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 
 class Misconception(Base):
@@ -527,8 +594,15 @@ class KGEntity(Base):
 
 
 class EntityPrereq(Base):
-    """Prerequisite DAG edges between Layer-1 entities (spec §2). from depends on
-    to. Composite PK (from_entity_id, to_entity_id)."""
+    """Prerequisite DAG edges between Layer-1 entities (spec §2).
+
+    LEGACY LAYER-1 EXCEPTION: ``from_entity_id`` depends on ``to_entity_id``
+    (dependent -> prerequisite). Do not conflate these persistence rows with KG
+    or canonical DEPENDS_ON edges, whose direction is prerequisite -> dependent.
+    Migrating existing Layer-1 rows is explicitly outside DAG-0 scope.
+
+    Composite PK (from_entity_id, to_entity_id).
+    """
 
     __tablename__ = "apollo_entity_prereqs"
 
@@ -610,6 +684,11 @@ class MasteryEvent(Base):
     attempt_id = Column(
         BigInteger,
         ForeignKey("apollo_problem_attempts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    concept_problem_id = Column(
+        BigInteger,
+        ForeignKey("apollo_concept_problems.id", ondelete="SET NULL"),
         nullable=True,
     )
     event_kind = Column(Text, nullable=False)
@@ -737,8 +816,9 @@ class GraphComparisonFinding(Base):
 
 class IngestRun(Base):
     """Per-document auto-provisioning run: scrape/promote/reject/merge counts plus
-    LLM call/token/cost aggregates (migration 030, §8B). ``content_hash`` lets an
-    unchanged re-upload short-circuit (3B2g). ``status`` vocabulary is
+    LLM call/token/cost aggregates (migration 030, §8B) and the mint-time
+    dedup-pressure gauge (migration 043). ``content_hash`` lets an unchanged
+    re-upload short-circuit (3B2g). ``status`` vocabulary is
     queued/running/succeeded/failed — DISTINCT from the job ``state`` vocabulary
     (the CHECK is in SQL only; the ORM declares none, repo convention)."""
 
@@ -764,6 +844,22 @@ class IngestRun(Base):
     n_promoted = Column(Integer, nullable=False, server_default=text("0"), default=0)
     n_rejected = Column(Integer, nullable=False, server_default=text("0"), default=0)
     n_dedup_merged = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    dedup_pressure = Column(
+        _JSONType,
+        nullable=False,
+        # server_default stays '{}' — a richer JSON literal here would need its
+        # colons escaped for text() (":0" parses as a bind param and renders
+        # DEFAULT '..."total_candidates"NULL...'); readers .get() every key.
+        server_default=text("'{}'::jsonb"),
+        default=lambda: {
+            "total_candidates": 0,
+            "exact_merges": 0,
+            "embedding_merges": 0,
+            "embedding_distinct": 0,
+            "embedding_merge_ratio": 0.0,
+            "per_concept": {},
+        },
+    )
     llm_calls = Column(Integer, nullable=False, server_default=text("0"), default=0)
     llm_tokens_in = Column(BigInteger, nullable=False, server_default=text("0"), default=0)
     llm_tokens_out = Column(BigInteger, nullable=False, server_default=text("0"), default=0)

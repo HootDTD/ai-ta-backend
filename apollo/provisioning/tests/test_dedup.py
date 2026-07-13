@@ -26,10 +26,11 @@ from dataclasses import FrozenInstanceError, dataclass
 import pytest
 from sqlalchemy import select
 
-from apollo.persistence.models import Concept, DedupDecision, KGEntity, Subject
+from apollo.persistence.models import Concept, DedupDecision, IngestRun, KGEntity, Subject
 from apollo.provisioning.dedup import (
     DedupVerdict,
     _cosine,
+    is_false_merge_risk,
     resolve_candidate,
 )
 from apollo.provisioning.dedup_constants import (
@@ -270,6 +271,44 @@ async def test_embedding_at_threshold_merges(db_session):
     assert rows[0].method == "embedding"
     assert rows[0].similarity == pytest.approx(0.92)
     assert rows[0].verdict == "merged"
+
+
+async def test_dedup_pressure_aggregates_and_persists_per_ingest_run(db_session):
+    """Exact + embedding merge + embedding distinct update one queryable gauge."""
+    ss_id, concept_id, _ids = await _seed_course(
+        db_session,
+        slug="c-pressure",
+        entities=[("ent.exact", "BASE"), ("ent.embedding", "BASE")],
+    )
+    run = IngestRun(search_space_id=ss_id, document_id=901, status="running")
+    db_session.add(run)
+    await db_session.flush()
+
+    scripted = (
+        _Candidate(canonical_key="ent.exact", scope_summary="MERGE_0_98"),
+        _Candidate(canonical_key="cand.merge", scope_summary="MERGE_0_98"),
+        _Candidate(canonical_key="cand.distinct", scope_summary="BELOW_0_50"),
+    )
+    for candidate in scripted:
+        await resolve_candidate(
+            db_session,
+            search_space_id=ss_id,
+            concept_id=concept_id,
+            candidate=candidate,
+            embed_fn=_embed,
+            judge_fn=_judge_explodes,
+            ingest_run_id=int(run.id),
+        )
+
+    await db_session.refresh(run)
+    assert run.dedup_pressure == {
+        "total_candidates": 3,
+        "exact_merges": 1,
+        "embedding_merges": 1,
+        "embedding_distinct": 1,
+        "embedding_merge_ratio": 0.5,
+        "per_concept": {str(concept_id): 1},
+    }
 
 
 async def test_embedding_in_band_escalates_to_judge(db_session):
@@ -589,9 +628,7 @@ async def test_exclude_entity_ids_forces_distinct(db_session):
     a candidate cannot dedup against an entity minted earlier in the SAME mint --
     what keeps two distinct nodes of one problem (m, M) from fusing. RED without the
     param (slug-merges into the excluded entity)."""
-    ss, concept_id, ids = await _seed_course(
-        db_session, slug="excl", entities=[("ent.x", "BASE")]
-    )
+    ss, concept_id, ids = await _seed_course(db_session, slug="excl", entities=[("ent.x", "BASE")])
     cand = _Candidate(canonical_key="ent.x", scope_summary="BASE")
     verdict = await resolve_candidate(
         db_session,
@@ -724,3 +761,53 @@ def test_public_api_reexport():
 
     assert ReexportVerdict is dedup_mod.DedupVerdict
     assert reexport_resolve is dedup_mod.resolve_candidate
+
+
+def test_is_false_merge_risk():
+    # Case differences on the same alphabet letters should trigger merge risk
+    assert is_false_merge_risk("var.m", "var.M") is True
+    assert is_false_merge_risk("var.v1", "var.V1") is True
+    assert is_false_merge_risk("var.v_1", "var.V_2") is True
+
+    # Subscript / number differences should trigger merge risk
+    assert is_false_merge_risk("var.v_1", "var.v_2") is True
+    assert is_false_merge_risk("var.v", "var.v_1") is True
+    assert is_false_merge_risk("var.v1", "var.v2") is True
+
+    # Completely different variable names should not trigger merge risk
+    assert is_false_merge_risk("var.v", "var.u") is False
+    assert is_false_merge_risk("var.v_1", "var.u_1") is False
+
+    # Concept names shouldn't trigger unless they only differ by case
+    assert is_false_merge_risk("eq.bernoulli", "eq.Bernoulli") is True
+    assert is_false_merge_risk("eq.bernoulli", "eq.continuity") is False
+
+
+async def test_resolve_candidate_prevents_false_merge(db_session):
+    """If a candidate matches the concept/search_space and has high cosine similarity
+    but differs by casing (e.g. 'm' vs 'M'), it must stay distinct."""
+    ss_id, concept_id, ids = await _seed_course(
+        db_session, slug="c-case", entities=[("var.m", "BASE")]
+    )
+    # Target existing entity is 'var.m' with vector BASE.
+    # Candidate is 'var.M' with summary BASE (cos == 1.0).
+    cand = _Candidate(canonical_key="var.M", scope_summary="BASE")
+
+    verdict = await resolve_candidate(
+        db_session,
+        search_space_id=ss_id,
+        concept_id=concept_id,
+        candidate=cand,
+        embed_fn=_embed,
+        judge_fn=_judge_explodes,  # Should NOT escalate to judge
+    )
+    # Cosine is 1.0 but it's a false-merge risk, so it should stay distinct
+    assert verdict.verdict == "distinct"
+    assert verdict.matched_entity_id is None
+
+
+def test_identical_cleaned_keys_are_not_a_false_merge_risk():
+    from apollo.provisioning.dedup import is_false_merge_risk
+
+    # Same base, same casing, same subscript: a true duplicate, not a risk.
+    assert is_false_merge_risk("energy.v_1", "kinematics.v_1") is False

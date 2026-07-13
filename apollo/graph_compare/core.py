@@ -24,10 +24,13 @@ from dataclasses import dataclass
 
 from apollo.graph_compare.bisimilarity import bisimilarity_score
 from apollo.graph_compare.canonical import CanonicalGraph, ReferenceGraph
+from apollo.graph_compare.contraction import ContractionVerdict, contraction_verdicts
 from apollo.graph_compare.coverage import PathCoverage, coverage_result
 from apollo.graph_compare.findings import (
     Finding,
+    FindingKind,
     alternative_path_finding,
+    contraction_finding,
     contradiction_finding,
     covered_finding,
     matched_edge_finding,
@@ -42,11 +45,12 @@ from apollo.graph_compare.soundness import (
     is_misconception_key,
     soundness_score,
 )
+from apollo.resolution.nli_adjudicator import NLIAdjudicator
 
 # The constant for the apollo_graph_comparison_runs.comparison_version column. A
 # re-run at the same version is a supersede (UNIQUE constraint). Single source of
 # truth; WU-4B reads it off GradeResult.comparison_version.
-COMPARISON_VERSION: str = "graph-compare-v1"
+COMPARISON_VERSION: str = "graph-compare-v2"
 
 
 @dataclass(frozen=True)
@@ -87,6 +91,7 @@ def grade_attempt(
     reference_graph: ReferenceGraph,
     *,
     bank_applicable: bool = True,
+    contraction_adjudicator: NLIAdjudicator | None = None,
 ) -> GradeResult:
     """Grade a student's canonical graph against the reference (§6.4 10/11/13).
 
@@ -98,7 +103,27 @@ def grade_attempt(
     contradiction_score become ``None``, bisimilarity renormalizes to coverage.
     """
     # Step 10 — coverage (max over declared paths).
-    coverage, winning_path, _ = coverage_result(student_canonical, reference_graph)
+    verdicts_by_path: dict[int, dict[str, ContractionVerdict]] = {}
+    contracted_keys_by_path: dict[int, frozenset[str]] = {}
+    if contraction_adjudicator is not None:
+        for path_index, path in enumerate(reference_graph.paths):
+            verdicts = contraction_verdicts(
+                student_canonical,
+                reference_graph,
+                path,
+                contraction_adjudicator,
+            )
+            verdicts_by_path[path_index] = verdicts
+            contracted_keys_by_path[path_index] = frozenset(
+                key
+                for key, verdict in verdicts.items()
+                if verdict.kind == FindingKind.COVERED_BY_CONTRACTION
+            )
+    coverage, winning_path, _ = coverage_result(
+        student_canonical,
+        reference_graph,
+        contracted_keys_by_path=contracted_keys_by_path,
+    )
     # Step 11 — soundness (contradictions only; None when bank not applicable).
     soundness = soundness_score(student_canonical, bank_applicable=bank_applicable)
     # Sub-scores (contradiction sub-score also None when bank not applicable).
@@ -108,7 +133,12 @@ def grade_attempt(
     # Step 13 — bisimilarity (harmonic mean; None soundness -> coverage-only fallback).
     bisimilarity = bisimilarity_score(soundness, coverage)
 
-    findings = _emit_findings(student_canonical, reference_graph, winning_path)
+    findings = _emit_findings(
+        student_canonical,
+        reference_graph,
+        winning_path,
+        verdicts_by_path.get(winning_path.path_index, {}),
+    )
 
     return GradeResult(
         coverage_score=coverage,
@@ -132,6 +162,7 @@ def _emit_findings(
     student: CanonicalGraph,
     reference: ReferenceGraph,
     winning_path: PathCoverage,
+    contraction_verdicts_by_key: dict[str, ContractionVerdict] | None = None,
 ) -> tuple[Finding, ...]:
     """Emit the §2 finding set (NO event conversion), deterministically ordered.
 
@@ -141,6 +172,7 @@ def _emit_findings(
     node_by_key = {n.canonical_key: n for n in student.nodes}
     ref_node_by_key = {n.canonical_key: n for n in reference.nodes}
     reference_keys = {k for p in reference.paths for k in p.canonical_keys}
+    contraction_verdicts_by_key = contraction_verdicts_by_key or {}
 
     covered = [
         covered_finding(node_by_key[k])
@@ -150,7 +182,22 @@ def _emit_findings(
     missing = [
         missing_finding(ref_node_by_key[k])
         for k in sorted(winning_path.missing_keys)
-        if k in ref_node_by_key
+        if k in ref_node_by_key and k not in contraction_verdicts_by_key
+    ]
+    contractions = [
+        contraction_finding(
+            ref_node_by_key[key],
+            kind=verdict.kind,
+            student_node_ids=verdict.student_node_ids,
+            evidence_spans=verdict.evidence_spans,
+            predecessor_key=verdict.predecessor_key,
+            successor_key=verdict.successor_key,
+            bridge_provenance=verdict.bridge_provenance,
+            entailment=verdict.entailment,
+            decision_channel=verdict.decision_channel,
+        )
+        for key, verdict in sorted(contraction_verdicts_by_key.items())
+        if key in ref_node_by_key
     ]
     alternative = (
         [alternative_path_finding(winning_path.path_index, winning_path.covered_keys)]
@@ -174,10 +221,15 @@ def _emit_findings(
         for node_id, surface in sorted(student.unresolved_nodes)
     ]
 
-    matched_edges, missing_edges = _edge_findings(student, reference)
+    matched_edges, missing_edges = _edge_findings(
+        student,
+        reference,
+        contraction_verdicts_by_key,
+    )
 
     return tuple(
         covered
+        + contractions
         + missing
         + alternative
         + contradiction
@@ -189,7 +241,9 @@ def _emit_findings(
 
 
 def _edge_findings(
-    student: CanonicalGraph, reference: ReferenceGraph
+    student: CanonicalGraph,
+    reference: ReferenceGraph,
+    contraction_verdicts_by_key: dict[str, ContractionVerdict] | None = None,
 ) -> tuple[list[Finding], list[Finding]]:
     """Diagnostic-only edge findings: a reference edge with a matching S_norm edge
     (same type+endpoints) is MATCHED, else MISSING. Never an event; never moves
@@ -197,8 +251,19 @@ def _edge_findings(
     student_edge_keys = {(e.edge_type, e.from_key, e.to_key) for e in student.edges}
     matched: list[Finding] = []
     missing: list[Finding] = []
+    contracted_edge_pairs = {
+        frozenset((verdict.predecessor_key, key))
+        for key, verdict in (contraction_verdicts_by_key or {}).items()
+        if verdict.kind == FindingKind.COVERED_BY_CONTRACTION
+    } | {
+        frozenset((key, verdict.successor_key))
+        for key, verdict in (contraction_verdicts_by_key or {}).items()
+        if verdict.kind == FindingKind.COVERED_BY_CONTRACTION
+    }
     for edge in sorted(reference.edges, key=lambda e: (str(e.edge_type), e.from_key, e.to_key)):
-        if (edge.edge_type, edge.from_key, edge.to_key) in student_edge_keys:
+        if (edge.edge_type, edge.from_key, edge.to_key) in student_edge_keys or frozenset(
+            (edge.from_key, edge.to_key)
+        ) in contracted_edge_pairs:
             matched.append(matched_edge_finding(edge))
         else:
             missing.append(missing_edge_finding(edge))
