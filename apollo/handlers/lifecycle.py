@@ -16,11 +16,52 @@ _LOG = logging.getLogger(__name__)
 
 
 async def handle_retry(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
-    """Student clicked 'Teach more and retry' — unfreeze KG, return to TEACHING."""
-    sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+    """Student clicked retry on the report — start a FRESH attempt at the same problem.
+
+    Fresh-slate semantics (2026-07-13 prod hotfix): when the current attempt is
+    already resolved (``result`` non-null — the post-grade retry), create a NEW
+    ``ProblemAttempt`` row for the same problem. Every "current attempt" lookup
+    is most-recent-by-id, so the transcript/KG start empty and the next Done
+    grades (and writes its grading artifact under) the new attempt_id — a second
+    Done can no longer collide with ``uq_grading_artifact_attempt_role``. The
+    graded attempt stays untouched as history.
+
+    When the current attempt is still in flight (``result`` null), retry stays a
+    pure phase flip so a stray /retry can never orphan in-progress teaching.
+    """
+    # Row lock so a double-clicked /retry can't race into two fresh attempts
+    # (same posture as handle_next). SQLite ignores it.
+    sess = (
+        await db.execute(
+            select(ApolloSession).where(ApolloSession.id == session_id).with_for_update()
+        )
+    ).scalar_one()
+
+    current_attempt = None
+    if sess.current_problem_id:
+        current_attempt = (
+            await db.execute(
+                select(ProblemAttempt)
+                .where(ProblemAttempt.session_id == session_id)
+                .where(ProblemAttempt.problem_id == sess.current_problem_id)
+                .order_by(ProblemAttempt.id.desc())
+            )
+        ).scalars().first()
+
+    new_attempt_id: int | None = None
+    if current_attempt is not None and current_attempt.result is not None:
+        new_attempt = ProblemAttempt(
+            session_id=session_id,
+            problem_id=current_attempt.problem_id,
+            difficulty=current_attempt.difficulty,
+        )
+        db.add(new_attempt)
+        await db.flush()
+        new_attempt_id = new_attempt.id
+
     sess.phase = SessionPhase.TEACHING.value
     await db.commit()
-    return {"ok": True}
+    return {"ok": True, "attempt_id": new_attempt_id}
 
 
 async def handle_end(
