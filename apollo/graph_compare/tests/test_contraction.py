@@ -16,6 +16,7 @@ from apollo.graph_compare.contraction import contraction_verdicts
 from apollo.graph_compare.core import grade_attempt
 from apollo.graph_compare.findings import FindingKind
 from apollo.ontology.edges import EdgeType
+from apollo.ontology.nodes import NodeType
 from apollo.resolution.nli_adjudicator import NLIResult
 
 from ._builders import cedge, cnode, path, rgraph, rnode, snorm
@@ -53,7 +54,7 @@ CONTRADICTED = NLIResult("entailment", 0.96, 0.20, 0.0, "fake")
 
 def _fixture(
     *,
-    middle_type: str = "simplification",
+    middle_type: NodeType = "simplification",
     include_predecessor: bool = True,
     include_successor: bool = True,
     bridge: bool = True,

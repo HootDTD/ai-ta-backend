@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -36,6 +37,13 @@ from database.session import get_async_session, get_db_session
 
 _LOG = logging.getLogger(__name__)
 _PROBLEM_TEXT_CAP = 2000
+
+
+def _json_dict(value: Any) -> dict[str, Any]:
+    """Runtime dict of a legacy JSON ``Column`` attribute (mypy sees the
+    descriptor type, not the instance value)."""
+    return value or {}
+
 
 router = APIRouter(tags=["apollo-problem-generation"])
 
@@ -91,7 +99,7 @@ async def list_generation_seeds(
         "seeds": [
             {
                 "concept_problem_id": int(row.id),
-                "problem_text": str((row.payload or {}).get("problem_text") or "")[
+                "problem_text": str(_json_dict(row.payload).get("problem_text") or "")[
                     :_PROBLEM_TEXT_CAP
                 ],
                 "difficulty": row.difficulty,
@@ -253,9 +261,9 @@ async def list_generation_runs(
                 "concept_id": int(row.concept_id),
                 "status": row.status,
                 "created_at": row.created_at.isoformat(),
-                "requested": (row.result_summary or {}).get("requested"),
-                "written_count": len((row.result_summary or {}).get("written") or []),
-                "dropped": (row.result_summary or {}).get("dropped"),
+                "requested": _json_dict(row.result_summary).get("requested"),
+                "written_count": len(_json_dict(row.result_summary).get("written") or []),
+                "dropped": _json_dict(row.result_summary).get("dropped"),
             }
             for row in rows
         ]
@@ -311,7 +319,7 @@ async def _generation_problems(db: AsyncSession, summary: dict) -> list[dict]:
         row = rows.get(problem_id)
         if row is None:
             continue
-        text = str((row.payload or {}).get("problem_text") or "")
+        text = str(_json_dict(row.payload).get("problem_text") or "")
         problems.append(
             {
                 "concept_problem_id": problem_id,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import pytest
 
@@ -129,7 +130,7 @@ class _Result:
 
 class _FakeDB:
     def __init__(self, seeds: list[ConceptProblem], existing_payloads: list[dict] | None = None):
-        self._results = [seeds, existing_payloads or [seed.payload for seed in seeds]]
+        self._results = [seeds, existing_payloads or [cast(dict, seed.payload) for seed in seeds]]
         self.added: list[ConceptProblem] = []
         self.flushes = 0
 

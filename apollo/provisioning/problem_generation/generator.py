@@ -279,14 +279,18 @@ async def generate_problem_variants(
                 continue
 
             problem_code = f"gen-{seed_row.id}-{operator.name}-{statement_hash[:12]}"
-            problem = Problem(
-                id=problem_code,
-                concept_id=seed.concept_id,
-                difficulty=candidate.difficulty,
-                problem_text=candidate.problem_text,
-                given_values=candidate.given_values,
-                target_unknown=candidate.target_unknown,
-                reference_solution=draft.reference_solution,
+            # draft.reference_solution is dict-shaped; model_validate coerces
+            # the steps into ReferenceStep.
+            problem = Problem.model_validate(
+                {
+                    "id": problem_code,
+                    "concept_id": seed.concept_id,
+                    "difficulty": candidate.difficulty,
+                    "problem_text": candidate.problem_text,
+                    "given_values": candidate.given_values,
+                    "target_unknown": candidate.target_unknown,
+                    "reference_solution": draft.reference_solution,
+                }
             )
             round_trip = round_trip_check(problem)
             if round_trip.verdict == "refuted":

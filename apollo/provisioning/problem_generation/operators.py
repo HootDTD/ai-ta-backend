@@ -70,7 +70,7 @@ class VariationOperator:
     include_dag_skeleton: bool = False
 
     def build_messages(self, seed_payload: Problem) -> list[dict]:
-        seed = {
+        seed: dict[str, object] = {
             "problem_text": seed_payload.problem_text,
             "given_values": seed_payload.given_values,
             "target_unknown": seed_payload.target_unknown,
