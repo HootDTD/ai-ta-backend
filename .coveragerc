@@ -29,6 +29,9 @@ omit =
     # DAG-4 live-LLM evaluation harness: same network/cost exclusion as the
     # wave-1 smoke above; the conductor runs it manually before merge.
     scripts/dag4_granularity_eval.py
+    # DAG-5 Docker-backed contraction replay: requires the locally recorded
+    # campaign attempt state and never runs in CI.
+    scripts/dag5_contraction_replay.py
 
 [report]
 show_missing = true

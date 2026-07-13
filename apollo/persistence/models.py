@@ -72,6 +72,8 @@ FINDING_KINDS = (
     "contradiction",
     "unresolved",
     "alternative_path",
+    "covered_by_contraction",
+    "not_demonstrated",
 )
 
 # Allowed values for apollo_problem_attempts.result. The DB CHECK constraint is
