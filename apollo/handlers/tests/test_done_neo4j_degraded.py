@@ -44,15 +44,14 @@ def _clear_flags(monkeypatch):
         "APOLLO_GRAPH_GRADER_LIVE",
         "APOLLO_GRADING_ARTIFACT_ENABLED",
         "APOLLO_GRAPH_SIM_LAYER3_ENABLED",
-        "APOLLO_DONE_GATE_ENABLED",
     ):
         monkeypatch.delenv(flag, raising=False)
     yield
 
 
 # ---------------------------------------------------------------------------
-# (1) read_graph degraded + transcript grader OK -> grade served, gate
-#     skipped, stamp skipped, shadow chain skipped with the marker.
+# (1) read_graph degraded + transcript grader OK -> grade served, stamp
+#     skipped, shadow chain skipped with the marker.
 # ---------------------------------------------------------------------------
 
 
@@ -60,7 +59,6 @@ def _clear_flags(monkeypatch):
 async def test_read_graph_degraded_transcript_grader_ok_serves_grade(monkeypatch):
     monkeypatch.setenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", "true")
     monkeypatch.setenv("APOLLO_GRADING_ARTIFACT_ENABLED", "true")
-    monkeypatch.setenv("APOLLO_DONE_GATE_ENABLED", "true")
 
     db, _sess, attempt, patches = _old_path_patches()
 
@@ -199,33 +197,3 @@ async def test_stamp_graded_at_retention_error_healthy_graph_still_serves(monkey
     # Grade served byte-identically to the golden OLD-path payload.
     assert out["rubric"] == {"overall": {"score": 0.5}}
     assert out["xp_earned"] == 10
-
-
-# ---------------------------------------------------------------------------
-# Regression: a HEALTHY read (kg_degraded=False) + gate ON actually RUNS the
-# gate (not skipped) — pins the `if kg_degraded: ... else: await
-# _enforce_done_gate(...)` branch split introduced by the degraded-mode
-# change.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_healthy_read_with_gate_enabled_runs_gate_not_skipped(monkeypatch):
-    monkeypatch.setenv("APOLLO_DONE_GATE_ENABLED", "true")
-    db, _sess, attempt, patches = _old_path_patches()
-
-    gate_spy = AsyncMock(return_value=None)
-    gate_patch = patch("apollo.handlers.done._enforce_done_gate", new=gate_spy)
-
-    for p in patches:
-        p.start()
-    gate_patch.start()
-    try:
-        out = await handle_done(db=db, neo=None, session_id=11)
-    finally:
-        gate_patch.stop()
-        for p in reversed(patches):
-            p.stop()
-
-    gate_spy.assert_awaited_once()
-    assert out["rubric"] == {"overall": {"score": 0.5}}

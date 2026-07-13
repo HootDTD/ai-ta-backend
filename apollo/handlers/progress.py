@@ -79,7 +79,7 @@ async def handle_get_progress_detail(
             .where(
                 ApolloSession.user_id == user_id,
                 ApolloSession.search_space_id == search_space_id,
-                # Deliberately the narrow "graded" literal: only the done-gate
+                # Deliberately the narrow "graded" literal: only the Done path
                 # path writes both result="graded" AND the {"rubric": {"overall":
                 # ...}} shape this block reads. Do NOT widen to
                 # GRADED_ATTEMPT_RESULTS or null-score legacy rows pollute the

@@ -2,20 +2,26 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.knowledge_graph.store import KGStore
 from apollo.overseer.problem_selector import list_problems_for_concept
-from apollo.persistence.models import ApolloSession, Message, ProblemAttempt, SessionPhase, SessionStatus
+from apollo.persistence.models import (
+    ApolloSession,
+    Message,
+    ProblemAttempt,
+    SessionPhase,
+    SessionStatus,
+)
 from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 
 _LOG = logging.getLogger(__name__)
 
 
-async def handle_retry(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
+async def handle_retry(*, db: AsyncSession, session_id: int) -> dict[str, Any]:
     """Student clicked retry on the report — start a FRESH attempt at the same problem.
 
     Fresh-slate semantics (2026-07-13 prod hotfix): when the current attempt is
@@ -57,8 +63,13 @@ async def handle_retry(*, db: AsyncSession, session_id: int) -> Dict[str, Any]:
         )
         db.add(new_attempt)
         await db.flush()
-        new_attempt_id = new_attempt.id
+        new_attempt_id = int(new_attempt.id)
 
+    # These fields are session-scoped caches/state machines. They must not
+    # carry an old attempt into a retry that promises a blank slate.
+    sess.pending_intent = None
+    sess.history_summary = None
+    sess.history_summary_up_to_turn = None
     sess.phase = SessionPhase.TEACHING.value
     await db.commit()
     return {"ok": True, "attempt_id": new_attempt_id}
@@ -69,7 +80,7 @@ async def handle_end(
     db: AsyncSession,
     neo: Neo4jClient | None,
     session_id: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Student clicked 'End session' — mark the session ended.
 
     Retention (§7 retention change, WU-3C1): per-attempt Neo4j subgraphs are
@@ -93,7 +104,7 @@ async def handle_get_session(
     db: AsyncSession,
     neo: Neo4jClient | None,
     session_id: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
 
     current_attempt_id: int | None = None
