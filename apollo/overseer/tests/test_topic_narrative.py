@@ -126,13 +126,14 @@ def test_prompt_includes_problem_text():
     assert "SENTINEL_PROBLEM" in user
 
 
-def test_prompt_includes_score_and_letter_but_not_component_decimals():
-    # 2026-07-11 feedback spec §2: coverage_component / misconception_dock
-    # decimals are internals and no longer appear in the prompt.
+def test_prompt_omits_overall_grade_and_component_decimals():
+    # The grade is already visible in the report UI. Keeping it out of the
+    # narrator input prevents the feedback from redundantly announcing it.
     result = _result()
     _system, user = build_topic_narrative_prompt(result, problem_text="p")
-    assert "72" in user
-    assert "B-" in user
+    assert "Score:" not in user
+    assert "72" not in user
+    assert "B-" not in user
     assert "Coverage component" not in user
     assert "Misconception dock" not in user
 
@@ -159,6 +160,36 @@ def test_system_prompt_instructs_next_step_line():
     result = _result()
     system, _user = build_topic_narrative_prompt(result, problem_text="p")
     assert "Next step:" in system
+
+
+def test_system_prompt_requires_direct_second_person_feedback():
+    system, _user = build_topic_narrative_prompt(_result(), problem_text="p")
+    lowered = " ".join(system.lower().split())
+    assert 'as "you" and "your"' in lowered
+    assert 'never call them "the student,' in lowered
+    assert "report written for a teacher" in lowered
+
+
+def test_system_prompt_suppresses_empty_misconception_commentary():
+    system, _user = build_topic_narrative_prompt(_result(), problem_text="p")
+    lowered = system.lower()
+    assert "if none are" in lowered
+    assert "say nothing at all about misconceptions" in lowered
+    assert "no misconceptions were recorded" in lowered
+
+
+def test_system_prompt_prioritizes_instead_of_inventorying_gaps():
+    system, _user = build_topic_narrative_prompt(_result(), problem_text="p")
+    lowered = system.lower()
+    assert "mention at most two" in lowered
+    assert "synthesize; do not inventory" in lowered
+    assert 'not "focus on understanding"' in lowered
+
+
+def test_user_payload_calls_input_assessment_evidence_not_ledger():
+    _system, user = build_topic_narrative_prompt(_result(), problem_text="p")
+    assert "Assessment evidence:" in user
+    assert "Ledger:" not in user
 
 
 def test_no_topics_degrades_gracefully():
