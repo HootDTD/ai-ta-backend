@@ -1,16 +1,7 @@
-"""I/O orchestration for reference coverage, opportunity state, and wording.
-
-The answer/student boundary lives here: the evaluator and planner are
-answer-side, the writer is answer-blind (nudge + public surface only), and
-the deterministic leak guard runs twice — on the evaluator's hint before it
-reaches the writer, and on the writer's question before it reaches the
-student.
-"""
+"""I/O orchestration for unified coverage assessment and Apollo questioning."""
 
 from __future__ import annotations
 
-import asyncio
-import logging
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -19,15 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.persistence.models import ReferenceQuestionOpportunity
 from apollo.schemas.problem import Problem
-from apollo.smart_questions.evaluator import evaluate_reference_coverage, rewrite_hint
-from apollo.smart_questions.leak_guard import leaks_private_content, private_leak_words
-from apollo.smart_questions.planner import choose_target
-from apollo.smart_questions.writer import SAFE_FALLBACK as _SAFE_FALLBACK
-from apollo.smart_questions.writer import write_question
-
-_LOG = logging.getLogger(__name__)
-
-_GENERIC_NUDGE = "ask the student to explain the part of the problem they have not covered yet"
+from apollo.smart_questions.unified import evaluate_and_ask
 
 
 @dataclass(frozen=True)
@@ -64,72 +47,18 @@ async def plan_next_question(
             row.state = "answered"
             row.answered_turn = turn_index
 
-    coverage = await evaluate_reference_coverage(
-        transcript=transcript, reference_graph=reference_graph, problem=problem
+    asked_node_ids = {row.reference_node_id for row in rows}
+    result = await evaluate_and_ask(
+        transcript=transcript,
+        reference_graph=reference_graph,
+        problem=problem,
+        already_asked_node_ids=asked_node_ids,
     )
-    target_id = choose_target(reference_graph, coverage, {row.reference_node_id for row in rows})
-    if target_id is None:
+    if result.action == "done":
         return QuestionDecision(action="done")
 
-    target = next(node for node in reference_graph.nodes if node.node_id == target_id)
-    problem_text = str(problem.problem_text)
-    student_messages = [content for role, content in transcript if role == "student"]
-
-    # The hint crosses from the answer-aware evaluator to the answer-blind
-    # writer; guard it so a hint that parrots node content never steers the
-    # question. The node itself stays controller-side for guarding only.
-    hint = next(item.ask_hint for item in coverage if item.node_id == target_id).strip()
-    nudge = hint or _GENERIC_NUDGE
-    leaked = (
-        private_leak_words(
-            hint, node=target, problem_text=problem_text, student_messages=student_messages
-        )
-        if hint
-        else set()
-    )
-    if leaked:
-        # Retry once: the leak names exactly which words are off-limits, and the
-        # rewrite runs before giving up on a targeted hint. Session 74
-        # (2026-07-14) showed the generic nudge degrades the first question
-        # into a problem-statement restatement, so it is a last resort.
-        nudge = _GENERIC_NUDGE
-        try:
-            retried = await asyncio.to_thread(
-                rewrite_hint,
-                hint=hint,
-                forbidden_words=sorted(leaked),
-                problem_text=problem_text,
-                student_messages=student_messages,
-            )
-        except Exception:
-            _LOG.exception(
-                "smart_question_hint_rewrite_failed attempt_id=%s node_id=%s",
-                attempt_id,
-                target_id,
-            )
-            retried = ""
-        if retried and not leaks_private_content(
-            retried, node=target, problem_text=problem_text, student_messages=student_messages
-        ):
-            _LOG.info(
-                "smart_question_hint_leak_rewritten attempt_id=%s node_id=%s",
-                attempt_id,
-                target_id,
-            )
-            nudge = retried
-        else:
-            _LOG.warning(
-                "smart_question_hint_leak_blocked attempt_id=%s node_id=%s", attempt_id, target_id
-            )
-
-    question = await asyncio.to_thread(
-        write_question, nudge=nudge, problem_text=problem_text, transcript=transcript
-    )
-    if question != _SAFE_FALLBACK and leaks_private_content(
-        question, node=target, problem_text=problem_text, student_messages=student_messages
-    ):
-        _LOG.warning("smart_question_leak_blocked attempt_id=%s node_id=%s", attempt_id, target_id)
-        question = _SAFE_FALLBACK
+    target_id = cast(str, result.target_node_id)
+    question = cast(str, result.reply)
     db.add(
         ReferenceQuestionOpportunity(
             attempt_id=attempt_id,

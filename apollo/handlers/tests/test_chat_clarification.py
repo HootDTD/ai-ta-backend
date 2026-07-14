@@ -188,10 +188,10 @@ def test_clarification_flag_name():
     assert chat._CLARIFICATION_ENABLED_FLAG == "APOLLO_CLARIFICATION_ENABLED"
 
 
-def test_smart_question_flag_defaults_off(monkeypatch):
-    assert chat._SMART_QUESTIONS_FLAG == "APOLLO_SMART_QUESTIONS_ENABLED"
-    monkeypatch.delenv(chat._SMART_QUESTIONS_FLAG, raising=False)
-    assert chat._smart_questions_enabled() is False
+def test_unified_questioning_flag_defaults_off(monkeypatch):
+    assert chat._UNIFIED_QUESTIONING_FLAG == "APOLLO_UNIFIED_QUESTIONING_ENABLED"
+    monkeypatch.delenv(chat._UNIFIED_QUESTIONING_FLAG, raising=False)
+    assert chat._unified_questioning_enabled() is False
 
 
 def test_clarification_enabled_default_off(monkeypatch):
@@ -217,8 +217,8 @@ def test_clarification_enabled_falsey(monkeypatch, raw):
 
 
 @pytest.mark.asyncio
-async def test_smart_question_path_bypasses_kg_drafter(db_session_attempt, monkeypatch):
-    monkeypatch.setenv("APOLLO_SMART_QUESTIONS_ENABLED", "1")
+async def test_unified_questioning_path_bypasses_kg_drafter(db_session_attempt, monkeypatch):
+    monkeypatch.setenv("APOLLO_UNIFIED_QUESTIONING_ENABLED", "1")
     db, session_id, _ = db_session_attempt
     store = _fake_store()
     mock_draft = MagicMock(return_value="must not be used")
@@ -243,8 +243,8 @@ async def test_smart_question_path_bypasses_kg_drafter(db_session_attempt, monke
 
 
 @pytest.mark.asyncio
-async def test_smart_question_stop_executes_done(db_session_attempt, monkeypatch):
-    monkeypatch.setenv("APOLLO_SMART_QUESTIONS_ENABLED", "1")
+async def test_unified_questioning_stop_executes_done(db_session_attempt, monkeypatch):
+    monkeypatch.setenv("APOLLO_UNIFIED_QUESTIONING_ENABLED", "1")
     db, session_id, _ = db_session_attempt
     store = _fake_store()
     ps = _patches(store)
