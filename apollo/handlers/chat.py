@@ -57,7 +57,7 @@ _CLARIFICATION_CACHE = CandidateEmbeddingCache()
 # extra LLM/embedding round-trips, draft_reply gets clarification_hints=None. Flip ON only
 # after rollout/cost review (same posture as APOLLO_GRAPH_SIM_* in done.py).
 _CLARIFICATION_ENABLED_FLAG: str = "APOLLO_CLARIFICATION_ENABLED"
-_SMART_QUESTIONS_FLAG: str = "APOLLO_SMART_QUESTIONS_ENABLED"
+_UNIFIED_QUESTIONING_FLAG: str = "APOLLO_UNIFIED_QUESTIONING_ENABLED"
 # Per-turn NLI node budget: when more than this many nodes are parsed in a
 # single utterance, NLI is skipped for that turn (degrades to lexical-only).
 # Synchronous model inference runs per residual node, so uncapped utterances
@@ -70,8 +70,8 @@ def _clarification_enabled() -> bool:
     return os.environ.get(_CLARIFICATION_ENABLED_FLAG, "").lower() in ("1", "true", "yes")
 
 
-def _smart_questions_enabled() -> bool:
-    return os.environ.get(_SMART_QUESTIONS_FLAG, "").lower() in ("1", "true", "yes")
+def _unified_questioning_enabled() -> bool:
+    return os.environ.get(_UNIFIED_QUESTIONING_FLAG, "").lower() in ("1", "true", "yes")
 
 
 def _nli_chat_node_cap() -> int:
@@ -429,12 +429,11 @@ async def handle_chat(
     # next_idx is needed before the clarification block (asked_turn = next_idx + 1).
     next_idx = await _next_turn_index(db, session_id)
 
-    # Reference-driven smart-question controller. Unlike the legacy
-    # clarification loop, this judges the full student transcript against the
-    # authored reference graph and gives each unresolved reference node at
-    # most one question opportunity. No student-KG summary reaches the
-    # question writer. When no eligible target remains, grade automatically.
-    if _smart_questions_enabled():
+    # One-call reference-driven question controller. The same model assesses
+    # the full student transcript and writes Apollo's answer-safe next reply.
+    # The opportunity ledger still caps each reference node at one question;
+    # when no eligible target remains, grade automatically.
+    if _unified_questioning_enabled():
         full_transcript = [
             ("student" if item["role"] == "user" else "apollo", item["content"])
             for item in history_pre

@@ -73,24 +73,15 @@ memory when the student taught that detail in an earlier session). The KG covera
 no per-node quotes; its span map is empty and the narrator credits those topics in general
 terms.
 
-The default-off `APOLLO_SMART_QUESTIONS_ENABLED` path replaces the per-turn dumb reply
-with three reference-driven stages: `smart_questions.evaluator` judges the cumulative
-student-only transcript against **every** authored reference node and, per uncovered node,
-emits an `ask_hint` nudge phrased only from the problem text and the student's own words;
-the pure planner chooses one prerequisite-ready `partial`/`missing`/`misconceived` node
-that has never been asked; and the writer is fully answer-blind — it receives only the
-chosen node's guarded nudge, the problem text, and the transcript, never node content,
-node ids, or node types (session-73 leak fix, 2026-07-14). `smart_questions.leak_guard`
-enforces the boundary deterministically: any wording carrying a content word private to
-the target node (present in its content, absent from the problem text and the student's
-messages) is blocked — a leaking hint gets ONE rewrite retry (`evaluator.rewrite_hint`:
-the offending words are named and banned, public surface only, re-guarded on return;
-`smart_question_hint_leak_rewritten` on success) before degrading to the generic nudge
-(session 74, 2026-07-14: the generic nudge collapses the first question into a
-problem-statement restatement, so it is a last resort; rewrite failure is caught and
-logged `smart_question_hint_rewrite_failed`, never blocks the turn), and a leaking
-question degrades to the safe fallback (`smart_question_hint_leak_blocked` /
-`smart_question_leak_blocked`). The
+The default-off `APOLLO_UNIFIED_QUESTIONING_ENABLED` path replaces the per-turn dumb reply
+with one structured-output call in `smart_questions.unified`: GPT-5.2 (overridable through
+`APOLLO_UNIFIED_QUESTION_MODEL`) judges the cumulative transcript against **every** authored
+reference node and writes Apollo's confused-classmate reply in the same pass. Its private/output
+boundary forbids importing reference-only facts or vocabulary into the reply, requires progress
+wording to cite only what the student actually said, and uses a content-free probe when a safe
+targeted question cannot be written. Deterministic validation rejects unknown/already-asked
+targets, premature completion, malformed multi-question replies, and direct private-answer reuse.
+The
 `apollo_reference_question_opportunities` ledger enforces one opportunity per
 `(attempt_id, reference_node_id)`. After the response, that opportunity is terminal even
 when coverage remains insufficient. When all nodes are covered or every remaining gap has
@@ -591,7 +582,7 @@ Bearer token → `require_user` resolves `user_id`; `require_course_member` chec
 
 ## Key dependencies
 
-- **OpenAI** (`openai` sync client, constructed per call): models resolved per call site — parser/coverage/diagnostic/concept-inference use `MAIN_MODEL` (default `gpt-4o`); `draft_reply` uses `APOLLO_MODEL` > `MAIN_MODEL` > `gpt-4o`; cross-checks (intent, triviality, history summarizer, leakage judge) use `APOLLO_CHEAP_MODEL` (default `gpt-4o-mini`) via `agent/_llm.cheap_chat`. Every `_llm` call logs `{event: "llm_call", purpose, model, tokens}` for cost audit.
+- **OpenAI** (`openai` sync client, constructed per call): models resolved per call site — parser/coverage/diagnostic/concept-inference use `MAIN_MODEL` (default `gpt-4o`); `draft_reply` uses `APOLLO_MODEL` > `MAIN_MODEL` > `gpt-4o`; unified questioning uses `APOLLO_UNIFIED_QUESTION_MODEL` (default `gpt-5.2`); cross-checks (intent, triviality, history summarizer, leakage judge) use `APOLLO_CHEAP_MODEL` (default `gpt-4o-mini`) via `agent/_llm.cheap_chat`. Every `_llm` call logs `{event: "llm_call", purpose, model, tokens}` for cost audit.
 - **Neo4j** (`neo4j` async driver) — **OPTIONAL at runtime (degraded mode, 2026-07-11).** `Neo4jClient.from_env()` requires `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `NEO4J_DATABASE` (Aura instance — see project memory). One driver per process, lazily built in `api.py`; `close_neo4j_client()` should be wired to app shutdown. `get_neo4j_client()` returns `Neo4jClient | None` — a construction failure (missing/bad env, Aura unreachable) is logged (`apollo_neo4j_client_construction_failed`) and degrades to `None` rather than raising; NO NEGATIVE CACHING, so the next request retries construction fresh. This is safe because the served grade is the transcript LLM grader (`APOLLO_TRANSCRIPT_GRADER=1`) — the Neo4j graph lane is shadow-only — so chat/done/session-lifecycle survive Neo4j being down entirely. Every route handler param widened to `Neo4jClient | None`; `KGStore.__init__` accepts the same and every Neo4j-backed method guards via `self._require_neo(stage=...)`, raising `KGUnavailableError` at entry when `neo is None` (Postgres-only `KGStore` methods — freeze/unfreeze/get_node_trace — are unaffected). The KG-native negotiation routes (`negotiate.py`) and `restart_problem` wrap their store calls in `KG_DEGRADED_ERRORS` (`apollo/persistence/neo4j_client.py`: `KGUnavailableError`, `DriverError`, `AuthError`, `TransientError`, `DatabaseUnavailable`, `OSError`, `asyncio.TimeoutError` — Neo4j missing/unreachable/broken-connection, deliberately NOT Cypher/data errors) and re-raise as `KGUnavailableError` → the new `kg_unavailable` 503 handler. Teacher-facing authored-set provisioning (`provisioning/authored_sets/api.py`) is Neo4j-native with no meaningful degraded path, so it routes every `get_neo4j_client()` call through a local `_require_neo` guard (mirrors `apollo.api.require_neo4j_client`, kept as a separate sync helper because the authored-sets call sites are plain function calls / a background task, not FastAPI `Depends` resolution) → the same 503. See "NO FALLBACK policy" below for the exact degraded-mode behavior per route/stage.
 - **SymPy**: `solver/sympy_exec.py` (zero-form parsing, `solve_system`) — in v1 only the LaTeX display path in `store.py` exercises it at runtime.
 - **Authentication**: all routes require Supabase bearer auth via `auth.py` primitives (`resolve_auth_context`, run off the event loop). `apollo/auth_deps.py` provides four gate functions: `require_user` (bare auth, used by `from_hoot` and `progress`), `require_course_member` (membership check at session creation), `require_course_teacher` (role='teacher' membership check, no auto-enroll fallback — gates the authored-sets endpoints), and `require_session_owner` (FastAPI Depends gate on session-scoped routes — 401/403/404 as appropriate). Identity never comes from the request body.
