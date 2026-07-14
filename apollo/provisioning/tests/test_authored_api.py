@@ -2683,3 +2683,890 @@ async def test_get_authored_set_no_ids_skips_lookup(db_session, monkeypatch):
     assert detail["result_summary"]["problems"] == [
         {"concept_problem_id": None, "outcome": "rejected"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_full_text_skips_problem_cap(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    long_text = "full question " * (aapi._LIST_OCR_TEXT_CAP // 4)
+    _space, _prob, aset = await _seed_enrichment_set(
+        db_session,
+        slug="enrich-full-text",
+        payload={"problem_text": long_text},
+        provenance={},
+    )
+
+    detail = await aapi.get_authored_set(
+        set_id=int(aset.id),
+        request=_FakeRequest(),
+        full_text=True,
+        db=db_session,
+    )
+
+    problem = detail["result_summary"]["problems"][0]
+    assert problem["problem_text"] == long_text
+    assert problem["problem_text_truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_attaches_live_promoted_reference_solution(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    steps = [
+        {
+            "step": 1,
+            "entry_type": "definition",
+            "id": "def_live",
+            "content": {"concept": "live", "meaning": "current payload"},
+            "depends_on": [],
+        }
+    ]
+    _space, prob, aset = await _seed_enrichment_set(
+        db_session,
+        slug="enrich-promoted-solution",
+        payload={
+            "problem_text": "Explain the live definition.",
+            "reference_solution": steps,
+            "solution_text": "The live stored solution.",
+        },
+        provenance={"authored_review": {"required": False, "approved_reference": "ocr"}},
+    )
+    prob.tier = 2
+    aset.result_summary = {
+        "problems": [{"concept_problem_id": int(prob.id), "outcome": "promoted"}]
+    }
+    await db_session.flush()
+
+    detail = await aapi.get_authored_set(set_id=int(aset.id), request=_FakeRequest(), db=db_session)
+
+    enriched = detail["result_summary"]["problems"][0]
+    assert enriched["reference_solution"] == steps
+    assert enriched["solution_text"] == "The live stored solution."
+
+
+@pytest.mark.asyncio
+async def test_get_authored_set_enriches_rejected_problem_payload(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, IngestRun, RejectedProblem
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    space, concept = await _seed_course(db_session, slug="enrich-rejected")
+    run = IngestRun(search_space_id=space, document_id=901, status="succeeded")
+    db_session.add(run)
+    await db_session.flush()
+    steps = [
+        {
+            "step": 1,
+            "entry_type": "definition",
+            "id": "def_rejected",
+            "content": {"concept": "rejected", "meaning": "stored draft"},
+            "depends_on": [],
+        }
+    ]
+    rejected = RejectedProblem(
+        ingest_run_id=int(run.id),
+        search_space_id=space,
+        concept_id=concept,
+        failed_gate=3,
+        rejected_stage="promotion_lint",
+        diagnostic="cycle",
+        payload={
+            "statement": "Full rejected question",
+            "draft": {"reference_solution": steps},
+            "authored": {"solution": "The rejected stored solution."},
+        },
+    )
+    db_session.add(rejected)
+    aset = AuthoredSet(
+        search_space_id=space,
+        set_index=1,
+        status="done",
+        problem_document_id=901,
+        result_summary={
+            "problems": [{"concept_problem_id": None, "outcome": "rejected"}]
+        },
+    )
+    db_session.add(aset)
+    await db_session.flush()
+
+    detail = await aapi.get_authored_set(
+        set_id=int(aset.id), request=_FakeRequest(), full_text=True, db=db_session
+    )
+
+    problem = detail["result_summary"]["problems"][0]
+    assert problem["rejected_problem_id"] == int(rejected.id)
+    assert problem["rejected_stage"] == "promotion_lint"
+    assert problem["failed_gate"] == 3
+    assert problem["diagnostic"] == "cycle"
+    assert problem["problem_text"] == "Full rejected question"
+    assert problem["reference_solution"] == steps
+    assert problem["solution_text"] == "The rejected stored solution."
+
+
+def test_stored_solution_text_supports_direct_and_authored_payloads():
+    import apollo.provisioning.authored_sets.api as aapi
+
+    assert aapi._stored_solution_text({"solution": "Direct solution"}) == "Direct solution"
+    assert (
+        aapi._stored_solution_text({"authored": {"solution": "Authored solution"}})
+        == "Authored solution"
+    )
+    assert aapi._stored_solution_text({"authored": {"solution": ""}}) is None
+
+
+@pytest.mark.parametrize("draft_key", ["draft", "ocr_draft", "generated_alt"])
+def test_stored_reference_solution_supports_nested_drafts(draft_key):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    steps = [{"id": draft_key}]
+    assert aapi._stored_reference_solution({draft_key: {"reference_solution": steps}}) == steps
+    assert aapi._stored_reference_solution({}) is None
+
+
+@pytest.mark.asyncio
+async def test_load_ingest_evidence_by_manual_run_id(db_session):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import IngestRun
+
+    search_space_id, _concept_id = await _seed_course(db_session, slug="manual-evidence")
+    run = IngestRun(search_space_id=search_space_id, document_id=None, status="succeeded")
+    db_session.add(run)
+    await db_session.flush()
+
+    run_dict, pages = await aapi._load_ingest_evidence(
+        db_session,
+        None,
+        ingest_run_id=int(run.id),
+    )
+
+    assert run_dict is not None
+    assert run_dict["id"] == int(run.id)
+    assert run_dict["status"] == "succeeded"
+    assert pages == []
+
+
+@pytest.mark.asyncio
+async def test_manual_create_runs_existing_ingest_and_provision_pipeline(db_session, monkeypatch):
+    import importlib
+    import json
+
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, ConceptProblem
+
+    search_space_id, _concept_id = await _seed_course(db_session, slug="manual-create")
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield db_session
+
+    class _ManualMetered:
+        def main(self, *, purpose, **_kwargs):
+            assert purpose == "authored_construct"
+            return json.dumps(
+                {
+                    "reference_solution": [
+                        {
+                            "step": 1,
+                            "entry_type": "definition",
+                            "id": "def_manual",
+                            "content": {
+                                "concept": "manual answer",
+                                "meaning": "The authored answer.",
+                            },
+                            "depends_on": [],
+                        },
+                        {
+                            "step": 2,
+                            "entry_type": "procedure_step",
+                            "id": "explain_manual_answer",
+                            # Gate 5 requires the answer_only constructor's promised
+                            # reference procedure, including for equation-free prose.
+                            "content": {
+                                "order": 1,
+                                "action": "Explain the manual answer",
+                                "purpose": "Reach the authored answer",
+                            },
+                            "depends_on": ["def_manual"],
+                        },
+                    ]
+                }
+            )
+
+        def cheap(self, *, purpose, **_kwargs):
+            if purpose == "pairing_phase_a":
+                return json.dumps({"paired": True, "confidence": 0.95})
+            if purpose == "pairing_phase_b":
+                return json.dumps({"claims": [{"claim": "The authored answer.", "entailed": True}]})
+            assert purpose == "tag_mint"
+            return json.dumps(
+                {
+                    "concept_slug": "manual-answer",
+                    "display_name": "Manual answer",
+                    "prereqs": [],
+                }
+            )
+
+    async def _noop_project_canon(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(aapi, "get_async_session", _session_cm)
+    monkeypatch.setattr(aapi, "_make_metered_chat", lambda **_kwargs: _ManualMetered())
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: object())
+    monkeypatch.setattr(aapi, "embed_text", lambda _text: [0.0, 1.0])
+    promote_module = importlib.import_module("apollo.provisioning.promote")
+    monkeypatch.setattr(promote_module, "project_canon", _noop_project_canon)
+
+    bg = _BG()
+    response = await aapi.create_manual_authored_set(
+        body=aapi.ManualAuthoredSetBody(
+            search_space_id=search_space_id,
+            problems=[
+                aapi.ManualProblemBody(
+                    problem_text="Explain the manual answer.",
+                    solution_text="The authored answer.",
+                )
+            ],
+        ),
+        request=_FakeRequest(),
+        background=bg,
+        db=db_session,
+    )
+    assert response == {"set_id": response["set_id"], "set_index": 1, "status": "pending"}
+    assert len(bg.tasks) == 1
+
+    fn, args, kwargs = bg.tasks[0]
+    await fn(*args, **kwargs)
+
+    aset = await db_session.get(AuthoredSet, response["set_id"])
+    assert aset.status == "done"
+    assert aset.result_summary["source"] == "manual"
+    (problem_result,) = aset.result_summary["problems"]
+    assert problem_result["outcome"] == "promoted", problem_result
+    assert aset.result_summary["counts"]["promoted"] == 1
+    concept_problem_id = problem_result["concept_problem_id"]
+    problem = await db_session.get(ConceptProblem, concept_problem_id)
+    assert problem.tier == 2
+    assert problem.payload["problem_text"] == "Explain the manual answer."
+    listing = await aapi.list_authored_sets(
+        request=_FakeRequest(), search_space_id=search_space_id, db=db_session
+    )
+    assert listing["sets"] == [
+        {
+            "set_id": response["set_id"],
+            "set_index": 1,
+            "status": "done",
+            "problem_document_id": None,
+            "solution_document_id": None,
+        }
+    ]
+
+
+def _manual_authored_payload(aapi, *, solution_text: str | None = "Answer") -> dict:
+    return aapi._manual_authored_problem(
+        aapi.ManualProblemBody(problem_text="A manual question", solution_text=solution_text)
+    ).model_dump()
+
+
+def _session_context_for(db):
+    @asynccontextmanager
+    async def _session_cm():
+        yield db
+
+    return _session_cm
+
+
+class _UnusedManualMetered:
+    def main(self, **_kwargs):
+        raise AssertionError("the stubbed provisioner must not invoke the LLM")
+
+    def cheap(self, **_kwargs):
+        raise AssertionError("the stubbed provisioner must not invoke the LLM")
+
+
+def test_manual_problem_validation_rejects_blank_text_and_normalizes_blank_solution():
+    import apollo.provisioning.authored_sets.api as aapi
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        aapi._manual_authored_problem(aapi.ManualProblemBody(problem_text="   "))
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "problem_text must not be blank"
+
+    problem = aapi._manual_authored_problem(
+        aapi.ManualProblemBody(problem_text="  Keep the question  ", solution_text="   ")
+    )
+    assert problem.statement == "Keep the question"
+    assert problem.solution is None
+    assert problem.completeness == "none"
+
+
+@pytest.mark.asyncio
+async def test_manual_background_returns_when_set_is_missing(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import IngestRun
+
+    search_space_id, _concept_id = await _seed_course(db_session, slug="manual-missing-set")
+    monkeypatch.setattr(aapi, "get_async_session", _session_context_for(db_session))
+
+    await aapi._run_manual_set_background(
+        set_id=987654,
+        search_space_id=search_space_id,
+        authored=[_manual_authored_payload(aapi)],
+    )
+    run_count = await db_session.scalar(
+        select(func.count()).select_from(IngestRun).where(
+            IngestRun.search_space_id == search_space_id
+        )
+    )
+    assert run_count == 0
+
+
+@pytest.mark.asyncio
+async def test_manual_background_persists_failure_before_run_starts(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, IngestRun
+
+    search_space_id, _concept_id = await _seed_course(db_session, slug="manual-pre-run-fail")
+    authored_set = AuthoredSet(search_space_id=search_space_id, set_index=1, status="pending")
+    db_session.add(authored_set)
+    await db_session.flush()
+
+    async def _start_failure(*_args, **_kwargs):
+        raise RuntimeError("ingest run could not start")
+
+    monkeypatch.setattr(aapi, "get_async_session", _session_context_for(db_session))
+    monkeypatch.setattr(aapi, "start_ingest_run", _start_failure)
+
+    await aapi._run_manual_set_background(
+        set_id=int(authored_set.id),
+        search_space_id=search_space_id,
+        authored=[_manual_authored_payload(aapi)],
+    )
+
+    assert authored_set.status == "failed"
+    assert authored_set.result_summary["error"] == "ingest run could not start"
+    run_count = await db_session.scalar(
+        select(func.count()).select_from(IngestRun).where(
+            IngestRun.search_space_id == search_space_id
+        )
+    )
+    assert run_count == 0
+
+
+@pytest.mark.asyncio
+async def test_manual_background_records_missing_provisional_concept_failure(
+    db_session, monkeypatch
+):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, Concept, IngestError, IngestRun
+
+    search_space_id, _concept_id = await _seed_course(db_session, slug="manual-missing-concept")
+    authored_set = AuthoredSet(search_space_id=search_space_id, set_index=1, status="pending")
+    db_session.add(authored_set)
+    await db_session.flush()
+    real_resolve = aapi.resolve_or_create_provisional_concept
+
+    async def _resolve_then_delete(db, **kwargs):
+        concept_id = await real_resolve(db, **kwargs)
+        concept = await db.get(Concept, concept_id)
+        await db.delete(concept)
+        await db.commit()
+        return concept_id
+
+    monkeypatch.setattr(aapi, "get_async_session", _session_context_for(db_session))
+    monkeypatch.setattr(aapi, "resolve_or_create_provisional_concept", _resolve_then_delete)
+
+    await aapi._run_manual_set_background(
+        set_id=int(authored_set.id),
+        search_space_id=search_space_id,
+        authored=[_manual_authored_payload(aapi)],
+    )
+
+    run = (
+        await db_session.execute(
+            select(IngestRun).where(IngestRun.search_space_id == search_space_id)
+        )
+    ).scalar_one()
+    error = (
+        await db_session.execute(
+            select(IngestError).where(IngestError.ingest_run_id == int(run.id))
+        )
+    ).scalar_one()
+    assert run.status == "failed"
+    assert error.stage == "manual_authored_set_ingest"
+    assert error.error_class == "RuntimeError"
+    assert error.context["set_id"] == int(authored_set.id)
+    assert authored_set.status == "failed"
+    assert authored_set.result_summary["error"] == (
+        "manual authored set has no provisional concept"
+    )
+
+
+@pytest.mark.asyncio
+async def test_manual_background_records_tier1_row_vanishing_after_ingest(
+    db_session, monkeypatch
+):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, ConceptProblem
+
+    search_space_id, _concept_id = await _seed_course(db_session, slug="manual-missing-tier1")
+    authored_set = AuthoredSet(search_space_id=search_space_id, set_index=1, status="pending")
+    db_session.add(authored_set)
+    await db_session.flush()
+    real_ingest = aapi.ingest_authored_problems
+
+    async def _ingest_then_delete(db, records, **kwargs):
+        result = await real_ingest(db, records, **kwargs)
+        problem = (
+            await db.execute(
+                select(ConceptProblem).where(
+                    ConceptProblem.problem_code == records[0]["problem_code"]
+                )
+            )
+        ).scalar_one()
+        await db.delete(problem)
+        await db.commit()
+        return result
+
+    monkeypatch.setattr(aapi, "get_async_session", _session_context_for(db_session))
+    monkeypatch.setattr(aapi, "ingest_authored_problems", _ingest_then_delete)
+    monkeypatch.setattr(aapi, "_make_metered_chat", lambda **_kwargs: _UnusedManualMetered())
+    monkeypatch.setattr(aapi, "get_neo4j_client", object)
+
+    await aapi._run_manual_set_background(
+        set_id=int(authored_set.id),
+        search_space_id=search_space_id,
+        authored=[_manual_authored_payload(aapi)],
+    )
+
+    assert authored_set.status == "failed"
+    assert "has no Tier-1 row" in authored_set.result_summary["error"]
+
+
+@pytest.mark.asyncio
+async def test_manual_background_returns_when_set_vanishes_after_provisioning(
+    db_session, monkeypatch
+):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet, IngestRun
+    from apollo.provisioning.orchestrator import AuthoredProvisionResult
+
+    search_space_id, _concept_id = await _seed_course(db_session, slug="manual-final-vanish")
+    authored_set = AuthoredSet(search_space_id=search_space_id, set_index=1, status="pending")
+    db_session.add(authored_set)
+    await db_session.flush()
+    set_id = int(authored_set.id)
+    real_finalize = aapi.finalize_ingest_run
+
+    async def _provision_success(*_args, **_kwargs):
+        return AuthoredProvisionResult(outcome="promoted", stage="ok")
+
+    async def _finalize_then_delete(db, **kwargs):
+        await real_finalize(db, **kwargs)
+        row = await db.get(AuthoredSet, set_id)
+        await db.delete(row)
+        await db.flush()
+
+    monkeypatch.setattr(aapi, "get_async_session", _session_context_for(db_session))
+    monkeypatch.setattr(aapi, "_make_metered_chat", lambda **_kwargs: _UnusedManualMetered())
+    monkeypatch.setattr(aapi, "get_neo4j_client", object)
+    monkeypatch.setattr(aapi, "provision_authored_problem", _provision_success)
+    monkeypatch.setattr(aapi, "finalize_ingest_run", _finalize_then_delete)
+
+    await aapi._run_manual_set_background(
+        set_id=set_id,
+        search_space_id=search_space_id,
+        authored=[_manual_authored_payload(aapi)],
+    )
+
+    assert await db_session.get(AuthoredSet, set_id) is None
+    run = (
+        await db_session.execute(
+            select(IngestRun).where(IngestRun.search_space_id == search_space_id)
+        )
+    ).scalar_one()
+    assert run.status == "succeeded"
+
+
+def _editable_problem_payload(*, problem_text: str = "Original question") -> dict:
+    return {
+        "id": "editable.problem",
+        "concept_id": "editable-concept",
+        "difficulty": "intro",
+        "problem_text": problem_text,
+        "given_values": {},
+        "target_unknown": "",
+        "reference_solution": [
+            {
+                "step": 1,
+                "entry_type": "definition",
+                "id": "def_editable",
+                "content": {"concept": "original", "meaning": "Original content"},
+                "depends_on": [],
+                "entity_key": "def.editable",
+            }
+        ],
+    }
+
+
+async def _seed_editable_problem(db, *, slug: str, problem_text: str = "Original question"):
+    from apollo.persistence.models import ConceptProblem
+
+    space, concept = await _seed_course(db, slug=slug)
+    problem = ConceptProblem(
+        concept_id=concept,
+        problem_code=f"editable-{slug}",
+        difficulty="intro",
+        tier=2,
+        payload=_editable_problem_payload(problem_text=problem_text),
+        search_space_id=space,
+        provenance={},
+    )
+    db.add(problem)
+    await db.flush()
+    return space, concept, problem
+
+
+def test_problem_edit_schema_rejects_step_metadata_changes():
+    import apollo.provisioning.authored_sets.api as aapi
+
+    with pytest.raises(aapi.ValidationError):
+        aapi.ReferenceSolutionEdit.model_validate(
+            {
+                "id": "def_editable",
+                "entry_type": "equation",
+                "content": {"concept": "changed"},
+            }
+        )
+
+
+def test_problem_edit_schema_requires_at_least_one_edit():
+    import apollo.provisioning.authored_sets.api as aapi
+
+    with pytest.raises(aapi.ValidationError, match="at least one editable field is required"):
+        aapi.ProblemEditBody()
+
+
+def test_edited_reference_solution_rejects_uneditable_duplicate_and_reordered_steps():
+    import apollo.provisioning.authored_sets.api as aapi
+
+    edit = aapi.ReferenceSolutionEdit(id="def_editable", content={"meaning": "changed"})
+    with pytest.raises(aapi.HTTPException) as no_solution:
+        aapi._edited_reference_solution(None, [edit])
+    assert no_solution.value.detail == "problem has no editable reference solution"
+
+    existing = _editable_problem_payload()["reference_solution"]
+    with pytest.raises(aapi.HTTPException) as duplicate:
+        aapi._edited_reference_solution(existing, [edit, edit])
+    assert duplicate.value.detail == "reference_solution contains duplicate ids"
+
+    procedure = [
+        {
+            "step": 1,
+            "entry_type": "procedure_step",
+            "id": "proc_editable",
+            "content": {"order": 1, "action": "Solve", "purpose": "Answer"},
+            "depends_on": [],
+        }
+    ]
+    with pytest.raises(aapi.HTTPException) as reordered:
+        aapi._edited_reference_solution(
+            procedure,
+            [
+                aapi.ReferenceSolutionEdit(
+                    id="proc_editable",
+                    content={"order": 2, "action": "Solve", "purpose": "Answer"},
+                )
+            ],
+        )
+    assert reordered.value.detail == "reference_solution step 'proc_editable' order is immutable"
+
+
+@pytest.mark.asyncio
+async def test_patch_problem_updates_content_and_preserves_step_identity(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    _space, _concept, problem = await _seed_editable_problem(db_session, slug="patch-happy")
+
+    response = await aapi.edit_authored_problem(
+        concept_problem_id=int(problem.id),
+        body=aapi.ProblemEditBody(
+            problem_text="Updated question",
+            reference_solution=[
+                aapi.ReferenceSolutionEdit(
+                    id="def_editable",
+                    content={"concept": "updated", "meaning": "Updated content"},
+                )
+            ],
+        ),
+        request=_FakeRequest(),
+        db=db_session,
+    )
+
+    assert response["concept_problem_id"] == int(problem.id)
+    assert response["problem_text"] == "Updated question"
+    assert response["problem_text_truncated"] is False
+    (step,) = response["reference_solution"]
+    assert step["id"] == "def_editable"
+    assert step["step"] == 1
+    assert step["entry_type"] == "definition"
+    assert step["entity_key"] == "def.editable"
+    assert step["content"] == {"concept": "updated", "meaning": "Updated content"}
+
+
+@pytest.mark.asyncio
+async def test_patch_problem_rejects_unknown_and_missing_step_ids(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    _space, _concept, problem = await _seed_editable_problem(db_session, slug="patch-step-id")
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.edit_authored_problem(
+            concept_problem_id=int(problem.id),
+            body=aapi.ProblemEditBody(
+                reference_solution=[
+                    aapi.ReferenceSolutionEdit(id="unknown", content={"meaning": "changed"})
+                ]
+            ),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "unknown ids: unknown; missing ids: def_editable"
+    assert problem.payload == _editable_problem_payload()
+
+
+@pytest.mark.asyncio
+async def test_patch_problem_rejects_dedup_collision(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import ConceptProblem
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    space, concept, problem = await _seed_editable_problem(db_session, slug="patch-collision")
+    duplicate = ConceptProblem(
+        concept_id=concept,
+        problem_code="existing-duplicate",
+        difficulty="intro",
+        tier=2,
+        payload=_editable_problem_payload(problem_text="Existing question"),
+        search_space_id=space,
+        provenance={},
+    )
+    db_session.add(duplicate)
+    await db_session.flush()
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.edit_authored_problem(
+            concept_problem_id=int(problem.id),
+            body=aapi.ProblemEditBody(problem_text="Existing question"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "another problem with the same content already exists"
+
+
+@pytest.mark.asyncio
+async def test_patch_problem_enforces_search_space_teacher_ownership(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    space, _concept, problem = await _seed_editable_problem(db_session, slug="patch-tenant")
+    seen = []
+
+    async def _forbidden(**kwargs):
+        seen.append(kwargs["search_space_id"])
+        raise aapi.HTTPException(status_code=403, detail="teacher role required")
+
+    monkeypatch.setattr(aapi, "require_course_teacher", _forbidden)
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.edit_authored_problem(
+            concept_problem_id=int(problem.id),
+            body=aapi.ProblemEditBody(problem_text="Forbidden update"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+
+    assert exc.value.status_code == 403
+    assert seen == [space]
+    assert problem.payload == _editable_problem_payload()
+
+
+@pytest.mark.asyncio
+async def test_patch_problem_404s_for_missing_and_unscoped_rows(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import ConceptProblem
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    _space, concept = await _seed_course(db_session, slug="patch-not-found")
+
+    with pytest.raises(aapi.HTTPException) as missing:
+        await aapi.edit_authored_problem(
+            concept_problem_id=987654,
+            body=aapi.ProblemEditBody(problem_text="Updated"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+    assert missing.value.status_code == 404
+
+    unscoped = ConceptProblem(
+        concept_id=concept,
+        problem_code="unscoped-edit",
+        difficulty="intro",
+        tier=1,
+        payload={},
+        search_space_id=None,
+        provenance={},
+    )
+    db_session.add(unscoped)
+    await db_session.flush()
+    with pytest.raises(aapi.HTTPException) as no_scope:
+        await aapi.edit_authored_problem(
+            concept_problem_id=int(unscoped.id),
+            body=aapi.ProblemEditBody(problem_text="Updated"),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+    assert no_scope.value.status_code == 404
+    assert no_scope.value.detail == "problem not found"
+
+
+@pytest.mark.asyncio
+async def test_patch_problem_rejects_whitespace_only_text(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    _space, _concept, problem = await _seed_editable_problem(db_session, slug="patch-blank")
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.edit_authored_problem(
+            concept_problem_id=int(problem.id),
+            body=aapi.ProblemEditBody(problem_text="   "),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "problem_text must not be blank"
+    assert problem.payload == _editable_problem_payload()
+
+
+@pytest.mark.asyncio
+async def test_patch_held_problem_hashes_without_reference_and_skips_bad_sibling(
+    db_session, monkeypatch
+):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import ConceptProblem
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    space, concept = await _seed_course(db_session, slug="patch-held-hash")
+    held = ConceptProblem(
+        concept_id=concept,
+        problem_code="held-without-reference",
+        difficulty="intro",
+        tier=1,
+        payload={
+            "id": "held.problem",
+            "concept_id": "held-concept",
+            "difficulty": "intro",
+            "problem_text": "Held question",
+            "given_values": {},
+            "target_unknown": "",
+        },
+        search_space_id=space,
+        provenance={},
+    )
+    malformed_sibling = ConceptProblem(
+        concept_id=concept,
+        problem_code="malformed-tier2-sibling",
+        difficulty="intro",
+        tier=2,
+        payload={"malformed": True},
+        search_space_id=space,
+        provenance={},
+    )
+    db_session.add_all([held, malformed_sibling])
+    await db_session.flush()
+
+    response = await aapi.edit_authored_problem(
+        concept_problem_id=int(held.id),
+        body=aapi.ProblemEditBody(problem_text="Updated held question"),
+        request=_FakeRequest(),
+        db=db_session,
+    )
+
+    assert response["problem_text"] == "Updated held question"
+    assert held.payload["problem_text"] == "Updated held question"
+
+
+@pytest.mark.asyncio
+async def test_patch_problem_rejects_reference_content_that_breaks_problem_schema(
+    db_session, monkeypatch
+):
+    import apollo.provisioning.authored_sets.api as aapi
+
+    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
+    _space, _concept, problem = await _seed_editable_problem(
+        db_session, slug="patch-invalid-reference"
+    )
+    procedure_payload = {
+        "id": "procedure.problem",
+        "concept_id": "editable-concept",
+        "difficulty": "intro",
+        "problem_text": "Follow the procedure.",
+        "given_values": {},
+        "target_unknown": "",
+        "reference_solution": [
+            {
+                "step": 1,
+                "entry_type": "procedure_step",
+                "id": "proc_editable",
+                "content": {"order": 1, "action": "Solve", "purpose": "Answer"},
+                "depends_on": [],
+            }
+        ],
+    }
+    problem.payload = procedure_payload
+    await db_session.flush()
+
+    with pytest.raises(aapi.HTTPException) as exc:
+        await aapi.edit_authored_problem(
+            concept_problem_id=int(problem.id),
+            body=aapi.ProblemEditBody(
+                reference_solution=[
+                    aapi.ReferenceSolutionEdit(
+                        id="proc_editable",
+                        content={
+                            "order": 1,
+                            "action": "Solve",
+                            "purpose": "Answer",
+                            "uses_equations": ["missing_equation"],
+                        },
+                    )
+                ]
+            ),
+            request=_FakeRequest(),
+            db=db_session,
+        )
+
+    assert exc.value.status_code == 422
+    assert str(exc.value.detail).startswith("invalid reference_solution content:")
+    assert problem.payload == procedure_payload

@@ -134,6 +134,8 @@ problem review projections, a seeds endpoint lists the concept's teachable
 (tier-2, non-quarantined) problems for the UI's seed picker (not flag-gated,
 like the run reads), and the generated-problem approve endpoint reuses
 the authored-set approve core to mint, lint, and promote a selected held draft.
+The run-detail GET caps each `problem_text` at 2000 characters by default and
+sets `problem_text_truncated`; `?full_text=true` returns the complete text.
 `GenerationRun` links the course and concept to the optional `IngestRun` that
 owns LLM call/token/cost aggregates; generation remains default-OFF while run
 reads and approval of already-generated content remain available.
@@ -440,18 +442,21 @@ pins this. Each `problems` entry whose `ConceptProblem` row still exists is
 additionally ENRICHED in the response (review-UI surface, 2026-07-11;
 `_enrich_problem_reviews` — the stored row/`result_summary` are never mutated)
 with `problem_text` (from the row's payload, capped to `_LIST_OCR_TEXT_CAP`
-chars with a `problem_text_truncated` flag — the same size discipline as the
-page-evidence surface) and a WHITELISTED `review` projection of
+chars by default with a `problem_text_truncated` flag — the same size discipline
+as the page-evidence surface; `?full_text=true` returns it untruncated), the live
+payload's `reference_solution` and available `solution_text`, and a WHITELISTED
+`review` projection of
 `provenance["authored_review"]`: the CURRENT `required` flag (flips false on
 approval, so the UI recomputes displayed counts from live problem state instead
 of trusting the frozen `counts`), `reason`, `approved_reference`, and — only
 while the hold is active — `ocr_draft`/`generated_alt` each trimmed to
 `solution_source` + `reference_solution` (grounding spans, `concept_match`,
 `ocr_confidence`, and every other provenance key are deliberately NOT exposed).
-Entries with no `concept_problem_id`, a since-deleted row, or malformed shape
-pass through unchanged, so pre-enrichment sets keep their old response shape
-(`test_get_authored_set_enriches_held_problem` and its sibling tests pin the
-whitelist, the cap, the post-approval draft omission, and null-safety). `solution_source='extracted'` means a paired,
+Rejected entries are enriched in result order from the same ingest run's
+`apollo_rejected_problems` rows with rejection id/stage, missing gate/diagnostic
+fields, and any stored `problem_text`, `reference_solution`, and `solution_text`;
+the same `full_text` cap applies. Unmatched, since-deleted, and malformed entries
+pass through compatibly. `solution_source='extracted'` means a paired,
 label-matched solution span was used; trusted extracted references may
 promote to tier 2. Generated references (including every candidate when no
 solution doc is paired), or OCR references that materially diverge from
@@ -502,15 +507,25 @@ The mounted endpoints are teacher-gated with `require_user` +
 `require_course_teacher` (role='teacher' membership; no auto-enroll
 fallback — a plain course member 403s): `POST /apollo/authored-sets` accepts multipart
 problem PDF (required) + solution PDF (optional) and starts in-process background provisioning,
+`POST /apollo/authored-sets/manual` accepts typed
+`{search_space_id, problems: [{problem_text, solution_text?}]}` input, marks the
+set summary `source="manual"`, and reuses the shared `AuthoredProblem` Tier-1
+ingest plus provision/hold/promote pipeline in a background task,
 `GET /apollo/authored-sets?search_space_id=` lists set statuses,
 `GET /apollo/authored-sets/{set_id}` returns detail, per-problem
-`result_summary` (each live problem enriched with capped `problem_text` and the
-whitelisted `review` projection — see the enrichment note above), and the
+`result_summary` (with live and rejected-row enrichment; `full_text` controls
+only the problem-text cap), and the
 ingestion observability surface (`ingest_run` +
 per-page `pages`: `page_ref`, `ocr_text`, `ocr_confidence`,
 `verify_path_fired`), and
 `POST /apollo/authored-sets/{set_id}/problems/{problem_id}/approve` promotes a
 held problem using the teacher-selected OCR or generated reference.
+`PATCH /apollo/authored-sets/problems/{concept_problem_id}` edits only
+`problem_text` and per-step `content`: the request must name exactly the existing
+reference-step id set, so step identity, metadata, and order are immutable; the
+updated payload is schema-validated, a same-concept Tier-2 dedup-hash collision
+returns 409, and ownership is checked from the problem row's `search_space_id`
+before mutation.
 - `apollo.provisioning.validate_pair(question, draft, *, retrieve_fn, judge_fn) -> PairingVerdict{paired, faithful, failed_claims, confidence}` (WU-3B2e stage 3; the §8B two-phase span-grounded pairing/correctness gate). The judge sees the SAME grounding the generator used (`draft.grounding`, else re-grounds via `retrieve_fn`): Phase A pairing (short-circuits Phase B when not paired), Phase B claim-decomposed faithfulness (any unentailed claim → `faithful=False` + `failed_claims`). **FAIL-CLOSED — the EXPLICIT INVERSION of `leakage_judge`'s fail-open:** a malformed/non-JSON/exception/non-object judge response at EITHER phase ⇒ `paired=False, faithful=False, confidence=0.0, failed_claims=("<unparseable judge response>",)` (a REJECT, never an approval); all `judge_fn` calls route through one `_judge_or_fail_closed` helper. `apollo.provisioning.rejection_from_verdict(verdict) -> Rejection | None` is the single fail-mapping point (None on approved; else `Rejection{stage='pairing_gate', reason ∈ unparseable_judge/not_paired/unfaithful_claims, diagnostic, failed_claims}` that 3B2g writes to `apollo_rejected_problems`). Logs ONE `pairing_verdict` line (counts + booleans + `solution_source` ONLY — NO text, NO PII). `judge_fn`/`retrieve_fn` injected (mocked in Tier-1 — NO network, NO DB). This unit hands typed values UP — it does NOT mint (3B2d), promote/lint/write rows (3B2g), or meter/queue (3B2f). Both judge phases now send a SCHEMA-EXPLICIT system prompt (`_PAIRING_PHASE_A_SYSTEM_PROMPT`/`_PAIRING_PHASE_B_SYSTEM_PROMPT`, declaring the exact `paired`/`confidence` and `claims:[{claim,entailed}]` keys) + a strict `response_format` json_schema (`build_pairing_phase_a_schema`/`build_pairing_phase_b_schema`); previously it sent NO system prompt under a JSON `response_format`, so a real model 400'd ("'messages' must contain the word 'json'") and EVERY pair fail-closed to a REJECT. `test_validate_pair_sends_system_prompt_and_json_schema` pins the wiring.
 - `apollo.knowledge_graph.resolution_store.write_resolution(neo, attempt_id, result, *, resolved_at) -> ResolutionWriteResult{edges, fields}` (WU-3C2; edges + fields in two idempotent passes) — also `write_resolves_to(neo, attempt_id, specs) -> int` (idempotent `MERGE` of `RESOLVES_TO`; empty → 0 without a session; raises `ResolutionUnavailableError(stage='write_resolves_to')`) and `persist_resolution_fields(neo, attempt_id, specs) -> int` (idempotent `SET`; `stage='persist_fields'` on failure); pure mapping seams `resolved_node_to_edge_spec`/`resolved_node_to_field_spec`.
 - `apollo.graph_compare.validate_student_graph(student_graph: KGGraph) -> None` / `validate_reference(problem: dict) -> None` (WU-4A1; the §6.4 step-4 + §6.6 raw-graph gates — return `None` on a valid graph, else raise `StudentGraphInvalidError`/`ReferenceGraphInvalidError` carrying a `reasons` tuple; the reference side delegates to `validate_reference_graph`).

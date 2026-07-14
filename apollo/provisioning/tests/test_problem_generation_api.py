@@ -358,6 +358,7 @@ async def test_get_detail_projects_review_without_provenance_leak(db_session, mo
         "llm_cost_usd": "0.012345",
     }
     assert len(projected["problem_text"]) == 2000
+    assert projected["problem_text_truncated"] is True
     assert projected["review"]["variation_operator"] == "context_reskin"
     assert projected["review"]["round_trip"] == {
         "verdict": "verified",
@@ -386,6 +387,49 @@ async def test_get_detail_projects_review_without_provenance_leak(db_session, mo
             "dropped": {},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_get_detail_caps_by_default_and_full_text_skips_cap(db_session, monkeypatch):
+    import apollo.provisioning.problem_generation.api as gapi
+    from apollo.persistence.models import GenerationRun
+
+    space_id, concept_id = await _seed_course(db_session, slug="gen4-detail-full-text")
+    long_text = "full question " * (gapi._PROBLEM_TEXT_CAP // 4)
+    problem = await _seed_problem(
+        db_session,
+        space_id=space_id,
+        concept_id=concept_id,
+        generated=True,
+        problem_text=long_text,
+    )
+    run = GenerationRun(
+        search_space_id=space_id,
+        concept_id=concept_id,
+        status="succeeded",
+        result_summary={"requested": 1, "written": [int(problem.id)], "dropped": {}},
+    )
+    db_session.add(run)
+    await db_session.flush()
+    monkeypatch.setattr(gapi, "require_user", _fake_require_user)
+    monkeypatch.setattr(gapi, "require_course_teacher", _fake_require_teacher)
+
+    capped_detail = await gapi.get_generation_run(
+        run_id=int(run.id), request=_FakeRequest(), db=db_session
+    )
+    full_detail = await gapi.get_generation_run(
+        run_id=int(run.id),
+        request=_FakeRequest(),
+        full_text=True,
+        db=db_session,
+    )
+
+    capped_problem = capped_detail["problems"][0]
+    assert capped_problem["problem_text"] == long_text[: gapi._PROBLEM_TEXT_CAP]
+    assert capped_problem["problem_text_truncated"] is True
+    full_problem = full_detail["problems"][0]
+    assert full_problem["problem_text"] == long_text
+    assert full_problem["problem_text_truncated"] is False
 
 
 def test_review_projection_omits_optional_rubric_and_trims_invalid_draft():
