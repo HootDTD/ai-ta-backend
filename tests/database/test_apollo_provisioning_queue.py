@@ -80,7 +80,10 @@ _TOUCHES_TARGETS = re.compile(
     r"apollo_(subjects|concepts|concept_problems|kg_entities|problem_attempts)\b"
 )
 _MIGRATION_030 = MIGRATIONS_DIR / "030_apollo_autoprovisioning.sql"
-_EXCLUDE_FROM_CHAIN = frozenset({_MIGRATION_030.name, "028_apollo_learner_janitor.sql"})
+_MIGRATION_046 = MIGRATIONS_DIR / "046_apollo_solution_source_llm_paired.sql"
+_EXCLUDE_FROM_CHAIN = frozenset(
+    {_MIGRATION_030.name, _MIGRATION_046.name, "028_apollo_learner_janitor.sql"}
+)
 
 
 def _chain_migrations() -> list[Path]:
@@ -104,8 +107,13 @@ def _post_030_migrations() -> list[Path]:
         path
         for path in sorted(MIGRATIONS_DIR.glob("*.sql"))
         if path.name > _MIGRATION_030.name
-        and path.name not in _EXCLUDE_FROM_CHAIN
-        and _INGEST_EXTENSION.search(path.read_text(encoding="utf-8"))
+        and (
+            path == _MIGRATION_046
+            or (
+                path.name not in _EXCLUDE_FROM_CHAIN
+                and _INGEST_EXTENSION.search(path.read_text(encoding="utf-8"))
+            )
+        )
     ]
 
 

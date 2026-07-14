@@ -58,6 +58,12 @@ def test_index_not_polluted_by_following_variable():
     assert hit is not None and hit[0][0] == 10
 
 
+def test_index_includes_leading_number_labels():
+    chunks = [(10, "1. (MC) Rivalry increases as competitors converge.", 2)]
+    index = build_solution_label_index(chunks)
+    assert match_solution_label("Problem 1", index) == chunks
+
+
 def test_match_ambiguous_returns_none():
     chunks = [
         (10, "Solution 3 first copy ...", 1),
@@ -66,3 +72,8 @@ def test_match_ambiguous_returns_none():
     index = build_solution_label_index(chunks)
     assert match_solution_label("3", index) is None  # >=2 distinct blocks -> fall through
     assert match_solution_label("99", index) is None  # 0 matches -> fall through
+
+
+def test_leading_number_index_keeps_ambiguity_fail_closed():
+    chunks = [(10, "1. First answer", 1), (11, "1) Duplicate answer", 2)]
+    assert match_solution_label("1", build_solution_label_index(chunks)) is None

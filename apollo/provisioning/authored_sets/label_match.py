@@ -64,7 +64,11 @@ def build_solution_label_index(
     for chunk in chunks:
         _chunk_id, content, _page = chunk
         seen_here: set[str] = set()
-        for match in _LABEL_RE.finditer(content or ""):
+        text = content or ""
+        matches = list(_LABEL_RE.finditer(text))
+        if leading_match := _LEADING_NUM_RE.match(text):
+            matches.append(leading_match)
+        for match in matches:
             key = normalize_label(match.group(0))
             if key and key not in seen_here:
                 seen_here.add(key)

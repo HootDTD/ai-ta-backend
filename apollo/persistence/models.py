@@ -8,6 +8,7 @@ apollo.knowledge_graph.store). Postgres now owns only:
 The legacy `apollo_kg_entries` table is dropped — see migration notes in
 docs. No production data, so no backfill.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -122,7 +123,9 @@ class Subject(Base):
 
     __tablename__ = "apollo_subjects"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     slug = Column(Text, nullable=False, unique=True)
     display_name = Column(Text, nullable=False)
     # Course-scoping (migration 026 / isolation invariant §1.4). NOT NULL by
@@ -144,9 +147,12 @@ class Concept(Base):
 
     __tablename__ = "apollo_concepts"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
-    subject_id = Column(BigInteger, ForeignKey("apollo_subjects.id", ondelete="CASCADE"),
-                        nullable=False, index=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    subject_id = Column(
+        BigInteger, ForeignKey("apollo_subjects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     slug = Column(Text, nullable=False)
     display_name = Column(Text, nullable=False)
     # Migration 038 (reversed provisioning): the closed-list concept-matcher
@@ -170,9 +176,12 @@ class ConceptProblem(Base):
 
     __tablename__ = "apollo_concept_problems"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
-    concept_id = Column(BigInteger, ForeignKey("apollo_concepts.id", ondelete="CASCADE"),
-                        nullable=False, index=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    concept_id = Column(
+        BigInteger, ForeignKey("apollo_concepts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     problem_code = Column(Text, nullable=False)
     difficulty = Column(Text, nullable=False)
     payload = Column(_JSONType, nullable=False)
@@ -183,7 +192,9 @@ class ConceptProblem(Base):
     # (the seed-helper/runtime reality is that authored curriculum is teachable —
     # mirroring migration 030's backfill of existing §8-seeded rows to tier=2).
     tier = Column(SmallInteger, nullable=False, server_default=text("1"), default=2)
-    solution_source = Column(Text, nullable=True)  # extracted|generated|authored (CHECK in SQL)
+    solution_source = Column(  # extracted|generated|authored|llm_paired (CHECK in SQL)
+        Text, nullable=True
+    )
     provenance = Column(_JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
     quarantined_at = Column(TIMESTAMP(timezone=True), nullable=True)  # WU-3B2h filter; NULL = live
     # Denormalized course scope (migration 030). NULLABLE in v1 (backfilled
@@ -199,6 +210,7 @@ class ConceptProblem(Base):
         if (provenance or {}).get("source") == "generated" and solution_source in {
             "extracted",
             "authored",
+            "llm_paired",
         }:
             raise ValueError(
                 "machine-generated problem provenance requires "
@@ -303,9 +315,12 @@ class Misconception(Base):
 
     __tablename__ = "apollo_misconceptions"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
-    concept_id = Column(BigInteger, ForeignKey("apollo_concepts.id", ondelete="CASCADE"),
-                        nullable=False, index=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    concept_id = Column(
+        BigInteger, ForeignKey("apollo_concepts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     code = Column(Text, nullable=False)
     description = Column(Text, nullable=False)
     confusion_pair_a = Column(Text, nullable=True)
@@ -334,26 +349,38 @@ class Clarification(Base):
 
     __tablename__ = "apollo_clarifications"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     attempt_id = Column(
-        BigInteger, ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
-        nullable=False, index=True,
+        BigInteger,
+        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     session_id = Column(
-        BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"),
-        nullable=False, index=True,
+        BigInteger,
+        ForeignKey("apollo_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
     search_space_id = Column(
-        Integer, ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
-        nullable=False, index=True,
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     concept_id = Column(
-        BigInteger, ForeignKey("apollo_concepts.id", ondelete="SET NULL"), nullable=True,
+        BigInteger,
+        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
+        nullable=True,
     )
     node_id = Column(Text, nullable=False)
     candidate_key = Column(Text, nullable=False)
-    state = Column(Text, nullable=False, server_default=text("'asked_waiting'"), default="asked_waiting")
+    state = Column(
+        Text, nullable=False, server_default=text("'asked_waiting'"), default="asked_waiting"
+    )
     probe_question = Column(Text, nullable=False)
     original_statement = Column(Text, nullable=False)
     clarification_text = Column(Text, nullable=True)
@@ -372,13 +399,19 @@ class ReferenceQuestionOpportunity(Base):
 
     __tablename__ = "apollo_reference_question_opportunities"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     attempt_id = Column(
-        BigInteger, ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"), nullable=False,
+        BigInteger,
+        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        nullable=False,
         index=True,
     )
     session_id = Column(
-        BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False,
+        BigInteger,
+        ForeignKey("apollo_sessions.id", ondelete="CASCADE"),
+        nullable=False,
         index=True,
     )
     reference_node_id = Column(Text, nullable=False)
@@ -390,7 +423,8 @@ class ReferenceQuestionOpportunity(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "attempt_id", "reference_node_id",
+            "attempt_id",
+            "reference_node_id",
             name="apollo_reference_question_opportunities_attempt_node_uniq",
         ),
     )
@@ -399,7 +433,9 @@ class ReferenceQuestionOpportunity(Base):
 class ApolloSession(Base):
     __tablename__ = "apollo_sessions"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     # Phase-1 auth retrofit: real Supabase identity + course scoping (the
     # classroom-isolation invariant). Mirrors course_memberships' types.
     user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
@@ -433,17 +469,25 @@ class ApolloSession(Base):
     history_summary = Column(Text, nullable=True)
     history_summary_up_to_turn = Column(Integer, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-    last_touched_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    last_touched_at = Column(
+        TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
 
     messages = relationship("Message", back_populates="session", cascade="all, delete-orphan")
-    problem_attempts = relationship("ProblemAttempt", back_populates="session", cascade="all, delete-orphan")
+    problem_attempts = relationship(
+        "ProblemAttempt", back_populates="session", cascade="all, delete-orphan"
+    )
 
 
 class Message(Base):
     __tablename__ = "apollo_messages"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
-    session_id = Column(BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    session_id = Column(
+        BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     attempt_id = Column(
         BigInteger,
         ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
@@ -465,8 +509,12 @@ class Message(Base):
 class ProblemAttempt(Base):
     __tablename__ = "apollo_problem_attempts"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
-    session_id = Column(BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    session_id = Column(
+        BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     problem_id = Column(Text, nullable=False)
     difficulty = Column(Text, nullable=False)
     # DB CHECK (migration 009 + 025) restricts this to ATTEMPT_RESULTS or NULL.
@@ -484,9 +532,7 @@ class ProblemAttempt(Base):
     # bookkeeping for the learner_update retry. WU-5B3a-0 maps these columns;
     # the drain state machine (WU-5B3a-1) reads/writes them. server_default so
     # raw-SQL/legacy/migration inserts see the default; default=... for ORM.
-    learner_update_attempts = Column(
-        Integer, nullable=False, server_default=text("0"), default=0
-    )
+    learner_update_attempts = Column(Integer, nullable=False, server_default=text("0"), default=0)
     learner_update_failed_at = Column(TIMESTAMP(timezone=True), nullable=True)
     learner_update_last_error = Column(Text, nullable=True)
     learner_update_next_attempt_at = Column(TIMESTAMP(timezone=True), nullable=True)
@@ -528,7 +574,9 @@ class KGNegotiation(Base):
 
     __tablename__ = "apollo_kg_negotiations"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     attempt_id = Column(
         BigInteger,
         ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
@@ -537,7 +585,7 @@ class KGNegotiation(Base):
     )
     entry_id = Column(Text, nullable=False)
     actor = Column(Text, nullable=False)  # 'student' | 'parser' | 'system'
-    move = Column(Text, nullable=False)   # 'challenge' | 'paraphrase' | 'skip'
+    move = Column(Text, nullable=False)  # 'challenge' | 'paraphrase' | 'skip'
     payload = Column(_JSONType, nullable=False, default=dict)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
@@ -566,7 +614,9 @@ class KGEntity(Base):
 
     __tablename__ = "apollo_kg_entities"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     concept_id = Column(
         BigInteger,
         ForeignKey("apollo_concepts.id", ondelete="CASCADE"),
@@ -587,9 +637,7 @@ class KGEntity(Base):
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
-        UniqueConstraint(
-            "concept_id", "canonical_key", name="apollo_kg_entities_concept_key_uniq"
-        ),
+        UniqueConstraint("concept_id", "canonical_key", name="apollo_kg_entities_concept_key_uniq"),
     )
 
 
@@ -667,7 +715,9 @@ class MasteryEvent(Base):
 
     __tablename__ = "apollo_mastery_events"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     # No ORM FK on user_id (auth.users is Supabase-managed, not in Base.metadata);
     # the migration SQL declares the FK + ON DELETE CASCADE.
     user_id = Column(UUID(as_uuid=False), nullable=False)
@@ -723,7 +773,9 @@ class GraphComparisonRun(Base):
 
     __tablename__ = "apollo_graph_comparison_runs"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     attempt_id = Column(
         BigInteger,
         ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
@@ -778,7 +830,9 @@ class GraphComparisonFinding(Base):
 
     __tablename__ = "apollo_graph_comparison_findings"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     run_id = Column(
         BigInteger,
         ForeignKey("apollo_graph_comparison_runs.id", ondelete="CASCADE"),
@@ -824,7 +878,9 @@ class IngestRun(Base):
 
     __tablename__ = "apollo_ingest_runs"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     search_space_id = Column(
         Integer,
         ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
@@ -878,7 +934,9 @@ class ProvisioningJob(Base):
 
     __tablename__ = "apollo_provisioning_jobs"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     search_space_id = Column(
         Integer,
         ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
@@ -908,7 +966,9 @@ class RejectedProblem(Base):
 
     __tablename__ = "apollo_rejected_problems"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     ingest_run_id = Column(
         BigInteger,
         ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
@@ -939,7 +999,9 @@ class DedupDecision(Base):
 
     __tablename__ = "apollo_dedup_decisions"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     ingest_run_id = Column(
         BigInteger,
         ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
@@ -975,7 +1037,9 @@ class IngestError(Base):
 
     __tablename__ = "apollo_ingest_errors"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     ingest_run_id = Column(
         BigInteger,
         ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
@@ -1009,7 +1073,9 @@ class IngestPageEvidence(Base):
 
     __tablename__ = "apollo_ingest_page_evidence"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     ingest_run_id = Column(
         BigInteger,
         ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
@@ -1031,9 +1097,7 @@ class IngestPageEvidence(Base):
     ocr_text = Column(Text, nullable=False, server_default=text("''"), default="")
     ocr_confidence = Column(Float, nullable=True)  # REAL on Postgres; self-reported [0,1]
     extraction_mode = Column(Text, nullable=True)
-    verify_path_fired = Column(
-        Boolean, nullable=False, server_default=text("false"), default=False
-    )
+    verify_path_fired = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 
@@ -1048,20 +1112,27 @@ class GradingArtifact(Base):
 
     __tablename__ = "apollo_grading_artifacts"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     attempt_id = Column(
-        BigInteger, ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
-        nullable=False, index=True,
+        BigInteger,
+        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     role = Column(Text, nullable=False)
     grader_used = Column(Text, nullable=False)
     user_id = Column(UUID(as_uuid=False), nullable=False)
     search_space_id = Column(
-        Integer, ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
         nullable=False,
     )
     concept_id = Column(
-        BigInteger, ForeignKey("apollo_concepts.id", ondelete="SET NULL"), nullable=True,
+        BigInteger,
+        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
+        nullable=True,
     )
     problem_id = Column(Text, nullable=False)
     versions = Column(_JSONType, nullable=False)
@@ -1076,7 +1147,9 @@ class GradingArtifact(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "attempt_id", "role", name="uq_grading_artifact_attempt_role",
+            "attempt_id",
+            "role",
+            name="uq_grading_artifact_attempt_role",
         ),
     )
 
@@ -1099,17 +1172,25 @@ class MisconceptionObservation(Base):
 
     __tablename__ = "apollo_misconception_observations"
 
-    id = Column(BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
     search_space_id = Column(
-        Integer, ForeignKey("aita_search_spaces.id", ondelete="CASCADE"), nullable=False,
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
     )
     concept_id = Column(
-        BigInteger, ForeignKey("apollo_concepts.id", ondelete="SET NULL"), nullable=True,
+        BigInteger,
+        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
+        nullable=True,
     )
     signature = Column(Text, nullable=False)
     user_id = Column(UUID(as_uuid=False), nullable=False)
     attempt_id = Column(
-        BigInteger, ForeignKey("apollo_problem_attempts.id", ondelete="SET NULL"), nullable=True,
+        BigInteger,
+        ForeignKey("apollo_problem_attempts.id", ondelete="SET NULL"),
+        nullable=True,
     )
     confidence = Column(Float, nullable=True)
     opposes = Column(Text, nullable=True)
@@ -1120,13 +1201,15 @@ class MisconceptionObservation(Base):
     # (emergent-map upgrade signal — a clarification rescore confirms the
     # misconception). Domain enforced by ck_misconception_obs_source
     # (migration 040; emergent-map design 2026-07-10 §5.3/§5.4).
-    source = Column(Text, nullable=False, server_default=text("'grading_artifact'"),
-                    default="grading_artifact")
+    source = Column(
+        Text, nullable=False, server_default=text("'grading_artifact'"), default="grading_artifact"
+    )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
         UniqueConstraint(
-            "attempt_id", "signature",
+            "attempt_id",
+            "signature",
             name="uq_misconception_observation_attempt_signature",
         ),
     )

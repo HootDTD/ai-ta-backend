@@ -63,11 +63,14 @@ _MIGRATION_030 = MIGRATIONS_DIR / "030_apollo_autoprovisioning.sql"
 # (test_apollo_learner_janitor_migration.py); the seeder does not need its columns.
 # 030 is applied separately after 026 (see _apply_chain), so it too is excluded from
 # the auto-built chain.
-_EXCLUDE_FROM_CHAIN = frozenset({
-    _MIGRATION_026.name,
-    _MIGRATION_030.name,
-    "028_apollo_learner_janitor.sql",
-})
+_EXCLUDE_FROM_CHAIN = frozenset(
+    {
+        _MIGRATION_026.name,
+        _MIGRATION_030.name,
+        "028_apollo_learner_janitor.sql",
+        "046_apollo_solution_source_llm_paired.sql",
+    }
+)
 
 
 def _chain_migrations() -> list[Path]:

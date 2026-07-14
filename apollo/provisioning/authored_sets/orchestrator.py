@@ -37,6 +37,7 @@ from apollo.provisioning.authored_sets.paired_retrieval import (
     make_paired_solution_retrieve_fn,
 )
 from apollo.provisioning.authored_sets.structure_pass import (
+    StructurePair,
     StructurePassSummary,
     run_structure_pass,
 )
@@ -257,6 +258,7 @@ async def run_authored_set_provisioning(
         structured=structured_scrape_enabled(),
     )
     structure_summary: StructurePassSummary | None = None
+    active_structure_pairs: Sequence[StructurePair] = ()
     if structure_mode != "off" and scrape_tokens_before is not None:
         try:
             scrape_spend = max(0, metered_chat.cumulative_tokens() - scrape_tokens_before)
@@ -267,6 +269,8 @@ async def run_authored_set_provisioning(
                 scrape_spend=scrape_spend,
             )
             structure_summary = structure_result.summary()
+            if structure_mode == "on" and not structure_result.budget_exhausted:
+                active_structure_pairs = structure_result.pairs
         except Exception:  # noqa: BLE001 - shadow work must never affect provisioning
             _LOG.exception(
                 "authored_set_structure_pass_failed",
@@ -302,6 +306,8 @@ async def run_authored_set_provisioning(
                 conf_threshold=conf_threshold,
                 registered=registered,
                 reversed_mode=reversed_mode,
+                solution_chunks=solution_chunks,
+                structure_pairs=active_structure_pairs,
             )
         )
 
@@ -331,6 +337,8 @@ async def _process_authored_candidate(
     conf_threshold: float,
     registered: Sequence[RegisteredConcept] = (),
     reversed_mode: bool = False,
+    solution_chunks: Sequence[tuple[int, str, int | None]] = (),
+    structure_pairs: Sequence[StructurePair] = (),
 ) -> ProblemResult:
     label = getattr(candidate, "label", None)
     retrieve_fn = make_paired_solution_retrieve_fn(
@@ -338,6 +346,8 @@ async def _process_authored_candidate(
         solution_document_id=solution_document_id,
         label_index=label_index,
         page_conf=page_conf,
+        solution_chunks=solution_chunks,
+        structure_pairs=structure_pairs,
     )
 
     # --- Reversed provisioning: closed-list concept match FIRST ------------- #
@@ -379,6 +389,11 @@ async def _process_authored_candidate(
     draft: ReferenceSolutionDraft | None = None
     if reversed_mode and resolved is not None:
         spans = tuple(await retrieve_fn(candidate))
+        draft_source = (
+            "llm_paired"
+            if getattr(retrieve_fn, "last_match_method", None) == "structure"
+            else "extracted"
+        )
         solution_spans = tuple(s for s in spans if s.carries_solution)
         if solution_spans:
             concept_row = await db.get(Concept, resolved.concept_id)
@@ -407,7 +422,7 @@ async def _process_authored_candidate(
                     diagnostic=f"derivation_error: {exc}",
                 )
             draft = ReferenceSolutionDraft(
-                solution_source="extracted",
+                solution_source=draft_source,
                 reference_solution=derived.reference_solution,
                 grounding=solution_spans,
                 provenance={
@@ -444,7 +459,7 @@ async def _process_authored_candidate(
     match_method = getattr(retrieve_fn, "last_match_method", None)
     min_conf = getattr(retrieve_fn, "last_min_conf", None)
     verdict = None
-    if draft.solution_source == "extracted":
+    if draft.solution_source in ("extracted", "llm_paired"):
         verdict = await verify_against_generated(
             db,
             candidate=candidate,
@@ -456,7 +471,7 @@ async def _process_authored_candidate(
             conf_threshold=conf_threshold,
         )
 
-    if draft.solution_source == "extracted":
+    if draft.solution_source in ("extracted", "llm_paired"):
         pair_verdict = await validate_pair(
             candidate,
             draft,

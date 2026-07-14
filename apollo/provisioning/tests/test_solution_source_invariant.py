@@ -30,7 +30,7 @@ def test_solution_source_write_paths_respect_provenance(write_path, provenance, 
     assert problem.solution_source == solution_source
 
 
-@pytest.mark.parametrize("forbidden_source", ["extracted", "authored"])
+@pytest.mark.parametrize("forbidden_source", ["extracted", "authored", "llm_paired"])
 def test_machine_generated_problem_rejects_teacher_grounded_solution_source(
     forbidden_source,
 ):
