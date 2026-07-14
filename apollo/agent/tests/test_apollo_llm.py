@@ -278,6 +278,11 @@ def test_clarification_hints_added_as_system_message(mock_client_cls):
     messages = client.chat.completions.create.call_args.kwargs["messages"]
     sys_texts = [m["content"] for m in messages if m["role"] == "system"]
     assert any("DIRECTION" in t for t in sys_texts)
+    clarification_text = next(t for t in sys_texts if "DIRECTION" in t)
+    assert "what the student actually said" in clarification_text
+    assert "concepts they have not mentioned yet" in clarification_text
+    assert "Do not import new ideas or wording from the problem" in clarification_text
+    assert "explain their latest claim more precisely" in clarification_text
 
 
 @patch("apollo.agent.apollo_llm.OpenAI")

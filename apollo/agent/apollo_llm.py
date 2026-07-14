@@ -66,7 +66,13 @@ def _estimate_tokens(messages: List[Dict[str, Any]]) -> int:
 _CLARIFICATION_PREFIX = (
     "You have a few things you're unsure about and want to ask your study partner. "
     "Work these clarifying questions naturally into your reply, in your own confused "
-    "voice. Ask them to commit to a specific answer; do NOT state the answer yourself:\n"
+    "voice. Base each question on what the student actually said, and use only claims "
+    "and vocabulary the student has already introduced. Lead the student toward noticing "
+    "and clearing up their possible misconception without naming, paraphrasing, or hinting "
+    "at concepts they have not mentioned yet. Do not import new ideas or wording from the "
+    "problem, the KG, or the target answer. If a supplied hint cannot be asked without "
+    "introducing something new, ask the student to explain their latest claim more precisely "
+    "instead. Ask them to commit to a specific answer; do NOT state the answer yourself:\n"
 )
 
 APOLLO_SYSTEM_PROMPT = """You are Apollo, being taught by the user. You know NOTHING about what they are teaching you.

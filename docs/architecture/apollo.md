@@ -498,7 +498,7 @@ held problem using the teacher-selected OCR or generated reference.
 - `compute_coverage(student_graph: KGGraph, reference_graph: KGGraph) -> dict` (async; LLM).
 - `compute_rubric(coverage, reference_nodes, *, misconception_scores=None) -> dict` (pure).
 - `generate_diagnostic(*, coverage, reference_steps, problem_text, rubric, model=None) -> str` (LLM).
-- `draft_reply(history, kg_summary, *, problem_text=None, model=None, history_summary=None, clarification_hints=None) -> str`. When `clarification_hints` (a list of hint strings) is present they are joined and appended as one extra system message (prefixed by `_CLARIFICATION_PREFIX`) that steers Apollo to weave the question(s) naturally into its confused reply without stating the answer; absent → byte-identical to today.
+- `draft_reply(history, kg_summary, *, problem_text=None, model=None, history_summary=None, clarification_hints=None) -> str`. When `clarification_hints` (a list of hint strings) is present they are joined and appended as one extra system message (prefixed by `_CLARIFICATION_PREFIX`) that steers Apollo to weave the question(s) naturally into its confused reply without stating the answer, grounded ONLY in claims and vocabulary the student already introduced — never importing wording from the problem, the KG summary, or the target answer; a hint that cannot be asked without introducing something new degrades to asking the student to sharpen their latest claim (2026-07-14); absent → byte-identical to today.
 - `Problem.to_kg_graph(attempt_id) -> KGGraph`; `load_problem(path)`; `load_concept(subject_id, concept_id)`.
 - `compute_xp_earned(*, overall_score, difficulty, is_reattempt) -> int`; `apply_xp(*, db, user_id, xp_delta)`.
 
