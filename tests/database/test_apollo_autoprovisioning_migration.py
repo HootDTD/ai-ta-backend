@@ -73,6 +73,7 @@ _TOUCHES_TARGETS = re.compile(
     r"apollo_(subjects|concepts|concept_problems|kg_entities|problem_attempts)\b"
 )
 _MIGRATION_030 = MIGRATIONS_DIR / "030_apollo_autoprovisioning.sql"
+_MIGRATION_046 = MIGRATIONS_DIR / "046_apollo_solution_source_llm_paired.sql"
 # 030 is applied LAST (separately), so it is excluded from the auto-built chain.
 # 028 (WU-5B3a-0) ALTERs apollo_problem_attempts and so matches the regex, but its
 # partial index predicate references `learner_update_pending` — a column 026
@@ -83,6 +84,7 @@ _EXCLUDE_FROM_CHAIN = frozenset(
     {
         _MIGRATION_030.name,
         "028_apollo_learner_janitor.sql",
+        _MIGRATION_046.name,
     }
 )
 
@@ -121,6 +123,7 @@ async def _apply_chain(dsn: str, *, include_030: bool) -> None:
             await conn.execute(migration.read_text(encoding="utf-8"))
         if include_030:
             await conn.execute(_MIGRATION_030.read_text(encoding="utf-8"))
+            await conn.execute(_MIGRATION_046.read_text(encoding="utf-8"))
     finally:
         await conn.close()
 
@@ -434,13 +437,29 @@ async def test_solution_source_check(mig_conn):
     _space, _subject, concept = await _seed_chain(mig_conn)
     # NULL ok (omit the column).
     await _seed_concept_problem(mig_conn, concept, problem_code="s_null")
-    for i, src in enumerate(("extracted", "generated", "authored")):
+    for i, src in enumerate(("extracted", "generated", "authored", "llm_paired")):
         await _seed_concept_problem(mig_conn, concept, problem_code=f"s{i}", solution_source=src)
     await _expect_violation(
         mig_conn,
         asyncpg.CheckViolationError,
         _seed_concept_problem(mig_conn, concept, problem_code="s_bad", solution_source="invented"),
     )
+
+
+async def test_promoted_llm_paired_solution_source_round_trips(mig_conn):
+    """Migration 046 must admit the provenance value written by promotion."""
+    _space, _subject, concept = await _seed_chain(mig_conn)
+    problem_id = await _seed_concept_problem(
+        mig_conn,
+        concept,
+        problem_code="structure-promoted",
+        tier=2,
+        solution_source="llm_paired",
+    )
+    row = await mig_conn.fetchrow(
+        "SELECT tier, solution_source FROM apollo_concept_problems WHERE id=$1", problem_id
+    )
+    assert dict(row) == {"tier": 2, "solution_source": "llm_paired"}
 
 
 async def test_ingest_runs_status_check(mig_conn):

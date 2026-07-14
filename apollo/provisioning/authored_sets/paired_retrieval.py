@@ -1,16 +1,17 @@
 """Doc-scoped grounding for authored sets (WU-AAS).
 
 The returned ``retrieve(question)`` grounds against ONLY the paired solution doc
-(when one was provided): label match first, then doc-scoped semantic top-k. Only
-a label match is a confirmed printed solution for THIS problem, so those spans
-are marked ``carries_solution=True`` (``find_or_generate`` takes its extract
-branch); the semantic top-k fallback is an unconfirmed guess at relevant
-context, so those spans are marked ``carries_solution=False`` (extract branch
-skipped, but the spans still ride along as generation context). When no
-solution document is paired (``solution_document_id is None``), the retrieve fn
-returns no spans at all so the caller falls through to solution generation.
-This module deliberately filters by ``aita_chunks.document_id`` and never uses
-the student-RAG document visibility gate.
+(when one was provided): deterministic regex label match first, then an optional
+structure-pass pair, then doc-scoped semantic top-k. Label and structure matches
+are confirmed printed solutions for THIS problem, so those spans are marked
+``carries_solution=True`` (``find_or_generate`` takes its extract branch); the
+semantic top-k fallback is an unconfirmed guess at relevant context, so those
+spans are marked ``carries_solution=False`` (extract branch skipped, but the
+spans still ride along as generation context). When no solution document is
+paired (``solution_document_id is None``), the retrieve fn returns no spans at
+all so the caller falls through to solution generation. This module deliberately
+filters by ``aita_chunks.document_id`` and never uses the student-RAG document
+visibility gate.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from apollo.provisioning.authored_sets.label_match import (
     extract_problem_label,
     match_solution_label,
 )
+from apollo.provisioning.authored_sets.structure_pass import StructurePair, StructurePassResult
 from apollo.provisioning.scrape import chunk_content_hash
 from apollo.provisioning.solution import GroundingSpan
 
@@ -135,24 +137,88 @@ def _spans_from_chunks(
     return spans, min_conf
 
 
+def _structure_pair_index(
+    structure_pairs: StructurePassResult | Sequence[StructurePair] | None,
+) -> dict[str, StructurePair]:
+    """Index only unambiguous normalized pairs; a caller-supplied duplicate
+    degrades safely instead of letting input order choose an answer."""
+    if structure_pairs is None:
+        return {}
+    pairs = (
+        structure_pairs.pairs
+        if isinstance(structure_pairs, StructurePassResult)
+        else structure_pairs
+    )
+    grouped: dict[str, list[StructurePair]] = {}
+    for pair in pairs:
+        grouped.setdefault(pair.label, []).append(pair)
+    return {label: matches[0] for label, matches in grouped.items() if len(matches) == 1}
+
+
+def _spans_from_structure_pair(
+    pair: StructurePair,
+    *,
+    solution_chunks: Sequence[SolutionChunk],
+    solution_document_id: int,
+    page_conf: dict[int | None, float | None],
+) -> tuple[tuple[GroundingSpan, ...], float | None]:
+    """Project one answer block onto ordered, chunk-local grounding spans.
+
+    Span text follows the structure pass's exact offsets, while the content hash
+    covers the complete persisted chunk so provenance remains compatible with
+    every other grounding path.
+    """
+    chunks_by_id = {chunk_id: (content, page) for chunk_id, content, page in solution_chunks}
+    spans: list[GroundingSpan] = []
+    confidences: list[float] = []
+    for block_span in pair.answer.block_spans:
+        chunk = chunks_by_id.get(block_span.chunk_id)
+        if chunk is None:
+            continue
+        content, page = chunk
+        text = content[block_span.start_char : block_span.end_char]
+        if not text.strip():
+            continue
+        spans.append(
+            GroundingSpan(
+                text=text,
+                document_id=solution_document_id,
+                page=page,
+                chunk_content_hash=chunk_content_hash(content),
+                carries_solution=True,
+            )
+        )
+        if (confidence := page_conf.get(page)) is not None:
+            confidences.append(confidence)
+    return tuple(spans), min(confidences) if confidences else None
+
+
 def make_paired_solution_retrieve_fn(
     db: AsyncSession | None,
     *,
     solution_document_id: int | None,
     label_index: dict[str, list[SolutionChunk]],
     page_conf: dict[int | None, float | None],
+    solution_chunks: Sequence[SolutionChunk] = (),
+    structure_pairs: StructurePassResult | Sequence[StructurePair] | None = None,
     top_k: int = DEFAULT_PAIRED_TOP_K,
 ) -> Callable[[Any], Awaitable[tuple[GroundingSpan, ...]]]:
     """Build a retrieve_fn for ``find_or_generate``.
 
     The returned callable exposes ``last_min_conf`` and ``last_match_method`` for
-    the most recent grounding. Empty results leave both as ``None``. When
+    the most recent grounding. ``structure_pairs`` accepts either the full pass
+    result or its pair sequence; its answer blocks are resolved through
+    ``solution_chunks``. Empty results leave both attributes as ``None``. When
     ``solution_document_id`` is ``None`` (no solution doc paired), the returned
     fn always yields no spans so ``find_or_generate`` falls through to its
     generate branch.
     """
 
+    structure_index = _structure_pair_index(structure_pairs)
+
     async def retrieve(question: Any) -> tuple[GroundingSpan, ...]:
+        retrieve.last_min_conf = None  # type: ignore[attr-defined]
+        retrieve.last_match_method = None  # type: ignore[attr-defined]
         if solution_document_id is None:
             return ()
 
@@ -168,6 +234,18 @@ def make_paired_solution_retrieve_fn(
             if spans:
                 retrieve.last_min_conf = min_conf  # type: ignore[attr-defined]
                 retrieve.last_match_method = "label"  # type: ignore[attr-defined]
+                return spans
+
+        if label is not None and (pair := structure_index.get(label)) is not None:
+            spans, min_conf = _spans_from_structure_pair(
+                pair,
+                solution_chunks=solution_chunks,
+                solution_document_id=solution_document_id,
+                page_conf=page_conf,
+            )
+            if spans:
+                retrieve.last_min_conf = min_conf  # type: ignore[attr-defined]
+                retrieve.last_match_method = "structure"  # type: ignore[attr-defined]
                 return spans
 
         query_text = getattr(question, "problem_text", "") or ""

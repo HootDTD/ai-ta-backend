@@ -6,6 +6,12 @@ from sqlalchemy import select
 
 from apollo.persistence.models import Concept, ConceptProblem, DedupDecision, KGEntity, Subject
 from apollo.provisioning.authored_sets.orchestrator import run_authored_set_provisioning
+from apollo.provisioning.authored_sets.structure_pass import (
+    BlockSpan,
+    StructurePair,
+    StructurePassResult,
+    StructureUnit,
+)
 from apollo.provisioning.pairing_gate import PairingVerdict
 from apollo.provisioning.promote import PromoteResult
 from apollo.provisioning.scrape import CandidateQuestion, ScrapeResult
@@ -262,7 +268,7 @@ async def test_authored_set_label_extract_promotes(db_session, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["shadow", "on"])
-async def test_structure_modes_are_shadow_only_and_stash_bounded_summary(
+async def test_structure_modes_run_pass_once_and_stash_bounded_summary(
     db_session, monkeypatch, mode
 ):
     space = await _seed_search_space(db_session, slug=f"aas-structure-{mode}")
@@ -302,6 +308,81 @@ async def test_structure_modes_are_shadow_only_and_stash_bounded_summary(
         "paired_labels": (),
     }
     assert metered.structure_calls == 1
+
+
+def _one_structure_result(*, budget_exhausted: bool = False) -> StructurePassResult:
+    question = StructureUnit(
+        kind="question",
+        label="1",
+        document_role="problem",
+        start_chunk=1,
+        end_chunk=1,
+        start_char=0,
+        end_char=10,
+        confidence=0.9,
+        block_spans=(BlockSpan(chunk_id=1, start_char=0, end_char=10),),
+    )
+    answer = StructureUnit(
+        kind="answer",
+        label="1",
+        document_role="solution",
+        start_chunk=2,
+        end_chunk=2,
+        start_char=0,
+        end_char=10,
+        confidence=0.9,
+        block_spans=(BlockSpan(chunk_id=2, start_char=0, end_char=10),),
+    )
+    pair = StructurePair(label="1", question=question, answer=answer)
+    return StructurePassResult(
+        units=(question, answer),
+        pairs=(pair,),
+        tokens_spent=10,
+        budget_exhausted=budget_exhausted,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "budget_exhausted", "expected_pairs"),
+    [("shadow", False, 0), ("on", True, 0), ("on", False, 1)],
+)
+async def test_structure_pairs_consumed_only_when_on_and_complete(
+    db_session, monkeypatch, mode, budget_exhausted, expected_pairs
+):
+    space = await _seed_search_space(
+        db_session, slug=f"structure-consume-{mode}-{budget_exhausted}"
+    )
+    concept_id = await _seed_concept(db_session, search_space_id=space)
+    prob_doc = await _seed_doc_with_chunk(db_session, space, "1. Porter question", title="P")
+    sol_doc = await _seed_doc_with_chunk(db_session, space, "Answer: rivalry", title="S")
+    candidate = _candidate(document_id=prob_doc)
+    _patch_common_stages(monkeypatch, candidate=candidate, concept_id=concept_id)
+    monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", mode)
+    monkeypatch.setattr(
+        orch,
+        "run_structure_pass",
+        lambda **_kwargs: _one_structure_result(budget_exhausted=budget_exhausted),
+    )
+    received: list = []
+
+    async def _capture_candidate(*_args, structure_pairs=(), **_kwargs):
+        received.extend(structure_pairs)
+        return orch.ProblemResult(label="1", outcome="held_for_review", review_required=True)
+
+    monkeypatch.setattr(orch, "_process_authored_candidate", _capture_candidate)
+
+    await run_authored_set_provisioning(
+        db_session,
+        neo=None,
+        search_space_id=space,
+        problem_document_id=prob_doc,
+        solution_document_id=sol_doc,
+        metered_chat=_StructureShadowMC(),
+        embed_fn=lambda _text: [0.0],
+    )
+
+    assert len(received) == expected_pairs
 
 
 @pytest.mark.asyncio

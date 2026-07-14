@@ -148,7 +148,8 @@ WU-AAS authored-set label matching starts in
 `apollo/provisioning/authored_sets/label_match.py`. It normalizes printed labels
 such as `Problem 3`, `Q3`, `3.`, and `Exercise 4(a)` to canonical keys, extracts
 problem labels from `CandidateQuestion.label` with a problem-text fallback, and
-indexes paired solution chunks by deterministic label matches. A sub-label (the
+indexes paired solution chunks by deterministic keyword labels and leading
+number markers such as `1.`/`1)`. A sub-label (the
 `a` in `4a`/`4(a)`) attaches ONLY when adjacent to the number — a bare letter
 must immediately follow the digit and only the parenthesized form may be
 whitespace-separated, so a solution heading like `Solution 1\nM = …` keys as `1`
@@ -163,13 +164,26 @@ problem and optional solution document in stable chunk-id order, asks the
 injected cheap-tier `MeteredChat` for strict structured units, maps global
 character offsets back to real chunk-local spans, normalizes labels through
 `label_match.normalize_label`, and aligns only unique question/answer labels.
-In this first rollout both `shadow` and `on` are observational: the existing
-grounding and provisioning path is unchanged, while a bounded counts-and-paired-
-labels summary is added to the set's `result_summary`. The pass snapshots the
-scrape token spend and stops before another call once its own spend exceeds
-`max(scrape_spend, 30_000)`; failures are contained at the authored orchestrator
-boundary. `off` performs no pass calls and preserves the prior serialized report
-shape. Pairing consumption is intentionally deferred to the next rollout.
+`shadow` remains observational: it records a bounded counts-and-paired-labels
+summary in the set's `result_summary` but never hands pairs to retrieval. `on`
+runs that same single pass once per authored-set run and makes its unambiguous
+pairs available after the regex fast path. The pass snapshots the scrape token
+spend and stops before another call once its own spend exceeds
+`max(scrape_spend, 30_000)`; failures and budget exhaustion are contained at the
+authored orchestrator boundary and supply no usable pairs, so candidates retain
+the label/retrieval/generated behavior. `off` performs no pass calls and
+preserves the prior serialized report shape.
+
+Paired-solution retrieval is deliberately ordered: deterministic regex label
+match first, then an unambiguous normalized-label structure pair, then the
+existing document-scoped semantic fallback. A structure answer unit becomes one
+ordered grounding span per real chunk overlap, with each chunk's content hash
+and `carries_solution=true`; semantic hits remain unconfirmed context with
+`carries_solution=false`, so they generate a held draft. Structure-grounded
+drafts retain `solution_source="llm_paired"` through promotion. They have the
+same promotion rights as `extracted` drafts only after both trust-spine checks
+run: generated-answer verification and the pair faithfulness gate. A failed
+check rejects or holds the candidate exactly as it does for extracted content.
 
 ## Public interfaces
 

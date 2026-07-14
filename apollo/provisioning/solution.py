@@ -167,7 +167,7 @@ class ReferenceSolutionDraft(BaseModel):
     threads the idempotency key (``chunk_content_hash``) + the retrieval hit
     count."""
 
-    solution_source: Literal["extracted", "generated", "authored"]
+    solution_source: Literal["extracted", "generated", "authored", "llm_paired"]
     reference_solution: list[dict]
     grounding: tuple[GroundingSpan, ...] = ()
     provenance: dict = Field(default_factory=dict)
@@ -382,7 +382,8 @@ async def find_or_generate(
 
     Calls ``retrieve_fn(question)`` once. If any retrieved span carries a printed
     solution (``carries_solution``), an extraction ``chat_fn`` pass over those
-    spans yields the ``reference_solution`` → ``solution_source='extracted'``.
+    spans yields the ``reference_solution`` → ``solution_source='extracted'``
+    for deterministic retrieval or ``'llm_paired'`` for a structure-pass pair.
     Otherwise ``chat_fn`` RAG-generates from the question + the retrieved spans →
     ``solution_source='generated'``, ``grounding`` = the SAME retrieved spans.
     FAIL-CLOSED via ``SolutionDraftError`` (no empty-step draft)."""
@@ -392,7 +393,11 @@ async def find_or_generate(
     has_printed = any(s.carries_solution for s in spans)
 
     if has_printed:
-        source: Literal["extracted", "generated"] = "extracted"
+        source: Literal["extracted", "generated", "llm_paired"] = (
+            "llm_paired"
+            if getattr(retrieve_fn, "last_match_method", None) == "structure"
+            else "extracted"
+        )
         harness_purpose = "solution_extract"
         harness_schema = build_solution_schema()
         harness_messages = [

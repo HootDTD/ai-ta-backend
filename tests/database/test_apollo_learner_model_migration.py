@@ -62,10 +62,13 @@ _MIGRATION_026 = MIGRATIONS_DIR / "026_apollo_learner_model.sql"
 # 028 (WU-5B3a-0) adds a partial index whose predicate references
 # `learner_update_pending` — a column 026 creates — so it is excluded here. 028
 # has its own forward-chain test (test_apollo_learner_janitor_migration.py).
-_EXCLUDE_FROM_CHAIN = frozenset({
-    _MIGRATION_026.name,
-    "028_apollo_learner_janitor.sql",
-})
+_EXCLUDE_FROM_CHAIN = frozenset(
+    {
+        _MIGRATION_026.name,
+        "028_apollo_learner_janitor.sql",
+        "046_apollo_solution_source_llm_paired.sql",
+    }
+)
 
 
 def _chain_migrations() -> list[Path]:
