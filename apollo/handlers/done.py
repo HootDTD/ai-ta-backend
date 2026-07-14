@@ -69,7 +69,7 @@ from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.overseer.rubric import compute_rubric
 from apollo.overseer.topic_score import TopicScoreResult, compute_topic_score
 from apollo.overseer.topic_score_serialize import serialize_topics
-from apollo.overseer.transcript_coverage import compute_transcript_coverage
+from apollo.overseer.transcript_coverage import compute_transcript_coverage_with_spans
 from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
 from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
@@ -400,6 +400,7 @@ def _compute_topic_score_safe(
     centrality: dict[str, float] | None,
     detection_outcome: MergeOutcome | None,
     attempt_id: int,
+    evidence_spans: dict[str, str] | None = None,
 ) -> TopicScoreResult | None:
     """Soft-failing wrapper around ``compute_topic_score`` (2026-07-10 spec
     §3): computed ALWAYS (flag-independent — the artifact gets telemetry
@@ -420,6 +421,7 @@ def _compute_topic_score_safe(
             reference_nodes=reference_graph.nodes,
             centrality=resolved_centrality,
             detection_outcome=detection_outcome,
+            evidence_spans=evidence_spans,
         )
     except Exception:
         _LOG.exception("topic_score_computation_failed attempt_id=%s", attempt_id)
@@ -525,10 +527,15 @@ async def handle_done(
 
     use_transcript_grader = transcript_grader_enabled()
     transcript_grader_failure: str | None = None
+    # Per-attempt student quotes for the diagnostic narrative (transcript lane
+    # only — the KG lane has no per-node quotes, so this stays empty there).
+    # Verbatim-gated in `narrative_evidence_spans`, so the narrative can only
+    # ever attribute to the student words they typed THIS attempt.
+    narrative_spans: dict[str, str] = {}
     if use_transcript_grader:
         try:
             transcript = await _full_transcript(db, attempt_id=int(attempt.id))
-            coverage = await compute_transcript_coverage(
+            coverage, narrative_spans = await compute_transcript_coverage_with_spans(
                 transcript=transcript,
                 reference_graph=reference_graph,
                 problem=problem,
@@ -767,6 +774,7 @@ async def handle_done(
         centrality=centrality_for_topic_score,
         detection_outcome=detection_outcome,
         attempt_id=int(attempt.id),
+        evidence_spans=narrative_spans,
     )
 
     # Serving (spec §3): under the flag, `served_rubric` REPLACES `overall`
@@ -785,12 +793,28 @@ async def handle_done(
     else:
         served_rubric = rubric
 
+    # Narrative grounding (2026-07-14): feed the narrator the verbatim student
+    # transcript so credit statements quote what the student actually said
+    # instead of expanding topic names into claims they never made. Best-effort:
+    # a fetch failure logs and degrades to the ungrounded prompt — it must
+    # never block grading.
+    try:
+        narrative_utterances: tuple[str, ...] = await _student_utterances(
+            db, attempt_id=attempt.id
+        )
+    except Exception:  # noqa: BLE001
+        _LOG.warning(
+            "apollo_narrative_utterances_fetch_failed attempt_id=%s", attempt.id
+        )
+        narrative_utterances = ()
+
     diagnostic_narrative = generate_diagnostic(
         coverage=coverage,
         reference_steps=[s.model_dump() for s in problem.reference_solution],
         problem_text=problem.problem_text,
         rubric=rubric,
         topic_score=topic_score,
+        student_utterances=narrative_utterances,
     )
 
     # Re-attempt detection (unchanged from V2).

@@ -5,6 +5,36 @@ import pytest
 import indexing.document_embedder as embedder
 from apollo.provisioning.authored_sets.label_match import build_solution_label_index
 from apollo.provisioning.authored_sets.paired_retrieval import make_paired_solution_retrieve_fn
+from apollo.provisioning.authored_sets.structure_pass import BlockSpan, StructurePair, StructureUnit
+from apollo.provisioning.scrape import chunk_content_hash
+
+
+def _structure_pair(*, answer_spans: tuple[BlockSpan, ...]) -> StructurePair:
+    return StructurePair(
+        label="1",
+        question=StructureUnit(
+            kind="question",
+            label="1",
+            document_role="problem",
+            start_chunk=1,
+            end_chunk=1,
+            start_char=0,
+            end_char=10,
+            confidence=0.99,
+            block_spans=(BlockSpan(chunk_id=1, start_char=0, end_char=10),),
+        ),
+        answer=StructureUnit(
+            kind="answer",
+            label="1",
+            document_role="solution",
+            start_chunk=20,
+            end_chunk=21,
+            start_char=0,
+            end_char=30,
+            confidence=0.98,
+            block_spans=answer_spans,
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -70,7 +100,7 @@ async def test_chunk_ocr_confidence_skips_malformed_entries(db_session):
 
 
 @pytest.mark.asyncio
-async def test_label_branch_returns_carries_solution_span():
+async def test_no_structure_pairs_preserves_regex_label_fast_path():
     chunks = [(10, "Solution 3\nSum moments: M = wL^2/8", 2)]
     index = build_solution_label_index(chunks)
     page_conf = {2: 0.91}
@@ -86,7 +116,189 @@ async def test_label_branch_returns_carries_solution_span():
     assert spans[0].carries_solution is True
     assert spans[0].document_id == 55
     assert spans[0].page == 2
+    assert spans[0].text == chunks[0][1]
     assert retrieve.last_min_conf == 0.91
+    assert retrieve.last_match_method == "label"
+
+
+@pytest.mark.asyncio
+async def test_structure_branch_returns_ordered_multichunk_solution_spans():
+    chunks = [
+        (20, "preface Answer: rivalry is strongest", 2),
+        (21, "when firms and offers converge. trailer", 3),
+    ]
+    pair = _structure_pair(
+        answer_spans=(
+            BlockSpan(chunk_id=20, start_char=8, end_char=len(chunks[0][1])),
+            BlockSpan(chunk_id=21, start_char=0, end_char=31),
+        )
+    )
+    retrieve = make_paired_solution_retrieve_fn(
+        db=None,
+        solution_document_id=55,
+        label_index={},
+        page_conf={2: 0.91, 3: 0.84},
+        solution_chunks=chunks,
+        structure_pairs=(pair,),
+    )
+
+    spans = await retrieve(SimpleNamespace(label="1", problem_text="1. (MC) Which force?"))
+
+    assert [span.text for span in spans] == [
+        "Answer: rivalry is strongest",
+        "when firms and offers converge.",
+    ]
+    assert [span.chunk_content_hash for span in spans] == [
+        chunk_content_hash(chunks[0][1]),
+        chunk_content_hash(chunks[1][1]),
+    ]
+    assert all(span.carries_solution for span in spans)
+    assert retrieve.last_match_method == "structure"
+    assert retrieve.last_min_conf == 0.84
+
+
+@pytest.mark.asyncio
+async def test_structure_pair_wins_over_answerless_regex_label_chunk():
+    label_chunk = (10, "1. (MC) In Porter's model, when is rivalry strongest?", 2)
+    option_chunk = (20, "A. When firms are highly differentiated\nB. When firms converge", 3)
+    answer_chunk = (21, "Answer: B. Rivalry is strongest when firms and offers converge.", 3)
+    continuation_chunk = (22, "Low switching costs intensify that rivalry.", 4)
+    solution_chunks = (label_chunk, option_chunk, answer_chunk, continuation_chunk)
+    retrieve = make_paired_solution_retrieve_fn(
+        db=None,
+        solution_document_id=55,
+        label_index=build_solution_label_index((label_chunk,)),
+        page_conf={2: 0.93, 3: 0.81, 4: 0.79},
+        solution_chunks=solution_chunks,
+        structure_pairs=(
+            _structure_pair(
+                answer_spans=(
+                    BlockSpan(chunk_id=20, start_char=0, end_char=len(option_chunk[1])),
+                    BlockSpan(chunk_id=21, start_char=0, end_char=len(answer_chunk[1])),
+                    BlockSpan(
+                        chunk_id=22,
+                        start_char=0,
+                        end_char=len(continuation_chunk[1]),
+                    ),
+                )
+            ),
+        ),
+    )
+
+    spans = await retrieve(SimpleNamespace(label="1", problem_text="1. Which force?"))
+
+    assert [span.text for span in spans] == [
+        option_chunk[1],
+        answer_chunk[1],
+        continuation_chunk[1],
+    ]
+    assert label_chunk[1] not in [span.text for span in spans]
+    assert all(span.carries_solution for span in spans)
+    assert retrieve.last_match_method == "structure"
+    assert retrieve.last_min_conf == 0.79
+
+
+@pytest.mark.asyncio
+async def test_label_without_structure_pair_uses_regex_gap_filler():
+    label_chunk = (10, "Solution 2\nThe threat of entry is low.", 2)
+    retrieve = make_paired_solution_retrieve_fn(
+        db=None,
+        solution_document_id=55,
+        label_index=build_solution_label_index((label_chunk,)),
+        page_conf={2: 0.93},
+        solution_chunks=((20, "Answer: unrelated structure pair", 3),),
+        structure_pairs=(
+            _structure_pair(answer_spans=(BlockSpan(chunk_id=20, start_char=0, end_char=32),)),
+        ),
+    )
+
+    spans = await retrieve(SimpleNamespace(label="2", problem_text="2. Which force?"))
+
+    assert [span.text for span in spans] == [label_chunk[1]]
+    assert retrieve.last_match_method == "label"
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_structure_label_falls_through_regex_then_semantic(monkeypatch):
+    label_chunk = (10, "Solution 1\nRegex gap-filler answer", 2)
+    structure_chunk = (20, "Answer: ambiguous structure candidate", 3)
+    duplicate_pairs = (
+        _structure_pair(
+            answer_spans=(BlockSpan(chunk_id=20, start_char=0, end_char=len(structure_chunk[1])),)
+        ),
+        _structure_pair(answer_spans=(BlockSpan(chunk_id=20, start_char=8, end_char=20),)),
+    )
+    semantic_hit = (30, "Semantic fallback context", 5)
+
+    async def _semantic(_db, _doc, _query, _top_k):
+        return [semantic_hit]
+
+    monkeypatch.setattr(
+        "apollo.provisioning.authored_sets.paired_retrieval._doc_scoped_semantic",
+        _semantic,
+    )
+    regex_retrieve = make_paired_solution_retrieve_fn(
+        db=None,
+        solution_document_id=55,
+        label_index=build_solution_label_index((label_chunk,)),
+        page_conf={2: 0.93, 5: 0.77},
+        solution_chunks=(structure_chunk,),
+        structure_pairs=duplicate_pairs,
+    )
+    semantic_retrieve = make_paired_solution_retrieve_fn(
+        db=None,
+        solution_document_id=55,
+        label_index={},
+        page_conf={5: 0.77},
+        solution_chunks=(structure_chunk,),
+        structure_pairs=duplicate_pairs,
+    )
+
+    regex_spans = await regex_retrieve(SimpleNamespace(label="1", problem_text="1. Which force?"))
+    semantic_spans = await semantic_retrieve(
+        SimpleNamespace(label="1", problem_text="1. Which force?")
+    )
+
+    assert [span.text for span in regex_spans] == [label_chunk[1]]
+    assert regex_retrieve.last_match_method == "label"
+    assert [span.text for span in semantic_spans] == [semantic_hit[1]]
+    assert all(span.carries_solution is False for span in semantic_spans)
+    assert semantic_retrieve.last_match_method == "retrieval"
+
+
+@pytest.mark.asyncio
+async def test_structure_only_uses_answer_slice_not_regex_whole_chunk(monkeypatch):
+    combined = "Question 1: Which force?\nAnswer 1: rivalry"
+    answer_start = combined.index("Answer")
+    pair = _structure_pair(
+        answer_spans=(BlockSpan(chunk_id=20, start_char=answer_start, end_char=len(combined)),)
+    )
+
+    async def _semantic_must_not_run(*_args, **_kwargs):
+        raise AssertionError("combined mode must not retrieve whole chunks")
+
+    monkeypatch.setattr(
+        "apollo.provisioning.authored_sets.paired_retrieval._doc_scoped_semantic",
+        _semantic_must_not_run,
+    )
+    retrieve = make_paired_solution_retrieve_fn(
+        db=None,
+        solution_document_id=10,
+        label_index=build_solution_label_index(((20, combined, 1),)),
+        page_conf={1: 0.95},
+        solution_chunks=((20, combined, 1),),
+        structure_pairs=(pair,),
+        structure_only=True,
+    )
+
+    spans = await retrieve(SimpleNamespace(label="1", problem_text="Question 1"))
+
+    assert [span.text for span in spans] == ["Answer 1: rivalry"]
+    assert retrieve.last_match_method == "structure"
+
+    unmatched = await retrieve(SimpleNamespace(label="2", problem_text="Question 2"))
+    assert unmatched == ()
+    assert retrieve.last_match_method is None
 
 
 @pytest.mark.asyncio

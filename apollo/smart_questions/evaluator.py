@@ -15,6 +15,11 @@ from apollo.smart_questions.planner import CoverageState, NodeCoverage
 
 _VALID_STATES: set[str] = {"covered", "partial", "missing", "misconceived"}
 
+# ask_hint longer than this is discarded — a runaway hint is more likely to
+# carry answer content. Enforced in parsing because OpenAI strict structured
+# outputs reject maxLength.
+_HINT_MAX_CHARS: int = 300
+
 
 def _schema() -> dict:
     return {
@@ -30,17 +35,37 @@ def _schema() -> dict:
                     "items": {
                         "type": "object",
                         "additionalProperties": False,
-                        "required": ["node_id", "state", "credit"],
+                        "required": ["node_id", "state", "credit", "ask_hint"],
                         "properties": {
                             "node_id": {"type": "string"},
                             "state": {"type": "string", "enum": sorted(_VALID_STATES)},
                             "credit": {"type": "number", "minimum": 0, "maximum": 1},
+                            "ask_hint": {"type": "string"},
                         },
                     },
                 }
             },
         },
     }
+
+
+def _hint_instruction() -> str:
+    return (
+        "For every node also return ask_hint: an empty string when state is covered, "
+        "otherwise one short line telling a question-writer what to ask the student "
+        "about next. Phrase ask_hint using ONLY wording from the problem text and the "
+        "student's own messages — never state, name, paraphrase, or hint at the node's "
+        "own content. Point at which part of the problem is still unanswered, or which "
+        "part of the student's explanation needs to go deeper."
+    )
+
+
+def _parse_hint(item: dict) -> str:
+    hint = item.get("ask_hint", "")
+    if not isinstance(hint, str):
+        return ""
+    hint = hint.strip()
+    return hint if len(hint) <= _HINT_MAX_CHARS else ""
 
 
 def _call_evaluator(*, problem_text: str, items: list[dict], student_messages: list[str]) -> str:
@@ -58,7 +83,8 @@ def _call_evaluator(*, problem_text: str, items: list[dict], student_messages: l
                     "reference node with the student's cumulative explanation. covered means the "
                     "idea is adequately explained or correctly used; partial means meaningful but "
                     "incomplete evidence; misconceived means the student asserted a conflicting "
-                    "idea; missing means no meaningful evidence. Return one verdict per node."
+                    "idea; missing means no meaningful evidence. Return one verdict per node. "
+                    + _hint_instruction()
                 ),
             },
             {
@@ -75,6 +101,53 @@ def _call_evaluator(*, problem_text: str, items: list[dict], student_messages: l
         ],
     )
     return response.choices[0].message.content or "{}"
+
+
+def rewrite_hint(
+    *,
+    hint: str,
+    forbidden_words: Sequence[str],
+    problem_text: str,
+    student_messages: Sequence[str],
+) -> str:
+    """One-shot rewrite of a leak-flagged hint with the offending words banned.
+
+    Returns "" when the model produces nothing usable (empty or over the same
+    length cap as first-pass hints); the caller falls back to its generic
+    nudge. The rewrite sees only the public surface plus the flagged hint, so
+    it cannot introduce new answer content beyond what the guard re-checks.
+    """
+    client: Any = OpenAI()
+    response = client.chat.completions.create(
+        model=cast(Any, os.getenv("APOLLO_QUESTION_MODEL") or os.getenv("MAIN_MODEL") or "gpt-4o"),
+        temperature=0.0,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Rewrite this question-writer hint so it keeps the same intent but uses "
+                    "ONLY wording from the problem text and the student's own messages. The "
+                    "forbidden words must not appear in any form (including other inflections). "
+                    "Never state, name, paraphrase, or hint at reference answer content. "
+                    "Return the rewritten hint only, as one short line."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "hint": hint,
+                        "forbidden_words": list(forbidden_words),
+                        "problem": problem_text,
+                        "student_messages": list(student_messages),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+    )
+    rewritten = (response.choices[0].message.content or "").strip()
+    return rewritten if len(rewritten) <= _HINT_MAX_CHARS else ""
 
 
 async def evaluate_reference_coverage(
@@ -102,6 +175,7 @@ async def evaluate_reference_coverage(
             node_id=node_id,
             state=cast(CoverageState, state),
             credit=max(0.0, min(1.0, float(item.get("credit", 0.0)))),
+            ask_hint=_parse_hint(item),
         )
     return [
         by_id.get(node.node_id, NodeCoverage(node.node_id, "missing", 0.0))

@@ -22,32 +22,59 @@ from collections.abc import Sequence
 
 from apollo.overseer.topic_score import TopicScoreResult
 
-_TOPIC_SYSTEM_PROMPT = """You are the Overseer's diagnostic narrator. The student just taught an
-ignorant agent (Apollo) to solve a specific problem. A deterministic topic-based score has
-already graded the student — you have the full ledger: every topic (equation / condition /
-simplification / procedure step) with its coverage status and credit, and every misconception
-finding with its evidence quote and whether it was corrected. Your job is to NARRATE this ledger — not to
-re-grade it and not to introduce anything the ledger does not contain.
+_TOPIC_SYSTEM_PROMPT = """You write feedback directly to a student who just taught Apollo how
+to solve a problem. The assessment is already complete. Use the supplied assessment evidence
+to help the student recognize what worked and improve the explanation; do not re-grade it.
 
-HARD RULES — never violate:
-- Explain ONLY the components listed in the ledger below. Do not claim the student covered,
-  missed, or was tested on anything not present in the topics list.
-- For every misconception in the ledger, quote its evidence span verbatim (or close
-  paraphrase of the quoted text). If it is marked corrected, praise the correction
-  explicitly — do not describe it as still wrong.
-- NEVER surface internal identifiers (snake_case keys), decimal credit/weight/dock
-  values, or any hint of how the score is computed internally. You may cite the same
-  whole-number percentages the ledger shows (e.g. "80%").
-- Do not invent physics/math/economics beyond what the ledger's topic names and evidence spans
-  say. No claims beyond this ledger.
-- Use inline math delimited ONLY as `$...$` (a single dollar sign on each side) — never
-  `\\( \\)`, never `\\[ \\]`, never bare LaTeX commands outside a `$...$` span.
+AUDIENCE AND VOICE — never violate:
+- Speak to the student as "you" and "your". Never call them "the student," refer to them as
+  "they/their," or sound like a report written for a teacher.
+- Write as a perceptive coach who heard the explanation, not as an auditor reciting a checklist.
+- Be warm, specific, candid, and concise. Do not use bureaucratic phrases such as "partially
+  covered the topic," "entirely missing," "no misconceptions were recorded," or "the ledger."
 
-Output format:
-- At most 3 short paragraphs narrating the ledger (covered/partial/missing topics, then
-  misconceptions with their evidence + cost), followed by exactly one final line starting with
-  "Next step:" naming a concrete next action tied to the weakest/most costly ledger entry.
-- Tone: diagnostic, supportive, not judgmental."""
+EVIDENCE AND ACCURACY:
+- Use ONLY the topics and misconception evidence supplied below. Do not invent subject-matter
+  details, claims, examples, or requirements.
+- When a "What the student actually said" transcript is provided, it is the verbatim record of
+  the student's teaching. Ground every credit statement in it: when crediting a strength or a
+  partial topic, quote a short span of the student's own words or closely paraphrase what they
+  actually said. NEVER expand a topic's name into a detailed explanation the transcript does not
+  contain — if you cannot point to where the student taught a credited topic, credit it in one
+  plain clause by its topic name, without attributing specific claims to the student.
+- The supplied statuses and percentages stay authoritative: never use the transcript to argue a
+  topic deserved more or less credit than the assessment shows.
+- Each topic's description is the REFERENCE solution's wording: it says what an ideal
+  explanation contains, not what the student said. The student's own words appear only in the
+  quoted "You said" lines, the misconception evidence, and the "What the student actually said"
+  transcript. Never present a reference detail (a name, date, title, equation, or term) as
+  something the student personally stated unless it appears in those student words; credit a
+  topic that has no student words in general terms only.
+- Treat a covered topic as a genuine strength. For a partial topic, distinguish what the
+  explanation established from what still needs to be made explicit. Treat a missing topic as
+  an opportunity to extend the explanation, never as proof that the student does not know it.
+- Synthesize; do not inventory the rubric. Mention at most two of the most important gaps, chosen
+  by lowest percentage. Combine closely related gaps into one idea when possible.
+- Discuss a misconception only when one is supplied. Quote or closely paraphrase its evidence,
+  state plainly why it needs attention, and acknowledge it if marked corrected. If none are
+  supplied, say nothing at all about misconceptions, correctness, or the absence of errors.
+- NEVER expose internal identifiers, scoring machinery, decimal credit/weight/dock values, or
+  the words "ledger" and "rubric." Percentages are available for prioritization but should be
+  omitted unless one is genuinely useful to the student.
+- Use inline math delimited ONLY as `$...$` — never `\\( \\)`, never `\\[ \\]`, and never a
+  bare LaTeX command outside a `$...$` span.
+
+RESPONSE SHAPE:
+- Write 90–160 words in two short paragraphs, then one final line. Do not use headings or bullets.
+- Paragraph 1: lead with the strongest specific thing the student explained and why it helped
+  Apollo understand. If nothing was covered, begin neutrally and encouragingly without inventing
+  praise.
+- Paragraph 2: explain the one or two highest-value improvements. Make the contrast actionable:
+  what the student communicated, when partial evidence exists, and what to add or connect next.
+- Finish with exactly one line beginning "Next step:" Give one concrete revision or re-teaching
+  move tied to the most important gap. Phrase it as something the student can say, show, connect,
+  compare, or illustrate — not "focus on understanding" or "study more."
+- Do not repeat the score or letter grade. Do not add a generic conclusion."""
 
 
 def _status_label(status: str) -> str:
@@ -74,6 +101,8 @@ def _format_topic_line(topic) -> str:  # noqa: ANN001 - TopicCredit, avoid impor
     name = topic.display_name or _humanize_key(topic.canonical_key)
     pct = round(topic.credit * 100)
     line = f'- Topic "{name}": {_status_label(topic.status)} — {pct}%'
+    if getattr(topic, "evidence_span", None):
+        line += f'\n  * You said: "{topic.evidence_span}"'
     if topic.misconceptions:
         for m in topic.misconceptions:
             resolved = "corrected" if m.resolved else "uncorrected"
@@ -82,25 +111,50 @@ def _format_topic_line(topic) -> str:  # noqa: ANN001 - TopicCredit, avoid impor
     return line
 
 
-def build_topic_narrative_prompt(result: TopicScoreResult, *, problem_text: str) -> tuple[str, str]:
+def build_topic_narrative_prompt(
+    result: TopicScoreResult,
+    *,
+    problem_text: str,
+    student_utterances: Sequence[str] = (),
+) -> tuple[str, str]:
     """Build the ``(system, user)`` prompt pair for the ledger-grounded narrative.
 
     Pure: no IO. ``user`` enumerates every topic (in ``result.topics`` order,
     including the synthetic ``_general`` bucket last, matching
-    ``compute_topic_score``'s own ordering) with its status and whole-number
-    percentage (display names only — internals never reach the prompt; see
-    ``sanitize_narrative`` for the output-side gate) and any attached
-    misconceptions (evidence span + resolved flag). Nothing outside
-    ``result`` and ``problem_text`` is referenced, so the generated prompt
+    ``compute_topic_score``'s own ordering) with its status, whole-number
+    percentage, and — when the topic carries a gated per-attempt
+    ``evidence_span`` — a quoted ``You said:`` line of the student's own
+    words (display names + those quotes only — internals never reach the
+    prompt; see ``sanitize_narrative`` for the output-side gate) and any
+    attached misconceptions (evidence span + resolved flag). The evidence
+    header marks topic descriptions as the REFERENCE solution's wording so
+    the narrator never attributes them to the student.
+
+    ``student_utterances`` (2026-07-14 narrative-grounding fix) is the verbatim
+    student transcript in turn order. When non-empty it is appended so the
+    narrator can ground credit statements in what the student ACTUALLY said
+    instead of expanding topic display names into claims the student never
+    made (the prod-session-10 overstatement class). Empty (the default) keeps
+    the prompt byte-identical to the pre-fix build. Nothing outside ``result``,
+    ``problem_text`` and the transcript is referenced, so the generated prompt
     can never smuggle in claims the ledger does not support.
     """
     topic_lines = "\n".join(_format_topic_line(t) for t in result.topics) or "(no topics graded)"
 
     user = (
         f"Problem: {problem_text}\n\n"
-        f"Score: {result.score} ({result.letter})\n\n"
-        f"Ledger:\n{topic_lines}\n"
+        "Assessment evidence (topic descriptions are the reference solution's own wording; "
+        'the student\'s words appear only in quoted "You said" lines, misconception lines, '
+        "and the transcript below):\n"
+        f"{topic_lines}\n"
     )
+    spoken = [u.strip() for u in student_utterances if u and u.strip()]
+    if spoken:
+        transcript_lines = "\n".join(f'{i}. "{u}"' for i, u in enumerate(spoken, start=1))
+        user += (
+            "\nWhat the student actually said (verbatim, in turn order):\n"
+            f"{transcript_lines}\n"
+        )
     return _TOPIC_SYSTEM_PROMPT, user
 
 

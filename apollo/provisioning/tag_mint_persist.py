@@ -182,8 +182,11 @@ async def link_opposes(
 ) -> int:
     """Second pass: resolve each misconception's ``payload.opposes_entity_key`` to
     ``opposes_entity_id`` now that every entity row exists. Returns the count
-    linked. Raises ``KeyError`` via the caller's lookup when an opposes key
-    resolves to no entity (the caller maps that to a fail-closed TagMintError)."""
+    linked. An ALREADY-LINKED row whose key does not resolve in THIS call's
+    ``key_to_id`` is skipped (a prior mint or emergent materialize owns that
+    link; re-requiring its key here fails every later mint into the concept).
+    Raises ``KeyError`` only for an UNLINKED row whose opposes key resolves to
+    no entity (the caller maps that to a fail-closed TagMintError)."""
     rows = (
         (
             await db.execute(
@@ -202,7 +205,17 @@ async def link_opposes(
         opposes_key = payload.get("opposes_entity_key")
         if not opposes_key:
             continue
-        target_id = key_to_id[opposes_key]  # KeyError → caller raises TagMintError
+        target_id = key_to_id.get(opposes_key)
+        if target_id is None:
+            if payload.get("opposes_entity_id") is not None:
+                # ALREADY LINKED by an earlier mint or emergent materialize —
+                # this walk's key_to_id (scoped to the CURRENT mint's keys)
+                # cannot re-resolve a prior mint's key, and failing here killed
+                # every candidate minting into the concept (staging set 13:
+                # one 2026-07-12 emergent misconception rejected 14/19
+                # otherwise-valid problems). The link is durable; skip it.
+                continue
+            raise KeyError(opposes_key)  # unlinked + unresolvable → caller fail-closed
         payload["opposes_entity_id"] = target_id
         row.payload = payload  # type: ignore[assignment]
         linked += 1
@@ -210,9 +223,55 @@ async def link_opposes(
     return linked
 
 
-async def _entities_concept_map(
-    db: AsyncSession, entity_ids: Iterable[int]
-) -> dict[int, int]:
+async def drop_unlinkable_minted_misconceptions(
+    db: AsyncSession,
+    *,
+    concept_id: int,
+    key_to_id: dict[str, int],
+    minted_entity_ids: dict[str, int],
+) -> list[dict[str, int | str]]:
+    """Delete THIS mint's misconception rows whose ``opposes_entity_key``
+    resolves to no minted/merged entity, returning what was dropped.
+
+    Scoped strictly to rows this mint created (``minted_entity_ids``): a
+    pre-existing misconception with an unresolvable key keeps
+    ``link_opposes``'s fail-closed contract, as does ``emergent/materialize.py``
+    (the other ``link_opposes`` caller — never routed through here). Dropping
+    creates no wrong link — unlike guessing a mapping — it only loses one
+    enrichment edge, mirroring the 5b unresolvable-prereq drop policy."""
+    minted_ids = set(minted_entity_ids.values())
+    rows = (
+        (
+            await db.execute(
+                select(KGEntity)
+                .where(KGEntity.concept_id == concept_id)
+                .where(KGEntity.kind == "misconception")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    dropped: list[dict[str, int | str]] = []
+    for row in rows:
+        if int(row.id) not in minted_ids:
+            continue
+        opposes_key = dict(row.payload or {}).get("opposes_entity_key")
+        if not opposes_key or opposes_key in key_to_id:
+            continue
+        dropped.append(
+            {
+                "canonical_key": str(row.canonical_key),
+                "opposes_entity_key": str(opposes_key),
+                "entity_id": int(row.id),
+            }
+        )
+        await db.delete(row)
+    if dropped:
+        await db.flush()
+    return dropped
+
+
+async def _entities_concept_map(db: AsyncSession, entity_ids: Iterable[int]) -> dict[int, int]:
     """Map each ``KGEntity.id`` to its owning ``concept_id`` in ONE query. A missing
     id is simply absent from the map — the caller treats absence as out-of-scope
     (the fail-safe direction)."""
@@ -222,9 +281,7 @@ async def _entities_concept_map(
     return {
         int(eid): int(cid)
         for eid, cid in (
-            await db.execute(
-                select(KGEntity.id, KGEntity.concept_id).where(KGEntity.id.in_(ids))
-            )
+            await db.execute(select(KGEntity.id, KGEntity.concept_id).where(KGEntity.id.in_(ids)))
         ).all()
     }
 
@@ -322,9 +379,7 @@ async def partition_prereqs_by_concept_scope(
     BRIDGE across two cross-concept edges and fake a cycle that discards a
     legitimate within-concept edge. A pair whose key is not in ``key_to_id`` raises
     KeyError (the caller's fail-closed contract for an unresolvable key)."""
-    concept_of = await _entities_concept_map(
-        db, (key_to_id[key] for pair in pairs for key in pair)
-    )
+    concept_of = await _entities_concept_map(db, (key_to_id[key] for pair in pairs for key in pair))
     in_concept: list[tuple[str, str]] = []
     cross_concept: list[tuple[str, str]] = []
     for from_key, to_key in pairs:
@@ -382,9 +437,7 @@ async def insert_prereqs(
         db, concept_id=concept_id, key_to_id=key_to_id, pairs=pairs
     )
     kept_ids = {key_to_id[key] for pair in kept for key in pair}
-    adj = await load_concept_prereq_adjacency(
-        db, concept_id=concept_id, entity_ids=kept_ids
-    )
+    adj = await load_concept_prereq_adjacency(db, concept_id=concept_id, entity_ids=kept_ids)
     inserted = 0
     skipped = 0
     cyclic: list[tuple[str, str]] = []

@@ -58,6 +58,7 @@ from apollo.provisioning.authored_sets.orchestrator import (
     _tag_mint_chat_fn,
     run_authored_set_provisioning,
 )
+from apollo.provisioning.cost_constants import structure_pairing_mode
 from apollo.provisioning.metered_chat import MeteredChat
 from apollo.provisioning.path_enumeration import enumerate_strategy_paths
 from apollo.provisioning.promote import promote
@@ -68,6 +69,12 @@ from database.session import get_async_session, get_db_session
 from indexing.document_embedder import embed_text
 
 _LOG = logging.getLogger(__name__)
+
+_SAME_DOC_GUARD_NOTE = (
+    "solution PDF ignored: identical content to the problem PDF "
+    "(content_hash match) — treated as no solution provided, "
+    "so reference solutions are generated and held for review"
+)
 
 router = APIRouter(tags=["apollo-authored-sets"])
 
@@ -165,9 +172,9 @@ async def _run_set_background(
     """Own a fresh session; request-scoped sessions are closed before this runs.
 
     ``solution_bytes`` is optional (B1): the teacher may upload a problem PDF
-    alone, in which case solution-role indexing is skipped entirely and
-    provisioning grounds every candidate against no solution spans, falling
-    through to ``find_or_generate``'s generate branch (held for review)."""
+    alone, in which case solution-role indexing is skipped. With structure
+    pairing ON, provisioning first probes that document for combined answer
+    units; otherwise candidates fall through to generated-and-held references."""
     ingest_run_id: int | None = None
     # OCR-observability: capture each doc's transient per-page OCR pass so the
     # ingest run + page-level evidence tables (empty before WU-AAS observability)
@@ -183,6 +190,7 @@ async def _run_set_background(
     # actually OCR'd. ``solution_document_id`` (below) is the PAIRING decision.
     indexed_solution_document_id: int | None = None
     solution_document_id: int | None = None
+    combined_document = False
     same_doc_guard_note: str | None = None
     evidence_persisted = False
     try:
@@ -236,22 +244,32 @@ async def _run_set_background(
                     problem_content_hash is not None
                     and solution_content_hash == problem_content_hash
                 ):
-                    _LOG.warning(
-                        "authored_set_same_doc_solution_guard",
-                        extra={
-                            "event": "authored_set_same_doc_solution_guard",
-                            "set_id": set_id,
-                            "search_space_id": search_space_id,
-                            "problem_document_id": problem_document_id,
-                            "solution_document_id": indexed_solution_document_id,
-                            "content_hash": problem_content_hash,
-                        },
-                    )
-                    same_doc_guard_note = (
-                        "solution PDF ignored: identical content to the problem PDF "
-                        "(content_hash match) — treated as no solution provided, "
-                        "so reference solutions are generated and held for review"
-                    )
+                    if structure_pairing_mode() == "on":
+                        combined_document = True
+                        solution_document_id = problem_document_id
+                        _LOG.info(
+                            "authored_set_same_doc_combined_mode",
+                            extra={
+                                "event": "authored_set_same_doc_combined_mode",
+                                "set_id": set_id,
+                                "search_space_id": search_space_id,
+                                "problem_document_id": problem_document_id,
+                                "indexed_solution_document_id": indexed_solution_document_id,
+                            },
+                        )
+                    else:
+                        _LOG.warning(
+                            "authored_set_same_doc_solution_guard",
+                            extra={
+                                "event": "authored_set_same_doc_solution_guard",
+                                "set_id": set_id,
+                                "search_space_id": search_space_id,
+                                "problem_document_id": problem_document_id,
+                                "solution_document_id": indexed_solution_document_id,
+                                "content_hash": problem_content_hash,
+                            },
+                        )
+                        same_doc_guard_note = _SAME_DOC_GUARD_NOTE
                 else:
                     solution_document_id = indexed_solution_document_id
 
@@ -295,6 +313,7 @@ async def _run_set_background(
                 search_space_id=search_space_id,
                 problem_document_id=problem_document_id,
                 solution_document_id=solution_document_id,
+                combined_document=combined_document,
                 metered_chat=_make_metered_chat(
                     document_id=problem_document_id, ingest_run=ingest_run
                 ),
@@ -311,6 +330,26 @@ async def _run_set_background(
             row = await db.get(AuthoredSet, set_id)
             if row is None:
                 return
+            if report.combined_document:
+                # Covers both the explicit same-hash handoff and a problem-only
+                # upload whose pre-scrape probe discovered answer units.
+                row.solution_document_id = problem_document_id
+            elif combined_document:
+                # The same-hash probe found no usable combined structure (or
+                # failed/breached budget): restore the original guard outcome.
+                row.solution_document_id = None
+                same_doc_guard_note = _SAME_DOC_GUARD_NOTE
+                _LOG.warning(
+                    "authored_set_same_doc_solution_guard",
+                    extra={
+                        "event": "authored_set_same_doc_solution_guard",
+                        "set_id": set_id,
+                        "search_space_id": search_space_id,
+                        "problem_document_id": problem_document_id,
+                        "solution_document_id": indexed_solution_document_id,
+                        "reason": "combined_segmentation_unavailable",
+                    },
+                )
             result_summary = report.model_dump()
             if same_doc_guard_note is not None:
                 result_summary["same_doc_solution_guard"] = same_doc_guard_note

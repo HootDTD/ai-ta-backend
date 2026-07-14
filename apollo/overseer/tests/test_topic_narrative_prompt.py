@@ -60,7 +60,7 @@ def test_user_prompt_carries_display_name_status_and_percent():
     assert "Explain causality in directional systems" in user
     assert "covered" in user
     assert "90%" in user
-    assert "Score: 64 (C)" in user
+    assert "Score:" not in user
 
 
 def test_misconception_line_keeps_span_and_resolution_only():
@@ -80,3 +80,114 @@ def test_system_prompt_forbids_internals_and_allows_percentages():
     system, _user = build_topic_narrative_prompt(_result(), problem_text="P?")
     assert "internal identifiers" in system
     assert "percentage" in system.lower()
+
+
+def test_system_prompt_forbids_third_person_audit_feedback():
+    system, _user = build_topic_narrative_prompt(_result(), problem_text="P?")
+    lowered = " ".join(system.lower().split())
+    assert 'speak to the student as "you" and "your"' in lowered
+    assert 'never call them "the student,' in lowered
+    assert "say nothing at all about misconceptions" in lowered
+
+
+# ── 2026-07-14 narrative grounding: verbatim student transcript in the prompt ──
+
+
+def test_user_prompt_includes_student_transcript_when_provided():
+    _system, user = build_topic_narrative_prompt(
+        _result(),
+        problem_text="P?",
+        student_utterances=("future shock is rapid change", "it disrupts social norms"),
+    )
+    assert "What the student actually said" in user
+    assert '1. "future shock is rapid change"' in user
+    assert '2. "it disrupts social norms"' in user
+
+
+def test_user_prompt_omits_transcript_block_by_default():
+    _system, user = build_topic_narrative_prompt(_result(), problem_text="P?")
+    assert "What the student actually said" not in user
+
+
+def test_blank_utterances_are_dropped_and_all_blank_omits_block():
+    _system, user = build_topic_narrative_prompt(
+        _result(), problem_text="P?", student_utterances=("", "  ", "real words")
+    )
+    assert '1. "real words"' in user
+    assert '2.' not in user
+    _system, user2 = build_topic_narrative_prompt(
+        _result(), problem_text="P?", student_utterances=("", "   ")
+    )
+    assert "What the student actually said" not in user2
+
+
+def test_system_prompt_forbids_overstating_credited_topics():
+    system, _user = build_topic_narrative_prompt(_result(), problem_text="P?")
+    lower = system.lower()
+    assert "what the student actually said" in lower
+    assert "never expand a topic's name" in lower
+    # Transcript must not re-grade: ledger stays authoritative.
+    assert "authoritative" in lower
+
+
+# ── 2026-07-14 per-session grounding: reference text is never the student's words ──
+
+
+def _result_with_evidence(evidence_span: str | None) -> TopicScoreResult:
+    return TopicScoreResult(
+        score=70,
+        letter="B",
+        coverage_component=0.7,
+        misconception_dock=0.0,
+        topics=(
+            TopicCredit(
+                canonical_key="proc_when_started",
+                display_name=(
+                    "State when future shock was identified: Alvin Toffler named it "
+                    "in his 1970 book"
+                ),
+                credit=0.7,
+                status="covered",
+                weight=1.0,
+                misconceptions=(),
+                evidence_span=evidence_span,
+            ),
+        ),
+    )
+
+
+def test_user_prompt_marks_topic_text_as_reference_wording():
+    """The narrator must be able to tell reference wording apart from student
+    speech — the evidence header says the topic descriptions are the
+    reference solution's own words."""
+    _system, user = build_topic_narrative_prompt(
+        _result_with_evidence(None), problem_text="P?"
+    )
+    assert "reference solution's own wording" in user
+
+
+def test_user_prompt_quotes_student_evidence_when_present():
+    _system, user = build_topic_narrative_prompt(
+        _result_with_evidence("it started in 1970"), problem_text="P?"
+    )
+    assert 'You said: "it started in 1970"' in user
+
+
+def test_user_prompt_has_no_you_said_line_without_evidence():
+    _system, user = build_topic_narrative_prompt(
+        _result_with_evidence(None), problem_text="P?"
+    )
+    assert "You said:" not in user
+
+
+def test_system_prompt_forbids_attributing_reference_content_to_student():
+    """The exact failure this guards: the narrative told a student who wrote
+    only '1970' that they 'referenced Alvin Toffler's 1970 book and the
+    post-World-War-II era' — reference wording presented as the student's own
+    statement."""
+    system, _user = build_topic_narrative_prompt(
+        _result_with_evidence(None), problem_text="P?"
+    )
+    lowered = " ".join(system.lower().split())
+    assert "not what the student said" in lowered
+    assert 'quoted "you said"' in lowered

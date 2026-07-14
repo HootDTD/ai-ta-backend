@@ -146,11 +146,15 @@ def test_generate_diagnostic_system_prompt_instructs_narrative_not_verdict(mock_
     )
     called = client.chat.completions.create.call_args
     system_msg = next(m for m in called.kwargs["messages"] if m["role"] == "system")
-    sys_lower = system_msg["content"].lower()
-    # The prompt must instruct narration aligned to the rubric, not grading.
+    sys_lower = " ".join(system_msg["content"].lower().split())
+    # The legacy lane follows the same direct-to-student coaching contract.
     assert "rubric" in sys_lower
-    assert "lead with the lowest-scoring" in sys_lower or "open with the weakest" in sys_lower
-    assert "do not decide the verdict" in sys_lower or "do not re-grade" in sys_lower or "narrate" in sys_lower
+    assert "address the student only as" in sys_lower
+    assert '"you" and "your' in sys_lower
+    assert 'never say "the student"' in sys_lower
+    assert "prioritize at most two" in sys_lower
+    assert "never say that no misconceptions" in sys_lower
+    assert "do not re-grade" in sys_lower
 
 
 @patch("apollo.overseer.diagnostic.OpenAI")
@@ -173,3 +177,14 @@ def test_generate_diagnostic_softfails_to_placeholder_on_llm_exception(mock_clie
     assert "unavailable" in result.lower()
     # The rubric is still accurate even if narrative fails.
     assert "grade" in result.lower() or "still accurate" in result.lower()
+
+
+def test_axis_system_prompt_forbids_attributing_reference_content():
+    """Same guard as the topic prompt: reference entries describe the ideal
+    solution - the narrator must never present their details as something the
+    student personally stated."""
+    from apollo.overseer.diagnostic import _SYSTEM_PROMPT
+
+    lowered = " ".join(_SYSTEM_PROMPT.lower().split())
+    assert "not what the student said" in lowered
+    assert "never present" in lowered

@@ -30,6 +30,10 @@ def test_model_prices_present():
         Decimal("0.15"),
         Decimal("0.60"),
     )
+    assert cost_constants.MODEL_PRICES["gpt-5.1"] == (
+        Decimal("1.25"),
+        Decimal("10.00"),
+    )
 
 
 def test_cost_usd_for_gpt4o():
@@ -104,3 +108,16 @@ def test_structured_scrape_enabled_default_on_and_overridable(monkeypatch):
     assert structured_scrape_enabled() is False
     monkeypatch.setenv("APOLLO_STRUCTURED_SCRAPE", "true")
     assert structured_scrape_enabled() is True
+
+
+def test_structure_pairing_mode_default_per_call_and_fail_closed(monkeypatch):
+    from apollo.provisioning.cost_constants import structure_pairing_mode
+
+    monkeypatch.delenv("APOLLO_STRUCTURE_PAIRING", raising=False)
+    assert structure_pairing_mode() == "off"
+    monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", "shadow")
+    assert structure_pairing_mode() == "shadow"
+    monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", "ON")
+    assert structure_pairing_mode() == "on"
+    monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", "typo")
+    assert structure_pairing_mode() == "off"

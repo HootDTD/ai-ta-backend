@@ -8,9 +8,12 @@ from apollo.errors import CoverageGradingError
 from apollo.ontology import KGGraph, build_node
 from apollo.overseer.coverage_contract import validate_coverage_verdict
 from apollo.overseer.transcript_coverage import (
+    NodeVerdict,
     build_system_prompt,
     build_transcript_grader_schema,
     compute_transcript_coverage,
+    compute_transcript_coverage_with_spans,
+    narrative_evidence_spans,
     validate_span,
 )
 
@@ -308,3 +311,73 @@ def test_validate_span_false_when_stitched_across_student_message_boundary():
     student_messages = ["I integrate the function", "now I evaluate the bounds"]
     stitched_span = "the function now I evaluate"
     assert not validate_span(stitched_span, student_messages)
+
+
+# --------------------------------------------------------------------------- #
+# Per-session narrative evidence (diagnostic-narrative grounding)
+# --------------------------------------------------------------------------- #
+def _verdict(
+    node_id: str,
+    *,
+    credit: float = 0.7,
+    evidence_span: str | None = "I integrate now",
+) -> NodeVerdict:
+    return NodeVerdict(
+        node_id=node_id,
+        covered=credit >= 0.5,
+        credit=credit,
+        confidence=0.9,
+        evidence_span=evidence_span,
+        prompted=False,
+        corrected_later=False,
+        basis="stated",
+    )
+
+
+def test_narrative_evidence_spans_keeps_only_verbatim_student_quotes():
+    """The narrative lane must only ever quote words the student actually
+    typed THIS attempt — an adjudicator span that fails the verbatim check
+    (hallucinated, Apollo-sourced, or stitched) is dropped, not served."""
+    transcript = [("student", "I integrate now"), ("apollo", "Alvin Toffler wrote it in 1970")]
+    verdicts = [
+        _verdict("p1", evidence_span="I integrate now"),
+        _verdict("p2", evidence_span="Alvin Toffler wrote it in 1970"),
+        _verdict("p3", evidence_span=None),
+    ]
+    spans = narrative_evidence_spans(verdicts, transcript)
+    assert spans == {"p1": "I integrate now"}
+
+
+def test_narrative_evidence_spans_drops_zero_credit_verdicts():
+    transcript = [("student", "I integrate now")]
+    verdicts = [_verdict("p1", credit=0.0, evidence_span="I integrate now")]
+    assert narrative_evidence_spans(verdicts, transcript) == {}
+
+
+@pytest.mark.asyncio
+async def test_with_spans_returns_contract_coverage_plus_gated_spans():
+    """One adjudication call yields BOTH the frozen coverage verdict and the
+    per-attempt narrative spans — no second LLM call, no extra coverage key."""
+    payload = {
+        "verdicts": [
+            {
+                "node_id": "p1",
+                "covered": True,
+                "credit": 0.7,
+                "confidence": 0.9,
+                "evidence_span": "I integrate now",
+                "prompted": False,
+                "corrected_later": False,
+                "basis": "stated",
+            }
+        ]
+    }
+    client = _client(payload)
+    with patch("apollo.overseer.transcript_coverage.OpenAI", return_value=client):
+        coverage, spans = await compute_transcript_coverage_with_spans(
+            [("student", "I integrate now")], _graph(), _problem()
+        )
+    validate_coverage_verdict(coverage)
+    assert coverage["procedure_scores"]["p1"] == pytest.approx(0.7)
+    assert spans == {"p1": "I integrate now"}
+    client.chat.completions.create.assert_called_once()

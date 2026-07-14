@@ -252,6 +252,7 @@ def test_reference_solution_draft_shape():
     # Pydantic round-trip.
     again = ReferenceSolutionDraft.model_validate(draft.model_dump())
     assert again.solution_source == "extracted"
+    assert _draft(solution_source="llm_paired").solution_source == "llm_paired"
     with pytest.raises(Exception):  # noqa: B017
         _draft(solution_source="invented")
 
@@ -314,6 +315,21 @@ async def test_find_or_generate_extracted_branch():
     assert len(draft.grounding) == 1
     assert draft.grounding[0].text == _printed_solution_span().text
     assert draft.provenance["retrieval_hits"] == 1
+
+
+async def test_find_or_generate_structure_branch_records_llm_paired_source():
+    async def _retrieve(_question):
+        _retrieve.last_match_method = "structure"
+        return [_printed_solution_span()]
+
+    _retrieve.last_match_method = None
+    draft = await find_or_generate(
+        None,
+        _candidate(),
+        retrieve_fn=_retrieve,
+        chat_fn=_chat_returning({"reference_solution": _reference_solution()}),
+    )
+    assert draft.solution_source == "llm_paired"
 
 
 async def test_find_or_generate_generated_branch():

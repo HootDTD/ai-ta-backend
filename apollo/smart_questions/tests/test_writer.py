@@ -1,76 +1,44 @@
+import json
 from types import SimpleNamespace
 
-from apollo.ontology import build_node
 from apollo.smart_questions import writer
 
 
-def test_writer_passes_private_target_and_returns_one_question(monkeypatch):
-    captured = {}
-
+def _client(reply: str, captured: dict):
     class Completions:
         def create(self, **kwargs):
             captured.update(kwargs)
             return SimpleNamespace(
-                choices=[
-                    SimpleNamespace(message=SimpleNamespace(content="Why does that step work?"))
-                ]
+                choices=[SimpleNamespace(message=SimpleNamespace(content=reply))]
             )
 
-    monkeypatch.setattr(
-        writer,
-        "OpenAI",
-        lambda: SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    return SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+
+
+def test_writer_prompt_carries_nudge_and_public_context_only(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(writer, "OpenAI", lambda: _client("Why does it occur?", captured))
+    result = writer.write_question(
+        nudge="the problem asks why it occurs and the student has not explained that",
+        problem_text="What is Future Shock, and why does it occur?",
+        transcript=[("student", "future shock is when things happen too quickly")],
     )
-    node = build_node(
-        node_type="definition",
-        node_id="a",
-        attempt_id=1,
-        source="reference",
-        content={"concept": "pressure", "meaning": "private answer"},
-    )
-    result = writer.write_question(node=node, transcript=[("student", "I used pressure")])
-    assert result == "Why does that step work?"
-    assert "private_target" in captured["messages"][1]["content"]
-    assert "Never state" in captured["messages"][0]["content"]
+    assert result == "Why does it occur?"
+    payload = json.loads(captured["messages"][1]["content"])
+    assert payload == {
+        "nudge": "the problem asks why it occurs and the student has not explained that",
+        "problem": "What is Future Shock, and why does it occur?",
+        "student_words": ["future shock is when things happen too quickly"],
+    }
+    system = captured["messages"][0]["content"]
+    assert "confused-student" in system
+    assert "never introduce" in system.casefold()
 
 
 def test_writer_has_safe_empty_fallback(monkeypatch):
-    class Completions:
-        def create(self, **kwargs):
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=""))])
-
-    monkeypatch.setattr(
-        writer, "OpenAI", lambda: SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
-    )
-    node = build_node(
-        node_type="definition",
-        node_id="a",
-        attempt_id=1,
-        source="reference",
-        content={"concept": "x", "meaning": "y"},
-    )
-    assert "missing one step" in writer.write_question(node=node, transcript=[])
-
-
-def test_writer_rejects_unintroduced_private_answer(monkeypatch):
-    class Completions:
-        def create(self, **kwargs):
-            return SimpleNamespace(
-                choices=[
-                    SimpleNamespace(message=SimpleNamespace(content="Does it mean private answer?"))
-                ]
-            )
-
-    monkeypatch.setattr(
-        writer, "OpenAI", lambda: SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
-    )
-    node = build_node(
-        node_type="definition",
-        node_id="a",
-        attempt_id=1,
-        source="reference",
-        content={"concept": "pressure", "meaning": "private answer"},
-    )
+    monkeypatch.setattr(writer, "OpenAI", lambda: _client("", {}))
     assert "missing one step" in writer.write_question(
-        node=node, transcript=[("student", "I used pressure")]
+        nudge="ask about the missing part",
+        problem_text="Explain x.",
+        transcript=[],
     )

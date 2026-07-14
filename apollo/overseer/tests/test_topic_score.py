@@ -803,3 +803,53 @@ def test_dedup_keeps_first_when_later_confidence_not_greater():
 
     assert len(result) == 1
     assert result[0].evidence_span == "first"
+
+
+# --------------------------------------------------------------------------- #
+# Per-session student evidence threading (diagnostic-narrative grounding)
+# --------------------------------------------------------------------------- #
+def test_evidence_spans_thread_into_topic_credit():
+    """``evidence_spans`` (node_id -> the student's own verbatim words this
+    attempt) lands on the matching topic's ``evidence_span``; topics without
+    a span carry ``None``; spans for unknown node ids are ignored."""
+    refs = [_eq_node("eq1"), _proc_node("p1")]
+    coverage = {"per_step": {"eq1": "covered"}, "procedure_scores": {"eq1": 0.7, "p1": 0.0}}
+
+    result = compute_topic_score(
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"eq1": 1.0, "p1": 1.0},
+        detection_outcome=None,
+        evidence_spans={"eq1": "flux in equals flux out", "ghost": "never served"},
+    )
+
+    by_key = {t.canonical_key: t for t in result.topics}
+    assert by_key["eq1"].evidence_span == "flux in equals flux out"
+    assert by_key["p1"].evidence_span is None
+
+
+def test_evidence_spans_default_is_none_and_score_unchanged():
+    """Omitting ``evidence_spans`` (every existing caller) leaves the result
+    byte-identical to the pre-threading behavior apart from the new field
+    defaulting to ``None`` — the span is narrative material, never a score
+    input."""
+    refs = [_eq_node("eq1")]
+    coverage = {"per_step": {"eq1": "covered"}, "procedure_scores": {"eq1": 0.7}}
+
+    without = compute_topic_score(
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"eq1": 1.0},
+        detection_outcome=None,
+    )
+    with_spans = compute_topic_score(
+        coverage=coverage,
+        reference_nodes=refs,
+        centrality={"eq1": 1.0},
+        detection_outcome=None,
+        evidence_spans={"eq1": "flux in equals flux out"},
+    )
+
+    assert without.topics[0].evidence_span is None
+    assert without.score == with_spans.score
+    assert without.coverage_component == with_spans.coverage_component

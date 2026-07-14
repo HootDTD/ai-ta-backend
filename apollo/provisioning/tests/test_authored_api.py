@@ -580,7 +580,10 @@ async def test_background_runner_without_solution_leaves_solution_document_id_nu
 
 
 @pytest.mark.asyncio
-async def test_background_runner_same_doc_guard_treats_solution_as_absent(db_session, monkeypatch):
+@pytest.mark.parametrize("mode", ["off", "shadow"])
+async def test_background_runner_same_doc_guard_treats_solution_as_absent(
+    db_session, monkeypatch, mode
+):
     """B2: a solution upload whose content_hash matches the problem doc's (the
     teacher uploaded the SAME file for both roles) must be treated as absent —
     NULL ``solution_document_id``, a structured warning log, and a note in
@@ -589,7 +592,8 @@ async def test_background_runner_same_doc_guard_treats_solution_as_absent(db_ses
     from apollo.persistence.models import AuthoredSet
     from apollo.provisioning.authored_sets.orchestrator import ProvisioningReport
 
-    search_space_id, _concept_id = await _seed_course(db_session, slug="background-samedoc")
+    monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", mode)
+    search_space_id, _concept_id = await _seed_course(db_session, slug=f"background-samedoc-{mode}")
     row = AuthoredSet(search_space_id=search_space_id, set_index=1, status="pending")
     db_session.add(row)
     await db_session.flush()
@@ -608,6 +612,7 @@ async def test_background_runner_same_doc_guard_treats_solution_as_absent(db_ses
 
     async def _run_provisioning(db, neo, **kwargs):
         assert kwargs["solution_document_id"] is None
+        assert kwargs["combined_document"] is False
         return ProvisioningReport(problems=[], counts={"promoted": 0})
 
     monkeypatch.setattr(aapi, "get_async_session", _session_cm)
@@ -631,8 +636,124 @@ async def test_background_runner_same_doc_guard_treats_solution_as_absent(db_ses
     assert refreshed.problem_document_id == 101
     assert refreshed.solution_document_id is None
     assert refreshed.status == "done"
-    assert "same_doc_solution_guard" in refreshed.result_summary
-    assert "identical content" in refreshed.result_summary["same_doc_solution_guard"]
+    assert refreshed.result_summary["same_doc_solution_guard"] == (
+        "solution PDF ignored: identical content to the problem PDF "
+        "(content_hash match) — treated as no solution provided, "
+        "so reference solutions are generated and held for review"
+    )
+
+
+@pytest.mark.asyncio
+async def test_background_runner_same_doc_guard_becomes_combined_when_on(db_session, monkeypatch):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+    from apollo.provisioning.authored_sets.orchestrator import ProvisioningReport
+
+    monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", "on")
+    search_space_id, _concept_id = await _seed_course(db_session, slug="background-samedoc-on")
+    row = AuthoredSet(search_space_id=search_space_id, set_index=1, status="pending")
+    db_session.add(row)
+    await db_session.flush()
+    set_id = int(row.id)
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield db_session
+
+    async def _index_authored_doc(db, *, role, **_kwargs):
+        return 101 if role == "problem" else 102
+
+    async def _doc_content_hash(db, document_id):
+        return "identical-hash"
+
+    async def _run_provisioning(db, neo, **kwargs):
+        assert kwargs["solution_document_id"] == 101
+        assert kwargs["combined_document"] is True
+        return ProvisioningReport(problems=[], counts={"promoted": 0}, combined_document=True)
+
+    monkeypatch.setattr(aapi, "get_async_session", _session_cm)
+    monkeypatch.setattr(aapi, "index_authored_doc", _index_authored_doc)
+    monkeypatch.setattr(aapi, "_doc_content_hash", _doc_content_hash)
+    monkeypatch.setattr(aapi, "run_authored_set_provisioning", _run_provisioning)
+    monkeypatch.setattr(aapi, "MeteredChat", lambda **_kwargs: "metered")
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: "neo")
+
+    await aapi._run_set_background(
+        set_id=set_id,
+        search_space_id=search_space_id,
+        set_index=1,
+        problem_bytes=b"%PDF p",
+        problem_title="problems.pdf",
+        solution_bytes=b"%PDF p",
+        solution_title="problems.pdf",
+    )
+
+    refreshed = await db_session.get(AuthoredSet, set_id)
+    assert refreshed.problem_document_id == 101
+    assert refreshed.solution_document_id == 101
+    assert refreshed.status == "done"
+    assert refreshed.result_summary["combined_document"] is True
+    assert "same_doc_solution_guard" not in refreshed.result_summary
+
+
+@pytest.mark.asyncio
+async def test_background_runner_combined_probe_fallback_restores_same_doc_guard(
+    db_session, monkeypatch
+):
+    import apollo.provisioning.authored_sets.api as aapi
+    from apollo.persistence.models import AuthoredSet
+    from apollo.provisioning.authored_sets.orchestrator import ProvisioningReport
+
+    monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", "on")
+    search_space_id, _concept_id = await _seed_course(
+        db_session, slug="background-samedoc-fallback"
+    )
+    row = AuthoredSet(search_space_id=search_space_id, set_index=1, status="pending")
+    db_session.add(row)
+    await db_session.flush()
+    set_id = int(row.id)
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield db_session
+
+    async def _index_authored_doc(db, *, role, **_kwargs):
+        return 101 if role == "problem" else 102
+
+    async def _doc_content_hash(db, document_id):
+        return "identical-hash"
+
+    async def _run_provisioning(db, neo, **kwargs):
+        assert kwargs["solution_document_id"] == 101
+        assert kwargs["combined_document"] is True
+        return ProvisioningReport(problems=[], counts={"promoted": 0})
+
+    monkeypatch.setattr(aapi, "get_async_session", _session_cm)
+    monkeypatch.setattr(aapi, "index_authored_doc", _index_authored_doc)
+    monkeypatch.setattr(aapi, "_doc_content_hash", _doc_content_hash)
+    monkeypatch.setattr(aapi, "run_authored_set_provisioning", _run_provisioning)
+    monkeypatch.setattr(aapi, "MeteredChat", lambda **_kwargs: "metered")
+    monkeypatch.setattr(aapi, "get_neo4j_client", lambda: "neo")
+
+    await aapi._run_set_background(
+        set_id=set_id,
+        search_space_id=search_space_id,
+        set_index=1,
+        problem_bytes=b"%PDF p",
+        problem_title="problems.pdf",
+        solution_bytes=b"%PDF p",
+        solution_title="problems.pdf",
+    )
+
+    refreshed = await db_session.get(AuthoredSet, set_id)
+    assert refreshed.solution_document_id is None
+    assert refreshed.status == "done"
+    assert refreshed.result_summary["same_doc_solution_guard"] == (
+        "solution PDF ignored: identical content to the problem PDF "
+        "(content_hash match) — treated as no solution provided, "
+        "so reference solutions are generated and held for review"
+    )
+    assert "combined_document" not in refreshed.result_summary
 
 
 @pytest.mark.asyncio
@@ -966,9 +1087,7 @@ async def test_delete_sweeps_unreferenced_tier1_leftovers(db_session, monkeypatc
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     space_id, _ = await _seed_course(db_session, slug="aas-del-leftover")
-    concept_id = await resolve_or_create_provisional_concept(
-        db_session, search_space_id=space_id
-    )
+    concept_id = await resolve_or_create_provisional_concept(db_session, search_space_id=space_id)
     problem_doc = AITADocument(
         title="problems",
         content="c",
@@ -1010,9 +1129,7 @@ async def test_delete_sweeps_unreferenced_tier1_leftovers(db_session, monkeypatc
     await db_session.flush()
     set_id, leftover_id = int(authored_set.id), int(leftover.id)
 
-    resp = await aapi.delete_authored_set(
-        set_id=set_id, request=_FakeRequest(), db=db_session
-    )
+    resp = await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
 
     assert resp["removed_problems"] == 1
     assert await db_session.get(ConceptProblem, leftover_id) is None
@@ -1030,9 +1147,7 @@ async def test_delete_spares_tier2_and_foreign_document_rows(db_session, monkeyp
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     space_id, _ = await _seed_course(db_session, slug="aas-del-scope")
-    concept_id = await resolve_or_create_provisional_concept(
-        db_session, search_space_id=space_id
-    )
+    concept_id = await resolve_or_create_provisional_concept(db_session, search_space_id=space_id)
     target_doc = AITADocument(
         title="target problems",
         content="target",
@@ -1085,18 +1200,14 @@ async def test_delete_spares_tier2_and_foreign_document_rows(db_session, monkeyp
         provenance={"document_id": int(sibling_doc.id)},
         search_space_id=space_id,
     )
-    db_session.add_all(
-        [authored_set, target_tier1, same_doc_tier2, sibling_tier1]
-    )
+    db_session.add_all([authored_set, target_tier1, same_doc_tier2, sibling_tier1])
     await db_session.flush()
     set_id = int(authored_set.id)
     target_id = int(target_tier1.id)
     tier2_id = int(same_doc_tier2.id)
     sibling_id = int(sibling_tier1.id)
 
-    resp = await aapi.delete_authored_set(
-        set_id=set_id, request=_FakeRequest(), db=db_session
-    )
+    resp = await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
 
     assert resp["removed_problems"] == 1
     assert await db_session.get(ConceptProblem, target_id) is None
@@ -1167,7 +1278,9 @@ async def test_delete_sweep_document_scope_without_database(monkeypatch):
 
     db = _DB()
     resp = await aapi.delete_authored_set(
-        set_id=77, request=_FakeRequest(), db=db  # type: ignore[arg-type]
+        set_id=77,
+        request=_FakeRequest(),
+        db=db,  # type: ignore[arg-type]
     )
 
     assert resp == {
