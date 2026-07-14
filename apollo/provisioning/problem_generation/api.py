@@ -304,7 +304,12 @@ def _trim_ocr_draft(draft: object) -> dict | None:
     }
 
 
-async def _generation_problems(db: AsyncSession, summary: dict) -> list[dict]:
+async def _generation_problems(
+    db: AsyncSession,
+    summary: dict,
+    *,
+    full_text: bool = False,
+) -> list[dict]:
     ids = [int(value) for value in summary.get("written") or []]
     if not ids:
         return []
@@ -320,10 +325,12 @@ async def _generation_problems(db: AsyncSession, summary: dict) -> list[dict]:
         if row is None:
             continue
         text = str(_json_dict(row.payload).get("problem_text") or "")
+        truncated = not full_text and len(text) > _PROBLEM_TEXT_CAP
         problems.append(
             {
                 "concept_problem_id": problem_id,
-                "problem_text": text[:_PROBLEM_TEXT_CAP],
+                "problem_text": text[:_PROBLEM_TEXT_CAP] if truncated else text,
+                "problem_text_truncated": truncated,
                 "difficulty": row.difficulty,
                 "tier": row.tier,
                 "review": _generation_review(row),
@@ -336,6 +343,7 @@ async def _generation_problems(db: AsyncSession, summary: dict) -> list[dict]:
 async def get_generation_run(
     run_id: int,
     request: Request,
+    full_text: bool = False,
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
@@ -362,7 +370,7 @@ async def get_generation_run(
             else None
         ),
         "result_summary": summary,
-        "problems": await _generation_problems(db, summary),
+        "problems": await _generation_problems(db, summary, full_text=full_text),
     }
 
 
