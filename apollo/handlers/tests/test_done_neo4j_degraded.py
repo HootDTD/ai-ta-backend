@@ -68,8 +68,8 @@ async def test_read_graph_degraded_transcript_grader_ok_serves_grade(monkeypatch
         new=AsyncMock(side_effect=ServiceUnavailable("aura down")),
     )
     transcript_coverage = patch(
-        "apollo.handlers.done.compute_transcript_coverage",
-        new=AsyncMock(return_value={"ok": True}),
+        "apollo.handlers.done.compute_transcript_coverage_with_spans",
+        new=AsyncMock(return_value=({"ok": True}, {})),
     )
     transcript_flag = patch(
         "apollo.handlers.done.transcript_grader_enabled",

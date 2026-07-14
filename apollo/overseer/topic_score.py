@@ -74,7 +74,13 @@ class TopicMisconception:
 
 @dataclass(frozen=True)
 class TopicCredit:
-    """One reference-node topic's credit, weight, and attached misconceptions."""
+    """One reference-node topic's credit, weight, and attached misconceptions.
+
+    ``evidence_span`` is the student's OWN verbatim words (this attempt only)
+    that earned the topic its credit — narrative material sourced from the
+    transcript adjudicator through the ``narrative_evidence_spans`` gate,
+    never a score input and never reference wording. ``None`` when the lane
+    has no per-node student quote (KG coverage lane, gate-dropped span)."""
 
     canonical_key: str
     display_name: str | None
@@ -82,6 +88,7 @@ class TopicCredit:
     status: TopicStatus
     weight: float
     misconceptions: tuple[TopicMisconception, ...]
+    evidence_span: str | None = None
 
 
 @dataclass(frozen=True)
@@ -220,6 +227,7 @@ def compute_topic_score(
     reference_nodes: list[Node],
     centrality: dict[str, float],
     detection_outcome: MergeOutcome | None,
+    evidence_spans: dict[str, str] | None = None,
 ) -> TopicScoreResult:
     """Deterministic topic-based score: coverage credit minus misconception dock.
 
@@ -231,6 +239,9 @@ def compute_topic_score(
         centrality: ``compute_centrality`` output (``node_id -> weight``).
         detection_outcome: the merged misconception outcome, or ``None`` (no
             detector run / detector produced nothing) -> zero dock.
+        evidence_spans: optional ``node_id -> the student's verbatim words``
+            map (transcript lane only). Threaded verbatim onto each matching
+            topic's ``evidence_span`` for the narrative; never a score input.
 
     Returns:
         A frozen ``TopicScoreResult``. An empty reference graph (no graded
@@ -315,6 +326,7 @@ def compute_topic_score(
                 status=statuses[nid],
                 weight=weights[nid],
                 misconceptions=tuple(misconceptions_by_topic.get(nid, ())),
+                evidence_span=(evidence_spans or {}).get(nid),
             )
         )
 

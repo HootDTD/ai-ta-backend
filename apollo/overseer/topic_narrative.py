@@ -44,6 +44,12 @@ EVIDENCE AND ACCURACY:
   plain clause by its topic name, without attributing specific claims to the student.
 - The supplied statuses and percentages stay authoritative: never use the transcript to argue a
   topic deserved more or less credit than the assessment shows.
+- Each topic's description is the REFERENCE solution's wording: it says what an ideal
+  explanation contains, not what the student said. The student's own words appear only in the
+  quoted "You said" lines, the misconception evidence, and the "What the student actually said"
+  transcript. Never present a reference detail (a name, date, title, equation, or term) as
+  something the student personally stated unless it appears in those student words; credit a
+  topic that has no student words in general terms only.
 - Treat a covered topic as a genuine strength. For a partial topic, distinguish what the
   explanation established from what still needs to be made explicit. Treat a missing topic as
   an opportunity to extend the explanation, never as proof that the student does not know it.
@@ -95,6 +101,8 @@ def _format_topic_line(topic) -> str:  # noqa: ANN001 - TopicCredit, avoid impor
     name = topic.display_name or _humanize_key(topic.canonical_key)
     pct = round(topic.credit * 100)
     line = f'- Topic "{name}": {_status_label(topic.status)} — {pct}%'
+    if getattr(topic, "evidence_span", None):
+        line += f'\n  * You said: "{topic.evidence_span}"'
     if topic.misconceptions:
         for m in topic.misconceptions:
             resolved = "corrected" if m.resolved else "uncorrected"
@@ -113,10 +121,14 @@ def build_topic_narrative_prompt(
 
     Pure: no IO. ``user`` enumerates every topic (in ``result.topics`` order,
     including the synthetic ``_general`` bucket last, matching
-    ``compute_topic_score``'s own ordering) with its status and whole-number
-    percentage (display names only — internals never reach the prompt; see
-    ``sanitize_narrative`` for the output-side gate) and any attached
-    misconceptions (evidence span + resolved flag).
+    ``compute_topic_score``'s own ordering) with its status, whole-number
+    percentage, and — when the topic carries a gated per-attempt
+    ``evidence_span`` — a quoted ``You said:`` line of the student's own
+    words (display names + those quotes only — internals never reach the
+    prompt; see ``sanitize_narrative`` for the output-side gate) and any
+    attached misconceptions (evidence span + resolved flag). The evidence
+    header marks topic descriptions as the REFERENCE solution's wording so
+    the narrator never attributes them to the student.
 
     ``student_utterances`` (2026-07-14 narrative-grounding fix) is the verbatim
     student transcript in turn order. When non-empty it is appended so the
@@ -131,7 +143,10 @@ def build_topic_narrative_prompt(
 
     user = (
         f"Problem: {problem_text}\n\n"
-        f"Assessment evidence:\n{topic_lines}\n"
+        "Assessment evidence (topic descriptions are the reference solution's own wording; "
+        'the student\'s words appear only in quoted "You said" lines, misconception lines, '
+        "and the transcript below):\n"
+        f"{topic_lines}\n"
     )
     spoken = [u.strip() for u in student_utterances if u and u.strip()]
     if spoken:
