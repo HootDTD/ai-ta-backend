@@ -395,7 +395,7 @@ class Clarification(Base):
 
 
 class ReferenceQuestionOpportunity(Base):
-    """One question opportunity for one authored reference node per attempt."""
+    """Latest question state for one authored reference node per attempt."""
 
     __tablename__ = "apollo_reference_question_opportunities"
 
