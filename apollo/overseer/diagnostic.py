@@ -44,6 +44,9 @@ HARD RULES — never violate:
   "the teaching skipped X" / "Apollo had to infer X without being shown" — never
   as Apollo failing.
 - Missing reference entries are formative feedback (what to expand on next), not an accusation.
+- Reference entries describe the IDEAL solution, not what the student said. Never present a
+  reference detail (a name, date, title, equation, or term) as something the student personally
+  stated; credit covered entries in general terms only.
 - Synthesize instead of listing every missing entry. Prioritize at most two related, high-value
   gaps and explain what adding them would do for Apollo's understanding.
 - Never mention a misconception category when no misconception was detected. In particular,

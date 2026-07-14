@@ -76,7 +76,8 @@ async def _run(
     compute_coverage_mock=None,
 ):
     """Drive ``handle_done`` through the OLD-path harness with the transcript
-    grader flag set (or unset) and ``compute_transcript_coverage`` patched.
+    grader flag set (or unset) and ``compute_transcript_coverage_with_spans``
+    patched (``coverage_mock`` must return the ``(coverage, spans)`` pair).
 
     When ``full_transcript_return`` is given, ``_full_transcript`` itself is
     also patched (used only for tests that don't care about exercising the
@@ -112,7 +113,10 @@ async def _run(
 
     with ExitStack() as stack:
         stack.enter_context(
-            patch("apollo.handlers.done.compute_transcript_coverage", new=coverage_mock)
+            patch(
+                "apollo.handlers.done.compute_transcript_coverage_with_spans",
+                new=coverage_mock,
+            )
         )
         stack.enter_context(
             patch("apollo.handlers.done.build_rerun_inputs", new=AsyncMock(return_value=rerun))
@@ -128,7 +132,7 @@ async def test_flag_on_uses_transcript_grader_and_skips_compute_coverage(monkeyp
     the harness DB via the extended `db.execute` side_effect), then
     `compute_transcript_coverage` is awaited once and `compute_coverage` is
     never called. Provenance reports the transcript lane."""
-    coverage_mock = AsyncMock(return_value=_VALID_VERDICT)
+    coverage_mock = AsyncMock(return_value=(_VALID_VERDICT, {}))
     compute_coverage_mock = AsyncMock()
     out = await _run(
         monkeypatch,
@@ -144,6 +148,76 @@ async def test_flag_on_uses_transcript_grader_and_skips_compute_coverage(monkeyp
     assert provenance["grader_used"] == "llm_transcript"
     assert provenance["evidence_source"] == "transcript"
     assert provenance["transcript_grader_failure"] is None
+
+
+async def test_flag_on_threads_narrative_spans_into_topic_score(monkeypatch):
+    """The per-attempt student quotes returned by the transcript grader flow
+    into ``compute_topic_score`` as ``evidence_spans`` — the seam that lets
+    the diagnostic narrative quote only what the student said THIS session."""
+    spans = {"p1": "future shock occurs when things move too quickly"}
+    coverage_mock = AsyncMock(return_value=(_VALID_VERDICT, spans))
+    topic_score_mock = MagicMock(return_value=None)
+
+    db, _sess, _attempt, patches = _old_path_patches()
+    rerun = _rerun_inputs(problem_payload={"declared_paths": [["a"]], "symbolic_mappings": {}})
+    monkeypatch.setenv("APOLLO_TRANSCRIPT_GRADER", "1")
+    _extend_db_execute_for_full_transcript(db, transcript_rows=[])
+
+    from apollo.handlers.done import handle_done
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "apollo.handlers.done.compute_transcript_coverage_with_spans",
+                new=coverage_mock,
+            )
+        )
+        stack.enter_context(
+            patch("apollo.handlers.done.compute_topic_score", new=topic_score_mock)
+        )
+        stack.enter_context(
+            patch("apollo.handlers.done.build_rerun_inputs", new=AsyncMock(return_value=rerun))
+        )
+        for p in patches:
+            stack.enter_context(p)
+        await handle_done(db=db, neo=MagicMock(), session_id=11)
+
+    topic_score_mock.assert_called_once()
+    assert topic_score_mock.call_args.kwargs["evidence_spans"] == spans
+
+
+async def test_flag_off_passes_empty_narrative_spans_to_topic_score(monkeypatch):
+    """The KG/legacy coverage lane has no per-node student quotes — the topic
+    score must receive an empty span map, never a stale or fabricated one."""
+    coverage_mock = AsyncMock(side_effect=AssertionError("must not be called"))
+    compute_coverage_mock = AsyncMock(return_value={})
+    topic_score_mock = MagicMock(return_value=None)
+
+    db, _sess, _attempt, patches = _old_path_patches()
+    rerun = _rerun_inputs(problem_payload={"declared_paths": [["a"]], "symbolic_mappings": {}})
+    patches.append(patch("apollo.handlers.done.compute_coverage", new=compute_coverage_mock))
+
+    from apollo.handlers.done import handle_done
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "apollo.handlers.done.compute_transcript_coverage_with_spans",
+                new=coverage_mock,
+            )
+        )
+        stack.enter_context(
+            patch("apollo.handlers.done.compute_topic_score", new=topic_score_mock)
+        )
+        stack.enter_context(
+            patch("apollo.handlers.done.build_rerun_inputs", new=AsyncMock(return_value=rerun))
+        )
+        for p in patches:
+            stack.enter_context(p)
+        await handle_done(db=db, neo=MagicMock(), session_id=11)
+
+    topic_score_mock.assert_called_once()
+    assert topic_score_mock.call_args.kwargs["evidence_spans"] == {}
 
 
 async def test_flag_on_coverage_grading_error_falls_back_to_compute_coverage(monkeypatch):
