@@ -182,8 +182,11 @@ async def link_opposes(
 ) -> int:
     """Second pass: resolve each misconception's ``payload.opposes_entity_key`` to
     ``opposes_entity_id`` now that every entity row exists. Returns the count
-    linked. Raises ``KeyError`` via the caller's lookup when an opposes key
-    resolves to no entity (the caller maps that to a fail-closed TagMintError)."""
+    linked. An ALREADY-LINKED row whose key does not resolve in THIS call's
+    ``key_to_id`` is skipped (a prior mint or emergent materialize owns that
+    link; re-requiring its key here fails every later mint into the concept).
+    Raises ``KeyError`` only for an UNLINKED row whose opposes key resolves to
+    no entity (the caller maps that to a fail-closed TagMintError)."""
     rows = (
         (
             await db.execute(
@@ -202,7 +205,17 @@ async def link_opposes(
         opposes_key = payload.get("opposes_entity_key")
         if not opposes_key:
             continue
-        target_id = key_to_id[opposes_key]  # KeyError → caller raises TagMintError
+        target_id = key_to_id.get(opposes_key)
+        if target_id is None:
+            if payload.get("opposes_entity_id") is not None:
+                # ALREADY LINKED by an earlier mint or emergent materialize —
+                # this walk's key_to_id (scoped to the CURRENT mint's keys)
+                # cannot re-resolve a prior mint's key, and failing here killed
+                # every candidate minting into the concept (staging set 13:
+                # one 2026-07-12 emergent misconception rejected 14/19
+                # otherwise-valid problems). The link is durable; skip it.
+                continue
+            raise KeyError(opposes_key)  # unlinked + unresolvable → caller fail-closed
         payload["opposes_entity_id"] = target_id
         row.payload = payload  # type: ignore[assignment]
         linked += 1

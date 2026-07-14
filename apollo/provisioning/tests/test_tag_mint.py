@@ -1037,8 +1037,10 @@ async def test_tag_and_mint_drops_unlinkable_minted_misconception(db_session, ca
 
 
 async def test_preexisting_unlinkable_misconception_stays_fail_closed(db_session):
-    """A PRE-EXISTING misconception row (earlier mint) whose opposes key does not
-    resolve keeps the fail-closed contract: only THIS mint's rows are droppable."""
+    """A PRE-EXISTING misconception row that is UNLINKED (no opposes_entity_id)
+    and whose opposes key does not resolve keeps the fail-closed contract: only
+    THIS mint's rows are droppable, and only ALREADY-LINKED prior rows are
+    skippable (see the linked-row test below)."""
     ss_id, _subj = await _seed_course(db_session, slug="c-fail-prior")
     pair = _approved_pair(search_space_id=ss_id)
     plan = await tag_and_mint(
@@ -1066,6 +1068,56 @@ async def test_preexisting_unlinkable_misconception_stays_fail_closed(db_session
             chat_fn=_chat_returning(_tag_payload()),
             embed_fn=_embed_distinct,
         )
+
+
+async def test_preexisting_linked_misconception_is_skipped_not_fatal(db_session):
+    """The staging set-13 regression: a PRE-EXISTING misconception that an
+    earlier mint (or emergent materialize) ALREADY LINKED must not fail later
+    mints into the same concept — its key can never resolve from a later mint's
+    key_to_id and the link is durable. link_opposes skips it untouched."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-linked-prior")
+    pair = _approved_pair(search_space_id=ss_id)
+    plan = await tag_and_mint(
+        db_session,
+        pair,
+        chat_fn=_chat_returning(_tag_payload()),
+        embed_fn=_embed_distinct,
+    )
+    db_session.add(
+        KGEntity(
+            concept_id=plan.concept_id,
+            canonical_key="emergent.proc.prior_linked",
+            kind="misconception",
+            display_name="Prior linked",
+            payload={
+                "opposes_entity_key": "proc.from_an_earlier_mint",
+                "opposes_entity_id": 999,
+            },
+            aliases=[],
+        )
+    )
+    await db_session.flush()
+
+    plan2 = await tag_and_mint(
+        db_session,
+        pair,
+        chat_fn=_chat_returning(_tag_payload()),
+        embed_fn=_embed_distinct,
+    )
+
+    assert plan2.concept_id == plan.concept_id
+    row = (
+        (
+            await db_session.execute(
+                select(KGEntity)
+                .where(KGEntity.concept_id == plan.concept_id)
+                .where(KGEntity.canonical_key == "emergent.proc.prior_linked")
+            )
+        )
+        .scalars()
+        .one()
+    )
+    assert dict(row.payload)["opposes_entity_id"] == 999  # untouched
 
 
 async def test_tag_and_mint_malformed_tag_raises(db_session):
