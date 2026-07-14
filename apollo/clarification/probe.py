@@ -17,8 +17,10 @@ _HINT_BY_TYPE: dict[str, str] = {
     "trade off, without stating the relationship yourself.",
     "simplification": "Ask under what CONDITION the step they described applies, "
     "without naming the condition.",
-    "definition": "Ask the student to DEFINE the term in their own words, without "
-    "giving the definition.",
+    "definition": "The student has already offered a definition — do NOT ask them to "
+    "define or restate it again. Ask what makes the term DIFFERENT from the ordinary "
+    "version of the same idea (what specifically qualifies something as that term), "
+    "without suggesting the distinction yourself.",
     "procedure_step": "Ask the student to state the next ACTION explicitly, without "
     "performing it for them.",
     "variable_mapping": "Ask which real-world quantity their symbol stands for, "

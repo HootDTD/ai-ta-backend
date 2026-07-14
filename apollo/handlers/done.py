@@ -785,12 +785,28 @@ async def handle_done(
     else:
         served_rubric = rubric
 
+    # Narrative grounding (2026-07-14): feed the narrator the verbatim student
+    # transcript so credit statements quote what the student actually said
+    # instead of expanding topic names into claims they never made. Best-effort:
+    # a fetch failure logs and degrades to the ungrounded prompt — it must
+    # never block grading.
+    try:
+        narrative_utterances: tuple[str, ...] = await _student_utterances(
+            db, attempt_id=attempt.id
+        )
+    except Exception:  # noqa: BLE001
+        _LOG.warning(
+            "apollo_narrative_utterances_fetch_failed attempt_id=%s", attempt.id
+        )
+        narrative_utterances = ()
+
     diagnostic_narrative = generate_diagnostic(
         coverage=coverage,
         reference_steps=[s.model_dump() for s in problem.reference_solution],
         problem_text=problem.problem_text,
         rubric=rubric,
         topic_score=topic_score,
+        student_utterances=narrative_utterances,
     )
 
     # Re-attempt detection (unchanged from V2).
