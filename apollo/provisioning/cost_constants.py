@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 from decimal import Decimal
+from typing import Literal
 
 # Runaway circuit-breaker: cumulative (in+out) tokens per document. The default
 # is generous — a large chapter scrapes well below it; the breach is the abort.
@@ -37,9 +38,7 @@ MAX_ATTEMPTS: int = int(os.getenv("APOLLO_PROVISION_MAX_ATTEMPTS", "3"))
 # problem-likely sections.
 APOLLO_SCRAPE_MAX_SECTIONS: int = int(os.getenv("APOLLO_SCRAPE_MAX_SECTIONS", "120"))
 APOLLO_SCRAPE_MIN_CANDIDATES: int = int(os.getenv("APOLLO_SCRAPE_MIN_CANDIDATES", "3"))
-APOLLO_SCRAPE_SECTION_CHAR_CAP: int = int(
-    os.getenv("APOLLO_SCRAPE_SECTION_CHAR_CAP", "2500")
-)
+APOLLO_SCRAPE_SECTION_CHAR_CAP: int = int(os.getenv("APOLLO_SCRAPE_SECTION_CHAR_CAP", "2500"))
 
 
 def structured_scrape_enabled() -> bool:
@@ -47,6 +46,19 @@ def structured_scrape_enabled() -> bool:
     already-OFF auto-provisioning subsystem; set ``APOLLO_STRUCTURED_SCRAPE=0`` to
     revert stage 1 to the legacy per-chunk path."""
     return os.getenv("APOLLO_STRUCTURED_SCRAPE", "1").lower() in ("1", "true", "yes")
+
+
+def structure_pairing_mode() -> Literal["off", "shadow", "on"]:
+    """Return the per-call authored-set structure-pass rollout mode.
+
+    Unknown values fail closed to ``off``: this flag can add LLM spend, so a
+    misspelled deployment value must not silently activate it. PR1 treats
+    ``shadow`` and ``on`` identically; consumption of ``on`` lands in PR2.
+    """
+    value = os.getenv("APOLLO_STRUCTURE_PAIRING", "off").strip().lower()
+    if value in ("shadow", "on"):
+        return value
+    return "off"
 
 
 # A million tokens — the denominator for the per-1M price table.
@@ -57,6 +69,7 @@ _TOKENS_PER_PRICE_UNIT: Decimal = Decimal("1000000")
 MODEL_PRICES: dict[str, tuple[Decimal, Decimal]] = {
     "gpt-4o": (Decimal("2.50"), Decimal("10.00")),
     "gpt-4o-mini": (Decimal("0.15"), Decimal("0.60")),
+    "gpt-5.1": (Decimal("1.25"), Decimal("10.00")),
 }
 
 

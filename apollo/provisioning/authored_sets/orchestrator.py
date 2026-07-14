@@ -16,11 +16,12 @@ reverts to the legacy LLM-tag-draft path.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serializer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,8 +36,13 @@ from apollo.provisioning.authored_sets.paired_retrieval import (
     load_solution_chunks,
     make_paired_solution_retrieve_fn,
 )
+from apollo.provisioning.authored_sets.structure_pass import (
+    StructurePassSummary,
+    run_structure_pass,
+)
 from apollo.provisioning.authored_sets.verification import verify_against_generated
 from apollo.provisioning.concept_match import ConceptMatch, match_concept
+from apollo.provisioning.cost_constants import structure_pairing_mode
 from apollo.provisioning.orchestrator import (
     _SCRAPE_SYSTEM_PROMPT,
     _TAG_MINT_SYSTEM_PROMPT,
@@ -74,6 +80,7 @@ __all__ = [
 ]
 
 _DEFAULT_CONF_THRESHOLD = 0.6
+_LOG = logging.getLogger(__name__)
 
 
 def reversed_provisioning_enabled() -> bool:
@@ -119,6 +126,15 @@ class ProvisioningReport(BaseModel):
 
     problems: list[ProblemResult] = Field(default_factory=list)
     counts: dict[str, int] = Field(default_factory=dict)
+    structure_pass: StructurePassSummary | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize_without_inactive_shadow(self, handler):  # noqa: ANN001
+        """Keep flag-off ``model_dump`` output byte-compatible with WU-AAS."""
+        data = handler(self)
+        if self.structure_pass is None:
+            data.pop("structure_pass", None)
+        return data
 
 
 def _augmented_hold_payload(payload: dict | None, draft: ReferenceSolutionDraft) -> dict | None:
@@ -217,6 +233,21 @@ async def run_authored_set_provisioning(
     problem_low_conf = _doc_is_low_conf(problem_page_conf, conf_threshold)
 
     problem_chunks = await _load_chunks(db, document_id=problem_document_id)
+    structure_mode = structure_pairing_mode()
+    scrape_tokens_before: int | None = None
+    if structure_mode != "off":
+        try:
+            scrape_tokens_before = metered_chat.cumulative_tokens()
+        except Exception:  # noqa: BLE001 - shadow setup must not affect provisioning
+            _LOG.exception(
+                "authored_set_structure_pass_failed",
+                extra={
+                    "event": "authored_set_structure_pass_failed",
+                    "problem_document_id": problem_document_id,
+                    "solution_document_id": solution_document_id,
+                    "mode": structure_mode,
+                },
+            )
     scrape_result = await scrape_document(
         problem_chunks,
         chat_fn=metered_chat.scrape_chat_fn(_SCRAPE_SYSTEM_PROMPT),
@@ -225,6 +256,27 @@ async def run_authored_set_provisioning(
         min_candidates=APOLLO_SCRAPE_MIN_CANDIDATES,
         structured=structured_scrape_enabled(),
     )
+    structure_summary: StructurePassSummary | None = None
+    if structure_mode != "off" and scrape_tokens_before is not None:
+        try:
+            scrape_spend = max(0, metered_chat.cumulative_tokens() - scrape_tokens_before)
+            structure_result = run_structure_pass(
+                problem_chunks=problem_chunks,
+                solution_chunks=solution_chunks,
+                metered_chat=metered_chat,
+                scrape_spend=scrape_spend,
+            )
+            structure_summary = structure_result.summary()
+        except Exception:  # noqa: BLE001 - shadow work must never affect provisioning
+            _LOG.exception(
+                "authored_set_structure_pass_failed",
+                extra={
+                    "event": "authored_set_structure_pass_failed",
+                    "problem_document_id": problem_document_id,
+                    "solution_document_id": solution_document_id,
+                    "mode": structure_mode,
+                },
+            )
     await write_tier1_problems(
         db,
         scrape_result.candidates,
@@ -256,7 +308,11 @@ async def run_authored_set_provisioning(
     counts = {"promoted": 0, "rejected": 0, "held_for_review": 0}
     for result in results:
         counts[result.outcome] = counts.get(result.outcome, 0) + 1
-    return ProvisioningReport(problems=results, counts=counts)
+    return ProvisioningReport(
+        problems=results,
+        counts=counts,
+        structure_pass=structure_summary,
+    )
 
 
 async def _process_authored_candidate(

@@ -176,6 +176,14 @@ def test_multiple_calls_accumulate_additively():
     assert run.llm_tokens_out == 30
 
 
+def test_cumulative_tokens_is_read_only_snapshot():
+    metered, run, _client = _make(responses=[_resp("a", 100, 20)])
+    assert metered.cumulative_tokens() == 0
+    metered.cheap(purpose="p", messages=[{"role": "user", "content": "x"}])
+    assert metered.cumulative_tokens() == 120
+    assert (run.llm_tokens_in, run.llm_tokens_out) == (100, 20)
+
+
 def test_main_accumulates_too():
     metered, run, _client = _make(responses=[_resp("z", 200, 60)])
     metered.main(purpose="p", messages=[{"role": "user", "content": "x"}])

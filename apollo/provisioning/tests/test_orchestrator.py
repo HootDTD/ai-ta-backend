@@ -161,8 +161,9 @@ def _patch_stages(
 ):
     """Patch the frozen stage callables on the orchestrator module surface."""
 
-    async def _scrape(chunk_rows, *, chat_fn, triage_chat_fn, max_sections,
-                      min_candidates, structured=True):  # noqa: ANN001
+    async def _scrape(
+        chunk_rows, *, chat_fn, triage_chat_fn, max_sections, min_candidates, structured=True
+    ):  # noqa: ANN001
         # exercise the injected scrape chat_fn so a cost-abort scrape can raise.
         for ch in chunk_rows:
             chat_fn(ch.content)
@@ -379,7 +380,9 @@ async def test_run_provisioning_lint_rejection_continues(db_session, monkeypatch
 # T-OR4 — a solution-draft error is a per-CANDIDATE rejection; the run CONTINUES
 # (one bad candidate no longer aborts the whole document run).
 # --------------------------------------------------------------------------- #
-async def test_run_provisioning_solution_error_rejects_candidate_and_continues(db_session, monkeypatch):
+async def test_run_provisioning_solution_error_rejects_candidate_and_continues(
+    db_session, monkeypatch
+):
     from apollo.provisioning.solution import SolutionDraftError
 
     space, run_id, claimed = await _seed(db_session, slug="or4")
@@ -637,8 +640,9 @@ async def test_run_provisioning_unexpected_error_fails_run_terminally(db_session
     space, run_id, claimed = await _seed(db_session, slug="or10")
     concept_id = await _seed_concept(db_session, search_space_id=space)
 
-    async def _boom_scrape(chunk_rows, *, chat_fn, triage_chat_fn, max_sections,
-                           min_candidates, structured=True):  # noqa: ANN001
+    async def _boom_scrape(
+        chunk_rows, *, chat_fn, triage_chat_fn, max_sections, min_candidates, structured=True
+    ):  # noqa: ANN001
         raise ValueError("totally unexpected")
 
     async def _resolve_prov(db, *, search_space_id):  # noqa: ANN001
@@ -1104,6 +1108,8 @@ async def test_run_provisioning_gate8_rejects_duplicate_on_concept(db_session, m
 # default-wiring branch without a real retriever / embedder / network.
 # --------------------------------------------------------------------------- #
 async def test_run_provisioning_default_retrieve_fn_is_course_adapter(db_session, monkeypatch):
+    # The authored-only flag must not activate or alter generic provisioning.
+    monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", "on")
     space, run_id, claimed = await _seed(db_session, slug="or17")
     concept_id = await _seed_concept(db_session, search_space_id=space)
     chash = "c1"
@@ -1361,8 +1367,9 @@ async def test_run_provisioning_uses_scrape_document_with_section_columns(db_ses
     concept_id = await _seed_concept(db_session, search_space_id=space)
     seen = {}
 
-    async def _scrape_doc(chunk_rows, *, chat_fn, triage_chat_fn, max_sections,
-                          min_candidates, structured=True):  # noqa: ANN001
+    async def _scrape_doc(
+        chunk_rows, *, chat_fn, triage_chat_fn, max_sections, min_candidates, structured=True
+    ):  # noqa: ANN001
         rows = list(chunk_rows)
         seen["has_section_attrs"] = all(
             hasattr(r, "id") and hasattr(r, "section_path") and hasattr(r, "chunk_type")
