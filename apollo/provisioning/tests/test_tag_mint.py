@@ -756,9 +756,7 @@ async def test_cross_mint_prereq_longer_chain_cycle_dropped(db_session):
         ],
     )
     pair2 = _approved_pair(problem=problem2, search_space_id=ss_id)
-    tag2 = _tag_payload(
-        prereqs=[["eq.bernoulli", "eq.third"], ["eq.third", "proc.solve_p2"]]
-    )
+    tag2 = _tag_payload(prereqs=[["eq.bernoulli", "eq.third"], ["eq.third", "proc.solve_p2"]])
     plan2 = await tag_and_mint(
         db_session, pair2, chat_fn=_chat_returning(tag2), embed_fn=_embed_distinct
     )
@@ -856,12 +854,20 @@ async def test_insert_prereqs_rejects_persisted_cycle_at_writer_boundary(db_sess
     db_session.add(concept)
     await db_session.flush()
     ea = KGEntity(
-        concept_id=concept.id, canonical_key="eq.a", kind="equation",
-        display_name="a", payload={}, aliases=[],
+        concept_id=concept.id,
+        canonical_key="eq.a",
+        kind="equation",
+        display_name="a",
+        payload={},
+        aliases=[],
     )
     eb = KGEntity(
-        concept_id=concept.id, canonical_key="eq.b", kind="equation",
-        display_name="b", payload={}, aliases=[],
+        concept_id=concept.id,
+        canonical_key="eq.b",
+        kind="equation",
+        display_name="b",
+        payload={},
+        aliases=[],
     )
     db_session.add_all([ea, eb])
     await db_session.flush()
@@ -982,9 +988,13 @@ async def test_tag_and_mint_idempotent(db_session):
     assert plan2.authored_symbols == []  # nothing new to author (all unioned)
 
 
-async def test_tag_and_mint_unmappable_tag_raises(db_session):
-    """FAIL-CLOSED. A misconception opposes a key that resolves to no entity →
-    TagMintError; no partial mint visible after the caller rolls back."""
+async def test_tag_and_mint_drops_unlinkable_minted_misconception(db_session, caplog):
+    """THIS mint's misconception opposing a key that resolves to no entity is
+    DROPPED (entity row deleted, key pruned from the plan, event logged) and the
+    candidate keeps minting — the 2026-07-14 policy change (staging set 12:
+    'proc.proc_explain_causality' rejected 2/19 otherwise-valid problems)."""
+    import logging
+
     ss_id, _subj = await _seed_course(db_session, slug="c-fail")
     misc = [
         {
@@ -996,6 +1006,59 @@ async def test_tag_and_mint_unmappable_tag_raises(db_session):
         }
     ]
     pair = _approved_pair(search_space_id=ss_id, misconceptions=misc)
+    caplog.set_level(logging.WARNING, logger="apollo.provisioning.tag_mint")
+    plan = await tag_and_mint(
+        db_session,
+        pair,
+        chat_fn=_chat_returning(_tag_payload()),
+        embed_fn=_embed_distinct,
+    )
+
+    assert "misc.bad" not in plan.minted_entity_ids
+    rogue = (
+        (
+            await db_session.execute(
+                select(KGEntity)
+                .where(KGEntity.concept_id == plan.concept_id)
+                .where(KGEntity.canonical_key == "misc.bad")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert rogue == []
+    events = [
+        r
+        for r in caplog.records
+        if getattr(r, "event", None) == "tag_mint_dropped_unlinkable_misconceptions"
+    ]
+    assert len(events) == 1
+    assert events[0].dropped[0]["opposes_entity_key"] == "eq.does_not_exist"
+
+
+async def test_preexisting_unlinkable_misconception_stays_fail_closed(db_session):
+    """A PRE-EXISTING misconception row (earlier mint) whose opposes key does not
+    resolve keeps the fail-closed contract: only THIS mint's rows are droppable."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-fail-prior")
+    pair = _approved_pair(search_space_id=ss_id)
+    plan = await tag_and_mint(
+        db_session,
+        pair,
+        chat_fn=_chat_returning(_tag_payload()),
+        embed_fn=_embed_distinct,
+    )
+    db_session.add(
+        KGEntity(
+            concept_id=plan.concept_id,
+            canonical_key="misc.prior_rogue",
+            kind="misconception",
+            display_name="Prior rogue",
+            payload={"opposes_entity_key": "eq.never_minted"},
+            aliases=[],
+        )
+    )
+    await db_session.flush()
+
     with pytest.raises(TagMintError):
         await tag_and_mint(
             db_session,
@@ -1093,9 +1156,7 @@ async def test_tag_and_mint_prereq_drops_only_the_unresolvable_edge(db_session):
     """A mixed draft keeps the resolvable edge and drops only the bad one."""
     ss_id, _subj = await _seed_course(db_session, slug="c-prqmix")
     pair = _approved_pair(search_space_id=ss_id)
-    tag = _tag_payload(
-        prereqs=[["solve_p2", "bernoulli"], ["eq.bernoulli", "eq.nonexistent"]]
-    )
+    tag = _tag_payload(prereqs=[["solve_p2", "bernoulli"], ["eq.bernoulli", "eq.nonexistent"]])
     plan = await tag_and_mint(
         db_session, pair, chat_fn=_chat_returning(tag), embed_fn=_embed_distinct
     )
@@ -1132,12 +1193,20 @@ async def test_insert_prereqs_drops_cross_concept_endpoint(db_session):
     db_session.add_all([ca, cb])
     await db_session.flush()
     ea = KGEntity(
-        concept_id=ca.id, canonical_key="eq.local", kind="equation",
-        display_name="local", payload={}, aliases=[],
+        concept_id=ca.id,
+        canonical_key="eq.local",
+        kind="equation",
+        display_name="local",
+        payload={},
+        aliases=[],
     )
     eb = KGEntity(
-        concept_id=cb.id, canonical_key="eq.foreign", kind="equation",
-        display_name="foreign", payload={}, aliases=[],
+        concept_id=cb.id,
+        canonical_key="eq.foreign",
+        kind="equation",
+        display_name="foreign",
+        payload={},
+        aliases=[],
     )
     db_session.add_all([ea, eb])
     await db_session.flush()
@@ -1165,12 +1234,20 @@ async def test_insert_prereqs_keeps_same_concept_edge(db_session):
     db_session.add(ca)
     await db_session.flush()
     e1 = KGEntity(
-        concept_id=ca.id, canonical_key="eq.one", kind="equation",
-        display_name="one", payload={}, aliases=[],
+        concept_id=ca.id,
+        canonical_key="eq.one",
+        kind="equation",
+        display_name="one",
+        payload={},
+        aliases=[],
     )
     e2 = KGEntity(
-        concept_id=ca.id, canonical_key="proc.two", kind="procedure",
-        display_name="two", payload={}, aliases=[],
+        concept_id=ca.id,
+        canonical_key="proc.two",
+        kind="procedure",
+        display_name="two",
+        payload={},
+        aliases=[],
     )
     db_session.add_all([e1, e2])
     await db_session.flush()
@@ -1227,8 +1304,12 @@ async def test_tag_and_mint_drops_cross_concept_edge_before_acyclicity(db_sessio
     db_session.add(foreign)
     await db_session.flush()
     f_entity = KGEntity(
-        concept_id=foreign.id, canonical_key="eq.x", kind="equation",
-        display_name="foreign x", payload={}, aliases=[],
+        concept_id=foreign.id,
+        canonical_key="eq.x",
+        kind="equation",
+        display_name="foreign x",
+        payload={},
+        aliases=[],
     )
     db_session.add(f_entity)
     await db_session.flush()
@@ -1238,10 +1319,14 @@ async def test_tag_and_mint_drops_cross_concept_edge_before_acyclicity(db_sessio
     async def _fake_resolve(db, *, candidate, **_kw):
         if candidate.canonical_key == "eq.x":
             return DedupVerdict(
-                verdict="merged", method="embedding", similarity=0.95,
+                verdict="merged",
+                method="embedding",
+                similarity=0.95,
                 matched_entity_id=int(f_entity.id),
             )
-        return DedupVerdict(verdict="distinct", method="slug", similarity=None, matched_entity_id=None)
+        return DedupVerdict(
+            verdict="distinct", method="slug", similarity=None, matched_entity_id=None
+        )
 
     monkeypatch.setattr(tm, "resolve_candidate", _fake_resolve)
 
@@ -1257,12 +1342,27 @@ async def test_tag_and_mint_drops_cross_concept_edge_before_acyclicity(db_sessio
         # resolution under test; the scenario is about cross-concept edge ordering,
         # not equation equivalence.
         "reference_solution": [
-            {"step": 1, "entry_type": "equation", "id": "a",
-             "content": {"label": "a", "symbolic": "A - B"}, "depends_on": []},
-            {"step": 2, "entry_type": "equation", "id": "b",
-             "content": {"label": "b", "symbolic": "B - 2*A"}, "depends_on": []},
-            {"step": 3, "entry_type": "equation", "id": "x",
-             "content": {"label": "x", "symbolic": "A + B"}, "depends_on": []},
+            {
+                "step": 1,
+                "entry_type": "equation",
+                "id": "a",
+                "content": {"label": "a", "symbolic": "A - B"},
+                "depends_on": [],
+            },
+            {
+                "step": 2,
+                "entry_type": "equation",
+                "id": "b",
+                "content": {"label": "b", "symbolic": "B - 2*A"},
+                "depends_on": [],
+            },
+            {
+                "step": 3,
+                "entry_type": "equation",
+                "id": "x",
+                "content": {"label": "x", "symbolic": "A + B"},
+                "depends_on": [],
+            },
         ],
     }
     pair = _approved_pair(problem=problem, search_space_id=ss_id)
@@ -1281,9 +1381,7 @@ async def test_tag_and_mint_drops_cross_concept_edge_before_acyclicity(db_sessio
     b_id = plan.minted_entity_ids["eq.b"]
     a_id = plan.minted_entity_ids["eq.a"]
     rows = (
-        await db_session.execute(
-            select(EntityPrereq.from_entity_id, EntityPrereq.to_entity_id)
-        )
+        await db_session.execute(select(EntityPrereq.from_entity_id, EntityPrereq.to_entity_id))
     ).all()
     directed = {(r[0], r[1]) for r in rows}
     assert (b_id, a_id) in directed  # the legit edge was inserted
@@ -1677,7 +1775,10 @@ def test_equivalence_signature_cross_kind_differs():
     eq = _equivalence_signature(_eq_spec("eq.x", "v = v0 + a*t", "vel"))
     df = _equivalence_signature(
         EntitySpec(
-            canonical_key="def.x", kind="definition", display_name="v = v0 + a*t", payload={},
+            canonical_key="def.x",
+            kind="definition",
+            display_name="v = v0 + a*t",
+            payload={},
         )
     )
     assert eq != df
@@ -1758,18 +1859,34 @@ def _dup_role_problem() -> dict:
         "target_unknown": "v",
         "provenance": {"document_id": 2, "page": 7},
         "reference_solution": [
-            {"step": 1, "entry_type": "equation", "id": "eq_motion",
-             "content": {"label": "Velocity formula", "symbolic": "v = v0 + a*t"},
-             "depends_on": []},
-            {"step": 2, "entry_type": "equation", "id": "eq_velocity_formula",
-             "content": {"label": "Velocity equation", "symbolic": "v0 + a*t = v"},
-             "depends_on": []},
-            {"step": 3, "entry_type": "equation", "id": "eq1",
-             "content": {"label": "Calculated final velocity", "symbolic": "v - v0 - a*t"},
-             "depends_on": []},
-            {"step": 4, "entry_type": "equation", "id": "eq_position",
-             "content": {"label": "Position formula", "symbolic": "x = v0*t + (1/2)*a*t**2"},
-             "depends_on": []},
+            {
+                "step": 1,
+                "entry_type": "equation",
+                "id": "eq_motion",
+                "content": {"label": "Velocity formula", "symbolic": "v = v0 + a*t"},
+                "depends_on": [],
+            },
+            {
+                "step": 2,
+                "entry_type": "equation",
+                "id": "eq_velocity_formula",
+                "content": {"label": "Velocity equation", "symbolic": "v0 + a*t = v"},
+                "depends_on": [],
+            },
+            {
+                "step": 3,
+                "entry_type": "equation",
+                "id": "eq1",
+                "content": {"label": "Calculated final velocity", "symbolic": "v - v0 - a*t"},
+                "depends_on": [],
+            },
+            {
+                "step": 4,
+                "entry_type": "equation",
+                "id": "eq_position",
+                "content": {"label": "Position formula", "symbolic": "x = v0*t + (1/2)*a*t**2"},
+                "depends_on": [],
+            },
         ],
     }
 
@@ -1861,8 +1978,13 @@ async def test_tag_and_mint_cross_mint_equivalent_equation_merges(db_session):
     )
     # replace the default bernoulli equation step with a velocity equation.
     problem1["reference_solution"] = [
-        {"step": 1, "entry_type": "equation", "id": "eq_motion",
-         "content": {"label": "Velocity formula", "symbolic": "v = v0 + a*t"}, "depends_on": []},
+        {
+            "step": 1,
+            "entry_type": "equation",
+            "id": "eq_motion",
+            "content": {"label": "Velocity formula", "symbolic": "v = v0 + a*t"},
+            "depends_on": [],
+        },
     ]
     plan1 = await tag_and_mint(
         db_session,
@@ -1875,9 +1997,13 @@ async def test_tag_and_mint_cross_mint_equivalent_equation_merges(db_session):
     problem2 = dict(problem1)
     problem2["id"] = "scrape.m2"
     problem2["reference_solution"] = [
-        {"step": 1, "entry_type": "equation", "id": "eq_velocity_formula",
-         "content": {"label": "A totally different label", "symbolic": "v0 + a*t = v"},
-         "depends_on": []},
+        {
+            "step": 1,
+            "entry_type": "equation",
+            "id": "eq_velocity_formula",
+            "content": {"label": "A totally different label", "symbolic": "v0 + a*t = v"},
+            "depends_on": [],
+        },
     ]
     plan2 = await tag_and_mint(
         db_session,
@@ -1909,8 +2035,13 @@ async def test_tag_and_mint_cross_concept_same_equation_not_merged(db_session):
     ss_id, _subj = await _seed_course(db_session, slug="c-xconcept-eq")
     problem_a = _problem_dict(problem_id="scrape.ca", concept_slug="concept-alpha")
     problem_a["reference_solution"] = [
-        {"step": 1, "entry_type": "equation", "id": "eq_motion",
-         "content": {"label": "vel", "symbolic": "v = v0 + a*t"}, "depends_on": []},
+        {
+            "step": 1,
+            "entry_type": "equation",
+            "id": "eq_motion",
+            "content": {"label": "vel", "symbolic": "v = v0 + a*t"},
+            "depends_on": [],
+        },
     ]
     problem_b = dict(problem_a)
     problem_b["id"] = "scrape.cb"
@@ -1963,19 +2094,48 @@ def _finding_d_upload_1() -> dict:
         "target_unknown": "v",
         "provenance": {"document_id": 2, "page": 3},
         "reference_solution": [
-            {"step": 1, "entry_type": "equation", "id": "eq_motion",
-             "content": {"label": "Velocity formula", "symbolic": "v = v0 + a*t"},
-             "depends_on": []},
-            {"step": 2, "entry_type": "definition", "id": "def_acceleration",
-             "content": {"label": "Acceleration"}, "depends_on": []},
-            {"step": 3, "entry_type": "definition", "id": "def_velocity",
-             "content": {"label": "Velocity"}, "depends_on": []},
-            {"step": 4, "entry_type": "variable_mapping", "id": "map_acceleration",
-             "content": {"label": "Acceleration symbol"}, "depends_on": []},
-            {"step": 5, "entry_type": "procedure_step", "id": "proc_substitute",
-             "content": {"label": "Substitute values"}, "depends_on": []},
-            {"step": 6, "entry_type": "simplification", "id": "simp_calc_velocity",
-             "content": {"label": "Calculate velocity"}, "depends_on": []},
+            {
+                "step": 1,
+                "entry_type": "equation",
+                "id": "eq_motion",
+                "content": {"label": "Velocity formula", "symbolic": "v = v0 + a*t"},
+                "depends_on": [],
+            },
+            {
+                "step": 2,
+                "entry_type": "definition",
+                "id": "def_acceleration",
+                "content": {"label": "Acceleration"},
+                "depends_on": [],
+            },
+            {
+                "step": 3,
+                "entry_type": "definition",
+                "id": "def_velocity",
+                "content": {"label": "Velocity"},
+                "depends_on": [],
+            },
+            {
+                "step": 4,
+                "entry_type": "variable_mapping",
+                "id": "map_acceleration",
+                "content": {"label": "Acceleration symbol"},
+                "depends_on": [],
+            },
+            {
+                "step": 5,
+                "entry_type": "procedure_step",
+                "id": "proc_substitute",
+                "content": {"label": "Substitute values"},
+                "depends_on": [],
+            },
+            {
+                "step": 6,
+                "entry_type": "simplification",
+                "id": "simp_calc_velocity",
+                "content": {"label": "Calculate velocity"},
+                "depends_on": [],
+            },
         ],
     }
 
@@ -1996,21 +2156,55 @@ def _finding_d_upload_2() -> dict:
         "target_unknown": "v",
         "provenance": {"document_id": 2, "page": 4},
         "reference_solution": [
-            {"step": 1, "entry_type": "equation", "id": "eq1",
-             "content": {"label": "Calculated final velocity", "symbolic": "v0 + a*t = v"},
-             "depends_on": []},
-            {"step": 2, "entry_type": "definition", "id": "def1",
-             "content": {"label": "Acceleration"}, "depends_on": []},
-            {"step": 3, "entry_type": "definition", "id": "def2",
-             "content": {"label": "Velocity"}, "depends_on": []},
-            {"step": 4, "entry_type": "variable_mapping", "id": "var1",
-             "content": {"label": "Acceleration symbol"}, "depends_on": []},
-            {"step": 5, "entry_type": "procedure_step", "id": "proc1",
-             "content": {"label": "Substitute values"}, "depends_on": []},
-            {"step": 6, "entry_type": "simplification", "id": "simp1",
-             "content": {"label": "Calculate velocity"}, "depends_on": []},
-            {"step": 7, "entry_type": "definition", "id": "def_time",
-             "content": {"label": "Time"}, "depends_on": []},
+            {
+                "step": 1,
+                "entry_type": "equation",
+                "id": "eq1",
+                "content": {"label": "Calculated final velocity", "symbolic": "v0 + a*t = v"},
+                "depends_on": [],
+            },
+            {
+                "step": 2,
+                "entry_type": "definition",
+                "id": "def1",
+                "content": {"label": "Acceleration"},
+                "depends_on": [],
+            },
+            {
+                "step": 3,
+                "entry_type": "definition",
+                "id": "def2",
+                "content": {"label": "Velocity"},
+                "depends_on": [],
+            },
+            {
+                "step": 4,
+                "entry_type": "variable_mapping",
+                "id": "var1",
+                "content": {"label": "Acceleration symbol"},
+                "depends_on": [],
+            },
+            {
+                "step": 5,
+                "entry_type": "procedure_step",
+                "id": "proc1",
+                "content": {"label": "Substitute values"},
+                "depends_on": [],
+            },
+            {
+                "step": 6,
+                "entry_type": "simplification",
+                "id": "simp1",
+                "content": {"label": "Calculate velocity"},
+                "depends_on": [],
+            },
+            {
+                "step": 7,
+                "entry_type": "definition",
+                "id": "def_time",
+                "content": {"label": "Time"},
+                "depends_on": [],
+            },
         ],
     }
 
@@ -2034,10 +2228,10 @@ async def test_two_upload_finding_d_dedupes_all_kinds(db_session):
         embed_fn=_embed_distinct,
     )
     after1 = (
-        await db_session.execute(
-            select(KGEntity).where(KGEntity.concept_id == plan1.concept_id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(KGEntity).where(KGEntity.concept_id == plan1.concept_id)))
+        .scalars()
+        .all()
+    )
     assert len(after1) == 6, [e.canonical_key for e in after1]
 
     plan2 = await tag_and_mint(
@@ -2048,15 +2242,20 @@ async def test_two_upload_finding_d_dedupes_all_kinds(db_session):
     )
     # every content-duplicate merged; only the new definition minted.
     assert set(plan2.merged_entity_keys) == {
-        "eq.eq1", "def.def1", "def.def2", "varmap.var1", "proc.proc1", "simp.simp1",
+        "eq.eq1",
+        "def.def1",
+        "def.def2",
+        "varmap.var1",
+        "proc.proc1",
+        "simp.simp1",
     }
     assert set(plan2.minted_entity_ids) == {"def.def_time"}
 
     rows = (
-        await db_session.execute(
-            select(KGEntity).where(KGEntity.concept_id == plan1.concept_id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(KGEntity).where(KGEntity.concept_id == plan1.concept_id)))
+        .scalars()
+        .all()
+    )
     assert len(rows) == 7, sorted(r.canonical_key for r in rows)
     # each duplicate reuses the FIRST upload's entity id (first-writer-wins).
     by_key = {r.canonical_key: r.id for r in rows}
@@ -2081,14 +2280,28 @@ async def test_two_upload_symbol_bearing_variable_dedup_is_label_independent(db_
     db_session.add(concept)
     await db_session.flush()
     # Pre-seed two variable entities differing ONLY by symbol case (a vs A).
-    db_session.add_all([
-        KGEntity(concept_id=concept.id, canonical_key="varmap.a", kind="variable",
-                 display_name="acceleration", payload={"symbol": "a"}, aliases=[],
-                 scope_summary="acceleration | symbol a | kind variable"),
-        KGEntity(concept_id=concept.id, canonical_key="varmap.big_a", kind="variable",
-                 display_name="area", payload={"symbol": "A"}, aliases=[],
-                 scope_summary="area | symbol A | kind variable"),
-    ])
+    db_session.add_all(
+        [
+            KGEntity(
+                concept_id=concept.id,
+                canonical_key="varmap.a",
+                kind="variable",
+                display_name="acceleration",
+                payload={"symbol": "a"},
+                aliases=[],
+                scope_summary="acceleration | symbol a | kind variable",
+            ),
+            KGEntity(
+                concept_id=concept.id,
+                canonical_key="varmap.big_a",
+                kind="variable",
+                display_name="area",
+                payload={"symbol": "A"},
+                aliases=[],
+                scope_summary="area | symbol A | kind variable",
+            ),
+        ]
+    )
     await db_session.flush()
 
     from apollo.persistence.learner_model_seed import EntitySpec
@@ -2100,12 +2313,20 @@ async def test_two_upload_symbol_bearing_variable_dedup_is_label_independent(db_
         for e in await load_concept_entities(db_session, concept_id=concept.id)
     }
     # a candidate for symbol 'a' with a DIFFERENT label matches the pre-seeded 'a'…
-    dup_a = EntitySpec(canonical_key="varmap.dup", kind="variable",
-                       display_name="a totally different label", payload={"symbol": "a"})
+    dup_a = EntitySpec(
+        canonical_key="varmap.dup",
+        kind="variable",
+        display_name="a totally different label",
+        payload={"symbol": "a"},
+    )
     assert _equivalence_signature(dup_a) in prior
     # …but a candidate for symbol 'A' matches the 'A' row, NOT the 'a' row (m≡M).
-    dup_bigA = EntitySpec(canonical_key="varmap.dup2", kind="variable",
-                          display_name="acceleration", payload={"symbol": "A"})
+    dup_bigA = EntitySpec(
+        canonical_key="varmap.dup2",
+        kind="variable",
+        display_name="acceleration",
+        payload={"symbol": "A"},
+    )
     assert prior[_equivalence_signature(dup_a)] != prior[_equivalence_signature(dup_bigA)]
 
 
@@ -2122,8 +2343,12 @@ async def test_two_upload_different_label_definition_not_deterministically_merge
     await db_session.flush()
     db_session.add(
         KGEntity(
-            concept_id=concept.id, canonical_key="def.def_acceleration", kind="definition",
-            display_name="Acceleration", payload={}, aliases=[],
+            concept_id=concept.id,
+            canonical_key="def.def_acceleration",
+            kind="definition",
+            display_name="Acceleration",
+            payload={},
+            aliases=[],
             scope_summary="Acceleration | kind definition",
         )
     )
@@ -2131,9 +2356,13 @@ async def test_two_upload_different_label_definition_not_deterministically_merge
 
     problem = _problem_dict(problem_id="scrape.dl", concept_slug="linear_motion")
     problem["reference_solution"] = [
-        {"step": 1, "entry_type": "definition", "id": "def1",
-         "content": {"label": "Rate of change of velocity"},  # SAME concept, DIFFERENT label
-         "depends_on": []},
+        {
+            "step": 1,
+            "entry_type": "definition",
+            "id": "def1",
+            "content": {"label": "Rate of change of velocity"},  # SAME concept, DIFFERENT label
+            "depends_on": [],
+        },
     ]
     plan = await tag_and_mint(
         db_session,

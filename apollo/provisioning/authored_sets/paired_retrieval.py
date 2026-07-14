@@ -1,17 +1,18 @@
 """Doc-scoped grounding for authored sets (WU-AAS).
 
 The returned ``retrieve(question)`` grounds against ONLY the paired solution doc
-(when one was provided): deterministic regex label match first, then an optional
-structure-pass pair, then doc-scoped semantic top-k. Label and structure matches
-are confirmed printed solutions for THIS problem, so those spans are marked
-``carries_solution=True`` (``find_or_generate`` takes its extract branch); the
-semantic top-k fallback is an unconfirmed guess at relevant context, so those
-spans are marked ``carries_solution=False`` (extract branch skipped, but the
-spans still ride along as generation context). When no solution document is
-paired (``solution_document_id is None``), the retrieve fn returns no spans at
-all so the caller falls through to solution generation. This module deliberately
-filters by ``aita_chunks.document_id`` and never uses the student-RAG document
-visibility gate.
+(when one was provided): an unambiguous structure-pass pair first, then a
+deterministic regex label match, then doc-scoped semantic top-k. Regex's
+remaining value is covering labels the structure pass missed. Label and
+structure matches are confirmed printed solutions for THIS problem, so those
+spans are marked ``carries_solution=True`` (``find_or_generate`` takes its
+extract branch); the semantic top-k fallback is an unconfirmed guess at relevant
+context, so those spans are marked ``carries_solution=False`` (extract branch
+skipped, but the spans still ride along as generation context). When no solution
+document is paired (``solution_document_id is None``), the retrieve fn returns
+no spans at all so the caller falls through to solution generation. This module
+deliberately filters by ``aita_chunks.document_id`` and never uses the
+student-RAG document visibility gate.
 """
 
 from __future__ import annotations
@@ -226,19 +227,6 @@ def make_paired_solution_retrieve_fn(
             return ()
 
         label = extract_problem_label(question)
-        matched = None if structure_only else match_solution_label(label, label_index)
-        if matched is not None:
-            spans, min_conf = _spans_from_chunks(
-                matched,
-                solution_document_id=solution_document_id,
-                page_conf=page_conf,
-                carries_solution=True,
-            )
-            if spans:
-                retrieve.last_min_conf = min_conf  # type: ignore[attr-defined]
-                retrieve.last_match_method = "label"  # type: ignore[attr-defined]
-                return spans
-
         if label is not None and (pair := structure_index.get(label)) is not None:
             spans, min_conf = _spans_from_structure_pair(
                 pair,
@@ -253,6 +241,19 @@ def make_paired_solution_retrieve_fn(
 
         if structure_only:
             return ()
+
+        matched = match_solution_label(label, label_index)
+        if matched is not None:
+            spans, min_conf = _spans_from_chunks(
+                matched,
+                solution_document_id=solution_document_id,
+                page_conf=page_conf,
+                carries_solution=True,
+            )
+            if spans:
+                retrieve.last_min_conf = min_conf  # type: ignore[attr-defined]
+                retrieve.last_match_method = "label"  # type: ignore[attr-defined]
+                return spans
 
         query_text = getattr(question, "problem_text", "") or ""
         hits = await _doc_scoped_semantic(db, solution_document_id, query_text, top_k)  # type: ignore[arg-type]

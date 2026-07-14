@@ -27,11 +27,14 @@ not at mint) — are intentionally unused.
 
 Returns a typed ``MintPlan`` (observability + the 3B2g handoff). NO promotion
 here — 3B2g runs ``run_promotion_lint`` over the result, flips Tier-2, and
-projects ``:Canon``. FAIL-CLOSED: a hallucinated/unmappable LLM tag or an
-``opposes_entity_key`` resolving to no entity raises ``TagMintError`` (mirroring
-``SeedError``'s NO-FALLBACK convention) — a mislinked entity silently corrupts
-grading for every student, so minting refuses rather than guesses. The ONE
-exception is a prereq edge naming an unminted entity key: prereqs are optional
+projects ``:Canon``. FAIL-CLOSED: a hallucinated/unmappable LLM tag or a
+PRE-EXISTING misconception's ``opposes_entity_key`` resolving to no entity
+raises ``TagMintError`` (mirroring ``SeedError``'s NO-FALLBACK convention) — a
+mislinked entity silently corrupts grading for every student, so minting
+refuses rather than guesses. THIS mint's own misconception with an unlinkable
+``opposes_entity_key`` is instead DROPPED with a log (2026-07-14 — no wrong
+link is created, one enrichment edge is lost, the candidate stays promotable).
+The other exception is a prereq edge naming an unminted entity key: prereqs are optional
 KG-enrichment edges the LLM routinely draws to a problem given (not a minted
 reference step), so such an edge is DROPPED (logged), not fatal — see step 5b.
 NO network: ``chat_fn``/``embed_fn`` are injected (mocked in Tier-1).
@@ -65,6 +68,7 @@ from apollo.persistence.models import Concept, KGEntity
 from apollo.provisioning.dedup import resolve_candidate
 from apollo.provisioning.tag_mint_persist import (
     author_concept_symbols,
+    drop_unlinkable_minted_misconceptions,
     insert_prereqs,
     link_opposes,
     load_concept_entities,
@@ -596,7 +600,35 @@ async def tag_and_mint(
         if canonical_key in key_to_id:
             key_to_id.setdefault(bare_id, key_to_id[canonical_key])
 
-    # --- 5a. Link misconception opposes (fail-closed on an unmappable key) -- #
+    # --- 5a. Link misconception opposes ------------------------------------- #
+    # An opposes edge naming an unminted key DROPS the offending misconception
+    # (THIS mint's rows only) instead of failing the candidate (staging set 12:
+    # the LLM draft opposed a phantom procedure step 'proc.proc_explain_causality'
+    # on 2/19 candidates, each rejecting an otherwise-valid problem). Dropping
+    # creates no wrong link — it loses one enrichment edge — mirroring the 5b
+    # prereq-drop policy. A PRE-EXISTING row with an unresolvable key keeps the
+    # fail-closed contract below: it was linked by an earlier mint, and silently
+    # unlinking or deleting it would corrupt grading, not enrich it.
+    dropped_misconceptions = await drop_unlinkable_minted_misconceptions(
+        db,
+        concept_id=concept_id,
+        key_to_id=key_to_id,
+        minted_entity_ids=minted_entity_ids,
+    )
+    if dropped_misconceptions:
+        _LOG.warning(
+            "tag_mint_dropped_unlinkable_misconceptions",
+            extra={
+                "event": "tag_mint_dropped_unlinkable_misconceptions",
+                "concept_id": concept_id,
+                "dropped": dropped_misconceptions,
+            },
+        )
+        dropped_ids = {entry["entity_id"] for entry in dropped_misconceptions}
+        for key in [k for k, v in key_to_id.items() if v in dropped_ids]:
+            del key_to_id[key]
+        for key in [k for k, v in minted_entity_ids.items() if v in dropped_ids]:
+            del minted_entity_ids[key]
     try:
         await link_opposes(db, concept_id=concept_id, key_to_id=key_to_id)
     except KeyError as exc:
@@ -610,8 +642,10 @@ async def tag_and_mint(
     # ``pressure_box_3``) — a real quantity that is not a reference-solution step,
     # so it is never minted. An edge to a non-existent node cannot be inserted
     # anyway; dropping it keeps the (otherwise valid) problem promotable instead
-    # of failing it. Scoped to prereqs ONLY — entity minting and misconception
-    # ``opposes`` (5a) stay fail-closed (a mislinked entity corrupts grading).
+    # of failing it. Entity minting stays fail-closed; misconception ``opposes``
+    # (5a) now drops THIS mint's unlinkable rows the same way (2026-07-14),
+    # while pre-existing rows keep the fail-closed contract (a mislinked entity
+    # corrupts grading).
     if resolved_concept is not None:
         # Deterministic reference-graph edges: step X depends_on Y ==> the
         # apollo_entity_prereqs row (from=X, to=Y) — FROM depends on TO,
