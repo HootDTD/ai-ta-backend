@@ -7,7 +7,7 @@ appearing in neither the problem text nor the student's own messages.
 """
 
 from apollo.ontology import build_node
-from apollo.smart_questions.leak_guard import leaks_private_content
+from apollo.smart_questions.leak_guard import leaks_private_content, private_leak_words
 
 _SESSION_73_NODE = build_node(
     node_type="definition",
@@ -113,4 +113,29 @@ def test_list_valued_content_fields_are_private_too():
         node=node,
         problem_text="Solve the pipe problem.",
         student_messages=["I set up the flow"],
+    )
+
+
+def test_private_leak_words_names_the_offending_words():
+    node = build_node(
+        node_type="definition",
+        node_id="def_x",
+        attempt_id=1,
+        source="reference",
+        content={"concept": "x", "meaning": "the psychological disorientation of x"},
+    )
+    assert private_leak_words(
+        "ask about the psychological side",
+        node=node,
+        problem_text="Explain x.",
+        student_messages=["x matters"],
+    ) == {"psychological"}
+    assert (
+        private_leak_words(
+            "ask them to explain x further",
+            node=node,
+            problem_text="Explain x.",
+            student_messages=["x matters"],
+        )
+        == set()
     )
