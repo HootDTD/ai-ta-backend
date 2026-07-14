@@ -65,8 +65,13 @@ chosen node's guarded nudge, the problem text, and the transcript, never node co
 node ids, or node types (session-73 leak fix, 2026-07-14). `smart_questions.leak_guard`
 enforces the boundary deterministically: any wording carrying a content word private to
 the target node (present in its content, absent from the problem text and the student's
-messages) is blocked — a leaking hint degrades to a generic nudge before the writer call,
-and a leaking question degrades to the safe fallback (`smart_question_hint_leak_blocked` /
+messages) is blocked — a leaking hint gets ONE rewrite retry (`evaluator.rewrite_hint`:
+the offending words are named and banned, public surface only, re-guarded on return;
+`smart_question_hint_leak_rewritten` on success) before degrading to the generic nudge
+(session 74, 2026-07-14: the generic nudge collapses the first question into a
+problem-statement restatement, so it is a last resort; rewrite failure is caught and
+logged `smart_question_hint_rewrite_failed`, never blocks the turn), and a leaking
+question degrades to the safe fallback (`smart_question_hint_leak_blocked` /
 `smart_question_leak_blocked`). The
 `apollo_reference_question_opportunities` ledger enforces one opportunity per
 `(attempt_id, reference_node_id)`. After the response, that opportunity is terminal even

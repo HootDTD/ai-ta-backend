@@ -97,14 +97,14 @@ def _private_texts(node: Node) -> list[str]:
     return texts
 
 
-def leaks_private_content(
+def private_leak_words(
     candidate: str,
     *,
     node: Node,
     problem_text: str,
     student_messages: Sequence[str],
-) -> bool:
-    """True when ``candidate`` contains a content word private to ``node``.
+) -> set[str]:
+    """Normalized content words in ``candidate`` that are private to ``node``.
 
     Public vocabulary (the problem text plus everything the student has said)
     is never a leak, however closely it matches the reference content — the
@@ -112,4 +112,19 @@ def leaks_private_content(
     """
     private = _content_words(_private_texts(node))
     public = _content_words([problem_text, *student_messages])
-    return bool(_content_words([candidate]) & (private - public))
+    return _content_words([candidate]) & (private - public)
+
+
+def leaks_private_content(
+    candidate: str,
+    *,
+    node: Node,
+    problem_text: str,
+    student_messages: Sequence[str],
+) -> bool:
+    """True when ``candidate`` contains a content word private to ``node``."""
+    return bool(
+        private_leak_words(
+            candidate, node=node, problem_text=problem_text, student_messages=student_messages
+        )
+    )

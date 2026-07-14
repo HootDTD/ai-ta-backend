@@ -134,3 +134,43 @@ def test_system_prompt_forbids_revealing_node_content():
     assert "problem text" in lowered
     assert "student" in lowered
     assert "never" in lowered
+
+
+def _patch_rewrite_client(monkeypatch, captured: dict, reply: str):
+    from types import SimpleNamespace
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=reply))])
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    monkeypatch.setattr(evaluator, "OpenAI", lambda: fake_client)
+
+
+def test_rewrite_hint_returns_trimmed_rewrite_and_bans_words(monkeypatch):
+    captured: dict = {}
+    _patch_rewrite_client(monkeypatch, captured, reply="  ask them to go deeper on x  ")
+    result = evaluator.rewrite_hint(
+        hint="ask about the private part",
+        forbidden_words=["private"],
+        problem_text="Explain x.",
+        student_messages=["x matters"],
+    )
+    assert result == "ask them to go deeper on x"
+    payload = json.loads(captured["messages"][1]["content"])
+    assert payload["forbidden_words"] == ["private"]
+    assert payload["problem"] == "Explain x."
+    assert payload["student_messages"] == ["x matters"]
+
+
+def test_rewrite_hint_discards_overlong_or_empty_output(monkeypatch):
+    _patch_rewrite_client(monkeypatch, {}, reply="x" * 301)
+    assert (
+        evaluator.rewrite_hint(hint="h", forbidden_words=[], problem_text="p", student_messages=[])
+        == ""
+    )
+    _patch_rewrite_client(monkeypatch, {}, reply="")
+    assert (
+        evaluator.rewrite_hint(hint="h", forbidden_words=[], problem_text="p", student_messages=[])
+        == ""
+    )
