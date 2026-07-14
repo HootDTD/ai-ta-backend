@@ -181,6 +181,41 @@ async def test_regex_label_fast_path_wins_over_structure_pair():
 
 
 @pytest.mark.asyncio
+async def test_structure_only_uses_answer_slice_not_regex_whole_chunk(monkeypatch):
+    combined = "Question 1: Which force?\nAnswer 1: rivalry"
+    answer_start = combined.index("Answer")
+    pair = _structure_pair(
+        answer_spans=(BlockSpan(chunk_id=20, start_char=answer_start, end_char=len(combined)),)
+    )
+
+    async def _semantic_must_not_run(*_args, **_kwargs):
+        raise AssertionError("combined mode must not retrieve whole chunks")
+
+    monkeypatch.setattr(
+        "apollo.provisioning.authored_sets.paired_retrieval._doc_scoped_semantic",
+        _semantic_must_not_run,
+    )
+    retrieve = make_paired_solution_retrieve_fn(
+        db=None,
+        solution_document_id=10,
+        label_index=build_solution_label_index(((20, combined, 1),)),
+        page_conf={1: 0.95},
+        solution_chunks=((20, combined, 1),),
+        structure_pairs=(pair,),
+        structure_only=True,
+    )
+
+    spans = await retrieve(SimpleNamespace(label="1", problem_text="Question 1"))
+
+    assert [span.text for span in spans] == ["Answer 1: rivalry"]
+    assert retrieve.last_match_method == "structure"
+
+    unmatched = await retrieve(SimpleNamespace(label="2", problem_text="Question 2"))
+    assert unmatched == ()
+    assert retrieve.last_match_method is None
+
+
+@pytest.mark.asyncio
 async def test_no_label_no_retrieval_hits_returns_empty(monkeypatch):
     retrieve = make_paired_solution_retrieve_fn(
         db=None,

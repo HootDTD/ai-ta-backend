@@ -201,6 +201,7 @@ def make_paired_solution_retrieve_fn(
     page_conf: dict[int | None, float | None],
     solution_chunks: Sequence[SolutionChunk] = (),
     structure_pairs: StructurePassResult | Sequence[StructurePair] | None = None,
+    structure_only: bool = False,
     top_k: int = DEFAULT_PAIRED_TOP_K,
 ) -> Callable[[Any], Awaitable[tuple[GroundingSpan, ...]]]:
     """Build a retrieve_fn for ``find_or_generate``.
@@ -211,7 +212,9 @@ def make_paired_solution_retrieve_fn(
     ``solution_chunks``. Empty results leave both attributes as ``None``. When
     ``solution_document_id`` is ``None`` (no solution doc paired), the returned
     fn always yields no spans so ``find_or_generate`` falls through to its
-    generate branch.
+    generate branch. ``structure_only`` is the combined-document safety mode:
+    regex and semantic whole-chunk paths are skipped so only answer-block spans
+    selected by the structure pass can enter grounding.
     """
 
     structure_index = _structure_pair_index(structure_pairs)
@@ -223,7 +226,7 @@ def make_paired_solution_retrieve_fn(
             return ()
 
         label = extract_problem_label(question)
-        matched = match_solution_label(label, label_index)
+        matched = None if structure_only else match_solution_label(label, label_index)
         if matched is not None:
             spans, min_conf = _spans_from_chunks(
                 matched,
@@ -247,6 +250,9 @@ def make_paired_solution_retrieve_fn(
                 retrieve.last_min_conf = min_conf  # type: ignore[attr-defined]
                 retrieve.last_match_method = "structure"  # type: ignore[attr-defined]
                 return spans
+
+        if structure_only:
+            return ()
 
         query_text = getattr(question, "problem_text", "") or ""
         hits = await _doc_scoped_semantic(db, solution_document_id, query_text, top_k)  # type: ignore[arg-type]

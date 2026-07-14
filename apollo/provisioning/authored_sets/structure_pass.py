@@ -1,4 +1,4 @@
-"""Shadow document-structure pass for authored problem/solution sets.
+"""Document-structure pass for authored problem/solution sets.
 
 Retrieval chunks are intentionally tiny and may split a printed label from the
 block it introduces. This module therefore presents each document to one
@@ -8,11 +8,13 @@ model identifies structure; pairing remains deterministic: one normalized
 question label must align with exactly one normalized answer label, otherwise
 the label is left unpaired rather than guessed.
 
-PR1 is observational only. Callers may log and persist ``StructurePassSummary``
-but do not consume units for grounding. Calls use only the injected metered
-cheap tier, never log document or response bodies, and stop before another call
-once pass-local spend exceeds ``max(scrape_spend, 30_000)``. A final call may
-overshoot because the guard is deliberately pre-flight.
+Calls use only the injected metered cheap tier and never log document or response
+bodies. Separate problem/solution documents run after scrape and stop before
+another call once pass-local spend exceeds ``max(scrape_spend, 30_000)``. A
+combined document must run before scrape so answer blocks can be excluded from
+student-facing problem text; scrape spend is not known yet, so that call uses
+the 30k floor as its budget. A final call may overshoot because the guard is
+deliberately pre-flight.
 """
 
 from __future__ import annotations
@@ -43,6 +45,11 @@ _LOG = logging.getLogger(__name__)
 _MIN_STRUCTURE_BUDGET = 30_000
 _MAX_SUMMARY_LABELS = 200
 _GENERIC_LABEL_RE = re.compile(r"^\s*([a-z]+|\d{1,3}[a-z]?)\s*[.):\-]?\s*$", re.IGNORECASE)
+_UNIT_KINDS: tuple[Literal["question", "answer", "other"], ...] = (
+    "question",
+    "answer",
+    "other",
+)
 
 _SYSTEM_PROMPT = """You segment exam-style documents into structural blocks.
 Return only JSON matching the supplied schema. A unit is a complete block from
@@ -117,7 +124,7 @@ class StructurePassResult(BaseModel):
         labels = tuple(pair.label for pair in self.pairs)
         return StructurePassSummary(
             unit_count=len(self.units),
-            kind_counts={kind: counts.get(kind, 0) for kind in ("question", "answer", "other")},
+            kind_counts={kind: counts.get(kind, 0) for kind in _UNIT_KINDS},
             paired_label_count=len(labels),
             paired_labels=labels[:_MAX_SUMMARY_LABELS],
         )

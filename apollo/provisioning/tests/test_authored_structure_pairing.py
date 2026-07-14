@@ -130,6 +130,27 @@ def _pair() -> StructurePair:
     )
 
 
+def _combined_pair() -> tuple[StructurePair, str]:
+    content = f"{_candidate().problem_text}\n{_ANSWER}"
+    answer_start = content.index(_ANSWER)
+    base = _pair()
+    answer = base.answer.model_copy(
+        update={
+            "document_role": "problem",
+            "start_char": answer_start,
+            "end_char": len(content),
+            "block_spans": (
+                BlockSpan(
+                    chunk_id=20,
+                    start_char=answer_start,
+                    end_char=len(content),
+                ),
+            ),
+        }
+    )
+    return base.model_copy(update={"answer": answer}), content
+
+
 def _mint_plan() -> MintPlan:
     return MintPlan(
         concept_id=7,
@@ -191,14 +212,22 @@ def _patch_downstream(monkeypatch, *, pair_passes: bool = True):
     return calls, tier1
 
 
-async def _process(*, reversed_mode: bool, structure_pairs, monkeypatch):
+async def _process(
+    *,
+    reversed_mode: bool,
+    structure_pairs,
+    monkeypatch,
+    solution_document_id: int = 55,
+    solution_chunks=((20, _ANSWER, 2),),
+    structure_only: bool = False,
+):
     return await orch._process_authored_candidate(
         cast(AsyncSession, _DB()),
         neo=None,
         candidate=_candidate(),
         concept_id=3,
         search_space_id=5,
-        solution_document_id=55,
+        solution_document_id=solution_document_id,
         label_index={},
         page_conf={2: 0.95},
         problem_low_conf=False,
@@ -207,8 +236,9 @@ async def _process(*, reversed_mode: bool, structure_pairs, monkeypatch):
         conf_threshold=0.6,
         registered=(),
         reversed_mode=reversed_mode,
-        solution_chunks=((20, _ANSWER, 2),),
+        solution_chunks=solution_chunks,
         structure_pairs=structure_pairs,
+        structure_only=structure_only,
     )
 
 
@@ -230,6 +260,28 @@ async def test_structure_pair_promotes_as_llm_paired_and_executes_both_gates(
     assert calls["validate"] == 1
     assert calls["mint"] == 1
     assert calls["promote"][0]["solution_source"] == "llm_paired"
+
+
+@pytest.mark.parametrize("reversed_mode", [False, True], ids=["legacy", "reversed"])
+@pytest.mark.asyncio
+async def test_combined_structure_pair_executes_unchanged_trust_spine(monkeypatch, reversed_mode):
+    calls, _tier1 = _patch_downstream(monkeypatch)
+    pair, combined_content = _combined_pair()
+
+    result = await _process(
+        reversed_mode=reversed_mode,
+        structure_pairs=(pair,),
+        monkeypatch=monkeypatch,
+        solution_document_id=10,
+        solution_chunks=((20, combined_content, 2),),
+        structure_only=True,
+    )
+
+    assert result.outcome == "promoted"
+    assert result.solution_source == "llm_paired"
+    assert result.match_method == "structure"
+    assert calls["verify"] == 1
+    assert calls["validate"] == 1
 
 
 @pytest.mark.parametrize("reversed_mode", [False, True], ids=["legacy", "reversed"])
