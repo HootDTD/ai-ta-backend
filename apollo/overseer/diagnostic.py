@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Sequence
 from typing import Any
 
 from openai import OpenAI
@@ -30,28 +31,31 @@ from apollo.overseer.topic_score import TopicScoreResult
 
 _LOG = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = """You are the Overseer's diagnostic narrator. The student just taught an
-ignorant agent (Apollo) to solve a specific problem. A deterministic rubric has
-already graded the student — you have the full rubric scores, per-axis letter
-bands, and the coverage map (which reference entries the student covered vs.
-missed). Your job is to NARRATE the rubric's verdict — not to re-grade it.
+_SYSTEM_PROMPT = """Write feedback directly to a student who just taught Apollo how to solve a
+specific problem. The deterministic assessment is already complete. Explain the result in a way
+that helps the student improve; do not re-grade it.
 
 HARD RULES — never violate:
+- Address the student only as "you" and "your." Never say "the student" or refer to the student
+  as "they/their." Sound like a coach who heard the explanation, not a report for a teacher.
 - Do not contradict the rubric's per-axis scores. If an axis is A+, do not
   describe it as deficient; if an axis is F, do not describe it as strong.
 - Frame every gap pedagogically: "you didn't explicitly walk Apollo through X" /
   "the teaching skipped X" / "Apollo had to infer X without being shown" — never
   as Apollo failing.
-- Missing reference entries are FORMATIVE feedback (what to expand on next),
-  not an accusation. Be encouraging.
+- Missing reference entries are formative feedback (what to expand on next), not an accusation.
+- Synthesize instead of listing every missing entry. Prioritize at most two related, high-value
+  gaps and explain what adding them would do for Apollo's understanding.
+- Never mention a misconception category when no misconception was detected. In particular,
+  never say that no misconceptions or errors were recorded.
+- Avoid audit language such as "partially covered," "entirely missing," "ledger," and "rubric."
 
-Output format: a short, supportive report (6-12 sentences) for the student.
-- Lead with the lowest-scoring PRESENT axis. Name it and what it means.
-- Then call out specifically what they taught well (which covered entries).
-- Explain what was missing and WHY it mattered — what Apollo's understanding
-  lacks because that piece wasn't taught.
-- End with a concrete next step tied to the weakest axis: re-teach that specific
-  piece, or return to Hoot to study that concept.
+Output format: two short paragraphs followed by exactly one final line beginning "Next step:".
+- Lead with a specific strength from the covered entries and why it helped Apollo understand.
+- Then explain the one or two most valuable improvements and why they matter.
+- Make the next step a concrete revision the student can say, show, connect, compare, or
+  illustrate. Never use the vague instruction "focus on understanding."
+- Do not repeat the score or letter grade and do not add a generic conclusion.
 
 Tone: diagnostic, supportive, not judgmental. Do not invent details. Do not add
 physics beyond what the reference solution and coverage tell you."""
@@ -65,6 +69,7 @@ def generate_diagnostic(
     rubric: dict[str, Any],
     model: str | None = None,
     topic_score: TopicScoreResult | None = None,
+    student_utterances: Sequence[str] = (),
 ) -> str:
     """Generate the student-facing diagnostic narrative.
 
@@ -84,7 +89,9 @@ def generate_diagnostic(
     use_topic_prompt = topic_score is not None and topic_score_served_enabled()
     if use_topic_prompt:
         system_prompt, user_content = build_topic_narrative_prompt(
-            topic_score, problem_text=problem_text
+            topic_score,
+            problem_text=problem_text,
+            student_utterances=student_utterances,
         )
     else:
         system_prompt = _SYSTEM_PROMPT

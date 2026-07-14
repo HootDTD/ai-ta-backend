@@ -60,7 +60,7 @@ def test_user_prompt_carries_display_name_status_and_percent():
     assert "Explain causality in directional systems" in user
     assert "covered" in user
     assert "90%" in user
-    assert "Score: 64 (C)" in user
+    assert "Score:" not in user
 
 
 def test_misconception_line_keeps_span_and_resolution_only():
@@ -80,3 +80,51 @@ def test_system_prompt_forbids_internals_and_allows_percentages():
     system, _user = build_topic_narrative_prompt(_result(), problem_text="P?")
     assert "internal identifiers" in system
     assert "percentage" in system.lower()
+
+
+def test_system_prompt_forbids_third_person_audit_feedback():
+    system, _user = build_topic_narrative_prompt(_result(), problem_text="P?")
+    lowered = " ".join(system.lower().split())
+    assert 'speak to the student as "you" and "your"' in lowered
+    assert 'never call them "the student,' in lowered
+    assert "say nothing at all about misconceptions" in lowered
+
+
+# ── 2026-07-14 narrative grounding: verbatim student transcript in the prompt ──
+
+
+def test_user_prompt_includes_student_transcript_when_provided():
+    _system, user = build_topic_narrative_prompt(
+        _result(),
+        problem_text="P?",
+        student_utterances=("future shock is rapid change", "it disrupts social norms"),
+    )
+    assert "What the student actually said" in user
+    assert '1. "future shock is rapid change"' in user
+    assert '2. "it disrupts social norms"' in user
+
+
+def test_user_prompt_omits_transcript_block_by_default():
+    _system, user = build_topic_narrative_prompt(_result(), problem_text="P?")
+    assert "What the student actually said" not in user
+
+
+def test_blank_utterances_are_dropped_and_all_blank_omits_block():
+    _system, user = build_topic_narrative_prompt(
+        _result(), problem_text="P?", student_utterances=("", "  ", "real words")
+    )
+    assert '1. "real words"' in user
+    assert '2.' not in user
+    _system, user2 = build_topic_narrative_prompt(
+        _result(), problem_text="P?", student_utterances=("", "   ")
+    )
+    assert "What the student actually said" not in user2
+
+
+def test_system_prompt_forbids_overstating_credited_topics():
+    system, _user = build_topic_narrative_prompt(_result(), problem_text="P?")
+    lower = system.lower()
+    assert "what the student actually said" in lower
+    assert "never expand a topic's name" in lower
+    # Transcript must not re-grade: ledger stays authoritative.
+    assert "authoritative" in lower
