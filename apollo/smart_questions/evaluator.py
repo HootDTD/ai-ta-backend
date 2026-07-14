@@ -103,6 +103,53 @@ def _call_evaluator(*, problem_text: str, items: list[dict], student_messages: l
     return response.choices[0].message.content or "{}"
 
 
+def rewrite_hint(
+    *,
+    hint: str,
+    forbidden_words: Sequence[str],
+    problem_text: str,
+    student_messages: Sequence[str],
+) -> str:
+    """One-shot rewrite of a leak-flagged hint with the offending words banned.
+
+    Returns "" when the model produces nothing usable (empty or over the same
+    length cap as first-pass hints); the caller falls back to its generic
+    nudge. The rewrite sees only the public surface plus the flagged hint, so
+    it cannot introduce new answer content beyond what the guard re-checks.
+    """
+    client: Any = OpenAI()
+    response = client.chat.completions.create(
+        model=cast(Any, os.getenv("APOLLO_QUESTION_MODEL") or os.getenv("MAIN_MODEL") or "gpt-4o"),
+        temperature=0.0,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Rewrite this question-writer hint so it keeps the same intent but uses "
+                    "ONLY wording from the problem text and the student's own messages. The "
+                    "forbidden words must not appear in any form (including other inflections). "
+                    "Never state, name, paraphrase, or hint at reference answer content. "
+                    "Return the rewritten hint only, as one short line."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "hint": hint,
+                        "forbidden_words": list(forbidden_words),
+                        "problem": problem_text,
+                        "student_messages": list(student_messages),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+    )
+    rewritten = (response.choices[0].message.content or "").strip()
+    return rewritten if len(rewritten) <= _HINT_MAX_CHARS else ""
+
+
 async def evaluate_reference_coverage(
     *, transcript: Sequence[tuple[str, str]], reference_graph: KGGraph, problem: Any
 ) -> list[NodeCoverage]:

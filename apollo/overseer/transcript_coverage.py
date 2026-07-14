@@ -197,9 +197,15 @@ def _to_coverage_verdict(
     return result
 
 
-async def compute_transcript_coverage(
+async def _adjudicate_verdicts(
     transcript: Sequence[tuple[str, str]], reference_graph: KGGraph, problem: Any
-) -> CoverageVerdict:
+) -> list[NodeVerdict]:
+    """Run one structured adjudication call and parse it into ``NodeVerdict``s.
+
+    Shared by the numeric-only :func:`compute_transcript_coverage` and the
+    spans-returning :func:`compute_transcript_coverage_with_spans`; the
+    diagnostic ``span_ok`` log (never a scoring rail) fires here exactly as
+    before."""
     rubric_items = _build_rubric_items(reference_graph)
     system_prompt = build_system_prompt(problem)
     user_message = build_user_message(problem, rubric_items, transcript)
@@ -249,7 +255,53 @@ async def compute_transcript_coverage(
             verdict.credit,
             validate_span(verdict.evidence_span, student_messages),
         )
+    return verdicts
+
+
+def narrative_evidence_spans(
+    verdicts: Sequence[NodeVerdict], transcript: Sequence[tuple[str, str]]
+) -> dict[str, str]:
+    """Per-attempt student quotes for the diagnostic narrative, keyed by node.
+
+    The narrative must only ever attribute to the student words they actually
+    typed THIS attempt (per-session feedback — never reference wording, never
+    another session's teaching). So this gate keeps a verdict's
+    ``evidence_span`` only when it passes :func:`validate_span` (a verbatim
+    quote of ONE student message in ``transcript``) AND the verdict earned
+    positive credit. A hallucinated, Apollo-sourced, or stitched span is
+    dropped — the narrator then credits that topic in general terms instead of
+    quoting anything. Pure, no IO."""
+    student_messages = [content for role, content in transcript if role == "student"]
+    spans: dict[str, str] = {}
+    for verdict in verdicts:
+        if verdict.credit <= 0.0 or verdict.evidence_span is None:
+            continue
+        if validate_span(verdict.evidence_span, student_messages):
+            spans[verdict.node_id] = verdict.evidence_span
+    return spans
+
+
+async def compute_transcript_coverage(
+    transcript: Sequence[tuple[str, str]], reference_graph: KGGraph, problem: Any
+) -> CoverageVerdict:
+    verdicts = await _adjudicate_verdicts(transcript, reference_graph, problem)
     return _to_coverage_verdict(verdicts, reference_graph)
+
+
+async def compute_transcript_coverage_with_spans(
+    transcript: Sequence[tuple[str, str]], reference_graph: KGGraph, problem: Any
+) -> tuple[CoverageVerdict, dict[str, str]]:
+    """One adjudication call -> ``(coverage, narrative_spans)``.
+
+    ``coverage`` is byte-identical to :func:`compute_transcript_coverage` (the
+    frozen contract — spans are deliberately NOT a coverage key). The spans map
+    is the :func:`narrative_evidence_spans` gate over the same verdicts, so the
+    Done path pays for exactly one LLM call."""
+    verdicts = await _adjudicate_verdicts(transcript, reference_graph, problem)
+    return (
+        _to_coverage_verdict(verdicts, reference_graph),
+        narrative_evidence_spans(verdicts, transcript),
+    )
 
 
 __all__ = [
@@ -258,5 +310,7 @@ __all__ = [
     "build_transcript_grader_schema",
     "build_user_message",
     "compute_transcript_coverage",
+    "compute_transcript_coverage_with_spans",
+    "narrative_evidence_spans",
     "validate_span",
 ]

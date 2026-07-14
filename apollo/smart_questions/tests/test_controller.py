@@ -126,6 +126,7 @@ async def test_leaking_hint_is_replaced_by_generic_nudge(monkeypatch):
 
     monkeypatch.setattr(controller, "evaluate_reference_coverage", evaluate)
     _patch_writer(monkeypatch, captured)
+    _patch_rewrite(monkeypatch, {}, reply="")
     result = await controller.plan_next_question(
         db,
         attempt_id=2,
@@ -204,3 +205,102 @@ async def test_controller_closes_answered_gap_then_stops(monkeypatch):
     assert row.state == "answered"
     assert row.answered_turn == 6
     assert db.added == []
+
+
+def _patch_rewrite(monkeypatch, captured: dict, reply: str = "", raises: bool = False):
+    def fake_rewrite_hint(**kwargs):
+        captured.update(kwargs)
+        if raises:
+            raise RuntimeError("model down")
+        return reply
+
+    monkeypatch.setattr(controller, "rewrite_hint", fake_rewrite_hint)
+
+
+def _evaluate_with_leaking_hint(monkeypatch):
+    async def evaluate(**kwargs):
+        # "private" is in the node's meaning but in neither the problem text
+        # nor the student's message, so the first-pass hint always leaks.
+        return [NodeCoverage("def_x", "missing", 0.0, "ask about the private part")]
+
+    monkeypatch.setattr(controller, "evaluate_reference_coverage", evaluate)
+
+
+@pytest.mark.asyncio
+async def test_leaking_hint_is_rewritten_once_and_used(monkeypatch):
+    db = _DB([])
+    writer_captured: dict = {}
+    rewrite_captured: dict = {}
+    _evaluate_with_leaking_hint(monkeypatch)
+    _patch_writer(monkeypatch, writer_captured)
+    _patch_rewrite(monkeypatch, rewrite_captured, reply="ask them to dig deeper into x")
+    result = await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x matters")],
+        turn_index=4,
+    )
+    assert result.action == "ask"
+    assert writer_captured["nudge"] == "ask them to dig deeper into x"
+    assert rewrite_captured["hint"] == "ask about the private part"
+    assert rewrite_captured["forbidden_words"] == ["private"]
+    assert rewrite_captured["problem_text"] == "Explain x."
+    assert rewrite_captured["student_messages"] == ["x matters"]
+
+
+@pytest.mark.asyncio
+async def test_rewritten_hint_that_still_leaks_falls_back_to_generic(monkeypatch):
+    db = _DB([])
+    writer_captured: dict = {}
+    rewrite_captured: dict = {}
+    _evaluate_with_leaking_hint(monkeypatch)
+    _patch_writer(monkeypatch, writer_captured)
+    _patch_rewrite(monkeypatch, rewrite_captured, reply="still about the private part")
+    await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x matters")],
+        turn_index=4,
+    )
+    assert writer_captured["nudge"] == controller._GENERIC_NUDGE
+
+
+@pytest.mark.asyncio
+async def test_empty_rewrite_falls_back_to_generic(monkeypatch):
+    db = _DB([])
+    writer_captured: dict = {}
+    _evaluate_with_leaking_hint(monkeypatch)
+    _patch_writer(monkeypatch, writer_captured)
+    _patch_rewrite(monkeypatch, {}, reply="")
+    await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x matters")],
+        turn_index=4,
+    )
+    assert writer_captured["nudge"] == controller._GENERIC_NUDGE
+
+
+@pytest.mark.asyncio
+async def test_rewrite_failure_falls_back_to_generic(monkeypatch):
+    db = _DB([])
+    writer_captured: dict = {}
+    _evaluate_with_leaking_hint(monkeypatch)
+    _patch_writer(monkeypatch, writer_captured)
+    _patch_rewrite(monkeypatch, {}, raises=True)
+    result = await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x matters")],
+        turn_index=4,
+    )
+    assert result.action == "ask"
+    assert writer_captured["nudge"] == controller._GENERIC_NUDGE

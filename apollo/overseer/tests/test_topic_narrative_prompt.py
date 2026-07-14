@@ -128,3 +128,66 @@ def test_system_prompt_forbids_overstating_credited_topics():
     assert "never expand a topic's name" in lower
     # Transcript must not re-grade: ledger stays authoritative.
     assert "authoritative" in lower
+
+
+# ── 2026-07-14 per-session grounding: reference text is never the student's words ──
+
+
+def _result_with_evidence(evidence_span: str | None) -> TopicScoreResult:
+    return TopicScoreResult(
+        score=70,
+        letter="B",
+        coverage_component=0.7,
+        misconception_dock=0.0,
+        topics=(
+            TopicCredit(
+                canonical_key="proc_when_started",
+                display_name=(
+                    "State when future shock was identified: Alvin Toffler named it "
+                    "in his 1970 book"
+                ),
+                credit=0.7,
+                status="covered",
+                weight=1.0,
+                misconceptions=(),
+                evidence_span=evidence_span,
+            ),
+        ),
+    )
+
+
+def test_user_prompt_marks_topic_text_as_reference_wording():
+    """The narrator must be able to tell reference wording apart from student
+    speech — the evidence header says the topic descriptions are the
+    reference solution's own words."""
+    _system, user = build_topic_narrative_prompt(
+        _result_with_evidence(None), problem_text="P?"
+    )
+    assert "reference solution's own wording" in user
+
+
+def test_user_prompt_quotes_student_evidence_when_present():
+    _system, user = build_topic_narrative_prompt(
+        _result_with_evidence("it started in 1970"), problem_text="P?"
+    )
+    assert 'You said: "it started in 1970"' in user
+
+
+def test_user_prompt_has_no_you_said_line_without_evidence():
+    _system, user = build_topic_narrative_prompt(
+        _result_with_evidence(None), problem_text="P?"
+    )
+    assert "You said:" not in user
+
+
+def test_system_prompt_forbids_attributing_reference_content_to_student():
+    """The exact failure this guards: the narrative told a student who wrote
+    only '1970' that they 'referenced Alvin Toffler's 1970 book and the
+    post-World-War-II era' — reference wording presented as the student's own
+    statement."""
+    system, _user = build_topic_narrative_prompt(
+        _result_with_evidence(None), problem_text="P?"
+    )
+    lowered = " ".join(system.lower().split())
+    assert "not what the student said" in lowered
+    assert 'quoted "you said"' in lowered

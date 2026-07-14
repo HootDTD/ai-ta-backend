@@ -19,8 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.persistence.models import ReferenceQuestionOpportunity
 from apollo.schemas.problem import Problem
-from apollo.smart_questions.evaluator import evaluate_reference_coverage
-from apollo.smart_questions.leak_guard import leaks_private_content
+from apollo.smart_questions.evaluator import evaluate_reference_coverage, rewrite_hint
+from apollo.smart_questions.leak_guard import leaks_private_content, private_leak_words
 from apollo.smart_questions.planner import choose_target
 from apollo.smart_questions.writer import SAFE_FALLBACK as _SAFE_FALLBACK
 from apollo.smart_questions.writer import write_question
@@ -80,13 +80,47 @@ async def plan_next_question(
     # question. The node itself stays controller-side for guarding only.
     hint = next(item.ask_hint for item in coverage if item.node_id == target_id).strip()
     nudge = hint or _GENERIC_NUDGE
-    if hint and leaks_private_content(
-        hint, node=target, problem_text=problem_text, student_messages=student_messages
-    ):
-        _LOG.warning(
-            "smart_question_hint_leak_blocked attempt_id=%s node_id=%s", attempt_id, target_id
+    leaked = (
+        private_leak_words(
+            hint, node=target, problem_text=problem_text, student_messages=student_messages
         )
+        if hint
+        else set()
+    )
+    if leaked:
+        # Retry once: the leak names exactly which words are off-limits, and the
+        # rewrite runs before giving up on a targeted hint. Session 74
+        # (2026-07-14) showed the generic nudge degrades the first question
+        # into a problem-statement restatement, so it is a last resort.
         nudge = _GENERIC_NUDGE
+        try:
+            retried = await asyncio.to_thread(
+                rewrite_hint,
+                hint=hint,
+                forbidden_words=sorted(leaked),
+                problem_text=problem_text,
+                student_messages=student_messages,
+            )
+        except Exception:
+            _LOG.exception(
+                "smart_question_hint_rewrite_failed attempt_id=%s node_id=%s",
+                attempt_id,
+                target_id,
+            )
+            retried = ""
+        if retried and not leaks_private_content(
+            retried, node=target, problem_text=problem_text, student_messages=student_messages
+        ):
+            _LOG.info(
+                "smart_question_hint_leak_rewritten attempt_id=%s node_id=%s",
+                attempt_id,
+                target_id,
+            )
+            nudge = retried
+        else:
+            _LOG.warning(
+                "smart_question_hint_leak_blocked attempt_id=%s node_id=%s", attempt_id, target_id
+            )
 
     question = await asyncio.to_thread(
         write_question, nudge=nudge, problem_text=problem_text, transcript=transcript
