@@ -1,38 +1,26 @@
-"""Answer-blind wording for a planner-selected reference target."""
+"""Answer-blind wording for a planner-selected reference target.
+
+The writer never sees the reference node — no content, no node id (ids like
+``proc_char_information_overload`` carry the answer in the name), no node
+type. Its only steering is the evaluator's guarded ``ask_hint`` nudge plus
+the public surface: the problem statement and the student's own words. The
+controller runs the deterministic leak guard on the returned question.
+"""
 
 from __future__ import annotations
 
 import json
 import os
-import re
 from collections.abc import Sequence
 from typing import Any, cast
 
 from openai import OpenAI
 
-from apollo.ontology import Node
-
-_SAFE_FALLBACK = "I’m still missing one step—can you explain what I should do next?"
+SAFE_FALLBACK = "I’m still missing one step—can you explain what I should do next?"
 
 
-def _private_phrases(node: Node) -> list[str]:
-    values = node.content.model_dump().values()
-    return [
-        str(value).strip() for value in values if isinstance(value, str) and len(value.strip()) >= 4
-    ]
-
-
-def _leaks_private_target(question: str, node: Node, student_words: Sequence[str]) -> bool:
-    normalized_question = re.sub(r"\s+", " ", question).casefold()
-    student_text = re.sub(r"\s+", " ", " ".join(student_words)).casefold()
-    return any(
-        phrase.casefold() in normalized_question and phrase.casefold() not in student_text
-        for phrase in _private_phrases(node)
-    )
-
-
-def write_question(*, node: Node, transcript: Sequence[tuple[str, str]]) -> str:
-    """Ask about the target dimension without supplying its answer."""
+def write_question(*, nudge: str, problem_text: str, transcript: Sequence[tuple[str, str]]) -> str:
+    """Ask about the nudged part of the problem without knowing its answer."""
     student_words = [content for role, content in transcript if role == "student"]
     client = OpenAI()
     response = client.chat.completions.create(
@@ -43,18 +31,20 @@ def write_question(*, node: Node, transcript: Sequence[tuple[str, str]]) -> str:
                 "role": "system",
                 "content": (
                     "Write exactly one short question in Apollo's confused-student voice. "
-                    "The private target tells you what understanding is missing. Never state, "
-                    "name, paraphrase, confirm, or hint at the target answer. Use only terms the "
-                    "student already used. Ask for an explanation, relationship, reason, or next "
-                    "step. Return the question only."
+                    "The private nudge names which part of the problem to ask about next. "
+                    "Ask for an explanation, reason, relationship, example, or next step "
+                    "on that part, using only terms the student already used or wording "
+                    "from the problem statement. Never answer the question yourself, and "
+                    "never introduce concepts, facts, or terms that appear in neither. "
+                    "Return the question only."
                 ),
             },
             {
                 "role": "user",
                 "content": json.dumps(
                     {
-                        "private_target_type": node.node_type,
-                        "private_target": node.content.model_dump(),
+                        "nudge": nudge,
+                        "problem": problem_text,
                         "student_words": student_words,
                     },
                     ensure_ascii=False,
@@ -63,6 +53,4 @@ def write_question(*, node: Node, transcript: Sequence[tuple[str, str]]) -> str:
         ],
     )
     question = (response.choices[0].message.content or "").strip()
-    if not question or _leaks_private_target(question, node, student_words):
-        return _SAFE_FALLBACK
-    return question
+    return question or SAFE_FALLBACK

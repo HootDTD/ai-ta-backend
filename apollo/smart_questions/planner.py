@@ -15,6 +15,10 @@ class NodeCoverage:
     node_id: str
     state: CoverageState
     credit: float
+    # Evaluator-authored nudge for the writer: what to ask about, phrased only
+    # from the problem text and the student's own words (leak-guarded by the
+    # controller before use). Empty when covered or when the hint was invalid.
+    ask_hint: str = ""
 
 
 def choose_target(

@@ -57,10 +57,17 @@ topic contribution; unattached findings retain the global `SEVERITY_CLAMP` cap.
 
 The default-off `APOLLO_SMART_QUESTIONS_ENABLED` path replaces the per-turn dumb reply
 with three reference-driven stages: `smart_questions.evaluator` judges the cumulative
-student-only transcript against **every** authored reference node; the pure planner chooses
-one prerequisite-ready `partial`/`missing`/`misconceived` node that has never been asked;
-and the answer-blind writer asks one short question without receiving the student KG. A
-private-target phrase guard falls back to a generic probe if wording leaks an answer. The
+student-only transcript against **every** authored reference node and, per uncovered node,
+emits an `ask_hint` nudge phrased only from the problem text and the student's own words;
+the pure planner chooses one prerequisite-ready `partial`/`missing`/`misconceived` node
+that has never been asked; and the writer is fully answer-blind — it receives only the
+chosen node's guarded nudge, the problem text, and the transcript, never node content,
+node ids, or node types (session-73 leak fix, 2026-07-14). `smart_questions.leak_guard`
+enforces the boundary deterministically: any wording carrying a content word private to
+the target node (present in its content, absent from the problem text and the student's
+messages) is blocked — a leaking hint degrades to a generic nudge before the writer call,
+and a leaking question degrades to the safe fallback (`smart_question_hint_leak_blocked` /
+`smart_question_leak_blocked`). The
 `apollo_reference_question_opportunities` ledger enforces one opportunity per
 `(attempt_id, reference_node_id)`. After the response, that opportunity is terminal even
 when coverage remains insufficient. When all nodes are covered or every remaining gap has
