@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import apollo.provisioning.authored_sets.orchestrator as orch
 from apollo.provisioning.authored_sets.graph_derivation import DerivedGraph
@@ -191,7 +193,7 @@ def _patch_downstream(monkeypatch, *, pair_passes: bool = True):
 
 async def _process(*, reversed_mode: bool, structure_pairs, monkeypatch):
     return await orch._process_authored_candidate(
-        _DB(),
+        cast(AsyncSession, _DB()),
         neo=None,
         candidate=_candidate(),
         concept_id=3,
