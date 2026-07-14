@@ -15,6 +15,11 @@ from apollo.smart_questions.planner import CoverageState, NodeCoverage
 
 _VALID_STATES: set[str] = {"covered", "partial", "missing", "misconceived"}
 
+# ask_hint longer than this is discarded — a runaway hint is more likely to
+# carry answer content. Enforced in parsing because OpenAI strict structured
+# outputs reject maxLength.
+_HINT_MAX_CHARS: int = 300
+
 
 def _schema() -> dict:
     return {
@@ -30,17 +35,37 @@ def _schema() -> dict:
                     "items": {
                         "type": "object",
                         "additionalProperties": False,
-                        "required": ["node_id", "state", "credit"],
+                        "required": ["node_id", "state", "credit", "ask_hint"],
                         "properties": {
                             "node_id": {"type": "string"},
                             "state": {"type": "string", "enum": sorted(_VALID_STATES)},
                             "credit": {"type": "number", "minimum": 0, "maximum": 1},
+                            "ask_hint": {"type": "string"},
                         },
                     },
                 }
             },
         },
     }
+
+
+def _hint_instruction() -> str:
+    return (
+        "For every node also return ask_hint: an empty string when state is covered, "
+        "otherwise one short line telling a question-writer what to ask the student "
+        "about next. Phrase ask_hint using ONLY wording from the problem text and the "
+        "student's own messages — never state, name, paraphrase, or hint at the node's "
+        "own content. Point at which part of the problem is still unanswered, or which "
+        "part of the student's explanation needs to go deeper."
+    )
+
+
+def _parse_hint(item: dict) -> str:
+    hint = item.get("ask_hint", "")
+    if not isinstance(hint, str):
+        return ""
+    hint = hint.strip()
+    return hint if len(hint) <= _HINT_MAX_CHARS else ""
 
 
 def _call_evaluator(*, problem_text: str, items: list[dict], student_messages: list[str]) -> str:
@@ -58,7 +83,8 @@ def _call_evaluator(*, problem_text: str, items: list[dict], student_messages: l
                     "reference node with the student's cumulative explanation. covered means the "
                     "idea is adequately explained or correctly used; partial means meaningful but "
                     "incomplete evidence; misconceived means the student asserted a conflicting "
-                    "idea; missing means no meaningful evidence. Return one verdict per node."
+                    "idea; missing means no meaningful evidence. Return one verdict per node. "
+                    + _hint_instruction()
                 ),
             },
             {
@@ -102,6 +128,7 @@ async def evaluate_reference_coverage(
             node_id=node_id,
             state=cast(CoverageState, state),
             credit=max(0.0, min(1.0, float(item.get("credit", 0.0)))),
+            ask_hint=_parse_hint(item),
         )
     return [
         by_id.get(node.node_id, NodeCoverage(node.node_id, "missing", 0.0))

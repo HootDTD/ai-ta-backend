@@ -54,18 +54,28 @@ class _DB:
         self.added.append(row)
 
 
+def _patch_writer(monkeypatch, captured: dict, reply: str = "What do you mean by that?"):
+    def fake_write_question(**kwargs):
+        captured.update(kwargs)
+        return reply
+
+    async def run_sync(fn, **kwargs):
+        return fn(**kwargs)
+
+    monkeypatch.setattr(controller, "write_question", fake_write_question)
+    monkeypatch.setattr(controller.asyncio, "to_thread", run_sync)
+
+
 @pytest.mark.asyncio
 async def test_controller_records_one_selected_opportunity(monkeypatch):
     db = _DB([])
+    captured: dict = {}
 
     async def evaluate(**kwargs):
-        return [NodeCoverage("def_x", "missing", 0.0)]
-
-    async def run_sync(fn, **kwargs):
-        return "What do you mean by that?"
+        return [NodeCoverage("def_x", "missing", 0.0, "ask what x is for")]
 
     monkeypatch.setattr(controller, "evaluate_reference_coverage", evaluate)
-    monkeypatch.setattr(controller.asyncio, "to_thread", run_sync)
+    _patch_writer(monkeypatch, captured)
     result = await controller.plan_next_question(
         db,
         attempt_id=2,
@@ -78,6 +88,99 @@ async def test_controller_records_one_selected_opportunity(monkeypatch):
     assert result.target_node_id == "def_x"
     assert len(db.added) == 1
     assert db.added[0].asked_turn == 5
+
+
+@pytest.mark.asyncio
+async def test_controller_passes_nudge_and_public_context_only(monkeypatch):
+    db = _DB([])
+    captured: dict = {}
+
+    async def evaluate(**kwargs):
+        return [NodeCoverage("def_x", "missing", 0.0, "ask what x is for")]
+
+    monkeypatch.setattr(controller, "evaluate_reference_coverage", evaluate)
+    _patch_writer(monkeypatch, captured)
+    await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x matters")],
+        turn_index=4,
+    )
+    assert captured == {
+        "nudge": "ask what x is for",
+        "problem_text": "Explain x.",
+        "transcript": [("student", "x matters")],
+    }
+
+
+@pytest.mark.asyncio
+async def test_leaking_hint_is_replaced_by_generic_nudge(monkeypatch):
+    db = _DB([])
+    captured: dict = {}
+
+    async def evaluate(**kwargs):
+        # Hint parrots the node's private meaning — must never reach the writer.
+        return [NodeCoverage("def_x", "missing", 0.0, "ask about the private meaning")]
+
+    monkeypatch.setattr(controller, "evaluate_reference_coverage", evaluate)
+    _patch_writer(monkeypatch, captured)
+    result = await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x matters")],
+        turn_index=4,
+    )
+    assert result.action == "ask"
+    assert captured["nudge"] == controller._GENERIC_NUDGE
+    assert "private" not in captured["nudge"]
+
+
+@pytest.mark.asyncio
+async def test_empty_hint_uses_generic_nudge(monkeypatch):
+    db = _DB([])
+    captured: dict = {}
+
+    async def evaluate(**kwargs):
+        return [NodeCoverage("def_x", "missing", 0.0)]
+
+    monkeypatch.setattr(controller, "evaluate_reference_coverage", evaluate)
+    _patch_writer(monkeypatch, captured)
+    await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x matters")],
+        turn_index=4,
+    )
+    assert captured["nudge"] == controller._GENERIC_NUDGE
+
+
+@pytest.mark.asyncio
+async def test_leaking_question_falls_back_to_safe_question(monkeypatch):
+    db = _DB([])
+    captured: dict = {}
+
+    async def evaluate(**kwargs):
+        return [NodeCoverage("def_x", "missing", 0.0, "ask what x is for")]
+
+    monkeypatch.setattr(controller, "evaluate_reference_coverage", evaluate)
+    _patch_writer(monkeypatch, captured, reply="Is it about the private meaning of x?")
+    result = await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x matters")],
+        turn_index=4,
+    )
+    assert result.action == "ask"
+    assert result.question == controller._SAFE_FALLBACK
+    assert len(db.added) == 1  # the opportunity is still spent
 
 
 @pytest.mark.asyncio
