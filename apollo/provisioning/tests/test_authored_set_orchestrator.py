@@ -27,6 +27,27 @@ class _FakeAuthoredMC:
         return '{"equivalent": false, "reason": "different answer"}'
 
 
+class _StructureShadowMC:
+    def __init__(self, *, failure: Exception | None = None) -> None:
+        self.tokens = 0
+        self.failure = failure
+        self.structure_calls = 0
+
+    def cumulative_tokens(self) -> int:
+        return self.tokens
+
+    def scrape_chat_fn(self, _system_prompt):
+        return lambda _content: "[]"
+
+    def cheap(self, *, purpose, **_kwargs):  # noqa: ANN001
+        assert purpose == "structure_pass"
+        self.structure_calls += 1
+        if self.failure is not None:
+            raise self.failure
+        self.tokens += 10
+        return '{"units": []}'
+
+
 async def _seed_search_space(db, *, slug: str) -> int:
     space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
@@ -168,6 +189,7 @@ def _patch_common_stages(monkeypatch, *, candidate: CandidateQuestion, concept_i
 
 @pytest.mark.asyncio
 async def test_authored_set_label_extract_promotes(db_session, monkeypatch):
+    monkeypatch.delenv("APOLLO_STRUCTURE_PAIRING", raising=False)
     space = await _seed_search_space(db_session, slug="aas1")
     concept_id = await _seed_concept(db_session, search_space_id=space)
     prob_doc = await _seed_doc_with_chunk(
@@ -222,6 +244,9 @@ async def test_authored_set_label_extract_promotes(db_session, monkeypatch):
     )
 
     assert report.counts == {"promoted": 1, "rejected": 0, "held_for_review": 0}
+    # The default-off flag does not even read a token accessor (the fake has no
+    # such method) and preserves the pre-PR1 serialized report shape.
+    assert "structure_pass" not in report.model_dump()
     assert len(report.problems) == 1
     result = report.problems[0]
     assert result.outcome == "promoted"
@@ -233,6 +258,83 @@ async def test_authored_set_label_extract_promotes(db_session, monkeypatch):
     assert result.match_method == "label"
     assert result.ocr_confidence == 0.95
     assert result.concept_problem_id is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["shadow", "on"])
+async def test_structure_modes_are_shadow_only_and_stash_bounded_summary(
+    db_session, monkeypatch, mode
+):
+    space = await _seed_search_space(db_session, slug=f"aas-structure-{mode}")
+    concept_id = await _seed_concept(db_session, search_space_id=space)
+    prob_doc = await _seed_doc_with_chunk(
+        db_session,
+        space,
+        "1. A beam length L, load w. Find max moment M.",
+        title=f"Structure {mode}",
+    )
+    candidate = _candidate(document_id=prob_doc)
+    _patch_common_stages(monkeypatch, candidate=candidate, concept_id=concept_id)
+    monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", mode)
+
+    async def _unchanged_candidate(*_args, **_kwargs):
+        return orch.ProblemResult(label="1", outcome="held_for_review", review_required=True)
+
+    monkeypatch.setattr(orch, "_process_authored_candidate", _unchanged_candidate)
+    metered = _StructureShadowMC()
+
+    report = await run_authored_set_provisioning(
+        db_session,
+        neo=None,
+        search_space_id=space,
+        problem_document_id=prob_doc,
+        solution_document_id=None,
+        metered_chat=metered,
+        embed_fn=lambda _text: [0.0],
+    )
+
+    assert report.counts == {"promoted": 0, "rejected": 0, "held_for_review": 1}
+    assert report.problems[0].outcome == "held_for_review"
+    assert report.model_dump()["structure_pass"] == {
+        "unit_count": 0,
+        "kind_counts": {"question": 0, "answer": 0, "other": 0},
+        "paired_label_count": 0,
+        "paired_labels": (),
+    }
+    assert metered.structure_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_structure_failure_never_escapes_or_changes_candidate_result(db_session, monkeypatch):
+    space = await _seed_search_space(db_session, slug="aas-structure-failure")
+    concept_id = await _seed_concept(db_session, search_space_id=space)
+    prob_doc = await _seed_doc_with_chunk(
+        db_session,
+        space,
+        "1. A beam length L, load w. Find max moment M.",
+        title="Structure Failure",
+    )
+    candidate = _candidate(document_id=prob_doc)
+    _patch_common_stages(monkeypatch, candidate=candidate, concept_id=concept_id)
+    monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", "shadow")
+
+    async def _unchanged_candidate(*_args, **_kwargs):
+        return orch.ProblemResult(label="1", outcome="held_for_review", review_required=True)
+
+    monkeypatch.setattr(orch, "_process_authored_candidate", _unchanged_candidate)
+
+    report = await run_authored_set_provisioning(
+        db_session,
+        neo=None,
+        search_space_id=space,
+        problem_document_id=prob_doc,
+        solution_document_id=None,
+        metered_chat=_StructureShadowMC(failure=RuntimeError("shadow failed")),
+        embed_fn=lambda _text: [0.0],
+    )
+
+    assert report.counts == {"promoted": 0, "rejected": 0, "held_for_review": 1}
+    assert "structure_pass" not in report.model_dump()
 
 
 @pytest.mark.asyncio
@@ -829,3 +931,45 @@ async def test_authored_set_low_confidence_divergence_holds_without_minting(
     review = tier1.provenance["authored_review"]
     assert review["required"] is True
     assert review["reason"] == "ocr_divergence"
+
+
+@pytest.mark.asyncio
+async def test_structure_snapshot_failure_skips_pass_and_run_proceeds(db_session, monkeypatch):
+    """The pre-scrape ledger snapshot is part of the shadow setup: if it raises
+    (orchestrator's first defensive arm), the pass is skipped entirely and the
+    run is identical to flag=off — no structure calls, no summary key."""
+    space = await _seed_search_space(db_session, slug="aas-structure-snapshot")
+    concept_id = await _seed_concept(db_session, search_space_id=space)
+    prob_doc = await _seed_doc_with_chunk(
+        db_session,
+        space,
+        "1. A beam length L, load w. Find max moment M.",
+        title="Structure Snapshot Failure",
+    )
+    candidate = _candidate(document_id=prob_doc)
+    _patch_common_stages(monkeypatch, candidate=candidate, concept_id=concept_id)
+    monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", "shadow")
+
+    async def _unchanged_candidate(*_args, **_kwargs):
+        return orch.ProblemResult(label="1", outcome="held_for_review", review_required=True)
+
+    monkeypatch.setattr(orch, "_process_authored_candidate", _unchanged_candidate)
+
+    class _SnapshotFailMC(_StructureShadowMC):
+        def cumulative_tokens(self) -> int:
+            raise RuntimeError("ledger unavailable")
+
+    metered = _SnapshotFailMC()
+    report = await run_authored_set_provisioning(
+        db_session,
+        neo=None,
+        search_space_id=space,
+        problem_document_id=prob_doc,
+        solution_document_id=None,
+        metered_chat=metered,
+        embed_fn=lambda _text: [0.0],
+    )
+
+    assert report.counts == {"promoted": 0, "rejected": 0, "held_for_review": 1}
+    assert "structure_pass" not in report.model_dump()
+    assert metered.structure_calls == 0

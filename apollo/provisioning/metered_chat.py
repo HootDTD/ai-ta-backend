@@ -153,6 +153,14 @@ class MeteredChat:
 
         return _chat_fn
 
+    def cumulative_tokens(self) -> int:
+        """Return the read-only cumulative input+output token count.
+
+        Stages use snapshots of this aggregate to account for their own spend;
+        the ingest-run row remains the single mutable ledger.
+        """
+        return int(self._run.llm_tokens_in or 0) + int(self._run.llm_tokens_out or 0)
+
     # -- internals -- #
     def _call(
         self,

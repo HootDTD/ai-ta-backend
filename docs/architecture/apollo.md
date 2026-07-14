@@ -156,6 +156,21 @@ rather than absorbing the following variable into a spurious `1m`. Ambiguous
 labels (zero or multiple distinct chunks) deliberately return no match so the
 paired retrieval layer can fall through to doc-scoped retrieval.
 
+The authored-set structure pass lives in
+`apollo/provisioning/authored_sets/structure_pass.py`. Behind the per-call
+`APOLLO_STRUCTURE_PAIRING=off|shadow|on` flag (default `off`), it assembles each
+problem and optional solution document in stable chunk-id order, asks the
+injected cheap-tier `MeteredChat` for strict structured units, maps global
+character offsets back to real chunk-local spans, normalizes labels through
+`label_match.normalize_label`, and aligns only unique question/answer labels.
+In this first rollout both `shadow` and `on` are observational: the existing
+grounding and provisioning path is unchanged, while a bounded counts-and-paired-
+labels summary is added to the set's `result_summary`. The pass snapshots the
+scrape token spend and stops before another call once its own spend exceeds
+`max(scrape_spend, 30_000)`; failures are contained at the authored orchestrator
+boundary. `off` performs no pass calls and preserves the prior serialized report
+shape. Pairing consumption is intentionally deferred to the next rollout.
+
 ## Public interfaces
 
 Provisioning retrieval adapter note: `make_course_retrieve_fn` skips hybrid-search
