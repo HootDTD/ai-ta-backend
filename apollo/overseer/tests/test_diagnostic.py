@@ -177,3 +177,14 @@ def test_generate_diagnostic_softfails_to_placeholder_on_llm_exception(mock_clie
     assert "unavailable" in result.lower()
     # The rubric is still accurate even if narrative fails.
     assert "grade" in result.lower() or "still accurate" in result.lower()
+
+
+def test_axis_system_prompt_forbids_attributing_reference_content():
+    """Same guard as the topic prompt: reference entries describe the ideal
+    solution - the narrator must never present their details as something the
+    student personally stated."""
+    from apollo.overseer.diagnostic import _SYSTEM_PROMPT
+
+    lowered = " ".join(_SYSTEM_PROMPT.lower().split())
+    assert "not what the student said" in lowered
+    assert "never present" in lowered

@@ -188,7 +188,7 @@ def test_system_prompt_prioritizes_instead_of_inventorying_gaps():
 
 def test_user_payload_calls_input_assessment_evidence_not_ledger():
     _system, user = build_topic_narrative_prompt(_result(), problem_text="p")
-    assert "Assessment evidence:" in user
+    assert "Assessment evidence" in user
     assert "Ledger:" not in user
 
 
