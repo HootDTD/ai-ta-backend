@@ -86,11 +86,14 @@ async def test_direct_private_answer_leak_uses_content_free_fallback(monkeypatch
 
 
 def test_private_token_leak_is_rejected_even_without_full_phrase():
-    assert unified._safe_reply(
-        "Could you explain force?",
-        reference_graph=_graph(),
-        student_messages=["I use pressure"],
-    ) == unified._SAFE_FALLBACK
+    assert (
+        unified._safe_reply(
+            "Could you explain force?",
+            reference_graph=_graph(),
+            student_messages=["I use pressure"],
+        )
+        == unified._SAFE_FALLBACK
+    )
 
 
 @pytest.mark.asyncio
@@ -98,8 +101,10 @@ async def test_invalid_target_and_malformed_coverage_fail_safe(monkeypatch):
     monkeypatch.setattr(
         unified,
         "_call_unified",
-        lambda **kwargs: '{"nodes":[{"node_id":"invented","state":"covered","credit":1}],'
-        '"action":"ask","target_node_id":"invented","reply":"What is the answer?"}',
+        lambda **kwargs: (
+            '{"nodes":[{"node_id":"invented","state":"covered","credit":1}],'
+            '"action":"ask","target_node_id":"invented","reply":"What is the answer?"}'
+        ),
     )
     result = await unified.evaluate_and_ask(
         transcript=[],
@@ -182,9 +187,7 @@ def test_call_uses_gpt_5_2_by_default_and_strict_output(monkeypatch):
     class Completions:
         def create(self, **kwargs):
             captured.update(kwargs)
-            return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))]
-            )
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))])
 
     monkeypatch.delenv("APOLLO_UNIFIED_QUESTION_MODEL", raising=False)
     monkeypatch.setattr(
