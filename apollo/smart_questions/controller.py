@@ -65,7 +65,8 @@ async def plan_next_question(
         return QuestionDecision(action="done")
 
     target_id = cast(str, result.target_node_id)
-    question = cast(str, result.reply)
+    reply = cast(str, result.reply)
+    question = cast(str, result.question)
     target_row = next((row for row in rows if row.reference_node_id == target_id), None)
     for row in rows:
         if row.state != "asked_waiting" or row is target_row:
@@ -94,4 +95,4 @@ async def plan_next_question(
         target_row.answered_turn = None
         assert coverage_by_id[target_id].state != "understood"
 
-    return QuestionDecision(action="ask", question=question, target_node_id=target_id)
+    return QuestionDecision(action="ask", question=reply, target_node_id=target_id)

@@ -36,6 +36,7 @@ def _payload(
     part=0,
     acknowledgement="I understand that you use pressure.",
     question="Why does your pressure step work?",
+    clause_coverage=None,
 ):
     return {
         "nodes": [
@@ -52,6 +53,7 @@ def _payload(
                 "student_evidence": None,
             },
         ],
+        "public_clause_coverage": clause_coverage or [{"index": 0, "status": "unattempted"}],
         "action": action,
         "target_node_id": target,
         "public_question_part_index": part,
@@ -208,6 +210,11 @@ async def test_future_shock_private_paraphrase_is_rejected_for_public_gap(monkey
                 "student_evidence": "it is overwealming",
             }
         ],
+        "public_clause_coverage": [
+            {"index": 0, "status": "attempted"},
+            {"index": 1, "status": "unattempted"},
+            {"index": 2, "status": "unattempted"},
+        ],
         "action": "ask",
         "target_node_id": "cause",
         "public_question_part_index": 1,
@@ -247,6 +254,11 @@ async def test_future_shock_does_not_repeat_attempted_public_clause(monkeypatch)
         part=0,
         acknowledgement=None,
         question="What is Future Shock, and why does it occur?",
+        clause_coverage=[
+            {"index": 0, "status": "attempted"},
+            {"index": 1, "status": "unattempted"},
+            {"index": 2, "status": "unattempted"},
+        ],
     )
     payload["nodes"][0]["student_evidence"] = (
         "future shock occurs when things are happening too quickly"
@@ -271,6 +283,111 @@ async def test_future_shock_does_not_repeat_attempted_public_clause(monkeypatch)
     assert result.reply == "When did it start happening — can you give an example?"
 
 
+@pytest.mark.asyncio
+async def test_clause_coverage_advances_after_two_student_attempts(monkeypatch):
+    payload = _payload(
+        target="a",
+        part=0,
+        acknowledgement=None,
+        question="What is Future Shock, and why does it occur?",
+        clause_coverage=[
+            {"index": 0, "status": "attempted"},
+            {"index": 1, "status": "answered"},
+            {"index": 2, "status": "unattempted"},
+        ],
+    )
+    payload["nodes"][0]["student_evidence"] = (
+        "future shock occurs when things are happening too quickly"
+    )
+    monkeypatch.setattr(unified, "_call_unified", lambda **kwargs: json.dumps(payload))
+
+    result = await unified.evaluate_and_ask(
+        transcript=[
+            (
+                "student",
+                "future shock occurs when things are happening too quickly and it becomes difficult to keep up",
+            ),
+            ("apollo", "When did it start happening -- can you give an example?"),
+            ("student", "it started happening in 1970"),
+        ],
+        reference_graph=_graph(),
+        problem=SimpleNamespace(
+            problem_text=(
+                "What is Future Shock, and why does it occur? When did it start happening -- can "
+                "you give an example? And is it still happening today -- why or why not?"
+            )
+        ),
+        question_history=(),
+    )
+
+    assert result.reply == "is it still happening today -- why or why not?"
+    assert result.question == "is it still happening today -- why or why not?"
+
+
+def test_clause_aware_fallback_redirects_answered_and_narrows_attempted():
+    parts = ["What is alpha", "Why does beta happen", "How does gamma work"]
+    assert (
+        unified._fallback_question(
+            parts,
+            0,
+            clause_statuses=("answered", "unattempted", "unattempted"),
+        )
+        == "Why does beta happen?"
+    )
+    narrowed = unified._fallback_question(
+        parts,
+        0,
+        clause_statuses=("answered", "attempted", "answered"),
+    )
+    assert narrowed == "What makes that happen?"
+    assert narrowed != "Why does beta happen?"
+    assert (
+        unified._fallback_question(
+            ["Why does beta happen"],
+            0,
+            avoid_index=0,
+            clause_statuses=("attempted",),
+        )
+        == "What makes that happen?"
+    )
+    assert (
+        unified._fallback_question(
+            ["Why does beta happen"],
+            0,
+            avoid_index=0,
+            clause_statuses=("unattempted",),
+        )
+        == "What makes that happen?"
+    )
+    assert (
+        unified._fallback_question(
+            parts,
+            0,
+            clause_statuses=("answered", "answered", "answered"),
+        )
+        == unified._GENERIC_FALLBACK
+    )
+
+
+def test_invalid_clause_coverage_defaults_each_clause_to_unattempted():
+    assert unified._clause_statuses({"public_clause_coverage": None}, 2) == (
+        "unattempted",
+        "unattempted",
+    )
+    assert unified._clause_statuses(
+        {
+            "public_clause_coverage": [
+                {"index": 0, "status": "answered"},
+                {"index": True, "status": "attempted"},
+                {"index": 1, "status": "invalid"},
+                {"index": 99, "status": "answered"},
+                None,
+            ]
+        },
+        3,
+    ) == ("answered", "unattempted", "unattempted")
+
+
 def test_safe_reply_rejects_echo_repeat_bad_ack_and_direct_private_leak():
     graph = _graph()
     common = {
@@ -280,27 +397,33 @@ def test_safe_reply_rejects_echo_repeat_bad_ack_and_direct_private_leak():
         "student_messages": ["pressure works in this pressure step"],
         "prior_questions": [],
     }
-    reply, reason = unified._safe_reply(
+    reply, question, reason = unified._safe_reply(
         acknowledgement=None,
         question="pressure works in this pressure step?",
         **common,
     )
-    assert (reply, reason) == ("Why does pressure work?", "question_echo")
+    assert (reply, question, reason) == (
+        "Why does pressure work?",
+        "Why does pressure work?",
+        "question_echo",
+    )
 
-    reply, reason = unified._safe_reply(
+    reply, question, reason = unified._safe_reply(
         acknowledgement="Do I understand?",
         question="Why does pressure work?",
         **{**common, "prior_questions": ["Why does pressure work?"]},
     )
     assert reply == "Why does pressure work?"
+    assert question == "Why does pressure work?"
     assert reason == "repeated_question"
 
-    reply, reason = unified._safe_reply(
+    reply, question, reason = unified._safe_reply(
         acknowledgement="Force divided by area.",
         question="Why does pressure work?",
         **common,
     )
     assert reply == "Why does pressure work?"
+    assert question == "Why does pressure work?"
     assert reason == "unsafe_acknowledgement"
 
 
@@ -337,7 +460,7 @@ def test_private_helpers_cover_nested_content_spelling_and_part_selection():
     )
 
 
-def test_call_uses_gpt_5_2_low_reasoning_and_strict_output(monkeypatch):
+def test_call_uses_gpt_5_2_medium_reasoning_and_strict_output(monkeypatch):
     captured = {}
 
     class Completions:
@@ -354,9 +477,13 @@ def test_call_uses_gpt_5_2_low_reasoning_and_strict_output(monkeypatch):
     )
     unified._call_unified(payload={})
     assert captured["model"] == "gpt-5.2"
-    assert captured["reasoning_effort"] == "low"
+    assert captured["reasoning_effort"] == "medium"
     assert captured["response_format"]["json_schema"]["strict"] is True
+    assert (
+        "public_clause_coverage" in captured["response_format"]["json_schema"]["schema"]["required"]
+    )
     assert "Recompute the entire tally" in captured["messages"][0]["content"]
+    assert "future shock" not in captured["messages"][0]["content"].casefold()
     assert "temperature" not in captured
 
 

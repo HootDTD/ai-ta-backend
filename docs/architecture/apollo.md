@@ -13,7 +13,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-07-14
+last_verified: 2026-07-15
 stub: false
 ---
 
@@ -75,28 +75,36 @@ terms.
 
 The default-off `APOLLO_UNIFIED_QUESTIONING_ENABLED` path replaces the per-turn dumb reply
 with one structured-output call in `smart_questions.unified`: GPT-5.2 (overridable through
-`APOLLO_UNIFIED_QUESTION_MODEL`, reasoning default `low` and overridable through
+`APOLLO_UNIFIED_QUESTION_MODEL`, reasoning default `medium` and overridable through
 `APOLLO_UNIFIED_QUESTION_REASONING_EFFORT`) recomputes an evidence-backed learner tally against
 **every** authored reference node and writes Apollo's next reply in the same pass. Each node is
 `understood`, `tentative`, `missing`, or `conflicting`; every non-missing state must cite an exact
-student-message span or it deterministically falls back to `missing`. Apollo selects a high-value
-unresolved R-graph node, briefly synthesizes only student-taught facts, and advances to an unmet
-public-problem requirement instead of restating the last response. The private/output boundary
-allows subject wording only from the public problem or student messages. A deterministic
+student-message span or it deterministically falls back to `missing`. The same call recomputes an
+`answered` / `attempted` / `unattempted` status for every public-problem clause from student
+messages only. Apollo selects a high-value unresolved R-graph node, briefly synthesizes only
+student-taught facts, and advances to an unmet public-problem requirement instead of restating the
+last response. The `medium` reasoning default improves clause-coverage judgment at an accepted
+latency and token-cost increase; the environment override remains available. The private/output
+boundary allows subject wording only from the public problem or student messages. A deterministic
 vocabulary and echo guard drops unsafe acknowledgements and replaces unsafe, repeated, or
-malformed questions with an unanswered clause from the public problem, never a private rubric
-paraphrase or a generic confusion loop. A public-clause re-ask guard also detects when a generated
-question merely copies a problem clause the student has already meaningfully attempted; it advances
-to another unanswered public clause, or uses a narrow answer-free probe when no other clause exists.
+malformed questions according to the model's clause statuses: first an `unattempted` clause, then
+an answer-free narrow probe for an `attempted` clause, otherwise the generic fallback, never a
+private rubric paraphrase. Invalid or missing clause-status entries decode as `unattempted`. A
+public-clause re-ask guard also detects when a generated question merely copies a problem clause the
+student has already meaningfully attempted; it follows the same fallback order without changing
+the existing string-overlap heuristics.
 
 The `apollo_reference_question_opportunities` unique key remains one row per
 `(attempt_id, reference_node_id)`, but the row is now the node's latest-question ledger rather
-than a terminal one-shot opportunity. A fresh tally can reselect and update a tentative,
+than a terminal one-shot opportunity. Its `question` column stores the final validated bare
+question, excluding any acknowledgement included in the student-facing reply, so repeat checks
+compare like with like. A fresh tally can reselect and update a tentative,
 missing, or conflicting node after an insufficient answer; switching targets closes the prior
 waiting row. Chat auto-finishes only when every R-graph node is `understood`, then invokes the
 existing Done handler and UI auto-report seam. Structured decision logs expose only model,
-action, target id/state, aggregate tally counts, and fallback reason (no transcript or private
-content). Flag OFF leaves the legacy chat and clarification paths unchanged.
+action, target id/state, aggregate node-tally counts, aggregate clause-status counts, and fallback
+reason (no transcript or private content). Flag OFF leaves the legacy chat and clarification paths
+unchanged.
 
 **GEN-0 selector/provenance hardening (2026-07-12).** The shared
 `overseer.problem_selector.list_problems_for_concept` chokepoint validates Tier-2
