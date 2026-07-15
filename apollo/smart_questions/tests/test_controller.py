@@ -60,6 +60,7 @@ def _ask(state="missing"):
         action="ask",
         target_node_id="def_x",
         reply="What do you mean by x?",
+        question="What do you mean by x?",
     )
 
 
@@ -83,6 +84,33 @@ async def test_controller_records_first_selected_question(monkeypatch):
     assert result.target_node_id == "def_x"
     assert len(db.added) == 1
     assert db.added[0].asked_turn == 5
+
+
+@pytest.mark.asyncio
+async def test_controller_ledger_stores_bare_question_not_acknowledgement(monkeypatch):
+    db = _DB([])
+
+    async def evaluate(**kwargs):
+        return UnifiedQuestionResult(
+            coverage=(NodeCoverage("def_x", "missing", 0.0, None),),
+            action="ask",
+            target_node_id="def_x",
+            reply="I understand your first point. What do you mean by x?",
+            question="What do you mean by x?",
+        )
+
+    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
+    result = await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x matters")],
+        turn_index=4,
+    )
+
+    assert result.question == "I understand your first point. What do you mean by x?"
+    assert db.added[0].question == "What do you mean by x?"
 
 
 @pytest.mark.asyncio
@@ -172,6 +200,7 @@ async def test_controller_marks_waiting_row_answered_on_done(monkeypatch):
             action="done",
             target_node_id=None,
             reply=None,
+            question=None,
         )
 
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
