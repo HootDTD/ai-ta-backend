@@ -240,6 +240,37 @@ async def test_future_shock_private_paraphrase_is_rejected_for_public_gap(monkey
     assert "overwealming" not in result.reply
 
 
+@pytest.mark.asyncio
+async def test_future_shock_does_not_repeat_attempted_public_clause(monkeypatch):
+    payload = _payload(
+        target="a",
+        part=0,
+        acknowledgement=None,
+        question="What is Future Shock, and why does it occur?",
+    )
+    payload["nodes"][0]["student_evidence"] = (
+        "future shock occurs when things are happening too quickly"
+    )
+    monkeypatch.setattr(unified, "_call_unified", lambda **kwargs: json.dumps(payload))
+    result = await unified.evaluate_and_ask(
+        transcript=[
+            (
+                "student",
+                "future shock occurs when things are happening too quickly and it becomes difficult to keep up",
+            )
+        ],
+        reference_graph=_graph(),
+        problem=SimpleNamespace(
+            problem_text=(
+                "What is Future Shock, and why does it occur? When did it start happening — can "
+                "you give an example? And is it still happening today — why or why not?"
+            )
+        ),
+        question_history=(),
+    )
+    assert result.reply == "When did it start happening — can you give an example?"
+
+
 def test_safe_reply_rejects_echo_repeat_bad_ack_and_direct_private_leak():
     graph = _graph()
     common = {
@@ -284,6 +315,14 @@ def test_private_helpers_cover_nested_content_spelling_and_part_selection():
     assert unified._fallback_question(["First", "And second"], 0, ["First?"]) == "second?"
     assert unified._fallback_question(["First"], 0, ["First?"]) == unified._GENERIC_FALLBACK
     assert unified._fallback_question([], None) == unified._GENERIC_FALLBACK
+    assert unified._fallback_question(["Why does it occur"], 0, avoid_index=0) == (
+        "What makes that happen?"
+    )
+    assert unified._narrow_generic_probe("Can you give an example") == (
+        "Can you give a concrete example?"
+    )
+    assert unified._narrow_generic_probe("When did this start") == "When does that happen?"
+    assert unified._narrow_generic_probe("How does it work") == "How do those steps connect?"
     assert not unified._leaks_private_content(
         "Why is it overwhelming?",
         reference_graph=_graph(),
