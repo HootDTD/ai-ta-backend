@@ -328,7 +328,7 @@ async def test_clause_coverage_advances_after_two_student_attempts(monkeypatch):
 async def test_transcript_dedup_remembers_probe_after_ledger_overwrite(monkeypatch):
     rejected = _payload(
         acknowledgement=None,
-        question="Where do hidden pathways connect?",
+        question="Where do quasar tachyons connect?",
         clause_coverage=[{"index": 0, "status": "attempted"}],
     )
     calls = []
@@ -359,7 +359,7 @@ async def test_transcript_dedup_remembers_probe_after_ledger_overwrite(monkeypat
 @pytest.mark.asyncio
 async def test_rejected_draft_retries_once_and_recovers(monkeypatch, caplog):
     drafts = [
-        _payload(acknowledgement=None, question="Where do hidden pathways connect?"),
+        _payload(acknowledgement=None, question="Where do quasar tachyons connect?"),
         _payload(acknowledgement=None, question="What should I understand next?"),
     ]
     calls = []
@@ -387,13 +387,13 @@ async def test_rejected_draft_retries_once_and_recovers(monkeypatch, caplog):
         {"role": "assistant", "content": json.dumps(drafts[0])},
         calls[1]["messages"][3],
     ]
-    assert "pathways" in calls[1]["messages"][3]["content"]
+    assert "tachyons" in calls[1]["messages"][3]["content"]
     assert "question_vocabulary_boundary_retry_recovered" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_second_rejection_uses_canned_fallback_with_only_two_calls(monkeypatch, caplog):
-    rejected = _payload(acknowledgement=None, question="Where do hidden pathways connect?")
+    rejected = _payload(acknowledgement=None, question="Where do quasar tachyons connect?")
     calls = []
 
     def fake_call(**kwargs):
@@ -447,23 +447,111 @@ def test_apollo_vocabulary_is_safe_for_question_but_not_acknowledgement():
         "reference_graph": _graph(),
         "public_text": "Explain pressure?",
         "student_messages": ["pressure"],
-        "apollo_messages": ["We talked about phones."],
+        "apollo_messages": ["We talked about quasiparticles."],
         "prior_questions": [],
         "public_parts": ["Explain pressure"],
     }
     safe_question = unified._validate_draft(
         acknowledgement=None,
-        question="How do phones connect?",
+        question="How do quasiparticles connect?",
         **common,
     )
     unsafe_ack = unified._validate_draft(
-        acknowledgement="Phones connect.",
-        question="How do phones connect?",
+        acknowledgement="Quasiparticles connect.",
+        question="How do quasiparticles connect?",
         **common,
     )
 
     assert safe_question.reason is None
     assert unsafe_ack.reason == "unsafe_acknowledgement"
+
+
+def test_live_future_shock_question_and_acknowledgement_are_safe():
+    graph = KGGraph(
+        nodes=[
+            build_node(
+                node_type="definition",
+                node_id="future-shock",
+                attempt_id=1,
+                source="reference",
+                content={
+                    "concept": "Future Shock",
+                    "meaning": "rapid social and technological change described by Toffler in 1970",
+                },
+            )
+        ],
+        edges=[],
+    )
+    validation = unified._validate_draft(
+        acknowledgement=(
+            "So far you've basically defined Future Shock as when things are happening too quickly…"
+        ),
+        question=(
+            "What's one period when you think this 'too quickly to keep up' feeling started "
+            "happening, and what's one example of the kind of change from that time?"
+        ),
+        reference_graph=graph,
+        public_text=(
+            "What is Future Shock, and why does it occur? When did it start happening — can you "
+            "give an example? And is it still happening today — why or why not?"
+        ),
+        student_messages=[
+            "Future Shock means life can feel too quick for people.",
+            "Things keep happening faster and quickly become hard to keep up with.",
+        ],
+        apollo_messages=[],
+        prior_questions=[],
+        public_parts=[],
+    )
+
+    assert validation.reason is None
+    assert validation.acknowledgement.startswith("So far you've basically defined")
+
+
+def test_common_words_do_not_weaken_digits_proper_nouns_or_private_phrases():
+    graph = KGGraph(
+        nodes=[
+            build_node(
+                node_type="definition",
+                node_id="private",
+                attempt_id=1,
+                source="reference",
+                content={"concept": "private concept", "meaning": "change over time"},
+            )
+        ],
+        edges=[],
+    )
+    common = {
+        "reference_graph": graph,
+        "public_text": "Why does it occur?",
+        "student_messages": [],
+    }
+
+    assert unified._leaks_private_content("Did it begin in 1970?", **common)
+    assert unified._leaks_private_content("What did Toffler say?", **common)
+    assert unified._leaks_private_content("How does change over time happen?", **common)
+
+
+def test_acknowledgement_still_cannot_assert_public_problem_vocabulary():
+    validation = unified._validate_draft(
+        acknowledgement="Photosynthesis converts light.",
+        question="What is your idea?",
+        reference_graph=KGGraph(nodes=[], edges=[]),
+        public_text="How does photosynthesis convert light?",
+        student_messages=["I have an idea."],
+        apollo_messages=[],
+        prior_questions=[],
+        public_parts=[],
+    )
+
+    assert validation.reason == "unsafe_acknowledgement"
+    assert validation.acknowledgement == ""
+
+
+def test_safe_token_match_uses_light_morphology_without_short_stem_overmatch():
+    assert unified._safe_token_match("started", {"start"})
+    assert unified._safe_token_match("occurs", {"occur"})
+    assert not unified._safe_token_match("gas", {"ga"})
 
 
 def test_exhausted_canned_repertoire_rotates_away_from_previous_question():
@@ -485,7 +573,7 @@ def test_exhausted_canned_repertoire_rotates_away_from_previous_question():
 @pytest.mark.asyncio
 async def test_debug_cycle_log_is_default_off_and_flag_gated(monkeypatch, caplog):
     drafts = [
-        _payload(acknowledgement=None, question="Where do hidden pathways connect?"),
+        _payload(acknowledgement=None, question="Where do quasar tachyons connect?"),
         _payload(acknowledgement=None, question="What should I understand next?"),
     ]
     call_count = 0
@@ -513,12 +601,44 @@ async def test_debug_cycle_log_is_default_off_and_flag_gated(monkeypatch, caplog
     with caplog.at_level("INFO"):
         await unified.evaluate_and_ask(**kwargs)
     assert caplog.text.count("apollo_unified_question_debug") == 1
-    assert "draft_question='Where do hidden pathways connect?'" in caplog.text
+    assert "draft_question='Where do quasar tachyons connect?'" in caplog.text
     assert "draft_rejection=question_vocabulary_boundary" in caplog.text
-    assert "draft_offending_tokens=hidden, pathways" in caplog.text
+    assert "draft_offending_tokens=quasar, tachyons" in caplog.text
     assert "redraft_question='What should I understand next?'" in caplog.text
     assert "redraft_validation=accepted" in caplog.text
     assert "final_question='What should I understand next?'" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_retry_question_recovery_is_honest_when_only_ack_is_dropped(monkeypatch, caplog):
+    drafts = [
+        _payload(acknowledgement=None, question="Where do quasar tachyons connect?"),
+        _payload(
+            acknowledgement="Do I understand?",
+            question="What should I understand next?",
+        ),
+    ]
+    calls = 0
+
+    def fake_call(**kwargs):
+        nonlocal calls
+        draft = drafts[calls]
+        calls += 1
+        return json.dumps(draft)
+
+    monkeypatch.setattr(unified, "_call_unified", fake_call)
+    monkeypatch.setenv("APOLLO_UNIFIED_QUESTION_DEBUG_LOG", "true")
+    with caplog.at_level("INFO"):
+        result = await unified.evaluate_and_ask(
+            transcript=[("student", "I use pressure")],
+            reference_graph=_graph(),
+            problem=SimpleNamespace(problem_text="Why does pressure work?"),
+            question_history=(),
+        )
+
+    assert result.reply == "What should I understand next?"
+    assert "question_vocabulary_boundary_retry_recovered" in caplog.text
+    assert "redraft_validation=unsafe_acknowledgement" in caplog.text
 
 
 def test_debug_tokens_are_bounded():
@@ -687,7 +807,7 @@ def test_private_helpers_cover_nested_content_spelling_and_part_selection():
         student_messages=["It is overwealming"],
     )
     assert unified._leaks_private_content(
-        "Could you explain force?",
+        "Could you explain force divided by area?",
         reference_graph=_graph(),
         public_text="Explain pressure?",
         student_messages=["pressure"],
