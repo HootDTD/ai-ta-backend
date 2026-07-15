@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -28,160 +29,276 @@ def _graph() -> KGGraph:
     )
 
 
-def _payload(*, action="ask", target="a", reply="Why does your pressure step work?"):
+def _payload(
+    *,
+    action="ask",
+    target="a",
+    part=0,
+    acknowledgement="I understand that you use pressure.",
+    question="Why does your pressure step work?",
+):
     return {
         "nodes": [
-            {"node_id": "a", "state": "partial", "credit": 0.4},
-            {"node_id": "b", "state": "missing", "credit": 0.0},
+            {
+                "node_id": "a",
+                "state": "tentative",
+                "credit": 0.4,
+                "student_evidence": "I use pressure",
+            },
+            {
+                "node_id": "b",
+                "state": "missing",
+                "credit": 0.0,
+                "student_evidence": None,
+            },
         ],
         "action": action,
         "target_node_id": target,
-        "reply": reply,
+        "public_question_part_index": part,
+        "acknowledgement": acknowledgement,
+        "question": question,
     }
 
 
 @pytest.mark.asyncio
-async def test_one_call_returns_coverage_and_confused_reply(monkeypatch):
+async def test_one_call_returns_evidence_backed_tally_and_question(monkeypatch):
     calls = []
 
     def fake_call(**kwargs):
         calls.append(kwargs["payload"])
-        return __import__("json").dumps(_payload())
+        return json.dumps(_payload())
 
     monkeypatch.setattr(unified, "_call_unified", fake_call)
+    history = (unified.QuestionHistory("b", "What happens next?", "answered"),)
     result = await unified.evaluate_and_ask(
         transcript=[("student", "I use pressure here")],
         reference_graph=_graph(),
-        problem=SimpleNamespace(problem_text="Explain the process."),
-        already_asked_node_ids=set(),
+        problem=SimpleNamespace(problem_text="Why does pressure work?"),
+        question_history=history,
     )
 
     assert len(calls) == 1
+    assert calls[0]["public_question_parts"] == [{"index": 0, "text": "Why does pressure work"}]
+    assert calls[0]["question_history"][0]["node_id"] == "b"
     assert result.action == "ask"
     assert result.target_node_id == "a"
-    assert result.reply == "Why does your pressure step work?"
-    assert [(item.node_id, item.state) for item in result.coverage] == [
-        ("a", "partial"),
-        ("b", "missing"),
-    ]
+    assert result.reply == "I understand that you use pressure. Why does your pressure step work?"
+    assert result.coverage[0] == unified.NodeCoverage("a", "tentative", 0.4, "I use pressure")
 
 
 @pytest.mark.asyncio
-async def test_direct_private_answer_leak_uses_content_free_fallback(monkeypatch):
-    monkeypatch.setattr(
-        unified,
-        "_call_unified",
-        lambda **kwargs: __import__("json").dumps(
-            _payload(reply="Is pressure force divided by area?")
-        ),
-    )
+async def test_unverifiable_evidence_cannot_create_learned_state(monkeypatch):
+    payload = _payload()
+    payload["nodes"][0] = {
+        "node_id": "a",
+        "state": "understood",
+        "credit": 7,
+        "student_evidence": "words the student never said",
+    }
+    payload["nodes"].extend([None, {"node_id": "invented", "state": "understood"}])
+    monkeypatch.setattr(unified, "_call_unified", lambda **kwargs: json.dumps(payload))
     result = await unified.evaluate_and_ask(
         transcript=[("student", "I use pressure")],
         reference_graph=_graph(),
-        problem=SimpleNamespace(problem_text="Explain the process."),
-        already_asked_node_ids=set(),
+        problem=SimpleNamespace(problem_text="Explain pressure?"),
+        question_history=(),
     )
-    assert result.reply == unified._SAFE_FALLBACK
-    assert "force divided by area" not in result.reply
+    assert result.coverage[0] == unified.NodeCoverage("a", "missing", 0.0, None)
 
 
-def test_private_token_leak_is_rejected_even_without_full_phrase():
-    assert (
-        unified._safe_reply(
-            "Could you explain force?",
+@pytest.mark.asyncio
+async def test_all_nodes_understood_finishes_even_if_model_requests_question(monkeypatch, caplog):
+    payload = _payload()
+    payload["nodes"] = [
+        {
+            "node_id": "a",
+            "state": "understood",
+            "credit": 1,
+            "student_evidence": "pressure",
+        },
+        {
+            "node_id": "b",
+            "state": "understood",
+            "credit": 0.8,
+            "student_evidence": "area",
+        },
+    ]
+    monkeypatch.setattr(unified, "_call_unified", lambda **kwargs: json.dumps(payload))
+    with caplog.at_level("INFO"):
+        result = await unified.evaluate_and_ask(
+            transcript=[("student", "pressure and area")],
             reference_graph=_graph(),
-            student_messages=["I use pressure"],
+            problem=SimpleNamespace(problem_text="Explain pressure?"),
+            question_history=(),
         )
-        == unified._SAFE_FALLBACK
-    )
+    assert result.action == "done"
+    assert result.reply is None
+    assert "action=done" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_invalid_target_and_malformed_coverage_fail_safe(monkeypatch):
-    monkeypatch.setattr(
-        unified,
-        "_call_unified",
-        lambda **kwargs: (
-            '{"nodes":[{"node_id":"invented","state":"covered","credit":1}],'
-            '"action":"ask","target_node_id":"invented","reply":"What is the answer?"}'
-        ),
-    )
-    result = await unified.evaluate_and_ask(
-        transcript=[],
-        reference_graph=_graph(),
-        problem=SimpleNamespace(problem_text="Explain the process."),
-        already_asked_node_ids=set(),
-    )
-    assert result.target_node_id == "a"
-    assert result.reply == unified._SAFE_FALLBACK
-    assert all(item.state == "missing" for item in result.coverage)
-
-
-@pytest.mark.asyncio
-async def test_malformed_json_and_bad_items_default_to_missing(monkeypatch):
+async def test_malformed_output_defaults_to_missing_and_public_question(monkeypatch):
     monkeypatch.setattr(unified, "_call_unified", lambda **kwargs: "not json")
     malformed = await unified.evaluate_and_ask(
         transcript=[],
         reference_graph=_graph(),
         problem=SimpleNamespace(problem_text="Explain the process."),
-        already_asked_node_ids=set(),
+        question_history=(),
     )
     assert all(item.state == "missing" for item in malformed.coverage)
+    assert malformed.target_node_id == "a"
+    assert malformed.reply == "Explain the process?"
 
     monkeypatch.setattr(unified, "_call_unified", lambda **kwargs: "[]")
     wrong_shape = await unified.evaluate_and_ask(
         transcript=[],
         reference_graph=_graph(),
-        problem=SimpleNamespace(problem_text="Explain the process."),
-        already_asked_node_ids=set(),
+        problem=SimpleNamespace(problem_text=""),
+        question_history=(),
     )
-    assert wrong_shape.reply == unified._SAFE_FALLBACK
-
-    payload = _payload()
-    payload["nodes"] = [None, {"node_id": "a", "state": "partial", "credit": "bad"}]
-    payload["target_node_id"] = ["a"]
-    payload["reply"] = 42
-    monkeypatch.setattr(
-        unified,
-        "_call_unified",
-        lambda **kwargs: __import__("json").dumps(payload),
-    )
-    bad_items = await unified.evaluate_and_ask(
-        transcript=[("student", "pressure")],
-        reference_graph=_graph(),
-        problem=SimpleNamespace(problem_text="Explain the process."),
-        already_asked_node_ids=set(),
-    )
-    assert bad_items.coverage[0] == unified.NodeCoverage("a", "partial", 0.0)
+    assert wrong_shape.reply == unified._GENERIC_FALLBACK
 
 
 @pytest.mark.asyncio
-async def test_done_only_when_no_unasked_gap_remains(monkeypatch):
-    monkeypatch.setattr(
-        unified,
-        "_call_unified",
-        lambda **kwargs: __import__("json").dumps(_payload(action="done", target=None, reply=None)),
-    )
-    premature = await unified.evaluate_and_ask(
-        transcript=[],
+async def test_bad_credit_and_invalid_target_fail_safe(monkeypatch):
+    payload = _payload(target="invented", acknowledgement=None, question=42)
+    payload["nodes"] = [
+        {
+            "node_id": "a",
+            "state": "tentative",
+            "credit": "bad",
+            "student_evidence": "pressure",
+        }
+    ]
+    monkeypatch.setattr(unified, "_call_unified", lambda **kwargs: json.dumps(payload))
+    result = await unified.evaluate_and_ask(
+        transcript=[("student", "pressure")],
         reference_graph=_graph(),
-        problem=SimpleNamespace(problem_text="Explain the process."),
-        already_asked_node_ids=set(),
+        problem=SimpleNamespace(problem_text="What is pressure?"),
+        question_history=(),
     )
-    assert premature.action == "ask"
-    assert premature.reply == unified._SAFE_FALLBACK
+    assert result.target_node_id == "a"
+    assert result.coverage[0].credit == 0
+    assert result.reply == "What is pressure?"
 
-    exhausted = await unified.evaluate_and_ask(
-        transcript=[],
+
+@pytest.mark.asyncio
+async def test_future_shock_private_paraphrase_is_rejected_for_public_gap(monkeypatch):
+    graph = KGGraph(
+        nodes=[
+            build_node(
+                node_type="definition",
+                node_id="cause",
+                attempt_id=1,
+                source="reference",
+                content={
+                    "concept": "choice overload",
+                    "meaning": "too many available paths create decision paralysis",
+                },
+            )
+        ],
+        edges=[],
+    )
+    payload = {
+        "nodes": [
+            {
+                "node_id": "cause",
+                "state": "tentative",
+                "credit": 0.4,
+                "student_evidence": "it is overwealming",
+            }
+        ],
+        "action": "ask",
+        "target_node_id": "cause",
+        "public_question_part_index": 1,
+        "acknowledgement": (
+            "Things are happening too quickly and it becomes difficult to keep up."
+        ),
+        "question": ("How do different paths to choose from make the future feel overwhelming?"),
+    }
+    monkeypatch.setattr(unified, "_call_unified", lambda **kwargs: json.dumps(payload))
+    result = await unified.evaluate_and_ask(
+        transcript=[
+            (
+                "student",
+                "future shock occurs when things are happening too quickly and it becomes difficult to keep up",
+            ),
+            ("apollo", "Can you explain more?"),
+            ("student", "it is overwealming"),
+        ],
+        reference_graph=graph,
+        problem=SimpleNamespace(
+            problem_text=(
+                "What is Future Shock, and why does it occur? When did it start happening — can "
+                "you give an example? And is it still happening today — why or why not?"
+            )
+        ),
+        question_history=(),
+    )
+    assert result.reply == "When did it start happening — can you give an example?"
+    assert "paths" not in result.reply
+    assert "overwealming" not in result.reply
+
+
+def test_safe_reply_rejects_echo_repeat_bad_ack_and_direct_private_leak():
+    graph = _graph()
+    common = {
+        "fallback": "Why does pressure work?",
+        "reference_graph": graph,
+        "public_text": "Why does pressure work?",
+        "student_messages": ["pressure works in this pressure step"],
+        "prior_questions": [],
+    }
+    reply, reason = unified._safe_reply(
+        acknowledgement=None,
+        question="pressure works in this pressure step?",
+        **common,
+    )
+    assert (reply, reason) == ("Why does pressure work?", "question_echo")
+
+    reply, reason = unified._safe_reply(
+        acknowledgement="Do I understand?",
+        question="Why does pressure work?",
+        **{**common, "prior_questions": ["Why does pressure work?"]},
+    )
+    assert reply == "Why does pressure work?"
+    assert reason == "repeated_question"
+
+    reply, reason = unified._safe_reply(
+        acknowledgement="Force divided by area.",
+        question="Why does pressure work?",
+        **common,
+    )
+    assert reply == "Why does pressure work?"
+    assert reason == "unsafe_acknowledgement"
+
+
+def test_private_helpers_cover_nested_content_spelling_and_part_selection():
+    assert unified._walk_strings({"a": [" x ", 2, {"b": ""}], "c": ("y",)}) == ["x", "y"]
+    assert unified._validated_evidence(None, ["hello"]) is None
+    assert unified._validated_evidence("!!!", ["!!!"]) is None
+    assert unified._validated_evidence("HELLO there", ["Well, hello there!"]) == "HELLO there"
+    assert unified._public_question_parts("First? And second? ") == ["First", "And second"]
+    assert unified._fallback_question(["First", "And second"], 1) == "second?"
+    assert unified._fallback_question(["First"], 20) == "First?"
+    assert unified._fallback_question(["First", "And second"], 0, ["First?"]) == "second?"
+    assert unified._fallback_question(["First"], 0, ["First?"]) == unified._GENERIC_FALLBACK
+    assert unified._fallback_question([], None) == unified._GENERIC_FALLBACK
+    assert not unified._leaks_private_content(
+        "Why is it overwhelming?",
         reference_graph=_graph(),
-        problem=SimpleNamespace(problem_text="Explain the process."),
-        already_asked_node_ids={"a", "b"},
+        public_text="Why is it overwhelming?",
+        student_messages=["It is overwealming"],
     )
-    assert exhausted.action == "done"
-    assert exhausted.reply is None
+    assert unified._leaks_private_content(
+        "Could you explain force?",
+        reference_graph=_graph(),
+        public_text="Explain pressure?",
+        student_messages=["pressure"],
+    )
 
 
-def test_call_uses_gpt_5_2_by_default_and_strict_output(monkeypatch):
+def test_call_uses_gpt_5_2_low_reasoning_and_strict_output(monkeypatch):
     captured = {}
 
     class Completions:
@@ -190,6 +307,7 @@ def test_call_uses_gpt_5_2_by_default_and_strict_output(monkeypatch):
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))])
 
     monkeypatch.delenv("APOLLO_UNIFIED_QUESTION_MODEL", raising=False)
+    monkeypatch.delenv("APOLLO_UNIFIED_QUESTION_REASONING_EFFORT", raising=False)
     monkeypatch.setattr(
         unified,
         "OpenAI",
@@ -197,6 +315,26 @@ def test_call_uses_gpt_5_2_by_default_and_strict_output(monkeypatch):
     )
     unified._call_unified(payload={})
     assert captured["model"] == "gpt-5.2"
+    assert captured["reasoning_effort"] == "low"
     assert captured["response_format"]["json_schema"]["strict"] is True
-    assert "Never state, name, paraphrase" in captured["messages"][0]["content"]
+    assert "Recompute the entire tally" in captured["messages"][0]["content"]
     assert "temperature" not in captured
+
+
+def test_call_omits_reasoning_effort_for_non_reasoning_override(monkeypatch):
+    captured = {}
+
+    class Completions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None))])
+
+    monkeypatch.setenv("APOLLO_UNIFIED_QUESTION_MODEL", "gpt-4o")
+    monkeypatch.setenv("APOLLO_UNIFIED_QUESTION_REASONING_EFFORT", "high")
+    monkeypatch.setattr(
+        unified,
+        "OpenAI",
+        lambda: SimpleNamespace(chat=SimpleNamespace(completions=Completions())),
+    )
+    assert unified._call_unified(payload={}) == "{}"
+    assert "reasoning_effort" not in captured

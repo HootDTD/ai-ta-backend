@@ -1,4 +1,4 @@
-"""I/O orchestration for unified coverage assessment and Apollo questioning."""
+"""I/O orchestration for unified R-graph learner tally and questioning."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.persistence.models import ReferenceQuestionOpportunity
 from apollo.schemas.problem import Problem
-from apollo.smart_questions.unified import evaluate_and_ask
+from apollo.smart_questions.unified import QuestionHistory, evaluate_and_ask
 
 
 @dataclass(frozen=True)
@@ -42,31 +42,56 @@ async def plan_next_question(
         .scalars()
         .all(),
     )
-    for row in rows:
-        if row.state == "asked_waiting":
-            row.state = "answered"
-            row.answered_turn = turn_index
-
-    asked_node_ids = {row.reference_node_id for row in rows}
     result = await evaluate_and_ask(
         transcript=transcript,
         reference_graph=reference_graph,
         problem=problem,
-        already_asked_node_ids=asked_node_ids,
+        question_history=tuple(
+            QuestionHistory(
+                node_id=str(row.reference_node_id),
+                question=str(row.question),
+                state=str(row.state),
+            )
+            for row in rows
+        ),
     )
+    coverage_by_id = {item.node_id: item for item in result.coverage}
+
     if result.action == "done":
+        for row in rows:
+            if row.state == "asked_waiting":
+                row.state = "answered"
+                row.answered_turn = turn_index
         return QuestionDecision(action="done")
 
     target_id = cast(str, result.target_node_id)
     question = cast(str, result.reply)
-    db.add(
-        ReferenceQuestionOpportunity(
-            attempt_id=attempt_id,
-            session_id=session_id,
-            reference_node_id=target_id,
-            state="asked_waiting",
-            question=question,
-            asked_turn=turn_index + 1,
+    target_row = next((row for row in rows if row.reference_node_id == target_id), None)
+    for row in rows:
+        if row.state != "asked_waiting" or row is target_row:
+            continue
+        row.state = "answered"
+        row.answered_turn = turn_index
+
+    if target_row is None:
+        db.add(
+            ReferenceQuestionOpportunity(
+                attempt_id=attempt_id,
+                session_id=session_id,
+                reference_node_id=target_id,
+                state="asked_waiting",
+                question=question,
+                asked_turn=turn_index + 1,
+            )
         )
-    )
+    else:
+        # The row is a per-node latest-question ledger, not proof that the node
+        # was learned. Reuse it when the fresh tally remains tentative/missing/
+        # conflicting so an insufficient response can receive a better probe.
+        target_row.state = "asked_waiting"
+        target_row.question = question
+        target_row.asked_turn = turn_index + 1
+        target_row.answered_turn = None
+        assert coverage_by_id[target_id].state != "understood"
+
     return QuestionDecision(action="ask", question=question, target_node_id=target_id)
