@@ -25,7 +25,7 @@ related:
   - shared/conventions
   - shared/security
   - shared/supabase
-last_verified: 2026-07-09
+last_verified: 2026-07-15
 stub: false
 ---
 
@@ -62,6 +62,9 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` is a single ~2000-l
 
 ### OCR/env surface
 
+- `APOLLO_UNIFIED_QUESTION_DEBUG_LOG` enables a default-off staging diagnostic containing bounded
+  rejected/redrafted Apollo question text; production must keep it off because drafts can contain
+  private rubric vocabulary. The behavior and logging boundary are documented in `apollo.md`.
 - `OCR_PROVIDER=openai` selects the OpenAI vision OCR provider via `ocr/factory.py` for authored-set indexing paths that pass a provider into `TeacherPDFIngestor`; `OCR_PROVIDER=mathpix` keeps the existing Mathpix factory option.
 - `APOLLO_OCR_MODEL` optionally overrides the OpenAI vision OCR model used by `OpenAIVisionOCRProvider.from_env()`; the code default is `gpt-4o`.
 - `APOLLO_AUTHORED_OCR_CONF_THRESHOLD` is the authored-set low-confidence OCR threshold used by `run_authored_set_provisioning` when deciding whether an extracted reference needs generated-reference comparison; the code default is `0.6`.
