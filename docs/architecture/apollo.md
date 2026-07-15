@@ -85,14 +85,24 @@ messages only. Apollo selects a high-value unresolved R-graph node, briefly synt
 student-taught facts, and advances to an unmet public-problem requirement instead of restating the
 last response. The `medium` reasoning default improves clause-coverage judgment at an accepted
 latency and token-cost increase; the environment override remains available. The private/output
-boundary allows subject wording only from the public problem or student messages. A deterministic
-vocabulary and echo guard rejects unsafe acknowledgements and unsafe, repeated, or malformed
-questions. A rejected student-facing draft gets exactly one structured redraft call with the prior
-JSON and the deterministic rejection constraint; only a second rejection reaches the canned chain.
-Decision logs suffix the original reason with `_retry_recovered` or `_retry_failed`. Question
-vocabulary may reuse words from prior Apollo transcript turns because those words are already
-student-visible; acknowledgements retain the stricter student-words-only boundary, and the private
-string containment guard is unchanged. Invalid or missing clause-status entries decode as
+boundary allows subject wording from the public problem or student messages plus a vendored,
+dependency-free allowlist of common conversational English. Safe-token membership also compares
+one lightly normalized suffix form (`ing`, `ed`, `es`, or `s`, with a minimum three-character
+stem), reducing false rejections for ordinary inflections without adding any new rejection path.
+Digits, uncommon proper nouns, and technical terms remain blocked unless student-visible; the
+private-string containment guard is unchanged, so multi-word rubric phrases remain blocked even
+when composed entirely of common words. The accepted residual risk is that a single common word
+also present in a private rubric (for example, `change`) may be used: one common token cannot
+reproduce rubric content, while phrase containment protects compositions. A deterministic echo
+guard still rejects unsafe acknowledgements and unsafe, repeated, or malformed questions.
+A rejected student-facing draft gets exactly one structured redraft call with the prior JSON and
+the deterministic rejection constraint; only a rejected redraft question reaches the canned
+chain. Decision logs use `_retry_recovered` when the redraft question is served (including when
+only its unsafe acknowledgement is dropped) and `_retry_failed` only when the final question is a
+canned fallback. Question vocabulary may reuse words from prior Apollo transcript turns because
+those words are already student-visible; acknowledgements retain the stricter boundary that
+excludes public-problem and prior-Apollo vocabulary, while gaining only the common-English and
+morphological allowances. Invalid or missing clause-status entries decode as
 `unattempted`. A public-clause re-ask guard also detects when a generated question merely copies a
 problem clause the student has already meaningfully attempted, without changing the existing
 string-overlap heuristics.

@@ -16,6 +16,7 @@ from typing import Any, Literal, cast
 from openai import OpenAI
 
 from apollo.ontology import KGGraph
+from apollo.smart_questions.common_words import COMMON_ENGLISH_WORDS
 
 LearnerState = Literal["understood", "tentative", "missing", "conflicting"]
 ClauseStatus = Literal["unattempted", "attempted", "answered"]
@@ -314,6 +315,27 @@ def _normalized(text: str) -> str:
     return " ".join(_WORD_RE.findall(text.casefold()))
 
 
+def _suffix_stripped(token: str) -> str:
+    """Return one lightly inflection-normalized form without shortening tiny stems."""
+    for suffix in ("ing", "ed", "es", "s"):
+        if token.endswith(suffix) and len(token) - len(suffix) >= 3:
+            return token[: -len(suffix)]
+    return token
+
+
+def _safe_token_match(
+    token: str,
+    safe_tokens: set[str],
+    normalized_safe_tokens: set[str] | None = None,
+) -> bool:
+    """Match exact safe vocabulary or a lightly normalized inflection."""
+    if token in safe_tokens:
+        return True
+    if normalized_safe_tokens is None:
+        normalized_safe_tokens = {_suffix_stripped(safe) for safe in safe_tokens}
+    return _suffix_stripped(token) in normalized_safe_tokens
+
+
 def _transcript_questions(transcript: Sequence[tuple[str, str]]) -> list[str]:
     """Return ordered whole-turn and bare-question forms for Apollo questions."""
     questions: list[str] = []
@@ -523,13 +545,20 @@ def _private_content_violations(
     normalized_reply = _normalized(reply)
     public_and_student = _normalized(f"{public_text} {' '.join(student_messages)}")
     safe_vocabulary = _normalized(f"{public_and_student} {' '.join(additional_safe_text)}")
-    safe_tokens = set(_WORD_RE.findall(safe_vocabulary)) | _GENERIC_REPLY_WORDS
+    safe_tokens = (
+        set(_WORD_RE.findall(safe_vocabulary)) | _GENERIC_REPLY_WORDS | COMMON_ENGLISH_WORDS
+    )
+    normalized_safe_tokens = {_suffix_stripped(token) for token in safe_tokens}
     offending_tokens: list[str] = []
     for token in _WORD_RE.findall(normalized_reply):
         spelling_match = len(token) >= 6 and any(
             SequenceMatcher(None, token, safe).ratio() >= 0.88 for safe in safe_tokens
         )
-        if (len(token) >= 4 or token.isdigit()) and token not in safe_tokens and not spelling_match:
+        if (
+            (len(token) >= 4 or token.isdigit())
+            and not _safe_token_match(token, safe_tokens, normalized_safe_tokens)
+            and not spelling_match
+        ):
             offending_tokens.append(token)
 
     if offending_tokens:
@@ -873,9 +902,7 @@ async def evaluate_and_ask(
             {"role": "assistant", "content": raw},
             {"role": "user", "content": _retry_feedback(validation, prior_questions)},
         ]
-        retry_raw = await asyncio.to_thread(
-            _call_unified, payload=payload, messages=retry_messages
-        )
+        retry_raw = await asyncio.to_thread(_call_unified, payload=payload, messages=retry_messages)
         try:
             retry_decoded = json.loads(retry_raw)
         except (TypeError, json.JSONDecodeError):
@@ -894,7 +921,7 @@ async def evaluate_and_ask(
             prior_questions=prior_questions,
             public_parts=public_parts,
         )
-        if retry_validation.reason is None:
+        if retry_validation.reason in {None, "unsafe_acknowledgement"}:
             question = retry_validation.question
             reply = f"{retry_validation.acknowledgement} {question}".strip()
             fallback_reason = f"{initial_reason}_retry_recovered"
