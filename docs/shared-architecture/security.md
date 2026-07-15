@@ -6,7 +6,7 @@ related:
   - ai-ta-backend/_overview
   - ai-ta-backend/domain-data
   - shared/supabase
-last_verified: 2026-06-10
+last_verified: 2026-07-12
 stub: false
 ---
 
@@ -121,4 +121,5 @@ When touching auth, RLS, schema, or any endpoint that reads course data:
 - [ ] If touching `/apollo/*`, preserve the auth_deps gates — identity comes from the
       token only (`require_user` / `require_session_owner` / `require_course_member`).
 - [ ] Mirror schema/RLS changes to both test (`hjevtxdtrkxjcaaexdxt`) and prod
-      (`uduxdniieeqbljtwocxy`) and commit the numbered SQL file (see shared/supabase).
+      (`uinkseewnxvumrxksnew` — the old `uduxdniieeqbljtwocxy` is dead) and commit the
+      numbered SQL file (see shared/supabase).

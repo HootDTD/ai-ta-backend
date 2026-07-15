@@ -5,7 +5,7 @@ owns: []
 related:
   - ai-ta-backend/_overview
   - shared/security
-last_verified: 2026-06-10
+last_verified: 2026-07-12
 stub: false
 ---
 
@@ -36,14 +36,14 @@ Defined in `ai-ta-backend/pytest.ini`, `ai-ta-backend/tests/conftest.py`, and `a
 
 ## CI gates (ai-ta-backend/.github/workflows/ci.yml)
 
-Triggered on PRs and pushes to `main`, `staging`, `ApolloV3`. Parallel jobs:
+Triggered on PRs and pushes to `main`, `staging`, and the retired `ApolloV3`. Parallel jobs:
 
 | Job | Gate |
 |---|---|
 | `quality` | Ruff on changed files — **blocking** for added files (check + format), advisory for modified files |
 | `typecheck` | Mypy on changed files — advisory (`continue-on-error`), tightened in Phase 3 |
 | `unit` | `pytest -m "not integration" -n auto` with coverage — blocking, no Docker |
-| `integration` | Full suite on real pgvector + Neo4j Testcontainers, then diff-cover **≥80% patch coverage** — blocking; the patch gate is skipped on promotion PRs into `ApolloV3` |
+| `integration` | Full suite on real pgvector + Neo4j Testcontainers, then diff-cover **≥80% patch coverage** — blocking. The skip condition still names the retired `ApolloV3` branch, so staging→`main` promotion PRs currently run the full patch gate (known drift in `ci.yml`; the ratchet was already enforced on the way into staging) |
 | `ci-passed` | Aggregation job — the single required branch-protection status |
 
 A nightly workflow (`ai-ta-backend/.github/workflows/nightly.yml`) exists for off-PR-path runs; evals and other nondeterministic/costly checks belong there, never on the PR path.
@@ -60,8 +60,8 @@ A nightly workflow (`ai-ta-backend/.github/workflows/nightly.yml`) exists for of
 ## Branch and deploy conventions
 
 - **Never push directly to `main`** — always work on a feature branch and open a PR (`ai-ta-backend/CLAUDE.md`).
-- Branch model (TESTING-CI-PLAN §3, adapted): short-lived `feature/*` branches → PR with full CI gate → promotion PRs flow downstream only. `ApolloV3` is the production branch; promotion PRs into it re-run the full suite but skip the patch-coverage ratchet (already enforced on the way in).
-- **Deployment is Railway** via GitHub integration, deploying the `ApolloV3` branch; `ai-ta-backend/Procfile` defines the web + worker processes. Heroku is abandoned — do not re-wire it.
+- Branch model (pilot era, 2026-07 — authority: `ai-ta-backend/docs/branching.md`): `staging` is the trunk (feature branches → PR → staging with the full CI gate); **`main` is the pilot release/prod branch**, moved only by staging→main promotion PRs and `hotfix/*` PRs (auto back-merged into staging). `ApolloV3` is the RETIRED former prod branch — stale since 2026-06-09; do not target it.
+- **Deployment is Railway** via GitHub integration: the **production** environment deploys `main` (backend, student-ui, teacher-ui; the prod backend-worker service alone is still pinned to legacy `ApolloV3`, deliberately — decision 2026-07-12), and the **staging** environment deploys `staging`. `ai-ta-backend/Procfile` defines the web + worker processes. Heroku is abandoned — do not re-wire it.
 - Commit messages: conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, ...).
 
 ## Naming patterns observed in code
