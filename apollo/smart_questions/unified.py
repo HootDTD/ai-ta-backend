@@ -21,7 +21,7 @@ LearnerState = Literal["understood", "tentative", "missing", "conflicting"]
 _VALID_STATES: set[str] = {"understood", "tentative", "missing", "conflicting"}
 _DEFAULT_MODEL = "gpt-5.2"
 _DEFAULT_REASONING_EFFORT = "low"
-_GENERIC_FALLBACK = "What part of the original question should we work through next?"
+_GENERIC_FALLBACK = "What is the key idea I should understand?"
 _LOG = logging.getLogger(__name__)
 _WORD_RE = re.compile(r"[a-zA-Z0-9]+")
 _GENERIC_REPLY_WORDS = {
@@ -105,6 +105,26 @@ _GENERIC_REPLY_WORDS = {
     "would",
     "your",
 }
+_PUBLIC_QUESTION_STOP_WORDS = {
+    "a",
+    "also",
+    "an",
+    "and",
+    "can",
+    "did",
+    "do",
+    "does",
+    "give",
+    "is",
+    "it",
+    "not",
+    "or",
+    "the",
+    "what",
+    "when",
+    "why",
+    "you",
+}
 
 
 @dataclass(frozen=True)
@@ -186,10 +206,11 @@ PRIVATE LEARNER TALLY:
 - Recompute the entire tally every turn. A prior question does not make a node understood.
 
 TARGET SELECTION:
-- If any node is not understood, action=ask and select the highest-value unresolved node. Prefer a
-  prerequisite before a dependent node, then an explicit unanswered requirement in the public
-  problem. A tentative or conflicting node may be revisited when the student's latest answer was
-  insufficient. Do not repeat a prior question; advance or narrow it.
+- If any node is not understood, action=ask and select the highest-value unresolved node. After a
+  student meaningfully attempts one public question clause, advance to a wholly unanswered public
+  requirement before revisiting that tentative clause, unless it is impossible to proceed without
+  resolving a prerequisite. A tentative or conflicting node may then be revisited with a NARROWER
+  diagnostic probe. Do not repeat a prior question; advance or narrow it.
 - action=done ONLY when every node is understood.
 - Map the target to the best public_question_part and return its zero-based index. This public
   clause is the safe fallback if your drafted wording is rejected.
@@ -199,6 +220,9 @@ STUDENT-FACING TURN:
   understand, then ask exactly one concise question that advances an unmet requirement.
 - Do NOT restate the student's last sentence or ask them merely to elaborate on it. Synthesize
   across evidence, then move forward. Do not repeat misspellings.
+- Never copy a full public question clause back after the student has attempted it. Asking "What is
+  Future Shock, and why does it occur?" after the student has just defined it is inattentive. Ask
+  the next missing requirement (for example, when/example/today) or a narrower reasoning probe.
 - acknowledgement may assert only information already present in student messages. question may
   use subject-matter wording from the public problem and student messages, plus ordinary
   conversational glue. The public problem may be quoted as a QUESTION, never as an answer.
@@ -278,20 +302,61 @@ def _public_question_parts(problem_text: str) -> list[str]:
 
 
 def _fallback_question(
-    parts: Sequence[str], requested_index: Any, prior_questions: Sequence[str] = ()
+    parts: Sequence[str],
+    requested_index: Any,
+    prior_questions: Sequence[str] = (),
+    *,
+    avoid_index: int | None = None,
 ) -> str:
     index = requested_index if isinstance(requested_index, int) else 0
     if parts:
         ordered = [index, *(item for item in range(len(parts)) if item != index)]
         seen = {_normalized(item) for item in prior_questions}
         for candidate_index in ordered:
-            if not 0 <= candidate_index < len(parts):
+            if candidate_index == avoid_index or not 0 <= candidate_index < len(parts):
                 continue
             selected = re.sub(r"^(?:and|also)\s+", "", parts[candidate_index], flags=re.IGNORECASE)
             question = f"{selected}?"
             if _normalized(question) not in seen:
                 return question
+        if avoid_index is not None and 0 <= avoid_index < len(parts):
+            return _narrow_generic_probe(parts[avoid_index])
     return _GENERIC_FALLBACK
+
+
+def _narrow_generic_probe(public_part: str) -> str:
+    tokens = set(_WORD_RE.findall(public_part.casefold()))
+    if tokens & {"why", "occur", "occurs", "cause", "causes"}:
+        return "What makes that happen?"
+    if "example" in tokens:
+        return "Can you give a concrete example?"
+    if "when" in tokens:
+        return "When does that happen?"
+    if "how" in tokens:
+        return "How do those steps connect?"
+    return _GENERIC_FALLBACK
+
+
+def _broad_reask_index(
+    question: str,
+    *,
+    public_parts: Sequence[str],
+    student_messages: Sequence[str],
+) -> int | None:
+    normalized_question = _normalized(question)
+    student_tokens = set(_WORD_RE.findall(_normalized(" ".join(student_messages))))
+    for index, part in enumerate(public_parts):
+        if normalized_question != _normalized(part):
+            continue
+        part_tokens = {
+            token
+            for token in _WORD_RE.findall(_normalized(part))
+            if token not in _PUBLIC_QUESTION_STOP_WORDS
+        }
+        overlap = part_tokens & student_tokens
+        if part_tokens and (len(overlap) >= 2 or len(overlap) / len(part_tokens) >= 0.5):
+            return index
+    return None
 
 
 def _leaks_private_content(
@@ -352,6 +417,8 @@ def _safe_reply(
     public_text: str,
     student_messages: Sequence[str],
     prior_questions: Sequence[str],
+    public_parts: Sequence[str] = (),
+    requested_public_index: Any = None,
 ) -> tuple[str, str | None]:
     candidate_question = re.sub(r"\s+", " ", question if isinstance(question, str) else "").strip()
     reason: str | None = None
@@ -372,6 +439,20 @@ def _safe_reply(
         reason = "question_echo"
     elif _normalized(candidate_question) in {_normalized(item) for item in prior_questions}:
         reason = "repeated_question"
+    else:
+        broad_reask_index = _broad_reask_index(
+            candidate_question,
+            public_parts=public_parts,
+            student_messages=student_messages,
+        )
+        if broad_reask_index is not None:
+            reason = "broad_reask_after_evidence"
+            fallback = _fallback_question(
+                public_parts,
+                requested_public_index,
+                prior_questions,
+                avoid_index=broad_reask_index,
+            )
     if reason:
         candidate_question = fallback
 
@@ -474,6 +555,8 @@ async def evaluate_and_ask(
         public_text=problem_text,
         student_messages=student_messages,
         prior_questions=prior_questions,
+        public_parts=public_parts,
+        requested_public_index=decoded.get("public_question_part_index"),
     )
     _log_decision(
         coverage=coverage,

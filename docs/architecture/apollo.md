@@ -85,7 +85,9 @@ public-problem requirement instead of restating the last response. The private/o
 allows subject wording only from the public problem or student messages. A deterministic
 vocabulary and echo guard drops unsafe acknowledgements and replaces unsafe, repeated, or
 malformed questions with an unanswered clause from the public problem, never a private rubric
-paraphrase or a generic confusion loop.
+paraphrase or a generic confusion loop. A public-clause re-ask guard also detects when a generated
+question merely copies a problem clause the student has already meaningfully attempted; it advances
+to another unanswered public clause, or uses a narrow answer-free probe when no other clause exists.
 
 The `apollo_reference_question_opportunities` unique key remains one row per
 `(attempt_id, reference_node_id)`, but the row is now the node's latest-question ledger rather
