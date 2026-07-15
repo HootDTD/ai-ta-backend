@@ -266,16 +266,18 @@ def _is_reasoning_model(model: str) -> bool:
     return model.startswith(("gpt-5", "o1", "o3", "o4"))
 
 
-def _call_unified(*, payload: dict[str, Any]) -> str:
+def _call_unified(
+    *,
+    payload: dict[str, Any],
+    messages: Sequence[dict[str, str]] | None = None,
+) -> str:
     client: Any = OpenAI()
     model = os.getenv("APOLLO_UNIFIED_QUESTION_MODEL") or _DEFAULT_MODEL
+    call_messages = list(messages) if messages is not None else _base_messages(payload)
     kwargs: dict[str, Any] = {
         "model": cast(Any, model),
         "response_format": {"type": "json_schema", "json_schema": _schema()},
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ],
+        "messages": call_messages,
     }
     if _is_reasoning_model(model):
         kwargs["reasoning_effort"] = os.getenv(
@@ -283,6 +285,13 @@ def _call_unified(*, payload: dict[str, Any]) -> str:
         )
     response = client.chat.completions.create(**kwargs)
     return response.choices[0].message.content or "{}"
+
+
+def _base_messages(payload: dict[str, Any]) -> list[dict[str, str]]:
+    return [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
 
 
 def _walk_strings(value: Any) -> list[str]:
@@ -303,6 +312,25 @@ def _private_strings(reference_graph: KGGraph) -> list[str]:
 
 def _normalized(text: str) -> str:
     return " ".join(_WORD_RE.findall(text.casefold()))
+
+
+def _transcript_questions(transcript: Sequence[tuple[str, str]]) -> list[str]:
+    """Return ordered whole-turn and bare-question forms for Apollo questions."""
+    questions: list[str] = []
+    for role, content in transcript:
+        cleaned = re.sub(r"\s+", " ", content).strip()
+        if role != "apollo" or not cleaned.endswith("?"):
+            continue
+        candidates = [cleaned]
+        previous_boundary = max(cleaned.rfind(mark, 0, len(cleaned) - 1) for mark in ".!?")
+        if previous_boundary >= 0:
+            candidates.append(cleaned[previous_boundary + 1 :].strip())
+        turn_seen: set[str] = set()
+        for candidate in candidates:
+            if candidate and _normalized(candidate) not in turn_seen:
+                questions.append(candidate)
+                turn_seen.add(_normalized(candidate))
+    return questions
 
 
 def _validated_evidence(value: Any, student_messages: Sequence[str]) -> str | None:
@@ -352,9 +380,9 @@ def _fallback_question(
     clause_statuses: Sequence[ClauseStatus] | None = None,
 ) -> str:
     index = requested_index if isinstance(requested_index, int) else 0
+    seen = {_normalized(item) for item in prior_questions}
     if parts:
         ordered = [index, *(item for item in range(len(parts)) if item != index)]
-        seen = {_normalized(item) for item in prior_questions}
         if clause_statuses is not None:
             statuses = [
                 clause_statuses[item] if item < len(clause_statuses) else "unattempted"
@@ -387,8 +415,12 @@ def _fallback_question(
                 and 0 <= avoid_index < len(parts)
                 and statuses[avoid_index] == "unattempted"
             ):
-                return _narrow_generic_probe(parts[avoid_index])
-            return _GENERIC_FALLBACK
+                question = _narrow_generic_probe(parts[avoid_index])
+                if _normalized(question) not in seen:
+                    return question
+            if _normalized(_GENERIC_FALLBACK) not in seen:
+                return _GENERIC_FALLBACK
+            return _least_recent_canned(parts, prior_questions)
         for candidate_index in ordered:
             if candidate_index == avoid_index or not 0 <= candidate_index < len(parts):
                 continue
@@ -397,8 +429,51 @@ def _fallback_question(
             if _normalized(question) not in seen:
                 return question
         if avoid_index is not None and 0 <= avoid_index < len(parts):
-            return _narrow_generic_probe(parts[avoid_index])
-    return _GENERIC_FALLBACK
+            question = _narrow_generic_probe(parts[avoid_index])
+            if _normalized(question) not in seen:
+                return question
+    if _normalized(_GENERIC_FALLBACK) not in seen:
+        return _GENERIC_FALLBACK
+    return _least_recent_canned(parts, prior_questions)
+
+
+def _canned_repertoire(parts: Sequence[str]) -> list[str]:
+    candidates = [
+        *(_public_part_question(part) for part in parts),
+        *(_narrow_generic_probe(part) for part in parts),
+        _GENERIC_FALLBACK,
+    ]
+    unique: dict[str, str] = {}
+    for candidate in candidates:
+        unique.setdefault(_normalized(candidate), candidate)
+    return list(unique.values())
+
+
+def _public_part_question(part: str) -> str:
+    selected = re.sub(r"^(?:and|also)\s+", "", part, flags=re.IGNORECASE)
+    return f"{selected}?"
+
+
+def _least_recent_canned(parts: Sequence[str], prior_questions: Sequence[str]) -> str:
+    repertoire = _canned_repertoire(parts)
+    normalized_prior = [_normalized(item) for item in prior_questions]
+    immediately_previous = normalized_prior[-1] if normalized_prior else None
+    eligible = [
+        item
+        for item in repertoire
+        if len(repertoire) == 1 or _normalized(item) != immediately_previous
+    ]
+    if not eligible:
+        return _GENERIC_FALLBACK
+
+    def last_asked(candidate: str) -> int:
+        normalized = _normalized(candidate)
+        return max(
+            (index for index, prior in enumerate(normalized_prior) if prior == normalized),
+            default=-1,
+        )
+
+    return min(eligible, key=last_asked)
 
 
 def _narrow_generic_probe(public_part: str) -> str:
@@ -436,23 +511,29 @@ def _broad_reask_index(
     return None
 
 
-def _leaks_private_content(
+def _private_content_violations(
     reply: str,
     *,
     reference_graph: KGGraph,
     public_text: str,
     student_messages: Sequence[str],
-) -> bool:
+    additional_safe_text: Sequence[str] = (),
+) -> tuple[bool, tuple[str, ...]]:
     """Reject private reuse and any invented subject-matter vocabulary."""
     normalized_reply = _normalized(reply)
     public_and_student = _normalized(f"{public_text} {' '.join(student_messages)}")
-    safe_tokens = set(_WORD_RE.findall(public_and_student)) | _GENERIC_REPLY_WORDS
+    safe_vocabulary = _normalized(f"{public_and_student} {' '.join(additional_safe_text)}")
+    safe_tokens = set(_WORD_RE.findall(safe_vocabulary)) | _GENERIC_REPLY_WORDS
+    offending_tokens: list[str] = []
     for token in _WORD_RE.findall(normalized_reply):
         spelling_match = len(token) >= 6 and any(
             SequenceMatcher(None, token, safe).ratio() >= 0.88 for safe in safe_tokens
         )
         if (len(token) >= 4 or token.isdigit()) and token not in safe_tokens and not spelling_match:
-            return True
+            offending_tokens.append(token)
+
+    if offending_tokens:
+        return True, tuple(dict.fromkeys(offending_tokens))
 
     for private in _private_strings(reference_graph):
         normalized_private = _normalized(private)
@@ -461,8 +542,26 @@ def _leaks_private_content(
             and normalized_private in normalized_reply
             and normalized_private not in public_and_student
         ):
-            return True
-    return False
+            return True, ()
+    return False, ()
+
+
+def _leaks_private_content(
+    reply: str,
+    *,
+    reference_graph: KGGraph,
+    public_text: str,
+    student_messages: Sequence[str],
+    additional_safe_text: Sequence[str] = (),
+) -> bool:
+    leaks, _ = _private_content_violations(
+        reply,
+        reference_graph=reference_graph,
+        public_text=public_text,
+        student_messages=student_messages,
+        additional_safe_text=additional_safe_text,
+    )
+    return leaks
 
 
 def _echoes_student(text: str, student_messages: Sequence[str]) -> bool:
@@ -497,6 +596,7 @@ def _safe_reply(
     public_parts: Sequence[str] = (),
     requested_public_index: Any = None,
     clause_statuses: Sequence[ClauseStatus] | None = None,
+    apollo_messages: Sequence[str] = (),
 ) -> tuple[str, str, str | None]:
     candidate_question = re.sub(r"\s+", " ", question if isinstance(question, str) else "").strip()
     reason: str | None = None
@@ -511,6 +611,7 @@ def _safe_reply(
         reference_graph=reference_graph,
         public_text=public_text,
         student_messages=student_messages,
+        additional_safe_text=apollo_messages,
     ):
         reason = "question_vocabulary_boundary"
     elif _echoes_student(candidate_question, student_messages):
@@ -554,6 +655,110 @@ def _safe_reply(
     return reply, candidate_question, reason
 
 
+@dataclass(frozen=True)
+class _DraftValidation:
+    acknowledgement: str
+    question: str
+    reason: str | None
+    offending_tokens: tuple[str, ...] = ()
+    broad_reask_index: int | None = None
+
+
+def _validate_draft(
+    *,
+    acknowledgement: Any,
+    question: Any,
+    reference_graph: KGGraph,
+    public_text: str,
+    student_messages: Sequence[str],
+    apollo_messages: Sequence[str],
+    prior_questions: Sequence[str],
+    public_parts: Sequence[str],
+) -> _DraftValidation:
+    candidate_question = re.sub(r"\s+", " ", question if isinstance(question, str) else "").strip()
+    reason: str | None = None
+    offending_tokens: tuple[str, ...] = ()
+    broad_reask_index: int | None = None
+    if (
+        not candidate_question
+        or candidate_question.count("?") != 1
+        or not candidate_question.endswith("?")
+    ):
+        reason = "malformed_question"
+    else:
+        leaks, offending_tokens = _private_content_violations(
+            candidate_question,
+            reference_graph=reference_graph,
+            public_text=public_text,
+            student_messages=student_messages,
+            additional_safe_text=apollo_messages,
+        )
+        if leaks:
+            reason = "question_vocabulary_boundary"
+        elif _echoes_student(candidate_question, student_messages):
+            reason = "question_echo"
+        elif _normalized(candidate_question) in {_normalized(item) for item in prior_questions}:
+            reason = "repeated_question"
+        else:
+            broad_reask_index = _broad_reask_index(
+                candidate_question,
+                public_parts=public_parts,
+                student_messages=student_messages,
+            )
+            if broad_reask_index is not None:
+                reason = "broad_reask_after_evidence"
+
+    candidate_ack = re.sub(
+        r"\s+", " ", acknowledgement if isinstance(acknowledgement, str) else ""
+    ).strip()
+    acknowledgement_is_unsafe = candidate_ack and (
+        "?" in candidate_ack
+        or _leaks_private_content(
+            candidate_ack,
+            reference_graph=reference_graph,
+            public_text="",
+            student_messages=student_messages,
+        )
+        or _echoes_student(candidate_ack, student_messages)
+    )
+    if acknowledgement_is_unsafe:
+        candidate_ack = ""
+        if reason is None:
+            reason = "unsafe_acknowledgement"
+    return _DraftValidation(
+        acknowledgement=candidate_ack,
+        question=candidate_question,
+        reason=reason,
+        offending_tokens=offending_tokens,
+        broad_reask_index=broad_reask_index,
+    )
+
+
+def _retry_feedback(validation: _DraftValidation, prior_questions: Sequence[str]) -> str:
+    constraints = {
+        "malformed_question": "Return exactly one non-empty concise question ending in '?'.",
+        "question_echo": "Do not echo or closely restate the student's wording.",
+        "broad_reask_after_evidence": (
+            "Do not repeat a public clause the student already attempted; ask a narrower or new question."
+        ),
+        "unsafe_acknowledgement": (
+            "The acknowledgement may use student words only and may not contain a question."
+        ),
+    }
+    reason = validation.reason or "rejected_draft"
+    detail = constraints.get(reason, "Rewrite the student-facing turn to satisfy the guard.")
+    if reason == "question_vocabulary_boundary":
+        tokens = ", ".join(validation.offending_tokens) or "private-only phrase"
+        detail = (
+            "The question used vocabulary outside the public problem, student messages, and "
+            f"already-exposed Apollo wording. Offending tokens: {tokens}."
+        )
+    elif reason == "repeated_question":
+        asked = json.dumps(list(dict.fromkeys(prior_questions)), ensure_ascii=False)
+        detail = f"A NEW question is required. Already-asked questions: {asked}."
+    return f"Your student-facing draft was rejected: {reason}. {detail} Redraft once using the same schema."
+
+
 async def evaluate_and_ask(
     *,
     transcript: Sequence[tuple[str, str]],
@@ -565,6 +770,8 @@ async def evaluate_and_ask(
     problem_text = str(problem.problem_text)
     public_parts = _public_question_parts(problem_text)
     student_messages = [content for role, content in transcript if role == "student"]
+    apollo_messages = [content for role, content in transcript if role == "apollo"]
+    # Keep attempt-stable fields before turn-varying fields for cross-turn prompt-cache prefixes.
     payload = {
         "public_problem": problem_text,
         "public_question_parts": [
@@ -578,7 +785,8 @@ async def evaluate_and_ask(
         "question_history": [item.__dict__ for item in question_history],
         "transcript": [{"role": role, "content": content} for role, content in transcript],
     }
-    raw = await asyncio.to_thread(_call_unified, payload=payload)
+    base_messages = _base_messages(payload)
+    raw = await asyncio.to_thread(_call_unified, payload=payload, messages=base_messages)
     try:
         decoded = json.loads(raw)
     except (TypeError, json.JSONDecodeError):
@@ -622,6 +830,15 @@ async def evaluate_and_ask(
             target=None,
             fallback_reason=None,
         )
+        _log_debug_cycle(
+            draft=decoded,
+            draft_validation=None,
+            redraft=None,
+            redraft_validation=None,
+            final_question=None,
+            target=None,
+            clause_statuses=clause_statuses,
+        )
         return UnifiedQuestionResult(coverage, "done", None, None, None)
 
     target = (
@@ -630,24 +847,72 @@ async def evaluate_and_ask(
         else next(node.node_id for node in reference_graph.nodes if node.node_id in unresolved)
     )
     prior_questions = [item.question for item in question_history]
-    fallback = _fallback_question(
-        public_parts,
-        decoded.get("public_question_part_index"),
-        prior_questions,
-        clause_statuses=clause_statuses,
-    )
-    reply, question, fallback_reason = _safe_reply(
+    for transcript_question in _transcript_questions(transcript):
+        prior_questions.append(transcript_question)
+
+    validation = _validate_draft(
         acknowledgement=decoded.get("acknowledgement"),
         question=decoded.get("question") if decoded.get("action") == "ask" else None,
-        fallback=fallback,
         reference_graph=reference_graph,
         public_text=problem_text,
         student_messages=student_messages,
+        apollo_messages=apollo_messages,
         prior_questions=prior_questions,
         public_parts=public_parts,
-        requested_public_index=decoded.get("public_question_part_index"),
-        clause_statuses=clause_statuses,
     )
+    fallback_reason: str | None = None
+    retry_decoded: dict[str, Any] | None = None
+    retry_validation: _DraftValidation | None = None
+    if validation.reason is None:
+        question = validation.question
+        reply = f"{validation.acknowledgement} {question}".strip()
+    else:
+        initial_reason = validation.reason
+        retry_messages = [
+            *base_messages,
+            {"role": "assistant", "content": raw},
+            {"role": "user", "content": _retry_feedback(validation, prior_questions)},
+        ]
+        retry_raw = await asyncio.to_thread(
+            _call_unified, payload=payload, messages=retry_messages
+        )
+        try:
+            retry_decoded = json.loads(retry_raw)
+        except (TypeError, json.JSONDecodeError):
+            retry_decoded = {}
+        if not isinstance(retry_decoded, dict):
+            retry_decoded = {}
+        retry_validation = _validate_draft(
+            acknowledgement=retry_decoded.get("acknowledgement"),
+            question=(
+                retry_decoded.get("question") if retry_decoded.get("action") == "ask" else None
+            ),
+            reference_graph=reference_graph,
+            public_text=problem_text,
+            student_messages=student_messages,
+            apollo_messages=apollo_messages,
+            prior_questions=prior_questions,
+            public_parts=public_parts,
+        )
+        if retry_validation.reason is None:
+            question = retry_validation.question
+            reply = f"{retry_validation.acknowledgement} {question}".strip()
+            fallback_reason = f"{initial_reason}_retry_recovered"
+        else:
+            avoid_index = (
+                retry_validation.broad_reask_index
+                if retry_validation.broad_reask_index is not None
+                else validation.broad_reask_index
+            )
+            question = _fallback_question(
+                public_parts,
+                decoded.get("public_question_part_index"),
+                prior_questions,
+                avoid_index=avoid_index,
+                clause_statuses=clause_statuses,
+            )
+            reply = f"{retry_validation.acknowledgement} {question}".strip()
+            fallback_reason = f"{initial_reason}_retry_failed"
     _log_decision(
         coverage=coverage,
         clause_statuses=clause_statuses,
@@ -655,7 +920,69 @@ async def evaluate_and_ask(
         target=target,
         fallback_reason=fallback_reason,
     )
+    _log_debug_cycle(
+        draft=decoded,
+        draft_validation=validation,
+        redraft=retry_decoded,
+        redraft_validation=retry_validation,
+        final_question=question,
+        target=target,
+        clause_statuses=clause_statuses,
+    )
     return UnifiedQuestionResult(coverage, "ask", target, reply, question)
+
+
+def _debug_log_enabled() -> bool:
+    return os.getenv("APOLLO_UNIFIED_QUESTION_DEBUG_LOG", "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _bounded_debug_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    return re.sub(r"\s+", " ", str(value)).strip()[:300]
+
+
+def _bounded_debug_tokens(validation: _DraftValidation | None) -> str:
+    if validation is None:
+        return ""
+    return _bounded_debug_text(", ".join(validation.offending_tokens)) or ""
+
+
+def _log_debug_cycle(
+    *,
+    draft: dict[str, Any],
+    draft_validation: _DraftValidation | None,
+    redraft: dict[str, Any] | None,
+    redraft_validation: _DraftValidation | None,
+    final_question: str | None,
+    target: str | None,
+    clause_statuses: Sequence[ClauseStatus],
+) -> None:
+    if not _debug_log_enabled():
+        return
+    draft_reason = draft_validation.reason if draft_validation is not None else None
+    redraft_reason = redraft_validation.reason if redraft_validation is not None else None
+    _LOG.info(
+        "apollo_unified_question_debug draft_ack=%r draft_question=%r "
+        "draft_rejection=%s draft_offending_tokens=%s redraft_ack=%r redraft_question=%r "
+        "redraft_validation=%s redraft_offending_tokens=%s final_question=%r target=%s clauses=%s",
+        _bounded_debug_text(draft.get("acknowledgement")),
+        _bounded_debug_text(draft.get("question")),
+        draft_reason,
+        _bounded_debug_tokens(draft_validation),
+        _bounded_debug_text(redraft.get("acknowledgement")) if redraft is not None else None,
+        _bounded_debug_text(redraft.get("question")) if redraft is not None else None,
+        "accepted" if redraft_validation is not None and redraft_reason is None else redraft_reason,
+        _bounded_debug_tokens(redraft_validation),
+        _bounded_debug_text(final_question),
+        target,
+        list(clause_statuses),
+    )
 
 
 def _log_decision(

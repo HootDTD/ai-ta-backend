@@ -324,6 +324,240 @@ async def test_clause_coverage_advances_after_two_student_attempts(monkeypatch):
     assert result.question == "is it still happening today -- why or why not?"
 
 
+@pytest.mark.asyncio
+async def test_transcript_dedup_remembers_probe_after_ledger_overwrite(monkeypatch):
+    rejected = _payload(
+        acknowledgement=None,
+        question="Where do hidden pathways connect?",
+        clause_coverage=[{"index": 0, "status": "attempted"}],
+    )
+    calls = []
+
+    def fake_call(**kwargs):
+        calls.append(kwargs)
+        return json.dumps(rejected)
+
+    monkeypatch.setattr(unified, "_call_unified", fake_call)
+    result = await unified.evaluate_and_ask(
+        transcript=[
+            ("student", "I use pressure"),
+            ("apollo", "What makes that happen?"),
+            ("student", "It just does"),
+            ("apollo", "What happens next?"),
+            ("student", "I am not sure"),
+        ],
+        reference_graph=_graph(),
+        problem=SimpleNamespace(problem_text="Why does pressure happen?"),
+        question_history=(unified.QuestionHistory("a", "What happens next?", "missing"),),
+    )
+
+    assert len(calls) == 2
+    assert result.question == unified._GENERIC_FALLBACK
+    assert result.question != "What makes that happen?"
+
+
+@pytest.mark.asyncio
+async def test_rejected_draft_retries_once_and_recovers(monkeypatch, caplog):
+    drafts = [
+        _payload(acknowledgement=None, question="Where do hidden pathways connect?"),
+        _payload(acknowledgement=None, question="What should I understand next?"),
+    ]
+    calls = []
+
+    def fake_call(**kwargs):
+        calls.append(kwargs)
+        return json.dumps(drafts[len(calls) - 1])
+
+    monkeypatch.setattr(unified, "_call_unified", fake_call)
+    with caplog.at_level("INFO"):
+        result = await unified.evaluate_and_ask(
+            transcript=[("student", "I use pressure")],
+            reference_graph=_graph(),
+            problem=SimpleNamespace(problem_text="Why does pressure work?"),
+            question_history=(),
+        )
+
+    assert len(calls) == 2
+    assert result.reply == "What should I understand next?"
+    assert calls[1]["messages"][0] is calls[0]["messages"][0]
+    assert calls[1]["messages"][1] is calls[0]["messages"][1]
+    assert calls[1]["messages"][:2] == calls[0]["messages"]
+    assert calls[1]["messages"] == [
+        *calls[0]["messages"],
+        {"role": "assistant", "content": json.dumps(drafts[0])},
+        calls[1]["messages"][3],
+    ]
+    assert "pathways" in calls[1]["messages"][3]["content"]
+    assert "question_vocabulary_boundary_retry_recovered" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_second_rejection_uses_canned_fallback_with_only_two_calls(monkeypatch, caplog):
+    rejected = _payload(acknowledgement=None, question="Where do hidden pathways connect?")
+    calls = []
+
+    def fake_call(**kwargs):
+        calls.append(kwargs)
+        return json.dumps(rejected)
+
+    monkeypatch.setattr(unified, "_call_unified", fake_call)
+    with caplog.at_level("INFO"):
+        result = await unified.evaluate_and_ask(
+            transcript=[("student", "I use pressure")],
+            reference_graph=_graph(),
+            problem=SimpleNamespace(problem_text="Why does pressure work?"),
+            question_history=(),
+        )
+
+    assert len(calls) == 2
+    assert result.question == "Why does pressure work?"
+    assert "question_vocabulary_boundary_retry_failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_repeat_retry_feedback_lists_all_asked_questions(monkeypatch):
+    repeated = _payload(acknowledgement=None, question="What happens next?")
+    recovered = _payload(acknowledgement=None, question="What should I understand next?")
+    calls = []
+
+    def fake_call(**kwargs):
+        calls.append(kwargs)
+        return json.dumps(repeated if len(calls) == 1 else recovered)
+
+    monkeypatch.setattr(unified, "_call_unified", fake_call)
+    await unified.evaluate_and_ask(
+        transcript=[
+            ("student", "I use pressure"),
+            ("apollo", "I follow. What happens next?"),
+            ("student", "I am not sure"),
+        ],
+        reference_graph=_graph(),
+        problem=SimpleNamespace(problem_text="Why does pressure work?"),
+        question_history=(unified.QuestionHistory("b", "Why is that?", "missing"),),
+    )
+
+    feedback = calls[1]["messages"][3]["content"]
+    assert "A NEW question is required" in feedback
+    assert "What happens next?" in feedback
+    assert "Why is that?" in feedback
+
+
+def test_apollo_vocabulary_is_safe_for_question_but_not_acknowledgement():
+    common = {
+        "reference_graph": _graph(),
+        "public_text": "Explain pressure?",
+        "student_messages": ["pressure"],
+        "apollo_messages": ["We talked about phones."],
+        "prior_questions": [],
+        "public_parts": ["Explain pressure"],
+    }
+    safe_question = unified._validate_draft(
+        acknowledgement=None,
+        question="How do phones connect?",
+        **common,
+    )
+    unsafe_ack = unified._validate_draft(
+        acknowledgement="Phones connect.",
+        question="How do phones connect?",
+        **common,
+    )
+
+    assert safe_question.reason is None
+    assert unsafe_ack.reason == "unsafe_acknowledgement"
+
+
+def test_exhausted_canned_repertoire_rotates_away_from_previous_question():
+    parts = ["Why does alpha happen", "Can you give an example"]
+    repertoire = unified._canned_repertoire(parts)
+    prior = [*repertoire, repertoire[-1]]
+
+    selected = unified._fallback_question(
+        parts,
+        0,
+        prior,
+        clause_statuses=("answered", "answered"),
+    )
+
+    assert selected != repertoire[-1]
+    assert selected in repertoire
+
+
+@pytest.mark.asyncio
+async def test_debug_cycle_log_is_default_off_and_flag_gated(monkeypatch, caplog):
+    drafts = [
+        _payload(acknowledgement=None, question="Where do hidden pathways connect?"),
+        _payload(acknowledgement=None, question="What should I understand next?"),
+    ]
+    call_count = 0
+
+    def fake_call(**kwargs):
+        nonlocal call_count
+        draft = drafts[call_count % len(drafts)]
+        call_count += 1
+        return json.dumps(draft)
+
+    monkeypatch.setattr(unified, "_call_unified", fake_call)
+    kwargs = {
+        "transcript": [("student", "I use pressure")],
+        "reference_graph": _graph(),
+        "problem": SimpleNamespace(problem_text="Why does pressure work?"),
+        "question_history": (),
+    }
+    monkeypatch.delenv("APOLLO_UNIFIED_QUESTION_DEBUG_LOG", raising=False)
+    with caplog.at_level("INFO"):
+        await unified.evaluate_and_ask(**kwargs)
+    assert "apollo_unified_question_debug" not in caplog.text
+
+    caplog.clear()
+    monkeypatch.setenv("APOLLO_UNIFIED_QUESTION_DEBUG_LOG", "true")
+    with caplog.at_level("INFO"):
+        await unified.evaluate_and_ask(**kwargs)
+    assert caplog.text.count("apollo_unified_question_debug") == 1
+    assert "draft_question='Where do hidden pathways connect?'" in caplog.text
+    assert "draft_rejection=question_vocabulary_boundary" in caplog.text
+    assert "draft_offending_tokens=hidden, pathways" in caplog.text
+    assert "redraft_question='What should I understand next?'" in caplog.text
+    assert "redraft_validation=accepted" in caplog.text
+    assert "final_question='What should I understand next?'" in caplog.text
+
+
+def test_debug_tokens_are_bounded():
+    validation = unified._DraftValidation(
+        acknowledgement="",
+        question="",
+        reason="question_vocabulary_boundary",
+        offending_tokens=("private" * 100,),
+    )
+
+    assert len(unified._bounded_debug_tokens(validation)) == 300
+
+
+@pytest.mark.asyncio
+async def test_payload_orders_stable_fields_before_turn_varying_fields(monkeypatch):
+    calls = []
+
+    def fake_call(**kwargs):
+        calls.append(kwargs)
+        return json.dumps(_payload())
+
+    monkeypatch.setattr(unified, "_call_unified", fake_call)
+    await unified.evaluate_and_ask(
+        transcript=[("student", "I use pressure")],
+        reference_graph=_graph(),
+        problem=SimpleNamespace(problem_text="Why does pressure work?"),
+        question_history=(),
+    )
+
+    assert list(calls[0]["payload"]) == [
+        "public_problem",
+        "public_question_parts",
+        "private_reference_nodes",
+        "private_reference_edges",
+        "question_history",
+        "transcript",
+    ]
+
+
 def test_clause_aware_fallback_redirects_answered_and_narrows_attempted():
     parts = ["What is alpha", "Why does beta happen", "How does gamma work"]
     assert (
