@@ -379,6 +379,8 @@ async def test_rejected_draft_retries_once_and_recovers(monkeypatch, caplog):
 
     assert len(calls) == 2
     assert result.reply == "What should I understand next?"
+    assert calls[1]["messages"][0] is calls[0]["messages"][0]
+    assert calls[1]["messages"][1] is calls[0]["messages"][1]
     assert calls[1]["messages"][:2] == calls[0]["messages"]
     assert calls[1]["messages"] == [
         *calls[0]["messages"],
@@ -482,11 +484,19 @@ def test_exhausted_canned_repertoire_rotates_away_from_previous_question():
 
 @pytest.mark.asyncio
 async def test_debug_cycle_log_is_default_off_and_flag_gated(monkeypatch, caplog):
-    monkeypatch.setattr(
-        unified,
-        "_call_unified",
-        lambda **kwargs: json.dumps(_payload(acknowledgement=None)),
-    )
+    drafts = [
+        _payload(acknowledgement=None, question="Where do hidden pathways connect?"),
+        _payload(acknowledgement=None, question="What should I understand next?"),
+    ]
+    call_count = 0
+
+    def fake_call(**kwargs):
+        nonlocal call_count
+        draft = drafts[call_count % len(drafts)]
+        call_count += 1
+        return json.dumps(draft)
+
+    monkeypatch.setattr(unified, "_call_unified", fake_call)
     kwargs = {
         "transcript": [("student", "I use pressure")],
         "reference_graph": _graph(),
@@ -503,8 +513,23 @@ async def test_debug_cycle_log_is_default_off_and_flag_gated(monkeypatch, caplog
     with caplog.at_level("INFO"):
         await unified.evaluate_and_ask(**kwargs)
     assert caplog.text.count("apollo_unified_question_debug") == 1
-    assert "draft_question='Why does your pressure step work?'" in caplog.text
-    assert "final_question='Why does your pressure step work?'" in caplog.text
+    assert "draft_question='Where do hidden pathways connect?'" in caplog.text
+    assert "draft_rejection=question_vocabulary_boundary" in caplog.text
+    assert "draft_offending_tokens=hidden, pathways" in caplog.text
+    assert "redraft_question='What should I understand next?'" in caplog.text
+    assert "redraft_validation=accepted" in caplog.text
+    assert "final_question='What should I understand next?'" in caplog.text
+
+
+def test_debug_tokens_are_bounded():
+    validation = unified._DraftValidation(
+        acknowledgement="",
+        question="",
+        reason="question_vocabulary_boundary",
+        offending_tokens=("private" * 100,),
+    )
+
+    assert len(unified._bounded_debug_tokens(validation)) == 300
 
 
 @pytest.mark.asyncio

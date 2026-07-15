@@ -947,6 +947,12 @@ def _bounded_debug_text(value: Any) -> str | None:
     return re.sub(r"\s+", " ", str(value)).strip()[:300]
 
 
+def _bounded_debug_tokens(validation: _DraftValidation | None) -> str:
+    if validation is None:
+        return ""
+    return _bounded_debug_text(", ".join(validation.offending_tokens)) or ""
+
+
 def _log_debug_cycle(
     *,
     draft: dict[str, Any],
@@ -968,11 +974,11 @@ def _log_debug_cycle(
         _bounded_debug_text(draft.get("acknowledgement")),
         _bounded_debug_text(draft.get("question")),
         draft_reason,
-        list(draft_validation.offending_tokens) if draft_validation is not None else [],
+        _bounded_debug_tokens(draft_validation),
         _bounded_debug_text(redraft.get("acknowledgement")) if redraft is not None else None,
         _bounded_debug_text(redraft.get("question")) if redraft is not None else None,
         "accepted" if redraft_validation is not None and redraft_reason is None else redraft_reason,
-        list(redraft_validation.offending_tokens) if redraft_validation is not None else [],
+        _bounded_debug_tokens(redraft_validation),
         _bounded_debug_text(final_question),
         target,
         list(clause_statuses),

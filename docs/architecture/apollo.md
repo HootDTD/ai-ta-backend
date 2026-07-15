@@ -107,7 +107,8 @@ consecutive canned repeats while keeping the database schema unchanged.
 
 The ordinary decision log remains aggregate-only and contains no transcript or private content.
 `APOLLO_UNIFIED_QUESTION_DEBUG_LOG` is a separate default-OFF staging diagnostic that emits one
-bounded (300-character fields) draft → rejection → redraft cycle line per turn, including raw
+bounded (300-character free-text and offending-token fields) draft → rejection → redraft cycle
+line per turn, including raw
 student-facing drafts, guard reasons/tokens, final question, target, and clause statuses. Enabling
 it knowingly suspends the no-private-content logging boundary because rejected drafts may contain
 private rubric material; production must keep it off. The retry preserves the first call's exact
