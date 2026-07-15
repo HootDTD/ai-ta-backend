@@ -86,13 +86,35 @@ student-taught facts, and advances to an unmet public-problem requirement instea
 last response. The `medium` reasoning default improves clause-coverage judgment at an accepted
 latency and token-cost increase; the environment override remains available. The private/output
 boundary allows subject wording only from the public problem or student messages. A deterministic
-vocabulary and echo guard drops unsafe acknowledgements and replaces unsafe, repeated, or
-malformed questions according to the model's clause statuses: first an `unattempted` clause, then
-an answer-free narrow probe for an `attempted` clause, otherwise the generic fallback, never a
-private rubric paraphrase. Invalid or missing clause-status entries decode as `unattempted`. A
-public-clause re-ask guard also detects when a generated question merely copies a problem clause the
-student has already meaningfully attempted; it follows the same fallback order without changing
-the existing string-overlap heuristics.
+vocabulary and echo guard rejects unsafe acknowledgements and unsafe, repeated, or malformed
+questions. A rejected student-facing draft gets exactly one structured redraft call with the prior
+JSON and the deterministic rejection constraint; only a second rejection reaches the canned chain.
+Decision logs suffix the original reason with `_retry_recovered` or `_retry_failed`. Question
+vocabulary may reuse words from prior Apollo transcript turns because those words are already
+student-visible; acknowledgements retain the stricter student-words-only boundary, and the private
+string containment guard is unchanged. Invalid or missing clause-status entries decode as
+`unattempted`. A public-clause re-ask guard also detects when a generated question merely copies a
+problem clause the student has already meaningfully attempted, without changing the existing
+string-overlap heuristics.
+
+Question dedup is attempt-wide: normalized Apollo questions extracted from the full transcript are
+unioned with the per-node ledger, so overwriting a node's latest-question row cannot make an older
+question eligible again. The same combined history drives every canned fallback check. The chain
+still prefers an `unattempted` public clause, then an answer-free narrow probe for an `attempted`
+clause, then the generic fallback. If every canned option has already appeared, it chooses the
+least-recently-asked option that is not the immediately preceding Apollo question, preventing
+consecutive canned repeats while keeping the database schema unchanged.
+
+The ordinary decision log remains aggregate-only and contains no transcript or private content.
+`APOLLO_UNIFIED_QUESTION_DEBUG_LOG` is a separate default-OFF staging diagnostic that emits one
+bounded (300-character fields) draft → rejection → redraft cycle line per turn, including raw
+student-facing drafts, guard reasons/tokens, final question, target, and clause statuses. Enabling
+it knowingly suspends the no-private-content logging boundary because rejected drafts may contain
+private rubric material; production must keep it off. The retry preserves the first call's exact
+system/payload message prefix and appends only the raw assistant JSON and guard feedback. This
+allows automatic GPT-5.x prompt caching for eligible shared prefixes (at least 1024 tokens), which
+affects latency and cost only—not outputs or error rates. Stable payload fields precede turn-varying
+history and transcript fields to preserve cross-turn cache prefixes.
 
 The `apollo_reference_question_opportunities` unique key remains one row per
 `(attempt_id, reference_node_id)`, but the row is now the node's latest-question ledger rather
