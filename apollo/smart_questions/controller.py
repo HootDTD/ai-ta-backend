@@ -26,10 +26,21 @@ _VALID_STATES = {"understood", "tentative", "missing", "conflicting"}
 
 
 @dataclass(frozen=True)
+class CoveredTopic:
+    """One reference node the student has demonstrated (tally status
+    ``understood``). Emitted each turn as part of the current covered snapshot;
+    the UI diffs ``node_id``s across turns so each topic celebrates only once."""
+
+    node_id: str
+    display_name: str
+
+
+@dataclass(frozen=True)
 class QuestionDecision:
     action: Literal["ask", "done"]
     question: str | None = None
     target_node_id: str | None = None
+    covered_topics: tuple[CoveredTopic, ...] = ()
 
 
 def _node_label(node: Any) -> str:
@@ -148,6 +159,23 @@ def _apply_tally_updates(
     return by_id
 
 
+def _covered_topics(
+    reference_graph: Any, tally_by_id: dict[str, Any]
+) -> tuple[CoveredTopic, ...]:
+    """Current covered snapshot: every reference node whose tally status is
+    ``understood`` after this turn's updates, with its human label. A node with
+    no tally row defaults to ``missing`` and is absent (never celebrated). The
+    UI receives this full snapshot each turn and diffs ``node_id``s across
+    turns, so each topic celebrates only once per attempt. Grading is untouched
+    — this only reads the tally the questioning call already produced."""
+    labels = {node.node_id: _node_label(node) for node in reference_graph.nodes}
+    return tuple(
+        CoveredTopic(node_id=node_id, display_name=labels[node_id])
+        for node_id, row in tally_by_id.items()
+        if str(row.status) == "understood" and node_id in labels
+    )
+
+
 async def _write_opportunity_audit(
     db: AsyncSession,
     *,
@@ -234,6 +262,7 @@ async def plan_next_question(
         updates=result.tally_updates,
         transcript=transcript,
     )
+    covered_topics = _covered_topics(reference_graph, tally_by_id)
 
     if result.action == "ask" and result.target_node_id is not None:
         target_row = tally_by_id.get(result.target_node_id)
@@ -253,9 +282,10 @@ async def plan_next_question(
         turn_index=turn_index,
     )
     if result.action == "done":
-        return QuestionDecision(action="done")
+        return QuestionDecision(action="done", covered_topics=covered_topics)
     return QuestionDecision(
         action="ask",
         question=cast(str, result.reply),
         target_node_id=cast(str, result.target_node_id),
+        covered_topics=covered_topics,
     )
