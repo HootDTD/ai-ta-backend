@@ -642,7 +642,9 @@ async def test_amain_prints_metrics_when_no_out_given(capsys: pytest.CaptureFixt
 
 
 # ---------------------------------------------------------------------------
-# Baseline pin — campaign/out/f1c/replay-baseline-2c2dc5f.json
+# Baseline pin — campaign/tests/fixtures/replay-baseline-2c2dc5f.json
+# (frozen copy of the f1c run's replay baseline; the ephemeral campaign/out/
+# run tree is no longer tracked)
 #
 # Pure JSON reads, no grading stack: recomputes every derived value in the
 # COMMITTED frozen baseline from its own raw rows and asserts it matches what
@@ -651,7 +653,7 @@ async def test_amain_prints_metrics_when_no_out_given(capsys: pytest.CaptureFixt
 # drifting the fix-iteration flywheel's reference point.
 # ---------------------------------------------------------------------------
 
-_BASELINE_PATH = Path(__file__).parent.parent / "out" / "f1c" / "replay-baseline-2c2dc5f.json"
+_BASELINE_PATH = Path(__file__).parent / "fixtures" / "replay-baseline-2c2dc5f.json"
 
 
 def _load_baseline() -> dict[str, Any]:
