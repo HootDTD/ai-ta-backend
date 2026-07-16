@@ -1031,9 +1031,7 @@ def _log_debug_cycle(
         _bounded_debug_text(redraft.get("question")) if redraft is not None else None,
         "accepted" if redraft_validation is not None and redraft_reason is None else redraft_reason,
         _bounded_debug_tokens(redraft_validation),
-        redraft_validation.acknowledgement_rejection
-        if redraft_validation is not None
-        else None,
+        redraft_validation.acknowledgement_rejection if redraft_validation is not None else None,
         _bounded_debug_ack_tokens(redraft_validation),
         _bounded_debug_text(final_question),
         target,
