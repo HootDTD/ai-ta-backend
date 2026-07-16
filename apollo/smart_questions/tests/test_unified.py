@@ -407,6 +407,16 @@ def test_prompt_hygiene_schema_and_model_call(monkeypatch):
     assert "Never introduce an example, relationship" not in prompt
 
 
+def test_prompt_encodes_confirm_once_reprobe_policy():
+    prompt = unified._SYSTEM_PROMPT
+    # Re-probing must lean on the durable counter, vary the wording, and cap at two asks per node.
+    assert "times_asked" in prompt
+    assert "different angle" in prompt
+    assert "at most twice" in prompt
+    # done stays reachable once territory is exhausted, not only when every node is understood.
+    assert "already probed twice" in prompt
+
+
 def test_question_cap_default_override_and_malformed(monkeypatch):
     monkeypatch.delenv("APOLLO_UNIFIED_QUESTION_CAP", raising=False)
     assert unified.question_cap() == 8

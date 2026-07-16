@@ -96,8 +96,14 @@ The prompt objective is elicitation: maximize what the student reveals, and afte
 clause is covered, open untouched private-node territory with a naive question in ordinary words.
 The model owns semantic targeting and may use ordinary words the student has not said. It must not
 re-ask a node already `understood` or explicitly declined unless the student volunteers new
-information. `action=done` is honored even with missing nodes when the model judges coverage
-sufficient, the student signals done, or little productive territory remains. A hard per-attempt
+information. Re-probing is prompt-bounded to confirm-once: a node is probed at most twice, and on a
+re-probe (its `times_asked` is 1) Apollo is told to confirm from a genuinely different angle rather
+than repeat its earlier wording; once `times_asked` reaches 2, or a re-probe still draws
+uncertainty, the model leaves that node and opens new territory. No code enforces this bound —
+`times_asked`/`last_asked_turn` are fed into the call and the system prompt is the only control (in
+keeping with the model-side-only enforcement stance below). `action=done` is honored even with
+missing nodes when the model judges coverage sufficient, the student signals done, or no node
+remains it may still productively probe (every node understood, declined, or already probed twice). A hard per-attempt
 ceiling, `APOLLO_UNIFIED_QUESTION_CAP` (default 8), derives spend from `SUM(times_asked)`; at the
 ceiling the call is skipped and `done` is returned. There is no coverage-floor override.
 
