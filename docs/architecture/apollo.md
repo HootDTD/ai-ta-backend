@@ -129,6 +129,12 @@ transcript-free INFO line with intent and confidence and falls through to the te
 unified questioner has the full context. Confirmation behavior for `done`, `restart`, `next`,
 `return_to_hoot`, and `help` is unchanged.
 
+`ParserCouldNotExtractError` likewise never surfaces to the student (since 2026-07-16): a teaching
+turn the parser cannot structure contributes zero KG entries, chat logs one aggregate INFO line
+(`apollo_parser_no_extract_fallthrough`, attempt id + message length only), and the turn proceeds
+to the normal conversational reply. The 422 handler in `api.py` remains registered but the chat
+path no longer raises through it — the student only ever converses with Apollo Q&A.
+
 The ordinary decision log remains aggregate-only and contains no transcript or private content.
 `APOLLO_UNIFIED_QUESTION_DEBUG_LOG` is a separate default-OFF staging diagnostic that emits one
 bounded (300-character free-text) draft → belt verdict → regenerate cycle line per turn, including

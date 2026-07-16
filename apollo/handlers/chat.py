@@ -29,6 +29,7 @@ from apollo.clarification.leak_guard import guard_clarification_reply
 from apollo.clarification.rescorer import default_clarification_judge
 from apollo.clarification.resolve_turn import resolve_pending_clarifications
 from apollo.clarification.turn import run_clarification_detection
+from apollo.errors import ParserCouldNotExtractError
 from apollo.handlers.done_inputs import _find_problem_payload
 from apollo.handlers.history import load_windowed_history
 from apollo.handlers.intent import (
@@ -397,12 +398,23 @@ async def handle_chat(
         store, attempt_id=current_attempt.id, stage="prior_graph",
     )
     graph_context = build_graph_context(prior_graph)
-    nodes, edges = parse_utterance(
-        message,
-        concept=concept,
-        attempt_id=current_attempt.id,
-        graph_context=graph_context,
-    )
+    try:
+        nodes, edges = parse_utterance(
+            message,
+            concept=concept,
+            attempt_id=current_attempt.id,
+            graph_context=graph_context,
+        )
+    except ParserCouldNotExtractError:
+        # The student only ever converses with Apollo: a turn the parser
+        # cannot structure contributes zero KG entries and falls through to
+        # the conversational reply instead of surfacing a 422 error card.
+        nodes, edges = [], []
+        _LOG.info(
+            "apollo_parser_no_extract_fallthrough attempt_id=%s message_len=%d",
+            current_attempt.id,
+            len(message),
+        )
     # write_nodes de-dups cross-turn re-assertions by id (WU-2B): a node whose
     # id already exists is reused, not re-minted, so the returned count is the
     # genuinely-new entries only. Degraded Neo4j -> writes are skipped
