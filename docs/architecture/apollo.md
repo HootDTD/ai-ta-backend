@@ -36,8 +36,13 @@ rubric item a continuous credit in `[0, 1]` and that number flows through UNCHAN
 way to the served topic score — no deterministic post-processing second-guesses it. The
 `stated`/`used`/`implied`/`absent` basis is reported provenance (prompt guidance and a
 logging field on the verdict) — no code branches on it; the former `implied` → 0.7 cap and
-`absent` → forced-zero overrides are gone. Every positive credit still asks the model to
-quote a supporting span from a student message, but span validation
+`absent` → forced-zero overrides are gone. The remaining credit anchors are prompt guidance
+only (a calibration knob in `build_system_prompt`): clearly-`implied` ≈ 0.85 and an
+ambiguous-but-on-track hint ≈ 0.6 (loosened from 0.7 / 0.4 in 2026-07 after the grader read
+too strict), with the model free to assign any value in `[0, 1]`; the prompt also credits
+understanding the student confirms/corrects/builds on in the dialogue, not only verbatim solo
+statements, while still treating Apollo's own words as non-evidence. Every positive credit
+still asks the model to quote a supporting span from a student message, but span validation
 (`transcript_coverage.py::validate_span`) is diagnostic logging only — it never zeroes or
 downgrades credit in the serving lane (it remains the gate for the offline
 `campaign/transcript_replay.py` fixture-replay harness). The adjudicator then emits the
