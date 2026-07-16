@@ -282,3 +282,91 @@ async def test_advancing_target_closes_previous_legacy_audit(monkeypatch):
     )
     assert previous.state == "answered"
     assert previous.answered_turn == 2
+
+
+@pytest.mark.asyncio
+async def test_covered_topics_snapshot_includes_node_understood_this_turn(monkeypatch):
+    """A node pushed to ``understood`` this turn appears in the covered snapshot
+    with its human label — on the done turn too, so the last topic still
+    celebrates before the report."""
+    row = SimpleNamespace(
+        reference_node_id="def_x",
+        status="tentative",
+        evidence=[],
+        student_declined=False,
+        times_asked=1,
+        last_asked_turn=1,
+    )
+    db = _DB([row], [])
+
+    async def evaluate(**kwargs):
+        return UnifiedQuestionResult(
+            (TallyUpdate("def_x", "understood", EvidenceQuote(0, "x matters"), False),),
+            "done",
+            None,
+            None,
+            None,
+        )
+
+    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
+    result = await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x matters")],
+        turn_index=0,
+    )
+    assert result.action == "done"
+    assert result.covered_topics == (controller.CoveredTopic("def_x", "x"),)
+
+
+@pytest.mark.asyncio
+async def test_covered_topics_excludes_non_understood_nodes(monkeypatch):
+    """A node that is only ``tentative`` (or ``missing``) is never celebrated."""
+    db = _DB([], [])
+
+    async def evaluate(**kwargs):
+        return _ask(TallyUpdate("def_x", "tentative", EvidenceQuote(0, "x matters"), False))
+
+    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
+    result = await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x matters")],
+        turn_index=0,
+    )
+    assert result.action == "ask"
+    assert result.covered_topics == ()
+
+
+@pytest.mark.asyncio
+async def test_covered_topics_is_a_cumulative_snapshot_not_just_this_turn(monkeypatch):
+    """A node already ``understood`` from a prior turn stays in the snapshot even
+    with no new update, so the backend sends the full covered set each turn and
+    the UI diffs it."""
+    prior = SimpleNamespace(
+        reference_node_id="def_x",
+        status="understood",
+        evidence=[{"turn_id": 0, "quote": "x matters"}],
+        student_declined=False,
+        times_asked=1,
+        last_asked_turn=1,
+    )
+    db = _DB([prior], [])
+
+    async def evaluate(**kwargs):
+        return _ask()
+
+    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
+    result = await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x")],
+        turn_index=2,
+    )
+    assert controller.CoveredTopic("def_x", "x") in result.covered_topics

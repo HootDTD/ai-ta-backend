@@ -465,6 +465,14 @@ async def handle_chat(
             transcript=full_transcript,
             turn_index=next_idx,
         )
+        # Current covered-topic snapshot (tally status "understood") for the UI
+        # celebration. Serialize once; sent on both the ask reply and the
+        # auto-done turn so the last newly-covered topics still animate before
+        # the report. Purely additive — grading/questioning are unchanged.
+        covered_topics = [
+            {"node_id": topic.node_id, "display_name": topic.display_name}
+            for topic in decision.covered_topics
+        ]
         if decision.action == "ask":
             validated = decision.question or "Can you explain that part one more time?"
         else:
@@ -485,12 +493,14 @@ async def handle_chat(
                 "apollo_reply": validated,
                 "kg_entries_added": nodes_added,
                 "kg": student_graph.model_dump(mode="json"),
+                "covered_topics": covered_topics,
                 "intent_executed": {"intent": "done", "result": done_result},
             }
         return {
             "apollo_reply": validated,
             "kg_entries_added": nodes_added,
             "kg": student_graph.model_dump(mode="json"),
+            "covered_topics": covered_topics,
             "question_target": decision.target_node_id,
         }
 
