@@ -6,13 +6,11 @@ owns:
   - auth.py
   - supabase_client.py
   - teacher_upload_worker.py
-  - reset_pending.py
   - config/**
   - runtime/**
   - vendors/**
   - scripts/**
   - citations/**
-  - subjects/**
   - workspaces/**
   - text-embeder/**
   - Procfile
@@ -25,7 +23,7 @@ related:
   - shared/conventions
   - shared/security
   - shared/supabase
-last_verified: 2026-07-15
+last_verified: 2026-07-16
 stub: false
 ---
 
@@ -43,7 +41,6 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` is a single ~2000-l
 | `auth.py` | Supabase JWT validation (REST call to `auth/v1/user`), in-memory token cache, course-membership checks, student auto-enroll. |
 | `supabase_client.py` | One-line backward-compat shim: `from vendors.supabase_client import *`. |
 | `teacher_upload_worker.py` | Procfile `worker` entrypoint: `TeacherWeeklyStorage().run_upload_worker_loop()` — drains the queued teacher-upload ingestion jobs. |
-| `reset_pending.py` | One-shot ops script: `UPDATE aita_documents SET status='pending' WHERE status->>'state'='ready'` (force reindex). Reads `SUPABASE_DB_URL`. |
 | `Procfile` | `web: uvicorn server:app` + `worker: python -m teacher_upload_worker` + `apollo-janitor: python -m apollo.learner_janitor_worker` + `apollo-provision: python -m apollo.provision_worker` (Railway deploys web+worker; **`apollo-janitor` is scaled to 0 replicas until `APOLLO_LEARNER_JANITOR_ENABLED` is flipped** — WU-5B3b; **`apollo-provision` is scaled to 0 replicas until `APOLLO_AUTOPROVISION_ENABLED` is flipped** — WU-3B2g). |
 
 ### config/
@@ -151,7 +148,7 @@ uploads, and FastAPI `BackgroundTasks`.
 ### Teacher upload flow (web + worker)
 1. `POST /teacher/upload` (teacher-gated, PDF-only) streams the file to a temp dir and calls `TeacherWeeklyStorage.enqueue_upload_by_search_space(...)` — returns 202 immediately.
 2. The separate `worker` dyno (`teacher_upload_worker.py`) runs `run_upload_worker_loop()`, which performs OCR/indexing for queued uploads (details in `indexing.md` / `domain-data.md`).
-3. `POST /teacher/uploads/{id}/retry` re-enqueues; `reset_pending.py` is the manual nuclear option to reindex everything.
+3. `POST /teacher/uploads/{id}/retry` re-enqueues individual failed uploads (the former `reset_pending.py` bulk-reset script — an unimported one-off — was removed as junk; 2026-07-16 cleanup).
 
 ### apollo-janitor flow (third, dormant process)
 The Procfile's third process — `apollo-janitor: python -m apollo.learner_janitor_worker` (`apollo/learner_janitor_worker.py`, owned by `apollo.md`) — is a dormant async-native learner-update retry janitor: a single `asyncio.run(main())` poll loop that, when `APOLLO_LEARNER_JANITOR_ENABLED` is ON (default OFF EVERYWHERE), drains pending Apollo Layer-3 belief updates one row per pass via the frozen `apollo.handlers.learner_janitor.drain_pending_attempts`, with cooperative SIGTERM/SIGINT shutdown between drains. It is **scaled to 0 replicas while dormant** so it costs no replica; activation is a HUMAN deploy step — flip `APOLLO_LEARNER_JANITOR_ENABLED` (and also `APOLLO_GRAPH_SIM_LAYER3_ENABLED` for belief writes, else the drain re-runs the shadow and DEFERS the belief write) then scale to 1. See `apollo.md` for the worker internals and `2026-06-19-apollo-kg-wu5b3b-janitor-worker-plan.md` §13 for the deploy runbook.
