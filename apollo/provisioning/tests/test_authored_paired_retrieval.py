@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -5,7 +6,12 @@ import pytest
 import indexing.document_embedder as embedder
 from apollo.provisioning.authored_sets.label_match import build_solution_label_index
 from apollo.provisioning.authored_sets.paired_retrieval import make_paired_solution_retrieve_fn
-from apollo.provisioning.authored_sets.structure_pass import BlockSpan, StructurePair, StructureUnit
+from apollo.provisioning.authored_sets.structure_pass import (
+    BlockSpan,
+    StructurePair,
+    StructureUnit,
+    run_structure_pass,
+)
 from apollo.provisioning.scrape import chunk_content_hash
 
 
@@ -35,6 +41,34 @@ def _structure_pair(*, answer_spans: tuple[BlockSpan, ...]) -> StructurePair:
             block_spans=answer_spans,
         ),
     )
+
+
+class _FakeMeteredChat:
+    def __init__(self, responses: list[dict]) -> None:
+        self.responses = list(responses)
+        self.tokens = 0
+
+    def cumulative_tokens(self) -> int:
+        return self.tokens
+
+    def cheap(self, **_kwargs) -> str:
+        self.tokens += 100
+        return json.dumps(self.responses.pop(0))
+
+
+def _anchor_unit(
+    kind: str,
+    label: str,
+    start_anchor: str,
+    end_anchor: str,
+) -> dict:
+    return {
+        "kind": kind,
+        "label": label,
+        "start_anchor": start_anchor,
+        "end_anchor": end_anchor,
+        "confidence": 0.95,
+    }
 
 
 @pytest.mark.asyncio
@@ -119,6 +153,102 @@ async def test_no_structure_pairs_preserves_regex_label_fast_path():
     assert spans[0].text == chunks[0][1]
     assert retrieve.last_min_conf == 0.91
     assert retrieve.last_match_method == "label"
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_anchors_preserve_separate_and_combined_degradation(monkeypatch):
+    problem_text = "Question 3: Find the beam moment."
+    solution_chunk = (20, "Solution 3\nSum moments: M = wL^2/8", 2)
+    separate_result = run_structure_pass(
+        problem_chunks=[(10, problem_text)],
+        solution_chunks=[solution_chunk[:2]],
+        metered_chat=_FakeMeteredChat(
+            [
+                {
+                    "units": [
+                        _anchor_unit("question", "3", problem_text, problem_text),
+                    ]
+                },
+                {
+                    "units": [
+                        _anchor_unit(
+                            "answer",
+                            "3",
+                            "fabricated solution opening",
+                            "fabricated solution ending",
+                        )
+                    ]
+                },
+            ]
+        ),
+        scrape_spend=0,
+    )
+    separate_retrieve = make_paired_solution_retrieve_fn(
+        db=None,
+        solution_document_id=55,
+        label_index=build_solution_label_index((solution_chunk,)),
+        page_conf={2: 0.91},
+        solution_chunks=(solution_chunk,),
+        structure_pairs=separate_result,
+    )
+
+    separate_spans = await separate_retrieve(
+        SimpleNamespace(label="Question 3", problem_text=problem_text)
+    )
+
+    assert [span.text for span in separate_spans] == [solution_chunk[1]]
+    assert separate_retrieve.last_match_method == "label"
+
+    combined = "Question 4: Why?\nAnswer 4: Because."
+    combined_result = run_structure_pass(
+        problem_chunks=[(30, combined)],
+        metered_chat=_FakeMeteredChat(
+            [
+                {
+                    "units": [
+                        _anchor_unit(
+                            "question",
+                            "4",
+                            "Question 4: Why?",
+                            "Question 4: Why?",
+                        ),
+                        _anchor_unit(
+                            "answer",
+                            "4",
+                            "fabricated combined answer",
+                            "fabricated combined ending",
+                        ),
+                    ]
+                }
+            ]
+        ),
+        scrape_spend=0,
+    )
+
+    async def _semantic_must_not_run(*_args, **_kwargs):
+        raise AssertionError("combined mode must not use semantic fallback")
+
+    monkeypatch.setattr(
+        "apollo.provisioning.authored_sets.paired_retrieval._doc_scoped_semantic",
+        _semantic_must_not_run,
+    )
+    combined_retrieve = make_paired_solution_retrieve_fn(
+        db=None,
+        solution_document_id=10,
+        label_index=build_solution_label_index(((30, combined, 1),)),
+        page_conf={1: 0.95},
+        solution_chunks=((30, combined, 1),),
+        structure_pairs=combined_result,
+        structure_only=True,
+    )
+
+    combined_spans = await combined_retrieve(
+        SimpleNamespace(label="Question 4", problem_text="Question 4: Why?")
+    )
+
+    assert combined_result.pairs == ()
+    assert combined_spans == ()
+    assert combined_retrieve.last_match_method is None
 
 
 @pytest.mark.asyncio
