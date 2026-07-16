@@ -13,7 +13,7 @@ globs in its frontmatter and is the authority on those files:
 
 - `docs/architecture/_overview.md` — bootstrap, HTTP surface, auth, config, vendors, ops entrypoints
 - `docs/architecture/rag-pipeline.md` — `ai/` + `retrieval/` (QA pipeline)
-- `docs/architecture/indexing.md` — `indexing/` + `indexers/` + `ocr/` (ingestion)
+- `docs/architecture/indexing.md` — `indexing/` + `ocr/` (ingestion)
 - `docs/architecture/apollo.md` — `apollo/` (learning-by-teaching subsystem)
 - `docs/architecture/domain-data.md` — `database/` + `chats/` + `knowledge/` + `reports/`
 

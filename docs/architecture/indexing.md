@@ -3,12 +3,11 @@ doc: ai-ta-backend/indexing
 description: Document ingestion pipeline — layout-aware PDF extraction, OpenAI embeddings, OCR fallbacks, and pgvector persistence for course materials.
 owns:
   - indexing/**
-  - indexers/**
   - ocr/**
 related:
   - ai-ta-backend/rag-pipeline
   - shared/supabase
-last_verified: 2026-06-29
+last_verified: 2026-07-16
 stub: false
 ---
 
@@ -31,10 +30,6 @@ How course material PDFs become searchable vectors. Ported from SurfSense's inde
 | `indexing/document_hashing.py` | `compute_unique_identifier_hash` = SHA-256 of `"{document_type}:{unique_id}:{search_space_id}"` (identity dedup). `compute_content_hash` = SHA-256 of `"{search_space_id}:{source_markdown}"` (revision detection). |
 | `indexing/document_persistence.py` | `rollback_and_persist_failure` (called only from except blocks; must never raise) and `attach_chunks_to_document` (uses `set_committed_value` to attach chunks without triggering SQLAlchemy async lazy loading). |
 | `indexing/indexing_service.py` | `AITAIndexingService` — the orchestrator. See Public interfaces. |
-
-### indexers/ — empty compatibility shim
-
-`indexers/__init__.py` is 2 lines: docstring `"Compatibility indexer package for legacy tests/scripts."` No code. Nothing in repo source imports it. Safe to ignore.
 
 ### ocr/ — pluggable OCR provider layer (5 files)
 
@@ -122,7 +117,6 @@ doc  = await service.index_from_items(docs[0], connector_doc, items)  # -> AITAD
 - **Failure handling**: `rollback_and_persist_failure` is deliberately swallow-everything (a raise there would mask the original indexing exception); a failed doc is retried on next upload.
 - **`attach_chunks_to_document` uses `set_committed_value`** — required to avoid async lazy-load (`MissingGreenlet`) when assigning the `chunks` relationship.
 - **Worker process**: Procfile defines `worker: python -m teacher_upload_worker`; jobs are claimed with lease ownership so multiple workers are safe (IntegrityError race handling in `prepare_for_indexing` covers the document table).
-- **`indexers/` is dead weight** — empty compat package, no imports.
 
 ## Product context
 

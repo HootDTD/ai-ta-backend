@@ -1,23 +1,19 @@
 """Regression tests for the S1 raw-graph harness scripts.
 
-Two things are pinned here, deliberately in tension:
+The CANONICAL driver (``campaign/scripts/run_s1_s2.py``) must emit
+``DEPENDS_ON`` for every ``apollo_entity_prereqs`` row -- per
+``apollo/ontology/edges.py``, PRECEDES is legal ONLY between
+``(procedure_step, procedure_step)`` pairs; generic concept->concept
+prerequisite links must be DEPENDS_ON (see
+``docs/_archive/experiments/2026-07-03-s1-judge-adjudication.md`` sec 2A:
+this mislabel drove 26 of 57 S1 failures in the f1/f1c campaign runs).
+Land all future S1/S2 harness changes in this canonical script.
 
-1. The CANONICAL driver (``campaign/scripts/run_s1_s2.py``) must emit
-   ``DEPENDS_ON`` for every ``apollo_entity_prereqs`` row -- per
-   ``apollo/ontology/edges.py``, PRECEDES is legal ONLY between
-   ``(procedure_step, procedure_step)`` pairs; generic concept->concept
-   prerequisite links must be DEPENDS_ON (see
-   ``docs/_archive/experiments/2026-07-03-s1-judge-adjudication.md`` sec 2A:
-   this mislabel drove 26 of 57 S1 failures in the f1/f1c campaign runs).
-   Land all future S1/S2 harness changes in this canonical script.
-
-2. The FROZEN per-run scripts (``campaign/out/f1/run_s1_s2.py`` and
-   ``campaign/out/f1c/run_s1_s2.py``) must stay byte-faithful to the
-   ``PRECEDES``-labeled edges their committed ``s1-results.json`` was
-   recorded against -- they are historical run artifacts, not live code, and
-   must NEVER be edited to match the canonical driver's corrected behavior
-   (cross-review finding #4). This test pins them to PRECEDES so a future
-   edit that silently "fixes" them forward is caught immediately.
+(The frozen per-run scripts under ``campaign/out/f1/`` and
+``campaign/out/f1c/`` that this suite used to pin byte-faithful to
+PRECEDES were deleted as run-artifact residue in the 2026-07-16 repo
+cleanup -- they were historical outputs, not live code, and are
+regenerable from the canonical driver above.)
 
 Loads each script as a module (they are plain files, not packages) and
 drives ``_fetch_subject_graph`` against a fake asyncpg connection -- no real
@@ -495,34 +491,3 @@ def test_fetch_run_ids_by_document_maps_latest_run_per_document(
 
     assert result == {7: 42, 9: 99}
     assert conn.closed is True
-
-
-# --- frozen per-run scripts: must stay pinned to PRECEDES -----------------
-
-
-@pytest.mark.parametrize(
-    "rel_path,module_name",
-    [
-        ("campaign/out/f1c/run_s1_s2.py", "_test_f1c_run_s1_s2"),
-        ("campaign/out/f1/run_s1_s2.py", "_test_f1_run_s1_s2"),
-    ],
-)
-def test_frozen_run_dir_scripts_stay_pinned_to_precedes(rel_path: str, module_name: str):
-    module = _load_module(rel_path, module_name)
-    nodes, prereqs = _fixture()
-    conn = _FakeConn(nodes=nodes, prereqs=prereqs)
-
-    graph = _run(module._fetch_subject_graph(conn, "fluid_mechanics", [1]))
-
-    # These are FROZEN historical run artifacts (see module docstring) --
-    # their committed s1-results.json was recorded against PRECEDES-labeled
-    # edges, so they must never emit DEPENDS_ON. Land harness fixes in
-    # campaign/scripts/run_s1_s2.py (the canonical driver) instead.
-    assert graph["edges"] == [
-        {
-            "edge_type": "PRECEDES",
-            "from_node_id": "kinetic_energy_density",
-            "to_node_id": "fluid_density",
-        }
-    ]
-    assert "DEPENDS_ON" not in {e["edge_type"] for e in graph["edges"]}

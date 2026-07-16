@@ -31,7 +31,7 @@ stub: false
 
 Hoot is a Python/FastAPI RAG teaching assistant. `server.py` is a single ~2000-line module that owns the FastAPI app, all top-level routes, and the QA request pipeline glue. Everything else in this doc's scope is supporting infrastructure: auth, per-request config, course-workspace resolution, vendor REST clients, citation formatting, and ops scripts.
 
-**Doc tree:** sibling docs own the deep subsystems — `rag-pipeline.md` (ai/, retrieval/), `indexing.md` (indexing/, indexers/, ocr/, text-embeder internals), `apollo.md` (apollo/), `domain-data.md` (database/, chats/, knowledge/, reports/). Do not look here for those.
+**Doc tree:** sibling docs own the deep subsystems — `rag-pipeline.md` (ai/, retrieval/), `indexing.md` (indexing/, ocr/, text-embeder internals), `apollo.md` (apollo/), `domain-data.md` (database/, chats/, knowledge/, reports/). Do not look here for those.
 
 ## Module map and file landmarks
 
@@ -74,8 +74,7 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` is a single ~2000-l
 | `citations/formatter.py` | `build_citation_info()` + `format_citations()`: maps snippets to labels like `[Notes, Week 3, p. 12]`, dedupes by `(doc_type, file, page)`, marks `verified=True` only for Textbook sources. |
 | `scripts/` | One-shot tools: `migrate_indexes_to_supabase.py` (legacy FAISS/SQLite → pgvector), `seed_apollo_concept_registry.py` (filesystem concept registry → `apollo_*` tables, idempotent), `seed_apollo_learner_model.py` (course-scoped, idempotent Apollo Layer-1 seeder — writes migration-026 `apollo_kg_entities`/`apollo_entity_prereqs` rows + annotates `apollo_concept_problems.payload` with reference-node entity links + declared solution paths; layers on top of the concept registry, WU-3B), `seed_apollo_misconceptions.py` (2026-07-02: course-scoped, idempotent seeder for the `apollo_misconceptions` TABLE bank — migration 019, DISTINCT from the `kind='misconception'` KG entities `seed_apollo_learner_model.py` mints; converts each concept's `misconceptions.json` via `apollo/persistence/misconception_bank_seed.py`, embeds `description` via `embed_text` unless `--no-embeddings`, upserts through `apollo/overseer/misconception_bank.py::upsert_entry`; wired into `campaign.cast.teacher.provision_seeded`), `test_search.py` (pgvector hybrid-search smoke test). Not imported by the app. |
 | `runtime/` | Runtime artifact dir (location overridable via `RUNTIME_DIR`). Holds `uploads/` (written per request by `/ask` attachments), `debug/`, `teacher_weekly/` worker scratch. Not code. |
-| `subjects/` | Legacy sample course data, not code: "Fluid Mechanics" (PDF + manifest + textbook index) and "Fluid Mechanics Test" (manifest + a FAISS smoke-test index fixture with `embeddings.npy`, `faiss.index`, `items.jsonl`). |
-| `text-embeder/` | Legacy standalone layout-aware multimodal PDF embedder (`layout_multimodal_embedder.py`, CLI, FAISS+SQLite-FTS5 output) plus a 38 MB sample aerodynamics PDF. Pre-pgvector era; also the default `CLASS_INDEX_ROOT` for the static workspace fallback. |
+| `text-embeder/` | Legacy standalone layout-aware multimodal PDF embedder (`layout_multimodal_embedder.py`, CLI, FAISS+SQLite-FTS5 output) plus a 38 MB sample aerodynamics PDF. Pre-pgvector era; also the default `CLASS_INDEX_ROOT` for the static workspace fallback. Still LIVE — `knowledge/manager.py::_load_layout_module` dynamically loads `layout_multimodal_embedder.py` (hyphenated dir, not a normal import) for the `POST /knowledge/materials` route; do not delete. |
 
 ## Public interfaces
 
