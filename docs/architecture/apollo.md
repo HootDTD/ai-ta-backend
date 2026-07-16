@@ -81,9 +81,12 @@ with one structured-output call in `smart_questions.unified`: GPT-5.2 (overridab
 `understood`, `tentative`, `missing`, or `conflicting`; every non-missing state must cite an exact
 student-message span or it deterministically falls back to `missing`. The same call recomputes an
 `answered` / `attempted` / `unattempted` status for every public-problem clause from student
-messages only. Apollo selects a high-value unresolved R-graph node, briefly synthesizes only
-student-taught facts, and advances to an unmet public-problem requirement instead of restating the
-last response. The `medium` reasoning default improves clause-coverage judgment at an accepted
+messages only. Apollo selects a high-value unresolved R-graph node, may use a very short connective
+acknowledgement, and advances to an unmet public-problem requirement instead of restating or
+summarizing the student's response. When a student explicitly says they do not know or cannot
+recall what Apollo asked, the prompt forbids asking for that same substance again, even reworded:
+Apollo must probe a genuinely different aspect or clause, or choose `action=done` when no productive
+alternative remains. The `medium` reasoning default improves clause-coverage judgment at an accepted
 latency and token-cost increase; the environment override remains available. The private/output
 boundary allows subject wording from the public problem or student messages plus a vendored,
 dependency-free allowlist of common conversational English. Safe-token membership also compares
@@ -107,6 +110,12 @@ morphological allowances. Invalid or missing clause-status entries decode as
 problem clause the student has already meaningfully attempted, without changing the existing
 string-overlap heuristics.
 
+The cheap intent classifier retains `off_topic` in its taxonomy and prompt for observability, but
+that verdict never enters the confirmation gate, regardless of confidence. Chat emits one
+transcript-free INFO line with intent and confidence and falls through to the teaching path, whose
+unified questioner has the full context. Confirmation behavior for `done`, `restart`, `next`,
+`return_to_hoot`, and `help` is unchanged.
+
 Question dedup is attempt-wide: normalized Apollo questions extracted from the full transcript are
 unioned with the per-node ledger, so overwriting a node's latest-question row cannot make an older
 question eligible again. The same combined history drives every canned fallback check. The chain
@@ -118,8 +127,9 @@ consecutive canned repeats while keeping the database schema unchanged.
 The ordinary decision log remains aggregate-only and contains no transcript or private content.
 `APOLLO_UNIFIED_QUESTION_DEBUG_LOG` is a separate default-OFF staging diagnostic that emits one
 bounded (300-character free-text and offending-token fields) draft → rejection → redraft cycle
-line per turn, including raw
-student-facing drafts, guard reasons/tokens, final question, target, and clause statuses. Enabling
+line per turn, including raw student-facing drafts, guard reasons/tokens, acknowledgement rejection
+sub-causes (`question_mark`, `vocabulary`, or `echo`) and vocabulary tokens, final question, target,
+and clause statuses. Enabling
 it knowingly suspends the no-private-content logging boundary because rejected drafts may contain
 private rubric material; production must keep it off. The retry preserves the first call's exact
 system/payload message prefix and appends only the raw assistant JSON and guard feedback. This

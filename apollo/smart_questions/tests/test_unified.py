@@ -573,7 +573,10 @@ def test_exhausted_canned_repertoire_rotates_away_from_previous_question():
 @pytest.mark.asyncio
 async def test_debug_cycle_log_is_default_off_and_flag_gated(monkeypatch, caplog):
     drafts = [
-        _payload(acknowledgement=None, question="Where do quasar tachyons connect?"),
+        _payload(
+            acknowledgement="Quasar tachyons connect.",
+            question="Where do quasar tachyons connect?",
+        ),
         _payload(acknowledgement=None, question="What should I understand next?"),
     ]
     call_count = 0
@@ -604,6 +607,8 @@ async def test_debug_cycle_log_is_default_off_and_flag_gated(monkeypatch, caplog
     assert "draft_question='Where do quasar tachyons connect?'" in caplog.text
     assert "draft_rejection=question_vocabulary_boundary" in caplog.text
     assert "draft_offending_tokens=quasar, tachyons" in caplog.text
+    assert "draft_ack_rejection=vocabulary" in caplog.text
+    assert "draft_ack_offending_tokens=quasar, tachyons" in caplog.text
     assert "redraft_question='What should I understand next?'" in caplog.text
     assert "redraft_validation=accepted" in caplog.text
     assert "final_question='What should I understand next?'" in caplog.text
@@ -639,6 +644,23 @@ async def test_retry_question_recovery_is_honest_when_only_ack_is_dropped(monkey
     assert result.reply == "What should I understand next?"
     assert "question_vocabulary_boundary_retry_recovered" in caplog.text
     assert "redraft_validation=unsafe_acknowledgement" in caplog.text
+    assert "redraft_ack_rejection=question_mark" in caplog.text
+
+
+def test_unsafe_acknowledgement_retry_feedback_demands_brevity_without_echoing():
+    feedback = unified._retry_feedback(
+        unified._DraftValidation(
+            acknowledgement="",
+            question="What happens next?",
+            reason="unsafe_acknowledgement",
+        ),
+        (),
+    )
+
+    assert "short" in feedback
+    assert "restate" in feedback
+    assert "question mark" in feedback
+    assert "student words only" not in feedback
 
 
 def test_debug_tokens_are_bounded():
@@ -650,6 +672,7 @@ def test_debug_tokens_are_bounded():
     )
 
     assert len(unified._bounded_debug_tokens(validation)) == 300
+    assert unified._bounded_debug_ack_tokens(None) == ""
 
 
 @pytest.mark.asyncio
