@@ -43,8 +43,6 @@ import logging
 from apollo.grading.composite import MISC_CONFIDENCE_FLOOR, CompositeWeights, composite_score
 from apollo.graph_compare.findings import Finding, FindingKind
 from apollo.handlers.done_grading import ShadowGradeResult
-from apollo.overseer.misconception_detector.apply import apply_penalty
-from apollo.overseer.misconception_detector.types import MergeOutcome
 from apollo.overseer.topic_score import TopicScoreResult
 from apollo.overseer.topic_score_serialize import serialize_topic_score
 from apollo.resolution.candidates import METHOD_CONFIDENCE_CAP
@@ -66,44 +64,6 @@ GRADER_USED_LLM_FALLBACK = "llm_fallback"
 GRADER_USED_LLM_TRANSCRIPT = "llm_transcript"
 
 _GRADER_VERSION_LLM_FALLBACK = "llm-fallback-v1"
-
-# Lane B3a/D1 — the explicit "no misconceptions asserted (empty bank)" marker.
-# Under the emergent-misconception design an empty ``apollo_misconceptions`` bank
-# is the NORMAL cold-start state of every class: coverage grades normally and
-# soundness is simply not assessed (``GradeResult.soundness_applicable=False``).
-# This marker disambiguates an empty ``misconceptions: []`` list that was NEVER
-# assessed (bank empty) from one that WAS assessed and found none — the machine-
-# readable signal that replaced the removed ``misconception_bank_empty``
-# abstention reason.
-#
-# It is nested UNDER the artifact's ``abstention`` block (key
-# ``misconceptions_status``) — the one flexible-JSONB slot ``GradingArtifact``
-# already persists (``models.py`` ``abstention`` column) that carries
-# "what did/didn't grading assess" metadata alongside ``fallback_grade`` /
-# ``graph_failure``. Nesting it there (rather than as a top-level payload key)
-# is what makes it TRAVEL: ``artifact_writer._artifact_row`` maps ``abstention``
-# to its column, so the marker reaches the persisted row AND the served
-# scorecard (``render_scorecard`` reads ``abstention.misconceptions_status``).
-# A top-level key would be silently dropped at persistence (no such column).
-#
-# Emitted on BOTH grader paths (``build_graph_artifact`` and
-# ``build_llm_artifact``) but ONLY on the empty-bank branch, so a seeded-bank
-# artifact stays byte-identical to today (no extra key in ``abstention``).
-MISCONCEPTIONS_STATUS_KEY = "misconceptions_status"
-MISCONCEPTIONS_STATUS_EMPTY_BANK = "empty_bank"
-
-
-def _empty_bank_misconceptions_marker() -> dict:
-    """The machine-readable "no misconceptions asserted (empty bank)" marker
-    (lane B3a/D1) — nested in an artifact's ``abstention`` block (under
-    ``misconceptions_status``) only when the misconception bank was empty/absent
-    for the concept, on either grader path."""
-    return {
-        "assertable": False,
-        "reason": MISCONCEPTIONS_STATUS_EMPTY_BANK,
-        "detail": "no misconceptions asserted (empty bank)",
-    }
-
 
 def _method_lookup(resolution: ResolutionResult) -> dict[str, tuple[str, float]]:
     """``resolved_key -> (method, confidence)`` for every RESOLVED node (the
@@ -351,8 +311,6 @@ def build_graph_artifact(
     # "no misconceptions asserted (empty bank)" marker nested in the persisted
     # ``abstention`` block (so it travels to the row and the served scorecard).
     # Conditional so the seeded-bank artifact is byte-identical (no extra key).
-    if not shadow.grade.soundness_applicable:
-        artifact["abstention"][MISCONCEPTIONS_STATUS_KEY] = _empty_bank_misconceptions_marker()
     # §10 composite gate (APOLLO_ABSTENTION_COMPOSITE): nest the coverage/
     # contradictions/decision audit trail under ``abstention.composite`` only
     # when the flag was on for this attempt (``shadow.audited.composite`` is
@@ -379,8 +337,6 @@ def build_llm_artifact(
     graph_failure: str | None,
     latency_ms: int | None,
     clarification_trace: list[dict],
-    misconceptions_bank_empty: bool = False,
-    detection_outcome: MergeOutcome | None = None,
     topic_score: TopicScoreResult | None = None,
 ) -> dict:
     """Build the LLM-fallback artifact payload (spec §1/§3) from the OLD
@@ -405,15 +361,6 @@ def build_llm_artifact(
     still reported for informational/telemetry parity with the graph
     artifact's shape, but does not feed ``composite`` here.
 
-    Lane B3a/D1: ``misconceptions_bank_empty`` threads the SAME empty-bank fact
-    the graph path reads off ``shadow.grade.soundness_applicable`` (sourced from
-    ``load_for_concept`` — see ``artifact_writer.write_artifacts``). When True,
-    the ``misconceptions_status`` marker is nested in the ``abstention`` block
-    exactly as on the graph path, so the SERVED scorecard (which templates over
-    the LLM canonical payload whenever the graph grade was not promoted — the
-    default in this build) can tell a cold-start empty bank apart from a checked
-    "found none". Default False → the seeded/legacy path is byte-identical.
-
     A2/G2 fix (2026-07-03 campaign): ``clarification_trace`` is threaded
     through exactly like ``build_graph_artifact`` does — clarifications are
     SESSION-level evidence (the student's live answer-blind follow-up dialog),
@@ -424,18 +371,6 @@ def build_llm_artifact(
     which is every attempt today — the graph grader is still shadow) always
     rendered an empty clarifications block on the student/teacher scorecard
     even when the live clarification loop ran and produced real exchanges.
-
-    T11 (misconception detector wiring): ``detection_outcome`` is an OPT-IN
-    keyword — ``None`` (the default) or an EMPTY ``MergeOutcome`` (zero
-    penalty, no misconceptions) leaves ``misconception_penalty``,
-    ``misconceptions``, and ``composite`` byte-identical to today (design
-    invariant #1 — the detector's flag-OFF/found-nothing regression guard).
-    A NON-empty outcome overrides ``misconception_penalty`` with
-    ``outcome.misconception_penalty``, ``misconceptions`` with
-    ``list(outcome.misconceptions)``, and recomputes ``composite`` via
-    ``apply.apply_penalty`` on the already-computed (pre-penalty) composite —
-    the detector only ever subtracts from or ceilings the LLM-path composite;
-    it never touches ``node_coverage``/``edge_coverage`` or any other input.
 
     2026-07-10 topic-score spec §3: ``topic_score`` is a NEW OPT-IN keyword,
     same contract as on ``build_graph_artifact`` — ``None`` (the default)
@@ -457,18 +392,8 @@ def build_llm_artifact(
     # T11: an outcome is only "active" when it carries something to apply —
     # None or an empty outcome (penalty 0.0, no rows) is the byte-identical
     # no-op path (design invariant #1).
-    has_detection = detection_outcome is not None and not (
-        detection_outcome.misconception_penalty == 0.0
-        and not detection_outcome.misconceptions
-        and not detection_outcome.ceiling_applied
-    )
-    if has_detection:
-        misconception_penalty = detection_outcome.misconception_penalty
-        misconceptions_rows = list(detection_outcome.misconceptions)
-        composite = apply_penalty(composite=composite, outcome=detection_outcome)
-    else:
-        misconception_penalty = 0.0
-        misconceptions_rows = []
+    misconception_penalty = 0.0
+    misconceptions_rows: list[dict] = []
 
     # Q2 fix (lane B4/2026-07-02 campaign): the LLM-fallback grader produces
     # per-node coverage (``per_step``) but NO per-node student utterance —
@@ -524,9 +449,6 @@ def build_llm_artifact(
     # bank)" marker in the ``abstention`` block, identically to the graph path,
     # so the served scorecard can distinguish cold-start from checked-found-none.
     # Conditional so a seeded/legacy LLM artifact stays byte-identical (no key).
-    if misconceptions_bank_empty:
-        abstention[MISCONCEPTIONS_STATUS_KEY] = _empty_bank_misconceptions_marker()
-
     artifact = {
         "grader_used": GRADER_USED_LLM_FALLBACK,
         "versions": _versions_block(

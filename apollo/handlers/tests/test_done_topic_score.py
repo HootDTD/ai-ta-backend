@@ -29,14 +29,12 @@ import pytest
 from apollo.handlers.done import handle_done
 from apollo.handlers.tests.test_done_shadow_flag import _old_path_patches
 from apollo.ontology import KGGraph, build_node
-from apollo.overseer.misconception_detector.types import ConceptFinding, DetectionResult
 from apollo.overseer.rubric import score_to_letter
 from apollo.overseer.xp import compute_xp_earned
 
 pytestmark = pytest.mark.unit
 
 _SERVED_FLAG = "APOLLO_TOPIC_SCORE_SERVED"
-_DETECTOR_FLAG = "APOLLO_MISCONCEPTION_DETECTOR"
 
 _OLD_RUBRIC = {
     "overall": {"score": 90, "letter": "A"},
@@ -68,7 +66,6 @@ def _patches_with_real_xp(patches):
 @pytest.fixture(autouse=True)
 def _clear_flags(monkeypatch):
     monkeypatch.delenv(_SERVED_FLAG, raising=False)
-    monkeypatch.delenv(_DETECTOR_FLAG, raising=False)
     monkeypatch.delenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", raising=False)
     monkeypatch.delenv("APOLLO_GRADING_ARTIFACT_ENABLED", raising=False)
     yield
@@ -98,17 +95,13 @@ async def _run(
     monkeypatch,
     *,
     served_flag,
-    detector_flag=None,
     artifact_flag=None,
-    detect_return=None,
     topic_score_side_effect=None,
     write_mock=None,
     use_real_xp=False,
 ):
     if served_flag is not None:
         monkeypatch.setenv(_SERVED_FLAG, served_flag)
-    if detector_flag is not None:
-        monkeypatch.setenv(_DETECTOR_FLAG, detector_flag)
     if artifact_flag is not None:
         monkeypatch.setenv("APOLLO_GRADING_ARTIFACT_ENABLED", artifact_flag)
 
@@ -143,21 +136,6 @@ async def _run(
             ),
         ),
     ]
-
-    if detector_flag == "true":
-        detection = detect_return if detect_return is not None else DetectionResult(per_concept=())
-        patches += [
-            patch(
-                "apollo.handlers.done.detect_misconceptions",
-                new=AsyncMock(return_value=detection),
-            ),
-            patch("apollo.handlers.done.make_openai_judge", new=MagicMock()),
-            patch("apollo.handlers.done._default_embed_fn", new=MagicMock()),
-            patch(
-                "apollo.handlers.done._student_utterances",
-                new=AsyncMock(return_value=("pressure always increases",)),
-            ),
-        ]
 
     if topic_score_side_effect is not None:
         patches.append(
@@ -301,35 +279,6 @@ async def test_flag_on_artifact_receives_same_topic_score_as_served(monkeypatch)
     artifact_topic_score = write_mock.await_args.kwargs["topic_score"]
     assert artifact_topic_score is not None
     assert artifact_topic_score.score == out["rubric"]["overall"]["score"]
-
-
-async def test_flag_on_with_docked_misconception_appears_in_topics(monkeypatch):
-    """The detector ON + a real docked finding localizes onto eq1's
-    misconceptions[] in the served topics list."""
-    finding = ConceptFinding(
-        concept_key="eq1",
-        verdict="misconception",
-        confidence=1.0,
-        severity=0.0,
-        evidence_span="pressure always increases",
-        signature="misc.sign_flip",
-        source="sympy_veto",
-        corroborated=True,
-    )
-    detection = DetectionResult(per_concept=(finding,))
-
-    out = await _run(
-        monkeypatch,
-        served_flag="true",
-        detector_flag="true",
-        detect_return=detection,
-    )
-
-    by_key = {t["canonical_key"]: t for t in out["topics"]}
-    assert len(by_key["eq1"]["misconceptions"]) == 1
-    misc = by_key["eq1"]["misconceptions"][0]
-    assert misc["canonical_key"] == "misc.sign_flip"
-    assert misc["evidence_span"] == "pressure always increases"
 
 
 # --------------------------------------------------------------------------- #

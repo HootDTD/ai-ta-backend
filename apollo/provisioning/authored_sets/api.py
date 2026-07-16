@@ -43,7 +43,6 @@ from apollo.persistence.models import (
     KGEntity,
     LearnerState,
     MasteryEvent,
-    Misconception,
     RejectedProblem,
 )
 from apollo.provisioning.authored_sets.indexing import index_authored_doc
@@ -1186,8 +1185,6 @@ async def _protected_concepts(db: AsyncSession, concept_ids: list[int]) -> set[i
         entities — the durable learner belief snapshot + the append-only grading /
         model-refit corpus. Both CASCADE from ``apollo_kg_entities``, so tearing the
         concept down would silently destroy them.
-      * ``apollo_misconceptions.concept_id`` — a seed-authored misconception bank
-        (CASCADE → silent loss); its presence marks a shared/seed concept.
       * an INBOUND cross-concept prereq edge from a SURVIVING concept — an entity of
         a concept NOT in this teardown batch depends on one of this concept's
         entities, so this concept is a prerequisite the surviving curriculum graph
@@ -1202,9 +1199,6 @@ async def _protected_concepts(db: AsyncSession, concept_ids: list[int]) -> set[i
 
     await _collect(
         select(ApolloSession.concept_id).where(ApolloSession.concept_id.in_(concept_ids)).distinct()
-    )
-    await _collect(
-        select(Misconception.concept_id).where(Misconception.concept_id.in_(concept_ids)).distinct()
     )
     await _collect(
         select(KGEntity.concept_id)

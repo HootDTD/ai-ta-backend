@@ -34,7 +34,6 @@ from apollo.persistence.models import (
     Concept,
     EntityPrereq,
     KGEntity,
-    Misconception,
     Subject,
 )
 from apollo.provisioning import run_promotion_lint
@@ -448,9 +447,6 @@ async def test_minted_misconception_is_kg_entity(db_session):
     # the second-pass link resolved opposes_entity_key → opposes_entity_id.
     assert "opposes_entity_id" in payload
 
-    # NO write to apollo_misconceptions (the DEVIATION — entities ONLY).
-    misc_rows = (await db_session.execute(select(Misconception))).scalars().all()
-    assert misc_rows == []
 
 
 async def test_tag_and_mint_dedups_via_resolve_candidate(db_session):

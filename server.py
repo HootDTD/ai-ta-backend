@@ -692,7 +692,7 @@ app.add_middleware(
 # Mount AI-use reports router
 try:
     from reports.ai_use.routes import router as reports_router
-except Exception:
+except Exception:  # pragma: no cover - optional router import failure
     reports_router = None  # type: ignore
 
 if reports_router is not None:
@@ -701,7 +701,7 @@ if reports_router is not None:
 # Mount chats router (simple transcript storage)
 try:
     from chats.routes import router as chats_router
-except Exception:
+except Exception:  # pragma: no cover - optional router import failure
     chats_router = None  # type: ignore
 
 if chats_router is not None:

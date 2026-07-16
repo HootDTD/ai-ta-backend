@@ -28,9 +28,6 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.clarification.candidate_assembly import misconception_bank_applicable
-from apollo.emergent.config import emergent_misconceptions_enabled
-from apollo.emergent.store import record_observations_from_canonical
 from apollo.grading.artifact_build import (
     GRADER_USED_GRAPH,
     GRADER_USED_LLM_FALLBACK,
@@ -39,7 +36,6 @@ from apollo.grading.artifact_build import (
 )
 from apollo.grading.composite import load_weights
 from apollo.handlers.done_grading import ShadowGradeResult
-from apollo.overseer.misconception_detector.types import MergeOutcome
 from apollo.overseer.topic_score import TopicScoreResult
 from apollo.persistence.models import ApolloSession, Clarification, GradingArtifact, ProblemAttempt
 
@@ -125,7 +121,6 @@ async def write_artifacts(
     served: str,
     graph_failure: str | None,
     latency_ms: int | None,
-    detection_outcome: MergeOutcome | None = None,
     topic_score: TopicScoreResult | None = None,
 ) -> dict | None:
     """Write the canonical (+ paired, when both grades exist) artifact rows for
@@ -133,18 +128,6 @@ async def write_artifacts(
     actually shown to the student (``"graph"`` or ``"llm_fallback"``) — Task
     A4 is the only caller that can pass ``"graph"``; this build always passes
     ``"llm_fallback"``.
-
-    T12 (misconception detector wiring): ``detection_outcome`` is a NEW
-    OPT-IN keyword — ``None`` (the default) leaves every existing caller
-    byte-identical (design invariant #1). When provided it is threaded
-    straight into ``build_llm_artifact`` (§6.3), which is the only builder
-    that currently applies it — ``build_graph_artifact`` keeps its own real
-    graph-derived penalty math untouched (the plan's §6.3 note: accept the
-    param for future parity, do not touch the graph builder's math). Because
-    the emergent-store call below (§6.5) already feeds off whichever payload
-    ends up ``canonical``, a non-empty outcome landing in the LLM payload's
-    ``misconceptions[]`` is picked up by the EXISTING
-    ``record_observations_from_canonical`` call with no further change here.
 
     Returns the CANONICAL artifact payload dict (the same shape persisted to
     the ``canonical`` row) on success, so the caller can hand it straight to
@@ -179,19 +162,6 @@ async def write_artifacts(
                 topic_score=topic_score,
             )
 
-        # Lane B3a/D1 — the empty-bank fact for the LLM artifact's
-        # `misconceptions_status` marker. When the shadow chain ran we already
-        # have it (`shadow.grade.soundness_applicable`), so reuse it — no extra
-        # query. On the shadow-off / LLM-served path (the default build) the
-        # fact was never computed, so read it from the SAME source the grading
-        # path uses (`load_for_concept`, via `misconception_bank_applicable`).
-        if shadow is not None:
-            misconceptions_bank_empty = not shadow.grade.soundness_applicable
-        else:
-            misconceptions_bank_empty = not await misconception_bank_applicable(
-                db, concept_id=sess.concept_id
-            )
-
         llm_payload = build_llm_artifact(
             coverage=coverage,
             rubric=rubric,
@@ -199,8 +169,6 @@ async def write_artifacts(
             graph_failure=graph_failure,
             latency_ms=latency_ms,
             clarification_trace=clarification_trace,
-            misconceptions_bank_empty=misconceptions_bank_empty,
-            detection_outcome=detection_outcome,
             topic_score=topic_score,
         )
 
@@ -238,32 +206,6 @@ async def write_artifacts(
         await db.flush()
         await db.commit()
 
-        # Emergent misconception store (memo 2026-07-05, increment 1). DORMANT
-        # unless APOLLO_EMERGENT_MISCONCEPTIONS is ON: flag OFF, this branch is
-        # never entered, zero ledger rows are written, and the canonical grade is
-        # byte-identical to the no-store behavior. Only the CANONICAL payload
-        # feeds the store (role=canonical only, OQ4). Own failure domain — a
-        # ledger-write failure is logged and swallowed after its own rollback so
-        # the already-committed artifact is never affected.
-        if emergent_misconceptions_enabled():
-            try:
-                await record_observations_from_canonical(
-                    db,
-                    search_space_id=int(sess.search_space_id),
-                    concept_id=sess.concept_id,
-                    user_id=str(sess.user_id),
-                    attempt_id=int(attempt.id),
-                    canonical_payload=canonical_payload,
-                )
-                await db.commit()
-            except Exception:
-                _LOG.exception("emergent_observation_write_failed attempt_id=%s", int(attempt.id))
-                try:
-                    await db.rollback()
-                except Exception:  # pragma: no cover - defensive
-                    _LOG.exception(
-                        "emergent_observation_rollback_failed attempt_id=%s", int(attempt.id)
-                    )
         return canonical_payload
     except Exception:
         _LOG.exception("artifact_write_failed attempt_id=%s", int(attempt.id))

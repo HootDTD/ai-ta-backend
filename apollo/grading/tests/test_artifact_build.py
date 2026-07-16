@@ -390,14 +390,8 @@ def _empty_bank_shadow() -> ShadowGradeResult:
     )
 
 
-def test_empty_bank_artifact_grades_coverage_and_carries_no_assertion_marker():
-    """D1: an empty misconception bank grades COVERAGE normally (scores present,
-    no abstention) AND the artifact carries an explicit machine-readable
-    "no misconceptions asserted (empty bank)" marker — disambiguating an empty
-    ``misconceptions: []`` that was NEVER assessed from one that WAS assessed and
-    found none. Lane B3a rework: the marker is nested in the PERSISTED
-    ``abstention`` JSONB block (a top-level payload key has no artifact column
-    and was silently dropped before it reached the row or the scorecard)."""
+def test_detector_removed_artifact_grades_coverage_with_empty_misconceptions():
+    """Coverage remains graded and the retired detector contributes no rows."""
     art = build_graph_artifact(
         shadow=_empty_bank_shadow(), weights=load_weights(), clarification_trace=[], latency_ms=None
     )
@@ -405,14 +399,8 @@ def test_empty_bank_artifact_grades_coverage_and_carries_no_assertion_marker():
     assert art["scores"]["node_coverage"] == 0.5
     assert art["abstention"]["abstained"] is False
     assert art["abstention"]["reasons"] == []
-    # No misconceptions were minted (bank empty), and the explicit marker says so
-    # — nested in the abstention block so it PERSISTS (not a dropped top-level key).
     assert art["misconceptions"] == []
-    assert "misconceptions_status" not in art  # NOT a (dropped) top-level key
-    marker = art["abstention"]["misconceptions_status"]
-    assert marker["assertable"] is False
-    assert marker["reason"] == "empty_bank"
-    assert "empty bank" in marker["detail"]
+    assert "misconceptions_status" not in art["abstention"]
 
 
 def test_seeded_bank_artifact_has_no_status_marker_byte_identical(shadow_fixture):
@@ -511,46 +499,6 @@ def test_llm_artifact_no_attempts_zero_coverage():
     assert art["scores"]["composite"] == 0.0
     assert art["abstention"]["fallback_grade"] is None
     assert art["abstention"]["graph_failure"] is None
-
-
-def test_llm_artifact_empty_bank_nests_marker_in_abstention():
-    """Lane B3a/D1 rework: the LLM path is the SERVED path in the default build
-    (shadow off), so the empty-bank marker MUST exist on the LLM artifact for
-    the served scorecard to render "not checked". With
-    ``misconceptions_bank_empty=True`` the marker is nested in the persisted
-    ``abstention`` block, identically to the graph path."""
-    art = build_llm_artifact(
-        coverage={"per_step": {"k1": "covered"}, "confidences": {"k1": 0.9}},
-        rubric={"overall": {"score": 88}},
-        weights=load_weights(),
-        graph_failure=None,
-        latency_ms=None,
-        clarification_trace=[],
-        misconceptions_bank_empty=True,
-    )
-    assert "misconceptions_status" not in art  # NOT a dropped top-level key
-    marker = art["abstention"]["misconceptions_status"]
-    assert marker["assertable"] is False
-    assert marker["reason"] == "empty_bank"
-    assert "empty bank" in marker["detail"]
-
-
-def test_llm_artifact_seeded_bank_default_is_byte_identical():
-    """Paired evidence: the default (``misconceptions_bank_empty`` unset ->
-    False, the seeded/legacy path) adds NO marker key anywhere — the LLM
-    artifact is byte-identical to before this lane."""
-    kwargs = dict(
-        coverage={"per_step": {"k1": "covered", "k2": "missing"}, "confidences": {}},
-        rubric={"overall": {"score": 71}},
-        weights=load_weights(),
-        graph_failure=None,
-        latency_ms=5,
-        clarification_trace=[],
-    )
-    default = build_llm_artifact(**kwargs)
-    seeded = build_llm_artifact(**kwargs, misconceptions_bank_empty=False)
-    assert default == seeded
-    assert "misconceptions_status" not in default["abstention"]
 
 
 def test_llm_artifact_clarification_trace_passthrough():

@@ -1259,7 +1259,7 @@ async def test_delete_sweep_document_scope_without_database(monkeypatch):
                 _Result(rowcount=1),  # ConceptProblem delete
                 _Result(rowcount=1),  # AITADocument delete
                 _Result([11]),  # surviving problem keeps the concept protected
-                *[_Result() for _ in range(5)],  # _protected_concepts' five reads
+                *[_Result() for _ in range(4)],  # _protected_concepts' four reads
             ]
             self.deleted = []
             self.committed = False
@@ -1601,29 +1601,6 @@ async def test_delete_authored_set_spares_concept_with_mastery_event(db_session,
             prior_belief=[0.33, 0.33, 0.34],
             posterior_belief=[0.3, 0.3, 0.4],
             mastery_after=0.4,
-        )
-    )
-    await db_session.flush()
-    await _assert_concept_spared(
-        db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id
-    )
-
-
-@pytest.mark.asyncio
-async def test_delete_authored_set_spares_concept_with_misconceptions(db_session, monkeypatch):
-    """A seed-authored apollo_misconceptions bank marks a shared/seed concept (it
-    would CASCADE-delete). Must be spared."""
-    from apollo.persistence.models import Misconception
-
-    aapi, _space_id, concept_id, _entities, set_id = await _seed_orphanable_concept_kg(
-        db_session, monkeypatch, slug="aas-misc"
-    )
-    db_session.add(
-        Misconception(
-            concept_id=concept_id,
-            code="mc.speed_pressure",
-            description="thinks faster=higher P",
-            probe_question="what happens to pressure?",
         )
     )
     await db_session.flush()

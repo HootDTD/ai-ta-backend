@@ -29,14 +29,8 @@ from apollo.persistence.models import (
     SessionPhase,
     SessionStatus,
 )
-from apollo.persistence.models import Misconception
-from apollo.projections.scorecard import (
-    WATCH_OUT_CHECKED,
-    WATCH_OUT_NOT_CHECKED_EMPTY_BANK,
-    render_scorecard,
-)
 from apollo.resolution.result import ResolutionResult, ResolvedNode
-from apollo.subjects.tests._curriculum_fixtures import seed_concept, seed_search_space
+from apollo.subjects.tests._curriculum_fixtures import seed_search_space
 
 pytestmark = pytest.mark.integration
 
@@ -138,60 +132,6 @@ async def _seed_session_attempt(
     db.add(attempt)
     await db.flush()
     return sess, attempt
-
-
-async def _seed_concept_with_bank(db, *, sid: int) -> int:
-    """A concept whose misconception bank is NON-empty (seeded), so
-    ``misconception_bank_applicable`` returns True → NO empty-bank marker."""
-    concept_id = await seed_concept(
-        db, search_space_id=sid, subject_slug="phys", concept_slug="bernoulli"
-    )
-    db.add(
-        Misconception(
-            concept_id=concept_id,
-            code="misc.reverses_causality",
-            description="Reverses cause and effect",
-            trigger_phrases=["because of magic"],
-            probe_question="Which causes which?",
-        )
-    )
-    await db.flush()
-    return concept_id
-
-
-def _empty_bank_shadow() -> ShadowGradeResult:
-    """A ShadowGradeResult for a cold-start EMPTY bank: coverage graded, but
-    ``soundness_applicable=False`` (no misconception candidate was ever minted)."""
-    import dataclasses
-
-    findings = _findings()
-    grade = dataclasses.replace(
-        _grade(findings),
-        soundness_applicable=False,
-        soundness_score=None,
-        contradiction_score=None,
-    )
-    audited = AuditedGrade(
-        grade=grade,
-        findings=findings,
-        abstention_reasons=(),
-        abstained=False,
-        suppressed_event_kinds=frozenset(),
-        alias_candidates=(),
-    )
-    return ShadowGradeResult(
-        run_id=2,
-        grade=grade,
-        audited=audited,
-        normalization_confidence=0.9,
-        reference_graph_hash="refhash-v1:emptybank",
-        opposes_map={},
-        turn_order={},
-        graph_sim_rubric={},
-        calibration=object(),  # type: ignore[arg-type]
-        diagnostic=object(),  # type: ignore[arg-type]
-        resolution=_resolution(),
-    )
 
 
 async def test_shadow_present_writes_canonical_graph_and_pair_llm(db_session):
@@ -390,111 +330,6 @@ async def test_flush_error_is_swallowed_and_never_propagates(db_session):
         .all()
     )
     assert rows == []
-
-
-# --- Lane B3a/D1: empty-bank marker travels to the persisted row + scorecard --
-
-
-async def test_llm_served_empty_bank_persists_marker_and_scorecard_not_checked(db_session):
-    """The rework's core fix: on the SERVED (LLM canonical) path with an empty
-    bank, the ``misconceptions_status`` marker must reach the persisted row's
-    ``abstention`` column AND the returned payload's scorecard must render
-    "not checked". ``concept_id=None`` is an empty bank by definition."""
-    sess, attempt = await _seed_session_attempt(db_session, concept_id=None)
-
-    payload = await write_artifacts(
-        db_session,
-        attempt=attempt,
-        sess=sess,
-        shadow=None,
-        coverage=_COVERAGE,
-        rubric=_RUBRIC,
-        served=GRADER_USED_LLM_FALLBACK,
-        graph_failure=None,
-        latency_ms=None,
-    )
-    assert payload is not None
-    row = (
-        await db_session.execute(
-            select(GradingArtifact).where(GradingArtifact.attempt_id == attempt.id)
-        )
-    ).scalar_one()
-    # Persisted (survived the column mapping) — NOT a dropped top-level key.
-    marker = row.abstention["misconceptions_status"]
-    assert marker["reason"] == "empty_bank"
-    # And the served scorecard reads it as "not checked (cold start)".
-    assert render_scorecard(payload)["watch_out_status"] == WATCH_OUT_NOT_CHECKED_EMPTY_BANK
-
-
-async def test_llm_served_seeded_bank_persists_no_marker(db_session):
-    """Paired evidence: a SEEDED bank (real concept + misconception row) leaves
-    the persisted LLM ``abstention`` block byte-identical — no marker key — and
-    the scorecard renders "checked"."""
-    sid = await seed_search_space(db_session)
-    concept_id = await _seed_concept_with_bank(db_session, sid=sid)
-    sess = ApolloSession(
-        user_id=TEST_USER_ID,
-        search_space_id=sid,
-        concept_id=concept_id,
-        status=SessionStatus.active.value,
-        phase=SessionPhase.REPORT.value,
-        current_problem_id="p1",
-    )
-    db_session.add(sess)
-    await db_session.flush()
-    attempt = ProblemAttempt(
-        session_id=sess.id, problem_id="p1", difficulty="intro", result="graded"
-    )
-    db_session.add(attempt)
-    await db_session.flush()
-
-    payload = await write_artifacts(
-        db_session,
-        attempt=attempt,
-        sess=sess,
-        shadow=None,
-        coverage=_COVERAGE,
-        rubric=_RUBRIC,
-        served=GRADER_USED_LLM_FALLBACK,
-        graph_failure=None,
-        latency_ms=None,
-    )
-    assert payload is not None
-    row = (
-        await db_session.execute(
-            select(GradingArtifact).where(GradingArtifact.attempt_id == attempt.id)
-        )
-    ).scalar_one()
-    assert "misconceptions_status" not in (row.abstention or {})
-    assert render_scorecard(payload)["watch_out_status"] == WATCH_OUT_CHECKED
-
-
-async def test_graph_served_empty_bank_persists_marker(db_session):
-    """The GRAPH-served path (soundness_applicable=False) persists the marker in
-    the canonical graph row's ``abstention`` block too."""
-    sess, attempt = await _seed_session_attempt(db_session, concept_id=None)
-
-    await write_artifacts(
-        db_session,
-        attempt=attempt,
-        sess=sess,
-        shadow=_empty_bank_shadow(),
-        coverage=_COVERAGE,
-        rubric=_RUBRIC,
-        served=GRADER_USED_GRAPH,
-        graph_failure=None,
-        latency_ms=None,
-    )
-    row = (
-        await db_session.execute(
-            select(GradingArtifact).where(
-                GradingArtifact.attempt_id == attempt.id,
-                GradingArtifact.role == "canonical",
-            )
-        )
-    ).scalar_one()
-    assert row.grader_used == GRADER_USED_GRAPH
-    assert row.abstention["misconceptions_status"]["reason"] == "empty_bank"
 
 
 async def test_served_grade_missing_falls_back_to_llm(db_session):
