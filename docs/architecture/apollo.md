@@ -103,17 +103,20 @@ canned-question chain remains. Repeated normalized Apollo questions are served a
 `apollo_reference_question_opportunities` remains a write-only latest-question audit ledger for
 continuity; none of its rows drive targeting.
 
-Privacy is enforced by one output belt over the complete acknowledgement plus question. It blocks
-only (1) a digit-bearing token absent from both the public problem and student messages, (2) a
-private-reference token of at least three characters that is absent from public/student text and
-not in the small inline function-word set, and (3) a normalized private string of at least four
-characters contained in the reply but absent from public/student text. This deliberately permits
-safe semantic paraphrases and ordinary invented English; accepted residual risk is that a
-paraphrase containing none of those private atoms can communicate a relationship implied by the
-rubric. A belt hit or malformed shape gets exactly one regeneration using an append-only message
-suffix that names only the forbidden atoms/classes. A second belt hit serves the verbatim public
-clause mapped to the first non-understood node and records `belt_exhausted`; no loop or canned chain
-exists.
+Privacy enforcement is model-side only: the system prompt forbids emitting private atoms, and the
+belt is LOG-ONLY TELEMETRY (blocking removed 2026-07-16 after live false positives — the
+private-vocabulary class flagged ordinary words and words present in the multiple-choice options,
+replacing a good draft with the useless verbatim public clause). The belt verdict is still computed
+over the complete acknowledgement plus question — (1) a digit-bearing token absent from both the
+public problem and student messages, (2) a private-reference token of at least three characters
+absent from public/student text and not in the small inline function-word set, (3) a normalized
+private string of at least four characters contained in the reply but absent from public/student
+text — but a hit never alters what is served: the draft ships as-is and the decision log records
+`belt_hit_served=true`. Accepted residual risk: a reply containing a private atom now reaches the
+student; the prompt rule plus the `belt_hit_served` metric (watched on staging) are the controls.
+Only a malformed shape (not exactly one question ending in '?') triggers the single append-only
+regeneration; a second malformed result serves the verbatim public clause mapped to the first
+non-understood node and records `malformed_exhausted`. No loop or canned chain exists.
 
 The cheap intent classifier retains `off_topic` in its taxonomy and prompt for observability, but
 that verdict never enters the confirmation gate, regardless of confidence. Chat emits one
@@ -124,16 +127,18 @@ unified questioner has the full context. Confirmation behavior for `done`, `rest
 The ordinary decision log remains aggregate-only and contains no transcript or private content.
 `APOLLO_UNIFIED_QUESTION_DEBUG_LOG` is a separate default-OFF staging diagnostic that emits one
 bounded (300-character free-text) draft → belt verdict → regenerate cycle line per turn, including
-the draft, offending belt atoms, regenerate text/verdict, and final served text. Enabling
-it knowingly suspends the no-private-content logging boundary because rejected drafts may contain
-private rubric material; production must keep it off. Regeneration preserves the first call's exact
-system/payload message prefix and appends only the raw assistant JSON and guard feedback. This
+the draft, offending belt atoms, regenerate text/verdict (malformed-shape only), and final served
+text. Enabling it knowingly suspends the no-private-content logging boundary because drafts may
+contain private rubric material; production must keep it off. Regeneration preserves the first
+call's exact system/payload message prefix and appends only the raw assistant JSON and the fixed
+malformed-shape feedback. This
 allows automatic GPT-5.x prompt caching for eligible shared prefixes (at least 1024 tokens), which
 affects latency and cost only—not outputs or error rates. Stable payload fields precede turn-varying
 `tally_state`, budget, and transcript fields to preserve cross-turn cache prefixes. Structured
 decision logs expose action, target, aggregate tally counts, budget spend/cap, the bounded fallback
-reason set, and the repetition metric (no transcript or private content). Flag OFF leaves the
-legacy chat and clarification paths unchanged.
+reason set (`malformed_regenerated`, `malformed_exhausted`, `budget_exhausted`), the
+`belt_hit_served` leak-watch metric, and the repetition metric (no transcript or private content).
+Flag OFF leaves the legacy chat and clarification paths unchanged.
 
 **GEN-0 selector/provenance hardening (2026-07-12).** The shared
 `overseer.problem_selector.list_problems_for_concept` chokepoint validates Tier-2

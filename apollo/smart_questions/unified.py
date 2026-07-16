@@ -1,4 +1,4 @@
-"""One-call Apollo tally updates and privacy-belted question generation."""
+"""One-call Apollo tally updates and question generation with log-only belt telemetry."""
 
 from __future__ import annotations
 
@@ -18,9 +18,8 @@ from apollo.ontology import KGGraph
 
 LearnerState = Literal["understood", "tentative", "missing", "conflicting"]
 FallbackReason = Literal[
-    "belt_regenerated",
-    "belt_exhausted",
     "malformed_regenerated",
+    "malformed_exhausted",
     "budget_exhausted",
 ]
 
@@ -428,19 +427,9 @@ def _student_reply(decoded: dict[str, Any]) -> tuple[str, str]:
     return f"{ack} {clean_question}".strip(), clean_question
 
 
-def _regenerate_feedback(verdict: _BeltVerdict) -> str:
-    if verdict.malformed and not verdict.hit:
-        return (
-            "Forbidden class: malformed shape. Regenerate with exactly one question ending in '?'."
-        )
-    details: list[str] = []
-    if verdict.digits:
-        details.append(f"private digit={','.join(verdict.digits)}")
-    if verdict.private_vocabulary:
-        details.append(f"private vocabulary={','.join(verdict.private_vocabulary)}")
-    if verdict.private_phrases:
-        details.append(f"private phrase={','.join(verdict.private_phrases)}")
-    return f"Forbidden atoms/classes: {'; '.join(details)}. Regenerate once without those atoms."
+_MALFORMED_FEEDBACK = (
+    "Forbidden class: malformed shape. Regenerate with exactly one question ending in '?'."
+)
 
 
 def _fallback_public_question(
@@ -489,7 +478,7 @@ async def evaluate_and_ask(
     tally_state: Sequence[TallyState],
     budget: QuestionBudget,
 ) -> UnifiedQuestionResult:
-    """Apply the hard budget, then make one healthy call and at most one belt regenerate."""
+    """Apply the hard budget, then make one call and at most one malformed-shape regenerate."""
     if budget.questions_asked >= budget.cap:
         _log_decision(
             tally_counts=_effective_counts(tally_state, ()),
@@ -497,6 +486,7 @@ async def evaluate_and_ask(
             target=None,
             budget=budget,
             fallback_reason="budget_exhausted",
+            belt_hit_served=False,
             repeated_question_served=False,
         )
         return UnifiedQuestionResult((), "done", None, None, None)
@@ -537,6 +527,7 @@ async def evaluate_and_ask(
             target=None,
             budget=budget,
             fallback_reason=None,
+            belt_hit_served=False,
             repeated_question_served=False,
         )
         _log_debug_cycle(decoded, None, None, None, None)
@@ -568,12 +559,13 @@ async def evaluate_and_ask(
     fallback_reason: FallbackReason | None = None
     regenerate_decoded: dict[str, Any] | None = None
     regenerate_verdict: _BeltVerdict | None = None
-    if verdict.hit or verdict.malformed:
-        fallback_reason = "belt_regenerated" if verdict.hit else "malformed_regenerated"
+    belt_hit_served = verdict.hit
+    if verdict.malformed:
+        fallback_reason = "malformed_regenerated"
         regenerate_messages = [
             *base_messages,
             {"role": "assistant", "content": raw},
-            {"role": "user", "content": _regenerate_feedback(verdict)},
+            {"role": "user", "content": _MALFORMED_FEEDBACK},
         ]
         regenerate_raw = await asyncio.to_thread(
             _call_unified, payload=payload, messages=regenerate_messages
@@ -586,15 +578,16 @@ async def evaluate_and_ask(
             public_text=problem_text,
             student_messages=student_messages,
         )
-        if regenerate_verdict.hit or regenerate_verdict.malformed:
+        belt_hit_served = regenerate_verdict.hit
+        if regenerate_verdict.malformed:
             reply = question = _fallback_public_question(
                 public_parts=public_parts,
                 reference_graph=reference_graph,
                 tally_state=tally_state,
                 updates=updates,
             )
-            if regenerate_verdict.hit:
-                fallback_reason = "belt_exhausted"
+            fallback_reason = "malformed_exhausted"
+            belt_hit_served = False
 
     prior_questions = {_normalized(item) for item in _transcript_questions(transcript)}
     repeated = _normalized(question) in prior_questions
@@ -604,6 +597,7 @@ async def evaluate_and_ask(
         target=target,
         budget=budget,
         fallback_reason=fallback_reason,
+        belt_hit_served=belt_hit_served,
         repeated_question_served=repeated,
     )
     _log_debug_cycle(decoded, verdict, regenerate_decoded, regenerate_verdict, reply)
@@ -665,11 +659,12 @@ def _log_decision(
     target: str | None,
     budget: QuestionBudget,
     fallback_reason: FallbackReason | None,
+    belt_hit_served: bool,
     repeated_question_served: bool,
 ) -> None:
     _LOG.info(
         "apollo_unified_question_decision model=%s action=%s target=%s tally=%s "
-        "budget=%s/%s fallback_reason=%s repeated_question_served=%s",
+        "budget=%s/%s fallback_reason=%s belt_hit_served=%s repeated_question_served=%s",
         os.getenv("APOLLO_UNIFIED_QUESTION_MODEL") or _DEFAULT_MODEL,
         action,
         target,
@@ -677,6 +672,7 @@ def _log_decision(
         budget.questions_asked,
         budget.cap,
         fallback_reason,
+        belt_hit_served,
         repeated_question_served,
     )
 
