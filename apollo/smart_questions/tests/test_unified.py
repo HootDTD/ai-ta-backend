@@ -169,7 +169,7 @@ async def test_invalid_target_defaults_for_logging_without_replacing_question(mo
 
 
 @pytest.mark.parametrize(
-    ("reply", "blocked"),
+    ("reply", "flagged"),
     [
         ("Did it begin in 1970?", True),
         ("What did Toffler say?", True),
@@ -177,8 +177,8 @@ async def test_invalid_target_defaults_for_logging_without_replacing_question(mo
         ("Does this change anything about how people live day to day?", False),
     ],
 )
-def test_belt_three_atom_classes_and_ordinary_english(reply, blocked):
-    meaning = "change over time" if blocked else "decision paralysis from excess options"
+def test_belt_three_atom_classes_and_ordinary_english(reply, flagged):
+    meaning = "change over time" if flagged else "decision paralysis from excess options"
     graph = KGGraph(
         nodes=[
             build_node(
@@ -198,7 +198,7 @@ def test_belt_three_atom_classes_and_ordinary_english(reply, blocked):
             public_text="Why does it occur?",
             student_messages=[],
         )
-        is blocked
+        is flagged
     )
 
 
@@ -226,7 +226,7 @@ def test_student_said_private_atoms_and_faithful_ack_pass():
     assert not verdict.malformed
 
 
-def test_private_phrase_of_only_function_words_is_blocked():
+def test_private_phrase_of_only_function_words_is_flagged():
     graph = KGGraph(
         nodes=[
             build_node(
@@ -250,9 +250,44 @@ def test_private_phrase_of_only_function_words_is_blocked():
 
 
 @pytest.mark.asyncio
-async def test_belt_regenerates_once_with_append_only_prefix_then_serves(monkeypatch, caplog):
+async def test_belt_hit_is_served_as_is_and_logged(monkeypatch, caplog):
+    calls = 0
+
+    def fake_call(**kwargs):
+        nonlocal calls
+        calls += 1
+        return json.dumps(_draft(acknowledgement=None, question="What did Toffler say?"))
+
+    monkeypatch.setattr(unified, "_call_unified", fake_call)
+    graph = KGGraph(
+        nodes=[
+            build_node(
+                node_type="definition",
+                node_id="a",
+                attempt_id=1,
+                source="reference",
+                content={"concept": "Toffler", "meaning": "private theory"},
+            )
+        ],
+        edges=[],
+    )
+    with caplog.at_level("INFO"):
+        result = await unified.evaluate_and_ask(
+            **_kwargs(
+                reference_graph=graph,
+                tally_state=(unified.TallyState("a", "Toffler", "missing"),),
+            )
+        )
+    assert calls == 1
+    assert result.reply == "What did Toffler say?"
+    assert "fallback_reason=None" in caplog.text
+    assert "belt_hit_served=True" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_malformed_gets_one_regenerate_with_append_only_prefix(monkeypatch, caplog):
     drafts = [
-        _draft(question="What did Toffler say?"),
+        _draft(question="This is not a question"),
         _draft(acknowledgement=None, question="What happens next?"),
     ]
     calls = []
@@ -262,72 +297,22 @@ async def test_belt_regenerates_once_with_append_only_prefix_then_serves(monkeyp
         return json.dumps(drafts[len(calls) - 1])
 
     monkeypatch.setattr(unified, "_call_unified", fake_call)
-    graph = KGGraph(
-        nodes=[
-            build_node(
-                node_type="definition",
-                node_id="a",
-                attempt_id=1,
-                source="reference",
-                content={"concept": "Toffler", "meaning": "private theory"},
-            )
-        ],
-        edges=[],
-    )
     with caplog.at_level("INFO"):
-        result = await unified.evaluate_and_ask(
-            **_kwargs(
-                reference_graph=graph,
-                tally_state=(unified.TallyState("a", "Toffler", "missing"),),
-            )
-        )
-    assert result.reply == "What happens next?"
+        result = await unified.evaluate_and_ask(**_kwargs())
     assert len(calls) == 2
     assert calls[1]["messages"][:2] == calls[0]["messages"]
     assert calls[1]["messages"][2] == {"role": "assistant", "content": json.dumps(drafts[0])}
-    assert "private vocabulary=toffler" in calls[1]["messages"][3]["content"]
-    assert "fallback_reason=belt_regenerated" in caplog.text
+    assert calls[1]["messages"][3]["content"] == unified._MALFORMED_FEEDBACK
+    assert result.reply == "What happens next?"
+    assert "fallback_reason=malformed_regenerated" in caplog.text
+    assert "belt_hit_served=False" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_second_belt_hit_serves_verbatim_public_clause(monkeypatch, caplog):
-    calls = 0
-
-    def fake_call(**kwargs):
-        nonlocal calls
-        calls += 1
-        return json.dumps(_draft(question="What did Toffler say?"))
-
-    graph = KGGraph(
-        nodes=[
-            build_node(
-                node_type="definition",
-                node_id="a",
-                attempt_id=1,
-                source="reference",
-                content={"concept": "Toffler", "meaning": "private theory"},
-            )
-        ],
-        edges=[],
-    )
-    monkeypatch.setattr(unified, "_call_unified", fake_call)
-    with caplog.at_level("INFO"):
-        result = await unified.evaluate_and_ask(
-            **_kwargs(
-                reference_graph=graph,
-                tally_state=(unified.TallyState("a", "Toffler", "missing"),),
-            )
-        )
-    assert calls == 2
-    assert result.reply == "Why does pressure work?"
-    assert "fallback_reason=belt_exhausted" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_malformed_gets_one_regenerate(monkeypatch, caplog):
+async def test_malformed_regenerate_with_belt_hit_is_served(monkeypatch, caplog):
     drafts = [
         _draft(question="This is not a question"),
-        _draft(acknowledgement=None, question="What happens next?"),
+        _draft(acknowledgement=None, question="What did Toffler say?"),
     ]
     calls = 0
 
@@ -338,11 +323,47 @@ async def test_malformed_gets_one_regenerate(monkeypatch, caplog):
         return json.dumps(result)
 
     monkeypatch.setattr(unified, "_call_unified", fake_call)
+    graph = KGGraph(
+        nodes=[
+            build_node(
+                node_type="definition",
+                node_id="a",
+                attempt_id=1,
+                source="reference",
+                content={"concept": "Toffler", "meaning": "private theory"},
+            )
+        ],
+        edges=[],
+    )
+    with caplog.at_level("INFO"):
+        result = await unified.evaluate_and_ask(
+            **_kwargs(
+                reference_graph=graph,
+                tally_state=(unified.TallyState("a", "Toffler", "missing"),),
+            )
+        )
+    assert calls == 2
+    assert result.reply == "What did Toffler say?"
+    assert "fallback_reason=malformed_regenerated" in caplog.text
+    assert "belt_hit_served=True" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_double_malformed_serves_verbatim_public_clause(monkeypatch, caplog):
+    calls = 0
+
+    def fake_call(**kwargs):
+        nonlocal calls
+        calls += 1
+        return json.dumps(_draft(question="This is not a question"))
+
+    monkeypatch.setattr(unified, "_call_unified", fake_call)
     with caplog.at_level("INFO"):
         result = await unified.evaluate_and_ask(**_kwargs())
     assert calls == 2
-    assert result.reply == "What happens next?"
-    assert "fallback_reason=malformed_regenerated" in caplog.text
+    assert result.reply == "Why does pressure work?"
+    assert "fallback_reason=malformed_exhausted" in caplog.text
+    assert "belt_hit_served=False" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -397,16 +418,11 @@ def test_question_cap_default_override_and_malformed(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_debug_log_flag_reports_belt_verdicts(monkeypatch, caplog):
-    drafts = [_draft(question="What did Toffler say?"), _draft(question="What happens next?")]
-    calls = 0
-
-    def fake_call(**kwargs):
-        nonlocal calls
-        result = drafts[calls]
-        calls += 1
-        return json.dumps(result)
-
-    monkeypatch.setattr(unified, "_call_unified", fake_call)
+    monkeypatch.setattr(
+        unified,
+        "_call_unified",
+        lambda **kwargs: json.dumps(_draft(acknowledgement=None, question="What did Toffler say?")),
+    )
     monkeypatch.setenv("APOLLO_UNIFIED_QUESTION_DEBUG_LOG", "true")
     graph = KGGraph(
         nodes=[
@@ -428,7 +444,9 @@ async def test_debug_log_flag_reports_belt_verdicts(monkeypatch, caplog):
             )
         )
     assert "apollo_unified_question_debug" in caplog.text
+    assert "belt_hit=True" in caplog.text
     assert "toffler" in caplog.text
+    assert "final='What did Toffler say?'" in caplog.text
 
 
 def test_private_helpers_and_invalid_updates():
@@ -452,9 +470,6 @@ def test_private_helpers_and_invalid_updates():
     )
     assert unified._decode("not json") == {}
     assert unified._decode_updates({"tally_updates": None}, valid_ids={"a"}, transcript=[]) == ()
-    assert "private digit=1970" in unified._regenerate_feedback(
-        unified._BeltVerdict(digits=("1970",))
-    )
     assert (
         unified._fallback_public_question(
             public_parts=[], reference_graph=_graph(), tally_state=_state(), updates=()
