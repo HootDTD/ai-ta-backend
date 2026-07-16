@@ -72,6 +72,23 @@ def test_prompt_states_grader_of_record_and_guidance_only_no_verbatim_requiremen
     assert "must quote a verbatim evidence span" not in prompt
 
 
+def test_prompt_uses_loosened_credit_anchors_and_credits_dialogue_contribution():
+    """Calibration: the transcript grader was over-strict. The credit anchors
+    are loosened (clearly-implied 0.7 -> 0.85, ambiguous 0.4 -> 0.6), the
+    grader now credits understanding the student confirms/corrects/builds on in
+    the dialogue rather than only verbatim solo statements, and it leans toward
+    crediting genuine understanding over penalizing informal wording. The
+    anti-gaming guard (Apollo's own words are not evidence on their own) is
+    deliberately retained."""
+    prompt = build_system_prompt(_problem())
+    assert "around 0.85" in prompt
+    assert "around 0.6" in prompt
+    assert "around 0.7" not in prompt
+    assert "Lean toward crediting genuine understanding" in prompt
+    assert "confirms, corrects, or builds on" in prompt
+    assert "NOT evidence on their own" in prompt
+
+
 def test_span_validation_is_student_only_and_normalizes_whitespace():
     assert validate_span("a  b\nc", ["a b c"])
     assert not validate_span("Apollo quote", ["student quote"])
