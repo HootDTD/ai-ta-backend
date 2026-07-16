@@ -49,3 +49,11 @@ RUNBOOK.md
 # Local HF model cache for the campaign harness's NLI pre-warm step
 # (campaign/infra/prewarm_nli.py) — large binary checkpoint files, never git.
 .hf-cache/
+
+# Stray build/debug residue (2026-07-16 cleanup)
+=*
+*.stackdump
+mainvars.txt
+lsvars.txt
+out*.json
+graphify-out/

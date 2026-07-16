@@ -720,10 +720,7 @@ app.add_middleware(
 try:
     from reports.ai_use.routes import router as reports_router
 except Exception:
-    try:
-        from reports.ai_use.routes import router as reports_router  # type: ignore
-    except Exception:
-        reports_router = None  # type: ignore
+    reports_router = None  # type: ignore
 
 if reports_router is not None:
     app.include_router(reports_router)
@@ -732,10 +729,7 @@ if reports_router is not None:
 try:
     from chats.routes import router as chats_router
 except Exception:
-    try:
-        from chats.routes import router as chats_router  # type: ignore
-    except Exception:
-        chats_router = None  # type: ignore
+    chats_router = None  # type: ignore
 
 if chats_router is not None:
     app.include_router(chats_router)
