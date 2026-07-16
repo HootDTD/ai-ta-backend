@@ -395,7 +395,7 @@ class Clarification(Base):
 
 
 class ReferenceQuestionOpportunity(Base):
-    """One question opportunity for one authored reference node per attempt."""
+    """Latest question state for one authored reference node per attempt."""
 
     __tablename__ = "apollo_reference_question_opportunities"
 
@@ -427,6 +427,42 @@ class ReferenceQuestionOpportunity(Base):
             "reference_node_id",
             name="apollo_reference_question_opportunities_attempt_node_uniq",
         ),
+    )
+
+
+class QuestionTally(Base):
+    """Durable per-attempt memory for Apollo's own reference-node judgments."""
+
+    __tablename__ = "apollo_question_tally"
+
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    attempt_id = Column(
+        BigInteger,
+        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    reference_node_id = Column(Text, nullable=False)
+    status = Column(Text, nullable=False)
+    evidence = Column(_JSONType, nullable=False, server_default=text("'[]'"), default=list)
+    student_declined = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    times_asked = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    last_asked_turn = Column(Integer, nullable=True)
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "attempt_id",
+            "reference_node_id",
+            name="apollo_question_tally_attempt_node_uniq",
+        ),
+        Index("ix_apollo_question_tally_attempt", "attempt_id"),
     )
 
 

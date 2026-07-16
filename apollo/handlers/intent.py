@@ -184,7 +184,6 @@ def confirmation_prompt_for(intent: Intent) -> str:
         "next": "It sounds like you'd like a different problem — should we move on?",
         "return_to_hoot": "It sounds like you want to head back to your main tutor — should I close this out?",
         "help": "It sounds like you're asking about how this works rather than teaching me — would a quick explanation help?",
-        "off_topic": "I noticed you're talking about something else — should we stick with what you were teaching me?",
     }
     return prompts.get(intent, "")
 

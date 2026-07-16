@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from functools import partial
 from types import SimpleNamespace
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -24,7 +24,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -44,6 +44,7 @@ from apollo.persistence.models import (
     LearnerState,
     MasteryEvent,
     Misconception,
+    RejectedProblem,
 )
 from apollo.provisioning.authored_sets.indexing import index_authored_doc
 from apollo.provisioning.authored_sets.observability import (
@@ -54,16 +55,27 @@ from apollo.provisioning.authored_sets.observability import (
 )
 from apollo.provisioning.authored_sets.orchestrator import (
     MintRejected,
+    ProblemResult,
     _authored_concept_dup_hashes,
     _tag_mint_chat_fn,
     run_authored_set_provisioning,
 )
 from apollo.provisioning.cost_constants import structure_pairing_mode
+from apollo.provisioning.ingest import (
+    AuthoredProblem,
+    authored_problem_code,
+    classify_completeness,
+    ingest_authored_problems,
+)
 from apollo.provisioning.metered_chat import MeteredChat
+from apollo.provisioning.orchestrator import provision_authored_problem
 from apollo.provisioning.path_enumeration import enumerate_strategy_paths
+from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promote import promote
+from apollo.provisioning.scrape import resolve_or_create_provisional_concept
 from apollo.provisioning.solution import ReferenceSolutionDraft, build_approved_pair
 from apollo.provisioning.tag_mint import ResolvedConcept, TagMintError, tag_and_mint
+from apollo.schemas.problem import Problem
 from database.models import AITADocument
 from database.session import get_async_session, get_db_session
 from indexing.document_embedder import embed_text
@@ -81,6 +93,36 @@ router = APIRouter(tags=["apollo-authored-sets"])
 
 class ApproveBody(BaseModel):
     reference: Literal["ocr", "generated"] = "ocr"
+
+
+class ManualProblemBody(BaseModel):
+    problem_text: str = Field(min_length=1)
+    solution_text: str | None = None
+
+
+class ManualAuthoredSetBody(BaseModel):
+    search_space_id: int
+    problems: list[ManualProblemBody] = Field(min_length=1)
+
+
+class ReferenceSolutionEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    content: dict[str, Any]
+
+
+class ProblemEditBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    problem_text: str | None = Field(default=None, min_length=1)
+    reference_solution: list[ReferenceSolutionEdit] | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_edit(self) -> ProblemEditBody:
+        if self.problem_text is None and self.reference_solution is None:
+            raise ValueError("at least one editable field is required")
+        return self
 
 
 def get_neo4j_client():
@@ -157,6 +199,188 @@ async def create_authored_set(
         solution_title=solution.filename if solution is not None else None,
     )
     return {"set_id": set_id, "set_index": set_index, "status": "pending"}
+
+
+@router.post("/authored-sets/manual")
+async def create_manual_authored_set(
+    body: ManualAuthoredSetBody,
+    request: Request,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    auth = await require_user(request)
+    await require_course_teacher(
+        db=db,
+        auth=auth,
+        search_space_id=body.search_space_id,
+    )
+    authored = [_manual_authored_problem(problem) for problem in body.problems]
+    set_index = await _next_set_index(db, body.search_space_id)
+    row = AuthoredSet(
+        search_space_id=body.search_space_id,
+        set_index=set_index,
+        status="pending",
+        result_summary={"source": "manual", "problems": [], "counts": {}},
+    )
+    db.add(row)
+    await db.flush()
+    set_id = int(row.id)
+    await db.commit()
+
+    background.add_task(
+        _run_manual_set_background,
+        set_id=set_id,
+        search_space_id=body.search_space_id,
+        authored=[problem.model_dump() for problem in authored],
+    )
+    return {"set_id": set_id, "set_index": set_index, "status": "pending"}
+
+
+def _manual_authored_problem(problem: ManualProblemBody) -> AuthoredProblem:
+    statement = problem.problem_text.strip()
+    if not statement:
+        raise HTTPException(status_code=422, detail="problem_text must not be blank")
+    solution = problem.solution_text.strip() if problem.solution_text is not None else None
+    if solution == "":
+        solution = None
+    return AuthoredProblem(
+        problem_code=authored_problem_code(statement),
+        concept_slug="provisional.inventory",
+        statement=statement,
+        difficulty="standard",
+        solution=solution,
+        worked_procedure=None,
+        given_values={},
+        target_unknown="",
+        completeness=classify_completeness(solution, None),
+    )
+
+
+async def _run_manual_set_background(
+    *,
+    set_id: int,
+    search_space_id: int,
+    authored: list[dict[str, Any]],
+) -> None:
+    """Provision typed manual problems with the existing authored pipeline."""
+    ingest_run_id: int | None = None
+    try:
+        async with get_async_session() as db:
+            row = await db.get(AuthoredSet, set_id)
+            if row is None:
+                return
+            row.status = "provisioning"
+            row.updated_at = datetime.now(UTC)
+            ingest_run = await start_ingest_run(
+                db,
+                search_space_id=search_space_id,
+                document_id=None,
+            )
+            ingest_run_id = int(ingest_run.id)
+            row.result_summary = {
+                "source": "manual",
+                "ingest_run_id": ingest_run_id,
+                "problems": [],
+                "counts": {},
+            }
+            concept_id = await resolve_or_create_provisional_concept(
+                db, search_space_id=search_space_id
+            )
+            concept = await db.get(Concept, concept_id)
+            if concept is None:
+                raise RuntimeError("manual authored set has no provisional concept")
+            subject_id = int(concept.subject_id)
+            await db.commit()
+
+            problems = [AuthoredProblem.model_validate(problem) for problem in authored]
+            await ingest_authored_problems(
+                db,
+                [problem.model_dump() for problem in problems],
+                subject_id=subject_id,
+                concept_id=concept_id,
+                search_space_id=search_space_id,
+            )
+
+            metered_chat = _make_metered_chat(document_id=None, ingest_run=ingest_run)
+            neo = _require_neo(get_neo4j_client(), stage="run_manual_set_provisioning")
+            results: list[ProblemResult] = []
+            for problem in problems:
+                concept_problem_id = (
+                    await db.execute(
+                        select(ConceptProblem.id)
+                        .where(ConceptProblem.concept_id == concept_id)
+                        .where(ConceptProblem.problem_code == problem.problem_code)
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if concept_problem_id is None:
+                    raise RuntimeError(
+                        f"manual authored problem {problem.problem_code!r} has no Tier-1 row"
+                    )
+                result = await provision_authored_problem(
+                    db,
+                    neo,
+                    problem,
+                    search_space_id=search_space_id,
+                    ingest_concept_id=concept_id,
+                    construct_chat_fn=metered_chat.main,
+                    judge_fn=metered_chat.cheap,
+                    tag_chat_fn=_tag_mint_chat_fn(metered_chat),
+                    embed_fn=embed_text,
+                    run=ingest_run,
+                )
+                results.append(
+                    ProblemResult(
+                        outcome=result.outcome,
+                        solution_source="authored",
+                        failed_gate=result.failed_gate,
+                        diagnostic=result.diagnostic,
+                        concept_problem_id=int(concept_problem_id),
+                    )
+                )
+
+            counts = {"promoted": 0, "rejected": 0, "held_for_review": 0}
+            for result in results:
+                counts[result.outcome] = counts.get(result.outcome, 0) + 1
+            await finalize_ingest_run(
+                db,
+                ingest_run=ingest_run,
+                status="succeeded",
+                n_questions_scraped=len(problems),
+                n_promoted=counts["promoted"],
+                n_rejected=counts["rejected"],
+            )
+            row = await db.get(AuthoredSet, set_id)
+            if row is None:
+                return
+            row.result_summary = {
+                "source": "manual",
+                "ingest_run_id": ingest_run_id,
+                "problems": [result.model_dump() for result in results],
+                "counts": counts,
+            }
+            row.status = "done"
+            row.updated_at = datetime.now(UTC)
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001 - persist failed status, never escape task
+        _LOG.exception("manual_authored_set_background_failed", extra={"set_id": set_id})
+        async with get_async_session() as db:
+            failed_run = (
+                await db.get(IngestRun, ingest_run_id) if ingest_run_id is not None else None
+            )
+            if failed_run is not None:
+                if failed_run.status != "failed":
+                    await finalize_ingest_run(db, ingest_run=failed_run, status="failed")
+                await record_ingest_error(
+                    db,
+                    search_space_id=search_space_id,
+                    ingest_run=failed_run,
+                    stage="manual_authored_set_ingest",
+                    exc=exc,
+                    context={"set_id": set_id},
+                )
+                await db.commit()
+            await _set_status(db, set_id, "failed", diagnostic=str(exc))
 
 
 async def _run_set_background(
@@ -426,7 +650,9 @@ async def _doc_content_hash(db: AsyncSession, document_id: int) -> str | None:
     return getattr(doc, "content_hash", None) if doc is not None else None
 
 
-def _make_metered_chat(*, document_id: int, ingest_run: IngestRun | None = None) -> MeteredChat:
+def _make_metered_chat(
+    *, document_id: int | None, ingest_run: IngestRun | None = None
+) -> MeteredChat:
     """Build the metered LLM client for a run.
 
     When ``ingest_run`` is a real ``apollo_ingest_runs`` row (the ingestion path),
@@ -515,6 +741,7 @@ async def get_authored_set(
     set_id: int,
     request: Request,
     full_ocr: bool = False,
+    full_text: bool = False,
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
@@ -522,10 +749,23 @@ async def get_authored_set(
     if row is None:
         raise HTTPException(status_code=404, detail="authored set not found")
     await require_course_teacher(db=db, auth=auth, search_space_id=int(row.search_space_id))
-    ingest_run, pages = await _load_ingest_evidence(db, row.problem_document_id, full_ocr=full_ocr)
     summary: dict = dict(row.result_summary or {})
+    summary_ingest_run_id = summary.get("ingest_run_id")
+    ingest_run, pages = await _load_ingest_evidence(
+        db,
+        row.problem_document_id,
+        full_ocr=full_ocr,
+        ingest_run_id=(
+            int(summary_ingest_run_id) if isinstance(summary_ingest_run_id, int) else None
+        ),
+    )
     if isinstance(summary.get("problems"), list):
-        summary["problems"] = await _enrich_problem_reviews(db, summary["problems"])
+        summary["problems"] = await _enrich_problem_reviews(
+            db,
+            summary["problems"],
+            full_text=full_text,
+            ingest_run_id=ingest_run["id"] if ingest_run is not None else None,
+        )
     return {
         "set_id": int(row.id),
         "set_index": row.set_index,
@@ -574,13 +814,49 @@ def _review_dict(provenance: dict | None) -> dict | None:
     return out
 
 
-async def _enrich_problem_reviews(db: AsyncSession, problems: list) -> list:
-    """Join each ``result_summary`` problem entry against its live
-    ``ConceptProblem`` row, adding ``problem_text`` (capped to
-    ``_LIST_OCR_TEXT_CAP`` with a ``problem_text_truncated`` flag — same size
-    discipline as the page evidence) and the whitelisted ``review`` projection.
-    Entries with no ``concept_problem_id`` (or whose row has since been deleted)
-    pass through unchanged, so pre-enrichment sets keep their old shape."""
+def _bounded_problem_text(text: str, *, full_text: bool) -> tuple[str, bool]:
+    truncated = not full_text and len(text) > _LIST_OCR_TEXT_CAP
+    return (text[:_LIST_OCR_TEXT_CAP] if truncated else text), truncated
+
+
+def _stored_solution_text(payload: dict) -> str | None:
+    direct = payload.get("solution_text") or payload.get("solution")
+    if isinstance(direct, str) and direct:
+        return direct
+    authored = payload.get("authored")
+    if isinstance(authored, dict):
+        solution = authored.get("solution")
+        if isinstance(solution, str) and solution:
+            return solution
+    return None
+
+
+def _stored_reference_solution(payload: dict) -> object | None:
+    reference = payload.get("reference_solution")
+    if reference is not None:
+        return reference
+    for key in ("draft", "ocr_draft", "generated_alt"):
+        draft = payload.get(key)
+        if isinstance(draft, dict) and draft.get("reference_solution") is not None:
+            return draft["reference_solution"]
+    return None
+
+
+async def _enrich_problem_reviews(
+    db: AsyncSession,
+    problems: list,
+    *,
+    full_text: bool = False,
+    ingest_run_id: int | None = None,
+) -> list:
+    """Add live concept payloads and ordered rejection-audit payloads.
+
+    Concept-backed entries receive the current question, reference solution, and
+    whitelisted review state. Rejected entries are paired in result order with this
+    run's rejection audit rows, projecting their real columns plus stored
+    question/solution fields. Live concept payload values take precedence when both
+    sources exist; unmatched old-shape entries pass through unchanged.
+    """
     ids = [
         int(p["concept_problem_id"])
         for p in problems
@@ -594,46 +870,104 @@ async def _enrich_problem_reviews(db: AsyncSession, problems: list) -> list:
                 await db.execute(select(ConceptProblem).where(ConceptProblem.id.in_(ids)))
             ).scalars()
         }
+    rejected_rows: list[RejectedProblem] = []
+    if ingest_run_id is not None:
+        rejected_rows = list(
+            (
+                await db.execute(
+                    select(RejectedProblem)
+                    .where(RejectedProblem.ingest_run_id == ingest_run_id)
+                    .order_by(RejectedProblem.id.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+    rejected_iter = iter(rejected_rows)
     enriched: list = []
     for problem in problems:
-        cp_id = problem.get("concept_problem_id") if isinstance(problem, dict) else None
-        row = rows.get(int(cp_id)) if cp_id is not None else None
-        if row is None:
+        rejected_row = (
+            next(rejected_iter, None)
+            if isinstance(problem, dict) and problem.get("outcome") == "rejected"
+            else None
+        )
+        if not isinstance(problem, dict):
             enriched.append(problem)
             continue
-        text = str((row.payload or {}).get("problem_text") or "")  # type: ignore[union-attr]
-        truncated = len(text) > _LIST_OCR_TEXT_CAP
-        enriched.append(
-            {
-                **problem,
-                "problem_text": text[:_LIST_OCR_TEXT_CAP] if truncated else text,
+
+        entry = dict(problem)
+        if rejected_row is not None:
+            rejected_payload = dict(rejected_row.payload or {})
+            entry["rejected_problem_id"] = int(rejected_row.id)
+            entry["rejected_stage"] = rejected_row.rejected_stage
+            if entry.get("failed_gate") is None:
+                entry["failed_gate"] = rejected_row.failed_gate
+            if not entry.get("diagnostic"):
+                entry["diagnostic"] = rejected_row.diagnostic
+            raw_text = rejected_payload.get("problem_text") or rejected_payload.get("statement")
+            if isinstance(raw_text, str):
+                displayed_text, truncated = _bounded_problem_text(raw_text, full_text=full_text)
+                entry["problem_text"] = displayed_text
+                entry["problem_text_truncated"] = truncated
+            reference_solution = _stored_reference_solution(rejected_payload)
+            if reference_solution is not None:
+                entry["reference_solution"] = reference_solution
+            solution_text = _stored_solution_text(rejected_payload)
+            if solution_text is not None:
+                entry["solution_text"] = solution_text
+
+        cp_id = problem.get("concept_problem_id")
+        row = rows.get(int(cp_id)) if cp_id is not None else None
+        if row is not None:
+            payload = dict(row.payload or {})
+            text = str(payload.get("problem_text") or "")
+            displayed_text, truncated = _bounded_problem_text(text, full_text=full_text)
+            entry = {
+                **entry,
+                "problem_text": displayed_text,
                 "problem_text_truncated": truncated,
                 "review": _review_dict(row.provenance),  # type: ignore[arg-type]
             }
-        )
+            if "reference_solution" in payload:
+                entry["reference_solution"] = payload["reference_solution"]
+            solution_text = _stored_solution_text(payload)
+            if solution_text is not None:
+                entry["solution_text"] = solution_text
+            enriched.append(entry)
+            continue
+        enriched.append(entry)
     return enriched
 
 
 async def _load_ingest_evidence(
-    db: AsyncSession, problem_document_id: int | None, *, full_ocr: bool = False
+    db: AsyncSession,
+    problem_document_id: int | None,
+    *,
+    full_ocr: bool = False,
+    ingest_run_id: int | None = None,
 ) -> tuple[dict | None, list[dict]]:
-    """Return the latest authored-set ingest run for ``problem_document_id`` plus its
-    per-page OCR evidence, both shaped for the teacher/S2-audit surface. ``(None, [])``
-    when the set never produced a run (still indexing, or a pre-observability set).
+    """Return an authored-set ingest run plus its per-page OCR evidence.
+
+    Manual sets supply ``ingest_run_id`` because they have no source document;
+    PDF sets resolve the latest run for ``problem_document_id``. ``(None, [])``
+    means the set never produced a run (still indexing, or pre-observability).
 
     Each page's ``ocr_text`` is truncated to ``_LIST_OCR_TEXT_CAP`` chars (with
     ``ocr_text_truncated`` flagged) unless ``full_ocr`` is set — the list surface
     stays bounded while a deliberate ``?full_ocr=true`` fetch gets the full body."""
-    if problem_document_id is None:
-        return None, []
-    run = (
-        await db.execute(
-            select(IngestRun)
-            .where(IngestRun.document_id == int(problem_document_id))
-            .order_by(IngestRun.id.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    if ingest_run_id is not None:
+        run = await db.get(IngestRun, ingest_run_id)
+    elif problem_document_id is not None:
+        run = (
+            await db.execute(
+                select(IngestRun)
+                .where(IngestRun.document_id == int(problem_document_id))
+                .order_by(IngestRun.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    else:
+        run = None
     if run is None:
         return None, []
 
@@ -687,6 +1021,155 @@ def _page_dict(ev: IngestPageEvidence, *, full_ocr: bool) -> dict:
         "extraction_mode": ev.extraction_mode,
         "verify_path_fired": ev.verify_path_fired,
     }
+
+
+def _problem_for_dup_hash(row: ConceptProblem, payload: dict) -> Problem:
+    """Build the exact gate-8 hash input, including for pre-promotion Tier-1 rows."""
+    try:
+        return Problem.model_validate(payload)
+    except ValidationError:
+        # Gate 8 hashes only problem_text/given_values/target_unknown. Held Tier-1
+        # rows legitimately have no reference_solution yet, so supply a neutral
+        # schema-valid step solely to call the same frozen hash function promote()
+        # uses. It cannot affect the resulting hash.
+        return Problem.model_validate(
+            {
+                "id": str(payload.get("id") or row.problem_code),
+                "concept_id": str(payload.get("concept_id") or "provisional.inventory"),
+                "difficulty": payload.get("difficulty") or row.difficulty,
+                "problem_text": payload.get("problem_text"),
+                "given_values": payload.get("given_values") or {},
+                "target_unknown": payload.get("target_unknown") or "",
+                "reference_solution": [
+                    {
+                        "step": 1,
+                        "entry_type": "definition",
+                        "id": "__dedup_hash_placeholder__",
+                        "content": {"term": "placeholder", "definition": "placeholder"},
+                        "depends_on": [],
+                    }
+                ],
+            }
+        )
+
+
+async def _edit_collision_exists(
+    db: AsyncSession,
+    *,
+    row: ConceptProblem,
+    updated_payload: dict,
+) -> bool:
+    updated_hash = problem_dup_hash(_problem_for_dup_hash(row, updated_payload))
+    other_payloads = (
+        (
+            await db.execute(
+                select(ConceptProblem.payload)
+                .where(ConceptProblem.concept_id == int(row.concept_id))
+                .where(ConceptProblem.tier == 2)
+                .where(ConceptProblem.id != int(row.id))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for payload in other_payloads:
+        try:
+            if problem_dup_hash(Problem.model_validate(payload)) == updated_hash:
+                return True
+        except (ValidationError, ValueError, TypeError):
+            continue
+    return False
+
+
+def _edited_reference_solution(
+    existing: object,
+    edits: list[ReferenceSolutionEdit],
+) -> list[dict]:
+    if not isinstance(existing, list) or not all(isinstance(step, dict) for step in existing):
+        raise HTTPException(status_code=422, detail="problem has no editable reference solution")
+
+    existing_by_id = {str(step.get("id")): step for step in existing}
+    edit_ids = [edit.id for edit in edits]
+    edit_id_set = set(edit_ids)
+    if len(edit_id_set) != len(edit_ids):
+        raise HTTPException(status_code=422, detail="reference_solution contains duplicate ids")
+    existing_ids = set(existing_by_id)
+    if edit_id_set != existing_ids:
+        unknown = sorted(edit_id_set - existing_ids)
+        missing = sorted(existing_ids - edit_id_set)
+        parts = []
+        if unknown:
+            parts.append(f"unknown ids: {', '.join(unknown)}")
+        if missing:
+            parts.append(f"missing ids: {', '.join(missing)}")
+        raise HTTPException(status_code=422, detail="; ".join(parts))
+
+    content_by_id = {edit.id: dict(edit.content) for edit in edits}
+    updated: list[dict] = []
+    for step in existing:
+        step_id = str(step["id"])
+        old_content = step.get("content")
+        old_order = old_content.get("order") if isinstance(old_content, dict) else None
+        new_order = content_by_id[step_id].get("order")
+        if old_order != new_order and (old_order is not None or new_order is not None):
+            raise HTTPException(
+                status_code=422,
+                detail=f"reference_solution step {step_id!r} order is immutable",
+            )
+        updated.append({**step, "content": content_by_id[step_id]})
+    return updated
+
+
+@router.patch("/authored-sets/problems/{concept_problem_id}")
+async def edit_authored_problem(
+    concept_problem_id: int,
+    body: ProblemEditBody,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    auth = await require_user(request)
+    row = await db.get(ConceptProblem, concept_problem_id)
+    if row is None or row.search_space_id is None:
+        raise HTTPException(status_code=404, detail="problem not found")
+    await require_course_teacher(
+        db=db,
+        auth=auth,
+        search_space_id=int(row.search_space_id),
+    )
+
+    payload = dict(row.payload or {})
+    if body.problem_text is not None:
+        problem_text = body.problem_text.strip()
+        if not problem_text:
+            raise HTTPException(status_code=422, detail="problem_text must not be blank")
+        payload["problem_text"] = problem_text
+    if body.reference_solution is not None:
+        payload["reference_solution"] = _edited_reference_solution(
+            payload.get("reference_solution"), body.reference_solution
+        )
+        try:
+            Problem.model_validate(payload)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"invalid reference_solution content: {exc}",
+            ) from exc
+
+    if await _edit_collision_exists(db, row=row, updated_payload=payload):
+        raise HTTPException(
+            status_code=409,
+            detail="another problem with the same content already exists",
+        )
+
+    row.payload = payload  # type: ignore[assignment]
+    await db.commit()
+    return (
+        await _enrich_problem_reviews(
+            db,
+            [{"concept_problem_id": int(row.id)}],
+            full_text=True,
+        )
+    )[0]
 
 
 async def _protected_concepts(db: AsyncSession, concept_ids: list[int]) -> set[int]:

@@ -29,6 +29,7 @@ from apollo.clarification.leak_guard import guard_clarification_reply
 from apollo.clarification.rescorer import default_clarification_judge
 from apollo.clarification.resolve_turn import resolve_pending_clarifications
 from apollo.clarification.turn import run_clarification_detection
+from apollo.errors import ParserCouldNotExtractError
 from apollo.handlers.done_inputs import _find_problem_payload
 from apollo.handlers.history import load_windowed_history
 from apollo.handlers.intent import (
@@ -57,7 +58,7 @@ _CLARIFICATION_CACHE = CandidateEmbeddingCache()
 # extra LLM/embedding round-trips, draft_reply gets clarification_hints=None. Flip ON only
 # after rollout/cost review (same posture as APOLLO_GRAPH_SIM_* in done.py).
 _CLARIFICATION_ENABLED_FLAG: str = "APOLLO_CLARIFICATION_ENABLED"
-_SMART_QUESTIONS_FLAG: str = "APOLLO_SMART_QUESTIONS_ENABLED"
+_UNIFIED_QUESTIONING_FLAG: str = "APOLLO_UNIFIED_QUESTIONING_ENABLED"
 # Per-turn NLI node budget: when more than this many nodes are parsed in a
 # single utterance, NLI is skipped for that turn (degrades to lexical-only).
 # Synchronous model inference runs per residual node, so uncapped utterances
@@ -70,8 +71,8 @@ def _clarification_enabled() -> bool:
     return os.environ.get(_CLARIFICATION_ENABLED_FLAG, "").lower() in ("1", "true", "yes")
 
 
-def _smart_questions_enabled() -> bool:
-    return os.environ.get(_SMART_QUESTIONS_FLAG, "").lower() in ("1", "true", "yes")
+def _unified_questioning_enabled() -> bool:
+    return os.environ.get(_UNIFIED_QUESTIONING_FLAG, "").lower() in ("1", "true", "yes")
 
 
 def _nli_chat_node_cap() -> int:
@@ -287,6 +288,13 @@ async def _maybe_intent_confirmation(
     )
     if verdict.intent == "teaching":
         return None
+    if verdict.intent == "off_topic":
+        _LOG.info(
+            "apollo_intent_off_topic_fallthrough intent=%s confidence=%.3f",
+            verdict.intent,
+            verdict.confidence,
+        )
+        return None
     if verdict.confidence < INTENT_CONFIDENCE_THRESHOLD:
         return None
 
@@ -390,12 +398,23 @@ async def handle_chat(
         store, attempt_id=current_attempt.id, stage="prior_graph",
     )
     graph_context = build_graph_context(prior_graph)
-    nodes, edges = parse_utterance(
-        message,
-        concept=concept,
-        attempt_id=current_attempt.id,
-        graph_context=graph_context,
-    )
+    try:
+        nodes, edges = parse_utterance(
+            message,
+            concept=concept,
+            attempt_id=current_attempt.id,
+            graph_context=graph_context,
+        )
+    except ParserCouldNotExtractError:
+        # The student only ever converses with Apollo: a turn the parser
+        # cannot structure contributes zero KG entries and falls through to
+        # the conversational reply instead of surfacing a 422 error card.
+        nodes, edges = [], []
+        _LOG.info(
+            "apollo_parser_no_extract_fallthrough attempt_id=%s message_len=%d",
+            current_attempt.id,
+            len(message),
+        )
     # write_nodes de-dups cross-turn re-assertions by id (WU-2B): a node whose
     # id already exists is reused, not re-minted, so the returned count is the
     # genuinely-new entries only. Degraded Neo4j -> writes are skipped
@@ -429,12 +448,11 @@ async def handle_chat(
     # next_idx is needed before the clarification block (asked_turn = next_idx + 1).
     next_idx = await _next_turn_index(db, session_id)
 
-    # Reference-driven smart-question controller. Unlike the legacy
-    # clarification loop, this judges the full student transcript against the
-    # authored reference graph and gives each unresolved reference node at
-    # most one question opportunity. No student-KG summary reaches the
-    # question writer. When no eligible target remains, grade automatically.
-    if _smart_questions_enabled():
+    # One-call reference-driven question controller. The same model assesses
+    # the full student transcript and writes Apollo's answer-safe next reply.
+    # The opportunity ledger still caps each reference node at one question;
+    # when no eligible target remains, grade automatically.
+    if _unified_questioning_enabled():
         full_transcript = [
             ("student" if item["role"] == "user" else "apollo", item["content"])
             for item in history_pre
@@ -447,6 +465,14 @@ async def handle_chat(
             transcript=full_transcript,
             turn_index=next_idx,
         )
+        # Current covered-topic snapshot (tally status "understood") for the UI
+        # celebration. Serialize once; sent on both the ask reply and the
+        # auto-done turn so the last newly-covered topics still animate before
+        # the report. Purely additive — grading/questioning are unchanged.
+        covered_topics = [
+            {"node_id": topic.node_id, "display_name": topic.display_name}
+            for topic in decision.covered_topics
+        ]
         if decision.action == "ask":
             validated = decision.question or "Can you explain that part one more time?"
         else:
@@ -467,12 +493,14 @@ async def handle_chat(
                 "apollo_reply": validated,
                 "kg_entries_added": nodes_added,
                 "kg": student_graph.model_dump(mode="json"),
+                "covered_topics": covered_topics,
                 "intent_executed": {"intent": "done", "result": done_result},
             }
         return {
             "apollo_reply": validated,
             "kg_entries_added": nodes_added,
             "kg": student_graph.model_dump(mode="json"),
+            "covered_topics": covered_topics,
             "question_target": decision.target_node_id,
         }
 

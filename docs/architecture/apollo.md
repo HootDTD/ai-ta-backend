@@ -13,7 +13,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-07-14
+last_verified: 2026-07-16
 stub: false
 ---
 
@@ -36,8 +36,13 @@ rubric item a continuous credit in `[0, 1]` and that number flows through UNCHAN
 way to the served topic score — no deterministic post-processing second-guesses it. The
 `stated`/`used`/`implied`/`absent` basis is reported provenance (prompt guidance and a
 logging field on the verdict) — no code branches on it; the former `implied` → 0.7 cap and
-`absent` → forced-zero overrides are gone. Every positive credit still asks the model to
-quote a supporting span from a student message, but span validation
+`absent` → forced-zero overrides are gone. The remaining credit anchors are prompt guidance
+only (a calibration knob in `build_system_prompt`): clearly-`implied` ≈ 0.85 and an
+ambiguous-but-on-track hint ≈ 0.6 (loosened from 0.7 / 0.4 in 2026-07 after the grader read
+too strict), with the model free to assign any value in `[0, 1]`; the prompt also credits
+understanding the student confirms/corrects/builds on in the dialogue, not only verbatim solo
+statements, while still treating Apollo's own words as non-evidence. Every positive credit
+still asks the model to quote a supporting span from a student message, but span validation
 (`transcript_coverage.py::validate_span`) is diagnostic logging only — it never zeroes or
 downgrades credit in the serving lane (it remains the gate for the offline
 `campaign/transcript_replay.py` fixture-replay harness). The adjudicator then emits the
@@ -73,30 +78,84 @@ memory when the student taught that detail in an earlier session). The KG covera
 no per-node quotes; its span map is empty and the narrator credits those topics in general
 terms.
 
-The default-off `APOLLO_SMART_QUESTIONS_ENABLED` path replaces the per-turn dumb reply
-with three reference-driven stages: `smart_questions.evaluator` judges the cumulative
-student-only transcript against **every** authored reference node and, per uncovered node,
-emits an `ask_hint` nudge phrased only from the problem text and the student's own words;
-the pure planner chooses one prerequisite-ready `partial`/`missing`/`misconceived` node
-that has never been asked; and the writer is fully answer-blind — it receives only the
-chosen node's guarded nudge, the problem text, and the transcript, never node content,
-node ids, or node types (session-73 leak fix, 2026-07-14). `smart_questions.leak_guard`
-enforces the boundary deterministically: any wording carrying a content word private to
-the target node (present in its content, absent from the problem text and the student's
-messages) is blocked — a leaking hint gets ONE rewrite retry (`evaluator.rewrite_hint`:
-the offending words are named and banned, public surface only, re-guarded on return;
-`smart_question_hint_leak_rewritten` on success) before degrading to the generic nudge
-(session 74, 2026-07-14: the generic nudge collapses the first question into a
-problem-statement restatement, so it is a last resort; rewrite failure is caught and
-logged `smart_question_hint_rewrite_failed`, never blocks the turn), and a leaking
-question degrades to the safe fallback (`smart_question_hint_leak_blocked` /
-`smart_question_leak_blocked`). The
-`apollo_reference_question_opportunities` ledger enforces one opportunity per
-`(attempt_id, reference_node_id)`. After the response, that opportunity is terminal even
-when coverage remains insufficient. When all nodes are covered or every remaining gap has
-already had its opportunity, chat persists a closing turn and invokes the existing Done
-handler; its embedded result uses the existing UI auto-report seam. Flag OFF leaves the
-legacy chat and clarification paths unchanged.
+The default-off `APOLLO_UNIFIED_QUESTIONING_ENABLED` path replaces the per-turn dumb reply
+with one structured-output call in `smart_questions.unified`: GPT-5.2 (overridable through
+`APOLLO_UNIFIED_QUESTION_MODEL`, reasoning default `medium` and overridable through
+`APOLLO_UNIFIED_QUESTION_REASONING_EFFORT`) reads the complete private reference graph and a
+durable per-node `tally_state`, updates only judgments changed by the newest student turn, and
+writes Apollo's next reply in the same pass. Migration 047 persists one
+`apollo_question_tally` row per `(attempt_id, reference_node_id)`: status
+(`understood|tentative|conflicting|missing`), append-only `{turn_id, quote}` evidence,
+`student_declined`, `times_asked`, and `last_asked_turn`. Missing rows are supplied to the model as
+`missing`/unasked. Code validates each cited quote as a verbatim substring of the referenced
+student turn before changing a row; invalid updates are logged and the prior state is preserved.
+The transcript is assembled from served `apollo_messages` text, so what the student saw is always
+the authoritative input on the next turn.
+
+The prompt objective is elicitation: maximize what the student reveals, and after a salient public
+clause is covered, open untouched private-node territory with a naive question in ordinary words.
+The model owns semantic targeting and may use ordinary words the student has not said. It must not
+re-ask a node already `understood` or explicitly declined unless the student volunteers new
+information. Re-probing is prompt-bounded to confirm-once: a node is probed at most twice, and on a
+re-probe (its `times_asked` is 1) Apollo is told to confirm from a genuinely different angle rather
+than repeat its earlier wording; once `times_asked` reaches 2, or a re-probe still draws
+uncertainty, the model leaves that node and opens new territory. No code enforces this bound —
+`times_asked`/`last_asked_turn` are fed into the call and the system prompt is the only control (in
+keeping with the model-side-only enforcement stance below). `action=done` is honored even with
+missing nodes when the model judges coverage sufficient, the student signals done, or no node
+remains it may still productively probe (every node understood, declined, or already probed twice). A hard per-attempt
+ceiling, `APOLLO_UNIFIED_QUESTION_CAP` (default 8), derives spend from `SUM(times_asked)`; at the
+ceiling the call is skipped and `done` is returned. There is no coverage-floor override.
+
+The former guard/retry/fallback policy is deleted: no echo rejection, invented-vocabulary
+allowlist, broad-clause re-ask block, repeated-question block, reject/retry policy feedback, or
+canned-question chain remains. Repeated normalized Apollo questions are served and recorded as
+`repeated_question_served=true`, making repetition a metric rather than a writer override.
+`apollo_reference_question_opportunities` remains a write-only latest-question audit ledger for
+continuity; none of its rows drive targeting.
+
+Privacy enforcement is model-side only: the system prompt forbids emitting private atoms, and the
+belt is LOG-ONLY TELEMETRY (blocking removed 2026-07-16 after live false positives — the
+private-vocabulary class flagged ordinary words and words present in the multiple-choice options,
+replacing a good draft with the useless verbatim public clause). The belt verdict is still computed
+over the complete acknowledgement plus question — (1) a digit-bearing token absent from both the
+public problem and student messages, (2) a private-reference token of at least three characters
+absent from public/student text and not in the small inline function-word set, (3) a normalized
+private string of at least four characters contained in the reply but absent from public/student
+text — but a hit never alters what is served: the draft ships as-is and the decision log records
+`belt_hit_served=true`. Accepted residual risk: a reply containing a private atom now reaches the
+student; the prompt rule plus the `belt_hit_served` metric (watched on staging) are the controls.
+Only a malformed shape (not exactly one question ending in '?') triggers the single append-only
+regeneration; a second malformed result serves the verbatim public clause mapped to the first
+non-understood node and records `malformed_exhausted`. No loop or canned chain exists.
+
+The cheap intent classifier retains `off_topic` in its taxonomy and prompt for observability, but
+that verdict never enters the confirmation gate, regardless of confidence. Chat emits one
+transcript-free INFO line with intent and confidence and falls through to the teaching path, whose
+unified questioner has the full context. Confirmation behavior for `done`, `restart`, `next`,
+`return_to_hoot`, and `help` is unchanged.
+
+`ParserCouldNotExtractError` likewise never surfaces to the student (since 2026-07-16): a teaching
+turn the parser cannot structure contributes zero KG entries, chat logs one aggregate INFO line
+(`apollo_parser_no_extract_fallthrough`, attempt id + message length only), and the turn proceeds
+to the normal conversational reply. The 422 handler in `api.py` remains registered but the chat
+path no longer raises through it — the student only ever converses with Apollo Q&A.
+
+The ordinary decision log remains aggregate-only and contains no transcript or private content.
+`APOLLO_UNIFIED_QUESTION_DEBUG_LOG` is a separate default-OFF staging diagnostic that emits one
+bounded (300-character free-text) draft → belt verdict → regenerate cycle line per turn, including
+the draft, offending belt atoms, regenerate text/verdict (malformed-shape only), and final served
+text. Enabling it knowingly suspends the no-private-content logging boundary because drafts may
+contain private rubric material; production must keep it off. Regeneration preserves the first
+call's exact system/payload message prefix and appends only the raw assistant JSON and the fixed
+malformed-shape feedback. This
+allows automatic GPT-5.x prompt caching for eligible shared prefixes (at least 1024 tokens), which
+affects latency and cost only—not outputs or error rates. Stable payload fields precede turn-varying
+`tally_state`, budget, and transcript fields to preserve cross-turn cache prefixes. Structured
+decision logs expose action, target, aggregate tally counts, budget spend/cap, the bounded fallback
+reason set (`malformed_regenerated`, `malformed_exhausted`, `budget_exhausted`), the
+`belt_hit_served` leak-watch metric, and the repetition metric (no transcript or private content).
+Flag OFF leaves the legacy chat and clarification paths unchanged.
 
 **GEN-0 selector/provenance hardening (2026-07-12).** The shared
 `overseer.problem_selector.list_problems_for_concept` chokepoint validates Tier-2
@@ -134,6 +193,8 @@ problem review projections, a seeds endpoint lists the concept's teachable
 (tier-2, non-quarantined) problems for the UI's seed picker (not flag-gated,
 like the run reads), and the generated-problem approve endpoint reuses
 the authored-set approve core to mint, lint, and promote a selected held draft.
+The run-detail GET caps each `problem_text` at 2000 characters by default and
+sets `problem_text_truncated`; `?full_text=true` returns the complete text.
 `GenerationRun` links the course and concept to the optional `IngestRun` that
 owns LLM call/token/cost aggregates; generation remains default-OFF while run
 reads and approval of already-generated content remain available.
@@ -440,18 +501,21 @@ pins this. Each `problems` entry whose `ConceptProblem` row still exists is
 additionally ENRICHED in the response (review-UI surface, 2026-07-11;
 `_enrich_problem_reviews` — the stored row/`result_summary` are never mutated)
 with `problem_text` (from the row's payload, capped to `_LIST_OCR_TEXT_CAP`
-chars with a `problem_text_truncated` flag — the same size discipline as the
-page-evidence surface) and a WHITELISTED `review` projection of
+chars by default with a `problem_text_truncated` flag — the same size discipline
+as the page-evidence surface; `?full_text=true` returns it untruncated), the live
+payload's `reference_solution` and available `solution_text`, and a WHITELISTED
+`review` projection of
 `provenance["authored_review"]`: the CURRENT `required` flag (flips false on
 approval, so the UI recomputes displayed counts from live problem state instead
 of trusting the frozen `counts`), `reason`, `approved_reference`, and — only
 while the hold is active — `ocr_draft`/`generated_alt` each trimmed to
 `solution_source` + `reference_solution` (grounding spans, `concept_match`,
 `ocr_confidence`, and every other provenance key are deliberately NOT exposed).
-Entries with no `concept_problem_id`, a since-deleted row, or malformed shape
-pass through unchanged, so pre-enrichment sets keep their old response shape
-(`test_get_authored_set_enriches_held_problem` and its sibling tests pin the
-whitelist, the cap, the post-approval draft omission, and null-safety). `solution_source='extracted'` means a paired,
+Rejected entries are enriched in result order from the same ingest run's
+`apollo_rejected_problems` rows with rejection id/stage, missing gate/diagnostic
+fields, and any stored `problem_text`, `reference_solution`, and `solution_text`;
+the same `full_text` cap applies. Unmatched, since-deleted, and malformed entries
+pass through compatibly. `solution_source='extracted'` means a paired,
 label-matched solution span was used; trusted extracted references may
 promote to tier 2. Generated references (including every candidate when no
 solution doc is paired), or OCR references that materially diverge from
@@ -502,15 +566,25 @@ The mounted endpoints are teacher-gated with `require_user` +
 `require_course_teacher` (role='teacher' membership; no auto-enroll
 fallback — a plain course member 403s): `POST /apollo/authored-sets` accepts multipart
 problem PDF (required) + solution PDF (optional) and starts in-process background provisioning,
+`POST /apollo/authored-sets/manual` accepts typed
+`{search_space_id, problems: [{problem_text, solution_text?}]}` input, marks the
+set summary `source="manual"`, and reuses the shared `AuthoredProblem` Tier-1
+ingest plus provision/hold/promote pipeline in a background task,
 `GET /apollo/authored-sets?search_space_id=` lists set statuses,
 `GET /apollo/authored-sets/{set_id}` returns detail, per-problem
-`result_summary` (each live problem enriched with capped `problem_text` and the
-whitelisted `review` projection — see the enrichment note above), and the
+`result_summary` (with live and rejected-row enrichment; `full_text` controls
+only the problem-text cap), and the
 ingestion observability surface (`ingest_run` +
 per-page `pages`: `page_ref`, `ocr_text`, `ocr_confidence`,
 `verify_path_fired`), and
 `POST /apollo/authored-sets/{set_id}/problems/{problem_id}/approve` promotes a
 held problem using the teacher-selected OCR or generated reference.
+`PATCH /apollo/authored-sets/problems/{concept_problem_id}` edits only
+`problem_text` and per-step `content`: the request must name exactly the existing
+reference-step id set, so step identity, metadata, and order are immutable; the
+updated payload is schema-validated, a same-concept Tier-2 dedup-hash collision
+returns 409, and ownership is checked from the problem row's `search_space_id`
+before mutation.
 - `apollo.provisioning.validate_pair(question, draft, *, retrieve_fn, judge_fn) -> PairingVerdict{paired, faithful, failed_claims, confidence}` (WU-3B2e stage 3; the §8B two-phase span-grounded pairing/correctness gate). The judge sees the SAME grounding the generator used (`draft.grounding`, else re-grounds via `retrieve_fn`): Phase A pairing (short-circuits Phase B when not paired), Phase B claim-decomposed faithfulness (any unentailed claim → `faithful=False` + `failed_claims`). **FAIL-CLOSED — the EXPLICIT INVERSION of `leakage_judge`'s fail-open:** a malformed/non-JSON/exception/non-object judge response at EITHER phase ⇒ `paired=False, faithful=False, confidence=0.0, failed_claims=("<unparseable judge response>",)` (a REJECT, never an approval); all `judge_fn` calls route through one `_judge_or_fail_closed` helper. `apollo.provisioning.rejection_from_verdict(verdict) -> Rejection | None` is the single fail-mapping point (None on approved; else `Rejection{stage='pairing_gate', reason ∈ unparseable_judge/not_paired/unfaithful_claims, diagnostic, failed_claims}` that 3B2g writes to `apollo_rejected_problems`). Logs ONE `pairing_verdict` line (counts + booleans + `solution_source` ONLY — NO text, NO PII). `judge_fn`/`retrieve_fn` injected (mocked in Tier-1 — NO network, NO DB). This unit hands typed values UP — it does NOT mint (3B2d), promote/lint/write rows (3B2g), or meter/queue (3B2f). Both judge phases now send a SCHEMA-EXPLICIT system prompt (`_PAIRING_PHASE_A_SYSTEM_PROMPT`/`_PAIRING_PHASE_B_SYSTEM_PROMPT`, declaring the exact `paired`/`confidence` and `claims:[{claim,entailed}]` keys) + a strict `response_format` json_schema (`build_pairing_phase_a_schema`/`build_pairing_phase_b_schema`); previously it sent NO system prompt under a JSON `response_format`, so a real model 400'd ("'messages' must contain the word 'json'") and EVERY pair fail-closed to a REJECT. `test_validate_pair_sends_system_prompt_and_json_schema` pins the wiring.
 - `apollo.knowledge_graph.resolution_store.write_resolution(neo, attempt_id, result, *, resolved_at) -> ResolutionWriteResult{edges, fields}` (WU-3C2; edges + fields in two idempotent passes) — also `write_resolves_to(neo, attempt_id, specs) -> int` (idempotent `MERGE` of `RESOLVES_TO`; empty → 0 without a session; raises `ResolutionUnavailableError(stage='write_resolves_to')`) and `persist_resolution_fields(neo, attempt_id, specs) -> int` (idempotent `SET`; `stage='persist_fields'` on failure); pure mapping seams `resolved_node_to_edge_spec`/`resolved_node_to_field_spec`.
 - `apollo.graph_compare.validate_student_graph(student_graph: KGGraph) -> None` / `validate_reference(problem: dict) -> None` (WU-4A1; the §6.4 step-4 + §6.6 raw-graph gates — return `None` on a valid graph, else raise `StudentGraphInvalidError`/`ReferenceGraphInvalidError` carrying a `reasons` tuple; the reference side delegates to `validate_reference_graph`).
@@ -576,7 +650,7 @@ Bearer token → `require_user` resolves `user_id`; `require_course_member` chec
 
 ## Key dependencies
 
-- **OpenAI** (`openai` sync client, constructed per call): models resolved per call site — parser/coverage/diagnostic/concept-inference use `MAIN_MODEL` (default `gpt-4o`); `draft_reply` uses `APOLLO_MODEL` > `MAIN_MODEL` > `gpt-4o`; cross-checks (intent, triviality, history summarizer, leakage judge) use `APOLLO_CHEAP_MODEL` (default `gpt-4o-mini`) via `agent/_llm.cheap_chat`. Every `_llm` call logs `{event: "llm_call", purpose, model, tokens}` for cost audit.
+- **OpenAI** (`openai` sync client, constructed per call): models resolved per call site — parser/coverage/diagnostic/concept-inference use `MAIN_MODEL` (default `gpt-4o`); `draft_reply` uses `APOLLO_MODEL` > `MAIN_MODEL` > `gpt-4o`; unified questioning uses `APOLLO_UNIFIED_QUESTION_MODEL` (default `gpt-5.2`); cross-checks (intent, triviality, history summarizer, leakage judge) use `APOLLO_CHEAP_MODEL` (default `gpt-4o-mini`) via `agent/_llm.cheap_chat`. Every `_llm` call logs `{event: "llm_call", purpose, model, tokens}` for cost audit.
 - **Neo4j** (`neo4j` async driver) — **OPTIONAL at runtime (degraded mode, 2026-07-11).** `Neo4jClient.from_env()` requires `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `NEO4J_DATABASE` (Aura instance — see project memory). One driver per process, lazily built in `api.py`; `close_neo4j_client()` should be wired to app shutdown. `get_neo4j_client()` returns `Neo4jClient | None` — a construction failure (missing/bad env, Aura unreachable) is logged (`apollo_neo4j_client_construction_failed`) and degrades to `None` rather than raising; NO NEGATIVE CACHING, so the next request retries construction fresh. This is safe because the served grade is the transcript LLM grader (`APOLLO_TRANSCRIPT_GRADER=1`) — the Neo4j graph lane is shadow-only — so chat/done/session-lifecycle survive Neo4j being down entirely. Every route handler param widened to `Neo4jClient | None`; `KGStore.__init__` accepts the same and every Neo4j-backed method guards via `self._require_neo(stage=...)`, raising `KGUnavailableError` at entry when `neo is None` (Postgres-only `KGStore` methods — freeze/unfreeze/get_node_trace — are unaffected). The KG-native negotiation routes (`negotiate.py`) and `restart_problem` wrap their store calls in `KG_DEGRADED_ERRORS` (`apollo/persistence/neo4j_client.py`: `KGUnavailableError`, `DriverError`, `AuthError`, `TransientError`, `DatabaseUnavailable`, `OSError`, `asyncio.TimeoutError` — Neo4j missing/unreachable/broken-connection, deliberately NOT Cypher/data errors) and re-raise as `KGUnavailableError` → the new `kg_unavailable` 503 handler. Teacher-facing authored-set provisioning (`provisioning/authored_sets/api.py`) is Neo4j-native with no meaningful degraded path, so it routes every `get_neo4j_client()` call through a local `_require_neo` guard (mirrors `apollo.api.require_neo4j_client`, kept as a separate sync helper because the authored-sets call sites are plain function calls / a background task, not FastAPI `Depends` resolution) → the same 503. See "NO FALLBACK policy" below for the exact degraded-mode behavior per route/stage.
 - **SymPy**: `solver/sympy_exec.py` (zero-form parsing, `solve_system`) — in v1 only the LaTeX display path in `store.py` exercises it at runtime.
 - **Authentication**: all routes require Supabase bearer auth via `auth.py` primitives (`resolve_auth_context`, run off the event loop). `apollo/auth_deps.py` provides four gate functions: `require_user` (bare auth, used by `from_hoot` and `progress`), `require_course_member` (membership check at session creation), `require_course_teacher` (role='teacher' membership check, no auto-enroll fallback — gates the authored-sets endpoints), and `require_session_owner` (FastAPI Depends gate on session-scoped routes — 401/403/404 as appropriate). Identity never comes from the request body.

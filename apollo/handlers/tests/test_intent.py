@@ -12,7 +12,6 @@ import pytest
 
 from apollo.handlers.intent import (
     INTENT_CONFIDENCE_THRESHOLD,
-    IntentVerdict,
     classify_intent,
     confirmation_prompt_for,
     detect_confirmation,
@@ -203,16 +202,15 @@ def test_classify_history_tail_is_passed(concept):
 # ---- confirmation_prompt_for --------------------------------------------
 
 @pytest.mark.parametrize("intent", [
-    "done", "restart", "next", "return_to_hoot", "help", "off_topic",
+    "done", "restart", "next", "return_to_hoot", "help",
 ])
-def test_confirmation_prompt_exists_for_all_non_teaching(intent):
+def test_confirmation_prompt_exists_for_all_gated_intents(intent):
     prompt = confirmation_prompt_for(intent)
     assert prompt
     assert isinstance(prompt, str)
     assert len(prompt) > 10
 
 
-def test_confirmation_prompt_for_teaching_is_empty():
-    """Teaching never goes through the confirmation gate, so its prompt
-    is intentionally empty."""
-    assert confirmation_prompt_for("teaching") == ""
+@pytest.mark.parametrize("intent", ["teaching", "off_topic"])
+def test_confirmation_prompt_is_empty_for_fallthrough_intents(intent):
+    assert confirmation_prompt_for(intent) == ""
