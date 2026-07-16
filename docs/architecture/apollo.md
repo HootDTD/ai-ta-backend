@@ -252,9 +252,13 @@ The authored-set structure pass lives in
 `apollo/provisioning/authored_sets/structure_pass.py`. Behind the per-call
 `APOLLO_STRUCTURE_PAIRING=off|shadow|on` flag (default `off`), it assembles each
 problem and optional solution document in stable chunk-id order, asks the
-injected cheap-tier `MeteredChat` for strict structured units, maps global
-character offsets back to real chunk-local spans, normalizes labels through
-`label_match.normalize_label`, and aligns only unique question/answer labels.
+injected cheap-tier `MeteredChat` for strict structured units identified by
+verbatim opening and closing text anchors, then resolves those anchors in Python
+with whitespace-normalized substring search and a moving document-order cursor.
+Resolved raw offsets map back to real chunk-local spans; unresolvable units are
+dropped so existing regex or generation degradation paths take over. The pass
+normalizes labels through `label_match.normalize_label` and aligns only unique
+question/answer labels.
 `shadow` remains observational: it records a bounded counts-and-paired-labels
 summary in the set's `result_summary` but never hands pairs to retrieval. `on`
 runs one pass per authored-set run and makes its unambiguous pairs available

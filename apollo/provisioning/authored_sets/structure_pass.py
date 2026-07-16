@@ -3,10 +3,11 @@
 Retrieval chunks are intentionally tiny and may split a printed label from the
 block it introduces. This module therefore presents each document to one
 structured-output call as a stable, id-ordered character stream, then maps the
-returned half-open offsets back to real chunk ids and chunk-local spans. The
-model identifies structure; pairing remains deterministic: one normalized
-question label must align with exactly one normalized answer label, otherwise
-the label is left unpaired rather than guessed.
+returned verbatim text anchors to deterministic half-open offsets and then back
+to real chunk ids and chunk-local spans. The model identifies structure;
+pairing remains deterministic: one normalized question label must align with
+exactly one normalized answer label, otherwise the label is left unpaired
+rather than guessed.
 
 Calls use only the injected metered cheap tier and never log document or response
 bodies. Separate problem/solution documents run after scrape and stop before
@@ -22,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from bisect import bisect_left
 from collections import Counter
 from collections.abc import Sequence
 from typing import Any, Literal
@@ -53,13 +55,14 @@ _UNIT_KINDS: tuple[Literal["question", "answer", "other"], ...] = (
 
 _SYSTEM_PROMPT = """You segment exam-style documents into structural blocks.
 Return only JSON matching the supplied schema. A unit is a complete block from
-its printed or inferred label through the character before the next unit; it may
-cross chunk boundaries. Identify questions, worked answers, and other material.
-For an answer introduced only by 'Answer:' after a numbered question, inherit
-that question's label. Preserve enough label syntax to identify it (for example
-'1.' or 'Question 1'). Use half-open document-global character offsets. Use the
-provided chunk table to report the first and last overlapping chunk ids. Do not
-invent a pairing when a label is ambiguous."""
+its printed or inferred label through its closing words; it may cross chunk
+boundaries. Identify questions, worked answers, and other material. For each
+unit, copy the block's opening words into start_anchor and its closing words into
+end_anchor, using about 10 words each verbatim and exactly as printed: do not
+paraphrase or normalize them. For an answer introduced only by 'Answer:' after a
+numbered question, inherit that question's label. Preserve enough label syntax
+to identify it (for example '1.' or 'Question 1'). Do not invent a pairing when
+a label is ambiguous."""
 
 
 class BlockSpan(BaseModel):
@@ -135,10 +138,8 @@ class _RawUnit(BaseModel):
 
     kind: Literal["question", "answer", "other"]
     label: str | None
-    start_chunk: int
-    end_chunk: int
-    start_char: int = Field(ge=0)
-    end_char: int = Field(ge=0)
+    start_anchor: str
+    end_anchor: str
     confidence: float = Field(ge=0.0, le=1.0)
 
 
@@ -191,39 +192,98 @@ def _normalized_label(raw: str | None) -> str | None:
     return normalize_label(f"Question {token}") or token
 
 
+def _normalize_with_raw_offsets(text: str) -> tuple[str, tuple[int, ...], tuple[int, ...]]:
+    """Collapse whitespace while retaining each normalized character's raw bounds."""
+    normalized: list[str] = []
+    raw_starts: list[int] = []
+    raw_ends: list[int] = []
+    cursor = 0
+    while cursor < len(text):
+        start = cursor
+        if text[cursor].isspace():
+            cursor += 1
+            while cursor < len(text) and text[cursor].isspace():
+                cursor += 1
+            normalized.append(" ")
+        else:
+            normalized.append(text[cursor])
+            cursor += 1
+        raw_starts.append(start)
+        raw_ends.append(cursor)
+    return "".join(normalized), tuple(raw_starts), tuple(raw_ends)
+
+
+def _normalized_anchor(anchor: str) -> str:
+    return " ".join(anchor.split())
+
+
+def _resolve_unit_anchors(
+    raw: _RawUnit,
+    *,
+    role: Literal["problem", "solution"],
+    normalized_document: str,
+    raw_starts: tuple[int, ...],
+    raw_ends: tuple[int, ...],
+    cursor: int,
+) -> tuple[int, int] | None:
+    start_anchor = _normalized_anchor(raw.start_anchor)
+    end_anchor = _normalized_anchor(raw.end_anchor)
+    if len("".join(start_anchor.split())) < 3 or len("".join(end_anchor.split())) < 3:
+        resolved = None
+    else:
+        normalized_cursor = bisect_left(raw_starts, cursor)
+        start_match = normalized_document.find(start_anchor, normalized_cursor)
+        if start_match < 0:
+            resolved = None
+        else:
+            end_match = normalized_document.find(end_anchor, start_match)
+            if end_match < 0:
+                resolved = None
+            else:
+                end_cursor = end_match + len(end_anchor)
+                start_char = raw_starts[start_match]
+                end_char = raw_ends[end_cursor - 1]
+                resolved = (start_char, end_char) if end_char > start_char else None
+    if resolved is None:
+        _LOG.warning(
+            "authored_set_structure_anchor_unresolved",
+            extra={
+                "event": "authored_set_structure_anchor_unresolved",
+                "kind": raw.kind,
+                "label": raw.label,
+                "document_role": role,
+            },
+        )
+    return resolved
+
+
 def _map_unit(
     raw: _RawUnit,
     *,
     role: Literal["problem", "solution"],
-    text_length: int,
+    start_char: int,
+    end_char: int,
     offsets: tuple[_ChunkOffset, ...],
 ) -> StructureUnit | None:
-    if raw.start_char >= raw.end_char or raw.end_char > text_length:
-        return None
-    overlaps = [
-        offset for offset in offsets if offset.end > raw.start_char and offset.start < raw.end_char
-    ]
+    overlaps = [offset for offset in offsets if offset.end > start_char and offset.start < end_char]
     if not overlaps:
         return None
     spans = tuple(
         BlockSpan(
             chunk_id=offset.chunk_id,
-            start_char=max(raw.start_char, offset.start) - offset.start,
-            end_char=min(raw.end_char, offset.end) - offset.start,
+            start_char=max(start_char, offset.start) - offset.start,
+            end_char=min(end_char, offset.end) - offset.start,
         )
         for offset in overlaps
     )
-    # Chunk ids are derived from the offset map rather than trusted from model
-    # output. The raw fields remain required in the wire schema so mismatches
-    # are visible to schema-aware fakes and future diagnostics.
     return StructureUnit(
         kind=raw.kind,
         label=_normalized_label(raw.label),
         document_role=role,
         start_chunk=overlaps[0].chunk_id,
         end_chunk=overlaps[-1].chunk_id,
-        start_char=raw.start_char,
-        end_char=raw.end_char,
+        start_char=start_char,
+        end_char=end_char,
         confidence=raw.confidence,
         block_spans=spans,
     )
@@ -250,9 +310,6 @@ def _segment_document(
     document, offsets = _assemble(chunks)
     if not document.strip():
         return ()
-    chunk_table = [
-        {"chunk_id": item.chunk_id, "start": item.start, "end": item.end} for item in offsets
-    ]
     response = metered_chat.cheap(
         purpose="structure_pass",
         messages=[
@@ -260,7 +317,7 @@ def _segment_document(
             {
                 "role": "user",
                 "content": json.dumps(
-                    {"document_role": role, "chunk_offsets": chunk_table, "document": document},
+                    {"document_role": role, "document": document},
                     ensure_ascii=False,
                 ),
             },
@@ -275,12 +332,32 @@ def _segment_document(
             extra={"event": "authored_set_structure_pass_invalid", "document_role": role},
         )
         return ()
-    return tuple(
-        unit
-        for raw in parsed.units
-        if (unit := _map_unit(raw, role=role, text_length=len(document), offsets=offsets))
-        is not None
-    )
+    normalized_document, raw_starts, raw_ends = _normalize_with_raw_offsets(document)
+    cursor = 0
+    units: list[StructureUnit] = []
+    for raw in parsed.units:
+        resolved = _resolve_unit_anchors(
+            raw,
+            role=role,
+            normalized_document=normalized_document,
+            raw_starts=raw_starts,
+            raw_ends=raw_ends,
+            cursor=cursor,
+        )
+        if resolved is None:
+            continue
+        start_char, end_char = resolved
+        cursor = end_char
+        unit = _map_unit(
+            raw,
+            role=role,
+            start_char=start_char,
+            end_char=end_char,
+            offsets=offsets,
+        )
+        if unit is not None:
+            units.append(unit)
+    return tuple(units)
 
 
 def _align(units: Sequence[StructureUnit], *, paired_document: bool) -> tuple[StructurePair, ...]:
