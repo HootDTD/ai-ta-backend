@@ -6,7 +6,7 @@ first space so the Pydantic model gets a non-empty ``concept`` and a non-empty
 ``meaning``; for single-token texts both fields receive the token.
 
 Provides ``make_equation_node`` — a factory that builds an EquationNode whose
-``node_type`` is ``"equation"`` (excluded from NLI_NODE_TYPES).  The symbolic
+``node_type`` is ``"equation"`` so the symbolic
 field is set to the supplied string; label and variables are left empty.
 """
 
@@ -45,9 +45,7 @@ def make_def_node():
 def make_equation_node():
     """Return a callable that builds an ``equation`` Node from a symbolic string.
 
-    ``node_type`` is ``"equation"`` which is NOT in ``NLI_NODE_TYPES``, so
-    ``match_nli_semantic`` returns ``None`` immediately on the type gate without
-    ever consulting the NLI adjudicator.
+    ``node_type`` is ``"equation"`` so the deterministic symbolic tier owns it.
     """
 
     def _factory(symbolic: str) -> Node:

@@ -40,7 +40,6 @@ from apollo.resolution.competition import (
     polarity_screen,
 )
 from apollo.resolution.equation_alignment import match_equation_alignment
-from apollo.resolution.nli_resolution import NLIContext
 from apollo.resolution.result import ResolutionResult, ResolvedNode
 from apollo.resolution.structural import ScoredMatch, type_compatible
 from apollo.resolution.tiers import (
@@ -60,7 +59,6 @@ def _content_match(
     *,
     fuzzy_threshold: float,
     symbolic_mappings: dict[str, str],
-    nli_ctx: NLIContext | None = None,
 ) -> ScoredMatch | None:
     """Run the content tiers in priority order for one node and return the
     winning :class:`ScoredMatch`, applying the type-compat HARD constraint, the
@@ -134,42 +132,7 @@ def _content_match(
     lexical = list(by_candidate.values())
     if lexical:
         winner = apply_misconception_competition(surface, lexical)
-        # Fix 2 (2026-07 misc-detection routing, flag ``APOLLO_NLI_MISC_POSITIVE_
-        # CERTIFY``): a wrong-claim node can falsely alias/fuzzy-match a lexically
-        # -close REFERENCE candidate, so the lexical winner above never competes
-        # against the misconception NLI check at all (the diagnosed
-        # `control_credit_leak` defect). When the flag is on and NLI is
-        # available, before accepting a non-misconception lexical winner, give
-        # the misconception NLI check one more chance to out-compete it. Only
-        # the alias/fuzzy (fused lexical) winner is ever intercepted here —
-        # exact/symbolic/derived tiers already returned earlier in this
-        # function and are NEVER reached by this block.
-        if (
-            winner is not None
-            and not winner.candidate.is_misconception
-            and nli_ctx is not None
-            and nli_ctx.nli is not None
-            and nli_ctx.params.misc_positive_certify
-        ):
-            miscs = tuple(c for c in type_ok if c.is_misconception)
-            if miscs:
-                from apollo.resolution.nli_resolution import match_nli_misconception_certify
-
-                misc_match = match_nli_misconception_certify(
-                    node,
-                    miscs,
-                    ctx=nli_ctx,
-                    entailment_bar=nli_ctx.params.misc_certify_entailment,
-                )
-                if misc_match is not None:
-                    return misc_match
         return winner
-    # Recall-only NLI fallback: fires ONLY when the fused lexical tier found
-    # nothing — so it can never mask a lexical-level misconception.
-    if nli_ctx is not None and nli_ctx.nli is not None:
-        from apollo.resolution.nli_resolution import match_nli_semantic
-
-        return match_nli_semantic(node, type_ok, ctx=nli_ctx)
     return None
 
 
@@ -179,7 +142,6 @@ def find_residual_nodes(
     *,
     fuzzy_threshold: float = 0.9,
     symbolic_mappings: dict[str, str] | None = None,
-    nli_ctx: NLIContext | None = None,
 ) -> list[Node]:
     """Nodes no deterministic tier confidently matched (the clarification
     detector's input). Pure: reuses ``_content_match`` so banding stays in
@@ -193,7 +155,6 @@ def find_residual_nodes(
                 candidates,
                 fuzzy_threshold=fuzzy_threshold,
                 symbolic_mappings=maps,
-                nli_ctx=nli_ctx,
             )
             is None
         ):
@@ -208,7 +169,6 @@ def resolve_attempt(
     confirmed_resolutions: dict[str, str] | None = None,
     fuzzy_threshold: float = 0.9,
     symbolic_mappings: dict[str, str] | None = None,
-    nli_ctx: NLIContext | None = None,
 ) -> ResolutionResult:
     """Resolve every student evidence node against the closed candidate set.
 
@@ -264,7 +224,6 @@ def resolve_attempt(
             candidates,
             fuzzy_threshold=fuzzy_threshold,
             symbolic_mappings=maps,
-            nli_ctx=nli_ctx,
         )
         if hit is not None:
             matches_by_node[n.node_id] = [hit]

@@ -144,58 +144,13 @@ Both are scoped to this campaign's containers only (`project_id =
 "e2e-harness"` / container name `apollo-campaign-neo4j`) — neither touches
 any other local Supabase project or Neo4j container on the machine.
 
-## NLI model local cache + boot-time pre-warm (Task C2)
-
-The Apollo NLI resolver tier (`apollo/resolution/nli_adjudicator.py`,
-default ON — see `docs/architecture/apollo.md`) lazily downloads its
-Hugging Face checkpoint (`cross-encoder/nli-deberta-v3-large` by default,
-~1.7GB) on first use. For a campaign run that first use must NOT be a live
-grading request — seed the local `HF_HOME` cache once, ahead of time:
-
-```bash
-# 1. Seed the cache (first run downloads from Hugging Face; ~1.7GB, needs network)
-HF_HOME=./.hf-cache python -m campaign.infra.prewarm_nli
-
-# 2. Confirm the cache actually serves the model with NO network (this is the
-#    contract campaign runs depend on) — HF_HUB_OFFLINE=1 makes huggingface_hub
-#    refuse any network call, so this only succeeds if the checkpoint files are
-#    genuinely local:
-HF_HOME=./.hf-cache HF_HUB_OFFLINE=1 python -m campaign.infra.prewarm_nli
-```
-
-`.hf-cache/` is gitignored (large binary checkpoint files, machine-local).
-
-**Verified 2026-07-02** (throwaway venv, `torch==2.6.0+cpu` /
-`transformers==4.57.6` — installing these into the shared dev interpreter was
-avoided; see the deviation note below): cold run against an empty
-`HF_HOME` → `load_seconds=88.66`, `first_classify_seconds=0.47` (network
-download happens inside `load_seconds`). Second run against the SAME
-`HF_HOME` with `HF_HUB_OFFLINE=1` → `load_seconds=4.50`,
-`first_classify_seconds=0.44` — i.e. loads from local disk in ~5% of the
-cold-run time with zero network calls, confirming "no first-request HF
-download" (spec `2026-07-01-system-scores-outputs-design.md` §5).
-
-To also warm the backend PROCESS itself at boot (not just the on-disk
-cache), set `APOLLO_NLI_PREWARM=1` before starting `uvicorn` — `server.py`'s
-startup hook then calls `apollo.resolution.nli_adjudicator.prewarm()`
-before the app accepts requests. Default is OFF (prod boot is unchanged);
-a prewarm failure is logged (`apollo_nli_prewarm_failed`) and never blocks
-boot.
-
-```bash
-set -a; source .env.campaign; set +a
-export APOLLO_NLI_PREWARM=1
-export HF_HOME=./.hf-cache
-uvicorn server:app --host 127.0.0.1 --port 8000
-```
 
 ## Config snapshot/freeze + run context (Task C3)
 
 `campaign/config.py::CampaignConfig` captures EVERY grading tunable that
 feeds a campaign attempt's composite score: rubric axis weights
 (`apollo.overseer.rubric.AXIS_WEIGHTS`), the letter-grade bands
-(`LETTER_BANDS`), the active NLI model + its tuned params
-(`load_nli_params()`), the §6.6 abstention thresholds
+(`LETTER_BANDS`), the §6.6 abstention thresholds
 (`apollo.grading.abstention.ABSTENTION_THRESHOLDS`), and the boolean feature
 flags that route an attempt down a different code path (clarification loop,
 autoprovisioning, graph-sim live/shadow, learner decay/janitor/negotiation,

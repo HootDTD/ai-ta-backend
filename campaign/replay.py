@@ -31,7 +31,7 @@ over the SAME two functions the live Done path and the retry janitor call:
     any grading/resolution logic.
 
 No live LLM student turn, no live session creation, no HTTP server — only the
-DB/Neo4j reads + the deterministic (module-injected NLI aside) grading chain.
+DB/Neo4j reads + the deterministic grading chain.
 Per-attempt DB writes ``run_graph_simulation`` performs (a fresh
 ``apollo_graph_comparison_runs`` row) are the same idempotent-MERGE writes the
 retry janitor produces; they do not touch ``campaign/out/f1c/attempts.jsonl``

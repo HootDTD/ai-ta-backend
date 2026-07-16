@@ -678,33 +678,6 @@ def _validate_startup_env() -> None:
     validate_required_env()
 
 
-def _apollo_nli_prewarm_enabled() -> bool:
-    """``APOLLO_NLI_PREWARM=1`` (or true/yes) opts boot into the NLI
-    pre-warm hook (campaign C2). Default OFF — prod boot behavior is
-    unchanged unless a deployment (or the local campaign harness) sets it."""
-    raw = os.environ.get("APOLLO_NLI_PREWARM")
-    return raw is not None and raw.strip().lower() in ("1", "true", "yes")
-
-
-@app.on_event("startup")
-def _prewarm_nli_on_startup() -> None:
-    """When enabled, force the NLI checkpoint to load at boot so the first
-    live grading/chat request never triggers a lazy first-load / Hugging
-    Face download on the request path (spec: "no first-request HF
-    download"). A prewarm failure (missing ``transformers``, no network on
-    a cold cache, OOM, ...) must never block server boot — it only means
-    the FIRST live NLI call pays the lazy-load cost instead."""
-    if not _apollo_nli_prewarm_enabled():
-        return
-    try:
-        from apollo.resolution.nli_adjudicator import prewarm
-
-        t0 = time.monotonic()
-        prewarm()
-        log.info("apollo_nli_prewarm_complete seconds=%.2f", time.monotonic() - t0)
-    except Exception:
-        log.exception("apollo_nli_prewarm_failed")
-
 # CORS
 cors_origins = os.getenv("CORS_ALLOW_ORIGINS", "*")
 allow_origins = [o.strip() for o in cors_origins.split(",")] if cors_origins else ["*"]

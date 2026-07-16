@@ -48,7 +48,7 @@ class CompositeWeights:
 def _env_float(name: str, default: float) -> float:
     """Read ``name`` from the environment as a float; fall back to ``default``
     on missing or malformed (mirrors the repo's other env-float readers, e.g.
-    ``nli_config``'s int/float parsing conventions)."""
+    the other grading-setting parsing conventions)."""
     raw = os.environ.get(name)
     if raw is None:
         return default

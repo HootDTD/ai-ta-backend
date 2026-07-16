@@ -93,18 +93,6 @@ def _mock_supabase(monkeypatch):
     mock.reset()
 
 
-@pytest.fixture(autouse=True)
-def _force_nli_off(monkeypatch):
-    """Force ``APOLLO_NLI_ENABLED=0`` for the whole (non-apollo) suite.
-
-    The NLI tier is now DEFAULT-ON in production (``nli_config.nli_enabled``), but
-    the real adjudicator pulls ``transformers``/``torch`` and downloads a model on
-    first use. Integration tests under ``tests/database/`` drive the real
-    Done-grade path (``handle_done`` → ``_nli_context``), so without this guard
-    they would build + download the model in CI. Mirrors ``apollo/conftest.py``'s
-    guard; a test that exercises NLI sets the flag itself (a function-scoped
-    ``monkeypatch.setenv`` runs after this and wins)."""
-    monkeypatch.setenv("APOLLO_NLI_ENABLED", "0")
 
 
 # ---------------------------------------------------------------------------

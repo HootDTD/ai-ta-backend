@@ -27,7 +27,6 @@ RESOLUTION_METHODS: tuple[str, ...] = (
     "derived",
     "alias",
     "clarification",
-    "nli",  # recall-only fallback (cap 0.88) — see nli_resolution.py
     "fuzzy",
     "llm",
     "unresolved",
@@ -41,7 +40,6 @@ METHOD_CONFIDENCE_CAP: dict[str, float] = {
     "derived": 0.95,
     "alias": 0.92,
     "clarification": 0.90,
-    "nli": 0.88,
     "fuzzy": 0.80,
     "llm": 0.75,
     "unresolved": 0.00,
@@ -96,14 +94,6 @@ def unknown_reference_entry_types(problem: dict) -> tuple[str, ...]:
         if entry_type is not None and _node_type_for_entry(entry_type) is None:
             seen.add(str(entry_type))
     return tuple(sorted(seen))
-
-# Node types the NLI tier attempts. Excludes `equation` (exact/symbolic/derived
-# already cover it) and `variable_mapping` (surface is a bare `term` — degenerate
-# for sentence-level inference).
-NLI_NODE_TYPES: frozenset[str] = frozenset(
-    {"procedure_step", "condition", "definition", "simplification"}
-)
-
 
 @dataclass(frozen=True)
 class Candidate:

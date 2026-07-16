@@ -246,7 +246,6 @@ def test_graph_artifact_node_ledger_statuses(shadow_fixture):
                 "derived",
                 "alias",
                 "clarification",
-                "nli",
                 "fuzzy",
             }
             assert e["evidence_span"]  # every credit carries evidence (spec §1)

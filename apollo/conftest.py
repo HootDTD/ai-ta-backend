@@ -11,13 +11,6 @@ only visible down their own directory tree, so they are re-exported here to make
 them available to ``apollo/`` tests as well. They Docker-skip cleanly when the
 daemon is unavailable.
 
-NLI guard (Task 12): ``_force_nli_off`` is an autouse function-scoped fixture
-that forces ``APOLLO_NLI_ENABLED=0`` for every test in the suite, ensuring the
-real model (transformers/torch) is never loaded in CI.  Tests that explicitly opt
-in to NLI behaviour (``apollo/resolution/tests/test_nli_*`` and
-``apollo/clarification/tests/test_turn_nli.py``) re-enable the flag via their own
-``monkeypatch.setenv("APOLLO_NLI_ENABLED", "1")`` call inside the test body; a
-test-level monkeypatch always wins over the autouse fixture's value.
 """
 
 from __future__ import annotations
@@ -79,21 +72,3 @@ async def neo4j_client():
             await s.run("MATCH (n:_KGNode) WHERE n.attempt_id < 0 DETACH DELETE n")
     finally:
         await client.close()
-
-
-@pytest.fixture(autouse=True)
-def _force_nli_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force ``APOLLO_NLI_ENABLED=0`` for every apollo/ test.
-
-    The NLI tier requires ``transformers``/``torch`` which are not installed in
-    CI.  This guard ensures the real model is never loaded during the suite.
-
-    Tests that need to exercise NLI code paths (test_nli_config,
-    test_nli_adjudicator, test_nli_resolution, test_nli_calibration,
-    test_turn_nli) re-enable the flag via their own
-    ``monkeypatch.setenv("APOLLO_NLI_ENABLED", "1")`` inside the test body.
-    A test-scoped monkeypatch call always takes precedence over this fixture's
-    value because both run at function scope and the test body executes after
-    the autouse fixture.
-    """
-    monkeypatch.setenv("APOLLO_NLI_ENABLED", "0")

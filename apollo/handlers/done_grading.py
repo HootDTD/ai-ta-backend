@@ -28,7 +28,6 @@ consume them. It does NOT promote the shadow grade to student-facing (WU-4C2).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from collections.abc import Mapping
@@ -75,190 +74,15 @@ from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.resolution import resolve_attempt
 from apollo.resolution.candidates import unknown_reference_entry_types
-from apollo.resolution.embedding import CandidateEmbeddingCache, default_embedder
-from apollo.resolution.nli_adjudicator import NLIAdjudicator, NLIResult
-from apollo.resolution.nli_config import (
-    NLI_DEVICE,
-    NLIParams,
-    active_nli_model,
-    load_nli_params,
-    nli_enabled,
-)
-from apollo.resolution.nli_resolution import NLIContext
 from apollo.resolution.result import ResolutionResult
 
 _LOG = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# NLI tier — grading-time injection (Task 9)
-# ---------------------------------------------------------------------------
-# Module-level lazy singletons.  Constructing CandidateEmbeddingCache() is
-# cheap (an empty dict); the real model is built only when the flag is on.
-_NLI_ADJUDICATOR = None  # process-lived TransformersNLIAdjudicator | None
-_NLI_CACHE = CandidateEmbeddingCache()
-
-# L4 — the ``transformers`` package (or the checkpoint download it lazily
-# triggers) may be unavailable in a given deployment. That must degrade
-# grading to no-NLI rather than re-arm the retry loop forever (an
-# ImportError/ModuleNotFoundError is infra-static — retrying never fixes it).
-# Logged ONCE per process so a missing install doesn't spam every request.
-_NLI_IMPORT_UNAVAILABLE_LOGGED = False
-
-# M3(b) — grading-path node budget cap, mirroring the chat path's
-# ``APOLLO_NLI_CHAT_MAX_NODES`` (fcfd285): synchronous transformer inference
-# runs per residual node, so an uncapped attempt can still tie up the worker
-# thread for a long time. Hoisted to a local once per call (same pattern).
-_NLI_GRADING_NODE_CAP_FLAG: str = "APOLLO_NLI_GRADING_MAX_NODES"
-# DEFAULT STAYS 15 (2026-07 misc-detection routing fixes, Fix 1 — revised
-# after cold-eyes review of PR #101): the cap is a binary whole-attempt NLI
-# disable, not a per-node truncation (see ``.superpowers/sdd/
-# misc-node-routing-diagnosis.md`` Q3), and 15 sits below realistic attempt
-# sizes (25+ nodes for a normal fluid-mechanics attempt). BUT raising the
-# DEFAULT would ship an un-gated grading-behavior change: NLI is default-ON
-# (``APOLLO_NLI_ENABLED``), so previously-capped attempts would start running
-# NLI recall and their unresolved_rate/composite would move (measured on the
-# frozen f1c replay: 6 attempts drift, e.g. one strong composite
-# 0.396 -> 0.516), plus ~2.6x NLI latency on large attempts. The raise is
-# therefore OPT-IN via the existing env override: campaign/probe runs set
-# ``APOLLO_NLI_GRADING_MAX_NODES=40`` explicitly (documented in
-# ``campaign/infra/env.campaign.example``; the live value is snapshot-audited
-# by ``campaign/config.py``), while prod default behavior stays byte-identical.
-_NLI_GRADING_NODE_CAP_DEFAULT: int = 15
 _GRAPH_CONTRACTION_FLAG: str = "APOLLO_GRAPH_CONTRACTION_ENABLED"
-
-
-class _UnavailableContractionAdjudicator:
-    """Non-loading adjudicator used to make enabled contraction fail closed."""
-
-    def classify(self, premise: str, hypothesis: str) -> NLIResult:
-        return NLIResult(
-            label="neutral",
-            entailment=0.0,
-            contradiction=0.0,
-            neutral=1.0,
-            model_name="unavailable",
-        )
-
-
-_UNAVAILABLE_CONTRACTION_ADJUDICATOR = _UnavailableContractionAdjudicator()
-
-
-@dataclass(frozen=True)
-class _ConfiguredContractionAdjudicator:
-    adjudicator: NLIAdjudicator
-    params: NLIParams
-
-    def classify(self, premise: str, hypothesis: str) -> NLIResult:
-        return self.adjudicator.classify(premise=premise, hypothesis=hypothesis)
 
 
 def _graph_contraction_enabled() -> bool:
     return os.environ.get(_GRAPH_CONTRACTION_FLAG, "").lower() in ("1", "true", "yes")
-
-
-def _contraction_adjudicator(
-    nli_ctx: NLIContext | None,
-) -> NLIAdjudicator:
-    if nli_ctx is not None and nli_ctx.nli is not None:
-        return _ConfiguredContractionAdjudicator(nli_ctx.nli, nli_ctx.params)
-    return _UNAVAILABLE_CONTRACTION_ADJUDICATOR
-
-
-def _build_adjudicator():  # pragma: no cover — constructs the real model (Task 12 probe)
-    from apollo.resolution.nli_adjudicator import TransformersNLIAdjudicator
-
-    return TransformersNLIAdjudicator(active_nli_model(), device=NLI_DEVICE)
-
-
-def _log_nli_import_failure_once(exc: BaseException) -> None:
-    """L4: log the missing-``transformers`` degradation exactly once per
-    process (not once per request) — grading proceeds WITHOUT NLI."""
-    global _NLI_IMPORT_UNAVAILABLE_LOGGED
-    if not _NLI_IMPORT_UNAVAILABLE_LOGGED:
-        _LOG.warning("apollo_nli_transformers_unavailable degrading_without_nli error=%s", exc)
-        _NLI_IMPORT_UNAVAILABLE_LOGGED = True
-
-
-def _nli_context() -> NLIContext | None:
-    """Return an ``NLIContext`` when ``APOLLO_NLI_ENABLED`` is set, else ``None``.
-
-    The adjudicator is built ONCE and reused across calls (process-lived
-    singleton).  When the flag is off grading is byte-identical to before.
-
-    L4: if construction itself fails on a missing ``transformers`` install
-    (``ImportError``/``ModuleNotFoundError``), degrade to no-NLI (``None``)
-    instead of letting the caller's broad except re-arm the retry loop.
-    """
-    if not nli_enabled():
-        return None
-    global _NLI_ADJUDICATOR
-    if _NLI_ADJUDICATOR is None:
-        try:
-            _NLI_ADJUDICATOR = _build_adjudicator()
-        except (ImportError, ModuleNotFoundError) as exc:
-            _log_nli_import_failure_once(exc)
-            return None
-    return NLIContext(
-        nli=_NLI_ADJUDICATOR,
-        embedder=default_embedder,
-        cache=_NLI_CACHE,
-        params=load_nli_params(),
-    )
-
-
-def _nli_grading_node_cap() -> int:
-    """Read ``APOLLO_NLI_GRADING_MAX_NODES`` from env; default 15 on missing or
-    malformed (mirrors ``chat.py``'s ``_nli_chat_node_cap`` semantics)."""
-    raw = os.environ.get(_NLI_GRADING_NODE_CAP_FLAG)
-    try:
-        return int(raw) if raw is not None else _NLI_GRADING_NODE_CAP_DEFAULT
-    except (ValueError, TypeError):
-        return _NLI_GRADING_NODE_CAP_DEFAULT
-
-
-async def _resolve_attempt_async(
-    student_graph: KGGraph,
-    candidates: tuple,
-    *,
-    confirmed_resolutions: dict,
-    fuzzy_threshold: float,
-    symbolic_mappings: dict,
-    nli_ctx: NLIContext | None,
-):
-    """M3(a) — run the (synchronous, CPU-bound when NLI is active) resolver off
-    the event loop. ``resolve_attempt`` itself stays sync/pure/deterministic;
-    only the call boundary changes, mirroring the chat path's conditional
-    offload in ``apollo.clarification.turn.run_clarification_detection``:
-    when NLI is inactive (``nli_ctx`` is ``None``) the call is inline —
-    byte-identical to the pre-NLI path — because there is nothing CPU-bound
-    to offload.
-
-    L4: if the offloaded call fails on a missing ``transformers`` install, log
-    once and re-resolve inline WITHOUT NLI rather than letting the failure
-    propagate into the caller's NO-FALLBACK / retry-forever except clauses.
-    """
-    if nli_ctx is not None and nli_ctx.nli is not None:
-        try:
-            return await asyncio.to_thread(
-                resolve_attempt,
-                student_graph,
-                candidates,
-                confirmed_resolutions=confirmed_resolutions,
-                fuzzy_threshold=fuzzy_threshold,
-                symbolic_mappings=symbolic_mappings,
-                nli_ctx=nli_ctx,
-            )
-        except (ImportError, ModuleNotFoundError) as exc:
-            _log_nli_import_failure_once(exc)
-            # Fall through to the no-NLI path below (same degrade as flag-off).
-    return resolve_attempt(
-        student_graph,
-        candidates,
-        confirmed_resolutions=confirmed_resolutions,
-        fuzzy_threshold=fuzzy_threshold,
-        symbolic_mappings=symbolic_mappings,
-        nli_ctx=None,
-    )
 
 
 # The named infra errors that surface in the cross-store window (step 5+). These
@@ -450,29 +274,12 @@ async def run_graph_simulation(
     try:
         confirmed_resolutions = await load_confirmed_resolutions(db, attempt_id=int(attempt.id))
         # Step 5 — resolve; clarification-confirmed nodes are authoritative (no LLM guess).
-        # M3(b) — grading-path node budget: cap large attempts the same way the
-        # chat path caps large utterances (both share the same NLI cost model).
-        nli_ctx = _nli_context()
-        contraction_nli_ctx = nli_ctx
-        student_node_count = len(student_graph.nodes)
-        grading_cap = _nli_grading_node_cap()
-        if nli_ctx is not None and student_node_count > grading_cap:
-            _LOG.info(
-                "nli_grading_skipped_budget nodes=%d cap=%d attempt_id=%s",
-                student_node_count,
-                grading_cap,
-                int(attempt.id),
-            )
-            nli_ctx = None
-        # M3(a) — offload the (possibly CPU-bound NLI) resolver call off the
-        # event loop; inline when NLI is inactive (byte-identical to before).
-        resolution = await _resolve_attempt_async(
+        resolution = resolve_attempt(
             student_graph,
             inputs.candidates,
             confirmed_resolutions=confirmed_resolutions,
             fuzzy_threshold=0.9,
             symbolic_mappings=inputs.symbolic_mappings,
-            nli_ctx=nli_ctx,
         )
         # Step 6 — RESOLVES_TO + resolution fields (idempotent MERGE).
         await write_resolution(neo, int(attempt.id), resolution, resolved_at=_now_iso())
@@ -493,9 +300,7 @@ async def run_graph_simulation(
             student_canonical,
             reference_graph,
             bank_applicable=bank_applicable,
-            contraction_adjudicator=(
-                _contraction_adjudicator(contraction_nli_ctx) if use_contraction else None
-            ),
+            contraction_enabled=use_contraction,
         )
 
         # Step 9 — transcript audit (live auditor; suppress-all-missing on infra

@@ -1,8 +1,8 @@
-"""Pure edge-contraction eligibility with symbolic and NLI safeguards (DAG-5).
+"""Pure edge-contraction eligibility with symbolic safeguards (DAG-5).
 
 Concrete equation intermediates use bridge equations as a symbolic confirm/veto
-channel before NLI; simplifications, display equations, and prose retain the
-original NLI-only decision path.
+channel. Simplifications, display equations, and prose fail closed because no
+deterministic equivalence proof is available.
 """
 
 from __future__ import annotations
@@ -20,8 +20,6 @@ from apollo.graph_compare.canonical import (
     ReferencePathView,
 )
 from apollo.graph_compare.findings import FindingKind
-from apollo.resolution.nli_adjudicator import NLIAdjudicator
-from apollo.resolution.nli_config import NLIParams
 
 _COMBINABLE_NODE_TYPES = frozenset({"equation", "simplification"})
 _MAX_CONTRACTED_CHAIN = 3
@@ -37,7 +35,7 @@ _EQUATION_LEAD_IN_RE = re.compile(
     re.IGNORECASE,
 )
 
-DecisionChannel = Literal["symbolic_equivalent", "symbolic_veto", "nli"]
+DecisionChannel = Literal["symbolic_equivalent", "symbolic_veto", "unproved"]
 
 
 @dataclass(frozen=True)
@@ -59,22 +57,16 @@ def contraction_verdicts(
     student: CanonicalGraph,
     reference: ReferenceGraph,
     path: ReferencePathView,
-    adjudicator: NLIAdjudicator | None,
-    *,
-    params: NLIParams | None = None,
 ) -> dict[str, ContractionVerdict]:
     """Return verdicts for eligible missing chains on one declared path.
 
     Eligibility is deliberately narrow: a run of one to three combinable,
     non-branching missing nodes must be bounded by exactly-covered student keys,
     and the student graph must bridge those bounds directly (or the same raw
-    student node must cover both bounds). Each concrete equation first uses a
-    symbolic confirm/veto over bridge equations; when that channel is not
-    pertinent, the missing node is independently NLI-checked against the shared
-    bridge evidence. Missing/unavailable NLI fails closed to
-    ``not_demonstrated``.
+    student node must cover both bounds). Each concrete equation uses a
+    symbolic confirm/veto over bridge equations. Other node shapes fail closed
+    to ``not_demonstrated``.
     """
-    thresholds = params or getattr(adjudicator, "params", None) or NLIParams()
     student_by_key = {node.canonical_key: node for node in student.nodes}
     reference_by_key = {node.canonical_key: node for node in reference.nodes}
     predecessor_sets, successor_sets = _path_neighbors(reference)
@@ -107,29 +99,15 @@ def contraction_verdicts(
         bridge = _bridge(student, student_by_key[predecessor_key], student_by_key[successor_key])
         if bridge is None:
             continue
-        student_node_ids, evidence_spans, bridge_provenance, premise = bridge
+        student_node_ids, evidence_spans, bridge_provenance = bridge
         for missing_key in missing_keys:
             ref_node = reference_by_key[missing_key]
             entailment: float | None = None
             symbolic_decision = _symbolic_equation_decision(ref_node, evidence_spans)
-            decision_channel: DecisionChannel = "nli"
+            decision_channel: DecisionChannel = "unproved"
             demonstrated = symbolic_decision is True
             if symbolic_decision is not None:
                 decision_channel = "symbolic_equivalent" if symbolic_decision else "symbolic_veto"
-            elif adjudicator is not None:
-                try:
-                    result = adjudicator.classify(
-                        premise=premise,
-                        hypothesis=_reference_surface(ref_node),
-                    )
-                except Exception:  # model/import/runtime unavailability fails closed
-                    result = None
-                if result is not None:
-                    entailment = result.entailment
-                    demonstrated = (
-                        result.entailment >= thresholds.min_entailment
-                        and result.contradiction <= thresholds.max_contradiction
-                    )
             verdicts[missing_key] = ContractionVerdict(
                 canonical_key=missing_key,
                 kind=(
@@ -194,7 +172,7 @@ def _bridge(
     student: CanonicalGraph,
     predecessor: CanonicalNode,
     successor: CanonicalNode,
-) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], str] | None:
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None:
     bridging_edges = tuple(
         edge
         for edge in student.edges
@@ -216,19 +194,14 @@ def _bridge(
     provenance = tuple(
         sorted(f"{edge.from_key}->{edge.to_key} ({edge.provenance})" for edge in bridging_edges)
     )
-    premise = "\n".join((*evidence_spans, *provenance))
-    return student_node_ids, evidence_spans, provenance, premise
-
-
-def _reference_surface(node: CanonicalNode) -> str:
-    return node.symbolic or next(iter(node.evidence_spans), node.canonical_key)
+    return student_node_ids, evidence_spans, provenance
 
 
 def _symbolic_equation_decision(
     reference_node: CanonicalNode,
     evidence_spans: tuple[str, ...],
 ) -> bool | None:
-    """Return symbolic confirm/veto, or ``None`` when NLI must decide."""
+    """Return symbolic confirm/veto, or ``None`` when no proof is available."""
     reference = reference_node.symbolic
     if reference_node.node_type != "equation" or not reference or "=" not in reference:
         return None
@@ -261,7 +234,7 @@ def _equation_fragments(evidence_spans: tuple[str, ...]) -> tuple[str, ...]:
     Bridge evidence embeds algebra in prose ("... to get v2 = v1/(A1*A2) then
     just used the given value"), so each side is trimmed to its longest
     sympify-parseable run: suffixes for the left side, prefixes for the right.
-    A side with no parseable run drops the fragment (fail-closed to NLI).
+    A side with no parseable run drops the fragment (fail closed).
     """
     fragments: list[str] = []
     for text in evidence_spans:
@@ -332,7 +305,7 @@ def _parse_equation_pair(
         return None
     # A fragment side that is a bare symbol ABSENT from the reference equation
     # is almost certainly a trimmed prose word ("v2 = the ..."), not algebra —
-    # drop the fragment so NLI decides instead of a spurious veto.
+    # drop the fragment instead of producing a spurious veto.
     reference_names = set(_SYMBOL_RE.findall(reference))
     for expression in parsed[:2]:
         if isinstance(expression, sympy.Symbol) and str(expression) not in reference_names:

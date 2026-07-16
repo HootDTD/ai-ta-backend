@@ -45,7 +45,6 @@ from apollo.graph_compare.soundness import (
     is_misconception_key,
     soundness_score,
 )
-from apollo.resolution.nli_adjudicator import NLIAdjudicator
 
 # The constant for the apollo_graph_comparison_runs.comparison_version column. A
 # re-run at the same version is a supersede (UNIQUE constraint). Single source of
@@ -91,7 +90,7 @@ def grade_attempt(
     reference_graph: ReferenceGraph,
     *,
     bank_applicable: bool = True,
-    contraction_adjudicator: NLIAdjudicator | None = None,
+    contraction_enabled: bool = False,
 ) -> GradeResult:
     """Grade a student's canonical graph against the reference (§6.4 10/11/13).
 
@@ -105,13 +104,12 @@ def grade_attempt(
     # Step 10 — coverage (max over declared paths).
     verdicts_by_path: dict[int, dict[str, ContractionVerdict]] = {}
     contracted_keys_by_path: dict[int, frozenset[str]] = {}
-    if contraction_adjudicator is not None:
+    if contraction_enabled:
         for path_index, path in enumerate(reference_graph.paths):
             verdicts = contraction_verdicts(
                 student_canonical,
                 reference_graph,
                 path,
-                contraction_adjudicator,
             )
             verdicts_by_path[path_index] = verdicts
             contracted_keys_by_path[path_index] = frozenset(

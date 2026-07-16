@@ -189,7 +189,7 @@ def test_reference_solution_display_name_from_label():
     by_key = _by_key(reference_solution_to_entities(problem))
     # display_name comes from content.label for every labeled reference step —
     # equations, conditions, AND the conceptual procedure/simplification steps
-    # (the NLI-tier label backfill authored a content.label on all of them).
+    # (the legacy label backfill authored a content.label on all of them).
     assert by_key["eq.continuity"].display_name == "Continuity (mass conservation)"
     assert (
         by_key["proc.plan_apply_continuity"].display_name

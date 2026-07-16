@@ -1,5 +1,4 @@
-"""Re-export shim — embedding primitives now live in apollo.resolution.embedding
-(neutral module so the NLI resolver can import them without a clarification cycle)."""
+"""Re-export shim — embedding primitives now live in apollo.resolution.embedding."""
 
 from apollo.resolution.embedding import (  # noqa: F401
     CandidateEmbeddingCache,

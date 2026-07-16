@@ -48,7 +48,6 @@ from apollo.overseer.misconception_detector.types import MergeOutcome
 from apollo.overseer.topic_score import TopicScoreResult
 from apollo.overseer.topic_score_serialize import serialize_topic_score
 from apollo.resolution.candidates import METHOD_CONFIDENCE_CAP
-from apollo.resolution.nli_config import active_nli_model, nli_enabled
 from apollo.resolution.result import ResolutionResult
 
 _LOG = logging.getLogger(__name__)
@@ -279,7 +278,6 @@ def _versions_block(
     return {
         "grader": grader,
         "reference_graph_hash": reference_graph_hash,
-        "nli_model": active_nli_model() if nli_enabled() else None,
         "weights": {"w_n": weights.w_n, "w_e": weights.w_e, "p": weights.p},
     }
 

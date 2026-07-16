@@ -1,7 +1,6 @@
 """Tests for the §10 composite-gate settings (config/settings.py).
 
-Mirrors ``apollo/resolution/tests/test_nli_config.py``'s pattern for
-``apollo_nli_misc_positive_certify``: default-OFF/default-value pins, truthy/
+Pins default-OFF/default-value behavior plus truthy/
 non-truthy acceptance sets, and the malformed-value fallback.
 """
 

@@ -4,8 +4,8 @@ Meaning-matching (cosine over text-embedding-3-large) maps student surface text
 onto candidate nodes. Candidate surface embeddings are precomputed and memoized
 per candidate-set hash so callers pay one batched embed per turn.
 
-These primitives are intentionally neutral — the NLI resolver and the
-clarification loop both import from this module.
+These primitives are intentionally neutral so resolution and clarification
+can import from this module without a cycle.
 """
 
 from __future__ import annotations

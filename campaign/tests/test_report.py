@@ -81,10 +81,8 @@ def _sample_config() -> CampaignConfig:
     return CampaignConfig(
         axis_weights={"a": 1.0},
         letter_bands=((90, "A"),),
-        nli_model="cross-encoder/nli-deberta-v3-large",
-        nli_params=CampaignConfig.capture_live().nli_params,
         abstention_thresholds={"unresolved_rate": 0.5},
-        flags={"APOLLO_NLI_ENABLED": True},
+        flags={"APOLLO_GRAPH_SIM_SHADOW_ENABLED": True},
     )
 
 

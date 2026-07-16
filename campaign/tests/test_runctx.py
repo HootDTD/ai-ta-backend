@@ -14,7 +14,6 @@ from campaign.runctx import RunContext
 
 @pytest.fixture(autouse=True)
 def _clean_config_sha_env(monkeypatch):
-    monkeypatch.delenv("APOLLO_NLI_ENABLED", raising=False)
     monkeypatch.delenv("APOLLO_CONFIG_SHA", raising=False)
     yield
 
@@ -68,9 +67,9 @@ def test_gate_phase_succeeds_when_live_env_matches_frozen_snapshot(tmp_path):
 
 
 def test_gate_phase_refuses_to_run_when_live_env_diverges(tmp_path, monkeypatch):
+    monkeypatch.delenv("APOLLO_CLARIFICATION_ENABLED", raising=False)
     RunContext.create("run-gate-bad", "tune", out_root=tmp_path)
 
-    monkeypatch.setenv("APOLLO_NLI_MIN_ENTAILMENT", "0.01")
-
+    monkeypatch.setenv("APOLLO_CLARIFICATION_ENABLED", "1")
     with pytest.raises(ConfigDivergedError):
         RunContext.create("run-gate-bad", "gate", out_root=tmp_path)
