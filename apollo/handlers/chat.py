@@ -287,6 +287,13 @@ async def _maybe_intent_confirmation(
     )
     if verdict.intent == "teaching":
         return None
+    if verdict.intent == "off_topic":
+        _LOG.info(
+            "apollo_intent_off_topic_fallthrough intent=%s confidence=%.3f",
+            verdict.intent,
+            verdict.confidence,
+        )
+        return None
     if verdict.confidence < INTENT_CONFIDENCE_THRESHOLD:
         return None
 

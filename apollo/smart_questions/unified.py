@@ -239,15 +239,20 @@ TARGET SELECTION:
   attempted only with a NARROWER diagnostic probe, never by repeating the clause text, unless it is
   impossible to proceed without resolving a prerequisite. Do not repeat a prior question; advance
   or narrow it.
-- action=done ONLY when every node is understood.
+- If the student explicitly says they do not know or cannot recall what Apollo asked, never ask for
+  that same information again, even with different wording. Probe a genuinely different aspect or
+  clause; if no productive alternative remains, use action=done.
+- Otherwise, action=done ONLY when every node is understood.
 - Map the target to the best public_question_part and return its zero-based index. This public
   clause is the safe fallback if your drafted wording is rejected.
 
 STUDENT-FACING TURN:
-- Sound like an attentive classmate, not a blank chatbot. Briefly synthesize what you now
-  understand, then ask exactly one concise question that advances an unmet requirement.
-- Do NOT restate the student's last sentence or ask them merely to elaborate on it. Synthesize
-  across evidence, then move forward. Do not repeat misspellings.
+- Sound like an attentive classmate, not a blank chatbot. You may begin with a very short
+  connective acknowledgement that signals the student was heard, then ask exactly one concise
+  question that advances an unmet requirement. Never make the acknowledgement a multi-clause
+  restatement or summary of the student's words.
+- Do NOT restate the student's last sentence or ask them merely to elaborate on it. Move forward.
+  Do not repeat misspellings.
 - Never copy a full public question clause back after the student has attempted it. Advance to an
   unattempted clause, or ask a narrower diagnostic question about an attempted clause.
 - acknowledgement may assert only information already present in student messages. question may
@@ -691,6 +696,8 @@ class _DraftValidation:
     reason: str | None
     offending_tokens: tuple[str, ...] = ()
     broad_reask_index: int | None = None
+    acknowledgement_rejection: str | None = None
+    acknowledgement_offending_tokens: tuple[str, ...] = ()
 
 
 def _validate_draft(
@@ -740,17 +747,22 @@ def _validate_draft(
     candidate_ack = re.sub(
         r"\s+", " ", acknowledgement if isinstance(acknowledgement, str) else ""
     ).strip()
-    acknowledgement_is_unsafe = candidate_ack and (
-        "?" in candidate_ack
-        or _leaks_private_content(
+    acknowledgement_rejection: str | None = None
+    acknowledgement_offending_tokens: tuple[str, ...] = ()
+    if candidate_ack and "?" in candidate_ack:
+        acknowledgement_rejection = "question_mark"
+    elif candidate_ack:
+        ack_leaks, acknowledgement_offending_tokens = _private_content_violations(
             candidate_ack,
             reference_graph=reference_graph,
             public_text="",
             student_messages=student_messages,
         )
-        or _echoes_student(candidate_ack, student_messages)
-    )
-    if acknowledgement_is_unsafe:
+        if ack_leaks:
+            acknowledgement_rejection = "vocabulary"
+        elif _echoes_student(candidate_ack, student_messages):
+            acknowledgement_rejection = "echo"
+    if acknowledgement_rejection is not None:
         candidate_ack = ""
         if reason is None:
             reason = "unsafe_acknowledgement"
@@ -760,6 +772,8 @@ def _validate_draft(
         reason=reason,
         offending_tokens=offending_tokens,
         broad_reask_index=broad_reask_index,
+        acknowledgement_rejection=acknowledgement_rejection,
+        acknowledgement_offending_tokens=acknowledgement_offending_tokens,
     )
 
 
@@ -771,7 +785,8 @@ def _retry_feedback(validation: _DraftValidation, prior_questions: Sequence[str]
             "Do not repeat a public clause the student already attempted; ask a narrower or new question."
         ),
         "unsafe_acknowledgement": (
-            "The acknowledgement may use student words only and may not contain a question."
+            "Keep the acknowledgement short, do not restate the student's sentences, and do not "
+            "include a question mark."
         ),
     }
     reason = validation.reason or "rejected_draft"
@@ -980,6 +995,12 @@ def _bounded_debug_tokens(validation: _DraftValidation | None) -> str:
     return _bounded_debug_text(", ".join(validation.offending_tokens)) or ""
 
 
+def _bounded_debug_ack_tokens(validation: _DraftValidation | None) -> str:
+    if validation is None:
+        return ""
+    return _bounded_debug_text(", ".join(validation.acknowledgement_offending_tokens)) or ""
+
+
 def _log_debug_cycle(
     *,
     draft: dict[str, Any],
@@ -996,16 +1017,24 @@ def _log_debug_cycle(
     redraft_reason = redraft_validation.reason if redraft_validation is not None else None
     _LOG.info(
         "apollo_unified_question_debug draft_ack=%r draft_question=%r "
-        "draft_rejection=%s draft_offending_tokens=%s redraft_ack=%r redraft_question=%r "
-        "redraft_validation=%s redraft_offending_tokens=%s final_question=%r target=%s clauses=%s",
+        "draft_rejection=%s draft_offending_tokens=%s draft_ack_rejection=%s "
+        "draft_ack_offending_tokens=%s redraft_ack=%r redraft_question=%r "
+        "redraft_validation=%s redraft_offending_tokens=%s redraft_ack_rejection=%s "
+        "redraft_ack_offending_tokens=%s final_question=%r target=%s clauses=%s",
         _bounded_debug_text(draft.get("acknowledgement")),
         _bounded_debug_text(draft.get("question")),
         draft_reason,
         _bounded_debug_tokens(draft_validation),
+        draft_validation.acknowledgement_rejection if draft_validation is not None else None,
+        _bounded_debug_ack_tokens(draft_validation),
         _bounded_debug_text(redraft.get("acknowledgement")) if redraft is not None else None,
         _bounded_debug_text(redraft.get("question")) if redraft is not None else None,
         "accepted" if redraft_validation is not None and redraft_reason is None else redraft_reason,
         _bounded_debug_tokens(redraft_validation),
+        redraft_validation.acknowledgement_rejection
+        if redraft_validation is not None
+        else None,
+        _bounded_debug_ack_tokens(redraft_validation),
         _bounded_debug_text(final_question),
         target,
         list(clause_statuses),

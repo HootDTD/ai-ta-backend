@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select as sa_select
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -240,6 +241,97 @@ async def test_unified_questioning_path_bypasses_kg_drafter(db_session_attempt, 
     assert result["question_target"] == "step_2"
     assert mock_draft.call_count == 0
     assert "kg_summary" not in planner.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_high_confidence_off_topic_falls_through_to_teaching(
+    db_session_attempt, monkeypatch, caplog
+):
+    monkeypatch.setenv("APOLLO_UNIFIED_QUESTIONING_ENABLED", "1")
+    db, session_id, _ = db_session_attempt
+    store = _fake_store()
+    patches = _patches(store)
+    patches[3] = patch(
+        "apollo.handlers.chat.classify_intent",
+        return_value=IntentVerdict(intent="off_topic", confidence=0.99, reason=""),
+    )
+    planner = AsyncMock(
+        return_value=QuestionDecision(
+            action="ask", question="What would you try next?", target_node_id="step_2"
+        )
+    )
+
+    with ExitStack() as stack:
+        for item in patches:
+            stack.enter_context(item)
+        stack.enter_context(patch("apollo.handlers.chat.plan_next_question", new=planner))
+        with caplog.at_level("INFO"):
+            result = await chat.handle_chat(
+                db=db, neo=MagicMock(), session_id=session_id, message="noy sure"
+            )
+
+    refreshed = (
+        await db.execute(sa_select(ApolloSession).where(ApolloSession.id == session_id))
+    ).scalar_one()
+    messages = (
+        (
+            await db.execute(
+                sa_select(Message)
+                .where(Message.session_id == session_id)
+                .order_by(Message.turn_index)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    fallthrough_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("apollo_intent_off_topic_fallthrough")
+    ]
+
+    assert result["apollo_reply"] == "What would you try next?"
+    assert "intent_pending" not in result
+    assert refreshed.pending_intent is None
+    assert [(item.role, item.content) for item in messages] == [
+        ("student", "noy sure"),
+        ("apollo", "What would you try next?"),
+    ]
+    planner.assert_awaited_once()
+    assert fallthrough_logs == [
+        "apollo_intent_off_topic_fallthrough intent=off_topic confidence=0.990"
+    ]
+    assert "noy sure" not in fallthrough_logs[0]
+
+
+@pytest.mark.asyncio
+async def test_high_confidence_done_still_uses_confirmation_gate(
+    db_session_attempt, monkeypatch
+):
+    monkeypatch.setenv("APOLLO_UNIFIED_QUESTIONING_ENABLED", "1")
+    db, session_id, _ = db_session_attempt
+    store = _fake_store()
+    patches = _patches(store)
+    patches[3] = patch(
+        "apollo.handlers.chat.classify_intent",
+        return_value=IntentVerdict(intent="done", confidence=0.99, reason=""),
+    )
+    planner = AsyncMock()
+
+    with ExitStack() as stack:
+        for item in patches:
+            stack.enter_context(item)
+        stack.enter_context(patch("apollo.handlers.chat.plan_next_question", new=planner))
+        result = await chat.handle_chat(
+            db=db, neo=MagicMock(), session_id=session_id, message="I am finished."
+        )
+
+    refreshed = (
+        await db.execute(sa_select(ApolloSession).where(ApolloSession.id == session_id))
+    ).scalar_one()
+    assert result["intent_pending"] == {"intent": "done", "confidence": 0.99}
+    assert refreshed.pending_intent == "done"
+    planner.assert_not_awaited()
 
 
 @pytest.mark.asyncio
