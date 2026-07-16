@@ -2,9 +2,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from apollo.persistence.models import QuestionTally, ReferenceQuestionOpportunity
 from apollo.schemas.problem import Problem
 from apollo.smart_questions import controller
-from apollo.smart_questions.unified import NodeCoverage, UnifiedQuestionResult
+from apollo.smart_questions.unified import EvidenceQuote, TallyUpdate, UnifiedQuestionResult
 
 
 def _problem() -> Problem:
@@ -13,7 +14,7 @@ def _problem() -> Problem:
             "id": "p1",
             "concept_id": "c1",
             "difficulty": "intro",
-            "problem_text": "Explain x.",
+            "problem_text": "Explain x?",
             "reference_solution": [
                 {
                     "step": 1,
@@ -43,34 +44,38 @@ class _Result:
 
 
 class _DB:
-    def __init__(self, rows):
-        self.rows = rows
+    def __init__(self, *results):
+        self.results = list(results)
         self.added = []
+        self.statements = []
 
     async def execute(self, statement):
-        return _Result(self.rows)
+        self.statements.append(statement)
+        return _Result(self.results.pop(0))
 
     def add(self, row):
         self.added.append(row)
 
 
-def _ask(state="missing"):
+def _ask(*updates):
     return UnifiedQuestionResult(
-        coverage=(NodeCoverage("def_x", state, 0.2, "x matters"),),
+        tally_updates=tuple(updates),
         action="ask",
         target_node_id="def_x",
-        reply="What do you mean by x?",
+        reply="That helps. What do you mean by x?",
         question="What do you mean by x?",
     )
 
 
 @pytest.mark.asyncio
-async def test_controller_records_first_selected_question(monkeypatch):
-    db = _DB([])
+async def test_absent_rows_default_missing_and_ask_persists_tally_and_audit(monkeypatch):
+    db = _DB([], [])
 
     async def evaluate(**kwargs):
-        assert kwargs["question_history"] == ()
-        return _ask()
+        assert kwargs["tally_state"][0].status == "missing"
+        assert kwargs["tally_state"][0].times_asked == 0
+        assert kwargs["budget"].questions_asked == 0
+        return _ask(TallyUpdate("def_x", "tentative", EvidenceQuote(0, "x matters"), False))
 
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     result = await controller.plan_next_question(
@@ -79,88 +84,37 @@ async def test_controller_records_first_selected_question(monkeypatch):
         session_id=3,
         problem=_problem(),
         transcript=[("student", "x matters")],
-        turn_index=4,
+        turn_index=0,
     )
-    assert result.target_node_id == "def_x"
-    assert len(db.added) == 1
-    assert db.added[0].asked_turn == 5
+    tally = next(row for row in db.added if isinstance(row, QuestionTally))
+    audit = next(row for row in db.added if isinstance(row, ReferenceQuestionOpportunity))
+    assert result.question == "That helps. What do you mean by x?"
+    assert tally.status == "tentative"
+    assert tally.evidence == [{"turn_id": 0, "quote": "x matters"}]
+    assert tally.student_declined is False
+    assert tally.times_asked == 1
+    assert tally.last_asked_turn == 1
+    assert audit.question == "What do you mean by x?"
 
 
 @pytest.mark.asyncio
-async def test_controller_ledger_stores_bare_question_not_acknowledgement(monkeypatch):
-    db = _DB([])
-
-    async def evaluate(**kwargs):
-        return UnifiedQuestionResult(
-            coverage=(NodeCoverage("def_x", "missing", 0.0, None),),
-            action="ask",
-            target_node_id="def_x",
-            reply="I understand your first point. What do you mean by x?",
-            question="What do you mean by x?",
-        )
-
-    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
-    result = await controller.plan_next_question(
-        db,
-        attempt_id=2,
-        session_id=3,
-        problem=_problem(),
-        transcript=[("student", "x matters")],
-        turn_index=4,
-    )
-
-    assert result.question == "I understand your first point. What do you mean by x?"
-    assert db.added[0].question == "What do you mean by x?"
-
-
-@pytest.mark.asyncio
-async def test_controller_reuses_row_when_latest_answer_is_insufficient(monkeypatch):
-    row = SimpleNamespace(
-        state="asked_waiting",
-        answered_turn=None,
+async def test_round_trip_budget_and_increment_target_only(monkeypatch):
+    target = SimpleNamespace(
         reference_node_id="def_x",
-        question="What is x?",
-        asked_turn=5,
+        status="missing",
+        evidence=[],
+        student_declined=True,
+        times_asked=2,
+        last_asked_turn=3,
     )
-    db = _DB([row])
+    db = _DB([target], [])
 
     async def evaluate(**kwargs):
-        history = kwargs["question_history"]
-        assert history[0].question == "What is x?"
-        assert history[0].state == "asked_waiting"
-        return _ask("tentative")
-
-    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
-    result = await controller.plan_next_question(
-        db,
-        attempt_id=2,
-        session_id=3,
-        problem=_problem(),
-        transcript=[("student", "x matters")],
-        turn_index=6,
-    )
-    assert result.action == "ask"
-    assert db.added == []
-    assert row.question == "What do you mean by x?"
-    assert row.asked_turn == 7
-    assert row.state == "asked_waiting"
-    assert row.answered_turn is None
-
-
-@pytest.mark.asyncio
-async def test_controller_closes_previous_target_when_advancing(monkeypatch):
-    previous = SimpleNamespace(
-        state="asked_waiting",
-        answered_turn=None,
-        reference_node_id="old",
-        question="Old question?",
-        asked_turn=3,
-    )
-    db = _DB([previous])
-    monkeypatch.setattr(controller, "evaluate_and_ask", lambda **kwargs: None)
-
-    async def evaluate(**kwargs):
-        return _ask()
+        state = kwargs["tally_state"][0]
+        assert state.student_declined is True
+        assert state.times_asked == 2
+        assert kwargs["budget"].questions_asked == 2
+        return _ask(TallyUpdate("def_x", "understood", EvidenceQuote(0, "x matters"), False))
 
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     await controller.plan_next_question(
@@ -171,37 +125,98 @@ async def test_controller_closes_previous_target_when_advancing(monkeypatch):
         transcript=[("student", "x matters")],
         turn_index=4,
     )
-    assert previous.state == "answered"
-    assert previous.answered_turn == 4
-    assert len(db.added) == 1
+    assert target.status == "understood"
+    assert target.student_declined is False
+    assert target.times_asked == 3
+    assert target.last_asked_turn == 5
 
 
 @pytest.mark.asyncio
-async def test_controller_marks_waiting_row_answered_on_done(monkeypatch):
+async def test_invalid_evidence_drops_update_and_preserves_prior(monkeypatch, caplog):
     row = SimpleNamespace(
-        state="asked_waiting",
-        answered_turn=None,
         reference_node_id="def_x",
-        question="What is x?",
-        asked_turn=5,
+        status="tentative",
+        evidence=[{"turn_id": 0, "quote": "old quote"}],
+        student_declined=False,
+        times_asked=1,
+        last_asked_turn=1,
     )
-    already_answered = SimpleNamespace(
-        state="answered",
-        answered_turn=2,
-        reference_node_id="old",
-        question="Old?",
+    db = _DB([row], [])
+    monkeypatch.setattr(
+        controller,
+        "evaluate_and_ask",
+        lambda **kwargs: _async_result(
+            UnifiedQuestionResult(
+                (TallyUpdate("def_x", "understood", EvidenceQuote(0, "invented"), True),),
+                "done",
+                None,
+                None,
+                None,
+            )
+        ),
+    )
+    with caplog.at_level("WARNING"):
+        result = await controller.plan_next_question(
+            db,
+            attempt_id=2,
+            session_id=3,
+            problem=_problem(),
+            transcript=[("student", "new words")],
+            turn_index=2,
+        )
+    assert result.action == "done"
+    assert row.status == "tentative"
+    assert row.evidence == [{"turn_id": 0, "quote": "old quote"}]
+    assert row.student_declined is False
+    assert "apollo_question_tally_invalid_evidence" in caplog.text
+
+
+async def _async_result(value):
+    return value
+
+
+@pytest.mark.asyncio
+async def test_reference_opportunity_state_is_not_input_but_still_written(monkeypatch):
+    audit = SimpleNamespace(
+        reference_node_id="def_x",
+        state="asked_waiting",
+        question="Old question?",
         asked_turn=1,
+        answered_turn=None,
     )
-    db = _DB([row, already_answered])
+    db = _DB([], [audit])
 
     async def evaluate(**kwargs):
-        return UnifiedQuestionResult(
-            coverage=(NodeCoverage("def_x", "understood", 1, "x"),),
-            action="done",
-            target_node_id=None,
-            reply=None,
-            question=None,
-        )
+        assert "question_history" not in kwargs
+        return _ask()
+
+    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
+    await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x")],
+        turn_index=2,
+    )
+    assert audit.question == "What do you mean by x?"
+    assert audit.asked_turn == 3
+    assert audit.state == "asked_waiting"
+
+
+@pytest.mark.asyncio
+async def test_done_closes_legacy_waiting_audit(monkeypatch):
+    audit = SimpleNamespace(
+        reference_node_id="def_x",
+        state="asked_waiting",
+        question="Old question?",
+        asked_turn=1,
+        answered_turn=None,
+    )
+    db = _DB([], [audit])
+
+    async def evaluate(**kwargs):
+        return UnifiedQuestionResult((), "done", None, None, None)
 
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     result = await controller.plan_next_question(
@@ -210,10 +225,60 @@ async def test_controller_marks_waiting_row_answered_on_done(monkeypatch):
         session_id=3,
         problem=_problem(),
         transcript=[("student", "x")],
-        turn_index=6,
+        turn_index=2,
     )
     assert result.action == "done"
-    assert row.state == "answered"
-    assert row.answered_turn == 6
-    assert already_answered.answered_turn == 2
-    assert db.added == []
+    assert audit.state == "answered"
+    assert audit.answered_turn == 2
+
+
+def test_controller_defensive_tally_decoders_and_validation():
+    node = SimpleNamespace(
+        node_id="fallback",
+        content=SimpleNamespace(model_dump=lambda **kwargs: {}),
+    )
+    assert controller._node_label(node) == "fallback"
+    assert controller._evidence_rows(None) == ()
+    assert controller._evidence_rows([None, {"turn_id": 1, "quote": "yes"}]) == (
+        EvidenceQuote(1, "yes"),
+    )
+    row = SimpleNamespace(
+        reference_node_id="fallback",
+        status="invalid",
+        evidence=[],
+        student_declined=False,
+        times_asked=0,
+        last_asked_turn=None,
+    )
+    assert (
+        controller._build_tally_state(SimpleNamespace(nodes=[node]), [row])[0].status == "missing"
+    )
+    assert controller._valid_update_evidence(TallyUpdate("fallback", "missing"), [])
+    assert not controller._valid_update_evidence(TallyUpdate("fallback", "understood"), [])
+
+
+@pytest.mark.asyncio
+async def test_advancing_target_closes_previous_legacy_audit(monkeypatch):
+    previous = SimpleNamespace(
+        reference_node_id="old",
+        state="asked_waiting",
+        question="Old question?",
+        asked_turn=1,
+        answered_turn=None,
+    )
+    db = _DB([], [previous])
+
+    async def evaluate(**kwargs):
+        return _ask()
+
+    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
+    await controller.plan_next_question(
+        db,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x")],
+        turn_index=2,
+    )
+    assert previous.state == "answered"
+    assert previous.answered_turn == 2

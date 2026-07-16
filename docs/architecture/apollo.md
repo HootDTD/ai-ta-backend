@@ -13,7 +13,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-07-15
+last_verified: 2026-07-16
 stub: false
 ---
 
@@ -76,39 +76,44 @@ terms.
 The default-off `APOLLO_UNIFIED_QUESTIONING_ENABLED` path replaces the per-turn dumb reply
 with one structured-output call in `smart_questions.unified`: GPT-5.2 (overridable through
 `APOLLO_UNIFIED_QUESTION_MODEL`, reasoning default `medium` and overridable through
-`APOLLO_UNIFIED_QUESTION_REASONING_EFFORT`) recomputes an evidence-backed learner tally against
-**every** authored reference node and writes Apollo's next reply in the same pass. Each node is
-`understood`, `tentative`, `missing`, or `conflicting`; every non-missing state must cite an exact
-student-message span or it deterministically falls back to `missing`. The same call recomputes an
-`answered` / `attempted` / `unattempted` status for every public-problem clause from student
-messages only. Apollo selects a high-value unresolved R-graph node, may use a very short connective
-acknowledgement, and advances to an unmet public-problem requirement instead of restating or
-summarizing the student's response. When a student explicitly says they do not know or cannot
-recall what Apollo asked, the prompt forbids asking for that same substance again, even reworded:
-Apollo must probe a genuinely different aspect or clause, or choose `action=done` when no productive
-alternative remains. The `medium` reasoning default improves clause-coverage judgment at an accepted
-latency and token-cost increase; the environment override remains available. The private/output
-boundary allows subject wording from the public problem or student messages plus a vendored,
-dependency-free allowlist of common conversational English. Safe-token membership also compares
-one lightly normalized suffix form (`ing`, `ed`, `es`, or `s`, with a minimum three-character
-stem), reducing false rejections for ordinary inflections without adding any new rejection path.
-Digits, uncommon proper nouns, and technical terms remain blocked unless student-visible; the
-private-string containment guard is unchanged, so multi-word rubric phrases remain blocked even
-when composed entirely of common words. The accepted residual risk is that a single common word
-also present in a private rubric (for example, `change`) may be used: one common token cannot
-reproduce rubric content, while phrase containment protects compositions. A deterministic echo
-guard still rejects unsafe acknowledgements and unsafe, repeated, or malformed questions.
-A rejected student-facing draft gets exactly one structured redraft call with the prior JSON and
-the deterministic rejection constraint; only a rejected redraft question reaches the canned
-chain. Decision logs use `_retry_recovered` when the redraft question is served (including when
-only its unsafe acknowledgement is dropped) and `_retry_failed` only when the final question is a
-canned fallback. Question vocabulary may reuse words from prior Apollo transcript turns because
-those words are already student-visible; acknowledgements retain the stricter boundary that
-excludes public-problem and prior-Apollo vocabulary, while gaining only the common-English and
-morphological allowances. Invalid or missing clause-status entries decode as
-`unattempted`. A public-clause re-ask guard also detects when a generated question merely copies a
-problem clause the student has already meaningfully attempted, without changing the existing
-string-overlap heuristics.
+`APOLLO_UNIFIED_QUESTION_REASONING_EFFORT`) reads the complete private reference graph and a
+durable per-node `tally_state`, updates only judgments changed by the newest student turn, and
+writes Apollo's next reply in the same pass. Migration 047 persists one
+`apollo_question_tally` row per `(attempt_id, reference_node_id)`: status
+(`understood|tentative|conflicting|missing`), append-only `{turn_id, quote}` evidence,
+`student_declined`, `times_asked`, and `last_asked_turn`. Missing rows are supplied to the model as
+`missing`/unasked. Code validates each cited quote as a verbatim substring of the referenced
+student turn before changing a row; invalid updates are logged and the prior state is preserved.
+The transcript is assembled from served `apollo_messages` text, so what the student saw is always
+the authoritative input on the next turn.
+
+The prompt objective is elicitation: maximize what the student reveals, and after a salient public
+clause is covered, open untouched private-node territory with a naive question in ordinary words.
+The model owns semantic targeting and may use ordinary words the student has not said. It must not
+re-ask a node already `understood` or explicitly declined unless the student volunteers new
+information. `action=done` is honored even with missing nodes when the model judges coverage
+sufficient, the student signals done, or little productive territory remains. A hard per-attempt
+ceiling, `APOLLO_UNIFIED_QUESTION_CAP` (default 8), derives spend from `SUM(times_asked)`; at the
+ceiling the call is skipped and `done` is returned. There is no coverage-floor override.
+
+The former guard/retry/fallback policy is deleted: no echo rejection, invented-vocabulary
+allowlist, broad-clause re-ask block, repeated-question block, reject/retry policy feedback, or
+canned-question chain remains. Repeated normalized Apollo questions are served and recorded as
+`repeated_question_served=true`, making repetition a metric rather than a writer override.
+`apollo_reference_question_opportunities` remains a write-only latest-question audit ledger for
+continuity; none of its rows drive targeting.
+
+Privacy is enforced by one output belt over the complete acknowledgement plus question. It blocks
+only (1) a digit-bearing token absent from both the public problem and student messages, (2) a
+private-reference token of at least three characters that is absent from public/student text and
+not in the small inline function-word set, and (3) a normalized private string of at least four
+characters contained in the reply but absent from public/student text. This deliberately permits
+safe semantic paraphrases and ordinary invented English; accepted residual risk is that a
+paraphrase containing none of those private atoms can communicate a relationship implied by the
+rubric. A belt hit or malformed shape gets exactly one regeneration using an append-only message
+suffix that names only the forbidden atoms/classes. A second belt hit serves the verbatim public
+clause mapped to the first non-understood node and records `belt_exhausted`; no loop or canned chain
+exists.
 
 The cheap intent classifier retains `off_topic` in its taxonomy and prompt for observability, but
 that verdict never enters the confirmation gate, regardless of confidence. Chat emits one
@@ -116,38 +121,19 @@ transcript-free INFO line with intent and confidence and falls through to the te
 unified questioner has the full context. Confirmation behavior for `done`, `restart`, `next`,
 `return_to_hoot`, and `help` is unchanged.
 
-Question dedup is attempt-wide: normalized Apollo questions extracted from the full transcript are
-unioned with the per-node ledger, so overwriting a node's latest-question row cannot make an older
-question eligible again. The same combined history drives every canned fallback check. The chain
-still prefers an `unattempted` public clause, then an answer-free narrow probe for an `attempted`
-clause, then the generic fallback. If every canned option has already appeared, it chooses the
-least-recently-asked option that is not the immediately preceding Apollo question, preventing
-consecutive canned repeats while keeping the database schema unchanged.
-
 The ordinary decision log remains aggregate-only and contains no transcript or private content.
 `APOLLO_UNIFIED_QUESTION_DEBUG_LOG` is a separate default-OFF staging diagnostic that emits one
-bounded (300-character free-text and offending-token fields) draft → rejection → redraft cycle
-line per turn, including raw student-facing drafts, guard reasons/tokens, acknowledgement rejection
-sub-causes (`question_mark`, `vocabulary`, or `echo`) and vocabulary tokens, final question, target,
-and clause statuses. Enabling
+bounded (300-character free-text) draft → belt verdict → regenerate cycle line per turn, including
+the draft, offending belt atoms, regenerate text/verdict, and final served text. Enabling
 it knowingly suspends the no-private-content logging boundary because rejected drafts may contain
-private rubric material; production must keep it off. The retry preserves the first call's exact
+private rubric material; production must keep it off. Regeneration preserves the first call's exact
 system/payload message prefix and appends only the raw assistant JSON and guard feedback. This
 allows automatic GPT-5.x prompt caching for eligible shared prefixes (at least 1024 tokens), which
 affects latency and cost only—not outputs or error rates. Stable payload fields precede turn-varying
-history and transcript fields to preserve cross-turn cache prefixes.
-
-The `apollo_reference_question_opportunities` unique key remains one row per
-`(attempt_id, reference_node_id)`, but the row is now the node's latest-question ledger rather
-than a terminal one-shot opportunity. Its `question` column stores the final validated bare
-question, excluding any acknowledgement included in the student-facing reply, so repeat checks
-compare like with like. A fresh tally can reselect and update a tentative,
-missing, or conflicting node after an insufficient answer; switching targets closes the prior
-waiting row. Chat auto-finishes only when every R-graph node is `understood`, then invokes the
-existing Done handler and UI auto-report seam. Structured decision logs expose only model,
-action, target id/state, aggregate node-tally counts, aggregate clause-status counts, and fallback
-reason (no transcript or private content). Flag OFF leaves the legacy chat and clarification paths
-unchanged.
+`tally_state`, budget, and transcript fields to preserve cross-turn cache prefixes. Structured
+decision logs expose action, target, aggregate tally counts, budget spend/cap, the bounded fallback
+reason set, and the repetition metric (no transcript or private content). Flag OFF leaves the
+legacy chat and clarification paths unchanged.
 
 **GEN-0 selector/provenance hardening (2026-07-12).** The shared
 `overseer.problem_selector.list_problems_for_concept` chokepoint validates Tier-2
