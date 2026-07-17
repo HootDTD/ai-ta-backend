@@ -35,7 +35,6 @@ from config.settings import apollo_composite_coverage_min
 #: default lives in each flag's owning module).
 _BOOLEAN_FLAG_DEFAULTS: dict[str, bool] = {
     "APOLLO_DONE_GATE_ENABLED": False,
-    "APOLLO_GRAPH_SIM_LIVE_ENABLED": False,
     "APOLLO_GRAPH_SIM_SHADOW_ENABLED": False,
     "APOLLO_LEARNER_DECAY_ENABLED": False,
     "APOLLO_LEARNER_JANITOR_ENABLED": False,

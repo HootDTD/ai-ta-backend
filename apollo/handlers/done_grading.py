@@ -129,8 +129,8 @@ class ShadowGradeResult:
     result is a silent bug we do not want) with the graph-sim candidate grade
     (``graph_sim_rubric``), the §6.7 ``calibration`` metrics (shadow-vs-OLD), and
     the §6.8 constrained ``diagnostic``. These are computed INSIDE the shadow
-    chain (only when SHADOW is on); the dormant ``APOLLO_GRAPH_SIM_LIVE_ENABLED``
-    flag (``done.py``) gates only their PROMOTION to student-facing."""
+    chain (only when SHADOW is on); the ``APOLLO_GRAPH_GRADER_LIVE`` flag
+    (``done.py``) gates only their PROMOTION to student-facing."""
 
     run_id: int
     grade: GradeResult

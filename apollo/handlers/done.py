@@ -76,28 +76,21 @@ _LOG = logging.getLogger(__name__)
 # When OFF, handle_done is byte-identical to today (the chain is never called).
 # When ON, the chain runs AFTER the OLD grade/XP/retention commit and persists a
 # comparison run + findings ALONGSIDE the unchanged student-facing grade. This is
-# NOT the promote-to-live flag (that is WU-4C2's APOLLO_GRAPH_SIM_LIVE_ENABLED).
+# NOT the promote-to-live flag (that is `APOLLO_GRAPH_GRADER_LIVE`).
 _GRAPH_SIM_SHADOW_FLAG: str = "APOLLO_GRAPH_SIM_SHADOW_ENABLED"
 
 # DAG-5 — edge-contraction grading inside the shadow comparer. Default OFF;
 # read per Done call so flag-off preserves the existing comparison byte-for-byte.
 _GRAPH_CONTRACTION_FLAG: str = "APOLLO_GRAPH_CONTRACTION_ENABLED"
 
-# WU-4C2 — the PROMOTE-to-live flag (default OFF EVERYWHERE incl. test; flipped
-# only after human calibration review, NEVER in this build). When OFF, the
-# student-facing rubric/diagnostic are the OLD-path values (byte-identical to
-# WU-4C1). When ON, the graph-sim rubric + constrained diagnostic from the shadow
-# chain REPLACE them. This gates only PROMOTION, NOT the shadow computation.
-_GRAPH_SIM_LIVE_FLAG: str = "APOLLO_GRAPH_SIM_LIVE_ENABLED"
-
 # WU-5A2 — the Layer-3 belief-PERSIST flag (default OFF EVERYWHERE incl. prod +
 # staging). When OFF (the only build state), the gated `run_learner_update` call
-# NEVER fires and `handle_done` is byte-identical to WU-4C2 (the shadow-flag-off
+# NEVER fires and `handle_done` is byte-identical to today (the shadow-flag-off
 # regression guard `test_done_shadow_route_postgres.py` me==0/ls==0 stays green).
 # When ON, the Done txn appends `apollo_mastery_events` + upserts
 # `apollo_learner_state` (the §3 Bayesian belief) all-or-nothing AFTER the shadow
 # persist. Flipping it ON is a later HUMAN calibration decision (same posture as
-# APOLLO_GRAPH_SIM_LIVE_ENABLED), NOT part of this build.
+# APOLLO_GRAPH_GRADER_LIVE), NOT part of this build.
 _GRAPH_SIM_LAYER3_FLAG: str = "APOLLO_GRAPH_SIM_LAYER3_ENABLED"
 
 # Campaign-plan Task A3 — the canonical-grading-artifact PERSIST flag (default
@@ -114,9 +107,8 @@ _GRAPH_SIM_LAYER3_FLAG: str = "APOLLO_GRAPH_SIM_LAYER3_ENABLED"
 _GRAPH_SIM_ARTIFACT_FLAG: str = "APOLLO_GRADING_ARTIFACT_ENABLED"
 
 # Campaign-plan Task A4 — the LIVE PROMOTION flag (default OFF everywhere; spec
-# §3/§5). This is the spec's actual promotion switch and OPERATIONALLY
-# SUPERSEDES the older dormant `APOLLO_GRAPH_SIM_LIVE_ENABLED` (WU-4C2), which
-# stays in the codebase untouched but is not the flag the e2e campaign flips.
+# §3/§5). This is the spec's actual promotion switch — the single flag that
+# gates the graph-sim rubric/diagnostic replacing the OLD-path values.
 # Semantics: OFF -> `handle_done` is byte-identical to pre-A4 (this build's
 # only state); ON + a successful, non-abstained shadow result -> the graph
 # rubric/diagnostic are served (`grader_used="graph"` in the artifact) exactly
@@ -173,10 +165,6 @@ def _graph_sim_shadow_enabled() -> bool:
 
 def _graph_contraction_enabled() -> bool:
     return os.environ.get(_GRAPH_CONTRACTION_FLAG, "").lower() in ("1", "true", "yes")
-
-
-def _graph_sim_live_enabled() -> bool:
-    return os.environ.get(_GRAPH_SIM_LIVE_FLAG, "").lower() in ("1", "true", "yes")
 
 
 def _graph_sim_layer3_enabled() -> bool:
@@ -710,15 +698,6 @@ async def handle_done(
                 old_rubric=rubric,  # the OLD student-facing rubric, for §6.7 calibration
                 contraction_enabled=_graph_contraction_enabled(),
             )
-            # WU-4C2 — LIVE promotion (DORMANT; flag OFF in this build). Built + tested,
-            # never active. When ON, the graph-sim rubric + constrained-diagnostic
-            # narrative REPLACE the two student-facing keys; coverage/progress/XP stay
-            # OLD-path. Reached only AFTER a successful shadow chain (a raised shadow —
-            # e.g. pending — never reaches here, so the OLD grade stands; §6.4).
-            if shadow is not None and _graph_sim_live_enabled():
-                student_response["rubric"] = shadow.graph_sim_rubric
-                student_response["diagnostic_narrative"] = shadow.diagnostic.narrative
-
             # WU-5A2 — Layer-3 belief PERSIST (DORMANT; flag OFF in this build). When
             # ON, after the shadow persist the Done txn appends `apollo_mastery_events`
             # + upserts `apollo_learner_state` (the §3 Bayesian belief) all-or-nothing
@@ -748,9 +727,7 @@ async def handle_done(
             # under-confident -> fall straight to the OLD/LLM values (spec
             # step 3); `served_grade` stays "llm_fallback" and the paired
             # graph artifact (written by `write_artifacts` below) carries the
-            # abstention reasons for the record. This block is independent of
-            # the dormant `APOLLO_GRAPH_SIM_LIVE_ENABLED` promotion above —
-            # the two flags are never both on in any real deployment.
+            # abstention reasons for the record.
             if live and shadow is not None and not shadow.audited.abstained:
                 student_response["rubric"] = shadow.graph_sim_rubric
                 student_response["diagnostic_narrative"] = shadow.diagnostic.narrative

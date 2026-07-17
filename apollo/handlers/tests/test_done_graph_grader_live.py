@@ -1,14 +1,14 @@
 """Campaign-plan Task A4 — the ``APOLLO_GRAPH_GRADER_LIVE`` promotion flag +
 any-exception -> LLM-fallback hardening.
 
-Pure unit tests (same harness as ``test_done_live_flag.py``): every OLD-path
-collaborator is mocked deterministically (``_old_path_patches``), Neo4j is a
-MagicMock, and both ``run_graph_simulation`` and ``write_artifacts`` are
-patched on the ``done`` module so no real chain / DB write / live LLM runs.
+Pure unit tests: every OLD-path collaborator is mocked deterministically
+(``_old_path_patches``), Neo4j is a MagicMock, and both ``run_graph_simulation``
+and ``write_artifacts`` are patched on the ``done`` module so no real chain /
+DB write / live LLM runs.
 
-Byte-identity guard: flag OFF must reproduce the exact `test_done_live_flag`
-OLD-path golden regardless of what the (never-called-for-promotion) shadow
-mock would have returned.
+Byte-identity guard: flag OFF must reproduce the exact OLD-path golden
+regardless of what the (never-called-for-promotion) shadow mock would have
+returned.
 """
 
 from __future__ import annotations
@@ -41,7 +41,6 @@ def _shadow_result(*, abstained: bool = False) -> MagicMock:
 @pytest.fixture(autouse=True)
 def _clear_flags(monkeypatch):
     monkeypatch.delenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", raising=False)
-    monkeypatch.delenv("APOLLO_GRAPH_SIM_LIVE_ENABLED", raising=False)
     monkeypatch.delenv("APOLLO_GRAPH_GRADER_LIVE", raising=False)
     monkeypatch.delenv("APOLLO_GRADING_ARTIFACT_ENABLED", raising=False)
     yield
@@ -117,8 +116,7 @@ def test_live_flag_constant_name():
 
 
 async def test_flag_off_byte_identical_to_shadow_golden(monkeypatch):
-    """(a) LIVE off ⇒ response is the exact OLD-path golden (same as
-    `test_done_live_flag.test_live_off_return_byte_identical`), regardless of
+    """(a) LIVE off ⇒ response is the exact OLD-path golden, regardless of
     what a healthy shadow would have promoted."""
     out, shadow_mock, write_artifacts_mock = await _run_with_flags(
         monkeypatch,

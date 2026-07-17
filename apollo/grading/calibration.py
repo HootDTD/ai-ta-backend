@@ -1,7 +1,7 @@
 """WU-4C2 §6.7 — calibration metrics comparing the SHADOW graph-sim rubric vs the
 OLD student-facing rubric.
 
-A human reads these later to decide whether to flip ``APOLLO_GRAPH_SIM_LIVE_ENABLED``.
+A human reads these later to decide whether to flip ``APOLLO_GRAPH_GRADER_LIVE``.
 PURE: reads two rubric dicts (both in the FROZEN ``compute_rubric`` shape) and
 returns a frozen :class:`CalibrationMetrics` value object — mutates neither input,
 calls no LLM, persists NOTHING (the §6.7 metrics are LOGGED + carried in-memory;

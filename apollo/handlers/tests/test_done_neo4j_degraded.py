@@ -40,7 +40,6 @@ pytestmark = pytest.mark.unit
 def _clear_flags(monkeypatch):
     for flag in (
         "APOLLO_GRAPH_SIM_SHADOW_ENABLED",
-        "APOLLO_GRAPH_SIM_LIVE_ENABLED",
         "APOLLO_GRAPH_GRADER_LIVE",
         "APOLLO_GRADING_ARTIFACT_ENABLED",
         "APOLLO_GRAPH_SIM_LAYER3_ENABLED",
