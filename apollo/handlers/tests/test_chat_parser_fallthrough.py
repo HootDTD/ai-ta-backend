@@ -31,6 +31,7 @@ from apollo.persistence.models import (
     SessionPhase,
     SessionStatus,
 )
+from apollo.smart_questions import QuestionDecision
 from database.models import Base
 
 pytestmark = pytest.mark.unit
@@ -86,12 +87,19 @@ def _patches(store):
     return [
         patch("apollo.handlers.chat.KGStore", return_value=store),
         patch("apollo.handlers.chat.parse_utterance"),
-        patch("apollo.handlers.chat.draft_reply", return_value="ok i think i follow"),
+        patch(
+            "apollo.handlers.chat.plan_next_question",
+            new=AsyncMock(
+                return_value=QuestionDecision(
+                    action="ask", question="ok i think i follow", target_node_id="eq.a"
+                )
+            ),
+        ),
         patch(
             "apollo.handlers.chat.classify_intent",
             return_value=IntentVerdict(intent="teaching", confidence=1.0, reason=""),
         ),
-        patch("apollo.handlers.chat.load_windowed_history", new=AsyncMock(return_value=(None, []))),
+        patch("apollo.handlers.chat._unified_questioning_enabled", return_value=True),
         patch(
             "apollo.handlers.chat._find_problem",
             new=AsyncMock(return_value=MagicMock(problem_text="find P2 in a horizontal pipe")),

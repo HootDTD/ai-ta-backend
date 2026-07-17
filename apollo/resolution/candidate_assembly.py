@@ -1,8 +1,4 @@
-"""Closed candidate-set assembly for the remaining clarification path.
-
-Authored and emergent misconception candidates were retired by cleanup T-D.
-The graph candidate set now contains only the problem and canonical entities.
-"""
+"""Database-backed assembly of the resolver's closed candidate set."""
 
 from __future__ import annotations
 
@@ -19,7 +15,7 @@ async def load_problem_candidates_with_soundness(
     concept_id: int | None,
     problem_payload: dict,
 ) -> tuple[ProblemInputs, bool]:
-    """Build candidates with no misconception-bank soundness channel."""
+    """Build reference candidates with no misconception-bank soundness channel."""
     specs = await load_entity_specs(db, search_space_id=search_space_id, concept_id=concept_id)
     canon_key_by_canonical_key = {spec.canonical_key: spec.key for spec in specs}
     inputs = build_problem_candidates(

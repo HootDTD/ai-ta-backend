@@ -24,6 +24,7 @@ from apollo.persistence.models import (
     SessionPhase,
     SessionStatus,
 )
+from apollo.smart_questions import QuestionDecision
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_concept_payloads,
     load_bernoulli_problem_payloads,
@@ -81,14 +82,19 @@ async def test_chat_loads_concept_definition_from_db(db_session):
     with (
         patch("apollo.handlers.chat.KGStore", return_value=store),
         patch("apollo.handlers.chat.parse_utterance", return_value=([], [])) as parse,
-        patch("apollo.handlers.chat.draft_reply", return_value="ok"),
+        patch(
+            "apollo.handlers.chat.plan_next_question",
+            new=AsyncMock(
+                return_value=QuestionDecision(action="ask", question="ok", target_node_id="eq.a")
+            ),
+        ),
         patch(
             "apollo.handlers.chat.classify_intent",
             return_value=IntentVerdict(intent="teaching", confidence=1.0, reason=""),
         ),
         patch(
-            "apollo.handlers.chat.load_windowed_history",
-            new=AsyncMock(return_value=(None, [])),
+            "apollo.handlers.chat._unified_questioning_enabled",
+            return_value=True,
         ),
     ):
         await handle_chat(db=db_session, neo=MagicMock(), session_id=session_id, message="hi")
@@ -99,7 +105,7 @@ async def test_chat_loads_concept_definition_from_db(db_session):
 
 
 async def test_chat_find_problem_matches_problem_code(db_session):
-    """T5.4 — draft_reply is given the DB problem's text (proves _find_problem
+    """T5.4 — the unified planner is given the DB problem (proves _find_problem
     reads the DB by concept_id + problem_code)."""
     session_id, _cid, current_code = await _seed_session_with_attempt(db_session)
     expected_text = next(p for p in _INTRO if p["id"] == current_code)["problem_text"]
@@ -108,19 +114,24 @@ async def test_chat_find_problem_matches_problem_code(db_session):
     with (
         patch("apollo.handlers.chat.KGStore", return_value=store),
         patch("apollo.handlers.chat.parse_utterance", return_value=([], [])),
-        patch("apollo.handlers.chat.draft_reply", return_value="ok") as reply,
+        patch(
+            "apollo.handlers.chat.plan_next_question",
+            new=AsyncMock(
+                return_value=QuestionDecision(action="ask", question="ok", target_node_id="eq.a")
+            ),
+        ) as planner,
         patch(
             "apollo.handlers.chat.classify_intent",
             return_value=IntentVerdict(intent="teaching", confidence=1.0, reason=""),
         ),
         patch(
-            "apollo.handlers.chat.load_windowed_history",
-            new=AsyncMock(return_value=(None, [])),
+            "apollo.handlers.chat._unified_questioning_enabled",
+            return_value=True,
         ),
     ):
         await handle_chat(db=db_session, neo=MagicMock(), session_id=session_id, message="hi")
 
-    assert reply.call_args.kwargs["problem_text"] == expected_text
+    assert planner.await_args.kwargs["problem"].problem_text == expected_text
 
 
 async def test_chat_find_problem_raises_when_code_absent(db_session):

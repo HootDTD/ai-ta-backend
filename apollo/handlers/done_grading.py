@@ -37,8 +37,6 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.clarification.candidate_assembly import load_problem_candidates_with_soundness
-from apollo.clarification.store import load_confirmed_resolutions
 from apollo.errors import (
     ResolutionInvalidOutputError,
     ResolutionUnavailableError,
@@ -73,6 +71,7 @@ from apollo.ontology import KGGraph
 from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
 from apollo.persistence.neo4j_client import Neo4jClient
 from apollo.resolution import resolve_attempt
+from apollo.resolution.candidate_assembly import load_problem_candidates_with_soundness
 from apollo.resolution.candidates import unknown_reference_entry_types
 from apollo.resolution.result import ResolutionResult
 
@@ -272,12 +271,10 @@ async def run_graph_simulation(
 
     # ---- Steps 5+ : the cross-store window (NO-FALLBACK on infra failure) ----
     try:
-        confirmed_resolutions = await load_confirmed_resolutions(db, attempt_id=int(attempt.id))
-        # Step 5 — resolve; clarification-confirmed nodes are authoritative (no LLM guess).
+        # Step 5 — resolve through the deterministic content tiers.
         resolution = resolve_attempt(
             student_graph,
             inputs.candidates,
-            confirmed_resolutions=confirmed_resolutions,
             fuzzy_threshold=0.9,
             symbolic_mappings=inputs.symbolic_mappings,
         )

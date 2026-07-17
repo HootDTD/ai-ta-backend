@@ -23,10 +23,9 @@ from campaign.config import (
 
 
 def test_capture_live_reflects_current_defaults(monkeypatch):
-    monkeypatch.delenv("APOLLO_CLARIFICATION_ENABLED", raising=False)
     cfg = CampaignConfig.capture_live()
 
-    assert cfg.flags["APOLLO_CLARIFICATION_ENABLED"] is False  # default-off
+    assert "APOLLO_CLARIFICATION_ENABLED" not in cfg.flags
     assert set(cfg.axis_weights.keys()) == {
         "procedure",
         "justification",
@@ -38,11 +37,11 @@ def test_capture_live_reflects_current_defaults(monkeypatch):
 
 
 def test_snapshot_flags_reads_env_overrides(monkeypatch):
-    monkeypatch.setenv("APOLLO_CLARIFICATION_ENABLED", "1")
+    monkeypatch.setenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", "1")
 
     flags = snapshot_flags()
 
-    assert flags["APOLLO_CLARIFICATION_ENABLED"] is True
+    assert flags["APOLLO_GRAPH_SIM_SHADOW_ENABLED"] is True
 
 
 def test_snapshot_round_trips_through_from_snapshot(monkeypatch):
@@ -65,11 +64,11 @@ def test_config_sha_is_stable_for_identical_snapshot(monkeypatch):
 
 
 def test_config_sha_changes_when_a_tunable_changes(monkeypatch):
-    monkeypatch.delenv("APOLLO_CLARIFICATION_ENABLED", raising=False)
+    monkeypatch.delenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", raising=False)
     cfg = CampaignConfig.capture_live()
     sha_before = config_sha(cfg.snapshot())
 
-    monkeypatch.setenv("APOLLO_CLARIFICATION_ENABLED", "1")
+    monkeypatch.setenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", "1")
     cfg_after = CampaignConfig.capture_live()
     sha_after = config_sha(cfg_after.snapshot())
 
@@ -112,10 +111,10 @@ def test_assert_live_matches_frozen_passes_when_unchanged(monkeypatch):
 
 
 def test_assert_live_matches_frozen_raises_on_divergence(monkeypatch):
-    monkeypatch.delenv("APOLLO_CLARIFICATION_ENABLED", raising=False)
+    monkeypatch.delenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", raising=False)
     frozen_cfg = CampaignConfig.capture_live()
 
-    monkeypatch.setenv("APOLLO_CLARIFICATION_ENABLED", "1")
+    monkeypatch.setenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", "1")
 
     with pytest.raises(ConfigDivergedError):
         assert_live_matches_frozen(frozen_cfg)

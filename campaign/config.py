@@ -34,7 +34,6 @@ from config.settings import apollo_composite_coverage_min
 #: read-only mirrors, never used to compute the flags themselves; the real
 #: default lives in each flag's owning module).
 _BOOLEAN_FLAG_DEFAULTS: dict[str, bool] = {
-    "APOLLO_CLARIFICATION_ENABLED": False,
     "APOLLO_AUTOPROVISION_ENABLED": False,
     "APOLLO_DONE_GATE_ENABLED": False,
     "APOLLO_GRAPH_SIM_LIVE_ENABLED": False,

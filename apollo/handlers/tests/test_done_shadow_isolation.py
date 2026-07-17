@@ -155,7 +155,7 @@ def _inject_mid(exc: BaseException):
 
 
 def _inject_late(exc: BaseException):
-    """Step 5 — the cross-store window: `load_confirmed_resolutions` raises, so
+    """Step 6 — the cross-store window: `write_resolution` raises, so
     run_graph_simulation's own `except Exception` sets learner_update_pending +
     commits, THEN re-raises. The done.py boundary must still catch it."""
     fake_inputs = SimpleNamespace(candidates=(), symbolic_mappings={})
@@ -165,7 +165,8 @@ def _inject_late(exc: BaseException):
             new=AsyncMock(return_value=(fake_inputs, True)),
         ),
         patch(f"{_DG}.validate_student_graph", new=MagicMock(return_value=None)),
-        patch(f"{_DG}.load_confirmed_resolutions", new=AsyncMock(side_effect=exc)),
+        patch(f"{_DG}.resolve_attempt", new=MagicMock(return_value=SimpleNamespace())),
+        patch(f"{_DG}.write_resolution", new=AsyncMock(side_effect=exc)),
     ]
 
 

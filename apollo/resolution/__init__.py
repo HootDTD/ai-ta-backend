@@ -19,12 +19,11 @@ from apollo.resolution.candidates import (
     candidates_from_misconceptions,
     candidates_from_reference_solution,
 )
-from apollo.resolution.resolver import find_residual_nodes, resolve_attempt
+from apollo.resolution.resolver import resolve_attempt
 from apollo.resolution.result import ResolutionResult, ResolvedNode
 
 __all__ = [
     "resolve_attempt",
-    "find_residual_nodes",
     "build_candidate_set",
     "candidates_from_reference_solution",
     "candidates_from_misconceptions",

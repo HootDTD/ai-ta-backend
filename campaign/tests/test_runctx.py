@@ -67,9 +67,9 @@ def test_gate_phase_succeeds_when_live_env_matches_frozen_snapshot(tmp_path):
 
 
 def test_gate_phase_refuses_to_run_when_live_env_diverges(tmp_path, monkeypatch):
-    monkeypatch.delenv("APOLLO_CLARIFICATION_ENABLED", raising=False)
+    monkeypatch.delenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", raising=False)
     RunContext.create("run-gate-bad", "tune", out_root=tmp_path)
 
-    monkeypatch.setenv("APOLLO_CLARIFICATION_ENABLED", "1")
+    monkeypatch.setenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", "1")
     with pytest.raises(ConfigDivergedError):
         RunContext.create("run-gate-bad", "gate", out_root=tmp_path)

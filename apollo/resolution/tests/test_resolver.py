@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import inspect
 
-from apollo.grading.abstention import unresolved_rate_of
 from apollo.ontology.graph import KGGraph
 from apollo.ontology.nodes import build_node
 from apollo.resolution import resolve_attempt, resolver
@@ -53,7 +52,6 @@ def test_unmatched_node_stays_unresolved_no_llm():
     rn = {r.node_id: r for r in result.resolved}["s1"]
     assert rn.resolution == "unresolved"
     assert result.llm_calls == 0
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -780,81 +778,3 @@ def test_empty_exact_aliases_resolution_unchanged():
         assert rn.confidence == METHOD_CONFIDENCE_CAP[rn.method]
     assert dict(result.tier_counts) == {"alias": 3, "symbolic": 1, "fuzzy": 1}
     assert result.llm_calls == 0
-
-
-# ---------------------------------------------------------------------------
-# Task 3 — confirmed_resolutions: authoritative clarification at 0.90.
-# ---------------------------------------------------------------------------
-
-
-def test_confirmed_resolution_resolves_via_clarification_at_0_90():
-    """A node in confirmed_resolutions with a type-compatible key resolves via
-    method 'clarification' at confidence 0.90 and drops out of unresolved_rate."""
-    graph = _graph([_node("s1", "condition", {"applies_when": "pressure changes", "label": ""})])
-    cands = _cands_with("cond.bernoulli", node_type="condition")
-    result = resolve_attempt(graph, cands, confirmed_resolutions={"s1": "cond.bernoulli"})
-    rn = {r.node_id: r for r in result.resolved}["s1"]
-    assert rn.resolution == "resolved"
-    assert rn.method == "clarification"
-    assert rn.confidence == 0.90
-    assert rn.resolved_key == "cond.bernoulli"
-    # The whole point: a confirmed node drops OUT of unresolved_rate.
-    assert unresolved_rate_of(result) == 0.0
-
-
-def test_confirmed_resolution_overrides_a_weaker_tier_hit():
-    """Even if a content tier (alias/fuzzy) would have matched, clarification is
-    authoritative and wins regardless of any lower-tier hit."""
-    graph = _graph([_node("s1", "condition", {"applies_when": "slower means higher", "label": ""})])
-    cands = _cands_with("cond.bernoulli", node_type="condition", aliases=("slower means higher",))
-    result = resolve_attempt(graph, cands, confirmed_resolutions={"s1": "cond.bernoulli"})
-    rn = {r.node_id: r for r in result.resolved}["s1"]
-    assert rn.method == "clarification"
-
-
-def test_confirmed_resolution_ignored_when_type_incompatible_or_unknown_key():
-    """A type-incompatible mapping or an unknown candidate key in
-    confirmed_resolutions is silently ignored; the node follows the normal path
-    (unresolved when no tier matches)."""
-    graph = _graph([_node("s1", "condition", {"applies_when": "x", "label": ""})])
-    cands = _cands_with("eq.mass", node_type="equation")  # wrong type
-    result = resolve_attempt(graph, cands, confirmed_resolutions={"s1": "eq.mass", "s2": "nope"})
-    rn = {r.node_id: r for r in result.resolved}["s1"]
-    assert rn.resolution == "unresolved"  # type-incompatible -> not credited
-
-
-def test_clarification_confidence_clears_normalization_floor():
-    """Spec §13 / brainstorm §5.3 hard constraint: a confirmed conceptual node's
-    0.90 cap normalizes to 1.0 against the 0.75 prose ceiling, comfortably
-    clearing the 0.85 abstention floor — so a confirmed node never triggers the
-    normalization_confidence gate."""
-    from apollo.grading.abstention import ABSTENTION_THRESHOLDS
-    from apollo.grading.normalization_confidence import (
-        RESOLUTION_CEILING_DEFAULT,
-        _type_normalized_confidence,
-    )
-
-    cap = 0.90  # clarification cap (METHOD_CONFIDENCE_CAP["clarification"])
-    # Conceptual node: ceiling 0.75 -> type-normalized = min(1.0, 0.90/0.75) = 1.0.
-    nc = _type_normalized_confidence("condition", cap)
-    assert nc == 1.0
-    assert nc >= ABSTENTION_THRESHOLDS["min_normalization_confidence"]  # 0.85
-    assert RESOLUTION_CEILING_DEFAULT == 0.75
-
-
-# ---------------------------------------------------------------------------
-# Task 6 — find_residual_nodes: the public clarification-detector seam.
-# ---------------------------------------------------------------------------
-
-
-def test_find_residual_nodes_returns_only_unmatched():
-    from apollo.resolution.resolver import find_residual_nodes
-
-    # "matched" node: its surface text IS an alias of the candidate → _content_match
-    # returns a ScoredMatch, so it is NOT residual.
-    matched = _node("s1", "condition", {"applies_when": "exact alias text", "label": ""})
-    # "residual" node: its surface text does not match any tier → _content_match None.
-    residual = _node("s2", "condition", {"applies_when": "some paraphrase", "label": ""})
-    cands = _cands_with("cond.k", node_type="condition", aliases=("exact alias text",))
-    out = find_residual_nodes([matched, residual], cands)
-    assert [n.node_id for n in out] == ["s2"]

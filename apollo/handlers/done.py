@@ -42,13 +42,13 @@ from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
 from apollo.overseer.coverage import compute_coverage
 from apollo.overseer.diagnostic import generate_diagnostic
-from apollo.overseer.misconception import (
-    MisconceptionSignal,
-    summarize_for_rubric,
-)
 from apollo.overseer.grading_flags import (
     topic_score_served_enabled,
     transcript_grader_enabled,
+)
+from apollo.overseer.misconception import (
+    MisconceptionSignal,
+    summarize_for_rubric,
 )
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.overseer.rubric import compute_rubric
@@ -120,8 +120,7 @@ _GRAPH_SIM_ARTIFACT_FLAG: str = "APOLLO_GRADING_ARTIFACT_ENABLED"
 # Semantics: OFF -> `handle_done` is byte-identical to pre-A4 (this build's
 # only state); ON + a successful, non-abstained shadow result -> the graph
 # rubric/diagnostic are served (`grader_used="graph"` in the artifact) exactly
-# like the WU-4C2 promotion; ON + an abstained shadow -> the (session-time)
-# clarification loop already ran, so we fall back to the OLD/LLM values
+# like the WU-4C2 promotion; ON + an abstained shadow -> fall back to the OLD/LLM values
 # (`grader_used="llm_fallback"`) rather than re-run anything at Done time; ON +
 # ANY exception anywhere in the graph path -> logged, `graph_failure` recorded
 # on the artifact, OLD/LLM values served, HTTP 200 (a graph bug must never
@@ -745,8 +744,7 @@ async def handle_done(
             # non-abstained shadow result REPLACES the OLD-path rubric/
             # diagnostic exactly like the dormant WU-4C2 block above, and
             # `served_grade` flips so the artifact records `grader_used=
-            # "graph"`. An abstained shadow means the (session-time)
-            # clarification loop already ran and the graph grader is still
+            # "graph"`. An abstained shadow means the graph grader is still
             # under-confident -> fall straight to the OLD/LLM values (spec
             # step 3); `served_grade` stays "llm_fallback" and the paired
             # graph artifact (written by `write_artifacts` below) carries the

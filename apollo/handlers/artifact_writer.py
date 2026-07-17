@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.grading.artifact_build import (
@@ -37,51 +36,12 @@ from apollo.grading.artifact_build import (
 from apollo.grading.composite import load_weights
 from apollo.handlers.done_grading import ShadowGradeResult
 from apollo.overseer.topic_score import TopicScoreResult
-from apollo.persistence.models import ApolloSession, Clarification, GradingArtifact, ProblemAttempt
+from apollo.persistence.models import ApolloSession, GradingArtifact, ProblemAttempt
 
 _LOG = logging.getLogger(__name__)
 
 _ROLE_CANONICAL = "canonical"
 _ROLE_PAIR = "pair"
-
-
-async def _load_clarification_trace(db: AsyncSession, *, attempt_id: int) -> list[dict]:
-    """The spec §1 clarification-trace block: one row per probed idea for this
-    attempt, question + answer + credit outcome. ``credit`` is ``"granted"``
-    only for a ``confirmed`` verdict, ``"denied"`` for ``refuted``/``vague``,
-    and ``None`` while still ``asked_waiting`` (never resolved before Done)."""
-    rows = (
-        (
-            await db.execute(
-                select(Clarification)
-                .where(Clarification.attempt_id == attempt_id)
-                .order_by(Clarification.asked_turn)
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-    trace: list[dict] = []
-    for row in rows:
-        if row.state == "confirmed":
-            credit = "granted"
-        elif row.state in ("refuted", "vague"):
-            credit = "denied"
-        else:
-            credit = None
-        trace.append(
-            {
-                "node_id": row.node_id,
-                "candidate_key": row.candidate_key,
-                "probe_question": row.probe_question,
-                "original_statement": row.original_statement,
-                "clarification_text": row.clarification_text,
-                "state": row.state,
-                "credit": credit,
-            }
-        )
-    return trace
 
 
 def _artifact_row(
@@ -150,7 +110,9 @@ async def write_artifacts(
     already-committed grade."""
     try:
         weights = load_weights()
-        clarification_trace = await _load_clarification_trace(db, attempt_id=int(attempt.id))
+        # Keep the JSON field for historical artifact compatibility. The
+        # retired clarification loop contributes no rows to new artifacts.
+        clarification_trace: list[dict] = []
 
         graph_payload: dict | None = None
         if shadow is not None:

@@ -306,64 +306,6 @@ class GenerationRun(Base):
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 
-# Mirrors the SQL CHECK in migration 032. Asserted equal by the allowlist test.
-CLARIFICATION_STATES: tuple[str, ...] = ("asked_waiting", "confirmed", "refuted", "vague")
-
-
-class Clarification(Base):
-    """One probed ambiguous student idea (Apollo clarification loop, migration
-    032). State machine asked_waiting -> {confirmed|refuted|vague}; UNIQUE on
-    (attempt_id, node_id) enforces one follow-up per idea. ``user_id`` declares
-    NO ORM FK (auth.users is Supabase-managed, absent from Base.metadata),
-    mirroring GraphComparisonRun."""
-
-    __tablename__ = "apollo_clarifications"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    attempt_id = Column(
-        BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    session_id = Column(
-        BigInteger,
-        ForeignKey("apollo_sessions.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    concept_id = Column(
-        BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    node_id = Column(Text, nullable=False)
-    candidate_key = Column(Text, nullable=False)
-    state = Column(
-        Text, nullable=False, server_default=text("'asked_waiting'"), default="asked_waiting"
-    )
-    probe_question = Column(Text, nullable=False)
-    original_statement = Column(Text, nullable=False)
-    clarification_text = Column(Text, nullable=True)
-    asked_turn = Column(Integer, nullable=False)
-    answered_turn = Column(Integer, nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-    __table_args__ = (
-        UniqueConstraint("attempt_id", "node_id", name="apollo_clarifications_attempt_node_uniq"),
-    )
-
-
 class ReferenceQuestionOpportunity(Base):
     """Latest question state for one authored reference node per attempt."""
 
@@ -1114,7 +1056,7 @@ class GradingArtifact(Base):
     captured on the same input (paired-artifact contract, spec §5). Append-only:
     no update path exists in code; retuning weights affects future artifacts
     only. ``user_id`` declares NO ORM FK (auth.users is Supabase-managed,
-    absent from Base.metadata), mirroring Clarification/GraphComparisonRun."""
+    absent from Base.metadata), mirroring GraphComparisonRun."""
 
     __tablename__ = "apollo_grading_artifacts"
 

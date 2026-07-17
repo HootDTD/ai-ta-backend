@@ -110,7 +110,6 @@ def _all_callee_patches(*, persist_return=4321):
             )
         ),
         "generate_constrained_diagnostic": MagicMock(return_value=MagicMock(name="diagnostic")),
-        "load_confirmed_resolutions": AsyncMock(return_value={}),
     }
     patches = [patch.object(dg, name, new=m) for name, m in mocks.items()]
     return patches, mocks
@@ -628,25 +627,6 @@ async def test_null_concept_id_forces_bank_not_applicable():
     # Lane B3a/D1: build_audited_grade no longer receives a bank-empty kwarg.
     audited_kwargs = mocks["build_audited_grade"].call_args.kwargs
     assert "misconception_bank_empty" not in audited_kwargs
-
-
-async def test_confirmed_resolutions_threaded_into_resolve():
-    """Task 16 (G2 payoff): confirmed clarifications loaded from DB and threaded
-    into resolve_attempt as ``confirmed_resolutions=`` (the @0.90 clarification
-    method that clears the abstention floor)."""
-    db = _db()
-    patches, mocks = _all_callee_patches()
-    mocks["load_confirmed_resolutions"].return_value = {"s1": "cond.bernoulli"}
-    with _read_transcript_patch():
-        for p in patches:
-            p.start()
-        try:
-            await _run(db)
-        finally:
-            for p in reversed(patches):
-                p.stop()
-    rkwargs = mocks["resolve_attempt"].call_args.kwargs
-    assert rkwargs["confirmed_resolutions"] == {"s1": "cond.bernoulli"}
 
 
 # ---------------------------------------------------------------------------

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.handlers.intent import IntentVerdict
-from apollo.knowledge_graph.store import _EMPTY_SUMMARY, WriteEdgesResult
+from apollo.knowledge_graph.store import WriteEdgesResult
 from apollo.persistence.models import (
     ApolloSession,
     KGNegotiation,
@@ -29,6 +29,7 @@ from apollo.persistence.models import (
     SessionPhase,
     SessionStatus,
 )
+from apollo.smart_questions import QuestionDecision
 from database.models import Base
 
 pytestmark = pytest.mark.unit
@@ -97,12 +98,19 @@ def _patches(store):
     return [
         patch("apollo.handlers.chat.KGStore", return_value=store),
         patch("apollo.handlers.chat.parse_utterance"),
-        patch("apollo.handlers.chat.draft_reply", return_value="ok i think i follow"),
+        patch(
+            "apollo.handlers.chat.plan_next_question",
+            new=AsyncMock(
+                return_value=QuestionDecision(
+                    action="ask", question="ok i think i follow", target_node_id="eq.a"
+                )
+            ),
+        ),
         patch(
             "apollo.handlers.chat.classify_intent",
             return_value=IntentVerdict(intent="teaching", confidence=1.0, reason=""),
         ),
-        patch("apollo.handlers.chat.load_windowed_history", new=AsyncMock(return_value=(None, []))),
+        patch("apollo.handlers.chat._unified_questioning_enabled", return_value=True),
         patch(
             "apollo.handlers.chat._find_problem",
             new=AsyncMock(return_value=MagicMock(problem_text="find P2 in a horizontal pipe")),
@@ -142,22 +150,21 @@ async def test_chat_degrades_on_kg_unavailable_error(db_session_attempt):
 
 
 @pytest.mark.asyncio
-async def test_chat_degrades_kg_summary_to_empty_constant(db_session_attempt):
-    """draft_reply must be called with the store's own empty-summary
-    constant on a degraded summarize_for_apollo, not an ad-hoc string."""
+async def test_unified_chat_does_not_read_legacy_kg_summary(db_session_attempt):
     from apollo.errors import KGUnavailableError
 
     db, session_id, _attempt_id = db_session_attempt
     store = _degraded_store(error=KGUnavailableError(stage="read_graph", last_error="down"))
 
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2] as mock_draft, ps[3], ps[4], ps[5], ps[6]:
+    with ps[0], ps[1] as mock_parse, ps[2] as planner, ps[3], ps[4], ps[5], ps[6]:
         mock_parse.return_value = ([], [])
         from apollo.handlers.chat import handle_chat
 
         await handle_chat(db=db, neo=MagicMock(), session_id=session_id, message="hi")
 
-    assert mock_draft.call_args.kwargs["kg_summary"] == _EMPTY_SUMMARY
+    planner.assert_awaited_once()
+    store.summarize_for_apollo.assert_not_awaited()
 
 
 @pytest.mark.asyncio
