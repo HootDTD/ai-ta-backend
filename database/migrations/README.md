@@ -23,3 +23,15 @@ reconciliation, it receives a timestamped name in the active chain instead.
 
 Remote history reconciliation and remote migration application are human-only
 operations. The repository harness runs only against the local Docker stack.
+
+## Retired Python entrypoints
+
+DB-03 permanently retired the executable `001_create_schema.py`,
+`002_seed_from_supabase.py`, and `003_reindex_existing.py` entrypoints. They now
+exit immediately with an error that points to `node scripts/db/reset-local.mjs`.
+Their bodies remain in place as checksum-enforced historical provenance; do not
+import or invoke them, and do not use them to apply either migration chain.
+
+This repository never had a single aggregate `database.run_migrations` runner.
+The three executable Python files were the only migration-apply entrypoints
+found under `database/` and `scripts/`, so all three are guarded.

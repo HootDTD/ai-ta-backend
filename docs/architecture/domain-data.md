@@ -28,6 +28,13 @@ through `047`; all forward migrations are timestamped SQL under
 `supabase/migrations/`. The local reset harness applies only that active chain
 and its deterministic non-production seed to the local Docker stack.
 
+DB-03 (2026-07-16) added a loud, non-authoritative
+`legacy_public_snapshot` draft reconstructed from migration 001 plus every
+frozen SQL migration through 047. It must be replaced by a reviewed human
+`db pull` from production before history repair. The three historical Python
+migration entrypoints now fail immediately; their remaining bodies stay frozen
+in place as provenance, and the checksum manifest records that final guard.
+
 ## Module map and file landmarks
 
 Cleanup T-E (2026-07-16) removed the `Clarification` SQLAlchemy model and all runtime reads/writes of `apollo_clarifications`. Migration 033 remains historical schema history; the physical table is intentionally left for the later DB-drop migration. `GradingArtifact.clarification_trace` remains as a compatibility JSON field and is empty on new writes.
@@ -36,8 +43,8 @@ Cleanup T-E (2026-07-16) removed the `Clarification` SQLAlchemy model and all ru
 |------|------|
 | `database/models.py` | All SQLAlchemy ORM models (12 tables, pgvector `Vector(3072)` columns) plus `DocumentStatus` JSONB-state helper |
 | `database/session.py` | Async engine/session factory keyed **per event loop**, plus `run_async()` sync-to-async bridge over a daemon-thread loop. Engine is configured with `pool_pre_ping=True` and `pool_recycle=1800` (30-min backstop to retire connections held across long jobs). |
-| `supabase/config.toml`, `supabase/migrations/`, `supabase/seed.sql` | Supabase CLI 2.109.0 local project. Timestamped SQL is the sole forward migration history; reset applies migrations in timestamp order, then the deterministic non-production seed. |
-| `database/migrations/README.md`, `legacy-manifest.sha256` | Freeze contract for the numbered `001`-`047` history. CI rejects additions, removals, or content changes; the old runners must never apply the active chain. |
+| `supabase/config.toml`, `supabase/migrations/`, `supabase/seed.sql` | Supabase CLI 2.109.0 local project. Timestamped SQL is the sole forward migration history; reset applies migrations in timestamp order, then the deterministic non-production seed. The first migration is the DB-03 draft snapshot and is explicitly not production truth. |
+| `database/migrations/README.md`, `legacy-manifest.sha256` | Freeze contract for the numbered `001`-`047` history. CI rejects additions, removals, or content changes. The only executable Python migration entrypoints were retired in DB-03 and now exit with a pointer to the local Supabase reset harness. |
 | `database/migrations/042_apollo_reference_question_opportunities.sql` | Creates the RLS-stopgapped `apollo_reference_question_opportunities` ledger used by the default-off unified-questioning controller. `UNIQUE(attempt_id, reference_node_id)` enforces one opportunity per authored node; state is `asked_waiting` or terminal `answered`; attempt/session FKs cascade on deletion. Apply to test before enabling `APOLLO_UNIFIED_QUESTIONING_ENABLED`; remote application remains a human/CI step. |
 | `database/migrations/047_apollo_question_tally.sql` | Creates the RLS-stopgapped `apollo_question_tally` durable-memory rows used by unified questioning. One row per attempt/reference node stores the model-owned status, verbatim turn evidence JSON, decline memory, and derived-budget bookkeeping (`times_asked`, `last_asked_turn`). Attempts cascade-delete their tally. The ORM mirror is `apollo.persistence.models.QuestionTally`; local tests only, and remote application remains a human/CI step. |
 | `database/migrations/043_apollo_dedup_pressure.sql` | Adds `apollo_ingest_runs.dedup_pressure JSONB NOT NULL`, whose default is a zeroed gauge. The dedup audit writer updates total candidates, exact merges, embedding merges/distincts, embedding merge share, and per-concept embedding merge counts inside the existing transaction. Additive/idempotent DDL; remote application remains a human/CI step. |

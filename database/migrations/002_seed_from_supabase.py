@@ -15,6 +15,11 @@ Requirements:
   - SUPABASE_DB_URL (for asyncpg writes)
 """
 
+raise SystemExit(
+    "Legacy Python migrations are retired. Use the timestamped Supabase chain via "
+    "`node scripts/db/reset-local.mjs`; never run database/migrations/*.py."
+)  # pragma: no cover - intentional command-line guard
+
 import asyncio
 import hashlib
 import json

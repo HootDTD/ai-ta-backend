@@ -43,6 +43,8 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` owns the FastAPI ap
 | `Procfile` | `web: uvicorn server:app` + `worker: python -m teacher_upload_worker` + `apollo-janitor: python -m apollo.learner_janitor_worker` (Railway deploys web+worker; **`apollo-janitor` is scaled to 0 replicas until `APOLLO_LEARNER_JANITOR_ENABLED` is flipped** — WU-5B3b). |
 | `scripts/db/check-migration-drift.mjs` | CI/local guard that verifies the frozen numbered migration checksums and permits only timestamped SQL in the active Supabase chain. |
 | `scripts/db/reset-local.mjs` | Cross-platform harness that requires Supabase CLI 2.109.0, starts the local Docker stack when needed, and runs `supabase db reset --local`; it has no remote mode. |
+| `scripts/db/build-legacy-snapshot-draft.mjs` | Deterministically reconstructs DB-03's non-authoritative `legacy_public_snapshot` draft from migration 001 DDL plus frozen SQL 004-047; excludes the data-only Python jobs. |
+| `scripts/db/compare-schema-dump.mjs` | Normalizes two schema-only SQL dumps by removing comments/session settings, canonicalizing whitespace, sorting statements, and reporting statement-level differences. |
 | `.github/workflows/ci.yml` database job | Blocking clean-reset gate for the active Supabase migration chain; `ci-passed` includes its result. |
 
 ### config/
