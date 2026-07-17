@@ -12,7 +12,6 @@ owns:
   - scripts/**
   - citations/**
   - workspaces/**
-  - text-embeder/**
   - Procfile
   - pytest.ini
   - .coveragerc
@@ -29,15 +28,15 @@ stub: false
 
 # ai-ta-backend overview
 
-Hoot is a Python/FastAPI RAG teaching assistant. `server.py` is a single ~2000-line module that owns the FastAPI app, all top-level routes, and the QA request pipeline glue. Everything else in this doc's scope is supporting infrastructure: auth, per-request config, course-workspace resolution, vendor REST clients, citation formatting, and ops scripts.
+Hoot is a Python/FastAPI RAG teaching assistant. `server.py` owns the FastAPI app, top-level routes, and the QA request pipeline glue. Everything else in this doc's scope is supporting infrastructure: auth, per-request config, course-workspace resolution, vendor REST clients, citation formatting, and ops scripts.
 
-**Doc tree:** sibling docs own the deep subsystems — `rag-pipeline.md` (ai/, retrieval/), `indexing.md` (indexing/, ocr/, text-embeder internals), `apollo.md` (apollo/), `domain-data.md` (database/, chats/, knowledge/, reports/). Do not look here for those.
+**Doc tree:** sibling docs own the deep subsystems — `rag-pipeline.md` (ai/, retrieval/), `indexing.md` (indexing/, ocr/), `apollo.md` (apollo/), `domain-data.md` (database/, chats/, knowledge/, reports/). Do not look here for those.
 
 ## Module map and file landmarks
 
 | Path | Role |
 |---|---|
-| `server.py` | FastAPI app, CORS, router mounting, all `/ask`, `/teacher/*`, `/knowledge/*`, `/invite-links*`, `/classes` routes. ~1970 lines. |
+| `server.py` | FastAPI app, CORS, router mounting, and all `/ask`, `/teacher/*`, `/invite-links*`, `/classes` routes. |
 | `auth.py` | Supabase JWT validation (REST call to `auth/v1/user`), in-memory token cache, course-membership checks, student auto-enroll. |
 | `supabase_client.py` | One-line backward-compat shim: `from vendors.supabase_client import *`. |
 | `teacher_upload_worker.py` | Procfile `worker` entrypoint: `TeacherWeeklyStorage().run_upload_worker_loop()` — drains the queued teacher-upload ingestion jobs. |
@@ -74,7 +73,6 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` is a single ~2000-l
 | `citations/formatter.py` | `build_citation_info()` + `format_citations()`: maps snippets to labels like `[Notes, Week 3, p. 12]`, dedupes by `(doc_type, file, page)`, marks `verified=True` only for Textbook sources. |
 | `scripts/` | One-shot tools: `migrate_indexes_to_supabase.py` (legacy FAISS/SQLite → pgvector), `seed_apollo_concept_registry.py` (filesystem concept registry → `apollo_*` tables, idempotent), `seed_apollo_learner_model.py` (course-scoped, idempotent Apollo Layer-1 seeder — writes migration-026 `apollo_kg_entities`/`apollo_entity_prereqs` rows + annotates `apollo_concept_problems.payload` with reference-node entity links + declared solution paths; layers on top of the concept registry, WU-3B), `test_search.py` (pgvector hybrid-search smoke test). Not imported by the app. |
 | `runtime/` | Runtime artifact dir (location overridable via `RUNTIME_DIR`). Holds `uploads/` (written per request by `/ask` attachments), `debug/`, `teacher_weekly/` worker scratch. Not code. |
-| `text-embeder/` | Legacy standalone layout-aware multimodal PDF embedder (`layout_multimodal_embedder.py`, CLI, FAISS+SQLite-FTS5 output) plus a 38 MB sample aerodynamics PDF. Pre-pgvector era; also the default `CLASS_INDEX_ROOT` for the static workspace fallback. Still LIVE — `knowledge/manager.py::_load_layout_module` dynamically loads `layout_multimodal_embedder.py` (hyphenated dir, not a normal import) for the `POST /knowledge/materials` route; do not delete. |
 
 ## Public interfaces
 
@@ -88,9 +86,6 @@ Auth legend: **T** = teacher membership required, **M** = any course membership 
 | POST | `/ask/stream` | M | Same pipeline as SSE: `status` / `answer` / `error` events |
 | GET / POST | `/classes` | P / A | List all search spaces / create class (creator becomes teacher) |
 | GET | `/my-classes` | A | Classes the caller is enrolled in |
-| GET | `/knowledge/subjects` | P | `KnowledgeManager.list_subjects()` |
-| GET / POST | `/knowledge/stores` | P | List / register a knowledge store by index path |
-| POST | `/knowledge/materials` | P | Multipart PDF upload → embed (503 if `python-multipart` missing) |
 | GET | `/teacher/weeks` | T | Weekly notes/slides upload state per course |
 | POST | `/teacher/weeks/current` | T | Set current week (1..`TEACHER_TOTAL_WEEKS`, default 16) |
 | GET / POST | `/teacher/retrieval-weights` | T | Per-course store-kind weight overrides (bounds 0..1) |

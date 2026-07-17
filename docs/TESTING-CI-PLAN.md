@@ -255,7 +255,7 @@ The bulk of the trophy. All via `AsyncClient` + rolled-back real Postgres + fake
 - **Retrieval** — `retrieval/pipeline.py` + `hybrid_search.py` against real pgvector with
   known fake vectors: assert ranking order, RRF fusion, store-bias effects, reranking.
 - **Indexing** — chunk → fake-embed → persist `AITADocument` → searchable round-trip.
-- **Knowledge** — `knowledge/manager.py` async CRUD, search-space integration.
+- **Knowledge** — teacher upload/storage flows and search-space integration.
 - **Chats** — `chats/service.py` session/turn persistence + memory summarization triggers.
 - **Auth** — enforcement on endpoints (valid/invalid/missing token, membership gates).
 - **Database** — models + migration 015/021 against **real Postgres** (revive
@@ -313,7 +313,7 @@ bug-repro regression test exists as the template.
 | `retrieval/pipeline.py` | **0%** | integration (real DB + fakes) |
 | `indexing/*` (6 modules) | **0%** | unit (chunking) + integration (embed→persist round-trip) |
 | `indexers/*` | **0%** | unit + integration |
-| `knowledge/manager.py`, `teacher_weekly.py` | ~20% | integration (async CRUD, ingestion) |
+| `knowledge/teacher_weekly.py` | ~20% | integration (async CRUD, ingestion) |
 | `chats/service.py` | **0%** | unit (memory) + integration (persistence) + e2e (multi-turn) |
 | `auth.py` | **0%** | unit (parsing) + integration (enforcement on endpoints) |
 | `database/models.py`, migrations | schema-only, **can't run** | integration (real Postgres) |

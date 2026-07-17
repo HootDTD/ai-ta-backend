@@ -24,7 +24,6 @@ from contextlib import contextmanager, redirect_stdout
 from ai.vision import vision_transcribe
 from config.settings import get_runtime_dir, hoot_qa_enabled, set_subject_name, RequestConfig
 from ai.orchestrator import Orchestrator
-from knowledge.manager import KnowledgeManager
 from config.weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
 from ai.main_ai import extract_keywords, parse_question, solve_with_bundle, solve_with_bundle_stream, format_answer
 from config.contracts import ParsedTask
@@ -153,25 +152,6 @@ class AskRequest(BaseModel):
 
     class Config:
         allow_population_by_field_name = True
-
-
-class KnowledgeMaterialOut(BaseModel):
-    id: str
-    subject: str
-    title: str
-    doc_id: str
-    index_dir: str
-    index_path: str
-    created_at: str
-    model: Optional[str] = None
-    dimensions: Optional[int] = None
-    page_count: Optional[int] = None
-
-
-class KnowledgeSubjectOut(BaseModel):
-    subject: str
-    slug: str
-    materials: List[KnowledgeMaterialOut]
 
 
 class TeacherUploadOut(BaseModel):
@@ -708,90 +688,6 @@ if chats_router is not None:
     app.include_router(chats_router)
 
 
-# -------- Knowledge endpoints --------
-@app.get("/knowledge/subjects", response_model=List[KnowledgeSubjectOut])
-def list_knowledge_subjects() -> List[KnowledgeSubjectOut]:
-    manager = KnowledgeManager()
-    try:
-        subjects = manager.list_subjects()
-    except Exception as exc:
-        log.exception("Failed to list knowledge subjects")
-        raise HTTPException(status_code=500, detail=str(exc))
-    return subjects
-
-
-class KnowledgeStoreIn(BaseModel):
-    subject: str
-    kind: str = Field(..., description="textbook|slides|homework|exams|other")
-    title: str
-    index_path: str = Field(..., description="Filesystem path to existing index directory")
-    priority: Optional[int] = None
-
-
-class KnowledgeStoreOut(BaseModel):
-    id: str
-    subject: str
-    kind: str
-    title: str
-    index_path: str
-    priority: int
-    created_at: str
-
-
-@app.get("/knowledge/stores", response_model=List[KnowledgeStoreOut])
-def list_knowledge_stores(subject: str = "") -> List[KnowledgeStoreOut]:
-    subject_clean = (subject or "").strip()
-    if not subject_clean:
-        raise HTTPException(status_code=400, detail="subject is required")
-    manager = KnowledgeManager()
-    try:
-        stores = manager.list_stores(subject_clean)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    # attach subject to each entry for response consistency
-    out: List[KnowledgeStoreOut] = []
-    for s in stores:
-        out.append(
-            KnowledgeStoreOut(
-                id=str(s.get("id", "")),
-                subject=subject_clean,
-                kind=str(s.get("kind", "")),
-                title=str(s.get("title", "")),
-                index_path=str(s.get("index_path", "")),
-                priority=int(s.get("priority", 0) or 0),
-                created_at=str(s.get("created_at", "")),
-            )
-        )
-    return out
-
-
-@app.post("/knowledge/stores", response_model=KnowledgeStoreOut)
-def register_knowledge_store(payload: KnowledgeStoreIn) -> KnowledgeStoreOut:
-    manager = KnowledgeManager()
-    try:
-        entry = manager.register_store(
-            payload.subject,
-            kind=payload.kind,
-            title=payload.title,
-            index_path=Path(payload.index_path),
-            priority=payload.priority,
-        )
-    except (ValueError, FileNotFoundError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-    return KnowledgeStoreOut(
-        id=str(entry.get("id", "")),
-        subject=str(entry.get("subject", payload.subject)),
-        kind=str(entry.get("kind", payload.kind)),
-        title=str(entry.get("title", payload.title)),
-        index_path=str(entry.get("index_path", payload.index_path)),
-        priority=int(entry.get("priority", payload.priority or 0) or 0),
-        created_at=str(entry.get("created_at", "")),
-    )
-
-
 @app.get("/teacher/weeks", response_model=TeacherCourseOut)
 def get_teacher_weeks(request: Request, search_space_id: int = Query(..., gt=0)) -> TeacherCourseOut:
     _require_course_membership(request, search_space_id=search_space_id, role="teacher")
@@ -898,60 +794,6 @@ def retry_teacher_upload(upload_id: int, request: Request) -> TeacherUploadOut:
 
 
 if _HAS_MULTIPART:
-
-    @app.post("/knowledge/materials", response_model=KnowledgeMaterialOut)
-    def upload_knowledge_material(
-        subject: str = Form(...),
-        title: str = Form(""),
-        file: UploadFile = File(...),
-    ) -> KnowledgeMaterialOut:
-        subject_clean = (subject or "").strip()
-        if not subject_clean:
-            raise HTTPException(status_code=400, detail="subject is required")
-
-        filename = file.filename or "knowledge-material.pdf"
-        name_path = Path(filename)
-        if name_path.suffix.lower() != ".pdf":
-            raise HTTPException(status_code=400, detail="Only PDF knowledge materials are supported")
-
-        resolved_title = (title or name_path.stem).strip() or name_path.stem
-        tmp_dir = Path(tempfile.mkdtemp(prefix="knowledge_upload_"))
-        tmp_path = tmp_dir / name_path.name
-
-        try:
-            with tmp_path.open("wb") as dest:
-                while True:
-                    chunk = file.file.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    dest.write(chunk)
-            if tmp_path.stat().st_size == 0:
-                raise HTTPException(status_code=400, detail="Uploaded file is empty")
-
-            manager = KnowledgeManager()
-            material = manager.add_pdf_material(
-                subject=subject_clean,
-                pdf_path=tmp_path,
-                title=resolved_title,
-            )
-        except HTTPException:
-            raise
-        except (ValueError, RuntimeError, FileNotFoundError) as exc:
-            log.warning("Embedding knowledge material failed: %s", exc)
-            raise HTTPException(status_code=400, detail=str(exc))
-        except Exception as exc:  # pragma: no cover - defensive
-            log.exception("Failed to process knowledge material upload")
-            raise HTTPException(status_code=500, detail="Failed to embed knowledge material") from exc
-        finally:
-            try:
-                file.file.close()
-            except Exception:
-                pass
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-        return material
-
-
     @app.post("/teacher/upload", response_model=TeacherUploadOut, status_code=202)
     def upload_teacher_material(
         request: Request,
@@ -1013,14 +855,6 @@ if _HAS_MULTIPART:
         return TeacherUploadOut(**record.to_dict())
 
 else:  # pragma: no cover - fallback when python-multipart missing
-
-    @app.post("/knowledge/materials")
-    async def upload_knowledge_material_unavailable() -> None:
-        raise HTTPException(
-            status_code=503,
-            detail="File upload support requires the 'python-multipart' package.",
-        )
-
     @app.post("/teacher/upload")
     async def upload_teacher_material_unavailable() -> None:
         raise HTTPException(

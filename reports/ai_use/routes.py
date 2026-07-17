@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from auth import resolve_auth_context
 from chats.service import get_chat_session_for_user, serialize_chat_session
 from database.session import get_async_session, run_async
-from .models import create_report, get_report, list_reports
+from .models import create_report, get_report
 from .service import build_evidence_pack, generate_report as gen_report
 
 router = APIRouter()
@@ -125,22 +125,3 @@ def get_ai_use_report_pdf(report_id: str, request: Request):
 def get_ai_use_report_detail(report_id: str, request: Request):
     auth = resolve_auth_context(request)
     return _require_owned_report(report_id, user_id=auth.user_id)
-
-
-@router.get("/reports/ai-use")
-def list_ai_use_reports_endpoint(request: Request, limit: int = 10):
-    auth = resolve_auth_context(request)
-    rows = list_reports(limit=limit)
-    out = []
-    seen: dict[str, bool] = {}
-    for row in rows:
-        chat_id = str((row or {}).get("chat_id") or "").strip()
-        if not chat_id:
-            continue
-        allowed = seen.get(chat_id)
-        if allowed is None:
-            allowed = _user_owns_chat(auth.user_id, chat_id)
-            seen[chat_id] = allowed
-        if allowed:
-            out.append(row)
-    return out

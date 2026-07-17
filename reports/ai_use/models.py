@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid as uuid_pkg
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -66,13 +66,3 @@ def create_report(
 def get_report(report_id: str) -> Optional[Dict[str, Any]]:
     """Fetch a single report by ID."""
     return sb.select_one(TABLE, {"id": f"eq.{report_id}"})
-
-
-def list_reports(*, limit: int = 10) -> List[Dict[str, Any]]:
-    """List recent reports, newest first."""
-    clamped = max(1, min(limit, 100))
-    return sb.select(TABLE, {
-        "select": "id,chat_id,created_at,style,length",
-        "order": "created_at.desc",
-        "limit": str(clamped),
-    })

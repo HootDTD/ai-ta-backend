@@ -46,8 +46,6 @@ How course material PDFs become searchable vectors. Ported from SurfSense's inde
 - `knowledge/teacher_pdf_ingestion.py` — `TeacherPDFIngestor`, the **production** layout-aware PDF extractor (PyMuPDF native + selective Mathpix). Builds its own provider via `build_teacher_mathpix_provider()`, bypassing `ocr/factory.py`.
 - `apollo/provisioning/authored_sets/indexing.py` — authored-set PDF indexer. It passes the env-selected `OCRProvider` into `TeacherPDFIngestor`, then reuses `AITAIndexingService.prepare_for_indexing`, `embed_and_persist_chunks`, `build_doc_content`, and `finalize_document`. It skips the weekly upload wrapper and overrides `finalize_document`'s ready status to the hidden sentinel `{"state": "apollo_reference"}` so authored problem/solution PDFs are not visible to student RAG. The connector metadata carries per-page `page_debug` (`page`, `ocr_confidence`, `extraction_mode`) — the same shape the weekly DTO uses — so the authored-set verification path (`chunk_ocr_confidence`) can detect low-confidence (e.g. handwritten) pages; without it the low-OCR generate-and-compare cross-check never fires. The synchronous PyMuPDF + per-page OCR ingest runs via `asyncio.to_thread` so a multi-page handwritten PDF does not stall the event loop serving concurrent requests.
 - `knowledge/teacher_weekly.py` — upload queue, job leasing, worker loop, week activation. Calls `AITAIndexingService`.
-- `knowledge/manager.py` — legacy `add_pdf_material()` path + `_index_items_to_pgvector()` bridge.
-- `text-embeder/layout_multimodal_embedder.py` — original CLI extractor/embedder (FAISS + SQLite FTS5); still used by `knowledge/manager.py`.
 - `teacher_upload_worker.py` — 20-line worker entrypoint (Procfile `worker:` process); just runs `TeacherWeeklyStorage().run_upload_worker_loop()`.
 
 ## Public interfaces
@@ -88,31 +86,25 @@ doc  = await service.index_from_items(docs[0], connector_doc, items)  # -> AITAD
    seam, so a normal teacher upload creates no provisioning job or extra ingest
    run. Authored sets use their separate synchronous API and observability path.
 
-### Flow 2 — Legacy KnowledgeManager path (`knowledge/manager.py:add_pdf_material`)
-
-`text-embeder/layout_multimodal_embedder.py:extract_document` (PyMuPDF blocks, 1000-token chunks with 150-token overlap via tiktoken `cl100k_base`, numbered-heading section tracking, repeating header/footer suppression) → `embed_items` (batched 64, exponential-backoff retries, L2-normalized float32) → `np.save embeddings.npy` + `build_faiss` (FAISS `IndexHNSWFlat(dim, 64)`, efConstruction 200, efSearch 128 → `faiss.index`) + `build_sqlite` (`items_raw` table + FTS5 `items` virtual table, porter tokenizer → `sqlite.db`), all under `km_<uuid>/` per material. Then `manager.py:_index_items_to_pgvector` dual-writes the same Items through `AITAIndexingService` (comment in code: "the only write path now" — pgvector is authoritative; FAISS/SQLite artifacts are legacy local-store outputs).
-
 ### OCR fallback ladder (three distinct mechanisms)
 
 1. **Mathpix selective per-page** (teacher path, Flow 1 step 4) — production; constructed directly from `MATHPIX_APP_ID`/`MATHPIX_APP_KEY` env.
-2. **Tesseract whole-page** (`layout_multimodal_embedder.py`, legacy path) — only when a page yields < 500 native chars; renders at 300 DPI, OCR lines re-chunked at the same token limits, item ids `{doc_id}:{page}:oN`.
-3. **`ocr/factory.py` env-gated provider** (`OCR_PROVIDER=mathpix` or `OCR_PROVIDER=openai`) — exists for authored-set indexing and tests; the weekly upload wrapper still constructs Mathpix directly. `knowledge/teacher_pdf_ingestion.py` accepts any `OCRProvider` at the existing `mathpix_provider` parameter name and only calls `.recognize()`.
+2. **`ocr/factory.py` env-gated provider** (`OCR_PROVIDER=mathpix` or `OCR_PROVIDER=openai`) — exists for authored-set indexing and tests; the weekly upload wrapper still constructs Mathpix directly. `knowledge/teacher_pdf_ingestion.py` accepts any `OCRProvider` at the existing `mathpix_provider` parameter name and only calls `.recognize()`.
 
 ## Key dependencies
 
-- **PyMuPDF (`fitz`)** — required for extraction; `TeacherPDFIngestor.ingest` raises `RuntimeError` without it. Optional in the legacy embedder (degrades for tests).
-- **OpenAI SDK** — embeddings (`text-embedding-3-large`). Lazy-imported in both embedder modules.
+- **PyMuPDF (`fitz`)** — required for extraction; `TeacherPDFIngestor.ingest` raises `RuntimeError` without it.
+- **OpenAI SDK** — embeddings (`text-embedding-3-large`), lazy-imported by the document embedder.
 - **pgvector.sqlalchemy `Vector`** — column type on `aita_documents` / `aita_chunks`.
 - **SQLAlchemy async + asyncpg** — `AITAIndexingService` takes an `AsyncSession`; worker bridges sync→async via `database/session.py:run_async`.
 - **Pydantic** — `AITAConnectorDocument`, OCR models.
 - **Mathpix HTTP API** — via stdlib `urllib.request` only.
-- Optional (legacy embedder only): `faiss`, `pytesseract`+`PIL`, `cv2`, `tiktoken`, `numpy`, `transformers` (BLIP figure captioning).
 
 ## Non-obvious conventions
 
-- **Chunk sizing differs by path**: teacher path does NO token windowing (1 layout Item = 1 chunk, preserving exact pages for citations); legacy embedder windows at 1000 tokens / 150 overlap (`KNOWLEDGE_TOKEN_LIMIT` / `KNOWLEDGE_OVERLAP_TOKENS`).
+- **Chunk sizing**: the teacher path does NO token windowing (1 layout Item = 1 chunk, preserving exact pages for citations).
 - **Embedding model/dims**: `text-embedding-3-large`, 3072 dims everywhere (`EMBEDDING_DIM` env, `database/models.py:25`). The checkpointed teacher-upload path uses `embed_texts` (~256 texts per API call, no session held during the call); the older `index_from_items` path in `indexing_service.py` still embeds one chunk at a time (N API calls per doc) with the 256-entry LRU cache. `embed_text` truncates at 8000 chars; doc-level content capped at 2000 chars.
-- **`index_from_items` is a known follow-up**: `indexing/indexing_service.py:index_from_items` retains the older monolithic pattern (serial per-chunk embedding inside one held `AsyncSession`) because `knowledge/manager.py` still calls it. That path was not changed in the checkpointed-indexing fix — migrating it is a deferred follow-up.
+- **`index_from_items` is the older monolithic API**: `indexing/indexing_service.py:index_from_items` embeds serially inside one held `AsyncSession`; the production teacher-upload and authored-set flows use the checkpointed path instead.
 - **Dedup/reindex semantics**: identical `unique_identifier_hash` + `content_hash` → skipped; content change → re-index in place. Forced reindex works by appending `<!-- reindex:{marker} -->` to `source_markdown` (`teacher_weekly.py:_ingest_pdf_upload`), changing the content hash.
 - **`material_kind` is silently coerced**: invalid kinds become `"other"` (validator in `connector_document.py`), not rejected. It drives retrieval store-bias weights downstream.
 - **NUL bytes are stripped, never rejected**: extraction output legitimately contains `\x00` on scanned PDFs; the pipeline silently removes it at the DTO and chunker boundaries (regression test: `tests/database/test_indexing_nul_postgres.py` on real Postgres — SQLite cannot catch this).
