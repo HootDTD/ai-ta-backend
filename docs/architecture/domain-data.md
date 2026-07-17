@@ -35,6 +35,14 @@ frozen SQL migration through 047. It must be replaced by a reviewed human
 migration entrypoints now fail immediately; their remaining bodies stay frozen
 in place as provenance, and the checksum manifest records that final guard.
 
+DB-04 (2026-07-16) added `create_app_schema_v1`, the non-destructive target
+schema build layered beside the legacy `public` tables. It creates 21
+tenant-bearing `app` tables with forced RLS and real authenticated policies,
+12 explicitly service-only `internal` tables, the initplan-safe
+`internal.has_course_role()` helper, the reviewed index allowlist, and the
+typed grading-v2 seam. It creates no data and does not alter any legacy table;
+the separately gated copy and activation migrations remain future work.
+
 ## Module map and file landmarks
 
 Cleanup T-E (2026-07-16) removed the `Clarification` SQLAlchemy model and all runtime reads/writes of `apollo_clarifications`. Migration 033 remains historical schema history; the physical table is intentionally left for the later DB-drop migration. `GradingArtifact.clarification_trace` remains as a compatibility JSON field and is empty on new writes.
