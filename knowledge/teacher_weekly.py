@@ -1171,22 +1171,6 @@ class TeacherWeeklyStorage:
                 session, search_space_id=int(upload.search_space_id),
                 current_week=int(course_row.current_week or 1),
             )
-            # WU-3B2g §8B: enqueue Apollo auto-provisioning for this finished
-            # document. Idempotent (content-hash short-circuit + partial-unique-
-            # index) and rides this SAME commit so a job is never visible for a
-            # doc that did not finish indexing. A no-op for the upload path: with
-            # APOLLO_AUTOPROVISION_ENABLED OFF nothing DRAINS the job, so upload
-            # behavior is byte-identical to today. The enqueue can never raise out
-            # of this commit (an index collision is swallowed via a SAVEPOINT).
-            # Local import: keep ``apollo`` off the teacher_weekly import path at
-            # module load (matches the deferred-import pattern at this seam).
-            from apollo.provisioning.enqueue import enqueue_provisioning_job
-            await enqueue_provisioning_job(
-                session,
-                search_space_id=int(upload.search_space_id),
-                document_id=document_id,
-                content_hash=getattr(indexed_doc, "content_hash", None),
-            )
             await session.commit()
 
     async def _handle_job_failure_async(

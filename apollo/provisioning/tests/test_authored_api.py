@@ -2726,66 +2726,6 @@ async def test_get_authored_set_attaches_live_promoted_reference_solution(db_ses
     assert enriched["solution_text"] == "The live stored solution."
 
 
-@pytest.mark.asyncio
-async def test_get_authored_set_enriches_rejected_problem_payload(db_session, monkeypatch):
-    import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet, IngestRun, RejectedProblem
-
-    monkeypatch.setattr(aapi, "require_user", _fake_require_user)
-    monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
-    space, concept = await _seed_course(db_session, slug="enrich-rejected")
-    run = IngestRun(search_space_id=space, document_id=901, status="succeeded")
-    db_session.add(run)
-    await db_session.flush()
-    steps = [
-        {
-            "step": 1,
-            "entry_type": "definition",
-            "id": "def_rejected",
-            "content": {"concept": "rejected", "meaning": "stored draft"},
-            "depends_on": [],
-        }
-    ]
-    rejected = RejectedProblem(
-        ingest_run_id=int(run.id),
-        search_space_id=space,
-        concept_id=concept,
-        failed_gate=3,
-        rejected_stage="promotion_lint",
-        diagnostic="cycle",
-        payload={
-            "statement": "Full rejected question",
-            "draft": {"reference_solution": steps},
-            "authored": {"solution": "The rejected stored solution."},
-        },
-    )
-    db_session.add(rejected)
-    aset = AuthoredSet(
-        search_space_id=space,
-        set_index=1,
-        status="done",
-        problem_document_id=901,
-        result_summary={
-            "problems": [{"concept_problem_id": None, "outcome": "rejected"}]
-        },
-    )
-    db_session.add(aset)
-    await db_session.flush()
-
-    detail = await aapi.get_authored_set(
-        set_id=int(aset.id), request=_FakeRequest(), full_text=True, db=db_session
-    )
-
-    problem = detail["result_summary"]["problems"][0]
-    assert problem["rejected_problem_id"] == int(rejected.id)
-    assert problem["rejected_stage"] == "promotion_lint"
-    assert problem["failed_gate"] == 3
-    assert problem["diagnostic"] == "cycle"
-    assert problem["problem_text"] == "Full rejected question"
-    assert problem["reference_solution"] == steps
-    assert problem["solution_text"] == "The rejected stored solution."
-
-
 def test_stored_solution_text_supports_direct_and_authored_payloads():
     import apollo.provisioning.authored_sets.api as aapi
 
@@ -3133,7 +3073,7 @@ async def test_manual_background_returns_when_set_vanishes_after_provisioning(
 ):
     import apollo.provisioning.authored_sets.api as aapi
     from apollo.persistence.models import AuthoredSet, IngestRun
-    from apollo.provisioning.orchestrator import AuthoredProvisionResult
+    from apollo.provisioning.authored_problem import AuthoredProvisionResult
 
     search_space_id, _concept_id = await _seed_course(db_session, slug="manual-final-vanish")
     authored_set = AuthoredSet(search_space_id=search_space_id, set_index=1, status="pending")

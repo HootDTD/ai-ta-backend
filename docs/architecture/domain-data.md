@@ -14,6 +14,13 @@ last_verified: 2026-07-16
 stub: false
 ---
 
+Cleanup T-F (2026-07-16) removed the dormant auto-provision worker and all code
+references to `apollo_provisioning_jobs` and `apollo_rejected_problems`; those
+tables await the separate DB-drop migration. Migration 030 remains documented
+below as historical schema provenance. The synchronous authored-set path still
+uses `apollo_ingest_runs`, `apollo_ingest_errors`, dedup decisions, and page
+evidence.
+
 ## Module map and file landmarks
 
 Cleanup T-E (2026-07-16) removed the `Clarification` SQLAlchemy model and all runtime reads/writes of `apollo_clarifications`. Migration 033 remains historical schema history; the physical table is intentionally left for the later DB-drop migration. `GradingArtifact.clarification_trace` remains as a compatibility JSON field and is empty on new writes.

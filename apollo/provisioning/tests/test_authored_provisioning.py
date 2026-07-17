@@ -22,17 +22,15 @@ import json
 import sys
 from unittest.mock import AsyncMock
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from apollo.persistence.models import (
     Concept,
     ConceptProblem,
-    IngestRun,
-    RejectedProblem,
     Subject,
 )
 from apollo.provisioning.ingest import ingest_authored_problems, load_authored_problems
-from apollo.provisioning.orchestrator import provision_authored_problem
+from apollo.provisioning.authored_problem import provision_authored_problem
 from database.models import SearchSpace
 
 # pytest.ini sets asyncio_mode = auto.
@@ -139,25 +137,6 @@ async def _seed_subject(db, *, slug: str):
     return space.id, subj.id, prov.id
 
 
-async def _seed_ingest_run(db, *, search_space_id: int) -> IngestRun:
-    """A real running ingest_run so provision_authored_problem can write an
-    apollo_rejected_problems audit row for a per-candidate reject (run is not None)."""
-    run = IngestRun(search_space_id=search_space_id, document_id=1, status="running")
-    db.add(run)
-    await db.flush()
-    return run
-
-
-async def _count_rejections(db, *, run: IngestRun) -> int:
-    return (
-        await db.execute(
-            select(func.count())
-            .select_from(RejectedProblem)
-            .where(RejectedProblem.ingest_run_id == run.id)
-        )
-    ).scalar_one()
-
-
 # --------------------------------------------------------------------------- #
 # AC #2 — polisci argument promotes under qualitative
 # --------------------------------------------------------------------------- #
@@ -220,7 +199,6 @@ async def test_unconstructable_candidate_is_clean_reject(db_session):
         commit=False,
     )
     authored = load_authored_problems([_POLISCI_RECORD], default_concept_slug="prov")[0][0]
-    run = await _seed_ingest_run(db_session, search_space_id=space)
     result = await provision_authored_problem(
         db_session,
         AsyncMock(),
@@ -231,18 +209,9 @@ async def test_unconstructable_candidate_is_clean_reject(db_session):
         judge_fn=_approving_judge(),
         tag_chat_fn=_tag_payload("federalism", "Federalism"),
         embed_fn=_embed_distinct,
-        run=run,
     )
     assert result.outcome == "rejected"
     assert result.stage == "construct"
-    # run is not None -> an apollo_rejected_problems audit row is written
-    assert await _count_rejections(db_session, run=run) == 1
-    rej = (
-        await db_session.execute(
-            select(RejectedProblem).where(RejectedProblem.ingest_run_id == run.id)
-        )
-    ).scalar_one()
-    assert rej.rejected_stage == "solution_draft"
 
 
 async def test_unfaithful_candidate_is_clean_reject(db_session):
@@ -268,7 +237,6 @@ async def test_unfaithful_candidate_is_clean_reject(db_session):
 
         return _judge
 
-    run = await _seed_ingest_run(db_session, search_space_id=space)
     result = await provision_authored_problem(
         db_session,
         AsyncMock(),
@@ -279,18 +247,9 @@ async def test_unfaithful_candidate_is_clean_reject(db_session):
         judge_fn=_rejecting_judge(),
         tag_chat_fn=_tag_payload("federalism", "Federalism"),
         embed_fn=_embed_distinct,
-        run=run,
     )
     assert result.outcome == "rejected"
     assert result.stage == "pairing_gate"
-    # run is not None -> the pairing-gate reject is audited
-    assert await _count_rejections(db_session, run=run) == 1
-    rej = (
-        await db_session.execute(
-            select(RejectedProblem).where(RejectedProblem.ingest_run_id == run.id)
-        )
-    ).scalar_one()
-    assert rej.rejected_stage == "pairing_gate"
 
 
 async def test_tag_mint_failure_is_clean_reject(db_session):
@@ -307,7 +266,6 @@ async def test_tag_mint_failure_is_clean_reject(db_session):
         commit=False,
     )
     authored = load_authored_problems([_POLISCI_RECORD], default_concept_slug="prov")[0][0]
-    run = await _seed_ingest_run(db_session, search_space_id=space)
     result = await provision_authored_problem(
         db_session,
         AsyncMock(),
@@ -319,25 +277,13 @@ async def test_tag_mint_failure_is_clean_reject(db_session):
         # tag payload missing concept_slug -> tag_and_mint raises TagMintError
         tag_chat_fn=_chat_returning({"display_name": "X", "prereqs": []}),
         embed_fn=_embed_distinct,
-        run=run,
     )
     assert result.outcome == "rejected"
     assert result.stage == "tag_mint"
-    # run is not None -> the tag/mint reject is audited
-    assert await _count_rejections(db_session, run=run) == 1
-    rej = (
-        await db_session.execute(
-            select(RejectedProblem).where(RejectedProblem.ingest_run_id == run.id)
-        )
-    ).scalar_one()
-    assert rej.rejected_stage == "tag_mint"
 
 
-async def test_reject_without_run_writes_no_audit_row(db_session):
-    """The guard side of the audit branch: when ``run`` is omitted (the default, the
-    direct-driven path) a reject is still CLEAN but writes NO apollo_rejected_problems
-    row — the ``if run is not None`` guard is what keeps _record_rejection off the
-    no-run path. DISCRIMINATING: dropping the guard would NameError/crash here."""
+async def test_reject_is_returned_for_the_authored_set_ledger(db_session):
+    """A clean reject remains available to the authored-set result ledger."""
     space, subj_id, prov_id = await _seed_subject(db_session, slug="ap-norun")
     await ingest_authored_problems(
         db_session,
@@ -358,18 +304,9 @@ async def test_reject_without_run_writes_no_audit_row(db_session):
         judge_fn=_approving_judge(),
         tag_chat_fn=_tag_payload("federalism", "Federalism"),
         embed_fn=_embed_distinct,
-        # run omitted -> default None -> no audit row
     )
     assert result.outcome == "rejected"
     assert result.stage == "construct"
-    n_rows = (
-        await db_session.execute(
-            select(func.count())
-            .select_from(RejectedProblem)
-            .where(RejectedProblem.search_space_id == space)
-        )
-    ).scalar_one()
-    assert n_rows == 0
 
 
 # --------------------------------------------------------------------------- #

@@ -3,8 +3,8 @@
 These exercise the ORM additions on the ``db_session`` (``create_all``-built)
 schema so the ORM edits in ``apollo/persistence/models.py`` are MEASURED by
 diff-cover (run with ``--cov=.``): the six ``ConceptProblem``/``KGEntity`` column
-adds and the five new model classes (``IngestRun``/``ProvisioningJob``/
-``RejectedProblem``/``DedupDecision``/``IngestError``).
+adds and the retained authored-ingest models (``IngestRun``/``DedupDecision``/
+``IngestError``). The worker-only queue and rejection models were removed.
 
 Postgres-only DDL semantics (the CHECK constraints, the partial-unique-index
 collapse, FK cascades, both backfills) are asserted for real in
@@ -23,8 +23,6 @@ from apollo.persistence.models import (
     IngestError,
     IngestRun,
     KGEntity,
-    ProvisioningJob,
-    RejectedProblem,
 )
 from apollo.subjects.tests._curriculum_fixtures import seed_concept, seed_search_space
 
@@ -144,61 +142,14 @@ async def test_orm_ingest_run_defaults(db_session):
     assert reloaded.created_at is not None
 
 
-async def test_orm_provisioning_job_roundtrip(db_session):
-    """ProvisioningJob defaults (state='pending', attempt_count=0) + the lease
-    fields round-trip when set."""
-    sid, _cid = await _space_and_concept(db_session)
-    job = ProvisioningJob(search_space_id=sid, document_id=1)
-    db_session.add(job)
-    await db_session.flush()
-    job_id = job.id
-    db_session.expire(job)
-    reloaded = (
-        await db_session.execute(select(ProvisioningJob).where(ProvisioningJob.id == job_id))
-    ).scalar_one()
-    assert reloaded.state == "pending"
-    assert reloaded.attempt_count == 0
-    assert reloaded.ingest_run_id is None
-
-    run = IngestRun(search_space_id=sid, document_id=2)
-    db_session.add(run)
-    await db_session.flush()
-    run_id = run.id
-    leased = ProvisioningJob(
-        search_space_id=sid,
-        document_id=2,
-        lease_owner="worker-1",
-        ingest_run_id=run_id,
-    )
-    db_session.add(leased)
-    await db_session.flush()
-    leased_id = leased.id
-    db_session.expire(leased)
-    reloaded2 = (
-        await db_session.execute(select(ProvisioningJob).where(ProvisioningJob.id == leased_id))
-    ).scalar_one()
-    assert reloaded2.lease_owner == "worker-1"
-    assert reloaded2.ingest_run_id == run_id
-
-
 async def test_orm_rejected_dedup_error_roundtrip(db_session):
-    """RejectedProblem / DedupDecision / IngestError round-trip the typed columns
-    (incl. _JSONType payload/context as dict and similarity REAL as float)."""
+    """DedupDecision / IngestError round-trip their typed columns."""
     sid, cid = await _space_and_concept(db_session)
     run = IngestRun(search_space_id=sid, document_id=1)
     db_session.add(run)
     await db_session.flush()
     run_id = run.id
 
-    rejected = RejectedProblem(
-        ingest_run_id=run_id,
-        search_space_id=sid,
-        concept_id=cid,
-        failed_gate=3,
-        rejected_stage="promotion_lint",
-        diagnostic="missing reference solution",
-        payload={"q": "x"},
-    )
     dedup = DedupDecision(
         ingest_run_id=run_id,
         search_space_id=sid,
@@ -215,19 +166,11 @@ async def test_orm_rejected_dedup_error_roundtrip(db_session):
         error_class="TimeoutError",
         context={"url": "x"},
     )
-    db_session.add_all([rejected, dedup, error])
+    db_session.add_all([dedup, error])
     await db_session.flush()
-    rejected_id, dedup_id, error_id = rejected.id, dedup.id, error.id
-    db_session.expire(rejected)
+    dedup_id, error_id = dedup.id, error.id
     db_session.expire(dedup)
     db_session.expire(error)
-
-    r = (
-        await db_session.execute(select(RejectedProblem).where(RejectedProblem.id == rejected_id))
-    ).scalar_one()
-    assert r.failed_gate == 3
-    assert r.rejected_stage == "promotion_lint"
-    assert r.payload == {"q": "x"}
 
     d = (
         await db_session.execute(select(DedupDecision).where(DedupDecision.id == dedup_id))

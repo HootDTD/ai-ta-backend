@@ -43,8 +43,8 @@ from apollo.persistence.models import (
     KGEntity,
     LearnerState,
     MasteryEvent,
-    RejectedProblem,
 )
+from apollo.provisioning.authored_problem import provision_authored_problem
 from apollo.provisioning.authored_sets.indexing import index_authored_doc
 from apollo.provisioning.authored_sets.observability import (
     finalize_ingest_run,
@@ -67,7 +67,6 @@ from apollo.provisioning.ingest import (
     ingest_authored_problems,
 )
 from apollo.provisioning.metered_chat import MeteredChat
-from apollo.provisioning.orchestrator import provision_authored_problem
 from apollo.provisioning.path_enumeration import enumerate_strategy_paths
 from apollo.provisioning.problem_hash import problem_dup_hash
 from apollo.provisioning.promote import promote
@@ -326,7 +325,6 @@ async def _run_manual_set_background(
                     judge_fn=metered_chat.cheap,
                     tag_chat_fn=_tag_mint_chat_fn(metered_chat),
                     embed_fn=embed_text,
-                    run=ingest_run,
                 )
                 results.append(
                     ProblemResult(
@@ -848,14 +846,13 @@ async def _enrich_problem_reviews(
     full_text: bool = False,
     ingest_run_id: int | None = None,
 ) -> list:
-    """Add live concept payloads and ordered rejection-audit payloads.
+    """Add live concept payloads to persisted authored-set outcomes.
 
     Concept-backed entries receive the current question, reference solution, and
-    whitelisted review state. Rejected entries are paired in result order with this
-    run's rejection audit rows, projecting their real columns plus stored
-    question/solution fields. Live concept payload values take precedence when both
-    sources exist; unmatched old-shape entries pass through unchanged.
+    whitelisted review state. Rejection diagnostics already live in the authored
+    set's result ledger; unmatched old-shape entries pass through unchanged.
     """
+    del ingest_run_id  # retained for compatibility with stored result readers
     ids = [
         int(p["concept_problem_id"])
         for p in problems
@@ -869,52 +866,13 @@ async def _enrich_problem_reviews(
                 await db.execute(select(ConceptProblem).where(ConceptProblem.id.in_(ids)))
             ).scalars()
         }
-    rejected_rows: list[RejectedProblem] = []
-    if ingest_run_id is not None:
-        rejected_rows = list(
-            (
-                await db.execute(
-                    select(RejectedProblem)
-                    .where(RejectedProblem.ingest_run_id == ingest_run_id)
-                    .order_by(RejectedProblem.id.asc())
-                )
-            )
-            .scalars()
-            .all()
-        )
-    rejected_iter = iter(rejected_rows)
     enriched: list = []
     for problem in problems:
-        rejected_row = (
-            next(rejected_iter, None)
-            if isinstance(problem, dict) and problem.get("outcome") == "rejected"
-            else None
-        )
         if not isinstance(problem, dict):
             enriched.append(problem)
             continue
 
         entry = dict(problem)
-        if rejected_row is not None:
-            rejected_payload = dict(rejected_row.payload or {})
-            entry["rejected_problem_id"] = int(rejected_row.id)
-            entry["rejected_stage"] = rejected_row.rejected_stage
-            if entry.get("failed_gate") is None:
-                entry["failed_gate"] = rejected_row.failed_gate
-            if not entry.get("diagnostic"):
-                entry["diagnostic"] = rejected_row.diagnostic
-            raw_text = rejected_payload.get("problem_text") or rejected_payload.get("statement")
-            if isinstance(raw_text, str):
-                displayed_text, truncated = _bounded_problem_text(raw_text, full_text=full_text)
-                entry["problem_text"] = displayed_text
-                entry["problem_text_truncated"] = truncated
-            reference_solution = _stored_reference_solution(rejected_payload)
-            if reference_solution is not None:
-                entry["reference_solution"] = reference_solution
-            solution_text = _stored_solution_text(rejected_payload)
-            if solution_text is not None:
-                entry["solution_text"] = solution_text
-
         cp_id = problem.get("concept_problem_id")
         row = rows.get(int(cp_id)) if cp_id is not None else None
         if row is not None:

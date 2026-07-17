@@ -805,14 +805,10 @@ class GraphComparisonFinding(Base):
 
 
 # ===========================================================================
-# WU-3B2a auto-provisioning substrate (migration 030). §8B materials->Apollo
-# observability + work-queue tables. Following the repo convention these declare
-# NO DB CHECK constraints — the migration SQL is the authority (status/state/
-# method/verdict CHECKs live in SQL only); the ORM is the typed Python access
-# layer. The schema EXISTS as of WU-3B2a but the pipeline that reads/writes these
-# tables lands in 3B2b-3B2h (jobs drained by 3B2f; runs/rejected/dedup/errors
-# written by 3B2g). The course-isolation invariant (§1.4) is carried by the
-# NOT NULL search_space_id FK on every table (a course delete cascades its rows).
+# Authored-content ingest observability. Migration 030 originally also created
+# an auto-provisioning queue and rejected-problem audit table; cleanup T-F
+# removed their runtime/ORM models while retaining the synchronous authored-set
+# ingest, dedup, and error records below.
 # ===========================================================================
 
 
@@ -838,8 +834,7 @@ class IngestRun(Base):
     # Nullable since WU-AAS observability (migration 036): the authored-set path
     # opens the run BEFORE indexing so an OCR/indexing failure (bad PDF, no chunks
     # produced) still leaves a run row — at that point no document has been minted
-    # yet, so document_id is stamped only once problem indexing succeeds. The queue
-    # worker path always sets it.
+    # yet, so document_id is stamped only once problem indexing succeeds.
     document_id = Column(BigInteger, nullable=True)
     content_hash = Column(Text, nullable=True)
     status = Column(Text, nullable=False, server_default=text("'queued'"), default="queued")
@@ -870,73 +865,6 @@ class IngestRun(Base):
     llm_cost_usd = Column(Numeric(12, 6), nullable=False, server_default=text("0"), default=0)
     started_at = Column(TIMESTAMP(timezone=True), nullable=True)
     finished_at = Column(TIMESTAMP(timezone=True), nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-
-class ProvisioningJob(Base):
-    """The SKIP-LOCKED auto-provisioning work queue (migration 030, §8B), mirroring
-    the TeacherUploadJob lease shape. ``state`` vocabulary is
-    pending/running/completed/failed — DISTINCT from the run ``status`` (CHECK in
-    SQL only). The partial-unique-index that collapses two OPEN jobs per document
-    is migration-only (NOT declared in the ORM, same as 028's partial index)."""
-
-    __tablename__ = "apollo_provisioning_jobs"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    document_id = Column(BigInteger, nullable=False)
-    state = Column(Text, nullable=False, server_default=text("'pending'"), default="pending")
-    ingest_run_id = Column(
-        BigInteger,
-        ForeignKey("apollo_ingest_runs.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    lease_owner = Column(Text, nullable=True)
-    lease_expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
-    attempt_count = Column(Integer, nullable=False, server_default=text("0"), default=0)
-    last_error = Column(Text, nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-
-class RejectedProblem(Base):
-    """A gate failure + diagnostic + the rejected payload (migration 030, §8B).
-    ``concept_id`` ON DELETE SET NULL: a pruned concept must not delete the audit
-    row. ``rejected_stage`` / ``failed_gate`` vocabularies are open (no SQL CHECK);
-    the ORM declares no DB CHECK (repo convention)."""
-
-    __tablename__ = "apollo_rejected_problems"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    ingest_run_id = Column(
-        BigInteger,
-        ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    concept_id = Column(
-        BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    failed_gate = Column(SmallInteger, nullable=True)
-    rejected_stage = Column(Text, nullable=False)
-    diagnostic = Column(Text, nullable=False)
-    payload = Column(_JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 

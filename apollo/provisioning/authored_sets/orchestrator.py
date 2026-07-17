@@ -53,14 +53,10 @@ from apollo.provisioning.authored_sets.structure_pass import (
 )
 from apollo.provisioning.authored_sets.verification import verify_against_generated
 from apollo.provisioning.concept_match import ConceptMatch, match_concept
-from apollo.provisioning.cost_constants import structure_pairing_mode
-from apollo.provisioning.orchestrator import (
-    _SCRAPE_SYSTEM_PROMPT,
-    _TAG_MINT_SYSTEM_PROMPT,
-    _TRIAGE_SYSTEM_PROMPT,
+from apollo.provisioning.cost_constants import (
     APOLLO_SCRAPE_MAX_SECTIONS,
     APOLLO_SCRAPE_MIN_CANDIDATES,
-    _load_chunks,
+    structure_pairing_mode,
     structured_scrape_enabled,
 )
 from apollo.provisioning.pairing_gate import rejection_from_verdict, validate_pair
@@ -89,6 +85,96 @@ __all__ = [
     "reversed_provisioning_enabled",
     "run_authored_set_provisioning",
 ]
+
+_SCRAPE_SYSTEM_PROMPT = (
+    "You extract EVERY question a student could be asked to answer from one "
+    "SECTION of course material, in ANY subject (textbook prose, worked "
+    "examples, exercise sets, exam study guides, and review outlines all count; "
+    "a section may contain zero, one, or many questions). Numeric solve-for "
+    "exercises, convergence/divergence determinations, show-that/verify tasks, "
+    "true/false items, define/explain/compare prompts, and open-ended "
+    "study-guide or discussion questions ALL count as problems — for a question "
+    'with no numeric answer, "target_unknown" is a short phrase naming what is '
+    'asked (e.g. "convergence verdict", "definition of future shock") and '
+    '"given_values" is {}.\n'
+    "Return ONLY a JSON array - no prose, no explanation, no markdown code fences. "
+    "Each array element is an object with EXACTLY these keys:\n"
+    '  "problem_text": string - the full, self-contained problem statement.\n'
+    '  "given_values": object mapping each stated known quantity\'s short symbol to '
+    "its NUMERIC value (numbers only - no units, no strings); use {} if none.\n"
+    '  "target_unknown": string - the single quantity or idea the problem asks '
+    "to find.\n"
+    '  "difficulty": exactly one of "intro", "standard", "hard".\n'
+    '  "concept_slug": string - a short dotted/kebab concept id, e.g. '
+    '"bernoulli-equation".\n'
+    '  "label": the problem\'s printed number/label exactly as shown, e.g. '
+    '"Problem 3", "Q3", "3.", or null if none.\n'
+    "If the section truly contains no questions, return []."
+)
+
+_TRIAGE_SYSTEM_PROMPT = (
+    "You triage a document's SECTIONS to find which likely contain questions a "
+    "student could be asked to answer — quantitative exercises OR qualitative "
+    "review/discussion questions. You receive a JSON array of sections, each with "
+    'an "index", "title", "chars", and "has_numeric_imperative" flag.\n'
+    "Return ONLY a JSON array - no prose, no markdown fences. Each element is an "
+    "object with EXACTLY these keys:\n"
+    '  "index": integer - echo the section\'s index.\n'
+    '  "is_problem_likely": boolean - true if the section probably contains '
+    "questions, practice problems, or worked examples.\n"
+    '  "priority": integer 0-10 - higher = scrape sooner.\n'
+    '  "concept_slug": string - a short dotted/kebab concept id for the section.\n'
+    '  "concept_display": string - a human-readable concept label.\n'
+    "Include EVERY index from the input exactly once."
+)
+
+_TAG_MINT_SYSTEM_PROMPT = (
+    "You tag an already-approved problem (quantitative OR qualitative) with its "
+    "canonical concept and the prerequisite edges between its solution entities.\n"
+    "Return ONLY a JSON object - no prose, no explanation, no markdown code fences. "
+    "The object has EXACTLY these keys:\n"
+    '  "concept_slug": string - a short dotted/kebab concept id (e.g. '
+    '"bernoulli-equation"). REQUIRED.\n'
+    '  "display_name": string - a human-readable concept label; if unknown, repeat '
+    "the concept_slug.\n"
+    '  "prereqs": array of {"from": <entity-key>, "to": <entity-key>} objects naming '
+    "prerequisite edges between the problem's minted entity keys; use [] if none."
+)
+
+
+class _ChunkView:
+    __slots__ = ("id", "content", "document_id", "page_number", "section_path", "chunk_type")
+
+    def __init__(self, id, content, document_id, page_number, section_path, chunk_type):  # noqa: A002
+        self.id = id
+        self.content = content
+        self.document_id = document_id
+        self.page_number = page_number
+        self.section_path = section_path
+        self.chunk_type = chunk_type
+
+
+async def _load_chunks(db: AsyncSession, *, document_id: int) -> Sequence[_ChunkView]:
+    from database.models import AITAChunk
+
+    rows = (
+        await db.execute(
+            select(
+                AITAChunk.id,
+                AITAChunk.content,
+                AITAChunk.document_id,
+                AITAChunk.page_number,
+                AITAChunk.section_path,
+                AITAChunk.chunk_type,
+            )
+            .where(AITAChunk.document_id == document_id)
+            .order_by(AITAChunk.id.asc())
+        )
+    ).all()
+    return [
+        _ChunkView(r.id, r.content, r.document_id, r.page_number, r.section_path, r.chunk_type)
+        for r in rows
+    ]
 
 _DEFAULT_CONF_THRESHOLD = 0.6
 _LOG = logging.getLogger(__name__)

@@ -26,7 +26,10 @@ from apollo.provisioning.cost_constants import (
     cost_usd_for,
 )
 from apollo.provisioning.dedup import DedupVerdict, resolve_candidate
-from apollo.provisioning.enqueue import enqueue_provisioning_job
+from apollo.provisioning.authored_problem import (
+    AuthoredProvisionResult,
+    provision_authored_problem,
+)
 from apollo.provisioning.ingest import (
     AuthoredProblem,
     IngestResult,
@@ -35,12 +38,6 @@ from apollo.provisioning.ingest import (
     write_authored_tier1_problems,
 )
 from apollo.provisioning.metered_chat import CostBudgetExceeded, MeteredChat
-from apollo.provisioning.orchestrator import (
-    AuthoredProvisionResult,
-    ProvisioningOutcome,
-    provision_authored_problem,
-    run_provisioning,
-)
 from apollo.provisioning.pairing_gate import (
     PairingVerdict,
     Rejection,
@@ -54,13 +51,6 @@ from apollo.provisioning.problem_leak_guard import (
 )
 from apollo.provisioning.promote import PromoteResult, promote
 from apollo.provisioning.promotion_lint import PromotionResult, run_promotion_lint
-from apollo.provisioning.queue import (
-    ClaimedJob,
-    claim_provisioning_job,
-    complete_job,
-    fail_job,
-    release_job,
-)
 from apollo.provisioning.scrape import (
     CandidateQuestion,
     ScrapeResult,
@@ -115,7 +105,7 @@ __all__ = [
     # Subject-fluid Apollo — authored construction (solution.py)
     "construct_authored_reference",
     "build_authored_approved_pair",
-    # Subject-fluid Apollo — authored per-candidate pipeline (orchestrator.py)
+    # Synchronous teacher-authored per-candidate pipeline
     "provision_authored_problem",
     "AuthoredProvisionResult",
     # WU-3B2e — pairing/correctness gate (stage 3) public surface
@@ -123,12 +113,6 @@ __all__ = [
     "Rejection",
     "validate_pair",
     "rejection_from_verdict",
-    # WU-3B2f — SKIP-LOCKED claim/lease queue drain (queue.py)
-    "ClaimedJob",
-    "claim_provisioning_job",
-    "complete_job",
-    "fail_job",
-    "release_job",
     # WU-3B2f — metered LLM client (metered_chat.py)
     "MeteredChat",
     "CostBudgetExceeded",
@@ -137,14 +121,9 @@ __all__ = [
     "MAX_ATTEMPTS",
     "MODEL_PRICES",
     "cost_usd_for",
-    # WU-3B2g — enqueue seam (enqueue.py)
-    "enqueue_provisioning_job",
     # WU-3B2g — promotion step (promote.py)
     "promote",
     "PromoteResult",
-    # WU-3B2g — orchestrator (orchestrator.py)
-    "run_provisioning",
-    "ProvisioningOutcome",
     # Subject-agnostic Apollo — authored-problem ingest (ingest.py)
     "AuthoredProblem",
     "IngestResult",

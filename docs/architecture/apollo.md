@@ -28,6 +28,12 @@ unwired (code still present).
 
 Cleanup T-D (2026-07-16) removed the abandoned misconception detector, authored misconception bank runtime, emergent observation ledger, and their flags. The P2.8 signal value object/rubric reducer remain; served topic payloads now degrade to coverage-only topics with empty misconception arrays.
 
+Cleanup T-F (2026-07-16) removed the dormant upload-triggered auto-provision
+worker, its queue/enqueue/orchestrator runtime, and the `ProvisioningJob` and
+`RejectedProblem` ORM models. The synchronous teacher-authored set and problem-
+generation paths remain live; authored rejection details are persisted in each
+set's result ledger, and authored ingest runs/errors/page evidence remain.
+
 Cleanup T-E (2026-07-16) made unified questioning permanent. `chat.py` still reads `APOLLO_UNIFIED_QUESTIONING_ENABLED` for one release and warns when it is off, but always calls the unified planner; the legacy `draft_reply` fall-through, clarification package/flag/cache, confirmed-resolution tier, and `Clarification` ORM model are gone. The live Done-time candidate loader now lives at `apollo/resolution/candidate_assembly.py`. New grading artifacts retain an empty `clarification_trace` JSON field for stored-payload compatibility. The historical `apollo_clarifications` table remains until the planned DB-drop migration is applied.
 
 This T-E runtime statement supersedes older work-unit history later in this document that describes loading confirmed clarifications, a live clarification loop, or `_load_clarification_trace`; those paths no longer exist. References to the physical `apollo_clarifications` table remain historical until its separate drop migration.

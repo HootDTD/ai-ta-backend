@@ -256,7 +256,7 @@ def test_scrape_prompt_declares_candidate_question_fields():
     LLM) are excluded; the minus-set is derived from that function's chunk-stamped
     args so it stays honest with the model. DISCRIMINATING: reverting the prompt to
     the vague one-liner (no field names) RED-flags."""
-    from apollo.provisioning.orchestrator import _SCRAPE_SYSTEM_PROMPT
+    from apollo.provisioning.authored_sets.orchestrator import _SCRAPE_SYSTEM_PROMPT
 
     # The fields _coerce_candidate stamps from the chunk (scrape.py:112-122) — the
     # LLM never supplies these, so the prompt does not declare them.
