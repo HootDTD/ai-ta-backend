@@ -230,7 +230,18 @@ async def test_forward_copy_reconcile_idempotency_and_reverse_delta(copied_conn)
     assert await copied_conn.fetchval(
         "SELECT count(*) FROM chat_sessions WHERE chat_id='reverse-chat'"
     ) == 1
+
+    # Reconciliation repairs explicit-ID sequence drift before reopening writes.
+    await copied_conn.execute(
+        "SELECT setval(pg_get_serial_sequence('app.courses','id'),1,true)"
+    )
     await copied_conn.execute(_RECONCILE.read_text(encoding="utf-8"))
+    sequence = await copied_conn.fetchrow(
+        "SELECT last_value,is_called FROM app.courses_id_seq"
+    )
+    maximum_id = await copied_conn.fetchval("SELECT max(id) FROM app.courses")
+    next_id = sequence["last_value"] + 1 if sequence["is_called"] else sequence["last_value"]
+    assert next_id > maximum_id
 
 
 def test_copy_migration_is_non_destructive_and_names_exactly_six_drops():

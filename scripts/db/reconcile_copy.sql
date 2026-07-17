@@ -1,6 +1,7 @@
 -- DB-05 forward-copy reconciliation. Run with psql after copy_app_schema_v1.
--- Read-only apart from transaction-local temporary objects. Every mismatch
--- raises an exception so local rehearsal/CI cannot continue on partial data.
+-- Read-only apart from transaction-local temporary objects and identity-sequence
+-- repair. Every mismatch raises an exception so local rehearsal/CI cannot
+-- continue on partial data. Sequence changes survive the final ROLLBACK.
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
@@ -297,7 +298,8 @@ BEGIN
         END IF;
     END LOOP;
 
-    -- The next sequence value, not merely last_value, must be above max(id).
+    -- Explicit identity values do not advance their sequences. Repair any lag
+    -- left by the copy/reverse-copy path, then prove the next value is safe.
     FOR identity_column IN
         SELECT table_schema, table_name, column_name, identity_increment::bigint AS increment_by
         FROM information_schema.columns
@@ -312,8 +314,14 @@ BEGIN
             identity_column.table_schema, identity_column.table_name) INTO maximum_id;
         next_identity := CASE WHEN sequence_called THEN sequence_last + identity_column.increment_by ELSE sequence_last END;
         IF maximum_id IS NOT NULL AND next_identity <= maximum_id THEN
-            RAISE EXCEPTION 'identity sequence % next value % is not above max %',
-                sequence_name, next_identity, maximum_id;
+            PERFORM setval(sequence_name::regclass, maximum_id, true);
+            EXECUTE format('SELECT last_value, is_called FROM %s', sequence_name)
+                INTO sequence_last, sequence_called;
+            next_identity := CASE WHEN sequence_called THEN sequence_last + identity_column.increment_by ELSE sequence_last END;
+            IF next_identity <= maximum_id THEN
+                RAISE EXCEPTION 'identity sequence % next value % is not above max % after repair',
+                    sequence_name, next_identity, maximum_id;
+            END IF;
         END IF;
     END LOOP;
 
