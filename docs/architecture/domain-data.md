@@ -41,7 +41,15 @@ tenant-bearing `app` tables with forced RLS and real authenticated policies,
 12 explicitly service-only `internal` tables, the initplan-safe
 `internal.has_course_role()` helper, the reviewed index allowlist, and the
 typed grading-v2 seam. It creates no data and does not alter any legacy table;
-the separately gated copy and activation migrations remain future work.
+the separately gated activation migration remains future work.
+
+DB-05 (2026-07-17) added the non-destructive `copy_app_schema_v1` forward
+copy. It maps the 36 retained legacy sources into all 33 target tables,
+performs the three planned merges and JSON-to-typed promotions, fails on
+ambiguous progress/problem/report attribution, records the six intentionally
+uncopied tables, and advances every target identity sequence. Reconciliation,
+scrubbed rehearsal data, and the human-run reverse-delta rollback artifact live
+under `scripts/db/`, `supabase/seed.sql`, and the DB-05 database contract test.
 
 ## Module map and file landmarks
 
