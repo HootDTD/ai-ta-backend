@@ -11,7 +11,7 @@ related:
   - shared/supabase
   - shared/security
   - ai-ta-backend/rag-pipeline
-last_verified: 2026-07-16
+last_verified: 2026-07-17
 stub: false
 ---
 
@@ -50,6 +50,15 @@ ambiguous progress/problem/report attribution, records the six intentionally
 uncopied tables, and advances every target identity sequence. Reconciliation,
 scrubbed rehearsal data, and the human-run reverse-delta rollback artifact live
 under `scripts/db/`, `supabase/seed.sql`, and the DB-05 database contract test.
+
+DB-06 (2026-07-17) pins pgvector objects to the `extensions` schema for the
+target build and replaces DB-04's provisional retrieval routines with hardened
+`internal.fetch_items`, `internal.fts_count`, and `internal.hybrid_search`
+definitions. They preserve the reviewed live integer/RPC result contracts,
+pin an empty search path, keep the whole-store HNSW scan before document
+filtering, and grant execution only to the current backend `service_role`.
+The three DB-04 retrieval indexes are asserted and reused, not duplicated;
+live extension relocation remains a separately observed human gate.
 
 ## Module map and file landmarks
 
