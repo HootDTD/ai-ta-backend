@@ -153,7 +153,7 @@ SELECT pg_temp.assert_copy_mapping('authored_sets',
     $q$SELECT id, course_id, set_index, problem_document_id, solution_document_id FROM app.authored_sets$q$);
 
 SELECT pg_temp.assert_copy_mapping('question_opportunities',
-    $q$SELECT a.id AS attempt_id, a.reference_node_id,
+    $q$SELECT a.attempt_id, a.reference_node_id,
               COALESCE(t.status,a.state) AS state, COALESCE(t.times_asked,0) AS times_asked
        FROM public.apollo_reference_question_opportunities a
        LEFT JOIN public.apollo_question_tally t USING (attempt_id,reference_node_id)
