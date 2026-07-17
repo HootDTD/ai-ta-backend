@@ -5,6 +5,7 @@
 #   typecheck   — mypy ratchet: ADDED files blocking, modified advisory (in ci-passed)
 #   unit        — fast `-m "not integration"` run, no Docker (blocking)
 #   integration — full suite on real pgvector + Neo4j Testcontainers + patch-coverage gate (blocking)
+#   database    — pinned Supabase CLI drift check + clean local reset (blocking)
 #   ci-passed   — aggregation check; THIS is the single required status for branch protection
 #
 # Why ruff is changed-files-only: the legacy tree has 360 ruff errors / 1689
@@ -191,12 +192,29 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  database:
+    name: database (clean Supabase reset)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install pinned Supabase CLI
+        uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3.0.0
+        with:
+          version: 2.109.0
+      - name: Check migration history drift
+        run: node scripts/db/check-migration-drift.mjs
+      - name: Reset local database from active migrations
+        run: node scripts/db/reset-local.mjs
+
   ci-passed:
     name: ci-passed
     # The SINGLE required status check for branch protection. Runs even if a
     # dependency failed so the gate reports a definitive pass/fail.
     if: always()
-    needs: [quality, typecheck, unit, integration]
+    needs: [quality, typecheck, unit, integration, database]
     runs-on: ubuntu-latest
     steps:
       - name: Assert all required jobs passed
@@ -206,10 +224,12 @@ jobs:
           echo "typecheck=${{ needs.typecheck.result }}"
           echo "unit=${{ needs.unit.result }}"
           echo "integration=${{ needs.integration.result }}"
+          echo "database=${{ needs.database.result }}"
           if [ "${{ needs.quality.result }}" = "success" ] \
             && [ "${{ needs.typecheck.result }}" = "success" ] \
             && [ "${{ needs.unit.result }}" = "success" ] \
-            && [ "${{ needs.integration.result }}" = "success" ]; then
+            && [ "${{ needs.integration.result }}" = "success" ] \
+            && [ "${{ needs.database.result }}" = "success" ]; then
             echo "All required jobs passed."
           else
             echo "::error::One or more required jobs failed."

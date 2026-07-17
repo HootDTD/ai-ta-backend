@@ -1,12 +1,12 @@
 ---
 doc: shared/supabase
-description: Supabase projects, schema map, pgvector/halfvec HNSW setup, and the numbered-SQL migration workflow
+description: Supabase projects, schema map, pgvector/halfvec HNSW setup, and the timestamped CLI migration workflow
 owns: []
 related:
   - ai-ta-backend/_overview
   - ai-ta-backend/domain-data
   - shared/security
-last_verified: 2026-07-01
+last_verified: 2026-07-16
 stub: false
 ---
 
@@ -88,31 +88,25 @@ All tables created by `ai-ta-backend/database/migrations/`; ORM models for the c
 
 ## Migration workflow
 
-- Migrations are **hand-numbered files** in `ai-ta-backend/database/migrations/`:
-  `001`–`003` are Python scripts (initial schema, Supabase seed, reindex), `004`–`024` are
-  plain SQL. No Alembic yet (an Alembic adoption is specced in the root `CLAUDE.md` but
-  not implemented — there is no `alembic/` directory). **Numbering collision**: two files
-  share `023` (`023_apollo_auth_scoping.sql`, `023_chunks_halfvec_hnsw.sql`) — when taking
-  a new number, check for duplicates, and don't reuse `023`.
-- `024_teacher_textbook.sql` (file committed, **applied nowhere yet** as of 2026-06-11)
-  relaxes `teacher_uploads` checks to `week BETWEEN 0 AND 16` and
-  `kind IN ('notes','slides','textbook')`. Deploy order matters: apply 024 to the target
-  DB **before** merging/deploying the textbook backend code (same migration-before-code
-  dependency PR #12 had with 023), or the first textbook upload 500s.
-- Recent migrations are applied with the **Supabase MCP `apply_migration`** tool (test
-  project first, then prod), and the SQL is committed to the repo as the next numbered
-  file. Prod's `supabase_migrations` history confirms this: it tracks `015`–`021` (applied
-  2026-06-08) plus `enable_rls_stopgap_all_public_tables` (= file 022, applied 2026-06-10).
-  Files `001`–`014` predate MCP tracking and were run manually (e.g.
-  `python -m ...001_create_schema` against `SUPABASE_DB_URL`).
-- **Status note**: memory/docs that say "prod is at migration 021" are stale — **022 is
-  applied to both projects as of 2026-06-10** (it enables RLS everywhere; see
-  shared/security for what that does and does not enforce).
-- Conventions for a new migration: take the next number; make it idempotent
-  (`IF NOT EXISTS` / `DROP POLICY IF EXISTS` guards, as in 006/022); include
-  `ENABLE ROW LEVEL SECURITY` for new tables; update `database/models.py` to match
-  (models and SQL are kept in sync by hand — there is no autogenerate/drift check);
-  apply to test, verify, apply to prod, commit the file.
+- Supabase CLI **2.109.0** is pinned in `package.json`, checked by the local
+  harness, and installed at that exact version in CI. `supabase/config.toml` is
+  committed and contains local-only stack settings.
+- `supabase/migrations/` is the only forward schema history. Create migrations
+  with `supabase migration new <descriptive_name>`; filenames use a unique
+  14-digit timestamp and are applied in ascending timestamp order. Never edit
+  an applied migration; append a correction.
+- `database/migrations/` is a read-only legacy archive through `047`. Its 48
+  files include the historical duplicate `023`; normalized SHA-256 checksums
+  make additions, deletions, and edits fail CI. The old Python/manual runner
+  must not apply the active timestamped chain.
+- `node scripts/db/reset-local.mjs` verifies history drift, requires the pinned
+  CLI, starts the local Docker stack if needed, and runs `supabase db reset
+  --local`. Reset applies the timestamped chain and then `supabase/seed.sql`.
+  The harness exposes no linked or remote mode.
+- CI performs the same drift check and empty-database reset as a required job.
+  Remote history reconciliation and migration application remain explicit,
+  separately reviewed human operations; agents never link or mutate a remote
+  project.
 
 ## Access paths (which credential touches what)
 

@@ -41,6 +41,9 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` owns the FastAPI ap
 | `supabase_client.py` | One-line backward-compat shim: `from vendors.supabase_client import *`. |
 | `teacher_upload_worker.py` | Procfile `worker` entrypoint: `TeacherWeeklyStorage().run_upload_worker_loop()` — drains the queued teacher-upload ingestion jobs. |
 | `Procfile` | `web: uvicorn server:app` + `worker: python -m teacher_upload_worker` + `apollo-janitor: python -m apollo.learner_janitor_worker` (Railway deploys web+worker; **`apollo-janitor` is scaled to 0 replicas until `APOLLO_LEARNER_JANITOR_ENABLED` is flipped** — WU-5B3b). |
+| `scripts/db/check-migration-drift.mjs` | CI/local guard that verifies the frozen numbered migration checksums and permits only timestamped SQL in the active Supabase chain. |
+| `scripts/db/reset-local.mjs` | Cross-platform harness that requires Supabase CLI 2.109.0, starts the local Docker stack when needed, and runs `supabase db reset --local`; it has no remote mode. |
+| `.github/workflows/ci.yml` database job | Blocking clean-reset gate for the active Supabase migration chain; `ci-passed` includes its result. |
 
 ### config/
 | File | Role |
