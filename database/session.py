@@ -82,6 +82,13 @@ def _build_engine() -> AsyncEngine:
     database_url = (os.getenv("SUPABASE_DB_URL") or "").strip()
     if not database_url:
         raise RuntimeError("SUPABASE_DB_URL is not set.")
+    if database_url.startswith("sqlite+"):
+        return create_async_engine(
+            database_url,
+            execution_options={
+                "schema_translate_map": {"app": None, "internal": None},
+            },
+        )
     return create_async_engine(
         database_url,
         pool_size=10,

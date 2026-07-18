@@ -133,7 +133,7 @@ class Subject(Base):
     # curriculum chain inherits course ownership through this column.
     search_space_id = Column(
         Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -247,7 +247,7 @@ class AuthoredSet(Base):
     )
     search_space_id = Column(
         Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -281,7 +281,7 @@ class GenerationRun(Base):
     )
     search_space_id = Column(
         Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -389,7 +389,7 @@ class ApolloSession(Base):
     user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
     search_space_id = Column(
         Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -627,7 +627,7 @@ class LearnerState(Base):
     user_id = Column(UUID(as_uuid=False), primary_key=True)
     search_space_id = Column(
         Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         primary_key=True,
     )
     entity_id = Column(
@@ -671,7 +671,7 @@ class MasteryEvent(Base):
     user_id = Column(UUID(as_uuid=False), nullable=False)
     search_space_id = Column(
         Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
     )
     entity_id = Column(
@@ -735,7 +735,7 @@ class GraphComparisonRun(Base):
     user_id = Column(UUID(as_uuid=False), nullable=False)
     search_space_id = Column(
         Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
     )
     coverage_score = Column(Float, nullable=False)
@@ -827,7 +827,7 @@ class IngestRun(Base):
     )
     search_space_id = Column(
         Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -885,7 +885,7 @@ class DedupDecision(Base):
     )
     search_space_id = Column(
         Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -923,7 +923,7 @@ class IngestError(Base):
     )
     search_space_id = Column(
         Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -960,7 +960,7 @@ class IngestPageEvidence(Base):
     )
     search_space_id = Column(
         Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -1002,7 +1002,7 @@ class GradingArtifact(Base):
     user_id = Column(UUID(as_uuid=False), nullable=False)
     search_space_id = Column(
         Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
     )
     concept_id = Column(
