@@ -282,15 +282,23 @@ async def test_old_new_function_parity(retrieval_conn: asyncpg.Connection) -> No
     assert new_count == old_count
 
     query_vector = _vector(3)
-    old_search = await retrieval_conn.fetch(
-        """
-        SELECT * FROM public.hybrid_search(
-          'pressure velocity', $1::vector, $2::integer[], 8, 60
+    legacy_transaction = retrieval_conn.transaction()
+    await legacy_transaction.start()
+    try:
+        # The legacy body contains unqualified pgvector objects and therefore
+        # needs the pre-cutover API search path after vector moves to extensions.
+        await retrieval_conn.execute("SET LOCAL search_path = public, extensions")
+        old_search = await retrieval_conn.fetch(
+            """
+            SELECT * FROM public.hybrid_search(
+              'pressure velocity', $1::extensions.vector, $2::integer[], 8, 60
+            )
+            """,
+            query_vector,
+            document_ids,
         )
-        """,
-        query_vector,
-        document_ids,
-    )
+    finally:
+        await legacy_transaction.rollback()
     new_search = await retrieval_conn.fetch(
         """
         SELECT * FROM internal.hybrid_search(
