@@ -154,7 +154,7 @@ class AskRequest(BaseModel):
         allow_population_by_field_name = True
 
 
-class TeacherUploadOut(BaseModel):
+class UploadOut(BaseModel):
     id: str
     week: int
     kind: str
@@ -175,8 +175,8 @@ class TeacherUploadOut(BaseModel):
 
 
 class TeacherSectionOut(BaseModel):
-    latest: Optional[TeacherUploadOut]
-    history: List[TeacherUploadOut]
+    latest: Optional[UploadOut]
+    history: List[UploadOut]
 
 
 class TeacherWeekOut(BaseModel):
@@ -247,11 +247,11 @@ class TeacherCurrentWeekIn(BaseModel):
 DATA_URL_RE = re.compile(r"^data:(?P<mime>[^;]+);base64,(?P<data>.+)$", re.DOTALL)
 
 
-def _serialize_upload(entry: Optional[Dict[str, Any]]) -> Optional[TeacherUploadOut]:
+def _serialize_upload(entry: Optional[Dict[str, Any]]) -> Optional[UploadOut]:
     if not isinstance(entry, dict):
         return None
     try:
-        return TeacherUploadOut(**entry)
+        return UploadOut(**entry)
     except Exception:
         log.warning("Failed to serialize teacher upload entry")
         return None
@@ -260,7 +260,7 @@ def _serialize_upload(entry: Optional[Dict[str, Any]]) -> Optional[TeacherUpload
 def _serialize_section(section: Optional[Dict[str, Any]]) -> TeacherSectionOut:
     latest = _serialize_upload((section or {}).get("latest"))
     history_raw = (section or {}).get("history") or []
-    history: List[TeacherUploadOut] = []
+    history: List[UploadOut] = []
     for item in history_raw:
         serialized = _serialize_upload(item)
         if serialized:
@@ -770,8 +770,8 @@ def update_teacher_retrieval_weights(
     )
 
 
-@app.post("/teacher/uploads/{upload_id}/retry", response_model=TeacherUploadOut, status_code=202)
-def retry_teacher_upload(upload_id: int, request: Request) -> TeacherUploadOut:
+@app.post("/teacher/uploads/{upload_id}/retry", response_model=UploadOut, status_code=202)
+def retry_teacher_upload(upload_id: int, request: Request) -> UploadOut:
     manager = _get_teacher_storage()
     try:
         search_space_id = manager.get_upload_search_space_id(int(upload_id))
@@ -790,11 +790,11 @@ def retry_teacher_upload(upload_id: int, request: Request) -> TeacherUploadOut:
         log.exception("Failed to retry teacher upload %s", upload_id)
         raise HTTPException(status_code=500, detail=str(exc) or "Failed to retry upload")
 
-    return TeacherUploadOut(**record.to_dict())
+    return UploadOut(**record.to_dict())
 
 
 if _HAS_MULTIPART:
-    @app.post("/teacher/upload", response_model=TeacherUploadOut, status_code=202)
+    @app.post("/teacher/upload", response_model=UploadOut, status_code=202)
     def upload_teacher_material(
         request: Request,
         search_space_id: int = Form(...),
@@ -802,7 +802,7 @@ if _HAS_MULTIPART:
         kind: str = Form(...),
         title: str = Form(""),
         file: UploadFile = File(...),
-    ) -> TeacherUploadOut:
+    ) -> UploadOut:
         auth = _require_course_membership(
             request,
             search_space_id=int(search_space_id),
@@ -852,7 +852,7 @@ if _HAS_MULTIPART:
                 pass
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-        return TeacherUploadOut(**record.to_dict())
+        return UploadOut(**record.to_dict())
 
 else:  # pragma: no cover - fallback when python-multipart missing
     @app.post("/teacher/upload")
@@ -914,7 +914,7 @@ def create_invite_link(payload: InviteLinkCreateIn, request: Request) -> InviteL
         role="teacher",
     )
 
-    from database.models import CourseInviteLink
+    from database.models import CourseInvite
     from sqlalchemy import select as sa_select, update as sa_update
 
     parsed_expires = None
@@ -929,18 +929,18 @@ def create_invite_link(payload: InviteLinkCreateIn, request: Request) -> InviteL
         async with get_async_session() as db_session:
             # Deactivate existing active links for this course+role
             await db_session.execute(
-                sa_update(CourseInviteLink)
+                sa_update(CourseInvite)
                 .where(
-                    CourseInviteLink.search_space_id == payload.search_space_id,
-                    CourseInviteLink.role == payload.role,
-                    CourseInviteLink.is_active == True,  # noqa: E712
+                    CourseInvite.course_id == payload.search_space_id,
+                    CourseInvite.role == payload.role,
+                    CourseInvite.is_active == True,  # noqa: E712
                 )
                 .values(is_active=False)
             )
 
-            link = CourseInviteLink(
+            link = CourseInvite(
                 code=_generate_invite_code(),
-                search_space_id=payload.search_space_id,
+                course_id=payload.search_space_id,
                 role=payload.role,
                 created_by=auth.user_id,
                 is_active=True,
@@ -956,7 +956,7 @@ def create_invite_link(payload: InviteLinkCreateIn, request: Request) -> InviteL
     return InviteLinkOut(
         id=link.id,
         code=link.code,
-        search_space_id=link.search_space_id,
+        search_space_id=link.course_id,
         role=link.role,
         is_active=link.is_active,
         max_uses=link.max_uses,
@@ -974,15 +974,15 @@ def list_invite_links(
     """List invite links for a course. Teacher only."""
     _require_course_membership(request, search_space_id=search_space_id, role="teacher")
 
-    from database.models import CourseInviteLink
+    from database.models import CourseInvite
     from sqlalchemy import select as sa_select
 
     async def _run():
         async with get_async_session() as db_session:
             result = await db_session.execute(
-                sa_select(CourseInviteLink)
-                .where(CourseInviteLink.search_space_id == search_space_id)
-                .order_by(CourseInviteLink.created_at.desc())
+                sa_select(CourseInvite)
+                .where(CourseInvite.course_id == search_space_id)
+                .order_by(CourseInvite.created_at.desc())
             )
             return result.scalars().all()
 
@@ -991,7 +991,7 @@ def list_invite_links(
         InviteLinkOut(
             id=link.id,
             code=link.code,
-            search_space_id=link.search_space_id,
+            search_space_id=link.course_id,
             role=link.role,
             is_active=link.is_active,
             max_uses=link.max_uses,
@@ -1006,18 +1006,18 @@ def list_invite_links(
 @app.delete("/invite-links/{link_id}", status_code=204)
 def revoke_invite_link(link_id: int, request: Request):
     """Revoke an invite link. Teacher only."""
-    from database.models import CourseInviteLink
+    from database.models import CourseInvite
     from sqlalchemy import select as sa_select
 
     async def _run():
         async with get_async_session() as db_session:
             result = await db_session.execute(
-                sa_select(CourseInviteLink).where(CourseInviteLink.id == link_id)
+                sa_select(CourseInvite).where(CourseInvite.id == link_id)
             )
             link = result.scalars().first()
             if not link:
                 raise HTTPException(status_code=404, detail="Invite link not found")
-            return link.search_space_id, link
+            return link.course_id, link
 
     search_space_id, _ = run_async(_run())
     _require_course_membership(request, search_space_id=search_space_id, role="teacher")
@@ -1025,7 +1025,7 @@ def revoke_invite_link(link_id: int, request: Request):
     async def _revoke():
         async with get_async_session() as db_session:
             result = await db_session.execute(
-                sa_select(CourseInviteLink).where(CourseInviteLink.id == link_id)
+                sa_select(CourseInvite).where(CourseInvite.id == link_id)
             )
             link = result.scalars().first()
             if link:
@@ -1039,16 +1039,16 @@ def revoke_invite_link(link_id: int, request: Request):
 @app.get("/invite-links/resolve/{code}", response_model=InviteResolveOut)
 def resolve_invite_link(code: str) -> InviteResolveOut:
     """Public endpoint: resolve an invite code to course info."""
-    from database.models import CourseInviteLink, SearchSpace
+    from database.models import CourseInvite, Course
     from sqlalchemy import select as sa_select
     from datetime import datetime as _dt, timezone as _tz
 
     async def _run():
         async with get_async_session() as db_session:
             result = await db_session.execute(
-                sa_select(CourseInviteLink).where(
-                    CourseInviteLink.code == code,
-                    CourseInviteLink.is_active == True,  # noqa: E712
+                sa_select(CourseInvite).where(
+                    CourseInvite.code == code,
+                    CourseInvite.is_active == True,  # noqa: E712
                 )
             )
             link = result.scalars().first()
@@ -1065,13 +1065,13 @@ def resolve_invite_link(code: str) -> InviteResolveOut:
 
             # Get course name
             space_result = await db_session.execute(
-                sa_select(SearchSpace).where(SearchSpace.id == link.search_space_id)
+                sa_select(Course).where(Course.id == link.course_id)
             )
             space = space_result.scalars().first()
             course_name = space.name if space else "Unknown Course"
 
             return {
-                "search_space_id": link.search_space_id,
+                "search_space_id": link.course_id,
                 "course_name": course_name,
                 "role": link.role,
             }
@@ -1085,7 +1085,7 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
     """Authenticated endpoint: redeem an invite code to join a course."""
     auth = _resolve_request_auth(request)
 
-    from database.models import CourseInviteLink, CourseMembership, SearchSpace
+    from database.models import CourseInvite, CourseMembership, Course
     from sqlalchemy import select as sa_select
     from sqlalchemy.exc import IntegrityError
     from datetime import datetime as _dt, timezone as _tz
@@ -1094,9 +1094,9 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
         async with get_async_session() as db_session:
             # Look up the invite link
             result = await db_session.execute(
-                sa_select(CourseInviteLink).where(
-                    CourseInviteLink.code == code,
-                    CourseInviteLink.is_active == True,  # noqa: E712
+                sa_select(CourseInvite).where(
+                    CourseInvite.code == code,
+                    CourseInvite.is_active == True,  # noqa: E712
                 )
             )
             link = result.scalars().first()
@@ -1113,7 +1113,7 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
             mem_result = await db_session.execute(
                 sa_select(CourseMembership).where(
                     CourseMembership.user_id == auth.user_id,
-                    CourseMembership.search_space_id == link.search_space_id,
+                    CourseMembership.course_id == link.course_id,
                 )
             )
             existing = mem_result.scalars().first()
@@ -1132,7 +1132,7 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
                 # Create new membership
                 membership = CourseMembership(
                     user_id=auth.user_id,
-                    search_space_id=link.search_space_id,
+                    course_id=link.course_id,
                     role=link.role,
                 )
                 db_session.add(membership)
@@ -1144,14 +1144,14 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
 
             # Get course name
             space_result = await db_session.execute(
-                sa_select(SearchSpace).where(SearchSpace.id == link.search_space_id)
+                sa_select(Course).where(Course.id == link.course_id)
             )
             space = space_result.scalars().first()
             course_name = space.name if space else "Unknown Course"
 
             return {
                 "success": True,
-                "search_space_id": link.search_space_id,
+                "search_space_id": link.course_id,
                 "role": link.role,
                 "course_name": course_name,
             }
@@ -1168,14 +1168,14 @@ def healthz():
 @app.get("/classes")
 def list_classes():
     """Return available search spaces for the class dropdown."""
-    from database.models import SearchSpace
+    from database.models import Course
     from database.session import get_async_session, run_async
     from sqlalchemy import select as sa_select
 
     async def _fetch():
         async with get_async_session() as session:
             result = await session.execute(
-                sa_select(SearchSpace).order_by(SearchSpace.name)
+                sa_select(Course).order_by(Course.name)
             )
             return result.scalars().all()
 
@@ -1207,7 +1207,7 @@ class CreateClassIn(BaseModel):
 def create_class(payload: CreateClassIn, request: Request):
     """Create a new class and assign the creator as teacher."""
     auth = _resolve_request_auth(request)
-    from database.models import CourseMembership, SearchSpace
+    from database.models import CourseMembership, Course
     from database.session import get_async_session, run_async
     import re
 
@@ -1217,12 +1217,12 @@ def create_class(payload: CreateClassIn, request: Request):
 
     async def _create():
         async with get_async_session() as session:
-            space = SearchSpace(name=name, slug=slug, subject_name=subject)
+            space = Course(name=name, slug=slug, subject_name=subject)
             session.add(space)
             await session.flush()
             membership = CourseMembership(
                 user_id=auth.user_id,
-                search_space_id=space.id,
+                course_id=space.id,
                 role="teacher",
             )
             session.add(membership)
@@ -1248,20 +1248,20 @@ def create_class(payload: CreateClassIn, request: Request):
 def list_my_classes(request: Request):
     """Return only classes the authenticated user is enrolled in."""
     auth = _resolve_request_auth(request)
-    from database.models import CourseMembership, SearchSpace
+    from database.models import CourseMembership, Course
     from database.session import get_async_session, run_async
     from sqlalchemy import select as sa_select
 
     async def _fetch():
         async with get_async_session() as session:
             result = await session.execute(
-                sa_select(SearchSpace)
+                sa_select(Course)
                 .join(
                     CourseMembership,
-                    CourseMembership.search_space_id == SearchSpace.id,
+                    CourseMembership.course_id == Course.id,
                 )
                 .where(CourseMembership.user_id == auth.user_id)
-                .order_by(SearchSpace.name)
+                .order_by(Course.name)
             )
             return result.scalars().all()
 

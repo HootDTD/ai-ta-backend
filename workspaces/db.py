@@ -1,7 +1,7 @@
-"""DB-backed workspace repository using pgvector schema (aita_search_spaces).
+"""DB-backed workspace repository using the merged ``app.courses`` model.
 
-Implements WorkspaceRepository by querying the aita_search_spaces and
-aita_documents tables instead of Supabase REST API or static config files.
+Implements WorkspaceRepository by querying courses and documents instead of
+Supabase REST API or static config files.
 
 This is the primary workspace repository for all retrieval.
 """
@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 
-from database.models import AITADocument, SearchSpace
+from database.models import Document, Course
 from database.session import get_async_session, run_async
 from retrieval.document_visibility import active_document_conditions
 from .manager import ClassWorkspace, WorkspaceMaterial, WorkspaceRepository
@@ -24,11 +24,11 @@ class DBWorkspaceRepository(WorkspaceRepository):
     """WorkspaceRepository backed by aita_search_spaces + aita_documents tables.
 
     load_workspace() accepts a class identifier that can be:
-    - SearchSpace.slug  (e.g. "aae-33300")
-    - SearchSpace.name  (e.g. "AAE 33300")
-    - str(SearchSpace.id)
+    - Course.slug  (e.g. "aae-33300")
+    - Course.name  (e.g. "AAE 33300")
+    - str(Course.id)
 
-    Materials are built from AITADocument rows where status.state == 'ready'.
+    Materials are built from Document rows where status.state == 'ready'.
     index_path is set to Path("") because there are no FAISS directories in
     the pgvector path — callers that still need index_path (old code paths)
     will get an empty path, which they should ignore when the flag is on.
@@ -40,32 +40,31 @@ class DBWorkspaceRepository(WorkspaceRepository):
 
     async def _load_workspace_async(self, identifier: str) -> ClassWorkspace:
         async with get_async_session() as session:
-            space = await self._find_space(session, identifier)
-            if space is None:
+            course = await self._find_course(session, identifier)
+            if course is None:
                 raise KeyError(
-                    f"No SearchSpace found for identifier {identifier!r}. "
-                    "Run migrations/001_create_schema.py and 002_seed_from_supabase.py first."
+                    f"No Course found for identifier {identifier!r}."
                 )
 
-            materials = await self._load_materials(session, space.id)
+            materials = await self._load_materials(session, course.id)
 
         return ClassWorkspace(
-            class_id=str(space.id),
-            class_name=space.name,
-            slug=space.slug,
-            subject_name=space.subject_name,
+            class_id=str(course.id),
+            class_name=course.name,
+            slug=course.slug,
+            subject_name=course.subject_name,
             materials=materials,
-            weight_overrides=space.weight_overrides or {},
-            metadata={"search_space_id": space.id},
+            weight_overrides=course.retrieval_weights or {},
+            metadata={"search_space_id": course.id},
         )
 
-    async def _find_space(self, session, identifier: str) -> Optional[SearchSpace]:
+    async def _find_course(self, session, identifier: str) -> Optional[Course]:
         """Try slug, name (case-insensitive), then integer id."""
         from sqlalchemy import func
 
         # Try slug exact match
         result = await session.execute(
-            select(SearchSpace).where(SearchSpace.slug == identifier)
+            select(Course).where(Course.slug == identifier)
         )
         space = result.scalars().first()
         if space:
@@ -73,7 +72,7 @@ class DBWorkspaceRepository(WorkspaceRepository):
 
         # Try name case-insensitive
         result = await session.execute(
-            select(SearchSpace).where(func.lower(SearchSpace.name) == identifier.lower())
+            select(Course).where(func.lower(Course.name) == identifier.lower())
         )
         space = result.scalars().first()
         if space:
@@ -82,7 +81,7 @@ class DBWorkspaceRepository(WorkspaceRepository):
         # Try integer id
         if identifier.isdigit():
             result = await session.execute(
-                select(SearchSpace).where(SearchSpace.id == int(identifier))
+                select(Course).where(Course.id == int(identifier))
             )
             space = result.scalars().first()
             if space:
@@ -94,13 +93,13 @@ class DBWorkspaceRepository(WorkspaceRepository):
         self, session, search_space_id: int
     ) -> List[WorkspaceMaterial]:
         result = await session.execute(
-            select(AITADocument).where(*active_document_conditions(search_space_id))
+            select(Document).where(*active_document_conditions(search_space_id))
         )
         docs = result.scalars().all()
 
         materials: List[WorkspaceMaterial] = []
         for doc in docs:
-            meta = doc.document_metadata or {}
+            meta = doc.metadata_ or {}
             materials.append(
                 WorkspaceMaterial(
                     id=str(doc.id),

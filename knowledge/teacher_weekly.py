@@ -28,12 +28,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.weights import WEIGHT_MAX, WEIGHT_MIN, get_env_weights, normalize_weights
 from database.models import (
-    AITADocument,
+    Document,
     DocumentStatus,
-    SearchSpace,
-    TeacherCourse,
-    TeacherUpload,
-    TeacherUploadJob,
+    Course,
+    Upload,
+    UploadJob,
 )
 from database.session import get_async_session, run_async
 from indexing.connector_document import AITAConnectorDocument
@@ -53,7 +52,6 @@ WEEKLY_KINDS = {"notes", "slides"}
 COURSE_WIDE_KINDS = {"textbook"}
 VALID_KINDS = WEEKLY_KINDS | COURSE_WIDE_KINDS
 COURSE_WIDE_WEEK = 0
-_INACTIVE_STATUS = {"state": "inactive"}
 UPLOAD_STATUS_QUEUED = "queued"
 UPLOAD_STATUS_PROCESSING = "processing"
 UPLOAD_STATUS_READY = "ready"
@@ -128,7 +126,7 @@ def _normalize_upload_week(kind: str, week: Any, total_weeks: int) -> int:
 
 
 def _document_week(kind: str, tracking_week: int) -> Optional[int]:
-    """Week stored on the indexed ``AITADocument``.
+    """Week stored on the indexed ``Document``.
 
     Course-wide materials store ``NULL`` so they remain visible for every week
     (the weekly activate/deactivate cycle only touches rows where week IS NOT
@@ -632,26 +630,26 @@ class TeacherWeeklyStorage:
                 raise ValueError(f"Unknown class: {identifier}")
             return int(space.id)
 
-    async def _load_search_space(self, session: AsyncSession, identifier: str | int) -> Optional[SearchSpace]:
+    async def _load_search_space(self, session: AsyncSession, identifier: str | int) -> Optional[Course]:
         if isinstance(identifier, int):
-            result = await session.execute(select(SearchSpace).where(SearchSpace.id == int(identifier)))
+            result = await session.execute(select(Course).where(Course.id == int(identifier)))
             return result.scalars().first()
 
         token = str(identifier).strip()
         if token.isdigit():
-            result = await session.execute(select(SearchSpace).where(SearchSpace.id == int(token)))
+            result = await session.execute(select(Course).where(Course.id == int(token)))
             found = result.scalars().first()
             if found is not None:
                 return found
 
-        result = await session.execute(select(SearchSpace).where(SearchSpace.slug == token))
+        result = await session.execute(select(Course).where(Course.slug == token))
         found = result.scalars().first()
         if found is not None:
             return found
 
         lowered = token.lower()
         result = await session.execute(
-            select(SearchSpace).where(func.lower(SearchSpace.name) == lowered)
+            select(Course).where(func.lower(Course.name) == lowered)
         )
         return result.scalars().first()
 
@@ -678,8 +676,6 @@ class TeacherWeeklyStorage:
             space = await self._load_search_space(session, int(search_space_id))
             if space is None:
                 raise ValueError(f"Unknown search_space_id: {search_space_id}")
-            await self._get_or_create_teacher_course(session, search_space_id=int(search_space_id))
-            await session.commit()
 
         storage_key = self._build_storage_key(
             search_space_id=int(search_space_id),
@@ -691,18 +687,18 @@ class TeacherWeeklyStorage:
 
         now = _utc_now()
         async with get_async_session() as session:
-            upload = TeacherUpload(
-                search_space_id=int(search_space_id),
+            upload = Upload(
+                course_id=int(search_space_id),
                 week=week_val,
                 kind=kind_norm,
                 title=resolved_title,
                 source_name=source_name,
-                doc_id=None,
+                document_id=None,
                 status=UPLOAD_STATUS_QUEUED,
                 storage_key=storage_key,
                 artifact_manifest={"bucket": self.pages_bucket, "pages": []},
                 ocr_provider=None,
-                ocr_summary={},
+                ocr_details={},
                 warning_count=0,
                 error_message=None,
                 started_at=None,
@@ -724,7 +720,8 @@ class TeacherWeeklyStorage:
             session.add(upload)
             await session.flush()
 
-            job = TeacherUploadJob(
+            job = UploadJob(
+                course_id=int(search_space_id),
                 upload_id=int(upload.id),
                 state=JOB_STATE_QUEUED,
                 lease_owner=None,
@@ -741,21 +738,21 @@ class TeacherWeeklyStorage:
 
     async def _get_upload_record_async(self, upload_id: int) -> UploadRecord:
         async with get_async_session() as session:
-            row = await session.get(TeacherUpload, int(upload_id))
+            row = await session.get(Upload, int(upload_id))
             if row is None:
                 raise ValueError(f"Unknown teacher upload: {upload_id}")
             return self._build_upload_record(row)
 
     async def _get_upload_search_space_id_async(self, upload_id: int) -> int:
         async with get_async_session() as session:
-            row = await session.get(TeacherUpload, int(upload_id))
+            row = await session.get(Upload, int(upload_id))
             if row is None:
                 raise ValueError(f"Unknown teacher upload: {upload_id}")
-            return int(row.search_space_id)
+            return int(row.course_id)
 
     async def _retry_upload_async(self, upload_id: int) -> UploadRecord:
         async with get_async_session() as session:
-            upload = await session.get(TeacherUpload, int(upload_id))
+            upload = await session.get(Upload, int(upload_id))
             if upload is None:
                 raise ValueError(f"Unknown teacher upload: {upload_id}")
             if str(upload.status or "") != UPLOAD_STATUS_FAILED:
@@ -764,9 +761,9 @@ class TeacherWeeklyStorage:
                 raise ValueError("Upload is missing stored PDF and cannot be retried")
 
             job_result = await session.execute(
-                select(TeacherUploadJob)
-                .where(TeacherUploadJob.upload_id == int(upload.id))
-                .order_by(TeacherUploadJob.created_at.desc(), TeacherUploadJob.id.desc())
+                select(UploadJob)
+                .where(UploadJob.upload_id == int(upload.id))
+                .order_by(UploadJob.created_at.desc(), UploadJob.id.desc())
             )
             job = job_result.scalars().first()
             now = _utc_now()
@@ -777,11 +774,12 @@ class TeacherWeeklyStorage:
             upload.started_at = None
             upload.completed_at = None
             upload.ocr_provider = None
-            upload.ocr_summary = {}
+            upload.ocr_details = {}
             upload.updated_at = now
 
             if job is None:
-                job = TeacherUploadJob(
+                job = UploadJob(
+                    course_id=int(upload.course_id),
                     upload_id=int(upload.id),
                     state=JOB_STATE_QUEUED,
                     lease_owner=None,
@@ -808,7 +806,7 @@ class TeacherWeeklyStorage:
     async def _get_reindex_marker_async(self, upload_id: int) -> Optional[str]:
         """Return the reindex_requested_at timestamp if set, else None."""
         async with get_async_session() as session:
-            upload = await session.get(TeacherUpload, int(upload_id))
+            upload = await session.get(Upload, int(upload_id))
             if upload is None:
                 return None
             meta = upload.metadata_ or {}
@@ -816,7 +814,7 @@ class TeacherWeeklyStorage:
 
     async def _reindex_upload_async(self, upload_id: int) -> UploadRecord:
         async with get_async_session() as session:
-            upload = await session.get(TeacherUpload, int(upload_id))
+            upload = await session.get(Upload, int(upload_id))
             if upload is None:
                 raise ValueError(f"Unknown teacher upload: {upload_id}")
             if str(upload.status or "") not in (UPLOAD_STATUS_READY, UPLOAD_STATUS_FAILED):
@@ -825,9 +823,9 @@ class TeacherWeeklyStorage:
                 raise ValueError("Upload is missing stored PDF and cannot be re-indexed")
 
             job_result = await session.execute(
-                select(TeacherUploadJob)
-                .where(TeacherUploadJob.upload_id == int(upload.id))
-                .order_by(TeacherUploadJob.created_at.desc(), TeacherUploadJob.id.desc())
+                select(UploadJob)
+                .where(UploadJob.upload_id == int(upload.id))
+                .order_by(UploadJob.created_at.desc(), UploadJob.id.desc())
             )
             job = job_result.scalars().first()
             now = _utc_now()
@@ -843,12 +841,13 @@ class TeacherWeeklyStorage:
             upload.started_at = None
             upload.completed_at = None
             upload.ocr_provider = None
-            upload.ocr_summary = {}
+            upload.ocr_details = {}
             upload.metadata_ = meta
             upload.updated_at = now
 
             if job is None:
-                job = TeacherUploadJob(
+                job = UploadJob(
+                    course_id=int(upload.course_id),
                     upload_id=int(upload.id),
                     state=JOB_STATE_QUEUED,
                     lease_owner=None,
@@ -887,22 +886,22 @@ class TeacherWeeklyStorage:
         now = _utc_now()
         async with get_async_session() as session:
             stmt = (
-                select(TeacherUploadJob, TeacherUpload)
-                .join(TeacherUpload, TeacherUpload.id == TeacherUploadJob.upload_id)
+                select(UploadJob, Upload)
+                .join(Upload, Upload.id == UploadJob.upload_id)
                 .where(
-                    TeacherUploadJob.state.in_((JOB_STATE_QUEUED, JOB_STATE_PROCESSING)),
+                    UploadJob.state.in_((JOB_STATE_QUEUED, JOB_STATE_PROCESSING)),
                     or_(
-                        TeacherUploadJob.lease_expires_at.is_(None),
-                        TeacherUploadJob.lease_expires_at < now,
+                        UploadJob.lease_expires_at.is_(None),
+                        UploadJob.lease_expires_at < now,
                     ),
-                    TeacherUpload.status.in_((UPLOAD_STATUS_QUEUED, UPLOAD_STATUS_PROCESSING)),
-                    TeacherUpload.storage_key.is_not(None),
+                    Upload.status.in_((UPLOAD_STATUS_QUEUED, UPLOAD_STATUS_PROCESSING)),
+                    Upload.storage_key.is_not(None),
                 )
-                .order_by(TeacherUploadJob.created_at.asc(), TeacherUploadJob.id.asc())
+                .order_by(UploadJob.created_at.asc(), UploadJob.id.asc())
                 .with_for_update(skip_locked=True)
             )
             if upload_id is not None:
-                stmt = stmt.where(TeacherUploadJob.upload_id == int(upload_id))
+                stmt = stmt.where(UploadJob.upload_id == int(upload_id))
 
             row = (await session.execute(stmt)).first()
             if row is None:
@@ -926,49 +925,13 @@ class TeacherWeeklyStorage:
             return ClaimedUploadJob(
                 job_id=int(job.id),
                 upload_id=int(upload.id),
-                search_space_id=int(upload.search_space_id),
+                search_space_id=int(upload.course_id),
                 week=int(upload.week),
                 kind=str(upload.kind),
                 title=str(upload.title),
                 source_name=upload.source_name or "teacher-upload.pdf",
                 storage_key=str(upload.storage_key),
             )
-
-    async def _get_or_create_teacher_course(
-        self,
-        session: AsyncSession,
-        *,
-        search_space_id: int,
-    ) -> TeacherCourse:
-        result = await session.execute(
-            select(TeacherCourse).where(TeacherCourse.search_space_id == search_space_id)
-        )
-        existing = result.scalars().first()
-        if existing is not None:
-            return existing
-
-        course = TeacherCourse(
-            search_space_id=search_space_id,
-            current_week=1,
-            weights=get_env_weights(),
-            weight_bounds={"min": WEIGHT_MIN, "max": WEIGHT_MAX},
-            created_at=_utc_now(),
-            updated_at=_utc_now(),
-        )
-        session.add(course)
-        try:
-            await session.flush()
-            return course
-        except IntegrityError:
-            # Another request created this row concurrently.
-            await session.rollback()
-            retry = await session.execute(
-                select(TeacherCourse).where(TeacherCourse.search_space_id == search_space_id)
-            )
-            existing_retry = retry.scalars().first()
-            if existing_retry is None:
-                raise
-            return existing_retry
 
     async def _sync_week_activation(
         self,
@@ -978,37 +941,22 @@ class TeacherWeeklyStorage:
         current_week: int,
     ) -> None:
         now = _utc_now()
-        kind_filter = AITADocument.material_kind.in_(tuple(VALID_KINDS))
-        scoped = AITADocument.search_space_id == search_space_id
-        has_week = AITADocument.week.is_not(None)
-
-        await session.execute(
-            update(AITADocument)
-            .where(
-                scoped,
-                kind_filter,
-                has_week,
-                AITADocument.status["state"].astext != DocumentStatus.FAILED,
-            )
-            .values(status=_INACTIVE_STATUS, updated_at=now)
-        )
-
         active_doc_rows = await session.execute(
-            select(TeacherUpload.doc_id)
+            select(Upload.document_id)
             .where(
-                TeacherUpload.search_space_id == search_space_id,
-                TeacherUpload.is_latest.is_(True),
-                TeacherUpload.status == UPLOAD_STATUS_READY,
-                TeacherUpload.week <= current_week,
-                TeacherUpload.kind.in_(tuple(VALID_KINDS)),
-                TeacherUpload.doc_id.is_not(None),
+                Upload.course_id == search_space_id,
+                Upload.is_latest.is_(True),
+                Upload.status == UPLOAD_STATUS_READY,
+                Upload.week <= current_week,
+                Upload.kind.in_(tuple(VALID_KINDS)),
+                Upload.document_id.is_not(None),
             )
         )
         active_doc_ids = [int(doc_id) for doc_id in active_doc_rows.scalars().all() if doc_id is not None]
         if active_doc_ids:
             await session.execute(
-                update(AITADocument)
-                .where(AITADocument.id.in_(active_doc_ids))
+                update(Document)
+                .where(Document.id.in_(active_doc_ids))
                 .values(status=DocumentStatus.ready(), updated_at=now)
             )
 
@@ -1029,7 +977,7 @@ class TeacherWeeklyStorage:
 
         # --- Phase 1: document upsert (short session) ---
         async with get_async_session() as session:
-            upload = await session.get(TeacherUpload, int(claimed.upload_id))
+            upload = await session.get(Upload, int(claimed.upload_id))
             if upload is None:
                 raise ValueError(f"Unknown teacher upload: {claimed.upload_id}")
             service = AITAIndexingService(session)
@@ -1040,12 +988,12 @@ class TeacherWeeklyStorage:
                 uid_hash = compute_unique_identifier_hash(connector_doc)
                 content_hash = compute_content_hash(connector_doc)
                 result = await session.execute(
-                    select(AITADocument).where(
+                    select(Document).where(
                         or_(
-                            AITADocument.unique_identifier_hash == uid_hash,
-                            AITADocument.content_hash == content_hash,
+                            Document.unique_identifier_hash == uid_hash,
+                            Document.content_hash == content_hash,
                         )
-                    ).order_by(AITADocument.updated_at.desc())
+                    ).order_by(Document.updated_at.desc())
                 )
                 existing = result.scalars().first()
                 if existing is None:
@@ -1065,13 +1013,13 @@ class TeacherWeeklyStorage:
         # --- Phase 2: checkpointed embed + persist (short session per batch) ---
         async def _on_progress(last_page: int) -> None:
             async with get_async_session() as s:
-                up = await s.get(TeacherUpload, int(claimed.upload_id))
+                up = await s.get(Upload, int(claimed.upload_id))
                 if up is not None:
                     m = dict(up.artifact_manifest or {})
                     m["embed_progress"] = {"last_completed_page": int(last_page)}
                     up.artifact_manifest = m
                     up.updated_at = _utc_now()
-                job = await s.get(TeacherUploadJob, int(claimed.job_id))
+                job = await s.get(UploadJob, int(claimed.job_id))
                 if job is not None:
                     job.lease_expires_at = _utc_now() + timedelta(seconds=self.job_lease_seconds)
                     job.attempt_count = 0
@@ -1090,7 +1038,7 @@ class TeacherWeeklyStorage:
         doc_content = build_doc_content(chunk_pairs, fallback_title=connector_doc.title)
         doc_embedding = embed_text(doc_content)
         async with get_async_session() as session:
-            upload = await session.get(TeacherUpload, int(claimed.upload_id))
+            upload = await session.get(Upload, int(claimed.upload_id))
             await finalize_document(
                 session,
                 document_id=document_id,
@@ -1099,36 +1047,21 @@ class TeacherWeeklyStorage:
                 doc_embedding=doc_embedding,
                 page_count=ingestion.page_count,
             )
-            indexed_doc = await session.get(AITADocument, document_id)
-            course_row = await self._get_or_create_teacher_course(
-                session, search_space_id=int(upload.search_space_id)
-            )
+            indexed_doc = await session.get(Document, document_id)
+            course_row = await self._load_search_space(session, int(upload.course_id))
+            if course_row is None:
+                raise ValueError(f"Unknown search_space_id: {upload.course_id}")
             now = _utc_now()
-            previous_upload_rows = await session.execute(
-                select(TeacherUpload.id, TeacherUpload.doc_id).where(
-                    TeacherUpload.search_space_id == int(upload.search_space_id),
-                    TeacherUpload.week == int(upload.week),
-                    TeacherUpload.kind == str(upload.kind),
-                    TeacherUpload.is_latest.is_(True),
-                    TeacherUpload.id != int(upload.id),
-                )
-            )
-            previous_doc_ids = [int(d) for _, d in previous_upload_rows.all() if d is not None]
             await session.execute(
-                update(TeacherUpload).where(
-                    TeacherUpload.search_space_id == int(upload.search_space_id),
-                    TeacherUpload.week == int(upload.week),
-                    TeacherUpload.kind == str(upload.kind),
-                    TeacherUpload.is_latest.is_(True),
-                    TeacherUpload.id != int(upload.id),
+                update(Upload).where(
+                    Upload.course_id == int(upload.course_id),
+                    Upload.week == int(upload.week),
+                    Upload.kind == str(upload.kind),
+                    Upload.is_latest.is_(True),
+                    Upload.id != int(upload.id),
                 ).values(is_latest=False, status=UPLOAD_STATUS_SUPERSEDED, updated_at=now)
             )
-            if previous_doc_ids:
-                await session.execute(
-                    update(AITADocument).where(AITADocument.id.in_(previous_doc_ids))
-                    .values(status=_INACTIVE_STATUS, updated_at=now)
-                )
-            upload.doc_id = document_id
+            upload.document_id = document_id
             upload.page_count = ingestion.page_count or indexed_doc.page_count
             upload.is_latest = True
             upload.status = UPLOAD_STATUS_READY
@@ -1137,7 +1070,7 @@ class TeacherWeeklyStorage:
             upload.updated_at = now
             upload.warning_count = int(ingestion.warning_count or 0)
             upload.ocr_provider = ingestion.ocr_provider
-            upload.ocr_summary = dict(ingestion.ocr_summary or {})
+            upload.ocr_details = dict(ingestion.ocr_summary or {})
             upload.artifact_manifest = {
                 "bucket": self.pages_bucket,
                 **(ingestion.artifact_manifest or {}),
@@ -1160,7 +1093,7 @@ class TeacherWeeklyStorage:
                 "ocr_summary": ingestion.ocr_summary,
                 "artifact_manifest": ingestion.artifact_manifest,
             }
-            job = await session.get(TeacherUploadJob, int(claimed.job_id))
+            job = await session.get(UploadJob, int(claimed.job_id))
             if job is not None:
                 job.state = JOB_STATE_COMPLETED
                 job.lease_owner = None
@@ -1168,7 +1101,7 @@ class TeacherWeeklyStorage:
                 job.last_error = None
                 job.updated_at = now
             await self._sync_week_activation(
-                session, search_space_id=int(upload.search_space_id),
+                session, search_space_id=int(upload.course_id),
                 current_week=int(course_row.current_week or 1),
             )
             await session.commit()
@@ -1181,8 +1114,8 @@ class TeacherWeeklyStorage:
         terminal: bool = False,
     ) -> None:
         async with get_async_session() as session:
-            upload = await session.get(TeacherUpload, int(claimed.upload_id))
-            job = await session.get(TeacherUploadJob, int(claimed.job_id))
+            upload = await session.get(Upload, int(claimed.upload_id))
+            job = await session.get(UploadJob, int(claimed.job_id))
             now = _utc_now()
             message = _truncate_error(error_message) or "Teacher upload processing failed"
 
@@ -1209,11 +1142,11 @@ class TeacherWeeklyStorage:
 
             await session.commit()
 
-    def _build_upload_record(self, row: TeacherUpload) -> UploadRecord:
+    def _build_upload_record(self, row: Upload) -> UploadRecord:
         meta = row.metadata_ or {}
         material_id = meta.get("material_id")
-        if material_id is None and row.doc_id is not None:
-            material_id = f"doc-{row.doc_id}"
+        if material_id is None and row.document_id is not None:
+            material_id = f"doc-{row.document_id}"
         return UploadRecord(
             id=str(row.id),
             week=int(row.week),
@@ -1224,14 +1157,14 @@ class TeacherWeeklyStorage:
             source_name=row.source_name,
             page_count=row.page_count,
             index_path=None,
-            doc_id=str(row.doc_id) if row.doc_id is not None else None,
+            doc_id=str(row.document_id) if row.document_id is not None else None,
             material_id=material_id,
             error_message=row.error_message,
             warning_count=int(row.warning_count or 0),
             started_at=_iso(row.started_at),
             completed_at=_iso(row.completed_at),
             ocr_provider=row.ocr_provider,
-            ocr_summary=row.ocr_summary or {},
+            ocr_summary=row.ocr_details or {},
         )
 
     async def _list_course_by_search_space_async(self, search_space_id: int) -> Dict[str, Any]:
@@ -1240,15 +1173,12 @@ class TeacherWeeklyStorage:
             if space is None:
                 raise ValueError(f"Unknown search_space_id: {search_space_id}")
 
-            course_row = await self._get_or_create_teacher_course(
-                session, search_space_id=int(search_space_id)
-            )
-            await session.commit()
+            course_row = space
 
             uploads_result = await session.execute(
-                select(TeacherUpload)
-                .where(TeacherUpload.search_space_id == int(search_space_id))
-                .order_by(TeacherUpload.week.asc(), TeacherUpload.kind.asc(), TeacherUpload.uploaded_at.desc())
+                select(Upload)
+                .where(Upload.course_id == int(search_space_id))
+                .order_by(Upload.week.asc(), Upload.kind.asc(), Upload.uploaded_at.desc())
             )
             uploads = uploads_result.scalars().all()
 
@@ -1266,9 +1196,7 @@ class TeacherWeeklyStorage:
             if space is None:
                 raise ValueError(f"Unknown search_space_id: {search_space_id}")
 
-            course_row = await self._get_or_create_teacher_course(
-                session, search_space_id=int(search_space_id)
-            )
+            course_row = space
             course_row.current_week = int(week)
             course_row.updated_at = _utc_now()
 
@@ -1290,12 +1218,9 @@ class TeacherWeeklyStorage:
             if space is None:
                 raise ValueError(f"Unknown search_space_id: {search_space_id}")
 
-            course_row = await self._get_or_create_teacher_course(
-                session, search_space_id=int(search_space_id)
-            )
-            await session.commit()
+            course_row = space
             base = get_env_weights()
-            return normalize_weights(course_row.weights or {}, clamp=True, base=base)
+            return normalize_weights(course_row.retrieval_weights or {}, clamp=True, base=base)
 
     async def _update_retrieval_weights_by_search_space_async(
         self,
@@ -1307,13 +1232,12 @@ class TeacherWeeklyStorage:
             if space is None:
                 raise ValueError(f"Unknown search_space_id: {search_space_id}")
 
-            course_row = await self._get_or_create_teacher_course(
-                session, search_space_id=int(search_space_id)
-            )
+            course_row = space
             base = get_env_weights()
             updated = normalize_weights(weights, clamp=True, base=base)
-            course_row.weights = updated
-            course_row.weight_bounds = {"min": WEIGHT_MIN, "max": WEIGHT_MAX}
+            course_row.retrieval_weights = updated
+            course_row.retrieval_weight_min = WEIGHT_MIN
+            course_row.retrieval_weight_max = WEIGHT_MAX
             course_row.updated_at = _utc_now()
             await session.commit()
             return updated
@@ -1325,7 +1249,7 @@ class TeacherWeeklyStorage:
         course: str,
         slug: str,
         current_week: int,
-        uploads: List[TeacherUpload],
+        uploads: List[Upload],
     ) -> Dict[str, Any]:
         """Build the teacher course payload from upload rows.
 
@@ -1333,7 +1257,7 @@ class TeacherWeeklyStorage:
         textbook rows populate a single course-level ``textbook`` section. Pure
         (no I/O) so it is unit-testable without a database.
         """
-        def _kind_of(row: TeacherUpload) -> str:
+        def _kind_of(row: Upload) -> str:
             return (row.kind or "").strip().lower()
 
         weeks: List[Dict[str, Any]] = []
@@ -1360,7 +1284,7 @@ class TeacherWeeklyStorage:
             "textbook": self._build_section(textbook_rows),
         }
 
-    def _build_section(self, rows: List[TeacherUpload]) -> Dict[str, Any]:
+    def _build_section(self, rows: List[Upload]) -> Dict[str, Any]:
         history: List[Dict[str, Any]] = []
         latest: Optional[Dict[str, Any]] = None
         for row in rows:
@@ -1370,7 +1294,7 @@ class TeacherWeeklyStorage:
                 latest = entry
         return {"latest": latest, "history": history}
 
-    def _teacher_upload_to_dict(self, row: TeacherUpload) -> Dict[str, Any]:
+    def _teacher_upload_to_dict(self, row: Upload) -> Dict[str, Any]:
         return self._build_upload_record(row).to_dict()
 
 
