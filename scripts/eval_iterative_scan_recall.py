@@ -74,9 +74,9 @@ async def _pick_largest_sid(session) -> int:
     row = (
         await session.execute(
             text(
-                "SELECT d.search_space_id, count(*) AS n FROM aita_chunks c "
-                "JOIN aita_documents d ON c.document_id = d.id "
-                "GROUP BY d.search_space_id ORDER BY n DESC LIMIT 1"
+                "SELECT d.course_id, count(*) AS n FROM internal.document_chunks c "
+                "JOIN app.documents d ON c.document_id = d.id "
+                "GROUP BY d.course_id ORDER BY n DESC LIMIT 1"
             )
         )
     ).first()

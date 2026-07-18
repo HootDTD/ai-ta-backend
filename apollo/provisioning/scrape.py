@@ -1,7 +1,7 @@
 """WU-3B2d stage 1 — LLM scrape → Tier-1 ``apollo_concept_problems`` inventory.
 
 ``scrape_questions`` runs ONE injected ``chat_fn`` pass over a document's already-
-embedded ``AITAChunk`` rows and parses each chunk's JSON into typed
+embedded ``DocumentChunk`` rows and parses each chunk's JSON into typed
 ``CandidateQuestion`` records (provenance + LLM difficulty + problem fields).
 ``write_tier1_problems`` persists those candidates as **Tier-1 inventory** — rows
 that are explicitly ``tier=1`` and therefore NOT teachable (the §8B safety trap:
@@ -10,7 +10,7 @@ scraped inventory selectable).
 
 Idempotency key: structured scraping stamps each candidate from the stable document
 id plus a CONTENT hash of its own normalized problem text, NOT a section ordinal or
-the volatile ``aita_chunks.id``. The composite is folded into a deterministic
+the volatile ``internal.document_chunks.id``. The composite is folded into a deterministic
 ``problem_code`` and the writer SKIPS a row whose ``(concept_id, problem_code)``
 already exists (an identical re-run inserts ZERO rows). The provisional-inventory
 concept (slug ``provisional.inventory``, created once per ``(subject,
@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from database.models import AITAChunk
+    from database.models import DocumentChunk
 
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
@@ -112,7 +112,7 @@ class ScrapeResult:
 def _coerce_candidate(
     raw: Any,
     *,
-    chunk: AITAChunk,
+    chunk: DocumentChunk,
 ) -> CandidateQuestion | None:
     """Build a ``CandidateQuestion`` from one LLM record, stamping the chunk-
     derived provenance (``document_id``/``page``/``chunk_content_hash`` come from
@@ -138,7 +138,7 @@ def _coerce_candidate(
 
 
 async def scrape_questions(
-    chunks: Sequence[AITAChunk],
+    chunks: Sequence[DocumentChunk],
     *,
     chat_fn: Callable[..., str],
 ) -> ScrapeResult:
@@ -534,7 +534,7 @@ def _problem_code_for(candidate: CandidateQuestion) -> str:
 
     The document-scoped content key uses the EXISTING ``(concept_id,
     problem_code)`` uniqueness (migration 018) as the idempotency target — NO new
-    index or migration. It does not embed ``aita_chunks.id``: a re-index may re-mint
+    index or migration. It does not embed ``internal.document_chunks.id``: a re-index may re-mint
     chunks, while the document row and normalized question text remain stable."""
     return f"scrape.{candidate.chunk_content_hash}"
 

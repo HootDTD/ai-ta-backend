@@ -17,7 +17,7 @@ import pytest
 
 from apollo.knowledge_graph.canon_projection import load_entity_specs, project_canon
 from apollo.persistence.models import Concept, KGEntity, Subject
-from database.models import SearchSpace
+from database.models import Course
 
 pytestmark = pytest.mark.integration
 
@@ -28,7 +28,7 @@ pytestmark = pytest.mark.integration
 
 
 async def _make_course(db, *, slug: str) -> int:
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     return space.id

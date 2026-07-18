@@ -206,12 +206,8 @@ def test_enqueue_uploads_source_pdf_via_ensure_first_seam(tmp_path, monkeypatch)
     async def fake_load_space(sess, identifier):
         return SimpleNamespace(id=2)
 
-    async def fake_get_or_create_course(sess, *, search_space_id):
-        return SimpleNamespace(search_space_id=search_space_id)
-
     monkeypatch.setattr(tw, "get_async_session", fake_get_async_session)
     monkeypatch.setattr(storage, "_load_search_space", fake_load_space)
-    monkeypatch.setattr(storage, "_get_or_create_teacher_course", fake_get_or_create_course)
 
     record = storage.enqueue_upload_by_search_space(2, week=0, kind="textbook", pdf_path=pdf)
 

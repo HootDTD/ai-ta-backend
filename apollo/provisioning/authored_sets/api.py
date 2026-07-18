@@ -74,7 +74,7 @@ from apollo.provisioning.scrape import resolve_or_create_provisional_concept
 from apollo.provisioning.solution import ReferenceSolutionDraft, build_approved_pair
 from apollo.provisioning.tag_mint import ResolvedConcept, TagMintError, tag_and_mint
 from apollo.schemas.problem import Problem
-from database.models import AITADocument
+from database.models import Document
 from database.session import get_async_session, get_db_session
 from indexing.document_embedder import embed_text
 
@@ -643,7 +643,7 @@ async def _run_set_background(
 async def _doc_content_hash(db: AsyncSession, document_id: int) -> str | None:
     """The indexed document's content hash — recorded on the ingest run so an
     unchanged re-upload is identifiable (parity with the queue path's run rows)."""
-    doc = await db.get(AITADocument, document_id)
+    doc = await db.get(Document, document_id)
     return getattr(doc, "content_hash", None) if doc is not None else None
 
 
@@ -1255,7 +1255,7 @@ async def delete_authored_set(
         the content out of tutoring (the student selector filters ``tier == 2 AND
         concept_id``). ``removed_problems`` counts both referenced and swept rows;
       * the two hidden reference documents (chunks cascade via the
-        ``aita_chunks`` ON DELETE CASCADE FK);
+        ``internal.document_chunks`` ON DELETE CASCADE FK);
       * the ``apollo_authored_sets`` row itself.
 
     Per-concept KG teardown is STRICTLY scoped to concepts this set fully ORPHANED.
@@ -1330,7 +1330,7 @@ async def delete_authored_set(
     doc_ids = [int(d) for d in (row.problem_document_id, row.solution_document_id) if d is not None]
     removed_documents = 0
     if doc_ids:
-        res = await db.execute(delete(AITADocument).where(AITADocument.id.in_(doc_ids)))
+        res = await db.execute(delete(Document).where(Document.id.in_(doc_ids)))
         removed_documents = res.rowcount or 0
 
     # --- Full KG teardown for concepts this set ORPHANED --------------------- #

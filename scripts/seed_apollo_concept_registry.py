@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # Make the package importable when run as `python -m scripts....`
@@ -39,6 +39,7 @@ from apollo.persistence.models import (  # noqa: E402
     ConceptProblem,
     Subject,
 )
+from database.models import Course  # noqa: E402
 
 _LOG = logging.getLogger(__name__)
 _REGISTRY_ROOT = Path(__file__).resolve().parents[1] / "apollo" / "subjects"
@@ -70,12 +71,12 @@ async def _upsert_subject(session: AsyncSession, slug: str) -> int:
 
     # Subject.search_space_id is NOT NULL (migration 026, isolation invariant
     # §1.4). The filesystem seeder has no per-course context, so it attributes
-    # subjects to the bootstrap course — MIN(aita_search_spaces.id) — matching
+    # subjects to the bootstrap course — MIN(app.courses.id) — matching
     # the migration backfill default. Computed only on the create path; the
     # update branch above never uses it, so it would be a wasted query there.
     # TODO(WU-3B): the per-course seeder sets the real search_space_id mapping.
     bootstrap_space_id = (
-        await session.execute(text("SELECT MIN(id) FROM aita_search_spaces"))
+        await session.execute(select(func.min(Course.id)))
     ).scalar_one_or_none()
     new = Subject(
         slug=slug,
@@ -190,7 +191,12 @@ def _scan_registry() -> list[tuple[str, str, dict[str, Any], list[dict[str, Any]
 
 async def seed(database_url: str, *, dry_run: bool = False) -> dict[str, int]:
     """Run the seeder. Returns a small stats dict for logging."""
-    engine = create_async_engine(database_url)
+    engine_options = (
+        {"execution_options": {"schema_translate_map": {"app": None, "internal": None}}}
+        if database_url.startswith("sqlite")
+        else {}
+    )
+    engine = create_async_engine(database_url, **engine_options)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
     stats = {"subjects": 0, "concepts": 0, "problems": 0}

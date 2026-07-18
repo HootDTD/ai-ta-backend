@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 
 class DBWorkspaceRepository(WorkspaceRepository):
-    """WorkspaceRepository backed by aita_search_spaces + aita_documents tables.
+    """WorkspaceRepository backed by app.courses + app.documents tables.
 
     load_workspace() accepts a class identifier that can be:
     - Course.slug  (e.g. "aae-33300")

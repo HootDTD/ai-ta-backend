@@ -1,10 +1,10 @@
 """Teacher weekly uploads and retrieval-weight controls backed by pgvector.
 
 This module is Supabase-first and uses the shared SQLAlchemy models/tables:
-    - aita_search_spaces
-    - aita_documents / aita_chunks
-    - teacher_courses
-    - teacher_uploads
+    - app.courses
+    - app.documents / internal.document_chunks
+    - app.courses
+    - app.uploads
 """
 from __future__ import annotations
 

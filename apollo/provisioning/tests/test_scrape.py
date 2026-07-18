@@ -39,7 +39,7 @@ from apollo.provisioning.scrape import (
     write_tier1_problems,
 )
 from apollo.provisioning.section_grouping import Section, group_into_sections
-from database.models import SearchSpace
+from database.models import Course
 
 # pytest.ini sets asyncio_mode = auto.
 
@@ -51,7 +51,7 @@ from database.models import SearchSpace
 
 @dataclass
 class _Chunk:
-    """A minimal AITAChunk duck-type: the three attributes scrape reads."""
+    """A minimal DocumentChunk duck-type: the three attributes scrape reads."""
 
     content: str
     document_id: int
@@ -712,9 +712,9 @@ def _candidate(
 
 
 async def _seed_course(db, *, slug: str):
-    """Seed SearchSpace -> Subject for one course (the provisional concept is
+    """Seed Course -> Subject for one course (the provisional concept is
     resolved by the writer). Returns search_space_id."""
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
@@ -753,7 +753,7 @@ async def test_provisional_concept_resolved_and_notnull(db_session):
 async def test_provisional_concept_creates_subject_when_absent(db_session):
     """A course with NO Subject still resolves a provisional concept — the helper
     creates a provisional Subject first (covers the no-subject branch)."""
-    space = SearchSpace(name="No-subject course", slug="c-nosubj", subject_name="X")
+    space = Course(name="No-subject course", slug="c-nosubj", subject_name="X")
     db_session.add(space)
     await db_session.flush()
     cid = await resolve_or_create_provisional_concept(db_session, search_space_id=space.id)

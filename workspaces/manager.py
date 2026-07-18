@@ -308,7 +308,7 @@ class WorkspaceManager:
 def build_workspace_manager(static_config: Optional[Mapping[str, Mapping[str, Any]]] = None) -> WorkspaceManager:
     """Factory that builds a workspace manager using environment settings.
 
-    Returns a manager backed by the aita_search_spaces table
+    Returns a manager backed by the app.courses table
     (DBWorkspaceRepository) with an optional static config fallback.
     """
     from .db import DBWorkspaceRepository

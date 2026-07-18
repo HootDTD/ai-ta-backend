@@ -6,12 +6,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from database.models import (
-    AITADocument,
+    Document,
     DocumentStatus,
-    SearchSpace,
-    TeacherCourse,
-    TeacherUpload,
-    TeacherUploadJob,
+    Course,
+    Upload,
+    UploadJob,
 )
 from indexing.connector_document import AITAConnectorDocument
 from knowledge.teacher_weekly import (
@@ -43,12 +42,11 @@ class _NoopStorage:
 
 
 async def _seed(db_session):
-    space = SearchSpace(name="Fluids", slug="fluids-ck-e2e", subject_name="ME")
+    space = Course(name="Fluids", slug="fluids-ck-e2e", subject_name="ME")
     db_session.add(space)
     await db_session.flush()
-    db_session.add(TeacherCourse(search_space_id=space.id, current_week=1, weights={}))
-    upload = TeacherUpload(
-        search_space_id=space.id,
+    upload = Upload(
+        course_id=space.id,
         week=0,
         kind="textbook",
         title="Textbook",
@@ -64,7 +62,8 @@ async def _seed(db_session):
     )
     db_session.add(upload)
     await db_session.flush()
-    job = TeacherUploadJob(
+    job = UploadJob(
+        course_id=space.id,
         upload_id=upload.id,
         state=JOB_STATE_PROCESSING,
         lease_owner="w1",
@@ -125,11 +124,11 @@ async def test_index_existing_upload_resumes_and_finalizes(db_session, monkeypat
         source_sha256="sha",
     )
 
-    refreshed_upload = await db_session.get(TeacherUpload, upload.id)
+    refreshed_upload = await db_session.get(Upload, upload.id)
     await db_session.refresh(refreshed_upload)
     assert refreshed_upload.status == "ready"
-    assert refreshed_upload.doc_id is not None
-    refreshed_job = await db_session.get(TeacherUploadJob, job.id)
+    assert refreshed_upload.document_id is not None
+    refreshed_job = await db_session.get(UploadJob, job.id)
     await db_session.refresh(refreshed_job)
     assert refreshed_job.attempt_count == 0  # reset on progress
 
@@ -168,10 +167,10 @@ async def test_index_existing_upload_resolves_existing_document(db_session, monk
     )
     # Pre-seed a READY doc whose hashes match the connector -> prepare_for_indexing
     # returns [] and the worker takes the existing-document resolution branch.
-    existing = AITADocument(
+    existing = Document(
         title="Textbook",
         content="old",
-        search_space_id=space.id,
+        course_id=space.id,
         content_hash=compute_content_hash(connector),
         unique_identifier_hash=compute_unique_identifier_hash(connector),
         status=DocumentStatus.ready(),
@@ -198,12 +197,12 @@ async def test_index_existing_upload_resolves_existing_document(db_session, monk
         source_sha256="sha",
     )
 
-    refreshed = await db_session.get(AITADocument, existing.id)
+    refreshed = await db_session.get(Document, existing.id)
     await db_session.refresh(refreshed)
     assert DocumentStatus.is_state(refreshed.status, DocumentStatus.READY)
-    refreshed_upload = await db_session.get(TeacherUpload, upload.id)
+    refreshed_upload = await db_session.get(Upload, upload.id)
     await db_session.refresh(refreshed_upload)
-    assert refreshed_upload.doc_id == existing.id
+    assert refreshed_upload.document_id == existing.id
 
 
 async def test_index_existing_upload_raises_on_empty_chunks(db_session, monkeypatch):

@@ -13,6 +13,7 @@ returns a stub record matching the live driver's shape. The live tests in
 `test_store_neo4j.py` cover the real driver; these offline tests cover the
 contract.
 """
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -139,8 +140,13 @@ def test_all_three_node_types_round_trip_status():
         ("procedure_step", {"action": "write continuity", "purpose": ""}),
     ]:
         n = build_node(
-            node_type=kind, node_id="x", attempt_id=1, source="parser",
-            content=content, status="DUAL", student_belief="...",
+            node_type=kind,
+            node_id="x",
+            attempt_id=1,
+            source="parser",
+            content=content,
+            status="DUAL",
+            student_belief="...",
         )
         out = _round_trip(n)
         assert out.status == "DUAL", f"failed for {kind}"
@@ -202,14 +208,22 @@ class _FakeNeo4jSession:
             raise AssertionError(f"unsupported cypher in fake: {cypher!r}")
 
         # KGStore reads `props` and `labels` off the record.
-        return _FakeResult(_FakeRecord({
-            "props": dict(node["_bag"]) | {
-                "status": node["status"],
-                **({"student_belief": node["student_belief"]}
-                   if node.get("student_belief") is not None else {}),
-            },
-            "labels": list(node["_labels"]),
-        }))
+        return _FakeResult(
+            _FakeRecord(
+                {
+                    "props": dict(node["_bag"])
+                    | {
+                        "status": node["status"],
+                        **(
+                            {"student_belief": node["student_belief"]}
+                            if node.get("student_belief") is not None
+                            else {}
+                        ),
+                    },
+                    "labels": list(node["_labels"]),
+                }
+            )
+        )
 
 
 class _FakeNeo4jClient:
@@ -237,7 +251,10 @@ class _FakeNeo4jClient:
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
         ApolloSession.__table__,
         ProblemAttempt.__table__,
@@ -255,8 +272,11 @@ async def db():
 @pytest_asyncio.fixture
 async def attempt(db: AsyncSession):
     sess = ApolloSession(
-        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_id=1,
-        status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
+        user_id=TEST_USER_ID,
+        search_space_id=TEST_SPACE_ID,
+        concept_id=1,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.TEACHING.value,
     )
     db.add(sess)
     await db.flush()
@@ -280,13 +300,17 @@ def store(db, neo):
 def _seed(neo: _FakeNeo4jClient, *, attempt_id: int):
     """Seed an equation node and a definition node into the fake graph."""
     eq = build_node(
-        node_type="equation", node_id="eq1", attempt_id=attempt_id,
+        node_type="equation",
+        node_id="eq1",
+        attempt_id=attempt_id,
         source="parser",
         content={"symbolic": "A1*v1 - A2*v2", "label": "continuity"},
         parser_confidence=0.55,
     )
     df = build_node(
-        node_type="definition", node_id="d1", attempt_id=attempt_id,
+        node_type="definition",
+        node_id="d1",
+        attempt_id=attempt_id,
         source="parser",
         content={"concept": "density", "meaning": "mass per volume"},
     )
@@ -298,19 +322,23 @@ def _seed(neo: _FakeNeo4jClient, *, attempt_id: int):
 # mark_node_disputed (CHALLENGE)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_mark_node_disputed_sets_status_and_logs(store, neo, db, attempt):
     _seed(neo, attempt_id=attempt.id)
     out = await store.mark_node_disputed(
-        attempt_id=attempt.id, node_id="eq1",
+        attempt_id=attempt.id,
+        node_id="eq1",
         reason="you misheard, it's volumetric not mass",
     )
     assert out.status == "DISPUTED"
     assert neo.nodes[(attempt.id, "eq1")]["status"] == "DISPUTED"
 
-    rows = (await db.execute(
-        select(KGNegotiation).where(KGNegotiation.entry_id == "eq1")
-    )).scalars().all()
+    rows = (
+        (await db.execute(select(KGNegotiation).where(KGNegotiation.entry_id == "eq1")))
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].move == "challenge"
     assert rows[0].actor == "student"
@@ -321,7 +349,9 @@ async def test_mark_node_disputed_sets_status_and_logs(store, neo, db, attempt):
 async def test_mark_node_disputed_raises_when_node_missing(store, attempt):
     with pytest.raises(KGEntryNotFoundError):
         await store.mark_node_disputed(
-            attempt_id=attempt.id, node_id="ghost", reason="?",
+            attempt_id=attempt.id,
+            node_id="ghost",
+            reason="?",
         )
 
 
@@ -329,19 +359,23 @@ async def test_mark_node_disputed_raises_when_node_missing(store, attempt):
 # paraphrase_node (SUPPLY-PARAPHRASE)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_paraphrase_node_sets_dual_and_belief(store, neo, db, attempt):
     _seed(neo, attempt_id=attempt.id)
     out = await store.paraphrase_node(
-        attempt_id=attempt.id, node_id="eq1",
+        attempt_id=attempt.id,
+        node_id="eq1",
         surface_form="rho * A * v is constant in pipes",
     )
     assert out.status == "DUAL"
     assert out.student_belief == "rho * A * v is constant in pipes"
 
-    rows = (await db.execute(
-        select(KGNegotiation).where(KGNegotiation.entry_id == "eq1")
-    )).scalars().all()
+    rows = (
+        (await db.execute(select(KGNegotiation).where(KGNegotiation.entry_id == "eq1")))
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].move == "paraphrase"
     assert rows[0].payload == {
@@ -353,7 +387,9 @@ async def test_paraphrase_node_sets_dual_and_belief(store, neo, db, attempt):
 async def test_paraphrase_preserves_structural_content(store, neo, attempt):
     _seed(neo, attempt_id=attempt.id)
     out = await store.paraphrase_node(
-        attempt_id=attempt.id, node_id="eq1", surface_form="my way",
+        attempt_id=attempt.id,
+        node_id="eq1",
+        surface_form="my way",
     )
     # Structural fields untouched — only status + belief flipped.
     assert out.content.symbolic == "A1*v1 - A2*v2"
@@ -364,6 +400,7 @@ async def test_paraphrase_preserves_structural_content(store, neo, attempt):
 # skip_node (SKIP)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_skip_node_sets_dual_no_belief(store, neo, db, attempt):
     _seed(neo, attempt_id=attempt.id)
@@ -371,9 +408,11 @@ async def test_skip_node_sets_dual_no_belief(store, neo, db, attempt):
     assert out.status == "DUAL"
     assert out.student_belief is None
 
-    rows = (await db.execute(
-        select(KGNegotiation).where(KGNegotiation.entry_id == "d1")
-    )).scalars().all()
+    rows = (
+        (await db.execute(select(KGNegotiation).where(KGNegotiation.entry_id == "d1")))
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].move == "skip"
     assert rows[0].payload == {}
@@ -383,21 +422,28 @@ async def test_skip_node_sets_dual_no_belief(store, neo, db, attempt):
 # get_node_trace
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_node_trace_orders_moves_chronologically(store, neo, db, attempt):
     _seed(neo, attempt_id=attempt.id)
     await store.mark_node_disputed(
-        attempt_id=attempt.id, node_id="eq1", reason="r1",
+        attempt_id=attempt.id,
+        node_id="eq1",
+        reason="r1",
     )
     await store.paraphrase_node(
-        attempt_id=attempt.id, node_id="eq1", surface_form="s1",
+        attempt_id=attempt.id,
+        node_id="eq1",
+        surface_form="s1",
     )
     await store.skip_node(attempt_id=attempt.id, node_id="eq1")
 
     trace = await store.get_node_trace(attempt_id=attempt.id, node_id="eq1")
     assert trace["node_id"] == "eq1"
     assert [m["move"] for m in trace["moves"]] == [
-        "challenge", "paraphrase", "skip",
+        "challenge",
+        "paraphrase",
+        "skip",
     ]
     assert trace["moves"][0]["payload"]["reason"] == "r1"
     assert trace["moves"][1]["payload"]["surface_form"] == "s1"
@@ -405,21 +451,39 @@ async def test_get_node_trace_orders_moves_chronologically(store, neo, db, attem
 
 @pytest.mark.asyncio
 async def test_get_node_trace_includes_latest_student_message(
-    store, neo, db, attempt,
+    store,
+    neo,
+    db,
+    attempt,
 ):
     _seed(neo, attempt_id=attempt.id)
-    db.add(Message(
-        session_id=attempt.session_id, attempt_id=attempt.id,
-        role="student", content="A1 v1 = A2 v2", turn_index=0,
-    ))
-    db.add(Message(
-        session_id=attempt.session_id, attempt_id=attempt.id,
-        role="apollo", content="ok!", turn_index=1,
-    ))
-    db.add(Message(
-        session_id=attempt.session_id, attempt_id=attempt.id,
-        role="student", content="density doesn't matter here", turn_index=2,
-    ))
+    db.add(
+        Message(
+            session_id=attempt.session_id,
+            attempt_id=attempt.id,
+            role="student",
+            content="A1 v1 = A2 v2",
+            turn_index=0,
+        )
+    )
+    db.add(
+        Message(
+            session_id=attempt.session_id,
+            attempt_id=attempt.id,
+            role="apollo",
+            content="ok!",
+            turn_index=1,
+        )
+    )
+    db.add(
+        Message(
+            session_id=attempt.session_id,
+            attempt_id=attempt.id,
+            role="student",
+            content="density doesn't matter here",
+            turn_index=2,
+        )
+    )
     await db.commit()
 
     trace = await store.get_node_trace(attempt_id=attempt.id, node_id="eq1")
@@ -439,23 +503,28 @@ async def test_get_node_trace_returns_empty_when_no_moves(store, neo, attempt):
 # Freeze contract
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_negotiation_blocked_when_session_frozen(store, neo, db, attempt):
     _seed(neo, attempt_id=attempt.id)
     # Freeze the session.
-    sess = (await db.execute(
-        select(ApolloSession).where(ApolloSession.id == attempt.session_id)
-    )).scalar_one()
+    sess = (
+        await db.execute(select(ApolloSession).where(ApolloSession.id == attempt.session_id))
+    ).scalar_one()
     sess.phase = SessionPhase.SOLVING.value
     await db.commit()
 
     with pytest.raises(SessionFrozenError):
         await store.mark_node_disputed(
-            attempt_id=attempt.id, node_id="eq1", reason="?",
+            attempt_id=attempt.id,
+            node_id="eq1",
+            reason="?",
         )
     with pytest.raises(SessionFrozenError):
         await store.paraphrase_node(
-            attempt_id=attempt.id, node_id="eq1", surface_form="?",
+            attempt_id=attempt.id,
+            node_id="eq1",
+            surface_form="?",
         )
     with pytest.raises(SessionFrozenError):
         await store.skip_node(attempt_id=attempt.id, node_id="eq1")

@@ -31,7 +31,7 @@ from apollo.persistence.models import (
 )
 from apollo.provisioning.ingest import ingest_authored_problems, load_authored_problems
 from apollo.provisioning.authored_problem import provision_authored_problem
-from database.models import SearchSpace
+from database.models import Course
 
 # pytest.ini sets asyncio_mode = auto.
 
@@ -125,7 +125,7 @@ _POLISCI_RECORD = {
 
 
 async def _seed_subject(db, *, slug: str):
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="X")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="X")
     db.add(space)
     await db.flush()
     subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)

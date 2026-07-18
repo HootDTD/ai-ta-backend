@@ -12,9 +12,14 @@ from database.models import Base
 
 @pytest_asyncio.fixture
 async def session():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     async with engine.begin() as conn:
-        await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=[StudentProgress.__table__]))
+        await conn.run_sync(
+            lambda sc: Base.metadata.create_all(sc, tables=[StudentProgress.__table__])
+        )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         yield s
@@ -39,9 +44,11 @@ async def test_student_progress_round_trip(session):
     session.add(StudentProgress(user_id=TEST_USER_ID_2, xp_total=1700, level=4))
     await session.commit()
 
-    loaded = (await session.execute(
-        select(StudentProgress).where(StudentProgress.user_id == TEST_USER_ID_2)
-    )).scalar_one()
+    loaded = (
+        await session.execute(
+            select(StudentProgress).where(StudentProgress.user_id == TEST_USER_ID_2)
+        )
+    ).scalar_one()
     assert loaded.xp_total == 1700
     assert loaded.level == 4
 

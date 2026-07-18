@@ -74,17 +74,17 @@ async def test_chunk_ocr_confidence_none_returns_empty_without_query():
 @pytest.mark.asyncio
 async def test_chunk_ocr_confidence_skips_malformed_entries(db_session):
     from apollo.provisioning.authored_sets.paired_retrieval import chunk_ocr_confidence
-    from database.models import AITADocument, SearchSpace
+    from database.models import Document, Course
 
-    sp = SearchSpace(name="Conf", slug="conf-malformed", subject_name="P")
+    sp = Course(name="Conf", slug="conf-malformed", subject_name="P")
     db_session.add(sp)
     await db_session.flush()
-    doc = AITADocument(
+    doc = Document(
         title="t",
         content="c",
         content_hash="h-malformed",
-        search_space_id=sp.id,
-        document_metadata={
+        course_id=sp.id,
+        metadata_={
             "page_debug": [
                 "not-a-dict",  # non-dict entry -> skipped
                 {"page": "NaN", "ocr_confidence": 0.5},  # unparseable page -> skipped
@@ -325,29 +325,29 @@ async def test_no_label_no_retrieval_hits_returns_empty(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_retrieval_branch_is_solution_document_scoped(db_session, monkeypatch):
-    from database.models import EMBEDDING_DIM, AITAChunk, AITADocument, SearchSpace
+    from database.models import EMBEDDING_DIM, DocumentChunk, Document, Course
 
     db_session.add(
-        SearchSpace(
+        Course(
             id=44,
             name="Authored Retrieval Scope",
             slug="authored-retrieval-scope",
             subject_name="Physics",
         )
     )
-    solution_doc = AITADocument(
+    solution_doc = Document(
         id=4401,
         title="Solutions",
         content="solutions",
         content_hash="authored-retrieval-solutions",
-        search_space_id=44,
+        course_id=44,
     )
-    distractor_doc = AITADocument(
+    distractor_doc = Document(
         id=4402,
         title="Distractor",
         content="distractor",
         content_hash="authored-retrieval-distractor",
-        search_space_id=44,
+        course_id=44,
     )
     db_session.add_all([solution_doc, distractor_doc])
     await db_session.flush()
@@ -359,19 +359,22 @@ async def test_retrieval_branch_is_solution_document_scoped(db_session, monkeypa
 
     db_session.add_all(
         [
-            AITAChunk(
+            DocumentChunk(
+                course_id=solution_doc.course_id,
                 document_id=solution_doc.id,
                 content="Use the paired solution: M = wL^2/8",
                 page_number=7,
                 embedding=query_vec,
             ),
-            AITAChunk(
+            DocumentChunk(
+                course_id=distractor_doc.course_id,
                 document_id=distractor_doc.id,
                 content="Wrong unpaired solution should never appear",
                 page_number=8,
                 embedding=query_vec,
             ),
-            AITAChunk(
+            DocumentChunk(
+                course_id=solution_doc.course_id,
                 document_id=solution_doc.id,
                 content="Less relevant paired solution note",
                 page_number=9,

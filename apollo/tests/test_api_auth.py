@@ -40,7 +40,10 @@ from database.session import get_db_session
 
 @pytest.fixture
 def client_factory():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
 
     async def _bootstrap():
         async with engine.begin() as conn:

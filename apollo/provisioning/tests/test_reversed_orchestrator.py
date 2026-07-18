@@ -20,7 +20,7 @@ from apollo.provisioning.concept_match import ConceptMatch
 from apollo.provisioning.pairing_gate import PairingVerdict
 from apollo.provisioning.promote import PromoteResult
 from apollo.provisioning.scrape import CandidateQuestion, ScrapeResult
-from database.models import AITAChunk, AITADocument, SearchSpace
+from database.models import DocumentChunk, Document, Course
 
 orch = sys.modules["apollo.provisioning.authored_sets.orchestrator"]
 
@@ -37,7 +37,7 @@ class _FakeMC:
 
 
 async def _seed_space(db, *, slug: str) -> int:
-    space = SearchSpace(name=f"Rev {slug}", slug=slug, subject_name="Calc")
+    space = Course(name=f"Rev {slug}", slug=slug, subject_name="Calc")
     db.add(space)
     await db.flush()
     return int(space.id)
@@ -65,16 +65,16 @@ async def _seed_registered_concept(
 
 
 async def _seed_doc(db, search_space_id: int, content: str, *, title: str) -> int:
-    doc = AITADocument(
+    doc = Document(
         title=title,
         content=content,
         content_hash=f"{title}-{search_space_id}",
-        search_space_id=search_space_id,
-        document_metadata={"page_debug": [{"page": 1, "ocr_confidence": 0.95}]},
+        course_id=search_space_id,
+        metadata_={"page_debug": [{"page": 1, "ocr_confidence": 0.95}]},
     )
     db.add(doc)
     await db.flush()
-    db.add(AITAChunk(document_id=doc.id, content=content, page_number=1))
+    db.add(DocumentChunk(course_id=doc.course_id, document_id=doc.id, content=content, page_number=1))
     await db.flush()
     return int(doc.id)
 

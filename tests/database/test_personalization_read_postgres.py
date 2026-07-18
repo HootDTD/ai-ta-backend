@@ -34,7 +34,7 @@ from apollo.persistence.models import (
     LearnerState,
     Subject,
 )
-from database.models import SearchSpace
+from database.models import Course
 
 pytestmark = pytest.mark.integration
 
@@ -46,11 +46,11 @@ pytestmark = pytest.mark.integration
 
 
 async def _seed_course(db, *, course_slug) -> tuple[int, int]:
-    """Insert SearchSpace -> Subject -> Concept. Returns (search_space_id, concept_id).
+    """Insert Course -> Subject -> Concept. Returns (search_space_id, concept_id).
 
     One concept per course; entities are per-concept via the KGEntity.concept_id FK.
     """
-    space = SearchSpace(name=course_slug, slug=course_slug, subject_name="Physics")
+    space = Course(name=course_slug, slug=course_slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     subj = Subject(slug=f"s_{course_slug}", display_name="Fluids", search_space_id=space.id)

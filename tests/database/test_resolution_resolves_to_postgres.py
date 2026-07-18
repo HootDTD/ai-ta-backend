@@ -25,7 +25,7 @@ from apollo.ontology.graph import KGGraph
 from apollo.persistence.models import Concept, KGEntity, Subject
 from apollo.resolution import resolve_attempt
 from apollo.resolution.candidates import Candidate
-from database.models import SearchSpace
+from database.models import Course
 
 pytestmark = pytest.mark.integration
 
@@ -33,7 +33,7 @@ _RESOLVED_AT = "2026-06-16T00:00:00+00:00"
 
 
 async def _seed_entities(db, *, course_slug, entities):
-    space = SearchSpace(name=f"Course {course_slug}", slug=course_slug, subject_name="Physics")
+    space = Course(name=f"Course {course_slug}", slug=course_slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     subj = Subject(slug=f"s-{course_slug}", display_name="Sub", search_space_id=space.id)

@@ -17,7 +17,7 @@ from apollo.provisioning.ingest import (
     load_authored_problems,
     write_authored_tier1_problems,
 )
-from database.models import SearchSpace
+from database.models import Course
 
 # pytest.ini sets asyncio_mode = auto.
 
@@ -121,7 +121,7 @@ def test_authored_problem_may_omit_givens_and_target():
 async def _seed_subject_concept(db, *, slug: str):
     from apollo.persistence.models import Concept
 
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="X")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="X")
     db.add(space)
     await db.flush()
     subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)

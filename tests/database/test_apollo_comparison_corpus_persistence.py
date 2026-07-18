@@ -26,7 +26,7 @@ from apollo.persistence.models import (
     GraphComparisonRun,
     ProblemAttempt,
 )
-from database.models import SearchSpace
+from database.models import Course
 
 pytestmark = pytest.mark.integration
 
@@ -37,7 +37,7 @@ _BY_NAME = {f.name: f for f in PERSISTING_CORPUS}
 
 async def _seed_attempt(db) -> tuple[int, int]:
     slug = f"course-{uuid.uuid4().hex[:8]}"
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     session = ApolloSession(user_id=_USER_ID, search_space_id=space.id)

@@ -41,7 +41,10 @@ from database.models import Base
 
 @pytest_asyncio.fixture
 async def db_session_attempt():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
         ApolloSession.__table__,
         ProblemAttempt.__table__,
@@ -248,9 +251,7 @@ async def test_chat_response_uses_unified_envelope(db_session_attempt):
 
 
 @pytest.mark.asyncio
-async def test_chat_ignores_off_flag_and_still_uses_unified_planner(
-    db_session_attempt, caplog
-):
+async def test_chat_ignores_off_flag_and_still_uses_unified_planner(db_session_attempt, caplog):
     db, session_id, _attempt_id = db_session_attempt
     store = _fake_store(prior_graph=KGGraph())
     ps = _patches(store)

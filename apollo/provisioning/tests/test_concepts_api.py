@@ -30,9 +30,9 @@ def _as_user(monkeypatch, capi, user_id: str) -> None:
 
 
 async def _seed_space(db, *, slug: str) -> int:
-    from database.models import SearchSpace
+    from database.models import Course
 
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="MIS")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="MIS")
     db.add(space)
     await db.flush()
     return int(space.id)
@@ -41,7 +41,7 @@ async def _seed_space(db, *, slug: str) -> int:
 async def _seed_membership(db, *, user_id: str, search_space_id: int, role: str) -> None:
     from database.models import CourseMembership
 
-    db.add(CourseMembership(user_id=user_id, search_space_id=search_space_id, role=role))
+    db.add(CourseMembership(user_id=user_id, course_id=search_space_id, role=role))
     await db.flush()
 
 

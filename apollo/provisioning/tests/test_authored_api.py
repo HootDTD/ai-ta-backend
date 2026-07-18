@@ -87,9 +87,9 @@ class _FakeNeo:
 
 async def _seed_course(db, *, slug: str = "aas-api") -> tuple[int, int]:
     from apollo.persistence.models import Concept, Subject
-    from database.models import SearchSpace
+    from database.models import Course
 
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     subject = Subject(slug=f"subject-{slug}", display_name="Physics", search_space_id=space.id)
@@ -972,7 +972,7 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
     ConceptProblems it minted — while a sibling set's problem is untouched."""
     import apollo.provisioning.authored_sets.api as aapi
     from apollo.persistence.models import AuthoredSet, ConceptProblem
-    from database.models import AITAChunk, AITADocument
+    from database.models import DocumentChunk, Document
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
@@ -980,28 +980,28 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
     space_id, concept_id = await _seed_course(db_session, slug="aas-del")
 
     # Two reference docs for the target set, each with a chunk.
-    pdoc = AITADocument(
+    pdoc = Document(
         title="p",
         content="c",
         content_hash="ph",
         unique_identifier_hash="pu",
-        search_space_id=space_id,
+        course_id=space_id,
         status={"state": "apollo_reference"},
     )
-    sdoc = AITADocument(
+    sdoc = Document(
         title="s",
         content="c",
         content_hash="sh",
         unique_identifier_hash="su",
-        search_space_id=space_id,
+        course_id=space_id,
         status={"state": "apollo_reference"},
     )
     db_session.add_all([pdoc, sdoc])
     await db_session.flush()
     db_session.add_all(
         [
-            AITAChunk(document_id=pdoc.id, content="pc"),
-            AITAChunk(document_id=sdoc.id, content="sc"),
+            DocumentChunk(course_id=pdoc.course_id, document_id=pdoc.id, content="pc"),
+            DocumentChunk(course_id=sdoc.course_id, document_id=sdoc.id, content="sc"),
         ]
     )
 
@@ -1058,16 +1058,16 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
     assert resp["removed_documents"] == 2
 
     assert await db_session.get(AuthoredSet, target_id) is None
-    assert await db_session.get(AITADocument, pdoc_id) is None
-    assert await db_session.get(AITADocument, sdoc_id) is None
+    assert await db_session.get(Document, pdoc_id) is None
+    assert await db_session.get(Document, sdoc_id) is None
     assert await db_session.get(ConceptProblem, cp1_id) is None
     assert await db_session.get(ConceptProblem, cp2_id) is None
     # Chunks cascade with their document.
     remaining_chunks = (
         await db_session.execute(
             select(func.count())
-            .select_from(AITAChunk)
-            .where(AITAChunk.document_id.in_([pdoc_id, sdoc_id]))
+            .select_from(DocumentChunk)
+            .where(DocumentChunk.document_id.in_([pdoc_id, sdoc_id]))
         )
     ).scalar_one()
     assert remaining_chunks == 0
@@ -1082,18 +1082,18 @@ async def test_delete_sweeps_unreferenced_tier1_leftovers(db_session, monkeypatc
     import apollo.provisioning.authored_sets.api as aapi
     from apollo.persistence.models import AuthoredSet, ConceptProblem
     from apollo.provisioning.scrape import resolve_or_create_provisional_concept
-    from database.models import AITADocument
+    from database.models import Document
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     space_id, _ = await _seed_course(db_session, slug="aas-del-leftover")
     concept_id = await resolve_or_create_provisional_concept(db_session, search_space_id=space_id)
-    problem_doc = AITADocument(
+    problem_doc = Document(
         title="problems",
         content="c",
         content_hash="leftover-ph",
         unique_identifier_hash="leftover-pu",
-        search_space_id=space_id,
+        course_id=space_id,
         status={"state": "apollo_reference"},
     )
     db_session.add(problem_doc)
@@ -1142,26 +1142,26 @@ async def test_delete_spares_tier2_and_foreign_document_rows(db_session, monkeyp
     import apollo.provisioning.authored_sets.api as aapi
     from apollo.persistence.models import AuthoredSet, Concept, ConceptProblem
     from apollo.provisioning.scrape import resolve_or_create_provisional_concept
-    from database.models import AITADocument
+    from database.models import Document
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     space_id, _ = await _seed_course(db_session, slug="aas-del-scope")
     concept_id = await resolve_or_create_provisional_concept(db_session, search_space_id=space_id)
-    target_doc = AITADocument(
+    target_doc = Document(
         title="target problems",
         content="target",
         content_hash="scope-target-ph",
         unique_identifier_hash="scope-target-pu",
-        search_space_id=space_id,
+        course_id=space_id,
         status={"state": "apollo_reference"},
     )
-    sibling_doc = AITADocument(
+    sibling_doc = Document(
         title="sibling problems",
         content="sibling",
         content_hash="scope-sibling-ph",
         unique_identifier_hash="scope-sibling-pu",
-        search_space_id=space_id,
+        course_id=space_id,
         status={"state": "apollo_reference"},
     )
     db_session.add_all([target_doc, sibling_doc])
@@ -1257,7 +1257,7 @@ async def test_delete_sweep_document_scope_without_database(monkeypatch):
                 ),
                 _Result([11]),  # affected concept ids
                 _Result(rowcount=1),  # ConceptProblem delete
-                _Result(rowcount=1),  # AITADocument delete
+                _Result(rowcount=1),  # Document delete
                 _Result([11]),  # surviving problem keeps the concept protected
                 *[_Result() for _ in range(4)],  # _protected_concepts' four reads
             ]
@@ -1664,12 +1664,12 @@ async def test_delete_authored_set_tears_down_mutually_linked_orphans(db_session
         KGEntity,
         Subject,
     )
-    from database.models import SearchSpace
+    from database.models import Course
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
 
-    space = SearchSpace(name="Course link", slug="aas-link", subject_name="Physics")
+    space = Course(name="Course link", slug="aas-link", subject_name="Physics")
     db_session.add(space)
     await db_session.flush()
     subject = Subject(slug="subject-link", display_name="Physics", search_space_id=space.id)
@@ -1768,12 +1768,12 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
         KGEntity,
         Subject,
     )
-    from database.models import SearchSpace
+    from database.models import Course
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
 
-    space = SearchSpace(name="Course prereqspare", slug="aas-prqspare", subject_name="Physics")
+    space = Course(name="Course prereqspare", slug="aas-prqspare", subject_name="Physics")
     db_session.add(space)
     await db_session.flush()
     subject = Subject(slug="subject-prqspare", display_name="Physics", search_space_id=space.id)
@@ -1870,7 +1870,7 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
 async def _seed_membership(db, *, user_id: str, search_space_id: int, role: str) -> None:
     from database.models import CourseMembership
 
-    db.add(CourseMembership(user_id=user_id, search_space_id=search_space_id, role=role))
+    db.add(CourseMembership(user_id=user_id, course_id=search_space_id, role=role))
     await db.flush()
 
 

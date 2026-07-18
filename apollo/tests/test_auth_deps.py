@@ -25,7 +25,10 @@ def _fake_request() -> Request:
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(
             lambda sc: Base.metadata.create_all(sc, tables=[ApolloSession.__table__])

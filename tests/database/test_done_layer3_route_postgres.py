@@ -61,7 +61,7 @@ from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_problem_payloads,
     seed_course,
 )
-from database.models import SearchSpace
+from database.models import Course
 
 pytestmark = pytest.mark.integration
 
@@ -85,7 +85,7 @@ async def _seed_course_with_entity(
 ):
     """Seed course/subject/concept + one KGEntity per canonical_key. Returns
     (search_space_id, concept_id, {canonical_key: entity_id})."""
-    space = SearchSpace(name=course_slug, slug=course_slug, subject_name="Physics")
+    space = Course(name=course_slug, slug=course_slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     subj = Subject(slug=f"s_{course_slug}", display_name="Fluids", search_space_id=space.id)

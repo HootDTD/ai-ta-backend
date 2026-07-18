@@ -1,4 +1,5 @@
 import pytest as _pytest_module
+
 _pytest_module.skip(
     "Legacy V2 test — needs rewrite for V3 KGGraph + Neo4j store + new parser/coverage signatures. "
     "Tracked in claude_v3_checklist.md item 1; will be re-enabled in test-rewrite phase.",
@@ -11,13 +12,23 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apollo.handlers.lifecycle import handle_end, handle_retry
-from apollo.persistence.models import ApolloSession, KGEntry, Message, ProblemAttempt, SessionPhase, SessionStatus
+from apollo.persistence.models import (
+    ApolloSession,
+    KGEntry,
+    Message,
+    ProblemAttempt,
+    SessionPhase,
+    SessionStatus,
+)
 from database.models import Base
 
 
 @pytest_asyncio.fixture
 async def session_in_phase():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     apollo_tables = [
         ApolloSession.__table__,
         KGEntry.__table__,
@@ -25,7 +36,9 @@ async def session_in_phase():
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
-        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables))
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables)
+        )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
     async def _make(phase: SessionPhase):
@@ -41,6 +54,7 @@ async def session_in_phase():
         await s.commit()
         await s.refresh(sess)
         return s, sess.id
+
     yield _make
     await engine.dispose()
 
@@ -52,7 +66,9 @@ async def test_retry_unfreezes_back_to_teaching(session_in_phase):
     result = await handle_retry(db=db, session_id=session_id)
     assert result == {"ok": True}
 
-    sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+    sess = (
+        await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+    ).scalar_one()
     assert sess.phase == SessionPhase.TEACHING.value
 
 
@@ -63,7 +79,9 @@ async def test_end_sets_status_ended(session_in_phase):
     result = await handle_end(db=db, session_id=session_id)
     assert result == {"ok": True}
 
-    sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+    sess = (
+        await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+    ).scalar_one()
     assert sess.status == SessionStatus.ended.value
 
 
@@ -81,10 +99,20 @@ async def test_get_session_returns_phase_kg_messages_and_current_problem(session
     db.add(attempt)
     await db.flush()
 
-    db.add(KGEntry(session_id=session_id, attempt_id=attempt.id, type="equation",
-                   content={"symbolic": "A1*v1 - A2*v2", "label": "Continuity"},
-                   source="parser"))
-    db.add(Message(session_id=session_id, attempt_id=attempt.id, role="student", content="hi", turn_index=0))
+    db.add(
+        KGEntry(
+            session_id=session_id,
+            attempt_id=attempt.id,
+            type="equation",
+            content={"symbolic": "A1*v1 - A2*v2", "label": "Continuity"},
+            source="parser",
+        )
+    )
+    db.add(
+        Message(
+            session_id=session_id, attempt_id=attempt.id, role="student", content="hi", turn_index=0
+        )
+    )
     await db.commit()
 
     state = await handle_get_session(db=db, session_id=session_id)
@@ -102,23 +130,43 @@ async def test_get_session_returns_only_current_attempt_kg_and_messages(session_
 
     db, session_id = await session_in_phase(SessionPhase.TEACHING)
     # Switch current_problem_id to p2 so we can seed two attempts and verify isolation.
-    sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+    sess = (
+        await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+    ).scalar_one()
     sess.current_problem_id = "p2"
     await db.flush()
 
-    a = ProblemAttempt(session_id=session_id, problem_id="p1", difficulty="intro", result="abandoned")
+    a = ProblemAttempt(
+        session_id=session_id, problem_id="p1", difficulty="intro", result="abandoned"
+    )
     b = ProblemAttempt(session_id=session_id, problem_id="p2", difficulty="standard")
     db.add_all([a, b])
     await db.flush()
 
-    db.add_all([
-        KGEntry(session_id=session_id, attempt_id=a.id, type="equation",
-                content={"symbolic": "x - 1", "label": "old"}, source="parser"),
-        KGEntry(session_id=session_id, attempt_id=b.id, type="equation",
-                content={"symbolic": "y - 2", "label": "new"}, source="parser"),
-        Message(session_id=session_id, attempt_id=a.id, role="student", content="old", turn_index=0),
-        Message(session_id=session_id, attempt_id=b.id, role="student", content="new", turn_index=0),
-    ])
+    db.add_all(
+        [
+            KGEntry(
+                session_id=session_id,
+                attempt_id=a.id,
+                type="equation",
+                content={"symbolic": "x - 1", "label": "old"},
+                source="parser",
+            ),
+            KGEntry(
+                session_id=session_id,
+                attempt_id=b.id,
+                type="equation",
+                content={"symbolic": "y - 2", "label": "new"},
+                source="parser",
+            ),
+            Message(
+                session_id=session_id, attempt_id=a.id, role="student", content="old", turn_index=0
+            ),
+            Message(
+                session_id=session_id, attempt_id=b.id, role="student", content="new", turn_index=0
+            ),
+        ]
+    )
     await db.commit()
 
     state = await handle_get_session(db=db, session_id=session_id)

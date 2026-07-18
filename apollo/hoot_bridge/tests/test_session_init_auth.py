@@ -92,10 +92,13 @@ async def db():
     We create only the tables needed by session_init rather than the full
     Base.metadata because some tables in database/models.py use JSONB columns
     that SQLAlchemy's SQLite dialect cannot compile. SQLite's FK enforcement is
-    off by default, so ApolloSession.search_space_id (→ aita_search_spaces.id)
+    off by default, so ApolloSession.search_space_id (→ app.courses.id)
     can hold any integer value without a matching parent row.
     """
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     apollo_tables = [
         ApolloSession.__table__,
         ProblemAttempt.__table__,

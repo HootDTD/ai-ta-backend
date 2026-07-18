@@ -22,11 +22,14 @@ _UID_6 = "a1000000-0000-4000-8000-000000000007"
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     async with engine.begin() as conn:
-        await conn.run_sync(lambda sc: Base.metadata.create_all(
-            sc, tables=[StudentProgress.__table__]
-        ))
+        await conn.run_sync(
+            lambda sc: Base.metadata.create_all(sc, tables=[StudentProgress.__table__])
+        )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         yield s
@@ -41,9 +44,9 @@ async def test_load_progress_creates_default_row_for_new_student(db):
     assert sp.level == 1
 
     # Row was persisted.
-    row = (await db.execute(
-        select(StudentProgress).where(StudentProgress.user_id == _UID_NEW)
-    )).scalar_one()
+    row = (
+        await db.execute(select(StudentProgress).where(StudentProgress.user_id == _UID_NEW))
+    ).scalar_one()
     assert row.xp_total == 0
 
 
@@ -98,9 +101,9 @@ async def test_apply_xp_flags_level_up_when_threshold_crossed(db):
     assert result["level_up"] is True
 
     # Row mutated in place.
-    row = (await db.execute(
-        select(StudentProgress).where(StudentProgress.user_id == _UID_4)
-    )).scalar_one()
+    row = (
+        await db.execute(select(StudentProgress).where(StudentProgress.user_id == _UID_4))
+    ).scalar_one()
     assert row.xp_total == 350
     assert row.level == 2
     assert row.last_level_up_at is not None
@@ -113,9 +116,9 @@ async def test_apply_xp_does_not_set_last_level_up_at_when_no_level_change(db):
 
     await apply_xp(db=db, user_id=_UID_5, xp_delta=50)
 
-    row = (await db.execute(
-        select(StudentProgress).where(StudentProgress.user_id == _UID_5)
-    )).scalar_one()
+    row = (
+        await db.execute(select(StudentProgress).where(StudentProgress.user_id == _UID_5))
+    ).scalar_one()
     assert row.last_level_up_at is None
 
 

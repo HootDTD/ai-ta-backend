@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 
 from apollo.persistence.models import Concept, Subject
 from apollo.provisioning.concept_match import norm_slug
-from database.models import SearchSpace
+from database.models import Course
 from scripts.seed_premade_concepts import seed_premade_concepts
 
 _CONCEPTS = [
@@ -19,7 +19,7 @@ _CONCEPTS = [
 
 
 async def _space(db_session, slug: str) -> int:
-    space = SearchSpace(name=f"Premade {slug}", slug=f"premade-{slug}", subject_name="Calc")
+    space = Course(name=f"Premade {slug}", slug=f"premade-{slug}", subject_name="Calc")
     db_session.add(space)
     await db_session.flush()
     return int(space.id)

@@ -1,4 +1,5 @@
 import pytest as _pytest_module
+
 _pytest_module.skip(
     "Legacy V2 test — needs rewrite for V3 KGGraph + Neo4j store + new parser/coverage signatures. "
     "Tracked in claude_v3_checklist.md item 1; will be re-enabled in test-rewrite phase.",
@@ -12,13 +13,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from apollo.errors import SessionFrozenError
 from apollo.knowledge_graph.store import KGStore
-from apollo.persistence.models import ApolloSession, KGEntry, Message, ProblemAttempt, SessionPhase, SessionStatus
+from apollo.persistence.models import (
+    ApolloSession,
+    KGEntry,
+    Message,
+    ProblemAttempt,
+    SessionPhase,
+    SessionStatus,
+)
 from database.models import Base
 
 
 @pytest_asyncio.fixture
 async def db_session():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     apollo_tables = [
         ApolloSession.__table__,
         KGEntry.__table__,
@@ -26,7 +37,9 @@ async def db_session():
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
-        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables))
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables)
+        )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         yield s
@@ -35,8 +48,12 @@ async def db_session():
 
 @pytest_asyncio.fixture
 async def sample_session(db_session: AsyncSession):
-    s = ApolloSession(student_id="stu-1", concept_cluster_id="fluid_mechanics",
-                      status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value)
+    s = ApolloSession(
+        student_id="stu-1",
+        concept_cluster_id="fluid_mechanics",
+        status=SessionStatus.active.value,
+        phase=SessionPhase.TEACHING.value,
+    )
     db_session.add(s)
     await db_session.flush()
     attempt = ProblemAttempt(session_id=s.id, problem_id="p1", difficulty="intro")
@@ -53,9 +70,14 @@ async def test_write_entries_then_read(db_session, sample_session):
     store = KGStore(db_session)
     entries = [
         {"type": "equation", "content": {"symbolic": "A1*v1 - A2*v2", "label": "Continuity"}},
-        {"type": "condition", "content": {"applies_when": "density is constant", "label": "Incompressibility"}},
+        {
+            "type": "condition",
+            "content": {"applies_when": "density is constant", "label": "Incompressibility"},
+        },
     ]
-    added = await store.write_entries(attempt_id=sample_session.attempt_id, entries=entries, source="parser")
+    added = await store.write_entries(
+        attempt_id=sample_session.attempt_id, entries=entries, source="parser"
+    )
     assert added == 2
 
     kg = await store.read_kg(attempt_id=sample_session.attempt_id)
@@ -68,7 +90,14 @@ async def test_write_entries_then_read(db_session, sample_session):
 async def test_read_kg_returns_all_five_types_even_when_empty(db_session, sample_session):
     store = KGStore(db_session)
     kg = await store.read_kg(attempt_id=sample_session.attempt_id)
-    assert set(kg.keys()) == {"equation", "definition", "condition", "simplification", "variable_mapping", "procedure_step"}
+    assert set(kg.keys()) == {
+        "equation",
+        "definition",
+        "condition",
+        "simplification",
+        "variable_mapping",
+        "procedure_step",
+    }
     for v in kg.values():
         assert v == []
 
@@ -76,9 +105,13 @@ async def test_read_kg_returns_all_five_types_even_when_empty(db_session, sample
 @pytest.mark.asyncio
 async def test_summarize_for_apollo_bullet_format(db_session, sample_session):
     store = KGStore(db_session)
-    await store.write_entries(attempt_id=sample_session.attempt_id, entries=[
-        {"type": "equation", "content": {"symbolic": "A1*v1 - A2*v2", "label": "Continuity"}},
-    ], source="parser")
+    await store.write_entries(
+        attempt_id=sample_session.attempt_id,
+        entries=[
+            {"type": "equation", "content": {"symbolic": "A1*v1 - A2*v2", "label": "Continuity"}},
+        ],
+        source="parser",
+    )
     summary = await store.summarize_for_apollo(attempt_id=sample_session.attempt_id)
     assert "Continuity" in summary
     assert "A1*v1 - A2*v2" in summary
@@ -96,9 +129,13 @@ async def test_freeze_then_write_raises(db_session, sample_session):
     store = KGStore(db_session)
     await store.freeze(sample_session.id)
     with pytest.raises(SessionFrozenError):
-        await store.write_entries(attempt_id=sample_session.attempt_id, entries=[
-            {"type": "equation", "content": {"symbolic": "x - 1", "label": "X"}},
-        ], source="parser")
+        await store.write_entries(
+            attempt_id=sample_session.attempt_id,
+            entries=[
+                {"type": "equation", "content": {"symbolic": "x - 1", "label": "X"}},
+            ],
+            source="parser",
+        )
 
 
 @pytest.mark.asyncio
@@ -106,9 +143,13 @@ async def test_unfreeze_restores_writeable(db_session, sample_session):
     store = KGStore(db_session)
     await store.freeze(sample_session.id)
     await store.unfreeze(sample_session.id)
-    added = await store.write_entries(attempt_id=sample_session.attempt_id, entries=[
-        {"type": "equation", "content": {"symbolic": "x - 1", "label": "X"}},
-    ], source="parser")
+    added = await store.write_entries(
+        attempt_id=sample_session.attempt_id,
+        entries=[
+            {"type": "equation", "content": {"symbolic": "x - 1", "label": "X"}},
+        ],
+        source="parser",
+    )
     assert added == 1
 
 
@@ -117,15 +158,17 @@ async def test_write_entries_accepts_procedure_step(db_session, sample_session):
     store = KGStore(db_session)
     added = await store.write_entries(
         attempt_id=sample_session.attempt_id,
-        entries=[{
-            "type": "procedure_step",
-            "content": {
-                "order": 1,
-                "action": "apply continuity to find v2",
-                "uses_equations": ["continuity"],
-                "purpose": "get v2 for bernoulli",
-            },
-        }],
+        entries=[
+            {
+                "type": "procedure_step",
+                "content": {
+                    "order": 1,
+                    "action": "apply continuity to find v2",
+                    "uses_equations": ["continuity"],
+                    "purpose": "get v2 for bernoulli",
+                },
+            }
+        ],
         source="parser",
     )
     assert added == 1
@@ -140,15 +183,17 @@ async def test_summarize_for_apollo_includes_procedure_steps(db_session, sample_
     store = KGStore(db_session)
     await store.write_entries(
         attempt_id=sample_session.attempt_id,
-        entries=[{
-            "type": "procedure_step",
-            "content": {
-                "order": 1,
-                "action": "apply continuity to find v2",
-                "uses_equations": ["continuity"],
-                "purpose": "get v2 for bernoulli",
-            },
-        }],
+        entries=[
+            {
+                "type": "procedure_step",
+                "content": {
+                    "order": 1,
+                    "action": "apply continuity to find v2",
+                    "uses_equations": ["continuity"],
+                    "purpose": "get v2 for bernoulli",
+                },
+            }
+        ],
         source="parser",
     )
     summary = await store.summarize_for_apollo(attempt_id=sample_session.attempt_id)
@@ -157,7 +202,10 @@ async def test_summarize_for_apollo_includes_procedure_steps(db_session, sample_
 
 @pytest_asyncio.fixture
 async def db_with_two_attempts():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
         ApolloSession.__table__,
         KGEntry.__table__,
@@ -177,7 +225,9 @@ async def db_with_two_attempts():
         )
         s.add(sess)
         await s.flush()
-        a = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro", result="abandoned")
+        a = ProblemAttempt(
+            session_id=sess.id, problem_id="p1", difficulty="intro", result="abandoned"
+        )
         b = ProblemAttempt(session_id=sess.id, problem_id="p2", difficulty="standard")
         s.add_all([a, b])
         await s.commit()

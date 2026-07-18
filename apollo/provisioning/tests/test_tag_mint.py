@@ -43,7 +43,7 @@ from apollo.provisioning.tag_mint import (
     TagMintError,
     tag_and_mint,
 )
-from database.models import SearchSpace
+from database.models import Course
 
 # pytest.ini sets asyncio_mode = auto, so async tests need no mark and the pure
 # tests stay sync.
@@ -179,9 +179,9 @@ def _approved_pair(
 
 
 async def _seed_course(db, *, slug: str):
-    """Seed SearchSpace -> Subject for one course. Returns (search_space_id,
+    """Seed Course -> Subject for one course. Returns (search_space_id,
     subject_id). The concept is resolved/created by tag_and_mint itself."""
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
@@ -1517,7 +1517,7 @@ async def test_resolve_or_create_concept_creates_subject_when_absent(db_session)
     provisional subject first (covers the no-subject branch)."""
     from apollo.provisioning.tag_mint_persist import resolve_or_create_concept
 
-    space = SearchSpace(name="No-subj tag", slug="c-tag-nosubj", subject_name="X")
+    space = Course(name="No-subj tag", slug="c-tag-nosubj", subject_name="X")
     db_session.add(space)
     await db_session.flush()
     cid = await resolve_or_create_concept(

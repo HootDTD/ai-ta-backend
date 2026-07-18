@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import Column, Integer, MetaData, Table, select
+from sqlalchemy import Column, Integer, MetaData, Table, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import scripts.seed_apollo_learner_model as seeder
@@ -91,15 +91,18 @@ CREATE TABLE apollo_concept_problems (
 @pytest_asyncio.fixture
 async def db_url() -> AsyncGenerator[str, None]:
     """A shared-cache in-memory SQLite URL with the seeder's ORM tables + an
-    aita_search_spaces stub. The seeder opens its OWN engine on this URL, so a
+    courses stub. The seeder opens its OWN engine on this URL, so a
     shared-cache name keeps the schema visible across connections."""
     # Unique shared-cache name per test so each gets a FRESH in-memory schema
     # (cache=shared keeps a named in-memory DB alive process-globally; a fixed
     # name would leak the schema across tests).
     name = f"memseed_{uuid.uuid4().hex}"
     url = f"sqlite+aiosqlite:///file:{name}?mode=memory&cache=shared&uri=true"
-    engine = create_async_engine(url)
-    spaces = Table("aita_search_spaces", MetaData(), Column("id", Integer, primary_key=True))
+    engine = create_async_engine(
+        url,
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
+    spaces = Table("courses", MetaData(), Column("id", Integer, primary_key=True))
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: spaces.create(sc))
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=_SEED_TABLES))
@@ -120,7 +123,7 @@ async def _insert_course(url: str, space_id: int) -> None:
     try:
         async with Session() as s:
             await s.execute(
-                seeder.text("INSERT INTO aita_search_spaces (id) VALUES (:i)"),
+                text("INSERT INTO courses (id) VALUES (:i)"),
                 {"i": space_id},
             )
             await s.commit()
@@ -711,8 +714,8 @@ async def test_seed_errors_when_concept_slug_absent(monkeypatch, tmp_path, db_ur
 
 @pytest.mark.asyncio
 async def test_seed_errors_when_no_courses(db_url):
-    """No aita_search_spaces rows -> SeedError (no course to attribute the seed)."""
-    with pytest.raises(seeder.SeedError, match="no aita_search_spaces"):
+    """No courses rows -> SeedError (no course to attribute the seed)."""
+    with pytest.raises(seeder.SeedError, match="no app.courses"):
         await seed(db_url, subject_slug="macroeconomics", write_disk=False)
 
 

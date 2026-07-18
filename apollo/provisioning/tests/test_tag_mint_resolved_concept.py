@@ -26,7 +26,7 @@ from apollo.provisioning.tag_mint import (
     TagMintError,
     tag_and_mint,
 )
-from database.models import SearchSpace
+from database.models import Course
 
 
 def _never_called(*_a, **_k) -> str:
@@ -83,7 +83,7 @@ def _problem_dict() -> dict:
 
 async def _seed_concept(db, *, slug: str = "integration-by-parts") -> tuple[int, int]:
     """Returns (search_space_id, concept_id) for a registered premade concept."""
-    space = SearchSpace(name=f"RC {slug}", slug=f"rc-{slug}-{random.random()}", subject_name="C2")
+    space = Course(name=f"RC {slug}", slug=f"rc-{slug}-{random.random()}", subject_name="C2")
     db.add(space)
     await db.flush()
     subject = Subject(slug="calculus_2", display_name="Calculus 2", search_space_id=space.id)

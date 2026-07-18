@@ -15,11 +15,11 @@ from __future__ import annotations
 
 from apollo.learner_model.personalization_read import read_learner_profile
 from apollo.persistence.models import Concept, EntityPrereq, KGEntity, Subject
-from database.models import SearchSpace
+from database.models import Course
 
 
 async def test_within_concept_filter_excludes_concept_level_edges(db_session):
-    space = SearchSpace(name="Course h4", slug="c-h4", subject_name="Physics")
+    space = Course(name="Course h4", slug="c-h4", subject_name="Physics")
     db_session.add(space)
     await db_session.flush()
     subj = Subject(slug="s-h4", display_name="Sub", search_space_id=space.id)

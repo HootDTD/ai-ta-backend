@@ -10,6 +10,7 @@ Tests run against in-memory SQLite (project convention). Postgres-only
 features (CHECK constraints) are validated by reading the migration text
 rather than by relying on SQLite to enforce them.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -31,13 +32,18 @@ from database.models import Base
 
 _MIGRATION_PATH = (
     Path(__file__).resolve().parents[3]
-    / "database" / "migrations" / "021_apollo_kg_negotiations.sql"
+    / "database"
+    / "migrations"
+    / "021_apollo_kg_negotiations.sql"
 )
 
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
         ApolloSession.__table__,
         ProblemAttempt.__table__,
@@ -54,8 +60,11 @@ async def db():
 @pytest_asyncio.fixture
 async def attempt(db: AsyncSession):
     sess = ApolloSession(
-        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_id=1,
-        status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
+        user_id=TEST_USER_ID,
+        search_space_id=TEST_SPACE_ID,
+        concept_id=1,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.TEACHING.value,
     )
     db.add(sess)
     await db.flush()
@@ -70,6 +79,7 @@ async def attempt(db: AsyncSession):
 # Model contract
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_insert_and_read_back_challenge_row(db: AsyncSession, attempt):
     row = KGNegotiation(
@@ -82,9 +92,11 @@ async def test_insert_and_read_back_challenge_row(db: AsyncSession, attempt):
     db.add(row)
     await db.commit()
 
-    rows = (await db.execute(
-        select(KGNegotiation).where(KGNegotiation.attempt_id == attempt.id)
-    )).scalars().all()
+    rows = (
+        (await db.execute(select(KGNegotiation).where(KGNegotiation.attempt_id == attempt.id)))
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].entry_id == "eq1"
     assert rows[0].actor == "student"
@@ -94,7 +106,8 @@ async def test_insert_and_read_back_challenge_row(db: AsyncSession, attempt):
 
 @pytest.mark.asyncio
 async def test_three_moves_for_same_entry_each_get_their_own_row(
-    db: AsyncSession, attempt,
+    db: AsyncSession,
+    attempt,
 ):
     """Audit-log semantics: every move is appended; nothing is updated in
     place. The Done-gate's "has been touched" check is `count(*) > 0`,
@@ -104,15 +117,22 @@ async def test_three_moves_for_same_entry_each_get_their_own_row(
         ("student", "paraphrase", {"surface_form": "y"}),
         ("student", "skip", {}),
     ]:
-        db.add(KGNegotiation(
-            attempt_id=attempt.id, entry_id="eq1",
-            actor=actor, move=move, payload=payload,
-        ))
+        db.add(
+            KGNegotiation(
+                attempt_id=attempt.id,
+                entry_id="eq1",
+                actor=actor,
+                move=move,
+                payload=payload,
+            )
+        )
     await db.commit()
 
-    rows = (await db.execute(
-        select(KGNegotiation).where(KGNegotiation.entry_id == "eq1")
-    )).scalars().all()
+    rows = (
+        (await db.execute(select(KGNegotiation).where(KGNegotiation.entry_id == "eq1")))
+        .scalars()
+        .all()
+    )
     assert {r.move for r in rows} == {"challenge", "paraphrase", "skip"}
 
 
@@ -120,14 +140,16 @@ async def test_three_moves_for_same_entry_each_get_their_own_row(
 async def test_payload_defaults_to_empty_dict(db: AsyncSession, attempt):
     """Skip payload is `{}` — the model default lets handlers omit it."""
     row = KGNegotiation(
-        attempt_id=attempt.id, entry_id="eq1",
-        actor="student", move="skip",
+        attempt_id=attempt.id,
+        entry_id="eq1",
+        actor="student",
+        move="skip",
     )
     db.add(row)
     await db.commit()
-    fetched = (await db.execute(
-        select(KGNegotiation).where(KGNegotiation.id == row.id)
-    )).scalar_one()
+    fetched = (
+        await db.execute(select(KGNegotiation).where(KGNegotiation.id == row.id))
+    ).scalar_one()
     assert fetched.payload == {}
 
 
@@ -158,10 +180,9 @@ def test_actor_and_move_columns_are_text_not_enum():
 # Migration file sanity
 # ---------------------------------------------------------------------------
 
+
 def test_migration_021_file_exists():
-    assert _MIGRATION_PATH.exists(), (
-        f"missing migration file: {_MIGRATION_PATH}"
-    )
+    assert _MIGRATION_PATH.exists(), f"missing migration file: {_MIGRATION_PATH}"
 
 
 def test_migration_creates_apollo_kg_negotiations_table():

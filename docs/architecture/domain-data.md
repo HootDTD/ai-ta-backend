@@ -60,14 +60,22 @@ filtering, and grant execution only to the current backend `service_role`.
 The three DB-04 retrieval indexes are asserted and reused, not duplicated;
 live extension relocation remains a separately observed human gate.
 
+DB-07 (2026-07-17) switches the first ORM/repository slice to the target
+schemas. `Course` now owns current week, retrieval weights, and typed bounds in
+`app.courses`; memberships/invites use `course_id`. `Document`,
+`DocumentChunk`, `Upload`, and `UploadJob` map to `app.documents`,
+`internal.document_chunks`, `app.uploads`, and `internal.upload_jobs` with
+typed status/reason fields and promoted metadata names. SQLite engines erase
+the `app`/`internal` schema names through `schema_translate_map` for unit tests.
+
 ## Module map and file landmarks
 
 Cleanup T-E (2026-07-16) removed the `Clarification` SQLAlchemy model and all runtime reads/writes of `apollo_clarifications`. Migration 033 remains historical schema history; the physical table is intentionally left for the later DB-drop migration. `GradingArtifact.clarification_trace` remains as a compatibility JSON field and is empty on new writes.
 
 | Path | Role |
 |------|------|
-| `database/models.py` | All SQLAlchemy ORM models (12 tables, pgvector `Vector(3072)` columns) plus `DocumentStatus` JSONB-state helper |
-| `database/session.py` | Async engine/session factory keyed **per event loop**, plus `run_async()` sync-to-async bridge over a daemon-thread loop. Engine is configured with `pool_pre_ping=True` and `pool_recycle=1800` (30-min backstop to retire connections held across long jobs). |
+| `database/models.py` | Core SQLAlchemy models. DB-07 target models use explicit `app`/`internal` schemas and typed document/upload status columns. |
+| `database/session.py` | Async engine/session factory keyed **per event loop**, plus `run_async()` sync-to-async bridge. PostgreSQL uses connection recycling; SQLite erases target schema names with `schema_translate_map`. |
 | `supabase/config.toml`, `supabase/migrations/`, `supabase/seed.sql` | Supabase CLI 2.109.0 local project. Timestamped SQL is the sole forward migration history; reset applies migrations in timestamp order, then the deterministic non-production seed. The first migration is the DB-03 draft snapshot and is explicitly not production truth. |
 | `database/migrations/README.md`, `legacy-manifest.sha256` | Freeze contract for the numbered `001`-`047` history. CI rejects additions, removals, or content changes. The only executable Python migration entrypoints were retired in DB-03 and now exit with a pointer to the local Supabase reset harness. |
 | `database/migrations/042_apollo_reference_question_opportunities.sql` | Creates the RLS-stopgapped `apollo_reference_question_opportunities` ledger used by the default-off unified-questioning controller. `UNIQUE(attempt_id, reference_node_id)` enforces one opportunity per authored node; state is `asked_waiting` or terminal `answered`; attempt/session FKs cascade on deletion. Apply to test before enabling `APOLLO_UNIFIED_QUESTIONING_ENABLED`; remote application remains a human/CI step. |
@@ -100,6 +108,15 @@ other raw SQL migrations, staging/prod application is out-of-band; there is no
 ## Public interfaces
 
 ### Models (`database/models.py`) — key columns
+
+DB-07 supersedes the legacy names in the historical bullets below for this
+slice: `Course` (`app.courses`) includes week/weights/bounds; `Document`
+(`app.documents`) has scalar status plus `failure_reason`; `DocumentChunk`
+(`internal.document_chunks`) carries direct `course_id`; `CourseMembership`
+and `CourseInvite` use `course_id`; `Upload` promotes `document_id` and
+`ocr_details`; and `UploadJob` is course-scoped in `internal.upload_jobs`.
+HTTP responses intentionally retain the established `search_space_id`,
+`doc_id`, and `ocr_summary` keys.
 - `SearchSpace` (`aita_search_spaces`): `name`, `slug` (unique), `subject_name`, `weight_overrides` JSONB, `metadata`. One row per course.
 - `AITADocument` (`aita_documents`): `title`, `material_kind`, `content`, `source_markdown`, `content_hash` (unique), `unique_identifier_hash` (unique), `embedding Vector(EMBEDDING_DIM=3072)`, `document_metadata` JSONB, `week`, `status` JSONB (`{"state": ready|pending|processing|failed|inactive}`), FK `search_space_id` CASCADE.
 - `AITAChunk` (`aita_chunks`): `content`, `embedding Vector(3072)`, `page_number`, `section_path`, `chunk_type` (body/heading/equation), `figure_id`, FK `document_id` CASCADE.

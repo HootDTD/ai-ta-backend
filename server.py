@@ -1182,7 +1182,7 @@ def list_classes():
     try:
         spaces = run_async(_fetch())
     except Exception as exc:
-        log.exception("Failed to load classes from aita_search_spaces")
+        log.exception("Failed to load classes from app.courses")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to load classes. Check SUPABASE_DB_URL, DB connectivity, and migrations. Error: {exc}",

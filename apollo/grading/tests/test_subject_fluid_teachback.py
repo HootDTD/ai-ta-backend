@@ -34,7 +34,7 @@ from apollo.persistence.models import (
     Subject,
 )
 from apollo.resolution.result import ResolutionResult
-from database.models import SearchSpace
+from database.models import Course
 
 # pytest.ini sets asyncio_mode = auto.
 
@@ -108,7 +108,7 @@ async def _seed_course_entity_session(
     session/attempt. Returns (entity_id, sess, attempt). ``user_id`` is a param so
     two teach-backs in one db_session don't trip the one-active-session-per-user
     unique index."""
-    space = SearchSpace(name=course_slug, slug=course_slug, subject_name="X")
+    space = Course(name=course_slug, slug=course_slug, subject_name="X")
     db.add(space)
     await db.flush()
     subj = Subject(slug=f"s_{course_slug}", display_name="Sub", search_space_id=space.id)

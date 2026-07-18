@@ -21,10 +21,10 @@ from ai.router.mode import ModeDecision
 from chats.bundle_cache import CachedBundle
 from config.contracts import BundleSnippet, ParsedTask
 from database.models import (
-    AITADocument,
+    Document,
     ChatRouterDecision,
     ChatSession,
-    SearchSpace,
+    Course,
 )
 
 
@@ -227,19 +227,19 @@ def _fake_router(mode: str, confidence: float = 0.9) -> LLMRouter:
 
 @pytest.mark.integration
 async def test_fresh_then_none_lifecycle(db_session, monkeypatch):
-    space = SearchSpace(
+    space = Course(
         name="Wiring test space",
         slug="wiring-test",
         subject_name="Calculus",
     )
     db_session.add(space)
     await db_session.flush()
-    doc = AITADocument(
+    doc = Document(
         title="Calc Textbook",
         content="content",
         content_hash="wiring-test-hash",
         unique_identifier_hash="wiring-test-uid",
-        search_space_id=space.id,
+        course_id=space.id,
         material_kind="textbook",
         status={"state": "ready"},
     )
@@ -278,9 +278,9 @@ async def test_fresh_then_none_lifecycle(db_session, monkeypatch):
     assert ctx1.cached is None
 
     # Persist turn 1's bundle (uses real chunk? no — snippet ids must be real chunks)
-    from database.models import AITAChunk
+    from database.models import DocumentChunk
 
-    chunk = AITAChunk(content="c", document_id=doc.id, chunk_type="body", page_number=1)
+    chunk = DocumentChunk(course_id=doc.course_id, content="c", document_id=doc.id, chunk_type="body", page_number=1)
     db_session.add(chunk)
     await db_session.flush()
 
@@ -331,12 +331,12 @@ async def test_fresh_then_none_lifecycle(db_session, monkeypatch):
 
     # A change to the visible document set invalidates the cache → FRESH
     # (new ready doc shifts the fingerprint away from the one stored at save)
-    doc2 = AITADocument(
+    doc2 = Document(
         title="Week 2 Notes",
         content="content",
         content_hash="wiring-test-hash-2",
         unique_identifier_hash="wiring-test-uid-2",
-        search_space_id=space.id,
+        course_id=space.id,
         material_kind="other",
         status={"state": "ready"},
     )
@@ -518,25 +518,25 @@ async def test_memory_loader_meta_refresh_preserves_cache_fingerprint(db_session
 
     import server
 
-    space = SearchSpace(
+    space = Course(
         name="Meta merge test space", slug="meta-merge-test", subject_name="Calculus"
     )
     db_session.add(space)
     await db_session.flush()
-    doc = AITADocument(
+    doc = Document(
         title="Calc Textbook",
         content="content",
         content_hash="meta-merge-hash",
         unique_identifier_hash="meta-merge-uid",
-        search_space_id=space.id,
+        course_id=space.id,
         material_kind="textbook",
         status={"state": "ready"},
     )
     db_session.add(doc)
     await db_session.flush()
-    from database.models import AITAChunk
+    from database.models import DocumentChunk
 
-    chunk = AITAChunk(content="c", document_id=doc.id, chunk_type="body", page_number=1)
+    chunk = DocumentChunk(course_id=doc.course_id, content="c", document_id=doc.id, chunk_type="body", page_number=1)
     db_session.add(chunk)
     await db_session.flush()
 

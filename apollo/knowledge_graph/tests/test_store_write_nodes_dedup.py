@@ -120,7 +120,10 @@ class _FakeNeo4jClient:
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
         ApolloSession.__table__,
         ProblemAttempt.__table__,
@@ -138,9 +141,11 @@ async def db():
 @pytest_asyncio.fixture
 async def attempt(db: AsyncSession):
     sess = ApolloSession(
-        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID,
+        user_id=TEST_USER_ID,
+        search_space_id=TEST_SPACE_ID,
         concept_id=1,
-        status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.TEACHING.value,
     )
     db.add(sess)
     await db.flush()

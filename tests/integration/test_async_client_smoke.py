@@ -23,9 +23,9 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import AITADocument
+from database.models import Document
 from database.session import get_db_session
-from tests.factories import AITADocumentFactory, SearchSpaceFactory, persist
+from tests.factories import DocumentFactory, CourseFactory, persist
 from tests.support import override_db_session
 
 pytestmark = pytest.mark.integration
@@ -36,7 +36,7 @@ def _build_app() -> FastAPI:
 
     @app.get("/doc-count")
     async def doc_count(session: AsyncSession = Depends(get_db_session)) -> dict:
-        total = (await session.execute(select(func.count()).select_from(AITADocument))).scalar_one()
+        total = (await session.execute(select(func.count()).select_from(Document))).scalar_one()
         return {"count": total}
 
     return app
@@ -47,11 +47,11 @@ async def test_endpoint_sees_session_writes_then_rolls_back(db_session):
     override_db_session(app, db_session)
 
     # Seed two documents through the SAME transactional session the endpoint uses.
-    space = await persist(db_session, SearchSpaceFactory.build())
+    space = await persist(db_session, CourseFactory.build())
     for i in range(2):
         await persist(
             db_session,
-            AITADocumentFactory.build(
+            DocumentFactory.build(
                 search_space_id=space.id,
                 title=f"doc-{i}",
                 content_hash=f"smoke-{i}",
@@ -73,5 +73,5 @@ async def test_endpoint_sees_session_writes_then_rolls_back(db_session):
 
 async def test_clean_database_starts_empty(db_session):
     """Confirms transactional isolation: the previous test's rows are gone."""
-    total = (await db_session.execute(select(func.count()).select_from(AITADocument))).scalar_one()
+    total = (await db_session.execute(select(func.count()).select_from(Document))).scalar_one()
     assert total == 0

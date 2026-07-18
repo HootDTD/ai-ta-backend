@@ -150,6 +150,8 @@ def _pg_url() -> str:
         # connect time. DDL is plain text and needs no codec anyway.
         engine = create_async_engine(url, poolclass=NullPool)
         async with engine.begin() as conn:
+            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS app"))
+            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS internal"))
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.run_sync(Base.metadata.create_all)
         await engine.dispose()

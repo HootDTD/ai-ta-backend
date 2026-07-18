@@ -133,12 +133,12 @@ async def test_run_default_scope_resolves_min_search_space():
 
 @pytest.mark.asyncio
 async def test_run_default_scope_no_search_spaces_raises():
-    """No scope args AND no aita_search_spaces rows -> RuntimeError (refuse to
+    """No scope args AND no app.courses rows -> RuntimeError (refuse to
     project against an empty/un-seeded course set)."""
     project_mock = AsyncMock()
     session = _DefaultScopeSession(min_id=None)
     p1, p2, p3, p4 = _patch_run_infra(session, project_mock)
     with p1, p2, p3, p4:
-        with pytest.raises(RuntimeError, match="no aita_search_spaces"):
+        with pytest.raises(RuntimeError, match=r"no app\.courses"):
             await run("postgresql+asyncpg://x/y", search_space_id=None, concept_id=None)
     project_mock.assert_not_awaited()

@@ -1,5 +1,5 @@
 """Fast unit test for the WU-3A seeder edit: _upsert_subject now attributes a
-subject to the bootstrap course (MIN(aita_search_spaces.id)) because
+subject to the bootstrap course (MIN(app.courses.id)) because
 apollo_subjects.search_space_id is NOT NULL (migration 026, isolation invariant
 §1.4).
 
@@ -24,18 +24,21 @@ from scripts.seed_apollo_concept_registry import _upsert_subject
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    # Minimal aita_search_spaces stub so MIN(id) resolves; Subject.__table__ for
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
+    # Minimal courses stub so MIN(id) resolves; Subject.__table__ for
     # the upsert target. SQLite does not enforce the FK, matching repo convention.
     spaces = Table(
-        "aita_search_spaces",
+        "courses",
         MetaData(),
         Column("id", Integer, primary_key=True),
     )
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: spaces.create(sc))
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=[Subject.__table__]))
-        await conn.exec_driver_sql("INSERT INTO aita_search_spaces (id) VALUES (7), (3)")
+        await conn.exec_driver_sql("INSERT INTO courses (id) VALUES (7), (3)")
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         yield s

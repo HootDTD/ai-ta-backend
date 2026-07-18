@@ -11,7 +11,7 @@ def test_apollo_session_has_user_and_space_columns():
     assert "search_space_id" in cols and not cols["search_space_id"].nullable
     assert "student_id" not in cols
     fks = {fk.target_fullname for fk in cols["search_space_id"].foreign_keys}
-    assert "aita_search_spaces.id" in fks
+    assert "app.courses.id" in fks
 
 
 def test_student_progress_keyed_by_user_id():

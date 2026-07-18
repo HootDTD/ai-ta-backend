@@ -26,7 +26,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.contracts import BundleSnippet
-from database.models import AITADocument, ChatSession, ChatSessionSnippet
+from database.models import Document, ChatSession, ChatSessionSnippet
 from retrieval.document_visibility import active_document_conditions
 
 log = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ async def compute_visible_docs_hash(db_session: AsyncSession, search_space_id: i
     """Fingerprint the currently searchable document set (same visibility rules
     as hybrid retrieval: ready status + week gating)."""
     result = await db_session.execute(
-        select(AITADocument.id).where(*active_document_conditions(search_space_id))
+        select(Document.id).where(*active_document_conditions(search_space_id))
     )
     return visible_docs_fingerprint(row[0] for row in result)
 

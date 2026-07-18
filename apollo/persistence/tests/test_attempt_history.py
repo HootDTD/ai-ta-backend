@@ -17,11 +17,16 @@ from database.models import Base
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     async with engine.begin() as conn:
-        await conn.run_sync(lambda sc: Base.metadata.create_all(
-            sc, tables=[ApolloSession.__table__, ProblemAttempt.__table__]
-        ))
+        await conn.run_sync(
+            lambda sc: Base.metadata.create_all(
+                sc, tables=[ApolloSession.__table__, ProblemAttempt.__table__]
+            )
+        )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         yield s
@@ -47,8 +52,9 @@ async def _mk_session(
     return s
 
 
-async def _mk_attempt(db: AsyncSession, *, session_id: int, problem_id: str,
-                     result: str | None) -> ProblemAttempt:
+async def _mk_attempt(
+    db: AsyncSession, *, session_id: int, problem_id: str, result: str | None
+) -> ProblemAttempt:
     a = ProblemAttempt(
         session_id=session_id,
         problem_id=problem_id,
@@ -66,12 +72,15 @@ async def test_returns_false_when_no_prior_attempts(db):
     current = await _mk_attempt(db, session_id=sess.id, problem_id="p1", result=None)
     await db.commit()
 
-    assert await has_prior_graded_attempt(
-        db=db,
-        user_id="stu-1",
-        problem_id="p1",
-        exclude_attempt_id=current.id,
-    ) is False
+    assert (
+        await has_prior_graded_attempt(
+            db=db,
+            user_id="stu-1",
+            problem_id="p1",
+            exclude_attempt_id=current.id,
+        )
+        is False
+    )
 
 
 @pytest.mark.asyncio
@@ -85,12 +94,15 @@ async def test_returns_true_when_prior_session_has_graded_attempt(db):
     current = await _mk_attempt(db, session_id=sess_b.id, problem_id="p1", result=None)
     await db.commit()
 
-    assert await has_prior_graded_attempt(
-        db=db,
-        user_id="stu-2",
-        problem_id="p1",
-        exclude_attempt_id=current.id,
-    ) is True
+    assert (
+        await has_prior_graded_attempt(
+            db=db,
+            user_id="stu-2",
+            problem_id="p1",
+            exclude_attempt_id=current.id,
+        )
+        is True
+    )
 
 
 @pytest.mark.asyncio
@@ -102,12 +114,15 @@ async def test_ignores_other_users(db):
     current = await _mk_attempt(db, session_id=sess_mine.id, problem_id="p1", result=None)
     await db.commit()
 
-    assert await has_prior_graded_attempt(
-        db=db,
-        user_id="stu-me",
-        problem_id="p1",
-        exclude_attempt_id=current.id,
-    ) is False
+    assert (
+        await has_prior_graded_attempt(
+            db=db,
+            user_id="stu-me",
+            problem_id="p1",
+            exclude_attempt_id=current.id,
+        )
+        is False
+    )
 
 
 @pytest.mark.asyncio
@@ -119,12 +134,15 @@ async def test_ignores_other_problems(db):
     current = await _mk_attempt(db, session_id=sess2.id, problem_id="p1", result=None)
     await db.commit()
 
-    assert await has_prior_graded_attempt(
-        db=db,
-        user_id="stu-3",
-        problem_id="p1",
-        exclude_attempt_id=current.id,
-    ) is False
+    assert (
+        await has_prior_graded_attempt(
+            db=db,
+            user_id="stu-3",
+            problem_id="p1",
+            exclude_attempt_id=current.id,
+        )
+        is False
+    )
 
 
 @pytest.mark.asyncio
@@ -135,12 +153,15 @@ async def test_excludes_current_attempt_id(db):
     current = await _mk_attempt(db, session_id=sess.id, problem_id="p1", result="solved")
     await db.commit()
 
-    assert await has_prior_graded_attempt(
-        db=db,
-        user_id="stu-4",
-        problem_id="p1",
-        exclude_attempt_id=current.id,
-    ) is False
+    assert (
+        await has_prior_graded_attempt(
+            db=db,
+            user_id="stu-4",
+            problem_id="p1",
+            exclude_attempt_id=current.id,
+        )
+        is False
+    )
 
 
 @pytest.mark.asyncio

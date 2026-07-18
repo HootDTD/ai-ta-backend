@@ -1,14 +1,14 @@
 import pytest
 
 from apollo.persistence.models import AuthoredSet
-from database.models import SearchSpace
+from database.models import Course
 
 
 @pytest.mark.asyncio
 async def test_authored_set_roundtrip(db_session):
-    # apollo_authored_sets.search_space_id is an FK to aita_search_spaces, so the
+    # apollo_authored_sets.search_space_id is an FK to app.courses, so the
     # parent course must exist before the pairing row is inserted.
-    space = SearchSpace(name="AAS Roundtrip", slug="aas-roundtrip", subject_name="AAE")
+    space = Course(name="AAS Roundtrip", slug="aas-roundtrip", subject_name="AAE")
     db_session.add(space)
     await db_session.flush()
 

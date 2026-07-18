@@ -1,4 +1,5 @@
 import pytest as _pytest_module
+
 _pytest_module.skip(
     "Legacy V2 test — needs rewrite for V3 KGGraph + Neo4j store + new parser/coverage signatures. "
     "Tracked in claude_v3_checklist.md item 1; will be re-enabled in test-rewrite phase.",
@@ -26,7 +27,10 @@ from database.models import Base
 @pytest_asyncio.fixture
 async def db_with_report_session():
     """Session in REPORT phase with one graded attempt on an intro problem."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
         ApolloSession.__table__,
         KGEntry.__table__,
@@ -46,12 +50,14 @@ async def db_with_report_session():
         )
         s.add(sess)
         await s.flush()
-        s.add(ProblemAttempt(
-            session_id=sess.id,
-            problem_id="bernoulli_horizontal_pipe_find_p2",
-            difficulty="intro",
-            result="solved",
-        ))
+        s.add(
+            ProblemAttempt(
+                session_id=sess.id,
+                problem_id="bernoulli_horizontal_pipe_find_p2",
+                difficulty="intro",
+                result="solved",
+            )
+        )
         await s.commit()
         await s.refresh(sess)
         yield s, sess.id
@@ -67,20 +73,24 @@ async def test_next_from_report_advances(db_with_report_session):
     assert result["attempt_id"] is not None
     assert result["problem"]["id"] != "bernoulli_horizontal_pipe_find_p2"
 
-    sess = (await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+    sess = (
+        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+    ).scalar_one()
     assert sess.phase == SessionPhase.TEACHING.value
     assert sess.current_problem_id == result["problem"]["id"]
 
-    prior = (await s.execute(
-        select(ProblemAttempt)
-        .where(ProblemAttempt.session_id == session_id)
-        .where(ProblemAttempt.problem_id == "bernoulli_horizontal_pipe_find_p2")
-    )).scalar_one()
+    prior = (
+        await s.execute(
+            select(ProblemAttempt)
+            .where(ProblemAttempt.session_id == session_id)
+            .where(ProblemAttempt.problem_id == "bernoulli_horizontal_pipe_find_p2")
+        )
+    ).scalar_one()
     assert prior.result == "solved"
 
-    new_attempt = (await s.execute(
-        select(ProblemAttempt).where(ProblemAttempt.id == result["attempt_id"])
-    )).scalar_one()
+    new_attempt = (
+        await s.execute(select(ProblemAttempt).where(ProblemAttempt.id == result["attempt_id"]))
+    ).scalar_one()
     assert new_attempt.difficulty == "standard"
     assert new_attempt.result is None
 
@@ -88,31 +98,35 @@ async def test_next_from_report_advances(db_with_report_session):
 @pytest.mark.asyncio
 async def test_next_from_teaching_abandons_current(db_with_report_session):
     s, session_id = db_with_report_session
-    sess = (await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+    sess = (
+        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+    ).scalar_one()
     sess.phase = SessionPhase.TEACHING.value
-    prior = (await s.execute(
-        select(ProblemAttempt).where(ProblemAttempt.session_id == session_id)
-    )).scalar_one()
+    prior = (
+        await s.execute(select(ProblemAttempt).where(ProblemAttempt.session_id == session_id))
+    ).scalar_one()
     prior.result = None
     await s.commit()
 
     result = await handle_next(db=s, session_id=session_id, difficulty="standard")
 
-    abandoned = (await s.execute(
-        select(ProblemAttempt).where(ProblemAttempt.id == prior.id)
-    )).scalar_one()
+    abandoned = (
+        await s.execute(select(ProblemAttempt).where(ProblemAttempt.id == prior.id))
+    ).scalar_one()
     assert abandoned.result == "abandoned"
 
-    new_attempt = (await s.execute(
-        select(ProblemAttempt).where(ProblemAttempt.id == result["attempt_id"])
-    )).scalar_one()
+    new_attempt = (
+        await s.execute(select(ProblemAttempt).where(ProblemAttempt.id == result["attempt_id"]))
+    ).scalar_one()
     assert new_attempt.difficulty == "standard"
 
 
 @pytest.mark.asyncio
 async def test_next_raises_session_frozen_during_solving(db_with_report_session):
     s, session_id = db_with_report_session
-    sess = (await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+    sess = (
+        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+    ).scalar_one()
     sess.phase = SessionPhase.SOLVING.value
     await s.commit()
     with pytest.raises(SessionFrozenError):
@@ -122,7 +136,9 @@ async def test_next_raises_session_frozen_during_solving(db_with_report_session)
 @pytest.mark.asyncio
 async def test_next_raises_invalid_phase_from_init(db_with_report_session):
     s, session_id = db_with_report_session
-    sess = (await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+    sess = (
+        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+    ).scalar_one()
     sess.phase = SessionPhase.INIT.value
     await s.commit()
     with pytest.raises(InvalidPhaseError):
@@ -130,10 +146,14 @@ async def test_next_raises_invalid_phase_from_init(db_with_report_session):
 
 
 @pytest.mark.asyncio
-async def test_next_raises_pool_exhausted_when_all_problems_attempted(db_with_report_session, monkeypatch):
+async def test_next_raises_pool_exhausted_when_all_problems_attempted(
+    db_with_report_session, monkeypatch
+):
     s, session_id = db_with_report_session
+
     def _boom(*, cluster_id, difficulty, attempted_ids):
         raise PoolExhaustedError(concept_cluster_id=cluster_id, difficulty=difficulty)
+
     monkeypatch.setattr("apollo.handlers.next.select_problem", _boom)
     with pytest.raises(PoolExhaustedError):
         await handle_next(db=s, session_id=session_id, difficulty="hard")
@@ -143,10 +163,13 @@ async def test_next_raises_pool_exhausted_when_all_problems_attempted(db_with_re
 async def test_next_excludes_prior_problem_ids(db_with_report_session, monkeypatch):
     s, session_id = db_with_report_session
     captured = {}
+
     def _spy(*, cluster_id, difficulty, attempted_ids):
         captured["attempted_ids"] = list(attempted_ids)
         from apollo.overseer.problem_selector import select_problem as real
+
         return real(cluster_id=cluster_id, difficulty=difficulty, attempted_ids=attempted_ids)
+
     monkeypatch.setattr("apollo.handlers.next.select_problem", _spy)
     await handle_next(db=s, session_id=session_id, difficulty="intro")
     assert "bernoulli_horizontal_pipe_find_p2" in captured["attempted_ids"]

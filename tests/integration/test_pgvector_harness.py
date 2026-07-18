@@ -11,20 +11,20 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from database.models import AITADocument
-from tests.factories import AITADocumentFactory, SearchSpaceFactory, persist
+from database.models import Document
+from tests.factories import DocumentFactory, CourseFactory, persist
 from tests.fakes import one_hot_embedding
 
 pytestmark = pytest.mark.integration
 
 
 async def _seed_docs(db_session, axes: list[int]):
-    space = await persist(db_session, SearchSpaceFactory.build())
+    space = await persist(db_session, CourseFactory.build())
     docs = []
     for axis in axes:
         doc = await persist(
             db_session,
-            AITADocumentFactory.build(
+            DocumentFactory.build(
                 search_space_id=space.id,
                 title=f"axis-{axis}",
                 content_hash=f"axis-{axis}",
@@ -44,7 +44,7 @@ async def test_cosine_distance_orders_nearest_first(db_session):
     rows = (
         (
             await db_session.execute(
-                select(AITADocument.title).order_by(AITADocument.embedding.cosine_distance(query))
+                select(Document.title).order_by(Document.embedding.cosine_distance(query))
             )
         )
         .scalars()
@@ -62,8 +62,8 @@ async def test_cosine_distance_values_are_correct(db_session):
 
     result = await db_session.execute(
         select(
-            AITADocument.title,
-            AITADocument.embedding.cosine_distance(query).label("dist"),
+            Document.title,
+            Document.embedding.cosine_distance(query).label("dist"),
         ).order_by("dist")
     )
     by_title = {title: dist for title, dist in result.all()}
@@ -79,7 +79,7 @@ async def test_l2_distance_orders_nearest_first(db_session):
 
     nearest = (
         await db_session.execute(
-            select(AITADocument.title).order_by(AITADocument.embedding.l2_distance(query)).limit(1)
+            select(Document.title).order_by(Document.embedding.l2_distance(query)).limit(1)
         )
     ).scalar_one()
 

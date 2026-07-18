@@ -18,11 +18,11 @@ from chats.bundle_cache import (
 )
 from config.contracts import BundleSnippet
 from database.models import (
-    AITAChunk,
-    AITADocument,
+    DocumentChunk,
+    Document,
     ChatSession,
     ChatSessionSnippet,
-    SearchSpace,
+    Course,
 )
 
 
@@ -83,7 +83,7 @@ def test_cached_bundle_titles_dedupe_and_include_sections():
 
 
 async def _seed_session_with_chunks(db_session, n_chunks: int):
-    space = SearchSpace(
+    space = Course(
         name="Bundle cache test space",
         slug="bundle-cache-test",
         subject_name="Calculus",
@@ -91,12 +91,12 @@ async def _seed_session_with_chunks(db_session, n_chunks: int):
     db_session.add(space)
     await db_session.flush()
 
-    doc = AITADocument(
+    doc = Document(
         title="Calc Textbook",
         content="calc textbook content",
         content_hash="bundle-cache-test-hash",
         unique_identifier_hash="bundle-cache-test-uid",
-        search_space_id=space.id,
+        course_id=space.id,
         material_kind="textbook",
         status={"state": "ready"},
     )
@@ -105,7 +105,8 @@ async def _seed_session_with_chunks(db_session, n_chunks: int):
 
     chunk_ids = []
     for i in range(n_chunks):
-        chunk = AITAChunk(
+        chunk = DocumentChunk(
+            course_id=doc.course_id,
             content=f"chunk content {i}",
             document_id=doc.id,
             chunk_type="body",

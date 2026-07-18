@@ -8,11 +8,11 @@ column existing, defaulting to '' for legacy rows, and round-tripping.
 import pytest
 
 from apollo.persistence.models import Concept, Subject
-from database.models import SearchSpace
+from database.models import Course
 
 
 async def _subject(db_session, slug: str) -> Subject:
-    space = SearchSpace(name=f"CD {slug}", slug=f"cd-{slug}", subject_name="Calc")
+    space = Course(name=f"CD {slug}", slug=f"cd-{slug}", subject_name="Calc")
     db_session.add(space)
     await db_session.flush()
     subject = Subject(slug=slug, display_name="Calc 2", search_space_id=space.id)

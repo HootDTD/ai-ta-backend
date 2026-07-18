@@ -28,7 +28,7 @@ from apollo.persistence.models import (
 from apollo.persistence.problem_linkage import resolve_concept_problem_id
 from apollo.projections.mastery import update_mastery_from_artifact
 from apollo.resolution.result import ResolutionResult
-from database.models import SearchSpace
+from database.models import Course
 
 pytestmark = pytest.mark.integration
 
@@ -37,7 +37,7 @@ _ENTITY_KEY = "eq.linked"
 
 async def _seed_course_with_entity(db) -> tuple[int, int, int]:
     suffix = uuid.uuid4().hex[:10]
-    space = SearchSpace(name=f"GEN-5 {suffix}", slug=f"gen5-{suffix}", subject_name="Physics")
+    space = Course(name=f"GEN-5 {suffix}", slug=f"gen5-{suffix}", subject_name="Physics")
     db.add(space)
     await db.flush()
     subject = Subject(

@@ -155,20 +155,20 @@ class _ChunkView:
 
 
 async def _load_chunks(db: AsyncSession, *, document_id: int) -> Sequence[_ChunkView]:
-    from database.models import AITAChunk
+    from database.models import DocumentChunk
 
     rows = (
         await db.execute(
             select(
-                AITAChunk.id,
-                AITAChunk.content,
-                AITAChunk.document_id,
-                AITAChunk.page_number,
-                AITAChunk.section_path,
-                AITAChunk.chunk_type,
+                DocumentChunk.id,
+                DocumentChunk.content,
+                DocumentChunk.document_id,
+                DocumentChunk.page_number,
+                DocumentChunk.section_path,
+                DocumentChunk.chunk_type,
             )
-            .where(AITAChunk.document_id == document_id)
-            .order_by(AITAChunk.id.asc())
+            .where(DocumentChunk.document_id == document_id)
+            .order_by(DocumentChunk.id.asc())
         )
     ).all()
     return [

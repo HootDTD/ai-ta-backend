@@ -87,7 +87,7 @@ def test_learner_state_fk_targets_and_cascades():
     the real cascade is exercised by the real-Postgres migration test."""
     table = LearnerState.__table__
     targets = {
-        "search_space_id": "aita_search_spaces",
+        "search_space_id": "courses",
         "entity_id": "apollo_kg_entities",
     }
     for col_name, target_table in targets.items():
@@ -152,7 +152,8 @@ def test_subject_requires_search_space_id():
     col = Subject.__table__.columns["search_space_id"]
     assert col.nullable is False
     fk = next(iter(col.foreign_keys))
-    assert fk.column.table.name == "aita_search_spaces"
+    assert fk.column.table.name == "courses"
+    assert fk.column.table.schema == "app"
     assert fk.ondelete == "CASCADE"
 
 
@@ -163,7 +164,10 @@ def test_subject_requires_search_space_id():
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
         Subject.__table__,
         KGEntity.__table__,

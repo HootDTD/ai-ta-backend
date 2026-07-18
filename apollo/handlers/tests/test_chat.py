@@ -1,4 +1,5 @@
 import pytest as _pytest_module
+
 _pytest_module.skip(
     "Legacy V2 test — needs rewrite for V3 KGGraph + Neo4j store + new parser/coverage signatures. "
     "Tracked in claude_v3_checklist.md item 1; will be re-enabled in test-rewrite phase.",
@@ -13,13 +14,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from apollo.errors import FilterRejectedError, ParserCouldNotExtractError
 from apollo.handlers.chat import handle_chat
-from apollo.persistence.models import ApolloSession, KGEntry, Message, ProblemAttempt, SessionPhase, SessionStatus
+from apollo.persistence.models import (
+    ApolloSession,
+    KGEntry,
+    Message,
+    ProblemAttempt,
+    SessionPhase,
+    SessionStatus,
+)
 from database.models import Base
 
 
 @pytest_asyncio.fixture
 async def db_with_session():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     apollo_tables = [
         ApolloSession.__table__,
         KGEntry.__table__,
@@ -27,7 +38,9 @@ async def db_with_session():
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
-        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables))
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables)
+        )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         sess = ApolloSession(
@@ -116,9 +129,9 @@ async def test_chat_filter_rejection_leaves_no_orphan_turn(mock_parse, mock_draf
         await handle_chat(db=db, session_id=session_id, message="x equals 1 here")
 
     # No half-written turn: neither the student nor the apollo row persisted.
-    msgs = (await db.execute(
-        select(Message).where(Message.session_id == session_id)
-    )).scalars().all()
+    msgs = (
+        (await db.execute(select(Message).where(Message.session_id == session_id))).scalars().all()
+    )
     assert msgs == []
 
     # The KG rides on the error so the FE can refresh the understanding panel.
@@ -137,7 +150,16 @@ async def test_chat_persists_messages(mock_parse, mock_draft, db_with_session):
     await handle_chat(db=db, session_id=session_id, message="ok")
 
     from sqlalchemy import select
-    msgs = (await db.execute(select(Message).where(Message.session_id == session_id).order_by(Message.turn_index))).scalars().all()
+
+    msgs = (
+        (
+            await db.execute(
+                select(Message).where(Message.session_id == session_id).order_by(Message.turn_index)
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert [m.role for m in msgs] == ["student", "apollo"]
     assert msgs[0].content == "ok"
     assert msgs[1].content == "tell me more about that"
@@ -146,7 +168,9 @@ async def test_chat_persists_messages(mock_parse, mock_draft, db_with_session):
 @pytest.mark.asyncio
 @patch("apollo.handlers.chat.draft_reply")
 @patch("apollo.handlers.chat.parse_utterance")
-async def test_chat_writes_kg_entries_tagged_with_attempt_id(mock_parse, mock_draft, db_with_session):
+async def test_chat_writes_kg_entries_tagged_with_attempt_id(
+    mock_parse, mock_draft, db_with_session
+):
     db, session_id, attempt_id = db_with_session
     mock_parse.return_value = [
         {"type": "equation", "content": {"symbolic": "x - 1", "label": "test"}}
@@ -156,7 +180,10 @@ async def test_chat_writes_kg_entries_tagged_with_attempt_id(mock_parse, mock_dr
     await handle_chat(db=db, session_id=session_id, message="x equals 1")
 
     from sqlalchemy import select
-    rows = (await db.execute(select(KGEntry).where(KGEntry.attempt_id == attempt_id))).scalars().all()
+
+    rows = (
+        (await db.execute(select(KGEntry).where(KGEntry.attempt_id == attempt_id))).scalars().all()
+    )
     assert len(rows) == 1
     assert rows[0].type == "equation"
 
@@ -172,6 +199,15 @@ async def test_chat_messages_tagged_with_attempt_id(mock_parse, mock_draft, db_w
     await handle_chat(db=db, session_id=session_id, message="hello")
 
     from sqlalchemy import select
-    rows = (await db.execute(select(Message).where(Message.session_id == session_id).order_by(Message.turn_index))).scalars().all()
+
+    rows = (
+        (
+            await db.execute(
+                select(Message).where(Message.session_id == session_id).order_by(Message.turn_index)
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert len(rows) == 2
     assert all(r.attempt_id == attempt_id for r in rows)

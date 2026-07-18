@@ -11,7 +11,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import AITADocument
+from database.models import Document, DocumentStatus
 from database.session import get_async_session
 from indexing.checkpoint_indexer import (
     build_doc_content,
@@ -29,7 +29,7 @@ from indexing.indexing_service import AITAIndexingService
 
 _LOG = logging.getLogger(__name__)
 
-_HIDDEN_STATUS = {"state": "apollo_reference"}
+_HIDDEN_STATUS = DocumentStatus.PENDING
 
 
 def _run_ingest(pdf_path: Path, *, doc_id: str):  # pragma: no cover - real PyMuPDF/OCR I/O
@@ -51,11 +51,11 @@ async def index_authored_doc(
     role: str,
     page_sink: list | None = None,
 ) -> int:
-    """Index raw authored PDF bytes and return the hidden ``AITADocument.id``.
+    """Index raw authored PDF bytes and return the hidden ``Document.id``.
 
     The caller owns the outer transaction after this function returns. This path
     deliberately reuses only the indexing core, not the weekly upload wrapper:
-    no TeacherUpload row, no supersede, no week activation, and no generic Apollo
+    no Upload row, no supersede, no week activation, and no generic Apollo
     provisioning enqueue.
 
     When ``page_sink`` is provided, the transient per-page OCR result
@@ -106,7 +106,7 @@ async def index_authored_doc(
             existing = await _find_existing_indexed_doc(db, connector_doc)
             if existing is None:
                 raise RuntimeError("authored indexer: prepare_for_indexing returned no doc")
-            existing.status = dict(_HIDDEN_STATUS)  # type: ignore[assignment]
+            existing.status = _HIDDEN_STATUS
             await db.flush()
             return int(existing.id)
 
@@ -137,10 +137,10 @@ async def index_authored_doc(
             page_count=ingestion.page_count,
         )
 
-        doc = await db.get(AITADocument, document_id)
+        doc = await db.get(Document, document_id)
         if doc is None:
             raise RuntimeError(f"authored indexer: indexed document {document_id} disappeared")
-        doc.status = dict(_HIDDEN_STATUS)  # type: ignore[assignment]
+        doc.status = _HIDDEN_STATUS
         await db.flush()
         _LOG.info("Indexed authored %s document %s for set %s", role, document_id, set_index)
         return document_id
@@ -200,7 +200,7 @@ def _page_debug(ingestion) -> list[dict]:
 async def _find_existing_indexed_doc(
     db: AsyncSession,
     connector_doc: AITAConnectorDocument,
-) -> AITADocument | None:
+) -> Document | None:
     """Locate an already-indexed doc this connector deduped against.
 
     Tries source identity (``unique_identifier_hash``) first, then content
@@ -209,7 +209,7 @@ async def _find_existing_indexed_doc(
     """
     unique_hash = compute_unique_identifier_hash(connector_doc)
     result = await db.execute(
-        select(AITADocument).where(AITADocument.unique_identifier_hash == unique_hash)
+        select(Document).where(Document.unique_identifier_hash == unique_hash)
     )
     by_unique = result.scalar_one_or_none()
     if by_unique is not None:
@@ -217,9 +217,9 @@ async def _find_existing_indexed_doc(
 
     content_hash = compute_content_hash(connector_doc)
     result = await db.execute(
-        select(AITADocument)
-        .where(AITADocument.content_hash == content_hash)
-        .order_by(AITADocument.id.desc())
+        select(Document)
+        .where(Document.content_hash == content_hash)
+        .order_by(Document.id.desc())
         .limit(1)
     )
     return result.scalar_one_or_none()

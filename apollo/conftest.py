@@ -31,7 +31,7 @@ from tests.conftest import _pg_url, db_session  # noqa: F401
 # as 0.0 in SQLite's numeric affinity).
 TEST_USER_ID = "a0000000-0000-4000-8000-000000000001"
 TEST_USER_ID_2 = "b0000000-0000-4000-8000-000000000002"
-TEST_SPACE_ID = 1  # integer FK to aita_search_spaces; SQLite tests don't enforce the FK
+TEST_SPACE_ID = 1  # integer FK to app.courses; SQLite tests don't enforce the FK
 
 # Load .env once so live tests see NEO4J_*. dotenv is in requirements.
 try:

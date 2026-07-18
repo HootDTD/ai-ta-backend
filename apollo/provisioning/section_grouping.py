@@ -1,6 +1,6 @@
 """Phase 2 — reconstruct document sections from retrieval micro-chunks.
 
-The layout-aware indexer splits a document into line/phrase-level ``aita_chunks``
+The layout-aware indexer splits a document into line/phrase-level ``internal.document_chunks``
 (median ~17 chars) tuned for RETRIEVAL, plus ``chunk_type='heading'`` markers and a
 ``section_path`` label per chunk. The per-chunk scrape (stage 1) re-sent the scrape
 system prompt once PER micro-chunk — ~92% wasted tokens, and no call ever saw a

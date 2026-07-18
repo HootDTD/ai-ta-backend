@@ -31,7 +31,10 @@ def test_question_tally_schema_contract():
 
 @pytest.mark.asyncio
 async def test_question_tally_sqlalchemy_round_trip():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(
             lambda sync_conn: Base.metadata.create_all(sync_conn, tables=[QuestionTally.__table__])

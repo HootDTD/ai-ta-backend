@@ -1,12 +1,12 @@
 """Shared real-PG seed helpers for the WU-3D curriculum-cutover tests.
 
 These insert the course-scoped curriculum chain
-    aita_search_spaces -> apollo_subjects -> apollo_concepts -> apollo_concept_problems
+    app.courses -> apollo_subjects -> apollo_concepts -> apollo_concept_problems
 using only ORM/`text()` inserts on the function-scoped ``db_session`` fixture
 (real pgvector container, savepoint rollback per test). No SQLite, no
 filesystem reads. Immutable: every helper returns ids; no global state.
 
-`aita_search_spaces` is part of ``Base.metadata`` (the ``db_session`` fixture
+`app.courses` is part of ``Base.metadata`` (the ``db_session`` fixture
 ``create_all``s it), so a search-space row is a plain ``text()`` insert.
 """
 
@@ -77,7 +77,7 @@ def load_bernoulli_concept_payloads() -> dict[str, Any]:
 
 
 async def seed_search_space(db: AsyncSession) -> int:
-    """Insert one aita_search_spaces row, return its id.
+    """Insert one app.courses row, return its id.
 
     name/slug/subject_name are NOT NULL (and slug is UNIQUE), so a unique slug is
     generated per call to let multiple courses coexist inside one test.
@@ -86,7 +86,7 @@ async def seed_search_space(db: AsyncSession) -> int:
     return (
         await db.execute(
             text(
-                "INSERT INTO aita_search_spaces "
+                "INSERT INTO app.courses "
                 "(name, slug, subject_name, created_at, updated_at) "
                 "VALUES (:name, :slug, :subject, now(), now()) RETURNING id"
             ),

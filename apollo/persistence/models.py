@@ -943,8 +943,8 @@ class IngestPageEvidence(Base):
     that this page tripped the low-confidence threshold — the signal the S2
     contract reads to know an OCR-suspect page WOULD route through the extra
     generated-vs-extracted verification. Append-only; rows CASCADE from the run.
-    ``document_id`` declares no ORM FK (aita_documents is owned by database.models
-    and the ON DELETE CASCADE on aita_chunks/document teardown is handled at the
+    ``document_id`` declares no ORM FK (app.documents is owned by database.models
+    and the ON DELETE CASCADE on internal.document_chunks/document teardown is handled at the
     authored-set delete path)."""
 
     __tablename__ = "apollo_ingest_page_evidence"

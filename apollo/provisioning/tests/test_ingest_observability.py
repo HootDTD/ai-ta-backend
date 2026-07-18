@@ -30,9 +30,9 @@ def _page(page_number, *, plain="", latex="", conf=None, mode="ocr"):
 
 async def _seed_course(db, *, slug: str) -> tuple[int, int]:
     from apollo.persistence.models import Concept, Subject
-    from database.models import SearchSpace
+    from database.models import Course
 
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     subject = Subject(slug=f"subject-{slug}", display_name="Physics", search_space_id=space.id)

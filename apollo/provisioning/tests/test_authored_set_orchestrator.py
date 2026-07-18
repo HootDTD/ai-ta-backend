@@ -19,7 +19,7 @@ from apollo.provisioning.promote import PromoteResult
 from apollo.provisioning.scrape import CandidateQuestion, ScrapeResult
 from apollo.provisioning.solution import ReferenceSolutionDraft
 from apollo.provisioning.tag_mint import MintPlan
-from database.models import AITAChunk, AITADocument, SearchSpace
+from database.models import DocumentChunk, Document, Course
 
 orch = sys.modules["apollo.provisioning.authored_sets.orchestrator"]
 
@@ -61,7 +61,7 @@ class _StructureShadowMC:
 
 
 async def _seed_search_space(db, *, slug: str) -> int:
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     return int(space.id)
@@ -93,16 +93,16 @@ async def _seed_doc_with_chunk(
     title: str,
     ocr_conf: float = 0.95,
 ) -> int:
-    doc = AITADocument(
+    doc = Document(
         title=title,
         content=content,
         content_hash=f"{title}-{search_space_id}",
-        search_space_id=search_space_id,
-        document_metadata={"page_debug": [{"page": 1, "ocr_confidence": ocr_conf}]},
+        course_id=search_space_id,
+        metadata_={"page_debug": [{"page": 1, "ocr_confidence": ocr_conf}]},
     )
     db.add(doc)
     await db.flush()
-    db.add(AITAChunk(document_id=doc.id, content=content, page_number=1))
+    db.add(DocumentChunk(course_id=doc.course_id, document_id=doc.id, content=content, page_number=1))
     await db.flush()
     return int(doc.id)
 
@@ -649,12 +649,12 @@ async def test_problem_only_combined_porter_masks_answers_before_tier1_write(
     monkeypatch.setenv("APOLLO_REVERSED_PROVISIONING", "0")
     space = await _seed_search_space(db_session, slug="combined-porter")
     concept_id = await _seed_concept(db_session, search_space_id=space)
-    doc = AITADocument(
+    doc = Document(
         title="Combined Porter Q&A",
         content="20 Porter questions and answers",
         content_hash="combined-porter-hash",
-        search_space_id=space,
-        document_metadata={"page_debug": [{"page": 1, "ocr_confidence": 0.95}]},
+        course_id=space,
+        metadata_={"page_debug": [{"page": 1, "ocr_confidence": 0.95}]},
     )
     db_session.add(doc)
     await db_session.flush()
@@ -663,7 +663,8 @@ async def test_problem_only_combined_porter_masks_answers_before_tier1_write(
     for index in range(1, 21):
         answer = f"Answer {index}: PORTER_SECRET_{index}"
         answer_texts.append(answer)
-        chunk = AITAChunk(
+        chunk = DocumentChunk(
+            course_id=doc.course_id,
             document_id=doc.id,
             content=f"Question {index}: Which force applies?\n{answer}",
             page_number=index,

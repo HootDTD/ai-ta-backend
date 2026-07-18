@@ -37,7 +37,7 @@ from apollo.provisioning.dedup_constants import (
     EMBED_JUDGE_BAND,
     EMBED_MERGE_THRESHOLD,
 )
-from database.models import SearchSpace
+from database.models import Course
 
 # NOTE: no module-level ``pytest.mark.asyncio`` — pytest.ini sets
 # ``asyncio_mode = auto`` so the async ``resolve_candidate`` tests run without a
@@ -117,13 +117,13 @@ class _Candidate:
 
 
 async def _seed_course(db, *, slug, entities):
-    """Seed SearchSpace -> Subject -> Concept -> KGEntity rows for one course.
+    """Seed Course -> Subject -> Concept -> KGEntity rows for one course.
 
     ``entities`` is an iterable of ``(canonical_key, scope_summary)`` tuples
     (``scope_summary`` may be ``None``). Returns
     ``(search_space_id, concept_id, {canonical_key: entity_id})``.
     """
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
@@ -542,9 +542,9 @@ async def test_cross_course_no_local_match_stays_distinct(db_session):
 # distinct nodes of one problem -- m, M -- can't fuse).
 # --------------------------------------------------------------------------- #
 async def _seed_two_concept_course(db, *, slug, a_entities, b_entities):
-    """Seed one SearchSpace -> Subject -> TWO concepts (A, B) in the SAME course.
+    """Seed one Course -> Subject -> TWO concepts (A, B) in the SAME course.
     Returns (search_space_id, concept_a_id, concept_b_id, ids_a, ids_b)."""
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)

@@ -2,7 +2,7 @@
 
 Drives ``apollo.grading.persist_comparison_run`` against the real pgvector pg16
 ``db_session`` (``Base.metadata.create_all``, per-test savepoint rollback). The
-``_seed_attempt`` helper builds the FK chain ``SearchSpace`` (ORM) ->
+``_seed_attempt`` helper builds the FK chain ``Course`` (ORM) ->
 ``ApolloSession`` -> ``ProblemAttempt`` and returns ``(attempt_id,
 search_space_id)``; ``user_id`` is a free-form UUID (runs.user_id has no ORM FK
 under ``create_all`` — auth.users is Supabase-managed). These tests MUST RUN
@@ -30,7 +30,7 @@ from apollo.persistence.models import (
     GraphComparisonRun,
     ProblemAttempt,
 )
-from database.models import SearchSpace
+from database.models import Course
 
 pytestmark = pytest.mark.integration
 
@@ -39,9 +39,9 @@ _REF_HASH = "refhash-v1:deadbeefcafe"
 
 
 async def _seed_attempt(db) -> tuple[int, int]:
-    """Create SearchSpace -> ApolloSession -> ProblemAttempt; return ids."""
+    """Create Course -> ApolloSession -> ProblemAttempt; return ids."""
     slug = f"course-{uuid.uuid4().hex[:8]}"
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     session = ApolloSession(user_id=_USER_ID, search_space_id=space.id)

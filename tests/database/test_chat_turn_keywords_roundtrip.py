@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import select
 
 from chats.service import append_turn
-from database.models import ChatSession, ChatTurn, SearchSpace
+from database.models import ChatSession, ChatTurn, Course
 
 pytestmark = pytest.mark.integration
 
@@ -19,7 +19,7 @@ _USER = "00000000-0000-0000-0000-0000000000ab"
 
 
 async def _seed_session(db_session) -> ChatSession:
-    space = SearchSpace(
+    space = Course(
         name="kw roundtrip space",
         slug=f"kw-roundtrip-{id(db_session)}",
         subject_name="Physics",

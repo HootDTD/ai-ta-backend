@@ -880,7 +880,7 @@ def _make_fake_link(
     return SimpleNamespace(
         id=id,
         code=code,
-        search_space_id=search_space_id,
+        course_id=search_space_id,
         role=role,
         is_active=is_active,
         max_uses=max_uses,

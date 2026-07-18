@@ -2,6 +2,15 @@ from __future__ import annotations
 
 import pytest
 
+from database.models import (
+    Course,
+    CourseInvite,
+    CourseMembership,
+    Document,
+    DocumentChunk,
+    Upload,
+    UploadJob,
+)
 from database.transforms import (
     document_status_columns,
     merge_course_settings,
@@ -46,3 +55,17 @@ def test_typed_upload_states_reject_unknown_values():
         normalize_upload_status("pending")
     with pytest.raises(ValueError, match="Unknown upload job state"):
         normalize_upload_job_state("done")
+
+
+def test_db07_models_map_only_to_target_tables_and_columns():
+    assert Course.__table__.fullname == "app.courses"
+    assert CourseMembership.__table__.fullname == "app.course_memberships"
+    assert CourseInvite.__table__.fullname == "app.course_invites"
+    assert Document.__table__.fullname == "app.documents"
+    assert DocumentChunk.__table__.fullname == "internal.document_chunks"
+    assert Upload.__table__.fullname == "app.uploads"
+    assert UploadJob.__table__.fullname == "internal.upload_jobs"
+    assert {"current_week", "retrieval_weights", "retrieval_weight_min", "retrieval_weight_max"} <= set(Course.__table__.c.keys())
+    assert {"status", "failure_reason", "metadata"} <= set(Document.__table__.c.keys())
+    assert {"course_id", "document_id"} <= set(DocumentChunk.__table__.c.keys())
+    assert {"course_id", "document_id", "ocr_details"} <= set(Upload.__table__.c.keys())

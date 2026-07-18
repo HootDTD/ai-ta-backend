@@ -16,7 +16,7 @@ the pipeline's OWN automatic outcomes.
 
 Two subcommands:
 
-  bootstrap  — mint the campaign teacher + a fresh course (SearchSpace +
+  bootstrap  — mint the campaign teacher + a fresh course (Course +
                teacher CourseMembership); writes <out-dir>/course.json.
                Needs SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / --pg-dsn.
                Seed the premade list AFTER this, BEFORE `run`:
@@ -104,7 +104,7 @@ async def _bootstrap(args: argparse.Namespace) -> None:  # pragma: no cover - li
         space_id = (
             await conn.execute(
                 text(
-                    "INSERT INTO aita_search_spaces (name, slug, subject_name, created_at, "
+                    "INSERT INTO app.courses (name, slug, subject_name, created_at, "
                     "updated_at) VALUES (:n, :s, :subj, now(), now()) RETURNING id"
                 ),
                 {"n": "Revgen Calc2", "s": f"revgen-calc2-{int(time.time())}", "subj": "Calc 2"},
@@ -112,7 +112,7 @@ async def _bootstrap(args: argparse.Namespace) -> None:  # pragma: no cover - li
         ).scalar_one()
         await conn.execute(
             text(
-                "INSERT INTO course_memberships (user_id, search_space_id, role, "
+                "INSERT INTO app.course_memberships (user_id, course_id, role, "
                 "created_at, updated_at) VALUES (:u, :ss, 'teacher', now(), now())"
             ),
             {"u": teacher_id, "ss": space_id},

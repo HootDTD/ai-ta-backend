@@ -24,7 +24,7 @@ from apollo.knowledge_graph.canon_projection import CanonProjectionError
 from apollo.persistence.models import Concept, ConceptProblem, Subject
 from apollo.provisioning.promote import PromoteResult, promote
 from apollo.provisioning.tag_mint import MintPlan
-from database.models import SearchSpace
+from database.models import Course
 
 # The submodule object (the package re-exports the ``promote`` FUNCTION, which
 # shadows the ``promote`` submodule attribute on the package — so resolve the
@@ -218,9 +218,9 @@ async def _seed_concept_with_problem(
     canonical_symbols: list[str] | None = None,
     normalization: dict | None = None,
 ):
-    """Seed SearchSpace -> Subject -> Concept (with authored canonical_symbols) ->
+    """Seed Course -> Subject -> Concept (with authored canonical_symbols) ->
     a Tier-1 ConceptProblem. Returns (search_space_id, concept_id, problem_id)."""
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
     subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
@@ -841,7 +841,7 @@ async def test_promote_rehomes_row_to_tagged_concept(db_session):
     reach it. Dropping the re-home assignment REDs this test."""
     from apollo.overseer.problem_selector import list_problems_for_concept
 
-    space = SearchSpace(name="Course pr7", slug="pr7", subject_name="Physics")
+    space = Course(name="Course pr7", slug="pr7", subject_name="Physics")
     db_session.add(space)
     await db_session.flush()
     subj = Subject(slug="s-pr7", display_name="Sub", search_space_id=space.id)
