@@ -464,3 +464,17 @@ def test_migration_reuses_the_db04_retrieval_index_allowlist() -> None:
     assert "human-only live relocation gate" in comment
     assert "abort the extension move" in comment
     assert "alter extension vector set schema extensions" in comment
+
+
+def test_retrieval_migration_is_independent_of_amended_a5_a9_tables() -> None:
+    sql = _RETRIEVAL.read_text(encoding="utf-8").lower()
+    superseded_targets = {
+        "app.chat_sessions",
+        "app.tutoring_sessions",
+        "app.learner_negotiations",
+        "app.subjects",
+        "app.authored_sets",
+        "internal.content_generation_runs",
+        "internal.grading_findings",
+    }
+    assert all(name not in sql for name in superseded_targets)

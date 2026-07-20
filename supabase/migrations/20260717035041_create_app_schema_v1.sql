@@ -52,7 +52,7 @@ END
 $runtime_role$;
 
 -- -------------------------------------------------------------------------
--- app: authenticated, tenant-bearing product records (20 tables)
+-- app: authenticated, tenant-bearing product records (18 tables)
 -- -------------------------------------------------------------------------
 
 CREATE TABLE app.courses (
@@ -536,7 +536,7 @@ CREATE TABLE app.ai_usage_reports (
 );
 
 -- -------------------------------------------------------------------------
--- internal: service-only queues, retrieval, telemetry, and grading (8 tables)
+-- internal: service-only queues, retrieval, telemetry, and grading (10 tables)
 -- -------------------------------------------------------------------------
 
 CREATE TABLE internal.document_chunks (
@@ -752,7 +752,7 @@ CREATE TABLE internal.grading_runs (
         CHECK (grader_used IN ('graph', 'llm_fallback', 'llm_transcript', 'evidence_graph_v2')),
     CONSTRAINT grading_runs__status__check CHECK (
         status IN ('collecting', 'awaiting_clarification', 'inferring', 'grading_pending',
-                   'provisional', 'final', 'manual_review', 'shadow')
+                   'provisional', 'final', 'manual_review')
     ),
     CONSTRAINT grading_runs__latency__check CHECK (grading_latency_ms IS NULL OR grading_latency_ms >= 0),
     CONSTRAINT grading_runs__scores__check CHECK (
@@ -1283,8 +1283,8 @@ BEGIN
     SELECT count(*) INTO internal_table_count
     FROM pg_tables WHERE schemaname = 'internal';
 
-    IF app_table_count <> 20 OR internal_table_count <> 8 THEN
-        RAISE EXCEPTION 'DB-04 postcondition failed: expected 20 app + 8 internal tables, got % + %',
+    IF app_table_count <> 18 OR internal_table_count <> 10 THEN
+        RAISE EXCEPTION 'DB-04 postcondition failed: expected 18 app + 10 internal tables, got % + %',
             app_table_count, internal_table_count;
     END IF;
 

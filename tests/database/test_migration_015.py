@@ -14,12 +14,14 @@ from sqlalchemy import text
 async def test_chat_session_snippets_table_exists(db_session):
     result = await db_session.execute(text(
         "SELECT column_name FROM information_schema.columns "
-        "WHERE table_name = 'chat_session_snippets' ORDER BY column_name"
+        "WHERE table_schema = 'internal' AND table_name = 'chat_session_snippets' "
+        "ORDER BY column_name"
     ))
     cols = {row[0] for row in result}
     expected = {
-        "chat_session_id",
+        "learning_activity_id",
         "chunk_id",
+        "course_id",
         "original_score",
         "first_seen_turn",
         "last_used_turn",
@@ -30,19 +32,28 @@ async def test_chat_session_snippets_table_exists(db_session):
 
 
 @pytest.mark.integration
-async def test_app_chat_sessions_has_target_columns(db_session):
+async def test_app_learning_activities_has_chat_modality_columns(db_session):
     result = await db_session.execute(text(
         "SELECT column_name FROM information_schema.columns "
-        "WHERE table_schema = 'app' AND table_name = 'chat_sessions'"
+        "WHERE table_schema = 'app' AND table_name = 'learning_activities'"
     ))
     cols = {row[0] for row in result}
     assert cols == {
         "id",
+        "modality",
         "external_id",
         "user_id",
         "course_id",
         "metadata",
         "memory_summary",
+        "status",
+        "phase",
+        "concept_id",
+        "current_problem_id",
+        "pending_intent",
+        "history_summary",
+        "history_summary_up_to_turn",
+        "last_touched_at",
         "created_at",
         "updated_at",
     }

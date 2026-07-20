@@ -151,7 +151,7 @@ async def test_forward_copy_reconcile_idempotency_and_reverse_delta(copied_conn)
 
     # Every target mapping is exercised by that seed.
     table_counts = await _target_fingerprint(copied_conn)
-    assert len(table_counts) == 33
+    assert len(table_counts) == 28
     assert all(row_count > 0 for _, row_count, _ in table_counts)
 
     course = await copied_conn.fetchrow(
@@ -166,8 +166,11 @@ async def test_forward_copy_reconcile_idempotency_and_reverse_delta(copied_conn)
     assert course["retrieval_weight_max"] == pytest.approx(0.9)
 
     concept = await copied_conn.fetchrow(
-        "SELECT canonical_symbols,symbol_metadata FROM app.concepts WHERE id=31"
+        "SELECT subject_slug,subject_display_name,canonical_symbols,symbol_metadata "
+        "FROM app.concepts WHERE id=31"
     )
+    assert concept["subject_slug"] == "physics"
+    assert concept["subject_display_name"] == "Physics"
     assert concept["canonical_symbols"] == ["p", "v"]
     assert json.loads(concept["symbol_metadata"]) == {"convention": "SI"}
     problem = await copied_conn.fetchrow(
@@ -180,7 +183,35 @@ async def test_forward_copy_reconcile_idempotency_and_reverse_delta(copied_conn)
     ) == 2
     assert await copied_conn.fetchval(
         "SELECT count(*) FROM internal.grading_runs"
+    ) == 1
+    assert await copied_conn.fetchval(
+        "SELECT count(*) FROM app.learning_activities"
     ) == 2
+    assert await copied_conn.fetchval(
+        "SELECT id FROM app.learning_activities WHERE modality='chat'"
+    ) == 20
+    assert await copied_conn.fetchval(
+        "SELECT id FROM app.learning_activities WHERE modality='tutoring'"
+    ) == 1_000_040
+    assert await copied_conn.fetchval(
+        "SELECT learning_activity_id FROM app.tutoring_messages WHERE id=42"
+    ) == 1_000_040
+    assert await copied_conn.fetchval(
+        "SELECT learning_activity_id FROM app.problem_attempts WHERE id=41"
+    ) == 1_000_040
+    assert await copied_conn.fetchval(
+        "SELECT bool_and(learning_activity_id=1000040) FROM app.question_opportunities"
+    ) is True
+    provisioning = await copied_conn.fetch(
+        "SELECT id,kind FROM app.provisioning_runs ORDER BY kind"
+    )
+    assert [(row["id"], row["kind"]) for row in provisioning] == [
+        (75, "authored_set"),
+        (1_000_074, "generation"),
+    ]
+    assert await copied_conn.fetchval(
+        "SELECT count(*) FROM pg_temp.db05_copy_quarantine"
+    ) == 0
 
     before = await _target_fingerprint(copied_conn)
     await copied_conn.execute(_COPY.read_text(encoding="utf-8"))
@@ -202,10 +233,37 @@ async def test_forward_copy_reconcile_idempotency_and_reverse_delta(copied_conn)
                  '2030-01-01','2030-01-01' FROM new_course
           RETURNING id
         )
-        INSERT INTO app.chat_sessions
-          (external_id,user_id,course_id,metadata,created_at,updated_at)
-        SELECT 'reverse-chat','10000000-0000-4000-8000-000000000001',id,
-               '{"delta":true}','2030-01-01','2030-01-01' FROM new_course;
+        INSERT INTO app.learning_activities
+          (modality,external_id,user_id,course_id,metadata,status,created_at,updated_at)
+        SELECT 'chat','reverse-chat','10000000-0000-4000-8000-000000000001',id,
+               '{"delta":true}','active','2030-01-01','2030-01-01' FROM new_course;
+        """
+    )
+    tutoring_activity_id = await copied_conn.fetchval(
+        """
+        INSERT INTO app.learning_activities
+          (modality,user_id,course_id,status,phase,created_at,updated_at,last_touched_at)
+        SELECT 'tutoring','10000000-0000-4000-8000-000000000001',id,
+               'paused','BETWEEN','2030-01-01','2030-01-01','2030-01-01'
+        FROM app.courses WHERE slug='reverse-course'
+        RETURNING id
+        """
+    )
+    authored_run_id = await copied_conn.fetchval(
+        """
+        INSERT INTO app.provisioning_runs
+          (course_id,kind,set_index,status,created_at,updated_at)
+        SELECT id,'authored_set',99,'pending','2030-01-01','2030-01-01'
+        FROM app.courses WHERE slug='reverse-course'
+        RETURNING id
+        """
+    )
+    generation_run_id = await copied_conn.fetchval(
+        """
+        INSERT INTO app.provisioning_runs
+          (course_id,kind,concept_id,status,created_at,updated_at)
+        VALUES (1,'generation',31,'pending','2030-01-01','2030-01-01')
+        RETURNING id
         """
     )
     transaction = copied_conn.transaction()
@@ -230,6 +288,18 @@ async def test_forward_copy_reconcile_idempotency_and_reverse_delta(copied_conn)
     assert await copied_conn.fetchval(
         "SELECT count(*) FROM chat_sessions WHERE chat_id='reverse-chat'"
     ) == 1
+    assert await copied_conn.fetchval(
+        "SELECT count(*) FROM apollo_sessions WHERE id=$1",
+        tutoring_activity_id - 1_000_000,
+    ) == 1
+    assert await copied_conn.fetchval(
+        "SELECT count(*) FROM apollo_authored_sets WHERE id=$1 AND set_index=99",
+        authored_run_id,
+    ) == 1
+    assert await copied_conn.fetchval(
+        "SELECT count(*) FROM apollo_generation_runs WHERE id=$1",
+        generation_run_id - 1_000_000,
+    ) == 1
 
     # Reconciliation repairs explicit-ID sequence drift before reopening writes.
     await copied_conn.execute(
@@ -244,11 +314,12 @@ async def test_forward_copy_reconcile_idempotency_and_reverse_delta(copied_conn)
     assert next_id > maximum_id
 
 
-def test_copy_migration_is_non_destructive_and_names_exactly_six_drops():
+def test_copy_migration_is_non_destructive_and_names_exactly_seven_drops():
     sql = _COPY.read_text(encoding="utf-8").lower()
     executable = "\n".join(
         line for line in sql.splitlines() if not line.lstrip().startswith("--")
     )
+    executable = executable.replace("truncate pg_temp.db05_copy_quarantine;", "")
     assert not any(
         token in executable
         for token in ("delete from", "truncate", "drop table", "alter table")
@@ -260,7 +331,10 @@ def test_copy_migration_is_non_destructive_and_names_exactly_six_drops():
         "apollo_misconception_observations",
         "apollo_provisioning_jobs",
         "apollo_rejected_problems",
+        "apollo_kg_negotiations",
     }
     comment = sql.split("begin;", 1)[0]
     assert {name for name in approved_drops if f"public.{name}" in comment} == approved_drops
-    assert comment.count("public.apollo_") == 6
+    assert comment.count("public.apollo_") == 7
+    assert "db05_copy_quarantine" in sql
+    assert "id + 1000000" in sql

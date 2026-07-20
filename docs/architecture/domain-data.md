@@ -36,18 +36,18 @@ migration entrypoints now fail immediately; their remaining bodies stay frozen
 in place as provenance, and the checksum manifest records that final guard.
 
 DB-04 (2026-07-16) added `create_app_schema_v1`, the non-destructive target
-schema build layered beside the legacy `public` tables. It creates 21
-tenant-bearing `app` tables with forced RLS and real authenticated policies,
-12 explicitly service-only `internal` tables, the initplan-safe
+schema build layered beside the legacy `public` tables. As amended by A5-A9,
+it creates 18 tenant-bearing `app` tables with forced RLS and real
+authenticated policies, 10 explicitly service-only `internal` tables, the initplan-safe
 `internal.has_course_role()` helper, the reviewed index allowlist, and the
 typed grading-v2 seam. It creates no data and does not alter any legacy table;
 the separately gated activation migration remains future work.
 
 DB-05 (2026-07-17) added the non-destructive `copy_app_schema_v1` forward
-copy. It maps the 36 retained legacy sources into all 33 target tables,
+copy. As amended by A5-A9, it maps the retained legacy sources into all 28 target tables,
 performs the three planned merges and JSON-to-typed promotions, fails on
-ambiguous progress/problem/report attribution, records the six intentionally
-uncopied tables, and advances every target identity sequence. Reconciliation,
+unattributable rerouted rows in a session-local quarantine, records the seven
+approved no-copy tables, and advances every target identity sequence. Reconciliation,
 scrubbed rehearsal data, and the human-run reverse-delta rollback artifact live
 under `scripts/db/`, `supabase/seed.sql`, and the DB-05 database contract test.
 
@@ -61,7 +61,7 @@ The three DB-04 retrieval indexes are asserted and reused, not duplicated;
 live extension relocation remains a separately observed human gate.
 
 MIG-AMEND (2026-07-20) applies architecture rulings A5-A9 to the built target:
-the final inventory is 28 tables (20 `app`, 8 `internal`). Chat and tutoring
+the final inventory is 28 tables (18 `app`, 10 `internal`). Chat and tutoring
 sessions share `app.learning_activities`, discriminated by `modality`, while
 their typed message children remain separate and carry denormalized course
 scope. Tutoring legacy ids are shifted by 1,000,000 during copy; chat ids stay

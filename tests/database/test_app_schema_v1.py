@@ -32,38 +32,33 @@ NO_MEMBERSHIP = "40000000-0000-4000-8000-000000000004"
 
 APP_TABLES = {
     "ai_usage_reports",
-    "authored_sets",
     "chat_messages",
-    "chat_sessions",
     "concepts",
     "course_invites",
     "course_memberships",
     "courses",
     "documents",
+    "learning_activities",
     "learner_entities",
-    "learner_negotiations",
     "learner_state",
     "mastery_events",
     "problem_attempts",
     "problems",
+    "provisioning_runs",
     "question_opportunities",
     "student_progress",
-    "subjects",
     "tutoring_messages",
-    "tutoring_sessions",
     "uploads",
 }
 
 INTERNAL_TABLES = {
     "chat_routing_decisions",
     "chat_session_snippets",
-    "content_generation_runs",
     "content_ingest_errors",
     "content_ingest_runs",
     "dedup_decisions",
     "document_chunks",
     "entity_prerequisites",
-    "grading_findings",
     "grading_runs",
     "ingest_page_evidence",
     "upload_jobs",
@@ -71,35 +66,30 @@ INTERNAL_TABLES = {
 
 EXPECTED_PKS = {
     "app.ai_usage_reports": ("id",),
-    "app.authored_sets": ("id",),
     "app.chat_messages": ("id",),
-    "app.chat_sessions": ("id",),
     "app.concepts": ("id",),
     "app.course_invites": ("id",),
     "app.course_memberships": ("user_id", "course_id"),
     "app.courses": ("id",),
     "app.documents": ("id",),
+    "app.learning_activities": ("id",),
     "app.learner_entities": ("id",),
-    "app.learner_negotiations": ("id",),
     "app.learner_state": ("user_id", "course_id", "entity_id"),
     "app.mastery_events": ("id",),
     "app.problem_attempts": ("id",),
     "app.problems": ("id",),
+    "app.provisioning_runs": ("id",),
     "app.question_opportunities": ("id",),
     "app.student_progress": ("user_id", "course_id"),
-    "app.subjects": ("id",),
     "app.tutoring_messages": ("id",),
-    "app.tutoring_sessions": ("id",),
     "app.uploads": ("id",),
     "internal.chat_routing_decisions": ("id",),
-    "internal.chat_session_snippets": ("chat_session_id", "chunk_id"),
-    "internal.content_generation_runs": ("id",),
+    "internal.chat_session_snippets": ("learning_activity_id", "chunk_id"),
     "internal.content_ingest_errors": ("id",),
     "internal.content_ingest_runs": ("id",),
     "internal.dedup_decisions": ("id",),
     "internal.document_chunks": ("id",),
     "internal.entity_prerequisites": ("from_entity_id", "to_entity_id"),
-    "internal.grading_findings": ("id",),
     "internal.grading_runs": ("id",),
     "internal.ingest_page_evidence": ("id",),
     "internal.upload_jobs": ("id",),
@@ -110,24 +100,27 @@ EXPECTED_FKS = {
     "app.ai_usage_reports": {
         ("user_id",): ("auth.users", ("id",)),
         ("course_id",): ("app.courses", ("id",)),
-        ("chat_id",): ("app.chat_sessions", ("external_id",)),
+        ("chat_id",): ("app.learning_activities", ("external_id",)),
     },
-    "app.authored_sets": {
+    "app.provisioning_runs": {
         ("course_id",): ("app.courses", ("id",)),
         ("problem_document_id",): ("app.documents", ("id",)),
         ("solution_document_id",): ("app.documents", ("id",)),
+        ("concept_id",): ("app.concepts", ("id",)),
+        ("ingest_run_id",): ("internal.content_ingest_runs", ("id",)),
     },
     "app.chat_messages": {
         ("course_id",): ("app.courses", ("id",)),
-        ("chat_session_id",): ("app.chat_sessions", ("id",)),
+        ("learning_activity_id",): ("app.learning_activities", ("id",)),
     },
-    "app.chat_sessions": {
+    "app.learning_activities": {
         ("user_id",): ("auth.users", ("id",)),
         ("course_id",): ("app.courses", ("id",)),
+        ("concept_id",): ("app.concepts", ("id",)),
+        ("current_problem_id",): ("app.problems", ("id",)),
     },
     "app.concepts": {
         ("course_id",): ("app.courses", ("id",)),
-        ("subject_id",): ("app.subjects", ("id",)),
     },
     "app.course_invites": {
         ("course_id",): ("app.courses", ("id",)),
@@ -141,11 +134,6 @@ EXPECTED_FKS = {
     "app.learner_entities": {
         ("course_id",): ("app.courses", ("id",)),
         ("concept_id",): ("app.concepts", ("id",)),
-    },
-    "app.learner_negotiations": {
-        ("course_id",): ("app.courses", ("id",)),
-        ("attempt_id",): ("app.problem_attempts", ("id",)),
-        ("user_id",): ("auth.users", ("id",)),
     },
     "app.learner_state": {
         ("user_id",): ("auth.users", ("id",)),
@@ -162,7 +150,7 @@ EXPECTED_FKS = {
     "app.problem_attempts": {
         ("course_id",): ("app.courses", ("id",)),
         ("user_id",): ("auth.users", ("id",)),
-        ("session_id",): ("app.tutoring_sessions", ("id",)),
+        ("learning_activity_id",): ("app.learning_activities", ("id",)),
         ("problem_id",): ("app.problems", ("id",)),
     },
     "app.problems": {
@@ -171,24 +159,17 @@ EXPECTED_FKS = {
     },
     "app.question_opportunities": {
         ("course_id",): ("app.courses", ("id",)),
-        ("session_id",): ("app.tutoring_sessions", ("id",)),
+        ("learning_activity_id",): ("app.learning_activities", ("id",)),
         ("attempt_id",): ("app.problem_attempts", ("id",)),
     },
     "app.student_progress": {
         ("user_id",): ("auth.users", ("id",)),
         ("course_id",): ("app.courses", ("id",)),
     },
-    "app.subjects": {("course_id",): ("app.courses", ("id",))},
     "app.tutoring_messages": {
         ("course_id",): ("app.courses", ("id",)),
-        ("session_id",): ("app.tutoring_sessions", ("id",)),
+        ("learning_activity_id",): ("app.learning_activities", ("id",)),
         ("attempt_id",): ("app.problem_attempts", ("id",)),
-    },
-    "app.tutoring_sessions": {
-        ("user_id",): ("auth.users", ("id",)),
-        ("course_id",): ("app.courses", ("id",)),
-        ("concept_id",): ("app.concepts", ("id",)),
-        ("current_problem_id",): ("app.problems", ("id",)),
     },
     "app.uploads": {
         ("course_id",): ("app.courses", ("id",)),
@@ -197,17 +178,12 @@ EXPECTED_FKS = {
     },
     "internal.chat_routing_decisions": {
         ("course_id",): ("app.courses", ("id",)),
-        ("chat_session_id",): ("app.chat_sessions", ("id",)),
+        ("learning_activity_id",): ("app.learning_activities", ("id",)),
     },
     "internal.chat_session_snippets": {
-        ("chat_session_id",): ("app.chat_sessions", ("id",)),
+        ("learning_activity_id",): ("app.learning_activities", ("id",)),
         ("chunk_id",): ("internal.document_chunks", ("id",)),
         ("course_id",): ("app.courses", ("id",)),
-    },
-    "internal.content_generation_runs": {
-        ("course_id",): ("app.courses", ("id",)),
-        ("concept_id",): ("app.concepts", ("id",)),
-        ("ingest_run_id",): ("internal.content_ingest_runs", ("id",)),
     },
     "internal.content_ingest_errors": {
         ("course_id",): ("app.courses", ("id",)),
@@ -231,11 +207,6 @@ EXPECTED_FKS = {
         ("course_id",): ("app.courses", ("id",)),
         ("from_entity_id",): ("app.learner_entities", ("id",)),
         ("to_entity_id",): ("app.learner_entities", ("id",)),
-    },
-    "internal.grading_findings": {
-        ("course_id",): ("app.courses", ("id",)),
-        ("run_id",): ("internal.grading_runs", ("id",)),
-        ("entity_id",): ("app.learner_entities", ("id",)),
     },
     "internal.grading_runs": {
         ("course_id",): ("app.courses", ("id",)),
@@ -368,7 +339,7 @@ async def _set_authenticated(conn: asyncpg.Connection, user_id: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_all_33_tables_have_expected_primary_keys_and_foreign_keys(schema_conn):
+async def test_all_28_tables_have_expected_primary_keys_and_foreign_keys(schema_conn):
     rows = await schema_conn.fetch(
         "SELECT schemaname, tablename FROM pg_tables WHERE schemaname IN ('app', 'internal')"
     )
@@ -452,7 +423,7 @@ async def test_every_app_table_has_forced_rls_and_a_policy(schema_conn):
     policy_count = await schema_conn.fetchval(
         "SELECT count(*) FROM pg_policies WHERE schemaname = 'app'"
     )
-    assert policy_count == 38
+    assert policy_count == 32
 
 
 @pytest.mark.asyncio
@@ -554,6 +525,67 @@ async def test_internal_schema_is_service_only(schema_conn):
             await schema_conn.fetchval("SELECT count(*) FROM internal.document_chunks")
     finally:
         await transaction.rollback()
+
+
+@pytest.mark.asyncio
+async def test_learning_activity_modality_status_and_active_tutoring_semantics(schema_conn):
+    course_id = await schema_conn.fetchval(
+        "SELECT id FROM app.courses WHERE slug = 'course-one'"
+    )
+    chat_id = await schema_conn.fetchval(
+        """
+        INSERT INTO app.learning_activities
+          (modality,external_id,user_id,course_id,status)
+        VALUES ('chat','schema-v1-chat',$1,$2,'active')
+        RETURNING id
+        """,
+        STUDENT,
+        course_id,
+    )
+    assert chat_id is not None
+
+    with pytest.raises(asyncpg.CheckViolationError):
+        await schema_conn.execute(
+            """
+            INSERT INTO app.learning_activities
+              (modality,external_id,user_id,course_id,status)
+            VALUES ('chat','invalid-paused-chat',$1,$2,'paused')
+            """,
+            STUDENT,
+            course_id,
+        )
+
+    first_tutoring_id = await schema_conn.fetchval(
+        """
+        INSERT INTO app.learning_activities
+          (modality,user_id,course_id,status,phase)
+        VALUES ('tutoring',$1,$2,'active','INIT')
+        RETURNING id
+        """,
+        STUDENT,
+        course_id,
+    )
+    assert first_tutoring_id is not None
+    with pytest.raises(asyncpg.UniqueViolationError):
+        await schema_conn.execute(
+            """
+            INSERT INTO app.learning_activities
+              (modality,user_id,course_id,status,phase)
+            VALUES ('tutoring',$1,$2,'active','TEACHING')
+            """,
+            STUDENT,
+            course_id,
+        )
+    assert await schema_conn.fetchval(
+        """
+        INSERT INTO app.learning_activities
+          (modality,user_id,course_id,status,phase)
+        VALUES ('tutoring',$1,$2,'paused','TEACHING')
+        RETURNING id
+        """,
+        STUDENT,
+        course_id,
+    ) is not None
 
 
 def test_migration_never_mutates_a_legacy_public_table():
