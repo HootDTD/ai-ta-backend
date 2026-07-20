@@ -55,12 +55,12 @@ def _event(status: str, *, diagnostic: str = "", job_id: int | None = None) -> d
 
 
 def _state(row: ConceptProblem) -> dict[str, Any]:
-    value = (row.provenance or {}).get("typed_rehoming")
+    value = (row.provenance or {}).get("typed_rehoming")  # type: ignore[call-overload]
     return dict(value) if isinstance(value, dict) else {}
 
 
 def _write_state(row: ConceptProblem, state: dict[str, Any]) -> None:
-    row.provenance = {**(row.provenance or {}), "typed_rehoming": state}
+    row.provenance = {**(row.provenance or {}), "typed_rehoming": state}  # type: ignore[assignment]
 
 
 def _transition_problem(
@@ -115,9 +115,9 @@ async def enqueue_rehoming(
         db.add(open_job)
         await db.flush()
     elif open_job.state == _PENDING:
-        open_job.requested_concept_id = requested_concept_id
-        open_job.last_error = None
-        open_job.updated_at = _now()
+        open_job.requested_concept_id = requested_concept_id  # type: ignore[assignment]
+        open_job.last_error = None  # type: ignore[assignment]
+        open_job.updated_at = _now()  # type: ignore[assignment]
     job_id = int(open_job.id)
     _transition_problem(
         row,
@@ -170,11 +170,11 @@ async def claim_rehoming_job(
     if job is None:
         return None
 
-    job.state = _RUNNING
-    job.lease_owner = lease_owner
-    job.lease_expires_at = now + timedelta(seconds=lease_seconds)
-    job.attempt_count = int(job.attempt_count or 0) + 1
-    job.updated_at = now
+    job.state = _RUNNING  # type: ignore[assignment]
+    job.lease_owner = lease_owner  # type: ignore[assignment]
+    job.lease_expires_at = now + timedelta(seconds=lease_seconds)  # type: ignore[assignment]
+    job.attempt_count = int(job.attempt_count or 0) + 1  # type: ignore[assignment]
+    job.updated_at = now  # type: ignore[assignment]
     row = await db.get(ConceptProblem, int(job.concept_problem_id))
     if row is not None:
         _transition_problem(
@@ -202,11 +202,11 @@ async def complete_rehoming_job(db: AsyncSession, *, job_id: int) -> None:
     job = await db.get(RehomingJob, job_id)
     if job is None:
         return
-    job.state = _COMPLETED
-    job.lease_owner = None
-    job.lease_expires_at = None
-    job.last_error = None
-    job.updated_at = _now()
+    job.state = _COMPLETED  # type: ignore[assignment]
+    job.lease_owner = None  # type: ignore[assignment]
+    job.lease_expires_at = None  # type: ignore[assignment]
+    job.last_error = None  # type: ignore[assignment]
+    job.updated_at = _now()  # type: ignore[assignment]
     row = await db.get(ConceptProblem, int(job.concept_problem_id))
     if row is not None:
         prior = _state(row)
@@ -219,11 +219,11 @@ async def fail_rehoming_job(db: AsyncSession, *, job_id: int, error: str) -> str
     job = await db.get(RehomingJob, job_id)
     if job is None:
         return _FAILED
-    job.state = _FAILED if int(job.attempt_count or 0) >= MAX_ATTEMPTS else _PENDING
-    job.last_error = (error or "")[:_MAX_ERROR_LEN]
-    job.lease_owner = None
-    job.lease_expires_at = None
-    job.updated_at = _now()
+    job.state = _FAILED if int(job.attempt_count or 0) >= MAX_ATTEMPTS else _PENDING  # type: ignore[assignment]
+    job.last_error = (error or "")[:_MAX_ERROR_LEN]  # type: ignore[assignment]
+    job.lease_owner = None  # type: ignore[assignment]
+    job.lease_expires_at = None  # type: ignore[assignment]
+    job.updated_at = _now()  # type: ignore[assignment]
     row = await db.get(ConceptProblem, int(job.concept_problem_id))
     if row is not None:
         prior = _state(row)
@@ -278,8 +278,8 @@ async def run_rehoming(
                 resolved_concept=resolved_concept,
                 diagnose_existing_symbols=True,
             )
-            row.concept_id = plan.concept_id
-            row.payload = {**(row.payload or {}), "concept_id": plan.concept_slug}
+            row.concept_id = plan.concept_id  # type: ignore[assignment]
+            row.payload = {**(row.payload or {}), "concept_id": plan.concept_slug}  # type: ignore[assignment]
             await project_canon(
                 db,
                 neo,
