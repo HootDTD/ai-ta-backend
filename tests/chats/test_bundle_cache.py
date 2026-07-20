@@ -98,7 +98,7 @@ async def _seed_session_with_chunks(db_session, n_chunks: int):
         unique_identifier_hash="bundle-cache-test-uid",
         course_id=space.id,
         material_kind="textbook",
-        status={"state": "ready"},
+        status="ready",
     )
     db_session.add(doc)
     await db_session.flush()

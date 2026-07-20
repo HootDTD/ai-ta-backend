@@ -241,7 +241,7 @@ async def test_fresh_then_none_lifecycle(db_session, monkeypatch):
         unique_identifier_hash="wiring-test-uid",
         course_id=space.id,
         material_kind="textbook",
-        status={"state": "ready"},
+        status="ready",
     )
     db_session.add(doc)
     await db_session.flush()
@@ -338,7 +338,7 @@ async def test_fresh_then_none_lifecycle(db_session, monkeypatch):
         unique_identifier_hash="wiring-test-uid-2",
         course_id=space.id,
         material_kind="other",
-        status={"state": "ready"},
+        status="ready",
     )
     db_session.add(doc2)
     await db_session.flush()
@@ -530,7 +530,7 @@ async def test_memory_loader_meta_refresh_preserves_cache_fingerprint(db_session
         unique_identifier_hash="meta-merge-uid",
         course_id=space.id,
         material_kind="textbook",
-        status={"state": "ready"},
+        status="ready",
     )
     db_session.add(doc)
     await db_session.flush()

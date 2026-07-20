@@ -986,7 +986,7 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
         content_hash="ph",
         unique_identifier_hash="pu",
         course_id=space_id,
-        status={"state": "apollo_reference"},
+        status="queued",
     )
     sdoc = Document(
         title="s",
@@ -994,7 +994,7 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
         content_hash="sh",
         unique_identifier_hash="su",
         course_id=space_id,
-        status={"state": "apollo_reference"},
+        status="queued",
     )
     db_session.add_all([pdoc, sdoc])
     await db_session.flush()
@@ -1094,7 +1094,7 @@ async def test_delete_sweeps_unreferenced_tier1_leftovers(db_session, monkeypatc
         content_hash="leftover-ph",
         unique_identifier_hash="leftover-pu",
         course_id=space_id,
-        status={"state": "apollo_reference"},
+        status="queued",
     )
     db_session.add(problem_doc)
     await db_session.flush()
@@ -1154,7 +1154,7 @@ async def test_delete_spares_tier2_and_foreign_document_rows(db_session, monkeyp
         content_hash="scope-target-ph",
         unique_identifier_hash="scope-target-pu",
         course_id=space_id,
-        status={"state": "apollo_reference"},
+        status="queued",
     )
     sibling_doc = Document(
         title="sibling problems",
@@ -1162,7 +1162,7 @@ async def test_delete_spares_tier2_and_foreign_document_rows(db_session, monkeyp
         content_hash="scope-sibling-ph",
         unique_identifier_hash="scope-sibling-pu",
         course_id=space_id,
-        status={"state": "apollo_reference"},
+        status="queued",
     )
     db_session.add_all([target_doc, sibling_doc])
     await db_session.flush()

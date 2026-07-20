@@ -43,7 +43,7 @@ class DocumentFactory(factory.Factory):
     content_hash = factory.Sequence(lambda n: f"hash-{n:08d}")
     embedding = factory.LazyAttribute(lambda o: fake_embedding(o.title))
     status = "ready"
-    # search_space_id is required (FK) — always pass it explicitly.
+    # course_id is required (FK) — always pass it explicitly.
 
 
 class DocumentChunkFactory(factory.Factory):
@@ -62,7 +62,7 @@ class CourseMembershipFactory(factory.Factory):
 
     user_id = factory.LazyFunction(lambda: str(uuid.uuid4()))
     role = "student"
-    # search_space_id is required (FK) — always pass it explicitly.
+    # course_id is required (FK) — always pass it explicitly.
 
 
 class ChatSessionFactory(factory.Factory):
@@ -84,4 +84,4 @@ class UploadFactory(factory.Factory):
     kind = "notes"
     title = factory.Sequence(lambda n: f"Week {n} notes")
     status = "ready"
-    # search_space_id is required (FK) — always pass it explicitly.
+    # course_id is required (FK) — always pass it explicitly.

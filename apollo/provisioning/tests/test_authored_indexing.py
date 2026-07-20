@@ -157,7 +157,7 @@ async def test_index_authored_doc_sets_hidden_status(db_session, monkeypatch):
     from database.models import Document
 
     doc = await db_session.get(Document, doc_id)
-    assert doc.status == {"state": "apollo_reference"}
+    assert doc.status == "queued"
 
 
 @pytest.mark.asyncio
@@ -289,7 +289,7 @@ async def test_index_authored_doc_falls_back_to_existing_doc(db_session, monkeyp
         content_hash="h-existing",
         course_id=11,
         unique_identifier_hash=compute_unique_identifier_hash(connector),
-        status={"state": "ready"},
+        status="ready",
     )
     db_session.add(existing)
     await db_session.flush()
@@ -312,7 +312,7 @@ async def test_index_authored_doc_falls_back_to_existing_doc(db_session, monkeyp
     )
     assert doc_id == existing_id
     refreshed = await db_session.get(Document, existing_id)
-    assert refreshed.status == {"state": "apollo_reference"}
+    assert refreshed.status == "queued"
 
 
 @pytest.mark.asyncio
@@ -347,7 +347,7 @@ async def test_reupload_reuses_content_identical_doc_via_real_prepare(db_session
         content_hash=compute_content_hash(first),
         course_id=21,
         unique_identifier_hash=compute_unique_identifier_hash(first),
-        status={"state": "apollo_reference"},
+        status="queued",
     )
     db_session.add(existing)
     await db_session.flush()

@@ -53,7 +53,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # Make the package importable when run as `python -m scripts....`
@@ -78,7 +78,6 @@ from apollo.persistence.models import (  # noqa: E402
     KGEntity,
     Subject,
 )
-from database.models import Course  # noqa: E402
 
 _LOG = logging.getLogger(__name__)
 
@@ -186,14 +185,14 @@ def _node_key_index(problems: list[dict]) -> dict[str, dict[str, str]]:
 async def _resolve_search_space_id(
     session: AsyncSession, search_space_id: int | None
 ) -> int:
-    """Resolve the course id, defaulting to MIN(app.courses.id) (D7)."""
+    """Resolve the legacy Apollo course id, defaulting to the smallest space."""
     if search_space_id is not None:
         return search_space_id
     resolved = (
-        await session.execute(select(func.min(Course.id)))
+        await session.execute(text("SELECT MIN(id) FROM aita_search_spaces"))
     ).scalar_one_or_none()
     if resolved is None:
-        raise SeedError("no app.courses rows — seed a course before the learner model")
+        raise SeedError("no aita_search_spaces rows — seed a course before the learner model")
     return resolved
 
 

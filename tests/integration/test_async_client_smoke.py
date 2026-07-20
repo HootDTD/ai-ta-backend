@@ -52,7 +52,7 @@ async def test_endpoint_sees_session_writes_then_rolls_back(db_session):
         await persist(
             db_session,
             DocumentFactory.build(
-                search_space_id=space.id,
+                course_id=space.id,
                 title=f"doc-{i}",
                 content_hash=f"smoke-{i}",
             ),

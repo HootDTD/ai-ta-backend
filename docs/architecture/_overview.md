@@ -22,7 +22,7 @@ related:
   - shared/conventions
   - shared/security
   - shared/supabase
-last_verified: 2026-07-17
+last_verified: 2026-07-19
 stub: false
 ---
 
@@ -76,7 +76,7 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` owns the FastAPI ap
 | `workspaces/manager.py` | `ClassWorkspace` / `WorkspaceMaterial` dataclasses, `WorkspaceManager` (TTL cache, `CLASS_WORKSPACE_CACHE_TTL` default 300s), `StaticWorkspaceRepository` legacy fallback, `build_workspace_manager()` factory. |
 | `workspaces/db.py` | `DBWorkspaceRepository` resolves course identifiers against `app.courses` and loads ready `app.documents`; current week and retrieval weights come directly from the merged course row. |
 | `citations/formatter.py` | `build_citation_info()` + `format_citations()`: maps snippets to labels like `[Notes, Week 3, p. 12]`, dedupes by `(doc_type, file, page)`, marks `verified=True` only for Textbook sources. |
-| `scripts/` | One-shot tools: `migrate_indexes_to_supabase.py` (legacy FAISS/SQLite → pgvector), `seed_apollo_concept_registry.py` (filesystem concept registry → `apollo_*` tables, idempotent), `seed_apollo_learner_model.py` (course-scoped, idempotent Apollo Layer-1 seeder — writes migration-026 `apollo_kg_entities`/`apollo_entity_prereqs` rows + annotates `apollo_concept_problems.payload` with reference-node entity links + declared solution paths; layers on top of the concept registry, WU-3B), `test_search.py` (pgvector hybrid-search smoke test). Not imported by the app. |
+| `scripts/` | One-shot tools: `migrate_indexes_to_supabase.py` (legacy FAISS/SQLite → pgvector), `seed_apollo_concept_registry.py` (filesystem concept registry → `apollo_*` tables, idempotent), `seed_apollo_learner_model.py` (course-scoped, idempotent Apollo Layer-1 seeder — writes migration-026 `apollo_kg_entities`/`apollo_entity_prereqs` rows + annotates `apollo_concept_problems.payload` with reference-node entity links + declared solution paths; its optional default scope still resolves from legacy `aita_search_spaces`, which owns the Apollo foreign keys), `test_search.py` (pgvector hybrid-search smoke test). Not imported by the app. |
 | `runtime/` | Runtime artifact dir (location overridable via `RUNTIME_DIR`). Holds `uploads/` (written per request by `/ask` attachments), `debug/`, `teacher_weekly/` worker scratch. Not code. |
 
 ## Public interfaces

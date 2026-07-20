@@ -25,7 +25,7 @@ async def _seed_docs(db_session, axes: list[int]):
         doc = await persist(
             db_session,
             DocumentFactory.build(
-                search_space_id=space.id,
+                course_id=space.id,
                 title=f"axis-{axis}",
                 content_hash=f"axis-{axis}",
                 embedding=one_hot_embedding(axis),

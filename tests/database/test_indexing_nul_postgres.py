@@ -59,7 +59,7 @@ async def test_prepare_for_indexing_persists_document_with_nul_laden_extraction(
     row = (
         (
             await db_session.execute(
-                select(Document).where(Document.search_space_id == space.id)
+                select(Document).where(Document.course_id == space.id)
             )
         )
         .scalars()
