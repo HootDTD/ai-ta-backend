@@ -11,7 +11,7 @@ related:
   - shared/supabase
   - shared/security
   - ai-ta-backend/rag-pipeline
-last_verified: 2026-07-17
+last_verified: 2026-07-20
 stub: false
 ---
 
@@ -59,6 +59,18 @@ pin an empty search path, keep the whole-store HNSW scan before document
 filtering, and grant execution only to the current backend `service_role`.
 The three DB-04 retrieval indexes are asserted and reused, not duplicated;
 live extension relocation remains a separately observed human gate.
+
+MIG-AMEND (2026-07-20) applies architecture rulings A5-A9 to the built target:
+the final inventory is 28 tables (20 `app`, 8 `internal`). Chat and tutoring
+sessions share `app.learning_activities`, discriminated by `modality`, while
+their typed message children remain separate and carry denormalized course
+scope. Tutoring legacy ids are shifted by 1,000,000 during copy; chat ids stay
+unchanged. `apollo_kg_negotiations`, `app.subjects`, and
+`internal.grading_findings` have no target tables; subject identity is promoted
+onto `app.concepts`; authored sets and generation runs share the teacher-gated
+`app.provisioning_runs`; and `internal.grading_runs` retains only the grading
+artifact leg. Status is meaningful for tutoring activities only, and every
+status lookup must also constrain `modality = 'tutoring'`.
 
 DB-07 (2026-07-17) switches the first ORM/repository slice to the target
 schemas. `Course` now owns current week, retrieval weights, and typed bounds in
