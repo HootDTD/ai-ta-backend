@@ -489,9 +489,10 @@ INSERT INTO app.provisioning_runs (
     id, course_id, kind, set_index, problem_document_id, solution_document_id,
     status, result_summary, created_at, updated_at
 )
-SELECT id, search_space_id::bigint, 'authored_set', set_index, problem_document_id,
-       solution_document_id, status, result_summary, created_at, updated_at
-FROM public.apollo_authored_sets
+SELECT authored.id, authored.search_space_id::bigint, 'authored_set', authored.set_index,
+       authored.problem_document_id, authored.solution_document_id, authored.status,
+       authored.result_summary, authored.created_at, authored.updated_at
+FROM public.apollo_authored_sets AS authored
 ON CONFLICT DO NOTHING;
 
 -- Opportunity rows own the merged identity. Tally-only rows receive a target
@@ -625,9 +626,10 @@ INSERT INTO app.provisioning_runs (
 )
 -- The second union leg uses the same documented +1000000 collision boundary
 -- so both independent legacy identity sequences remain reversible.
-SELECT id + 1000000, search_space_id::bigint, 'generation', concept_id, status, result_summary,
-       ingest_run_id, created_at, created_at
-FROM public.apollo_generation_runs
+SELECT generation.id + 1000000, generation.search_space_id::bigint, 'generation',
+       generation.concept_id, generation.status, generation.result_summary,
+       generation.ingest_run_id, generation.created_at, generation.created_at
+FROM public.apollo_generation_runs AS generation
 ON CONFLICT DO NOTHING;
 
 INSERT INTO internal.content_ingest_errors (

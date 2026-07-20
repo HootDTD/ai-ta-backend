@@ -180,14 +180,16 @@ SELECT pg_temp.assert_copy_mapping('problems',
     $q$SELECT id, course_id, concept_id, problem_code, problem_text FROM app.problems$q$);
 
 SELECT pg_temp.assert_copy_mapping('provisioning_runs',
-    $q$SELECT id, search_space_id::bigint AS course_id, 'authored_set'::text AS kind,
-              set_index, problem_document_id, solution_document_id,
-              NULL::bigint AS concept_id, NULL::bigint AS ingest_run_id, status
-       FROM public.apollo_authored_sets
+    $q$SELECT authored.id, authored.search_space_id::bigint AS course_id,
+              'authored_set'::text AS kind, authored.set_index,
+              authored.problem_document_id, authored.solution_document_id,
+              NULL::bigint AS concept_id, NULL::bigint AS ingest_run_id, authored.status
+       FROM public.apollo_authored_sets AS authored
        UNION ALL
-       SELECT id+1000000, search_space_id::bigint, 'generation'::text,
-              NULL::integer, NULL::bigint, NULL::bigint, concept_id, ingest_run_id, status
-       FROM public.apollo_generation_runs$q$,
+       SELECT generation.id+1000000, generation.search_space_id::bigint,
+              'generation'::text, NULL::integer, NULL::bigint, NULL::bigint,
+              generation.concept_id, generation.ingest_run_id, generation.status
+       FROM public.apollo_generation_runs AS generation$q$,
     $q$SELECT id, course_id, kind, set_index, problem_document_id,
               solution_document_id, concept_id, ingest_run_id, status
        FROM app.provisioning_runs$q$);

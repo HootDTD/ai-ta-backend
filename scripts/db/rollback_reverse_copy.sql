@@ -211,14 +211,15 @@ INSERT INTO public.apollo_concepts (
     created_at, updated_at, description
 ) OVERRIDING SYSTEM VALUE
 SELECT c.id, s.id, c.slug, c.display_name,
-       symbol_metadata || jsonb_build_object('symbols',to_jsonb(canonical_symbols)),
-       normalization_map, parser_prompt_template, solver_config,
-       to_jsonb(forbidden_named_laws), '{}'::jsonb, created_at, updated_at, description
+       c.symbol_metadata || jsonb_build_object('symbols',to_jsonb(c.canonical_symbols)),
+       c.normalization_map, c.parser_prompt_template, c.solver_config,
+       to_jsonb(c.forbidden_named_laws), '{}'::jsonb, c.created_at, c.updated_at,
+       c.description
 FROM app.concepts c
 JOIN public.apollo_subjects s
   ON s.slug=c.subject_slug AND s.search_space_id=c.course_id
-CROSS JOIN _db05_reverse_context
-WHERE c.created_at >= watermark OR c.updated_at >= watermark
+CROSS JOIN _db05_reverse_context ctx
+WHERE c.created_at >= ctx.watermark OR c.updated_at >= ctx.watermark
 ON CONFLICT (id) DO UPDATE SET
     display_name=EXCLUDED.display_name, canonical_symbols=EXCLUDED.canonical_symbols,
     normalization_map=EXCLUDED.normalization_map, solver_hints=EXCLUDED.solver_hints,
@@ -252,9 +253,9 @@ SELECT s.id-1000000, s.status, s.phase, p.problem_code, s.created_at, s.last_tou
        s.concept_id, s.user_id, s.course_id::integer
 FROM app.learning_activities s
 LEFT JOIN app.problems p ON p.id=s.current_problem_id
-CROSS JOIN _db05_reverse_context
+CROSS JOIN _db05_reverse_context ctx
 WHERE s.modality='tutoring'
-  AND (s.created_at >= watermark OR s.updated_at >= watermark)
+  AND (s.created_at >= ctx.watermark OR s.updated_at >= ctx.watermark)
 ON CONFLICT (id) DO UPDATE SET
     status=EXCLUDED.status, phase=EXCLUDED.phase,
     current_problem_id=EXCLUDED.current_problem_id,
@@ -273,8 +274,8 @@ SELECT a.id, a.learning_activity_id-1000000, p.problem_code, a.difficulty, a.res
        a.learner_update_attempts, a.learner_update_failed_at,
        a.learner_update_last_error, a.learner_update_next_attempt_at
 FROM app.problem_attempts a JOIN app.problems p ON p.id=a.problem_id
-CROSS JOIN _db05_reverse_context
-WHERE a.created_at >= watermark OR a.updated_at >= watermark
+CROSS JOIN _db05_reverse_context ctx
+WHERE a.created_at >= ctx.watermark OR a.updated_at >= ctx.watermark
 ON CONFLICT (id) DO UPDATE SET
     result=EXCLUDED.result, solver_trace=EXCLUDED.solver_trace,
     diagnostic_report=EXCLUDED.diagnostic_report,
@@ -318,10 +319,12 @@ INSERT INTO public.apollo_authored_sets (
     id, search_space_id, set_index, problem_document_id, solution_document_id,
     status, result_summary, created_at, updated_at
 )
-SELECT id, course_id::integer, set_index, problem_document_id,
-       solution_document_id, status, result_summary, created_at, updated_at
-FROM app.provisioning_runs, _db05_reverse_context
-WHERE kind='authored_set' AND (created_at >= watermark OR updated_at >= watermark)
+SELECT run.id, run.course_id::integer, run.set_index, run.problem_document_id,
+       run.solution_document_id, run.status, run.result_summary, run.created_at,
+       run.updated_at
+FROM app.provisioning_runs AS run CROSS JOIN _db05_reverse_context AS ctx
+WHERE run.kind='authored_set'
+  AND (run.created_at >= ctx.watermark OR run.updated_at >= ctx.watermark)
 ON CONFLICT (id) DO UPDATE SET
     status=EXCLUDED.status, result_summary=EXCLUDED.result_summary,
     updated_at=EXCLUDED.updated_at;
@@ -425,10 +428,11 @@ ON CONFLICT (id) DO UPDATE SET
 INSERT INTO public.apollo_generation_runs (
     id, search_space_id, concept_id, status, result_summary, ingest_run_id, created_at
 )
-SELECT id-1000000, course_id::integer, concept_id, status, result_summary,
-       ingest_run_id, created_at
-FROM app.provisioning_runs, _db05_reverse_context
-WHERE kind='generation' AND (created_at >= watermark OR updated_at >= watermark)
+SELECT run.id-1000000, run.course_id::integer, run.concept_id, run.status,
+       run.result_summary, run.ingest_run_id, run.created_at
+FROM app.provisioning_runs AS run CROSS JOIN _db05_reverse_context AS ctx
+WHERE run.kind='generation'
+  AND (run.created_at >= ctx.watermark OR run.updated_at >= ctx.watermark)
 ON CONFLICT (id) DO UPDATE SET
     status=EXCLUDED.status, result_summary=EXCLUDED.result_summary,
     ingest_run_id=EXCLUDED.ingest_run_id;
@@ -471,8 +475,8 @@ SELECT r.id, r.attempt_id, r.role, r.grader_used, r.user_id, r.course_id,
        r.edge_ledger, r.score_details, r.abstention_details,
        r.grading_latency_ms, r.created_at
 FROM internal.grading_runs r JOIN app.problems p ON p.id=r.problem_id
-CROSS JOIN _db05_reverse_context
-WHERE r.role IN ('canonical','pair') AND r.created_at >= watermark
+CROSS JOIN _db05_reverse_context ctx
+WHERE r.role IN ('canonical','pair') AND r.created_at >= ctx.watermark
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.ai_use_reports (
