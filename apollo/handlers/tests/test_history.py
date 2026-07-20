@@ -20,8 +20,8 @@ from apollo.handlers.history import (
     load_windowed_history,
 )
 from apollo.persistence.models import (
-    ApolloSession,
-    Message,
+    TutoringSession,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -36,8 +36,8 @@ async def db_with_session():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     apollo_tables = [
-        ApolloSession.__table__,
-        Message.__table__,
+        TutoringSession.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
@@ -46,7 +46,7 @@ async def db_with_session():
         )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
-        sess = ApolloSession(
+        sess = TutoringSession(
             user_id=TEST_USER_ID,
             search_space_id=TEST_SPACE_ID,
             concept_id=1,
@@ -65,7 +65,7 @@ async def _seed_messages(s: AsyncSession, session_id: int, n: int) -> None:
     for i in range(n):
         role = "student" if i % 2 == 0 else "apollo"
         s.add(
-            Message(
+            TutoringMessage(
                 session_id=session_id,
                 attempt_id=None,
                 role=role,
@@ -141,7 +141,7 @@ async def test_subsequent_turns_within_K_dont_resummarize(
 
     # Add 2 more turns (under K threshold of 8) and call again.
     s.add(
-        Message(
+        TutoringMessage(
             session_id=sess.id,
             attempt_id=None,
             role="student",
@@ -150,7 +150,7 @@ async def test_subsequent_turns_within_K_dont_resummarize(
         )
     )
     s.add(
-        Message(
+        TutoringMessage(
             session_id=sess.id,
             attempt_id=None,
             role="apollo",
@@ -184,7 +184,7 @@ async def test_summary_refreshes_after_K_new_older_turns(
     # out of the window), so the older-tail grows by K.
     for i in range(REFRESH_EVERY_K_TURNS + 2):
         s.add(
-            Message(
+            TutoringMessage(
                 session_id=sess.id,
                 attempt_id=None,
                 role="student" if i % 2 == 0 else "apollo",
@@ -236,14 +236,14 @@ async def test_history_is_scoped_to_attempt(db_with_session):
     await s.flush()
     s.add_all(
         [
-            Message(
+            TutoringMessage(
                 session_id=sess.id,
                 attempt_id=first.id,
                 role="student",
                 content="old attempt secret",
                 turn_index=0,
             ),
-            Message(
+            TutoringMessage(
                 session_id=sess.id,
                 attempt_id=second.id,
                 role="student",

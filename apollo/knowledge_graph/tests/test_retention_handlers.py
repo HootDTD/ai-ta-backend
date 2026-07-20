@@ -224,7 +224,7 @@ async def test_restart_problem_still_deletes_subgraph():
         [
             _ScalarResult(one=sess),  # session (with_for_update)
             _ScalarResult(first=attempt),  # current attempt
-            _ScalarResult(),  # delete(Message)
+            _ScalarResult(),  # delete(TutoringMessage)
         ]
     )
     neo = object()

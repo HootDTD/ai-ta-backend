@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
 from apollo.handlers.progress import handle_get_progress_detail
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     Concept,
     KGEntity,
     LearnerState,
@@ -26,7 +26,7 @@ TABLES = [
     Concept.__table__,
     KGEntity.__table__,
     LearnerState.__table__,
-    ApolloSession.__table__,
+    TutoringSession.__table__,
     ProblemAttempt.__table__,
 ]
 
@@ -89,7 +89,7 @@ async def _seed_graded_attempt(
     user_id: str = TEST_USER_ID,
     when: datetime | None = None,
 ) -> None:
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=user_id,
         search_space_id=TEST_SPACE_ID,
         concept_id=concept_id,
@@ -140,7 +140,7 @@ async def test_detail_recent_attempts_graded_only_newest_first(db):
     )
     await _seed_graded_attempt(db, concept_id=c1, problem_id="p-new", score=85, letter="A-")
     # ungraded attempt and another student's attempt must not appear
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=c1,

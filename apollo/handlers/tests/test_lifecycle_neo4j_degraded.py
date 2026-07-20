@@ -19,9 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.handlers.lifecycle import handle_get_session
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGNegotiation,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -38,9 +38,9 @@ async def db():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
@@ -53,7 +53,7 @@ async def db():
 
 @pytest_asyncio.fixture
 async def session_with_attempt(db: AsyncSession):
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,
@@ -67,7 +67,7 @@ async def session_with_attempt(db: AsyncSession):
     db.add(attempt)
     await db.flush()
     db.add(
-        Message(
+        TutoringMessage(
             session_id=sess.id,
             attempt_id=attempt.id,
             role="student",

@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.errors import InvalidPhaseError, SessionFrozenError
 from apollo.handlers.restart_problem import handle_restart_problem
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGEntry,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -31,16 +31,16 @@ async def db_with_report_session():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
-        sess = ApolloSession(
+        sess = TutoringSession(
             student_id="stu-1",
             concept_cluster_id="fluid_mechanics",
             status=SessionStatus.active.value,
@@ -72,7 +72,7 @@ async def test_restart_wipes_kg_and_messages_for_current_attempt(db_with_report_
     # Flip to TEACHING + seed KG/messages scoped to current attempt, then clear result so
     # the attempt behaves like an in-flight one for the restart.
     sess = (
-        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await s.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     sess.phase = SessionPhase.TEACHING.value
     attempt.result = None
@@ -85,7 +85,7 @@ async def test_restart_wipes_kg_and_messages_for_current_attempt(db_with_report_
                 content={"symbolic": "x - 1", "label": "to_be_wiped"},
                 source="parser",
             ),
-            Message(
+            TutoringMessage(
                 session_id=session_id,
                 attempt_id=attempt.id,
                 role="student",
@@ -103,7 +103,7 @@ async def test_restart_wipes_kg_and_messages_for_current_attempt(db_with_report_
         (await s.execute(select(KGEntry).where(KGEntry.attempt_id == attempt.id))).scalars().all()
     )
     msg_rows = (
-        (await s.execute(select(Message).where(Message.attempt_id == attempt.id))).scalars().all()
+        (await s.execute(select(TutoringMessage).where(TutoringMessage.attempt_id == attempt.id))).scalars().all()
     )
     assert kg_rows == []
     assert msg_rows == []
@@ -116,7 +116,7 @@ async def test_restart_wipes_kg_and_messages_for_current_attempt(db_with_report_
     assert attempt_after.result is None
 
     sess_after = (
-        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await s.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     assert sess_after.phase == SessionPhase.TEACHING.value
 
@@ -128,7 +128,7 @@ async def test_restart_from_report_unfreezes_to_teaching(db_with_report_session)
     result = await handle_restart_problem(db=s, session_id=session_id)
     assert result == {"ok": True}
     sess = (
-        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await s.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     assert sess.phase == SessionPhase.TEACHING.value
 
@@ -137,7 +137,7 @@ async def test_restart_from_report_unfreezes_to_teaching(db_with_report_session)
 async def test_restart_blocked_during_solving(db_with_report_session):
     s, session_id = db_with_report_session
     sess = (
-        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await s.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     sess.phase = SessionPhase.SOLVING.value
     await s.commit()
@@ -149,7 +149,7 @@ async def test_restart_blocked_during_solving(db_with_report_session):
 async def test_restart_raises_invalid_phase_from_init(db_with_report_session):
     s, session_id = db_with_report_session
     sess = (
-        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await s.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     sess.phase = SessionPhase.INIT.value
     await s.commit()
@@ -190,7 +190,7 @@ async def test_restart_does_not_touch_other_attempts(db_with_report_session):
         ]
     )
     sess = (
-        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await s.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     sess.phase = SessionPhase.TEACHING.value
     await s.commit()

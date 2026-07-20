@@ -7,7 +7,7 @@ Tests cover three layers in isolation:
     3. The apollo_llm.py suffix — invite text appears only when fired=True.
 
 `decide_invite` is async + db-driven; we use SQLite-in-memory + the
-ApolloSession / Message tables. Time is injected via `now=` so cooldown
+TutoringSession / TutoringMessage tables. Time is injected via `now=` so cooldown
 tests are deterministic.
 """
 
@@ -30,8 +30,8 @@ from apollo.handlers.olm_invite import (
 )
 from apollo.ontology import build_node
 from apollo.persistence.models import (
-    ApolloSession,
-    Message,
+    TutoringSession,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -70,7 +70,7 @@ def test_find_low_conf_new_nodes_threshold_is_0_7():
 
 def test_signal_to_metadata_strips_summary():
     """Summary is redundant with the Neo4j node — only the gate fields
-    persist on Message.metadata."""
+    persist on TutoringMessage.metadata."""
     sig = OlmInviteSignal(
         fired=True,
         entry_id="eq1",
@@ -92,9 +92,9 @@ async def db():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
@@ -106,7 +106,7 @@ async def db():
 
 @pytest_asyncio.fixture
 async def session(db: AsyncSession):
-    s = ApolloSession(
+    s = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,
@@ -125,7 +125,7 @@ async def session(db: AsyncSession):
 
 async def _add_student_turn(db, session_id, attempt_id, idx, *, low_conf=False):
     db.add(
-        Message(
+        TutoringMessage(
             session_id=session_id,
             attempt_id=attempt_id,
             role="student",
@@ -146,7 +146,7 @@ async def _add_apollo_turn(
     fired=False,
     when: datetime | None = None,
 ):
-    msg = Message(
+    msg = TutoringMessage(
         session_id=session_id,
         attempt_id=attempt_id,
         role="apollo",

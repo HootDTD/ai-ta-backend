@@ -31,9 +31,9 @@ from apollo.handlers.negotiate import (
 from apollo.knowledge_graph.store import _node_to_neo4j_props
 from apollo.ontology import NODE_LABELS, build_node
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGNegotiation,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -196,9 +196,9 @@ async def db():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
@@ -211,7 +211,7 @@ async def db():
 
 @pytest_asyncio.fixture
 async def session(db: AsyncSession):
-    s = ApolloSession(
+    s = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,
@@ -297,7 +297,7 @@ async def test_challenge_404_for_unknown_entry(db, session, neo):
 async def test_challenge_invalid_phase_when_no_attempt(db, neo):
     """Sessions with no ProblemAttempt — student hasn't started a problem
     yet — get InvalidPhaseError. The exception handler maps to 409."""
-    s = ApolloSession(
+    s = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,

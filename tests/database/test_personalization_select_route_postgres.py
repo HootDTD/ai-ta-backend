@@ -42,7 +42,7 @@ from apollo.overseer.problem_selector import (
     select_problem_personalized,
 )
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     EntityPrereq,
     KGEntity,
     LearnerState,
@@ -170,8 +170,8 @@ async def _seed_weak_profile(db, *, sid, cid):
 async def _seed_session(
     db, *, sid, cid, current_problem_id, phase=SessionPhase.REPORT.value, user_id=TEST_USER_ID
 ):
-    """Seed one ApolloSession (WU-5A2 pattern) for the handle_next route tests."""
-    sess = ApolloSession(
+    """Seed one TutoringSession (WU-5A2 pattern) for the handle_next route tests."""
+    sess = TutoringSession(
         user_id=user_id,
         search_space_id=sid,
         concept_id=cid,

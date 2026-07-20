@@ -33,9 +33,9 @@ from apollo.knowledge_graph.store import (
 )
 from apollo.ontology import NODE_LABELS, build_node
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGNegotiation,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -256,9 +256,9 @@ async def db():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
@@ -271,7 +271,7 @@ async def db():
 
 @pytest_asyncio.fixture
 async def attempt(db: AsyncSession):
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,
@@ -458,7 +458,7 @@ async def test_get_node_trace_includes_latest_student_message(
 ):
     _seed(neo, attempt_id=attempt.id)
     db.add(
-        Message(
+        TutoringMessage(
             session_id=attempt.session_id,
             attempt_id=attempt.id,
             role="student",
@@ -467,7 +467,7 @@ async def test_get_node_trace_includes_latest_student_message(
         )
     )
     db.add(
-        Message(
+        TutoringMessage(
             session_id=attempt.session_id,
             attempt_id=attempt.id,
             role="apollo",
@@ -476,7 +476,7 @@ async def test_get_node_trace_includes_latest_student_message(
         )
     )
     db.add(
-        Message(
+        TutoringMessage(
             session_id=attempt.session_id,
             attempt_id=attempt.id,
             role="student",
@@ -509,7 +509,7 @@ async def test_negotiation_blocked_when_session_frozen(store, neo, db, attempt):
     _seed(neo, attempt_id=attempt.id)
     # Freeze the session.
     sess = (
-        await db.execute(select(ApolloSession).where(ApolloSession.id == attempt.session_id))
+        await db.execute(select(TutoringSession).where(TutoringSession.id == attempt.session_id))
     ).scalar_one()
     sess.phase = SessionPhase.SOLVING.value
     await db.commit()

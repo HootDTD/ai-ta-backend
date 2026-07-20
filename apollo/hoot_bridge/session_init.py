@@ -27,7 +27,7 @@ from apollo.overseer.problem_selector import (
     select_problem_personalized,
 )
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -51,16 +51,16 @@ async def _create_session_with_problem(
     TEACHING session + first attempt, commit, return the FE payload.
     Moved verbatim from init_session_from_hoot (WU-3D shape unchanged)."""
     await db.execute(
-        update(ApolloSession)
+        update(TutoringSession)
         .where(
-            ApolloSession.user_id == user_id,
-            ApolloSession.status == SessionStatus.active.value,
+            TutoringSession.user_id == user_id,
+            TutoringSession.status == SessionStatus.active.value,
         )
         .values(status=SessionStatus.ended.value)
     )
     await db.flush()
 
-    session = ApolloSession(
+    session = TutoringSession(
         user_id=user_id,
         search_space_id=search_space_id,
         concept_id=concept_id,

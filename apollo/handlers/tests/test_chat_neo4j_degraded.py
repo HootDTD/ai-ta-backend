@@ -22,9 +22,9 @@ from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.handlers.intent import IntentVerdict
 from apollo.knowledge_graph.store import WriteEdgesResult
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGNegotiation,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -42,16 +42,16 @@ async def db_session_attempt():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
-        sess = ApolloSession(
+        sess = TutoringSession(
             user_id=TEST_USER_ID,
             search_space_id=TEST_SPACE_ID,
             concept_id=1,
@@ -243,7 +243,7 @@ async def test_pending_done_confirmation_degrades_kg_read(db_session_attempt):
     db, session_id, attempt_id = db_session_attempt
     sess = (
         await db.execute(
-            __import__("sqlalchemy").select(ApolloSession).where(ApolloSession.id == session_id)
+            __import__("sqlalchemy").select(TutoringSession).where(TutoringSession.id == session_id)
         )
     ).scalar_one()
     sess.pending_intent = "done"

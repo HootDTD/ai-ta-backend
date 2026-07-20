@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
-from apollo.persistence.models import Message
+from apollo.persistence.models import TutoringMessage
 from apollo.persistence.neo4j_client import Neo4jClient
 
 
@@ -38,10 +38,10 @@ async def _read_student_turn_points(db: AsyncSession, *, attempt_id: int) -> lis
     string so it compares against the node ``created_at`` ISO strings."""
     rows = (
         await db.execute(
-            select(Message.turn_index, Message.created_at)
-            .where(Message.attempt_id == attempt_id)
-            .where(Message.role == "student")
-            .order_by(Message.turn_index)
+            select(TutoringMessage.turn_index, TutoringMessage.created_at)
+            .where(TutoringMessage.attempt_id == attempt_id)
+            .where(TutoringMessage.role == "student")
+            .order_by(TutoringMessage.turn_index)
         )
     ).all()
     points: list[tuple[int, str]] = []

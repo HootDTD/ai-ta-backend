@@ -22,9 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from apollo.api import register_exception_handlers, router as apollo_router
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGEntry,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     StudentProgress,
 )
@@ -39,9 +39,9 @@ async def engine_with_schema():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     apollo_tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
         StudentProgress.__table__,
     ]
@@ -395,7 +395,7 @@ def test_e2e_switch_then_restart(
                 .all()
             )
             b_msgs = (
-                (await s.execute(select(Message).where(Message.attempt_id == attempt_b)))
+                (await s.execute(select(TutoringMessage).where(TutoringMessage.attempt_id == attempt_b)))
                 .scalars()
                 .all()
             )

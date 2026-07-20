@@ -26,9 +26,9 @@ from apollo.errors import SessionFrozenError
 from apollo.knowledge_graph.store import KGStore, _node_to_neo4j_props
 from apollo.ontology import build_node
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGNegotiation,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -125,9 +125,9 @@ async def db():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
@@ -140,7 +140,7 @@ async def db():
 
 @pytest_asyncio.fixture
 async def attempt(db: AsyncSession):
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,
@@ -239,7 +239,7 @@ async def test_write_nodes_empty_returns_zero(store, neo, attempt):
 async def test_write_nodes_respects_freeze(store, neo, db, attempt):
     aid = attempt.id
     sess = (
-        await db.execute(select(ApolloSession).where(ApolloSession.id == attempt.session_id))
+        await db.execute(select(TutoringSession).where(TutoringSession.id == attempt.session_id))
     ).scalar_one()
     sess.phase = SessionPhase.SOLVING.value
     await db.commit()

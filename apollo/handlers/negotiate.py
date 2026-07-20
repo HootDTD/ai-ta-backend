@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import InvalidPhaseError, KGUnavailableError
 from apollo.knowledge_graph.store import KGStore
-from apollo.persistence.models import ApolloSession, ProblemAttempt, SessionPhase
+from apollo.persistence.models import TutoringSession, ProblemAttempt, SessionPhase
 from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 
 _LOG = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ async def _resolve_active_attempt(
     the InvalidPhaseError contract the FE already understands.
     """
     sess = (await db.execute(
-        select(ApolloSession).where(ApolloSession.id == session_id)
+        select(TutoringSession).where(TutoringSession.id == session_id)
     )).scalar_one_or_none()
     if sess is None:
         raise InvalidPhaseError(session_id=session_id, phase="missing")

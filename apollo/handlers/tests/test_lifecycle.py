@@ -13,9 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from apollo.handlers.lifecycle import handle_end, handle_retry
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGEntry,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -30,9 +30,9 @@ async def session_in_phase():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     apollo_tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
@@ -43,7 +43,7 @@ async def session_in_phase():
 
     async def _make(phase: SessionPhase):
         s = Session()
-        sess = ApolloSession(
+        sess = TutoringSession(
             student_id="stu-1",
             concept_cluster_id="fluid_mechanics",
             status=SessionStatus.active.value,
@@ -67,7 +67,7 @@ async def test_retry_unfreezes_back_to_teaching(session_in_phase):
     assert result == {"ok": True}
 
     sess = (
-        await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     assert sess.phase == SessionPhase.TEACHING.value
 
@@ -80,7 +80,7 @@ async def test_end_sets_status_ended(session_in_phase):
     assert result == {"ok": True}
 
     sess = (
-        await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     assert sess.status == SessionStatus.ended.value
 
@@ -88,7 +88,7 @@ async def test_end_sets_status_ended(session_in_phase):
 @pytest.mark.asyncio
 async def test_get_session_returns_phase_kg_messages_and_current_problem(session_in_phase):
     from apollo.handlers.lifecycle import handle_get_session
-    from apollo.persistence.models import KGEntry, Message
+    from apollo.persistence.models import KGEntry, TutoringMessage
 
     db, session_id = await session_in_phase(SessionPhase.TEACHING)
     attempt = ProblemAttempt(
@@ -109,7 +109,7 @@ async def test_get_session_returns_phase_kg_messages_and_current_problem(session
         )
     )
     db.add(
-        Message(
+        TutoringMessage(
             session_id=session_id, attempt_id=attempt.id, role="student", content="hi", turn_index=0
         )
     )
@@ -131,7 +131,7 @@ async def test_get_session_returns_only_current_attempt_kg_and_messages(session_
     db, session_id = await session_in_phase(SessionPhase.TEACHING)
     # Switch current_problem_id to p2 so we can seed two attempts and verify isolation.
     sess = (
-        await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     sess.current_problem_id = "p2"
     await db.flush()
@@ -159,10 +159,10 @@ async def test_get_session_returns_only_current_attempt_kg_and_messages(session_
                 content={"symbolic": "y - 2", "label": "new"},
                 source="parser",
             ),
-            Message(
+            TutoringMessage(
                 session_id=session_id, attempt_id=a.id, role="student", content="old", turn_index=0
             ),
-            Message(
+            TutoringMessage(
                 session_id=session_id, attempt_id=b.id, role="student", content="new", turn_index=0
             ),
         ]

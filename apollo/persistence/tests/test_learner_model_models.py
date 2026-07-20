@@ -83,7 +83,7 @@ def test_learner_state_composite_pk():
 def test_learner_state_fk_targets_and_cascades():
     """search_space_id and entity_id carry ORM FKs (CASCADE). user_id does NOT
     carry an ORM FK — auth.users is Supabase-managed and not in Base.metadata, so
-    the FK lives only in the migration SQL (same convention as ApolloSession);
+    the FK lives only in the migration SQL (same convention as TutoringSession);
     the real cascade is exercised by the real-Postgres migration test."""
     table = LearnerState.__table__
     targets = {

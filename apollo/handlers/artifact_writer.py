@@ -8,13 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.grading.artifact_build import build_llm_artifact
 from apollo.overseer.topic_score import TopicScoreResult
-from apollo.persistence.models import ApolloSession, GradingArtifact, ProblemAttempt
+from apollo.persistence.models import TutoringSession, GradingArtifact, ProblemAttempt
 
 _LOG = logging.getLogger(__name__)
 
 
 def _artifact_row(
-    *, attempt: ProblemAttempt, sess: ApolloSession, payload: dict
+    *, attempt: ProblemAttempt, sess: TutoringSession, payload: dict
 ) -> GradingArtifact:
     return GradingArtifact(
         attempt_id=int(attempt.id),
@@ -39,7 +39,7 @@ async def write_artifacts(
     db: AsyncSession,
     *,
     attempt: ProblemAttempt,
-    sess: ApolloSession,
+    sess: TutoringSession,
     coverage: dict,
     rubric: dict,
     latency_ms: int | None,

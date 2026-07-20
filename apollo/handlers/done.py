@@ -45,9 +45,9 @@ from apollo.overseer.transcript_coverage import compute_transcript_coverage_with
 from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
 from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     GradingArtifact,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
 )
@@ -133,10 +133,10 @@ async def _attempt_misconception_scores(
     rows = (
         (
             await db.execute(
-                select(Message.message_metadata)
-                .where(Message.attempt_id == attempt_id)
-                .where(Message.role == "apollo")
-                .order_by(Message.turn_index)
+                select(TutoringMessage.message_metadata)
+                .where(TutoringMessage.attempt_id == attempt_id)
+                .where(TutoringMessage.role == "apollo")
+                .order_by(TutoringMessage.turn_index)
             )
         )
         .scalars()
@@ -173,7 +173,7 @@ async def _student_utterances(
     """T13 — the raw student teaching utterances for this attempt, in turn
     order, that feed the misconception detector's ``bank_pattern`` tier.
 
-    Reads ``Message.content`` where ``Message.role == "student"`` (R6 —
+    Reads ``TutoringMessage.content`` where ``TutoringMessage.role == "student"`` (R6 —
     the CONFIRMED student-turn role, distinct from the "apollo" learner
     turns ``_attempt_misconception_scores`` reads) ordered by
     ``turn_index``. Returns a tuple (immutable) so the detector's frozen
@@ -183,10 +183,10 @@ async def _student_utterances(
     rows = (
         (
             await db.execute(
-                select(Message.content)
-                .where(Message.attempt_id == attempt_id)
-                .where(Message.role == _STUDENT_ROLE)
-                .order_by(Message.turn_index)
+                select(TutoringMessage.content)
+                .where(TutoringMessage.attempt_id == attempt_id)
+                .where(TutoringMessage.role == _STUDENT_ROLE)
+                .order_by(TutoringMessage.turn_index)
             )
         )
         .scalars()
@@ -203,9 +203,9 @@ async def _full_transcript(
     """Return both-role attempt messages in canonical turn order."""
     rows = (
         await db.execute(
-            select(Message.role, Message.content)
-            .where(Message.attempt_id == attempt_id)
-            .order_by(Message.turn_index)
+            select(TutoringMessage.role, TutoringMessage.content)
+            .where(TutoringMessage.attempt_id == attempt_id)
+            .order_by(TutoringMessage.turn_index)
         )
     ).all()
     return tuple((role, content) for role, content in rows)
@@ -251,10 +251,10 @@ async def _fetch_attempt_transcript(
         messages = (
             (
                 await db.execute(
-                    select(Message)
-                    .where(Message.attempt_id == attempt_id)
-                    .where(Message.role.in_(("student", "apollo")))
-                    .order_by(Message.turn_index)
+                    select(TutoringMessage)
+                    .where(TutoringMessage.attempt_id == attempt_id)
+                    .where(TutoringMessage.role.in_(("student", "apollo")))
+                    .order_by(TutoringMessage.turn_index)
                 )
             )
             .scalars()
@@ -287,7 +287,7 @@ async def handle_done(
     store = KGStore(db, neo)
 
     sess = (
-        await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     problem = await _find_problem(db, sess.concept_id, sess.current_problem_id)
 

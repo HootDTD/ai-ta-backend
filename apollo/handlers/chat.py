@@ -34,7 +34,7 @@ from apollo.ontology import KGGraph
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.parser.graph_context import build_graph_context
 from apollo.parser.parser_llm import parse_utterance
-from apollo.persistence.models import ApolloSession, Message, ProblemAttempt
+from apollo.persistence.models import TutoringSession, TutoringMessage, ProblemAttempt
 from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 from apollo.schemas.problem import Problem
 from apollo.smart_questions import plan_next_question
@@ -61,9 +61,9 @@ async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) ->
 
 async def _next_turn_index(db: AsyncSession, session_id: int) -> int:
     result = await db.execute(
-        select(Message.turn_index)
-        .where(Message.session_id == session_id)
-        .order_by(Message.turn_index.desc())
+        select(TutoringMessage.turn_index)
+        .where(TutoringMessage.session_id == session_id)
+        .order_by(TutoringMessage.turn_index.desc())
         .limit(1)
     )
     latest = result.scalar_one_or_none()
@@ -74,10 +74,10 @@ async def _load_history(
     db: AsyncSession, session_id: int, attempt_id: int,
 ) -> list[dict[str, str]]:
     result = await db.execute(
-        select(Message)
-        .where(Message.session_id == session_id)
-        .where(Message.attempt_id == attempt_id)
-        .order_by(Message.turn_index)
+        select(TutoringMessage)
+        .where(TutoringMessage.session_id == session_id)
+        .where(TutoringMessage.attempt_id == attempt_id)
+        .order_by(TutoringMessage.turn_index)
     )
     rows = result.scalars().all()
     out = []
@@ -98,7 +98,7 @@ async def _persist_turn(
     """Append the (student, apollo) turn pair atomically."""
     next_idx = await _next_turn_index(db, session_id)
     db.add(
-        Message(
+        TutoringMessage(
             session_id=session_id,
             attempt_id=attempt_id,
             role="student",
@@ -107,7 +107,7 @@ async def _persist_turn(
         )
     )
     db.add(
-        Message(
+        TutoringMessage(
             session_id=session_id,
             attempt_id=attempt_id,
             role="apollo",
@@ -171,7 +171,7 @@ async def _handle_pending_done(
     *,
     db: AsyncSession,
     neo: Neo4jClient | None,
-    sess: ApolloSession,
+    sess: TutoringSession,
     attempt_id: int,
     message: str,
     store: KGStore,
@@ -220,7 +220,7 @@ async def _handle_pending_done(
 async def _maybe_intent_confirmation(
     *,
     db: AsyncSession,
-    sess: ApolloSession,
+    sess: TutoringSession,
     attempt_id: int,
     message: str,
     history: list[dict[str, str]],
@@ -286,7 +286,7 @@ async def handle_chat(
     store = KGStore(db, neo)
 
     sess = (
-        await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     current_attempt = (
         (

@@ -56,7 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.knowledge_graph.canon_projection import load_entity_specs
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     GradingArtifact,
     LearnerState,
     MasteryEvent,
@@ -238,9 +238,9 @@ async def update_mastery_from_artifact(db: AsyncSession, *, artifact_row: Gradin
     # Missing legacy rows/codes deliberately produce NULL without suppressing
     # the composite event or its learner-state update.
     linkage_result = await db.execute(
-        select(ApolloSession.concept_id, ProblemAttempt.problem_id)
+        select(TutoringSession.concept_id, ProblemAttempt.problem_id)
         .select_from(ProblemAttempt)
-        .join(ApolloSession, ApolloSession.id == ProblemAttempt.session_id)
+        .join(TutoringSession, TutoringSession.id == ProblemAttempt.session_id)
         .where(ProblemAttempt.id == attempt_id)
     )
     # The existing pure projection tests use a deliberately minimal result

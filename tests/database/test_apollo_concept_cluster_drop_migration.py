@@ -261,7 +261,7 @@ async def test_027_preserves_existing_sessions(pre027_factory):
 
 def test_models_apollo_session_has_no_concept_cluster_id():
     """T7.4 — the ORM dropped the column in lockstep with the migration."""
-    from apollo.persistence.models import ApolloSession
+    from apollo.persistence.models import TutoringSession
 
-    assert "concept_cluster_id" not in ApolloSession.__table__.columns
-    assert "concept_id" in ApolloSession.__table__.columns
+    assert "concept_cluster_id" not in TutoringSession.__table__.columns
+    assert "concept_id" in TutoringSession.__table__.columns

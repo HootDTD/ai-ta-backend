@@ -31,9 +31,9 @@ from apollo.errors import KGUnavailableError
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import EdgeType, build_node
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGNegotiation,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -91,9 +91,9 @@ async def db():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
@@ -106,7 +106,7 @@ async def db():
 
 @pytest_asyncio.fixture
 async def attempt(db: AsyncSession):
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,
@@ -265,17 +265,17 @@ async def test_summarize_for_apollo_raises_on_none(store, attempt):
 @pytest.mark.asyncio
 async def test_freeze_unfreeze_work_with_neo_none(store, attempt, db):
     await store.freeze(attempt.session_id)
-    refreshed = await db.get(ApolloSession, attempt.session_id)
+    refreshed = await db.get(TutoringSession, attempt.session_id)
     assert refreshed.phase == SessionPhase.PROBLEM_REVEAL.value
 
     await store.unfreeze(attempt.session_id)
-    refreshed2 = await db.get(ApolloSession, attempt.session_id)
+    refreshed2 = await db.get(TutoringSession, attempt.session_id)
     assert refreshed2.phase == SessionPhase.TEACHING.value
 
 
 @pytest.mark.asyncio
 async def test_get_node_trace_works_with_neo_none(store, attempt):
-    """Postgres-only read (KGNegotiation + Message); no attempt to touch
+    """Postgres-only read (KGNegotiation + TutoringMessage); no attempt to touch
     self.neo at all."""
     out = await store.get_node_trace(attempt_id=attempt.id, node_id="eq1")
     assert out["node_id"] == "eq1"

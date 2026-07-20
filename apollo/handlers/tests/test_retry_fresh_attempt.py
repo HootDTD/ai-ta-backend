@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.handlers.lifecycle import handle_retry
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -26,7 +26,7 @@ async def db():
         await conn.run_sync(
             lambda sync_conn: Base.metadata.create_all(
                 sync_conn,
-                tables=[ApolloSession.__table__, ProblemAttempt.__table__],
+                tables=[TutoringSession.__table__, ProblemAttempt.__table__],
             )
         )
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -36,7 +36,7 @@ async def db():
 
 
 async def _seed(db: AsyncSession, *, result: str | None):
-    session = ApolloSession(
+    session = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,

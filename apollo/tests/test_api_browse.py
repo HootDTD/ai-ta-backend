@@ -17,7 +17,7 @@ from apollo.api import get_neo4j_client, register_exception_handlers
 from apollo.api import router as apollo_router
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     Concept,
     ConceptProblem,
     EntityPrereq,
@@ -38,7 +38,7 @@ TABLES = cast(
         Subject.__table__,
         Concept.__table__,
         ConceptProblem.__table__,
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
         StudentProgress.__table__,
         # Personalized selection (APOLLO_SESSION_PERSONALIZATION_ENABLED=1 in this
@@ -230,7 +230,7 @@ def test_list_concepts_excludes_concept_without_teachable_problems(client_factor
 
 async def _seed_attempt(Session, *, user_id: str, problem_id: str, space_id: int = TEST_SPACE_ID):
     async with Session() as db:
-        sess = ApolloSession(
+        sess = TutoringSession(
             user_id=user_id,
             search_space_id=space_id,
             status="ended",
@@ -337,7 +337,7 @@ def test_create_session_with_explicit_problem(client_factory, monkeypatch):
 
             row = (
                 await db.execute(
-                    select(ApolloSession).where(ApolloSession.id == body["session_id"])
+                    select(TutoringSession).where(TutoringSession.id == body["session_id"])
                 )
             ).scalar_one()
             assert row.phase == "TEACHING"
@@ -420,12 +420,12 @@ def test_create_session_ends_prior_active_session(client_factory, monkeypatch):
 
             old = (
                 await db.execute(
-                    select(ApolloSession).where(ApolloSession.id == first["session_id"])
+                    select(TutoringSession).where(TutoringSession.id == first["session_id"])
                 )
             ).scalar_one()
             new = (
                 await db.execute(
-                    select(ApolloSession).where(ApolloSession.id == second["session_id"])
+                    select(TutoringSession).where(TutoringSession.id == second["session_id"])
                 )
             ).scalar_one()
             assert old.status == "ended"

@@ -20,7 +20,7 @@ from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import ApolloSession
+from apollo.persistence.models import TutoringSession
 from auth import (
     AuthContext,
     auto_enroll_student_membership,
@@ -104,7 +104,7 @@ async def require_session_owner(
     """
     auth = await require_user(request)
     row = (
-        (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id)))
+        (await db.execute(select(TutoringSession).where(TutoringSession.id == session_id)))
         .scalars()
         .first()
     )

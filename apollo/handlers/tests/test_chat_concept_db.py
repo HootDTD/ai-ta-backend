@@ -19,7 +19,7 @@ from apollo.handlers.intent import IntentVerdict
 from apollo.knowledge_graph.store import WriteEdgesResult
 from apollo.ontology import KGGraph
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -45,7 +45,7 @@ async def _seed_session_with_attempt(db, *, concept_payloads=None):
         concept_payloads=concept_payloads,
     )
     current_code = codes[0]
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=sid,
         concept_id=cid,

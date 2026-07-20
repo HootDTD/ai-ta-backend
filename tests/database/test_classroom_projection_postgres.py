@@ -29,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     GradingArtifact,
     KGEntity,
     LearnerState,
@@ -84,7 +84,7 @@ async def _seed_state(
 
 
 async def _seed_attempt(db, *, search_space_id: int, concept_id: int) -> int:
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=str(uuid.uuid4()),
         search_space_id=search_space_id,
         concept_id=concept_id,

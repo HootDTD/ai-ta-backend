@@ -29,7 +29,7 @@ import apollo.auth_deps as deps
 from apollo.api import get_neo4j_client, register_exception_handlers
 from apollo.api import router as apollo_router
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
-from apollo.persistence.models import ApolloSession, StudentProgress
+from apollo.persistence.models import TutoringSession, StudentProgress
 from database.models import Base
 from database.session import get_db_session
 
@@ -50,7 +50,7 @@ def client_factory():
             await conn.run_sync(
                 lambda sc: Base.metadata.create_all(
                     sc,
-                    tables=[ApolloSession.__table__, StudentProgress.__table__],
+                    tables=[TutoringSession.__table__, StudentProgress.__table__],
                 )
             )
 
@@ -116,7 +116,7 @@ def test_session_endpoint_403_for_non_owner(client_factory, monkeypatch):
 
     async def _seed() -> int:
         async with Session() as s:
-            row = ApolloSession(
+            row = TutoringSession(
                 user_id="00000000-0000-4000-8000-0000000000ff",
                 search_space_id=TEST_SPACE_ID,
                 status="active",

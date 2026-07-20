@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy import select
 
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     GradingArtifact,
     KGEntity,
     LearnerState,
@@ -51,7 +51,7 @@ async def _seed_attempt(db, *, search_space_id: int, concept_id: int | None) -> 
     """A real ``apollo_problem_attempts`` row — ``GradingArtifact.attempt_id``
     is a NOT NULL FK, so a bare literal id (as the pure/mocked artifact_writer
     tests use) is not enough here."""
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=_USER_ID,
         search_space_id=search_space_id,
         concept_id=concept_id,

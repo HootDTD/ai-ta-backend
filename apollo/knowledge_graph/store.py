@@ -39,9 +39,9 @@ from apollo.ontology import (
     build_node,
 )
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGNegotiation,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
 )
 from apollo.persistence.neo4j_client import Neo4jClient
@@ -260,7 +260,7 @@ class KGStore:
 
     async def _ensure_unfrozen(self, session_id: int) -> None:
         result = await self.db.execute(
-            select(ApolloSession.phase).where(ApolloSession.id == session_id)
+            select(TutoringSession.phase).where(TutoringSession.id == session_id)
         )
         phase = result.scalar_one_or_none()
         if phase in ("PROBLEM_REVEAL", "SOLVING", "REPORT"):
@@ -268,7 +268,7 @@ class KGStore:
 
     async def freeze(self, session_id: int) -> None:
         result = await self.db.execute(
-            select(ApolloSession).where(ApolloSession.id == session_id)
+            select(TutoringSession).where(TutoringSession.id == session_id)
         )
         session = result.scalar_one()
         session.phase = "PROBLEM_REVEAL"
@@ -276,7 +276,7 @@ class KGStore:
 
     async def unfreeze(self, session_id: int) -> None:
         result = await self.db.execute(
-            select(ApolloSession).where(ApolloSession.id == session_id)
+            select(TutoringSession).where(TutoringSession.id == session_id)
         )
         session = result.scalar_one()
         session.phase = "TEACHING"
@@ -842,10 +842,10 @@ class KGStore:
 
         # Source utterance — latest student message in the attempt.
         last_student_msg = (await self.db.execute(
-            select(Message.content)
-            .where(Message.attempt_id == attempt_id)
-            .where(Message.role == "student")
-            .order_by(Message.turn_index.desc())
+            select(TutoringMessage.content)
+            .where(TutoringMessage.attempt_id == attempt_id)
+            .where(TutoringMessage.role == "student")
+            .order_by(TutoringMessage.turn_index.desc())
             .limit(1)
         )).scalar_one_or_none()
 

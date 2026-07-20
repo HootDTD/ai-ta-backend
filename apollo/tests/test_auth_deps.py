@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import apollo.auth_deps as deps
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
-from apollo.persistence.models import ApolloSession
+from apollo.persistence.models import TutoringSession
 from auth import AuthContext
 from database.models import Base
 
@@ -31,7 +31,7 @@ async def db():
     )
     async with engine.begin() as conn:
         await conn.run_sync(
-            lambda sc: Base.metadata.create_all(sc, tables=[ApolloSession.__table__])
+            lambda sc: Base.metadata.create_all(sc, tables=[TutoringSession.__table__])
         )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
@@ -52,7 +52,7 @@ def as_user(monkeypatch):
 
 
 async def _make_session(db: AsyncSession, user_id: str) -> int:
-    row = ApolloSession(
+    row = TutoringSession(
         user_id=user_id,
         search_space_id=TEST_SPACE_ID,
         status="active",

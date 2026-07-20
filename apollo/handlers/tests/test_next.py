@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.errors import InvalidPhaseError, PoolExhaustedError, SessionFrozenError
 from apollo.handlers.next import handle_next
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGEntry,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -32,16 +32,16 @@ async def db_with_report_session():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
-        sess = ApolloSession(
+        sess = TutoringSession(
             student_id="stu-1",
             concept_cluster_id="fluid_mechanics",
             status=SessionStatus.active.value,
@@ -74,7 +74,7 @@ async def test_next_from_report_advances(db_with_report_session):
     assert result["problem"]["id"] != "bernoulli_horizontal_pipe_find_p2"
 
     sess = (
-        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await s.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     assert sess.phase == SessionPhase.TEACHING.value
     assert sess.current_problem_id == result["problem"]["id"]
@@ -99,7 +99,7 @@ async def test_next_from_report_advances(db_with_report_session):
 async def test_next_from_teaching_abandons_current(db_with_report_session):
     s, session_id = db_with_report_session
     sess = (
-        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await s.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     sess.phase = SessionPhase.TEACHING.value
     prior = (
@@ -125,7 +125,7 @@ async def test_next_from_teaching_abandons_current(db_with_report_session):
 async def test_next_raises_session_frozen_during_solving(db_with_report_session):
     s, session_id = db_with_report_session
     sess = (
-        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await s.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     sess.phase = SessionPhase.SOLVING.value
     await s.commit()
@@ -137,7 +137,7 @@ async def test_next_raises_session_frozen_during_solving(db_with_report_session)
 async def test_next_raises_invalid_phase_from_init(db_with_report_session):
     s, session_id = db_with_report_session
     sess = (
-        await s.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await s.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     sess.phase = SessionPhase.INIT.value
     await s.commit()

@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.errors import SessionFrozenError
 from apollo.knowledge_graph.store import KGStore
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGEntry,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -31,9 +31,9 @@ async def db_session():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     apollo_tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
@@ -48,7 +48,7 @@ async def db_session():
 
 @pytest_asyncio.fixture
 async def sample_session(db_session: AsyncSession):
-    s = ApolloSession(
+    s = TutoringSession(
         student_id="stu-1",
         concept_cluster_id="fluid_mechanics",
         status=SessionStatus.active.value,
@@ -207,16 +207,16 @@ async def db_with_two_attempts():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
-        sess = ApolloSession(
+        sess = TutoringSession(
             student_id="stu-1",
             concept_cluster_id="fluid_mechanics",
             status=SessionStatus.active.value,

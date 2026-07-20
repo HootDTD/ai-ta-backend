@@ -18,7 +18,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import ApolloSession, ProblemAttempt
+from apollo.persistence.models import TutoringSession, ProblemAttempt
 from database.models import Course
 
 
@@ -34,7 +34,7 @@ class AttemptChain:
 
 
 async def seed_attempt_chain(db: AsyncSession) -> AttemptChain:
-    """Create Course -> ApolloSession -> ProblemAttempt; return ids.
+    """Create Course -> TutoringSession -> ProblemAttempt; return ids.
 
     ``user_id`` is a fresh UUID per call so the unique-active-session index
     (``ix_apollo_sessions_unique_active_per_user``) never collides across tests.
@@ -49,7 +49,7 @@ async def seed_attempt_chain(db: AsyncSession) -> AttemptChain:
     db.add(space)
     await db.flush()
 
-    session = ApolloSession(user_id=user_id, search_space_id=space.id)
+    session = TutoringSession(user_id=user_id, search_space_id=space.id)
     db.add(session)
     await db.flush()
 

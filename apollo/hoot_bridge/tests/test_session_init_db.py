@@ -19,7 +19,7 @@ from sqlalchemy import select, text
 from apollo.conftest import TEST_USER_ID
 from apollo.hoot_bridge.session_init import init_session_from_hoot
 from apollo.overseer.problem_selector import list_problems_for_concept
-from apollo.persistence.models import ApolloSession, ProblemAttempt, SessionStatus
+from apollo.persistence.models import TutoringSession, ProblemAttempt, SessionStatus
 from apollo.subjects.curriculum_db import list_course_concepts
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_problem_payloads,
@@ -56,7 +56,7 @@ async def test_init_session_populates_concept_id(db_session):
 
     sess = (
         await db_session.execute(
-            select(ApolloSession).where(ApolloSession.id == result["session_id"])
+            select(TutoringSession).where(TutoringSession.id == result["session_id"])
         )
     ).scalar_one()
     assert sess.concept_id == cid
@@ -78,7 +78,7 @@ async def test_init_session_does_not_write_concept_cluster_id(db_session):
             difficulty="intro",
         )
 
-    assert "concept_cluster_id" not in ApolloSession.__table__.columns
+    assert "concept_cluster_id" not in TutoringSession.__table__.columns
     concept_val = (
         await db_session.execute(
             text("SELECT concept_id FROM apollo_sessions WHERE id = :sid"),
@@ -134,12 +134,12 @@ async def test_init_session_ends_stale_active_session(db_session):
 
     first_sess = (
         await db_session.execute(
-            select(ApolloSession).where(ApolloSession.id == first["session_id"])
+            select(TutoringSession).where(TutoringSession.id == first["session_id"])
         )
     ).scalar_one()
     second_sess = (
         await db_session.execute(
-            select(ApolloSession).where(ApolloSession.id == second["session_id"])
+            select(TutoringSession).where(TutoringSession.id == second["session_id"])
         )
     ).scalar_one()
     assert first_sess.status == SessionStatus.ended.value

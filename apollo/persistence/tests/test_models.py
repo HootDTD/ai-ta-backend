@@ -8,9 +8,9 @@ _pytest_module.skip(
 from datetime import datetime
 
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGEntry,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -28,7 +28,7 @@ def test_session_status_enum():
 
 
 def test_apollo_session_instantiation():
-    s = ApolloSession(
+    s = TutoringSession(
         student_id="stu-1",
         concept_cluster_id="fluid_mechanics",
         status=SessionStatus.active,
@@ -53,7 +53,7 @@ def test_kgentry_source_values_constrained_to_parser_or_student():
 
 def test_message_roles():
     for role in ("student", "apollo", "system"):
-        m = Message(session_id=1, role=role, content="hi", turn_index=0)
+        m = TutoringMessage(session_id=1, role=role, content="hi", turn_index=0)
         assert m.role == role
 
 
@@ -72,8 +72,8 @@ def test_kg_entry_has_attempt_id_column():
 
 
 def test_message_has_attempt_id_column():
-    assert "attempt_id" in Message.__table__.columns
-    col = Message.__table__.columns["attempt_id"]
+    assert "attempt_id" in TutoringMessage.__table__.columns
+    col = TutoringMessage.__table__.columns["attempt_id"]
     assert col.nullable is True
     fk = next(iter(col.foreign_keys))
     assert fk.column.table.name == "apollo_problem_attempts"

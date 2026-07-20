@@ -15,9 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from apollo.handlers.done import handle_done
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGEntry,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -33,9 +33,9 @@ async def db_with_session_and_kg():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     apollo_tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
         StudentProgress.__table__,
     ]
@@ -45,7 +45,7 @@ async def db_with_session_and_kg():
         )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
-        sess = ApolloSession(
+        sess = TutoringSession(
             student_id="stu-1",
             concept_cluster_id="fluid_mechanics",
             status=SessionStatus.active.value,
@@ -127,7 +127,7 @@ async def test_done_freezes_session_and_persists_attempt(mock_diag, db_with_sess
     from sqlalchemy import select
 
     sess = (
-        await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     assert sess.phase == SessionPhase.REPORT.value
 
@@ -194,9 +194,9 @@ async def db_with_session_equations_only():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     apollo_tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
         StudentProgress.__table__,
     ]
@@ -206,7 +206,7 @@ async def db_with_session_equations_only():
         )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
-        sess = ApolloSession(
+        sess = TutoringSession(
             student_id="stu-2",
             concept_cluster_id="fluid_mechanics",
             status=SessionStatus.active.value,
@@ -353,7 +353,7 @@ async def test_handle_done_flags_level_up_when_threshold_crossed(
     db_with_session_and_kg,
 ):
     """Seed progress to 290 XP so a standard-difficulty pass crosses 300."""
-    from apollo.persistence.models import ApolloSession, StudentProgress, ProblemAttempt
+    from apollo.persistence.models import TutoringSession, StudentProgress, ProblemAttempt
 
     mock_diag.return_value = "ok"
     # Force a perfect rubric so a standard-difficulty pass earns 100 * 1.5 = 150 XP.
@@ -368,7 +368,7 @@ async def test_handle_done_flags_level_up_when_threshold_crossed(
 
     # Fetch student_id off the session.
     sess = (
-        await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
 
     # Ensure StudentProgress table exists for this in-memory DB.

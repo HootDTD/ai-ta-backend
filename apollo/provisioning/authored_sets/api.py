@@ -32,7 +32,7 @@ from sqlalchemy.orm import aliased
 from apollo.auth_deps import require_course_teacher, require_user
 from apollo.errors import KGUnavailableError
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     AuthoredSet,
     Concept,
     ConceptProblem,
@@ -1156,7 +1156,7 @@ async def _protected_concepts(db: AsyncSession, concept_ids: list[int]) -> set[i
         protected.update(int(c) for c in (await db.execute(stmt)).scalars().all() if c is not None)
 
     await _collect(
-        select(ApolloSession.concept_id).where(ApolloSession.concept_id.in_(concept_ids)).distinct()
+        select(TutoringSession.concept_id).where(TutoringSession.concept_id.in_(concept_ids)).distinct()
     )
     await _collect(
         select(KGEntity.concept_id)

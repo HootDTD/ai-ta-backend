@@ -1543,13 +1543,13 @@ async def test_delete_authored_set_spares_concept_with_session(db_session, monke
     """A concept any student ever opened has an apollo_sessions row — the only
     ON DELETE RESTRICT FK into apollo_concepts. It must be spared (else the whole
     delete 500s and the set becomes permanently undeletable)."""
-    from apollo.persistence.models import ApolloSession
+    from apollo.persistence.models import TutoringSession
 
     aapi, space_id, concept_id, _entities, set_id = await _seed_orphanable_concept_kg(
         db_session, monkeypatch, slug="aas-session"
     )
     db_session.add(
-        ApolloSession(user_id=_STUDENT_UUID, search_space_id=space_id, concept_id=concept_id)
+        TutoringSession(user_id=_STUDENT_UUID, search_space_id=space_id, concept_id=concept_id)
     )
     await db_session.flush()
     await _assert_concept_spared(
@@ -1760,7 +1760,7 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
     in-batch concept as a survivor, not as part of the teardown."""
     import apollo.provisioning.authored_sets.api as aapi
     from apollo.persistence.models import (
-        ApolloSession,
+        TutoringSession,
         AuthoredSet,
         Concept,
         ConceptProblem,
@@ -1816,7 +1816,7 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
     # D depends on C (from=D's entity, to=C's entity).
     db_session.add(EntityPrereq(from_entity_id=ed.id, to_entity_id=ec.id))
     # D is spared by a student session; C has no signal of its own.
-    db_session.add(ApolloSession(user_id=_STUDENT_UUID, search_space_id=space.id, concept_id=cd.id))
+    db_session.add(TutoringSession(user_id=_STUDENT_UUID, search_space_id=space.id, concept_id=cd.id))
     cpc = ConceptProblem(
         concept_id=cc.id,
         problem_code="scrape.c",

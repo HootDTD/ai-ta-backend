@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.overseer.xp import next_tier_threshold, title_for_level
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     Concept,
     KGEntity,
     LearnerState,
@@ -73,12 +73,12 @@ async def handle_get_progress_detail(
 
     attempt_rows = (
         await db.execute(
-            select(ProblemAttempt, ApolloSession.concept_id, Concept.display_name)
-            .join(ApolloSession, ProblemAttempt.session_id == ApolloSession.id)
-            .outerjoin(Concept, ApolloSession.concept_id == Concept.id)
+            select(ProblemAttempt, TutoringSession.concept_id, Concept.display_name)
+            .join(TutoringSession, ProblemAttempt.session_id == TutoringSession.id)
+            .outerjoin(Concept, TutoringSession.concept_id == Concept.id)
             .where(
-                ApolloSession.user_id == user_id,
-                ApolloSession.search_space_id == search_space_id,
+                TutoringSession.user_id == user_id,
+                TutoringSession.search_space_id == search_space_id,
                 # Deliberately the narrow "graded" literal: only the Done path
                 # path writes both result="graded" AND the {"rubric": {"overall":
                 # ...}} shape this block reads. Do NOT widen to

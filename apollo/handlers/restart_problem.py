@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.errors import InvalidPhaseError, KGUnavailableError, SessionFrozenError
 from apollo.knowledge_graph.store import KGStore
 from apollo.persistence.models import (
-    ApolloSession,
-    Message,
+    TutoringSession,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -45,7 +45,7 @@ async def handle_restart_problem(
     # Row lock on Postgres to serialize concurrent restart + chat writes.
     # SQLite silently ignores it.
     sess = (await db.execute(
-        select(ApolloSession).where(ApolloSession.id == session_id).with_for_update()
+        select(TutoringSession).where(TutoringSession.id == session_id).with_for_update()
     )).scalar_one()
 
     if sess.status != SessionStatus.active.value:
@@ -82,7 +82,7 @@ async def handle_restart_problem(
             current_attempt.id, exc,
         )
         raise KGUnavailableError(stage="restart_problem", last_error=str(exc)) from exc
-    await db.execute(delete(Message).where(Message.attempt_id == current_attempt.id))
+    await db.execute(delete(TutoringMessage).where(TutoringMessage.attempt_id == current_attempt.id))
 
     sess.phase = SessionPhase.TEACHING.value
     sess.pending_intent = None

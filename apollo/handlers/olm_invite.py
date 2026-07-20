@@ -40,7 +40,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.ontology import Node
-from apollo.persistence.models import Message
+from apollo.persistence.models import TutoringMessage
 
 
 LOW_CONF_THRESHOLD: float = 0.7
@@ -109,9 +109,9 @@ async def _count_past_low_conf_patterns(
     """Count past STUDENT turns flagged as low-conf pattern. Reads
     message_metadata of role=student rows."""
     rows = (await db.execute(
-        select(Message.message_metadata)
-        .where(Message.session_id == session_id)
-        .where(Message.role == "student")
+        select(TutoringMessage.message_metadata)
+        .where(TutoringMessage.session_id == session_id)
+        .where(TutoringMessage.role == "student")
     )).scalars().all()
     n = 0
     for payload in rows:
@@ -126,10 +126,10 @@ async def _last_invite_at(
     """Most-recent created_at among Apollo turns where olm_invite.fired
     was True. Returns None if no invite has fired yet in this session."""
     rows = (await db.execute(
-        select(Message.message_metadata, Message.created_at)
-        .where(Message.session_id == session_id)
-        .where(Message.role == "apollo")
-        .order_by(Message.turn_index.desc())
+        select(TutoringMessage.message_metadata, TutoringMessage.created_at)
+        .where(TutoringMessage.session_id == session_id)
+        .where(TutoringMessage.role == "apollo")
+        .order_by(TutoringMessage.turn_index.desc())
     )).all()
     for payload, created_at in rows:
         if not isinstance(payload, dict):
@@ -209,7 +209,7 @@ async def decide_invite(
 
 
 def signal_to_metadata(signal: OlmInviteSignal) -> dict:
-    """Serialize a signal for persistence on Message.metadata. The summary
+    """Serialize a signal for persistence on TutoringMessage.metadata. The summary
     is omitted from the audit trail (it's redundant with the node itself,
     which Neo4j already stores) — only the gate-relevant fields stick."""
     return {

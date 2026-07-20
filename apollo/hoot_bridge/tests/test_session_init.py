@@ -15,9 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.errors import NoMatchingConceptError
 from apollo.hoot_bridge.session_init import init_session_from_hoot
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGEntry,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -32,9 +32,9 @@ async def db_session():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     apollo_tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
@@ -69,7 +69,7 @@ async def test_init_session_creates_session_and_first_problem(mock_infer, db_ses
 
     from sqlalchemy import select
 
-    sess = (await db_session.execute(select(ApolloSession))).scalar_one()
+    sess = (await db_session.execute(select(TutoringSession))).scalar_one()
     assert sess.status == SessionStatus.active.value
     assert sess.phase == SessionPhase.TEACHING.value
     assert sess.concept_cluster_id == "fluid_mechanics"
@@ -102,7 +102,7 @@ async def test_init_session_ends_stale_active_session_for_same_student(mock_infe
     from sqlalchemy import select
 
     sessions = (
-        (await db_session.execute(select(ApolloSession).order_by(ApolloSession.id))).scalars().all()
+        (await db_session.execute(select(TutoringSession).order_by(TutoringSession.id))).scalars().all()
     )
     assert len(sessions) == 2
     assert sessions[0].id == first["session_id"]

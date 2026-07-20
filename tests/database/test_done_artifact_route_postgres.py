@@ -14,9 +14,9 @@ from apollo.conftest import TEST_USER_ID
 from apollo.handlers.done import handle_done
 from apollo.ontology import KGGraph, build_node
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     GradingArtifact,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -44,7 +44,7 @@ def _student_graph(attempt_id: int) -> KGGraph:
 
 
 async def _seed_session(db, *, current_code: str, sid: int, cid: int):
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=sid,
         concept_id=cid,
@@ -58,7 +58,7 @@ async def _seed_session(db, *, current_code: str, sid: int, cid: int):
     db.add(attempt)
     await db.flush()
     db.add(
-        Message(
+        TutoringMessage(
             session_id=sess.id,
             attempt_id=attempt.id,
             role="student",

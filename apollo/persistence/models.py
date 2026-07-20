@@ -31,9 +31,9 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, REAL, UUID
-from sqlalchemy.orm import relationship, validates
+from sqlalchemy.orm import relationship, synonym, validates
 
-from database.models import Base
+from database.models import Base, LearningActivity
 
 # JSONB on Postgres, fall back to JSON on SQLite (tests use in-memory SQLite).
 _JSONType = JSONB().with_variant(JSON(), "sqlite")
@@ -378,92 +378,109 @@ class QuestionTally(Base):
     )
 
 
-class ApolloSession(Base):
-    __tablename__ = "apollo_sessions"
+class TutoringSession(LearningActivity):
+    """Tutoring-modality view of app.learning_activities."""
 
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    # Phase-1 auth retrofit: real Supabase identity + course scoping (the
-    # classroom-isolation invariant). Mirrors course_memberships' types.
-    user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
-    search_space_id = Column(
-        Integer,
-        ForeignKey("app.courses.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    # FK into apollo_concepts (migration 018). All code paths read concept_id
-    # from the session row and pass it as the only concept signal — no
-    # subject/concept slug strings appear in handler code. The legacy
-    # concept_cluster_id (TEXT) column was dropped in migration 027 (WU-3D §8A
-    # cutover) once the runtime stopped reading/writing it.
-    concept_id = Column(
-        BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="RESTRICT"),
-        nullable=True,
-        index=True,
-    )
-    status = Column(Text, nullable=False, default=SessionStatus.active.value)
-    phase = Column(Text, nullable=False, default=SessionPhase.INIT.value)
-    current_problem_id = Column(Text, nullable=True)
-    # Item #5: pending intent awaiting student confirmation. One of the
-    # `Intent` values from `apollo.handlers.intent` (e.g. "done"); cleared
-    # on the next turn whether or not the student confirmed.
-    pending_intent = Column(Text, nullable=True)
-    # Item #2: rolling summary of older conversation turns so chat context
-    # stays bounded. Refreshed when the unwindowed-tail count crosses K
-    # turns; null until the session is long enough to warrant one.
-    history_summary = Column(Text, nullable=True)
-    history_summary_up_to_turn = Column(Integer, nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-    last_touched_at = Column(
-        TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
-    )
+    __mapper_args__ = {"polymorphic_identity": "tutoring"}
 
-    messages = relationship("Message", back_populates="session", cascade="all, delete-orphan")
+    # Preserve the established Apollo Python name while mapping the physical
+    # target column course_id.
+    search_space_id = synonym("course_id")
+
+    messages = relationship(
+        "TutoringMessage", back_populates="session", cascade="all, delete-orphan"
+    )
     problem_attempts = relationship(
         "ProblemAttempt", back_populates="session", cascade="all, delete-orphan"
     )
 
 
-class Message(Base):
-    __tablename__ = "apollo_messages"
+def promote_tutoring_message_metadata(
+    value: dict | None,
+) -> tuple[dict, bool, str | None]:
+    """Split stable legacy metadata signals into target typed columns."""
+    metadata = dict(value or {})
+    low_confidence_pattern = bool(metadata.pop("low_conf_pattern", False))
+    raw_intent = metadata.pop("intent", None)
+    intent = raw_intent if isinstance(raw_intent, str) else None
+    return metadata, low_confidence_pattern, intent
+
+
+class TutoringMessage(Base):
+    __tablename__ = "tutoring_messages"
+    __table_args__ = (
+        UniqueConstraint("learning_activity_id", "turn_index"),
+        {"schema": "app"},
+    )
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     session_id = Column(
-        BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+        "learning_activity_id",
+        BigInteger,
+        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     attempt_id = Column(
         BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        ForeignKey("app.problem_attempts.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
     role = Column(Text, nullable=False)
     content = Column(Text, nullable=False)
     turn_index = Column(Integer, nullable=False)
-    # Migration 020: per-turn signals (misconception, sufficiency snapshot,
-    # intent classification) persisted alongside the message. Readers must
-    # tolerate missing keys — other writers may add fields here over time.
-    message_metadata = Column("metadata", _JSONType, nullable=True)
+    low_confidence_pattern = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    intent = Column(Text, nullable=True)
+    message_metadata = Column(
+        "metadata", _JSONType, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
-    session = relationship("ApolloSession", back_populates="messages")
+    session = relationship("TutoringSession", back_populates="messages")
+
+    def __init__(self, **kwargs):
+        metadata, low_confidence_pattern, intent = promote_tutoring_message_metadata(
+            kwargs.pop("message_metadata", None)
+        )
+        kwargs["message_metadata"] = metadata
+        kwargs.setdefault("low_confidence_pattern", low_confidence_pattern)
+        kwargs.setdefault("intent", intent)
+        super().__init__(**kwargs)
 
 
 class ProblemAttempt(Base):
-    __tablename__ = "apollo_problem_attempts"
+    __tablename__ = "problem_attempts"
+    __table_args__ = {"schema": "app"}
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
-    session_id = Column(
-        BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
-    problem_id = Column(Text, nullable=False)
+    user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
+    session_id = Column(
+        "learning_activity_id",
+        BigInteger,
+        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    problem_id = Column(BigInteger, nullable=False)
     difficulty = Column(Text, nullable=False)
     # DB CHECK (migration 009 + 025) restricts this to ATTEMPT_RESULTS or NULL.
     result = Column(Text, nullable=True)
@@ -484,30 +501,51 @@ class ProblemAttempt(Base):
     learner_update_failed_at = Column(TIMESTAMP(timezone=True), nullable=True)
     learner_update_last_error = Column(Text, nullable=True)
     learner_update_next_attempt_at = Column(TIMESTAMP(timezone=True), nullable=True)
-    learner_update_failed_permanently = Column(
-        Boolean, nullable=False, server_default=text("false"), default=False
-    )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
 
-    session = relationship("ApolloSession", back_populates="problem_attempts")
+    session = relationship("TutoringSession", back_populates="problem_attempts")
 
 
 Index(
-    "ix_apollo_sessions_unique_active_per_user",
-    ApolloSession.user_id,
+    "learning_activities__active_tutoring_user_course__uidx",
+    TutoringSession.user_id,
+    TutoringSession.course_id,
     unique=True,
-    postgresql_where=(ApolloSession.status == "active"),
-    sqlite_where=(ApolloSession.status == "active"),
+    postgresql_where=(
+        (TutoringSession.status == "active") & (TutoringSession.modality == "tutoring")
+    ),
+    sqlite_where=(
+        (TutoringSession.status == "active") & (TutoringSession.modality == "tutoring")
+    ),
 )
 
 
 class StudentProgress(Base):
-    __tablename__ = "apollo_student_progress"
+    __tablename__ = "student_progress"
+    __table_args__ = {"schema": "app"}
 
     user_id = Column(UUID(as_uuid=False), primary_key=True)
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
     xp_total = Column(Integer, nullable=False, default=0)
     level = Column(Integer, nullable=False, default=1)
     last_level_up_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
 
 
 class KGNegotiation(Base):
@@ -623,7 +661,7 @@ class LearnerState(Base):
 
     # user_id FKs auth.users(id) ON DELETE CASCADE in the migration SQL. The ORM
     # declares no FK here because auth.users (Supabase-managed) is not in
-    # Base.metadata — same convention as ApolloSession.user_id.
+    # Base.metadata — same convention as TutoringSession.user_id.
     user_id = Column(UUID(as_uuid=False), primary_key=True)
     search_space_id = Column(
         Integer,

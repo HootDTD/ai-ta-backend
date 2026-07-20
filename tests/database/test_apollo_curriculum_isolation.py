@@ -21,7 +21,7 @@ from sqlalchemy import select
 from apollo.conftest import TEST_USER_ID, TEST_USER_ID_2
 from apollo.hoot_bridge.session_init import init_session_from_hoot
 from apollo.overseer.problem_selector import list_problems_for_concept
-from apollo.persistence.models import ApolloSession
+from apollo.persistence.models import TutoringSession
 from apollo.subjects.curriculum_db import list_course_concepts
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_problem_payloads,
@@ -99,7 +99,7 @@ async def test_session_init_for_course_x_picks_x_problem(db_session):
 
     sess = (
         await db_session.execute(
-            select(ApolloSession).where(ApolloSession.id == result["session_id"])
+            select(TutoringSession).where(TutoringSession.id == result["session_id"])
         )
     ).scalar_one()
     assert sess.concept_id == cid_x
@@ -128,7 +128,7 @@ async def test_new_course_wired_with_zero_code(db_session):
     assert [c.concept_id for c in spy.call_args.kwargs["candidates"]] == [cid_y]
     sess = (
         await db_session.execute(
-            select(ApolloSession).where(ApolloSession.id == result["session_id"])
+            select(TutoringSession).where(TutoringSession.id == result["session_id"])
         )
     ).scalar_one()
     assert sess.concept_id == cid_y

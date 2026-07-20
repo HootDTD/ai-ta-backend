@@ -11,8 +11,8 @@ from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.handlers.next import handle_next
 from apollo.handlers.restart_problem import handle_restart_problem
 from apollo.persistence.models import (
-    ApolloSession,
-    Message,
+    TutoringSession,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -31,9 +31,9 @@ async def db():
             lambda sync_conn: Base.metadata.create_all(
                 sync_conn,
                 tables=[
-                    ApolloSession.__table__,
+                    TutoringSession.__table__,
                     ProblemAttempt.__table__,
-                    Message.__table__,
+                    TutoringMessage.__table__,
                 ],
             )
         )
@@ -44,7 +44,7 @@ async def db():
 
 
 async def _seed(db: AsyncSession, *, phase: str):
-    session = ApolloSession(
+    session = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,
@@ -67,7 +67,7 @@ async def _seed(db: AsyncSession, *, phase: str):
     return session, attempt
 
 
-def _assert_context_cleared(session: ApolloSession) -> None:
+def _assert_context_cleared(session: TutoringSession) -> None:
     assert session.pending_intent is None
     assert session.history_summary is None
     assert session.history_summary_up_to_turn is None

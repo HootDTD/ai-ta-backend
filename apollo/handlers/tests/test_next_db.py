@@ -14,7 +14,7 @@ from apollo.conftest import TEST_USER_ID
 from apollo.errors import PoolExhaustedError
 from apollo.handlers.next import handle_next
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -31,7 +31,7 @@ _INTRO = [p for p in load_bernoulli_problem_payloads() if p["difficulty"] == "in
 
 async def _seed_report_session(db, *, search_space_id, concept_id, current_problem_id):
     """A REPORT-phase session with one graded attempt on current_problem_id."""
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=search_space_id,
         concept_id=concept_id,
@@ -75,7 +75,7 @@ async def test_next_selects_problem_by_session_concept_id(db_session):
     assert result["problem"]["id"] in set(codes)
     assert result["problem"]["id"] != first_code  # excludes the attempted one
     sess = (
-        await db_session.execute(select(ApolloSession).where(ApolloSession.id == session_id))
+        await db_session.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
     assert sess.current_problem_id == result["problem"]["id"]
     assert sess.phase == SessionPhase.TEACHING.value

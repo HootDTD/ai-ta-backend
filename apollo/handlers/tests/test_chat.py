@@ -15,9 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.errors import FilterRejectedError, ParserCouldNotExtractError
 from apollo.handlers.chat import handle_chat
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     KGEntry,
-    Message,
+    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -32,9 +32,9 @@ async def db_with_session():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     apollo_tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
@@ -43,7 +43,7 @@ async def db_with_session():
         )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
-        sess = ApolloSession(
+        sess = TutoringSession(
             student_id="stu-1",
             concept_cluster_id="fluid_mechanics",
             status=SessionStatus.active.value,
@@ -130,7 +130,7 @@ async def test_chat_filter_rejection_leaves_no_orphan_turn(mock_parse, mock_draf
 
     # No half-written turn: neither the student nor the apollo row persisted.
     msgs = (
-        (await db.execute(select(Message).where(Message.session_id == session_id))).scalars().all()
+        (await db.execute(select(TutoringMessage).where(TutoringMessage.session_id == session_id))).scalars().all()
     )
     assert msgs == []
 
@@ -154,7 +154,7 @@ async def test_chat_persists_messages(mock_parse, mock_draft, db_with_session):
     msgs = (
         (
             await db.execute(
-                select(Message).where(Message.session_id == session_id).order_by(Message.turn_index)
+                select(TutoringMessage).where(TutoringMessage.session_id == session_id).order_by(TutoringMessage.turn_index)
             )
         )
         .scalars()
@@ -203,7 +203,7 @@ async def test_chat_messages_tagged_with_attempt_id(mock_parse, mock_draft, db_w
     rows = (
         (
             await db.execute(
-                select(Message).where(Message.session_id == session_id).order_by(Message.turn_index)
+                select(TutoringMessage).where(TutoringMessage.session_id == session_id).order_by(TutoringMessage.turn_index)
             )
         )
         .scalars()

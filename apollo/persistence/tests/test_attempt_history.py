@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.conftest import TEST_SPACE_ID
 from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -24,7 +24,7 @@ async def db():
     async with engine.begin() as conn:
         await conn.run_sync(
             lambda sc: Base.metadata.create_all(
-                sc, tables=[ApolloSession.__table__, ProblemAttempt.__table__]
+                sc, tables=[TutoringSession.__table__, ProblemAttempt.__table__]
             )
         )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -38,8 +38,8 @@ async def _mk_session(
     user_id: str,
     *,
     status: str = SessionStatus.active.value,
-) -> ApolloSession:
-    s = ApolloSession(
+) -> TutoringSession:
+    s = TutoringSession(
         user_id=user_id,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,

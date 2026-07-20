@@ -17,7 +17,7 @@ from apollo.conftest import TEST_USER_ID
 from apollo.handlers.done import _find_problem, handle_done
 from apollo.ontology import KGGraph
 from apollo.persistence.models import (
-    ApolloSession,
+    TutoringSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -43,7 +43,7 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
         problems=_INTRO,
     )
     current_code = codes[0]
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=sid,
         concept_id=cid,
