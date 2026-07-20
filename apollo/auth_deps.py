@@ -99,8 +99,9 @@ async def require_session_owner(
 ) -> AuthContext:
     """401/403/404 gate for /apollo/sessions/{session_id}/* endpoints.
 
-    FastAPI resolves session_id from the path. Returns the AuthContext so
-    handlers can use the validated identity.
+    The owner predicate deliberately returns 404 for another user's id. The
+    subsequent membership check rejects access if that owner is no longer a
+    member of the session's course.
     """
     auth = await require_user(request)
     row = (
