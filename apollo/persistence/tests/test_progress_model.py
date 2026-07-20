@@ -9,6 +9,9 @@ from apollo.conftest import TEST_USER_ID, TEST_USER_ID_2
 from apollo.persistence.models import StudentProgress
 from database.models import Base
 
+COURSE_1 = 101
+COURSE_2 = 202
+
 
 @pytest_asyncio.fixture
 async def session():
@@ -28,7 +31,7 @@ async def session():
 
 @pytest.mark.asyncio
 async def test_student_progress_defaults(session):
-    sp = StudentProgress(user_id=TEST_USER_ID)
+    sp = StudentProgress(user_id=TEST_USER_ID, course_id=COURSE_1)
     session.add(sp)
     await session.commit()
     await session.refresh(sp)
@@ -41,7 +44,7 @@ async def test_student_progress_defaults(session):
 
 @pytest.mark.asyncio
 async def test_student_progress_round_trip(session):
-    session.add(StudentProgress(user_id=TEST_USER_ID_2, xp_total=1700, level=4))
+    session.add(StudentProgress(user_id=TEST_USER_ID_2, course_id=COURSE_1, xp_total=1700, level=4))
     await session.commit()
 
     loaded = (
@@ -54,11 +57,14 @@ async def test_student_progress_round_trip(session):
 
 
 @pytest.mark.asyncio
-async def test_student_progress_user_id_is_primary_key(session):
-    session.add(StudentProgress(user_id=TEST_USER_ID))
+async def test_student_progress_user_and_course_are_composite_primary_key(session):
+    session.add(StudentProgress(user_id=TEST_USER_ID, course_id=COURSE_1))
     await session.commit()
 
-    # Inserting a second row with the same user_id should fail.
-    session.add(StudentProgress(user_id=TEST_USER_ID))
+    session.add(StudentProgress(user_id=TEST_USER_ID, course_id=COURSE_2))
+    await session.commit()
+
+    # Inserting a duplicate (user_id, course_id) pair should fail.
+    session.add(StudentProgress(user_id=TEST_USER_ID, course_id=COURSE_1))
     with pytest.raises(Exception):
         await session.commit()

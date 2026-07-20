@@ -38,6 +38,20 @@ panel and graph writes are skipped, but the Postgres transcript and questioning
 path continue. KG-native mutation routes fail with a structured 503 when a safe
 degraded operation is impossible.
 
+## DB-09 tutoring persistence
+
+Tutoring sessions are the `modality = 'tutoring'` subtype of
+`app.learning_activities`; the ORM name is `TutoringSession`. Tutoring turns use
+`app.tutoring_messages`, and attempts use `app.problem_attempts`. Both children
+carry `course_id`, while their Python `session_id` property maps to the physical
+`learning_activity_id` foreign key. Problem payload codes remain the public
+identifier; persistence resolves them to the numeric `app.problems.id`.
+
+**A1 is applied:** XP and level are per course. `app.student_progress` is keyed
+by `(user_id, course_id)`, `/apollo/progress` requires `search_space_id`, and
+the response echoes that course identifier. Session ownership and course
+membership are checked before tutoring state is returned or mutated.
+
 ## Done-time grading
 
 The permanent grader of record is the transcript adjudicator plus topic score.

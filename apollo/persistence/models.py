@@ -2,7 +2,7 @@
 
 V3: KG entries moved to Neo4j (apollo.persistence.neo4j_client +
 apollo.knowledge_graph.store). Postgres now owns only:
-  apollo_sessions, apollo_messages, apollo_problem_attempts,
+  app.learning_activities, app.tutoring_messages, app.problem_attempts,
   apollo_student_progress.
 
 The legacy `apollo_kg_entries` table is dropped — see migration notes in

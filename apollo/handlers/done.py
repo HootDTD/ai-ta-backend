@@ -125,7 +125,7 @@ async def _attempt_misconception_scores(
     """Read every Apollo turn for this attempt and reduce misconception
     signals to a per-bank-code score map for the rubric's axis.
 
-    Reads from `apollo_messages.metadata` (migration 020). Skips messages
+    Reads from tutoring-message metadata. Skips messages
     whose metadata is null or has no misconception payload. Returns an
     empty dict when nothing fired — the rubric treats that as
     axis-absent and falls back to the pre-P2.8 60/25/15 weights.
@@ -371,7 +371,7 @@ async def handle_done(
         coverage = await compute_coverage(student_graph, reference_graph)
 
     # Class 2 Phase 2 (P2.8): pull per-attempt misconception signals from
-    # apollo_messages.metadata and reduce them to the per-bank-code score
+    # tutoring-message metadata and reduce them to the per-bank-code score
     # map the rubric expects. The axis enters at 5% taken from the
     # existing 60/25/15. When no misconceptions fired, the dict is empty
     # and the rubric is byte-identical to its pre-P2.8 output.

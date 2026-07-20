@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from apollo.persistence.models import TutoringSession, StudentProgress
+from apollo.persistence.models import StudentProgress, TutoringSession
 
 
 def test_apollo_session_has_user_and_space_columns():
@@ -14,14 +14,15 @@ def test_apollo_session_has_user_and_space_columns():
     assert "app.courses.id" in fks
 
 
-def test_student_progress_keyed_by_user_id():
+def test_student_progress_keyed_by_user_and_course():
     cols = StudentProgress.__table__.columns
     assert cols["user_id"].primary_key
+    assert cols["course_id"].primary_key
     assert "student_id" not in cols
 
 
-def test_unique_active_index_uses_user_id():
+def test_unique_active_index_uses_user_and_course():
     idx = {i.name: i for i in TutoringSession.__table__.indexes}
-    active = idx["ix_apollo_sessions_unique_active_per_user"]
+    active = idx["learning_activities__active_tutoring_user_course__uidx"]
     assert active.unique
-    assert [c.name for c in active.columns] == ["user_id"]
+    assert [c.name for c in active.columns] == ["user_id", "course_id"]

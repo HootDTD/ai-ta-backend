@@ -72,6 +72,16 @@ onto `app.concepts`; authored sets and generation runs share the teacher-gated
 artifact leg. Status is meaningful for tutoring activities only, and every
 status lookup must also constrain `modality = 'tutoring'`.
 
+DB-09 (2026-07-20) retargets the tutoring ORM and runtime to that design.
+`TutoringSession` is a polymorphic `LearningActivity`; tutoring messages and
+problem attempts map to `app.tutoring_messages` and `app.problem_attempts`,
+with physical `learning_activity_id` foreign keys and denormalized course
+scope. Message metadata promotions are written to typed columns. **A1 is
+applied:** `app.student_progress` uses composite identity `(user_id, course_id)`;
+progress reads, XP awards, and the student progress endpoint all require the
+course dimension. The external tutoring API continues to use problem codes,
+while persistence stores the resolved numeric `app.problems.id`.
+
 DB-07 (2026-07-17) switches the first ORM/repository slice to the target
 schemas. `Course` now owns current week, retrieval weights, and typed bounds in
 `app.courses`; memberships/invites use `course_id`. `Document`,
@@ -86,7 +96,7 @@ Cleanup T-E (2026-07-16) removed the `Clarification` SQLAlchemy model and all ru
 
 | Path | Role |
 |------|------|
-| `database/models.py` | Core SQLAlchemy models. DB-07 target models use explicit `app`/`internal` schemas and typed document/upload status columns. |
+| `database/models.py` | Core SQLAlchemy models. Target models use explicit `app`/`internal` schemas; `LearningActivity` supplies the chat and tutoring polymorphic base. |
 | `database/session.py` | Async engine/session factory keyed **per event loop**, plus `run_async()` sync-to-async bridge. PostgreSQL uses connection recycling; SQLite erases target schema names with `schema_translate_map`. |
 | `supabase/config.toml`, `supabase/migrations/`, `supabase/seed.sql` | Supabase CLI 2.109.0 local project. Timestamped SQL is the sole forward migration history; reset applies migrations in timestamp order, then the deterministic non-production seed. The first migration is the DB-03 draft snapshot and is explicitly not production truth. |
 | `database/migrations/README.md`, `legacy-manifest.sha256` | Freeze contract for the numbered `001`-`047` history. CI rejects additions, removals, or content changes. The only executable Python migration entrypoints were retired in DB-03 and now exit with a pointer to the local Supabase reset harness. |

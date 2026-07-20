@@ -972,7 +972,7 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
     ConceptProblems it minted — while a sibling set's problem is untouched."""
     import apollo.provisioning.authored_sets.api as aapi
     from apollo.persistence.models import AuthoredSet, ConceptProblem
-    from database.models import DocumentChunk, Document
+    from database.models import Document, DocumentChunk
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
@@ -1540,7 +1540,7 @@ async def _assert_concept_spared(db, aapi, monkeypatch, *, concept_id, set_id):
 
 @pytest.mark.asyncio
 async def test_delete_authored_set_spares_concept_with_session(db_session, monkeypatch):
-    """A concept any student ever opened has an apollo_sessions row — the only
+    """A concept any student ever opened has a tutoring activity — the only
     ON DELETE RESTRICT FK into apollo_concepts. It must be spared (else the whole
     delete 500s and the set becomes permanently undeletable)."""
     from apollo.persistence.models import TutoringSession
@@ -1760,13 +1760,13 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
     in-batch concept as a survivor, not as part of the teardown."""
     import apollo.provisioning.authored_sets.api as aapi
     from apollo.persistence.models import (
-        TutoringSession,
         AuthoredSet,
         Concept,
         ConceptProblem,
         EntityPrereq,
         KGEntity,
         Subject,
+        TutoringSession,
     )
     from database.models import Course
 

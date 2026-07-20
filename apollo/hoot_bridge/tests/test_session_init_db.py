@@ -3,7 +3,7 @@
 `init_session_from_hoot` now builds the candidate concept set from the course's
 ``apollo_concepts`` rows (scoped via ``search_space_id``), infers a ``concept_id``
 via the LLM hop (mocked), selects a problem from the DB, and populates
-``apollo_sessions.concept_id`` — WITHOUT writing ``concept_cluster_id``.
+the tutoring activity's ``concept_id`` without writing ``concept_cluster_id``.
 
 The legacy ``test_session_init.py`` is module-skipped (references the deleted
 ``KGEntry``); these are the new behavioral tests on real PG.
@@ -19,7 +19,7 @@ from sqlalchemy import select, text
 from apollo.conftest import TEST_USER_ID
 from apollo.hoot_bridge.session_init import init_session_from_hoot
 from apollo.overseer.problem_selector import list_problems_for_concept
-from apollo.persistence.models import TutoringSession, ProblemAttempt, SessionStatus
+from apollo.persistence.models import ProblemAttempt, SessionStatus, TutoringSession
 from apollo.subjects.curriculum_db import list_course_concepts
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_problem_payloads,
@@ -81,7 +81,7 @@ async def test_init_session_does_not_write_concept_cluster_id(db_session):
     assert "concept_cluster_id" not in TutoringSession.__table__.columns
     concept_val = (
         await db_session.execute(
-            text("SELECT concept_id FROM apollo_sessions WHERE id = :sid"),
+            text("SELECT concept_id FROM learning_activities WHERE id = :sid"),
             {"sid": result["session_id"]},
         )
     ).scalar_one()

@@ -32,7 +32,6 @@ from sqlalchemy.orm import aliased
 from apollo.auth_deps import require_course_teacher, require_user
 from apollo.errors import KGUnavailableError
 from apollo.persistence.models import (
-    TutoringSession,
     AuthoredSet,
     Concept,
     ConceptProblem,
@@ -43,6 +42,7 @@ from apollo.persistence.models import (
     KGEntity,
     LearnerState,
     MasteryEvent,
+    TutoringSession,
 )
 from apollo.provisioning.authored_problem import provision_authored_problem
 from apollo.provisioning.authored_sets.indexing import index_authored_doc
@@ -1135,7 +1135,7 @@ async def _protected_concepts(db: AsyncSession, concept_ids: list[int]) -> set[i
     ANY single signal spares the whole concept — under-tearing-down is the safe
     direction (it only leaves KG behind; it never destroys data or crashes). Signals:
 
-      * ``apollo_sessions.concept_id`` — a student opened this concept. This is ALSO
+      * ``app.learning_activities.concept_id`` — a student opened this concept. This is ALSO
         the only ``ON DELETE RESTRICT`` FK into ``apollo_concepts`` (migration 018),
         so sparing session-bound concepts is what keeps ``DELETE apollo_concepts``
         from hard-failing the whole delete.
@@ -1268,7 +1268,7 @@ async def delete_authored_set(
     ``apollo_concepts`` (KGEntity + ``apollo_entity_prereqs`` cascade) in Postgres,
     and the guarded ``:Canon`` nodes in Neo4j. Every ambiguous case spares the
     concept — under-tearing-down only leaves KG behind, whereas over-tearing-down
-    would 500 (the ``apollo_sessions`` RESTRICT FK) or destroy student data.
+    would 500 (the tutoring-activity RESTRICT FK) or destroy student data.
     """
     auth = await require_user(request)
     row = await db.get(AuthoredSet, set_id)
@@ -1369,7 +1369,7 @@ async def delete_authored_set(
             if orphaned_concept_ids:
                 # dedup_decisions FK is ON DELETE SET NULL, so delete explicitly
                 # BEFORE the concept; deleting apollo_concepts cascades KGEntity and
-                # apollo_entity_prereqs. apollo_sessions (the only RESTRICT FK) is
+                # apollo_entity_prereqs. tutoring activities (the only RESTRICT FK) are
                 # already spared by _protected_concepts, so this never hard-fails.
                 await db.execute(
                     delete(DedupDecision).where(DedupDecision.concept_id.in_(orphaned_concept_ids))

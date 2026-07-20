@@ -18,14 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
 from apollo.errors import NoMatchingConceptError
 from apollo.hoot_bridge.session_init import init_session_from_hoot
-from apollo.persistence.models import TutoringSession, ProblemAttempt, SessionPhase, SessionStatus
+from apollo.persistence.models import ProblemAttempt, SessionPhase, SessionStatus, TutoringSession
 from apollo.schemas.problem import Problem, ReferenceStep
 from database.models import Base
 
 # WU-3D: the concept signal is now an int concept_id (not a cluster string); the
 # curriculum readers are async DB calls. These tests stay on SQLite by mocking
 # the concept-resolution + problem-selection I/O entirely (no apollo_concepts
-# rows needed), and assert apollo_sessions.concept_id is populated.
+# rows needed), and assert the tutoring activity concept_id is populated.
 _STUB_CONCEPT_ID = 7
 
 # ---------------------------------------------------------------------------

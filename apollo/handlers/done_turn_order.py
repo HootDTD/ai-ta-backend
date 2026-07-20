@@ -9,7 +9,7 @@ strips it. ``build_turn_order`` therefore:
 
   1. reads each node's ``created_at`` via the tiny ``KGStore.read_node_created_at``
      read (NOT ``read_graph``, NOT a schema change);
-  2. reads the student ``apollo_messages.turn_index`` reference points for the
+  2. reads student ``app.tutoring_messages.turn_index`` reference points for the
      attempt;
   3. groups node ids by distinct ``created_at``, sorts the distinct values
      ascending, and assigns each group the ``turn_index`` of the latest student
@@ -81,7 +81,7 @@ async def build_turn_order(
     student_graph: KGGraph,
 ) -> dict[str, int]:
     """Map each KG ``node_id`` -> a monotone turn position sourced from the node's
-    Neo4j ``created_at`` (joined to ``apollo_messages.turn_index`` where possible).
+    Neo4j ``created_at`` (joined to tutoring-message ``turn_index`` where possible).
 
     A node with no ``created_at`` -> absent key (events.py tolerates via
     ``_SENTINEL_TURN``). ``student_graph`` is accepted for interface symmetry with

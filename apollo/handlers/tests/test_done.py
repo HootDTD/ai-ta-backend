@@ -15,13 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from apollo.handlers.done import handle_done
 from apollo.persistence.models import (
-    TutoringSession,
     KGEntry,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
     StudentProgress,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -353,7 +353,7 @@ async def test_handle_done_flags_level_up_when_threshold_crossed(
     db_with_session_and_kg,
 ):
     """Seed progress to 290 XP so a standard-difficulty pass crosses 300."""
-    from apollo.persistence.models import TutoringSession, StudentProgress, ProblemAttempt
+    from apollo.persistence.models import ProblemAttempt, StudentProgress, TutoringSession
 
     mock_diag.return_value = "ok"
     # Force a perfect rubric so a standard-difficulty pass earns 100 * 1.5 = 150 XP.
@@ -379,7 +379,14 @@ async def test_handle_done_flags_level_up_when_threshold_crossed(
             lambda sc: Base.metadata.create_all(sc, tables=[StudentProgress.__table__])
         )
 
-    db.add(StudentProgress(student_id=sess.student_id, xp_total=290, level=1))
+    db.add(
+        StudentProgress(
+            user_id=sess.user_id,
+            course_id=sess.course_id,
+            xp_total=290,
+            level=1,
+        )
+    )
 
     # Bump the attempt difficulty to `standard` so a ~100 overall earns ≥ 10 XP
     # above the 10-needed margin (294/300 boundary wiggle).
