@@ -5,7 +5,7 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import ChatMessage, ChatSession
@@ -79,6 +79,45 @@ async def get_or_create_chat_session_for_user(
     db_session.add(session)
     await db_session.flush()
     return session
+
+
+async def delete_chat_session_for_user(
+    db_session: AsyncSession,
+    *,
+    chat_id: str,
+    user_id: str,
+    course_id: int | None = None,
+) -> bool:
+    """Delete one owner's session and messages using service-role-safe predicates."""
+    session = await get_chat_session_for_user(
+        db_session,
+        chat_id=chat_id,
+        user_id=user_id,
+        course_id=course_id,
+    )
+    if session is None:
+        return False
+
+    owned_session = select(ChatSession.id).where(
+        ChatSession.id == session.id,
+        ChatSession.user_id == user_id,
+        ChatSession.course_id == session.course_id,
+    )
+    await db_session.execute(
+        delete(ChatMessage).where(
+            ChatMessage.chat_session_id == session.id,
+            ChatMessage.course_id == session.course_id,
+            ChatMessage.chat_session_id.in_(owned_session),
+        )
+    )
+    await db_session.execute(
+        delete(ChatSession).where(
+            ChatSession.id == session.id,
+            ChatSession.user_id == user_id,
+            ChatSession.course_id == session.course_id,
+        )
+    )
+    return True
 
 
 async def list_recent_turns(

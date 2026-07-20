@@ -25,7 +25,13 @@ from ai.vision import vision_transcribe
 from config.settings import get_runtime_dir, hoot_qa_enabled, set_subject_name, RequestConfig
 from ai.orchestrator import Orchestrator
 from config.weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
-from ai.main_ai import extract_keywords, parse_question, solve_with_bundle, solve_with_bundle_stream, format_answer
+from ai.main_ai import (
+    extract_keywords,
+    parse_question,
+    solve_with_bundle,
+    solve_with_bundle_stream,
+    format_answer,
+)
 from config.contracts import ParsedTask
 from citations.formatter import format_citations
 from knowledge.teacher_weekly import TeacherWeeklyStorage
@@ -51,7 +57,10 @@ from chats.service import (
     list_recent_turns,
     refresh_memory_summary,
 )
-from apollo.api import router as apollo_router, register_exception_handlers as _register_apollo_exception_handlers
+from apollo.api import (
+    router as apollo_router,
+    register_exception_handlers as _register_apollo_exception_handlers,
+)
 
 try:  # pragma: no cover - optional dependency detection
     importlib.import_module("python_multipart")
@@ -66,6 +75,7 @@ try:  # pragma: no cover - convenience
 
     load_dotenv(override=True)
 except Exception:
+
     def _load_env_fallback() -> None:
         try:
             repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -241,8 +251,6 @@ class TeacherCurrentWeekIn(BaseModel):
         allow_population_by_field_name = True
 
 
-
-
 # -------- Utils --------
 DATA_URL_RE = re.compile(r"^data:(?P<mime>[^;]+);base64,(?P<data>.+)$", re.DOTALL)
 
@@ -341,7 +349,9 @@ def _require_course_membership(
     except HTTPException:
         raise
     except Exception as exc:
-        log.error("Membership check failed for user=%s space=%s: %s", auth.user_id, search_space_id, exc)
+        log.error(
+            "Membership check failed for user=%s space=%s: %s", auth.user_id, search_space_id, exc
+        )
         raise HTTPException(status_code=500, detail="Membership validation failed")
 
     if not allowed:
@@ -406,7 +416,7 @@ async def _load_memory_and_append_user_turn_async(
             chat_id=chat_id,
             user_id=auth.user_id,
         )
-        if existing is not None and int(existing.search_space_id) != int(search_space_id):
+        if existing is not None and int(existing.course_id) != int(search_space_id):
             raise HTTPException(status_code=400, detail="search_space_id mismatch for chat_id")
 
         session = existing or await get_or_create_chat_session_for_user(
@@ -420,17 +430,21 @@ async def _load_memory_and_append_user_turn_async(
             # Merge, don't replace: meta also carries orchestrator state
             # (bundle_cache fingerprint) written by persist_turn_outcome —
             # a blind overwrite here invalidated the session cache every turn.
-            session.meta = {**(session.meta or {}), **meta}
+            session.metadata_ = {**(session.metadata_ or {}), **meta}
 
         recent_turns = await list_recent_turns(
             db_session,
             chat_session_id=int(session.id),
+            user_id=auth.user_id,
+            course_id=int(session.course_id),
         )
         memory_context = build_memory_context(session.memory_summary or "", recent_turns)
 
         await append_turn(
             db_session,
             chat_session_id=int(session.id),
+            user_id=auth.user_id,
+            course_id=int(session.course_id),
             role="user",
             content=user_content,
             attachments=_attachments_for_chat_turn(attachments),
@@ -505,19 +519,26 @@ async def _append_assistant_turn_and_refresh_async(
                 search_space_id=int(search_space_id),
                 meta={},
             )
-        elif int(session.search_space_id) != int(search_space_id):
+        elif int(session.course_id) != int(search_space_id):
             raise HTTPException(status_code=400, detail="search_space_id mismatch for chat_id")
 
         await append_turn(
             db_session,
             chat_session_id=int(session.id),
+            user_id=auth.user_id,
+            course_id=int(session.course_id),
             role="assistant",
             content=assistant_content,
             model=os.getenv("SOLVER_MODEL", "gpt-4o"),
             citations=list(citations) if citations else None,
             keywords=list(keywords) if keywords else None,  # None/empty -> [] in append_turn
         )
-        await refresh_memory_summary(db_session, chat_session=session)
+        await refresh_memory_summary(
+            db_session,
+            chat_session=session,
+            user_id=auth.user_id,
+            course_id=int(session.course_id),
+        )
         session.updated_at = datetime.now(UTC)
         await db_session.commit()
 
@@ -689,7 +710,9 @@ if chats_router is not None:
 
 
 @app.get("/teacher/weeks", response_model=TeacherCourseOut)
-def get_teacher_weeks(request: Request, search_space_id: int = Query(..., gt=0)) -> TeacherCourseOut:
+def get_teacher_weeks(
+    request: Request, search_space_id: int = Query(..., gt=0)
+) -> TeacherCourseOut:
     _require_course_membership(request, search_space_id=search_space_id, role="teacher")
     manager = _get_teacher_storage()
     try:
@@ -794,6 +817,7 @@ def retry_teacher_upload(upload_id: int, request: Request) -> UploadOut:
 
 
 if _HAS_MULTIPART:
+
     @app.post("/teacher/upload", response_model=UploadOut, status_code=202)
     def upload_teacher_material(
         request: Request,
@@ -855,6 +879,7 @@ if _HAS_MULTIPART:
         return UploadOut(**record.to_dict())
 
 else:  # pragma: no cover - fallback when python-multipart missing
+
     @app.post("/teacher/upload")
     async def upload_teacher_material_unavailable() -> None:
         raise HTTPException(
@@ -902,6 +927,7 @@ class InviteRedeemOut(BaseModel):
 
 def _generate_invite_code() -> str:
     import secrets
+
     return secrets.token_urlsafe(16)
 
 
@@ -920,6 +946,7 @@ def create_invite_link(payload: InviteLinkCreateIn, request: Request) -> InviteL
     parsed_expires = None
     if payload.expires_at:
         from datetime import datetime as _dt, timezone as _tz
+
         try:
             parsed_expires = _dt.fromisoformat(payload.expires_at)
         except ValueError:
@@ -1119,7 +1146,9 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
             existing = mem_result.scalars().first()
 
             if existing:
-                if existing.role == link.role or (existing.role == "teacher" and link.role == "student"):
+                if existing.role == link.role or (
+                    existing.role == "teacher" and link.role == "student"
+                ):
                     # Already enrolled with same or higher role — idempotent
                     link.use_count += 1
                     await db_session.commit()
@@ -1174,9 +1203,7 @@ def list_classes():
 
     async def _fetch():
         async with get_async_session() as session:
-            result = await session.execute(
-                sa_select(Course).order_by(Course.name)
-            )
+            result = await session.execute(sa_select(Course).order_by(Course.name))
             return result.scalars().all()
 
     try:
@@ -1286,9 +1313,14 @@ def list_my_classes(request: Request):
 # pgvector retrieval helper
 # ---------------------------------------------------------------------------
 
+
 def _ask_pgvector(
-    q_effective: str, workspace, weight_overrides: dict, cfg,
-    top_k: Optional[int] = None, token_budget: Optional[int] = None,
+    q_effective: str,
+    workspace,
+    weight_overrides: dict,
+    cfg,
+    top_k: Optional[int] = None,
+    token_budget: Optional[int] = None,
 ) -> "ResearchBundle":
     """Run the pgvector retrieval pipeline and return a ResearchBundle.
 
@@ -1319,7 +1351,7 @@ def _ask_pgvector(
         _ctx_summary, raw_keywords = extract_and_filter_keywords(q_effective)
         log.info("[timing] keyword_extraction=%.2fs", time.perf_counter() - _t_kw)
         keywords: List[str] = []
-        for entry in (raw_keywords or []):
+        for entry in raw_keywords or []:
             if isinstance(entry, dict):
                 term = entry.get("term") or entry.get("keyword") or entry.get("name")
                 if isinstance(term, str) and term.strip():
@@ -1351,7 +1383,9 @@ def _ask_pgvector(
     allowed_markers = [sn.citation_marker for sn in snippets if sn.citation_marker]
 
     metadata = ResearchMetadata(
-        keyword_iterations=[{"round": 1, "combined_query": diagnostics.get("combined_query", q_effective)}],
+        keyword_iterations=[
+            {"round": 1, "combined_query": diagnostics.get("combined_query", q_effective)}
+        ],
         found_terms=[],
         not_found_terms=[],
         attempted_terms=[q_effective],
@@ -1390,8 +1424,14 @@ def _ask_pgvector(
 # Retrieval-mode orchestrator hooks (ROUTER_ENABLED, default off)
 # ---------------------------------------------------------------------------
 
+
 def _prepare_router_context_sync(
-    *, auth, chat_id: str, search_space_id: int, question: str, has_attachments: bool,
+    *,
+    auth,
+    chat_id: str,
+    search_space_id: int,
+    question: str,
+    has_attachments: bool,
 ):
     """Decide NONE/AUGMENT/FRESH for this turn. Returns None (= legacy FRESH
     path) when the router is disabled or anything fails."""
@@ -1415,7 +1455,12 @@ def _prepare_router_context_sync(
 
 
 def _retrieve_bundle_with_router(
-    *, router_ctx, q_effective: str, workspace, weight_overrides: dict, cfg,
+    *,
+    router_ctx,
+    q_effective: str,
+    workspace,
+    weight_overrides: dict,
+    cfg,
 ) -> Tuple["ResearchBundle", int]:
     """Pick the retrieval path from the router decision.
 
@@ -1465,8 +1510,14 @@ def _retrieve_bundle_with_router(
 
 
 def _persist_router_outcome_sync(
-    *, auth, chat_id: str, router_ctx, bundle, question: str,
-    retrieval_ms: Optional[int], answer_ms: Optional[int],
+    *,
+    auth,
+    chat_id: str,
+    router_ctx,
+    bundle,
+    question: str,
+    retrieval_ms: Optional[int],
+    answer_ms: Optional[int],
 ) -> None:
     """Save the answered bundle into the session cache + telemetry row.
     Never raises."""
@@ -1501,9 +1552,7 @@ def post_ask(payload: AskRequest, request: Request):
     # Apollo-only deployments (HOOT_QA_ENABLED=0) close the Q&A surface at the
     # HTTP boundary — before validation, so the flag wins over any payload.
     if not hoot_qa_enabled():
-        raise HTTPException(
-            status_code=403, detail="Hoot Q&A is disabled on this deployment"
-        )
+        raise HTTPException(status_code=403, detail="Hoot Q&A is disabled on this deployment")
 
     # Validate input: allow (question) OR (attachments)
     q = (payload.question or "").strip()
@@ -1672,10 +1721,14 @@ def post_ask(payload: AskRequest, request: Request):
 
         _t_answer = time.perf_counter()
         solution = solve_with_bundle(
-            parsed_task, bundle, subject=cfg.subject_name,
+            parsed_task,
+            bundle,
+            subject=cfg.subject_name,
         )
         final = format_answer(
-            solution, bundle, include_background=False,
+            solution,
+            bundle,
+            include_background=False,
             subject=cfg.subject_name,
         )
         answer_ms = int((time.perf_counter() - _t_answer) * 1000)
@@ -1692,7 +1745,11 @@ def post_ask(payload: AskRequest, request: Request):
         answer_text = error_text
 
     raw_logs = stdout_buffer.getvalue().splitlines()
-    wire_logs = [line.strip() for line in raw_logs if line.strip().startswith("[Main AI") or line.strip().startswith("[Indexer AI")]
+    wire_logs = [
+        line.strip()
+        for line in raw_logs
+        if line.strip().startswith("[Main AI") or line.strip().startswith("[Indexer AI")
+    ]
 
     payload_out = {
         "answer": answer_text,
@@ -1731,6 +1788,7 @@ def post_ask(payload: AskRequest, request: Request):
 # SSE streaming variant — same pipeline, but streams progress events so the
 # frontend can show real-time status updates instead of a blank wait.
 # ---------------------------------------------------------------------------
+
 
 def _sse_event(event: str, data: dict) -> str:
     """Format a single Server-Sent Event."""
@@ -1824,7 +1882,9 @@ async def post_ask_stream(payload: AskRequest, request: Request):
         q_effective = q
         image_text = ""
         if image_paths:
-            yield _sse_event("status", {"stage": "vision", "message": "Reading image attachments..."})
+            yield _sse_event(
+                "status", {"stage": "vision", "message": "Reading image attachments..."}
+            )
             try:
                 image_text = vision_transcribe(image_paths) or ""
             except Exception:
@@ -1903,16 +1963,19 @@ async def post_ask_stream(payload: AskRequest, request: Request):
             cfg.set_subject(subject_name, "server")
 
             # --- Stage 1: Retrieval + parse (parallel) ---------------------
-            yield _sse_event("status", {"stage": "retrieving", "message": "Searching course materials..."})
+            yield _sse_event(
+                "status", {"stage": "retrieving", "message": "Searching course materials..."}
+            )
 
             bundle_future = stream_loop.run_in_executor(
-                None, lambda: _retrieve_bundle_with_router(
+                None,
+                lambda: _retrieve_bundle_with_router(
                     router_ctx=router_ctx,
                     q_effective=q_effective,
                     workspace=workspace,
                     weight_overrides=weight_overrides,
                     cfg=cfg,
-                )
+                ),
             )
             parse_future = (
                 stream_loop.run_in_executor(
@@ -1940,10 +2003,13 @@ async def post_ask_stream(payload: AskRequest, request: Request):
 
             # --- Stage 2: Scoring + solution ------------------------------
             n_snippets = len(bundle.snippets) if bundle.snippets else 0
-            yield _sse_event("status", {
-                "stage": "analyzing",
-                "message": f"Analyzing {n_snippets} relevant excerpt{'s' if n_snippets != 1 else ''}...",
-            })
+            yield _sse_event(
+                "status",
+                {
+                    "stage": "analyzing",
+                    "message": f"Analyzing {n_snippets} relevant excerpt{'s' if n_snippets != 1 else ''}...",
+                },
+            )
 
             _t_answer = time.perf_counter()
             solution = None
@@ -1967,7 +2033,9 @@ async def post_ask_stream(payload: AskRequest, request: Request):
             yield _sse_event("status", {"stage": "formatting", "message": "Preparing answer..."})
 
             final = format_answer(
-                solution, bundle, include_background=False,
+                solution,
+                bundle,
+                include_background=False,
                 subject=cfg.subject_name,
             )
             answer_ms = int((time.perf_counter() - _t_answer) * 1000)
@@ -1976,11 +2044,14 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                 bundle, getattr(final, "citations", [])
             )
 
-            yield _sse_event("answer", {
-                "answer": answer_text,
-                "citations": structured_citations,
-                "logs": [],
-            })
+            yield _sse_event(
+                "answer",
+                {
+                    "answer": answer_text,
+                    "citations": structured_citations,
+                    "logs": [],
+                },
+            )
 
             try:
                 persist_citations = list(structured_citations)
@@ -1996,7 +2067,9 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                     ),
                 )
             except Exception:
-                log.warning("Failed to persist assistant turn for chat_id=%s", chat_id, exc_info=True)
+                log.warning(
+                    "Failed to persist assistant turn for chat_id=%s", chat_id, exc_info=True
+                )
 
             if router_ctx is not None:
                 await stream_loop.run_in_executor(
@@ -2028,7 +2101,9 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                     ),
                 )
             except Exception:
-                log.warning("Failed to persist assistant error turn for chat_id=%s", chat_id, exc_info=True)
+                log.warning(
+                    "Failed to persist assistant error turn for chat_id=%s", chat_id, exc_info=True
+                )
 
     return StreamingResponse(
         _generate(),

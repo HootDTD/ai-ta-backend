@@ -22,7 +22,7 @@ related:
   - shared/conventions
   - shared/security
   - shared/supabase
-last_verified: 2026-07-19
+last_verified: 2026-07-20
 stub: false
 ---
 
@@ -135,12 +135,12 @@ uploads, and FastAPI `BackgroundTasks`.
 2. `_require_course_membership()` → `resolve_auth_context()` (Bearer token → Supabase) then membership check on `search_space_id`; for student-level access, missing membership triggers auto-enroll. 403 otherwise.
 3. Workspace resolution: `WorkspaceManager.get(str(search_space_id))` → `DBWorkspaceRepository` (404 `WorkspaceNotFound`, 500 on config errors). The workspace supplies `class_name`, `subject_name`, materials, and weight overrides.
 4. Attachments (base64 data URLs) are decoded to `runtime/uploads/`; images go through `vision_transcribe()` + `extract_keywords()` and the result is appended to the effective question.
-5. Chat memory: load/create the chat session, build memory context from `memory_summary` + recent turns, persist the user turn (all via `run_async` onto the shared background event loop). Memory context is prepended to the question. The per-turn workspace refresh MERGES into `session.meta` — never replaces it — because meta also carries the orchestrator's `bundle_cache` fingerprint; a blind overwrite here invalidated the session cache on every turn (fixed 2026-06-12).
+5. Chat memory: load/create `app.chat_sessions`, build memory context from `memory_summary` + recent `app.chat_messages`, and persist the user message (all via `run_async` onto the shared background event loop). Every repository query includes the owning `user_id` and course-scoped paths also include `course_id`, even while the backend uses its service-role engine. Memory context is prepended to the question. The per-turn workspace refresh MERGES into `session.metadata_` — never replaces it — because metadata also carries the orchestrator's `bundle_cache` fingerprint.
 5a. Retrieval-mode decision (`ROUTER_ENABLED=true` only): `_prepare_router_context_sync` classifies the raw question NONE/AUGMENT/FRESH using the session bundle cache + a gpt-4o-mini call (see `rag-pipeline.md` step 3a). `None`/FRESH = legacy path.
 6. Weight overrides merge, lowest to highest precedence: env defaults → workspace overrides → per-material overrides → teacher-set weights from `TeacherWeeklyStorage`.
 7. Retrieval (`_retrieve_bundle_with_router` → cache reuse, top-up merge, or legacy `_ask_pgvector` → `retrieval.pipeline.retrieve_for_question`, building a `ResearchBundle`) and `parse_question` run in parallel on a 2-worker `ThreadPoolExecutor`; retrieval stdout is captured via `redirect_stdout`.
 8. `solve_with_bundle()` → `format_answer()` → `_structured_citations_from_bundle()` (only markers the LLM actually used).
-9. Assistant turn + citations persisted (the assistant turn also writes write-only chat keywords — `bundle.found_terms` via `_keywords_from_bundle` — to `chat_turns.keywords` on both happy paths; the streaming error path and the user turn write `[]`. See `rag-pipeline.md` step 14 + `domain-data.md`); memory summary refreshed. When routed, `_persist_router_outcome_sync` saves the bundle to the session cache + writes a `chat_router_decisions` telemetry row (non-fatal on failure). Response: `{answer, logs, citations}` where `logs` is the captured `[Main AI`/`[Indexer AI` wire-log lines.
+9. Assistant message + citations persisted (the assistant message also writes write-only chat keywords — `bundle.found_terms` via `_keywords_from_bundle` — to `app.chat_messages.keywords text[]` on both happy paths; the streaming error path and the user message write `[]`. See `rag-pipeline.md` step 14 + `domain-data.md`); memory summary refreshed. When routed, `_persist_router_outcome_sync` saves snippets to `internal.chat_session_snippets` and writes an `internal.chat_routing_decisions` telemetry row (non-fatal on failure). Response: `{answer, logs, citations}` where `logs` is the captured `[Main AI`/`[Indexer AI` wire-log lines.
 
 `/ask/stream` is the same pipeline as an `async def` SSE generator: blocking stages are pushed to `run_in_executor`, with `status` events (`vision`, `retrieving`, `analyzing`, `formatting`) before a final `answer` or `error` event.
 

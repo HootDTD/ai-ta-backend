@@ -10,6 +10,7 @@ from sqlalchemy import delete, func, select
 from auth import resolve_auth_context
 from chats.service import (
     append_turn,
+    delete_chat_session_for_user,
     get_chat_session_for_user,
     get_or_create_chat_session_for_user,
     refresh_memory_summary,
@@ -210,33 +211,13 @@ def delete_chat(chat_id: str, request: Request):
 
     async def _run():
         async with get_async_session() as db_session:
-            session = await get_chat_session_for_user(
+            deleted = await delete_chat_session_for_user(
                 db_session,
                 chat_id=chat_id,
                 user_id=auth.user_id,
             )
-            if session is None:
+            if not deleted:
                 raise HTTPException(status_code=404, detail="chat not found")
-            await db_session.execute(
-                delete(ChatMessage).where(
-                    ChatMessage.chat_session_id == session.id,
-                    ChatMessage.course_id == session.course_id,
-                    ChatMessage.chat_session_id.in_(
-                        select(ChatSession.id).where(
-                            ChatSession.id == session.id,
-                            ChatSession.user_id == auth.user_id,
-                            ChatSession.course_id == session.course_id,
-                        )
-                    ),
-                )
-            )
-            await db_session.execute(
-                delete(ChatSession).where(
-                    ChatSession.id == session.id,
-                    ChatSession.user_id == auth.user_id,
-                    ChatSession.course_id == session.course_id,
-                )
-            )
             await db_session.commit()
 
     try:
