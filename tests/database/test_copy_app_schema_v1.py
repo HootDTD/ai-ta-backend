@@ -83,8 +83,6 @@ def copied_schema_dsn(request: pytest.FixtureRequest):
             await conn.execute(_SNAPSHOT.read_text(encoding="utf-8"))
             await conn.execute(_CREATE.read_text(encoding="utf-8"))
             await conn.execute(_SEED.read_text(encoding="utf-8"))
-            await conn.execute(_COPY.read_text(encoding="utf-8"))
-            await conn.execute(_RECONCILE.read_text(encoding="utf-8"))
         finally:
             await conn.close()
 
@@ -106,6 +104,10 @@ def copied_schema_dsn(request: pytest.FixtureRequest):
 async def copied_conn(copied_schema_dsn: str):
     conn = await asyncpg.connect(copied_schema_dsn)
     try:
+        # The quarantine is pg_temp, so copy, reconciliation, and assertions
+        # must use this same connection for its full session lifetime.
+        await conn.execute(_COPY.read_text(encoding="utf-8"))
+        await conn.execute(_RECONCILE.read_text(encoding="utf-8"))
         yield conn
     finally:
         await conn.close()

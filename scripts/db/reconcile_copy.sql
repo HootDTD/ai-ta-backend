@@ -1,7 +1,19 @@
--- DB-05 forward-copy reconciliation. Run with psql after copy_app_schema_v1.
+-- DB-05 forward-copy reconciliation. Run with psql after copy_app_schema_v1,
+-- in the same session when its quarantine rows are needed for operator review.
 -- Read-only apart from transaction-local temporary objects and identity-sequence
 -- repair. Every mismatch raises an exception so local rehearsal/CI cannot
 -- continue on partial data. Sequence changes survive the final ROLLBACK.
+
+-- Standalone reconciliation (for example after reverse delta) still exposes an
+-- empty, session-local quarantine. IF NOT EXISTS preserves rows populated by a
+-- forward copy performed earlier on this connection.
+CREATE TEMP TABLE IF NOT EXISTS db05_copy_quarantine (
+    source_table text NOT NULL,
+    source_id text NOT NULL,
+    reason text NOT NULL,
+    source_row jsonb NOT NULL,
+    PRIMARY KEY (source_table, source_id, reason)
+) ON COMMIT PRESERVE ROWS;
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
