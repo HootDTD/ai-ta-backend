@@ -45,6 +45,7 @@ from apollo.persistence.models import (
     MasteryEvent,
     Misconception,
     RejectedProblem,
+    Subject,
 )
 from apollo.provisioning.authored_sets.indexing import index_authored_doc
 from apollo.provisioning.authored_sets.observability import (
@@ -60,6 +61,13 @@ from apollo.provisioning.authored_sets.orchestrator import (
     _tag_mint_chat_fn,
     run_authored_set_provisioning,
 )
+from apollo.provisioning.authored_sets.rehoming import (
+    claim_rehoming_job,
+    complete_rehoming_job,
+    enqueue_rehoming,
+    fail_rehoming_job,
+    run_rehoming,
+)
 from apollo.provisioning.cost_constants import structure_pairing_mode
 from apollo.provisioning.ingest import (
     AuthoredProblem,
@@ -71,7 +79,11 @@ from apollo.provisioning.metered_chat import MeteredChat
 from apollo.provisioning.orchestrator import provision_authored_problem
 from apollo.provisioning.path_enumeration import enumerate_strategy_paths
 from apollo.provisioning.problem_hash import problem_dup_hash
-from apollo.provisioning.promote import promote
+from apollo.provisioning.promote import (
+    PromoteHeldForReview,
+    promote,
+    promote_typed_confirmed,
+)
 from apollo.provisioning.scrape import resolve_or_create_provisional_concept
 from apollo.provisioning.solution import ReferenceSolutionDraft, build_approved_pair
 from apollo.provisioning.tag_mint import ResolvedConcept, TagMintError, tag_and_mint
@@ -103,6 +115,11 @@ class ManualProblemBody(BaseModel):
 class ManualAuthoredSetBody(BaseModel):
     search_space_id: int
     problems: list[ManualProblemBody] = Field(min_length=1)
+    replace_problem_id: int | None = None
+
+
+class AssignConceptBody(BaseModel):
+    concept_id: int
 
 
 class ReferenceSolutionEdit(BaseModel):
@@ -214,6 +231,25 @@ async def create_manual_authored_set(
         auth=auth,
         search_space_id=body.search_space_id,
     )
+    if body.replace_problem_id is not None:
+        previous = await db.get(ConceptProblem, body.replace_problem_id)
+        confirmation = (
+            (previous.provenance or {}).get("typed_confirmation") if previous is not None else None
+        )
+        if (
+            previous is None
+            or int(previous.search_space_id or 0) != body.search_space_id
+            or not isinstance(confirmation, dict)
+            or confirmation.get("status") != "awaiting_teacher_confirmation"
+        ):
+            raise HTTPException(status_code=409, detail="replacement draft is not pending")
+        await _replace_problem_result(
+            db,
+            problem_id=int(previous.id),
+            outcome="discarded",
+            reason="edit_resubmitted",
+        )
+        await db.delete(previous)
     authored = [_manual_authored_problem(problem) for problem in body.problems]
     set_index = await _next_set_index(db, body.search_space_id)
     row = AuthoredSet(
@@ -335,11 +371,17 @@ async def _run_manual_set_background(
                         solution_source="authored",
                         failed_gate=result.failed_gate,
                         diagnostic=result.diagnostic,
+                        reason=result.stage,
                         concept_problem_id=int(concept_problem_id),
                     )
                 )
 
-            counts = {"promoted": 0, "rejected": 0, "held_for_review": 0}
+            counts = {
+                "promoted": 0,
+                "rejected": 0,
+                "held_for_review": 0,
+                "awaiting_teacher_confirmation": 0,
+            }
             for result in results:
                 counts[result.outcome] = counts.get(result.outcome, 0) + 1
             await finalize_ingest_run(
@@ -359,7 +401,10 @@ async def _run_manual_set_background(
                 "problems": [result.model_dump() for result in results],
                 "counts": counts,
             }
-            row.status = "done"
+            # Migration 032's existing status vocabulary already has the right
+            # non-terminal value. Per-problem confirmation state lives in the
+            # result ledger/provenance; no temporary set-level state is needed.
+            row.status = "provisioning" if counts["awaiting_teacher_confirmation"] else "done"
             row.updated_at = datetime.now(UTC)
             await db.commit()
     except Exception as exc:  # noqa: BLE001 - persist failed status, never escape task
@@ -920,13 +965,16 @@ async def _enrich_problem_reviews(
         row = rows.get(int(cp_id)) if cp_id is not None else None
         if row is not None:
             payload = dict(row.payload or {})
+            provenance = dict(row.provenance or {})
             text = str(payload.get("problem_text") or "")
             displayed_text, truncated = _bounded_problem_text(text, full_text=full_text)
             entry = {
                 **entry,
                 "problem_text": displayed_text,
                 "problem_text_truncated": truncated,
-                "review": _review_dict(row.provenance),  # type: ignore[arg-type]
+                "review": _review_dict(provenance),
+                "confirmation": provenance.get("typed_confirmation"),
+                "rehoming": provenance.get("typed_rehoming"),
             }
             if "reference_solution" in payload:
                 entry["reference_solution"] = payload["reference_solution"]
@@ -1136,6 +1184,14 @@ async def edit_authored_problem(
         auth=auth,
         search_space_id=int(row.search_space_id),
     )
+    confirmation = (row.provenance or {}).get("typed_confirmation")
+    if isinstance(confirmation, dict) and confirmation.get("status") == (
+        "awaiting_teacher_confirmation"
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="typed drafts are edited by fresh manual resubmission",
+        )
 
     payload = dict(row.payload or {})
     if body.problem_text is not None:
@@ -1619,6 +1675,432 @@ def _problem_belongs_to_set(
     if problem_id not in minted_ids:
         return False
     return int(problem.search_space_id) == int(authored_set.search_space_id)
+
+
+def typed_confirmation_expiry_at(_constructed_at: str | None = None) -> None:
+    """Disabled-by-default expiry/reminder configuration stub.
+
+    Pending typed drafts intentionally remain actionable indefinitely. A future
+    reminder product can replace this no-op without introducing lifecycle state
+    today.
+    """
+    return None
+
+
+def _replace_result_entry(
+    authored_set: AuthoredSet,
+    *,
+    problem_id: int,
+    outcome: str,
+    reason: str,
+    diagnostic: str = "",
+    failed_gate: int | None = None,
+) -> bool:
+    summary = dict(authored_set.result_summary or {})
+    raw_problems = summary.get("problems")
+    if not isinstance(raw_problems, list):
+        return False
+    replaced = False
+    problems: list[Any] = []
+    for raw in raw_problems:
+        if not isinstance(raw, dict) or raw.get("concept_problem_id") != problem_id:
+            problems.append(raw)
+            continue
+        problems.append(
+            {
+                **raw,
+                "outcome": outcome,
+                "reason": reason,
+                "diagnostic": diagnostic,
+                "failed_gate": failed_gate,
+            }
+        )
+        replaced = True
+    if not replaced:
+        return False
+    counts: dict[str, int] = {}
+    for item in problems:
+        if isinstance(item, dict) and isinstance(item.get("outcome"), str):
+            key = item["outcome"]
+            counts[key] = counts.get(key, 0) + 1
+    summary["problems"] = problems
+    summary["counts"] = counts
+    authored_set.result_summary = summary
+    authored_set.status = (
+        "provisioning" if counts.get("awaiting_teacher_confirmation", 0) > 0 else "done"
+    )
+    authored_set.updated_at = datetime.now(UTC)
+    return True
+
+
+async def _replace_problem_result(
+    db: AsyncSession,
+    *,
+    problem_id: int,
+    outcome: str,
+    reason: str,
+    diagnostic: str = "",
+    failed_gate: int | None = None,
+) -> AuthoredSet | None:
+    """Update the one authored-set ledger entry that owns ``problem_id``."""
+    rows = (
+        (
+            await db.execute(
+                select(AuthoredSet).order_by(AuthoredSet.created_at.desc(), AuthoredSet.id.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for authored_set in rows:
+        if _replace_result_entry(
+            authored_set,
+            problem_id=problem_id,
+            outcome=outcome,
+            reason=reason,
+            diagnostic=diagnostic,
+            failed_gate=failed_gate,
+        ):
+            return authored_set
+    return None
+
+
+async def _typed_problem_hashes(
+    db: AsyncSession,
+    *,
+    search_space_id: int,
+    exclude_problem_id: int,
+) -> set[str]:
+    """Course-wide duplicate inventory for a draft not yet assigned a concept."""
+    payloads = (
+        (
+            await db.execute(
+                select(ConceptProblem.payload)
+                .where(ConceptProblem.search_space_id == search_space_id)
+                .where(ConceptProblem.tier == 2)
+                .where(ConceptProblem.id != exclude_problem_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    hashes: set[str] = set()
+    for payload in payloads:
+        try:
+            hashes.add(problem_dup_hash(Problem.model_validate(payload)))
+        except (ValidationError, ValueError, TypeError):
+            continue
+    return hashes
+
+
+async def _typed_set_problem(
+    db: AsyncSession,
+    *,
+    set_id: int,
+    problem_id: int,
+    auth: Any,
+) -> tuple[AuthoredSet, ConceptProblem]:
+    authored_set = await db.get(AuthoredSet, set_id)
+    if authored_set is None:
+        raise HTTPException(status_code=404, detail="authored set not found")
+    await require_course_teacher(
+        db=db,
+        auth=auth,
+        search_space_id=int(authored_set.search_space_id),
+    )
+    row = await db.get(ConceptProblem, problem_id)
+    if row is None or not _problem_belongs_to_set(authored_set, row, problem_id):
+        raise HTTPException(status_code=404, detail="problem not found in this authored set")
+    return authored_set, row
+
+
+async def _record_confirmation_rejection(
+    db: AsyncSession,
+    *,
+    authored_set: AuthoredSet,
+    row: ConceptProblem,
+    failed_gate: int | None,
+    diagnostic: str,
+) -> None:
+    ingest_run_id = (authored_set.result_summary or {}).get("ingest_run_id")
+    db.add(
+        RejectedProblem(
+            ingest_run_id=int(ingest_run_id) if isinstance(ingest_run_id, int) else None,
+            search_space_id=int(authored_set.search_space_id),
+            concept_id=int(row.concept_id),
+            failed_gate=failed_gate,
+            rejected_stage="typed_confirmation_promotion",
+            diagnostic=diagnostic,
+            payload={
+                "problem_text": (row.payload or {}).get("problem_text", ""),
+                "reason": "duplicate" if failed_gate == 8 else "solve_and_check",
+            },
+        )
+    )
+    if isinstance(ingest_run_id, int):
+        run = await db.get(IngestRun, ingest_run_id)
+        if run is not None:
+            run.n_rejected = int(run.n_rejected or 0) + 1
+
+
+async def _run_rehoming_job_background(*, job_id: int) -> None:
+    """Immediate worker for a durable job; a failed attempt remains retryable."""
+    async with get_async_session() as db:
+        claimed = await claim_rehoming_job(
+            db,
+            job_id=job_id,
+            lease_owner="authored-api-background",
+            lease_seconds=1800,
+        )
+    if claimed is None:
+        return
+    async with get_async_session() as db:
+        resolved: ResolvedConcept | None = None
+        if claimed.requested_concept_id is not None:
+            concept = await db.get(Concept, claimed.requested_concept_id)
+            resolved = ResolvedConcept(
+                concept_id=claimed.requested_concept_id,
+                slug=str(concept.slug if concept is not None else ""),
+            )
+        metered = _make_metered_chat(document_id=None)
+        ok = await run_rehoming(
+            db,
+            get_neo4j_client(),
+            problem_id=claimed.problem_id,
+            chat_fn=_tag_mint_chat_fn(metered),
+            embed_fn=embed_text,
+            resolved_concept=resolved,
+            job_id=claimed.job_id,
+        )
+        if ok:
+            await complete_rehoming_job(db, job_id=claimed.job_id)
+            return
+        row = await db.get(ConceptProblem, claimed.problem_id)
+        state = (row.provenance or {}).get("typed_rehoming") if row is not None else {}
+        diagnostic = state.get("diagnostic", "rehoming failed") if isinstance(state, dict) else ""
+        await fail_rehoming_job(db, job_id=claimed.job_id, error=str(diagnostic))
+
+
+@router.post("/authored-sets/{set_id}/problems/{problem_id}/confirm")
+async def confirm_typed_problem(
+    set_id: int,
+    problem_id: int,
+    request: Request,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """Approve one constructed typed draft, then enqueue non-blocking re-homing."""
+    auth = await require_user(request)
+    authored_set, row = await _typed_set_problem(
+        db,
+        set_id=set_id,
+        problem_id=problem_id,
+        auth=auth,
+    )
+    confirmation = (row.provenance or {}).get("typed_confirmation")
+    if not isinstance(confirmation, dict) or confirmation.get("status") != (
+        "awaiting_teacher_confirmation"
+    ):
+        raise HTTPException(status_code=409, detail="typed draft is not awaiting confirmation")
+
+    confirmed_at = datetime.now(UTC).isoformat()
+    result = await promote_typed_confirmed(
+        db,
+        problem=dict(row.payload or {}),
+        concept_problem_id=int(row.id),
+        existing_problem_hashes=await _typed_problem_hashes(
+            db,
+            search_space_id=int(authored_set.search_space_id),
+            exclude_problem_id=int(row.id),
+        ),
+        confirmed_by=str(auth.user_id),
+        confirmed_at=confirmed_at,
+    )
+    if result.promoted:
+        row.provenance = {
+            **(row.provenance or {}),
+            "typed_confirmation": {
+                **confirmation,
+                "status": "teacher_confirmed",
+                "confirmed_by": str(auth.user_id),
+                "confirmed_at": confirmed_at,
+            },
+        }
+        job_id = await enqueue_rehoming(db, row)
+        _replace_result_entry(
+            authored_set,
+            problem_id=problem_id,
+            outcome="promoted",
+            reason="rehoming_pending",
+        )
+        ingest_run_id = (authored_set.result_summary or {}).get("ingest_run_id")
+        if isinstance(ingest_run_id, int):
+            run = await db.get(IngestRun, ingest_run_id)
+            if run is not None:
+                run.n_promoted = int(run.n_promoted or 0) + 1
+        await db.commit()
+        background.add_task(_run_rehoming_job_background, job_id=job_id)
+        return {
+            "promoted": True,
+            "failed_gate": None,
+            "diagnostic": "",
+            "rehoming": "rehoming_pending",
+            "job_id": job_id,
+        }
+
+    outcome = "held_for_review" if isinstance(result, PromoteHeldForReview) else "rejected"
+    reason = (
+        "solve_unresolved"
+        if isinstance(result, PromoteHeldForReview)
+        else ("duplicate" if result.failed_gate == 8 else "solve_refuted")
+    )
+    row.provenance = {
+        **(row.provenance or {}),
+        "typed_confirmation": {
+            **confirmation,
+            "status": "teacher_confirmed_not_promoted",
+            "confirmed_by": str(auth.user_id),
+            "confirmed_at": confirmed_at,
+            "diagnostic": result.diagnostic,
+        },
+    }
+    _replace_result_entry(
+        authored_set,
+        problem_id=problem_id,
+        outcome=outcome,
+        reason=reason,
+        diagnostic=result.diagnostic,
+        failed_gate=result.failed_gate,
+    )
+    if outcome == "rejected":
+        await _record_confirmation_rejection(
+            db,
+            authored_set=authored_set,
+            row=row,
+            failed_gate=result.failed_gate,
+            diagnostic=result.diagnostic,
+        )
+    await db.commit()
+    return {
+        "promoted": False,
+        "outcome": outcome,
+        "failed_gate": result.failed_gate,
+        "diagnostic": result.diagnostic,
+    }
+
+
+@router.post("/authored-sets/{set_id}/problems/{problem_id}/discard")
+async def discard_typed_problem(
+    set_id: int,
+    problem_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    auth = await require_user(request)
+    authored_set, row = await _typed_set_problem(
+        db,
+        set_id=set_id,
+        problem_id=problem_id,
+        auth=auth,
+    )
+    confirmation = (row.provenance or {}).get("typed_confirmation")
+    if not isinstance(confirmation, dict) or confirmation.get("status") != (
+        "awaiting_teacher_confirmation"
+    ):
+        raise HTTPException(status_code=409, detail="typed draft is not awaiting confirmation")
+    _replace_result_entry(
+        authored_set,
+        problem_id=problem_id,
+        outcome="discarded",
+        reason="teacher_discarded",
+    )
+    await db.delete(row)
+    await db.commit()
+    return {"discarded": True, "problem_id": problem_id}
+
+
+async def _validate_existing_concept(
+    db: AsyncSession,
+    *,
+    concept_id: int,
+    search_space_id: int,
+) -> Concept:
+    concept = await db.get(Concept, concept_id)
+    subject = await db.get(Subject, int(concept.subject_id)) if concept is not None else None
+    if concept is None or subject is None or int(subject.search_space_id) != search_space_id:
+        raise HTTPException(status_code=404, detail="concept not found in this course")
+    return concept
+
+
+async def _queue_rehoming_action(
+    *,
+    set_id: int,
+    problem_id: int,
+    requested_concept_id: int | None,
+    request: Request,
+    background: BackgroundTasks,
+    db: AsyncSession,
+) -> dict:
+    auth = await require_user(request)
+    authored_set, row = await _typed_set_problem(
+        db,
+        set_id=set_id,
+        problem_id=problem_id,
+        auth=auth,
+    )
+    if row.tier != 2:
+        raise HTTPException(status_code=409, detail="problem is not promoted")
+    if requested_concept_id is not None:
+        await _validate_existing_concept(
+            db,
+            concept_id=requested_concept_id,
+            search_space_id=int(authored_set.search_space_id),
+        )
+    job_id = await enqueue_rehoming(
+        db,
+        row,
+        requested_concept_id=requested_concept_id,
+    )
+    await db.commit()
+    background.add_task(_run_rehoming_job_background, job_id=job_id)
+    return {"rehoming": "rehoming_pending", "job_id": job_id}
+
+
+@router.post("/authored-sets/{set_id}/problems/{problem_id}/rehoming/retry")
+async def retry_typed_rehoming(
+    set_id: int,
+    problem_id: int,
+    request: Request,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return await _queue_rehoming_action(
+        set_id=set_id,
+        problem_id=problem_id,
+        requested_concept_id=None,
+        request=request,
+        background=background,
+        db=db,
+    )
+
+
+@router.post("/authored-sets/{set_id}/problems/{problem_id}/rehoming/assign")
+async def assign_typed_problem_concept(
+    set_id: int,
+    problem_id: int,
+    body: AssignConceptBody,
+    request: Request,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return await _queue_rehoming_action(
+        set_id=set_id,
+        problem_id=problem_id,
+        requested_concept_id=body.concept_id,
+        request=request,
+        background=background,
+        db=db,
+    )
 
 
 def _candidate_from_row(row: ConceptProblem) -> SimpleNamespace:

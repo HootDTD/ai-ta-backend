@@ -50,6 +50,8 @@ from typing import Any
 import sympy
 from pydantic import BaseModel, Field
 
+from apollo.ontology import NODE_CONTENT_TYPES, EdgeType, build_node
+from apollo.persistence.learner_model_seed import _ENTRY_TYPE_TO_KIND_PREFIX
 from apollo.provisioning.generation_contract import (
     GENERIC_ID_TOKENS,
     SHARED_CONSTANT_SYMBOLS,
@@ -64,6 +66,8 @@ __all__ = [
     "GENERATION_DEFECT_CLASSES",
     "DerivationError",
     "DerivedGraph",
+    "TypedConstructionDefect",
+    "build_ordered_problem",
     "derive_reference_graph",
     "find_derivation_defects",
     "kc_granularity_enabled",
@@ -101,12 +105,274 @@ class DerivationError(RuntimeError):
     feedback retry)."""
 
 
+class TypedConstructionDefect(ValueError):
+    """Mechanical defect in a manual typed ordered-step response.
+
+    The exception carries every concrete validator diagnostic from one attempt so
+    the construction caller can feed it back verbatim without inventing a second
+    validation vocabulary.
+    """
+
+    def __init__(self, diagnostics: Sequence[str]):
+        self.diagnostics = tuple(str(item) for item in diagnostics)
+        super().__init__("; ".join(self.diagnostics))
+
+
 class DerivedGraph(BaseModel):
     reference_solution: list[dict]
     target_unknown: str = ""
     symbolic_mappings: dict[str, str] = Field(default_factory=dict)
     bound_variables: list[str] = Field(default_factory=list)
     retried: bool = False
+
+
+def _declared_references(step: dict) -> list[str]:
+    raw = step.get("references")
+    if raw is None and isinstance(step.get("content"), dict):
+        raw = step["content"].get("references")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise TypedConstructionDefect(
+            [f"step_schema: {step.get('id')!r} references must be an array of prior ids"]
+        )
+    references: list[str] = []
+    for value in raw:
+        if not isinstance(value, str) or not value:
+            raise TypedConstructionDefect(
+                [f"step_schema: {step.get('id')!r} references must contain non-empty ids"]
+            )
+        references.append(value)
+    return references
+
+
+def _definition_symbol(step: dict) -> str | None:
+    """Return the case-sensitive symbol introduced by an ordered step, if any."""
+    content = step.get("content") or {}
+    entry_type = step.get("entry_type")
+    if entry_type == "variable_mapping":
+        value = str(content.get("symbol") or "")
+        return value if value.isidentifier() else None
+    if entry_type == "definition":
+        for field in ("symbol", "term", "concept"):
+            value = str(content.get(field) or "")
+            if value.isidentifier():
+                return value
+    if entry_type == "equation":
+        symbolic = str(content.get("symbolic") or "")
+        if symbolic.count("=") == 1:
+            lhs = symbolic.split("=", 1)[0].strip()
+            if lhs.isidentifier():
+                return lhs
+    return None
+
+
+def _ordered_step_symbols(step: dict, local: dict[str, Any]) -> tuple[set[str], str | None]:
+    """Return symbols consumed by a concrete equation and its optional LHS definition."""
+    if step.get("entry_type") != "equation" or _is_display(step):
+        return set(), _definition_symbol(step)
+    symbolic = str((step.get("content") or {}).get("symbolic") or "")
+    step_id = str(step.get("id") or "")
+    defect = _equation_parse_defect(step, local)
+    if defect:
+        raise TypedConstructionDefect([defect])
+    expr = parse_zero_form(symbolic, entry_id=step_id, local_dict=local)
+    used = {symbol.name for symbol in expr.free_symbols}
+    defined = _definition_symbol(step)
+    if defined and symbolic.count("=") == 1:
+        rhs = symbolic.split("=", 1)[1]
+        try:
+            rhs_expr = sympy.sympify(rhs, locals=local)
+            used = {symbol.name for symbol in rhs_expr.free_symbols}
+        except Exception as exc:  # noqa: BLE001 - reported as the construction defect
+            raise TypedConstructionDefect(
+                [f"equation_parse: {step_id}: sympify failed on {rhs.strip()!r}: {exc}"]
+            ) from exc
+    return used, defined
+
+
+def build_ordered_problem(
+    authored: Any,
+    ordered_steps: Sequence[dict],
+    *,
+    symbol_table: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build a schema-valid ``Problem`` from dependency-free ordered typed steps.
+
+    Symbolic dependencies are definition/use edges to prior definers. Equationless
+    nodes use declared ``references`` when supplied, otherwise adjacent precedence.
+    Procedure order is reassigned contiguously, which makes ``PRECEDES`` an
+    unbroken list-order chain in ``Problem.to_kg_graph``. The function either
+    returns a fully validated problem dict or raises ``TypedConstructionDefect``;
+    callers never receive a partial graph.
+    """
+    if not isinstance(ordered_steps, Sequence) or isinstance(ordered_steps, (str, bytes)):
+        raise TypedConstructionDefect(["step_schema: steps must be a non-empty array"])
+    raw_steps = list(ordered_steps)
+    if not raw_steps:
+        raise TypedConstructionDefect(["step_schema: steps must be a non-empty array"])
+    if symbol_table is not None and (
+        not isinstance(symbol_table, dict)
+        or not all(
+            isinstance(key, str) and key and isinstance(value, dict)
+            for key, value in symbol_table.items()
+        )
+    ):
+        raise TypedConstructionDefect(
+            ["symbol_table: must map each case-sensitive symbol to an entry object"]
+        )
+
+    diagnostics: list[str] = []
+    seen: set[str] = set()
+    allowed_types = set(_ENTRY_TYPE_TO_KIND_PREFIX)
+    for index, step in enumerate(raw_steps, start=1):
+        if not isinstance(step, dict):
+            diagnostics.append(f"step_schema: step {index} must be an object")
+            continue
+        if "depends_on" in step:
+            diagnostics.append(
+                f"step_schema: {step.get('id')!r} must not declare depends_on; dependencies are derived"
+            )
+        extra_keys = set(step) - {"entry_type", "id", "content", "references"}
+        if extra_keys:
+            diagnostics.append(
+                f"step_schema: {step.get('id')!r} has unsupported keys {sorted(extra_keys)!r}"
+            )
+        step_id = str(step.get("id") or "")
+        if not step_id:
+            diagnostics.append(f"step_schema: step {index} has no id")
+        elif step_id in seen:
+            diagnostics.append(f"duplicate_id: {step_id}")
+        else:
+            seen.add(step_id)
+            opaque = _opaque_id_defect(step_id)
+            if opaque:
+                diagnostics.append(opaque)
+            semantic = _semantic_key_defect(step)
+            if semantic:
+                diagnostics.append(semantic)
+        if step.get("entry_type") not in allowed_types:
+            diagnostics.append(
+                f"step_schema: {step_id or index!r} entry_type must be one of {sorted(allowed_types)}"
+            )
+        if not isinstance(step.get("content"), dict):
+            diagnostics.append(f"step_schema: {step_id or index!r} content must be an object")
+        elif step.get("entry_type") in NODE_CONTENT_TYPES:
+            try:
+                build_node(
+                    node_type=step["entry_type"],
+                    node_id=step_id or str(index),
+                    attempt_id=0,
+                    source="reference",
+                    content=step["content"],
+                )
+            except Exception as exc:  # noqa: BLE001 - normalized construction surface
+                diagnostics.append(f"step_schema: {step_id or index!r} content invalid: {exc}")
+    if diagnostics:
+        raise TypedConstructionDefect(diagnostics)
+
+    problem_seed = authored.to_problem_dict([])
+    table_names = set(symbol_table or {})
+    local_names = (
+        table_names
+        | set(problem_seed.get("given_values") or {})
+        | set(problem_seed.get("bound_variables") or [])
+        | set(SHARED_CONSTANT_SYMBOLS)
+    )
+    target = str(problem_seed.get("target_unknown") or "")
+    if target.isidentifier():
+        local_names.add(target)
+    local = {name: sympy.Symbol(name) for name in local_names if name.isidentifier()}
+    local["Rational"] = sympy.Rational
+
+    derived: list[dict[str, Any]] = []
+    prior_ids: list[str] = []
+    definers: dict[str, str] = {}
+    procedure_order = 0
+    for index, raw_step in enumerate(raw_steps, start=1):
+        step = dict(raw_step)
+        step_id = str(step["id"])
+        content = dict(step["content"])
+        content.pop("references", None)
+        references = _declared_references(step)
+        unknown_refs = [ref for ref in references if ref not in prior_ids]
+        if unknown_refs:
+            diagnostics.append(
+                f"declared_reference: {step_id!r} references non-prior ids {unknown_refs!r}"
+            )
+        try:
+            used_symbols, defined_symbol = _ordered_step_symbols(step, local)
+        except TypedConstructionDefect as exc:
+            diagnostics.extend(exc.diagnostics)
+            used_symbols, defined_symbol = set(), _definition_symbol(step)
+
+        symbolic = step.get("entry_type") == "equation" and not _is_display(step)
+        if symbolic:
+            undefined = sorted(
+                name for name in used_symbols if name not in local_names and name not in definers
+            )
+            if undefined:
+                diagnostics.append(
+                    f"symbol_closure: {step_id!r} uses undefined case-sensitive symbols {undefined!r}"
+                )
+            dependencies = []
+            for name in sorted(used_symbols):
+                definer = definers.get(name)
+                if definer is not None and definer not in dependencies:
+                    dependencies.append(definer)
+        else:
+            dependencies = list(dict.fromkeys(references))
+            if not references and prior_ids:
+                dependencies = [prior_ids[-1]]
+
+        if step.get("entry_type") == "procedure_step":
+            procedure_order += 1
+            content["order"] = procedure_order
+            used_equations = content.get("uses_equations", []) or []
+            if not isinstance(used_equations, list):
+                diagnostics.append(
+                    f"step_schema: procedure {step_id!r} uses_equations must be an array"
+                )
+                used_equations = []
+            prior_equations = {item["id"] for item in derived if item["entry_type"] == "equation"}
+            bad_equations = [str(eq) for eq in used_equations if str(eq) not in prior_equations]
+            if bad_equations:
+                diagnostics.append(
+                    f"declared_reference: procedure {step_id!r} uses non-prior equations {bad_equations!r}"
+                )
+
+        clean = {
+            "step": index,
+            "entry_type": step["entry_type"],
+            "id": step_id,
+            "content": content,
+            "depends_on": dependencies,
+        }
+        if step.get("entity_key") is not None:
+            clean["entity_key"] = step["entity_key"]
+        derived.append(clean)
+        prior_ids.append(step_id)
+        if defined_symbol:
+            definers[defined_symbol] = step_id
+            local_names.add(defined_symbol)
+            local.setdefault(defined_symbol, sympy.Symbol(defined_symbol))
+
+    if diagnostics:
+        raise TypedConstructionDefect(diagnostics)
+
+    problem_dict = {**problem_seed, "reference_solution": derived}
+    if symbol_table is not None:
+        problem_dict["symbol_table"] = symbol_table
+    try:
+        problem = Problem.model_validate(problem_dict)
+        problem.to_kg_graph(attempt_id=0).topological_order(EdgeType.DEPENDS_ON)
+    except Exception as exc:  # noqa: BLE001 - one typed construction failure surface
+        raise TypedConstructionDefect([f"graph_derivation: {exc}"]) from exc
+    return {
+        **problem_dict,
+        **problem.model_dump(exclude={"reference_solution"}),
+        "reference_solution": [step.model_dump() for step in problem.reference_solution],
+    }
 
 
 # --------------------------------------------------------------------------- #

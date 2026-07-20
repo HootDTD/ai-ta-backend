@@ -2450,3 +2450,88 @@ def test_equivalence_signature_payloadless_same_name_same_kind_merges():
     # name is a discriminator: a different label stays distinct.
     d = EntitySpec(canonical_key="def.d", kind="definition", display_name="Net torque", payload={})
     assert _equivalence_signature(a) != _equivalence_signature(d)
+
+
+# --------------------------------------------------------------------------- #
+# Re-homing's ``diagnose_existing_symbols`` flag (§4): a foreign-symbol check
+# against the target concept's ALREADY-authored canonical symbols, isolated
+# from the mint itself (informational only — never blocks the mint).
+# --------------------------------------------------------------------------- #
+
+
+async def test_diagnose_existing_symbols_flags_foreign_symbol_against_prior_canon(db_session):
+    """The FIRST mint into a concept authors canonical symbols {P, v, rho}. A
+    SECOND mint (into the SAME concept, ``diagnose_existing_symbols=True``)
+    whose problem introduces a symbol ('Z') never given/declared and not
+    covered by the first mint's canonical set/normalization map gets a
+    non-None ``concept_symbol_diagnostic`` naming it — proving
+    ``tag_and_mint`` threads the pre-authoring foreign-symbol check through to
+    ``MintPlan`` when the flag is set."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-diagnose")
+    pair1 = _approved_pair(search_space_id=ss_id)
+    plan1 = await tag_and_mint(
+        db_session,
+        pair1,
+        chat_fn=_chat_returning(_tag_payload()),
+        embed_fn=_embed_distinct,
+    )
+    assert plan1.concept_symbol_diagnostic is None  # nothing to diagnose on the first mint
+
+    problem2 = _problem_dict(
+        problem_id="scrape.p2-diagnose",
+        extra_steps=[
+            {
+                "step": 3,
+                "entry_type": "equation",
+                "id": "unrelated",
+                "content": {"label": "unrelated eq", "symbolic": "Z - 5"},
+                "depends_on": [],
+            }
+        ],
+    )
+    pair2 = _approved_pair(problem=problem2, search_space_id=ss_id)
+    plan2 = await tag_and_mint(
+        db_session,
+        pair2,
+        chat_fn=_chat_returning(_tag_payload()),
+        embed_fn=_embed_distinct,
+        diagnose_existing_symbols=True,
+    )
+    assert plan2.concept_id == plan1.concept_id  # same concept (slug-resolved)
+    assert plan2.concept_symbol_diagnostic is not None
+    assert "Z" in plan2.concept_symbol_diagnostic
+
+
+async def test_diagnose_existing_symbols_off_by_default_never_diagnoses(db_session):
+    """Without the flag, ``concept_symbol_diagnostic`` stays ``None`` even when a
+    later mint would otherwise flag a foreign symbol — the diagnostic is opt-in
+    (re-homing only), never a silent default-on behavior change for the
+    PDF/generic call sites."""
+    ss_id, _subj = await _seed_course(db_session, slug="c-diagnose-off")
+    pair1 = _approved_pair(search_space_id=ss_id)
+    await tag_and_mint(
+        db_session,
+        pair1,
+        chat_fn=_chat_returning(_tag_payload()),
+        embed_fn=_embed_distinct,
+    )
+    problem2 = _problem_dict(
+        problem_id="scrape.p2-diagnose-off",
+        extra_steps=[
+            {
+                "step": 3,
+                "entry_type": "equation",
+                "id": "unrelated",
+                "content": {"label": "unrelated eq", "symbolic": "Z - 5"},
+                "depends_on": [],
+            }
+        ],
+    )
+    pair2 = _approved_pair(problem=problem2, search_space_id=ss_id)
+    plan2 = await tag_and_mint(
+        db_session,
+        pair2,
+        chat_fn=_chat_returning(_tag_payload()),
+        embed_fn=_embed_distinct,
+    )
+    assert plan2.concept_symbol_diagnostic is None

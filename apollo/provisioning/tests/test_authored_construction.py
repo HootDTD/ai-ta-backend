@@ -31,39 +31,42 @@ def _chat_returning(payload):
     return _chat
 
 
-def _argument_reference_solution() -> list[dict]:
+def _chat_sequence(payloads):
+    calls = []
+
+    def _chat(*_a, **kwargs) -> str:
+        calls.append(kwargs)
+        payload = payloads[len(calls) - 1]
+        return payload if isinstance(payload, str) else json.dumps(payload)
+
+    _chat.calls = calls
+    return _chat
+
+
+def _argument_steps() -> list[dict]:
     return [
         {
-            "step": 1,
             "entry_type": "definition",
             "id": "def_fed",
             "content": {"concept": "federalism", "meaning": "divided sovereignty"},
-            "depends_on": [],
         },
         {
-            "step": 2,
             "entry_type": "condition",
             "id": "premise",
             "content": {"applies_when": "authority is split across levels"},
-            "depends_on": ["def_fed"],
         },
         {
-            "step": 3,
             "entry_type": "procedure_step",
             "id": "veto",
-            "content": {"order": 1, "action": "identify veto points", "purpose": "show checks"},
-            "depends_on": ["premise"],
+            "content": {"action": "identify veto points", "purpose": "show checks"},
         },
         {
-            "step": 4,
             "entry_type": "procedure_step",
             "id": "concl",
             "content": {
-                "order": 2,
                 "action": "weigh checks vs blurred responsibility",
                 "purpose": "reach verdict",
             },
-            "depends_on": ["veto"],
         },
     ]
 
@@ -81,7 +84,7 @@ def _worked_argument() -> AuthoredProblem:
 
 async def test_construct_worked_argument():
     authored = _worked_argument()
-    chat = _chat_returning({"reference_solution": _argument_reference_solution()})
+    chat = _chat_returning({"steps": _argument_steps()})
     draft = await construct_authored_reference(authored, chat_fn=chat)
     assert draft.solution_source == "authored"
     assert draft.provenance["completeness"] == "worked"
@@ -101,7 +104,7 @@ async def test_construct_answer_only_is_authored_not_flagged():
         solution="Yes, by distributing authority so ambition checks ambition.",
         completeness="answer_only",
     )
-    chat = _chat_returning({"reference_solution": _argument_reference_solution()})
+    chat = _chat_returning({"steps": _argument_steps()})
     draft = await construct_authored_reference(authored, chat_fn=chat)
     assert draft.solution_source == "authored"
     assert draft.provenance["flagged"] is False
@@ -114,7 +117,7 @@ async def test_construct_none_is_generated_and_flagged():
         statement="Explain the separation of powers.",
         completeness="none",
     )
-    chat = _chat_returning({"reference_solution": _argument_reference_solution()})
+    chat = _chat_returning({"steps": _argument_steps()})
     draft = await construct_authored_reference(authored, chat_fn=chat)
     assert draft.solution_source == "generated"
     assert draft.provenance["flagged"] is True  # 'none' is flagged for review
@@ -127,18 +130,16 @@ async def test_construct_rejects_node_type_outside_universal_mint_map():
     ALLOWED for ANY subject (subject-agnostic), so the rejected type must be a
     genuinely-foreign one."""
     authored = _worked_argument()
-    bad = _argument_reference_solution()
+    bad = _argument_steps()
     bad.append(
         {
-            "step": 5,
             "entry_type": "NOT_A_REAL_TYPE",
-            "id": "x",
+            "id": "foreign_node_type",
             "content": {},
-            "depends_on": [],
         }
     )
-    chat = _chat_returning({"reference_solution": bad})
-    with pytest.raises(SolutionDraftError, match="mint map"):
+    chat = _chat_returning({"steps": bad})
+    with pytest.raises(SolutionDraftError, match="entry_type must be one of"):
         await construct_authored_reference(authored, chat_fn=chat)
 
 
@@ -148,17 +149,15 @@ async def test_construct_allows_equation_node_for_prose_subject():
     whether the symbolic rigor applies.) Old code raised here for a 'qualitative'
     subject."""
     authored = _worked_argument()
-    mixed = _argument_reference_solution()
+    mixed = _argument_steps()
     mixed.append(
         {
-            "step": 5,
             "entry_type": "equation",
-            "id": "eq",
+            "id": "compare_outcomes",
             "content": {"symbolic": "x - y", "label": "eq"},
-            "depends_on": [],
         }
     )
-    chat = _chat_returning({"reference_solution": mixed})
+    chat = _chat_returning({"steps": mixed, "symbol_table": {"x": {}, "y": {}}})
     draft = await construct_authored_reference(authored, chat_fn=chat)  # no raise
     assert any(s["entry_type"] == "equation" for s in draft.reference_solution)
 
@@ -170,14 +169,13 @@ async def test_construct_fail_closed_on_unparseable():
         await construct_authored_reference(authored, chat_fn=chat)
 
 
-async def test_construct_fail_closed_on_non_problem_valid():
-    """A reference_solution whose depends_on is dangling fails Problem validation
-    -> fail-closed."""
+async def test_construct_fail_closed_on_non_prior_declared_reference():
+    """Declared references must resolve to an earlier meaningful step."""
     authored = _worked_argument()
-    broken = _argument_reference_solution()
-    broken[0]["depends_on"] = ["NONEXISTENT"]
-    chat = _chat_returning({"reference_solution": broken})
-    with pytest.raises(SolutionDraftError, match="not Problem-valid"):
+    broken = _argument_steps()
+    broken[0]["references"] = ["later_step"]
+    chat = _chat_returning({"steps": broken})
+    with pytest.raises(SolutionDraftError, match="references non-prior ids"):
         await construct_authored_reference(authored, chat_fn=chat)
 
 
@@ -196,35 +194,140 @@ async def test_construct_worked_quantitative_with_equation_nodes():
     )
     ref = [
         {
-            "step": 1,
             "entry_type": "equation",
             "id": "cont",
             "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "continuity"},
-            "depends_on": [],
         },
         {
-            "step": 2,
             "entry_type": "procedure_step",
             "id": "solve",
             "content": {
-                "order": 1,
                 "action": "solve for P2",
                 "purpose": "answer",
                 "uses_equations": ["cont"],
             },
-            "depends_on": ["cont"],
         },
     ]
-    chat = _chat_returning({"reference_solution": ref})
+    chat = _chat_returning(
+        {
+            "steps": ref,
+            "symbol_table": {"rho": {}, "A1": {}, "A2": {}, "v2": {}},
+        }
+    )
     draft = await construct_authored_reference(authored, chat_fn=chat)
     assert draft.solution_source == "authored"
 
 
 async def test_build_authored_approved_pair_uses_authored_id():
     authored = _worked_argument()
-    chat = _chat_returning({"reference_solution": _argument_reference_solution()})
+    chat = _chat_returning({"steps": _argument_steps()})
     draft = await construct_authored_reference(authored, chat_fn=chat)
     pair = build_authored_approved_pair(authored, draft, search_space_id=7)
     assert pair.problem["id"] == "authored.fed1"  # matches the Tier-1 problem_code
     assert pair.search_space_id == 7
     assert pair.solution_source == "authored"
+
+
+@pytest.mark.parametrize(
+    ("bad_step", "diagnostic"),
+    [
+        (
+            {
+                "entry_type": "definition",
+                "id": "step_1",
+                "content": {"concept": "federalism", "meaning": "divided sovereignty"},
+            },
+            "semantic_key",
+        ),
+        (
+            {
+                "entry_type": "equation",
+                "id": "calculate_balance",
+                "content": {"symbolic": "answer = missing + 1"},
+            },
+            "symbol_closure",
+        ),
+        (
+            {
+                "entry_type": "equation",
+                "id": "calculate_balance",
+                "content": {"symbolic": "answer = x(x + 1)"},
+            },
+            "equation_parse",
+        ),
+    ],
+)
+async def test_construct_repairs_one_mechanical_defect(bad_step, diagnostic):
+    authored = _worked_argument()
+    bad_payload: dict = {"steps": [bad_step]}
+    if diagnostic == "equation_parse":
+        bad_payload["symbol_table"] = {"x": {}}
+    chat = _chat_sequence(
+        [
+            bad_payload,
+            {"steps": _argument_steps()},
+        ]
+    )
+
+    draft = await construct_authored_reference(authored, chat_fn=chat)
+
+    assert draft.provenance["construction_attempts"] == 2
+    assert diagnostic in chat.calls[1]["messages"][-1]["content"]
+    assert draft.provenance["construction_diagnostics"][0].startswith("attempt 1:")
+
+
+@pytest.mark.parametrize(
+    "bad_payload",
+    [
+        pytest.param(["steps", "not", "an", "object"], id="non_dict_response"),
+        pytest.param(
+            {"steps": _argument_steps(), "unexpected_key": "x"}, id="unsupported_extra_key"
+        ),
+        pytest.param({"steps": "not-a-list"}, id="steps_not_a_list"),
+    ],
+)
+async def test_construct_repairs_response_schema_defect(bad_payload):
+    """A malformed top-level JSON envelope (not an object, an unsupported key, or
+    a non-list ``steps``) is caught by the response-schema guard BEFORE
+    ``build_ordered_problem`` runs, surfaces as a ``response_schema:`` repair
+    diagnostic, and still repairs successfully on the next attempt."""
+    chat = _chat_sequence(
+        [
+            bad_payload,
+            {"steps": _argument_steps()},
+        ]
+    )
+
+    draft = await construct_authored_reference(_worked_argument(), chat_fn=chat)
+
+    assert draft.provenance["construction_attempts"] == 2
+    assert draft.provenance["construction_diagnostics"][0].startswith("attempt 1: response_schema:")
+
+
+async def test_construct_exhaustion_accumulates_every_attempt_diagnostic():
+    chat = _chat_sequence(
+        [
+            {"steps": [{"entry_type": "definition", "id": "step_1", "content": {}}]},
+            {
+                "steps": [
+                    {
+                        "entry_type": "equation",
+                        "id": "broken_equation",
+                        "content": {"symbolic": "x("},
+                    }
+                ]
+            },
+            "not json",
+        ]
+    )
+
+    with pytest.raises(SolutionDraftError) as exc_info:
+        await construct_authored_reference(_worked_argument(), chat_fn=chat)
+
+    diagnostic = str(exc_info.value)
+    assert "attempt 1:" in diagnostic
+    assert "attempt 2:" in diagnostic
+    assert "attempt 3:" in diagnostic
+    final_prompt = chat.calls[2]["messages"][-1]["content"]
+    assert "attempt 1:" in final_prompt
+    assert "attempt 2:" in final_prompt

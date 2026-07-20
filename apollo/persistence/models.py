@@ -994,6 +994,46 @@ class ProvisioningJob(Base):
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 
+class RehomingJob(Base):
+    """Durable SKIP-LOCKED queue for post-promotion typed-problem re-homing.
+
+    The problem is already Tier 2 while this job is open. ``requested_concept_id``
+    is populated only for a teacher's manual existing-concept assignment; NULL
+    runs the unchanged automatic tag/mint path. The partial open-job uniqueness
+    constraint is migration-owned, matching :class:`ProvisioningJob`.
+    """
+
+    __tablename__ = "apollo_rehoming_jobs"
+
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    search_space_id = Column(
+        Integer,
+        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    concept_problem_id = Column(
+        BigInteger,
+        ForeignKey("apollo_concept_problems.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    requested_concept_id = Column(
+        BigInteger,
+        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    state = Column(Text, nullable=False, server_default=text("'pending'"), default="pending")
+    lease_owner = Column(Text, nullable=True)
+    lease_expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    attempt_count = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+
 class RejectedProblem(Base):
     """A gate failure + diagnostic + the rejected payload (migration 030, §8B).
     ``concept_id`` ON DELETE SET NULL: a pruned concept must not delete the audit

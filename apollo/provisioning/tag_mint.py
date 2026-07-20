@@ -136,6 +136,7 @@ class MintPlan(BaseModel):
     # that would introduce a self-loop/cycle (acyclicity guard, #73), and an edge
     # whose resolved endpoint belongs to a FOREIGN concept (endpoint guard, #74).
     dropped_prereq_pairs: list[tuple[str, str]] = []
+    concept_symbol_diagnostic: str | None = None
 
 
 def _judge_distinct(*_a, **_k) -> str:
@@ -460,6 +461,7 @@ async def tag_and_mint(
     chat_fn: Callable[..., str],
     embed_fn: Callable[[str], Sequence[float]],
     resolved_concept: ResolvedConcept | None = None,
+    diagnose_existing_symbols: bool = False,
 ) -> MintPlan:
     """Tag the concept, author its canonical symbols, dedup + mint the reference
     and misconception entities, insert the drafted prereq edges, and return a
@@ -495,6 +497,23 @@ async def tag_and_mint(
             slug=concept_slug,
             display_name=display_name,
         )
+
+    concept_row = await db.get(Concept, concept_id)
+    canonical_before = (
+        set(dict(concept_row.canonical_symbols or {}).get("symbols") or [])
+        if diagnose_existing_symbols
+        else set()
+    )
+    if canonical_before:
+        from apollo.provisioning.promotion_lint import concept_symbol_diagnostic
+
+        symbol_diagnostic = concept_symbol_diagnostic(
+            problem,
+            canonical_symbols=canonical_before,
+            normalization_map=dict(concept_row.normalization_map or {}),
+        )
+    else:
+        symbol_diagnostic = None
 
     # --- 3. Author canonical symbols (gate-4 non-vacuity) ------------------- #
     symbols, normalization = _author_symbol_set(problem)
@@ -747,4 +766,5 @@ async def tag_and_mint(
         collapsed_entity_keys=sorted(collapse_alias.keys()),
         # Drop pipeline order: unresolvable-key -> cross-concept -> cyclic.
         dropped_prereq_pairs=[*dropped_pairs, *cross_concept_pairs, *cyclic_pairs],
+        concept_symbol_diagnostic=symbol_diagnostic,
     )

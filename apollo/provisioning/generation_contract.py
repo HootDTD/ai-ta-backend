@@ -17,7 +17,12 @@ from __future__ import annotations
 
 from apollo.provisioning.provisioning_schema import solution_content_field_hints
 
-__all__ = ["ontology_block", "SHARED_CONSTANT_SYMBOLS", "GENERIC_ID_TOKENS"]
+__all__ = [
+    "GENERIC_ID_TOKENS",
+    "SHARED_CONSTANT_SYMBOLS",
+    "ontology_block",
+    "ordered_step_ontology_block",
+]
 
 
 # Symbols that are ambient mathematical/physical constants: an equation may use
@@ -71,6 +76,41 @@ def ontology_block() -> str:
         'vocabulary key it instantiates ("" if none), "unit": its unit string '
         "or null}. Symbols are case-sensitive: m and M are DIFFERENT quantities "
         "and need two entries; never reuse one casing for both.\n"
+        "Return the JSON object ONLY — no prose, no explanation, no markdown "
+        "code fences."
+    )
+
+
+def ordered_step_ontology_block() -> str:
+    """Manual typed-path contract before deterministic graph construction.
+
+    The PDF/generic generation lanes still author complete graph steps through
+    :func:`ontology_block`. Manual input instead asks the model only for ordered
+    typed content; the backend owns step numbers, dependencies, and procedure
+    order. Keeping this variant here preserves one source of truth for the six
+    entry types and their content fields without giving the model contradictory
+    ``depends_on`` instructions.
+    """
+    return (
+        'Each ordered step object has EXACTLY "entry_type", "id", and "content" '
+        '(object), plus OPTIONAL "references" (an array of PRIOR meaningful step '
+        'ids for prose/non-symbolic references). Never emit "step", "depends_on", '
+        '"entity_key", or graph edges; the backend derives them.\n'
+        '"entry_type" is exactly one of "equation", "condition", '
+        '"simplification", "definition", "variable_mapping", "procedure_step"; '
+        f'its "content" fields are {solution_content_field_hints()}. Do not emit '
+        "procedure content.order; procedure order is backend-derived. A procedure "
+        "may list prior equation ids in content.uses_equations.\n"
+        "IDs are meaningful snake_case English naming the step's CONTENT "
+        '(e.g. "ibp_formula", "equal_pressure_simplification"). Never use opaque '
+        'or mechanical ids such as "step_2", "eq1", "vm_a", or "node_3".\n'
+        "Every case-sensitive symbol an equation uses must be a problem given, "
+        "the target, a shared mathematical constant, introduced by an earlier "
+        "definition/variable_mapping/equation, or declared in the optional "
+        'top-level "symbol_table" object. Use explicit * multiplication and '
+        "machine-parseable SymPy syntax; m and M are distinct quantities.\n"
+        'The OPTIONAL top-level "symbol_table" maps a symbol to an object with '
+        '"role", "ontology_key", and "unit" metadata where known.\n'
         "Return the JSON object ONLY — no prose, no explanation, no markdown "
         "code fences."
     )

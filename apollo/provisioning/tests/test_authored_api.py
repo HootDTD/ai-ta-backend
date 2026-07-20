@@ -2788,9 +2788,7 @@ async def test_get_authored_set_enriches_rejected_problem_payload(db_session, mo
         set_index=1,
         status="done",
         problem_document_id=901,
-        result_summary={
-            "problems": [{"concept_problem_id": None, "outcome": "rejected"}]
-        },
+        result_summary={"problems": [{"concept_problem_id": None, "outcome": "rejected"}]},
     )
     db_session.add(aset)
     await db_session.flush()
@@ -2853,7 +2851,6 @@ async def test_load_ingest_evidence_by_manual_run_id(db_session):
 
 @pytest.mark.asyncio
 async def test_manual_create_runs_existing_ingest_and_provision_pipeline(db_session, monkeypatch):
-    import importlib
     import json
 
     import apollo.provisioning.authored_sets.api as aapi
@@ -2869,60 +2866,39 @@ async def test_manual_create_runs_existing_ingest_and_provision_pipeline(db_sess
 
     class _ManualMetered:
         def main(self, *, purpose, **_kwargs):
+            # New typed contract: ordered steps only — the backend derives step
+            # numbers, procedure order, and dependencies. No "step"/"depends_on".
             assert purpose == "authored_construct"
             return json.dumps(
                 {
-                    "reference_solution": [
+                    "steps": [
                         {
-                            "step": 1,
                             "entry_type": "definition",
                             "id": "def_manual",
                             "content": {
                                 "concept": "manual answer",
                                 "meaning": "The authored answer.",
                             },
-                            "depends_on": [],
                         },
                         {
-                            "step": 2,
                             "entry_type": "procedure_step",
                             "id": "explain_manual_answer",
-                            # Gate 5 requires the answer_only constructor's promised
-                            # reference procedure, including for equation-free prose.
                             "content": {
-                                "order": 1,
                                 "action": "Explain the manual answer",
                                 "purpose": "Reach the authored answer",
                             },
-                            "depends_on": ["def_manual"],
                         },
                     ]
                 }
             )
 
-        def cheap(self, *, purpose, **_kwargs):
-            if purpose == "pairing_phase_a":
-                return json.dumps({"paired": True, "confidence": 0.95})
-            if purpose == "pairing_phase_b":
-                return json.dumps({"claims": [{"claim": "The authored answer.", "entailed": True}]})
-            assert purpose == "tag_mint"
-            return json.dumps(
-                {
-                    "concept_slug": "manual-answer",
-                    "display_name": "Manual answer",
-                    "prereqs": [],
-                }
-            )
-
-    async def _noop_project_canon(*_args, **_kwargs):
-        return None
+        def cheap(self, *, purpose, **_kwargs):  # pragma: no cover - typed path never judges/tags
+            raise AssertionError(f"typed construction must not reach {purpose!r}")
 
     monkeypatch.setattr(aapi, "get_async_session", _session_cm)
     monkeypatch.setattr(aapi, "_make_metered_chat", lambda **_kwargs: _ManualMetered())
     monkeypatch.setattr(aapi, "get_neo4j_client", lambda: object())
     monkeypatch.setattr(aapi, "embed_text", lambda _text: [0.0, 1.0])
-    promote_module = importlib.import_module("apollo.provisioning.promote")
-    monkeypatch.setattr(promote_module, "project_canon", _noop_project_canon)
 
     bg = _BG()
     response = await aapi.create_manual_authored_set(
@@ -2946,15 +2922,22 @@ async def test_manual_create_runs_existing_ingest_and_provision_pipeline(db_sess
     await fn(*args, **kwargs)
 
     aset = await db_session.get(AuthoredSet, response["set_id"])
-    assert aset.status == "done"
+    # The typed path constructs a draft and STOPS at the teacher checkpoint: the
+    # set stays non-terminal ("provisioning"), never auto-promotes, and never
+    # reaches pairing/tag-mint (asserted by _ManualMetered.cheap).
+    assert aset.status == "provisioning"
     assert aset.result_summary["source"] == "manual"
     (problem_result,) = aset.result_summary["problems"]
-    assert problem_result["outcome"] == "promoted", problem_result
-    assert aset.result_summary["counts"]["promoted"] == 1
+    assert problem_result["outcome"] == "awaiting_teacher_confirmation", problem_result
+    assert aset.result_summary["counts"]["awaiting_teacher_confirmation"] == 1
     concept_problem_id = problem_result["concept_problem_id"]
     problem = await db_session.get(ConceptProblem, concept_problem_id)
-    assert problem.tier == 2
+    assert problem.tier == 1
     assert problem.payload["problem_text"] == "Explain the manual answer."
+    confirmation = problem.provenance["typed_confirmation"]
+    assert confirmation["status"] == "awaiting_teacher_confirmation"
+    assert confirmation["draft"]["solution"] == "The authored answer."
+    assert confirmation["draft"]["steps"] == problem.payload["reference_solution"]
     listing = await aapi.list_authored_sets(
         request=_FakeRequest(), search_space_id=search_space_id, db=db_session
     )
@@ -2962,7 +2945,7 @@ async def test_manual_create_runs_existing_ingest_and_provision_pipeline(db_sess
         {
             "set_id": response["set_id"],
             "set_index": 1,
-            "status": "done",
+            "status": "provisioning",
             "problem_document_id": None,
             "solution_document_id": None,
         }
@@ -3021,9 +3004,9 @@ async def test_manual_background_returns_when_set_is_missing(db_session, monkeyp
         authored=[_manual_authored_payload(aapi)],
     )
     run_count = await db_session.scalar(
-        select(func.count()).select_from(IngestRun).where(
-            IngestRun.search_space_id == search_space_id
-        )
+        select(func.count())
+        .select_from(IngestRun)
+        .where(IngestRun.search_space_id == search_space_id)
     )
     assert run_count == 0
 
@@ -3053,9 +3036,9 @@ async def test_manual_background_persists_failure_before_run_starts(db_session, 
     assert authored_set.status == "failed"
     assert authored_set.result_summary["error"] == "ingest run could not start"
     run_count = await db_session.scalar(
-        select(func.count()).select_from(IngestRun).where(
-            IngestRun.search_space_id == search_space_id
-        )
+        select(func.count())
+        .select_from(IngestRun)
+        .where(IngestRun.search_space_id == search_space_id)
     )
     assert run_count == 0
 
@@ -3110,9 +3093,7 @@ async def test_manual_background_records_missing_provisional_concept_failure(
 
 
 @pytest.mark.asyncio
-async def test_manual_background_records_tier1_row_vanishing_after_ingest(
-    db_session, monkeypatch
-):
+async def test_manual_background_records_tier1_row_vanishing_after_ingest(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi
     from apollo.persistence.models import AuthoredSet, ConceptProblem
 
