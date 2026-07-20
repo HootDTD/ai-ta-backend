@@ -1,8 +1,8 @@
-"""GET /apollo/progress — XP + level, plus an optional per-course detail block.
+"""GET /apollo/progress — course-scoped XP, level, and detail.
 
-Base payload (no search_space_id): unchanged since P1 — {user_id, xp_total,
-level, title, next_tier_threshold}. Callers that don't pass a course get a
-byte-identical response to the pre-detail era.
+The required search_space_id selects the course-specific StudentProgress row.
+The response includes that identifier so clients cannot confuse progress from
+two enrolled courses.
 
 Detail block (search_space_id given): per-concept mastery averaged over
 apollo_learner_state (entity → concept via apollo_kg_entities.concept_id) and
@@ -18,11 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.overseer.xp import next_tier_threshold, title_for_level
 from apollo.persistence.models import (
-    TutoringSession,
     Concept,
     KGEntity,
     LearnerState,
     ProblemAttempt,
+    TutoringSession,
 )
 from apollo.persistence.progress_repo import load_progress
 
@@ -33,10 +33,14 @@ async def handle_get_progress(
     *,
     db: AsyncSession,
     user_id: str,
+    search_space_id: int,
 ) -> Dict[str, Any]:
-    row = await load_progress(db=db, user_id=user_id)
+    row = await load_progress(
+        db=db, user_id=user_id, course_id=search_space_id
+    )
     return {
         "user_id": row.user_id,
+        "search_space_id": row.course_id,
         "xp_total": row.xp_total,
         "level": row.level,
         "title": title_for_level(row.level),
@@ -50,7 +54,9 @@ async def handle_get_progress_detail(
     user_id: str,
     search_space_id: int,
 ) -> Dict[str, Any]:
-    base = await handle_get_progress(db=db, user_id=user_id)
+    base = await handle_get_progress(
+        db=db, user_id=user_id, search_space_id=search_space_id
+    )
 
     mastery_rows = (
         await db.execute(
@@ -79,6 +85,8 @@ async def handle_get_progress_detail(
             .where(
                 TutoringSession.user_id == user_id,
                 TutoringSession.search_space_id == search_space_id,
+                ProblemAttempt.user_id == user_id,
+                ProblemAttempt.course_id == search_space_id,
                 # Deliberately the narrow "graded" literal: only the Done path
                 # path writes both result="graded" AND the {"rubric": {"overall":
                 # ...}} shape this block reads. Do NOT widen to
