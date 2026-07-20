@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import delete, func, select
@@ -15,14 +15,14 @@ from chats.service import (
     refresh_memory_summary,
     serialize_chat_session,
 )
-from database.models import ChatSession, ChatTurn
+from database.models import ChatMessage, ChatSession
 from database.session import get_async_session, run_async
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _coerce_search_space_id(payload: Dict[str, Any]) -> int:
+def _coerce_search_space_id(payload: dict[str, Any]) -> int:
     raw = payload.get("search_space_id")
     if raw is None:
         meta = payload.get("meta")
@@ -38,7 +38,6 @@ def _coerce_search_space_id(payload: Dict[str, Any]) -> int:
 @router.get("/chats")
 def list_chats(request: Request):
     """Return chat sessions for the authenticated user, optionally filtered by search_space_id."""
-    from fastapi import Query as FQuery
 
     auth = resolve_auth_context(request)
     raw_ssid = request.query_params.get("search_space_id")
@@ -46,12 +45,9 @@ def list_chats(request: Request):
 
     async def _run() -> list:
         async with get_async_session() as db_session:
-            stmt = (
-                select(ChatSession)
-                .where(ChatSession.user_id == auth.user_id)
-            )
+            stmt = select(ChatSession).where(ChatSession.user_id == auth.user_id)
             if search_space_id:
-                stmt = stmt.where(ChatSession.search_space_id == search_space_id)
+                stmt = stmt.where(ChatSession.course_id == search_space_id)
             stmt = stmt.order_by(ChatSession.updated_at.desc())
 
             result = await db_session.execute(stmt)
@@ -61,20 +57,30 @@ def list_chats(request: Request):
             for s in sessions:
                 # Get the first user turn as a title preview
                 first_turn_result = await db_session.execute(
-                    select(ChatTurn)
+                    select(ChatMessage)
+                    .join(ChatSession, ChatSession.id == ChatMessage.chat_session_id)
                     .where(
-                        ChatTurn.chat_session_id == s.id,
-                        ChatTurn.role == "user",
+                        ChatMessage.chat_session_id == s.id,
+                        ChatMessage.course_id == s.course_id,
+                        ChatMessage.role == "user",
+                        ChatSession.user_id == auth.user_id,
+                        ChatSession.course_id == s.course_id,
                     )
-                    .order_by(ChatTurn.turn_index.asc())
+                    .order_by(ChatMessage.turn_index.asc())
                     .limit(1)
                 )
                 first_turn = first_turn_result.scalars().first()
 
                 # Get total turn count
                 count_result = await db_session.execute(
-                    select(func.count(ChatTurn.id))
-                    .where(ChatTurn.chat_session_id == s.id)
+                    select(func.count(ChatMessage.id))
+                    .join(ChatSession, ChatSession.id == ChatMessage.chat_session_id)
+                    .where(
+                        ChatMessage.chat_session_id == s.id,
+                        ChatMessage.course_id == s.course_id,
+                        ChatSession.user_id == auth.user_id,
+                        ChatSession.course_id == s.course_id,
+                    )
                 )
                 turn_count = int(count_result.scalar_one() or 0)
 
@@ -82,14 +88,16 @@ def list_chats(request: Request):
                 if first_turn and first_turn.content:
                     title = first_turn.content.strip()[:120]
 
-                out.append({
-                    "chat_id": s.chat_id,
-                    "search_space_id": s.search_space_id,
-                    "title": title,
-                    "turn_count": turn_count,
-                    "created_at": s.created_at.isoformat() if s.created_at else None,
-                    "updated_at": s.updated_at.isoformat() if s.updated_at else None,
-                })
+                out.append(
+                    {
+                        "chat_id": s.external_id,
+                        "search_space_id": s.course_id,
+                        "title": title,
+                        "turn_count": turn_count,
+                        "created_at": s.created_at.isoformat() if s.created_at else None,
+                        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+                    }
+                )
             return out
 
     try:
@@ -98,11 +106,11 @@ def list_chats(request: Request):
         raise
     except Exception as exc:
         log.error("Failed to list chats: %s", exc)
-        raise HTTPException(status_code=500, detail="failed to list chats")
+        raise HTTPException(status_code=500, detail="failed to list chats") from exc
 
 
 @router.post("/chats/{chat_id}")
-def save_chat(chat_id: str, payload: Dict[str, Any], request: Request):
+def save_chat(chat_id: str, payload: dict[str, Any], request: Request):
     """Import/upsert chat transcript for the authenticated user."""
     auth = resolve_auth_context(request)
     data = dict(payload or {})
@@ -118,7 +126,9 @@ def save_chat(chat_id: str, payload: Dict[str, Any], request: Request):
                 user_id=auth.user_id,
             )
             if existing is None and search_space_id <= 0:
-                raise HTTPException(status_code=400, detail="search_space_id is required for new chats")
+                raise HTTPException(
+                    status_code=400, detail="search_space_id is required for new chats"
+                )
 
             session = existing or await get_or_create_chat_session_for_user(
                 db_session,
@@ -128,21 +138,35 @@ def save_chat(chat_id: str, payload: Dict[str, Any], request: Request):
                 meta=meta,
             )
 
-            if search_space_id > 0 and int(session.search_space_id) != search_space_id:
+            if search_space_id > 0 and int(session.course_id) != search_space_id:
                 raise HTTPException(status_code=400, detail="search_space_id mismatch for chat")
 
-            session.meta = meta
+            session.metadata_ = meta
             session.updated_at = datetime.now(UTC)
 
             # Serialize full import/upsert writes for this chat session.
             await db_session.execute(
                 select(ChatSession.id)
-                .where(ChatSession.id == session.id)
+                .where(
+                    ChatSession.id == session.id,
+                    ChatSession.user_id == auth.user_id,
+                    ChatSession.course_id == session.course_id,
+                )
                 .with_for_update()
             )
 
             await db_session.execute(
-                delete(ChatTurn).where(ChatTurn.chat_session_id == session.id)
+                delete(ChatMessage).where(
+                    ChatMessage.chat_session_id == session.id,
+                    ChatMessage.course_id == session.course_id,
+                    ChatMessage.chat_session_id.in_(
+                        select(ChatSession.id).where(
+                            ChatSession.id == session.id,
+                            ChatSession.user_id == auth.user_id,
+                            ChatSession.course_id == session.course_id,
+                        )
+                    ),
+                )
             )
 
             for turn in turns:
@@ -150,6 +174,8 @@ def save_chat(chat_id: str, payload: Dict[str, Any], request: Request):
                 await append_turn(
                     db_session,
                     chat_session_id=int(session.id),
+                    user_id=auth.user_id,
+                    course_id=int(session.course_id),
                     role=str(turn.get("role", "user")),
                     content=str(turn.get("content", "")),
                     created_at=turn_dt,
@@ -159,7 +185,12 @@ def save_chat(chat_id: str, payload: Dict[str, Any], request: Request):
                     attachments=turn.get("attachments") or [],
                 )
 
-            await refresh_memory_summary(db_session, chat_session=session)
+            await refresh_memory_summary(
+                db_session,
+                chat_session=session,
+                user_id=auth.user_id,
+                course_id=int(session.course_id),
+            )
             await db_session.commit()
             return {"ok": True, "chat_id": chat_id}
 
@@ -169,7 +200,7 @@ def save_chat(chat_id: str, payload: Dict[str, Any], request: Request):
         raise
     except Exception as exc:
         log.error("Failed to save chat %s: %s", chat_id, exc)
-        raise HTTPException(status_code=500, detail="failed to save chat")
+        raise HTTPException(status_code=500, detail="failed to save chat") from exc
 
 
 @router.delete("/chats/{chat_id}", status_code=204)
@@ -187,10 +218,24 @@ def delete_chat(chat_id: str, request: Request):
             if session is None:
                 raise HTTPException(status_code=404, detail="chat not found")
             await db_session.execute(
-                delete(ChatTurn).where(ChatTurn.chat_session_id == session.id)
+                delete(ChatMessage).where(
+                    ChatMessage.chat_session_id == session.id,
+                    ChatMessage.course_id == session.course_id,
+                    ChatMessage.chat_session_id.in_(
+                        select(ChatSession.id).where(
+                            ChatSession.id == session.id,
+                            ChatSession.user_id == auth.user_id,
+                            ChatSession.course_id == session.course_id,
+                        )
+                    ),
+                )
             )
             await db_session.execute(
-                delete(ChatSession).where(ChatSession.id == session.id)
+                delete(ChatSession).where(
+                    ChatSession.id == session.id,
+                    ChatSession.user_id == auth.user_id,
+                    ChatSession.course_id == session.course_id,
+                )
             )
             await db_session.commit()
 
@@ -200,7 +245,7 @@ def delete_chat(chat_id: str, request: Request):
         raise
     except Exception as exc:
         log.error("Failed to delete chat %s: %s", chat_id, exc)
-        raise HTTPException(status_code=500, detail="failed to delete chat")
+        raise HTTPException(status_code=500, detail="failed to delete chat") from exc
     return None
 
 
@@ -217,8 +262,8 @@ def get_chat(chat_id: str, request: Request):
                     chat_id=chat_id,
                     user_id=auth.user_id,
                 )
-            except ValueError:
-                raise HTTPException(status_code=404, detail="chat not found")
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail="chat not found") from exc
 
     try:
         return run_async(_run())
@@ -226,4 +271,4 @@ def get_chat(chat_id: str, request: Request):
         raise
     except Exception as exc:
         log.error("Failed to load chat %s: %s", chat_id, exc)
-        raise HTTPException(status_code=500, detail="failed to load chat")
+        raise HTTPException(status_code=500, detail="failed to load chat") from exc

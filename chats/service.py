@@ -3,20 +3,20 @@ from __future__ import annotations
 import contextlib
 import os
 from datetime import UTC, datetime
-from typing import Any, Dict, List
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import ChatSession, ChatTurn
+from database.models import ChatMessage, ChatSession
 
 MEMORY_WINDOW_TURNS = int(os.getenv("CHAT_MEMORY_WINDOW_TURNS", "8"))
 MEMORY_SUMMARY_MAX_CHARS = int(os.getenv("CHAT_MEMORY_SUMMARY_MAX_CHARS", "3000"))
 MEMORY_SUMMARY_TRIGGER_TURNS = int(os.getenv("CHAT_MEMORY_SUMMARY_TRIGGER_TURNS", "12"))
 
 
-def build_memory_context(summary: str, turns: List[ChatTurn]) -> str:
-    lines: List[str] = []
+def build_memory_context(summary: str, turns: list[ChatMessage]) -> str:
+    lines: list[str] = []
     if summary.strip():
         lines.append("Conversation summary:")
         lines.append(summary.strip())
@@ -38,13 +38,15 @@ async def get_chat_session_for_user(
     *,
     chat_id: str,
     user_id: str,
+    course_id: int | None = None,
 ) -> ChatSession | None:
-    result = await db_session.execute(
-        select(ChatSession).where(
-            ChatSession.chat_id == chat_id,
-            ChatSession.user_id == user_id,
-        )
+    stmt = select(ChatSession).where(
+        ChatSession.external_id == chat_id,
+        ChatSession.user_id == user_id,
     )
+    if course_id is not None:
+        stmt = stmt.where(ChatSession.course_id == course_id)
+    result = await db_session.execute(stmt)
     return result.scalars().first()
 
 
@@ -54,21 +56,22 @@ async def get_or_create_chat_session_for_user(
     chat_id: str,
     user_id: str,
     search_space_id: int,
-    meta: Dict[str, Any] | None = None,
+    meta: dict[str, Any] | None = None,
 ) -> ChatSession:
     existing = await get_chat_session_for_user(
         db_session,
         chat_id=chat_id,
         user_id=user_id,
+        course_id=search_space_id,
     )
     if existing is not None:
         return existing
 
     session = ChatSession(
-        chat_id=chat_id,
+        external_id=chat_id,
         user_id=user_id,
-        search_space_id=search_space_id,
-        meta=meta or {},
+        course_id=search_space_id,
+        metadata_=meta or {},
         memory_summary="",
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
@@ -82,12 +85,20 @@ async def list_recent_turns(
     db_session: AsyncSession,
     *,
     chat_session_id: int,
+    user_id: str,
+    course_id: int,
     limit: int = MEMORY_WINDOW_TURNS,
-) -> List[ChatTurn]:
+) -> list[ChatMessage]:
     result = await db_session.execute(
-        select(ChatTurn)
-        .where(ChatTurn.chat_session_id == chat_session_id)
-        .order_by(ChatTurn.turn_index.desc())
+        select(ChatMessage)
+        .join(ChatSession, ChatSession.id == ChatMessage.chat_session_id)
+        .where(
+            ChatMessage.chat_session_id == chat_session_id,
+            ChatMessage.course_id == course_id,
+            ChatSession.user_id == user_id,
+            ChatSession.course_id == course_id,
+        )
+        .order_by(ChatMessage.turn_index.desc())
         .limit(limit)
     )
     rows = result.scalars().all()
@@ -99,28 +110,39 @@ async def append_turn(
     db_session: AsyncSession,
     *,
     chat_session_id: int,
+    user_id: str,
+    course_id: int,
     role: str,
     content: str,
     created_at: str | None = None,
     model: str | None = None,
     tool_name: str | None = None,
-    tool_inputs: Dict[str, Any] | None = None,
-    attachments: List[Dict[str, Any]] | None = None,
-    citations: List[Dict[str, Any]] | None = None,
-    keywords: List[str] | None = None,
-) -> ChatTurn:
+    tool_inputs: dict[str, Any] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
+    citations: list[dict[str, Any]] | None = None,
+    keywords: list[str] | None = None,
+) -> ChatMessage:
     # Lock the parent chat session row so concurrent writers serialize turn indexes.
     lock_result = await db_session.execute(
         select(ChatSession.id)
-        .where(ChatSession.id == chat_session_id)
+        .where(
+            ChatSession.id == chat_session_id,
+            ChatSession.user_id == user_id,
+            ChatSession.course_id == course_id,
+        )
         .with_for_update()
     )
     if lock_result.scalar_one_or_none() is None:
         raise ValueError(f"chat_session not found: {chat_session_id}")
 
     idx_result = await db_session.execute(
-        select(func.coalesce(func.max(ChatTurn.turn_index), 0)).where(
-            ChatTurn.chat_session_id == chat_session_id
+        select(func.coalesce(func.max(ChatMessage.turn_index), 0))
+        .join(ChatSession, ChatSession.id == ChatMessage.chat_session_id)
+        .where(
+            ChatMessage.chat_session_id == chat_session_id,
+            ChatMessage.course_id == course_id,
+            ChatSession.user_id == user_id,
+            ChatSession.course_id == course_id,
         )
     )
     max_idx = int(idx_result.scalar_one() or 0)
@@ -131,10 +153,11 @@ async def append_turn(
             parsed = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
             dt = parsed
 
-    turn = ChatTurn(
+    turn = ChatMessage(
+        course_id=course_id,
         chat_session_id=chat_session_id,
         turn_index=next_index,
-        turn_id=str(next_index),
+        external_id=str(next_index),
         role=role,
         content=content or "",
         created_at=dt,
@@ -149,8 +172,8 @@ async def append_turn(
     return turn
 
 
-def _summarize_turns_for_memory(turns: List[ChatTurn]) -> str:
-    snippets: List[str] = []
+def _summarize_turns_for_memory(turns: list[ChatMessage]) -> str:
+    snippets: list[str] = []
     for turn in turns:
         txt = (turn.content or "").strip()
         if not txt:
@@ -168,15 +191,25 @@ async def refresh_memory_summary(
     db_session: AsyncSession,
     *,
     chat_session: ChatSession,
+    user_id: str,
+    course_id: int,
 ) -> None:
     all_turns_result = await db_session.execute(
-        select(ChatTurn)
-        .where(ChatTurn.chat_session_id == chat_session.id)
-        .order_by(ChatTurn.turn_index.asc())
+        select(ChatMessage)
+        .join(ChatSession, ChatSession.id == ChatMessage.chat_session_id)
+        .where(
+            ChatMessage.chat_session_id == chat_session.id,
+            ChatMessage.course_id == course_id,
+            ChatSession.user_id == user_id,
+            ChatSession.course_id == course_id,
+        )
+        .order_by(ChatMessage.turn_index.asc())
     )
     all_turns = all_turns_result.scalars().all()
     if len(all_turns) <= MEMORY_SUMMARY_TRIGGER_TURNS:
-        chat_session.memory_summary = _summarize_turns_for_memory(all_turns[:-MEMORY_WINDOW_TURNS] if len(all_turns) > MEMORY_WINDOW_TURNS else [])
+        chat_session.memory_summary = _summarize_turns_for_memory(
+            all_turns[:-MEMORY_WINDOW_TURNS] if len(all_turns) > MEMORY_WINDOW_TURNS else []
+        )
         chat_session.updated_at = datetime.now(UTC)
         return
 
@@ -195,18 +228,24 @@ async def serialize_chat_session(
     if session is None:
         raise ValueError("chat not found")
     turns_result = await db_session.execute(
-        select(ChatTurn)
-        .where(ChatTurn.chat_session_id == session.id)
-        .order_by(ChatTurn.turn_index.asc())
+        select(ChatMessage)
+        .join(ChatSession, ChatSession.id == ChatMessage.chat_session_id)
+        .where(
+            ChatMessage.chat_session_id == session.id,
+            ChatMessage.course_id == session.course_id,
+            ChatSession.user_id == user_id,
+            ChatSession.course_id == session.course_id,
+        )
+        .order_by(ChatMessage.turn_index.asc())
     )
     turns = turns_result.scalars().all()
     return {
-        "chat_id": session.chat_id,
-        "meta": session.meta or {},
+        "chat_id": session.external_id,
+        "meta": session.metadata_ or {},
         "memory_summary": session.memory_summary or "",
         "turns": [
             {
-                "turn_id": t.turn_id,
+                "turn_id": t.external_id,
                 "role": t.role,
                 "content": t.content,
                 "created_at": t.created_at.isoformat() if t.created_at else None,

@@ -18,11 +18,11 @@ from chats.bundle_cache import (
 )
 from config.contracts import BundleSnippet
 from database.models import (
-    DocumentChunk,
-    Document,
     ChatSession,
     ChatSessionSnippet,
     Course,
+    Document,
+    DocumentChunk,
 )
 
 
@@ -117,10 +117,10 @@ async def _seed_session_with_chunks(db_session, n_chunks: int):
         chunk_ids.append(chunk.id)
 
     session = ChatSession(
-        chat_id="cache-test-chat",
+        external_id="cache-test-chat",
         user_id="00000000-0000-0000-0000-000000000001",
-        search_space_id=space.id,
-        meta={},
+        course_id=space.id,
+        metadata_={},
         memory_summary="",
     )
     db_session.add(session)
@@ -288,6 +288,7 @@ async def test_corrupt_payload_degrades_to_cache_miss(db_session):
     db_session.add(
         ChatSessionSnippet(
             chat_session_id=session.id,
+            course_id=session.course_id,
             chunk_id=chunk_ids[0],
             original_score=0.5,
             first_seen_turn=1,
@@ -305,6 +306,7 @@ async def test_non_dict_snippet_payload_is_skipped(db_session):
     db_session.add(
         ChatSessionSnippet(
             chat_session_id=session.id,
+            course_id=session.course_id,
             chunk_id=chunk_ids[0],
             original_score=0.5,
             first_seen_turn=1,
