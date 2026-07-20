@@ -1,14 +1,17 @@
 -- DB-05: non-destructive, idempotent copy from the frozen legacy public schema.
 --
--- The following SIX approved-drop tables are intentionally NOT copied:
+-- The following SEVEN approved-drop tables are intentionally NOT copied:
 --   public.apollo_kg_entries
 --   public.apollo_clarifications
 --   public.apollo_misconceptions
 --   public.apollo_misconception_observations
 --   public.apollo_provisioning_jobs
 --   public.apollo_rejected_problems
+--   public.apollo_kg_negotiations
 --
 -- No statement in this migration deletes from or alters a legacy table.
+-- Cutover requires a maintenance window with zero in-flight Apollo sessions;
+-- legacy tutoring ids are shifted by +1000000, while chat ids remain unchanged.
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
@@ -24,6 +27,43 @@ BEGIN
     END IF;
 END
 $copy_preconditions$;
+
+-- Re-routed rows that cannot be attributed without inventing ownership are
+-- retained in a session-local quarantine for reconciliation/operator review.
+-- Run reconciliation in this same session so it can balance these rows.
+CREATE TEMP TABLE IF NOT EXISTS db05_copy_quarantine (
+    source_table text NOT NULL,
+    source_id text NOT NULL,
+    reason text NOT NULL,
+    source_row jsonb NOT NULL,
+    PRIMARY KEY (source_table, source_id, reason)
+) ON COMMIT PRESERVE ROWS;
+TRUNCATE pg_temp.db05_copy_quarantine;
+
+DO $id_remap_boundaries$
+BEGIN
+    IF EXISTS (SELECT 1 FROM public.chat_sessions WHERE id <= 0)
+       OR EXISTS (SELECT 1 FROM public.apollo_sessions WHERE id <= 0)
+       OR EXISTS (SELECT 1 FROM public.apollo_generation_runs WHERE id <= 0)
+       OR EXISTS (SELECT 1 FROM public.apollo_authored_sets WHERE id <= 0) THEN
+        RAISE EXCEPTION 'copy id remap requires positive legacy ids';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM public.chat_sessions AS chat
+        JOIN public.apollo_sessions AS tutoring
+          ON chat.id = tutoring.id + 1000000
+    ) THEN
+        RAISE EXCEPTION 'learning activity id remap collides at the +1000000 boundary';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM public.apollo_authored_sets AS authored
+        JOIN public.apollo_generation_runs AS generation
+          ON authored.id = generation.id + 1000000
+    ) THEN
+        RAISE EXCEPTION 'provisioning run id remap collides at the +1000000 boundary';
+    END IF;
+END
+$id_remap_boundaries$;
 
 -- Courses merge search-space identity and teacher-owned runtime controls.
 INSERT INTO app.courses (
@@ -128,22 +168,40 @@ FROM public.teacher_upload_jobs AS j
 JOIN public.teacher_uploads AS u ON u.id = j.upload_id
 ON CONFLICT DO NOTHING;
 
-INSERT INTO app.chat_sessions (
-    id, external_id, user_id, course_id, metadata, memory_summary, created_at, updated_at
+INSERT INTO pg_temp.db05_copy_quarantine (source_table, source_id, reason, source_row)
+SELECT 'chat_sessions', s.id::text, 'missing target course', to_jsonb(s)
+FROM public.chat_sessions AS s
+LEFT JOIN app.courses AS course ON course.id = s.search_space_id
+WHERE course.id IS NULL
+ON CONFLICT DO NOTHING;
+
+INSERT INTO app.learning_activities (
+    id, modality, external_id, user_id, course_id, metadata, memory_summary,
+    status, created_at, updated_at
 )
-SELECT id, chat_id, user_id, search_space_id::bigint, COALESCE(meta, '{}'::jsonb),
-       memory_summary, created_at, updated_at
-FROM public.chat_sessions
+SELECT s.id, 'chat', s.chat_id, s.user_id, s.search_space_id::bigint,
+       COALESCE(s.meta, '{}'::jsonb), s.memory_summary, 'active', s.created_at, s.updated_at
+FROM public.chat_sessions AS s
+JOIN app.courses AS course ON course.id = s.search_space_id
+ON CONFLICT DO NOTHING;
+
+INSERT INTO pg_temp.db05_copy_quarantine (source_table, source_id, reason, source_row)
+SELECT 'chat_turns', t.id::text, 'missing target chat activity', to_jsonb(t)
+FROM public.chat_turns AS t
+LEFT JOIN app.learning_activities AS activity
+  ON activity.id = t.chat_session_id AND activity.modality = 'chat'
+WHERE activity.id IS NULL
 ON CONFLICT DO NOTHING;
 
 INSERT INTO app.chat_messages (
-    id, course_id, chat_session_id, turn_index, external_id, role, content,
+    id, course_id, learning_activity_id, kind, turn_index, external_id, role, content,
     model, tool_name, tool_inputs, attachments, citations, keywords, created_at
 )
 SELECT
     t.id,
     s.search_space_id::bigint,
     t.chat_session_id,
+    'message',
     t.turn_index,
     t.turn_id,
     t.role,
@@ -159,10 +217,12 @@ SELECT
     t.created_at
 FROM public.chat_turns AS t
 JOIN public.chat_sessions AS s ON s.id = t.chat_session_id
+JOIN app.learning_activities AS activity
+  ON activity.id = s.id AND activity.modality = 'chat'
 ON CONFLICT DO NOTHING;
 
 INSERT INTO internal.chat_session_snippets (
-    chat_session_id, chunk_id, course_id, original_score, first_seen_turn,
+    learning_activity_id, chunk_id, course_id, original_score, first_seen_turn,
     last_used_turn, snippet_payload, created_at
 )
 SELECT sn.chat_session_id, sn.chunk_id, s.search_space_id::bigint,
@@ -170,10 +230,12 @@ SELECT sn.chat_session_id, sn.chunk_id, s.search_space_id::bigint,
        sn.snippet_payload, sn.created_at
 FROM public.chat_session_snippets AS sn
 JOIN public.chat_sessions AS s ON s.id = sn.chat_session_id
+JOIN app.learning_activities AS activity
+  ON activity.id = s.id AND activity.modality = 'chat'
 ON CONFLICT DO NOTHING;
 
 INSERT INTO internal.chat_routing_decisions (
-    id, course_id, chat_session_id, turn_id, query, stage1_top1, stage1_margin,
+    id, course_id, learning_activity_id, turn_id, query, stage1_top1, stage1_margin,
     stage1_route, stage2_invoked, stage2_route, stage2_confidence,
     retrieval_mode, retrieval_top_score, final_route, was_clarified,
     clarify_cause, latency_router_ms, latency_retrieval_ms, latency_answer_ms,
@@ -186,17 +248,12 @@ SELECT r.id, s.search_space_id::bigint, r.chat_session_id, r.turn_id, r.query,
        r.latency_router_ms, r.latency_retrieval_ms, r.latency_answer_ms, r.created_at
 FROM public.chat_router_decisions AS r
 JOIN public.chat_sessions AS s ON s.id = r.chat_session_id
-ON CONFLICT DO NOTHING;
-
--- Curriculum is copied before tutoring rows so legacy text problem codes can
--- resolve to target bigint problem identities without temporarily weakening FKs.
-INSERT INTO app.subjects (id, course_id, slug, display_name, created_at, updated_at)
-SELECT id, search_space_id::bigint, slug, display_name, created_at, created_at
-FROM public.apollo_subjects
+JOIN app.learning_activities AS activity
+  ON activity.id = s.id AND activity.modality = 'chat'
 ON CONFLICT DO NOTHING;
 
 INSERT INTO app.concepts (
-    id, course_id, subject_id, slug, display_name, description,
+    id, course_id, subject_slug, subject_display_name, slug, display_name, description,
     canonical_symbols, symbol_metadata, normalization_map,
     parser_prompt_template, solver_config, parser_config,
     forbidden_named_laws, created_at, updated_at
@@ -204,7 +261,8 @@ INSERT INTO app.concepts (
 SELECT
     c.id,
     s.search_space_id::bigint,
-    c.subject_id,
+    s.slug,
+    s.display_name,
     c.slug,
     c.display_name,
     c.description,
@@ -277,30 +335,42 @@ JOIN public.apollo_concepts AS c ON c.id = p.concept_id
 JOIN public.apollo_subjects AS s ON s.id = c.subject_id
 ON CONFLICT DO NOTHING;
 
-DO $attempt_resolution$
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM public.apollo_problem_attempts AS a
-        JOIN public.apollo_sessions AS s ON s.id = a.session_id
-        LEFT JOIN app.problems AS p
-          ON p.course_id = s.search_space_id
-         AND p.problem_code = a.problem_id
-         AND (s.concept_id IS NULL OR p.concept_id = s.concept_id)
-        WHERE p.id IS NULL
-    ) THEN
-        RAISE EXCEPTION 'legacy problem attempt has an unresolved problem code';
-    END IF;
-END
-$attempt_resolution$;
+INSERT INTO pg_temp.db05_copy_quarantine (source_table, source_id, reason, source_row)
+SELECT 'apollo_sessions', s.id::text, 'missing course, concept, or current problem', to_jsonb(s)
+FROM public.apollo_sessions AS s
+LEFT JOIN app.courses AS course ON course.id = s.search_space_id
+LEFT JOIN app.concepts AS concept ON concept.id = s.concept_id
+LEFT JOIN app.problems AS problem
+  ON problem.course_id = s.search_space_id
+ AND problem.problem_code = s.current_problem_id
+ AND (s.concept_id IS NULL OR problem.concept_id = s.concept_id)
+WHERE course.id IS NULL
+   OR (s.concept_id IS NOT NULL AND concept.id IS NULL)
+   OR (s.current_problem_id IS NOT NULL AND problem.id IS NULL)
+ON CONFLICT DO NOTHING;
 
-INSERT INTO app.tutoring_sessions (
-    id, user_id, course_id, concept_id, status, phase, current_problem_id,
+INSERT INTO pg_temp.db05_copy_quarantine (source_table, source_id, reason, source_row)
+SELECT 'apollo_problem_attempts', a.id::text, 'unresolved parent activity or problem', to_jsonb(a)
+FROM public.apollo_problem_attempts AS a
+JOIN public.apollo_sessions AS s ON s.id = a.session_id
+LEFT JOIN app.problems AS p
+  ON p.course_id = s.search_space_id
+ AND p.problem_code = a.problem_id
+ AND (s.concept_id IS NULL OR p.concept_id = s.concept_id)
+LEFT JOIN pg_temp.db05_copy_quarantine AS quarantined_session
+  ON quarantined_session.source_table = 'apollo_sessions'
+ AND quarantined_session.source_id = s.id::text
+WHERE p.id IS NULL OR quarantined_session.source_id IS NOT NULL
+ON CONFLICT DO NOTHING;
+
+INSERT INTO app.learning_activities (
+    id, modality, external_id, user_id, course_id, concept_id, status, phase, current_problem_id,
     pending_intent, history_summary, history_summary_up_to_turn, created_at,
     updated_at, last_touched_at
 )
 SELECT
-    s.id, s.user_id, s.search_space_id::bigint, s.concept_id, s.status, s.phase,
+    s.id + 1000000, 'tutoring', NULL, s.user_id, s.search_space_id::bigint,
+    s.concept_id, s.status, s.phase,
     p.id, s.pending_intent, s.history_summary, s.history_summary_up_to_turn,
     s.created_at, s.last_touched_at, s.last_touched_at
 FROM public.apollo_sessions AS s
@@ -308,16 +378,20 @@ LEFT JOIN app.problems AS p
   ON p.course_id = s.search_space_id
  AND p.problem_code = s.current_problem_id
  AND (s.concept_id IS NULL OR p.concept_id = s.concept_id)
+LEFT JOIN pg_temp.db05_copy_quarantine AS quarantined
+  ON quarantined.source_table = 'apollo_sessions'
+ AND quarantined.source_id = s.id::text
+WHERE quarantined.source_id IS NULL
 ON CONFLICT DO NOTHING;
 
 INSERT INTO app.problem_attempts (
-    id, course_id, user_id, session_id, problem_id, difficulty, result,
+    id, course_id, user_id, learning_activity_id, problem_id, difficulty, result,
     solver_trace, diagnostic_report, learner_update_pending,
     learner_update_attempts, learner_update_failed_at, learner_update_last_error,
     learner_update_next_attempt_at, created_at, updated_at
 )
 SELECT
-    a.id, s.search_space_id::bigint, s.user_id, a.session_id, p.id,
+    a.id, s.search_space_id::bigint, s.user_id, a.session_id + 1000000, p.id,
     a.difficulty, a.result, a.solver_trace, a.diagnostic_report,
     a.learner_update_pending, a.learner_update_attempts,
     a.learner_update_failed_at, a.learner_update_last_error,
@@ -328,16 +402,18 @@ JOIN app.problems AS p
   ON p.course_id = s.search_space_id
  AND p.problem_code = a.problem_id
  AND (s.concept_id IS NULL OR p.concept_id = s.concept_id)
+JOIN app.learning_activities AS activity
+  ON activity.id = s.id + 1000000 AND activity.modality = 'tutoring'
 ON CONFLICT DO NOTHING;
 
 INSERT INTO app.tutoring_messages (
-    id, course_id, session_id, attempt_id, role, content, turn_index,
+    id, course_id, learning_activity_id, attempt_id, role, content, turn_index,
     low_confidence_pattern, intent, metadata, created_at
 )
 SELECT
     m.id,
     s.search_space_id::bigint,
-    m.session_id,
+    m.session_id + 1000000,
     m.attempt_id,
     m.role,
     m.content,
@@ -351,6 +427,16 @@ SELECT
     m.created_at
 FROM public.apollo_messages AS m
 JOIN public.apollo_sessions AS s ON s.id = m.session_id
+JOIN app.learning_activities AS activity
+  ON activity.id = s.id + 1000000 AND activity.modality = 'tutoring'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO pg_temp.db05_copy_quarantine (source_table, source_id, reason, source_row)
+SELECT 'apollo_messages', m.id::text, 'missing target tutoring activity', to_jsonb(m)
+FROM public.apollo_messages AS m
+LEFT JOIN app.learning_activities AS activity
+  ON activity.id = m.session_id + 1000000 AND activity.modality = 'tutoring'
+WHERE activity.id IS NULL
 ON CONFLICT DO NOTHING;
 
 -- A progress row must resolve to exactly one course from session or membership
@@ -399,11 +485,11 @@ FROM public.apollo_student_progress AS p
 JOIN attributed AS a ON a.user_id = p.user_id
 ON CONFLICT DO NOTHING;
 
-INSERT INTO app.authored_sets (
-    id, course_id, set_index, problem_document_id, solution_document_id,
+INSERT INTO app.provisioning_runs (
+    id, course_id, kind, set_index, problem_document_id, solution_document_id,
     status, result_summary, created_at, updated_at
 )
-SELECT id, search_space_id::bigint, set_index, problem_document_id,
+SELECT id, search_space_id::bigint, 'authored_set', set_index, problem_document_id,
        solution_document_id, status, result_summary, created_at, updated_at
 FROM public.apollo_authored_sets
 ON CONFLICT DO NOTHING;
@@ -411,12 +497,12 @@ ON CONFLICT DO NOTHING;
 -- Opportunity rows own the merged identity. Tally-only rows receive a target
 -- identity while retaining their shared business key and are reconciled below.
 INSERT INTO app.question_opportunities (
-    id, course_id, session_id, attempt_id, reference_node_id, state, question,
+    id, course_id, learning_activity_id, attempt_id, reference_node_id, state, question,
     asked_turn, answered_turn, evidence, student_declined, times_asked,
     last_asked_turn, created_at, updated_at
 )
 SELECT
-    o.id, s.search_space_id::bigint, o.session_id, o.attempt_id,
+    o.id, s.search_space_id::bigint, o.session_id + 1000000, o.attempt_id,
     o.reference_node_id, COALESCE(t.status, o.state), o.question, o.asked_turn,
     o.answered_turn, COALESCE(t.evidence, '[]'::jsonb),
     COALESCE(t.student_declined, false), COALESCE(t.times_asked, 0),
@@ -424,22 +510,26 @@ SELECT
 FROM public.apollo_reference_question_opportunities AS o
 JOIN public.apollo_problem_attempts AS a ON a.id = o.attempt_id
 JOIN public.apollo_sessions AS s ON s.id = a.session_id
+JOIN app.learning_activities AS activity
+  ON activity.id = s.id + 1000000 AND activity.modality = 'tutoring'
 LEFT JOIN public.apollo_question_tally AS t
   ON t.attempt_id = o.attempt_id AND t.reference_node_id = o.reference_node_id
 ON CONFLICT DO NOTHING;
 
 INSERT INTO app.question_opportunities (
-    course_id, session_id, attempt_id, reference_node_id, state, question,
+    course_id, learning_activity_id, attempt_id, reference_node_id, state, question,
     asked_turn, answered_turn, evidence, student_declined, times_asked,
     last_asked_turn, created_at, updated_at
 )
 SELECT
-    s.search_space_id::bigint, a.session_id, t.attempt_id, t.reference_node_id,
+    s.search_space_id::bigint, a.session_id + 1000000, t.attempt_id, t.reference_node_id,
     t.status, '', NULL, NULL, t.evidence, t.student_declined, t.times_asked,
     t.last_asked_turn, t.updated_at, t.updated_at
 FROM public.apollo_question_tally AS t
 JOIN public.apollo_problem_attempts AS a ON a.id = t.attempt_id
 JOIN public.apollo_sessions AS s ON s.id = a.session_id
+JOIN app.learning_activities AS activity
+  ON activity.id = s.id + 1000000 AND activity.modality = 'tutoring'
 LEFT JOIN public.apollo_reference_question_opportunities AS o
   ON o.attempt_id = t.attempt_id AND o.reference_node_id = t.reference_node_id
 WHERE o.id IS NULL
@@ -502,16 +592,6 @@ JOIN app.learner_entities AS copied_entity
   ON copied_entity.id = me.entity_id
 ON CONFLICT DO NOTHING;
 
-INSERT INTO app.learner_negotiations (
-    id, course_id, attempt_id, user_id, entry_id, actor, move, payload, created_at
-)
-SELECT n.id, s.search_space_id::bigint, n.attempt_id, s.user_id, n.entry_id,
-       n.actor, n.move, n.payload, n.created_at
-FROM public.apollo_kg_negotiations AS n
-JOIN public.apollo_problem_attempts AS a ON a.id = n.attempt_id
-JOIN public.apollo_sessions AS s ON s.id = a.session_id
-ON CONFLICT DO NOTHING;
-
 INSERT INTO internal.content_ingest_runs (
     id, course_id, document_id, content_hash, status, n_questions_scraped,
     n_promoted, n_rejected, n_dedup_merged, n_pages, llm_calls, llm_tokens_in,
@@ -539,11 +619,13 @@ SELECT
 FROM public.apollo_ingest_runs
 ON CONFLICT DO NOTHING;
 
-INSERT INTO internal.content_generation_runs (
-    id, course_id, concept_id, status, result_summary, ingest_run_id,
+INSERT INTO app.provisioning_runs (
+    id, course_id, kind, concept_id, status, result_summary, ingest_run_id,
     created_at, updated_at
 )
-SELECT id, search_space_id::bigint, concept_id, status, result_summary,
+-- The second union leg uses the same documented +1000000 collision boundary
+-- so both independent legacy identity sequences remain reversible.
+SELECT id + 1000000, search_space_id::bigint, 'generation', concept_id, status, result_summary,
        ingest_run_id, created_at, created_at
 FROM public.apollo_generation_runs
 ON CONFLICT DO NOTHING;
@@ -581,7 +663,7 @@ INSERT INTO internal.grading_runs (
     id, course_id, user_id, attempt_id, concept_id, problem_id, role,
     grader_used, grader_version, reference_graph_hash, weights_version,
     status, grading_latency_ms, composite_score, node_coverage_score,
-    edge_coverage_score, soundness_applicable, abstained, version_details,
+    edge_coverage_score, abstained, version_details,
     node_ledger, edge_ledger, score_details, abstention_details,
     grader_payload, created_at
 )
@@ -596,7 +678,6 @@ SELECT
         THEN (g.scores ->> 'node_coverage')::real END,
     CASE WHEN jsonb_typeof(g.scores -> 'edge_coverage') = 'number'
         THEN (g.scores ->> 'edge_coverage')::real END,
-    NULL,
     g.abstention IS NOT NULL,
     g.versions,
     g.node_ledger,
@@ -612,69 +693,13 @@ JOIN app.problems AS p
  AND (g.concept_id IS NULL OR p.concept_id = g.concept_id)
 ON CONFLICT DO NOTHING;
 
--- Shadow comparison rows omit id so collisions between the two legacy run
--- sequences cannot discard data. source_id remains in grader_payload.
-INSERT INTO internal.grading_runs (
-    course_id, user_id, attempt_id, concept_id, problem_id, role, grader_used,
-    grader_version, reference_graph_hash, status, coverage_score,
-    soundness_score, bisimilarity_score, node_coverage_score,
-    edge_coverage_score, scoping_score, usage_score, procedure_order_score,
-    dependency_score, contradiction_score, normalization_confidence,
-    soundness_applicable, abstained, abstention_details, grader_payload, created_at
-)
-SELECT
-    r.search_space_id::bigint, r.user_id, r.attempt_id, s.concept_id, a.problem_id,
-    'shadow', 'graph', r.comparison_version, r.reference_graph_hash, 'shadow',
-    r.coverage_score, r.soundness_score, r.bisimilarity_score,
-    r.node_coverage_score, r.edge_coverage_score, r.scoping_score, r.usage_score,
-    r.procedure_order_score, r.dependency_score, r.contradiction_score,
-    r.normalization_confidence, r.soundness_applicable, r.abstained,
-    CASE WHEN r.abstained
-        THEN jsonb_build_object('reasons', r.abstention_reasons) END,
-    jsonb_build_object('source', 'apollo_graph_comparison_runs', 'source_id', r.id),
-    r.created_at
-FROM public.apollo_graph_comparison_runs AS r
-JOIN app.problem_attempts AS a ON a.id = r.attempt_id
-JOIN app.tutoring_sessions AS s ON s.id = a.session_id
+INSERT INTO pg_temp.db05_copy_quarantine (source_table, source_id, reason, source_row)
+SELECT 'ai_use_reports', r.id::text, 'missing target chat activity', to_jsonb(r)
+FROM public.ai_use_reports AS r
+LEFT JOIN app.learning_activities AS s
+  ON s.external_id = r.chat_id AND s.modality = 'chat'
+WHERE s.id IS NULL
 ON CONFLICT DO NOTHING;
-
-INSERT INTO internal.grading_findings (
-    id, course_id, run_id, entity_id, finding_kind, score, confidence,
-    student_node_ids, reference_node_ids, student_edge_ids, reference_edge_ids,
-    evidence_spans, message, created_at
-)
-SELECT
-    f.id, r.search_space_id::bigint, gr.id, copied_entity.id, f.finding_kind,
-    f.score, f.confidence,
-    CASE WHEN jsonb_typeof(f.student_node_ids) = 'array'
-        THEN ARRAY(SELECT jsonb_array_elements_text(f.student_node_ids)) ELSE '{}'::text[] END,
-    CASE WHEN jsonb_typeof(f.reference_node_ids) = 'array'
-        THEN ARRAY(SELECT jsonb_array_elements_text(f.reference_node_ids)) ELSE '{}'::text[] END,
-    CASE WHEN jsonb_typeof(f.student_edge_ids) = 'array'
-        THEN ARRAY(SELECT jsonb_array_elements_text(f.student_edge_ids)) ELSE '{}'::text[] END,
-    CASE WHEN jsonb_typeof(f.reference_edge_ids) = 'array'
-        THEN ARRAY(SELECT jsonb_array_elements_text(f.reference_edge_ids)) ELSE '{}'::text[] END,
-    f.evidence_spans, f.message, f.created_at
-FROM public.apollo_graph_comparison_findings AS f
-JOIN public.apollo_graph_comparison_runs AS r ON r.id = f.run_id
-JOIN internal.grading_runs AS gr
-  ON gr.attempt_id = r.attempt_id
- AND gr.role = 'shadow'
- AND gr.grader_version = r.comparison_version
-LEFT JOIN app.learner_entities AS copied_entity ON copied_entity.id = f.entity_id
-ON CONFLICT DO NOTHING;
-
-DO $report_attribution$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM public.ai_use_reports AS r
-        LEFT JOIN app.chat_sessions AS s ON s.external_id = r.chat_id
-        WHERE s.id IS NULL
-    ) THEN
-        RAISE EXCEPTION 'AI usage report cannot be attributed to a chat owner/course';
-    END IF;
-END
-$report_attribution$;
 
 INSERT INTO app.ai_usage_reports (
     id, user_id, course_id, chat_id, style, length, markdown, jsonld,
@@ -688,11 +713,11 @@ SELECT
         ELSE '{}'::text[] END,
     r.created_at
 FROM public.ai_use_reports AS r
-JOIN app.chat_sessions AS s ON s.external_id = r.chat_id
+JOIN app.learning_activities AS s ON s.external_id = r.chat_id AND s.modality = 'chat'
 ON CONFLICT DO NOTHING;
 
 -- Advance every identity sequence in app/internal, including target-only ids
--- allocated for tally-only questions and shadow grading runs.
+-- allocated for remapped tutoring activities and generation runs.
 DO $advance_sequences$
 DECLARE
     identity_column record;

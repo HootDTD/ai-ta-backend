@@ -139,8 +139,8 @@ INSERT INTO public.chat_sessions (
 )
 SELECT id, external_id, user_id, course_id::integer, metadata, memory_summary,
        created_at, updated_at
-FROM app.chat_sessions, _db05_reverse_context
-WHERE created_at >= watermark OR updated_at >= watermark
+FROM app.learning_activities, _db05_reverse_context
+WHERE modality='chat' AND (created_at >= watermark OR updated_at >= watermark)
 ON CONFLICT (id) DO UPDATE SET
     meta=EXCLUDED.meta, memory_summary=EXCLUDED.memory_summary,
     updated_at=EXCLUDED.updated_at;
@@ -149,7 +149,7 @@ INSERT INTO public.chat_turns (
     id, chat_session_id, turn_index, turn_id, role, content, created_at, model,
     tool_name, tool_inputs, attachments, citations, keywords
 )
-SELECT id, chat_session_id, turn_index, external_id, role, content, created_at,
+SELECT id, learning_activity_id, turn_index, external_id, role, content, created_at,
        model, tool_name, tool_inputs, attachments, citations, to_jsonb(keywords)
 FROM app.chat_messages, _db05_reverse_context
 WHERE created_at >= watermark
@@ -159,7 +159,7 @@ INSERT INTO public.chat_session_snippets (
     chat_session_id, chunk_id, original_score, first_seen_turn, last_used_turn,
     snippet_payload, created_at
 )
-SELECT chat_session_id, chunk_id, original_score, first_seen_turn, last_used_turn,
+SELECT learning_activity_id, chunk_id, original_score, first_seen_turn, last_used_turn,
        snippet_payload, created_at
 FROM internal.chat_session_snippets, _db05_reverse_context
 WHERE created_at >= watermark
@@ -174,7 +174,7 @@ INSERT INTO public.chat_router_decisions (
     clarify_cause, latency_router_ms, latency_retrieval_ms, latency_answer_ms,
     created_at
 ) OVERRIDING SYSTEM VALUE
-SELECT id, turn_id, chat_session_id, query, stage1_top1, stage1_margin,
+SELECT id, turn_id, learning_activity_id, query, stage1_top1, stage1_margin,
        stage1_route, stage2_invoked, stage2_route, stage2_confidence,
        retrieval_mode, retrieval_top_score, final_route, was_clarified,
        clarify_cause, latency_router_ms, latency_retrieval_ms,
@@ -183,27 +183,42 @@ FROM internal.chat_routing_decisions, _db05_reverse_context
 WHERE created_at >= watermark
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO public.apollo_subjects (
-    id, slug, display_name, created_at, search_space_id
-) OVERRIDING SYSTEM VALUE
-SELECT id, slug, display_name, created_at, course_id::integer
-FROM app.subjects, _db05_reverse_context
+DO $legacy_subject_slug_guard$
+BEGIN
+    IF EXISTS (
+        SELECT subject_slug
+        FROM app.concepts
+        GROUP BY subject_slug
+        HAVING count(DISTINCT course_id) > 1
+    ) THEN
+        RAISE EXCEPTION 'cannot reverse course-scoped duplicate subject slugs into legacy global-unique apollo_subjects';
+    END IF;
+END
+$legacy_subject_slug_guard$;
+
+INSERT INTO public.apollo_subjects (slug, display_name, created_at, search_space_id)
+SELECT DISTINCT ON (subject_slug)
+       subject_slug, subject_display_name, created_at, course_id::integer
+FROM app.concepts, _db05_reverse_context
 WHERE created_at >= watermark OR updated_at >= watermark
-ON CONFLICT (id) DO UPDATE SET
-    slug=EXCLUDED.slug, display_name=EXCLUDED.display_name,
-    search_space_id=EXCLUDED.search_space_id;
+ORDER BY subject_slug, updated_at DESC
+ON CONFLICT (slug) DO UPDATE SET
+    display_name=EXCLUDED.display_name, search_space_id=EXCLUDED.search_space_id;
 
 INSERT INTO public.apollo_concepts (
     id, subject_id, slug, display_name, canonical_symbols, normalization_map,
     parser_prompt_template, solver_hints, forbidden_named_laws, concept_dag,
     created_at, updated_at, description
 ) OVERRIDING SYSTEM VALUE
-SELECT id, subject_id, slug, display_name,
+SELECT c.id, s.id, c.slug, c.display_name,
        symbol_metadata || jsonb_build_object('symbols',to_jsonb(canonical_symbols)),
        normalization_map, parser_prompt_template, solver_config,
        to_jsonb(forbidden_named_laws), '{}'::jsonb, created_at, updated_at, description
-FROM app.concepts, _db05_reverse_context
-WHERE created_at >= watermark OR updated_at >= watermark
+FROM app.concepts c
+JOIN public.apollo_subjects s
+  ON s.slug=c.subject_slug AND s.search_space_id=c.course_id
+CROSS JOIN _db05_reverse_context
+WHERE c.created_at >= watermark OR c.updated_at >= watermark
 ON CONFLICT (id) DO UPDATE SET
     display_name=EXCLUDED.display_name, canonical_symbols=EXCLUDED.canonical_symbols,
     normalization_map=EXCLUDED.normalization_map, solver_hints=EXCLUDED.solver_hints,
@@ -232,13 +247,14 @@ INSERT INTO public.apollo_sessions (
     pending_intent, history_summary, history_summary_up_to_turn, concept_id,
     user_id, search_space_id
 )
-SELECT s.id, s.status, s.phase, p.problem_code, s.created_at, s.last_touched_at,
+SELECT s.id-1000000, s.status, s.phase, p.problem_code, s.created_at, s.last_touched_at,
        s.pending_intent, s.history_summary, s.history_summary_up_to_turn,
        s.concept_id, s.user_id, s.course_id::integer
-FROM app.tutoring_sessions s
+FROM app.learning_activities s
 LEFT JOIN app.problems p ON p.id=s.current_problem_id
 CROSS JOIN _db05_reverse_context
-WHERE s.created_at >= watermark OR s.updated_at >= watermark
+WHERE s.modality='tutoring'
+  AND (s.created_at >= watermark OR s.updated_at >= watermark)
 ON CONFLICT (id) DO UPDATE SET
     status=EXCLUDED.status, phase=EXCLUDED.phase,
     current_problem_id=EXCLUDED.current_problem_id,
@@ -252,7 +268,7 @@ INSERT INTO public.apollo_problem_attempts (
     learner_update_attempts, learner_update_failed_at, learner_update_last_error,
     learner_update_next_attempt_at
 )
-SELECT a.id, a.session_id, p.problem_code, a.difficulty, a.result, a.solver_trace,
+SELECT a.id, a.learning_activity_id-1000000, p.problem_code, a.difficulty, a.result, a.solver_trace,
        a.diagnostic_report, a.created_at, a.learner_update_pending,
        a.learner_update_attempts, a.learner_update_failed_at,
        a.learner_update_last_error, a.learner_update_next_attempt_at
@@ -271,7 +287,7 @@ ON CONFLICT (id) DO UPDATE SET
 INSERT INTO public.apollo_messages (
     id, session_id, role, content, turn_index, created_at, attempt_id, metadata
 )
-SELECT id, session_id, role, content, turn_index, created_at, attempt_id,
+SELECT id, learning_activity_id-1000000, role, content, turn_index, created_at, attempt_id,
        metadata || jsonb_strip_nulls(jsonb_build_object(
            'low_conf_pattern',low_confidence_pattern,'intent',intent))
 FROM app.tutoring_messages, _db05_reverse_context
@@ -304,8 +320,8 @@ INSERT INTO public.apollo_authored_sets (
 )
 SELECT id, course_id::integer, set_index, problem_document_id,
        solution_document_id, status, result_summary, created_at, updated_at
-FROM app.authored_sets, _db05_reverse_context
-WHERE created_at >= watermark OR updated_at >= watermark
+FROM app.provisioning_runs, _db05_reverse_context
+WHERE kind='authored_set' AND (created_at >= watermark OR updated_at >= watermark)
 ON CONFLICT (id) DO UPDATE SET
     status=EXCLUDED.status, result_summary=EXCLUDED.result_summary,
     updated_at=EXCLUDED.updated_at;
@@ -314,7 +330,7 @@ INSERT INTO public.apollo_reference_question_opportunities (
     id, attempt_id, session_id, reference_node_id, state, question,
     asked_turn, answered_turn, created_at
 )
-SELECT id, attempt_id, session_id, reference_node_id,
+SELECT id, attempt_id, learning_activity_id-1000000, reference_node_id,
        CASE WHEN state='answered' THEN 'answered' ELSE 'asked_waiting' END,
        question, COALESCE(asked_turn,0), answered_turn, created_at
 FROM app.question_opportunities, _db05_reverse_context
@@ -382,14 +398,6 @@ FROM app.mastery_events, _db05_reverse_context
 WHERE created_at >= watermark
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO public.apollo_kg_negotiations (
-    id, attempt_id, entry_id, actor, move, payload, created_at
-) OVERRIDING SYSTEM VALUE
-SELECT id, attempt_id, entry_id, actor, move, payload, created_at
-FROM app.learner_negotiations, _db05_reverse_context
-WHERE created_at >= watermark
-ON CONFLICT (id) DO NOTHING;
-
 INSERT INTO public.apollo_ingest_runs (
     id, search_space_id, document_id, content_hash, status,
     n_questions_scraped, n_promoted, n_rejected, n_dedup_merged, llm_calls,
@@ -417,10 +425,10 @@ ON CONFLICT (id) DO UPDATE SET
 INSERT INTO public.apollo_generation_runs (
     id, search_space_id, concept_id, status, result_summary, ingest_run_id, created_at
 )
-SELECT id, course_id::integer, concept_id, status, result_summary,
+SELECT id-1000000, course_id::integer, concept_id, status, result_summary,
        ingest_run_id, created_at
-FROM internal.content_generation_runs, _db05_reverse_context
-WHERE created_at >= watermark OR updated_at >= watermark
+FROM app.provisioning_runs, _db05_reverse_context
+WHERE kind='generation' AND (created_at >= watermark OR updated_at >= watermark)
 ON CONFLICT (id) DO UPDATE SET
     status=EXCLUDED.status, result_summary=EXCLUDED.result_summary,
     ingest_run_id=EXCLUDED.ingest_run_id;
@@ -467,48 +475,6 @@ CROSS JOIN _db05_reverse_context
 WHERE r.role IN ('canonical','pair') AND r.created_at >= watermark
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO public.apollo_graph_comparison_runs (
-    id, attempt_id, user_id, search_space_id, coverage_score, soundness_score,
-    bisimilarity_score, node_coverage_score, edge_coverage_score, scoping_score,
-    usage_score, procedure_order_score, dependency_score, contradiction_score,
-    normalization_confidence, abstained, abstention_reasons,
-    comparison_version, reference_graph_hash, created_at, soundness_applicable
-) OVERRIDING SYSTEM VALUE
-SELECT id, attempt_id, user_id, course_id::integer, coverage_score,
-       soundness_score, bisimilarity_score, node_coverage_score,
-       edge_coverage_score, scoping_score, usage_score, procedure_order_score,
-       dependency_score, contradiction_score, normalization_confidence,
-       abstained, COALESCE(abstention_details->'reasons','[]'::jsonb),
-       grader_version, COALESCE(reference_graph_hash,''), created_at,
-       COALESCE(soundness_applicable,true)
-FROM internal.grading_runs, _db05_reverse_context
-WHERE role='shadow' AND created_at >= watermark
-ON CONFLICT (attempt_id,comparison_version) DO UPDATE SET
-    coverage_score=EXCLUDED.coverage_score,
-    soundness_score=EXCLUDED.soundness_score,
-    bisimilarity_score=EXCLUDED.bisimilarity_score,
-    normalization_confidence=EXCLUDED.normalization_confidence,
-    abstained=EXCLUDED.abstained,
-    abstention_reasons=EXCLUDED.abstention_reasons;
-
-INSERT INTO public.apollo_graph_comparison_findings (
-    id, run_id, entity_id, finding_kind, score, confidence,
-    student_node_ids, reference_node_ids, student_edge_ids, reference_edge_ids,
-    evidence_spans, message, created_at
-) OVERRIDING SYSTEM VALUE
-SELECT f.id, legacy_run.id, f.entity_id, f.finding_kind, f.score, f.confidence,
-       to_jsonb(f.student_node_ids), to_jsonb(f.reference_node_ids),
-       to_jsonb(f.student_edge_ids), to_jsonb(f.reference_edge_ids),
-       f.evidence_spans, f.message, f.created_at
-FROM internal.grading_findings f
-JOIN internal.grading_runs target_run ON target_run.id=f.run_id
-JOIN public.apollo_graph_comparison_runs legacy_run
-  ON legacy_run.attempt_id=target_run.attempt_id
- AND legacy_run.comparison_version=target_run.grader_version
-CROSS JOIN _db05_reverse_context
-WHERE f.created_at >= watermark
-ON CONFLICT (id) DO NOTHING;
-
 INSERT INTO public.ai_use_reports (
     id, chat_id, created_at, style, length, markdown, jsonld,
     model_fingerprint, tool_calls, prompt_hashes
@@ -550,7 +516,7 @@ END
 $advance_legacy_sequences$;
 
 -- Fail-loud reverse checksums for the principal ownership/FK spine. The full
--- 33-mapping checksum gate is scripts/db/reconcile_copy.sql, run immediately
+-- 28-table checksum gate is scripts/db/reconcile_copy.sql, run immediately
 -- after this transaction as shown above.
 DO $reverse_checksum_assertions$
 DECLARE source_hash text; target_hash text;
@@ -581,15 +547,16 @@ BEGIN
 
     SELECT md5(COALESCE(string_agg(md5(to_jsonb(x)::text),'' ORDER BY id),''))
       INTO target_hash
-      FROM (SELECT id,external_id,user_id,course_id FROM app.chat_sessions,_db05_reverse_context
-            WHERE created_at>=watermark OR updated_at>=watermark) x;
+      FROM (SELECT id,external_id,user_id,course_id FROM app.learning_activities,_db05_reverse_context
+            WHERE modality='chat' AND (created_at>=watermark OR updated_at>=watermark)) x;
     SELECT md5(COALESCE(string_agg(md5(to_jsonb(x)::text),'' ORDER BY id),''))
       INTO source_hash
       FROM (SELECT s.id,s.chat_id AS external_id,s.user_id,s.search_space_id::bigint AS course_id
-            FROM public.chat_sessions s JOIN app.chat_sessions a ON a.id=s.id
+             FROM public.chat_sessions s JOIN app.learning_activities a
+               ON a.id=s.id AND a.modality='chat'
             CROSS JOIN _db05_reverse_context
             WHERE a.created_at>=watermark OR a.updated_at>=watermark) x;
-    IF source_hash <> target_hash THEN RAISE EXCEPTION 'reverse checksum failed: chat_sessions'; END IF;
+    IF source_hash <> target_hash THEN RAISE EXCEPTION 'reverse checksum failed: learning_activities(chat)'; END IF;
 END
 $reverse_checksum_assertions$;
 
