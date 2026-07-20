@@ -404,7 +404,7 @@ no-silent-drop rule — `store.write_edges`'s own fix is WU-2B.
 
 This duplicates the validator only at the **parser output** boundary (cheap,
 deterministic, prevents emitting garbage). It is NOT the §6.3
-`graph_compare/validator.py` (that grades a whole graph at Done — out of
+`retired graph comparator/validator.py` (that grades a whole graph at Done — out of
 scope). Reusing `EDGE_ALLOWED_PAIRS` (not re-listing pairs) keeps one source
 of truth.
 
@@ -791,7 +791,7 @@ Explicitly NOT in this unit (each is a named later work unit or phase):
   existing persisted edge is **WU-2B** (needs the store). WU-2A's
   `reuse_of`/context handling only avoids creating duplicate NODES within the
   prompt; it does not dedup against Neo4j.
-- **The §6.3 `graph_compare/validator.py`** and the whole `apollo/graph_compare/`
+- **The §6.3 `retired graph comparator/validator.py`** and the whole `apollo/retired graph comparator/`
   grading core — **phase 4**. WU-2A reuses `EDGE_ALLOWED_PAIRS` for a parser
   output-boundary check only.
 - **Resolution / `:Canon` / RESOLVES_TO / reference-anchored matching** —

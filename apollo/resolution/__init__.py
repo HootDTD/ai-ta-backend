@@ -1,6 +1,6 @@
 """Apollo §5 reference-anchored resolver package (WU-3C2).
 
-Standalone by design so WU-4A's ``apollo/graph_compare/`` imports it rather than
+Standalone by design so downstream consumers import it rather than
 owning it (``from apollo.resolution import resolve_attempt, ...``). The resolver
 maps a student's per-attempt evidence nodes onto this problem's reference nodes
 (+ course misconception entities) with content-first tiers, structural

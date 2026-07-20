@@ -39,7 +39,7 @@ The whole subsystem is flag-gated and runs in shadow; the isolation boundary is
 - **`APOLLO_MISCONCEPTION_ENABLED`** gates the misconception path
   (`apollo/overseer/misconception.py:503`); env comment: "no-op until P7 chat
   wiring; harmless now." H3 is an explicitly unwired, separately-flagged feature.
-- **`APOLLO_GRAPH_SIM_SHADOW_ENABLED` / `_LIVE_ENABLED`** gate the grade-time
+- **`[retired A7 shadow switch]` / `_LIVE_ENABLED`** gate the grade-time
   consumer of the reference graph (`apollo/handlers/done.py:66-83`). SHADOW
   computes the graph rubric/diagnostic but does not surface it; a human reads
   calibration output (`apollo/grading/calibration.py:4`) before flipping LIVE.

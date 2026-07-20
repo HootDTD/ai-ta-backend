@@ -1,11 +1,4 @@
-"""Campaign-plan Task A3 — real-PG gate: paired canonical-artifact capture on
-the Done route.
-
-Mirrors ``test_done_shadow_route_postgres.py``'s harness (same Neo4j stubs,
-same ``seed_course``/``_seed_session`` shape) but asserts the NEW
-``apollo_grading_artifacts`` rows written by ``write_artifacts`` under
-``APOLLO_GRADING_ARTIFACT_ENABLED``, orthogonally to
-``APOLLO_GRAPH_SIM_SHADOW_ENABLED``.
+"""Real-PG gate for canonical transcript/topic artifact capture on Done.
 
 These MUST RUN GREEN (not skip) with Docker up — a skip is a FAIL of the gate.
 """
@@ -77,10 +70,6 @@ async def _seed_session(db, *, current_code: str, sid: int, cid: int):
     return sess, attempt
 
 
-def _auditor_stub(_request):
-    return {"spans": {}}
-
-
 def _neo_stubs(attempt_id: int):
     return [
         patch(
@@ -89,16 +78,6 @@ def _neo_stubs(attempt_id: int):
         ),
         patch("apollo.handlers.done.KGStore.freeze", new=AsyncMock()),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=AsyncMock()),
-        patch(
-            "apollo.handlers.done.KGStore.read_node_graded_at",
-            new=AsyncMock(return_value={"stu_continuity": "2026-06-18T00:00:02+00:00"}),
-        ),
-        patch("apollo.handlers.done_grading.write_resolution", new=AsyncMock(return_value=None)),
-        patch(
-            "apollo.handlers.done_turn_order.KGStore.read_node_created_at",
-            new=AsyncMock(return_value={"stu_continuity": "2026-06-18T00:00:02+00:00"}),
-        ),
-        patch("apollo.handlers.done_grading.main_chat_auditor", new=_auditor_stub),
     ]
 
 
@@ -112,9 +91,7 @@ def _stop(patches):
         p.stop()
 
 
-async def _run_done(db, sess_id, monkeypatch, *, neo_patches, shadow_on: bool, artifact_on: bool):
-    if shadow_on:
-        monkeypatch.setenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", "true")
+async def _run_done(db, sess_id, monkeypatch, *, neo_patches, artifact_on: bool):
     if artifact_on:
         monkeypatch.setenv("APOLLO_GRADING_ARTIFACT_ENABLED", "true")
     _start(neo_patches)
@@ -147,7 +124,6 @@ async def test_both_flags_off_writes_zero_rows_response_unchanged(db_session, mo
         sess.id,
         monkeypatch,
         neo_patches=_neo_stubs(attempt.id),
-        shadow_on=False,
         artifact_on=False,
     )
 
@@ -187,7 +163,6 @@ async def test_artifact_on_shadow_off_writes_one_llm_canonical_row(db_session, m
         sess.id,
         monkeypatch,
         neo_patches=_neo_stubs(attempt.id),
-        shadow_on=False,
         artifact_on=True,
     )
 
@@ -195,7 +170,6 @@ async def test_artifact_on_shadow_off_writes_one_llm_canonical_row(db_session, m
     assert len(rows) == 1
     assert rows[0].role == "canonical"
     assert rows[0].grader_used == "llm_fallback"
-    assert rows[0].abstention["graph_failure"] is None
 
     # Task B1 — artifact capture on ⇒ handle_done renders + attaches the
     # student scorecard from the persisted canonical row's payload.
@@ -211,37 +185,6 @@ async def test_artifact_on_shadow_off_writes_one_llm_canonical_row(db_session, m
         "watch_out_note",
         "clarifications",
     }
-
-
-async def test_both_flags_on_writes_two_rows_canonical_llm_pair_graph(db_session, monkeypatch):
-    sid, cid, codes = await seed_course(
-        db_session,
-        subject_slug="fluid_mechanics",
-        concept_slug="bernoulli_principle",
-        problems=_INTRO,
-    )
-    sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
-
-    out = await _run_done(
-        db_session,
-        sess.id,
-        monkeypatch,
-        neo_patches=_neo_stubs(attempt.id),
-        shadow_on=True,
-        artifact_on=True,
-    )
-
-    rows = await _artifact_rows(db_session, attempt.id)
-    by_role = {r.role: r for r in rows}
-    assert set(by_role) == {"canonical", "pair"}
-    assert by_role["canonical"].grader_used == "llm_fallback"
-    assert by_role["pair"].grader_used == "graph"
-
-    # Task B1 — the scorecard renders from the CANONICAL (served) payload,
-    # i.e. the LLM row here, not the paired graph row.
-    assert "scorecard" in out
-    assert isinstance(out["scorecard"]["score_0_100"], int)
-    assert out["scorecard"]["band"] in {"Strong", "Proficient", "Developing", "Beginning"}
 
 
 def _student_graph_with_condition_credit(attempt_id: int) -> KGGraph:
@@ -319,7 +262,6 @@ async def test_llm_canonical_composite_and_band_match_served_rubric(db_session, 
         sess.id,
         monkeypatch,
         neo_patches=neo_patches,
-        shadow_on=False,
         artifact_on=True,
     )
 
@@ -344,29 +286,3 @@ async def test_llm_canonical_composite_and_band_match_served_rubric(db_session, 
     assert canonical.scores["composite"] * 100 == pytest.approx(
         out["scorecard"]["score_0_100"], abs=1
     )
-
-
-async def test_shadow_on_artifact_off_writes_zero_rows(db_session, monkeypatch):
-    """The artifact flag is the sole gate — a running shadow chain alone never
-    writes an artifact row."""
-    sid, cid, codes = await seed_course(
-        db_session,
-        subject_slug="fluid_mechanics",
-        concept_slug="bernoulli_principle",
-        problems=_INTRO,
-    )
-    sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
-
-    out = await _run_done(
-        db_session,
-        sess.id,
-        monkeypatch,
-        neo_patches=_neo_stubs(attempt.id),
-        shadow_on=True,
-        artifact_on=False,
-    )
-
-    rows = await _artifact_rows(db_session, attempt.id)
-    assert rows == []
-    # Task B1 — no artifact write ⇒ nothing to template a scorecard over.
-    assert "scorecard" not in out

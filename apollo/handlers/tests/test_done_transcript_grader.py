@@ -37,7 +37,6 @@ _VALID_VERDICT = {
 @pytest.fixture(autouse=True)
 def _clear_flags(monkeypatch):
     monkeypatch.delenv("APOLLO_TRANSCRIPT_GRADER", raising=False)
-    monkeypatch.delenv("APOLLO_GRAPH_GRADER_LIVE", raising=False)
     monkeypatch.delenv("APOLLO_GRADING_ARTIFACT_ENABLED", raising=False)
     yield
 

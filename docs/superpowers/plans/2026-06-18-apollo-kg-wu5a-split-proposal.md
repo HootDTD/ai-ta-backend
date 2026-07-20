@@ -64,7 +64,7 @@
 ## 0. What WU-5A is (and the sibling boundaries it must not cross)
 
 WU-5A is **§6.4 step 16 *invocation* + step 17** — the explicit, atomic Layer-3
-write. It receives the frozen `ShadowGradeResult` that WU-4C1 builds
+write. It receives the frozen `retired shadow result` that WU-4C1 builds
 (`apollo/handlers/done_grading.py:91-113`), calls the **already-built, frozen**
 pure `convert_findings_to_events` (WU-4B2, `apollo/grading/events.py:68`) to turn
 `audited.findings` into a `tuple[LearnerEvent, ...]`, runs the **§3 3-state
@@ -73,8 +73,8 @@ appended + `apollo_learner_state` upserted — in **one all-or-nothing Postgres
 transaction** at Done time. It owns **no grading algorithm, no findings
 production, no run/findings persistence, no decay, no janitor**.
 
-Everything upstream is DONE and frozen (WU-4A graph_compare, WU-4B1 audit/abstention,
-WU-4B2 events, WU-4B3 run/findings persistence, WU-4C1 shadow chain + `ShadowGradeResult`,
+Everything upstream is DONE and frozen (WU-4A retired graph comparator, WU-4B1 audit/abstention,
+WU-4B2 events, WU-4B3 run/findings persistence, WU-4C1 shadow chain + `retired shadow result`,
 WU-4C2 calibration/diagnostic + `APOLLO_GRAPH_SIM_LIVE_ENABLED`). The detailed
 boundary citations are unchanged from the pre-critique draft and verified below in §1.
 
@@ -96,15 +96,15 @@ boundary citations are unchanged from the pre-critique draft and verified below 
 
 ## 1. Ground truth discovered (load-bearing facts, file:line — RE-VERIFIED post-critique)
 
-- **`ShadowGradeResult`** (`apollo/handlers/done_grading.py:91-113`): `run_id`,
+- **`retired shadow result`** (`apollo/handlers/done_grading.py:91-113`): `run_id`,
   `grade: GradeResult`, `audited: AuditedGrade`, `normalization_confidence: float`,
   `reference_graph_hash: str`, `opposes_map: Mapping[str,str]`,
   `turn_order: Mapping[str,int]`, `graph_sim_rubric: dict`, `calibration`,
   `diagnostic`. **It does NOT carry `user_id`/`search_space_id`, `parser_confidence`,
   or any Done timestamp.** `done.py` has `sess` in scope
   (`sess.user_id`/`sess.search_space_id`/`sess.concept_id`) AND the raw
-  `student_graph` (passed into `run_graph_simulation`, `done.py:385-389`) — so
-  WU-5A's entry takes `sess`, the `ShadowGradeResult`, an explicitly-captured
+  `student_graph` (passed into `retired graph simulation`, `done.py:385-389`) — so
+  WU-5A's entry takes `sess`, the `retired shadow result`, an explicitly-captured
   `done_ts`, and a `parser_confidence` scalar computed in `done.py` from
   `student_graph`. **No FK chase up `apollo_problem_attempts`.**
 - **`convert_findings_to_events` is PURE and abstention-correct**
@@ -205,7 +205,7 @@ pure-core / persist / done-wire pattern.
 
 A three-way split (math / persist / done-wire) was considered and rejected: the
 persist layer and the `done.py` call share one transaction, one flag, and one
-`ShadowGradeResult` substrate; the `done.py` edit is a ~10-line call site that
+`retired shadow result` substrate; the `done.py` edit is a ~10-line call site that
 cannot be independently green without the persist function it calls.
 
 ## 3. Sub-units
@@ -350,7 +350,7 @@ class LearnerStateRowSpec: ...
 ### WU-5A2 — the all-or-nothing Layer-3 persist + Done wiring
 
 **One-line:** Capture `done_ts` once, compute `parser_confidence` from the student
-graph, call `convert_findings_to_events` on the `ShadowGradeResult`, resolve each
+graph, call `convert_findings_to_events` on the `retired shadow result`, resolve each
 event's `canonical_key → entity_id`, read the prior `LearnerState` rows
 `SELECT … FOR UPDATE`, supersede this attempt's prior mastery events, apply 5A1's
 pure update per entity (recomputing from the EVENT-LOG prior, not the state row),
@@ -451,7 +451,7 @@ _GRAPH_SIM_LAYER3_FLAG = "APOLLO_GRAPH_SIM_LAYER3_ENABLED"  # default OFF
 
 **Dependencies:** WU-5A1 (`belief`/`update`/`state_model`), WU-4B2
 (`convert_findings_to_events`), WU-3C1 (`load_entity_specs`), WU-4C1
-(`ShadowGradeResult`, `sess`, `learner_update_pending`),
+(`retired shadow result`, `sess`, `learner_update_pending`),
 `min_parser_confidence_of` (`apollo.grading.abstention`), the
 `LearnerState`/`MasteryEvent`/`ProblemAttempt` ORM. No new external deps.
 
@@ -470,7 +470,7 @@ SAME harness as `test_done_shadow_route_postgres.py` — **NEVER the unit `db`
   (`me==0`, `ls==0`) stays GREEN unchanged.
 - Flag ON, happy path → one `MasteryEvent` per mapped entity, one `LearnerState`
   upsert per entity; belief sums-to-1; mastery∈[0,1]; first-touch `prior_belief == COLD_START_PRIOR`.
-- Abstained `ShadowGradeResult` → converter returns `()` → NO Layer-3 rows,
+- Abstained `retired shadow result` → converter returns `()` → NO Layer-3 rows,
   `result.abstained=True`; the run/findings (WU-4C1) count unchanged.
 - Unmapped `canonical_key` → that event SKIPPED (in `result.skipped_unmapped`), the
   others still write; **no NULL entity_id insert, no FK crash.**
@@ -499,7 +499,7 @@ SAME harness as `test_done_shadow_route_postgres.py` — **NEVER the unit `db`
    `APOLLO_GRAPH_SIM_LAYER3_ENABLED` (default OFF everywhere incl. the test
    regression path; ON only in the Layer-3 integration tests).** THREE orthogonal
    flags now:
-   - `APOLLO_GRAPH_SIM_SHADOW_ENABLED` (WU-4C1) — run the chain (persist run/findings).
+   - `[retired A7 shadow switch]` (WU-4C1) — run the chain (persist run/findings).
    - `APOLLO_GRAPH_SIM_LIVE_ENABLED` (WU-4C2) — promote the graph-sim GRADE to the student.
    - `APOLLO_GRAPH_SIM_LAYER3_ENABLED` (WU-5A2, NEW) — write `apollo_mastery_events`/
      `apollo_learner_state`. The §6.7 calibration gate.
@@ -579,7 +579,7 @@ SAME harness as `test_done_shadow_route_postgres.py` — **NEVER the unit `db`
      in `done.py` reusing the SHIPPED §6.6 helper (`abstention.py:70`), the SAME
      min-over-turns the abstention gate uses; threaded into `run_learner_update`.
    - `grader_confidence = shadow.normalization_confidence × 1.0` (comparison_confidence
-     = 1.0 in v1), one per run, off the frozen `ShadowGradeResult.normalization_confidence`.
+     = 1.0 in v1), one per run, off the frozen `retired shadow result.normalization_confidence`.
    - The COVERED score `s = event.score` is ALREADY resolution-scaled by the
      converter (`events.py:307-329`); `event.confidence` (resolution confidence) is
      NOT re-multiplied into q. (Pinned by the q-sourcing test in §3.)
@@ -608,7 +608,7 @@ SAME harness as `test_done_shadow_route_postgres.py` — **NEVER the unit `db`
 | Files (NEW) | `apollo/learner_model/persistence.py`, `apollo/handlers/learner_update.py`, `tests/database/test_done_layer3_route_postgres.py` |
 | Files (EDIT) | `apollo/handlers/done.py` (~12 lines: capture done_ts + new flag + gated call + parser_confidence), `apollo/knowledge_graph/store.py` (~3 lines: widen `stamp_graded_at` to accept `ts`) |
 | Frozen public API | `persist_learner_update(db,*,sess,shadow,done_ts,parser_confidence,canon_key_by_canonical_key)->LearnerUpdateResult` (flush-only); `run_learner_update(db,*,sess,attempt,shadow,done_ts,parser_confidence)->LearnerUpdateResult\|None` (owns commit + NO-FALLBACK); frozen `LearnerUpdateResult`; `_GRAPH_SIM_LAYER3_FLAG` |
-| Consumes | WU-5A1; WU-4B2 (`convert_findings_to_events`); WU-3C1 (`load_entity_specs`); WU-4C1 (`ShadowGradeResult`, `sess`, `learner_update_pending`); `min_parser_confidence_of`; `LearnerState`/`MasteryEvent`/`ProblemAttempt` ORM |
+| Consumes | WU-5A1; WU-4B2 (`convert_findings_to_events`); WU-3C1 (`load_entity_specs`); WU-4C1 (`retired shadow result`, `sess`, `learner_update_pending`); `min_parser_confidence_of`; `LearnerState`/`MasteryEvent`/`ProblemAttempt` ORM |
 | depends_on | WU-5A1, WU-4C1 (branch tip), WU-4B2, WU-3C1 |
 | real_infra | **real-PG (Testcontainers `tests/database`, `pytest.mark.integration`/`db_session`)** — CHECK constraints, UNIQUE NULLS NOT DISTINCT, NOT-NULL `entity_id` FK, `SELECT … FOR UPDATE`, all-or-nothing rollback. **No Neo4j, no LLM.** |
 | migration | none |
@@ -732,7 +732,7 @@ golden-vector test files; WU-5A2 ≈ 2 new modules + a ~12-line `done.py` edit +
 | Sub-unit | Seam (input → output) | Files | Migration | Real-infra | Key risk owned |
 |---|---|---|---|---|---|
 | **WU-5A1** | `LearnerEvent` + prior belief + confidences + done_ts → posterior belief + `MasteryEventRowSpec`/`LearnerStateRowSpec` (PURE, floored) | `learner_model/__init__.py`, `belief.py`, `state_model.py`, `update.py` (NEW) | No | **No** (pure, `math` only) | absorbing-zero floor; golden-vector γ=1.5; damper form; two-step 0.5 threshold; cold-start mastery 0.50; q-no-double-count |
-| **WU-5A2** | `ShadowGradeResult` + `sess` + `done_ts` + `parser_confidence` → `apollo_mastery_events` appended + `apollo_learner_state` upserted in ONE all-or-nothing txn (flag-gated) | `learner_model/persistence.py`, `handlers/learner_update.py`, `tests/database/test_done_layer3_route_postgres.py` (NEW); `handlers/done.py`, `knowledge_graph/store.py` (edit) | No | **Yes — real-PG** (no Neo4j, no LLM) | txn atomicity; key→id join + unmapped-skip; retry/supersede no-double-count (event-log base); done_ts threading; flag-off byte-identity; tripwire flips |
+| **WU-5A2** | `retired shadow result` + `sess` + `done_ts` + `parser_confidence` → `apollo_mastery_events` appended + `apollo_learner_state` upserted in ONE all-or-nothing txn (flag-gated) | `learner_model/persistence.py`, `handlers/learner_update.py`, `tests/database/test_done_layer3_route_postgres.py` (NEW); `handlers/done.py`, `knowledge_graph/store.py` (edit) | No | **Yes — real-PG** (no Neo4j, no LLM) | txn atomicity; key→id join + unmapped-skip; retry/supersede no-double-count (event-log base); done_ts threading; flag-off byte-identity; tripwire flips |
 
 **The one-sentence split:** WU-5A1 is the interpretable filter's arithmetic (pure,
 exhaustively golden-vector-tested, NO container, with the BKT boundary-floor that

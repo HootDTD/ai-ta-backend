@@ -12,7 +12,7 @@
 
 WU-4C is the **orchestration unit that wires the already-built graph-simulation
 grading chain into the LIVE `apollo/handlers/done.py`**. Everything it consumes
-is DONE: the pure score core (`apollo/graph_compare/`, WU-4A), the resolver
+is DONE: the pure score core (`apollo/retired graph comparator/`, WU-4A), the resolver
 (`apollo/resolution/`, WU-3C2), and the downstream grading layer
 (`apollo/grading/`, WU-4B — audit, abstention, §6.5 events, runs/findings
 persistence). WU-4C writes **no new grading algorithm**; it re-orchestrates the
@@ -27,7 +27,7 @@ student-facing grade is the top risk** (§4.1).
 
 Phase-4 / Phase-5 boundary (from the roadmap, restated and HELD):
 
-- **WU-4A (DONE)** = pure score-math core in `apollo/graph_compare/`:
+- **WU-4A (DONE)** = pure score-math core in `apollo/retired graph comparator/`:
   `validate_student_graph` / `validate_reference` / `build_problem_candidates`
   / `build_student_canonical` / `build_reference_canonical` /
   `grade_attempt(student_canonical, reference_graph) -> GradeResult`. NO IO.
@@ -135,19 +135,19 @@ Verified against the real code/migrations/ORM, not assumed (file:line):
   call, in order:
   1. `build_problem_candidates(problem: dict, misconceptions: dict, *,
      canon_key_by_canonical_key: dict[str,int]) -> ProblemInputs`
-     (`apollo/graph_compare/problem_inputs.py:40`).
+     (`apollo/retired graph comparator/problem_inputs.py:40`).
   2. `resolve_attempt(student_graph, candidates, *, llm_adjudicator=None,
      fuzzy_threshold=0.9, symbolic_mappings=None) -> ResolutionResult`
      (`apollo/resolution/resolver.py:132`). Note `llm_adjudicator` defaults
      None (CI-safe); the live path passes
      `apollo.resolution.adjudication.main_chat_adjudicator`.
   3. `validate_student_graph(...)` / `build_student_canonical(student_graph,
-     resolution) -> CanonicalGraph` (`apollo/graph_compare/canonical.py:167`);
+     resolution) -> CanonicalGraph` (`apollo/retired graph comparator/canonical.py:167`);
      `build_reference_canonical(problem: dict) -> ReferenceGraph`
      (`canonical.py:100`, which calls `validate_reference` → raises
      `ReferenceGraphInvalidError`).
   4. `grade_attempt(student_canonical, reference_graph) -> GradeResult`
-     (`apollo/graph_compare/core.py:78`).
+     (`apollo/retired graph comparator/core.py:78`).
   5. `build_audited_grade(grade, *, transcript, resolution, student_nodes,
      candidates, reference_invalid, audit_fn) -> AuditedGrade`
      (`apollo/grading/audited_grade.py:165`).
@@ -214,7 +214,7 @@ Verified against the real code/migrations/ORM, not assumed (file:line):
   declares `ResolutionUnavailableError` (line 169),
   `TranscriptAuditUnavailableError` (189, docstring: "named-but-not-HTTP-registered
   here; WU-4C registers the handler"), `ResolutionInvalidOutputError` (211),
-  plus `apollo/graph_compare/validator.py` declares `StudentGraphInvalidError` /
+  plus `apollo/retired graph comparator/validator.py` declares `StudentGraphInvalidError` /
   `ReferenceGraphInvalidError`. `apollo/api.py::register_exception_handlers`
   (line 402) registers 12 handlers via `app.add_exception_handler`; the pattern
   is a per-error async handler returning `JSONResponse(status_code=…,
@@ -321,15 +321,15 @@ the persisted comparison run + a structured "shadow result" object (the
   student turns for `transcript`; `build_audited_grade`;
   `compute_normalization_confidence`; `reference_graph_hash`;
   `persist_comparison_run`; commit the run txn. **All of it behind
-  `APOLLO_GRAPH_SIM_SHADOW_ENABLED` (default OFF in prod, ON in test);** when
+  `[retired A7 shadow switch]` (default OFF in prod, ON in test);** when
   off, `done.py` is byte-identical to today. The OLD `compute_coverage`/
   `compute_rubric`/`generate_diagnostic`/XP path is UNCHANGED and still produces
   the student-facing return.
 - `apollo/handlers/done_grading.py` (NEW, small) — the new-chain orchestration
   extracted out of `done.py` so the handler stays under the 800-line ceiling and
   the chain is unit-testable in isolation:
-  `run_graph_simulation(db, neo, *, attempt, sess, student_graph, problem_payload)
-  -> ShadowGradeResult | None`. Returns None / sets `learner_update_pending` on
+  `retired graph simulation(db, neo, *, attempt, sess, student_graph, problem_payload)
+  -> retired shadow result | None`. Returns None / sets `learner_update_pending` on
   any step-5+ infra failure (NO-FALLBACK, never voids the grade). This is where
   the §6.4 staged-transaction discipline lives.
 - `apollo/handlers/done_turn_order.py` (NEW, small) — `build_turn_order(db, *,
@@ -343,14 +343,14 @@ the persisted comparison run + a structured "shadow result" object (the
   blocks grading, §6.6). Follow the `_err_payload` pattern (lines 258–262).
 - `apollo/errors.py` (EDIT, tiny) — none required structurally; the five classes
   exist. (Confirm `StudentGraphInvalidError`/`ReferenceGraphInvalidError` are
-  importable into `api.py` from `apollo.graph_compare.validator`.)
+  importable into `api.py` from `apollo.retired graph comparator.validator`.)
 
 **Public API exposed for WU-4C2 / WU-5A:**
 
 ```python
 # apollo/handlers/done_grading.py
 @dataclass(frozen=True)
-class ShadowGradeResult:
+class retired shadow result:
     run_id: int
     grade: GradeResult
     audited: AuditedGrade
@@ -359,12 +359,12 @@ class ShadowGradeResult:
     opposes_map: Mapping[str, str]
     turn_order: Mapping[str, int]
     # the inputs WU-5A's belief update + 4C2's metrics both consume
-run_graph_simulation(db, neo, *, attempt, sess, student_graph, problem_payload) -> ShadowGradeResult | None
+retired graph simulation(db, neo, *, attempt, sess, student_graph, problem_payload) -> retired shadow result | None
 # apollo/handlers/done_turn_order.py
 build_turn_order(db, *, attempt_id, student_graph) -> dict[str, int]
 ```
 
-**Dependencies:** ALL of WU-4A (`apollo.graph_compare`), WU-4B
+**Dependencies:** ALL of WU-4A (`apollo.retired graph comparator`), WU-4B
 (`apollo.grading`), WU-3C2 (`apollo.resolution` + `resolution_store`), WU-3C1
 (`canon_projection.load_entity_specs`), the `KGStore.read_graph` + `Message` /
 `ConceptProblem` ORM. No new external deps.
@@ -424,7 +424,7 @@ OFF). Handoff: the calibration-metrics record + the findings-driven diagnostic.
 **Scope — files to touch/create:**
 
 - `apollo/grading/calibration.py` (NEW) — the §6.7 per-run metrics:
-  `compute_calibration_metrics(*, shadow: ShadowGradeResult, old_coverage,
+  `compute_calibration_metrics(*, shadow: retired shadow result, old_coverage,
   old_rubric) -> CalibrationMetrics` (false-missing rate vs transcript audit,
   resolution tier distribution from `ResolutionResult.tier_counts`, unresolved
   rate, explicit-vs-inferred edge counts, simulator-vs-old-LLM agreement).
@@ -463,7 +463,7 @@ from apollo.grading.diagnostic import generate_findings_diagnostic  # §6.8 cons
 APOLLO_GRAPH_SIM_LIVE_ENABLED  # promote-to-live flag, default OFF
 ```
 
-**Dependencies:** WU-4C1 (`ShadowGradeResult`), the OLD `compute_coverage` /
+**Dependencies:** WU-4C1 (`retired shadow result`), the OLD `compute_coverage` /
 `compute_rubric` outputs (for agreement metrics), `apollo.agent._llm.main_chat`
 (diagnostic; injected/mocked).
 
@@ -502,7 +502,7 @@ covered by WU-4C1's real-PG tests. Clean separation from the container regime.
    `compute_rubric` as the student-facing grade and runs the new chain in
    shadow** — computed + persisted (run/findings) + measured (calibration), but
    NOT shown to the student and NOT written to Layer 3. Two flags govern it:
-   `APOLLO_GRAPH_SIM_SHADOW_ENABLED` (run the chain at all; default OFF in prod,
+   `[retired A7 shadow switch]` (run the chain at all; default OFF in prod,
    ON in test) and `APOLLO_GRAPH_SIM_LIVE_ENABLED` (promote the new grade to
    student-facing; default OFF, flipped only after human calibration review —
    never inside this build). **This is the single most important decision: it is
@@ -636,7 +636,7 @@ LLM-mock). Neither is an XL.
   027 dropped `concept_cluster_id`). Next free number stays 028. If risk #5
   (calibration metrics table) is ever chosen, that is a separate, later,
   explicitly-DDL'd change — do not absorb it here.
-- The two flags (`APOLLO_GRAPH_SIM_SHADOW_ENABLED`,
+- The two flags (`[retired A7 shadow switch]`,
   `APOLLO_GRAPH_SIM_LIVE_ENABLED`) and the §6.7/§6.8 thresholds are calibration
   knobs: declare them as named module constants / documented env flags (like
   `APOLLO_DONE_GATE_FLAG`) so the promote decision is config, not code surgery.
@@ -647,5 +647,5 @@ LLM-mock). Neither is an XL.
 
 | Sub-unit | Seam (input → output) | Files | Migration | Real-infra | Key risk owned |
 |---|---|---|---|---|---|
-| **WU-4C1** | live Done request → persisted comparison run+findings (SHADOW) + `ShadowGradeResult` (turn_order, opposes_map) + 5 error handlers | `done.py` (edit), `done_grading.py`, `done_turn_order.py`, `api.py` (edit) | No | **Yes — real-PG AND Neo4j** | shadow flag + live-Done non-breakage + turn_order sourcing |
-| **WU-4C2** | `ShadowGradeResult` + old coverage → §6.7 metrics + §6.4 rubric mapping + §6.8 constrained diagnostic | `grading/calibration.py`, `grading/rubric_mapping.py`, `grading/diagnostic.py`, `done.py` (edit) | No | No (pure + LLM-mock) | promote-to-live flag (OFF), diagnostic post-check |
+| **WU-4C1** | live Done request → persisted comparison run+findings (SHADOW) + `retired shadow result` (turn_order, opposes_map) + 5 error handlers | `done.py` (edit), `done_grading.py`, `done_turn_order.py`, `api.py` (edit) | No | **Yes — real-PG AND Neo4j** | shadow flag + live-Done non-breakage + turn_order sourcing |
+| **WU-4C2** | `retired shadow result` + old coverage → §6.7 metrics + §6.4 rubric mapping + §6.8 constrained diagnostic | `grading/calibration.py`, `grading/rubric_mapping.py`, `grading/diagnostic.py`, `done.py` (edit) | No | No (pure + LLM-mock) | promote-to-live flag (OFF), diagnostic post-check |

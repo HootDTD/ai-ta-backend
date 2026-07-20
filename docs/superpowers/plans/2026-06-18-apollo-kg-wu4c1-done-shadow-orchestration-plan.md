@@ -18,7 +18,7 @@ errors → HTTP), §8A (runtime curriculum payload).
 WU-4C1 wires the already-built graph-simulation grading chain
 (`resolve → RESOLVES_TO → canonicalize → grade → audit → persist run+findings`)
 into the LIVE `apollo/handlers/done.py`, **behind a named shadow flag
-`APOLLO_GRAPH_SIM_SHADOW_ENABLED` (default OFF in prod, ON in test)**. It writes
+`[retired A7 shadow switch]` (default OFF in prod, ON in test)**. It writes
 NO new grading algorithm — every callee is DONE and frozen (only CALL them). When
 the flag is OFF, `handle_done` is byte-identical to today. When ON, the new chain
 runs AFTER the existing OLD-path grade/XP commit, persists a comparison run +
@@ -55,7 +55,7 @@ These shape every decision below; all confirmed by reading the source on
 
 3. **Chain callees (all DONE; signatures verified):**
    - `build_problem_candidates(problem: dict, misconceptions: dict, *, canon_key_by_canonical_key: dict[str,int]) -> ProblemInputs`
-     (`graph_compare/problem_inputs.py:40`). Reads `problem["symbolic_mappings"]`
+     (`retired graph comparator/problem_inputs.py:40`). Reads `problem["symbolic_mappings"]`
      (defaults `{}`). `ProblemInputs(candidates: tuple[Candidate,...], symbolic_mappings: dict)`.
    - `candidates_from_misconceptions(misc: dict, *, canon_key_by_canonical_key)`
      reads `misc["misconceptions"]` as a list of `{key, trigger_phrases, opposes,
@@ -73,15 +73,15 @@ These shape every decision below; all confirmed by reading the source on
      (`knowledge_graph/resolution_store.py:202`). Idempotent MERGE; raises
      `ResolutionUnavailableError(stage="write_resolves_to"|"persist_fields")`.
    - `validate_student_graph(student_graph) -> None`
-     (`graph_compare/validator.py:50`); raises `StudentGraphInvalidError`.
+     (`retired graph comparator/validator.py:50`); raises `StudentGraphInvalidError`.
    - `build_student_canonical(student_graph, resolution) -> CanonicalGraph`
-     (`graph_compare/canonical.py:167`).
+     (`retired graph comparator/canonical.py:167`).
    - `build_reference_canonical(problem: dict) -> ReferenceGraph`
-     (`graph_compare/canonical.py:100`); calls `validate_reference` → raises
+     (`retired graph comparator/canonical.py:100`); calls `validate_reference` → raises
      `ReferenceGraphInvalidError`. **Reads `problem["declared_paths"]` and per-step
      `step["entity_key"]` (canonical.py:114,154).**
    - `grade_attempt(student_canonical, reference_graph) -> GradeResult`
-     (`graph_compare/core.py:78`).
+     (`retired graph comparator/core.py:78`).
    - `build_audited_grade(grade, *, transcript, resolution, student_nodes,
      candidates=(), reference_invalid=False, audit_fn=None) -> AuditedGrade`
      (`grading/audited_grade.py:165`). **CATCHES `TranscriptAuditUnavailableError`
@@ -179,7 +179,7 @@ These shape every decision below; all confirmed by reading the source on
 
 10. **The five named errors exist** in `apollo/errors.py`
     (`ResolutionUnavailableError:169`, `TranscriptAuditUnavailableError:189`,
-    `ResolutionInvalidOutputError:211`) and `apollo/graph_compare/validator.py`
+    `ResolutionInvalidOutputError:211`) and `apollo/retired graph comparator/validator.py`
     (`StudentGraphInvalidError:30`, `ReferenceGraphInvalidError:40`). NONE are
     HTTP-registered. `apollo/api.py::register_exception_handlers` (line 402)
     registers handlers via `app.add_exception_handler`; the pattern is a per-error
@@ -195,11 +195,11 @@ These shape every decision below; all confirmed by reading the source on
 # apollo/handlers/done_grading.py  (NEW)
 from dataclasses import dataclass
 from collections.abc import Mapping
-from apollo.graph_compare.core import GradeResult
+from apollo.retired graph comparator.core import GradeResult
 from apollo.grading.audited_grade import AuditedGrade
 
 @dataclass(frozen=True)
-class ShadowGradeResult:
+class retired shadow result:
     """The frozen handoff WU-4C2 (calibration metrics) and WU-5A (belief update)
     both read. Carries everything the live chain computed for the shadow run."""
     run_id: int
@@ -210,7 +210,7 @@ class ShadowGradeResult:
     opposes_map: Mapping[str, str]
     turn_order: Mapping[str, int]
 
-async def run_graph_simulation(
+async def retired graph simulation(
     db: AsyncSession,
     neo: Neo4jClient,
     *,
@@ -218,11 +218,11 @@ async def run_graph_simulation(
     sess: ApolloSession,
     student_graph: KGGraph,
     problem_payload: dict,
-) -> ShadowGradeResult | None:
+) -> retired shadow result | None:
     """Run the full §6.4 chain (steps 1–9, 13, 15-call) in SHADOW and persist the
     comparison run + findings (caller owns the surrounding txn; this calls
     persist_comparison_run which flushes, then db.commit()). Returns the
-    ShadowGradeResult on success. On ANY step-5+ infra failure (named error) it
+    retired shadow result on success. On ANY step-5+ infra failure (named error) it
     sets attempt.learner_update_pending=True, commits that flag, and RE-RAISES the
     named error — it NEVER returns a partial result and NEVER voids the grade.
     Returns None ONLY when the chain is a no-op for non-error reasons (see §3.4)."""
@@ -256,11 +256,11 @@ flag-gated call inserted after the OLD grade/XP commit.
 
 ### 3.1 `apollo/handlers/done_grading.py` (NEW)
 
-Holds `ShadowGradeResult` + `run_graph_simulation` + the staged-txn / NO-FALLBACK
+Holds `retired shadow result` + `retired graph simulation` + the staged-txn / NO-FALLBACK
 discipline, so `done.py` stays well under 800 lines and the chain is
 unit-testable in isolation.
 
-Internal flow of `run_graph_simulation` (each numbered to §6.4):
+Internal flow of `retired graph simulation` (each numbered to §6.4):
 1. Build `misconceptions` dict: `misconception_bank.load_for_concept(db,
    concept_id=sess.concept_id)` → `{"misconceptions": [{"key": e.code,
    "trigger_phrases": list(e.trigger_phrases), "opposes": <opposes>, "display_name":
@@ -306,21 +306,21 @@ Internal flow of `run_graph_simulation` (each numbered to §6.4):
 12. `opposes_map = build_opposes_map(inputs.candidates)`;
     `turn_order = await build_turn_order(db, neo, attempt_id=attempt.id,
     student_graph=student_graph)`.
-13. Return `ShadowGradeResult(run_id, grade, audited, normalization_confidence,
+13. Return `retired shadow result(run_id, grade, audited, normalization_confidence,
     ref_hash, opposes_map, turn_order)`.
 
 **NO step 16/17:** WU-4C1 does NOT call `convert_findings_to_events` and does NOT
 write `apollo_mastery_events`/`apollo_learner_state` (those are WU-5A). It carries
 `opposes_map` + `turn_order` in the frozen result so WU-5A can consume them.
 
-**Staged-txn / NO-FALLBACK wrapper:** `run_graph_simulation` wraps steps 5–13 in a
+**Staged-txn / NO-FALLBACK wrapper:** `retired graph simulation` wraps steps 5–13 in a
 `try/except` over the named infra errors that must not void the grade
 (`ResolutionUnavailableError`, `ResolutionInvalidOutputError`,
 `ReferenceGraphInvalidError`, plus any unexpected Exception in the cross-store
 window). On catch: `attempt.learner_update_pending = True`; `await db.commit()`;
 re-raise the original named error (so `done.py`/the API layer surfaces the right
 HTTP status). The grade/XP are already committed by the OLD path before
-`run_graph_simulation` is even called, so re-raising never voids them.
+`retired graph simulation` is even called, so re-raising never voids them.
 
 ### 3.2 `apollo/handlers/done_turn_order.py` (NEW)
 
@@ -338,7 +338,7 @@ HTTP status). The grade/XP are already committed by the OLD path before
 
 ### 3.3 `apollo/handlers/done.py` (EDIT)
 
-- Add module constant `_GRAPH_SIM_SHADOW_FLAG = "APOLLO_GRAPH_SIM_SHADOW_ENABLED"`
+- Add module constant `_GRAPH_SIM_SHADOW_FLAG = "[retired A7 shadow switch]"`
   + `_graph_sim_shadow_enabled()` mirroring `_done_gate_enabled()` (done.py:53-57).
   Do NOT add the promote-to-live flag (WU-4C2).
 - Add a parallel raw-payload read helper
@@ -348,7 +348,7 @@ HTTP status). The grade/XP are already committed by the OLD path before
   `Problem`). Keep `_find_problem` (the parsed `Problem`) for the OLD path.
 - Insert the shadow call AFTER the existing post-commit retention write (after
   `store.stamp_graded_at`, done.py:296) — the grade/XP are fully durable by then.
-  Guard: `if _graph_sim_shadow_enabled(): ... run_graph_simulation(...)`. The
+  Guard: `if _graph_sim_shadow_enabled(): ... retired graph simulation(...)`. The
   return dict (298-322) is built BEFORE the shadow call and is NOT modified by it
   — the student-facing payload is byte-identical to today whether the flag is on
   or off and whether the chain succeeds. (Placing the shadow call AFTER the return
@@ -395,7 +395,7 @@ Add five async handlers + five registrations, following `_err_payload`
 | `ReferenceGraphInvalidError` | 409 | `reference_graph_invalid` | `reasons` |
 
 Import `StudentGraphInvalidError`/`ReferenceGraphInvalidError` from
-`apollo.graph_compare.validator`; the other three from `apollo.errors`. Register
+`apollo.retired graph comparator.validator`; the other three from `apollo.errors`. Register
 all five in `register_exception_handlers` (api.py:402) via
 `app.add_exception_handler`. Two 503s mirror the no-fallback contract; the user
 message is "grading is computing in the background; your grade is saved" — i.e.
@@ -413,7 +413,7 @@ returning `{node_id: created_at}` skipping null `created_at`. Read-only, opens o
 - `apollo/handlers/` row: add `done_grading.py`, `done_turn_order.py`; update the
   `done.py` description to "freeze → OLD grade/XP/retention (student-facing,
   unchanged) → **shadow graph-simulation chain behind
-  `APOLLO_GRAPH_SIM_SHADOW_ENABLED`** (resolve → RESOLVES_TO → canonicalize →
+  `[retired A7 shadow switch]`** (resolve → RESOLVES_TO → canonicalize →
   grade → audit → persist run+findings; sets `learner_update_pending` + named
   error on any step-5+ infra failure, NEVER voids the grade; sources `turn_order`;
   does NOT write `apollo_mastery_events`/`apollo_learner_state` — that is WU-5A,
@@ -439,15 +439,15 @@ No skip/xfail/tautology. LLM mocked deterministically everywhere
 ### 4.1 `apollo/handlers/tests/test_done_shadow_flag.py` (unit, the LOAD-BEARING guard)
 
 - `test_shadow_flag_off_return_byte_identical` — **the single most important
-  test.** With `APOLLO_GRAPH_SIM_SHADOW_ENABLED` unset/false, drive `handle_done`
+  test.** With `[retired A7 shadow switch]` unset/false, drive `handle_done`
   with the OLD-path collaborators mocked (compute_coverage/compute_rubric/
   generate_diagnostic/compute_xp_earned/apply_xp/stamp_graded_at) and assert the
   returned dict equals a frozen golden dict captured from the SAME mocked inputs
-  WITHOUT the new code path ever importing/calling `run_graph_simulation`. Patch
-  `apollo.handlers.done.run_graph_simulation` with a `MagicMock` and assert
+  WITHOUT the new code path ever importing/calling `retired graph simulation`. Patch
+  `apollo.handlers.done.retired graph simulation` with a `MagicMock` and assert
   `not called`. (Proves: flag off → student grade provably untouched.)
-- `test_shadow_flag_on_invokes_chain` — flag on; `run_graph_simulation` patched to
-  return a sentinel `ShadowGradeResult`; assert it WAS called once with
+- `test_shadow_flag_on_invokes_chain` — flag on; `retired graph simulation` patched to
+  return a sentinel `retired shadow result`; assert it WAS called once with
   `student_graph`/`attempt`/`sess`/`problem_payload`, and the returned dict is
   STILL the OLD-path dict (chain result is not merged into the student response).
 - `test_shadow_flag_parsing` — `_graph_sim_shadow_enabled()` true for
@@ -456,7 +456,7 @@ No skip/xfail/tautology. LLM mocked deterministically everywhere
 
 ### 4.2 `apollo/handlers/tests/test_done_grading_unit.py` (unit, chain orchestration with all callees mocked)
 
-- `test_run_graph_simulation_happy_path_calls_chain_in_order` — patch every callee
+- `test_retired graph simulation_happy_path_calls_chain_in_order` — patch every callee
   (`build_problem_candidates`, `resolve_attempt`, `write_resolution`,
   `validate_student_graph`, `build_student_canonical`, `build_reference_canonical`,
   `grade_attempt`, `build_audited_grade`, `compute_normalization_confidence`,
@@ -465,7 +465,7 @@ No skip/xfail/tautology. LLM mocked deterministically everywhere
   `llm_adjudicator=main_chat_adjudicator` and `symbolic_mappings=inputs.symbolic_mappings`,
   and `persist_comparison_run` got `user_id=sess.user_id`,
   `search_space_id=sess.search_space_id`. Assert `db.commit` called after persist.
-  Assert the returned `ShadowGradeResult` carries the mocked `run_id`,
+  Assert the returned `retired shadow result` carries the mocked `run_id`,
   `opposes_map`, `turn_order`.
 - `test_raw_payload_passed_not_parsed_problem` (the §1.4 regression guard) — feed a
   `problem_payload` dict carrying `declared_paths`, `symbolic_mappings`, and per-step
@@ -486,7 +486,7 @@ No skip/xfail/tautology. LLM mocked deterministically everywhere
 - `test_audit_fn_injected` — assert `build_audited_grade` received a non-None
   `audit_fn` and `candidates=inputs.candidates`, `reference_invalid=False`.
 - `test_no_mastery_events_written` (boundary, unit-level) — assert
-  `convert_findings_to_events` is NOT imported/called by `run_graph_simulation`
+  `convert_findings_to_events` is NOT imported/called by `retired graph simulation`
   (patch it on the module and assert not called).
 
 ### 4.3 `apollo/handlers/tests/test_done_turn_order_unit.py` (unit, with the two reads mocked)
@@ -644,7 +644,7 @@ dual-infra gate.
   EMPTY after a Done (the boundary test).
 - **No new migration** (026/027 already shipped everything WU-4C1 touches; next
   free is 028, unused).
-- **DO NOT modify** `apollo/graph_compare/**`, `apollo/grading/**`,
+- **DO NOT modify** `apollo/retired graph comparator/**`, `apollo/grading/**`,
   `apollo/resolution/**` internals (frozen — only CALL them). The one permitted
   edit outside `apollo/handlers/` + `apollo/api.py` is the tiny READ method on
   `apollo/knowledge_graph/store.py` and the owner doc.

@@ -8,7 +8,7 @@ owner_doc: docs/architecture/apollo.md
 status: ready
 created: 2026-06-16
 provides:
-  - apollo/resolution/ package — the §5 shared reference-anchored resolver (standalone, importable by WU-4A graph_compare)
+  - apollo/resolution/ package — the §5 shared reference-anchored resolver (standalone, importable by WU-4A retired graph comparator)
   - resolve_attempt(...) -> ResolutionResult, with per-node ResolvedNode {resolution, resolved_key, method, confidence}
   - RESOLVES_TO edge writer + resolution node-field persistence in apollo/knowledge_graph/
   - ResolutionUnavailableError + ResolutionInvalidOutputError (apollo/errors.py)
@@ -60,7 +60,7 @@ This unit delivers exactly three things and nothing more:
 2. **The persistence half** (`apollo/knowledge_graph/`): write `RESOLVES_TO {method,confidence,resolved_at}` edges from `:_KGNode` to `:Canon`, and persist the four resolution node-fields on Layer-2 nodes (idempotent MERGE).
 3. **Two named errors** (`apollo/errors.py`): `ResolutionUnavailableError` (infra failure — must NOT void the grade), `ResolutionInvalidOutputError` (hallucinated LLM key not in the candidate set).
 
-**Standalone-by-design (binding):** §6.3 names the resolver `apollo/graph_compare/resolver.py`, but `graph_compare` is Phase-4 (WU-4A) and does not exist on this branch. Per the binding constraint, build the resolver in a **standalone `apollo/resolution/` package** so WU-4A's `graph_compare` imports it (`from apollo.resolution import resolve_attempt, ...`) rather than owning it. WU-4A's pipeline step 5 ("Resolve student nodes (§5)") and step 7 ("Write RESOLVES_TO edges") call this unit's public API.
+**Standalone-by-design (binding):** §6.3 names the resolver `apollo/retired graph comparator/resolver.py`, but `retired graph comparator` is Phase-4 (WU-4A) and does not exist on this branch. Per the binding constraint, build the resolver in a **standalone `apollo/resolution/` package** so WU-4A's `retired graph comparator` imports it (`from apollo.resolution import resolve_attempt, ...`) rather than owning it. WU-4A's pipeline step 5 ("Resolve student nodes (§5)") and step 7 ("Write RESOLVES_TO edges") call this unit's public API.
 
 The resolver does NOT grade, simulate, audit transcripts, emit learner events, or orchestrate the Done pipeline. It is matching + persistence + named errors only.
 
@@ -489,7 +489,7 @@ re-raise.
 
 Edit `docs/architecture/apollo.md` in the SAME work; set `last_verified: 2026-06-16`. Concretely:
 
-1. **Module map** — add a new `apollo/resolution/` row: "the §5 shared reference-anchored resolver (WU-3C2), standalone so WU-4A `graph_compare` imports it: `resolve_attempt(student_graph, candidates, *, llm_adjudicator=None)` → `ResolutionResult`; content-first tiers (exact→SymPy-symbolic via `parse_zero_form`→alias→RapidFuzz≥0.9) + structural propagation/neighborhood veto + type-compat HARD constraint + misconception competition + bounded greedy assignment (cap 150) + one LLM adjudication via `main_chat` (`return empty when unsure`, hallucination→`ResolutionInvalidOutputError`); confidence caps by method (exact 1.0/symbolic 0.98/alias 0.92/fuzzy 0.80/LLM 0.75/unresolved 0.0)."
+1. **Module map** — add a new `apollo/resolution/` row: "the §5 shared reference-anchored resolver (WU-3C2), standalone so WU-4A `retired graph comparator` imports it: `resolve_attempt(student_graph, candidates, *, llm_adjudicator=None)` → `ResolutionResult`; content-first tiers (exact→SymPy-symbolic via `parse_zero_form`→alias→RapidFuzz≥0.9) + structural propagation/neighborhood veto + type-compat HARD constraint + misconception competition + bounded greedy assignment (cap 150) + one LLM adjudication via `main_chat` (`return empty when unsure`, hallucination→`ResolutionInvalidOutputError`); confidence caps by method (exact 1.0/symbolic 0.98/alias 0.92/fuzzy 0.80/LLM 0.75/unresolved 0.0)."
 2. **`apollo/knowledge_graph/` row** — extend: "**`resolution_store.py`** (WU-3C2) writes `(:_KGNode)-[:RESOLVES_TO {method,confidence,resolved_at}]->(:Canon)` (idempotent MERGE) and persists the four Layer-2 resolution node-fields (`resolution`/`resolved_key`/`resolution_method`/`resolution_confidence`); `store._record_to_node` now also strips those four props so `read_graph` round-trips byte-identically. `RESOLVES_TO` is a `:_KGNode→:Canon` cross-label edge written by its own Cypher — NOT a member of `EdgeType`/`EDGE_ALLOWED_PAIRS`." Update the trailing "The §5 resolver, RESOLVES_TO edges, and :Canon reads are WU-3C2" sentence to "delivered in WU-3C2 (`apollo/resolution/` + `resolution_store.py`)."
 3. **Public interfaces** — add `apollo.resolution.resolve_attempt(...) -> ResolutionResult` and `apollo.knowledge_graph.resolution_store.write_resolution(neo, attempt_id, result, *, resolved_at) -> ResolutionWriteResult` (+ `write_resolves_to`/`persist_resolution_fields`).
 4. **Neo4j shape** — note the new `:_KGNode→:Canon` `RESOLVES_TO` edge + the four resolution props on `:_KGNode` (server-side, stripped on read like the other metadata).
@@ -525,7 +525,7 @@ Edit `docs/architecture/apollo.md` in the SAME work; set `last_verified: 2026-06
 ## 15. Explicit out-of-scope (anti-scope, binding)
 
 This unit is ONLY the resolver + RESOLVES_TO + resolution fields + named errors. NOT in scope:
-- **Grading / graph simulation** (coverage/soundness/bisimilarity, sub-scores) — WU-4A `apollo/graph_compare/`.
+- **Grading / graph simulation** (coverage/soundness/bisimilarity, sub-scores) — WU-4A `apollo/retired graph comparator/`.
 - **Transcript auditor / abstention gates / missing-node gate** — WU-4B.
 - **Learner-model events / belief update / decision table / Layer-3** — WU-5A.
 - **Done-pipeline orchestration** (`done.py` step ordering, freeze, `learner_update_pending` write, the cross-store transaction staging) — WU-4A.

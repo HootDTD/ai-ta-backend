@@ -134,7 +134,7 @@ def candidates_from_reference_solution(
         if node_type is None:
             # G4 tolerance: an entry_type outside the map degrades to NO candidate
             # (the step is not a resolution target) rather than KeyError-ing the
-            # whole attempt. run_graph_simulation records the marker separately.
+            # whole attempt. Unknown entry types simply contribute no candidate.
             continue
         canonical_key = step["entity_key"]
         content = step.get("content", {}) or {}

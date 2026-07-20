@@ -488,7 +488,7 @@ Verify: `grep -n "apollo-provision\|enqueue_provisioning_job\|run_provisioning\|
 
 ## 15. Out-of-scope boundaries (held firmly)
 
-- **`apollo/handlers/done.py` / `done_grading.py` / `done_inputs.py` / the §6 grading core (`apollo/graph_compare/**`) — ZERO change.** Auto-provisioned Tier-2 problems flow through the EXISTING shadow path. WU-3B2g does not touch grading.
+- **`apollo/handlers/done.py` / `done_grading.py` / `done_inputs.py` / the §6 grading core (`apollo/retired graph comparator/**`) — ZERO change.** Auto-provisioned Tier-2 problems flow through the EXISTING shadow path. WU-3B2g does not touch grading.
 - **The stage modules (3B2b–3B2f) — REDEFINE NOTHING.** `scrape`/`find_or_generate`/`validate_pair`/`tag_and_mint`/`promotion_lint`/`problem_hash`/`dedup`/`queue`/`metered_chat`/`cost_constants` are FROZEN imports. WU-3B2g wires them; it does not edit them. (The one frozen-adjacent edit is `apollo/provisioning/__init__.py` re-exports — additive only.)
 - **Migration / DDL — NONE.** Uses migration 030's frozen tables. NEVER apply a migration to any remote DB; the real-PG tests run on LOCAL Testcontainers only.
 - **The §8 seed writer `scripts/seed_apollo_learner_model.py` — not touched.** `promote.py` REUSES `annotate_reference_solution`/`validate_reference_graph` (frozen pure converters); it does not import the disk-bound seed writer.

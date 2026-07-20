@@ -23,8 +23,8 @@ of those events is WU-5A; this unit only PRODUCES them.
 |---|---|---|
 | `AuditedGrade` carries `.grade` (GradeResult), `.findings` (tuple, ALREADY audit-upgraded), `.abstained`, `.suppressed_event_kinds` (frozenset of `'missing'`/`'misconception'`), `.abstention_reasons`, `.alias_candidates`. | `apollo/grading/audited_grade.py:59-74` | 4B2 reads `.findings`, `.abstained`, `.suppressed_event_kinds` ONLY. Frozen — never mutated. |
 | Audit-upgraded findings are emitted as `kind=COVERED_NODE`, `confidence=0.75` (== `TRANSCRIPT_AUDIT_CONFIDENCE_CAP`), `message == AUDIT_UPGRADE_MESSAGE` (`"upgraded by transcript_audit"`), carrying `evidence_spans`. | `apollo/grading/audited_grade.py:56, 98-111` | A genuine `llm`-tier covered node ALSO has `confidence=0.75`. The table MUST key the audit-upgrade row on the `AUDIT_UPGRADE_MESSAGE` marker — NOT kind or confidence alone. Import the marker from `audited_grade`. |
-| `Finding` (frozen): `kind`, `canonical_key`, `student_node_ids`, `reference_node_ids`, `evidence_spans`, `score`, `confidence`, `message`. `contradiction_finding` leaves `confidence=None`; `covered_finding` sets it; `missing_finding` sets `score=0.0`. | `apollo/graph_compare/findings.py:40-92` | Event `score`/`confidence`/`misconception_code`/`evidence_node_ids`/`reference_step_id` are derived from these fields. Coalesce `None` confidence defensively. |
-| `FindingKind` StrEnum: `COVERED_NODE`, `MISSING_NODE`, `MATCHED_EDGE`, `MISSING_EDGE`, `UNSUPPORTED_EXTRA`, `CONTRADICTION`, `UNRESOLVED`, `ALTERNATIVE_PATH`. | `apollo/graph_compare/findings.py:27-37` | The decision table switches on `finding.kind`. `MATCHED_EDGE`/`MISSING_EDGE`/`ALTERNATIVE_PATH` → no event (diagnostic-only, same as `UNSUPPORTED_EXTRA`/`UNRESOLVED`). |
+| `Finding` (frozen): `kind`, `canonical_key`, `student_node_ids`, `reference_node_ids`, `evidence_spans`, `score`, `confidence`, `message`. `contradiction_finding` leaves `confidence=None`; `covered_finding` sets it; `missing_finding` sets `score=0.0`. | `apollo/retired graph comparator/findings.py:40-92` | Event `score`/`confidence`/`misconception_code`/`evidence_node_ids`/`reference_step_id` are derived from these fields. Coalesce `None` confidence defensively. |
+| `FindingKind` StrEnum: `COVERED_NODE`, `MISSING_NODE`, `MATCHED_EDGE`, `MISSING_EDGE`, `UNSUPPORTED_EXTRA`, `CONTRADICTION`, `UNRESOLVED`, `ALTERNATIVE_PATH`. | `apollo/retired graph comparator/findings.py:27-37` | The decision table switches on `finding.kind`. `MATCHED_EDGE`/`MISSING_EDGE`/`ALTERNATIVE_PATH` → no event (diagnostic-only, same as `UNSUPPORTED_EXTRA`/`UNRESOLVED`). |
 | `Candidate` carries `canonical_key`, `is_misconception`, `opposes_key` (`str | None`). | `apollo/resolution/candidates.py:56-73` | `build_opposes_map` maps each misconception candidate's `canonical_key → opposes_key`. |
 | `MASTERY_EVENT_KINDS = ("covered", "missing", "partial", "misconception", "corrected")` — OPEN enum, documentation tuple. | `apollo/persistence/models.py:63` | `LearnerEventKind` value-set MUST equal this (asserted by a test, mirroring `test_finding_kind_unchanged`). |
 | `apollo_mastery_events` columns: `event_kind`, `score`, `misconception_code`, `evidence_node_ids` (JSONB), `reference_step_id`. `parser_confidence`/`grader_confidence`/`prior_belief`/`posterior_belief`/`mastery_after` are filled at the BELIEF update. | spec §2 lines 240–268 | `LearnerEvent` carries `canonical_key`, `event_kind`, `score`, `confidence`, `misconception_code`, `evidence_node_ids`, `reference_step_id`. Do NOT add belief/parser fields — those are WU-5A. |
@@ -38,7 +38,7 @@ of those events is WU-5A; this unit only PRODUCES them.
 ### CREATE `apollo/grading/event_model.py` (~70 lines)
 The frozen value objects + the kind enum + the version constant. Kept separate
 from `events.py` so the data shape is a tiny, dependency-light module (mirrors
-`graph_compare/findings.py` carrying the type, `core.py` carrying the logic).
+`retired graph comparator/findings.py` carrying the type, `core.py` carrying the logic).
 
 ```python
 from __future__ import annotations
@@ -201,7 +201,7 @@ def convert_findings_to_events(
    suppression (distinct value); `covered`/`partial` survive a `missing`
    suppression.
 7. **Deterministic order:** sort the output by `(canonical_key, event_kind.value)`
-   so identical inputs yield an equal tuple (mirrors `graph_compare` determinism).
+   so identical inputs yield an equal tuple (mirrors `retired graph comparator` determinism).
 
 Named module constants in `events.py`:
 `PARTIAL_EDGE_GAP_ENABLED = False`, `AMBIGUOUS_ORDER_CONFIDENCE = 0.5`,
@@ -417,11 +417,11 @@ Keep `last_verified: 2026-06-17` (already current).
   / Neo4j created_at) — **WU-4C**. 4B2 takes `turn_order` as an injected keyword.
 - **§6.7 shadow / §6.8 diagnostics** — **WU-4C**. 4B2 only carries the
   diagnostic flags as data.
-- **NO migration**; **NO modification** of `graph_compare` (frozen WU-4A) or the
+- **NO migration**; **NO modification** of `retired graph comparator` (frozen WU-4A) or the
   WU-4B1 modules `transcript_audit.py`/`abstention.py`/`audited_grade.py`
   (frozen). 4B2 IMPORTS `AUDIT_UPGRADE_MESSAGE` + `AuditedGrade` from
   `audited_grade`, `Candidate` from `resolution.candidates`, `Finding`/`FindingKind`
-  from `graph_compare.findings`, `MASTERY_EVENT_KINDS` from `persistence.models` —
+  from `retired graph comparator.findings`, `MASTERY_EVENT_KINDS` from `persistence.models` —
   read-only.
 
 ---

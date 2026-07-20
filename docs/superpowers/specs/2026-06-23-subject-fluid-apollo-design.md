@@ -51,7 +51,7 @@ science) courses, fed by **professor-authored problem sets**.
   solution + optional worked procedure), classified by completeness.
 - **B. Build & validate** a subject-fluid teachable **reference graph** per problem, behind a
   pluggable **subject profile** (node vocabulary, gate set, target contract, validator).
-- **C. Teach-back → student KG:** prove the existing `graph_compare` grader + learner model run
+- **C. Teach-back → student KG:** prove the existing `retired graph comparator` grader + learner model run
   end-to-end on the new graphs for **both** a fluid problem and a polisci problem.
 
 **Out of scope:**
@@ -107,7 +107,7 @@ Grounding facts (verified):
 - Gates **1, 2, 3, 8** are structural/dedup → subject-agnostic. Gates **6, 7** pass vacuously on
   an equation-less graph. Gates **4, 5** are the *only* ones that actively break for arguments →
   the profile must be able to switch them off.
-- `graph_compare.grade_attempt` is structural (coverage/soundness/bisimilarity over typed
+- `retired graph comparator.grade_attempt` is structural (coverage/soundness/bisimilarity over typed
   nodes/paths) and already supports `procedure_step`/`definition`/`condition`. The dormant
   **rubric** (`compute_rubric`) and **opposes/contradiction** machinery are available for
   counterargument/misconception grading.
@@ -147,7 +147,7 @@ On pass → flip Tier-2, store the annotated graph, project `:Canon`.
 
 ### 4.4 C — Teach-back → student knowledge graph
 
-The existing teach-back loop (`graph_compare` grade → learner-model update) must run on the new
+The existing teach-back loop (`retired graph comparator` grade → learner-model update) must run on the new
 reference graphs **subject-fluidly**. Verify end-to-end for one fluid problem (back-compat) and
 one polisci problem (new), including a student turn that writes `apollo_learner_state` /
 `apollo_mastery_events`.
@@ -177,9 +177,9 @@ one polisci problem (new), including a student turn that writes `apollo_learner_
 - `apollo/provisioning/pairing_gate.py` — faithfulness grounded against the authored solution.
 - `apollo/provisioning/orchestrator.py` — wire: detect/resolve profile → ingest → profile-gated
   per-candidate pipeline → promote. Replace `_SCRAPE_SYSTEM_PROMPT`/`_TRIAGE_SYSTEM_PROMPT` usage.
-- `apollo/graph_compare/` + `apollo/grading/` — **verify** (mostly reuse) the grader + rubric +
+- `apollo/retired graph comparator/` + `apollo/grading/` — **verify** (mostly reuse) the grader + rubric +
   opposes path runs on argument graphs; wire `opposes_map` if needed for counterarguments.
-- `apollo/provisioning/tests/`, `apollo/tests/`, `apollo/graph_compare/tests/` — new fixtures:
+- `apollo/provisioning/tests/`, `apollo/tests/`, `apollo/retired graph comparator/tests/` — new fixtures:
   a polisci authored set + a fluid authored set; back-compat regression test; profile-detection
   test; profile-gated-lint test. Use the Supabase mock fixtures (`conftest.py`).
 - `docs/architecture/apollo.md` — update owner doc + `last_verified` in the same commit.

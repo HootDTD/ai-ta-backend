@@ -21,7 +21,7 @@ from apollo.persistence.models import MASTERY_EVENT_KINDS
 
 def test_learner_event_kind_matches_mastery_event_kinds():
     """The §2 parity lock: the StrEnum value-set == models.MASTERY_EVENT_KINDS
-    (mirrors graph_compare.test_finding_kind_unchanged)."""
+    and the persistence tuple cannot drift."""
     assert {k.value for k in LearnerEventKind} == set(MASTERY_EVENT_KINDS)
 
 

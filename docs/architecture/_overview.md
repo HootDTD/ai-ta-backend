@@ -40,7 +40,7 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` owns the FastAPI ap
 | `auth.py` | Supabase JWT validation (REST call to `auth/v1/user`), in-memory token cache, course-membership checks, student auto-enroll. |
 | `supabase_client.py` | One-line backward-compat shim: `from vendors.supabase_client import *`. |
 | `teacher_upload_worker.py` | Procfile `worker` entrypoint: `TeacherWeeklyStorage().run_upload_worker_loop()` — drains the queued teacher-upload ingestion jobs. |
-| `Procfile` | `web: uvicorn server:app` + `worker: python -m teacher_upload_worker` + `apollo-janitor: python -m apollo.learner_janitor_worker` (Railway deploys web+worker; **`apollo-janitor` is scaled to 0 replicas until `APOLLO_LEARNER_JANITOR_ENABLED` is flipped** — WU-5B3b). |
+| `Procfile` | `web: uvicorn server:app` + `worker: python -m teacher_upload_worker` (Railway deploys the API and upload-ingestion worker). |
 | `scripts/db/check-migration-drift.mjs` | CI/local guard that verifies the frozen numbered migration checksums and permits only timestamped SQL in the active Supabase chain. |
 | `scripts/db/reset-local.mjs` | Cross-platform harness that requires Supabase CLI 2.109.0, starts the local Docker stack when needed, and runs `supabase db reset --local`; it has no remote mode. |
 | `scripts/db/build-legacy-snapshot-draft.mjs` | Deterministically reconstructs DB-03's non-authoritative `legacy_public_snapshot` draft from migration 001 DDL plus frozen SQL 004-047; excludes the data-only Python jobs. |
@@ -148,9 +148,6 @@ uploads, and FastAPI `BackgroundTasks`.
 1. `POST /teacher/upload` (teacher-gated, PDF-only) streams the file to a temp dir and calls `TeacherWeeklyStorage.enqueue_upload_by_search_space(...)` — returns 202 immediately.
 2. The separate `worker` dyno (`teacher_upload_worker.py`) runs `run_upload_worker_loop()`, which performs OCR/indexing for queued uploads (details in `indexing.md` / `domain-data.md`).
 3. `POST /teacher/uploads/{id}/retry` re-enqueues individual failed uploads (the former `reset_pending.py` bulk-reset script — an unimported one-off — was removed as junk; 2026-07-16 cleanup).
-
-### apollo-janitor flow (third, dormant process)
-The Procfile's third process — `apollo-janitor: python -m apollo.learner_janitor_worker` (`apollo/learner_janitor_worker.py`, owned by `apollo.md`) — is a dormant async-native learner-update retry janitor: a single `asyncio.run(main())` poll loop that, when `APOLLO_LEARNER_JANITOR_ENABLED` is ON (default OFF EVERYWHERE), drains pending Apollo Layer-3 belief updates one row per pass via the frozen `apollo.handlers.learner_janitor.drain_pending_attempts`, with cooperative SIGTERM/SIGINT shutdown between drains. It is **scaled to 0 replicas while dormant** so it costs no replica; activation is a HUMAN deploy step — flip `APOLLO_LEARNER_JANITOR_ENABLED` (and also `APOLLO_GRAPH_SIM_LAYER3_ENABLED` for belief writes, else the drain re-runs the shadow and DEFERS the belief write) then scale to 1. See `apollo.md` for the worker internals and `2026-06-19-apollo-kg-wu5b3b-janitor-worker-plan.md` §13 for the deploy runbook.
 
 ### Teacher-authored provisioning
 The dormant upload-triggered Apollo worker was removed in cleanup T-F. Teacher

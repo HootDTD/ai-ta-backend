@@ -60,13 +60,8 @@ from apollo.schemas.problem import Problem
 _LOG = logging.getLogger(__name__)
 
 # WU-5A2 — the Layer-3 belief-PERSIST flag (default OFF EVERYWHERE incl. prod +
-# staging). When OFF (the only build state), the gated `run_learner_update` call
-# NEVER fires and `handle_done` is byte-identical to today (the shadow-flag-off
-# regression guard `test_done_shadow_route_postgres.py` me==0/ls==0 stays green).
-# When ON, the Done txn appends `apollo_mastery_events` + upserts
-# `apollo_learner_state` (the §3 Bayesian belief) all-or-nothing AFTER the shadow
-# persist. Flipping it ON is a later HUMAN calibration decision (same posture as
-# APOLLO_GRAPH_GRADER_LIVE), NOT part of this build.
+# staging). A7 removed its former Done-time producer; the helper remains only
+# for compatibility with the artifact-derived mastery interlock.
 _GRAPH_SIM_LAYER3_FLAG: str = "APOLLO_GRAPH_SIM_LAYER3_ENABLED"
 
 # Campaign-plan Task A3 — the canonical-grading-artifact PERSIST flag (default

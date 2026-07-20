@@ -701,7 +701,7 @@ Explicitly NOT built here (these are WU-3C2 / later units — building them now 
 - **Resolution node-fields** on Layer-2 nodes: `resolution` (resolved/unresolved/ambiguous),
   `resolved_key`, `resolution_method`, `resolution_confidence`. (We add scoping/timestamp props ONLY.)
 - **Reading `:Canon`** for matching — projection is write-only in this unit.
-- **The §6 grading core** (`apollo/graph_compare/**`: validator, canonical_graph, simulation,
+- **The §6 grading core** (`apollo/retired graph comparator/**`: validator, canonical_graph, simulation,
   bisimilarity, transcript_audit, findings, events) and **Layer-3 belief math**.
 - **§8A runtime cutover** (DB-driven concept resolution, deleting `_AVAILABLE_CLUSTERS` /
   `_CLUSTER_TO_CONCEPT`) and **§8B auto-provisioning pipeline.**

@@ -18,12 +18,12 @@ consumes:
   - apollo/learner_model/{belief,update,state_model}.py (FROZEN WU-5A1 API — apply_event / event_to_row_specs / COLD_START_PRIOR)
   - apollo/grading/events.py (convert_findings_to_events — step 16, frozen WU-4B2)
   - apollo/grading/abstention.py (min_parser_confidence_of — frozen §6.6 helper)
-  - apollo/handlers/done_grading.py (ShadowGradeResult, run_graph_simulation, _set_pending_and_commit pattern, learner_update_pending)
+  - apollo/handlers/done_grading.py (retired shadow result, retired graph simulation, _set_pending_and_commit pattern, learner_update_pending)
   - apollo/knowledge_graph/canon_projection.py (load_entity_specs — canonical_key -> entity_id)
   - apollo/persistence/models.py (MasteryEvent / LearnerState / ProblemAttempt ORM; migration 026 schema)
 depends_on:
   - WU-5A1 (feat/apollo-kg-wu5a1-bayesian-filter-core)
-  - WU-4C1 (ShadowGradeResult + done_grading wiring), WU-4B2 (events), WU-3C1 (load_entity_specs)
+  - WU-4C1 (retired shadow result + done_grading wiring), WU-4B2 (events), WU-3C1 (load_entity_specs)
 ---
 
 ## Overview
@@ -100,7 +100,7 @@ Mirror these shipped patterns verbatim — do NOT invent new shapes.
    - `_set_pending_and_commit` (`done_grading.py:156-162`): `attempt.learner_update_pending = True;
      await db.commit()`. WU-5A2's `run_learner_update` reuses this exact two-line shape for the
      failure fork.
-   - `run_graph_simulation` (`:165-322`): owns the run-txn `db.commit()` AFTER the flush-only
+   - `retired graph simulation` (`:165-322`): owns the run-txn `db.commit()` AFTER the flush-only
      `persist_comparison_run`, wraps the cross-store window in `try/except` that catches named
      infra errors -> set pending + re-raise, and a bare `except Exception:` catch-all that ALSO
      sets pending + re-raises (`:313-322`). `run_learner_update` is the structural twin (simpler:
@@ -158,7 +158,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from collections.abc import Mapping
 from sqlalchemy.ext.asyncio import AsyncSession
-from apollo.handlers.done_grading import ShadowGradeResult
+from apollo.handlers.done_grading import retired shadow result
 from apollo.persistence.models import ApolloSession, ProblemAttempt
 
 @dataclass(frozen=True)
@@ -173,7 +173,7 @@ async def persist_learner_update(
     *,
     sess: ApolloSession,
     attempt: ProblemAttempt,
-    shadow: ShadowGradeResult,
+    shadow: retired shadow result,
     done_ts: datetime,
     parser_confidence: float,
     canon_key_by_canonical_key: Mapping[str, int],
@@ -189,7 +189,7 @@ async def run_learner_update(
     *,
     sess: ApolloSession,
     attempt: ProblemAttempt,
-    shadow: ShadowGradeResult,
+    shadow: retired shadow result,
     done_ts: datetime,
     parser_confidence: float,
 ) -> LearnerUpdateResult | None: ...
@@ -307,7 +307,7 @@ UNLESS marked "(flag-off, existing)". Use `.venv/Scripts/python.exe`.
    two existing callers green (back-compat). This is the smallest, lowest-risk edit — do it first
    so the later done_ts-identity test has a target.
 2. **`persist_learner_update` happy path (flush-only).** RED: `test_layer3_persists_events_and_state`
-   — seed a course + entities (so `load_entity_specs` is non-empty), build a `ShadowGradeResult`
+   — seed a course + entities (so `load_entity_specs` is non-empty), build a `retired shadow result`
    with ≥1 covered finding, call `persist_learner_update` then `db.commit()` from the test, assert
    one `apollo_mastery_events` row per mapped event + one `apollo_learner_state` row with the
    posterior belief/mastery and `last_evidence_at == done_ts`. GREEN: implement convert→resolve→
@@ -456,7 +456,7 @@ Acceptance: Gate 1 zero failures; Gate 2 the new PG file + the existing shadow P
   empty map (conflict/corrected detection inert); the opposes wiring is its own carried follow-up,
   NOT WU-5A2. Do not expand `load_entity_specs`/`CanonNodeSpec` here.
 - **Any migration**, any Neo4j schema change, any LLM call, any edit to the frozen WU-5A1 package or
-  to `graph_compare`/`grading` internals.
+  to `retired graph comparator`/`grading` internals.
 - **Refactoring `handle_done`** (stays as-is; only the ~12-line addition).
 
 ## Deviations I'd allow the executor (small, log them)

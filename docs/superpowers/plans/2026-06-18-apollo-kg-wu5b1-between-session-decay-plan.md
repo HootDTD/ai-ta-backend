@@ -293,7 +293,7 @@ This set drives every line/branch of `decay.py`: the `max(0,·)` clamp (L1-3/L1-
 
 ### Layer 2 — ONE real-PG integration test (added to `tests/database/test_done_layer3_route_postgres.py`)
 
-`pytest.mark.integration` (module already carries `pytestmark = pytest.mark.integration`). Reuses the existing harness: `db_session` fixture, `_seed_course_with_entity`, `_seed_session_attempt`, `_covered_finding`, `_audited`, `_shadow`, `_belief_close`, and `monkeypatch.setenv`. NO Neo4j, NO LLM (the `ShadowGradeResult` is hand-built; the entity map is seeded via ORM — same as the 16 existing tests).
+`pytest.mark.integration` (module already carries `pytestmark = pytest.mark.integration`). Reuses the existing harness: `db_session` fixture, `_seed_course_with_entity`, `_seed_session_attempt`, `_covered_finding`, `_audited`, `_shadow`, `_belief_close`, and `monkeypatch.setenv`. NO Neo4j, NO LLM (the `retired shadow result` is hand-built; the entity map is seeded via ORM — same as the 16 existing tests).
 
 | Test name | Asserts | How deps are mocked |
 |---|---|---|

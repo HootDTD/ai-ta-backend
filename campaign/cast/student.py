@@ -8,7 +8,7 @@ session end-to-end over the REAL student-facing HTTP routes
 first, this module's shapes mirror them exactly), then reads back the two
 ``GradingArtifact`` rows (canonical + pair) the Done-click persisted and
 returns one :class:`AttemptRecord`. ``run_corpus`` drives many attempts and
-appends one JSONL line per attempt to a :class:`~campaign.runctx.RunContext`'s
+appends one JSONL line per attempt to the caller-provided campaign output,
 ``attempts.jsonl``.
 
 Every real I/O boundary is an injected seam so the whole flow unit-tests with
@@ -50,7 +50,7 @@ Similarly, Apollo's clarification loop (spec §3 step 2) has no dedicated
 "answer this clarification" endpoint — it is woven into ordinary ``/chat``
 replies (see ``apollo/handlers/chat.py``). This driver has no reliable
 structural signal for "Apollo just asked a clarification probe"; it uses the
-same heuristic :func:`campaign.adapters.extract_apollo_questions` uses for S4
+same question-mark heuristic used by the S4 evaluator
 (a reply containing ``"?"``) to decide whether to spend one of the
 ``clarification_max_turns`` follow-up turns, and always delegates the actual
 wording (including how ``clarification_policy`` should shape the answer) to
