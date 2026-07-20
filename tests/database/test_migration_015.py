@@ -30,19 +30,29 @@ async def test_chat_session_snippets_table_exists(db_session):
 
 
 @pytest.mark.integration
-async def test_chat_sessions_has_topic_centroid(db_session):
+async def test_app_chat_sessions_has_target_columns(db_session):
     result = await db_session.execute(text(
-        "SELECT data_type FROM information_schema.columns "
-        "WHERE table_name = 'chat_sessions' AND column_name = 'topic_centroid_vector'"
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'app' AND table_name = 'chat_sessions'"
     ))
-    assert result.scalar_one_or_none() is not None
+    cols = {row[0] for row in result}
+    assert cols == {
+        "id",
+        "external_id",
+        "user_id",
+        "course_id",
+        "metadata",
+        "memory_summary",
+        "created_at",
+        "updated_at",
+    }
 
 
 @pytest.mark.integration
-async def test_chat_router_decisions_table_exists(db_session):
+async def test_internal_chat_routing_decisions_table_exists(db_session):
     result = await db_session.execute(text(
         "SELECT column_name FROM information_schema.columns "
-        "WHERE table_name = 'chat_router_decisions'"
+        "WHERE table_schema = 'internal' AND table_name = 'chat_routing_decisions'"
     ))
     cols = {row[0] for row in result}
     assert "final_route" in cols and "retrieval_mode" in cols
