@@ -1,12 +1,33 @@
-"""Typed boundary transforms for the DB-07 target models."""
+"""Typed boundary transforms for the target database models."""
+
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any
 
 DOCUMENT_STATUSES = frozenset({"queued", "processing", "ready", "failed"})
 UPLOAD_STATUSES = frozenset({"queued", "processing", "ready", "failed", "superseded"})
 UPLOAD_JOB_STATES = frozenset({"queued", "leased", "processing", "completed", "failed"})
+
+
+def chat_keywords_to_text_array(value: Any) -> list[str]:
+    """Normalize a legacy JSON string array for ``app.chat_messages``."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("chat keywords must be a JSON string array") from exc
+    if not isinstance(value, (list, tuple)) or any(not isinstance(item, str) for item in value):
+        raise ValueError("chat keywords must be a string array")
+    return list(value)
+
+
+def chat_keywords_to_json_array(value: Any) -> str:
+    """Serialize a target text array for legacy/export boundaries."""
+    return json.dumps(chat_keywords_to_text_array(value), ensure_ascii=False)
 
 
 def merge_course_settings(
@@ -77,6 +98,8 @@ def _bounded_float(value: Any, *, default: float) -> float:
 
 
 __all__ = [
+    "chat_keywords_to_json_array",
+    "chat_keywords_to_text_array",
     "document_status_columns",
     "merge_course_settings",
     "normalize_upload_job_state",

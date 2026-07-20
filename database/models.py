@@ -1,4 +1,5 @@
 """SQLAlchemy ORM models for AI-TA's pgvector-backed retrieval system."""
+
 from __future__ import annotations
 
 import os
@@ -7,10 +8,10 @@ from enum import StrEnum
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    TIMESTAMP,
     BigInteger,
     Boolean,
     CheckConstraint,
-    TIMESTAMP,
     Column,
     Float,
     ForeignKey,
@@ -19,10 +20,11 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, relationship
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.orm import DeclarativeBase, declared_attr, relationship
 
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "3072"))
 
@@ -111,10 +113,14 @@ class Course(BaseModel, TimestampMixin):
     subject_name = Column(String(200), nullable=False)
 
     current_week = Column(SmallInteger, nullable=False, default=1, server_default=text("1"))
-    retrieval_weights = Column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    retrieval_weights = Column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     retrieval_weight_min = Column(Float, nullable=False, default=0.0, server_default=text("0"))
     retrieval_weight_max = Column(Float, nullable=False, default=1.0, server_default=text("1"))
-    metadata_ = Column("metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    metadata_ = Column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
 
     updated_at = Column(
         TIMESTAMP(timezone=True),
@@ -148,7 +154,9 @@ class Document(BaseModel, TimestampMixin):
     content_hash = Column(String, nullable=False, index=True, unique=True)
     unique_identifier_hash = Column(String, nullable=True, index=True, unique=True)
     embedding = Column(Vector(EMBEDDING_DIM))
-    metadata_ = Column("metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    metadata_ = Column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     page_count = Column(Integer, nullable=True)
     week = Column(Integer, nullable=True, index=True)
 
@@ -317,7 +325,9 @@ class Upload(Base):
     page_count = Column(Integer, nullable=True)
     is_latest = Column(Boolean, nullable=False, default=True, index=True)
     uploaded_by = Column(UUID(as_uuid=False), nullable=True, index=True)
-    metadata_ = Column("metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    metadata_ = Column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     uploaded_at = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
@@ -382,17 +392,20 @@ class ChatSession(Base):
     """Persisted chat session for memory + reporting."""
 
     __tablename__ = "chat_sessions"
+    __table_args__ = {"schema": "app"}
 
     id = Column(BigInteger, primary_key=True, index=True)
-    chat_id = Column(String(200), nullable=False, unique=True, index=True)
+    external_id = Column(Text, nullable=False, unique=True, index=True)
     user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
-    search_space_id = Column(
-        Integer,
+    course_id = Column(
+        BigInteger,
         ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    meta = Column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    metadata_ = Column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
     memory_summary = Column(Text, nullable=False, default="", server_default=text("''"))
     created_at = Column(
         TIMESTAMP(timezone=True),
@@ -407,30 +420,39 @@ class ChatSession(Base):
         onupdate=lambda: datetime.now(UTC),
         index=True,
     )
-    topic_centroid_vector = Column(Vector(3072), nullable=True)
-
-    turns = relationship(
-        "ChatTurn",
+    messages = relationship(
+        "ChatMessage",
         back_populates="session",
         cascade="all, delete-orphan",
-        order_by="ChatTurn.turn_index",
+        order_by="ChatMessage.turn_index",
     )
 
 
-class ChatTurn(Base):
-    """Chat turn rows for a session."""
+class ChatMessage(Base):
+    """One persisted message in a RAG chat session."""
 
-    __tablename__ = "chat_turns"
+    __tablename__ = "chat_messages"
+    __table_args__ = (
+        UniqueConstraint("chat_session_id", "external_id"),
+        UniqueConstraint("chat_session_id", "turn_index"),
+        {"schema": "app"},
+    )
 
     id = Column(BigInteger, primary_key=True, index=True)
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     chat_session_id = Column(
         BigInteger,
-        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        ForeignKey("app.chat_sessions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     turn_index = Column(Integer, nullable=False, index=True)
-    turn_id = Column(String(100), nullable=False, index=True)
+    external_id = Column(Text, nullable=False, index=True)
     role = Column(String(20), nullable=False, index=True)
     content = Column(Text, nullable=False, default="", server_default=text("''"))
     created_at = Column(
@@ -444,12 +466,12 @@ class ChatTurn(Base):
     tool_inputs = Column(JSONB, nullable=True)
     attachments = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     citations = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
-    # §10 RQ5 hedge (WU-5B4): write-only <=8 concept terms from
-    # extract_and_filter_keywords, persisted for offline class-level backfill.
-    # No read path in v1. Mirrors the attachments/citations JSONB-array shape.
-    keywords = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    # §10 RQ5 hedge (WU-5B4): <=8 concept terms for offline class-level backfill.
+    keywords = Column(
+        ARRAY(Text), nullable=False, default=list, server_default=text("'{}'::text[]")
+    )
 
-    session = relationship("ChatSession", back_populates="turns")
+    session = relationship("ChatSession", back_populates="messages")
 
 
 class ChatSessionSnippet(Base):
@@ -462,10 +484,16 @@ class ChatSessionSnippet(Base):
     __tablename__ = "chat_session_snippets"
 
     chat_session_id = Column(
-        BigInteger, ForeignKey("chat_sessions.id", ondelete="CASCADE"), primary_key=True
+        BigInteger, ForeignKey("app.chat_sessions.id", ondelete="CASCADE"), primary_key=True
     )
     chunk_id = Column(
         BigInteger, ForeignKey("internal.document_chunks.id", ondelete="CASCADE"), primary_key=True
+    )
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     original_score = Column(Float, nullable=False)
     first_seen_turn = Column(Integer, nullable=False)
@@ -479,6 +507,7 @@ class ChatSessionSnippet(Base):
 
     __table_args__ = (
         Index("ix_css_session_lru", "chat_session_id", "last_used_turn"),
+        {"schema": "internal"},
     )
 
 
@@ -489,13 +518,20 @@ class ChatRouterDecision(Base):
     of the router.
     """
 
-    __tablename__ = "chat_router_decisions"
+    __tablename__ = "chat_routing_decisions"
+    __table_args__ = {"schema": "internal"}
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     turn_id = Column(Text, nullable=False)
     chat_session_id = Column(
         BigInteger,
-        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        ForeignKey("app.chat_sessions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -531,7 +567,7 @@ __all__ = [
     "Upload",
     "UploadJob",
     "ChatSession",
-    "ChatTurn",
+    "ChatMessage",
     "ChatSessionSnippet",
     "ChatRouterDecision",
     "DocumentType",

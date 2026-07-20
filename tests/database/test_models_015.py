@@ -2,6 +2,7 @@
 
 Verifies class metadata only - no DB connection required.
 """
+
 import pytest
 
 from database.models import ChatRouterDecision, ChatSession, ChatSessionSnippet
@@ -13,6 +14,7 @@ def test_chat_session_snippet_columns():
     assert {
         "chat_session_id",
         "chunk_id",
+        "course_id",
         "original_score",
         "first_seen_turn",
         "last_used_turn",
@@ -22,8 +24,11 @@ def test_chat_session_snippet_columns():
 
 
 @pytest.mark.unit
-def test_chat_session_has_centroid_attr():
-    assert hasattr(ChatSession, "topic_centroid_vector")
+def test_chat_models_use_target_schemas():
+    assert ChatSession.__table__.schema == "app"
+    assert ChatSessionSnippet.__table__.schema == "internal"
+    assert ChatRouterDecision.__table__.schema == "internal"
+    assert ChatRouterDecision.__tablename__ == "chat_routing_decisions"
 
 
 @pytest.mark.unit
@@ -34,4 +39,5 @@ def test_chat_router_decision_columns():
         "retrieval_mode",
         "was_clarified",
         "clarify_cause",
+        "course_id",
     } <= cols
