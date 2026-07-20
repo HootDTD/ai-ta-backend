@@ -75,7 +75,6 @@ from apollo.provisioning.solution import (
     GroundingSpan,
     SolutionDraftError,
     build_approved_pair,
-    build_authored_approved_pair,
     construct_authored_reference,
     find_or_generate,
 )
@@ -618,20 +617,14 @@ def _cost_abort(exc: CostBudgetExceeded, *, stage: str) -> _PerDocumentError:
 
 @dataclass(frozen=True)
 class AuthoredProvisionResult:
-    """The per-authored-problem outcome. ``outcome`` ∈ {'promoted', 'rejected'};
-    ``stage`` names where it ended ('ok' | 'construct' | 'pairing_gate' |
-    'promotion_lint')."""
+    """The per-authored-problem construction outcome."""
 
     outcome: str
     stage: str
     diagnostic: str = ""
     failed_gate: int | None = None
-
-
-async def _no_retrieve(_question) -> tuple[GroundingSpan, ...]:
-    """A no-op retrieve_fn for the authored path: the draft ALWAYS carries the
-    authored solution as its grounding, so ``validate_pair`` never re-grounds."""
-    return ()
+    problem: dict | None = None
+    construction_diagnostics: tuple[str, ...] = ()
 
 
 async def _find_authored_tier1_row_id(
@@ -661,15 +654,53 @@ async def provision_authored_problem(
     embed_fn: Callable[[str], Sequence[float]],
     run: IngestRun | None = None,
 ) -> AuthoredProvisionResult:
-    """Construct -> faithfulness -> tag/mint -> content-gated promote for ONE
-    already-ingested authored problem. Returns an ``AuthoredProvisionResult``.
+    """Construct and persist one manual typed draft for teacher confirmation.
 
-    A per-candidate rejection (un-constructable graph, a failed faithfulness
-    verdict, or a lint failure) is a CLEAN reject — never a run abort (AC #3). When
-    ``run`` is supplied an ``apollo_rejected_problems`` row is written for the
-    reject (mirroring ``_process_candidate``); otherwise the rejection is returned
-    only. ``promote`` derives the applicable gates from the problem's own content —
-    no subject profile."""
+    The preserved parameters keep the public call shape stable, but this typed
+    lane intentionally returns before pairing, tag/mint, or promotion. Those
+    stages remain available to generic/PDF provisioning only.
+    """
+    concept_problem_id = await _find_authored_tier1_row_id(
+        db, concept_id=ingest_concept_id, problem_code=authored.problem_code
+    )
+    if concept_problem_id is None:
+        raise _PerDocumentError(stage="construct", error_class="MissingTier1Row")
+    row = await db.get(ConceptProblem, concept_problem_id)
+    if row is None:  # pragma: no cover - id was selected immediately above
+        raise _PerDocumentError(stage="construct", error_class="MissingTier1Row")
+
+    # Fingerprint idempotency: replaying the same normalized statement must not
+    # spend another construction call, reset a pending teacher decision, or turn
+    # a promoted row back into a draft. Edit/resubmit deletes the old row first,
+    # so that explicitly authorized path still constructs a fresh submission.
+    # `tier == 2` is checked first because it is the authoritative promotion
+    # signal — it must win even if the `typed_confirmation` blob is stale.
+    if row.tier == 2:
+        return AuthoredProvisionResult(
+            outcome="promoted",
+            stage="ok",
+            problem=dict(row.payload or {}),
+        )
+    confirmation = (row.provenance or {}).get("typed_confirmation")
+    if isinstance(confirmation, dict):
+        status = str(confirmation.get("status") or "")
+        if status == "awaiting_teacher_confirmation":
+            return AuthoredProvisionResult(
+                outcome=status,
+                stage="confirmation",
+                problem=dict(row.payload or {}),
+                construction_diagnostics=tuple(
+                    str(item) for item in confirmation.get("diagnostics", [])
+                ),
+            )
+        if status == "teacher_confirmed_not_promoted":
+            return AuthoredProvisionResult(
+                outcome="held_for_review",
+                stage="confirmation",
+                diagnostic=str(confirmation.get("diagnostic") or ""),
+                problem=dict(row.payload or {}),
+            )
+
     # --- construct (three-completeness, universal vocab, authored grounding) --- #
     try:
         draft = await construct_authored_reference(authored, chat_fn=construct_chat_fn)
@@ -686,80 +717,35 @@ async def provision_authored_problem(
             )
         return AuthoredProvisionResult(outcome="rejected", stage="construct", diagnostic=str(exc))
 
-    # --- faithfulness against the AUTHORED solution (draft.grounding) --------- #
-    verdict = await validate_pair(authored, draft, retrieve_fn=_no_retrieve, judge_fn=judge_fn)
-    rej = rejection_from_verdict(verdict)
-    if rej is not None:
-        if run is not None:
-            _record_rejection(
-                db,
-                run=run,
-                rejected_stage="pairing_gate",
-                failed_gate=None,
-                diagnostic=rej.diagnostic,
-                concept_id=ingest_concept_id,
-                payload={"reason": rej.reason},
-            )
-        return AuthoredProvisionResult(
-            outcome="rejected", stage="pairing_gate", diagnostic=rej.diagnostic
-        )
-
-    # --- tag/mint + content-gated promote ----------------------------------- #
-    pair = build_authored_approved_pair(authored, draft, search_space_id=search_space_id)
-    # A failed tag/mint (the LLM omits a concept_slug) or a blown cost budget is a
-    # per-CANDIDATE reject — never a run abort (AC #3). Mirrors _process_candidate's
-    # guard, except the authored path treats a TagMintError as a clean reject rather
-    # than a per-document abort (one un-taggable authored problem must not sink a
-    # batch of others).
-    try:
-        mint_plan = await tag_and_mint(db, pair, chat_fn=tag_chat_fn, embed_fn=embed_fn)
-    except (TagMintError, CostBudgetExceeded) as exc:
-        if run is not None:
-            _record_rejection(
-                db,
-                run=run,
-                rejected_stage="tag_mint",
-                failed_gate=None,
-                diagnostic=f"{type(exc).__name__}: {exc}",
-                concept_id=ingest_concept_id,
-                payload={"reason": "tag_mint_error"},
-            )
-        return AuthoredProvisionResult(outcome="rejected", stage="tag_mint", diagnostic=str(exc))
-
-    concept_problem_id = await _find_authored_tier1_row_id(
-        db, concept_id=ingest_concept_id, problem_code=authored.problem_code
+    constructed = dict(draft.provenance.get("constructed_problem") or {})
+    if not constructed:
+        raise _PerDocumentError(stage="construct", error_class="MissingConstructedProblem")
+    now = _now().isoformat()
+    diagnostics = tuple(str(item) for item in draft.provenance.get("construction_diagnostics", []))
+    graph = Problem.model_validate(constructed).to_kg_graph(attempt_id=0)
+    row.payload = {**(row.payload or {}), **constructed}
+    row.provenance = {
+        **(row.provenance or {}),
+        "typed_confirmation": {
+            "status": "awaiting_teacher_confirmation",
+            "constructed_at": now,
+            "confirmed_by": None,
+            "confirmed_at": None,
+            "diagnostics": list(diagnostics),
+            "draft": {
+                "steps": constructed["reference_solution"],
+                "edges": [edge.model_dump() for edge in graph.edges],
+                "solution": authored.solution or "",
+            },
+        },
+    }
+    await db.flush()
+    return AuthoredProvisionResult(
+        outcome="awaiting_teacher_confirmation",
+        stage="confirmation",
+        problem=constructed,
+        construction_diagnostics=diagnostics,
     )
-    if concept_problem_id is None:
-        raise _PerDocumentError(stage="promote", error_class="MissingTier1Row")
-
-    existing_problem_hashes = await _concept_dup_hashes(db, concept_id=mint_plan.concept_id)
-    result: PromoteResult = await promote(
-        db,
-        neo,
-        problem=pair.problem,
-        mint_plan=mint_plan,
-        search_space_id=search_space_id,
-        concept_problem_id=concept_problem_id,
-        existing_problem_hashes=existing_problem_hashes,
-    )
-    if not result.promoted:
-        if run is not None:
-            _record_rejection(
-                db,
-                run=run,
-                rejected_stage="promotion_lint",
-                failed_gate=result.failed_gate,
-                diagnostic=result.diagnostic,
-                concept_id=mint_plan.concept_id,
-                payload={},
-            )
-        return AuthoredProvisionResult(
-            outcome="rejected",
-            stage="promotion_lint",
-            diagnostic=result.diagnostic,
-            failed_gate=result.failed_gate,
-        )
-    return AuthoredProvisionResult(outcome="promoted", stage="ok")
 
 
 async def _finalize(

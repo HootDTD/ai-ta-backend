@@ -6,16 +6,395 @@ import pytest
 
 from apollo.provisioning.authored_sets.graph_derivation import (
     DerivationError,
+    TypedConstructionDefect,
+    build_ordered_problem,
     derive_reference_graph,
     find_derivation_defects,
 )
+from apollo.provisioning.ingest import AuthoredProblem
 from apollo.provisioning.solution import GroundingSpan
+from apollo.schemas.problem import Problem
 
 _VOCAB = {
     "symbols": ["x", "u", "v", "du", "dv", "dx", "F", "I", "C"],
     "description": {"x": "integration variable", "F": "the antiderivative"},
 }
 _NORM = {"antiderivative": "F", "constant of integration": "C"}
+
+
+def _ordered_authored(*, target_unknown: str = "") -> AuthoredProblem:
+    return AuthoredProblem(
+        problem_code="authored.ordered",
+        concept_slug="provisional.inventory",
+        statement="Explain and solve the ordered problem.",
+        solution="A worked answer.",
+        given_values={"a": 2.0},
+        target_unknown=target_unknown,
+        completeness="answer_only",
+    )
+
+
+def test_ordered_builder_derives_case_sensitive_symbol_dependencies():
+    graph = build_ordered_problem(
+        _ordered_authored(target_unknown="z"),
+        [
+            {
+                "entry_type": "variable_mapping",
+                "id": "lowercase_mass",
+                "content": {"term": "lowercase mass", "symbol": "m"},
+            },
+            {
+                "entry_type": "variable_mapping",
+                "id": "uppercase_mass",
+                "content": {"term": "uppercase mass", "symbol": "M"},
+            },
+            {
+                "entry_type": "equation",
+                "id": "intermediate_value",
+                "content": {"symbolic": "x = m + a"},
+            },
+            {
+                "entry_type": "equation",
+                "id": "target_value",
+                "content": {"symbolic": "z = x + M"},
+            },
+        ],
+    )
+
+    steps = {step["id"]: step for step in graph["reference_solution"]}
+    assert steps["intermediate_value"]["depends_on"] == ["lowercase_mass"]
+    assert steps["target_value"]["depends_on"] == [
+        "uppercase_mass",
+        "intermediate_value",
+    ]
+    assert isinstance(Problem.model_validate(graph), Problem)
+
+
+def test_ordered_builder_rejects_case_variant_as_undefined():
+    with pytest.raises(TypedConstructionDefect, match="case-sensitive.*'M'"):
+        build_ordered_problem(
+            _ordered_authored(target_unknown="answer"),
+            [
+                {
+                    "entry_type": "variable_mapping",
+                    "id": "lowercase_mass",
+                    "content": {"term": "mass", "symbol": "m"},
+                },
+                {
+                    "entry_type": "equation",
+                    "id": "calculate_answer",
+                    "content": {"symbolic": "answer = M + a"},
+                },
+            ],
+        )
+
+
+def test_ordered_builder_uses_declared_then_adjacent_prose_fallback():
+    graph = build_ordered_problem(
+        _ordered_authored(),
+        [
+            {
+                "entry_type": "definition",
+                "id": "federalism_meaning",
+                "content": {"concept": "federalism", "meaning": "divided sovereignty"},
+            },
+            {
+                "entry_type": "condition",
+                "id": "divided_authority",
+                "content": {"applies_when": "authority is split"},
+            },
+            {
+                "entry_type": "simplification",
+                "id": "focus_accountability",
+                "content": {
+                    "applies_when": "accountability is the question",
+                    "transformation": "focus the argument on veto points",
+                },
+                "references": ["federalism_meaning"],
+            },
+        ],
+    )
+    first, second, third = graph["reference_solution"]
+    assert first["depends_on"] == []
+    assert second["depends_on"] == ["federalism_meaning"]
+    assert third["depends_on"] == ["federalism_meaning"]
+
+
+def test_ordered_builder_rejects_non_list_references():
+    with pytest.raises(TypedConstructionDefect, match="references must be an array"):
+        build_ordered_problem(
+            _ordered_authored(),
+            [
+                {
+                    "entry_type": "definition",
+                    "id": "federalism_meaning",
+                    "content": {"concept": "federalism", "meaning": "divided sovereignty"},
+                },
+                {
+                    "entry_type": "condition",
+                    "id": "divided_authority",
+                    "content": {"applies_when": "authority is split"},
+                    "references": "federalism_meaning",
+                },
+            ],
+        )
+
+
+def test_ordered_builder_rejects_empty_reference_ids():
+    with pytest.raises(TypedConstructionDefect, match="references must contain non-empty ids"):
+        build_ordered_problem(
+            _ordered_authored(),
+            [
+                {
+                    "entry_type": "definition",
+                    "id": "federalism_meaning",
+                    "content": {"concept": "federalism", "meaning": "divided sovereignty"},
+                },
+                {
+                    "entry_type": "condition",
+                    "id": "divided_authority",
+                    "content": {"applies_when": "authority is split"},
+                    "references": [""],
+                },
+            ],
+        )
+
+
+def test_ordered_builder_adds_unbroken_procedure_chain_and_contiguous_order():
+    graph = build_ordered_problem(
+        _ordered_authored(),
+        [
+            {
+                "entry_type": "procedure_step",
+                "id": "identify_evidence",
+                "content": {"action": "identify evidence", "purpose": "ground the claim"},
+            },
+            {
+                "entry_type": "definition",
+                "id": "accountability_meaning",
+                "content": {"concept": "accountability", "meaning": "answerability"},
+            },
+            {
+                "entry_type": "procedure_step",
+                "id": "weigh_evidence",
+                "content": {"action": "weigh evidence", "purpose": "reach a conclusion"},
+            },
+            {
+                "entry_type": "procedure_step",
+                "id": "state_conclusion",
+                "content": {"action": "state conclusion", "purpose": "answer"},
+            },
+        ],
+    )
+    problem = Problem.model_validate(graph)
+    procedures = [
+        step for step in problem.reference_solution if step.entry_type == "procedure_step"
+    ]
+    assert [step.content["order"] for step in procedures] == [1, 2, 3]
+    precedes = [
+        (edge.from_node_id, edge.to_node_id)
+        for edge in problem.to_kg_graph(0).edges
+        if edge.edge_type == "PRECEDES"
+    ]
+    assert precedes == [
+        ("identify_evidence", "weigh_evidence"),
+        ("weigh_evidence", "state_conclusion"),
+    ]
+
+
+def test_ordered_builder_makes_cycles_unresolved_edges_and_bad_order_unreachable():
+    graph = build_ordered_problem(
+        _ordered_authored(),
+        [
+            {
+                "entry_type": "definition",
+                "id": "first_concept",
+                "content": {"concept": "first", "meaning": "first meaning"},
+            },
+            {
+                "entry_type": "procedure_step",
+                "id": "first_action",
+                "content": {"order": 99, "action": "act", "purpose": "advance"},
+                "references": ["first_concept"],
+            },
+            {
+                "entry_type": "procedure_step",
+                "id": "second_action",
+                "content": {"order": -4, "action": "finish", "purpose": "answer"},
+            },
+        ],
+    )
+    problem = Problem.model_validate(graph)
+    ids = [step.id for step in problem.reference_solution]
+    for index, step in enumerate(problem.reference_solution):
+        assert all(ids.index(dependency) < index for dependency in step.depends_on)
+    assert [
+        step.content["order"]
+        for step in problem.reference_solution
+        if step.entry_type == "procedure_step"
+    ] == [1, 2]
+    problem.to_kg_graph(0).topological_order("DEPENDS_ON")
+
+
+def test_ordered_builder_rejects_non_sequence_and_empty_steps():
+    with pytest.raises(TypedConstructionDefect, match="non-empty array"):
+        build_ordered_problem(_ordered_authored(), {"not": "a sequence"})
+    with pytest.raises(TypedConstructionDefect, match="non-empty array"):
+        build_ordered_problem(_ordered_authored(), [])
+
+
+def test_ordered_builder_rejects_malformed_symbol_table():
+    steps = [
+        {
+            "entry_type": "definition",
+            "id": "federalism_meaning",
+            "content": {"concept": "federalism", "meaning": "divided sovereignty"},
+        }
+    ]
+    with pytest.raises(TypedConstructionDefect, match="symbol_table"):
+        build_ordered_problem(_ordered_authored(), steps, symbol_table="not-a-dict")
+    with pytest.raises(TypedConstructionDefect, match="symbol_table"):
+        build_ordered_problem(_ordered_authored(), steps, symbol_table={"m": "not-a-dict"})
+
+
+def test_ordered_builder_accumulates_first_pass_schema_diagnostics():
+    """Every step-schema defect class raises together in one pass: a non-dict
+    step, a forbidden ``depends_on`` key, an unsupported extra key, a missing
+    id, a duplicate id, an opaque id, and non-object ``content``."""
+    steps = [
+        "not a dict",
+        {
+            "entry_type": "definition",
+            "id": "shared_definition",
+            "content": {"concept": "a", "meaning": "b"},
+            "depends_on": [],
+        },
+        {
+            "entry_type": "definition",
+            "id": "extra_field_definition",
+            "content": {"concept": "a", "meaning": "b"},
+            "unexpected_field": True,
+        },
+        {
+            "entry_type": "definition",
+            "content": {"concept": "a", "meaning": "b"},
+        },
+        {
+            "entry_type": "definition",
+            "id": "shared_definition",
+            "content": {"concept": "c", "meaning": "d"},
+        },
+        {
+            "entry_type": "definition",
+            "id": "123",
+            "content": {"concept": "e", "meaning": "f"},
+        },
+        {
+            "entry_type": "definition",
+            "id": "bad_content_definition",
+            "content": "not-a-dict",
+        },
+    ]
+    with pytest.raises(TypedConstructionDefect) as excinfo:
+        build_ordered_problem(_ordered_authored(), steps)
+    diagnostics = "\n".join(excinfo.value.diagnostics)
+    assert "step 1 must be an object" in diagnostics
+    assert "must not declare depends_on" in diagnostics
+    assert "unsupported keys" in diagnostics
+    assert "has no id" in diagnostics
+    assert "duplicate_id: shared_definition" in diagnostics
+    assert "opaque_id: '123'" in diagnostics
+    assert "content must be an object" in diagnostics
+
+
+def test_ordered_builder_rejects_non_array_uses_equations():
+    steps = [
+        {
+            "entry_type": "procedure_step",
+            "id": "identify_evidence",
+            "content": {
+                "action": "identify evidence",
+                "purpose": "ground the claim",
+                "uses_equations": "not-a-list",
+            },
+        },
+    ]
+    with pytest.raises(TypedConstructionDefect, match="uses_equations must be an array"):
+        build_ordered_problem(_ordered_authored(), steps)
+
+
+def test_ordered_builder_rejects_procedure_uses_equations_referencing_non_prior_equation():
+    steps = [
+        {
+            "entry_type": "procedure_step",
+            "id": "apply_formula",
+            "content": {
+                "action": "apply the formula",
+                "purpose": "answer",
+                "uses_equations": ["never_declared_equation"],
+            },
+        },
+    ]
+    with pytest.raises(TypedConstructionDefect, match="non-prior equations"):
+        build_ordered_problem(_ordered_authored(), steps)
+
+
+def test_ordered_builder_rejects_rhs_sympify_double_parse_failure(monkeypatch):
+    """The RHS double-parse (line 185) is defense-in-depth beyond
+    ``_equation_parse_defect``'s own double-parse: let the first two
+    sympify calls (LHS/RHS inside the defect pre-check) succeed for real,
+    then force the third (this function's own RHS re-parse) to blow up."""
+    import apollo.provisioning.authored_sets.graph_derivation as gd
+
+    real_sympify = gd.sympy.sympify
+    calls = {"n": 0}
+
+    def _flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] > 2:
+            raise TypeError("forced rhs sympify failure")
+        return real_sympify(*args, **kwargs)
+
+    monkeypatch.setattr(gd.sympy, "sympify", _flaky)
+    with pytest.raises(TypedConstructionDefect, match="sympify failed"):
+        build_ordered_problem(
+            _ordered_authored(target_unknown="z"),
+            [
+                {
+                    "entry_type": "variable_mapping",
+                    "id": "lowercase_mass",
+                    "content": {"term": "mass", "symbol": "m"},
+                },
+                {
+                    "entry_type": "equation",
+                    "id": "target_value",
+                    "content": {"symbolic": "z = m + a"},
+                },
+            ],
+        )
+
+
+def test_ordered_builder_wraps_final_schema_validation_failure(monkeypatch):
+    """``Problem.model_validate``/``to_kg_graph`` failures that survive every
+    upstream diagnostic (the final construction surface) are wrapped in a
+    ``graph_derivation:``-prefixed ``TypedConstructionDefect``."""
+    import apollo.provisioning.authored_sets.graph_derivation as gd
+
+    def _boom(*_args, **_kwargs):
+        raise ValueError("forced final validation failure")
+
+    monkeypatch.setattr(gd.Problem, "model_validate", _boom)
+    with pytest.raises(TypedConstructionDefect, match="graph_derivation:"):
+        build_ordered_problem(
+            _ordered_authored(),
+            [
+                {
+                    "entry_type": "definition",
+                    "id": "federalism_meaning",
+                    "content": {"concept": "federalism", "meaning": "divided sovereignty"},
+                },
+            ],
+        )
 
 
 def _good_graph() -> dict:

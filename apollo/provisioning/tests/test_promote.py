@@ -22,7 +22,12 @@ import pytest
 
 from apollo.knowledge_graph.canon_projection import CanonProjectionError
 from apollo.persistence.models import Concept, ConceptProblem, Subject
-from apollo.provisioning.promote import PromoteResult, promote
+from apollo.provisioning.promote import (
+    PromoteHeldForReview,
+    PromoteResult,
+    promote,
+    promote_typed_confirmed,
+)
 from apollo.provisioning.tag_mint import MintPlan
 from database.models import SearchSpace
 
@@ -905,3 +910,176 @@ async def test_promote_rehomes_row_to_tagged_concept(db_session):
     # ...and it is NOT reachable under the provisional concept.
     provisional_pool = await list_problems_for_concept(db_session, concept_id=provisional.id)
     assert provisional_pool == []
+
+
+# --------------------------------------------------------------------------- #
+# ``promote_typed_confirmed`` — §4/§5's post-confirmation promotion: duplicate
+# check then solve-and-check ONLY (no gates 1-7, no tag/mint), Tier 1->2 under
+# whatever concept the Tier-1 row already sits on (provisional inventory in
+# production), with the honesty stamp + teacher-confirmation stamp added
+# together. Phase C covered this only through the API-level integration tests;
+# these are the dedicated low-level unit tests for the function itself.
+# --------------------------------------------------------------------------- #
+
+
+def _typed_symbolic_graph(*, governing: str, stated: str, givens: dict, target: str = "Q") -> dict:
+    return {
+        "id": "typed_promote_case",
+        "concept_id": "provisional.inventory",
+        "difficulty": "intro",
+        "given_values": givens,
+        "problem_text": f"Solve for {target}.",
+        "target_unknown": target,
+        "declared_paths": [["governing", "answer_key", "solve"]],
+        "reference_solution": [
+            {
+                "id": "governing",
+                "step": 1,
+                "entry_type": "equation",
+                "content": {"label": "Governing equation", "symbolic": governing},
+                "depends_on": [],
+            },
+            {
+                "id": "answer_key",
+                "step": 2,
+                "entry_type": "equation",
+                "content": {"label": "Stated answer", "symbolic": f"{target} = {stated}"},
+                "depends_on": ["governing"],
+            },
+            {
+                "id": "solve",
+                "step": 3,
+                "entry_type": "procedure_step",
+                "content": {
+                    "order": 1,
+                    "action": f"solve for {target}",
+                    "purpose": "obtain the stated answer",
+                    "uses_equations": ["answer_key"],
+                },
+                "depends_on": ["answer_key"],
+            },
+        ],
+    }
+
+
+async def test_promote_typed_confirmed_promotes_and_defaults_solution_source(db_session):
+    """Happy path on a Tier-1 row with NO solution_source yet (the typed
+    manual-create flow's own ingest already stamps 'authored', but the function
+    defends the case where it hasn't — covers the ``if not row.solution_source``
+    default branch)."""
+    space_id, _concept_id, problem_id = await _seed_concept_with_problem(
+        db_session, slug="typed-ok"
+    )
+    graph = _typed_symbolic_graph(governing="Q = A*v", stated="0.06", givens={"A": 0.015, "v": 4.0})
+
+    result = await promote_typed_confirmed(
+        db_session,
+        problem=graph,
+        concept_problem_id=problem_id,
+        existing_problem_hashes=set(),
+        confirmed_by="teacher-1",
+        confirmed_at="2026-07-20T00:00:00+00:00",
+    )
+
+    assert isinstance(result, PromoteResult)
+    assert result.promoted is True
+    refreshed = await db_session.get(ConceptProblem, problem_id)
+    assert refreshed.tier == 2
+    assert refreshed.solution_source == "authored"  # defaulted, since it was None
+    assert refreshed.payload["verification"] == "mechanically_verified"
+    assert refreshed.payload["teacher_confirmed"] is True
+    assert refreshed.payload["teacher_confirmation"] == {
+        "actor": "teacher-1",
+        "at": "2026-07-20T00:00:00+00:00",
+    }
+
+
+async def test_promote_typed_confirmed_preserves_existing_solution_source(db_session):
+    """When the row already carries a solution_source (the real typed flow's
+    ingest-time stamp), promotion does NOT overwrite it."""
+    space_id, _concept_id, problem_id = await _seed_concept_with_problem(
+        db_session, slug="typed-src"
+    )
+    row = await db_session.get(ConceptProblem, problem_id)
+    row.solution_source = "authored"
+    await db_session.flush()
+    graph = _typed_symbolic_graph(governing="Q = A*v", stated="0.06", givens={"A": 0.015, "v": 4.0})
+
+    result = await promote_typed_confirmed(
+        db_session,
+        problem=graph,
+        concept_problem_id=problem_id,
+        existing_problem_hashes=set(),
+        confirmed_by="teacher-1",
+        confirmed_at="2026-07-20T00:00:00+00:00",
+    )
+    assert result.promoted is True
+    refreshed = await db_session.get(ConceptProblem, problem_id)
+    assert refreshed.solution_source == "authored"
+
+
+async def test_promote_typed_confirmed_duplicate_rejects_no_tier_flip(db_session):
+    """Gate 8 (duplicate) fails -> ``PromoteResult(promoted=False, failed_gate=8)``,
+    a plain rejection (not held-for-review), and the row stays Tier 1."""
+    from apollo.provisioning.problem_hash import problem_dup_hash
+    from apollo.schemas.problem import Problem
+
+    space_id, _concept_id, problem_id = await _seed_concept_with_problem(
+        db_session, slug="typed-dup"
+    )
+    graph = _typed_symbolic_graph(governing="Q = A*v", stated="0.06", givens={"A": 0.015, "v": 4.0})
+    own_hash = problem_dup_hash(Problem.model_validate(graph))
+
+    result = await promote_typed_confirmed(
+        db_session,
+        problem=graph,
+        concept_problem_id=problem_id,
+        existing_problem_hashes={own_hash},
+        confirmed_by="teacher-1",
+        confirmed_at="2026-07-20T00:00:00+00:00",
+    )
+    assert isinstance(result, PromoteResult)
+    assert type(result) is PromoteResult  # not the held-for-review subclass
+    assert result.promoted is False
+    assert result.failed_gate == 8
+    refreshed = await db_session.get(ConceptProblem, problem_id)
+    assert refreshed.tier == 1  # never flipped
+
+
+async def test_promote_typed_confirmed_unresolved_holds_for_review(db_session):
+    """A transcendental solve-and-check verdict returns
+    ``PromoteHeldForReview`` (promoted=False) — the three-way solve semantics
+    survive through the typed promotion profile."""
+    space_id, _concept_id, problem_id = await _seed_concept_with_problem(
+        db_session, slug="typed-unresolved"
+    )
+    graph = _typed_symbolic_graph(governing="Q + cos(Q)", stated="0", givens={})
+
+    result = await promote_typed_confirmed(
+        db_session,
+        problem=graph,
+        concept_problem_id=problem_id,
+        existing_problem_hashes=set(),
+        confirmed_by="teacher-1",
+        confirmed_at="2026-07-20T00:00:00+00:00",
+    )
+    assert isinstance(result, PromoteHeldForReview)
+    assert result.promoted is False
+    refreshed = await db_session.get(ConceptProblem, problem_id)
+    assert refreshed.tier == 1
+
+
+async def test_promote_typed_confirmed_missing_row_raises(db_session):
+    """An unknown ``concept_problem_id`` (defensive — should never happen given
+    the caller resolves the row first) fails closed with a ``RuntimeError``
+    rather than silently no-op-ing."""
+    graph = _typed_symbolic_graph(governing="Q = A*v", stated="0.06", givens={"A": 0.015, "v": 4.0})
+    with pytest.raises(RuntimeError, match="not found"):
+        await promote_typed_confirmed(
+            db_session,
+            problem=graph,
+            concept_problem_id=999_999_999,
+            existing_problem_hashes=set(),
+            confirmed_by="teacher-1",
+            confirmed_at="2026-07-20T00:00:00+00:00",
+        )

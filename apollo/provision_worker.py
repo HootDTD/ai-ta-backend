@@ -1,8 +1,9 @@
-"""Dormant ``apollo-provision`` worker process (WU-3B2g).
+"""Apollo durable provisioning and typed-problem re-homing worker.
 
 The 4th Procfile process. A thin, async-native poll loop that drains the
 ``apollo_provisioning_jobs`` queue behind the default-OFF
-``APOLLO_AUTOPROVISION_ENABLED`` flag, with cooperative SIGTERM/SIGINT shutdown.
+``APOLLO_AUTOPROVISION_ENABLED`` flag and always drains the manual typed-path
+``apollo_rehoming_jobs`` queue, with cooperative SIGTERM/SIGINT shutdown.
 It MIRRORS ``apollo/learner_janitor_worker.py`` 1:1, swapping the drain body for
 the lease-reaper + claim (3B2f) + ``run_provisioning`` (3B2g orchestrator) +
 terminal job decision.
@@ -19,10 +20,9 @@ This module owns ONLY the process shell + the lease-reaper:
 
 It REDEFINES no stage. The claim/lease + terminal transitions are FROZEN
 (``apollo/provisioning/queue.py``, 3B2f); the 6-stage orchestrator is
-``apollo/provisioning/orchestrator.py``. The headline safety: with the flag OFF
-NOTHING drains, so a teacher upload behaves byte-identically to today and no
-auto-provisioned content reaches a student without a human deploy step (the
-process also ships scaled to 0 replicas).
+``apollo/provisioning/orchestrator.py``. With the flag OFF, PDF jobs remain
+dormant and byte-identical. Typed re-homing drains independently because its
+problem is already teacher-confirmed and Tier 2 before a job is enqueued.
 
 The worker runs entirely inside a SINGLE ``asyncio.run(main())`` loop so
 ``database.session``'s ``id(loop)``-keyed engine registry resolves the SAME
@@ -44,12 +44,22 @@ import logging
 import os
 import signal
 import socket
+from decimal import Decimal
+from types import SimpleNamespace
 
 from sqlalchemy import and_, select
 
 from apollo.handlers.learner_janitor import _int_env  # REUSE the frozen helper
-from apollo.persistence.models import IngestRun, ProvisioningJob
+from apollo.persistence.models import Concept, IngestRun, ProvisioningJob
 from apollo.persistence.neo4j_client import Neo4jClient
+from apollo.provisioning.authored_sets.orchestrator import _tag_mint_chat_fn
+from apollo.provisioning.authored_sets.rehoming import (
+    ClaimedRehoming,
+    claim_rehoming_job,
+    complete_rehoming_job,
+    fail_rehoming_job,
+    run_rehoming,
+)
 from apollo.provisioning.metered_chat import MeteredChat
 from apollo.provisioning.orchestrator import ProvisioningOutcome, run_provisioning
 from apollo.provisioning.queue import (
@@ -57,7 +67,9 @@ from apollo.provisioning.queue import (
     complete_job,
     fail_job,
 )
+from apollo.provisioning.tag_mint import ResolvedConcept
 from database.session import get_async_session
+from indexing.document_embedder import embed_text
 
 # Default OFF EVERYWHERE — activation is a human calibration/deploy decision.
 _AUTOPROVISION_ENABLED_FLAG: str = "APOLLO_AUTOPROVISION_ENABLED"
@@ -173,6 +185,62 @@ async def _drain_one(neo, *, session_factory, metered_chat_factory) -> Provision
     return outcome
 
 
+async def _drain_one_rehoming(
+    neo,
+    *,
+    session_factory,
+    metered_chat_factory,
+) -> ClaimedRehoming | None:
+    """Claim and execute one durable post-promotion re-homing job."""
+    async with session_factory() as claim_session:
+        claimed = await claim_rehoming_job(
+            claim_session,
+            lease_owner=LEASE_OWNER,
+            lease_seconds=LEASE_SECONDS,
+        )
+    if claimed is None:
+        return None
+
+    async with session_factory() as work_session:
+        resolved: ResolvedConcept | None = None
+        if claimed.requested_concept_id is not None:
+            concept = await work_session.get(Concept, claimed.requested_concept_id)
+            resolved = ResolvedConcept(
+                concept_id=claimed.requested_concept_id,
+                slug=str(concept.slug if concept is not None else ""),
+            )
+        metered = metered_chat_factory(
+            ingest_run=SimpleNamespace(
+                id=None,
+                llm_calls=0,
+                llm_tokens_in=0,
+                llm_tokens_out=0,
+                llm_cost_usd=Decimal("0"),
+            ),
+            document_id=None,
+        )
+        ok = await run_rehoming(
+            work_session,
+            neo,
+            problem_id=claimed.problem_id,
+            chat_fn=_tag_mint_chat_fn(metered),
+            embed_fn=embed_text,
+            resolved_concept=resolved,
+            job_id=claimed.job_id,
+        )
+
+    async with session_factory() as terminal_session:
+        if ok:
+            await complete_rehoming_job(terminal_session, job_id=claimed.job_id)
+        else:
+            await fail_rehoming_job(
+                terminal_session,
+                job_id=claimed.job_id,
+                error="typed problem re-homing failed; see problem provenance diagnostic",
+            )
+    return claimed
+
+
 async def _run_one_iteration(neo, *, stop_event: asyncio.Event) -> None:
     """ONE loop pass — flag-read -> (reap + drain | skip) -> sleep.
 
@@ -205,7 +273,24 @@ async def _run_one_iteration(neo, *, stop_event: asyncio.Event) -> None:
         except Exception:  # noqa: BLE001 - one bad sweep must not kill the worker
             _LOG.exception("apollo_provision_sweep_failed")
     else:
-        _LOG.debug("apollo_provision_disabled")  # flag OFF -> NO drain (early skip)
+        _LOG.debug("apollo_provision_disabled")
+    try:
+        rehomed = await _drain_one_rehoming(
+            neo,
+            session_factory=get_async_session,
+            metered_chat_factory=_default_metered_factory,
+        )
+        if rehomed is not None:
+            _LOG.info(
+                "apollo_rehoming_sweep",
+                extra={
+                    "job_id": rehomed.job_id,
+                    "problem_id": rehomed.problem_id,
+                    "attempt_count": rehomed.attempt_count,
+                },
+            )
+    except Exception:  # noqa: BLE001 - re-homing cannot kill the worker loop
+        _LOG.exception("apollo_rehoming_sweep_failed")
     await asyncio.sleep(POLL_SECONDS)
 
 

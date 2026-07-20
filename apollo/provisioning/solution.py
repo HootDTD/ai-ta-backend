@@ -52,7 +52,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from apollo.persistence.learner_model_seed import _ENTRY_TYPE_TO_KIND_PREFIX
-from apollo.provisioning.generation_contract import ontology_block
+from apollo.provisioning.generation_contract import ontology_block, ordered_step_ontology_block
 from apollo.provisioning.provisioning_schema import build_solution_schema
 from apollo.provisioning.tag_mint import ApprovedPair
 from apollo.schemas.problem import Problem
@@ -654,10 +654,9 @@ def _authored_output_contract() -> str:
     contract is the shared ``ontology_block`` (DAG-3) — a prose argument simply
     has no equations, so the symbolic rules are vacuous for it."""
     return (
-        'Output a single JSON object whose key "reference_solution" is a NON-EMPTY '
-        'array of step objects (plus, optionally, the "symbol_table" key described '
-        "below). No other keys. Use equations / symbols ONLY where the method "
-        "genuinely requires them; a prose argument needs none.\n" + ontology_block()
+        'Output a single JSON object with "steps", a NON-EMPTY ordered array, and '
+        'optionally "symbol_table". Use equations only where the method genuinely '
+        "requires them; prose needs none.\n" + ordered_step_ontology_block()
     )
 
 
@@ -713,44 +712,86 @@ async def construct_authored_reference(
     via ``SolutionDraftError`` — an unparseable/empty construction, a node type
     outside the universal mint map, or a non-``Problem``-valid graph raises rather
     than yielding a half-built draft. ``chat_fn`` is injected (mocked in tests)."""
-    system_prompt = _authored_system_prompt(authored.completeness)
-    raw = chat_fn(
-        purpose="authored_construct",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": _canonical_json(
-                    {
-                        "problem_text": authored.statement,
-                        "authored_solution": authored.solution or "",
-                        "worked_procedure": authored.worked_procedure or [],
-                        "given_values": dict(authored.given_values),
-                        "target_unknown": authored.target_unknown,
-                    }
-                ),
-            },
-        ],
-        response_format={"type": "json_schema", "json_schema": build_solution_schema()},
-        temperature=0.0,
+    from apollo.provisioning.authored_sets.graph_derivation import (
+        TypedConstructionDefect,
+        build_ordered_problem,
     )
 
-    reference_solution = _parse_reference_solution(raw)
-    if not reference_solution:
+    system_prompt = _authored_system_prompt(authored.completeness)
+    base_messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": _canonical_json(
+                {
+                    "problem_text": authored.statement,
+                    "authored_solution": authored.solution or "",
+                    "worked_procedure": authored.worked_procedure or [],
+                    "given_values": dict(authored.given_values),
+                    "target_unknown": authored.target_unknown,
+                }
+            ),
+        },
+    ]
+    messages = list(base_messages)
+    accumulated: list[str] = []
+    constructed: dict | None = None
+    raw = ""
+    attempts = _GENERATION_DEFECT_RETRIES + 1
+    completed_attempts = 0
+    for attempt in range(1, attempts + 1):
+        completed_attempts = attempt
+        raw = chat_fn(
+            purpose="authored_construct",
+            messages=messages,
+            response_format={"type": "json_object"},
+            temperature=0.0,
+        )
+        try:
+            parsed = json.loads(raw)
+            if not isinstance(parsed, dict):
+                raise ValueError("response must be a JSON object")
+            extra_keys = set(parsed) - {"steps", "symbol_table"}
+            if extra_keys:
+                raise ValueError(f"response has unsupported keys {sorted(extra_keys)!r}")
+            steps = parsed.get("steps")
+            if not isinstance(steps, list):
+                raise ValueError("response must contain a non-empty steps array")
+            table = parsed.get("symbol_table")
+            constructed = build_ordered_problem(authored, steps, symbol_table=table)
+        except (json.JSONDecodeError, TypeError, ValueError, TypedConstructionDefect) as exc:
+            attempt_diagnostics = (
+                list(exc.diagnostics)
+                if isinstance(exc, TypedConstructionDefect)
+                else [f"response_schema: {exc}"]
+            )
+            accumulated.extend(
+                f"attempt {attempt}: {diagnostic}" for diagnostic in attempt_diagnostics
+            )
+            if attempt == attempts:
+                break
+            feedback = (
+                "Repair the COMPLETE ordered-step JSON. These are the concrete "
+                "mechanical errors from this attempt; preserve prior valid content:\n- "
+                + "\n- ".join(attempt_diagnostics)
+                + "\nAccumulated diagnostics from every failed attempt:\n- "
+                + "\n- ".join(accumulated)
+            )
+            messages = [
+                *base_messages,
+                {"role": "assistant", "content": raw},
+                {"role": "user", "content": feedback},
+            ]
+            continue
+        break
+
+    if constructed is None:
         raise SolutionDraftError(
-            "authored construction produced no usable reference_solution "
-            "(unparseable/empty; fail-closed, never an empty-step draft)"
+            "authored construction defective after two repairs: " + "; ".join(accumulated)
         )
 
+    reference_solution = list(constructed["reference_solution"])
     _validate_authored_node_vocab(reference_solution)
-    # Problem-shape validation against the authored problem dict (depends_on
-    # resolution + procedure order); fail-closed on any violation.
-    try:
-        Problem.model_validate(authored.to_problem_dict(reference_solution))
-    except Exception as exc:  # noqa: BLE001 — any validation failure → fail-closed
-        raise SolutionDraftError(
-            f"authored reference_solution is not Problem-valid: {exc}"
-        ) from exc
 
     grounding = (GroundingSpan(text=_authored_grounding_text(authored), carries_solution=True),)
     # worked/answer_only are grounded on the professor's solution -> 'authored';
@@ -765,6 +806,9 @@ async def construct_authored_reference(
         provenance={
             "completeness": authored.completeness,
             "flagged": authored.completeness == "none",
+            "construction_attempts": completed_attempts,
+            "construction_diagnostics": accumulated,
+            "constructed_problem": constructed,
         },
     )
 

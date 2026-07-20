@@ -57,12 +57,15 @@ from apollo.persistence.models import Concept, ConceptProblem
 from apollo.provisioning.path_enumeration import multi_path_enabled
 from apollo.provisioning.promotion_lint import (
     PromotionUnresolved,
+    PromotionVerified,
     content_active_gates,
     run_promotion_lint,
+    run_typed_promotion_checks,
 )
 from apollo.provisioning.tag_mint import MintPlan
+from apollo.schemas.problem import Problem
 
-__all__ = ["promote", "PromoteHeldForReview", "PromoteResult"]
+__all__ = ["promote", "promote_typed_confirmed", "PromoteHeldForReview", "PromoteResult"]
 
 _LOG = logging.getLogger(__name__)
 
@@ -86,7 +89,7 @@ class PromoteHeldForReview(PromoteResult):
 
 def _annotate(
     problem: dict,
-    mint_plan: MintPlan,
+    mint_plan: MintPlan | None,
 ) -> dict:
     """Return the annotated reference graph the lint consumes: each step carries
     its ``entity_key`` (derived from the step's ``entry_type``/``id`` via the
@@ -105,6 +108,63 @@ def _annotate(
         return _entity_key_for_step(steps_by_id[node_id])
 
     return annotate_reference_solution(problem, _key_for_node)
+
+
+async def promote_typed_confirmed(
+    db: AsyncSession,
+    *,
+    problem: dict,
+    concept_problem_id: int,
+    existing_problem_hashes: set[str] | frozenset[str],
+    confirmed_by: str,
+    confirmed_at: str,
+) -> PromoteResult:
+    """Promote a constructed manual draft under provisional inventory.
+
+    The only post-confirmation checks are duplicate detection and the unchanged
+    solve-and-check oracle. Construction already owns schema/graph/symbol
+    validation; tag/mint and concept-canonical checks belong to asynchronous
+    re-homing.
+    """
+    annotated = _annotate(problem, None)
+    validated = Problem.model_validate(annotated)
+    result = run_typed_promotion_checks(
+        validated,
+        annotated,
+        normalization_map={},
+        existing_problem_hashes=set(existing_problem_hashes),
+    )
+    if not result.ok:
+        result_type = (
+            PromoteHeldForReview if isinstance(result, PromotionUnresolved) else PromoteResult
+        )
+        return result_type(
+            promoted=False,
+            failed_gate=result.failed_gate,
+            diagnostic=result.diagnostic,
+        )
+
+    row = await db.get(ConceptProblem, concept_problem_id)
+    if row is None:
+        raise RuntimeError(
+            f"promote_typed_confirmed: concept_problem {concept_problem_id} not found"
+        )
+    row.payload = {
+        **(row.payload or {}),
+        **annotated,
+        "verification": (
+            "mechanically_verified"
+            if isinstance(result, PromotionVerified)
+            else "faithfulness_only"
+        ),
+        "teacher_confirmed": True,
+        "teacher_confirmation": {"actor": confirmed_by, "at": confirmed_at},
+    }
+    row.tier = 2
+    if not row.solution_source:
+        row.solution_source = "authored"
+    await db.flush()
+    return PromoteResult(promoted=True)
 
 
 def _with_enumerated_paths(

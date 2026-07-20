@@ -18,7 +18,7 @@ from apollo.provisioning.authored_sets.graph_derivation import (
     GENERATION_DEFECT_CLASSES,
     find_derivation_defects,
 )
-from apollo.provisioning.generation_contract import ontology_block
+from apollo.provisioning.generation_contract import ontology_block, ordered_step_ontology_block
 from apollo.provisioning.solution import (
     _SOLUTION_GENERATE_AUGMENT_SYSTEM_PROMPT,
     _SOLUTION_GENERATE_SYSTEM_PROMPT,
@@ -41,7 +41,8 @@ def test_ontology_block_is_sourced_by_all_three_prompts():
     assert block in _SOLUTION_GENERATE_SYSTEM_PROMPT
     assert block in _SOLUTION_GENERATE_AUGMENT_SYSTEM_PROMPT
     assert block in _DERIVATION_SYSTEM_PROMPT
-    assert block in _authored_output_contract()
+    assert ordered_step_ontology_block() in _authored_output_contract()
+    assert 'Never emit "step", "depends_on"' in _authored_output_contract()
 
 
 def test_ontology_block_renders_byte_stably():

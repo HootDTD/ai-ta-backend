@@ -405,3 +405,132 @@ def _fake_session_factory():
 
 def _fake_metered_factory(*, ingest_run, document_id):  # noqa: ANN001
     return AsyncMock()
+
+
+# --------------------------------------------------------------------------- #
+# _drain_one_rehoming — the always-on typed-problem re-homing drain
+# --------------------------------------------------------------------------- #
+from apollo.provisioning.authored_sets.rehoming import ClaimedRehoming  # noqa: E402
+
+_CLAIMED_REHOMING = ClaimedRehoming(
+    job_id=7,
+    problem_id=42,
+    search_space_id=1,
+    requested_concept_id=None,
+    attempt_count=1,
+)
+
+
+async def test_drain_one_rehoming_completes_on_success(monkeypatch):
+    monkeypatch.setattr(worker, "claim_rehoming_job", AsyncMock(return_value=_CLAIMED_REHOMING))
+    monkeypatch.setattr(worker, "_tag_mint_chat_fn", lambda metered: metered)
+    monkeypatch.setattr(worker, "embed_text", lambda _t: [0.0])
+    monkeypatch.setattr(worker, "run_rehoming", AsyncMock(return_value=True))
+    complete = AsyncMock()
+    fail = AsyncMock()
+    monkeypatch.setattr(worker, "complete_rehoming_job", complete)
+    monkeypatch.setattr(worker, "fail_rehoming_job", fail)
+
+    claimed = await worker._drain_one_rehoming(
+        _FakeNeo(),
+        session_factory=_fake_session_factory(),
+        metered_chat_factory=_fake_metered_factory,
+    )
+
+    assert claimed is _CLAIMED_REHOMING
+    complete.assert_awaited_once()
+    fail.assert_not_awaited()
+
+
+async def test_drain_one_rehoming_resolves_requested_concept(monkeypatch):
+    claimed_with_concept = ClaimedRehoming(
+        job_id=8, problem_id=43, search_space_id=1, requested_concept_id=99, attempt_count=1
+    )
+    monkeypatch.setattr(worker, "claim_rehoming_job", AsyncMock(return_value=claimed_with_concept))
+    monkeypatch.setattr(worker, "_tag_mint_chat_fn", lambda metered: metered)
+    monkeypatch.setattr(worker, "embed_text", lambda _t: [0.0])
+    captured: dict = {}
+
+    async def _run(_db, _neo, *, problem_id, chat_fn, embed_fn, resolved_concept, job_id):
+        captured["resolved"] = resolved_concept
+        return True
+
+    monkeypatch.setattr(worker, "run_rehoming", _run)
+    monkeypatch.setattr(worker, "complete_rehoming_job", AsyncMock())
+    monkeypatch.setattr(worker, "fail_rehoming_job", AsyncMock())
+
+    await worker._drain_one_rehoming(
+        _FakeNeo(),
+        session_factory=_fake_session_factory(),
+        metered_chat_factory=_fake_metered_factory,
+    )
+
+    assert captured["resolved"] is not None
+    assert captured["resolved"].concept_id == 99
+
+
+async def test_drain_one_rehoming_fails_job_on_failure(monkeypatch):
+    monkeypatch.setattr(worker, "claim_rehoming_job", AsyncMock(return_value=_CLAIMED_REHOMING))
+    monkeypatch.setattr(worker, "_tag_mint_chat_fn", lambda metered: metered)
+    monkeypatch.setattr(worker, "embed_text", lambda _t: [0.0])
+    monkeypatch.setattr(worker, "run_rehoming", AsyncMock(return_value=False))
+    complete = AsyncMock()
+    fail = AsyncMock()
+    monkeypatch.setattr(worker, "complete_rehoming_job", complete)
+    monkeypatch.setattr(worker, "fail_rehoming_job", fail)
+
+    await worker._drain_one_rehoming(
+        _FakeNeo(),
+        session_factory=_fake_session_factory(),
+        metered_chat_factory=_fake_metered_factory,
+    )
+
+    fail.assert_awaited_once()
+    complete.assert_not_awaited()
+
+
+async def test_drain_one_rehoming_returns_none_when_nothing_claimable(monkeypatch):
+    monkeypatch.setattr(worker, "claim_rehoming_job", AsyncMock(return_value=None))
+    run = AsyncMock()
+    monkeypatch.setattr(worker, "run_rehoming", run)
+
+    claimed = await worker._drain_one_rehoming(
+        _FakeNeo(),
+        session_factory=_fake_session_factory(),
+        metered_chat_factory=_fake_metered_factory,
+    )
+
+    assert claimed is None
+    run.assert_not_awaited()
+
+
+async def test_iteration_runs_rehoming_sweep_when_flag_off(monkeypatch, caplog):
+    """Re-homing drains even with autoprovision OFF, and logs its sweep line."""
+    monkeypatch.delenv(worker._AUTOPROVISION_ENABLED_FLAG, raising=False)
+    monkeypatch.setattr(worker, "_reap_expired", AsyncMock(return_value=0))
+    monkeypatch.setattr(worker, "_drain_one", AsyncMock(return_value=None))
+    rehome = AsyncMock(return_value=_CLAIMED_REHOMING)
+    monkeypatch.setattr(worker, "_drain_one_rehoming", rehome)
+    sleep = AsyncMock()
+    monkeypatch.setattr(worker.asyncio, "sleep", sleep)
+
+    with caplog.at_level(logging.INFO, logger=worker.__name__):
+        await worker._run_one_iteration(_FakeNeo(), stop_event=asyncio.Event())
+
+    rehome.assert_awaited_once()
+    sweep = [r for r in caplog.records if r.message == "apollo_rehoming_sweep"]
+    assert len(sweep) == 1 and sweep[0].job_id == _CLAIMED_REHOMING.job_id
+    sleep.assert_awaited_once_with(worker.POLL_SECONDS)
+
+
+async def test_iteration_survives_rehoming_sweep_exception(monkeypatch, caplog):
+    monkeypatch.delenv(worker._AUTOPROVISION_ENABLED_FLAG, raising=False)
+    monkeypatch.setattr(worker, "_drain_one_rehoming", AsyncMock(side_effect=RuntimeError("boom")))
+    sleep = AsyncMock()
+    monkeypatch.setattr(worker.asyncio, "sleep", sleep)
+
+    with caplog.at_level(logging.ERROR, logger=worker.__name__):
+        await worker._run_one_iteration(_FakeNeo(), stop_event=asyncio.Event())
+
+    sleep.assert_awaited_once_with(worker.POLL_SECONDS)
+    assert any(r.message == "apollo_rehoming_sweep_failed" for r in caplog.records)

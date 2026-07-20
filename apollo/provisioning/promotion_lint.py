@@ -85,6 +85,28 @@ _LINT_ATTEMPT_ID = 0
 # subject profile.
 ALL_PROMOTION_GATES: frozenset[int] = frozenset(range(1, 10))
 
+__all__ = [
+    "ALL_PROMOTION_GATES",
+    "PromotionResult",
+    "PromotionVerified",
+    "PromotionRefuted",
+    "PromotionUnresolved",
+    "content_active_gates",
+    "run_promotion_lint",
+    "run_typed_promotion_checks",
+    "concept_symbol_diagnostic",
+]
+
+
+def concept_symbol_diagnostic(
+    graph: dict,
+    *,
+    canonical_symbols: set[str] | frozenset[str],
+    normalization_map: Mapping[str, str],
+) -> str | None:
+    """Apply the existing concept-canonical foreign-symbol rule in isolation."""
+    return _gate_4(Problem.model_validate(graph), canonical_symbols, normalization_map)
+
 
 @dataclass(frozen=True)
 class PromotionResult:
@@ -999,6 +1021,36 @@ def _gate_8(problem: Problem, existing_problem_hashes: Iterable[str]) -> str | N
     if h in set(existing_problem_hashes):
         return f"gate 8: duplicate problem (dup hash {h} already exists)"
     return None
+
+
+def run_typed_promotion_checks(
+    problem: Problem,
+    graph: dict,
+    *,
+    normalization_map: Mapping[str, str],
+    existing_problem_hashes: set[str] | frozenset[str],
+) -> PromotionResult:
+    """Typed manual profile: duplicate detection, then existing solve-and-check.
+
+    Construction has already produced and mechanically validated ``problem``;
+    this deliberately does not enter promotion gates 1-7. Gate 9 retains its
+    exact child-process timeout and verified/refuted/unresolved result types.
+    """
+    duplicate = _gate_8(problem, existing_problem_hashes)
+    if duplicate is not None:
+        return PromotionResult(ok=False, failed_gate=8, diagnostic=duplicate)
+    if not _solve_check_layer_applies(graph):
+        return PromotionResult(ok=True, failed_gate=None, diagnostic="")
+    decision = _gate_9(problem, graph, normalization_map)
+    diagnostic = (
+        f"gate 9: {decision.verdict}: {decision.reason}; target={decision.target!r}; "
+        f"solved={decision.solved!r}; stated={decision.stated!r}"
+    )
+    if decision.verdict == "verified":
+        return PromotionVerified(ok=True, failed_gate=None, diagnostic="")
+    if decision.verdict == "refuted":
+        return PromotionRefuted(ok=False, failed_gate=9, diagnostic=diagnostic)
+    return PromotionUnresolved(ok=False, failed_gate=9, diagnostic=diagnostic)
 
 
 # --------------------------------------------------------------------------- #

@@ -74,11 +74,14 @@ async def list_course_concepts(db: AsyncSession, *, search_space_id: int) -> lis
     then raise ``PoolExhaustedError`` on its empty pool (the G6 fluids-grading
     409 block).
     """
+    from apollo.provisioning.scrape import PROVISIONAL_CONCEPT_SLUG
+
     result = await db.execute(
         select(Concept.id, Concept.slug, Concept.display_name)
         .join(Subject, Concept.subject_id == Subject.id)
         .where(
             Subject.search_space_id == search_space_id,
+            Concept.slug != PROVISIONAL_CONCEPT_SLUG,
             exists().where(
                 ConceptProblem.concept_id == Concept.id,
                 ConceptProblem.tier == 2,
