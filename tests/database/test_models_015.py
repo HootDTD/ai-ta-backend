@@ -4,6 +4,7 @@ Verifies class metadata only - no DB connection required.
 """
 
 import pytest
+from sqlalchemy import select
 
 from database.models import ChatRouterDecision, ChatSession, ChatSessionSnippet
 
@@ -12,7 +13,7 @@ from database.models import ChatRouterDecision, ChatSession, ChatSessionSnippet
 def test_chat_session_snippet_columns():
     cols = {c.name for c in ChatSessionSnippet.__table__.columns}
     assert {
-        "chat_session_id",
+        "learning_activity_id",
         "chunk_id",
         "course_id",
         "original_score",
@@ -26,9 +27,13 @@ def test_chat_session_snippet_columns():
 @pytest.mark.unit
 def test_chat_models_use_target_schemas():
     assert ChatSession.__table__.schema == "app"
+    assert ChatSession.__table__.name == "learning_activities"
     assert ChatSessionSnippet.__table__.schema == "internal"
     assert ChatRouterDecision.__table__.schema == "internal"
     assert ChatRouterDecision.__tablename__ == "chat_routing_decisions"
+    assert ChatSession.__mapper__.polymorphic_identity == "chat"
+    compiled = str(select(ChatSession).compile(compile_kwargs={"literal_binds": True}))
+    assert "learning_activities.modality IN ('chat')" in compiled
 
 
 @pytest.mark.unit

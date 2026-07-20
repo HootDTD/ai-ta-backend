@@ -9,7 +9,13 @@ from database.models import ChatMessage
 @pytest.mark.unit
 def test_chat_message_target_shape():
     cols = {c.name for c in ChatMessage.__table__.columns}
-    assert {"course_id", "chat_session_id", "external_id", "keywords"} <= cols
+    assert {
+        "course_id",
+        "learning_activity_id",
+        "kind",
+        "external_id",
+        "keywords",
+    } <= cols
     assert "turn_id" not in cols
     assert ChatMessage.__table__.schema == "app"
 
@@ -34,5 +40,5 @@ def test_chat_message_uniques_are_session_scoped():
         for constraint in ChatMessage.__table__.constraints
         if constraint.__class__.__name__ == "UniqueConstraint"
     }
-    assert ("chat_session_id", "external_id") in unique_columns
-    assert ("chat_session_id", "turn_index") in unique_columns
+    assert ("learning_activity_id", "external_id") in unique_columns
+    assert ("learning_activity_id", "turn_index") in unique_columns

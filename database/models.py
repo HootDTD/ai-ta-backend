@@ -388,14 +388,15 @@ class UploadJob(Base):
     )
 
 
-class ChatSession(Base):
-    """Persisted chat session for memory + reporting."""
+class LearningActivity(Base):
+    """Interaction supertype shared by chat and tutoring persistence."""
 
-    __tablename__ = "chat_sessions"
+    __tablename__ = "learning_activities"
     __table_args__ = {"schema": "app"}
 
     id = Column(BigInteger, primary_key=True, index=True)
-    external_id = Column(Text, nullable=False, unique=True, index=True)
+    modality = Column(Text, nullable=False)
+    external_id = Column(Text, nullable=True, unique=True, index=True)
     user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
     course_id = Column(
         BigInteger,
@@ -407,6 +408,14 @@ class ChatSession(Base):
         "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
     memory_summary = Column(Text, nullable=False, default="", server_default=text("''"))
+    status = Column(Text, nullable=False, default="active", server_default=text("'active'"))
+    phase = Column(Text, nullable=True)
+    concept_id = Column(BigInteger, nullable=True)
+    current_problem_id = Column(BigInteger, nullable=True)
+    pending_intent = Column(Text, nullable=True)
+    history_summary = Column(Text, nullable=True)
+    history_summary_up_to_turn = Column(Integer, nullable=True)
+    last_touched_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
@@ -420,6 +429,17 @@ class ChatSession(Base):
         onupdate=lambda: datetime.now(UTC),
         index=True,
     )
+    __mapper_args__ = {
+        "polymorphic_on": modality,
+        "polymorphic_abstract": True,
+    }
+
+
+class ChatSession(LearningActivity):
+    """Chat-modality view of ``app.learning_activities``."""
+
+    __mapper_args__ = {"polymorphic_identity": "chat"}
+
     messages = relationship(
         "ChatMessage",
         back_populates="session",
@@ -433,8 +453,8 @@ class ChatMessage(Base):
 
     __tablename__ = "chat_messages"
     __table_args__ = (
-        UniqueConstraint("chat_session_id", "external_id"),
-        UniqueConstraint("chat_session_id", "turn_index"),
+        UniqueConstraint("learning_activity_id", "external_id"),
+        UniqueConstraint("learning_activity_id", "turn_index"),
         {"schema": "app"},
     )
 
@@ -446,11 +466,13 @@ class ChatMessage(Base):
         index=True,
     )
     chat_session_id = Column(
+        "learning_activity_id",
         BigInteger,
-        ForeignKey("app.chat_sessions.id", ondelete="CASCADE"),
+        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
+    kind = Column(Text, nullable=False, default="message", server_default=text("'message'"))
     turn_index = Column(Integer, nullable=False, index=True)
     external_id = Column(Text, nullable=False, index=True)
     role = Column(String(20), nullable=False, index=True)
@@ -484,7 +506,10 @@ class ChatSessionSnippet(Base):
     __tablename__ = "chat_session_snippets"
 
     chat_session_id = Column(
-        BigInteger, ForeignKey("app.chat_sessions.id", ondelete="CASCADE"), primary_key=True
+        "learning_activity_id",
+        BigInteger,
+        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
+        primary_key=True,
     )
     chunk_id = Column(
         BigInteger, ForeignKey("internal.document_chunks.id", ondelete="CASCADE"), primary_key=True
@@ -506,7 +531,7 @@ class ChatSessionSnippet(Base):
     )
 
     __table_args__ = (
-        Index("ix_css_session_lru", "chat_session_id", "last_used_turn"),
+        Index("ix_css_session_lru", "learning_activity_id", "last_used_turn"),
         {"schema": "internal"},
     )
 
@@ -530,8 +555,9 @@ class ChatRouterDecision(Base):
     )
     turn_id = Column(Text, nullable=False)
     chat_session_id = Column(
+        "learning_activity_id",
         BigInteger,
-        ForeignKey("app.chat_sessions.id", ondelete="CASCADE"),
+        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -566,6 +592,7 @@ __all__ = [
     "CourseInvite",
     "Upload",
     "UploadJob",
+    "LearningActivity",
     "ChatSession",
     "ChatMessage",
     "ChatSessionSnippet",
