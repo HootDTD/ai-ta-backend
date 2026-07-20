@@ -2,8 +2,8 @@
 
 Same no-Docker harness as ``test_done_graph_grader_live.py``: every OLD-path
 collaborator is mocked deterministically via ``_old_path_patches`` /
-``_rerun_inputs`` (reused wholesale from ``test_done_shadow_flag``), Neo4j is
-a MagicMock, and ``run_graph_simulation`` / ``write_artifacts`` are patched on
+the shared deterministic Done fixtures, Neo4j is a MagicMock, and external
+grading calls are patched on
 the ``done`` module so no real chain / DB write / live LLM runs.
 
 Covers the flag-ON branch (``transcript_grader_enabled()`` ->
@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from apollo.errors import CoverageGradingError
-from apollo.handlers.tests.test_done_shadow_flag import _old_path_patches, _rerun_inputs
+from apollo.handlers.tests._done_fixtures import _old_path_patches
 
 pytestmark = pytest.mark.unit
 
@@ -37,7 +37,6 @@ _VALID_VERDICT = {
 @pytest.fixture(autouse=True)
 def _clear_flags(monkeypatch):
     monkeypatch.delenv("APOLLO_TRANSCRIPT_GRADER", raising=False)
-    monkeypatch.delenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", raising=False)
     monkeypatch.delenv("APOLLO_GRAPH_GRADER_LIVE", raising=False)
     monkeypatch.delenv("APOLLO_GRADING_ARTIFACT_ENABLED", raising=False)
     yield
@@ -93,9 +92,6 @@ async def _run(
         monkeypatch.setenv("APOLLO_TRANSCRIPT_GRADER", transcript_grader)
 
     db, _sess, _attempt, patches = _old_path_patches()
-    payload = {"declared_paths": [["a"]], "symbolic_mappings": {"d": "2*r"}}
-    rerun = _rerun_inputs(problem_payload=payload)
-
     if full_transcript_return is None:
         _extend_db_execute_for_full_transcript(db, transcript_rows=[])
     else:
@@ -117,9 +113,6 @@ async def _run(
                 "apollo.handlers.done.compute_transcript_coverage_with_spans",
                 new=coverage_mock,
             )
-        )
-        stack.enter_context(
-            patch("apollo.handlers.done.build_rerun_inputs", new=AsyncMock(return_value=rerun))
         )
         for p in patches:
             stack.enter_context(p)
@@ -159,7 +152,6 @@ async def test_flag_on_threads_narrative_spans_into_topic_score(monkeypatch):
     topic_score_mock = MagicMock(return_value=None)
 
     db, _sess, _attempt, patches = _old_path_patches()
-    rerun = _rerun_inputs(problem_payload={"declared_paths": [["a"]], "symbolic_mappings": {}})
     monkeypatch.setenv("APOLLO_TRANSCRIPT_GRADER", "1")
     _extend_db_execute_for_full_transcript(db, transcript_rows=[])
 
@@ -174,9 +166,6 @@ async def test_flag_on_threads_narrative_spans_into_topic_score(monkeypatch):
         )
         stack.enter_context(
             patch("apollo.handlers.done.compute_topic_score", new=topic_score_mock)
-        )
-        stack.enter_context(
-            patch("apollo.handlers.done.build_rerun_inputs", new=AsyncMock(return_value=rerun))
         )
         for p in patches:
             stack.enter_context(p)
@@ -194,7 +183,6 @@ async def test_flag_off_passes_empty_narrative_spans_to_topic_score(monkeypatch)
     topic_score_mock = MagicMock(return_value=None)
 
     db, _sess, _attempt, patches = _old_path_patches()
-    rerun = _rerun_inputs(problem_payload={"declared_paths": [["a"]], "symbolic_mappings": {}})
     patches.append(patch("apollo.handlers.done.compute_coverage", new=compute_coverage_mock))
 
     from apollo.handlers.done import handle_done
@@ -208,9 +196,6 @@ async def test_flag_off_passes_empty_narrative_spans_to_topic_score(monkeypatch)
         )
         stack.enter_context(
             patch("apollo.handlers.done.compute_topic_score", new=topic_score_mock)
-        )
-        stack.enter_context(
-            patch("apollo.handlers.done.build_rerun_inputs", new=AsyncMock(return_value=rerun))
         )
         for p in patches:
             stack.enter_context(p)

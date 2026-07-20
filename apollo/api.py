@@ -40,10 +40,6 @@ from apollo.errors import (
     SessionFrozenError,
     TranscriptAuditUnavailableError,
 )
-from apollo.graph_compare.validator import (
-    ReferenceGraphInvalidError,
-    StudentGraphInvalidError,
-)
 from apollo.handlers.browse import handle_list_problems
 from apollo.handlers.chat import handle_chat
 from apollo.handlers.done import handle_done
@@ -638,32 +634,6 @@ async def resolution_invalid_output_handler(
     )
 
 
-async def student_graph_invalid_handler(
-    request: Request, exc: StudentGraphInvalidError
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=422,
-        content=_err_payload(
-            "student_graph_invalid",
-            str(exc),
-            reasons=list(exc.reasons),
-        ),
-    )
-
-
-async def reference_graph_invalid_handler(
-    request: Request, exc: ReferenceGraphInvalidError
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=409,
-        content=_err_payload(
-            "reference_graph_invalid",
-            str(exc),
-            reasons=list(exc.reasons),
-        ),
-    )
-
-
 async def context_overflow_handler(request: Request, exc) -> JSONResponse:
     """Item #2: surface token-budget overflow as 503 instead of silently
     truncating Apollo's context."""
@@ -700,5 +670,3 @@ def register_exception_handlers(app) -> None:
     app.add_exception_handler(ResolutionUnavailableError, resolution_unavailable_handler)
     app.add_exception_handler(TranscriptAuditUnavailableError, transcript_audit_unavailable_handler)
     app.add_exception_handler(ResolutionInvalidOutputError, resolution_invalid_output_handler)
-    app.add_exception_handler(StudentGraphInvalidError, student_graph_invalid_handler)
-    app.add_exception_handler(ReferenceGraphInvalidError, reference_graph_invalid_handler)

@@ -27,7 +27,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from apollo.handlers.done import handle_done
-from apollo.handlers.tests.test_done_shadow_flag import _old_path_patches
+from apollo.handlers.tests._done_fixtures import _old_path_patches
 from apollo.ontology import KGGraph, build_node
 from apollo.overseer.rubric import score_to_letter
 from apollo.overseer.xp import compute_xp_earned
@@ -66,7 +66,6 @@ def _patches_with_real_xp(patches):
 @pytest.fixture(autouse=True)
 def _clear_flags(monkeypatch):
     monkeypatch.delenv(_SERVED_FLAG, raising=False)
-    monkeypatch.delenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", raising=False)
     monkeypatch.delenv("APOLLO_GRADING_ARTIFACT_ENABLED", raising=False)
     yield
 

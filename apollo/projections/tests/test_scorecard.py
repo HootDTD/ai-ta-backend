@@ -6,7 +6,6 @@ from __future__ import annotations
 import pytest
 
 from apollo.grading.artifact_build import build_llm_artifact
-from apollo.grading.composite import load_weights
 from apollo.projections.scorecard import (
     BANDS,
     COLD_START_WATCH_OUT_NOTE,
@@ -353,8 +352,6 @@ def test_clarifications_shown_inline_on_llm_fallback_artifact():
     art = build_llm_artifact(
         coverage={"per_step": {"k1": "covered"}, "confidences": {"k1": 0.9}},
         rubric={"overall": {"score": 71}},
-        weights=load_weights(),
-        graph_failure=None,
         latency_ms=None,
         clarification_trace=trace,
     )

@@ -25,6 +25,7 @@ from enum import StrEnum
 # Bumped when the §6.5 mapping changes; WU-5A/persist reads it onto the event row
 # provenance (NOT a DB column in v1 — carried for replay/version parity).
 EVENT_CONVERSION_VERSION: str = "finding-to-event-v1"
+AMBIGUOUS_ORDER_SCORE: float = 0.5
 
 
 class LearnerEventKind(StrEnum):

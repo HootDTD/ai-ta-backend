@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from apollo.handlers.done import _fetch_attempt_transcript, handle_done
-from apollo.handlers.tests.test_done_shadow_flag import _old_path_patches
+from apollo.handlers.tests._done_fixtures import _old_path_patches
 
 pytestmark = pytest.mark.unit
 

@@ -21,23 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.errors import (
     CoverageGradingError,
     KGUnavailableError,
-    ResolutionUnavailableError,
     RetentionError,
-    TranscriptAuditUnavailableError,
 )
-from apollo.grading.abstention import min_parser_confidence_of
-from apollo.grading.artifact_build import GRADER_USED_GRAPH, GRADER_USED_LLM_FALLBACK
-from apollo.graph_compare.validator import (
-    ReferenceGraphInvalidError,
-    StudentGraphInvalidError,
-)
+from apollo.grading.artifact_build import GRADER_USED_LLM_FALLBACK
 from apollo.handlers.artifact_writer import write_artifacts
-from apollo.handlers.done_grading import ShadowGradeResult, run_graph_simulation
-from apollo.handlers.done_inputs import (
-    _find_problem_payload,  # noqa: F401 — re-export (relocated to done_inputs, WU-5B3a-0)
-    build_rerun_inputs,
-)
-from apollo.handlers.learner_update import run_learner_update
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
 from apollo.overseer.coverage import compute_coverage
@@ -72,17 +59,6 @@ from apollo.schemas.problem import Problem
 
 _LOG = logging.getLogger(__name__)
 
-# WU-4C1 — the SHADOW graph-simulation flag (default OFF in prod, ON in test).
-# When OFF, handle_done is byte-identical to today (the chain is never called).
-# When ON, the chain runs AFTER the OLD grade/XP/retention commit and persists a
-# comparison run + findings ALONGSIDE the unchanged student-facing grade. This is
-# NOT the promote-to-live flag (that is `APOLLO_GRAPH_GRADER_LIVE`).
-_GRAPH_SIM_SHADOW_FLAG: str = "APOLLO_GRAPH_SIM_SHADOW_ENABLED"
-
-# DAG-5 — edge-contraction grading inside the shadow comparer. Default OFF;
-# read per Done call so flag-off preserves the existing comparison byte-for-byte.
-_GRAPH_CONTRACTION_FLAG: str = "APOLLO_GRAPH_CONTRACTION_ENABLED"
-
 # WU-5A2 — the Layer-3 belief-PERSIST flag (default OFF EVERYWHERE incl. prod +
 # staging). When OFF (the only build state), the gated `run_learner_update` call
 # NEVER fires and `handle_done` is byte-identical to today (the shadow-flag-off
@@ -97,28 +73,8 @@ _GRAPH_SIM_LAYER3_FLAG: str = "APOLLO_GRAPH_SIM_LAYER3_ENABLED"
 # OFF everywhere). When OFF, `write_artifacts` is never called and `handle_done`
 # writes no `apollo_grading_artifacts` rows (byte-identical to pre-A3). When ON,
 # ONE canonical row is written every Done-click (`grader_used="llm_fallback"` —
-# this build never serves the graph grade; A4's `APOLLO_GRAPH_GRADER_LIVE` is
-# the flag that flips `served`), plus a `pair` row with the graph-grader's
-# artifact whenever the shadow chain ran and produced a result (paired-capture,
-# spec section 5). This is orthogonal to `APOLLO_GRAPH_SIM_SHADOW_ENABLED`:
-# artifact capture with NO shadow run still writes the single LLM canonical row
-# so campaign runs always have a record, even on subjects/attempts where the
-# shadow chain itself is off.
+# the transcript/topic grade), so campaign runs have a durable grading record.
 _GRAPH_SIM_ARTIFACT_FLAG: str = "APOLLO_GRADING_ARTIFACT_ENABLED"
-
-# Campaign-plan Task A4 — the LIVE PROMOTION flag (default OFF everywhere; spec
-# §3/§5). This is the spec's actual promotion switch — the single flag that
-# gates the graph-sim rubric/diagnostic replacing the OLD-path values.
-# Semantics: OFF -> `handle_done` is byte-identical to pre-A4 (this build's
-# only state); ON + a successful, non-abstained shadow result -> the graph
-# rubric/diagnostic are served (`grader_used="graph"` in the artifact) exactly
-# like the WU-4C2 promotion; ON + an abstained shadow -> fall back to the OLD/LLM values
-# (`grader_used="llm_fallback"`) rather than re-run anything at Done time; ON +
-# ANY exception anywhere in the graph path -> logged, `graph_failure` recorded
-# on the artifact, OLD/LLM values served, HTTP 200 (a graph bug must never
-# cost a student their grade). When OFF, a named infra error in the shadow
-# chain still re-raises (today's NO-FALLBACK diagnostics, unchanged).
-_GRAPH_GRADER_LIVE_FLAG: str = "APOLLO_GRAPH_GRADER_LIVE"
 
 # T13 — the raw student-turn role for `_student_utterances` (R6, RESOLVED): live
 # transcript roles are exactly {"apollo", "student"}; the Apollo learner turns
@@ -126,57 +82,12 @@ _GRAPH_GRADER_LIVE_FLAG: str = "APOLLO_GRAPH_GRADER_LIVE"
 # teaching utterances (which feed the bank_pattern tier) are "student".
 _STUDENT_ROLE: str = "student"
 
-# Lane B1 / G3 — the shadow-failure marker prefix stamped onto the canonical
-# LLM artifact's `abstention.graph_failure` when a SHADOW-mode (LIVE off)
-# shadow-chain exception is caught and isolated (see the `except` in
-# `handle_done`). Deliberately DISTINCT from the LIVE-mode fallback's bare
-# `repr(e)`: paired analysis greps this prefix to tell "the shadow chain
-# crashed during calibration, so there is no `pair` row" apart from "the live
-# graph grader crashed and fell back to LLM" — the canonical row is the only
-# artifact written in the shadow-crash case, and this marker is why.
-_SHADOW_FAILURE_MARKER: str = "shadow_failure: "
-
-# Lane B1 / G3 (narrowed) — the CONTRACTUAL typed failure modes that must keep
-# propagating out of the shadow chain in SHADOW mode. Authoritative source:
-# `apollo/api.py::register_exception_handlers` — these are exactly the
-# shadow-chain error types the done route explicitly maps to a NON-500
-# response, each with load-bearing commit semantics the route tests pin
-# (`tests/database/test_done_shadow_route_postgres.py`):
-#   * ResolutionUnavailableError      -> 503 (pending set + committed; retryable)
-#   * TranscriptAuditUnavailableError -> 503 (pending set + committed; retryable)
-#   * StudentGraphInvalidError        -> 422 (raised pre-cross-store; no pending)
-#   * ReferenceGraphInvalidError      -> 409 (raised pre-cross-store; no pending)
-# `ResolutionInvalidOutputError` is deliberately ABSENT: its handler maps to
-# 500 — exactly the "shadow bug 500s the live grade" class G3 isolates — so it
-# falls to the isolation branch with everything else unexpected (e.g. the G3
-# KeyError, CanonProjectionError). LIVE mode is untouched by this list: the A4
-# any-exception fallback still catches ALL types, including these four.
-_SHADOW_PROPAGATE_ERRORS: tuple[type[Exception], ...] = (
-    ResolutionUnavailableError,
-    TranscriptAuditUnavailableError,
-    StudentGraphInvalidError,
-    ReferenceGraphInvalidError,
-)
-
-
-def _graph_sim_shadow_enabled() -> bool:
-    return os.environ.get(_GRAPH_SIM_SHADOW_FLAG, "").lower() in ("1", "true", "yes")
-
-
-def _graph_contraction_enabled() -> bool:
-    return os.environ.get(_GRAPH_CONTRACTION_FLAG, "").lower() in ("1", "true", "yes")
-
-
 def _graph_sim_layer3_enabled() -> bool:
     return os.environ.get(_GRAPH_SIM_LAYER3_FLAG, "").lower() in ("1", "true", "yes")
 
 
 def _grading_artifact_enabled() -> bool:
     return os.environ.get(_GRAPH_SIM_ARTIFACT_FLAG, "").lower() in ("1", "true", "yes")
-
-
-def _graph_grader_live_enabled() -> bool:
-    return os.environ.get(_GRAPH_GRADER_LIVE_FLAG, "").lower() in ("1", "true", "yes")
 
 
 async def _project_mastery(db: AsyncSession, *, attempt_id: int) -> None:
@@ -643,156 +554,8 @@ async def handle_done(
 
     student_response["transcript"] = await _fetch_attempt_transcript(db, int(attempt.id))
 
-    # WU-4C1 — SHADOW graph-simulation chain. Runs AFTER the OLD grade/XP/retention
-    # are fully durable, so any failure here surfaces a named error (the right HTTP
-    # status) WITHOUT voiding the already-committed student grade (NO-FALLBACK,
-    # mirrors RetentionError). When LIVE is off (the only build state) the
-    # student_response above is NOT modified by it.
-    #
-    # Task A3 — `shadow` starts `None` so the artifact-writer call below (which
-    # runs whether or not the shadow chain ran at all) can tell a "shadow flag
-    # off" Done-click apart from one where the chain ran and returned a result.
-    #
-    # Task A4 — `graph_failure` carries the any-exception fallback reason (LIVE
-    # mode only; see `_GRAPH_GRADER_LIVE_FLAG` above) and `served_grade` is the
-    # `grader_used` value threaded into `write_artifacts` below. Both stay at
-    # their OLD-path defaults (`None` / `llm_fallback`) unless LIVE promotes.
-    shadow: ShadowGradeResult | None = None
-    graph_failure: str | None = None
-    served_grade = GRADER_USED_LLM_FALLBACK
-    if _graph_sim_shadow_enabled() and (kg_degraded or neo is None):
-        # Degraded mode: Neo4j is down (either the pre-freeze read already
-        # failed, or the client never constructed at all). The shadow chain
-        # is Neo4j-native end to end (build_rerun_inputs/run_graph_simulation
-        # both read/write the graph) — skip it entirely rather than let it
-        # crash mid-chain, and stamp the SAME shadow-failure marker the
-        # mid-chain isolation branch below uses, so paired analysis sees a
-        # consistent reason for the missing `pair` row.
-        _LOG.warning(
-            "apollo_neo4j_degraded stage=shadow_chain_skipped attempt_id=%s session_id=%s",
-            int(attempt.id), int(session_id),
-        )
-        graph_failure = f"{_SHADOW_FAILURE_MARKER}neo4j_unavailable"
-    elif _graph_sim_shadow_enabled():
-        # Reached only when NOT (kg_degraded or neo is None) — see the
-        # sibling `if` above — so `neo` is a healthy client here. Bind a
-        # locally-narrowed name: mypy cannot narrow `Neo4jClient | None`
-        # across the `if`/`elif` split of a compound `or` condition.
-        assert neo is not None
-        live = _graph_grader_live_enabled()
-        try:
-            # WU-5B3a-0: source the shadow problem_payload through the SHARED builder
-            # (single source of truth with the future retry janitor). The builder keys
-            # on attempt.problem_id (== problem.id at LIVE Done, since `attempt` was
-            # found by ProblemAttempt.problem_id == problem.id), so this is
-            # behavior-preserving here while the janitor reconstructs the OLD problem
-            # later. student_graph + old_rubric stay the LIVE values (unchanged grade).
-            rerun = await build_rerun_inputs(db, neo, attempt=attempt, sess=sess)
-            shadow = await run_graph_simulation(
-                db,
-                neo,
-                attempt=attempt,
-                sess=sess,
-                student_graph=student_graph,
-                problem_payload=rerun.problem_payload,
-                old_rubric=rubric,  # the OLD student-facing rubric, for §6.7 calibration
-                contraction_enabled=_graph_contraction_enabled(),
-            )
-            # WU-5A2 — Layer-3 belief PERSIST (DORMANT; flag OFF in this build). When
-            # ON, after the shadow persist the Done txn appends `apollo_mastery_events`
-            # + upserts `apollo_learner_state` (the §3 Bayesian belief) all-or-nothing
-            # with `done_ts` as the single `last_evidence_at`/`updated_at` instant. The
-            # shadow result carries `audited`/`opposes_map`/`turn_order`; `parser_confidence`
-            # is the §6.6 MIN over the student graph's parser confidences; `grader_confidence`
-            # is derived in `persist_learner_update` from `shadow.normalization_confidence`.
-            # A raised shadow (e.g. pending) never reaches here, so the gate is guarded
-            # on `shadow is not None`; a Layer-3 failure sets `learner_update_pending`
-            # without voiding the already-committed grade (NO-FALLBACK).
-            if shadow is not None and _graph_sim_layer3_enabled():
-                parser_confidence = min_parser_confidence_of(student_graph.nodes)
-                await run_learner_update(
-                    db,
-                    sess=sess,
-                    attempt=attempt,
-                    shadow=shadow,
-                    done_ts=done_ts,
-                    parser_confidence=parser_confidence,
-                )
-
-            # Task A4 — the LIVE promotion (spec §3 steps 2-3): a successful,
-            # non-abstained shadow result REPLACES the OLD-path rubric/
-            # diagnostic exactly like the dormant WU-4C2 block above, and
-            # `served_grade` flips so the artifact records `grader_used=
-            # "graph"`. An abstained shadow means the graph grader is still
-            # under-confident -> fall straight to the OLD/LLM values (spec
-            # step 3); `served_grade` stays "llm_fallback" and the paired
-            # graph artifact (written by `write_artifacts` below) carries the
-            # abstention reasons for the record.
-            if live and shadow is not None and not shadow.audited.abstained:
-                student_response["rubric"] = shadow.graph_sim_rubric
-                student_response["diagnostic_narrative"] = shadow.diagnostic.narrative
-                served_grade = GRADER_USED_GRAPH
-        except Exception as e:
-            if live:
-                # LIVE mode: ANY graph-path exception must never cost the student
-                # their grade (spec §3 error handling). Log, record the failure on
-                # the artifact, and serve the already-committed OLD/LLM values.
-                # (UNCHANGED — pre-G3 Task A4 semantics; the shadow-isolation
-                # branch below is the ONLY behavioral change in G3.)
-                _LOG.exception("apollo_graph_grader_live_failure attempt_id=%s", int(attempt.id))
-                graph_failure = repr(e)[:500]
-                shadow = None
-                served_grade = GRADER_USED_LLM_FALLBACK
-            else:
-                # SHADOW mode's CONTRACTUAL typed failures keep propagating
-                # unchanged: the route maps each to a deliberate NON-500
-                # response (503/503/422/409, see `_SHADOW_PROPAGATE_ERRORS`)
-                # with pinned commit semantics — pending set+committed for the
-                # retryable 503s, no pending for the two validator errors. The
-                # student-facing message on the 503s already reads "your grade
-                # is saved" (the OLD grade is durable), so surfacing them is
-                # the contract, not a bug.
-                if isinstance(e, _SHADOW_PROPAGATE_ERRORS):
-                    raise
-                # Lane B1 / G3 — SHADOW-mode crash isolation for everything
-                # UNEXPECTED. During calibration staging/prod run SHADOW on but
-                # LIVE off, so the shadow chain computes a comparison run
-                # ALONGSIDE the student grade without promoting it. Pre-G3 an
-                # unexpected exception here re-raised as a raw 500, which killed
-                # the Done request and cost the student their ALREADY-COMMITTED
-                # LLM grade — a shadow bug voiding the live answer. That is
-                # wrong: the shadow is telemetry, not the grade. So mirror the
-                # LIVE fallback's posture WITHOUT promoting anything — log with
-                # full context, stamp a shadow-failure marker on the canonical
-                # LLM artifact (so paired analysis sees the missing `pair` row
-                # and WHY), drop the shadow result, and serve the OLD/LLM values
-                # BYTE-IDENTICAL to a shadow-off Done-click. No re-raise → HTTP
-                # 200 with the LLM grade. (The shadow chain's OWN internal
-                # NO-FALLBACK bookkeeping — `learner_update_pending` set +
-                # committed on a cross-store failure — has already run before
-                # the error reached here; we only stop it from reaching the
-                # HTTP layer.)
-                _LOG.exception(
-                    "apollo_graph_shadow_failure attempt_id=%s session_id=%s "
-                    "served=llm_fallback (shadow isolated; live grade unaffected)",
-                    int(attempt.id),
-                    int(session_id),
-                )
-                graph_failure = f"{_SHADOW_FAILURE_MARKER}{repr(e)}"[:500]
-                shadow = None
-                served_grade = GRADER_USED_LLM_FALLBACK
-
-    # Task A3 — paired canonical-artifact capture (DEFAULT OFF). Orthogonal to
-    # `_graph_sim_shadow_enabled()`: with the shadow flag off, `shadow` is
-    # `None` and exactly one LLM canonical row is written; with it on and a
-    # shadow result present, a `pair` row with the graph-grader's artifact is
-    # ALSO written (spec §5 paired-capture). Task A4 — `served_grade` is
-    # `"graph"` only when `APOLLO_GRAPH_GRADER_LIVE` promoted a healthy,
-    # non-abstained shadow result above; otherwise it is `"llm_fallback"`
-    # (LIVE off, LIVE-on-but-abstained, or LIVE-on-with-a-caught exception).
-    # `graph_failure` carries the any-exception fallback reason (LIVE only);
-    # `None` in every other build state.
-    # Task B1 — student scorecard projection (spec §2). Additive
+    # Canonical transcript/topic artifact capture (default OFF). Task B1 —
+    # student scorecard projection (spec §2). Additive
     # `student_response["scorecard"]` key, attached only when artifact capture
     # is on (there is nothing to template over otherwise): `write_artifacts`
     # returns the CANONICAL payload it just persisted — the exact grade the
@@ -806,11 +569,8 @@ async def handle_done(
             db,
             attempt=attempt,
             sess=sess,
-            shadow=shadow,
             coverage=coverage,
             rubric=rubric,
-            served=served_grade,
-            graph_failure=graph_failure,
             latency_ms=artifact_latency_ms,
             topic_score=topic_score,
         )
@@ -828,19 +588,18 @@ async def handle_done(
             else:
                 await _project_mastery(db, attempt_id=int(attempt.id))
 
-    # Provenance must report what was ACTUALLY served: the GRAPH_GRADER_LIVE
-    # promotion branch can replace the served rubric even when the transcript
-    # grader fed the legacy lane, and the topic/dock payload (which quotes the
-    # student) may only ship when APOLLO_TOPIC_SCORE_SERVED allows topics into
-    # the response at all — provenance must not bypass that serve gate.
-    transcript_served = use_transcript_grader and served_grade != GRADER_USED_GRAPH
+    # The topic/dock payload (which quotes the student) may only ship when
+    # APOLLO_TOPIC_SCORE_SERVED allows topics into the response at all.
+    transcript_served = use_transcript_grader
     serialized_topics = (
         serialize_topics(topic_score)
         if topic_score is not None and serve_topic_score
         else []
     )
     student_response["grading_provenance"] = {
-        "grader_used": "llm_transcript" if transcript_served else served_grade,
+        "grader_used": (
+            "llm_transcript" if transcript_served else GRADER_USED_LLM_FALLBACK
+        ),
         "evidence_source": "transcript" if transcript_served else "graph_nodes",
         "transcript_grader_failure": transcript_grader_failure,
         "score_before_dock": (
@@ -857,14 +616,7 @@ async def handle_done(
             for topic in serialized_topics
             for misconception in topic["misconceptions"]
         ],
-        "graph_lane": (
-            {
-                "abstained": shadow.audited.abstained,
-                "reasons": list(shadow.audited.abstention_reasons),
-            }
-            if shadow is not None
-            else None
-        ),
+        "graph_lane": None,
     }
 
     return student_response
