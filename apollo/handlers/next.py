@@ -15,10 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.errors import InvalidPhaseError, SessionFrozenError
 from apollo.overseer.problem_selector import select_problem_personalized
 from apollo.persistence.models import (
-    TutoringSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
 
 _ABANDON_PHASES = {SessionPhase.TEACHING.value, SessionPhase.PROBLEM_REVEAL.value}
@@ -87,13 +87,15 @@ async def handle_next(
 
     new_attempt = ProblemAttempt(
         session_id=session_id,
-        problem_id=problem.id,
+        course_id=sess.course_id,
+        user_id=sess.user_id,
+        problem_id=problem.database_id,
         difficulty=difficulty,
     )
     db.add(new_attempt)
     await db.flush()
 
-    sess.current_problem_id = problem.id
+    sess.current_problem_id = problem.database_id
     sess.phase = SessionPhase.TEACHING.value
     sess.pending_intent = None
     sess.history_summary = None

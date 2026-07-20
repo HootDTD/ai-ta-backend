@@ -60,7 +60,7 @@ async def list_problems_for_concept(db: AsyncSession, *, concept_id: int) -> lis
     problems: list[Problem] = []
     for row in rows:
         try:
-            problems.append(Problem.model_validate(row.payload))
+            problems.append(Problem.model_validate({**row.payload, "database_id": row.id}))
         except ValidationError as exc:
             first_error = exc.errors(include_input=False)[0]
             location = ".".join(str(part) for part in first_error["loc"])
@@ -86,7 +86,7 @@ async def select_problem(
     *,
     concept_id: int,
     difficulty: str,
-    attempted_ids: Sequence[str],
+    attempted_ids: Sequence[str | int],
 ) -> Problem:
     """Pick the first unattempted ``Problem`` at ``difficulty`` for ``concept_id``.
 
@@ -95,7 +95,11 @@ async def select_problem(
     """
     pool = await list_problems_for_concept(db, concept_id=concept_id)
     attempted = set(attempted_ids)
-    candidates = [p for p in pool if p.difficulty == difficulty and p.id not in attempted]
+    candidates = [
+        p
+        for p in pool
+        if p.difficulty == difficulty and p.id not in attempted and p.database_id not in attempted
+    ]
     if not candidates:
         raise PoolExhaustedError(concept_cluster_id=str(concept_id), difficulty=difficulty)
     return candidates[0]
@@ -108,7 +112,7 @@ async def select_problem_personalized(
     search_space_id: int,
     concept_id: int,
     difficulty: str,
-    attempted_ids: Sequence[str],
+    attempted_ids: Sequence[str | int],
 ) -> Problem:
     """The v1 session-personalization wedge (WU-6A3) wrapped around the untouched
     ``select_problem``.

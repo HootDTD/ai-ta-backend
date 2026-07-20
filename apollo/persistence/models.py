@@ -316,13 +316,13 @@ class ReferenceQuestionOpportunity(Base):
     )
     attempt_id = Column(
         BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        ForeignKey("app.problem_attempts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     session_id = Column(
         BigInteger,
-        ForeignKey("apollo_sessions.id", ondelete="CASCADE"),
+        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -352,7 +352,7 @@ class QuestionTally(Base):
     )
     attempt_id = Column(
         BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        ForeignKey("app.problem_attempts.id", ondelete="CASCADE"),
         nullable=False,
     )
     reference_node_id = Column(Text, nullable=False)
@@ -443,7 +443,7 @@ class TutoringMessage(Base):
     )
     intent = Column(Text, nullable=True)
     message_metadata = Column(
-        "metadata", _JSONType, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+        "metadata", _JSONType, nullable=False, default=dict, server_default=text("'{}'")
     )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
@@ -565,7 +565,7 @@ class KGNegotiation(Base):
     )
     attempt_id = Column(
         BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        ForeignKey("app.problem_attempts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -719,7 +719,7 @@ class MasteryEvent(Base):
     )
     attempt_id = Column(
         BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="SET NULL"),
+        ForeignKey("app.problem_attempts.id", ondelete="SET NULL"),
         nullable=True,
     )
     concept_problem_id = Column(
@@ -764,7 +764,7 @@ class GraphComparisonRun(Base):
     )
     attempt_id = Column(
         BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        ForeignKey("app.problem_attempts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -1031,7 +1031,7 @@ class GradingArtifact(Base):
     )
     attempt_id = Column(
         BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        ForeignKey("app.problem_attempts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

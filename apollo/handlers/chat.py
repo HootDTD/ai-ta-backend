@@ -34,7 +34,7 @@ from apollo.ontology import KGGraph
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.parser.graph_context import build_graph_context
 from apollo.parser.parser_llm import parse_utterance
-from apollo.persistence.models import TutoringSession, TutoringMessage, ProblemAttempt
+from apollo.persistence.models import ProblemAttempt, TutoringMessage, TutoringSession
 from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 from apollo.schemas.problem import Problem
 from apollo.smart_questions import plan_next_question
@@ -49,14 +49,14 @@ def _unified_questioning_enabled() -> bool:
     return os.environ.get(_UNIFIED_QUESTIONING_FLAG, "").lower() in ("1", "true", "yes")
 
 
-async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) -> Problem:
-    """Locate a problem in the DB bank by concept_id + problem_code. Mirrors
+async def _find_problem(db: AsyncSession, concept_id: int, problem_id: int) -> Problem:
+    """Locate a problem in the DB bank by concept_id + target surrogate id. Mirrors
     done.py's helper. Kept inline rather than hoisted into problem_selector to
     keep that module's contract (problem listing) narrow."""
     for p in await list_problems_for_concept(db, concept_id=concept_id):
-        if p.id == problem_code:
+        if p.database_id == problem_id:
             return p
-    raise RuntimeError(f"problem {problem_code!r} not in bank for cluster {concept_id!r}")
+    raise RuntimeError(f"problem {problem_id!r} not in bank for cluster {concept_id!r}")
 
 
 async def _next_turn_index(db: AsyncSession, session_id: int) -> int:
@@ -91,6 +91,7 @@ async def _persist_turn(
     db: AsyncSession,
     *,
     session_id: int,
+    course_id: int,
     attempt_id: int,
     student_msg: str,
     apollo_msg: str,
@@ -100,6 +101,7 @@ async def _persist_turn(
     db.add(
         TutoringMessage(
             session_id=session_id,
+            course_id=course_id,
             attempt_id=attempt_id,
             role="student",
             content=student_msg,
@@ -109,6 +111,7 @@ async def _persist_turn(
     db.add(
         TutoringMessage(
             session_id=session_id,
+            course_id=course_id,
             attempt_id=attempt_id,
             role="apollo",
             content=apollo_msg,
@@ -201,6 +204,7 @@ async def _handle_pending_done(
     await _persist_turn(
         db,
         session_id=sess.id,
+        course_id=sess.course_id,
         attempt_id=attempt_id,
         student_msg=message,
         apollo_msg=apollo_reply,
@@ -258,6 +262,7 @@ async def _maybe_intent_confirmation(
     await _persist_turn(
         db,
         session_id=sess.id,
+        course_id=sess.course_id,
         attempt_id=attempt_id,
         student_msg=message,
         apollo_msg=prompt,
@@ -417,6 +422,7 @@ async def handle_chat(
     await _persist_turn(
         db,
         session_id=session_id,
+        course_id=sess.course_id,
         attempt_id=int(current_attempt.id),
         student_msg=message,
         apollo_msg=validated,

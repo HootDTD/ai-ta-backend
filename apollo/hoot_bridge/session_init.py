@@ -27,10 +27,10 @@ from apollo.overseer.problem_selector import (
     select_problem_personalized,
 )
 from apollo.persistence.models import (
-    TutoringSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
 from apollo.schemas.problem import Problem
 from apollo.subjects.curriculum_db import list_course_concepts
@@ -54,6 +54,7 @@ async def _create_session_with_problem(
         update(TutoringSession)
         .where(
             TutoringSession.user_id == user_id,
+            TutoringSession.search_space_id == search_space_id,
             TutoringSession.status == SessionStatus.active.value,
         )
         .values(status=SessionStatus.ended.value)
@@ -73,7 +74,9 @@ async def _create_session_with_problem(
 
     attempt = ProblemAttempt(
         session_id=session.id,
-        problem_id=problem.id,
+        course_id=search_space_id,
+        user_id=user_id,
+        problem_id=problem.database_id,
         difficulty=difficulty,
     )
     db.add(attempt)

@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import NoMatchingConceptError
 from apollo.overseer.problem_selector import list_problems_for_concept
-from apollo.persistence.models import TutoringSession, ProblemAttempt
+from apollo.persistence.models import ProblemAttempt
 from apollo.subjects.curriculum_db import list_course_concepts
 
 
@@ -44,10 +44,9 @@ async def handle_list_problems(
         (
             await db.execute(
                 select(ProblemAttempt.problem_id)
-                .join(TutoringSession, ProblemAttempt.session_id == TutoringSession.id)
                 .where(
-                    TutoringSession.user_id == user_id,
-                    TutoringSession.search_space_id == search_space_id,
+                    ProblemAttempt.user_id == user_id,
+                    ProblemAttempt.course_id == search_space_id,
                 )
                 .distinct()
             )
@@ -62,7 +61,7 @@ async def handle_list_problems(
                 "id": p.id,
                 "difficulty": p.difficulty,
                 "problem_text": p.problem_text,
-                "attempted": p.id in attempted_ids,
+                "attempted": p.database_id in attempted_ids,
             }
             for p in pool
         ]

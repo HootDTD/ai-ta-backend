@@ -8,6 +8,7 @@ from enum import StrEnum
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    JSON,
     TIMESTAMP,
     BigInteger,
     Boolean,
@@ -394,7 +395,12 @@ class LearningActivity(Base):
     __tablename__ = "learning_activities"
     __table_args__ = {"schema": "app"}
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(
+        BigInteger().with_variant(Integer(), "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+        index=True,
+    )
     modality = Column(Text, nullable=False)
     external_id = Column(Text, nullable=True, unique=True, index=True)
     user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
@@ -405,7 +411,11 @@ class LearningActivity(Base):
         index=True,
     )
     metadata_ = Column(
-        "metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+        "metadata",
+        JSONB().with_variant(JSON(), "sqlite"),
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'"),
     )
     memory_summary = Column(Text, nullable=False, default="", server_default=text("''"))
     status = Column(Text, nullable=False, default="active", server_default=text("'active'"))

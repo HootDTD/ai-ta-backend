@@ -56,6 +56,9 @@ class ReferenceStep(BaseModel):
 
 class Problem(BaseModel):
     id: str = Field(min_length=1)
+    # Target-schema surrogate key. Excluded from API serialization so the
+    # established problem-code contract remains unchanged.
+    database_id: int | None = Field(default=None, exclude=True)
     concept_id: str = Field(min_length=1)
     difficulty: Difficulty
     problem_text: str = Field(min_length=1)

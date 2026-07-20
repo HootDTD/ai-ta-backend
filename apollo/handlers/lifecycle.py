@@ -10,11 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.knowledge_graph.store import KGStore
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.persistence.models import (
-    TutoringSession,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 
@@ -58,6 +58,8 @@ async def handle_retry(*, db: AsyncSession, session_id: int) -> dict[str, Any]:
     if current_attempt is not None and current_attempt.result is not None:
         new_attempt = ProblemAttempt(
             session_id=session_id,
+            course_id=sess.course_id,
+            user_id=sess.user_id,
             problem_id=current_attempt.problem_id,
             difficulty=current_attempt.difficulty,
         )
@@ -139,7 +141,7 @@ async def handle_get_session(
     problem = None
     if sess.current_problem_id and sess.concept_id is not None:
         for p in await list_problems_for_concept(db, concept_id=sess.concept_id):
-            if p.id == sess.current_problem_id:
+            if p.database_id == sess.current_problem_id:
                 problem = {
                     "id": p.id,
                     "concept_id": p.concept_id,

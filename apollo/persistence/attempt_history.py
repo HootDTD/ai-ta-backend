@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.persistence.models import (
     GRADED_ATTEMPT_RESULTS,
-    TutoringSession,
     ProblemAttempt,
 )
 
@@ -26,16 +25,17 @@ async def has_prior_graded_attempt(
     *,
     db: AsyncSession,
     user_id: str,
-    problem_id: str,
+    course_id: int,
+    problem_id: int,
     exclude_attempt_id: int,
 ) -> bool:
     """True iff another graded ProblemAttempt exists for this (user, problem)."""
     stmt = (
         select(func.count())
         .select_from(ProblemAttempt)
-        .join(TutoringSession, TutoringSession.id == ProblemAttempt.session_id)
         .where(
-            TutoringSession.user_id == user_id,
+            ProblemAttempt.user_id == user_id,
+            ProblemAttempt.course_id == course_id,
             ProblemAttempt.problem_id == problem_id,
             ProblemAttempt.result.in_(GRADED_ATTEMPT_RESULTS),
             ProblemAttempt.id != exclude_attempt_id,

@@ -45,11 +45,11 @@ from apollo.overseer.transcript_coverage import compute_transcript_coverage_with
 from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
 from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
-    TutoringSession,
     GradingArtifact,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
+    TutoringMessage,
+    TutoringSession,
 )
 from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 from apollo.persistence.progress_repo import apply_xp
@@ -236,11 +236,11 @@ def _compute_topic_score_safe(
         return None
 
 
-async def _find_problem(db: AsyncSession, concept_id: int, problem_code: str) -> Problem:
+async def _find_problem(db: AsyncSession, concept_id: int, problem_id: int) -> Problem:
     for p in await list_problems_for_concept(db, concept_id=concept_id):
-        if p.id == problem_code:
+        if p.database_id == problem_id:
             return p
-    raise RuntimeError(f"problem {problem_code!r} not in bank for cluster {concept_id!r}")
+    raise RuntimeError(f"problem {problem_id!r} not in bank for cluster {concept_id!r}")
 
 
 async def _fetch_attempt_transcript(
@@ -296,7 +296,7 @@ async def handle_done(
             await db.execute(
                 select(ProblemAttempt)
                 .where(ProblemAttempt.session_id == session_id)
-                .where(ProblemAttempt.problem_id == problem.id)
+                .where(ProblemAttempt.problem_id == problem.database_id)
                 .order_by(ProblemAttempt.id.desc())
             )
         )
@@ -442,7 +442,8 @@ async def handle_done(
     is_reattempt_cross_session = await has_prior_graded_attempt(
         db=db,
         user_id=sess.user_id,
-        problem_id=problem.id,
+        course_id=sess.course_id,
+        problem_id=problem.database_id,
         exclude_attempt_id=attempt.id,
     )
     is_reattempt = is_reattempt_in_session or is_reattempt_cross_session
@@ -471,6 +472,7 @@ async def handle_done(
     progress = await apply_xp(
         db=db,
         user_id=sess.user_id,
+        course_id=sess.course_id,
         xp_delta=xp_earned,
     )
 

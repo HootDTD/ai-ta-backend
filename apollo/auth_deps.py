@@ -104,12 +104,22 @@ async def require_session_owner(
     """
     auth = await require_user(request)
     row = (
-        (await db.execute(select(TutoringSession).where(TutoringSession.id == session_id)))
+        (
+            await db.execute(
+                select(TutoringSession).where(
+                    TutoringSession.id == session_id,
+                    TutoringSession.user_id == auth.user_id,
+                )
+            )
+        )
         .scalars()
         .first()
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if str(row.user_id) != str(auth.user_id):
-        raise HTTPException(status_code=403, detail="Not your session")
+    await require_course_member(
+        db=db,
+        auth=auth,
+        search_space_id=int(row.course_id),
+    )
     return auth
