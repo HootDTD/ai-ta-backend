@@ -132,6 +132,21 @@ The abandoned upload-triggered auto-provision worker remains removed. Existing
 `quarantined_at` values still exclude unsafe problems; A7 only removed the
 findings-driven process that automatically changed that value.
 
+DB-12 persists both teacher-facing run types through one
+`app.provisioning_runs` model. `kind = 'authored_set'` rows use the course/set
+identity and optional problem/solution document pair; `kind = 'generation'`
+rows use a concept and may link to an ingest run. Runtime construction and every
+lookup are kind-scoped, while the existing authored-set and problem-generation
+HTTP response shapes remain unchanged. Authored-set document links are real
+`app.documents` foreign keys.
+
+Ingest telemetry is service-only in `internal.content_ingest_runs`,
+`internal.content_ingest_errors`, `internal.ingest_page_evidence`, and
+`internal.dedup_decisions`. Stable dedup counters and the embedding merge ratio
+are typed columns; only the per-concept breakdown remains JSON. The synchronous
+path owns these records directly—there is no provisioning queue, worker, or
+rejected-problem write seam.
+
 ## Security and data boundaries
 
 - Session routes require the authenticated session owner.

@@ -16,11 +16,10 @@ stub: false
 ---
 
 Cleanup T-F (2026-07-16) removed the dormant auto-provision worker and all code
-references to `apollo_provisioning_jobs` and `apollo_rejected_problems`; those
-tables await the separate DB-drop migration. Migration 030 remains documented
-below as historical schema provenance. The synchronous authored-set path still
-uses `apollo_ingest_runs`, `apollo_ingest_errors`, dedup decisions, and page
-evidence.
+references to its job and rejection tables; those legacy tables await the
+separate DB-drop migration. Migration 030 remains documented below as
+historical schema provenance. DB-12 moved the synchronous authored-set path to
+the target internal ingest, error, dedup-decision, and page-evidence tables.
 
 DB-02 (2026-07-16) established the pinned Supabase CLI migration machinery.
 `database/migrations/` is now a checksum-enforced, read-only legacy archive
@@ -67,6 +66,20 @@ question timing, decline, and counter columns with one unique
 `(attempt_id, reference_node_id)` identity. The frozen 042/047 migrations and
 copy/rollback SQL retain the two legacy source names only as historical and
 cutover provenance.
+
+DB-12 (2026-07-21) completes the authored/generation/ingest persistence move.
+One `ProvisioningRun` ORM maps to `app.provisioning_runs`; kind-specific
+factories and kind-scoped reads enforce the authored-set versus generation
+column/status contracts without exposing discriminator details through the
+teacher APIs. The authored kind uses the target partial course/set uniqueness
+and real problem/solution document FKs.
+
+`IngestRun`, `IngestError`, `IngestPageEvidence`, and `DedupDecision` now map to
+their `internal` target tables. Ingest and evidence document IDs use real
+`app.documents` FKs, stable dedup pressure metrics are typed columns, and the
+dynamic per-concept breakdown alone remains JSON. Campaign S1/S2 reads these
+internal tables directly and writes UTF-8 JSON artifacts. No runtime
+provisioning-job or rejected-problem persistence remains.
 
 MIG-AMEND (2026-07-20) applies architecture rulings A5-A9 to the built target:
 the final inventory is 28 tables (18 `app`, 10 `internal`). Chat and tutoring

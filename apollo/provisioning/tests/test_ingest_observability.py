@@ -1,7 +1,7 @@
 """WU-AAS ingestion observability (lane B2.4 / G4.4).
 
-The authored-set ingestion path used to leave apollo_ingest_runs /
-apollo_ingest_errors EMPTY and persist no per-page OCR text, so the S2 audit ran
+The authored-set ingestion path used to leave its ingest/error tables empty and
+persist no per-page OCR text, so the S2 audit ran
 on thin inputs. These tests pin the new observability writes: an ingest run row
 per ingestion, per-page OCR evidence (text + confidence + verify-path flag), a
 stage-error row on failure, and the GET surface that exposes it all.
@@ -30,7 +30,7 @@ def _page(page_number, *, plain="", latex="", conf=None, mode="ocr"):
 
 async def _seed_course(db, *, slug: str) -> tuple[int, int]:
     from apollo.persistence.models import Concept
-    from database.models import Course
+    from database.models import Course, Document
 
     space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
@@ -44,6 +44,17 @@ async def _seed_course(db, *, slug: str) -> tuple[int, int]:
         normalization_map={},
     )
     db.add(concept)
+    await db.flush()
+    for document_id in (301, 302, 311, 555, 700, 800, 900, 1000):
+        db.add(
+            Document(
+                id=document_id,
+                course_id=space.id,
+                title=f"Fixture {document_id}",
+                content=f"fixture {document_id}",
+                content_hash=f"{slug}-{document_id}",
+            )
+        )
     await db.flush()
     return int(space.id), int(concept.id)
 
@@ -229,14 +240,14 @@ async def test_background_run_populates_ingest_run_and_page_evidence(db_session,
     from sqlalchemy import select
 
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import ProvisioningRun
     from apollo.provisioning.authored_sets.orchestrator import (
         ProblemResult,
         ProvisioningReport,
     )
 
     space_id, _c = await _seed_course(db_session, slug="obs-e2e")
-    row = AuthoredSet(search_space_id=space_id, set_index=1, status="pending")
+    row = ProvisioningRun.authored_set(search_space_id=space_id, set_index=1, status="pending")
     db_session.add(row)
     await db_session.flush()
     set_id = int(row.id)
@@ -305,7 +316,7 @@ async def test_background_run_populates_ingest_run_and_page_evidence(db_session,
 @pytest.mark.asyncio
 async def test_get_authored_set_exposes_ingest_run_and_pages(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import ProvisioningRun
     from apollo.provisioning.authored_sets.observability import (
         finalize_ingest_run,
         persist_page_evidence,
@@ -325,7 +336,7 @@ async def test_get_authored_set_exposes_ingest_run_and_pages(db_session, monkeyp
     await finalize_ingest_run(
         db_session, ingest_run=run, status="succeeded", n_pages=1, n_promoted=1
     )
-    aset = AuthoredSet(
+    aset = ProvisioningRun.authored_set(
         search_space_id=space_id,
         set_index=1,
         status="done",
@@ -369,7 +380,7 @@ async def test_get_authored_set_caps_ocr_text_unless_full_ocr(db_session, monkey
     (flagging it) so a run of long pages doesn't bloat the payload; ?full_ocr=true
     returns the untruncated body for a deliberate deep fetch."""
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import ProvisioningRun
     from apollo.provisioning.authored_sets.observability import (
         persist_page_evidence,
         start_ingest_run,
@@ -386,7 +397,7 @@ async def test_get_authored_set_caps_ocr_text_unless_full_ocr(db_session, monkey
         role="problem",
         pages=[_page(1, plain=long_text, conf=0.9)],
     )
-    aset = AuthoredSet(
+    aset = ProvisioningRun.authored_set(
         search_space_id=space_id, set_index=1, status="done", problem_document_id=311
     )
     db_session.add(aset)
@@ -425,10 +436,10 @@ async def test_background_failure_marks_run_failed_and_records_error(db_session,
     from sqlalchemy import select
 
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import ProvisioningRun
 
     space_id, _c = await _seed_course(db_session, slug="obs-fail")
-    row = AuthoredSet(search_space_id=space_id, set_index=1, status="pending")
+    row = ProvisioningRun.authored_set(search_space_id=space_id, set_index=1, status="pending")
     db_session.add(row)
     await db_session.flush()
     set_id = int(row.id)
@@ -460,7 +471,7 @@ async def test_background_failure_marks_run_failed_and_records_error(db_session,
         solution_title="s",
     )
 
-    refreshed = await db_session.get(AuthoredSet, set_id)
+    refreshed = await db_session.get(ProvisioningRun, set_id)
     assert refreshed.status == "failed"
 
     run = (
@@ -488,10 +499,10 @@ async def test_background_indexing_failure_opens_run_and_persists_evidence(db_se
     from sqlalchemy import select
 
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import ProvisioningRun
 
     space_id, _c = await _seed_course(db_session, slug="obs-idxfail")
-    row = AuthoredSet(search_space_id=space_id, set_index=1, status="pending")
+    row = ProvisioningRun.authored_set(search_space_id=space_id, set_index=1, status="pending")
     db_session.add(row)
     await db_session.flush()
     set_id = int(row.id)
@@ -526,7 +537,7 @@ async def test_background_indexing_failure_opens_run_and_persists_evidence(db_se
         solution_title="s",
     )
 
-    refreshed = await db_session.get(AuthoredSet, set_id)
+    refreshed = await db_session.get(ProvisioningRun, set_id)
     assert refreshed.status == "failed"
     assert "no chunks produced" in (refreshed.result_summary or {}).get("error", "")
 

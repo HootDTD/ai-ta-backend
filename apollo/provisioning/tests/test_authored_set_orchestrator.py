@@ -1258,7 +1258,7 @@ def _savepoint_draft(*, step_id: str) -> ReferenceSolutionDraft:
 @pytest.mark.asyncio
 async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, monkeypatch):
     """M1: a fail-closed TagMintError raised INSIDE the REAL ``tag_and_mint`` (at
-    step 5a, ``link_opposes``) after concept/KGEntity/apollo_dedup_decisions rows
+    step 5a, ``link_opposes``) after concept/KGEntity/dedup-decision rows
     for THAT candidate have already been flushed must not leave those rows
     orphaned once the caller's (simulated ``_run_set_background``) commit lands.
     The per-candidate ``begin_nested`` savepoint rolls back exactly the failed
@@ -1357,7 +1357,7 @@ async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, mon
     )
     assert len(ok_rows) == 1
 
-    # No apollo_dedup_decisions row from the rolled-back candidate leaks through
+    # No dedup-decision row from the rolled-back candidate leaks through
     # either (it would otherwise become a live dedup target for a future mint).
     dedup_rows = (
         (

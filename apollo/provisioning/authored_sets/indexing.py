@@ -56,7 +56,7 @@ async def index_authored_doc(
     The caller owns the outer transaction after this function returns. This path
     deliberately reuses only the indexing core, not the weekly upload wrapper:
     no Upload row, no supersede, no week activation, and no generic Apollo
-    provisioning enqueue.
+    asynchronous provisioning job dispatch.
 
     When ``page_sink`` is provided, the transient per-page OCR result
     (``ingestion.pages`` — ``NormalizedPage`` objects carrying text + confidence +

@@ -141,7 +141,7 @@ async def test_post_flag_off_403_but_get_list_still_serves(db_session, monkeypat
 @pytest.mark.asyncio
 async def test_post_persists_pending_run_and_schedules_one_task(db_session, monkeypatch):
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import GenerationRun
+    from apollo.persistence.models import ProvisioningRun
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-create")
     monkeypatch.setenv("APOLLO_PROBLEM_GENERATION", "1")
@@ -158,7 +158,7 @@ async def test_post_persists_pending_run_and_schedules_one_task(db_session, monk
     )
 
     assert response == {"run_id": response["run_id"], "status": "pending"}
-    row = await db_session.get(GenerationRun, response["run_id"])
+    row = await db_session.get(ProvisioningRun, response["run_id"])
     assert (row.search_space_id, row.concept_id, row.status) == (
         space_id,
         concept_id,
@@ -208,14 +208,14 @@ async def test_post_bad_concept_404_and_teacher_403_bubbles(db_session, monkeypa
 @pytest.mark.asyncio
 async def test_background_succeeds_serializes_records_and_stamps_ingest(db_session, monkeypatch):
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import GenerationRun, IngestRun
+    from apollo.persistence.models import IngestRun, ProvisioningRun
     from apollo.provisioning.problem_generation.generator import (
         GenerationRecord,
         GenerationRunResult,
     )
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-bg-ok")
-    run = GenerationRun(search_space_id=space_id, concept_id=concept_id)
+    run = ProvisioningRun.generation(search_space_id=space_id, concept_id=concept_id)
     db_session.add(run)
     await db_session.flush()
 
@@ -243,7 +243,7 @@ async def test_background_succeeds_serializes_records_and_stamps_ingest(db_sessi
     monkeypatch.setattr(gapi, "MeteredChat", lambda **kwargs: kwargs)
     await gapi._run_generation_background(int(run.id), concept_id, space_id, [7], 2)
 
-    refreshed = await db_session.get(GenerationRun, int(run.id))
+    refreshed = await db_session.get(ProvisioningRun, int(run.id))
     assert refreshed.status == "succeeded"
     assert refreshed.result_summary == {
         "requested": 2,
@@ -267,10 +267,10 @@ async def test_background_succeeds_serializes_records_and_stamps_ingest(db_sessi
 @pytest.mark.asyncio
 async def test_background_exception_is_swallowed_and_persisted(db_session, monkeypatch):
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import GenerationRun, IngestRun
+    from apollo.persistence.models import IngestRun, ProvisioningRun
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-bg-fail")
-    run = GenerationRun(search_space_id=space_id, concept_id=concept_id)
+    run = ProvisioningRun.generation(search_space_id=space_id, concept_id=concept_id)
     db_session.add(run)
     await db_session.flush()
 
@@ -286,7 +286,7 @@ async def test_background_exception_is_swallowed_and_persisted(db_session, monke
     monkeypatch.setattr(gapi, "MeteredChat", lambda **kwargs: kwargs)
     await gapi._run_generation_background(int(run.id), concept_id, space_id, [7], 1)
 
-    refreshed = await db_session.get(GenerationRun, int(run.id))
+    refreshed = await db_session.get(ProvisioningRun, int(run.id))
     assert refreshed.status == "failed"
     assert refreshed.result_summary["error"] == "generation boom"
     ingest = await db_session.get(IngestRun, int(refreshed.ingest_run_id))
@@ -310,7 +310,7 @@ async def test_background_recovery_failure_is_also_swallowed(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_detail_projects_review_without_provenance_leak(db_session, monkeypatch):
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import GenerationRun, IngestRun
+    from apollo.persistence.models import IngestRun, ProvisioningRun
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-detail")
     problem = await _seed_problem(
@@ -331,7 +331,7 @@ async def test_get_detail_projects_review_without_provenance_leak(db_session, mo
     )
     db_session.add(ingest)
     await db_session.flush()
-    run = GenerationRun(
+    run = ProvisioningRun.generation(
         search_space_id=space_id,
         concept_id=concept_id,
         status="succeeded",
@@ -389,7 +389,7 @@ async def test_get_detail_projects_review_without_provenance_leak(db_session, mo
 @pytest.mark.asyncio
 async def test_get_detail_caps_by_default_and_full_text_skips_cap(db_session, monkeypatch):
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import GenerationRun
+    from apollo.persistence.models import ProvisioningRun
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-detail-full-text")
     long_text = "full question " * (gapi._PROBLEM_TEXT_CAP // 4)
@@ -400,7 +400,7 @@ async def test_get_detail_caps_by_default_and_full_text_skips_cap(db_session, mo
         generated=True,
         problem_text=long_text,
     )
-    run = GenerationRun(
+    run = ProvisioningRun.generation(
         search_space_id=space_id,
         concept_id=concept_id,
         status="succeeded",
@@ -564,10 +564,10 @@ async def test_approve_generated_problem_404_and_conflict_cases(db_session, monk
 
 @pytest.mark.asyncio
 async def test_generation_run_defaults_and_jsonb_round_trip(db_session):
-    from apollo.persistence.models import GenerationRun
+    from apollo.persistence.models import ProvisioningRun
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-model")
-    run = GenerationRun(search_space_id=space_id, concept_id=concept_id)
+    run = ProvisioningRun.generation(search_space_id=space_id, concept_id=concept_id)
     db_session.add(run)
     await db_session.flush()
     await db_session.refresh(run)

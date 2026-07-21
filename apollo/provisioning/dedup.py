@@ -23,9 +23,8 @@ callables so Tier-1 tests are deterministic with zero network calls — producti
 wiring (3B2d/3B2f) supplies ``embed_text`` and a ``cheap_chat`` adapter.
 
 Out of scope (downstream units — NOT here): scrape/mint/upsert of entities or
-problems (3B2d), solution pairing (3B2e), metering/queue-drain (3B2f), the
-the content-ingest aggregate metrics,
-quarantine (3B2h). This unit reads the inventory, writes ONE audit row, and
+problems, solution pairing, metering, the content-ingest aggregate metrics, and
+quarantine. This unit reads the inventory, writes ONE audit row, and
 increments the run's typed dedup-pressure metrics in the same flow.
 """
 

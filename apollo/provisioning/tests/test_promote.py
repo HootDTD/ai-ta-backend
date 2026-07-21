@@ -6,7 +6,7 @@ concept's AUTHORED ``canonical_symbols``/``normalization_map`` -> on PASS flip t
 ``apollo_concept_problems`` row tier 1->2, store the annotated reference solution
 into ``payload``, set ``solution_source``, then ``project_canon`` (mocked here).
 On FAIL it returns ``PromoteResult(promoted=False, failed_gate, diagnostic)`` so
-the ORCHESTRATOR (not promote) writes the ``apollo_rejected_problems`` row.
+the orchestrator (not promote) records the bounded rejection outcome.
 
 ``neo`` is an ``AsyncMock`` so ``project_canon`` is a no-op observable call; NO
 Neo4j container, NO network, NO LLM. The savepoint ``db_session`` is real

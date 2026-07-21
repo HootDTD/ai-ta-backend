@@ -279,7 +279,7 @@ async def test_dedup_pressure_aggregates_and_persists_per_ingest_run(db_session)
         slug="c-pressure",
         entities=[("ent.exact", "BASE"), ("ent.embedding", "BASE")],
     )
-    run = IngestRun(search_space_id=ss_id, document_id=901, status="running")
+    run = IngestRun(search_space_id=ss_id, document_id=None, status="running")
     db_session.add(run)
     await db_session.flush()
 
@@ -300,14 +300,12 @@ async def test_dedup_pressure_aggregates_and_persists_per_ingest_run(db_session)
         )
 
     await db_session.refresh(run)
-    assert run.dedup_pressure == {
-        "total_candidates": 3,
-        "exact_merges": 1,
-        "embedding_merges": 1,
-        "embedding_distinct": 1,
-        "embedding_merge_ratio": 0.5,
-        "per_concept": {str(concept_id): 1},
-    }
+    assert run.dedup_total_candidates == 3
+    assert run.dedup_exact_merges == 1
+    assert run.dedup_embedding_merges == 1
+    assert run.dedup_embedding_distinct == 1
+    assert run.dedup_embedding_merge_ratio == 0.5
+    assert run.dedup_details == {"per_concept": {str(concept_id): 1}}
 
 
 async def test_embedding_in_band_escalates_to_judge(db_session):
@@ -720,10 +718,10 @@ async def test_ingest_run_id_is_stamped_when_present(db_session):
         db_session, slug="c-run", entities=[("eq.run", "BASE")]
     )
     cand = _Candidate(canonical_key="eq.run", scope_summary="BASE")
-    # ingest_run_id must be a real apollo_ingest_runs.id FK; seed one minimal run.
+    # ingest_run_id must be a real content-ingest-run FK; seed one minimal run.
     from apollo.persistence.models import IngestRun
 
-    run = IngestRun(search_space_id=ss_id, document_id=1, status="running")
+    run = IngestRun(search_space_id=ss_id, document_id=None, status="running")
     db_session.add(run)
     await db_session.flush()
     await resolve_candidate(

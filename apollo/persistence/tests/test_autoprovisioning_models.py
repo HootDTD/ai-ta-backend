@@ -20,6 +20,7 @@ from sqlalchemy import select
 from apollo.persistence.models import (
     DedupDecision,
     IngestError,
+    IngestPageEvidence,
     IngestRun,
     KGEntity,
 )
@@ -38,6 +39,21 @@ async def _space_and_concept(db_session) -> tuple[int, int]:
         db_session, search_space_id=sid, subject_slug="s_orm", concept_slug="c_orm"
     )
     return sid, cid
+
+
+def test_ingest_models_map_to_internal_targets_with_document_fks():
+    assert IngestRun.__table__.fullname == "internal.content_ingest_runs"
+    assert IngestError.__table__.fullname == "internal.content_ingest_errors"
+    assert IngestPageEvidence.__table__.fullname == "internal.ingest_page_evidence"
+    assert DedupDecision.__table__.fullname == "internal.dedup_decisions"
+
+    run_document_fks = {fk.target_fullname for fk in IngestRun.document_id.property.columns[0].foreign_keys}
+    evidence_document_fks = {
+        fk.target_fullname
+        for fk in IngestPageEvidence.document_id.property.columns[0].foreign_keys
+    }
+    assert run_document_fks == {"app.documents.id"}
+    assert evidence_document_fks == {"app.documents.id"}
 
 
 async def test_orm_concept_problem_has_tier_columns(db_session):
@@ -121,7 +137,7 @@ async def test_orm_kg_entity_scope_summary_roundtrip(db_session):
 async def test_orm_ingest_run_defaults(db_session):
     """IngestRun status/counters/cost default on the ORM-built schema."""
     sid, _cid = await _space_and_concept(db_session)
-    run = IngestRun(search_space_id=sid, document_id=1)
+    run = IngestRun(search_space_id=sid, document_id=None)
     db_session.add(run)
     await db_session.flush()
     run_id = run.id
@@ -134,6 +150,12 @@ async def test_orm_ingest_run_defaults(db_session):
     assert reloaded.n_promoted == 0
     assert reloaded.n_rejected == 0
     assert reloaded.n_dedup_merged == 0
+    assert reloaded.dedup_total_candidates == 0
+    assert reloaded.dedup_exact_merges == 0
+    assert reloaded.dedup_embedding_merges == 0
+    assert reloaded.dedup_embedding_distinct == 0
+    assert reloaded.dedup_embedding_merge_ratio == 0
+    assert reloaded.dedup_details == {}
     assert reloaded.llm_calls == 0
     assert reloaded.llm_tokens_in == 0
     assert reloaded.llm_tokens_out == 0
@@ -144,7 +166,7 @@ async def test_orm_ingest_run_defaults(db_session):
 async def test_orm_rejected_dedup_error_roundtrip(db_session):
     """DedupDecision / IngestError round-trip their typed columns."""
     sid, cid = await _space_and_concept(db_session)
-    run = IngestRun(search_space_id=sid, document_id=1)
+    run = IngestRun(search_space_id=sid, document_id=None)
     db_session.add(run)
     await db_session.flush()
     run_id = run.id
