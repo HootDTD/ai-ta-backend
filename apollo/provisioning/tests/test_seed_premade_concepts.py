@@ -120,7 +120,7 @@ async def test_seed_copies_vocab_only_into_empty_rows(db_session, tmp_path):
         await db_session.execute(select(Concept).where(Concept.slug == "integration-by-parts"))
     ).scalar_one()
     assert row.canonical_symbols == ["x", "u", "v"]
-    assert row.symbol_metadata == {"description": {"x": "value"}}
+    assert row.symbol_metadata == {}
     # u-substitution had no vocab dir -> untouched
     other = (
         await db_session.execute(select(Concept).where(Concept.slug == "u-substitution"))

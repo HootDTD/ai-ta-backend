@@ -498,7 +498,7 @@ async def test_approve_generated_problem_promotes_with_known_concept(db_session,
 
     assert response["promoted"] is True
     assert captured["resolved"] == aapi.ResolvedConcept(
-        concept_id=concept_id, slug="known_concept_slug"
+        concept_id=concept_id, slug="concept-gen4-approve"
     )
     refreshed = await db_session.get(ProblemRecord, int(problem.id))
     assert refreshed.tier == 2

@@ -3471,6 +3471,7 @@ async def test_patch_problem_rejects_reference_content_that_breaks_problem_schem
     }
     problem.apply_pydantic_payload(procedure_payload)
     await db_session.flush()
+    stored_reference = problem.reference_solution
 
     with pytest.raises(aapi.HTTPException) as exc:
         await aapi.edit_authored_problem(
@@ -3495,4 +3496,4 @@ async def test_patch_problem_rejects_reference_content_that_breaks_problem_schem
     assert exc.value.status_code == 422
     assert str(exc.value.detail).startswith("invalid reference_solution content:")
     assert problem.problem_text == procedure_payload["problem_text"]
-    assert problem.reference_solution["steps"] == procedure_payload["reference_solution"]
+    assert problem.reference_solution == stored_reference

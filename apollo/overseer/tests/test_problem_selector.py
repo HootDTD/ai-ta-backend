@@ -286,7 +286,7 @@ async def test_malformed_problem_is_logged_and_skipped_for_both_selectors(db_ses
     assert len(records) == 2  # direct listing + personalized path share the chokepoint
     assert all(record.concept_id == cid for record in records)
     assert all(record.problem_tier == 2 for record in records)
-    assert all(record.concept_problem_id is not None for record in records)
+    assert all(record.problem_id is not None for record in records)
     assert all("validation error" in record.validation_error for record in records)
 
 

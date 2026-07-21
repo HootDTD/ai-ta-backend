@@ -1124,7 +1124,13 @@ async def edit_authored_problem(
             detail="another problem with the same content already exists",
         )
 
-    row.apply_pydantic_payload(payload)
+    if row.tier == 1 and not payload.get("reference_solution"):
+        # Held inventory rows may be edited before a reference solution exists.
+        # Keep that intentional draft shape instead of sending an empty solution
+        # through the promoted-problem schema, which requires at least one step.
+        row.apply_inventory_payload(payload)
+    else:
+        row.apply_pydantic_payload(payload)
     await db.commit()
     return (
         await _enrich_problem_reviews(
