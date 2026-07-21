@@ -96,7 +96,7 @@ async def provision_authored_problem(
     """Construct, verify, mint, and promote one teacher-authored problem.
 
     Candidate failures are returned to the authored-set result ledger.  They no
-    longer write the worker-only ``apollo_rejected_problems`` audit table.
+    return bounded rejection outcomes without writing a retired audit table.
     """
     try:
         draft = await construct_authored_reference(authored, chat_fn=construct_chat_fn)

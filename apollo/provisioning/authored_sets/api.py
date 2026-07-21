@@ -662,7 +662,7 @@ def _make_metered_chat(
 ) -> MeteredChat:
     """Build the metered LLM client for a run.
 
-    When ``ingest_run`` is a real ``apollo_ingest_runs`` row (the ingestion path),
+    When ``ingest_run`` is a real content-ingest row (the ingestion path),
     metered LLM usage accrues on it in place, so the run's llm_calls/token/cost
     aggregates persist. The approve endpoint has no run row, so it falls back to a
     throwaway namespace whose metering is discarded.
@@ -1287,7 +1287,7 @@ async def delete_authored_set(
     (``_protected_concepts`` — sessions, learner_state, mastery_events,
     misconceptions, or an inbound cross-concept prereq), AND no ``:Canon`` student
     ``RESOLVES_TO`` history. For those (and ONLY those) the reference graph a plain
-    delete used to leave behind is torn down: ``apollo_dedup_decisions`` +
+    delete used to leave behind is torn down: dedup decisions plus
     ``app.concepts`` (KGEntity + prerequisite rows cascade) in Postgres,
     and the guarded ``:Canon`` nodes in Neo4j. Every ambiguous case spares the
     concept — under-tearing-down only leaves KG behind, whereas over-tearing-down

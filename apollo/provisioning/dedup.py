@@ -2,7 +2,7 @@
 
 ``resolve_candidate`` resolves ONE candidate entity against THIS course's
 existing ``apollo_kg_entities`` inventory and returns a frozen ``DedupVerdict``,
-writing exactly ONE ``apollo_dedup_decisions`` audit row per resolution. The
+writing exactly ONE ``internal.dedup_decisions`` audit row per resolution. The
 ladder is:
 
     slug-exact  ->  scope_summary embedding cosine  ->  injected LLM-judge
@@ -24,9 +24,9 @@ wiring (3B2d/3B2f) supplies ``embed_text`` and a ``cheap_chat`` adapter.
 
 Out of scope (downstream units — NOT here): scrape/mint/upsert of entities or
 problems (3B2d), solution pairing (3B2e), metering/queue-drain (3B2f), the
-``apollo_ingest_runs.n_dedup_merged`` aggregate and the worker shell (3B2g),
+the content-ingest aggregate metrics,
 quarantine (3B2h). This unit reads the inventory, writes ONE audit row, and
-increments the run's JSON dedup-pressure gauge in the same flow.
+increments the run's typed dedup-pressure metrics in the same flow.
 """
 
 from __future__ import annotations
@@ -162,27 +162,28 @@ async def _record_decision(
         if run is None:
             raise RuntimeError(f"dedup ingest_run {ingest_run_id} not found")
 
-        pressure = dict(run.dedup_pressure or {})
-        pressure["total_candidates"] = int(pressure.get("total_candidates", 0)) + 1
+        run.dedup_total_candidates = int(run.dedup_total_candidates or 0) + 1
         if method == "slug" and verdict == "merged":
-            pressure["exact_merges"] = int(pressure.get("exact_merges", 0)) + 1
+            run.dedup_exact_merges = int(run.dedup_exact_merges or 0) + 1
         if method == "embedding":
-            counter = "embedding_merges" if verdict == "merged" else "embedding_distinct"
-            pressure[counter] = int(pressure.get(counter, 0)) + 1
             if verdict == "merged":
-                per_concept = dict(pressure.get("per_concept", {}))
+                run.dedup_embedding_merges = int(run.dedup_embedding_merges or 0) + 1
+            else:
+                run.dedup_embedding_distinct = int(run.dedup_embedding_distinct or 0) + 1
+            if verdict == "merged":
+                details = dict(run.dedup_details or {})
+                per_concept = dict(details.get("per_concept", {}))
                 concept_key = str(concept_id)
                 per_concept[concept_key] = int(per_concept.get(concept_key, 0)) + 1
-                pressure["per_concept"] = per_concept
+                details["per_concept"] = per_concept
+                run.dedup_details = details
 
-        embedding_merges = int(pressure.get("embedding_merges", 0))
-        embedding_distinct = int(pressure.get("embedding_distinct", 0))
+        embedding_merges = int(run.dedup_embedding_merges or 0)
+        embedding_distinct = int(run.dedup_embedding_distinct or 0)
         embedding_decisions = embedding_merges + embedding_distinct
-        pressure["embedding_merge_ratio"] = (
+        run.dedup_embedding_merge_ratio = (
             embedding_merges / embedding_decisions if embedding_decisions else 0.0
         )
-        pressure.setdefault("per_concept", {})
-        run.dedup_pressure = pressure  # type: ignore[assignment]
     await db.flush()
 
 

@@ -9,7 +9,7 @@ by design — NO LLM, NO DB, NO Neo4j, NO containers, NO migration:
     ``existing_problem_hashes`` are PASSED IN by the caller (populated later by
     3B2a / 3B2d), so the core never touches the database;
   * it owns the gate logic + diagnostic ONLY — it does NOT promote, call
-    ``project_canon``, or write ``apollo_rejected_problems`` (the
+    ``project_canon``, or write retired rejection-audit rows (the
     ``PromotionResult`` -> promote/reject mapping is 3B2g's orchestrator).
 
 Mirrors ``apollo/resolution/`` (standalone, flat re-export ``__init__``) so the
@@ -19,6 +19,10 @@ run_promotion_lint, ...``) rather than owning it.
 
 from __future__ import annotations
 
+from apollo.provisioning.authored_problem import (
+    AuthoredProvisionResult,
+    provision_authored_problem,
+)
 from apollo.provisioning.cost_constants import (
     MAX_ATTEMPTS,
     MODEL_PRICES,
@@ -26,10 +30,6 @@ from apollo.provisioning.cost_constants import (
     cost_usd_for,
 )
 from apollo.provisioning.dedup import DedupVerdict, resolve_candidate
-from apollo.provisioning.authored_problem import (
-    AuthoredProvisionResult,
-    provision_authored_problem,
-)
 from apollo.provisioning.ingest import (
     AuthoredProblem,
     IngestResult,

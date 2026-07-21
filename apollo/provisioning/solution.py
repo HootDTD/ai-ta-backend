@@ -140,7 +140,7 @@ class SolutionDraftError(RuntimeError):
     """Raised when a draft cannot be built without guessing (retrieve empty AND
     the generate response is unparseable / yields an empty or non-``Problem``-valid
     ``reference_solution``). FAIL-CLOSED — the caller (3B2g) marks the run failed
-    and writes ``apollo_ingest_errors(stage='find_or_generate')``; NEVER an
+    and writes a content-ingest error at ``find_or_generate``; NEVER an
     empty-step draft."""
 
 

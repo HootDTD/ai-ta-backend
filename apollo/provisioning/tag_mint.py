@@ -539,7 +539,7 @@ async def tag_and_mint(
     # absent), so it never fuses two nodes of one problem; ``setdefault`` keeps the
     # earliest (lowest-id) entity as the survivor (first-writer-wins), matching the
     # ladder. Content-matched candidates skip ``resolve_candidate`` (hence write no
-    # ``apollo_dedup_decisions`` row — like the within-mint collapse) and surface on
+    # dedup-decision row — like the within-mint collapse) and surface on
     # ``MintPlan.merged_entity_keys``.
     prior_by_signature: dict[tuple[str, str, str], int] = {}
     for _ent in await load_concept_entities(db, concept_id=concept_id):

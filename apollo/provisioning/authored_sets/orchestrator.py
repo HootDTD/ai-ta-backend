@@ -884,7 +884,7 @@ async def _process_authored_candidate(
         # Mint AND promote ride ONE nested SAVEPOINT — mint is TRANSACTIONAL
         # with promotion. Two rollback triggers:
         #   * a fail-closed TagMintError (raised AFTER tag_mint has already
-        #     flushed concept / KGEntity / apollo_dedup_decisions rows for this
+        #     flushed concept / KGEntity / dedup-decision rows for this
         #     candidate);
         #   * a LINT REJECTION from ``promote`` (e.g. the gate-8 duplicate
         #     check) — previously the mint's flushed rows survived the run's

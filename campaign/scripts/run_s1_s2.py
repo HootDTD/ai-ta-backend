@@ -140,7 +140,7 @@ async def build_s1_raw(pg_dsn: str, subject_concepts: dict[str, list[int]]) -> l
 
 
 async def _fetch_page_evidence(pg_dsn: str) -> dict[str, dict[str, str]]:
-    """Page-level OCR evidence per ingest run (``apollo_ingest_page_evidence``,
+    """Page-level OCR evidence per ingest run (``internal.ingest_page_evidence``,
     migration 036 -- landed on staging AFTER the frozen f1/f1c runs; those
     runs had no page-level raw inputs, which is exactly the diagnosis's G4.4
     'S2 unmeasurable' finding). Returns ``{ingest_run_id: {role: ocr_text}}``.
@@ -151,7 +151,7 @@ async def _fetch_page_evidence(pg_dsn: str) -> dict[str, dict[str, str]]:
         try:
             rows = await conn.fetch(
                 "SELECT ingest_run_id, role, page_number, ocr_text"
-                " FROM apollo_ingest_page_evidence"
+                " FROM internal.ingest_page_evidence"
                 " ORDER BY ingest_run_id, role, page_number"
             )
         except asyncpg.UndefinedTableError:
@@ -167,7 +167,7 @@ async def _fetch_page_evidence(pg_dsn: str) -> dict[str, dict[str, str]]:
 
 
 async def _fetch_run_ids_by_document(pg_dsn: str, document_ids: list[int]) -> dict[int, int]:
-    """Real authored-set <-> ingest-run linkage: the latest ``apollo_ingest_runs``
+    """Real authored-set <-> ingest-run linkage: the latest content-ingest
     row per ``problem_document_id``, mirrored from
     ``apollo/provisioning/authored_sets/api.py::_load_ingest_evidence`` (the
     same lookup the GET ``/authored-sets/{set_id}`` surface uses to expose
@@ -186,7 +186,7 @@ async def _fetch_run_ids_by_document(pg_dsn: str, document_ids: list[int]) -> di
         rows = await conn.fetch(
             """
             SELECT DISTINCT ON (document_id) document_id, id
-            FROM apollo_ingest_runs
+            FROM internal.content_ingest_runs
             WHERE document_id = ANY($1::bigint[])
             ORDER BY document_id, id DESC
             """,
@@ -203,7 +203,7 @@ def _document_ids_from_fixtures(fixture_paths: list[Path]) -> list[int]:
     fixture shape, or a set that never resolved a document)."""
     document_ids: list[int] = []
     for path in fixture_paths:
-        document_id = json.loads(path.read_text()).get("problem_document_id")
+        document_id = json.loads(path.read_text(encoding="utf-8")).get("problem_document_id")
         if document_id is not None and int(document_id) not in document_ids:
             document_ids.append(int(document_id))
     return document_ids
@@ -233,7 +233,7 @@ def build_s2_raw(
     run_id_by_document = run_id_by_document or {}
     for final_path in sorted(out_dir.glob("authored_set_final*.json")):
         set_id = "".join(ch for ch in final_path.stem if ch.isdigit()) or final_path.stem
-        resp = json.loads(final_path.read_text())
+        resp = json.loads(final_path.read_text(encoding="utf-8"))
         document_id = resp.get("problem_document_id")
         run_id = run_id_by_document.get(int(document_id)) if document_id is not None else None
         run_evidence = (page_evidence or {}).get(str(run_id), {}) if run_id is not None else {}
@@ -254,7 +254,7 @@ def build_s2_raw(
                     "paired_solution": paired_solution,
                     "ocr_confidence": prob["ocr_confidence"],
                     # No low_confidence_threshold field exists anywhere in the
-                    # authored-sets result_summary or apollo_ingest_runs --
+                    # authored-sets result_summary or content-ingest rows --
                     # recorded as None so check_verify_path_fired skips these
                     # items rather than fabricating a threshold.
                     "low_confidence_threshold": None,
@@ -274,7 +274,7 @@ def dump(result, path: Path) -> None:
             {"item_id": v.item_id, "ok": v.ok, "reason": v.reason} for v in result.verdicts
         ],
     }
-    path.write_text(json.dumps(payload, indent=2))
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 async def run(pg_dsn: str, out_dir: Path, subject_concepts: dict[str, list[int]]) -> None:

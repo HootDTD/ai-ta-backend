@@ -39,7 +39,7 @@ pass to promotion. The gates:
 PURE / DB-free / LLM-free: ``canonical_symbols`` / ``normalization_map`` (gate 4)
 and ``existing_problem_hashes`` (gate 8) are PASSED IN by the caller. This unit
 owns the gate logic + diagnostic ONLY — it does NOT promote, call
-``project_canon``, or write ``rejected_problems`` (that wiring is 3B2g's).
+``project_canon``, or persist rejection-audit rows.
 """
 
 from __future__ import annotations

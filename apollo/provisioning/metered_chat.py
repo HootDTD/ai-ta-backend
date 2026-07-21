@@ -6,10 +6,10 @@ count anywhere in the pipeline. ``MeteredChat`` re-invokes the OpenAI client
 ITSELF (it does NOT import or call ``_llm`` — that would couple every existing
 caller and still discard usage), captures ``response.usage.prompt_tokens`` /
 ``completion_tokens``, accumulates ``llm_calls`` / ``llm_tokens_in`` /
-``llm_tokens_out`` / ``llm_cost_usd`` onto the passed ``apollo_ingest_runs`` row,
+``llm_tokens_out`` / ``llm_cost_usd`` onto the passed content-ingest row,
 and after each call compares the running cumulative (in+out) token total against
 ``PER_DOCUMENT_TOKEN_CEILING``; on breach it raises ``CostBudgetExceeded`` — the
-abort signal the orchestrator (WU-3B2g) turns into an ``apollo_ingest_errors``
+abort signal the orchestrator turns into a content-ingest error
 row + a failed run.
 
 The ingest_run row is MUTATED IN PLACE via SQLAlchemy attribute assignment: the
@@ -79,7 +79,7 @@ def _make_default_client():  # pragma: no cover - exercised only when no client 
 
 class MeteredChat:
     """Wraps the OpenAI client to capture ``response.usage`` and accumulate
-    token/cost onto a passed ``apollo_ingest_runs`` row, raising
+    token/cost onto a passed content-ingest row, raising
     ``CostBudgetExceeded`` at the per-document ceiling."""
 
     def __init__(

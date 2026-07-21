@@ -2,20 +2,20 @@
 
 The authored-set ingestion path (``api._run_set_background`` -> ``index_authored_doc``
 -> ``run_authored_set_provisioning``) historically wrote NOTHING to
-``apollo_ingest_runs`` / ``apollo_ingest_errors`` and persisted no per-page OCR
+``internal.content_ingest_runs`` / ``internal.content_ingest_errors`` and persisted no per-page OCR
 text, so the S2 ingestion audit ran on thin/absent inputs. This module owns the
 observability writes for that path:
 
-  * ``start_ingest_run`` — one ``apollo_ingest_runs`` row per authored-set ingestion,
+  * ``start_ingest_run`` — one content-ingest row per authored-set ingestion,
     opened ``status='running'`` with ``started_at`` set. Metered LLM usage accrues
     on the SAME row (``MeteredChat`` mutates it in place), so the run's
     ``llm_calls`` / token / cost aggregates are populated for free.
-  * ``persist_page_evidence`` — one ``apollo_ingest_page_evidence`` row per source
+  * ``persist_page_evidence`` — one internal page-evidence row per source
     page, carrying the recognized OCR text + self-reported confidence + extraction
     mode + the ``verify_path_fired`` low-confidence flag the S2 contract reads.
   * ``finalize_ingest_run`` — stamp the terminal status + timing + the
     scraped/promoted/rejected counts from the provisioning report.
-  * ``record_ingest_error`` — one ``apollo_ingest_errors`` row per stage failure.
+  * ``record_ingest_error`` — one internal content-ingest error per stage failure.
 
 Every write flushes but does NOT commit — the caller (``_run_set_background``) owns
 the transaction boundary, matching the rest of the authored-set path.
@@ -48,6 +48,18 @@ __all__ = [
 DEFAULT_CONF_THRESHOLD = 0.6
 
 
+def dedup_pressure(ingest_run: IngestRun) -> dict[str, Any]:
+    """Rebuild the established observability envelope from typed DB columns."""
+    return {
+        "total_candidates": int(ingest_run.dedup_total_candidates or 0),
+        "exact_merges": int(ingest_run.dedup_exact_merges or 0),
+        "embedding_merges": int(ingest_run.dedup_embedding_merges or 0),
+        "embedding_distinct": int(ingest_run.dedup_embedding_distinct or 0),
+        "embedding_merge_ratio": float(ingest_run.dedup_embedding_merge_ratio or 0),
+        "per_concept": dict(ingest_run.dedup_details or {}).get("per_concept", {}),
+    }
+
+
 def page_ocr_text(page: Any) -> str:
     """The recognized text for one ingestion page, LaTeX appended to plain text.
 
@@ -66,7 +78,7 @@ async def start_ingest_run(
     document_id: int | None,
     content_hash: str | None = None,
 ) -> IngestRun:
-    """Open an ``apollo_ingest_runs`` row (``status='running'``, ``started_at`` now)
+    """Open a content-ingest row (``status='running'``, ``started_at`` now)
     for one authored-set ingestion and flush so ``run.id`` is assigned.
     ``document_id`` is None for runs with no source document (problem
     generation) — the column is nullable since migration 036."""
@@ -101,7 +113,7 @@ async def persist_page_evidence(
     pages: Sequence[Any],
     conf_threshold: float = DEFAULT_CONF_THRESHOLD,
 ) -> int:
-    """Write one ``apollo_ingest_page_evidence`` row per ingestion page.
+    """Write one page-evidence row per ingestion page.
 
     ``pages`` are ``NormalizedPage``-shaped (``page_number`` / ``plain_text`` /
     ``latex_text`` / ``ocr_confidence`` / ``extraction_mode``). ``verify_path_fired``
@@ -173,7 +185,7 @@ async def finalize_ingest_run(
             "n_pages": ingest_run.n_pages,
             "n_promoted": ingest_run.n_promoted,
             "n_rejected": ingest_run.n_rejected,
-            "dedup_pressure": ingest_run.dedup_pressure,
+            "dedup_pressure": dedup_pressure(ingest_run),
         },
     )
 
@@ -187,7 +199,7 @@ async def record_ingest_error(
     exc: BaseException,
     context: dict[str, Any] | None = None,
 ) -> None:
-    """Write one ``apollo_ingest_errors`` row for a stage failure.
+    """Write one content-ingest error row for a stage failure.
 
     ``error_class`` is the exception's type name; ``context`` carries a bounded,
     PII-free summary (never the raw OCR/LLM bodies). ``ingest_run`` may be None if

@@ -28,12 +28,11 @@ malformed, invalid, or failed enumeration leaves the legacy single path intact.
 
 On a FAIL it returns ``PromoteResult(promoted=False, failed_gate, diagnostic)``
 WITHOUT touching the row. ``promote`` does NOT write the
-``apollo_rejected_problems`` row — the orchestrator is the SINGLE rejection-write
-owner (so the gate->reject mapping lives in one place).
+retired rejection-audit table; the result ledger owns rejection outcomes.
 
 ``promote`` never commits or rolls back the caller's session: the orchestrator
 owns the transaction. A ``CanonProjectionError`` from ``project_canon`` is
-re-raised (the orchestrator maps it to an ``apollo_ingest_errors`` row + a failed
+re-raised (the orchestrator maps it to a content-ingest error + a failed
 run); the already-flushed tier flip is left in place — it is idempotently
 re-projected on the next attempt.
 """
