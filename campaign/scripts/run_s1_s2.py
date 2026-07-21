@@ -100,10 +100,24 @@ async def _fetch_subject_graph(
                 edges.append({"edge_type": "DEPENDS_ON", "from_node_id": fk, "to_node_id": tk})
 
         prob_rows = await conn.fetch(
-            "SELECT problem_code, payload FROM apollo_concept_problems WHERE concept_id=$1", cid
+            "SELECT problem_code, difficulty, problem_text, given_values, target_unknown, "
+            "reference_solution, payload_extra FROM app.problems WHERE concept_id=$1",
+            cid,
         )
         for pr in prob_rows:
-            payload = json.loads(pr["payload"]) if isinstance(pr["payload"], str) else pr["payload"]
+            extra = pr["payload_extra"]
+            payload = json.loads(extra) if isinstance(extra, str) else dict(extra or {})
+            solution = pr["reference_solution"]
+            solution = json.loads(solution) if isinstance(solution, str) else solution
+            payload.update(
+                id=pr["problem_code"],
+                concept_id=str(cid),
+                difficulty=pr["difficulty"],
+                problem_text=pr["problem_text"],
+                given_values=pr["given_values"],
+                target_unknown=pr["target_unknown"],
+                reference_solution=(solution or {}).get("steps", []),
+            )
             problem_texts.append(payload)
 
     return {

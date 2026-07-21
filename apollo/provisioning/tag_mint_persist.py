@@ -7,7 +7,7 @@ an LLM tag (not the hardcoded ``_BERNOULLI_SLUG``) and the data comes from the
 ``ApprovedPair`` (not from disk). The seed script is WRAPPED, not imported — it
 hardcodes bernoulli.
 
-ALL persistence keys on the BIGINT ``apollo_concepts.id`` (resolved from the LLM
+ALL persistence keys on the BIGINT ``app.concepts.id`` (resolved from the LLM
 slug), never the slug (the §6 namespace contract). Idempotent: entity upsert on
 ``(concept_id, canonical_key)``; prereqs ``(from_entity_id, to_entity_id)``
 SELECT-then-skip; concept symbol authoring first-writer-wins UNION.
@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from apollo.persistence.learner_model_seed import EntitySpec
-from apollo.persistence.models import Concept, EntityPrereq, KGEntity, Subject
+from apollo.persistence.models import Concept, EntityPrereq, KGEntity
 
 _LOG = logging.getLogger(__name__)
 
@@ -39,43 +39,38 @@ async def resolve_or_create_concept(
     slug: str,
     display_name: str,
 ) -> int:
-    """Resolve the LLM-tagged concept slug to a BIGINT ``apollo_concepts.id`` for
-    this course, CREATING the concept (under the course's first subject) if
+    """Resolve the LLM-tagged concept slug to a BIGINT ``app.concepts.id`` for
+    this course, creating it with the course's existing subject label if
     absent. Idempotent: re-resolves to the SAME id (the §6 namespace contract —
     key on BIGINT, never slug)."""
     concept_id = (
         await db.execute(
             select(Concept.id)
-            .join(Subject, Subject.id == Concept.subject_id)
-            .where(Subject.search_space_id == search_space_id)
+            .where(Concept.course_id == search_space_id)
             .where(Concept.slug == slug)
         )
     ).scalar_one_or_none()
     if concept_id is not None:
         return concept_id
 
-    subject_id = (
+    subject_label = (
         (
             await db.execute(
-                select(Subject.id)
-                .where(Subject.search_space_id == search_space_id)
-                .order_by(Subject.id.asc())
+                select(Concept.subject_slug, Concept.subject_display_name)
+                .where(Concept.course_id == search_space_id)
+                .order_by(Concept.id.asc())
             )
         )
-        .scalars()
         .first()
     )
-    if subject_id is None:
-        subject = Subject(
-            slug=f"auto-{search_space_id}",
-            display_name="Auto-provisioned",
-            search_space_id=search_space_id,
-        )
-        db.add(subject)
-        await db.flush()
-        subject_id = int(subject.id)
-
-    concept = Concept(subject_id=subject_id, slug=slug, display_name=display_name)
+    subject_slug, subject_display_name = subject_label or ("general", "General")
+    concept = Concept(
+        course_id=search_space_id,
+        subject_slug=subject_slug,
+        subject_display_name=subject_display_name,
+        slug=slug,
+        display_name=display_name,
+    )
     db.add(concept)
     await db.flush()
     return int(concept.id)

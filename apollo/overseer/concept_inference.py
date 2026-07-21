@@ -1,7 +1,7 @@
 """Overseer.concept_inference: Hoot transcript -> concept_id.
 
 Isolated LLM call. The LLM is given the transcript and the course's candidate
-concepts (``{concept_id, display_name}``, drawn from ``apollo_concepts`` rows
+concepts (``{concept_id, display_name}``, drawn from ``app.concepts`` rows
 scoped to the course). It must return exactly one matching ``concept_id`` (int)
 from the provided set, or null. Apollo NEVER sees this call's output directly —
 only the Overseer uses it to select a problem.

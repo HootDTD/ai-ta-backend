@@ -13,7 +13,8 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import ConceptProblem
+from apollo.persistence.models import Concept
+from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.metered_chat import CostBudgetExceeded
 from apollo.provisioning.pairing_gate import rejection_from_verdict, validate_pair
 from apollo.provisioning.problem_hash import problem_dup_hash
@@ -43,33 +44,37 @@ async def _no_retrieve(_question) -> tuple[GroundingSpan, ...]:
 
 
 async def _find_tier1_row_id(
-    db: AsyncSession, *, concept_id: int, problem_code: str
+    db: AsyncSession, *, concept_id: int, problem_code: str, search_space_id: int
 ) -> int | None:
     return (
         await db.execute(
-            select(ConceptProblem.id)
-            .where(ConceptProblem.concept_id == concept_id)
-            .where(ConceptProblem.problem_code == problem_code)
+            select(ProblemRecord.id)
+            .where(ProblemRecord.course_id == search_space_id)
+            .where(ProblemRecord.concept_id == concept_id)
+            .where(ProblemRecord.problem_code == problem_code)
         )
     ).scalar_one_or_none()
 
 
-async def _concept_dup_hashes(db: AsyncSession, *, concept_id: int) -> set[str]:
+async def _concept_dup_hashes(
+    db: AsyncSession, *, concept_id: int, search_space_id: int
+) -> set[str]:
     rows = (
         (
             await db.execute(
-                select(ConceptProblem.payload)
-                .where(ConceptProblem.concept_id == concept_id)
-                .where(ConceptProblem.tier == 2)
+                select(ProblemRecord, Concept.slug)
+                .join(Concept, Concept.id == ProblemRecord.concept_id)
+                .where(ProblemRecord.course_id == search_space_id)
+                .where(ProblemRecord.concept_id == concept_id)
+                .where(ProblemRecord.tier == 2)
             )
         )
-        .scalars()
         .all()
     )
     hashes: set[str] = set()
-    for payload in rows:
+    for row, concept_slug in rows:
         try:
-            problem = Problem.model_validate(payload)
+            problem = Problem.model_validate(row.to_pydantic_payload(concept_slug=concept_slug))
         except (ValidationError, ValueError):
             continue
         hashes.add(problem_dup_hash(problem))
@@ -112,12 +117,17 @@ async def provision_authored_problem(
         return AuthoredProvisionResult(outcome="rejected", stage="tag_mint", diagnostic=str(exc))
 
     concept_problem_id = await _find_tier1_row_id(
-        db, concept_id=ingest_concept_id, problem_code=authored.problem_code
+        db,
+        concept_id=ingest_concept_id,
+        problem_code=authored.problem_code,
+        search_space_id=search_space_id,
     )
     if concept_problem_id is None:
         raise RuntimeError(f"authored problem {authored.problem_code!r} has no Tier-1 row")
 
-    existing_problem_hashes = await _concept_dup_hashes(db, concept_id=mint_plan.concept_id)
+    existing_problem_hashes = await _concept_dup_hashes(
+        db, concept_id=mint_plan.concept_id, search_space_id=search_space_id
+    )
     result: PromoteResult = await promote(
         db,
         neo,

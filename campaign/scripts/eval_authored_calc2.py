@@ -195,19 +195,33 @@ async def _dump_generated(
         rows = (
             await conn.execute(
                 text(
-                    "SELECT cp.id, cp.tier, cp.payload, cp.provenance, cp.solution_source, "
+                    "SELECT cp.id, cp.tier, cp.problem_code, cp.difficulty, cp.problem_text, "
+                    "cp.given_values, cp.target_unknown, cp.reference_solution, cp.payload_extra, "
+                    "cp.provenance, cp.solution_source, "
                     "c.slug AS concept_slug, c.id AS concept_db_id "
-                    "FROM apollo_concept_problems cp "
-                    "JOIN apollo_concepts c ON cp.concept_id = c.id "
-                    "JOIN apollo_subjects s ON c.subject_id = s.id "
-                    "WHERE s.search_space_id = :ss"
+                    "FROM app.problems cp "
+                    "JOIN app.concepts c ON cp.concept_id = c.id "
+                    "WHERE c.course_id = :ss AND cp.course_id = :ss"
                 ),
                 {"ss": search_space_id},
             )
         ).mappings()
         out = []
         for r in rows:
-            payload = r["payload"] if isinstance(r["payload"], dict) else json.loads(r["payload"])
+            extra = r["payload_extra"]
+            payload = extra if isinstance(extra, dict) else json.loads(extra)
+            solution = r["reference_solution"]
+            solution = solution if isinstance(solution, dict) else json.loads(solution)
+            payload = {
+                **payload,
+                "id": r["problem_code"],
+                "concept_id": r["concept_slug"],
+                "difficulty": r["difficulty"],
+                "problem_text": r["problem_text"],
+                "given_values": r["given_values"],
+                "target_unknown": r["target_unknown"],
+                "reference_solution": solution.get("steps", []),
+            }
             prov = (
                 r["provenance"]
                 if isinstance(r["provenance"], dict | type(None))

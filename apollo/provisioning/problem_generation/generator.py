@@ -15,7 +15,8 @@ from typing import Any
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 
-from apollo.persistence.models import ConceptProblem
+from apollo.persistence.models import Concept
+from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.authored_sets.verification import _empty_retrieve
 from apollo.provisioning.metered_chat import CostBudgetExceeded, _resolve_model
 from apollo.provisioning.problem_generation.operators import (
@@ -114,8 +115,8 @@ def _parse_candidate(raw: str) -> GeneratedCandidate | None:
 
 
 def _assignments(
-    seeds: Sequence[tuple[ConceptProblem, Problem]], count: int
-) -> list[tuple[ConceptProblem, Problem, VariationOperator]]:
+    seeds: Sequence[tuple[ProblemRecord, Problem]], count: int
+) -> list[tuple[ProblemRecord, Problem, VariationOperator]]:
     applicable = [
         (row, payload, operator)
         for row, payload in seeds
@@ -173,26 +174,31 @@ async def generate_problem_variants(
     rows = (
         (
             await db.execute(
-                select(ConceptProblem).where(
-                    ConceptProblem.id.in_(requested_ids),
-                    ConceptProblem.concept_id == concept_id,
-                    ConceptProblem.tier == 2,
-                    ConceptProblem.quarantined_at.is_(None),
+                select(ProblemRecord, Concept.slug)
+                .join(Concept, Concept.id == ProblemRecord.concept_id)
+                .where(
+                    ProblemRecord.id.in_(requested_ids),
+                    ProblemRecord.course_id == search_space_id,
+                    ProblemRecord.concept_id == concept_id,
+                    ProblemRecord.tier == 2,
+                    ProblemRecord.quarantined_at.is_(None),
                 )
             )
         )
-        .scalars()
         .all()
     )
-    rows_by_id = {int(row.id): row for row in rows}
-    valid_seeds: list[tuple[ConceptProblem, Problem]] = []
+    rows_by_id = {int(row.id): (row, slug) for row, slug in rows}
+    valid_seeds: list[tuple[ProblemRecord, Problem]] = []
     for seed_id in seed_problem_ids:
-        row = rows_by_id.get(int(seed_id))
-        if row is None:
+        row_with_slug = rows_by_id.get(int(seed_id))
+        if row_with_slug is None:
             _drop(dropped, records, "invalid_seed", seed_id=int(seed_id), operator=None)
             continue
+        row, concept_slug = row_with_slug
         try:
-            valid_seeds.append((row, Problem.model_validate(row.payload)))
+            valid_seeds.append(
+                (row, Problem.model_validate(row.to_pydantic_payload(concept_slug=concept_slug)))
+            )
         except ValidationError as exc:
             _LOG.warning(
                 "apollo_problem_generation_invalid_seed_skipped",
@@ -211,9 +217,10 @@ async def generate_problem_variants(
     existing_payloads = (
         (
             await db.execute(
-                select(ConceptProblem.payload).where(
-                    ConceptProblem.concept_id == concept_id,
-                    ConceptProblem.quarantined_at.is_(None),
+                select(ProblemRecord.problem_text).where(
+                    ProblemRecord.course_id == search_space_id,
+                    ProblemRecord.concept_id == concept_id,
+                    ProblemRecord.quarantined_at.is_(None),
                 )
             )
         )
@@ -221,13 +228,13 @@ async def generate_problem_variants(
         .all()
     )
     seen_hashes = {
-        _normalized_hash(str(payload.get("problem_text", "")))
-        for payload in existing_payloads
-        if isinstance(payload, dict) and payload.get("problem_text")
+        _normalized_hash(str(problem_text))
+        for problem_text in existing_payloads
+        if problem_text
     }
     seen_hashes.update(_normalized_hash(seed.problem_text) for _, seed in valid_seeds)
 
-    pending: list[tuple[ConceptProblem, GenerationRecord]] = []
+    pending: list[tuple[ProblemRecord, GenerationRecord]] = []
     model = _resolve_model("MAIN_MODEL", _MAIN_MODEL_DEFAULT)
     for seed_row, seed, operator in _assignments(valid_seeds, requested):
         try:
@@ -366,11 +373,8 @@ async def generate_problem_variants(
                 if key in draft.provenance:
                     provenance[key] = draft.provenance[key]
 
-            row = ConceptProblem(
-                concept_id=concept_id,
-                problem_code=problem_code,
-                difficulty=candidate.difficulty,
-                payload={
+            row = ProblemRecord.from_inventory_payload(
+                {
                     "id": problem_code,
                     "concept_id": seed.concept_id,
                     "difficulty": candidate.difficulty,
@@ -378,10 +382,11 @@ async def generate_problem_variants(
                     "given_values": candidate.given_values,
                     "target_unknown": candidate.target_unknown,
                 },
+                course_id=search_space_id,
+                concept_id=concept_id,
                 tier=1,
                 solution_source="generated",
                 provenance=provenance,
-                search_space_id=search_space_id,
             )
             db.add(row)
             record = GenerationRecord(

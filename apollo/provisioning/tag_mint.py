@@ -6,7 +6,7 @@ order), ``tag_and_mint``:
 
   1. LLM-drafts the concept tag (slug + display name) + prereq edges via the
      injected ``chat_fn`` (cheap_chat-shaped, MOCKED in Tier-1);
-  2. resolves the slug to a BIGINT ``apollo_concepts.id`` (creating it if absent);
+  2. resolves the slug to a BIGINT ``app.concepts.id`` (creating it if absent);
   3. AUTHORS the concept's ``canonical_symbols``/``normalization_map`` from the
      approved problem's symbol set (first-writer-wins UNION — NOT derived from a
      promoted problem, which is circular because gate 4 runs BEFORE promotion);

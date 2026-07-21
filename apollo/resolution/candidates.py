@@ -50,7 +50,7 @@ METHOD_CONFIDENCE_CAP: dict[str, float] = {
 # G4 (variable_mapping contract): ``variable_mapping`` MUST be here — it is a
 # real ontology ``NodeType`` (nodes.py), the schema ``EntryType`` accepts it, and
 # the mint map ``persistence.learner_model_seed._ENTRY_TYPE_TO_KIND_PREFIX``
-# emits it (``varmap.*`` steps). A WU-AAS-authored ``ConceptProblem.payload``
+# emits it (``varmap.*`` steps). A WU-AAS-authored problem document
 # whose ``reference_solution`` carries a ``variable_mapping`` step therefore
 # reaches the graph-sim chain, and its ABSENCE from THIS map is what raised
 # ``KeyError: 'variable_mapping'`` in ``candidates_from_reference_solution`` /

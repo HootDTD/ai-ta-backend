@@ -9,7 +9,7 @@ ladder is:
 
 The candidate POOL is scoped in SQL BEFORE any cosine is ever computed (§1.4 +
 PR2 — the 2026-06-30 false-merge fix) — never a global similarity search filtered
-afterward. ``_in_course_entities`` applies, first: ``Subject.search_space_id``
+afterward. ``_in_course_entities`` applies, first: ``Concept.course_id``
 (two COURSES never merge, even on a byte-identical ``scope_summary``), AND
 ``KGEntity.concept_id == :concept_id`` (two CONCEPTS of one course never merge —
 no foreign-set binding / cross-concept fusion); plus ``exclude_entity_ids`` drops
@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import Concept, DedupDecision, IngestRun, KGEntity, Subject
+from apollo.persistence.models import Concept, DedupDecision, IngestRun, KGEntity
 from apollo.provisioning.dedup_constants import (
     EMBED_JUDGE_BAND,
     EMBED_MERGE_THRESHOLD,
@@ -100,7 +100,7 @@ async def _in_course_entities(
     ``KGEntity.id`` (earliest writer first — the deterministic first-writer-wins
     order). Scoping (PR2 — the 2026-06-30 dedup false-merge fix):
 
-    * ``Subject.search_space_id`` keeps two COURSES apart (the ``test_cross_course_*``
+    * ``Concept.course_id`` keeps two courses apart (the ``test_cross_course_*``
       property); it runs in SQL BEFORE any cosine.
     * ``KGEntity.concept_id == concept_id`` keeps two CONCEPTS of one course apart,
       so a candidate never slug-/cosine-merges into a sibling or earlier-set
@@ -116,8 +116,7 @@ async def _in_course_entities(
     stmt = (
         select(KGEntity)
         .join(Concept, Concept.id == KGEntity.concept_id)
-        .join(Subject, Subject.id == Concept.subject_id)
-        .where(Subject.search_space_id == search_space_id)
+        .where(Concept.course_id == search_space_id)
         .where(KGEntity.concept_id == concept_id)
         .order_by(KGEntity.id.asc())
     )

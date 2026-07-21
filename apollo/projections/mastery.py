@@ -19,7 +19,7 @@ both active for the same attempt.
 Granularity: the plan text says "one mastery_event per concept"; the schema's
 ``apollo_mastery_events``/``apollo_learner_state`` are keyed by
 ``entity_id`` (a ``apollo_kg_entities`` row), one level BELOW the top-level
-``apollo_concepts`` scope the artifact records (``GradingArtifact.concept_id``).
+``app.concepts`` scope the artifact records (``GradingArtifact.concept_id``).
 Reusing the columns as-is (no new migration), this projection writes one
 event/state row per DISTINCT resolvable entity referenced in the artifact's
 ``node_ledger`` (``credited``/``misconception`` rows only — ``unresolved`` rows

@@ -233,9 +233,64 @@ class Problem(Base):
             **typed_columns,
         )
 
+    @classmethod
+    def from_inventory_payload(
+        cls,
+        payload: dict,
+        *,
+        course_id: int,
+        concept_id: int,
+        **typed_columns,
+    ) -> Problem:
+        """Split a tier-1 draft, which intentionally has no solution steps yet."""
+        known = {
+            "id",
+            "concept_id",
+            "difficulty",
+            "problem_text",
+            "given_values",
+            "target_unknown",
+            "reference_solution",
+        }
+        reference_solution = payload.get("reference_solution") or []
+        if isinstance(reference_solution, dict):
+            document = dict(reference_solution)
+        else:
+            document = {"version": 1, "steps": list(reference_solution)}
+        return cls(
+            course_id=course_id,
+            concept_id=concept_id,
+            problem_code=str(payload["id"]),
+            difficulty=str(payload["difficulty"]),
+            problem_text=str(payload["problem_text"]),
+            given_values=dict(payload.get("given_values") or {}),
+            target_unknown=str(payload.get("target_unknown") or ""),
+            reference_solution=document,
+            payload_extra={key: value for key, value in payload.items() if key not in known},
+            **typed_columns,
+        )
+
     def apply_pydantic_payload(self, payload: dict) -> None:
         """Validate and replace the public/payload portion of an existing row."""
         replacement = type(self).from_pydantic_payload(
+            payload,
+            course_id=int(self.course_id),
+            concept_id=int(self.concept_id),
+        )
+        for field in (
+            "problem_code",
+            "difficulty",
+            "problem_text",
+            "given_values",
+            "target_unknown",
+            "reference_solution",
+            "payload_extra",
+        ):
+            setattr(self, field, getattr(replacement, field))
+
+    def apply_inventory_payload(self, payload: dict) -> None:
+        """Replace draft fields without requiring a solution before promotion."""
+        replacement = type(self).from_inventory_payload(
             payload,
             course_id=int(self.course_id),
             concept_id=int(self.concept_id),

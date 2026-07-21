@@ -1,4 +1,4 @@
-"""WU-3B2d stage 1 — LLM scrape → Tier-1 ``apollo_concept_problems`` inventory.
+"""WU-3B2d stage 1 — LLM scrape → Tier-1 ``app.problems`` inventory.
 
 ``scrape_questions`` runs ONE injected ``chat_fn`` pass over a document's already-
 embedded ``DocumentChunk`` rows and parses each chunk's JSON into typed
@@ -41,7 +41,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import Concept, ConceptProblem, Subject
+from apollo.persistence.models import Concept, Problem
 from apollo.provisioning.cost_constants import APOLLO_SCRAPE_SECTION_CHAR_CAP
 from apollo.provisioning.section_grouping import Section, group_into_sections, section_content_hash
 from apollo.provisioning.section_triage import triage_sections
@@ -483,34 +483,25 @@ async def resolve_or_create_provisional_concept(
     NOT-NULL ``concept_id`` is satisfied at scrape time; the concept is never
     teachable (its rows are tier=1) and carries empty canonical_symbols.
 
-    Course-scoped via ``Subject.search_space_id``; resolves the (first) subject of
-    the course and reuses or creates a ``provisional.inventory`` concept under it.
+    Course-scoped directly on concepts and reuses the first subject label, or
+    defaults to ``general`` / ``General`` when the course has no concepts.
     Idempotent: re-calling returns the SAME concept id."""
-    subject_id = (
+    subject_label = (
         (
             await db.execute(
-                select(Subject.id)
-                .where(Subject.search_space_id == search_space_id)
-                .order_by(Subject.id.asc())
+                select(Concept.subject_slug, Concept.subject_display_name)
+                .where(Concept.course_id == search_space_id)
+                .order_by(Concept.id.asc())
             )
         )
-        .scalars()
         .first()
     )
-    if subject_id is None:
-        subject = Subject(
-            slug=f"provisional-{search_space_id}",
-            display_name="Provisional inventory",
-            search_space_id=search_space_id,
-        )
-        db.add(subject)
-        await db.flush()
-        subject_id = int(subject.id)
+    subject_slug, subject_display_name = subject_label or ("general", "General")
 
     concept_id = (
         await db.execute(
             select(Concept.id)
-            .where(Concept.subject_id == subject_id)
+            .where(Concept.course_id == search_space_id)
             .where(Concept.slug == PROVISIONAL_CONCEPT_SLUG)
         )
     ).scalar_one_or_none()
@@ -518,7 +509,9 @@ async def resolve_or_create_provisional_concept(
         return concept_id
 
     concept = Concept(
-        subject_id=subject_id,
+        course_id=search_space_id,
+        subject_slug=subject_slug,
+        subject_display_name=subject_display_name,
         slug=PROVISIONAL_CONCEPT_SLUG,
         display_name="Provisional inventory",
     )
@@ -576,20 +569,20 @@ async def write_tier1_problems(
         problem_code = _problem_code_for(candidate)
         existing = (
             await db.execute(
-                select(ConceptProblem.id)
-                .where(ConceptProblem.concept_id == concept_id)
-                .where(ConceptProblem.problem_code == problem_code)
+                select(Problem.id)
+                .where(Problem.course_id == search_space_id)
+                .where(Problem.concept_id == concept_id)
+                .where(Problem.problem_code == problem_code)
             )
         ).scalar_one_or_none()
         if existing is not None:
             continue
 
         db.add(
-            ConceptProblem(
+            Problem.from_inventory_payload(
+                _tier1_payload(candidate),
+                course_id=search_space_id,
                 concept_id=concept_id,
-                problem_code=problem_code,
-                difficulty=candidate.difficulty,
-                payload=_tier1_payload(candidate),
                 tier=1,  # EXPLICIT: never inherit the teachable default (2)
                 solution_source=None,
                 provenance={
@@ -597,7 +590,6 @@ async def write_tier1_problems(
                     "page": candidate.page,
                     "chunk_content_hash": candidate.chunk_content_hash,
                 },
-                search_space_id=search_space_id,
             )
         )
         inserted += 1

@@ -33,7 +33,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serial
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import Concept, ConceptProblem
+from apollo.persistence.models import Concept
+from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.authored_sets.graph_derivation import (
     DerivationError,
     derive_reference_graph,
@@ -410,33 +411,41 @@ def _solution_chunks_from_problem(
 
 
 async def _find_tier1_row(
-    db: AsyncSession, *, concept_id: int, chunk_content_hash: str
-) -> ConceptProblem | None:
+    db: AsyncSession, *, concept_id: int, course_id: int, chunk_content_hash: str
+) -> ProblemRecord | None:
     return (
         await db.execute(
-            select(ConceptProblem)
-            .where(ConceptProblem.concept_id == concept_id)
-            .where(ConceptProblem.problem_code == f"scrape.{chunk_content_hash}")
+            select(ProblemRecord)
+            .where(ProblemRecord.course_id == course_id)
+            .where(ProblemRecord.concept_id == concept_id)
+            .where(ProblemRecord.problem_code == f"scrape.{chunk_content_hash}")
         )
     ).scalar_one_or_none()
 
 
-async def _authored_concept_dup_hashes(db: AsyncSession, *, concept_id: int) -> set[str]:
+async def _authored_concept_dup_hashes(
+    db: AsyncSession, *, concept_id: int, course_id: int
+) -> set[str]:
     rows = (
         (
             await db.execute(
-                select(ConceptProblem.payload)
-                .where(ConceptProblem.concept_id == concept_id)
-                .where(ConceptProblem.tier == 2)
+                select(ProblemRecord, Concept.slug)
+                .join(Concept, Concept.id == ProblemRecord.concept_id)
+                .where(ProblemRecord.course_id == course_id)
+                .where(ProblemRecord.concept_id == concept_id)
+                .where(ProblemRecord.tier == 2)
             )
         )
-        .scalars()
         .all()
     )
     hashes: set[str] = set()
-    for payload in rows:
+    for row, concept_slug in rows:
         try:
-            hashes.add(problem_dup_hash(Problem.model_validate(payload)))
+            hashes.add(
+                problem_dup_hash(
+                    Problem.model_validate(row.to_pydantic_payload(concept_slug=concept_slug))
+                )
+            )
         except (ValidationError, ValueError):
             continue
     return hashes
@@ -675,7 +684,10 @@ async def _process_authored_candidate(
             # NEVER force-matched: hold for teacher review with the match
             # evidence; no draft, no mint, no KG mutation.
             tier1 = await _find_tier1_row(
-                db, concept_id=concept_id, chunk_content_hash=candidate.chunk_content_hash
+                db,
+                concept_id=concept_id,
+                course_id=search_space_id,
+                chunk_content_hash=candidate.chunk_content_hash,
             )
             if tier1 is not None:
                 tier1.provenance = {  # type: ignore[assignment]
@@ -805,15 +817,20 @@ async def _process_authored_candidate(
         verdict and verdict.review_required
     )
     tier1 = await _find_tier1_row(
-        db, concept_id=concept_id, chunk_content_hash=candidate.chunk_content_hash
+        db,
+        concept_id=concept_id,
+        course_id=search_space_id,
+        chunk_content_hash=candidate.chunk_content_hash,
     )
     if review_required:
         reason = verdict.reason if verdict is not None else "generated_no_match"
         if tier1 is not None:
             if draft.augmented_problem_text:
-                tier1.payload = _augmented_hold_payload(  # type: ignore[assignment]
-                    tier1.payload, draft
+                augmented = _augmented_hold_payload(
+                    tier1.to_pydantic_payload(concept_slug=candidate.concept_slug), draft
                 )
+                if augmented is not None:
+                    tier1.apply_inventory_payload(augmented)
             tier1.provenance = {  # type: ignore[assignment]
                 **(tier1.provenance or {}),
                 "authored_review": {
@@ -867,7 +884,7 @@ async def _process_authored_candidate(
         #   * a LINT REJECTION from ``promote`` (e.g. the gate-8 duplicate
         #     check) — previously the mint's flushed rows survived the run's
         #     end-of-run commit as orphaned KG rows (unreachable by any
-        #     promoted ConceptProblem, yet live dedup targets for the NEXT
+        #     promoted problem, yet live dedup targets for the NEXT
         #     candidate; verified as a 17->33 entity doubling). ``MintRejected``
         #     unwinds the savepoint, then the except arm reports the rejection.
         # A ``CanonProjectionError`` from ``promote`` still propagates as a
@@ -885,7 +902,7 @@ async def _process_authored_candidate(
                 **mint_kwargs,
             )
             existing_problem_hashes = await _authored_concept_dup_hashes(
-                db, concept_id=mint_plan.concept_id
+                db, concept_id=mint_plan.concept_id, course_id=search_space_id
             )
             result: PromoteResult = await promote(
                 db,

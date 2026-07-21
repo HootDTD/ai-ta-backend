@@ -1,7 +1,7 @@
 """Seeder: Apollo learner-model Layer-1 rows for one subject's concept(s).
 
 Layers on TOP of ``scripts/seed_apollo_concept_registry.py`` (which must have run
-first to create the ``apollo_concepts`` / ``apollo_concept_problems`` rows this
+first to create the ``app.concepts`` / ``app.problems`` rows this
 reads). Converts the hand-authored concept source files into migration-026
 Layer-1 rows and annotates each concept's problems' reference solutions:
 
@@ -13,7 +13,7 @@ Layer-1 rows and annotates each concept's problems' reference solutions:
   * ``apollo_entity_prereqs`` — one edge per concept_dag edge.
   * misconception opposes-link — resolved to ``payload.opposes_entity_id`` in a
                                second pass once every entity row exists (D3).
-  * ``apollo_concept_problems.payload`` — each reference-solution step gains an
+  * ``app.problems.reference_solution`` — each step gains an
                                ``entity_key``; each problem gains
                                ``declared_paths`` + ``layer1_seeded`` (D2/D6), so
                                the §6.1 validation contract passes (the WU-4A
@@ -31,7 +31,7 @@ and no ``--concept-slug`` the bernoulli behavior is unchanged — bernoulli's
 authored ``def.pressure_velocity_tradeoff`` (not a reference node) is still minted
 from ``_AUTHORED_DEFINITIONS`` so its existing opposes-link resolves.
 
-Course-scoped (resolves the subject via ``apollo_subjects.search_space_id``, D7)
+Course-scoped directly through ``app.concepts.course_id`` (D7)
 and idempotent (entity upsert keyed on ``(concept_id, canonical_key)``; prereqs
 ``ON CONFLICT DO NOTHING``; re-annotation is a no-op). NO LLM, NO embeddings, NO
 new DDL.
@@ -73,10 +73,11 @@ from apollo.persistence.learner_model_seed import (  # noqa: E402
 )
 from apollo.persistence.models import (  # noqa: E402
     Concept,
-    ConceptProblem,
     EntityPrereq,
     KGEntity,
-    Subject,
+)
+from apollo.persistence.models import (
+    Problem as ProblemRecord,
 )
 from database.models import Course  # noqa: E402
 
@@ -205,8 +206,8 @@ async def _resolve_concepts(
 ) -> list[_ConceptTarget]:
     """Resolve the target concept(s) for one course generically (D7).
 
-    Resolution: ``Subject.search_space_id == <course>`` AND ``Subject.slug ==
-    subject_slug`` -> its ``Concept`` rows. When ``concept_slug`` is given, narrow
+    Resolution: ``Concept.course_id == <course>`` and ``subject_slug`` -> its
+    concept rows. When ``concept_slug`` is given, narrow
     to that one concept; otherwise return every concept the subject teaches
     (slug-sorted for stable iteration). Raises ``SeedError`` if the subject or a
     requested concept row is missing (the registry seeder must run first).
@@ -218,20 +219,10 @@ async def _resolve_concepts(
     """
     space_id = await _resolve_search_space_id(session, search_space_id)
 
-    subject_id = (
-        await session.execute(
-            select(Subject.id)
-            .where(Subject.search_space_id == space_id)
-            .where(Subject.slug == subject_slug)
-        )
-    ).scalar_one_or_none()
-    if subject_id is None:
-        raise SeedError(
-            f"no '{subject_slug}' subject for search_space_id={space_id}; "
-            "run scripts.seed_apollo_concept_registry first"
-        )
-
-    stmt = select(Concept.id, Concept.slug).where(Concept.subject_id == subject_id)
+    stmt = select(Concept.id, Concept.slug).where(
+        Concept.course_id == space_id,
+        Concept.subject_slug == subject_slug,
+    )
     if concept_slug is not None:
         stmt = stmt.where(Concept.slug == concept_slug)
     rows = (await session.execute(stmt.order_by(Concept.slug))).all()
@@ -362,7 +353,7 @@ async def _annotate_problems(
     rows = (
         (
             await session.execute(
-                select(ConceptProblem).where(ConceptProblem.concept_id == target.concept_id)
+                select(ProblemRecord).where(ProblemRecord.concept_id == target.concept_id)
             )
         )
         .scalars()
@@ -372,14 +363,14 @@ async def _annotate_problems(
     annotated_count = 0
     disk_by_code = _disk_problem_paths(target.source_dir)
     for row in rows:
-        payload = dict(row.payload or {})
+        payload = row.to_pydantic_payload(concept_slug=target.slug)
         mapping = node_key_by_problem.get(str(payload.get("id")))
         if mapping is None:
             # A problem whose reference nodes we have no mapping for is unexpected
             # for a Layer-1 fixture set; skip rather than mislink.
             continue
         annotated = annotate_reference_solution(payload, lambda nid: mapping[nid])  # noqa: B023
-        row.payload = annotated  # type: ignore[assignment]
+        row.apply_pydantic_payload(annotated)
         annotated_count += 1
 
         if write_disk:
@@ -405,8 +396,8 @@ def _disk_problem_paths(source_dir: Path) -> dict[str, Path]:
     return out
 
 
-def _load_problems_from_db_rows(rows) -> list[dict]:
-    return [dict(r.payload) for r in rows]
+def _load_problems_from_db_rows(rows, *, concept_slug: str) -> list[dict]:
+    return [r.to_pydantic_payload(concept_slug=concept_slug) for r in rows]
 
 
 async def _seed_concept(
@@ -429,13 +420,13 @@ async def _seed_concept(
     problem_rows = (
         (
             await session.execute(
-                select(ConceptProblem).where(ConceptProblem.concept_id == target.concept_id)
+                select(ProblemRecord).where(ProblemRecord.concept_id == target.concept_id)
             )
         )
         .scalars()
         .all()
     )
-    problems = _load_problems_from_db_rows(problem_rows)
+    problems = _load_problems_from_db_rows(problem_rows, concept_slug=target.slug)
 
     specs = _collect_entity_specs(target.slug, target.source_dir, problems)
     key_to_id: dict[str, int] = {}

@@ -34,7 +34,6 @@ from apollo.errors import KGUnavailableError
 from apollo.persistence.models import (
     AuthoredSet,
     Concept,
-    ConceptProblem,
     DedupDecision,
     EntityPrereq,
     IngestPageEvidence,
@@ -43,6 +42,9 @@ from apollo.persistence.models import (
     LearnerState,
     MasteryEvent,
     TutoringSession,
+)
+from apollo.persistence.models import (
+    Problem as ProblemRecord,
 )
 from apollo.provisioning.authored_problem import provision_authored_problem
 from apollo.provisioning.authored_sets.indexing import index_authored_doc
@@ -287,14 +289,13 @@ async def _run_manual_set_background(
             concept = await db.get(Concept, concept_id)
             if concept is None:
                 raise RuntimeError("manual authored set has no provisional concept")
-            subject_id = int(concept.subject_id)
             await db.commit()
 
             problems = [AuthoredProblem.model_validate(problem) for problem in authored]
             await ingest_authored_problems(
                 db,
                 [problem.model_dump() for problem in problems],
-                subject_id=subject_id,
+                subject_id=int(concept_id),
                 concept_id=concept_id,
                 search_space_id=search_space_id,
             )
@@ -305,9 +306,10 @@ async def _run_manual_set_background(
             for problem in problems:
                 concept_problem_id = (
                     await db.execute(
-                        select(ConceptProblem.id)
-                        .where(ConceptProblem.concept_id == concept_id)
-                        .where(ConceptProblem.problem_code == problem.problem_code)
+                        select(ProblemRecord.id)
+                        .where(ProblemRecord.course_id == search_space_id)
+                        .where(ProblemRecord.concept_id == concept_id)
+                        .where(ProblemRecord.problem_code == problem.problem_code)
                         .limit(1)
                     )
                 ).scalar_one_or_none()
@@ -858,12 +860,12 @@ async def _enrich_problem_reviews(
         for p in problems
         if isinstance(p, dict) and p.get("concept_problem_id") is not None
     ]
-    rows: dict[int, ConceptProblem] = {}
+    rows: dict[int, ProblemRecord] = {}
     if ids:
         rows = {
             int(r.id): r
             for r in (
-                await db.execute(select(ConceptProblem).where(ConceptProblem.id.in_(ids)))
+                await db.execute(select(ProblemRecord).where(ProblemRecord.id.in_(ids)))
             ).scalars()
         }
     enriched: list = []
@@ -876,8 +878,8 @@ async def _enrich_problem_reviews(
         cp_id = problem.get("concept_problem_id")
         row = rows.get(int(cp_id)) if cp_id is not None else None
         if row is not None:
-            payload = dict(row.payload or {})
-            text = str(payload.get("problem_text") or "")
+            payload = row.to_pydantic_payload(concept_slug="provisional.inventory")
+            text = str(row.problem_text or "")
             displayed_text, truncated = _bounded_problem_text(text, full_text=full_text)
             entry = {
                 **entry,
@@ -980,7 +982,7 @@ def _page_dict(ev: IngestPageEvidence, *, full_ocr: bool) -> dict:
     }
 
 
-def _problem_for_dup_hash(row: ConceptProblem, payload: dict) -> Problem:
+def _problem_for_dup_hash(row: ProblemRecord, payload: dict) -> Problem:
     """Build the exact gate-8 hash input, including for pre-promotion Tier-1 rows."""
     try:
         return Problem.model_validate(payload)
@@ -1013,25 +1015,28 @@ def _problem_for_dup_hash(row: ConceptProblem, payload: dict) -> Problem:
 async def _edit_collision_exists(
     db: AsyncSession,
     *,
-    row: ConceptProblem,
+    row: ProblemRecord,
     updated_payload: dict,
 ) -> bool:
     updated_hash = problem_dup_hash(_problem_for_dup_hash(row, updated_payload))
     other_payloads = (
         (
             await db.execute(
-                select(ConceptProblem.payload)
-                .where(ConceptProblem.concept_id == int(row.concept_id))
-                .where(ConceptProblem.tier == 2)
-                .where(ConceptProblem.id != int(row.id))
+                select(ProblemRecord, Concept.slug)
+                .join(Concept, Concept.id == ProblemRecord.concept_id)
+                .where(ProblemRecord.course_id == int(row.course_id))
+                .where(ProblemRecord.concept_id == int(row.concept_id))
+                .where(ProblemRecord.tier == 2)
+                .where(ProblemRecord.id != int(row.id))
             )
         )
-        .scalars()
         .all()
     )
-    for payload in other_payloads:
+    for other_row, concept_slug in other_payloads:
         try:
-            if problem_dup_hash(Problem.model_validate(payload)) == updated_hash:
+            if problem_dup_hash(
+                Problem.model_validate(other_row.to_pydantic_payload(concept_slug=concept_slug))
+            ) == updated_hash:
                 return True
         except (ValidationError, ValueError, TypeError):
             continue
@@ -1085,16 +1090,17 @@ async def edit_authored_problem(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
-    row = await db.get(ConceptProblem, concept_problem_id)
-    if row is None or row.search_space_id is None:
+    row = await db.get(ProblemRecord, concept_problem_id)
+    if row is None:
         raise HTTPException(status_code=404, detail="problem not found")
     await require_course_teacher(
         db=db,
         auth=auth,
-        search_space_id=int(row.search_space_id),
+        search_space_id=int(row.course_id),
     )
 
-    payload = dict(row.payload or {})
+    concept_slug = await db.scalar(select(Concept.slug).where(Concept.id == row.concept_id))
+    payload = row.to_pydantic_payload(concept_slug=str(concept_slug or ""))
     if body.problem_text is not None:
         problem_text = body.problem_text.strip()
         if not problem_text:
@@ -1118,7 +1124,7 @@ async def edit_authored_problem(
             detail="another problem with the same content already exists",
         )
 
-    row.payload = payload  # type: ignore[assignment]
+    row.apply_pydantic_payload(payload)
     await db.commit()
     return (
         await _enrich_problem_reviews(
@@ -1136,8 +1142,8 @@ async def _protected_concepts(db: AsyncSession, concept_ids: list[int]) -> set[i
     direction (it only leaves KG behind; it never destroys data or crashes). Signals:
 
       * ``app.learning_activities.concept_id`` — a student opened this concept. This is ALSO
-        the only ``ON DELETE RESTRICT`` FK into ``apollo_concepts`` (migration 018),
-        so sparing session-bound concepts is what keeps ``DELETE apollo_concepts``
+        the only ``ON DELETE RESTRICT`` FK into ``app.concepts``,
+        so sparing session-bound concepts is what keeps concept deletion
         from hard-failing the whole delete.
       * ``apollo_learner_state`` / ``apollo_mastery_events`` keyed on the concept's
         entities — the durable learner belief snapshot + the append-only grading /
@@ -1260,12 +1266,12 @@ async def delete_authored_set(
 
     Per-concept KG teardown is STRICTLY scoped to concepts this set fully ORPHANED.
     A concept is torn down ONLY if it has ZERO footprint of any kind beyond this
-    set: no remaining ``ConceptProblem``s, no Postgres student/seed footprint
+    set: no remaining problems, no Postgres student/seed footprint
     (``_protected_concepts`` — sessions, learner_state, mastery_events,
     misconceptions, or an inbound cross-concept prereq), AND no ``:Canon`` student
     ``RESOLVES_TO`` history. For those (and ONLY those) the reference graph a plain
     delete used to leave behind is torn down: ``apollo_dedup_decisions`` +
-    ``apollo_concepts`` (KGEntity + ``apollo_entity_prereqs`` cascade) in Postgres,
+    ``app.concepts`` (KGEntity + prerequisite rows cascade) in Postgres,
     and the guarded ``:Canon`` nodes in Neo4j. Every ambiguous case spares the
     concept — under-tearing-down only leaves KG behind, whereas over-tearing-down
     would 500 (the tutoring-activity RESTRICT FK) or destroy student data.
@@ -1296,9 +1302,9 @@ async def delete_authored_set(
     if row.problem_document_id is not None:
         tier1_rows = (
             await db.execute(
-                select(ConceptProblem.id, ConceptProblem.provenance)
-                .where(ConceptProblem.tier == 1)
-                .where(ConceptProblem.search_space_id == int(row.search_space_id))
+                select(ProblemRecord.id, ProblemRecord.provenance)
+                .where(ProblemRecord.tier == 1)
+                .where(ProblemRecord.course_id == int(row.search_space_id))
             )
         ).all()
         leftover_ids = {
@@ -1316,15 +1322,15 @@ async def delete_authored_set(
             int(c)
             for c in (
                 await db.execute(
-                    select(ConceptProblem.concept_id)
-                    .where(ConceptProblem.id.in_(problem_ids))
+                    select(ProblemRecord.concept_id)
+                    .where(ProblemRecord.id.in_(problem_ids))
                     .distinct()
                 )
             )
             .scalars()
             .all()
         ]
-        res = await db.execute(delete(ConceptProblem).where(ConceptProblem.id.in_(problem_ids)))
+        res = await db.execute(delete(ProblemRecord).where(ProblemRecord.id.in_(problem_ids)))
         removed_problems = res.rowcount or 0
 
     doc_ids = [int(d) for d in (row.problem_document_id, row.solution_document_id) if d is not None]
@@ -1342,14 +1348,14 @@ async def delete_authored_set(
     orphaned_concept_ids: list[int] = []
     neo = None
     if affected_concept_ids:
-        # PG-orphan candidates: affected concepts with NO remaining ConceptProblem
+        # PG-orphan candidates: affected concepts with no remaining problems
         # (the set's deletes above are visible in this uncommitted transaction).
         surviving = {
             int(c)
             for c in (
                 await db.execute(
-                    select(ConceptProblem.concept_id)
-                    .where(ConceptProblem.concept_id.in_(affected_concept_ids))
+                    select(ProblemRecord.concept_id)
+                    .where(ProblemRecord.concept_id.in_(affected_concept_ids))
                     .distinct()
                 )
             )
@@ -1368,7 +1374,7 @@ async def delete_authored_set(
             orphaned_concept_ids = [cid for cid in candidates if cid not in with_history]
             if orphaned_concept_ids:
                 # dedup_decisions FK is ON DELETE SET NULL, so delete explicitly
-                # BEFORE the concept; deleting apollo_concepts cascades KGEntity and
+                # BEFORE the concept; deleting app.concepts cascades KGEntity and
                 # apollo_entity_prereqs. tutoring activities (the only RESTRICT FK) are
                 # already spared by _protected_concepts, so this never hard-fails.
                 await db.execute(
@@ -1420,7 +1426,7 @@ async def approve_held_problem(
         search_space_id=int(authored_set.search_space_id),
     )
 
-    row = await db.get(ConceptProblem, problem_id)
+    row = await db.get(ProblemRecord, problem_id)
     if row is None or not _problem_belongs_to_set(authored_set, row, problem_id):
         # 404, not 403/409: don't leak whether problem_id exists at all, and
         # don't let a caller who cleared the course-membership gate use a
@@ -1472,7 +1478,7 @@ async def approve_held_problem(
 async def approve_held_row(
     db: AsyncSession,
     *,
-    row: ConceptProblem,
+    row: ProblemRecord,
     review: dict,
     reference: Literal["ocr", "generated"],
     search_space_id: int,
@@ -1507,7 +1513,7 @@ async def approve_held_row(
                 **mint_kwargs,
             )
             existing_hashes = await _authored_concept_dup_hashes(
-                db, concept_id=mint_plan.concept_id
+                db, concept_id=mint_plan.concept_id, course_id=search_space_id
             )
             result = await promote(
                 db,
@@ -1552,14 +1558,14 @@ async def approve_held_row(
 
 
 def _problem_belongs_to_set(
-    authored_set: AuthoredSet, problem: ConceptProblem, problem_id: int
+    authored_set: AuthoredSet, problem: ProblemRecord, problem_id: int
 ) -> bool:
     """True iff ``problem`` is one this ``authored_set`` actually minted.
 
     Two independent checks, both required: the id must appear in the set's own
     ``result_summary["problems"]`` list (the orchestrator's per-problem outcome
     ledger — see ``run_authored_set_provisioning`` / ``_run_set_background``),
-    AND the row's own ``search_space_id`` must match the set's — belt-and-
+    AND the row's own ``course_id`` must match the set's — belt-and-
     suspenders against a stale/corrupted ``result_summary`` pointing at a
     problem that has since moved (or was minted) into a different course.
     """
@@ -1570,17 +1576,17 @@ def _problem_belongs_to_set(
     }
     if problem_id not in minted_ids:
         return False
-    return int(problem.search_space_id) == int(authored_set.search_space_id)
+    return int(problem.course_id) == int(authored_set.search_space_id)
 
 
-def _candidate_from_row(row: ConceptProblem) -> SimpleNamespace:
-    payload: dict = row.payload or {}  # type: ignore[assignment]
+def _candidate_from_row(row: ProblemRecord) -> SimpleNamespace:
+    payload: dict = dict(row.payload_extra or {})
     provenance: dict = row.provenance or {}  # type: ignore[assignment]
     return SimpleNamespace(
-        problem_text=payload.get("problem_text", ""),
-        given_values=payload.get("given_values", {}) or {},
-        target_unknown=payload.get("target_unknown", ""),
-        difficulty=payload.get("difficulty", row.difficulty),
+        problem_text=row.problem_text,
+        given_values=row.given_values or {},
+        target_unknown=row.target_unknown,
+        difficulty=row.difficulty,
         chunk_content_hash=provenance.get("chunk_content_hash", ""),
         concept_slug=payload.get("concept_slug", "provisional.inventory"),
         label=payload.get("label"),
