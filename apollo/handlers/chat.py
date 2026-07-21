@@ -49,11 +49,15 @@ def _unified_questioning_enabled() -> bool:
     return os.environ.get(_UNIFIED_QUESTIONING_FLAG, "").lower() in ("1", "true", "yes")
 
 
-async def _find_problem(db: AsyncSession, concept_id: int, problem_id: int) -> Problem:
+async def _find_problem(
+    db: AsyncSession, concept_id: int, problem_id: int, *, course_id: int
+) -> Problem:
     """Locate a problem in the DB bank by concept_id + target surrogate id. Mirrors
     done.py's helper. Kept inline rather than hoisted into problem_selector to
     keep that module's contract (problem listing) narrow."""
-    for p in await list_problems_for_concept(db, concept_id=concept_id):
+    for p in await list_problems_for_concept(
+        db, concept_id=concept_id, search_space_id=course_id
+    ):
         if p.database_id == problem_id:
             return p
     raise RuntimeError(f"problem {problem_id!r} not in bank for cluster {concept_id!r}")
@@ -308,7 +312,9 @@ async def handle_chat(
     if current_attempt is None:
         raise RuntimeError(f"no current ProblemAttempt for session {session_id}")
 
-    concept = await load_concept_definition(db, concept_id=sess.concept_id)
+    concept = await load_concept_definition(
+        db, concept_id=sess.concept_id, search_space_id=sess.course_id
+    )
 
     # ---- Intent state machine (item #5) -------------------------------
     # Step 1: if a pending intent exists, see if this turn confirms it.
@@ -386,7 +392,9 @@ async def handle_chat(
     student_graph = await _read_graph_or_empty(
         store, attempt_id=current_attempt.id, stage="student_graph",
     )
-    problem = await _find_problem(db, sess.concept_id, sess.current_problem_id)
+    problem = await _find_problem(
+        db, sess.concept_id, sess.current_problem_id, course_id=sess.course_id
+    )
     next_idx = await _next_turn_index(db, session_id)
 
     # One-call reference-driven question controller. The same model assesses

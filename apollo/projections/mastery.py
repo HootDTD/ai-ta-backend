@@ -56,13 +56,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.knowledge_graph.canon_projection import load_entity_specs
 from apollo.persistence.models import (
-    TutoringSession,
     GradingArtifact,
     LearnerState,
     MasteryEvent,
     ProblemAttempt,
+    TutoringSession,
 )
-from apollo.persistence.problem_linkage import resolve_concept_problem_id
+from apollo.persistence.problem_linkage import resolve_problem_id
 
 # Env var name (Task B2). Default matches the plan's named constant.
 _ENV_EWMA_ALPHA = "APOLLO_MASTERY_EWMA_ALPHA"
@@ -251,10 +251,11 @@ async def update_mastery_from_artifact(db: AsyncSession, *, artifact_row: Gradin
     )
     concept_problem_id = None
     if attempt_linkage is not None and attempt_linkage.concept_id is not None:
-        concept_problem_id = await resolve_concept_problem_id(
+        concept_problem_id = await resolve_problem_id(
             db,
             concept_id=int(attempt_linkage.concept_id),
-            problem_code=str(attempt_linkage.problem_id),
+            course_id=search_space_id,
+            problem_identity=attempt_linkage.problem_id,
         )
 
     for key in keys:

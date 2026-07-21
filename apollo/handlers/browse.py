@@ -36,7 +36,9 @@ async def handle_list_problems(
             f"concept_id={concept_id} is not teachable in course {search_space_id}"
         )
 
-    pool = await list_problems_for_concept(db, concept_id=concept_id)
+    pool = await list_problems_for_concept(
+        db, concept_id=concept_id, search_space_id=search_space_id
+    )
     if difficulty is not None:
         pool = [p for p in pool if p.difficulty == difficulty]
 

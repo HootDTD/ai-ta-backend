@@ -236,8 +236,12 @@ def _compute_topic_score_safe(
         return None
 
 
-async def _find_problem(db: AsyncSession, concept_id: int, problem_id: int) -> Problem:
-    for p in await list_problems_for_concept(db, concept_id=concept_id):
+async def _find_problem(
+    db: AsyncSession, concept_id: int, problem_id: int, *, course_id: int
+) -> Problem:
+    for p in await list_problems_for_concept(
+        db, concept_id=concept_id, search_space_id=course_id
+    ):
         if p.database_id == problem_id:
             return p
     raise RuntimeError(f"problem {problem_id!r} not in bank for cluster {concept_id!r}")
@@ -289,7 +293,9 @@ async def handle_done(
     sess = (
         await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
-    problem = await _find_problem(db, sess.concept_id, sess.current_problem_id)
+    problem = await _find_problem(
+        db, sess.concept_id, sess.current_problem_id, course_id=sess.course_id
+    )
 
     attempt = (
         (

@@ -1,9 +1,7 @@
 """Overseer.problem_selector — pick a problem from the DB problem bank.
 
-WU-3D §8A cutover: problems are loaded from ``apollo_concept_problems`` rows by
-``concept_id`` (+difficulty), NOT from the filesystem and NOT via a legacy
-``cluster_id`` map. Each row's ``payload`` is validated through
-``Problem.model_validate`` (pydantic).
+Problems are loaded from ``app.problems`` by course and concept. Promoted
+columns are reassembled and validated through the public Pydantic schema.
 
 Deterministic: sorted by ``Problem.id`` (== ``payload['id']`` == ``problem_code``).
 Refresh on every call (no caching). Raises ``PoolExhaustedError`` if no
@@ -26,16 +24,16 @@ from apollo.learner_model.personalization_select import (
     weak_teachable,
 )
 from apollo.overseer import personalization_flag
-from apollo.persistence.models import ConceptProblem
-from apollo.schemas.problem import Problem
+from apollo.persistence.models import Concept, Problem
+from apollo.schemas.problem import Problem as ProblemSchema
 
 _LOG = logging.getLogger(__name__)
 
 
-async def list_problems_for_concept(db: AsyncSession, *, concept_id: int) -> list[Problem]:
-    """Load every TEACHABLE ``apollo_concept_problems`` row for a concept and
-    validate each row's ``payload`` through ``Problem.model_validate``, sorted by
-    ``Problem.id`` for determinism. NO filesystem read.
+async def list_problems_for_concept(
+    db: AsyncSession, *, concept_id: int, search_space_id: int
+) -> list[ProblemSchema]:
+    """Load every teachable problem within the requested course and concept.
 
     WU-3B2a (§8B auto-provisioning): ONLY Tier-2 problems are returned. Tier-1 is
     auto-provisioned inventory (not yet teachable) and is excluded. This single
@@ -50,17 +48,25 @@ async def list_problems_for_concept(db: AsyncSession, *, concept_id: int) -> lis
     ``quarantined_at`` and the problem becomes selectable again."""
     rows = (
         await db.execute(
-            select(ConceptProblem.id, ConceptProblem.tier, ConceptProblem.payload).where(
-                ConceptProblem.concept_id == concept_id,
-                ConceptProblem.tier == 2,
-                ConceptProblem.quarantined_at.is_(None),
+            select(Problem, Concept.slug)
+            .join(Concept, Concept.id == Problem.concept_id)
+            .where(
+                Problem.course_id == search_space_id,
+                Concept.course_id == search_space_id,
+                Problem.concept_id == concept_id,
+                Problem.tier == 2,
+                Problem.quarantined_at.is_(None),
             )
         )
     ).all()
-    problems: list[Problem] = []
-    for row in rows:
+    problems: list[ProblemSchema] = []
+    for row, concept_slug in rows:
         try:
-            problems.append(Problem.model_validate({**row.payload, "database_id": row.id}))
+            problems.append(
+                ProblemSchema.model_validate(
+                    {**row.to_pydantic_payload(concept_slug=concept_slug), "database_id": row.id}
+                )
+            )
         except ValidationError as exc:
             first_error = exc.errors(include_input=False)[0]
             location = ".".join(str(part) for part in first_error["loc"])
@@ -74,7 +80,7 @@ async def list_problems_for_concept(db: AsyncSession, *, concept_id: int) -> lis
                     "event": "apollo_problem_selector_invalid_payload_skipped",
                     "concept_id": concept_id,
                     "problem_tier": row.tier,
-                    "concept_problem_id": row.id,
+                    "problem_id": row.id,
                     "validation_error": summary,
                 },
             )
@@ -85,15 +91,18 @@ async def select_problem(
     db: AsyncSession,
     *,
     concept_id: int,
+    search_space_id: int,
     difficulty: str,
     attempted_ids: Sequence[str | int],
-) -> Problem:
+) -> ProblemSchema:
     """Pick the first unattempted ``Problem`` at ``difficulty`` for ``concept_id``.
 
     Raises ``PoolExhaustedError`` (with ``concept_cluster_id=str(concept_id)`` for
     API back-compat) when none remain.
     """
-    pool = await list_problems_for_concept(db, concept_id=concept_id)
+    pool = await list_problems_for_concept(
+        db, concept_id=concept_id, search_space_id=search_space_id
+    )
     attempted = set(attempted_ids)
     candidates = [
         p
@@ -113,7 +122,7 @@ async def select_problem_personalized(
     concept_id: int,
     difficulty: str,
     attempted_ids: Sequence[str | int],
-) -> Problem:
+) -> ProblemSchema:
     """The v1 session-personalization wedge (WU-6A3) wrapped around the untouched
     ``select_problem``.
 
@@ -133,11 +142,14 @@ async def select_problem_personalized(
         return await select_problem(
             db,
             concept_id=concept_id,
+            search_space_id=search_space_id,
             difficulty=difficulty,
             attempted_ids=attempted_ids,
         )
 
-    pool = await list_problems_for_concept(db, concept_id=concept_id)
+    pool = await list_problems_for_concept(
+        db, concept_id=concept_id, search_space_id=search_space_id
+    )
     profile = await read_learner_profile(
         db,
         user_id=user_id,

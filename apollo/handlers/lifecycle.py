@@ -140,7 +140,9 @@ async def handle_get_session(
 
     problem = None
     if sess.current_problem_id and sess.concept_id is not None:
-        for p in await list_problems_for_concept(db, concept_id=sess.concept_id):
+        for p in await list_problems_for_concept(
+            db, concept_id=sess.concept_id, search_space_id=sess.course_id
+        ):
             if p.database_id == sess.current_problem_id:
                 problem = {
                     "id": p.id,

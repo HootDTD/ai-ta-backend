@@ -156,7 +156,9 @@ async def init_session_direct(
         )
 
     if problem_id is not None:
-        pool = await list_problems_for_concept(db, concept_id=concept_id)
+        pool = await list_problems_for_concept(
+            db, concept_id=concept_id, search_space_id=search_space_id
+        )
         problem = next((p for p in pool if p.id == problem_id), None)
         if problem is None:
             raise ProblemNotFoundError(problem_id=problem_id, concept_id=concept_id)
