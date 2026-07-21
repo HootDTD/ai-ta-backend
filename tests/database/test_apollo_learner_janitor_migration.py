@@ -3,16 +3,16 @@
 WU-5B3a-0 ships ``028_apollo_learner_janitor.sql``: five dead-letter +
 exponential-backoff columns on ``apollo_problem_attempts`` plus a PARTIAL index
 ``apollo_problem_attempts_pending_idx`` over the pending, not-dead rows. The
-janitor's claim/recompute state machine (WU-5B3a-1) consumes these; this unit
-ships the DDL + ORM mapping only.
+janitor's claim/recompute state machine (WU-5B3a-1) consumed these before A7
+removed that runtime.
 
 DDL behavior (column types/defaults/nullability, the partial-index predicate,
 idempotency) is what SQLite cannot honor — so the chain tests apply the *actual*
 migration chain (028 auto-joins via the ``ALTER TABLE apollo_problem_attempts``
 content glob) to a fresh DB on the session pgvector container, mirroring
-``tests/database/test_apollo_learner_model_migration.py``. The ORM round-trip
-runs on the savepoint ``db_session`` (``Base.metadata.create_all`` picks up the
-five new columns).
+``tests/database/test_apollo_learner_model_migration.py``. Per FIX-015, the
+obsolete ORM round-trip was removed after DB-09 dropped the deleted janitor's
+columns from the target ORM mapping; these frozen legacy-SQL pins remain valid.
 
 These MUST RUN GREEN (not skip) with Docker up — a skip is a FAIL of this gate.
 """
@@ -21,21 +21,12 @@ from __future__ import annotations
 
 import asyncio
 import re
-from datetime import UTC, datetime
 from pathlib import Path
 
 import asyncpg
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
 from sqlalchemy.engine import make_url
-
-# Import the Apollo ORM models at module top so they REGISTER on Base.metadata
-# BEFORE the session-scoped `_pg_url` fixture runs `Base.metadata.create_all`
-# (the `db_session` schema needs apollo_sessions / apollo_problem_attempts to
-# exist for the ORM round-trip). A deferred (in-function) import would register
-# them only AFTER create_all, leaving the tables absent.
-from apollo.persistence import models as _apollo_models  # noqa: F401
 
 pytestmark = pytest.mark.integration
 
@@ -205,90 +196,3 @@ async def test_migration_028_is_idempotent(_migrated_dsn):
         assert idx == 1
     finally:
         await conn.close()
-
-
-# ---------------------------------------------------------------------------
-# H1 — ORM round-trip of the five new columns on db_session (real PG)
-# ---------------------------------------------------------------------------
-
-
-async def _seed_attempt(db):
-    """Minimal session + attempt via ORM (no values for the new cols)."""
-    from apollo.conftest import TEST_USER_ID
-    from apollo.persistence.models import (
-        ProblemAttempt,
-        SessionPhase,
-        SessionStatus,
-        TutoringSession,
-    )
-    from apollo.subjects.tests._curriculum_fixtures import seed_search_space
-
-    sid = await seed_search_space(db)
-    sess = TutoringSession(
-        user_id=TEST_USER_ID,
-        search_space_id=sid,
-        status=SessionStatus.active.value,
-        phase=SessionPhase.SOLVING.value,
-        current_problem_id=1,
-    )
-    db.add(sess)
-    await db.flush()
-    attempt = ProblemAttempt(
-        session_id=sess.id,
-        problem_id=1,
-        difficulty="intro",
-        user_id=sess.user_id,
-        course_id=sess.course_id,
-    )
-    db.add(attempt)
-    await db.flush()
-    return attempt
-
-
-async def test_problem_attempt_orm_roundtrips_new_columns(db_session):
-    from apollo.persistence.models import ProblemAttempt
-
-    attempt = await _seed_attempt(db_session)
-    await db_session.commit()
-
-    # Server defaults applied: counts 0, perm-fail False, the three nullable None.
-    # populate_existing forces a fresh DB read of the identity-mapped object
-    # WITHIN the async execute (greenlet-safe), so we assert the persisted values,
-    # not the in-memory ORM defaults.
-    read = (
-        await db_session.execute(
-            select(ProblemAttempt)
-            .where(ProblemAttempt.id == attempt.id)
-            .execution_options(populate_existing=True)
-        )
-    ).scalar_one()
-    assert read.learner_update_attempts == 0
-    assert read.learner_update_failed_permanently is False
-    assert read.learner_update_failed_at is None
-    assert read.learner_update_last_error is None
-    assert read.learner_update_next_attempt_at is None
-
-    # Now set values (incl. tz-aware datetimes) and assert exact round-trip.
-    failed_at = datetime(2026, 6, 19, 8, 30, 0, tzinfo=UTC)
-    next_at = datetime(2026, 6, 19, 9, 0, 0, tzinfo=UTC)
-    read.learner_update_attempts = 2
-    read.learner_update_failed_permanently = True
-    read.learner_update_last_error = "boom"
-    read.learner_update_failed_at = failed_at
-    read.learner_update_next_attempt_at = next_at
-    await db_session.commit()
-
-    again = (
-        await db_session.execute(
-            select(ProblemAttempt)
-            .where(ProblemAttempt.id == attempt.id)
-            .execution_options(populate_existing=True)
-        )
-    ).scalar_one()
-    assert again.learner_update_attempts == 2
-    assert again.learner_update_failed_permanently is True
-    assert again.learner_update_last_error == "boom"
-    # tz preserved (TIMESTAMPTZ): compare the absolute instant.
-    assert again.learner_update_failed_at == failed_at
-    assert again.learner_update_next_attempt_at == next_at
-    assert again.learner_update_failed_at.tzinfo is not None

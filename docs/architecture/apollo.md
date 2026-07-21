@@ -46,6 +46,9 @@ Tutoring sessions are the `modality = 'tutoring'` subtype of
 carry `course_id`, while their Python `session_id` property maps to the physical
 `learning_activity_id` foreign key. Problem payload codes remain the public
 identifier; persistence resolves them to the numeric `app.problems.id`.
+Both the baseline and personalized selectors exclude attempted problems by
+either public problem code or numeric database id, because route-level attempt
+queries now return the persisted numeric identity.
 
 **A1 is applied:** XP and level are per course. `app.student_progress` is keyed
 by `(user_id, course_id)`, `/apollo/progress` requires `search_space_id`, and
