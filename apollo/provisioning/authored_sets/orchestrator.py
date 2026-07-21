@@ -730,7 +730,12 @@ async def _process_authored_candidate(
                         str(concept_row.display_name) if concept_row is not None else resolved.slug
                     ),
                     canonical_symbols=(
-                        dict(concept_row.canonical_symbols or {}) if concept_row is not None else {}
+                        {
+                            **dict(concept_row.symbol_metadata or {}),
+                            "symbols": list(concept_row.canonical_symbols or []),
+                        }
+                        if concept_row is not None
+                        else {}
                     ),
                     normalization_map=(
                         dict(concept_row.normalization_map or {}) if concept_row is not None else {}

@@ -196,13 +196,12 @@ async def promote(
         concept_problem_id=concept_problem_id,
     )
 
-    # Read the concept's AUTHORED symbol set (gate-4 non-vacuity). The shape is
-    # {"symbols": [...], ...} (author_concept_symbols, 3B2d); a vacuous set makes
-    # gate 4 reject every foreign symbol.
+    # Read the concept's AUTHORED symbol array (gate-4 non-vacuity); a vacuous
+    # set makes gate 4 reject every foreign symbol.
     concept = await db.get(Concept, mint_plan.concept_id)
     if concept is None:
         raise RuntimeError(f"promote: concept {mint_plan.concept_id} not found")
-    canonical_symbols = set(dict(concept.canonical_symbols or {}).get("symbols") or [])
+    canonical_symbols = set(concept.canonical_symbols or [])
     normalization_map = dict(concept.normalization_map or {})
 
     # Subject-AGNOSTIC Apollo (spec §3): gate applicability is CONTENT-DERIVED, not

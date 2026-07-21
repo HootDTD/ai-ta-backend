@@ -88,22 +88,15 @@ async def author_concept_symbols(
     first writer's canonical set). Returns the symbols authored/unioned THIS call
     (the ones not already present).
 
-    ``canonical_symbols`` is stored in the ``CanonicalSymbols``-validatable shape
-    ``{"symbols": [...], "description": {...}, ...}`` — the SAME shape the
-    registry seed writes and the runtime reader
-    (``apollo.subjects.curriculum_db.load_concept_definition`` →
-    ``CanonicalSymbols.model_validate``) reads on every teaching session. The
-    union is over the existing ``"symbols"`` LIST (first-writer-wins; new symbols
-    are appended, existing entries are NEVER removed or reordered-away). Any
-    other ``CanonicalSymbols`` keys already authored (``description``,
-    ``subscript_convention``) are preserved untouched. ``normalization_map`` is a
-    flat ``{alias: canonical}`` dict; existing keys are NEVER overwritten."""
+    ``canonical_symbols`` is the target symbol array; descriptions and other
+    symbol metadata live in the separate ``symbol_metadata`` column. New
+    symbols are appended without removing existing entries. ``normalization_map``
+    is a flat ``{alias: canonical}`` dict whose existing keys are never overwritten.
+    """
     concept = (await db.execute(select(Concept).where(Concept.id == concept_id))).scalar_one()
 
-    existing_canon = dict(concept.canonical_symbols or {})
+    existing_symbols = list(concept.canonical_symbols or [])
     existing_norm = dict(concept.normalization_map or {})
-
-    existing_symbols = list(existing_canon.get("symbols") or [])
     existing_set = set(existing_symbols)
 
     newly_authored: list[str] = []
@@ -114,13 +107,9 @@ async def author_concept_symbols(
     for alias, canonical in normalization.items():
         existing_norm.setdefault(alias, canonical)
 
-    # Immutable assignment of a NEW CanonicalSymbols-validatable dict (no in-place
-    # mutation of the ORM column). Preserve any pre-authored description /
-    # subscript_convention; only the symbol LIST is unioned.
-    new_canon = dict(existing_canon)
-    new_canon["symbols"] = sorted(existing_symbols + newly_authored)
-    new_canon.setdefault("description", {})
-    concept.canonical_symbols = new_canon  # type: ignore[assignment]
+    # Immutable assignment of a new list so the ORM observes the array update.
+    # Descriptions and subscript conventions remain in the separate metadata column.
+    concept.canonical_symbols = sorted(existing_symbols + newly_authored)  # type: ignore[assignment]
     concept.normalization_map = existing_norm  # type: ignore[assignment]
     await db.flush()
     return newly_authored
