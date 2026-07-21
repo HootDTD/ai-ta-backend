@@ -108,6 +108,12 @@ def _mock_supabase(monkeypatch):
 # ---------------------------------------------------------------------------
 
 PGVECTOR_IMAGE = "pgvector/pgvector:pg16"
+# DB-06 installs pgvector in ``extensions``. Keep that schema visible on every
+# harness connection because pgvector's SQLAlchemy type and distance operators
+# compile unqualified; this covers both metadata DDL and per-test ORM queries.
+PGVECTOR_CONNECT_ARGS = {
+    "server_settings": {"search_path": "public,extensions"},
+}
 
 # NOTE: we deliberately do NOT call pgvector.asyncpg.register_vector here.
 # pgvector's SQLAlchemy `Vector` type already serializes lists to the pgvector
@@ -147,7 +153,11 @@ def _pg_url() -> str:
         # No vector codec on the setup engine: its first connection is the one
         # that runs CREATE EXTENSION, so the `vector` type doesn't exist yet at
         # connect time. DDL is plain text and needs no codec anyway.
-        engine = create_async_engine(url, poolclass=NullPool)
+        engine = create_async_engine(
+            url,
+            poolclass=NullPool,
+            connect_args=PGVECTOR_CONNECT_ARGS,
+        )
         async with engine.begin() as conn:
             await conn.execute(text("CREATE SCHEMA IF NOT EXISTS app"))
             await conn.execute(text("CREATE SCHEMA IF NOT EXISTS internal"))
@@ -179,7 +189,11 @@ async def db_session(_pg_url):
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
     from sqlalchemy.pool import NullPool
 
-    engine = create_async_engine(_pg_url, poolclass=NullPool)
+    engine = create_async_engine(
+        _pg_url,
+        poolclass=NullPool,
+        connect_args=PGVECTOR_CONNECT_ARGS,
+    )
 
     conn = await engine.connect()
     trans = await conn.begin()
