@@ -30,13 +30,27 @@ import pytest_asyncio
 from sqlalchemy.engine import make_url
 
 from apollo.persistence.learner_model_seed import SeedError, validate_reference_graph
-from scripts.seed_apollo_learner_model import main, seed
+from scripts.seed_apollo_learner_model import main
+from scripts.seed_apollo_learner_model import seed as _seed
 
 pytestmark = pytest.mark.integration
 
 _REPO = Path(__file__).resolve().parents[2]
 MIGRATIONS_DIR = _REPO / "database" / "migrations"
 _BERNOULLI = _REPO / "apollo" / "subjects" / "fluid_mechanics" / "concepts" / "bernoulli_principle"
+
+
+async def seed(database_url: str, **kwargs):
+    """Run the production seeder without rewriting repository fixtures.
+
+    Disk write-back has dedicated coverage against ``tmp_path`` in
+    ``apollo/persistence/tests/test_learner_model_seed_generic.py``. These
+    integration tests only exercise database effects, so a future bare
+    ``seed()`` call must remain side-effect-free outside the test database.
+    """
+    kwargs.setdefault("write_disk", False)
+    return await _seed(database_url, **kwargs)
+
 
 # Same FK stubs + content-scoped chain selection as the WU-3A harness.  The
 # seeder resolves curriculum through the target ORM, so this isolated legacy
@@ -191,9 +205,7 @@ def _load_problem(n: int) -> dict:
 
 
 async def _seed_space(conn: asyncpg.Connection) -> int:
-    course_id = await conn.fetchval(
-        "INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id"
-    )
+    course_id = await conn.fetchval("INSERT INTO aita_search_spaces DEFAULT VALUES RETURNING id")
     await conn.execute(
         "INSERT INTO app.courses (id, name, slug, subject_name) "
         "VALUES ($1, 'Test Course', $2, 'Fluid Mechanics')",
@@ -634,8 +646,7 @@ async def test_seed_is_course_scoped_two_courses_do_not_collide(seeded_db):
     for space_id in spaces:
         concept_id = await _fetchval(
             plain,
-            "SELECT id FROM app.concepts "
-            "WHERE course_id=$1 AND slug='bernoulli_principle'",
+            "SELECT id FROM app.concepts WHERE course_id=$1 AND slug='bernoulli_principle'",
             space_id,
         )
         n = await _fetchval(
@@ -648,8 +659,7 @@ async def test_seed_is_course_scoped_two_courses_do_not_collide(seeded_db):
     # Deleting course-1 cascades only course-1's entities.
     c2_concept = await _fetchval(
         plain,
-        "SELECT id FROM app.concepts "
-        "WHERE course_id=$1 AND slug='bernoulli_principle'",
+        "SELECT id FROM app.concepts WHERE course_id=$1 AND slug='bernoulli_principle'",
         spaces[1],
     )
     c2_before = await _fetchval(

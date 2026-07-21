@@ -168,11 +168,7 @@ async def _insert_concept_with_problems(
             await s.flush()
             cid: int = int(concept.id)  # type: ignore[arg-type]  # SA stubs expose .id as Column
             for p in problems:
-                s.add(
-                    ProblemRecord.from_pydantic_payload(
-                        p, course_id=course_id, concept_id=cid
-                    )
-                )
+                s.add(ProblemRecord.from_pydantic_payload(p, course_id=course_id, concept_id=cid))
             await s.commit()
             return cid
     finally:
@@ -208,9 +204,7 @@ async def _fetch_problems(url: str, concept_id: int) -> list[dict]:
                 .all()
             )
             concept_slug = await s.scalar(select(Concept.slug).where(Concept.id == concept_id))
-            return [
-                r.to_pydantic_payload(concept_slug=str(concept_slug or "")) for r in rows
-            ]
+            return [r.to_pydantic_payload(concept_slug=str(concept_slug or "")) for r in rows]
     finally:
         await engine.dispose()
 
@@ -838,9 +832,23 @@ async def test_seed_explicit_search_space_id_and_source_override(monkeypatch, tm
 @pytest.mark.asyncio
 async def test_seed_write_disk_mirrors_annotation_to_json(monkeypatch, tmp_path, db_url):
     """write_disk=True writes the annotated payload back to the concept dir's
-    problem_*.json (additive entity_key / declared_paths / layer1_seeded)."""
+    problem_*.json as UTF-8 (additive entity_key / declared_paths /
+    layer1_seeded)."""
     monkeypatch.setattr(seeder, "_SUBJECTS_ROOT", tmp_path)
     _make_macro_subject(tmp_path)
+
+    # Keep non-ASCII units literal so this test detects a locale-default
+    # (cp1252 on Windows) write instead of allowing ensure_ascii escaping to
+    # hide it.
+    problem = _macro_problem("gdp_identity")
+    problem["problem_text"] = "Compute a flow ratio in m³/s from areas in m²."
+    disk_file = (
+        tmp_path / "macroeconomics" / "concepts" / "gdp_components" / "problems" / "problem_01.json"
+    )
+    disk_file.write_text(
+        json.dumps(problem, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     await _insert_course(db_url, 1)
     subject_id = await _insert_subject(db_url, slug="macroeconomics", space_id=1)
@@ -848,17 +856,18 @@ async def test_seed_write_disk_mirrors_annotation_to_json(monkeypatch, tmp_path,
         db_url,
         subject_id=subject_id,
         slug="gdp_components",
-        problems=[_macro_problem("gdp_identity")],
+        problems=[problem],
     )
 
     await seed(
         db_url, subject_slug="macroeconomics", concept_slug="gdp_components", write_disk=True
     )
 
-    disk_file = (
-        tmp_path / "macroeconomics" / "concepts" / "gdp_components" / "problems" / "problem_01.json"
-    )
+    raw = disk_file.read_bytes()
+    assert "m³/s".encode() in raw
+    assert "m²".encode() in raw
     on_disk = json.loads(disk_file.read_text(encoding="utf-8"))
+    assert on_disk["problem_text"] == problem["problem_text"]
     assert on_disk["layer1_seeded"] is True
     assert "declared_paths" in on_disk
     assert all(step["entity_key"] for step in on_disk["reference_solution"])
