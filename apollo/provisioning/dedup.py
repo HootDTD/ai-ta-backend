@@ -11,12 +11,12 @@ The candidate POOL is scoped in SQL BEFORE any cosine is ever computed (§1.4 +
 PR2 — the 2026-06-30 false-merge fix) — never a global similarity search filtered
 afterward. ``_in_course_entities`` applies, first: ``Concept.course_id``
 (two COURSES never merge, even on a byte-identical ``scope_summary``), AND
-``KGEntity.concept_id == :concept_id`` (two CONCEPTS of one course never merge —
+``LearnerEntity.concept_id == :concept_id`` (two CONCEPTS of one course never merge —
 no foreign-set binding / cross-concept fusion); plus ``exclude_entity_ids`` drops
 entities minted earlier in the SAME mint, so two distinct nodes of one problem
 (the ``m≡M`` fusion) cannot fuse against each other.
 
-Embedding source is the on-the-fly-embedded ``KGEntity.scope_summary`` TEXT
+Embedding source is the on-the-fly-embedded ``LearnerEntity.scope_summary`` TEXT
 column (migration 030 / WU-3B2a); there is NO persisted entity vector. The
 embedder (``embed_fn``) and the LLM judge (``judge_fn``) are INJECTED SYNC
 callables so Tier-1 tests are deterministic with zero network calls — production
@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import Concept, DedupDecision, IngestRun, KGEntity
+from apollo.persistence.models import Concept, DedupDecision, IngestRun, LearnerEntity
 from apollo.provisioning.dedup_constants import (
     EMBED_JUDGE_BAND,
     EMBED_MERGE_THRESHOLD,
@@ -56,7 +56,7 @@ class DedupVerdict:
     * ``similarity``        — the cosine for the embedding/llm_judge tiers;
                               ``None`` for the slug tier and the empty-inventory
                               distinct case
-    * ``matched_entity_id`` — ``KGEntity.id`` merged onto; ``None`` when distinct
+    * ``matched_entity_id`` — ``LearnerEntity.id`` merged onto; ``None`` when distinct
     """
 
     verdict: str
@@ -91,17 +91,17 @@ async def _in_course_entities(
     concept_id: int,
     require_summary: bool,
     exclude_entity_ids: set[int] | None = None,
-) -> list[KGEntity]:
+) -> list[LearnerEntity]:
     """THE load-bearing dedup-pool filter.
 
     Returns the candidate pool for ``resolve_candidate``: the entities of THIS
     ``concept_id`` (within ``search_space_id``), ordered by ascending
-    ``KGEntity.id`` (earliest writer first — the deterministic first-writer-wins
+    ``LearnerEntity.id`` (earliest writer first — the deterministic first-writer-wins
     order). Scoping (PR2 — the 2026-06-30 dedup false-merge fix):
 
     * ``Concept.course_id`` keeps two courses apart (the ``test_cross_course_*``
       property); it runs in SQL BEFORE any cosine.
-    * ``KGEntity.concept_id == concept_id`` keeps two CONCEPTS of one course apart,
+    * ``LearnerEntity.concept_id == concept_id`` keeps two CONCEPTS of one course apart,
       so a candidate never slug-/cosine-merges into a sibling or earlier-set
       concept (the audit's foreign-set binding + cross-concept fusions).
     * ``exclude_entity_ids`` drops entities minted earlier in the SAME mint, so two
@@ -113,16 +113,16 @@ async def _in_course_entities(
     because a slug match does not require a summary.
     """
     stmt = (
-        select(KGEntity)
-        .join(Concept, Concept.id == KGEntity.concept_id)
+        select(LearnerEntity)
+        .join(Concept, Concept.id == LearnerEntity.concept_id)
         .where(Concept.course_id == search_space_id)
-        .where(KGEntity.concept_id == concept_id)
-        .order_by(KGEntity.id.asc())
+        .where(LearnerEntity.concept_id == concept_id)
+        .order_by(LearnerEntity.id.asc())
     )
     if require_summary:
-        stmt = stmt.where(KGEntity.scope_summary.is_not(None))
+        stmt = stmt.where(LearnerEntity.scope_summary.is_not(None))
     if exclude_entity_ids:
-        stmt = stmt.where(KGEntity.id.not_in(exclude_entity_ids))
+        stmt = stmt.where(LearnerEntity.id.not_in(exclude_entity_ids))
     return list((await db.execute(stmt)).scalars().all())
 
 

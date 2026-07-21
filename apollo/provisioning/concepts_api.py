@@ -32,7 +32,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.auth_deps import require_course_teacher, require_user
-from apollo.persistence.models import Concept, KGEntity, Problem
+from apollo.persistence.models import Concept, LearnerEntity, Problem
 from apollo.provisioning.concept_match import norm_slug
 from apollo.provisioning.scrape import PROVISIONAL_CONCEPT_SLUG
 from apollo.provisioning.tag_mint_persist import resolve_or_create_concept
@@ -234,7 +234,7 @@ async def delete_teacher_concept(
         )
     ).scalar_one()
     entity_count = (
-        await db.execute(select(func.count(KGEntity.id)).where(KGEntity.concept_id == concept_id))
+        await db.execute(select(func.count(LearnerEntity.id)).where(LearnerEntity.concept_id == concept_id))
     ).scalar_one()
     if int(problem_count) or int(entity_count):
         raise HTTPException(

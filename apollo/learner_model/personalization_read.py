@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import EntityPrereq, KGEntity, LearnerState
+from apollo.persistence.models import EntityPrereq, LearnerEntity, LearnerState
 
 __all__ = ["EntityProfile", "LearnerProfile", "read_learner_profile"]
 
@@ -50,7 +50,6 @@ class EntityProfile:
     canonical_key: str
     mastery: float
     confidence: float
-    misconception_code: str | None
 
 
 @dataclass(frozen=True)
@@ -90,7 +89,7 @@ async def read_learner_profile(
     # 1. This concept's entity inventory (1 query) -> id<->key maps.
     entity_rows = (
         await db.execute(
-            select(KGEntity.id, KGEntity.canonical_key).where(KGEntity.concept_id == concept_id)
+            select(LearnerEntity.id, LearnerEntity.canonical_key).where(LearnerEntity.concept_id == concept_id)
         )
     ).all()
 
@@ -117,7 +116,6 @@ async def read_learner_profile(
                 LearnerState.entity_id,
                 LearnerState.mastery,
                 LearnerState.confidence,
-                LearnerState.misconception_code,
             ).where(
                 LearnerState.user_id == user_id,
                 LearnerState.search_space_id == search_space_id,
@@ -127,14 +125,13 @@ async def read_learner_profile(
     ).all()
 
     by_canonical_key: dict[str, EntityProfile] = {}
-    for entity_id, mastery, confidence, misconception_code in state_rows:
+    for entity_id, mastery, confidence in state_rows:
         canonical_key = key_by_entity_id[entity_id]
         by_canonical_key[canonical_key] = EntityProfile(
             entity_id=entity_id,
             canonical_key=canonical_key,
             mastery=mastery,
             confidence=confidence,
-            misconception_code=misconception_code,
         )
 
     # 3. WITHIN-CONCEPT prereq edges (1 query): BOTH endpoints among this concept's

@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from apollo.persistence.learner_model_seed import EntitySpec
-from apollo.persistence.models import Concept, EntityPrereq, KGEntity
+from apollo.persistence.models import Concept, EntityPrereq, LearnerEntity
 
 _LOG = logging.getLogger(__name__)
 
@@ -118,6 +118,7 @@ async def author_concept_symbols(
 async def upsert_entity(
     db: AsyncSession,
     *,
+    course_id: int,
     concept_id: int,
     spec: EntitySpec,
     scope_summary: str | None,
@@ -125,17 +126,22 @@ async def upsert_entity(
     """Upsert one entity keyed on ``(concept_id, canonical_key)``. Returns
     ``(entity_id, inserted)``. Idempotent — a re-run with the same key updates in
     place (no duplicate row). Mirrors seed ``_upsert_entity`` but also writes the
-    dedup ladder's embedding source ``scope_summary``."""
+    dedup ladder's embedding source ``scope_summary``.
+
+    DB-13: ``course_id`` is a denormalized NOT NULL column on ``app.learner_entities``
+    (initplan-safe RLS); it is required on INSERT and unused on the update branch
+    (immutable once set — a concept never changes course)."""
     row = (
         await db.execute(
-            select(KGEntity)
-            .where(KGEntity.concept_id == concept_id)
-            .where(KGEntity.canonical_key == spec.canonical_key)
+            select(LearnerEntity)
+            .where(LearnerEntity.concept_id == concept_id)
+            .where(LearnerEntity.canonical_key == spec.canonical_key)
         )
     ).scalar_one_or_none()
 
     if row is None:
-        row = KGEntity(
+        row = LearnerEntity(
+            course_id=course_id,
             concept_id=concept_id,
             canonical_key=spec.canonical_key,
             kind=spec.kind,
@@ -174,9 +180,9 @@ async def link_opposes(
     rows = (
         (
             await db.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == concept_id)
-                .where(KGEntity.kind == "misconception")
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == concept_id)
+                .where(LearnerEntity.kind == "misconception")
             )
         )
         .scalars()
@@ -227,9 +233,9 @@ async def drop_unlinkable_minted_misconceptions(
     rows = (
         (
             await db.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == concept_id)
-                .where(KGEntity.kind == "misconception")
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == concept_id)
+                .where(LearnerEntity.kind == "misconception")
             )
         )
         .scalars()
@@ -256,7 +262,7 @@ async def drop_unlinkable_minted_misconceptions(
 
 
 async def _entities_concept_map(db: AsyncSession, entity_ids: Iterable[int]) -> dict[int, int]:
-    """Map each ``KGEntity.id`` to its owning ``concept_id`` in ONE query. A missing
+    """Map each ``LearnerEntity.id`` to its owning ``concept_id`` in ONE query. A missing
     id is simply absent from the map — the caller treats absence as out-of-scope
     (the fail-safe direction)."""
     ids = set(entity_ids)
@@ -265,12 +271,12 @@ async def _entities_concept_map(db: AsyncSession, entity_ids: Iterable[int]) -> 
     return {
         int(eid): int(cid)
         for eid, cid in (
-            await db.execute(select(KGEntity.id, KGEntity.concept_id).where(KGEntity.id.in_(ids)))
+            await db.execute(select(LearnerEntity.id, LearnerEntity.concept_id).where(LearnerEntity.id.in_(ids)))
         ).all()
     }
 
 
-async def load_concept_entities(db: AsyncSession, *, concept_id: int) -> list[KGEntity]:
+async def load_concept_entities(db: AsyncSession, *, concept_id: int) -> list[LearnerEntity]:
     """Load THIS concept's already-PERSISTED ``apollo_kg_entities`` rows (ascending
     ``id`` — first-writer-wins order), for the cross-mint deterministic content-
     equality pre-match (G4.3, cross-UPLOAD half). ``concept_id`` uniquely belongs to
@@ -281,9 +287,9 @@ async def load_concept_entities(db: AsyncSession, *, concept_id: int) -> list[KG
     return list(
         (
             await db.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == concept_id)
-                .order_by(KGEntity.id.asc())
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == concept_id)
+                .order_by(LearnerEntity.id.asc())
             )
         )
         .scalars()
@@ -308,8 +314,8 @@ async def load_concept_prereq_adjacency(
     ids = set(entity_ids)
     if not ids:
         return {}
-    from_entity = aliased(KGEntity)
-    to_entity = aliased(KGEntity)
+    from_entity = aliased(LearnerEntity)
+    to_entity = aliased(LearnerEntity)
     rows = (
         await db.execute(
             select(EntityPrereq.from_entity_id, EntityPrereq.to_entity_id)
@@ -380,6 +386,7 @@ async def partition_prereqs_by_concept_scope(
 async def insert_prereqs(
     db: AsyncSession,
     *,
+    course_id: int,
     concept_id: int,
     key_to_id: dict[str, int],
     pairs: Sequence[tuple[str, str]],
@@ -416,7 +423,10 @@ async def insert_prereqs(
 
     A pair whose key is not in ``key_to_id`` raises KeyError (the caller maps it to
     a TagMintError — an unresolvable key is a caller contract violation, distinct
-    from a resolvable-but-foreign endpoint)."""
+    from a resolvable-but-foreign endpoint).
+
+    DB-13: ``course_id`` is a denormalized NOT NULL column on
+    ``internal.entity_prerequisites``; required on INSERT, unused on skip/drop."""
     kept, dropped = await partition_prereqs_by_concept_scope(
         db, concept_id=concept_id, key_to_id=key_to_id, pairs=pairs
     )
@@ -441,7 +451,7 @@ async def insert_prereqs(
         if from_id == to_id or _reaches(adj, to_id, from_id):
             cyclic.append((from_key, to_key))
             continue
-        db.add(EntityPrereq(from_entity_id=from_id, to_entity_id=to_id))
+        db.add(EntityPrereq(course_id=course_id, from_entity_id=from_id, to_entity_id=to_id))
         adj.setdefault(from_id, set()).add(to_id)
         inserted += 1
     await db.flush()

@@ -37,7 +37,7 @@ from apollo.persistence.models import (
     EntityPrereq,
     IngestPageEvidence,
     IngestRun,
-    KGEntity,
+    LearnerEntity,
     LearnerState,
     MasteryEvent,
     ProvisioningRun,
@@ -1182,15 +1182,15 @@ async def _protected_concepts(db: AsyncSession, concept_ids: list[int]) -> set[i
         select(TutoringSession.concept_id).where(TutoringSession.concept_id.in_(concept_ids)).distinct()
     )
     await _collect(
-        select(KGEntity.concept_id)
-        .join(LearnerState, LearnerState.entity_id == KGEntity.id)
-        .where(KGEntity.concept_id.in_(concept_ids))
+        select(LearnerEntity.concept_id)
+        .join(LearnerState, LearnerState.entity_id == LearnerEntity.id)
+        .where(LearnerEntity.concept_id.in_(concept_ids))
         .distinct()
     )
     await _collect(
-        select(KGEntity.concept_id)
-        .join(MasteryEvent, MasteryEvent.entity_id == KGEntity.id)
-        .where(KGEntity.concept_id.in_(concept_ids))
+        select(LearnerEntity.concept_id)
+        .join(MasteryEvent, MasteryEvent.entity_id == LearnerEntity.id)
+        .where(LearnerEntity.concept_id.in_(concept_ids))
         .distinct()
     )
     # Inbound cross-concept prereq: FROM a SURVIVING concept's entity TO this
@@ -1205,8 +1205,8 @@ async def _protected_concepts(db: AsyncSession, concept_ids: list[int]) -> set[i
     # concept protected ONLY transitively through this same prereq relation is not
     # re-fed as a survivor — a deep prereq chain among orphans may shed one edge.
     still_candidate = [cid for cid in concept_ids if cid not in protected]
-    prereq_target = aliased(KGEntity)
-    prereq_source = aliased(KGEntity)
+    prereq_target = aliased(LearnerEntity)
+    prereq_source = aliased(LearnerEntity)
     await _collect(
         select(prereq_target.concept_id)
         .join(EntityPrereq, EntityPrereq.to_entity_id == prereq_target.id)
@@ -1288,7 +1288,7 @@ async def delete_authored_set(
     misconceptions, or an inbound cross-concept prereq), AND no ``:Canon`` student
     ``RESOLVES_TO`` history. For those (and ONLY those) the reference graph a plain
     delete used to leave behind is torn down: dedup decisions plus
-    ``app.concepts`` (KGEntity + prerequisite rows cascade) in Postgres,
+    ``app.concepts`` (LearnerEntity + prerequisite rows cascade) in Postgres,
     and the guarded ``:Canon`` nodes in Neo4j. Every ambiguous case spares the
     concept — under-tearing-down only leaves KG behind, whereas over-tearing-down
     would 500 (the tutoring-activity RESTRICT FK) or destroy student data.
@@ -1396,7 +1396,7 @@ async def delete_authored_set(
             orphaned_concept_ids = [cid for cid in candidates if cid not in with_history]
             if orphaned_concept_ids:
                 # dedup_decisions FK is ON DELETE SET NULL, so delete explicitly
-                # BEFORE the concept; deleting app.concepts cascades KGEntity and
+                # BEFORE the concept; deleting app.concepts cascades LearnerEntity and
                 # apollo_entity_prereqs. tutoring activities (the only RESTRICT FK) are
                 # already spared by _protected_concepts, so this never hard-fails.
                 await db.execute(

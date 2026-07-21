@@ -62,9 +62,9 @@ async def mastery_heatmap(db: AsyncSession, *, search_space_id: int) -> list[dic
                     e.concept_id AS concept_id,
                     avg(ls.mastery) AS mastery,
                     avg(ls.confidence) AS confidence
-                FROM apollo_learner_state ls
-                JOIN apollo_kg_entities e ON e.id = ls.entity_id
-                WHERE ls.search_space_id = :search_space_id
+                FROM app.learner_state ls
+                JOIN app.learner_entities e ON e.id = ls.entity_id
+                WHERE ls.course_id = :search_space_id
                 GROUP BY ls.user_id, e.concept_id
                 ORDER BY ls.user_id, e.concept_id
                 """

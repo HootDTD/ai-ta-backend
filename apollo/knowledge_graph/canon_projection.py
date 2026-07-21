@@ -37,7 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import CanonProjectionError
-from apollo.persistence.models import Concept, KGEntity
+from apollo.persistence.models import Concept, LearnerEntity
 from apollo.persistence.neo4j_client import Neo4jClient
 
 # ---------------------------------------------------------------------------
@@ -143,17 +143,17 @@ async def load_entity_specs(
 
     stmt = (
         select(
-            KGEntity.id,
-            KGEntity.concept_id,
+            LearnerEntity.id,
+            LearnerEntity.concept_id,
             Concept.course_id.label("search_space_id"),
-            KGEntity.canonical_key,
-            KGEntity.kind,
-            KGEntity.display_name,
+            LearnerEntity.canonical_key,
+            LearnerEntity.kind,
+            LearnerEntity.display_name,
         )
-        .join(Concept, Concept.id == KGEntity.concept_id)
+        .join(Concept, Concept.id == LearnerEntity.concept_id)
     )
     if concept_id is not None:
-        stmt = stmt.where(KGEntity.concept_id == concept_id)
+        stmt = stmt.where(LearnerEntity.concept_id == concept_id)
     else:
         stmt = stmt.where(Concept.course_id == search_space_id)
 

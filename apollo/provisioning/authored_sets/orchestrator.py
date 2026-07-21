@@ -195,7 +195,7 @@ def reversed_provisioning_enabled() -> bool:
 class MintRejected(Exception):
     """Internal control flow: ``promote`` returned a lint rejection INSIDE the
     mint+promote savepoint — raising unwinds the savepoint so the mint's
-    flushed concept/KGEntity/prereq/dedup rows do NOT survive as orphans (the
+    flushed concept/LearnerEntity/prereq/dedup rows do NOT survive as orphans (the
     verified 17->33 entity-doubling bug), then the except arm reports the
     rejection normally."""
 
@@ -884,7 +884,7 @@ async def _process_authored_candidate(
         # Mint AND promote ride ONE nested SAVEPOINT — mint is TRANSACTIONAL
         # with promotion. Two rollback triggers:
         #   * a fail-closed TagMintError (raised AFTER tag_mint has already
-        #     flushed concept / KGEntity / dedup-decision rows for this
+        #     flushed concept / LearnerEntity / dedup-decision rows for this
         #     candidate);
         #   * a LINT REJECTION from ``promote`` (e.g. the gate-8 duplicate
         #     check) — previously the mint's flushed rows survived the run's

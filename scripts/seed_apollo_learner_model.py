@@ -74,7 +74,7 @@ from apollo.persistence.learner_model_seed import (  # noqa: E402
 from apollo.persistence.models import (  # noqa: E402
     Concept,
     EntityPrereq,
-    KGEntity,
+    LearnerEntity,
 )
 from apollo.persistence.models import (
     Problem as ProblemRecord,
@@ -105,6 +105,7 @@ class _ConceptTarget:
     """One concept to seed: its DB row id + slug + on-disk source dir."""
 
     concept_id: int
+    course_id: int
     slug: str
     source_dir: Path
 
@@ -237,6 +238,7 @@ async def _resolve_concepts(
     return [
         _ConceptTarget(
             concept_id=row_id,
+            course_id=space_id,
             slug=row_slug,
             source_dir=_concept_dir(source_subject_slug, row_slug),
         )
@@ -245,20 +247,22 @@ async def _resolve_concepts(
 
 
 async def _upsert_entity(
-    session: AsyncSession, concept_id: int, spec: EntitySpec
+    session: AsyncSession, concept_id: int, course_id: int, spec: EntitySpec
 ) -> tuple[int, bool]:
     """Upsert one entity keyed on (concept_id, canonical_key). Returns
-    (entity_id, inserted)."""
+    (entity_id, inserted). ``course_id`` is a denormalized NOT NULL column on
+    ``app.learner_entities`` (DB-13); required on INSERT, unused on update."""
     row = (
         await session.execute(
-            select(KGEntity)
-            .where(KGEntity.concept_id == concept_id)
-            .where(KGEntity.canonical_key == spec.canonical_key)
+            select(LearnerEntity)
+            .where(LearnerEntity.concept_id == concept_id)
+            .where(LearnerEntity.canonical_key == spec.canonical_key)
         )
     ).scalar_one_or_none()
 
     if row is None:
-        row = KGEntity(
+        row = LearnerEntity(
+            course_id=course_id,
             concept_id=concept_id,
             canonical_key=spec.canonical_key,
             kind=spec.kind,
@@ -286,9 +290,9 @@ async def _link_opposes(session: AsyncSession, concept_id: int, key_to_id: dict[
     rows = (
         (
             await session.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == concept_id)
-                .where(KGEntity.kind == "misconception")
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == concept_id)
+                .where(LearnerEntity.kind == "misconception")
             )
         )
         .scalars()
@@ -317,8 +321,11 @@ async def _insert_prereqs(
     session: AsyncSession,
     key_to_id: dict[str, int],
     pairs: list[tuple[str, str]],
+    course_id: int,
 ) -> tuple[int, int]:
-    """Insert prereq edges (ON CONFLICT DO NOTHING). Returns (inserted, skipped)."""
+    """Insert prereq edges (ON CONFLICT DO NOTHING). Returns (inserted, skipped).
+    ``course_id`` is a denormalized NOT NULL column on
+    ``internal.entity_prerequisites`` (DB-13)."""
     inserted = 0
     skipped = 0
     for from_key, to_key in pairs:
@@ -334,7 +341,9 @@ async def _insert_prereqs(
         if existing is not None:
             skipped += 1
             continue
-        session.add(EntityPrereq(from_entity_id=from_id, to_entity_id=to_id))
+        session.add(
+            EntityPrereq(course_id=course_id, from_entity_id=from_id, to_entity_id=to_id)
+        )
         inserted += 1
     await session.flush()
     return inserted, skipped
@@ -431,7 +440,9 @@ async def _seed_concept(
     specs = _collect_entity_specs(target.slug, target.source_dir, problems)
     key_to_id: dict[str, int] = {}
     for spec in specs:
-        entity_id, inserted = await _upsert_entity(session, target.concept_id, spec)
+        entity_id, inserted = await _upsert_entity(
+            session, target.concept_id, target.course_id, spec
+        )
         key_to_id[spec.canonical_key] = entity_id
         if inserted:
             stats["entities_inserted"] += 1
@@ -442,7 +453,7 @@ async def _seed_concept(
 
     dag = _read_json(target.source_dir / "concept_dag.json")
     prereqs_inserted, prereqs_skipped = await _insert_prereqs(
-        session, key_to_id, concept_dag_to_prereqs(dag)
+        session, key_to_id, concept_dag_to_prereqs(dag), target.course_id
     )
     stats["prereqs_inserted"] = prereqs_inserted
     stats["prereqs_skipped"] = prereqs_skipped

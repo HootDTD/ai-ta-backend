@@ -64,7 +64,7 @@ from apollo.persistence.learner_model_seed import (
     misconceptions_to_entities,
     reference_solution_to_entities,
 )
-from apollo.persistence.models import Concept, KGEntity
+from apollo.persistence.models import Concept, LearnerEntity
 from apollo.provisioning.dedup import resolve_candidate
 from apollo.provisioning.tag_mint_persist import (
     author_concept_symbols,
@@ -221,10 +221,10 @@ def _normalize_equation(symbolic: str) -> str:
         return re.sub(r"\s+", "", raw)
 
 
-def _equivalence_signature(spec: EntitySpec | KGEntity) -> tuple[str, str, str]:
+def _equivalence_signature(spec: EntitySpec | LearnerEntity) -> tuple[str, str, str]:
     """The deterministic, CASE-SENSITIVE equivalence key content-duplicate entities
     are folded on (G4.3). Computed identically for a fresh ``EntitySpec`` candidate
-    AND a PERSISTED ``KGEntity`` row (both expose ``kind``/``display_name``/
+    AND a PERSISTED ``LearnerEntity`` row (both expose ``kind``/``display_name``/
     ``payload``), so it drives BOTH the within-mint collapse and the cross-mint
     content-equality pre-match against prior uploads' entities.
 
@@ -572,6 +572,7 @@ async def tag_and_mint(
 
         entity_id, _inserted = await upsert_entity(
             db,
+            course_id=search_space_id,
             concept_id=concept_id,
             spec=spec,
             scope_summary=scope_summary,
@@ -734,7 +735,13 @@ async def tag_and_mint(
     # Persist the surviving edges. ``insert_prereqs`` re-applies the concept-scope
     # guard at the writer boundary (defense-in-depth); after the pre-filter above it
     # has nothing left to drop, so its dropped-return is empty here.
-    await insert_prereqs(db, concept_id=concept_id, key_to_id=key_to_id, pairs=prereq_pairs)
+    await insert_prereqs(
+        db,
+        course_id=search_space_id,
+        concept_id=concept_id,
+        key_to_id=key_to_id,
+        pairs=prereq_pairs,
+    )
 
     return MintPlan(
         concept_id=concept_id,

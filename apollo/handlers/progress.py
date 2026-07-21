@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.overseer.xp import next_tier_threshold, title_for_level
 from apollo.persistence.models import (
     Concept,
-    KGEntity,
+    LearnerEntity,
     LearnerState,
     Problem,
     ProblemAttempt,
@@ -62,18 +62,18 @@ async def handle_get_progress_detail(
     mastery_rows = (
         await db.execute(
             select(
-                KGEntity.concept_id,
+                LearnerEntity.concept_id,
                 Concept.display_name,
                 func.avg(LearnerState.mastery),
                 func.count(LearnerState.entity_id),
             )
-            .join(KGEntity, LearnerState.entity_id == KGEntity.id)
-            .join(Concept, KGEntity.concept_id == Concept.id)
+            .join(LearnerEntity, LearnerState.entity_id == LearnerEntity.id)
+            .join(Concept, LearnerEntity.concept_id == Concept.id)
             .where(
                 LearnerState.user_id == user_id,
                 LearnerState.search_space_id == search_space_id,
             )
-            .group_by(KGEntity.concept_id, Concept.display_name)
+            .group_by(LearnerEntity.concept_id, Concept.display_name)
             .order_by(Concept.display_name)
         )
     ).all()
