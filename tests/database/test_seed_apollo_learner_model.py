@@ -157,8 +157,9 @@ async def _seed_space(conn: asyncpg.Connection) -> int:
     )
     await conn.execute(
         "INSERT INTO app.courses (id, name, slug, subject_name) "
-        "VALUES ($1, 'Test Course', 'test-course-' || $1, 'Fluid Mechanics')",
+        "VALUES ($1, 'Test Course', $2, 'Fluid Mechanics')",
         course_id,
+        f"test-course-{course_id}",
     )
     return course_id
 
