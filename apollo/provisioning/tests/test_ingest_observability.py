@@ -257,12 +257,28 @@ async def test_background_run_populates_ingest_run_and_page_evidence(db_session,
         yield db_session
 
     async def _index_authored_doc(db, *, role, page_sink=None, **_kwargs):
+        from database.models import Document
+
         # Simulate the transient per-page OCR pass the real indexer captures.
         if role == "problem":
             page_sink.append(_page(1, plain="Problem 1(a).", conf=0.95))
-            return 201
-        page_sink.append(_page(1, plain="Solution 1(a).", conf=0.5))  # low -> verify
-        return 202
+            doc_id = 201
+        else:
+            page_sink.append(_page(1, plain="Solution 1(a).", conf=0.5))  # low -> verify
+            doc_id = 202
+        # The real indexer mints this row via prepare_for_indexing before
+        # returning the id; provisioning_runs/content_ingest_runs FK to it.
+        db.add(
+            Document(
+                id=doc_id,
+                course_id=space_id,
+                title=f"Fixture {doc_id}",
+                content=f"fixture {doc_id}",
+                content_hash=f"obs-e2e-{doc_id}",
+            )
+        )
+        await db.flush()
+        return doc_id
 
     async def _run_provisioning(db, neo, **kwargs):
         return ProvisioningReport(
@@ -449,8 +465,21 @@ async def test_background_failure_marks_run_failed_and_records_error(db_session,
         yield db_session
 
     async def _index_authored_doc(db, *, role, page_sink=None, **_kwargs):
+        from database.models import Document
+
         page_sink.append(_page(1, plain="page", conf=0.9))
-        return 401 if role == "problem" else 402
+        doc_id = 401 if role == "problem" else 402
+        db.add(
+            Document(
+                id=doc_id,
+                course_id=space_id,
+                title=f"Fixture {doc_id}",
+                content=f"fixture {doc_id}",
+                content_hash=f"obs-fail-{doc_id}",
+            )
+        )
+        await db.flush()
+        return doc_id
 
     async def _run_provisioning(db, neo, **_kwargs):
         raise RuntimeError("provisioning boom")

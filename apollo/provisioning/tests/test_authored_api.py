@@ -136,6 +136,25 @@ async def _seed_course(db, *, slug: str = "aas-api") -> tuple[int, int]:
     return int(space.id), int(concept.id)
 
 
+async def _seed_documents(db, *, course_id: int, ids: tuple[int, ...], slug: str) -> None:
+    """Seed real ``app.documents`` rows for hidden-doc ids a test's mocked
+    ``index_authored_doc``/``_run_set_background`` call fabricates — required
+    since ``provisioning_runs``/``content_ingest_runs`` FK to ``documents``."""
+    from database.models import Document
+
+    for document_id in ids:
+        db.add(
+            Document(
+                id=document_id,
+                course_id=course_id,
+                title=f"Fixture {document_id}",
+                content=f"fixture {document_id}",
+                content_hash=f"{slug}-{document_id}",
+            )
+        )
+    await db.flush()
+
+
 @pytest.mark.asyncio
 async def test_create_set_persists_and_schedules(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi
@@ -207,6 +226,7 @@ async def test_background_runner_returns_when_row_vanishes(db_session, monkeypat
     # A real search space so the ingest-run row (opened before the vanish check)
     # satisfies its search_space_id FK; the ProvisioningRun id stays nonexistent.
     search_space_id, _concept_id = await _seed_course(db_session, slug="vanish")
+    await _seed_documents(db_session, course_id=search_space_id, ids=(101, 102), slug="vanish")
 
     @asynccontextmanager
     async def _session_cm():
@@ -509,6 +529,7 @@ async def test_background_runner_indexes_and_persists_report(db_session, monkeyp
     from apollo.provisioning.authored_sets.orchestrator import ProvisioningReport
 
     search_space_id, _concept_id = await _seed_course(db_session, slug="background")
+    await _seed_documents(db_session, course_id=search_space_id, ids=(101, 102), slug="background")
     row = ProvisioningRun.authored_set(search_space_id=search_space_id, set_index=1, status="pending")
     db_session.add(row)
     await db_session.flush()
@@ -565,6 +586,7 @@ async def test_background_runner_without_solution_leaves_solution_document_id_nu
     from apollo.provisioning.authored_sets.orchestrator import ProvisioningReport
 
     search_space_id, _concept_id = await _seed_course(db_session, slug="background-nosol")
+    await _seed_documents(db_session, course_id=search_space_id, ids=(101,), slug="background-nosol")
     row = ProvisioningRun.authored_set(search_space_id=search_space_id, set_index=1, status="pending")
     db_session.add(row)
     await db_session.flush()
@@ -623,6 +645,9 @@ async def test_background_runner_same_doc_guard_treats_solution_as_absent(
 
     monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", mode)
     search_space_id, _concept_id = await _seed_course(db_session, slug=f"background-samedoc-{mode}")
+    await _seed_documents(
+        db_session, course_id=search_space_id, ids=(101, 102), slug=f"background-samedoc-{mode}"
+    )
     row = ProvisioningRun.authored_set(search_space_id=search_space_id, set_index=1, status="pending")
     db_session.add(row)
     await db_session.flush()
@@ -680,6 +705,9 @@ async def test_background_runner_same_doc_guard_becomes_combined_when_on(db_sess
 
     monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", "on")
     search_space_id, _concept_id = await _seed_course(db_session, slug="background-samedoc-on")
+    await _seed_documents(
+        db_session, course_id=search_space_id, ids=(101, 102), slug="background-samedoc-on"
+    )
     row = ProvisioningRun.authored_set(search_space_id=search_space_id, set_index=1, status="pending")
     db_session.add(row)
     await db_session.flush()
@@ -736,6 +764,9 @@ async def test_background_runner_combined_probe_fallback_restores_same_doc_guard
     monkeypatch.setenv("APOLLO_STRUCTURE_PAIRING", "on")
     search_space_id, _concept_id = await _seed_course(
         db_session, slug="background-samedoc-fallback"
+    )
+    await _seed_documents(
+        db_session, course_id=search_space_id, ids=(101, 102), slug="background-samedoc-fallback"
     )
     row = ProvisioningRun.authored_set(search_space_id=search_space_id, set_index=1, status="pending")
     db_session.add(row)
@@ -840,6 +871,7 @@ async def test_list_and_detail_are_course_gated(db_session, monkeypatch):
     from apollo.persistence.models import ProvisioningRun
 
     search_space_id, _concept_id = await _seed_course(db_session, slug="list")
+    await _seed_documents(db_session, course_id=search_space_id, ids=(101, 102), slug="list")
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     seen = []
 
@@ -1262,6 +1294,7 @@ async def test_delete_sweep_document_scope_without_database(monkeypatch):
     authored_set = SimpleNamespace(
         id=77,
         search_space_id=5,
+        kind="authored_set",
         status="done",
         problem_document_id=42,
         solution_document_id=None,

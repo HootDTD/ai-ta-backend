@@ -1352,6 +1352,11 @@ async def delete_authored_set(
 
     doc_ids = [int(d) for d in (row.problem_document_id, row.solution_document_id) if d is not None]
     removed_documents = 0
+    # provisioning_runs.{problem,solution}_document_id is ON DELETE RESTRICT: this
+    # set's own row is the only remaining referencer of doc_ids, so it must go
+    # before the documents or the FK blocks the delete below. The ORM-enabled
+    # bulk delete's autoflush below applies this pending delete first.
+    await db.delete(row)
     if doc_ids:
         res = await db.execute(delete(Document).where(Document.id.in_(doc_ids)))
         removed_documents = res.rowcount or 0
@@ -1399,7 +1404,6 @@ async def delete_authored_set(
                 )
                 await db.execute(delete(Concept).where(Concept.id.in_(orphaned_concept_ids)))
 
-    await db.delete(row)
     await db.commit()
 
     # Neo4j shares no txn with Postgres — run the guarded :Canon teardown AFTER the
