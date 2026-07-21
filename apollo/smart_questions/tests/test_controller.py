@@ -97,6 +97,11 @@ async def test_absent_rows_default_missing_and_ask_persists_tally_and_audit(monk
     assert opportunity.times_asked == 1
     assert opportunity.last_asked_turn == 1
     assert opportunity.question == "What do you mean by x?"
+    assert len(db.statements) == 1
+    scoped_query = str(db.statements[0])
+    assert "question_opportunities.course_id" in scoped_query
+    assert "question_opportunities.learning_activity_id" in scoped_query
+    assert "question_opportunities.attempt_id" in scoped_query
 
 
 @pytest.mark.asyncio
@@ -135,6 +140,47 @@ async def test_confirm_once_round_trip_increments_target_to_two(monkeypatch):
     assert target.student_declined is False
     assert target.times_asked == 2
     assert target.last_asked_turn == 5
+
+
+@pytest.mark.asyncio
+async def test_two_probe_cap_preserves_per_node_state_count_and_evidence(monkeypatch):
+    row = SimpleNamespace(
+        reference_node_id="def_x",
+        state="tentative",
+        evidence=[{"turn_id": 0, "quote": "x matters"}],
+        student_declined=False,
+        times_asked=2,
+        last_asked_turn=3,
+        question="Could you explain x another way?",
+        asked_turn=3,
+        answered_turn=None,
+    )
+    db = _DB([row])
+
+    async def evaluate(**kwargs):
+        state = kwargs["tally_state"][0]
+        assert state.status == "tentative"
+        assert state.evidence == (EvidenceQuote(0, "x matters"),)
+        assert state.times_asked == 2
+        assert kwargs["budget"].questions_asked == 2
+        return UnifiedQuestionResult((), "done", None, None, None)
+
+    monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
+    result = await controller.plan_next_question(
+        db,
+        course_id=11,
+        attempt_id=2,
+        session_id=3,
+        problem=_problem(),
+        transcript=[("student", "x matters")],
+        turn_index=4,
+    )
+
+    assert result.action == "done"
+    assert row.state == "tentative"
+    assert row.evidence == [{"turn_id": 0, "quote": "x matters"}]
+    assert row.times_asked == 2
+    assert row.answered_turn == 4
 
 
 @pytest.mark.asyncio

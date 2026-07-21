@@ -72,6 +72,23 @@ numeric `app.problems.id` only at the persistence boundary. Provisioning,
 authored-set ingestion, generated variants, and active curriculum seeds all
 write the folded, course-scoped target rows directly.
 
+## DB-11 question opportunities
+
+Unified questioning persists one `QuestionOpportunity` per
+`(attempt_id, reference_node_id)` in `app.question_opportunities`. Each row is
+scoped by `course_id` and the tutoring `learning_activity_id`, and combines the
+student-facing question timing with the durable per-node learner state,
+verbatim evidence, decline memory, and ask counters. The controller loads this
+single scoped row set once per turn and constructs the existing response shape
+without a compatibility model or a second tally query.
+
+The `state` column is the tally state (`missing`, `tentative`, `understood`, or
+`conflicting`). Question-audit closure changes only `answered_turn`; it never
+overwrites learner state. `times_asked` remains cumulative, so the first probe
+and one confirmation reach two asks for that node, after which the existing
+confirm-once policy moves on. Evidence validation and deduplication remain
+unchanged.
+
 ## Done-time grading
 
 The permanent grader of record is the transcript adjudicator plus topic score.

@@ -60,6 +60,14 @@ filtering, and grant execution only to the current backend `service_role`.
 The three DB-04 retrieval indexes are asserted and reused, not duplicated;
 live extension relocation remains a separately observed human gate.
 
+DB-11 (2026-07-21) moves Apollo's runtime question persistence onto the merged
+`app.question_opportunities` target. The `QuestionOpportunity` ORM matches the
+target DDL's course, learning-activity, attempt, per-node state/evidence,
+question timing, decline, and counter columns with one unique
+`(attempt_id, reference_node_id)` identity. The frozen 042/047 migrations and
+copy/rollback SQL retain the two legacy source names only as historical and
+cutover provenance.
+
 MIG-AMEND (2026-07-20) applies architecture rulings A5-A9 to the built target:
 the final inventory is 28 tables (18 `app`, 10 `internal`). Chat and tutoring
 sessions share `app.learning_activities`, discriminated by `modality`, while
@@ -112,8 +120,8 @@ Cleanup T-E (2026-07-16) removed the `Clarification` SQLAlchemy model and all ru
 | `database/session.py` | Async engine/session factory keyed **per event loop**, plus `run_async()` sync-to-async bridge. PostgreSQL uses connection recycling; SQLite erases target schema names with `schema_translate_map`. |
 | `supabase/config.toml`, `supabase/migrations/`, `supabase/seed.sql` | Supabase CLI 2.109.0 local project. Timestamped SQL is the sole forward migration history; reset applies migrations in timestamp order, then the deterministic non-production seed. The first migration is the DB-03 draft snapshot and is explicitly not production truth. |
 | `database/migrations/README.md`, `legacy-manifest.sha256` | Freeze contract for the numbered `001`-`047` history. CI rejects additions, removals, or content changes. The only executable Python migration entrypoints were retired in DB-03 and now exit with a pointer to the local Supabase reset harness. |
-| `database/migrations/042_apollo_reference_question_opportunities.sql` | Creates the RLS-stopgapped `apollo_reference_question_opportunities` ledger used by the default-off unified-questioning controller. `UNIQUE(attempt_id, reference_node_id)` enforces one opportunity per authored node; state is `asked_waiting` or terminal `answered`; attempt/session FKs cascade on deletion. Apply to test before enabling `APOLLO_UNIFIED_QUESTIONING_ENABLED`; remote application remains a human/CI step. |
-| `database/migrations/047_apollo_question_tally.sql` | Creates the RLS-stopgapped `apollo_question_tally` durable-memory rows used by unified questioning. One row per attempt/reference node stores the model-owned status, verbatim turn evidence JSON, decline memory, and derived-budget bookkeeping (`times_asked`, `last_asked_turn`). Attempts cascade-delete their tally. The ORM mirror is `apollo.persistence.models.QuestionTally`; local tests only, and remote application remains a human/CI step. |
+| `database/migrations/042_apollo_reference_question_opportunities.sql` | Frozen legacy migration that created the `apollo_reference_question_opportunities` audit ledger. Its `(attempt_id, reference_node_id)` rows are copied into `app.question_opportunities`; runtime no longer maps or queries the legacy table. |
+| `database/migrations/047_apollo_question_tally.sql` | Frozen legacy migration that created `apollo_question_tally` with per-node state, evidence, decline memory, and ask counters. Its shared-key rows are merged into `app.question_opportunities`; runtime no longer maps or queries the legacy table. |
 | `database/migrations/043_apollo_dedup_pressure.sql` | Adds `apollo_ingest_runs.dedup_pressure JSONB NOT NULL`, whose default is a zeroed gauge. The dedup audit writer updates total candidates, exact merges, embedding merges/distincts, embedding merge share, and per-concept embedding merge counts inside the existing transaction. Additive/idempotent DDL; remote application remains a human/CI step. |
 | `database/migrations/044_apollo_generation_runs.sql` | Creates the RLS-stopgapped `apollo_generation_runs` batch ledger for teacher-initiated problem generation. Each course/concept-scoped row tracks `pending|running|succeeded|failed`, a bounded JSONB result summary, and an optional `apollo_ingest_runs` link for LLM cost/token aggregates; course/concept deletes cascade and ingest-run deletion clears only the observability link. |
 | `database/migrations/045_apollo_mastery_event_problem_link.sql` | GEN-5 additively links `apollo_mastery_events.concept_problem_id` to the originating `apollo_concept_problems` row (`ON DELETE SET NULL`) and adds a partial `(concept_problem_id, created_at)` index for future per-item calibration reads. The nullable key is resolved at write time; legacy or unresolvable problem codes continue to write events with `NULL`. |
