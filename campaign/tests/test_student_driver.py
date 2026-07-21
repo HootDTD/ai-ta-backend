@@ -696,15 +696,18 @@ class _FakeRow:
 
 
 def test_sql_artifact_reader_row_to_payload_maps_every_jsonb_column():
+    # GradingRun (internal.grading_runs, DB-14/A7 artifacts-only merge) has
+    # no dedicated misconceptions/clarification_trace columns -- they nest
+    # inside grader_payload; versions/scores/abstention are now the typed
+    # *_details JSONB columns. See GradingRun's docstring + _row_to_payload.
     row = _FakeRow(
         grader_used="graph",
-        versions={"grader": "v1"},
+        version_details={"grader": "v1"},
         node_ledger=[{"canonical_key": "eq.a"}],
         edge_ledger=[],
-        misconceptions=[],
-        clarification_trace=[],
-        scores={"composite": 0.9},
-        abstention=None,
+        grader_payload={"misconceptions": [], "clarification_trace": []},
+        score_details={"composite": 0.9},
+        abstention_details=None,
         grading_latency_ms=1200,
     )
     payload = student.SqlArtifactReader._row_to_payload(row)

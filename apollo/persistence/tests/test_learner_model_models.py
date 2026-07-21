@@ -26,15 +26,16 @@ from apollo.persistence.models import (
     ProblemAttempt,
     TutoringSession,
 )
-
-# DB-14/A7 note: GraphComparisonRun/GraphComparisonFinding were deleted from
-# apollo.persistence.models (dead graph-comparison leg, artifacts-only merge
-# onto internal.grading_runs). This is a commit-1 IMPORT-ONLY fix so the
-# module still collects; test_six_models_map_expected_tablenames /
-# test_comparison_run_unique_attempt_version / test_comparison_finding_entity_set_null
-# below still reference the removed names and are LEFT FAILING for the DB-14
-# stage-2 (tests+docs) retarget commit, not fixed here.
 from database.models import Base
+
+# DB-14/A7 note: GraphComparisonRun/GraphComparisonFinding (the dead
+# graph-comparison leg -- internal.grading_findings was dropped from the
+# target, T-J already removed the shadow chain that wrote them) were DELETED
+# from apollo.persistence.models, not renamed -- there is nothing to retarget
+# their shape-assertion tests onto. test_six_models_map_expected_tablenames
+# dropped its two comparison-model assertions; the two dedicated
+# test_comparison_run_unique_attempt_version /
+# test_comparison_finding_entity_set_null tests below were removed outright.
 
 # ---------------------------------------------------------------------------
 # Table-name mapping
@@ -48,8 +49,6 @@ def test_six_models_map_expected_tablenames():
     assert LearnerState.__table__.schema == "app"
     assert MasteryEvent.__tablename__ == "mastery_events"
     assert MasteryEvent.__table__.schema == "app"
-    assert GraphComparisonRun.__tablename__ == "apollo_graph_comparison_runs"
-    assert GraphComparisonFinding.__tablename__ == "apollo_graph_comparison_findings"
     assert EntityPrereq.__tablename__ == "entity_prerequisites"
     assert EntityPrereq.__table__.schema == "internal"
 
@@ -203,23 +202,11 @@ def test_mastery_event_evidence_node_ids_is_array_not_json():
 
 
 # ---------------------------------------------------------------------------
-# GraphComparisonRun / Finding
+# GraphComparisonRun / Finding -- DELETED (dead graph-comparison leg, A7 /
+# DB-14 artifacts-only merge onto internal.grading_runs; T-J already removed
+# the shadow chain that wrote to them). No replacement model exists to
+# retarget these shape assertions onto -- see the module docstring note.
 # ---------------------------------------------------------------------------
-
-
-def test_comparison_run_unique_attempt_version():
-    ucs = _unique_constraints(GraphComparisonRun)
-    cols = [tuple(c.name for c in uc.columns) for uc in ucs]
-    assert ("attempt_id", "comparison_version") in cols
-
-
-def test_comparison_finding_entity_set_null():
-    table = GraphComparisonFinding.__table__
-    entity_fk = next(iter(table.columns["entity_id"].foreign_keys))
-    assert entity_fk.ondelete == "SET NULL"
-    run_fk = next(iter(table.columns["run_id"].foreign_keys))
-    assert run_fk.column.table.name == "apollo_graph_comparison_runs"
-    assert run_fk.ondelete == "CASCADE"
 
 
 # ---------------------------------------------------------------------------

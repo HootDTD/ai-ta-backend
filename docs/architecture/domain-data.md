@@ -130,6 +130,14 @@ table — DB-13 removes the `KGNegotiation` ORM model and
 negotiate routes and their Neo4j mutations are unaffected. See `apollo.md` for
 the runtime/caller detail.
 
+DB-14 (2026-07-21) completes A7 at the ORM/runtime layer: `GradingArtifact`
+is renamed `GradingRun` and retargeted onto MIG-AMEND's `internal.grading_runs`
+(the artifacts-only merge — `internal.grading_findings` has no target table),
+and the dead `GraphComparisonRun`/`GraphComparisonFinding` ORM models are
+deleted outright (zero remaining runtime importers verified before deletion).
+See `apollo.md`'s "DB-14 grading merge" section for the full column mapping
+and runtime-caller detail.
+
 DB-07 (2026-07-17) switches the first ORM/repository slice to the target
 schemas. `Course` now owns current week, retrieval weights, and typed bounds in
 `app.courses`; memberships/invites use `course_id`. `Document`,
@@ -140,7 +148,7 @@ the `app`/`internal` schema names through `schema_translate_map` for unit tests.
 
 ## Module map and file landmarks
 
-Cleanup T-E (2026-07-16) removed the `Clarification` SQLAlchemy model and all runtime reads/writes of `apollo_clarifications`. Migration 033 remains historical schema history; the physical table is intentionally left for the later DB-drop migration. `GradingArtifact.clarification_trace` remains as a compatibility JSON field and is empty on new writes.
+Cleanup T-E (2026-07-16) removed the `Clarification` SQLAlchemy model and all runtime reads/writes of `apollo_clarifications`. Migration 033 remains historical schema history; the physical table is intentionally left for the later DB-drop migration. DB-14 (2026-07-21) renamed `GradingArtifact` to `GradingRun` and retargeted it onto `internal.grading_runs`; the target DDL has no dedicated `clarification_trace` column, so it (and `misconceptions`) now nest inside the `grader_payload` JSONB catch-all instead of a top-level compatibility field — see `apollo.md`'s "DB-14 grading merge" section for the full column mapping.
 
 | Path | Role |
 |------|------|

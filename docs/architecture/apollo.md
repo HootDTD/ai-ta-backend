@@ -143,11 +143,12 @@ Neo4j is available, the pre-existing semantic coverage fallback remains. If both
 sources are unavailable, the route raises `CoverageGradingError` instead of
 fabricating an empty-graph grade.
 
-`APOLLO_GRADING_ARTIFACT_ENABLED` optionally writes one canonical artifact for
-the transcript/topic result. Artifact persistence and artifact-derived mastery
-projection are soft-failing telemetry: neither can change or void the served
-grade. The response continues to expose the historical `graph_lane: null` field
-for API compatibility.
+`APOLLO_GRADING_ARTIFACT_ENABLED` optionally writes one canonical `GradingRun`
+row (`internal.grading_runs`) for the transcript/topic result. Artifact
+persistence and artifact-derived mastery projection are soft-failing
+telemetry: neither can change or void the served grade. The response
+continues to expose the historical `graph_lane: null` field for API
+compatibility.
 
 ## A7 ruling
 
@@ -158,9 +159,32 @@ worker, findings-driven quarantine sweep, and their deployment switches were
 removed. Student KG construction during chat, transcript grading, topic scores,
 and reference-graph provisioning/storage are explicitly retained.
 
-The schema still contains historical comparison tables until MIG-AMEND performs
-the separately reviewed migration changes. No runtime in `apollo/` writes new
-comparison findings or comparison-run rows.
+## DB-14 grading merge
+
+DB-14 completes A7 at the ORM/runtime layer: `GradingArtifact` is renamed
+`GradingRun` and retargeted onto the DB-04 target DDL's `internal.grading_runs`
+(role `canonical`/`pair`, append-only `UNIQUE(attempt_id, role,
+grader_version)`). `versions`/`scores`/`abstention` split into typed scalar
+columns (`grader_version`, `composite_score`, `node_coverage_score`,
+`abstained`) plus whole-dict `*_details` JSONB columns; the target DDL has no
+dedicated `misconceptions`/`clarification_trace` columns, so both nest inside
+a catch-all `grader_payload` JSONB column instead (`artifact_writer.py`'s
+`_artifact_row` maps `build_llm_artifact`'s payload dict onto this shape;
+`campaign/cast/student.py`'s `SqlArtifactReader._row_to_payload` reconstructs
+the original dict shape for scorecard/campaign consumers). `problem_id`
+becomes a real `BigInteger` FK to `app.problems.id` (`ON DELETE RESTRICT`),
+not an unconstrained `Text` column.
+
+The `GraphComparisonRun`/`GraphComparisonFinding` ORM models (the graph-
+comparison audit leg — `internal.grading_findings` has no target table under
+MIG-AMEND) are DELETED outright, not retargeted: T-J already removed the
+shadow-grader chain that wrote to them, and DB-14 confirmed zero remaining
+runtime importers before deleting. `apollo/projections/classroom.py`'s
+`struggle_signals` raw SQL and `apollo/projections/mastery.py`'s
+`update_mastery_from_artifact` both read `internal.grading_runs` directly.
+The legacy `apollo_grading_artifacts`/`apollo_graph_comparison_*` Postgres
+tables physically remain until MIG-AMEND's separately reviewed migration
+drops them; no runtime code references them by name any more.
 
 ## Reference content and provisioning
 

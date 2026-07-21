@@ -14,6 +14,7 @@ from apollo.conftest import TEST_USER_ID
 from apollo.handlers.done import handle_done
 from apollo.ontology import KGGraph, build_node
 from apollo.persistence.models import (
+    GradingRun,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -25,11 +26,6 @@ from apollo.subjects.tests._curriculum_fixtures import (
     problem_database_id,
     seed_course,
 )
-
-# DB-14/A7 note: this module still selects the removed `GradingArtifact`
-# model (renamed `GradingRun`, retargeted onto `internal.grading_runs` with a
-# different column set) -- IMPORT-ONLY fix for commit-1 collectability, left
-# failing for the stage-2 (tests+docs) commit.
 
 pytestmark = pytest.mark.integration
 
@@ -118,7 +114,7 @@ async def _run_done(db, sess_id, monkeypatch, *, neo_patches, artifact_on: bool)
 
 async def _artifact_rows(db, attempt_id: int):
     return (
-        (await db.execute(select(GradingArtifact).where(GradingArtifact.attempt_id == attempt_id)))
+        (await db.execute(select(GradingRun).where(GradingRun.attempt_id == attempt_id)))
         .scalars()
         .all()
     )
@@ -290,14 +286,14 @@ async def test_llm_canonical_composite_and_band_match_served_rubric(db_session, 
     assert canonical.grader_used == "llm_fallback"
 
     expected_composite = round(served_rubric_score / 100.0, 6)
-    assert canonical.scores["composite"] == pytest.approx(expected_composite)
-    assert canonical.scores["composite"] > 0.0
+    assert canonical.composite_score == pytest.approx(expected_composite)
+    assert canonical.composite_score > 0.0
     # The node ledger must carry real entries (not the empty list a
     # covered/missing-key mismatch silently produced).
     assert canonical.node_ledger != []
 
     expected_band = _band_for(expected_composite, load_bands())
     assert out["scorecard"]["band"] == expected_band
-    assert canonical.scores["composite"] * 100 == pytest.approx(
+    assert canonical.composite_score * 100 == pytest.approx(
         out["scorecard"]["score_0_100"], abs=1
     )
