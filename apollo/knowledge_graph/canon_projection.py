@@ -131,8 +131,12 @@ async def load_entity_specs(
       * elif ``search_space_id`` given -> every concept under that course;
       * else -> ``ValueError`` (refuse a global unscoped projection).
 
-    Misconception entities (``kind == "misconception"``) ARE included — no kind
-    filtering. Wraps the read so any DB failure surfaces as
+    No kind filtering is applied — every ``app.learner_entities`` row in scope is
+    projected, whatever kind it carries. DB-13: ``kind='misconception'`` is no
+    longer a row this query can ever return (the DDL's
+    ``learner_entities__kind__check`` excludes it and no writer mints one), so
+    misconceptions are absent from ``:Canon`` — this function needs no
+    special-casing either way. Wraps the read so any DB failure surfaces as
     ``CanonProjectionError(stage="load_entities", ...)`` (NO FALLBACK).
     """
     if concept_id is None and search_space_id is None:

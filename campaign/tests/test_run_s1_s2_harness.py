@@ -1,7 +1,7 @@
 """Regression tests for the S1 raw-graph harness scripts.
 
 The CANONICAL driver (``campaign/scripts/run_s1_s2.py``) must emit
-``DEPENDS_ON`` for every ``apollo_entity_prereqs`` row -- per
+``DEPENDS_ON`` for every ``internal.entity_prerequisites`` row -- per
 ``apollo/ontology/edges.py``, PRECEDES is legal ONLY between
 ``(procedure_step, procedure_step)`` pairs; generic concept->concept
 prerequisite links must be DEPENDS_ON (see
@@ -59,9 +59,9 @@ class _FakeConn:
         self._prereqs = prereqs
 
     async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
-        if "apollo_entity_prereqs" in query:
+        if "entity_prerequisites" in query:
             return self._prereqs
-        if "apollo_kg_entities" in query:
+        if "learner_entities" in query:
             return self._nodes
         if "apollo_concept_problems" in query or "FROM app.problems" in query:
             return []

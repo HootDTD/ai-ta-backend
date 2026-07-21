@@ -8,11 +8,12 @@ Layer-1 rows and annotates each concept's problems' reference solutions:
   * ``apollo_kg_entities``   — concept + variable + reference-derived
                                (equations/conditions/simplifications/procedures,
                                deduped by canonical_key across a concept's
-                               problems) + ``misc.*`` (with an opposes-link) + any
-                               authored definitions.
+                               problems) + any authored definitions. DB-13:
+                               ``misc.*`` misconception entities are NEVER
+                               written here — the app-schema kind CHECK has no
+                               'misconception' kind; misconceptions.json is not
+                               read by this seeder.
   * ``apollo_entity_prereqs`` — one edge per concept_dag edge.
-  * misconception opposes-link — resolved to ``payload.opposes_entity_id`` in a
-                               second pass once every entity row exists (D3).
   * ``app.problems.reference_solution`` — each step gains an
                                ``entity_key``; each problem gains
                                ``declared_paths`` + ``layer1_seeded`` (D2/D6), so
@@ -67,7 +68,6 @@ from apollo.persistence.learner_model_seed import (  # noqa: E402
     authored_definitions_from_spec,
     concept_dag_to_entities,
     concept_dag_to_prereqs,
-    misconceptions_to_entities,
     reference_solution_to_entities,
     symbols_to_entities,
 )
@@ -147,7 +147,6 @@ def _collect_entity_specs(
     dag = _read_json(source_dir / "concept_dag.json")
     symbols = _read_json(source_dir / "canonical_symbols.json")
     normalization = _read_json(source_dir / "normalization_map.json")
-    misc = _read_json(source_dir / "misconceptions.json")
 
     specs: list[EntitySpec] = []
     specs.extend(concept_dag_to_entities(dag))
@@ -155,7 +154,6 @@ def _collect_entity_specs(
     for problem in problems:
         specs.extend(reference_solution_to_entities(problem))
     specs.extend(_authored_definitions_for(concept_slug, source_dir))
-    specs.extend(misconceptions_to_entities(misc))
 
     deduped: dict[str, EntitySpec] = {}
     for spec in specs:

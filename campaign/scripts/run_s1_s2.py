@@ -17,7 +17,7 @@ Land future S1/S2 harness changes HERE and invoke this module for new runs:
 (``authored_set_final*.json``, one per promoted set) if S2 is to run;
 S2 is skipped with a warning if none are found.
 
-Edge-type emission: ``apollo_entity_prereqs`` rows are generic
+Edge-type emission: ``internal.entity_prerequisites`` rows are generic
 concept->concept prerequisite/dependency links, not procedure-step sequence
 steps -- per ``apollo/ontology/edges.py``, PRECEDES is legal ONLY for
 ``(procedure_step, procedure_step)`` pairs. This driver emits DEPENDS_ON for
@@ -62,7 +62,7 @@ async def _fetch_subject_graph(
     problem_texts = []
     for cid in concept_ids:
         rows = await conn.fetch(
-            "SELECT id, canonical_key, kind, display_name, payload FROM apollo_kg_entities WHERE concept_id=$1",
+            "SELECT id, canonical_key, kind, display_name, payload FROM app.learner_entities WHERE concept_id=$1",
             cid,
         )
         id_to_key = {r["id"]: r["canonical_key"] for r in rows}
@@ -79,8 +79,8 @@ async def _fetch_subject_graph(
             )
         prereq_rows = await conn.fetch(
             """
-            SELECT p.from_entity_id, p.to_entity_id FROM apollo_entity_prereqs p
-            JOIN apollo_kg_entities e ON e.id = p.from_entity_id
+            SELECT p.from_entity_id, p.to_entity_id FROM internal.entity_prerequisites p
+            JOIN app.learner_entities e ON e.id = p.from_entity_id
             WHERE e.concept_id = $1
             """,
             cid,
@@ -89,7 +89,7 @@ async def _fetch_subject_graph(
             fk = id_to_key.get(pr["from_entity_id"])
             tk = id_to_key.get(pr["to_entity_id"])
             if fk and tk:
-                # apollo_entity_prereqs rows are generic concept->concept
+                # internal.entity_prerequisites rows are generic concept->concept
                 # prerequisite/dependency links, not procedure-step sequence
                 # steps -- per apollo/ontology/edges.py, PRECEDES is legal
                 # ONLY for (procedure_step, procedure_step) pairs. Emit

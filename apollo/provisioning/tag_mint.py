@@ -10,15 +10,20 @@ order), ``tag_and_mint``:
   3. AUTHORS the concept's ``canonical_symbols``/``normalization_map`` from the
      approved problem's symbol set (first-writer-wins UNION — NOT derived from a
      promoted problem, which is circular because gate 4 runs BEFORE promotion);
-  4. mints reference + misconception ``EntitySpec``s by REUSING two frozen §8 seed
-     converters (``reference_solution_to_entities`` /
-     ``misconceptions_to_entities``), resolving EACH entity candidate through
-     3B2c's ``resolve_candidate`` dedup ladder BEFORE upsert (a ``merged`` verdict
-     reuses the matched id instead of inserting);
+  4. mints reference ``EntitySpec``s by REUSING the frozen §8 seed converter
+     (``reference_solution_to_entities``), resolving EACH entity candidate
+     through 3B2c's ``resolve_candidate`` dedup ladder BEFORE upsert (a
+     ``merged`` verdict reuses the matched id instead of inserting).
+     Misconception ``EntitySpec``s are also minted via the frozen
+     ``misconceptions_to_entities`` converter, but DB-13 excludes them from the
+     dedup/upsert pass entirely — they never become ``LearnerEntity`` rows,
+     surfacing only as observability (``MintPlan.misconception_keys``);
   5. inserts the prereq edges from the LLM tag draft (NOT from the frozen
      ``concept_dag_to_prereqs`` converter — auto-provisioning drafts prereqs at
-     tag time, before any concept-DAG exists) and links each misconception's
-     ``opposes_entity_key`` to its entity id.
+     tag time, before any concept-DAG exists) and attempts to link each
+     minted misconception's ``opposes_entity_key`` to its entity id (a
+     permanent no-op post-DB-13: no misconception entity row ever exists to
+     link against).
 
 The two §8 converters that the seed script uses but this auto-provisioning path
 does NOT — ``concept_dag_to_prereqs`` (prereqs are LLM-drafted here) and
@@ -39,10 +44,15 @@ KG-enrichment edges the LLM routinely draws to a problem given (not a minted
 reference step), so such an edge is DROPPED (logged), not fatal — see step 5b.
 NO network: ``chat_fn``/``embed_fn`` are injected (mocked in Tier-1).
 
-Misconception-storage DEVIATION (orchestrator-signed, ADJ #2): auto-minted
-misconceptions are stored as ``apollo_kg_entities kind='misconception'`` (a valid
-ENTITY_KIND) via the frozen ``misconceptions_to_entities`` converter — NOT the
-literal §8B.2 ``apollo_misconceptions`` table (whose NOT-NULL Socratic
+DB-13 supersedes the misconception-storage DEVIATION below: the app-schema
+``learner_entities__kind__check`` no longer allows 'misconception', so
+auto-minted misconceptions are NEVER persisted as ``LearnerEntity`` rows —
+they exist only as in-memory ``EntitySpec``s / ``MintPlan.misconception_keys``
+observability. Preserved for history — the original deviation (orchestrator-
+signed, ADJ #2): auto-minted misconceptions used to be stored as
+``apollo_kg_entities kind='misconception'`` (a valid ENTITY_KIND at the time)
+via the frozen ``misconceptions_to_entities`` converter — NOT the literal
+§8B.2 ``apollo_misconceptions`` table (whose NOT-NULL Socratic
 ``probe_question``/``rt_steps`` v1 auto-provisioning cannot responsibly author).
 """
 
@@ -514,8 +524,11 @@ async def tag_and_mint(
     page_ref = (problem.get("provenance") or {}).get("page")
     ref_specs = reference_solution_to_entities(problem)
     ref_specs, collapse_alias = _collapse_equivalent_candidates(ref_specs, page_ref=page_ref)
+    # DB-13: misconception EntitySpecs are observability-only (misconception_keys
+    # below) — the app-schema kind CHECK has no 'misconception', so they are
+    # NEVER added to all_specs / resolved / upserted as LearnerEntity rows.
     misc_specs = misconceptions_to_entities({"misconceptions": pair.misconceptions})
-    all_specs: list[EntitySpec] = [*ref_specs, *misc_specs]
+    all_specs: list[EntitySpec] = ref_specs
 
     key_to_id: dict[str, int] = {}
     minted_entity_ids: dict[str, int] = {}

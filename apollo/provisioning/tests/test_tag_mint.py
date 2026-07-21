@@ -408,10 +408,11 @@ async def test_tag_and_mint_mints_reference_entities(db_session):
     assert by_key["eq.bernoulli"].scope_summary
 
 
-async def test_minted_misconception_is_kg_entity(db_session):
-    """THE DEVIATION. An apollo_kg_entities row with kind='misconception' and
-    payload['opposes_entity_key'] exists (via misconceptions_to_entities); NO
-    write to apollo_misconceptions."""
+async def test_minted_misconception_is_observability_only_not_persisted(db_session):
+    """DB-13: the app-schema ``learner_entities__kind__check`` dropped
+    'misconception', so a misconception is surfaced ONLY via
+    ``MintPlan.misconception_keys`` (observability) — it is NEVER written as a
+    ``LearnerEntity`` row (no write to ``apollo_misconceptions`` either)."""
     ss_id, _subj = await _seed_course(db_session, slug="c-misc")
     misc = [
         {
@@ -441,11 +442,7 @@ async def test_minted_misconception_is_kg_entity(db_session):
         .scalars()
         .all()
     )
-    assert len(rows) == 1
-    payload = rows[0].payload
-    assert payload["opposes_entity_key"] == "eq.bernoulli"
-    # the second-pass link resolved opposes_entity_key → opposes_entity_id.
-    assert "opposes_entity_id" in payload
+    assert rows == []  # no LearnerEntity row ever minted for the misconception
 
 
 
@@ -925,12 +922,13 @@ async def test_tag_and_mint_drops_self_loop_prereq(db_session):
     assert plan.prereq_pairs == []
 
 
-async def test_tag_and_mint_links_opposes_bare_id(db_session):
-    """REGRESSION (H1): link_opposes shares the BLOCKER's bare/prefixed key bug.
-    A misconception whose opposes names a reference node by BARE id (bernoulli)
-    must link to the minted entity (eq.bernoulli), not raise. DISCRIMINATING:
-    reverting the bare-id alias REDs with TagMintError ('misconception opposes an
-    unknown entity key')."""
+async def test_tag_and_mint_bare_id_opposes_does_not_raise(db_session):
+    """A misconception whose opposes names a reference node by BARE id
+    (bernoulli, not eq.bernoulli) must not raise TagMintError. Historically
+    (H1) this exercised link_opposes's bare/prefixed key resolution against a
+    persisted misconception row; DB-13 made misconception persistence a
+    permanent no-op (no LearnerEntity row is ever minted for it), so this is
+    now a smoke test that the bare-id draft mints cleanly regardless."""
     ss_id, _subj = await _seed_course(db_session, slug="c-bareopp")
     misc = [
         {
@@ -945,6 +943,7 @@ async def test_tag_and_mint_links_opposes_bare_id(db_session):
     plan = await tag_and_mint(
         db_session, pair, chat_fn=_chat_returning(_tag_payload()), embed_fn=_embed_distinct
     )
+    assert "misc.pressure_follows_speed" in plan.misconception_keys
     rows = (
         (
             await db_session.execute(
@@ -956,10 +955,7 @@ async def test_tag_and_mint_links_opposes_bare_id(db_session):
         .scalars()
         .all()
     )
-    assert len(rows) == 1
-    payload = rows[0].payload
-    assert payload["opposes_entity_key"] == "bernoulli"  # raw draft key preserved
-    assert payload["opposes_entity_id"] == plan.minted_entity_ids["eq.bernoulli"]
+    assert rows == []  # no LearnerEntity row ever minted for the misconception
 
 
 async def test_tag_and_mint_idempotent(db_session):
@@ -995,11 +991,14 @@ async def test_tag_and_mint_idempotent(db_session):
     assert plan2.authored_symbols == []  # nothing new to author (all unioned)
 
 
-async def test_tag_and_mint_drops_unlinkable_minted_misconception(db_session, caplog):
-    """THIS mint's misconception opposing a key that resolves to no entity is
-    DROPPED (entity row deleted, key pruned from the plan, event logged) and the
-    candidate keeps minting — the 2026-07-14 policy change (staging set 12:
-    'proc.proc_explain_causality' rejected 2/19 otherwise-valid problems)."""
+async def test_tag_and_mint_unresolvable_misconception_opposes_is_inert(db_session, caplog):
+    """A misconception opposing a key that resolves to no entity mints cleanly
+    and does not raise. Historically (2026-07-14 policy change, staging set 12)
+    this exercised drop_unlinkable_minted_misconceptions deleting THIS mint's
+    rogue row and logging a drop event; DB-13 made misconception persistence a
+    permanent no-op (nothing is ever minted for a misconception, so there is
+    nothing to drop) — the drop event never fires and the candidate still
+    mints, which is what this now proves."""
     import logging
 
     ss_id, _subj = await _seed_course(db_session, slug="c-fail")
@@ -1022,6 +1021,7 @@ async def test_tag_and_mint_drops_unlinkable_minted_misconception(db_session, ca
     )
 
     assert "misc.bad" not in plan.minted_entity_ids
+    assert "misc.bad" in plan.misconception_keys
     rogue = (
         (
             await db_session.execute(
@@ -1039,8 +1039,7 @@ async def test_tag_and_mint_drops_unlinkable_minted_misconception(db_session, ca
         for r in caplog.records
         if getattr(r, "event", None) == "tag_mint_dropped_unlinkable_misconceptions"
     ]
-    assert len(events) == 1
-    assert events[0].dropped[0]["opposes_entity_key"] == "eq.does_not_exist"
+    assert events == []  # nothing was minted, so nothing was dropped
 
 
 async def test_preexisting_unlinkable_misconception_stays_fail_closed(db_session):

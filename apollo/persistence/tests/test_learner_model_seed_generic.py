@@ -9,9 +9,12 @@ subject/concept, not just bernoulli, WITHOUT a Postgres/Docker harness:
     ``select``/``flush``/``commit`` queries are exercised — a true mock DB, no
     network, no remote writes;
   * a synthetic two-concept subject is authored into ``tmp_path`` and
-    ``_SUBJECTS_ROOT`` is monkeypatched, proving multi-concept resolution + the
-    generic opposes-link (a misconception opposing a REAL reference key, with NO
-    authored-definition file) without coupling to the macroeconomics deliverable;
+    ``_SUBJECTS_ROOT`` is monkeypatched, proving multi-concept resolution
+    without coupling to the macroeconomics deliverable. Each fixture concept
+    still carries a ``misconceptions.json`` (with a REAL-reference-key
+    ``opposes``) purely as inert fixture data — DB-13 made the generic
+    seeder never read that file, so it mints no misconception entity and
+    ``misconceptions_linked`` is always 0;
   * backward compatibility is pinned against the REAL bernoulli source dir via
     the default ``subject_slug='fluid_mechanics'``.
 
@@ -449,10 +452,11 @@ def test_authored_definitions_for_reads_disk_file(tmp_path):
     assert specs[0].payload["statement"] == "zed"
 
 
-def test_collect_entity_specs_generic_concept_opposes_real_reference_key(monkeypatch, tmp_path):
-    """The generic opposes guarantee: every misconception's opposes_entity_key is
-    a key minted by the concept's own sources (reference nodes / symbols /
-    concept dag) — NO authored-definition file needed."""
+def test_collect_entity_specs_never_reads_misconceptions_json(monkeypatch, tmp_path):
+    """DB-13: misconceptions.json is NEVER read by the generic seeder — the
+    app-schema kind CHECK has no 'misconception', so _collect_entity_specs
+    mints only reference/symbol/dag/authored-definition entities. The
+    concept's own reference key (cond.final_goods_only) still mints normally."""
     monkeypatch.setattr(seeder, "_SUBJECTS_ROOT", tmp_path)
     _make_macro_subject(tmp_path)
     cdir = _concept_dir("macroeconomics", "gdp_components")
@@ -461,12 +465,9 @@ def test_collect_entity_specs_generic_concept_opposes_real_reference_key(monkeyp
     specs = _collect_entity_specs("gdp_components", cdir, problems)
     by_key = {s.canonical_key: s for s in specs}
 
-    # The misconception opposes cond.final_goods_only, which IS minted.
-    assert "misc.includes_transfers" in by_key
+    assert "misc.includes_transfers" not in by_key
+    assert not any(s.kind == "misconception" for s in specs)
     assert "cond.final_goods_only" in by_key
-    assert by_key["misc.includes_transfers"].payload["opposes_entity_key"] == (
-        "cond.final_goods_only"
-    )
     # No bernoulli-style authored definition leaked in.
     assert "def.pressure_velocity_tradeoff" not in by_key
     # Dedup: the shared cond/eq across the two problems mints one entity each.
@@ -504,21 +505,17 @@ async def test_seed_macro_all_concepts_under_subject(monkeypatch, tmp_path, db_u
     # Both concepts were seeded.
     assert stats["concepts_seeded"] == 2
     assert stats["entities_inserted"] > 0
-    assert stats["misconceptions_linked"] == 2  # one per concept
+    # DB-13: misconceptions.json is never read by the generic seeder, so no
+    # misconception entity is ever minted to link.
+    assert stats["misconceptions_linked"] == 0
 
-    # Concept A got its misconception with a RESOLVED opposes_entity_id.
     ents_a = await _fetch_entities(db_url, cid_a)
-    misc_a = next(e for e in ents_a if e.kind == "misconception")
-    assert misc_a.payload["opposes_entity_key"] == "cond.final_goods_only"
-    opposes_id = misc_a.payload["opposes_entity_id"]
-    target = next(e for e in ents_a if e.id == opposes_id)
-    assert target.canonical_key == "cond.final_goods_only"
+    assert not any(e.kind == "misconception" for e in ents_a)
+    assert any(e.canonical_key == "cond.final_goods_only" for e in ents_a)
 
-    # Concept B too (def.real_basis is a real reference node here).
     ents_b = await _fetch_entities(db_url, cid_b)
-    misc_b = next(e for e in ents_b if e.kind == "misconception")
-    assert misc_b.payload["opposes_entity_key"] == "def.real_basis"
-    assert misc_b.payload["opposes_entity_id"] is not None
+    assert not any(e.kind == "misconception" for e in ents_b)
+    assert any(e.canonical_key == "def.real_basis" for e in ents_b)
 
 
 @pytest.mark.asyncio
@@ -595,8 +592,9 @@ def _load_bernoulli_problem(n: int) -> dict:
 async def test_seed_backward_compat_bernoulli_default_subject(db_url):
     """A bare seed() (default subject_slug='fluid_mechanics', no concept_slug)
     reads the REAL bernoulli dir and mints the known counts: 14 concept + 8
-    variable entities, 16 prereqs, both misconceptions opposes-linked (one of
-    which opposes the authored def.pressure_velocity_tradeoff)."""
+    variable entities, 16 prereqs. DB-13: misconceptions.json is never read by
+    the generic seeder, so no misconception entity is minted or opposes-linked
+    (bernoulli's two misconceptions are simply inert data on disk now)."""
     await _insert_course(db_url, 1)
     subject_id = await _insert_subject(db_url, slug="fluid_mechanics", space_id=1)
     cid = await _insert_concept_with_problems(
@@ -609,7 +607,7 @@ async def test_seed_backward_compat_bernoulli_default_subject(db_url):
     stats = await seed(db_url, write_disk=False)  # all defaults
 
     assert stats["concepts_seeded"] == 1
-    assert stats["misconceptions_linked"] == 2
+    assert stats["misconceptions_linked"] == 0
 
     ents = await _fetch_entities(db_url, cid)
     by_kind: dict[str, int] = {}
@@ -617,18 +615,14 @@ async def test_seed_backward_compat_bernoulli_default_subject(db_url):
         by_kind[e.kind] = by_kind.get(e.kind, 0) + 1
     assert by_kind["concept"] == 14
     assert by_kind["variable"] == 8
+    assert "misconception" not in by_kind
 
     keys = {e.canonical_key for e in ents}
     # The authored definition (not a reference node) is still minted for bernoulli.
     assert "def.pressure_velocity_tradeoff" in keys
-
-    # density_ignored opposes a real reference key; pressure_velocity opposes the
-    # authored definition — both resolve to a real entity id.
-    misc = {e.canonical_key: e for e in ents if e.kind == "misconception"}
-    assert misc["misc.density_ignored"].payload["opposes_entity_key"] == ("cond.incompressibility")
-    pv = misc["misc.pressure_velocity_same_direction"]
-    assert pv.payload["opposes_entity_key"] == "def.pressure_velocity_tradeoff"
-    assert pv.payload["opposes_entity_id"] is not None
+    # The misconceptions themselves never mint entity rows.
+    assert "misc.density_ignored" not in keys
+    assert "misc.pressure_velocity_same_direction" not in keys
 
     # 16 prereq edges.
     engine = _sqlite_engine(db_url)
@@ -874,9 +868,10 @@ async def test_seed_write_disk_mirrors_annotation_to_json(monkeypatch, tmp_path,
 
 
 @pytest.mark.asyncio
-async def test_seed_raises_on_unknown_opposes_key(monkeypatch, tmp_path, db_url):
-    """A misconception opposing a key the seed does NOT mint raises SeedError in
-    the second (opposes-link) pass."""
+async def test_seed_ignores_dangling_misconception_opposes_key(monkeypatch, tmp_path, db_url):
+    """DB-13: misconceptions.json is never read by the generic seeder, so a
+    misconception opposing a key the seed does NOT mint is simply inert data —
+    seed() succeeds (it no longer reaches the opposes-link pass at all)."""
     monkeypatch.setattr(seeder, "_SUBJECTS_ROOT", tmp_path)
     # Author a concept whose misconception opposes a non-existent key.
     _write_concept_dir(
@@ -909,8 +904,8 @@ async def test_seed_raises_on_unknown_opposes_key(monkeypatch, tmp_path, db_url)
         problems=[_macro_problem("p1")],
     )
 
-    with pytest.raises(seeder.SeedError, match="opposes unknown key"):
-        await seed(db_url, subject_slug="brokensub", write_disk=False)
+    stats = await seed(db_url, subject_slug="brokensub", write_disk=False)
+    assert stats["misconceptions_linked"] == 0
 
 
 def test_disk_problem_paths_missing_dir_returns_empty(tmp_path):

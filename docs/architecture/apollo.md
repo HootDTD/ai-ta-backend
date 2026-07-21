@@ -102,8 +102,18 @@ and their test doubles) threads a `course_id` through construction.
 `aliases` (`LearnerEntity`) and `evidence_node_ids` (`MasteryEvent`) are
 `TEXT[]` columns now, not JSONB. `misconception_code` is gone from
 `LearnerState` and `MasteryEvent` — misconceptions are tracked via
-`MasteryEvent.event_kind` and via `LearnerEntity.kind == 'misconception'` at
-mint time, not as a mutable per-entity/per-event field.
+`MasteryEvent.event_kind` instead. `learner_entities__kind__check` also
+dropped `'misconception'` from its allowed kinds: the Postgres Layer-1 skill
+inventory no longer stores misconception entities AT ALL. Every writer that
+used to mint `kind='misconception'` rows (`tag_mint.py`'s auto-provisioning
+path, `scripts/seed_apollo_learner_model.py`'s curriculum seeder) now excludes
+misconception `EntitySpec`s from the entity upsert entirely — they surface
+only as observability (`MintPlan.misconception_keys`, `seed()`'s
+`misconceptions_linked` stat, which is now always 0). The opposes-link readers
+(`tag_mint_persist.link_opposes` / `drop_unlinkable_minted_misconceptions`,
+the seed script's own `_link_opposes`) are kept as permanent no-ops (no row
+ever matches `kind == 'misconception'`) rather than removed, so a future
+schema reversal would not need them rebuilt.
 
 A6 (`.planning/cleanup/db-plan-amendments-2026-07-20.md`) removed the
 `apollo_kg_negotiations` Postgres audit table and the `KGNegotiation` model —
@@ -113,9 +123,10 @@ routes) and their Neo4j status writes keep working unconditionally; only the
 Postgres audit-row write is gone, so `KGStore.get_node_trace` now always
 returns an empty `moves` list. `MasteryEvent.negotiation_move` is a distinct,
 still-live nullable column (unrelated to the deleted audit table) — the
-dormant WU-5A2 in-memory row-spec dataclasses (`apollo/learner_model/state_model.py`)
-dropped their own `negotiation_move` field as unused, but the ORM column and
-the real `MasteryEvent` model both retain it.
+dormant WU-5A2 in-memory row-spec dataclass (`MasteryEventRowSpec` in
+`apollo/learner_model/state_model.py`) mirrors it (writers pass `None`,
+matching `apollo/projections/mastery.py`'s live writer) rather than dropping
+it, so the spec stays a true 1:1 onto the ORM/DDL column set.
 
 ## Done-time grading
 
