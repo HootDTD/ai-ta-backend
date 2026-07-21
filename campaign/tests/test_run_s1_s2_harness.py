@@ -63,7 +63,7 @@ class _FakeConn:
             return self._prereqs
         if "apollo_kg_entities" in query:
             return self._nodes
-        if "apollo_concept_problems" in query:
+        if "apollo_concept_problems" in query or "FROM app.problems" in query:
             return []
         raise AssertionError(f"unexpected query: {query!r}")
 
@@ -128,25 +128,59 @@ def test_canonical_driver_build_s2_raw_skips_when_no_fixtures(tmp_path: Path):
 
 
 def test_canonical_driver_fetch_subject_graph_parses_problem_payloads():
-    # Covers the apollo_concept_problems loop (lines otherwise unexercised by
-    # the edge-emission-focused fixture above): both the JSON-string and
-    # already-decoded-dict payload shapes.
+    # Covers the app.problems loop (lines otherwise unexercised by the
+    # edge-emission-focused fixture above): both JSON-string and already-decoded
+    # payload_extra/reference_solution shapes.
     nodes, prereqs = _fixture()
 
     class _ConnWithProblems(_FakeConn):
         async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
-            if "apollo_concept_problems" in query:
+            if "FROM app.problems" in query:
                 return [
-                    {"problem_code": "p1", "payload": json.dumps({"statement": "A flows..."})},
-                    {"problem_code": "p2", "payload": {"statement": "already decoded"}},
+                    {
+                        "problem_code": "p1",
+                        "difficulty": "easy",
+                        "problem_text": "A flows...",
+                        "given_values": {"density": 1000},
+                        "target_unknown": "pressure",
+                        "reference_solution": json.dumps({"steps": ["Apply Bernoulli"]}),
+                        "payload_extra": json.dumps({"source": "fixture-1"}),
+                    },
+                    {
+                        "problem_code": "p2",
+                        "difficulty": "medium",
+                        "problem_text": "Already decoded",
+                        "given_values": {"velocity": 2},
+                        "target_unknown": "flow_rate",
+                        "reference_solution": {"steps": ["Use continuity"]},
+                        "payload_extra": {"source": "fixture-2"},
+                    },
                 ]
             return await super().fetch(query, *args)
 
     conn = _ConnWithProblems(nodes=nodes, prereqs=prereqs)
     graph = _run(canonical_script._fetch_subject_graph(conn, "fluid_mechanics", [1]))
     assert graph["problem"]["problems"] == [
-        {"statement": "A flows..."},
-        {"statement": "already decoded"},
+        {
+            "source": "fixture-1",
+            "id": "p1",
+            "concept_id": "1",
+            "difficulty": "easy",
+            "problem_text": "A flows...",
+            "given_values": {"density": 1000},
+            "target_unknown": "pressure",
+            "reference_solution": ["Apply Bernoulli"],
+        },
+        {
+            "source": "fixture-2",
+            "id": "p2",
+            "concept_id": "1",
+            "difficulty": "medium",
+            "problem_text": "Already decoded",
+            "given_values": {"velocity": 2},
+            "target_unknown": "flow_rate",
+            "reference_solution": ["Use continuity"],
+        },
     ]
 
 
