@@ -350,11 +350,14 @@ class Problem(Base):
         return value
 
 
-class AuthoredSet(Base):
-    """Problem-doc plus solution-doc pairing for authored-set provisioning
-    (WU-AAS). result_summary holds the bounded per-problem outcome list."""
+class ProvisioningRun(Base):
+    """One teacher-gated authored-set or generation provisioning run.
 
-    __tablename__ = "apollo_authored_sets"
+    Callers use the kind-specific factories below instead of assembling a
+    discriminator plus a nullable field bag themselves.
+    """
+
+    __tablename__ = "provisioning_runs"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"),
@@ -362,14 +365,31 @@ class AuthoredSet(Base):
         autoincrement=True,
     )
     search_space_id = Column(
-        Integer,
+        "course_id",
+        BigInteger,
         ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    set_index = Column(Integer, nullable=False)
-    problem_document_id = Column(BigInteger, nullable=True)
-    solution_document_id = Column(BigInteger, nullable=True)
+    kind = Column(Text, nullable=False)
+    set_index = Column(Integer, nullable=True)
+    problem_document_id = Column(
+        BigInteger, ForeignKey("app.documents.id", ondelete="RESTRICT"), nullable=True
+    )
+    solution_document_id = Column(
+        BigInteger, ForeignKey("app.documents.id", ondelete="RESTRICT"), nullable=True
+    )
+    concept_id = Column(
+        BigInteger,
+        ForeignKey("app.concepts.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    ingest_run_id = Column(
+        BigInteger,
+        ForeignKey("internal.content_ingest_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     status = Column(Text, nullable=False, server_default=text("'pending'"), default="pending")
     result_summary = Column(
         _JSONType,
@@ -381,45 +401,62 @@ class AuthoredSet(Base):
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
-        UniqueConstraint("search_space_id", "set_index", name="uq_authored_set_per_space"),
+        Index(
+            "provisioning_runs__authored_course_set__uidx",
+            "course_id",
+            "set_index",
+            unique=True,
+            postgresql_where=text("kind = 'authored_set'"),
+            sqlite_where=text("kind = 'authored_set'"),
+        ),
+        {"schema": "app"},
     )
 
+    @classmethod
+    def authored_set(
+        cls,
+        *,
+        search_space_id: int,
+        set_index: int,
+        problem_document_id: int | None = None,
+        solution_document_id: int | None = None,
+        status: str = "pending",
+        result_summary: dict | None = None,
+    ) -> ProvisioningRun:
+        if set_index < 0:
+            raise ValueError("authored-set set_index must be non-negative")
+        if status not in {"pending", "indexing", "provisioning", "done", "failed"}:
+            raise ValueError(f"invalid authored-set status: {status}")
+        return cls(
+            kind="authored_set",
+            search_space_id=search_space_id,
+            set_index=set_index,
+            problem_document_id=problem_document_id,
+            solution_document_id=solution_document_id,
+            status=status,
+            result_summary={} if result_summary is None else result_summary,
+        )
 
-class GenerationRun(Base):
-    """Teacher-initiated problem-generation batch and its bounded result ledger."""
-
-    __tablename__ = "apollo_generation_runs"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"),
-        primary_key=True,
-        autoincrement=True,
-    )
-    search_space_id = Column(
-        Integer,
-        ForeignKey("app.courses.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    concept_id = Column(
-        BigInteger,
-        ForeignKey("app.concepts.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    status = Column(Text, nullable=False, server_default=text("'pending'"), default="pending")
-    result_summary = Column(
-        _JSONType,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-        default=dict,
-    )
-    ingest_run_id = Column(
-        BigInteger,
-        ForeignKey("apollo_ingest_runs.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    @classmethod
+    def generation(
+        cls,
+        *,
+        search_space_id: int,
+        concept_id: int,
+        status: str = "pending",
+        result_summary: dict | None = None,
+        ingest_run_id: int | None = None,
+    ) -> ProvisioningRun:
+        if status not in {"pending", "running", "succeeded", "failed"}:
+            raise ValueError(f"invalid generation status: {status}")
+        return cls(
+            kind="generation",
+            search_space_id=search_space_id,
+            concept_id=concept_id,
+            status=status,
+            result_summary={} if result_summary is None else result_summary,
+            ingest_run_id=ingest_run_id,
+        )
 
 
 class QuestionOpportunity(Base):
@@ -958,13 +995,14 @@ class IngestRun(Base):
     queued/running/succeeded/failed — DISTINCT from the job ``state`` vocabulary
     (the CHECK is in SQL only; the ORM declares none, repo convention)."""
 
-    __tablename__ = "apollo_ingest_runs"
+    __tablename__ = "content_ingest_runs"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
     search_space_id = Column(
-        Integer,
+        "course_id",
+        BigInteger,
         ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -973,7 +1011,9 @@ class IngestRun(Base):
     # opens the run BEFORE indexing so an OCR/indexing failure (bad PDF, no chunks
     # produced) still leaves a run row — at that point no document has been minted
     # yet, so document_id is stamped only once problem indexing succeeds.
-    document_id = Column(BigInteger, nullable=True)
+    document_id = Column(
+        BigInteger, ForeignKey("app.documents.id", ondelete="SET NULL"), nullable=True
+    )
     content_hash = Column(Text, nullable=True)
     status = Column(Text, nullable=False, server_default=text("'queued'"), default="queued")
     n_pages = Column(Integer, nullable=False, server_default=text("0"), default=0)
@@ -981,21 +1021,21 @@ class IngestRun(Base):
     n_promoted = Column(Integer, nullable=False, server_default=text("0"), default=0)
     n_rejected = Column(Integer, nullable=False, server_default=text("0"), default=0)
     n_dedup_merged = Column(Integer, nullable=False, server_default=text("0"), default=0)
-    dedup_pressure = Column(
+    dedup_total_candidates = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    dedup_exact_merges = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    dedup_embedding_merges = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    dedup_embedding_distinct = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    dedup_embedding_merge_ratio = Column(
+        Float, nullable=False, server_default=text("0"), default=0.0
+    )
+    dedup_details = Column(
         _JSONType,
         nullable=False,
         # server_default stays '{}' — a richer JSON literal here would need its
         # colons escaped for text() (":0" parses as a bind param and renders
         # DEFAULT '..."total_candidates"NULL...'); readers .get() every key.
         server_default=text("'{}'::jsonb"),
-        default=lambda: {
-            "total_candidates": 0,
-            "exact_merges": 0,
-            "embedding_merges": 0,
-            "embedding_distinct": 0,
-            "embedding_merge_ratio": 0.0,
-            "per_concept": {},
-        },
+        default=dict,
     )
     llm_calls = Column(Integer, nullable=False, server_default=text("0"), default=0)
     llm_tokens_in = Column(BigInteger, nullable=False, server_default=text("0"), default=0)
@@ -1005,24 +1045,27 @@ class IngestRun(Base):
     finished_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
+    __table_args__ = ({"schema": "internal"},)
+
 
 class DedupDecision(Base):
     """method + similarity + verdict for every dedup resolution (migration 030,
     §8B). ``similarity`` is NULL for the slug exact-match tier. ``method`` /
     ``verdict`` CHECKs live in SQL only; the ORM declares none (repo convention)."""
 
-    __tablename__ = "apollo_dedup_decisions"
+    __tablename__ = "dedup_decisions"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
     ingest_run_id = Column(
         BigInteger,
-        ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
+        ForeignKey("internal.content_ingest_runs.id", ondelete="CASCADE"),
         nullable=True,
     )
     search_space_id = Column(
-        Integer,
+        "course_id",
+        BigInteger,
         ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -1043,24 +1086,27 @@ class DedupDecision(Base):
     )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
+    __table_args__ = ({"schema": "internal"},)
+
 
 class IngestError(Base):
     """stage + class + context for any non-terminal pipeline error (migration 030,
     §8B). ``stage`` / ``error_class`` vocabularies are open (no SQL CHECK); the ORM
     declares no DB CHECK (repo convention)."""
 
-    __tablename__ = "apollo_ingest_errors"
+    __tablename__ = "content_ingest_errors"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
     ingest_run_id = Column(
         BigInteger,
-        ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
+        ForeignKey("internal.content_ingest_runs.id", ondelete="CASCADE"),
         nullable=True,
     )
     search_space_id = Column(
-        Integer,
+        "course_id",
+        BigInteger,
         ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -1069,6 +1115,8 @@ class IngestError(Base):
     error_class = Column(Text, nullable=False)
     context = Column(_JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = ({"schema": "internal"},)
 
 
 class IngestPageEvidence(Base):
@@ -1085,19 +1133,20 @@ class IngestPageEvidence(Base):
     and the ON DELETE CASCADE on internal.document_chunks/document teardown is handled at the
     authored-set delete path)."""
 
-    __tablename__ = "apollo_ingest_page_evidence"
+    __tablename__ = "ingest_page_evidence"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
     ingest_run_id = Column(
         BigInteger,
-        ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
+        ForeignKey("internal.content_ingest_runs.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     search_space_id = Column(
-        Integer,
+        "course_id",
+        BigInteger,
         ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -1105,7 +1154,9 @@ class IngestPageEvidence(Base):
     # Nullable: a page captured before the failure path minted a document (e.g. a
     # page-bearing-but-chunkless PDF that raised "no chunks produced") still gets
     # its OCR evidence persisted, with no document id to attribute it to.
-    document_id = Column(BigInteger, nullable=True)
+    document_id = Column(
+        BigInteger, ForeignKey("app.documents.id", ondelete="SET NULL"), nullable=True
+    )
     role = Column(Text, nullable=False)  # 'problem' | 'solution' (open enum, no SQL CHECK)
     page_number = Column(Integer, nullable=True)
     ocr_text = Column(Text, nullable=False, server_default=text("''"), default="")
@@ -1113,6 +1164,8 @@ class IngestPageEvidence(Base):
     extraction_mode = Column(Text, nullable=True)
     verify_path_fired = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = ({"schema": "internal"},)
 
 
 class GradingArtifact(Base):
