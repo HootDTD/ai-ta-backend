@@ -37,10 +37,11 @@ from apollo.persistence.learner_model_seed import (
 )
 from apollo.persistence.models import (
     Concept,
-    ConceptProblem,
     EntityPrereq,
     KGEntity,
-    Subject,
+)
+from apollo.persistence.models import (
+    Problem as ProblemRecord,
 )
 from database.models import Base
 from scripts.seed_apollo_learner_model import (
@@ -55,32 +56,43 @@ _BERNOULLI_DIR = (
     _REPO / "apollo" / "subjects" / "fluid_mechanics" / "concepts" / "bernoulli_principle"
 )
 
-# Tables the seeder touches via create_all. ConceptProblem is created with raw
+# Tables the seeder touches via create_all. ProblemRecord is created with raw
 # DDL instead (its provenance column carries a Postgres-only ``'{}'::jsonb``
 # server_default that SQLite's DDL compiler rejects); the raw table matches the
-# columns the ConceptProblem ORM maps so ``select(ConceptProblem)`` works.
+# columns the ProblemRecord ORM maps so ``select(ProblemRecord)`` works.
 _SEED_TABLES: list[Table] = [
-    Subject.__table__,  # type: ignore[list-item]  # SA stubs expose __table__ as FromClause
     Concept.__table__,  # type: ignore[list-item]
     KGEntity.__table__,  # type: ignore[list-item]
     EntityPrereq.__table__,  # type: ignore[list-item]
 ]
 
 _CONCEPT_PROBLEMS_DDL = """
-CREATE TABLE apollo_concept_problems (
+CREATE TABLE problems (
     id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    course_id BIGINT NOT NULL,
     concept_id BIGINT NOT NULL,
     problem_code TEXT NOT NULL,
     difficulty TEXT NOT NULL,
-    payload JSON NOT NULL,
+    problem_text TEXT NOT NULL,
+    given_values JSON NOT NULL DEFAULT '{}',
+    target_unknown TEXT NOT NULL DEFAULT '',
+    reference_solution JSON NOT NULL,
+    payload_extra JSON NOT NULL DEFAULT '{}',
     tier SMALLINT NOT NULL DEFAULT 1,
     solution_source TEXT,
     provenance JSON NOT NULL DEFAULT '{}',
     quarantined_at TIMESTAMP,
-    search_space_id INTEGER,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 """
+
+
+def _sqlite_engine(url: str):
+    return create_async_engine(
+        url,
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +130,7 @@ async def db_url() -> AsyncGenerator[str, None]:
 
 
 async def _insert_course(url: str, space_id: int) -> None:
-    engine = create_async_engine(url)
+    engine = _sqlite_engine(url)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with Session() as s:
@@ -131,39 +143,34 @@ async def _insert_course(url: str, space_id: int) -> None:
         await engine.dispose()
 
 
-async def _insert_subject(url: str, *, slug: str, space_id: int) -> int:
-    engine = create_async_engine(url)
-    Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-    try:
-        async with Session() as s:
-            subject = Subject(slug=slug, display_name=slug.title(), search_space_id=space_id)
-            s.add(subject)
-            await s.flush()
-            sid: int = int(subject.id)  # type: ignore[arg-type]  # SA stubs expose .id as Column
-            await s.commit()
-            return sid
-    finally:
-        await engine.dispose()
+async def _insert_subject(url: str, *, slug: str, space_id: int) -> tuple[int, str]:
+    """Return the folded course/subject label used by the concept insert."""
+    del url
+    return space_id, slug
 
 
 async def _insert_concept_with_problems(
-    url: str, *, subject_id: int, slug: str, problems: list[dict]
+    url: str, *, subject_id: tuple[int, str], slug: str, problems: list[dict]
 ) -> int:
-    engine = create_async_engine(url)
+    engine = _sqlite_engine(url)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with Session() as s:
-            concept = Concept(subject_id=subject_id, slug=slug, display_name=slug.title())
+            course_id, subject_slug = subject_id
+            concept = Concept(
+                course_id=course_id,
+                subject_slug=subject_slug,
+                subject_display_name=subject_slug.title(),
+                slug=slug,
+                display_name=slug.title(),
+            )
             s.add(concept)
             await s.flush()
             cid: int = int(concept.id)  # type: ignore[arg-type]  # SA stubs expose .id as Column
             for p in problems:
                 s.add(
-                    ConceptProblem(
-                        concept_id=cid,
-                        problem_code=p["id"],
-                        difficulty=p.get("difficulty", "intro"),
-                        payload=p,
+                    ProblemRecord.from_pydantic_payload(
+                        p, course_id=course_id, concept_id=cid
                     )
                 )
             await s.commit()
@@ -173,7 +180,7 @@ async def _insert_concept_with_problems(
 
 
 async def _fetch_entities(url: str, concept_id: int) -> list[KGEntity]:
-    engine = create_async_engine(url)
+    engine = _sqlite_engine(url)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with Session() as s:
@@ -187,20 +194,23 @@ async def _fetch_entities(url: str, concept_id: int) -> list[KGEntity]:
 
 
 async def _fetch_problems(url: str, concept_id: int) -> list[dict]:
-    engine = create_async_engine(url)
+    engine = _sqlite_engine(url)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with Session() as s:
             rows = (
                 (
                     await s.execute(
-                        select(ConceptProblem).where(ConceptProblem.concept_id == concept_id)
+                        select(ProblemRecord).where(ProblemRecord.concept_id == concept_id)
                     )
                 )
                 .scalars()
                 .all()
             )
-            return [dict(r.payload) for r in rows]
+            concept_slug = await s.scalar(select(Concept.slug).where(Concept.id == concept_id))
+            return [
+                r.to_pydantic_payload(concept_slug=str(concept_slug or "")) for r in rows
+            ]
     finally:
         await engine.dispose()
 
@@ -627,7 +637,7 @@ async def test_seed_backward_compat_bernoulli_default_subject(db_url):
     assert pv.payload["opposes_entity_id"] is not None
 
     # 16 prereq edges.
-    engine = create_async_engine(db_url)
+    engine = _sqlite_engine(db_url)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with Session() as s:
@@ -686,7 +696,7 @@ async def test_seed_idempotent_second_run_inserts_nothing(monkeypatch, tmp_path,
 async def test_seed_errors_when_subject_missing(db_url):
     """A course with no matching subject raises SeedError."""
     await _insert_course(db_url, 1)
-    with pytest.raises(seeder.SeedError, match="no 'macroeconomics' subject"):
+    with pytest.raises(seeder.SeedError, match="no any concept under subject 'macroeconomics'"):
         await seed(db_url, subject_slug="macroeconomics", write_disk=False)
 
 

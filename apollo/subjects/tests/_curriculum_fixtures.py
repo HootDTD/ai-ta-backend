@@ -1,7 +1,7 @@
 """Shared real-PG seed helpers for the WU-3D curriculum-cutover tests.
 
 These insert the course-scoped curriculum chain
-    app.courses -> apollo_subjects -> apollo_concepts -> apollo_concept_problems
+    app.courses -> app.concepts -> app.problems
 using only ORM/`text()` inserts on the function-scoped ``db_session`` fixture
 (real pgvector container, savepoint rollback per test). No SQLite, no
 filesystem reads. Immutable: every helper returns ids; no global state.
@@ -22,7 +22,7 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import Concept, ConceptProblem, Subject
+from apollo.persistence.models import Concept, Problem
 
 _BERNOULLI_DIR = (
     Path(__file__).resolve().parents[2]
@@ -103,14 +103,7 @@ async def seed_concept(
     concept_slug: str,
     concept_payloads: dict[str, Any] | None = None,
 ) -> int:
-    """Insert a subject + one concept under a course; return the concept_id."""
-    subject = Subject(
-        slug=subject_slug,
-        display_name=subject_slug.replace("_", " ").title(),
-        search_space_id=search_space_id,
-    )
-    db.add(subject)
-    await db.flush()
+    """Insert one course-scoped concept with its folded subject label."""
 
     payloads = concept_payloads or {
         "canonical_symbols": _MIN_CANONICAL_SYMBOLS,
@@ -121,15 +114,25 @@ async def seed_concept(
         "concept_dag": {},
     }
     concept = Concept(
-        subject_id=subject.id,
+        course_id=search_space_id,
+        subject_slug=subject_slug,
+        subject_display_name=subject_slug.replace("_", " ").title(),
         slug=concept_slug,
         display_name=concept_slug.replace("_", " ").title(),
-        canonical_symbols=payloads["canonical_symbols"],
+        canonical_symbols=list(payloads["canonical_symbols"].get("symbols", [])),
+        symbol_metadata={
+            key: value
+            for key, value in payloads["canonical_symbols"].items()
+            if key != "symbols"
+        },
         normalization_map=payloads["normalization_map"],
         parser_prompt_template=payloads["parser_prompt_template"],
-        solver_hints=payloads["solver_hints"],
-        forbidden_named_laws=payloads["forbidden_named_laws"],
-        concept_dag=payloads.get("concept_dag", {}),
+        solver_config=payloads["solver_hints"],
+        forbidden_named_laws=[
+            str(item)
+            for values in payloads["forbidden_named_laws"].values()
+            for item in values
+        ],
     )
     db.add(concept)
     await db.flush()
@@ -137,14 +140,21 @@ async def seed_concept(
 
 
 def minimal_problem_payload(code: str = "p1", difficulty: str = "intro") -> dict[str, Any]:
-    """A minimal ``apollo_concept_problems`` payload for the curriculum tests.
-
-    ``seed_problems`` reads only ``id`` + ``difficulty`` off a payload, and
-    ``list_course_concepts``' teachable-pool ``EXISTS`` filter never reads the
-    payload at all, so these two keys suffice — no full ``Problem`` round-trip is
-    exercised by the curriculum-loader tests (those that need the real shape pass
-    ``load_bernoulli_problem_payloads()``)."""
-    return {"id": code, "difficulty": difficulty}
+    """A minimal valid public problem payload for curriculum tests."""
+    return {
+        "id": code,
+        "concept_id": "test_concept",
+        "difficulty": difficulty,
+        "problem_text": f"Explain {code}",
+        "reference_solution": [
+            {
+                "step": 1,
+                "entry_type": "definition",
+                "id": "definition",
+                "content": {"term": code, "definition": f"Definition of {code}"},
+            }
+        ],
+    }
 
 
 async def seed_problems(
@@ -161,16 +171,18 @@ async def seed_problems(
                     # leaves the rows live. Lets the curriculum tests prove the
                     # quarantined_at-IS-NULL leg of the teachable-pool filter.
 ) -> list[str]:
-    """Insert one apollo_concept_problems row per payload; return the problem_codes."""
+    """Insert one target problem row per payload; return the public codes."""
+    course_id = int(
+        await db.scalar(select(Concept.course_id).where(Concept.id == concept_id))
+    )
     codes: list[str] = []
     for payload in payloads:
         code = payload["id"]
         db.add(
-            ConceptProblem(
+            Problem.from_pydantic_payload(
+                payload,
+                course_id=course_id,
                 concept_id=concept_id,
-                problem_code=code,
-                difficulty=payload["difficulty"],
-                payload=payload,
                 tier=tier,
                 quarantined_at=quarantined_at,
             )
@@ -187,9 +199,9 @@ async def problem_database_id(
     return int(
         (
             await db.execute(
-                select(ConceptProblem.id).where(
-                    ConceptProblem.concept_id == concept_id,
-                    ConceptProblem.problem_code == problem_code,
+                select(Problem.id).where(
+                    Problem.concept_id == concept_id,
+                    Problem.problem_code == problem_code,
                 )
             )
         ).scalar_one()

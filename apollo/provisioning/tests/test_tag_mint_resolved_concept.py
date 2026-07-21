@@ -15,11 +15,12 @@ test_tag_mint.py. Tier-1: injected stubs, no network.
 from __future__ import annotations
 
 import random
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
-from apollo.persistence.models import Concept, EntityPrereq, KGEntity, Subject
+from apollo.persistence.models import Concept, EntityPrereq, KGEntity
 from apollo.provisioning.tag_mint import (
     ApprovedPair,
     ResolvedConcept,
@@ -86,10 +87,8 @@ async def _seed_concept(db, *, slug: str = "integration-by-parts") -> tuple[int,
     space = Course(name=f"RC {slug}", slug=f"rc-{slug}-{random.random()}", subject_name="C2")
     db.add(space)
     await db.flush()
-    subject = Subject(slug="calculus_2", display_name="Calculus 2", search_space_id=space.id)
-    db.add(subject)
-    await db.flush()
-    concept = Concept(subject_id=subject.id, slug=slug, display_name="Integration by Parts")
+    subject = SimpleNamespace(slug="calculus_2", display_name="Calculus 2", search_space_id=space.id)
+    concept = Concept(course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name, slug=slug, display_name="Integration by Parts")
     db.add(concept)
     await db.flush()
     return int(space.id), int(concept.id)

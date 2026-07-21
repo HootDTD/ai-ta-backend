@@ -8,7 +8,9 @@ detected — gate applicability is content-derived at promote time.
 
 from __future__ import annotations
 
-from apollo.persistence.models import ConceptProblem, Subject
+from types import SimpleNamespace
+
+from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.ingest import (
     AuthoredProblem,
     authored_problem_code,
@@ -124,13 +126,11 @@ async def _seed_subject_concept(db, *, slug: str):
     space = Course(name=f"Course {slug}", slug=slug, subject_name="X")
     db.add(space)
     await db.flush()
-    subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
-    db.add(subj)
-    await db.flush()
-    concept = Concept(subject_id=subj.id, slug=f"prov-{slug}", display_name="Prov")
+    subj = SimpleNamespace(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
+    concept = Concept(course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name, slug=f"prov-{slug}", display_name="Prov")
     db.add(concept)
     await db.flush()
-    return space.id, subj.id, concept.id
+    return space.id, space.id, concept.id
 
 
 async def test_tier1_write_is_explicit_tier1_and_authored(db_session):
@@ -142,7 +142,7 @@ async def test_tier1_write_is_explicit_tier1_and_authored(db_session):
     assert n == 3
     rows = (
         await db_session.execute(
-            ConceptProblem.__table__.select().where(ConceptProblem.concept_id == concept_id)
+            ProblemRecord.__table__.select().where(ProblemRecord.concept_id == concept_id)
         )
     ).fetchall()
     assert len(rows) == 3
@@ -205,7 +205,7 @@ async def test_ingest_independent_commit_persists_inventory(db_session):
     # The inventory survived the rollback (committed independently).
     surviving = (
         await db_session.execute(
-            ConceptProblem.__table__.select().where(ConceptProblem.concept_id == concept_id)
+            ProblemRecord.__table__.select().where(ProblemRecord.concept_id == concept_id)
         )
     ).fetchall()
     assert len(surviving) == 3

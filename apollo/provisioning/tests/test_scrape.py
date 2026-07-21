@@ -25,7 +25,8 @@ import pytest
 from sqlalchemy import select
 
 from apollo.overseer.problem_selector import list_problems_for_concept
-from apollo.persistence.models import Concept, ConceptProblem, Subject
+from apollo.persistence.models import Concept
+from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.scrape import (
     CandidateQuestion,
     ScrapeResult,
@@ -717,15 +718,12 @@ async def _seed_course(db, *, slug: str):
     space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
-    subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
-    db.add(subj)
-    await db.flush()
     return space.id
 
 
 async def _rows_for(db, *, concept_id: int):
     return (
-        (await db.execute(select(ConceptProblem).where(ConceptProblem.concept_id == concept_id)))
+        (await db.execute(select(ProblemRecord).where(ProblemRecord.concept_id == concept_id)))
         .scalars()
         .all()
     )
@@ -750,7 +748,7 @@ async def test_provisional_concept_resolved_and_notnull(db_session):
     assert concept.canonical_symbols in (None, {}, {})
 
 
-async def test_provisional_concept_creates_subject_when_absent(db_session):
+async def test_provisional_concept_folds_subject_when_absent(db_session):
     """A course with NO Subject still resolves a provisional concept — the helper
     creates a provisional Subject first (covers the no-subject branch)."""
     space = Course(name="No-subject course", slug="c-nosubj", subject_name="X")
@@ -759,10 +757,8 @@ async def test_provisional_concept_creates_subject_when_absent(db_session):
     cid = await resolve_or_create_provisional_concept(db_session, search_space_id=space.id)
     assert isinstance(cid, int)
     concept = (await db_session.execute(select(Concept).where(Concept.id == cid))).scalar_one()
-    subj = (
-        await db_session.execute(select(Subject).where(Subject.id == concept.subject_id))
-    ).scalar_one()
-    assert subj.search_space_id == space.id
+    assert concept.course_id == space.id
+    assert concept.subject_slug == "provisional"
 
 
 async def test_scrape_writes_tier1_rows_explicit(db_session):
@@ -886,8 +882,8 @@ async def test_rerun_with_different_segmentation_does_not_adopt_stale_rows(db_se
     )
     row = (
         await db_session.execute(
-            select(ConceptProblem).where(
-                ConceptProblem.problem_code == f"scrape.{run_b.chunk_content_hash}"
+            select(ProblemRecord).where(
+                ProblemRecord.problem_code == f"scrape.{run_b.chunk_content_hash}"
             )
         )
     ).scalar_one()

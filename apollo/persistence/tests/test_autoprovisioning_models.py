@@ -2,7 +2,7 @@
 
 These exercise the ORM additions on the ``db_session`` (``create_all``-built)
 schema so the ORM edits in ``apollo/persistence/models.py`` are MEASURED by
-diff-cover (run with ``--cov=.``): the six ``ConceptProblem``/``KGEntity`` column
+diff-cover (run with ``--cov=.``): the six ``ProblemRecord``/``KGEntity`` column
 adds and the retained authored-ingest models (``IngestRun``/``DedupDecision``/
 ``IngestError``). The worker-only queue and rejection models were removed.
 
@@ -18,11 +18,13 @@ import pytest
 from sqlalchemy import select
 
 from apollo.persistence.models import (
-    ConceptProblem,
     DedupDecision,
     IngestError,
     IngestRun,
     KGEntity,
+)
+from apollo.persistence.models import (
+    Problem as ProblemRecord,
 )
 from apollo.subjects.tests._curriculum_fixtures import seed_concept, seed_search_space
 
@@ -39,10 +41,10 @@ async def _space_and_concept(db_session) -> tuple[int, int]:
 
 
 async def test_orm_concept_problem_has_tier_columns(db_session):
-    """Round-trip the new ConceptProblem columns; assert the ORM default tier=2
+    """Round-trip the new ProblemRecord columns; assert the ORM default tier=2
     and provenance={} when omitted (the seed-helper/ORM reality is teachable)."""
     sid, cid = await _space_and_concept(db_session)
-    explicit = ConceptProblem(
+    explicit = ProblemRecord(
         concept_id=cid,
         problem_code="orm_explicit",
         difficulty="intro",
@@ -57,7 +59,7 @@ async def test_orm_concept_problem_has_tier_columns(db_session):
     db_session.expire(explicit)
     reloaded = (
         await db_session.execute(
-            select(ConceptProblem).where(ConceptProblem.problem_code == "orm_explicit")
+            select(ProblemRecord).where(ProblemRecord.problem_code == "orm_explicit")
         )
     ).scalar_one()
     assert reloaded.tier == 2
@@ -67,7 +69,7 @@ async def test_orm_concept_problem_has_tier_columns(db_session):
     assert reloaded.quarantined_at is None
 
     # Omitting tier -> ORM default 2; omitting provenance -> {}.
-    defaulted = ConceptProblem(
+    defaulted = ProblemRecord(
         concept_id=cid,
         problem_code="orm_defaulted",
         difficulty="intro",
@@ -78,7 +80,7 @@ async def test_orm_concept_problem_has_tier_columns(db_session):
     db_session.expire(defaulted)
     reloaded2 = (
         await db_session.execute(
-            select(ConceptProblem).where(ConceptProblem.problem_code == "orm_defaulted")
+            select(ProblemRecord).where(ProblemRecord.problem_code == "orm_defaulted")
         )
     ).scalar_one()
     assert reloaded2.tier == 2

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -28,17 +29,15 @@ async def _fake_require_teacher(**_kwargs):
 
 
 async def _seed_course(db, *, slug: str) -> tuple[int, int]:
-    from apollo.persistence.models import Concept, Subject
+    from apollo.persistence.models import Concept
     from database.models import Course
 
     space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
-    subject = Subject(slug=f"subject-{slug}", display_name="Physics", search_space_id=space.id)
-    db.add(subject)
-    await db.flush()
+    subject = SimpleNamespace(slug=f"subject-{slug}", display_name="Physics", search_space_id=space.id)
     concept = Concept(
-        subject_id=subject.id,
+        course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name,
         slug=f"concept-{slug}",
         display_name="Concept",
         canonical_symbols={},
@@ -75,9 +74,9 @@ async def _seed_problem(
     required: bool = True,
     problem_text: str = "Find M.",
 ):
-    from apollo.persistence.models import ConceptProblem
+    from apollo.persistence.models import Problem as ProblemRecord
 
-    row = ConceptProblem(
+    row = ProblemRecord(
         concept_id=concept_id,
         problem_code=f"problem-{concept_id}-{generated}-{required}-{len(problem_text)}",
         difficulty="intro",
@@ -454,7 +453,7 @@ def test_review_projection_omits_optional_rubric_and_trims_invalid_draft():
 async def test_approve_generated_problem_promotes_with_known_concept(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import ConceptProblem
+    from apollo.persistence.models import Problem as ProblemRecord
     from apollo.provisioning.promote import PromoteResult
     from apollo.provisioning.tag_mint import MintPlan
 
@@ -479,7 +478,7 @@ async def test_approve_generated_problem_promotes_with_known_concept(db_session,
         )
 
     async def _promote(db, neo, **kwargs):
-        row = await db.get(ConceptProblem, kwargs["concept_problem_id"])
+        row = await db.get(ProblemRecord, kwargs["concept_problem_id"])
         row.tier = 2
         return PromoteResult(promoted=True)
 
@@ -503,7 +502,7 @@ async def test_approve_generated_problem_promotes_with_known_concept(db_session,
     assert captured["resolved"] == aapi.ResolvedConcept(
         concept_id=concept_id, slug="known_concept_slug"
     )
-    refreshed = await db_session.get(ConceptProblem, int(problem.id))
+    refreshed = await db_session.get(ProblemRecord, int(problem.id))
     assert refreshed.tier == 2
     assert refreshed.provenance["authored_review"]["required"] is False
 
@@ -590,7 +589,7 @@ async def test_seeds_lists_teachable_problems_only(db_session, monkeypatch):
     from datetime import UTC, datetime
 
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import ConceptProblem
+    from apollo.persistence.models import Problem as ProblemRecord
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-seeds")
     monkeypatch.setattr(gapi, "require_user", _fake_require_user)
@@ -630,7 +629,7 @@ async def test_seeds_lists_teachable_problems_only(db_session, monkeypatch):
     assert len(seeds[1]["problem_text"]) == 2000
 
     # Quarantined row exists but is excluded (guard the fixture, not the dust).
-    assert await db_session.get(ConceptProblem, int(quarantined.id)) is not None
+    assert await db_session.get(ProblemRecord, int(quarantined.id)) is not None
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest_asyncio
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
@@ -14,17 +13,17 @@ from apollo.persistence.models import (
     Concept,
     KGEntity,
     LearnerState,
+    Problem,
     ProblemAttempt,
     StudentProgress,
-    Subject,
     TutoringSession,
 )
 from database.models import Base
 
 TABLES = [
     StudentProgress.__table__,
-    Subject.__table__,
     Concept.__table__,
+    Problem.__table__,
     KGEntity.__table__,
     LearnerState.__table__,
     TutoringSession.__table__,
@@ -40,13 +39,6 @@ async def db():
     )
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=TABLES))
-        await conn.execute(
-            text(
-                "CREATE TABLE apollo_concept_problems ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "concept_id BIGINT NOT NULL, problem_code TEXT NOT NULL)"
-            )
-        )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         yield s
@@ -54,10 +46,13 @@ async def db():
 
 
 async def _seed_concept(db, *, slug: str, name: str) -> int:
-    subj = Subject(slug=f"subj-{slug}", display_name=slug, search_space_id=TEST_SPACE_ID)
-    db.add(subj)
-    await db.flush()
-    c = Concept(subject_id=subj.id, slug=slug, display_name=name)
+    c = Concept(
+        course_id=TEST_SPACE_ID,
+        subject_slug=f"subj-{slug}",
+        subject_display_name=slug,
+        slug=slug,
+        display_name=name,
+    )
     db.add(c)
     await db.flush()
     return int(c.id)  # type: ignore[arg-type]  # SA stubs expose .id as Column
@@ -88,17 +83,21 @@ async def _seed_mastery(db, *, concept_id: int, values: list[float]) -> None:
 
 
 async def _seed_problem(db: AsyncSession, *, concept_id: int, problem_code: str) -> int:
-    return int(
-        (
-            await db.execute(
-                text(
-                    "INSERT INTO apollo_concept_problems (concept_id, problem_code) "
-                    "VALUES (:concept_id, :problem_code) RETURNING id"
-                ),
-                {"concept_id": concept_id, "problem_code": problem_code},
-            )
-        ).scalar_one()
+    problem = Problem.from_inventory_payload(
+        {
+            "id": problem_code,
+            "difficulty": "intro",
+            "problem_text": "Explain",
+            "given_values": {},
+            "target_unknown": "",
+        },
+        course_id=TEST_SPACE_ID,
+        concept_id=concept_id,
+        tier=2,
     )
+    db.add(problem)
+    await db.flush()
+    return int(problem.id)
 
 
 async def _seed_graded_attempt(

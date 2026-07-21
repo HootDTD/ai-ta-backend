@@ -11,9 +11,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
 
-from apollo.persistence.models import Concept, Subject
+from apollo.persistence.models import Concept
 from apollo.subjects import ConceptDefinition
 from apollo.subjects.curriculum_db import (
     ConceptNotFoundError,
@@ -95,7 +94,7 @@ async def test_list_course_concepts_ordered_by_id(db_session):
 # Teachable-pool filter (G6 fix). list_course_concepts must return ONLY concepts
 # that have at least one TEACHABLE problem, using the EXACT predicate the
 # downstream pool query (overseer.problem_selector.list_problems_for_concept)
-# applies: ConceptProblem.tier == 2 AND quarantined_at IS NULL. Otherwise an
+# applies: ProblemRecord.tier == 2 AND quarantined_at IS NULL. Otherwise an
 # autoprovisioned decoy concept with an empty pool can be inferred and then blow
 # up select_problem with PoolExhaustedError (the fluids-grading 409).
 # ---------------------------------------------------------------------------
@@ -256,14 +255,11 @@ async def test_list_registered_concepts_includes_problemless_and_description(db_
     )
     await seed_problems(db_session, concept_id=cid_teachable, payloads=[minimal_problem_payload()])
     # a problemless registered concept — must STILL appear (no tier-2 EXISTS)
-    subject_id = (
-        (await db_session.execute(select(Subject.id).where(Subject.search_space_id == sid)))
-        .scalars()
-        .first()
-    )
     db_session.add(
         Concept(
-            subject_id=subject_id,
+            course_id=sid,
+            subject_slug="calc2",
+            subject_display_name="Calculus II",
             slug="integration-by-parts",
             display_name="Integration by Parts",
             description="u dv = uv - v du",
@@ -271,7 +267,9 @@ async def test_list_registered_concepts_includes_problemless_and_description(db_
     )
     db_session.add(
         Concept(
-            subject_id=subject_id,
+            course_id=sid,
+            subject_slug="calc2",
+            subject_display_name="Calculus II",
             slug="provisional.inventory",
             display_name="Provisional Inventory",
         )

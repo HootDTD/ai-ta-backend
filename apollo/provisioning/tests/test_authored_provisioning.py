@@ -20,17 +20,17 @@ from __future__ import annotations
 
 import json
 import sys
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
-
-from sqlalchemy import select
 
 from apollo.persistence.models import (
     Concept,
-    ConceptProblem,
-    Subject,
 )
-from apollo.provisioning.ingest import ingest_authored_problems, load_authored_problems
+from apollo.persistence.models import (
+    Problem as ProblemRecord,
+)
 from apollo.provisioning.authored_problem import provision_authored_problem
+from apollo.provisioning.ingest import ingest_authored_problems, load_authored_problems
 from database.models import Course
 
 # pytest.ini sets asyncio_mode = auto.
@@ -128,13 +128,11 @@ async def _seed_subject(db, *, slug: str):
     space = Course(name=f"Course {slug}", slug=slug, subject_name="X")
     db.add(space)
     await db.flush()
-    subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
-    db.add(subj)
-    await db.flush()
-    prov = Concept(subject_id=subj.id, slug="provisional.inventory", display_name="Prov")
+    subj = SimpleNamespace(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
+    prov = Concept(course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name, slug="provisional.inventory", display_name="Prov")
     db.add(prov)
     await db.flush()
-    return space.id, subj.id, prov.id
+    return space.id, space.id, prov.id
 
 
 # --------------------------------------------------------------------------- #
@@ -174,8 +172,8 @@ async def test_polisci_authored_problem_promotes_under_qualitative(db_session, m
     ).fetchone()
     row = (
         await db_session.execute(
-            ConceptProblem.__table__.select().where(
-                ConceptProblem.problem_code == authored.problem_code
+            ProblemRecord.__table__.select().where(
+                ProblemRecord.problem_code == authored.problem_code
             )
         )
     ).fetchone()
@@ -448,8 +446,8 @@ async def test_fluid_authored_problem_promotes_under_quantitative(db_session, mo
 
     row = (
         await db_session.execute(
-            ConceptProblem.__table__.select().where(
-                ConceptProblem.problem_code == authored.problem_code
+            ProblemRecord.__table__.select().where(
+                ProblemRecord.problem_code == authored.problem_code
             )
         )
     ).fetchone()

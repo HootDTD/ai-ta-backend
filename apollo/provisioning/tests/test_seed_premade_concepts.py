@@ -1,9 +1,11 @@
 """seed_premade_concepts: idempotent premade-list registration (reversed model)."""
 
+from types import SimpleNamespace
+
 import pytest
 from sqlalchemy import func, select
 
-from apollo.persistence.models import Concept, Subject
+from apollo.persistence.models import Concept
 from apollo.provisioning.concept_match import norm_slug
 from database.models import Course
 from scripts.seed_premade_concepts import seed_premade_concepts
@@ -39,7 +41,7 @@ async def test_seed_creates_subject_and_concepts_with_description(db_session):
     rows = (
         (
             await db_session.execute(
-                select(Concept).join(Subject).where(Subject.search_space_id == ss)
+                select(Concept).where(Concept.course_id == ss)
             )
         )
         .scalars()
@@ -53,12 +55,10 @@ async def test_seed_creates_subject_and_concepts_with_description(db_session):
 async def test_seed_is_idempotent_and_slug_normalized(db_session):
     ss = await _space(db_session, "idem")
     # Pre-existing row with UNDERSCORE spelling (the registry-seeder spelling).
-    subj = Subject(slug="calculus_2", display_name="Calculus 2", search_space_id=ss)
-    db_session.add(subj)
-    await db_session.flush()
+    subj = SimpleNamespace(slug="calculus_2", display_name="Calculus 2", search_space_id=ss)
     db_session.add(
         Concept(
-            subject_id=subj.id,
+            course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name,
             slug="integration_by_parts",
             display_name="Integration by Parts",
         )
@@ -76,7 +76,9 @@ async def test_seed_is_idempotent_and_slug_normalized(db_session):
     assert report.created == 1 and report.updated == 1
     n = (
         await db_session.execute(
-            select(func.count()).select_from(Concept).where(Concept.subject_id == subj.id)
+            select(func.count()).select_from(Concept).where(
+                Concept.course_id == ss, Concept.subject_slug == subj.slug
+            )
         )
     ).scalar_one()
     assert n == 2
@@ -132,10 +134,8 @@ def test_norm_slug() -> None:
 @pytest.mark.asyncio
 async def test_seed_backfills_vocab_and_name_on_existing_row(db_session, tmp_path):
     ss = await _space(db_session, "backfill")
-    subj = Subject(slug="calculus_2", display_name="Calculus 2", search_space_id=ss)
-    db_session.add(subj)
-    await db_session.flush()
-    db_session.add(Concept(subject_id=subj.id, slug="integration_by_parts", display_name=""))
+    subj = SimpleNamespace(slug="calculus_2", display_name="Calculus 2", search_space_id=ss)
+    db_session.add(Concept(course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name, slug="integration_by_parts", display_name=""))
     await db_session.flush()
 
     vocab_dir = tmp_path / "concepts"
@@ -157,4 +157,4 @@ async def test_seed_backfills_vocab_and_name_on_existing_row(db_session, tmp_pat
         await db_session.execute(select(Concept).where(Concept.slug == "integration_by_parts"))
     ).scalar_one()
     assert row.display_name == "Integration by Parts"  # empty name backfilled
-    assert dict(row.canonical_symbols)["symbols"] == ["x", "u"]  # empty vocab filled
+    assert list(row.canonical_symbols) == ["x", "u"]  # empty vocab filled

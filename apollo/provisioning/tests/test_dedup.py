@@ -22,11 +22,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import FrozenInstanceError, dataclass
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
-from apollo.persistence.models import Concept, DedupDecision, IngestRun, KGEntity, Subject
+from apollo.persistence.models import Concept, DedupDecision, IngestRun, KGEntity
 from apollo.provisioning.dedup import (
     DedupVerdict,
     _cosine,
@@ -126,10 +127,8 @@ async def _seed_course(db, *, slug, entities):
     space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
-    subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
-    db.add(subj)
-    await db.flush()
-    concept = Concept(subject_id=subj.id, slug=f"k-{slug}", display_name="Concept")
+    subj = SimpleNamespace(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
+    concept = Concept(course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name, slug=f"k-{slug}", display_name="Concept")
     db.add(concept)
     await db.flush()
     ids: dict[str, int] = {}
@@ -547,12 +546,10 @@ async def _seed_two_concept_course(db, *, slug, a_entities, b_entities):
     space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
-    subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
-    db.add(subj)
-    await db.flush()
+    subj = SimpleNamespace(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
 
     async def _concept(cslug, entities):
-        concept = Concept(subject_id=subj.id, slug=cslug, display_name="Concept")
+        concept = Concept(course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name, slug=cslug, display_name="Concept")
         db.add(concept)
         await db.flush()
         ids: dict[str, int] = {}

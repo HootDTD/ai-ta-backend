@@ -16,13 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.persistence.models import (
+    Concept,
     GraphComparisonFinding,
     GraphComparisonRun,
     KGEntity,
     LearnerState,
     MasteryEvent,
     ProblemAttempt,
-    Subject,
     TutoringSession,
 )
 from database.models import Base
@@ -67,7 +67,8 @@ def test_kg_entity_unique_constraint_is_per_concept():
 def test_kg_entity_concept_fk_cascade():
     col = KGEntity.__table__.columns["concept_id"]
     fk = next(iter(col.foreign_keys))
-    assert fk.column.table.name == "apollo_concepts"
+    assert fk.column.table.name == "concepts"
+    assert fk.column.table.schema == "app"
     assert fk.ondelete == "CASCADE"
 
 
@@ -149,8 +150,8 @@ def test_comparison_finding_entity_set_null():
 # ---------------------------------------------------------------------------
 
 
-def test_subject_requires_search_space_id():
-    col = Subject.__table__.columns["search_space_id"]
+def test_concept_requires_course_id():
+    col = Concept.__table__.columns["course_id"]
     assert col.nullable is False
     fk = next(iter(col.foreign_keys))
     assert fk.column.table.name == "courses"
@@ -170,7 +171,7 @@ async def db():
         execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
     tables = [
-        Subject.__table__,
+        Concept.__table__,
         KGEntity.__table__,
         LearnerState.__table__,
         MasteryEvent.__table__,

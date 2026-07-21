@@ -4,7 +4,24 @@ from __future__ import annotations
 
 import pytest
 
-from apollo.persistence.models import ConceptProblem
+from apollo.persistence.models import Problem as ProblemRecord
+
+
+def _problem(*, code: str, provenance: dict, solution_source: str | None) -> ProblemRecord:
+    return ProblemRecord(
+        course_id=1,
+        concept_id=1,
+        problem_code=code,
+        difficulty="intro",
+        problem_text="Draft",
+        given_values={},
+        target_unknown="",
+        reference_solution={"version": 1, "steps": []},
+        payload_extra={},
+        tier=1,
+        provenance=provenance,
+        solution_source=solution_source,
+    )
 
 
 @pytest.mark.parametrize(
@@ -18,14 +35,8 @@ from apollo.persistence.models import ConceptProblem
 )
 def test_solution_source_write_paths_respect_provenance(write_path, provenance, solution_source):
     """Enumerate every production stamper and pin its permitted provenance pair."""
-    problem = ConceptProblem(
-        concept_id=1,
-        problem_code=write_path,
-        difficulty="intro",
-        payload={},
-        tier=1,
-        provenance=provenance,
-        solution_source=solution_source,
+    problem = _problem(
+        code=write_path, provenance=provenance, solution_source=solution_source
     )
     assert problem.solution_source == solution_source
 
@@ -36,12 +47,8 @@ def test_machine_generated_problem_rejects_teacher_grounded_solution_source(
 ):
     """Machine generation can never masquerade as extracted/authored truth."""
     with pytest.raises(ValueError, match="machine-generated problem provenance"):
-        ConceptProblem(
-            concept_id=1,
-            problem_code=f"generated.{forbidden_source}",
-            difficulty="intro",
-            payload={},
-            tier=1,
+        _problem(
+            code=f"generated.{forbidden_source}",
             provenance={"source": "generated"},
             solution_source=forbidden_source,
         )
@@ -49,12 +56,8 @@ def test_machine_generated_problem_rejects_teacher_grounded_solution_source(
 
 def test_machine_generated_provenance_cannot_be_applied_after_source_stamp():
     """The guard is assignment-order independent for promotion/update paths."""
-    problem = ConceptProblem(
-        concept_id=1,
-        problem_code="generated.late-provenance",
-        difficulty="intro",
-        payload={},
-        tier=1,
+    problem = _problem(
+        code="generated.late-provenance",
         solution_source="extracted",
         provenance={"source": "document"},
     )

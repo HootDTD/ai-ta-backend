@@ -13,8 +13,10 @@ and Docker-skips cleanly when the daemon is down.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from apollo.learner_model.personalization_read import read_learner_profile
-from apollo.persistence.models import Concept, EntityPrereq, KGEntity, Subject
+from apollo.persistence.models import Concept, EntityPrereq, KGEntity
 from database.models import Course
 
 
@@ -22,12 +24,10 @@ async def test_within_concept_filter_excludes_concept_level_edges(db_session):
     space = Course(name="Course h4", slug="c-h4", subject_name="Physics")
     db_session.add(space)
     await db_session.flush()
-    subj = Subject(slug="s-h4", display_name="Sub", search_space_id=space.id)
-    db_session.add(subj)
-    await db_session.flush()
+    subj = SimpleNamespace(slug="s-h4", display_name="Sub", search_space_id=space.id)
 
-    concept_a = Concept(subject_id=subj.id, slug="bernoulli", display_name="Bernoulli")
-    concept_b = Concept(subject_id=subj.id, slug="fluids", display_name="Fluids")
+    concept_a = Concept(course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name, slug="bernoulli", display_name="Bernoulli")
+    concept_b = Concept(course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name, slug="fluids", display_name="Fluids")
     db_session.add_all([concept_a, concept_b])
     await db_session.flush()
 

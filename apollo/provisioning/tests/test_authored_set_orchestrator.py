@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from apollo.persistence.models import Concept, ConceptProblem, DedupDecision, KGEntity, Subject
+from apollo.persistence.models import Concept, DedupDecision, KGEntity
+from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.authored_sets.orchestrator import run_authored_set_provisioning
 from apollo.provisioning.authored_sets.structure_pass import (
     BlockSpan,
@@ -19,7 +20,7 @@ from apollo.provisioning.promote import PromoteResult
 from apollo.provisioning.scrape import CandidateQuestion, ScrapeResult
 from apollo.provisioning.solution import ReferenceSolutionDraft
 from apollo.provisioning.tag_mint import MintPlan
-from database.models import DocumentChunk, Document, Course
+from database.models import Course, Document, DocumentChunk
 
 orch = sys.modules["apollo.provisioning.authored_sets.orchestrator"]
 
@@ -68,13 +69,11 @@ async def _seed_search_space(db, *, slug: str) -> int:
 
 
 async def _seed_concept(db, *, search_space_id: int, slug: str = "authored") -> int:
-    subject = Subject(
+    subject = SimpleNamespace(
         slug=f"subject-{slug}", display_name="Physics", search_space_id=search_space_id
     )
-    db.add(subject)
-    await db.flush()
     concept = Concept(
-        subject_id=subject.id,
+        course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name,
         slug=slug,
         display_name="Authored",
         canonical_symbols={"symbols": ["M"]},
@@ -237,7 +236,7 @@ async def test_authored_set_label_extract_promotes(db_session, monkeypatch):
 
     async def _promote(db, neo, **kwargs):  # noqa: ANN001
         promote_kwargs.update(kwargs)
-        row = await db.get(ConceptProblem, kwargs["concept_problem_id"])
+        row = await db.get(ProblemRecord, kwargs["concept_problem_id"])
         row.tier = 2
         return PromoteResult(promoted=True)
 
@@ -625,7 +624,7 @@ async def test_oversized_question_without_answer_unit_is_masked_before_tier1(
     assert leaked_tail not in scraped_candidates[0].problem_text
     payload = (
         await db_session.execute(
-            select(ConceptProblem.payload).where(ConceptProblem.concept_id == concept_id)
+            select(ProblemRecord.payload).where(ProblemRecord.concept_id == concept_id)
         )
     ).scalar_one()
     assert leaked_tail not in payload["problem_text"]
@@ -758,7 +757,7 @@ async def test_problem_only_combined_porter_masks_answers_before_tier1_write(
     payloads = (
         (
             await db_session.execute(
-                select(ConceptProblem.payload).where(ConceptProblem.concept_id == concept_id)
+                select(ProblemRecord.payload).where(ProblemRecord.concept_id == concept_id)
             )
         )
         .scalars()
@@ -998,7 +997,7 @@ async def test_unaugmented_hold_payload_untouched(db_session, monkeypatch):
     assert result.solution_source == "generated"
     assert result.review_required is True
     assert result.reason == "generated_no_match"
-    row = await db_session.get(ConceptProblem, result.concept_problem_id)
+    row = await db_session.get(ProblemRecord, result.concept_problem_id)
     assert row.payload == {
         "id": f"scrape.{candidate.chunk_content_hash}",
         "concept_id": candidate.concept_slug,
@@ -1071,7 +1070,7 @@ async def test_hold_arm_applies_augmentation_to_tier1_payload(db_session, monkey
     assert result.reason == "generated_no_match"
     assert result.concept_problem_id is not None
 
-    row = await db_session.get(ConceptProblem, result.concept_problem_id)
+    row = await db_session.get(ProblemRecord, result.concept_problem_id)
     authored_review = row.provenance["authored_review"]
     assert row.payload["problem_text"] == "Define beam moment and explain why it peaks."
     assert row.payload["target_unknown"] == "why beam moment peaks"
@@ -1099,7 +1098,7 @@ async def test_authored_concept_dup_hashes_skips_invalid_payload(db_session):
     space = await _seed_search_space(db_session, slug="dup")
     concept_id = await _seed_concept(db_session, search_space_id=space, slug="dup")
     db_session.add(
-        ConceptProblem(
+        ProblemRecord(
             concept_id=concept_id,
             problem_code="bad-payload",
             difficulty="intro",
@@ -1265,7 +1264,7 @@ async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, mon
     candidate's partial writes; a SIBLING candidate in the same run still mints
     and promotes. DISCRIMINATING: without the savepoint wrap, the failed
     candidate's ``eq.eq-fail`` KGEntity + its DedupDecision row would survive the
-    outer commit even though no ConceptProblem was ever promoted for it."""
+    outer commit even though no ProblemRecord was ever promoted for it."""
     from apollo.provisioning import tag_mint as tm
     from apollo.provisioning.tag_mint_persist import link_opposes as real_link_opposes
 
@@ -1308,7 +1307,7 @@ async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, mon
         return await real_link_opposes(db, concept_id=concept_id, key_to_id=key_to_id)
 
     async def _promote(db, neo, **kwargs):
-        row = await db.get(ConceptProblem, kwargs["concept_problem_id"])
+        row = await db.get(ProblemRecord, kwargs["concept_problem_id"])
         row.tier = 2
         return PromoteResult(promoted=True)
 
@@ -1340,7 +1339,7 @@ async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, mon
     await db_session.commit()
 
     # The failed candidate's entity must NOT have survived the savepoint rollback
-    # (orphaned KG rows unreachable by any promoted ConceptProblem, yet a live
+    # (orphaned KG rows unreachable by any promoted ProblemRecord, yet a live
     # dedup target for a later mint, is exactly the defect M1 fixes).
     fail_rows = (
         (await db_session.execute(select(KGEntity).where(KGEntity.canonical_key == "eq.eq-fail")))
@@ -1462,7 +1461,7 @@ async def test_candidate_gate9_unresolved_is_held_for_review(db_session, monkeyp
     result = report.problems[0]
     assert result.outcome == "held_for_review"
     assert result.reason == "promotion_lint_unresolved"
-    row = await db_session.get(ConceptProblem, result.concept_problem_id)
+    row = await db_session.get(ProblemRecord, result.concept_problem_id)
     assert row.tier == 1
     assert row.provenance["authored_review"]["reason"] == "promotion_lint_unresolved"
 
@@ -1542,7 +1541,7 @@ async def test_authored_set_low_confidence_divergence_holds_without_minting(
     assert result.ocr_confidence == 0.20
     assert minted is False
     assert promoted is False
-    tier1 = await db_session.get(ConceptProblem, result.concept_problem_id)
+    tier1 = await db_session.get(ProblemRecord, result.concept_problem_id)
     assert tier1.tier == 1
     review = tier1.provenance["authored_review"]
     assert review["required"] is True

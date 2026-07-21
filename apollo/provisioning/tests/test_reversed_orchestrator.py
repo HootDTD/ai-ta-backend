@@ -9,18 +9,20 @@ module-level stubs; the label-match retrieval machinery runs real.
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
 
-from apollo.persistence.models import Concept, ConceptProblem, KGEntity, Subject
+from apollo.persistence.models import Concept, KGEntity
+from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.authored_sets.graph_derivation import DerivationError, DerivedGraph
 from apollo.provisioning.authored_sets.orchestrator import run_authored_set_provisioning
 from apollo.provisioning.concept_match import ConceptMatch
 from apollo.provisioning.pairing_gate import PairingVerdict
 from apollo.provisioning.promote import PromoteResult
 from apollo.provisioning.scrape import CandidateQuestion, ScrapeResult
-from database.models import DocumentChunk, Document, Course
+from database.models import Course, Document, DocumentChunk
 
 orch = sys.modules["apollo.provisioning.authored_sets.orchestrator"]
 
@@ -46,13 +48,11 @@ async def _seed_space(db, *, slug: str) -> int:
 async def _seed_registered_concept(
     db, *, search_space_id: int, slug: str = "integration-by-parts"
 ) -> int:
-    subject = Subject(
+    subject = SimpleNamespace(
         slug=f"calc2-{slug}", display_name="Calculus 2", search_space_id=search_space_id
     )
-    db.add(subject)
-    await db.flush()
     concept = Concept(
-        subject_id=subject.id,
+        course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name,
         slug=slug,
         display_name="Integration by Parts",
         description="u dv = uv - v du",
@@ -237,7 +237,7 @@ async def test_reversed_promotes_with_matched_concept_and_derived_graph(db_sessi
         )
 
     async def _promote(db, neo, **kwargs):
-        row = await db.get(ConceptProblem, kwargs["concept_problem_id"])
+        row = await db.get(ProblemRecord, kwargs["concept_problem_id"])
         row.tier = 2
         return PromoteResult(promoted=True)
 
@@ -283,7 +283,7 @@ async def test_reversed_no_match_holds_for_review(db_session, monkeypatch):
     assert report.counts == {"promoted": 0, "rejected": 0, "held_for_review": 1}
     result = report.problems[0]
     assert result.reason == "no_matching_concept"
-    tier1 = await db_session.get(ConceptProblem, result.concept_problem_id)
+    tier1 = await db_session.get(ProblemRecord, result.concept_problem_id)
     review = tier1.provenance["authored_review"]
     assert review["required"] is True
     assert review["reason"] == "no_matching_concept"

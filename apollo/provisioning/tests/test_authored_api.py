@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
@@ -86,17 +87,15 @@ class _FakeNeo:
 
 
 async def _seed_course(db, *, slug: str = "aas-api") -> tuple[int, int]:
-    from apollo.persistence.models import Concept, Subject
+    from apollo.persistence.models import Concept
     from database.models import Course
 
     space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
-    subject = Subject(slug=f"subject-{slug}", display_name="Physics", search_space_id=space.id)
-    db.add(subject)
-    await db.flush()
+    subject = SimpleNamespace(slug=f"subject-{slug}", display_name="Physics", search_space_id=space.id)
     concept = Concept(
-        subject_id=subject.id,
+        course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name,
         slug=f"concept-{slug}",
         display_name="Concept",
         canonical_symbols={},
@@ -272,12 +271,13 @@ async def test_approve_409_when_not_held(db_session, monkeypatch):
     from fastapi import HTTPException
 
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import Problem as ProblemRecord
 
     space, concept = await _seed_course(db_session, slug="approve409")
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
-    prob = ConceptProblem(
+    prob = ProblemRecord(
         concept_id=concept,
         problem_code="not-held",
         difficulty="intro",
@@ -314,12 +314,13 @@ async def test_approve_422_when_chosen_reference_missing(db_session, monkeypatch
     from fastapi import HTTPException
 
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import Problem as ProblemRecord
 
     space, concept = await _seed_course(db_session, slug="approve422")
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
-    prob = ConceptProblem(
+    prob = ProblemRecord(
         concept_id=concept,
         problem_code="held-no-ocr",
         difficulty="intro",
@@ -355,20 +356,21 @@ async def test_approve_422_when_chosen_reference_missing(db_session, monkeypatch
 
 @pytest.mark.asyncio
 async def test_approve_404_when_problem_not_minted_by_this_set(db_session, monkeypatch):
-    """C1 regression: a real ConceptProblem in the SAME course, but not recorded in
+    """C1 regression: a real ProblemRecord in the SAME course, but not recorded in
     this set's result_summary (e.g. it belongs to a sibling set), must 404 rather
     than promote under the caller's search space."""
     from fastapi import HTTPException
 
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import Problem as ProblemRecord
 
     space, concept = await _seed_course(db_session, slug="approve404cross")
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     other_set = AuthoredSet(search_space_id=space, set_index=1, status="done")
     db_session.add(other_set)
-    prob = ConceptProblem(
+    prob = ProblemRecord(
         concept_id=concept,
         problem_code="held-cross-set",
         difficulty="intro",
@@ -404,14 +406,15 @@ async def test_approve_404_when_problem_in_different_search_space(db_session, mo
     from fastapi import HTTPException
 
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import Problem as ProblemRecord
 
     space_a, concept_a = await _seed_course(db_session, slug="approve404space-a")
     space_b, _concept_b = await _seed_course(db_session, slug="approve404space-b")
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     # Problem actually lives in course A.
-    prob = ConceptProblem(
+    prob = ProblemRecord(
         concept_id=concept_a,
         problem_code="held-other-space",
         difficulty="intro",
@@ -842,14 +845,15 @@ async def test_list_and_detail_are_course_gated(db_session, monkeypatch):
 @pytest.mark.asyncio
 async def test_approve_held_problem_promotes_chosen_reference(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import Problem as ProblemRecord
     from apollo.provisioning.promote import PromoteResult
     from apollo.provisioning.tag_mint import MintPlan
 
     search_space_id, concept_id = await _seed_course(db_session, slug="approve")
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
-    problem = ConceptProblem(
+    problem = ProblemRecord(
         concept_id=concept_id,
         problem_code="scrape.approve",
         difficulty="intro",
@@ -916,7 +920,7 @@ async def test_approve_held_problem_promotes_chosen_reference(db_session, monkey
         # The teacher-approved EXTRACTED OCR draft's provenance is threaded into
         # promote so the re-promoted row records "extracted", not "generated".
         assert kwargs["solution_source"] == "extracted"
-        row = await db.get(ConceptProblem, kwargs["concept_problem_id"])
+        row = await db.get(ProblemRecord, kwargs["concept_problem_id"])
         row.tier = 2
         return PromoteResult(promoted=True)
 
@@ -940,7 +944,7 @@ async def test_approve_held_problem_promotes_chosen_reference(db_session, monkey
     )
 
     assert resp == {"promoted": True, "failed_gate": None, "diagnostic": ""}
-    refreshed = await db_session.get(ConceptProblem, problem.id)
+    refreshed = await db_session.get(ProblemRecord, problem.id)
     review = refreshed.provenance["authored_review"]
     assert review["required"] is False
     assert review["approved_reference"] == "ocr"
@@ -971,7 +975,8 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
     """Delete removes the set, its reference docs (+chunks), and the
     ConceptProblems it minted — while a sibling set's problem is untouched."""
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import Problem as ProblemRecord
     from database.models import Document, DocumentChunk
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
@@ -1006,7 +1011,7 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
     )
 
     # Two ConceptProblems minted by the target set, one by a sibling set.
-    cp1 = ConceptProblem(
+    cp1 = ProblemRecord(
         concept_id=concept_id,
         problem_code="scrape.a",
         difficulty="m",
@@ -1014,7 +1019,7 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
         tier=2,
         search_space_id=space_id,
     )
-    cp2 = ConceptProblem(
+    cp2 = ProblemRecord(
         concept_id=concept_id,
         problem_code="scrape.b",
         difficulty="m",
@@ -1022,7 +1027,7 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
         tier=2,
         search_space_id=space_id,
     )
-    sibling = ConceptProblem(
+    sibling = ProblemRecord(
         concept_id=concept_id,
         problem_code="scrape.z",
         difficulty="m",
@@ -1060,8 +1065,8 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
     assert await db_session.get(AuthoredSet, target_id) is None
     assert await db_session.get(Document, pdoc_id) is None
     assert await db_session.get(Document, sdoc_id) is None
-    assert await db_session.get(ConceptProblem, cp1_id) is None
-    assert await db_session.get(ConceptProblem, cp2_id) is None
+    assert await db_session.get(ProblemRecord, cp1_id) is None
+    assert await db_session.get(ProblemRecord, cp2_id) is None
     # Chunks cascade with their document.
     remaining_chunks = (
         await db_session.execute(
@@ -1072,7 +1077,7 @@ async def test_delete_authored_set_cascades_and_spares_siblings(db_session, monk
     ).scalar_one()
     assert remaining_chunks == 0
     # Sibling problem survives.
-    assert await db_session.get(ConceptProblem, sibling_id) is not None
+    assert await db_session.get(ProblemRecord, sibling_id) is not None
 
 
 @pytest.mark.asyncio
@@ -1080,7 +1085,8 @@ async def test_delete_sweeps_unreferenced_tier1_leftovers(db_session, monkeypatc
     """A rejected candidate's Tier-1 row records no concept_problem_id in
     result_summary, but must still die with its authored set."""
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import Problem as ProblemRecord
     from apollo.provisioning.scrape import resolve_or_create_provisional_concept
     from database.models import Document
 
@@ -1105,7 +1111,7 @@ async def test_delete_sweeps_unreferenced_tier1_leftovers(db_session, monkeypatc
         problem_document_id=problem_doc.id,
         result_summary={"problems": []},
     )
-    leftover = ConceptProblem(
+    leftover = ProblemRecord(
         concept_id=concept_id,
         problem_code=f"scrape.{'a' * 64}.3",  # OLD format on purpose
         difficulty="intro",
@@ -1116,7 +1122,7 @@ async def test_delete_sweeps_unreferenced_tier1_leftovers(db_session, monkeypatc
     )
     # Keep the shared inventory concept alive so this test stays focused on the
     # Tier-1 sweep rather than exercising Neo4j orphan teardown.
-    survivor = ConceptProblem(
+    survivor = ProblemRecord(
         concept_id=concept_id,
         problem_code="scrape.promoted-survivor",
         difficulty="intro",
@@ -1132,7 +1138,7 @@ async def test_delete_sweeps_unreferenced_tier1_leftovers(db_session, monkeypatc
     resp = await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
 
     assert resp["removed_problems"] == 1
-    assert await db_session.get(ConceptProblem, leftover_id) is None
+    assert await db_session.get(ProblemRecord, leftover_id) is None
 
 
 @pytest.mark.asyncio
@@ -1140,7 +1146,8 @@ async def test_delete_spares_tier2_and_foreign_document_rows(db_session, monkeyp
     """The sweep is limited to this set's Tier-1 inventory, and surviving sibling
     inventory prevents teardown of the shared provisional concept."""
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet, Concept, ConceptProblem
+    from apollo.persistence.models import AuthoredSet, Concept
+    from apollo.persistence.models import Problem as ProblemRecord
     from apollo.provisioning.scrape import resolve_or_create_provisional_concept
     from database.models import Document
 
@@ -1173,7 +1180,7 @@ async def test_delete_spares_tier2_and_foreign_document_rows(db_session, monkeyp
         problem_document_id=target_doc.id,
         result_summary={"problems": []},
     )
-    target_tier1 = ConceptProblem(
+    target_tier1 = ProblemRecord(
         concept_id=concept_id,
         problem_code="scrape.target-tier1",
         difficulty="intro",
@@ -1182,7 +1189,7 @@ async def test_delete_spares_tier2_and_foreign_document_rows(db_session, monkeyp
         provenance={"document_id": int(target_doc.id)},
         search_space_id=space_id,
     )
-    same_doc_tier2 = ConceptProblem(
+    same_doc_tier2 = ProblemRecord(
         concept_id=concept_id,
         problem_code="scrape.target-tier2",
         difficulty="intro",
@@ -1191,7 +1198,7 @@ async def test_delete_spares_tier2_and_foreign_document_rows(db_session, monkeyp
         provenance={"document_id": int(target_doc.id)},
         search_space_id=space_id,
     )
-    sibling_tier1 = ConceptProblem(
+    sibling_tier1 = ProblemRecord(
         concept_id=concept_id,
         problem_code="scrape.sibling-tier1",
         difficulty="intro",
@@ -1210,9 +1217,9 @@ async def test_delete_spares_tier2_and_foreign_document_rows(db_session, monkeyp
     resp = await aapi.delete_authored_set(set_id=set_id, request=_FakeRequest(), db=db_session)
 
     assert resp["removed_problems"] == 1
-    assert await db_session.get(ConceptProblem, target_id) is None
-    assert await db_session.get(ConceptProblem, tier2_id) is not None
-    assert await db_session.get(ConceptProblem, sibling_id) is not None
+    assert await db_session.get(ProblemRecord, target_id) is None
+    assert await db_session.get(ProblemRecord, tier2_id) is not None
+    assert await db_session.get(ProblemRecord, sibling_id) is not None
     assert await db_session.get(Concept, concept_id) is not None
 
 
@@ -1256,7 +1263,7 @@ async def test_delete_sweep_document_scope_without_database(monkeypatch):
                     ]
                 ),
                 _Result([11]),  # affected concept ids
-                _Result(rowcount=1),  # ConceptProblem delete
+                _Result(rowcount=1),  # ProblemRecord delete
                 _Result(rowcount=1),  # Document delete
                 _Result([11]),  # surviving problem keeps the concept protected
                 *[_Result() for _ in range(4)],  # _protected_concepts' four reads
@@ -1380,16 +1387,18 @@ async def test_delete_authored_set_enforces_membership(db_session, monkeypatch):
 
 
 async def _seed_orphanable_concept_kg(db, monkeypatch, *, slug):
-    """Seed a course + a concept whose ONLY ConceptProblem belongs to one authored
+    """Seed a course + a concept whose ONLY ProblemRecord belongs to one authored
     set, plus the KG the set minted (two entities, a prereq edge, a dedup decision).
     Returns (aapi, space_id, concept_id, entity_ids, set_id)."""
     import apollo.provisioning.authored_sets.api as aapi
     from apollo.persistence.models import (
         AuthoredSet,
-        ConceptProblem,
         DedupDecision,
         EntityPrereq,
         KGEntity,
+    )
+    from apollo.persistence.models import (
+        Problem as ProblemRecord,
     )
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
@@ -1425,7 +1434,7 @@ async def _seed_orphanable_concept_kg(db, monkeypatch, *, slug):
             verdict="distinct",
         )
     )
-    cp = ConceptProblem(
+    cp = ProblemRecord(
         concept_id=concept_id,
         problem_code="scrape.a",
         difficulty="m",
@@ -1620,11 +1629,13 @@ async def test_delete_authored_set_spares_concept_depended_on_by_another(db_sess
         db_session, monkeypatch, slug="aas-depended"
     )
     # A DIFFERENT concept whose entity depends on this concept's entity e1.
-    subj_id = (
-        await db_session.execute(select(Concept.subject_id).where(Concept.id == concept_id))
+    parent = (
+        await db_session.execute(select(Concept).where(Concept.id == concept_id))
     ).scalar_one()
     other = Concept(
-        subject_id=subj_id,
+        course_id=parent.course_id,
+        subject_slug=parent.subject_slug,
+        subject_display_name=parent.subject_display_name,
         slug="concept-dependent",
         display_name="Dependent",
         canonical_symbols={},
@@ -1659,10 +1670,11 @@ async def test_delete_authored_set_tears_down_mutually_linked_orphans(db_session
     from apollo.persistence.models import (
         AuthoredSet,
         Concept,
-        ConceptProblem,
         EntityPrereq,
         KGEntity,
-        Subject,
+    )
+    from apollo.persistence.models import (
+        Problem as ProblemRecord,
     )
     from database.models import Course
 
@@ -1672,18 +1684,16 @@ async def test_delete_authored_set_tears_down_mutually_linked_orphans(db_session
     space = Course(name="Course link", slug="aas-link", subject_name="Physics")
     db_session.add(space)
     await db_session.flush()
-    subject = Subject(slug="subject-link", display_name="Physics", search_space_id=space.id)
-    db_session.add(subject)
-    await db_session.flush()
+    subject = SimpleNamespace(slug="subject-link", display_name="Physics", search_space_id=space.id)
     ca = Concept(
-        subject_id=subject.id,
+        course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name,
         slug="concept-a",
         display_name="A",
         canonical_symbols={},
         normalization_map={},
     )
     cb = Concept(
-        subject_id=subject.id,
+        course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name,
         slug="concept-b",
         display_name="B",
         canonical_symbols={},
@@ -1711,7 +1721,7 @@ async def test_delete_authored_set_tears_down_mutually_linked_orphans(db_session
     await db_session.flush()
     # Cross-concept prereq BETWEEN the two set-owned concepts (ca depends on cb).
     db_session.add(EntityPrereq(from_entity_id=ea.id, to_entity_id=eb.id))
-    cpa = ConceptProblem(
+    cpa = ProblemRecord(
         concept_id=ca.id,
         problem_code="scrape.a",
         difficulty="m",
@@ -1719,7 +1729,7 @@ async def test_delete_authored_set_tears_down_mutually_linked_orphans(db_session
         tier=2,
         search_space_id=space.id,
     )
-    cpb = ConceptProblem(
+    cpb = ProblemRecord(
         concept_id=cb.id,
         problem_code="scrape.b",
         difficulty="m",
@@ -1762,11 +1772,12 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
     from apollo.persistence.models import (
         AuthoredSet,
         Concept,
-        ConceptProblem,
         EntityPrereq,
         KGEntity,
-        Subject,
         TutoringSession,
+    )
+    from apollo.persistence.models import (
+        Problem as ProblemRecord,
     )
     from database.models import Course
 
@@ -1776,18 +1787,16 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
     space = Course(name="Course prereqspare", slug="aas-prqspare", subject_name="Physics")
     db_session.add(space)
     await db_session.flush()
-    subject = Subject(slug="subject-prqspare", display_name="Physics", search_space_id=space.id)
-    db_session.add(subject)
-    await db_session.flush()
+    subject = SimpleNamespace(slug="subject-prqspare", display_name="Physics", search_space_id=space.id)
     cc = Concept(
-        subject_id=subject.id,
+        course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name,
         slug="concept-c",
         display_name="C",
         canonical_symbols={},
         normalization_map={},
     )
     cd = Concept(
-        subject_id=subject.id,
+        course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name,
         slug="concept-d",
         display_name="D",
         canonical_symbols={},
@@ -1817,7 +1826,7 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
     db_session.add(EntityPrereq(from_entity_id=ed.id, to_entity_id=ec.id))
     # D is spared by a student session; C has no signal of its own.
     db_session.add(TutoringSession(user_id=_STUDENT_UUID, search_space_id=space.id, concept_id=cd.id))
-    cpc = ConceptProblem(
+    cpc = ProblemRecord(
         concept_id=cc.id,
         problem_code="scrape.c",
         difficulty="m",
@@ -1825,7 +1834,7 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
         tier=2,
         search_space_id=space.id,
     )
-    cpd = ConceptProblem(
+    cpd = ProblemRecord(
         concept_id=cd.id,
         problem_code="scrape.d",
         difficulty="m",
@@ -2115,10 +2124,11 @@ def _held_draft_payload() -> dict:
 
 
 async def _seed_held_problem(db, *, slug: str, review_extra: dict | None = None):
-    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import Problem as ProblemRecord
 
     space, concept = await _seed_course(db, slug=slug)
-    prob = ConceptProblem(
+    prob = ProblemRecord(
         concept_id=concept,
         problem_code=f"held-{slug}",
         difficulty="intro",
@@ -2391,10 +2401,11 @@ async def test_approve_held_problem_degraded_neo4j_raises_kg_unavailable(db_sess
 
 async def _seed_enrichment_set(db, *, slug: str, payload: dict, provenance: dict):
     """One held problem + its authored set, returning ``(space, prob, aset)``."""
-    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import Problem as ProblemRecord
 
     space, concept = await _seed_course(db, slug=slug)
-    prob = ConceptProblem(
+    prob = ProblemRecord(
         concept_id=concept,
         problem_code=f"enrich-{slug}",
         difficulty="intro",
@@ -2594,12 +2605,13 @@ async def test_get_authored_set_enrichment_null_safety(db_session, monkeypatch):
     a row with no ``authored_review`` provenance pass through without enrichment
     errors (old-shape sets keep working)."""
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import Problem as ProblemRecord
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     space, concept = await _seed_course(db_session, slug="enrich-null")
-    prob = ConceptProblem(
+    prob = ProblemRecord(
         concept_id=concept,
         problem_code="enrich-null",
         difficulty="intro",
@@ -2639,7 +2651,7 @@ async def test_get_authored_set_enrichment_null_safety(db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_authored_set_no_ids_skips_lookup(db_session, monkeypatch):
-    """A problems list carrying no concept_problem_ids never queries ConceptProblem."""
+    """A problems list carrying no concept_problem_ids never queries ProblemRecord."""
     import apollo.provisioning.authored_sets.api as aapi
     from apollo.persistence.models import AuthoredSet
 
@@ -2774,7 +2786,8 @@ async def test_manual_create_runs_existing_ingest_and_provision_pipeline(db_sess
     import json
 
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import Problem as ProblemRecord
 
     search_space_id, _concept_id = await _seed_course(db_session, slug="manual-create")
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
@@ -2869,7 +2882,7 @@ async def test_manual_create_runs_existing_ingest_and_provision_pipeline(db_sess
     assert problem_result["outcome"] == "promoted", problem_result
     assert aset.result_summary["counts"]["promoted"] == 1
     concept_problem_id = problem_result["concept_problem_id"]
-    problem = await db_session.get(ConceptProblem, concept_problem_id)
+    problem = await db_session.get(ProblemRecord, concept_problem_id)
     assert problem.tier == 2
     assert problem.payload["problem_text"] == "Explain the manual answer."
     listing = await aapi.list_authored_sets(
@@ -3031,7 +3044,8 @@ async def test_manual_background_records_tier1_row_vanishing_after_ingest(
     db_session, monkeypatch
 ):
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import AuthoredSet, ConceptProblem
+    from apollo.persistence.models import AuthoredSet
+    from apollo.persistence.models import Problem as ProblemRecord
 
     search_space_id, _concept_id = await _seed_course(db_session, slug="manual-missing-tier1")
     authored_set = AuthoredSet(search_space_id=search_space_id, set_index=1, status="pending")
@@ -3043,8 +3057,8 @@ async def test_manual_background_records_tier1_row_vanishing_after_ingest(
         result = await real_ingest(db, records, **kwargs)
         problem = (
             await db.execute(
-                select(ConceptProblem).where(
-                    ConceptProblem.problem_code == records[0]["problem_code"]
+                select(ProblemRecord).where(
+                    ProblemRecord.problem_code == records[0]["problem_code"]
                 )
             )
         ).scalar_one()
@@ -3134,10 +3148,10 @@ def _editable_problem_payload(*, problem_text: str = "Original question") -> dic
 
 
 async def _seed_editable_problem(db, *, slug: str, problem_text: str = "Original question"):
-    from apollo.persistence.models import ConceptProblem
+    from apollo.persistence.models import Problem as ProblemRecord
 
     space, concept = await _seed_course(db, slug=slug)
-    problem = ConceptProblem(
+    problem = ProblemRecord(
         concept_id=concept,
         problem_code=f"editable-{slug}",
         difficulty="intro",
@@ -3268,12 +3282,12 @@ async def test_patch_problem_rejects_unknown_and_missing_step_ids(db_session, mo
 @pytest.mark.asyncio
 async def test_patch_problem_rejects_dedup_collision(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import ConceptProblem
+    from apollo.persistence.models import Problem as ProblemRecord
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     space, concept, problem = await _seed_editable_problem(db_session, slug="patch-collision")
-    duplicate = ConceptProblem(
+    duplicate = ProblemRecord(
         concept_id=concept,
         problem_code="existing-duplicate",
         difficulty="intro",
@@ -3327,7 +3341,7 @@ async def test_patch_problem_enforces_search_space_teacher_ownership(db_session,
 @pytest.mark.asyncio
 async def test_patch_problem_404s_for_missing_and_unscoped_rows(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import ConceptProblem
+    from apollo.persistence.models import Problem as ProblemRecord
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     _space, concept = await _seed_course(db_session, slug="patch-not-found")
@@ -3341,7 +3355,7 @@ async def test_patch_problem_404s_for_missing_and_unscoped_rows(db_session, monk
         )
     assert missing.value.status_code == 404
 
-    unscoped = ConceptProblem(
+    unscoped = ProblemRecord(
         concept_id=concept,
         problem_code="unscoped-edit",
         difficulty="intro",
@@ -3389,12 +3403,12 @@ async def test_patch_held_problem_hashes_without_reference_and_skips_bad_sibling
     db_session, monkeypatch
 ):
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import ConceptProblem
+    from apollo.persistence.models import Problem as ProblemRecord
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     space, concept = await _seed_course(db_session, slug="patch-held-hash")
-    held = ConceptProblem(
+    held = ProblemRecord(
         concept_id=concept,
         problem_code="held-without-reference",
         difficulty="intro",
@@ -3410,7 +3424,7 @@ async def test_patch_held_problem_hashes_without_reference_and_skips_bad_sibling
         search_space_id=space,
         provenance={},
     )
-    malformed_sibling = ConceptProblem(
+    malformed_sibling = ProblemRecord(
         concept_id=concept,
         problem_code="malformed-tier2-sibling",
         difficulty="intro",

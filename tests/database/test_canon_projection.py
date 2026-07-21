@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from apollo.knowledge_graph.canon_projection import load_entity_specs, project_canon
-from apollo.persistence.models import Concept, KGEntity, Subject
+from apollo.persistence.models import Concept, KGEntity
 from database.models import Course
 
 pytestmark = pytest.mark.integration
@@ -34,15 +34,16 @@ async def _make_course(db, *, slug: str) -> int:
     return space.id
 
 
-async def _make_subject(db, *, search_space_id: int, slug: str) -> int:
-    subj = Subject(slug=slug, display_name=slug, search_space_id=search_space_id)
-    db.add(subj)
-    await db.flush()
-    return subj.id
-
-
-async def _make_concept(db, *, subject_id: int, slug: str) -> int:
-    concept = Concept(subject_id=subject_id, slug=slug, display_name=slug)
+async def _make_concept(
+    db, *, course_id: int, subject_slug: str, slug: str
+) -> int:
+    concept = Concept(
+        course_id=course_id,
+        subject_slug=subject_slug,
+        subject_display_name=subject_slug,
+        slug=slug,
+        display_name=slug,
+    )
     db.add(concept)
     await db.flush()
     return concept.id
@@ -80,8 +81,9 @@ async def _seed_concept_with_entities(
     """Create course/subject/concept + the given (canonical_key, kind, name)
     entities. Returns (search_space_id, concept_id, [entity_id...])."""
     ss = await _make_course(db, slug=course_slug)
-    subj = await _make_subject(db, search_space_id=ss, slug=subject_slug)
-    concept = await _make_concept(db, subject_id=subj, slug=concept_slug)
+    concept = await _make_concept(
+        db, course_id=ss, subject_slug=subject_slug, slug=concept_slug
+    )
     ids = [
         await _make_entity(
             db,
@@ -144,7 +146,7 @@ async def test_load_entity_specs_scoped_by_concept(db_session):
     specs = await load_entity_specs(db_session, concept_id=c1)
     assert {s.key for s in specs} == set(ids1)
     assert all(s.concept_id == c1 for s in specs)
-    # search_space_id carried via the Subject join.
+    # search_space_id is carried directly by the folded concept row.
     assert len({s.search_space_id for s in specs}) == 1
 
 
@@ -158,8 +160,9 @@ async def test_load_entity_specs_scoped_by_search_space(db_session):
         entities=[("eq.a", "equation", "A")],
     )
     # Same course, second subject+concept -> its entities are also in scope.
-    subj2 = await _make_subject(db_session, search_space_id=ss1, slug="ss1b")
-    c1b = await _make_concept(db_session, subject_id=subj2, slug="kk1b")
+    c1b = await _make_concept(
+        db_session, course_id=ss1, subject_slug="ss1b", slug="kk1b"
+    )
     id_b = await _make_entity(
         db_session,
         concept_id=c1b,

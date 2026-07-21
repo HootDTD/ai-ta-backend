@@ -77,7 +77,7 @@ _TOUCHES_TARGETS = re.compile(
 _MIGRATION_026 = MIGRATIONS_DIR / "026_apollo_learner_model.sql"
 # Migration 030 (WU-3B2a) ALTERs apollo_concept_problems with tier/solution_source/
 # provenance/quarantined_at/search_space_id. The learner-model seeder selects through
-# the ConceptProblem ORM, which now declares those columns, so the seeder's
+# the ProblemRecord ORM, which now declares those columns, so the seeder's
 # `SELECT ... tier ...` errors unless the harness table carries them. 030 depends on
 # 026 (its concept->subject backfill-join reads apollo_subjects.search_space_id, added
 # by 026) so it is applied AFTER 026, not in the auto-built chain.
@@ -138,7 +138,7 @@ async def _apply_chain(dsn: str) -> None:
         for migration in _chain_migrations():
             await conn.execute(migration.read_text(encoding="utf-8"))
         await conn.execute(_MIGRATION_026.read_text(encoding="utf-8"))
-        # 030 (WU-3B2a) adds the tier/* columns the ConceptProblem ORM now selects;
+        # 030 (WU-3B2a) adds the tier/* columns the ProblemRecord ORM now selects;
         # it must apply after 026 (its backfill-join reads apollo_subjects.search_space_id).
         await conn.execute(_MIGRATION_030.read_text(encoding="utf-8"))
     finally:

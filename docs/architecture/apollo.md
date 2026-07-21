@@ -7,7 +7,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-07-20
+last_verified: 2026-07-21
 stub: false
 ---
 
@@ -54,6 +54,23 @@ queries now return the persisted numeric identity.
 by `(user_id, course_id)`, `/apollo/progress` requires `search_space_id`, and
 the response echoes that course identifier. Session ownership and course
 membership are checked before tutoring state is returned or mutated.
+
+## DB-10 curriculum and problem bank
+
+The live curriculum is fully target-native. `Concept` maps to `app.concepts`
+and carries `course_id` plus the folded `subject_slug` and
+`subject_display_name`; there is no runtime Subject ORM or subject-table join.
+Every exposed concept lookup is constrained by course. `Problem` maps to
+`app.problems`, where the public problem payload is promoted into typed columns
+(`problem_text`, `given_values`, `target_unknown`, `reference_solution`, and
+`payload_extra`). Runtime conversion helpers reconstruct the established
+Pydantic shape at API boundaries without exposing numeric database identities.
+
+Both tables use persisted bigint identities. Public problem codes remain the
+API-facing identifiers; selectors and attempt writers resolve them to the
+numeric `app.problems.id` only at the persistence boundary. Provisioning,
+authored-set ingestion, generated variants, and active curriculum seeds all
+write the folded, course-scoped target rows directly.
 
 ## Done-time grading
 

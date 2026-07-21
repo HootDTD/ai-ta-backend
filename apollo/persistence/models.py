@@ -198,7 +198,7 @@ class Problem(Base):
     solution_source = Column(  # extracted|generated|authored|llm_paired (CHECK in SQL)
         Text, nullable=True
     )
-    provenance = Column(_JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
+    provenance = Column(_JSONType, nullable=False, server_default=text("'{}'"), default=dict)
     quarantined_at = Column(TIMESTAMP(timezone=True), nullable=True)  # WU-3B2h filter; NULL = live
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))

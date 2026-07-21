@@ -22,6 +22,7 @@ DISCRIMINATING by design (independent-mutation discipline):
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -34,7 +35,6 @@ from apollo.persistence.models import (
     Concept,
     EntityPrereq,
     KGEntity,
-    Subject,
 )
 from apollo.provisioning import run_promotion_lint
 from apollo.provisioning.tag_mint import (
@@ -184,10 +184,8 @@ async def _seed_course(db, *, slug: str):
     space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
-    subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
-    db.add(subj)
-    await db.flush()
-    return space.id, subj.id
+    subj = SimpleNamespace(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
+    return space.id, subj
 
 
 # --------------------------------------------------------------------------- #
@@ -456,7 +454,7 @@ async def test_tag_and_mint_dedups_via_resolve_candidate(db_session):
     ss_id, subj_id = await _seed_course(db_session, slug="c-dedup")
     # Pre-seed a concept + an entity whose canonical_key EXACTLY matches one the
     # mint will produce (eq.bernoulli) so the slug tier merges it deterministically.
-    concept = Concept(subject_id=subj_id, slug="bernoulli_principle", display_name="Bernoulli")
+    concept = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="bernoulli_principle", display_name="Bernoulli")
     db_session.add(concept)
     await db_session.flush()
     existing = KGEntity(
@@ -846,7 +844,7 @@ async def test_insert_prereqs_rejects_persisted_cycle_at_writer_boundary(db_sess
     from apollo.provisioning.tag_mint_persist import insert_prereqs
 
     _ss_id, subj_id = await _seed_course(db_session, slug="c-writercycle")
-    concept = Concept(subject_id=subj_id, slug="writer-cycle", display_name="WC")
+    concept = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="writer-cycle", display_name="WC")
     db_session.add(concept)
     await db_session.flush()
     ea = KGEntity(
@@ -1236,8 +1234,8 @@ async def test_insert_prereqs_drops_cross_concept_endpoint(db_session):
     from apollo.provisioning.tag_mint_persist import insert_prereqs
 
     _ss_id, subj_id = await _seed_course(db_session, slug="c-xconcept")
-    ca = Concept(subject_id=subj_id, slug="concept-a", display_name="A")
-    cb = Concept(subject_id=subj_id, slug="concept-b", display_name="B")
+    ca = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="concept-a", display_name="A")
+    cb = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="concept-b", display_name="B")
     db_session.add_all([ca, cb])
     await db_session.flush()
     ea = KGEntity(
@@ -1278,7 +1276,7 @@ async def test_insert_prereqs_keeps_same_concept_edge(db_session):
     from apollo.provisioning.tag_mint_persist import insert_prereqs
 
     _ss_id, subj_id = await _seed_course(db_session, slug="c-sameconcept")
-    ca = Concept(subject_id=subj_id, slug="concept-a2", display_name="A")
+    ca = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="concept-a2", display_name="A")
     db_session.add(ca)
     await db_session.flush()
     e1 = KGEntity(
@@ -1348,7 +1346,7 @@ async def test_tag_and_mint_drops_cross_concept_edge_before_acyclicity(db_sessio
 
     ss_id, subj_id = await _seed_course(db_session, slug="c-phantom")
     # A FOREIGN concept in the same course, holding the merge-target entity F.
-    foreign = Concept(subject_id=subj_id, slug="concept-foreign", display_name="Foreign")
+    foreign = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="concept-foreign", display_name="Foreign")
     db_session.add(foreign)
     await db_session.flush()
     f_entity = KGEntity(
@@ -1443,7 +1441,7 @@ async def test_tag_and_mint_escalates_to_judge(db_session):
     callable. The pre-seeded entity uses the 'BANDSEED' scope_summary that
     ``_embed_in_band`` places at cosine 0.87."""
     ss_id, subj_id = await _seed_course(db_session, slug="c-band")
-    concept = Concept(subject_id=subj_id, slug="bernoulli_principle", display_name="Bernoulli")
+    concept = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="bernoulli_principle", display_name="Bernoulli")
     db_session.add(concept)
     await db_session.flush()
     seed_entity = KGEntity(
@@ -1540,7 +1538,7 @@ async def test_link_opposes_skips_empty_opposes(db_session):
     from apollo.provisioning.tag_mint_persist import link_opposes
 
     ss_id, subj_id = await _seed_course(db_session, slug="c-noopp")
-    concept = Concept(subject_id=subj_id, slug="bernoulli_principle", display_name="Bernoulli")
+    concept = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="bernoulli_principle", display_name="Bernoulli")
     db_session.add(concept)
     await db_session.flush()
     # A misconception entity carrying NO opposes_entity_key in its payload.
@@ -2324,7 +2322,7 @@ async def test_two_upload_symbol_bearing_variable_dedup_is_label_independent(db_
     behaviour directly against pre-seeded rows so the m≡M invariant is covered wherever
     a symbol payload IS present."""
     ss_id, subj_id = await _seed_course(db_session, slug="c-var-symbol")
-    concept = Concept(subject_id=subj_id, slug="linear_motion", display_name="Linear motion")
+    concept = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="linear_motion", display_name="Linear motion")
     db_session.add(concept)
     await db_session.flush()
     # Pre-seed two variable entities differing ONLY by symbol case (a vs A).
@@ -2386,7 +2384,7 @@ async def test_two_upload_different_label_definition_not_deterministically_merge
     embedding/LLM-judge tier's job — the deterministic pass never guesses. This pins
     the boundary so a future fuzzy-widening change is a conscious decision."""
     ss_id, subj_id = await _seed_course(db_session, slug="c-diff-label")
-    concept = Concept(subject_id=subj_id, slug="linear_motion", display_name="Linear motion")
+    concept = Concept(course_id=subj_id.search_space_id, subject_slug=subj_id.slug, subject_display_name=subj_id.display_name, slug="linear_motion", display_name="Linear motion")
     db_session.add(concept)
     await db_session.flush()
     db_session.add(

@@ -4,6 +4,7 @@ GET /apollo/problems) and the standalone session entry (POST /apollo/sessions)."
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -18,14 +19,15 @@ from apollo.api import router as apollo_router
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
 from apollo.persistence.models import (
     Concept,
-    ConceptProblem,
     EntityPrereq,
     KGEntity,
     LearnerState,
     ProblemAttempt,
     StudentProgress,
-    Subject,
     TutoringSession,
+)
+from apollo.persistence.models import (
+    Problem as ProblemRecord,
 )
 from auth import AuthContext
 from database.models import Base
@@ -35,9 +37,8 @@ from database.session import get_db_session
 TABLES = cast(
     "list[Table]",
     [
-        Subject.__table__,
         Concept.__table__,
-        ConceptProblem.__table__,
+        ProblemRecord.__table__,
         TutoringSession.__table__,
         ProblemAttempt.__table__,
         StudentProgress.__table__,
@@ -76,7 +77,7 @@ def _full_problem_payload(code: str, concept_id: int, difficulty: str = "intro")
 def _sqlite_create_all(sync_conn) -> None:
     """create_all(TABLES) on SQLite. A few curriculum columns carry a
     Postgres-only ``server_default=text("'{}'::jsonb")`` (e.g.
-    ConceptProblem.provenance) that SQLite's DDL compiler rejects
+    ProblemRecord.provenance) that SQLite's DDL compiler rejects
     (``unrecognized token: ":"``). Those defaults only matter to the
     Postgres runtime — ORM inserts apply the Python-side ``default=dict``
     instead — so we null them out for the duration of CREATE TABLE and
@@ -144,10 +145,8 @@ async def _seed_curriculum(Session, *, n_teachable: int = 2) -> tuple[int, list[
     from datetime import UTC, datetime
 
     async with Session() as db:
-        subj = Subject(slug="physics", display_name="Physics", search_space_id=TEST_SPACE_ID)
-        db.add(subj)
-        await db.flush()
-        concept = Concept(subject_id=subj.id, slug="newton-2", display_name="Newton's Second Law")
+        subj = SimpleNamespace(slug="physics", display_name="Physics", search_space_id=TEST_SPACE_ID)
+        concept = Concept(course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name, slug="newton-2", display_name="Newton's Second Law")
         db.add(concept)
         await db.flush()
         cid = int(concept.id)  # type: ignore[arg-type]  # SA stubs expose .id as Column
@@ -156,29 +155,26 @@ async def _seed_curriculum(Session, *, n_teachable: int = 2) -> tuple[int, list[
             code = f"p{i + 1}"
             codes.append(code)
             db.add(
-                ConceptProblem(
+                ProblemRecord.from_pydantic_payload(
+                    _full_problem_payload(code, cid),
+                    course_id=TEST_SPACE_ID,
                     concept_id=cid,
-                    problem_code=code,
-                    difficulty="intro",
-                    payload=_full_problem_payload(code, cid),
                     tier=2,
                 )
             )
         db.add(
-            ConceptProblem(
+            ProblemRecord.from_pydantic_payload(
+                _full_problem_payload("tier1", cid),
+                course_id=TEST_SPACE_ID,
                 concept_id=cid,
-                problem_code="tier1",
-                difficulty="intro",
-                payload=_full_problem_payload("tier1", cid),
                 tier=1,
             )
         )
         db.add(
-            ConceptProblem(
+            ProblemRecord.from_pydantic_payload(
+                _full_problem_payload("quarantined", cid),
+                course_id=TEST_SPACE_ID,
                 concept_id=cid,
-                problem_code="quarantined",
-                difficulty="intro",
-                payload=_full_problem_payload("quarantined", cid),
                 tier=2,
                 quarantined_at=datetime.now(UTC),
             )
@@ -212,10 +208,8 @@ def test_list_concepts_excludes_concept_without_teachable_problems(client_factor
 
     async def _seed_empty():
         async with Session() as db:
-            subj = Subject(slug="math", display_name="Math", search_space_id=TEST_SPACE_ID)
-            db.add(subj)
-            await db.flush()
-            db.add(Concept(subject_id=subj.id, slug="limits", display_name="Limits"))
+            subj = SimpleNamespace(slug="math", display_name="Math", search_space_id=TEST_SPACE_ID)
+            db.add(Concept(course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name, slug="limits", display_name="Limits"))
             await db.commit()
 
     asyncio.run(_seed_empty())
@@ -232,7 +226,7 @@ async def _seed_attempt(Session, *, user_id: str, problem_id: str, space_id: int
     async with Session() as db:
         problem = (
             await db.execute(
-                select(ConceptProblem).where(ConceptProblem.problem_code == problem_id)
+                select(ProblemRecord).where(ProblemRecord.problem_code == problem_id)
             )
         ).scalar_one()
         sess = TutoringSession(
@@ -289,19 +283,16 @@ def test_list_problems_rejects_foreign_concept(client_factory, monkeypatch):
 
     async def _seed_foreign() -> int:
         async with Session() as db:
-            subj = Subject(slug="chem", display_name="Chem", search_space_id=TEST_SPACE_ID + 99)
-            db.add(subj)
-            await db.flush()
-            concept = Concept(subject_id=subj.id, slug="acids", display_name="Acids")
+            subj = SimpleNamespace(slug="chem", display_name="Chem", search_space_id=TEST_SPACE_ID + 99)
+            concept = Concept(course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name, slug="acids", display_name="Acids")
             db.add(concept)
             await db.flush()
             cid = int(concept.id)  # type: ignore[arg-type]  # SA stubs expose .id as Column
             db.add(
-                ConceptProblem(
+                ProblemRecord.from_pydantic_payload(
+                    _full_problem_payload("f1", cid),
+                    course_id=TEST_SPACE_ID + 99,
                     concept_id=cid,
-                    problem_code="f1",
-                    difficulty="intro",
-                    payload=_full_problem_payload("f1", cid),
                     tier=2,
                 )
             )
@@ -357,9 +348,9 @@ def test_create_session_with_explicit_problem(client_factory, monkeypatch):
             assert row.concept_id == concept_id
             selected_problem_id = (
                 await db.execute(
-                    select(ConceptProblem.id).where(
-                        ConceptProblem.concept_id == concept_id,
-                        ConceptProblem.problem_code == codes[1],
+                    select(ProblemRecord.id).where(
+                        ProblemRecord.concept_id == concept_id,
+                        ProblemRecord.problem_code == codes[1],
                     )
                 )
             ).scalar_one()
@@ -505,19 +496,16 @@ def test_create_session_rejects_foreign_concept(client_factory, monkeypatch):
 
     async def _seed_foreign() -> int:
         async with Session() as db:
-            subj = Subject(slug="chem", display_name="Chem", search_space_id=TEST_SPACE_ID + 99)
-            db.add(subj)
-            await db.flush()
-            concept = Concept(subject_id=subj.id, slug="acids", display_name="Acids")
+            subj = SimpleNamespace(slug="chem", display_name="Chem", search_space_id=TEST_SPACE_ID + 99)
+            concept = Concept(course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name, slug="acids", display_name="Acids")
             db.add(concept)
             await db.flush()
             cid = int(concept.id)  # type: ignore[arg-type]  # SA stubs expose .id as Column
             db.add(
-                ConceptProblem(
+                ProblemRecord.from_pydantic_payload(
+                    _full_problem_payload("f1", cid),
+                    course_id=TEST_SPACE_ID + 99,
                     concept_id=cid,
-                    problem_code="f1",
-                    difficulty="intro",
-                    payload=_full_problem_payload("f1", cid),
                     tier=2,
                 )
             )

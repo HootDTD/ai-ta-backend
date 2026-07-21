@@ -14,8 +14,8 @@ def test_seed_problem_constructor_passes_tier_two_explicitly():
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "ConceptProblem"
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "from_pydantic_payload"
     ]
     assert constructors
     for constructor in constructors:

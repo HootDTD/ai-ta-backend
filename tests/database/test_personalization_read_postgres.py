@@ -32,7 +32,6 @@ from apollo.persistence.models import (
     EntityPrereq,
     KGEntity,
     LearnerState,
-    Subject,
 )
 from database.models import Course
 
@@ -53,10 +52,13 @@ async def _seed_course(db, *, course_slug) -> tuple[int, int]:
     space = Course(name=course_slug, slug=course_slug, subject_name="Physics")
     db.add(space)
     await db.flush()
-    subj = Subject(slug=f"s_{course_slug}", display_name="Fluids", search_space_id=space.id)
-    db.add(subj)
-    await db.flush()
-    concept = Concept(subject_id=subj.id, slug=f"k_{course_slug}", display_name="Continuity")
+    concept = Concept(
+        course_id=space.id,
+        subject_slug=f"s_{course_slug}",
+        subject_display_name="Fluids",
+        slug=f"k_{course_slug}",
+        display_name="Continuity",
+    )
     db.add(concept)
     await db.flush()
     return space.id, concept.id

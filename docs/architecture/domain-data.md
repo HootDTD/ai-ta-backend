@@ -11,7 +11,7 @@ related:
   - shared/supabase
   - shared/security
   - ai-ta-backend/rag-pipeline
-last_verified: 2026-07-20
+last_verified: 2026-07-21
 stub: false
 ---
 
@@ -81,6 +81,18 @@ applied:** `app.student_progress` uses composite identity `(user_id, course_id)`
 progress reads, XP awards, and the student progress endpoint all require the
 course dimension. The external tutoring API continues to use problem codes,
 while persistence stores the resolved numeric `app.problems.id`.
+
+DB-10 (2026-07-21) completes the curriculum/problem-bank cutover. The deleted
+Subject ORM has no target replacement: `app.concepts` owns `course_id` and the
+folded subject slug/display metadata directly. `app.problems` replaces the
+legacy concept-problem model and promotes the public payload fields into typed
+columns, retaining only unknown extension keys in `payload_extra`. Both models
+use bigint persistence identities; HTTP and authored-file contracts continue
+to expose stable problem codes. Curriculum readers, selectors, inference,
+provisioning, ingest, and active seeds constrain reads/writes by `course_id` and
+use explicit payload conversion helpers at their public boundaries. Historical
+legacy migration/copy tests below intentionally retain old table names as
+frozen source-schema provenance.
 
 DB-07 (2026-07-17) switches the first ORM/repository slice to the target
 schemas. `Course` now owns current week, retrieval weights, and typed bounds in
