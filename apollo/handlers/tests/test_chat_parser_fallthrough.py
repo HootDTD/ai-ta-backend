@@ -24,12 +24,12 @@ from apollo.handlers.intent import IntentVerdict
 from apollo.knowledge_graph.store import WriteEdgesResult
 from apollo.ontology import KGGraph
 from apollo.persistence.models import (
-    TutoringSession,
     KGNegotiation,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from apollo.smart_questions import QuestionDecision
 from database.models import Base
@@ -59,7 +59,7 @@ async def db_session_attempt():
             concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.TEACHING.value,
-            current_problem_id="bernoulli_horizontal_pipe_find_p2",
+            current_problem_id=1,
             pending_intent=None,
         )
         s.add(sess)
@@ -67,8 +67,10 @@ async def db_session_attempt():
         await s.refresh(sess)
         attempt = ProblemAttempt(
             session_id=sess.id,
-            problem_id="bernoulli_horizontal_pipe_find_p2",
+            problem_id=1,
             difficulty="intro",
+            user_id=sess.user_id,
+            course_id=sess.course_id,
         )
         s.add(attempt)
         await s.commit()

@@ -22,11 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.persistence.models import (
-    TutoringSession,
     KGNegotiation,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -68,7 +68,13 @@ async def attempt(db: AsyncSession):
     )
     db.add(sess)
     await db.flush()
-    a = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro")
+    a = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
     db.add(a)
     await db.commit()
     await db.refresh(a)

@@ -31,12 +31,12 @@ from apollo.handlers.negotiate import (
 from apollo.knowledge_graph.store import _node_to_neo4j_props
 from apollo.ontology import NODE_LABELS, build_node
 from apollo.persistence.models import (
-    TutoringSession,
     KGNegotiation,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -220,7 +220,13 @@ async def session(db: AsyncSession):
     )
     db.add(s)
     await db.flush()
-    a = ProblemAttempt(session_id=s.id, problem_id="p1", difficulty="intro")
+    a = ProblemAttempt(
+        session_id=s.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=s.user_id,
+        course_id=s.course_id,
+    )
     db.add(a)
     await db.commit()
     await db.refresh(s)

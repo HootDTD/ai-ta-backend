@@ -14,12 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.errors import SessionFrozenError
 from apollo.knowledge_graph.store import KGStore
 from apollo.persistence.models import (
-    TutoringSession,
     KGEntry,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -49,14 +49,21 @@ async def db_session():
 @pytest_asyncio.fixture
 async def sample_session(db_session: AsyncSession):
     s = TutoringSession(
-        student_id="stu-1",
-        concept_cluster_id="fluid_mechanics",
+        user_id="00000000-0000-0000-0000-000000000001",
+        search_space_id=1,
+        concept_id=1,
         status=SessionStatus.active.value,
         phase=SessionPhase.TEACHING.value,
     )
     db_session.add(s)
     await db_session.flush()
-    attempt = ProblemAttempt(session_id=s.id, problem_id="p1", difficulty="intro")
+    attempt = ProblemAttempt(
+        session_id=s.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=s.user_id,
+        course_id=s.course_id,
+    )
     db_session.add(attempt)
     await db_session.commit()
     await db_session.refresh(s)
@@ -217,18 +224,30 @@ async def db_with_two_attempts():
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         sess = TutoringSession(
-            student_id="stu-1",
-            concept_cluster_id="fluid_mechanics",
+            user_id="00000000-0000-0000-0000-000000000001",
+            search_space_id=1,
+            concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.TEACHING.value,
-            current_problem_id="p2",
+            current_problem_id=2,
         )
         s.add(sess)
         await s.flush()
         a = ProblemAttempt(
-            session_id=sess.id, problem_id="p1", difficulty="intro", result="abandoned"
+            session_id=sess.id,
+            problem_id=1,
+            difficulty="intro",
+            result="abandoned",
+            user_id=sess.user_id,
+            course_id=sess.course_id,
         )
-        b = ProblemAttempt(session_id=sess.id, problem_id="p2", difficulty="standard")
+        b = ProblemAttempt(
+            session_id=sess.id,
+            problem_id=2,
+            difficulty="standard",
+            user_id=sess.user_id,
+            course_id=sess.course_id,
+        )
         s.add_all([a, b])
         await s.commit()
         yield s, sess.id, a.id, b.id

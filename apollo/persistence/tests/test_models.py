@@ -1,19 +1,19 @@
 import pytest as _pytest_module
+
 _pytest_module.skip(
     "Legacy V2 test — needs rewrite for V3 KGGraph + Neo4j store + new parser/coverage signatures. "
     "Tracked in claude_v3_checklist.md item 1; will be re-enabled in test-rewrite phase.",
     allow_module_level=True,
 )
 
-from datetime import datetime
 
 from apollo.persistence.models import (
-    TutoringSession,
     KGEntry,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 
 
@@ -29,13 +29,15 @@ def test_session_status_enum():
 
 def test_apollo_session_instantiation():
     s = TutoringSession(
-        student_id="stu-1",
-        concept_cluster_id="fluid_mechanics",
+        user_id="00000000-0000-0000-0000-000000000001",
+        search_space_id=1,
+        concept_id=1,
         status=SessionStatus.active,
         phase=SessionPhase.INIT,
     )
-    assert s.student_id == "stu-1"
-    assert s.concept_cluster_id == "fluid_mechanics"
+    assert s.user_id == "00000000-0000-0000-0000-000000000001"
+    assert s.course_id == 1
+    assert s.concept_id == 1
     assert s.phase == SessionPhase.INIT
 
 
@@ -53,14 +55,20 @@ def test_kgentry_source_values_constrained_to_parser_or_student():
 
 def test_message_roles():
     for role in ("student", "apollo", "system"):
-        m = TutoringMessage(session_id=1, role=role, content="hi", turn_index=0)
+        m = TutoringMessage(session_id=1, course_id=1, role=role, content="hi", turn_index=0)
         assert m.role == role
 
 
 def test_problem_attempt_defaults():
-    pa = ProblemAttempt(session_id=1, problem_id="bernoulli_horizontal_pipe_find_p2", difficulty="intro")
+    pa = ProblemAttempt(
+        session_id=1,
+        problem_id=1,
+        difficulty="intro",
+        user_id="00000000-0000-0000-0000-000000000001",
+        course_id=1,
+    )
     assert pa.result is None  # unset until solve attempt
-    assert pa.problem_id == "bernoulli_horizontal_pipe_find_p2"
+    assert pa.problem_id == 1
 
 
 def test_kg_entry_has_attempt_id_column():

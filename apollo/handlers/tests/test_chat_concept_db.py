@@ -19,15 +19,16 @@ from apollo.handlers.intent import IntentVerdict
 from apollo.knowledge_graph.store import WriteEdgesResult
 from apollo.ontology import KGGraph
 from apollo.persistence.models import (
-    TutoringSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
 from apollo.smart_questions import QuestionDecision
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_concept_payloads,
     load_bernoulli_problem_payloads,
+    problem_database_id,
     seed_course,
 )
 
@@ -45,17 +46,24 @@ async def _seed_session_with_attempt(db, *, concept_payloads=None):
         concept_payloads=concept_payloads,
     )
     current_code = codes[0]
+    current_problem_id = await problem_database_id(db, concept_id=cid, problem_code=current_code)
     sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=sid,
         concept_id=cid,
         status=SessionStatus.active.value,
         phase=SessionPhase.TEACHING.value,
-        current_problem_id=current_code,
+        current_problem_id=current_problem_id,
     )
     db.add(sess)
     await db.flush()
-    attempt = ProblemAttempt(session_id=sess.id, problem_id=current_code, difficulty="intro")
+    attempt = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=current_problem_id,
+        difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
     db.add(attempt)
     await db.flush()
     return sess.id, cid, current_code

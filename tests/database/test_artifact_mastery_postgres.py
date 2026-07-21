@@ -19,7 +19,6 @@ import pytest
 from sqlalchemy import select
 
 from apollo.persistence.models import (
-    TutoringSession,
     GradingArtifact,
     KGEntity,
     LearnerState,
@@ -27,6 +26,7 @@ from apollo.persistence.models import (
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
 from apollo.projections.mastery import EVENT_KIND, update_mastery_from_artifact
 from apollo.subjects.tests._curriculum_fixtures import seed_concept, seed_search_space
@@ -48,7 +48,7 @@ async def _seed_scope(db) -> tuple[int, int]:
 
 
 async def _seed_attempt(db, *, search_space_id: int, concept_id: int | None) -> int:
-    """A real ``apollo_problem_attempts`` row — ``GradingArtifact.attempt_id``
+    """A real ``app.problem_attempts`` row — ``GradingArtifact.attempt_id``
     is a NOT NULL FK, so a bare literal id (as the pure/mocked artifact_writer
     tests use) is not enough here."""
     sess = TutoringSession(
@@ -56,17 +56,22 @@ async def _seed_attempt(db, *, search_space_id: int, concept_id: int | None) -> 
         search_space_id=search_space_id,
         concept_id=concept_id,
         # "ended" (not "active"): the partial-unique-index
-        # ix_apollo_sessions_unique_active_per_user allows only one ACTIVE
+        # learning_activities__active_tutoring_user_course__uidx allows one ACTIVE
         # session per user, and several tests in this module seed more than
         # one session for the same _USER_ID.
         status=SessionStatus.ended.value,
         phase=SessionPhase.REPORT.value,
-        current_problem_id="p1",
+        current_problem_id=1,
     )
     db.add(sess)
     await db.flush()
     attempt = ProblemAttempt(
-        session_id=sess.id, problem_id="p1", difficulty="intro", result="graded"
+        session_id=sess.id,
+        problem_id=1,
+        difficulty="intro",
+        result="graded",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
     )
     db.add(attempt)
     await db.flush()

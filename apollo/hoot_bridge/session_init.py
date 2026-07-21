@@ -67,7 +67,7 @@ async def _create_session_with_problem(
         concept_id=concept_id,
         status=SessionStatus.active.value,
         phase=SessionPhase.TEACHING.value,
-        current_problem_id=problem.id,
+        current_problem_id=problem.database_id,
     )
     db.add(session)
     await db.flush()

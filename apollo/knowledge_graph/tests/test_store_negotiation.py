@@ -33,12 +33,12 @@ from apollo.knowledge_graph.store import (
 )
 from apollo.ontology import NODE_LABELS, build_node
 from apollo.persistence.models import (
-    TutoringSession,
     KGNegotiation,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -280,7 +280,13 @@ async def attempt(db: AsyncSession):
     )
     db.add(sess)
     await db.flush()
-    a = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro")
+    a = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
     db.add(a)
     await db.commit()
     await db.refresh(a)
@@ -460,6 +466,7 @@ async def test_get_node_trace_includes_latest_student_message(
     db.add(
         TutoringMessage(
             session_id=attempt.session_id,
+            course_id=attempt.course_id,
             attempt_id=attempt.id,
             role="student",
             content="A1 v1 = A2 v2",
@@ -469,6 +476,7 @@ async def test_get_node_trace_includes_latest_student_message(
     db.add(
         TutoringMessage(
             session_id=attempt.session_id,
+            course_id=attempt.course_id,
             attempt_id=attempt.id,
             role="apollo",
             content="ok!",
@@ -478,6 +486,7 @@ async def test_get_node_trace_includes_latest_student_message(
     db.add(
         TutoringMessage(
             session_id=attempt.session_id,
+            course_id=attempt.course_id,
             attempt_id=attempt.id,
             role="student",
             content="density doesn't matter here",

@@ -14,12 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.errors import InvalidPhaseError, PoolExhaustedError, SessionFrozenError
 from apollo.handlers.next import handle_next
 from apollo.persistence.models import (
-    TutoringSession,
     KGEntry,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -42,19 +42,22 @@ async def db_with_report_session():
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         sess = TutoringSession(
-            student_id="stu-1",
-            concept_cluster_id="fluid_mechanics",
+            user_id="00000000-0000-0000-0000-000000000001",
+            search_space_id=1,
+            concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.REPORT.value,
-            current_problem_id="bernoulli_horizontal_pipe_find_p2",
+            current_problem_id=1,
         )
         s.add(sess)
         await s.flush()
         s.add(
             ProblemAttempt(
                 session_id=sess.id,
-                problem_id="bernoulli_horizontal_pipe_find_p2",
+                problem_id=1,
                 difficulty="intro",
+                user_id=sess.user_id,
+                course_id=sess.course_id,
                 result="solved",
             )
         )
@@ -83,7 +86,7 @@ async def test_next_from_report_advances(db_with_report_session):
         await s.execute(
             select(ProblemAttempt)
             .where(ProblemAttempt.session_id == session_id)
-            .where(ProblemAttempt.problem_id == "bernoulli_horizontal_pipe_find_p2")
+            .where(ProblemAttempt.problem_id == 1)
         )
     ).scalar_one()
     assert prior.result == "solved"

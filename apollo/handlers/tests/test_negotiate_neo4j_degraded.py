@@ -25,12 +25,12 @@ from apollo.handlers.negotiate import (
     handle_skip,
 )
 from apollo.persistence.models import (
-    TutoringSession,
     KGNegotiation,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -68,7 +68,13 @@ async def session(db: AsyncSession):
     )
     db.add(s)
     await db.flush()
-    a = ProblemAttempt(session_id=s.id, problem_id="p1", difficulty="intro")
+    a = ProblemAttempt(
+        session_id=s.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=s.user_id,
+        course_id=s.course_id,
+    )
     db.add(a)
     await db.commit()
     await db.refresh(s)

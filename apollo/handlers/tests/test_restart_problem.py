@@ -14,12 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.errors import InvalidPhaseError, SessionFrozenError
 from apollo.handlers.restart_problem import handle_restart_problem
 from apollo.persistence.models import (
-    TutoringSession,
     KGEntry,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -41,19 +41,22 @@ async def db_with_report_session():
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         sess = TutoringSession(
-            student_id="stu-1",
-            concept_cluster_id="fluid_mechanics",
+            user_id="00000000-0000-0000-0000-000000000001",
+            search_space_id=1,
+            concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.REPORT.value,
-            current_problem_id="bernoulli_horizontal_pipe_find_p2",
+            current_problem_id=1,
         )
         s.add(sess)
         await s.flush()
         s.add(
             ProblemAttempt(
                 session_id=sess.id,
-                problem_id="bernoulli_horizontal_pipe_find_p2",
+                problem_id=1,
                 difficulty="intro",
+                user_id=sess.user_id,
+                course_id=sess.course_id,
                 result="solved",
             )
         )
@@ -87,6 +90,7 @@ async def test_restart_wipes_kg_and_messages_for_current_attempt(db_with_report_
             ),
             TutoringMessage(
                 session_id=session_id,
+                course_id=sess.course_id,
                 attempt_id=attempt.id,
                 role="student",
                 content="hi",
@@ -111,7 +115,7 @@ async def test_restart_wipes_kg_and_messages_for_current_attempt(db_with_report_
     attempt_after = (
         await s.execute(select(ProblemAttempt).where(ProblemAttempt.id == attempt.id))
     ).scalar_one()
-    assert attempt_after.problem_id == "bernoulli_horizontal_pipe_find_p2"
+    assert attempt_after.problem_id == 1
     assert attempt_after.difficulty == "intro"
     assert attempt_after.result is None
 
@@ -165,9 +169,11 @@ async def test_restart_does_not_touch_other_attempts(db_with_report_session):
     ).scalar_one()
     other = ProblemAttempt(
         session_id=session_id,
-        problem_id="some_other_problem",
+        problem_id=2,
         difficulty="intro",
         result="abandoned",
+        user_id=current.user_id,
+        course_id=current.course_id,
     )
     s.add(other)
     await s.flush()

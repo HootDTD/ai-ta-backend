@@ -20,11 +20,11 @@ from apollo.handlers.history import (
     load_windowed_history,
 )
 from apollo.persistence.models import (
-    TutoringSession,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -52,7 +52,7 @@ async def db_with_session():
             concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.TEACHING.value,
-            current_problem_id="p1",
+            current_problem_id=1,
         )
         s.add(sess)
         await s.commit()
@@ -61,12 +61,13 @@ async def db_with_session():
     await engine.dispose()
 
 
-async def _seed_messages(s: AsyncSession, session_id: int, n: int) -> None:
+async def _seed_messages(s: AsyncSession, session: TutoringSession, n: int) -> None:
     for i in range(n):
         role = "student" if i % 2 == 0 else "apollo"
         s.add(
             TutoringMessage(
-                session_id=session_id,
+                session_id=session.id,
+                course_id=session.course_id,
                 attempt_id=None,
                 role=role,
                 content=f"turn {i}",
@@ -80,7 +81,7 @@ async def _seed_messages(s: AsyncSession, session_id: int, n: int) -> None:
 async def test_short_session_returns_no_summary(db_with_session):
     """Below the window size => no summary, all messages returned raw."""
     s, sess = db_with_session
-    await _seed_messages(s, sess.id, 5)
+    await _seed_messages(s, sess, 5)
 
     summary, window = await load_windowed_history(db=s, session=sess, attempt_id=None)
 
@@ -93,7 +94,7 @@ async def test_short_session_returns_no_summary(db_with_session):
 async def test_at_window_size_returns_no_summary(db_with_session):
     """Exactly at window size => still no older turns to summarize."""
     s, sess = db_with_session
-    await _seed_messages(s, sess.id, RAW_WINDOW_TURNS)
+    await _seed_messages(s, sess, RAW_WINDOW_TURNS)
 
     summary, window = await load_windowed_history(db=s, session=sess, attempt_id=None)
     assert summary is None
@@ -109,7 +110,7 @@ async def test_above_window_size_triggers_summary(mock_chat, db_with_session):
     """One turn over window size triggers a summary refresh."""
     s, sess = db_with_session
     n = RAW_WINDOW_TURNS + 5
-    await _seed_messages(s, sess.id, n)
+    await _seed_messages(s, sess, n)
 
     summary, window = await load_windowed_history(db=s, session=sess, attempt_id=None)
 
@@ -133,7 +134,7 @@ async def test_subsequent_turns_within_K_dont_resummarize(
     have arrived should NOT regenerate the summary (cost control)."""
     s, sess = db_with_session
     n = RAW_WINDOW_TURNS + 5
-    await _seed_messages(s, sess.id, n)
+    await _seed_messages(s, sess, n)
 
     # First call — produces summary.
     await load_windowed_history(db=s, session=sess, attempt_id=None)
@@ -143,6 +144,7 @@ async def test_subsequent_turns_within_K_dont_resummarize(
     s.add(
         TutoringMessage(
             session_id=sess.id,
+            course_id=sess.course_id,
             attempt_id=None,
             role="student",
             content="more",
@@ -152,6 +154,7 @@ async def test_subsequent_turns_within_K_dont_resummarize(
     s.add(
         TutoringMessage(
             session_id=sess.id,
+            course_id=sess.course_id,
             attempt_id=None,
             role="apollo",
             content="ok",
@@ -174,7 +177,7 @@ async def test_summary_refreshes_after_K_new_older_turns(
     summarizer fires again."""
     s, sess = db_with_session
     n = RAW_WINDOW_TURNS + 5
-    await _seed_messages(s, sess.id, n)
+    await _seed_messages(s, sess, n)
 
     await load_windowed_history(db=s, session=sess, attempt_id=None)
     first_covered = sess.history_summary_up_to_turn
@@ -186,6 +189,7 @@ async def test_summary_refreshes_after_K_new_older_turns(
         s.add(
             TutoringMessage(
                 session_id=sess.id,
+                course_id=sess.course_id,
                 attempt_id=None,
                 role="student" if i % 2 == 0 else "apollo",
                 content=f"new {i}",
@@ -208,7 +212,7 @@ async def test_summarizer_failure_falls_back_to_raw_window(
     """LLM error => no summary, but raw window still returned."""
     s, sess = db_with_session
     n = RAW_WINDOW_TURNS + 3
-    await _seed_messages(s, sess.id, n)
+    await _seed_messages(s, sess, n)
 
     summary, window = await load_windowed_history(db=s, session=sess, attempt_id=None)
     assert summary is None  # never set
@@ -222,7 +226,7 @@ async def test_summarizer_malformed_json_falls_back(
     db_with_session,
 ):
     s, sess = db_with_session
-    await _seed_messages(s, sess.id, RAW_WINDOW_TURNS + 3)
+    await _seed_messages(s, sess, RAW_WINDOW_TURNS + 3)
     summary, window = await load_windowed_history(db=s, session=sess, attempt_id=None)
     assert summary is None
 
@@ -230,14 +234,27 @@ async def test_summarizer_malformed_json_falls_back(
 @pytest.mark.asyncio
 async def test_history_is_scoped_to_attempt(db_with_session):
     s, sess = db_with_session
-    first = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro")
-    second = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro")
+    first = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
+    second = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
     s.add_all([first, second])
     await s.flush()
     s.add_all(
         [
             TutoringMessage(
                 session_id=sess.id,
+                course_id=sess.course_id,
                 attempt_id=first.id,
                 role="student",
                 content="old attempt secret",
@@ -245,6 +262,7 @@ async def test_history_is_scoped_to_attempt(db_with_session):
             ),
             TutoringMessage(
                 session_id=sess.id,
+                course_id=sess.course_id,
                 attempt_id=second.id,
                 role="student",
                 content="new attempt only",

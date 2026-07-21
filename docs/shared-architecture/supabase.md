@@ -6,7 +6,7 @@ related:
   - ai-ta-backend/_overview
   - ai-ta-backend/domain-data
   - shared/security
-last_verified: 2026-07-16
+last_verified: 2026-07-20
 stub: false
 ---
 
@@ -33,7 +33,7 @@ apply changes to test first, then prod.
 no CHECK constraints). Migration `024_teacher_textbook.sql` re-adds both checks in their
 relaxed form on whichever project it runs against, closing the drift.
 
-## Schema overview (public schema, 17 tables + queue/decision tables)
+## Schema overview
 
 All tables created by `ai-ta-backend/database/migrations/`; ORM models for the core set in
 `database/models.py`.
@@ -49,8 +49,8 @@ All tables created by `ai-ta-backend/database/migrations/`; ORM models for the c
 - **Chat**: `chat_sessions` (incl. `memory_summary`, `topic_centroid_vector vector(3072)`
   from 015), `chat_turns` (011 added citations), `chat_session_snippets` +
   `chat_router_decisions` (RAG orchestrator, 015).
-- **Apollo (tutoring)**: `apollo_sessions`, `apollo_kg_entries`, `apollo_messages`,
-  `apollo_problem_attempts` (009/010/014/020), `apollo_student_progress` (013),
+- **Apollo (tutoring)**: `app.learning_activities` (`modality = 'tutoring'`),
+  `app.tutoring_messages`, `app.problem_attempts`, `app.student_progress`,
   `apollo_subjects` / `apollo_concepts` / `apollo_concept_problems` (018),
   `apollo_misconceptions` (019, embedded), `apollo_kg_negotiations` (021),
   `apollo_clarifications` (033), `apollo_grading_artifacts` (034 — canonical

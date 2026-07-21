@@ -30,11 +30,11 @@ from apollo.handlers.olm_invite import (
 )
 from apollo.ontology import build_node
 from apollo.persistence.models import (
-    TutoringSession,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -115,7 +115,13 @@ async def session(db: AsyncSession):
     )
     db.add(s)
     await db.flush()
-    a = ProblemAttempt(session_id=s.id, problem_id="p1", difficulty="intro")
+    a = ProblemAttempt(
+        session_id=s.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=s.user_id,
+        course_id=s.course_id,
+    )
     db.add(a)
     await db.commit()
     await db.refresh(s)
@@ -124,9 +130,11 @@ async def session(db: AsyncSession):
 
 
 async def _add_student_turn(db, session_id, attempt_id, idx, *, low_conf=False):
+    attempt = await db.get(ProblemAttempt, attempt_id)
     db.add(
         TutoringMessage(
             session_id=session_id,
+            course_id=attempt.course_id,
             attempt_id=attempt_id,
             role="student",
             content="x",
@@ -146,8 +154,10 @@ async def _add_apollo_turn(
     fired=False,
     when: datetime | None = None,
 ):
+    attempt = await db.get(ProblemAttempt, attempt_id)
     msg = TutoringMessage(
         session_id=session_id,
+        course_id=attempt.course_id,
         attempt_id=attempt_id,
         role="apollo",
         content="x",

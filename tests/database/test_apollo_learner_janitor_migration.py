@@ -216,10 +216,10 @@ async def _seed_attempt(db):
     """Minimal session + attempt via ORM (no values for the new cols)."""
     from apollo.conftest import TEST_USER_ID
     from apollo.persistence.models import (
-        TutoringSession,
         ProblemAttempt,
         SessionPhase,
         SessionStatus,
+        TutoringSession,
     )
     from apollo.subjects.tests._curriculum_fixtures import seed_search_space
 
@@ -229,11 +229,17 @@ async def _seed_attempt(db):
         search_space_id=sid,
         status=SessionStatus.active.value,
         phase=SessionPhase.SOLVING.value,
-        current_problem_id="p1",
+        current_problem_id=1,
     )
     db.add(sess)
     await db.flush()
-    attempt = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro")
+    attempt = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
     db.add(attempt)
     await db.flush()
     return attempt

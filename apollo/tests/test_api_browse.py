@@ -9,7 +9,7 @@ from typing import cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Table
+from sqlalchemy import Table, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import apollo.auth_deps as deps
@@ -17,7 +17,6 @@ from apollo.api import get_neo4j_client, register_exception_handlers
 from apollo.api import router as apollo_router
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
 from apollo.persistence.models import (
-    TutoringSession,
     Concept,
     ConceptProblem,
     EntityPrereq,
@@ -26,6 +25,7 @@ from apollo.persistence.models import (
     ProblemAttempt,
     StudentProgress,
     Subject,
+    TutoringSession,
 )
 from auth import AuthContext
 from database.models import Base
@@ -230,16 +230,30 @@ def test_list_concepts_excludes_concept_without_teachable_problems(client_factor
 
 async def _seed_attempt(Session, *, user_id: str, problem_id: str, space_id: int = TEST_SPACE_ID):
     async with Session() as db:
+        problem = (
+            await db.execute(
+                select(ConceptProblem).where(ConceptProblem.problem_code == problem_id)
+            )
+        ).scalar_one()
         sess = TutoringSession(
             user_id=user_id,
             search_space_id=space_id,
+            concept_id=problem.concept_id,
             status="ended",
             phase="REPORT",
-            current_problem_id=problem_id,
+            current_problem_id=problem.id,
         )
         db.add(sess)
         await db.flush()
-        db.add(ProblemAttempt(session_id=sess.id, problem_id=problem_id, difficulty="intro"))
+        db.add(
+            ProblemAttempt(
+                session_id=sess.id,
+                problem_id=problem.id,
+                difficulty="intro",
+                user_id=sess.user_id,
+                course_id=sess.course_id,
+            )
+        )
         await db.commit()
 
 
@@ -333,8 +347,6 @@ def test_create_session_with_explicit_problem(client_factory, monkeypatch):
     # session row exists, TEACHING phase, correct concept binding
     async def _check():
         async with Session() as db:
-            from sqlalchemy import select
-
             row = (
                 await db.execute(
                     select(TutoringSession).where(TutoringSession.id == body["session_id"])
@@ -343,7 +355,15 @@ def test_create_session_with_explicit_problem(client_factory, monkeypatch):
             assert row.phase == "TEACHING"
             assert row.status == "active"
             assert row.concept_id == concept_id
-            assert row.current_problem_id == codes[1]
+            selected_problem_id = (
+                await db.execute(
+                    select(ConceptProblem.id).where(
+                        ConceptProblem.concept_id == concept_id,
+                        ConceptProblem.problem_code == codes[1],
+                    )
+                )
+            ).scalar_one()
+            assert row.current_problem_id == selected_problem_id
 
     asyncio.run(_check())
 

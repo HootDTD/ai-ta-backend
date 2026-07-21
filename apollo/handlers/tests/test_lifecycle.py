@@ -13,12 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from apollo.handlers.lifecycle import handle_end, handle_retry
 from apollo.persistence.models import (
-    TutoringSession,
     KGEntry,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -44,11 +44,12 @@ async def session_in_phase():
     async def _make(phase: SessionPhase):
         s = Session()
         sess = TutoringSession(
-            student_id="stu-1",
-            concept_cluster_id="fluid_mechanics",
+            user_id="00000000-0000-0000-0000-000000000001",
+            search_space_id=1,
+            concept_id=1,
             status=SessionStatus.active.value,
             phase=phase.value,
-            current_problem_id="bernoulli_horizontal_pipe_find_p2",
+            current_problem_id=1,
         )
         s.add(sess)
         await s.commit()
@@ -91,10 +92,15 @@ async def test_get_session_returns_phase_kg_messages_and_current_problem(session
     from apollo.persistence.models import KGEntry, TutoringMessage
 
     db, session_id = await session_in_phase(SessionPhase.TEACHING)
+    sess = (
+        await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))
+    ).scalar_one()
     attempt = ProblemAttempt(
         session_id=session_id,
-        problem_id="bernoulli_horizontal_pipe_find_p2",
+        problem_id=1,
         difficulty="standard",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
     )
     db.add(attempt)
     await db.flush()
@@ -110,7 +116,12 @@ async def test_get_session_returns_phase_kg_messages_and_current_problem(session
     )
     db.add(
         TutoringMessage(
-            session_id=session_id, attempt_id=attempt.id, role="student", content="hi", turn_index=0
+            session_id=session_id,
+            course_id=sess.course_id,
+            attempt_id=attempt.id,
+            role="student",
+            content="hi",
+            turn_index=0,
         )
     )
     await db.commit()
@@ -133,13 +144,24 @@ async def test_get_session_returns_only_current_attempt_kg_and_messages(session_
     sess = (
         await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))
     ).scalar_one()
-    sess.current_problem_id = "p2"
+    sess.current_problem_id = 2
     await db.flush()
 
     a = ProblemAttempt(
-        session_id=session_id, problem_id="p1", difficulty="intro", result="abandoned"
+        session_id=session_id,
+        problem_id=1,
+        difficulty="intro",
+        result="abandoned",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
     )
-    b = ProblemAttempt(session_id=session_id, problem_id="p2", difficulty="standard")
+    b = ProblemAttempt(
+        session_id=session_id,
+        problem_id=2,
+        difficulty="standard",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
     db.add_all([a, b])
     await db.flush()
 
@@ -160,10 +182,20 @@ async def test_get_session_returns_only_current_attempt_kg_and_messages(session_
                 source="parser",
             ),
             TutoringMessage(
-                session_id=session_id, attempt_id=a.id, role="student", content="old", turn_index=0
+                session_id=session_id,
+                course_id=sess.course_id,
+                attempt_id=a.id,
+                role="student",
+                content="old",
+                turn_index=0,
             ),
             TutoringMessage(
-                session_id=session_id, attempt_id=b.id, role="student", content="new", turn_index=0
+                session_id=session_id,
+                course_id=sess.course_id,
+                attempt_id=b.id,
+                role="student",
+                content="new",
+                turn_index=0,
             ),
         ]
     )

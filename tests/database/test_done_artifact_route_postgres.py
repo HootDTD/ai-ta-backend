@@ -14,15 +14,16 @@ from apollo.conftest import TEST_USER_ID
 from apollo.handlers.done import handle_done
 from apollo.ontology import KGGraph, build_node
 from apollo.persistence.models import (
-    TutoringSession,
     GradingArtifact,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_problem_payloads,
+    problem_database_id,
     seed_course,
 )
 
@@ -44,22 +45,32 @@ def _student_graph(attempt_id: int) -> KGGraph:
 
 
 async def _seed_session(db, *, current_code: str, sid: int, cid: int):
+    current_problem_id = await problem_database_id(
+        db, concept_id=cid, problem_code=current_code
+    )
     sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=sid,
         concept_id=cid,
         status=SessionStatus.active.value,
         phase=SessionPhase.SOLVING.value,
-        current_problem_id=current_code,
+        current_problem_id=current_problem_id,
     )
     db.add(sess)
     await db.flush()
-    attempt = ProblemAttempt(session_id=sess.id, problem_id=current_code, difficulty="intro")
+    attempt = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=current_problem_id,
+        difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
     db.add(attempt)
     await db.flush()
     db.add(
         TutoringMessage(
             session_id=sess.id,
+            course_id=sess.course_id,
             attempt_id=attempt.id,
             role="student",
             content="continuity says rho A1 v1 equals rho A2 v2",

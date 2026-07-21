@@ -23,6 +23,7 @@ from apollo.persistence.models import (
     MasteryEvent,
     ProblemAttempt,
     Subject,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -173,6 +174,7 @@ async def db():
         KGEntity.__table__,
         LearnerState.__table__,
         MasteryEvent.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
@@ -232,10 +234,19 @@ async def test_problem_attempt_has_learner_update_pending_default_false(db: Asyn
     assert col.nullable is False
     assert col.server_default is not None
 
-    sess_attempt = ProblemAttempt(session_id=1, problem_id="p1", difficulty="intro")
+    session = TutoringSession(user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID)
+    db.add(session)
+    await db.flush()
+    sess_attempt = ProblemAttempt(
+        session_id=session.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=session.user_id,
+        course_id=session.course_id,
+    )
     db.add(sess_attempt)
     await db.commit()
     fetched = (
-        await db.execute(select(ProblemAttempt).where(ProblemAttempt.problem_id == "p1"))
+        await db.execute(select(ProblemAttempt).where(ProblemAttempt.problem_id == 1))
     ).scalar_one()
     assert fetched.learner_update_pending is False

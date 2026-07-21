@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.persistence.models import Concept, ConceptProblem, Subject
@@ -178,6 +178,22 @@ async def seed_problems(
         codes.append(code)
     await db.flush()
     return codes
+
+
+async def problem_database_id(
+    db: AsyncSession, *, concept_id: int, problem_code: str
+) -> int:
+    """Resolve an API-facing problem code to its persisted bigint identity."""
+    return int(
+        (
+            await db.execute(
+                select(ConceptProblem.id).where(
+                    ConceptProblem.concept_id == concept_id,
+                    ConceptProblem.problem_code == problem_code,
+                )
+            )
+        ).scalar_one()
+    )
 
 
 async def seed_course(

@@ -46,18 +46,21 @@ async def db_with_session_and_kg():
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         sess = TutoringSession(
-            student_id="stu-1",
-            concept_cluster_id="fluid_mechanics",
+            user_id="00000000-0000-0000-0000-000000000001",
+            search_space_id=1,
+            concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.TEACHING.value,
-            current_problem_id="bernoulli_horizontal_pipe_find_p2",
+            current_problem_id=1,
         )
         s.add(sess)
         await s.flush()
         attempt = ProblemAttempt(
             session_id=sess.id,
-            problem_id="bernoulli_horizontal_pipe_find_p2",
+            problem_id=1,
             difficulty="intro",
+            user_id=sess.user_id,
+            course_id=sess.course_id,
         )
         s.add(attempt)
         await s.flush()
@@ -207,18 +210,21 @@ async def db_with_session_equations_only():
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         sess = TutoringSession(
-            student_id="stu-2",
-            concept_cluster_id="fluid_mechanics",
+            user_id="00000000-0000-0000-0000-000000000002",
+            search_space_id=1,
+            concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.TEACHING.value,
-            current_problem_id="bernoulli_horizontal_pipe_find_p2",
+            current_problem_id=1,
         )
         s.add(sess)
         await s.flush()
         attempt = ProblemAttempt(
             session_id=sess.id,
-            problem_id="bernoulli_horizontal_pipe_find_p2",
+            problem_id=1,
             difficulty="intro",
+            user_id=sess.user_id,
+            course_id=sess.course_id,
         )
         s.add(attempt)
         await s.flush()
@@ -409,14 +415,19 @@ async def test_handle_done_flags_level_up_when_threshold_crossed(
 async def test_done_grades_only_current_attempt_kg(mock_diag, db_with_session_and_kg):
     mock_diag.return_value = "ok"
     s, session_id = db_with_session_and_kg
+    sess = (
+        await s.execute(select(TutoringSession).where(TutoringSession.id == session_id))
+    ).scalar_one()
 
     # Seed a second, abandoned attempt under the same session with a
     # distractor equation that must NOT surface in grading.
     abandoned = ProblemAttempt(
         session_id=session_id,
-        problem_id="bernoulli_horizontal_pipe_find_p2",
+        problem_id=1,
         difficulty="intro",
         result="abandoned",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
     )
     s.add(abandoned)
     await s.flush()

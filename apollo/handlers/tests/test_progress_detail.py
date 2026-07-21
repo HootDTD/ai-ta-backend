@@ -5,18 +5,19 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest_asyncio
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
 from apollo.handlers.progress import handle_get_progress_detail
 from apollo.persistence.models import (
-    TutoringSession,
     Concept,
     KGEntity,
     LearnerState,
     ProblemAttempt,
     StudentProgress,
     Subject,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -39,6 +40,13 @@ async def db():
     )
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=TABLES))
+        await conn.execute(
+            text(
+                "CREATE TABLE apollo_concept_problems ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "concept_id BIGINT NOT NULL, problem_code TEXT NOT NULL)"
+            )
+        )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         yield s
@@ -79,6 +87,20 @@ async def _seed_mastery(db, *, concept_id: int, values: list[float]) -> None:
     await db.commit()
 
 
+async def _seed_problem(db: AsyncSession, *, concept_id: int, problem_code: str) -> int:
+    return int(
+        (
+            await db.execute(
+                text(
+                    "INSERT INTO apollo_concept_problems (concept_id, problem_code) "
+                    "VALUES (:concept_id, :problem_code) RETURNING id"
+                ),
+                {"concept_id": concept_id, "problem_code": problem_code},
+            )
+        ).scalar_one()
+    )
+
+
 async def _seed_graded_attempt(
     db,
     *,
@@ -89,21 +111,26 @@ async def _seed_graded_attempt(
     user_id: str = TEST_USER_ID,
     when: datetime | None = None,
 ) -> None:
+    problem_database_id = await _seed_problem(
+        db, concept_id=concept_id, problem_code=problem_id
+    )
     sess = TutoringSession(
         user_id=user_id,
         search_space_id=TEST_SPACE_ID,
         concept_id=concept_id,
         status="ended",
         phase="REPORT",
-        current_problem_id=problem_id,
+        current_problem_id=problem_database_id,
     )
     db.add(sess)
     await db.flush()
     db.add(
         ProblemAttempt(
             session_id=sess.id,
-            problem_id=problem_id,
+            problem_id=problem_database_id,
             difficulty="intro",
+            user_id=sess.user_id,
+            course_id=sess.course_id,
             result="graded",
             diagnostic_report={
                 "rubric": {"overall": {"score": score, "letter": letter}},
@@ -140,17 +167,26 @@ async def test_detail_recent_attempts_graded_only_newest_first(db):
     )
     await _seed_graded_attempt(db, concept_id=c1, problem_id="p-new", score=85, letter="A-")
     # ungraded attempt and another student's attempt must not appear
+    live_problem_id = await _seed_problem(db, concept_id=c1, problem_code="p-live")
     sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=c1,
         status="active",
         phase="TEACHING",
-        current_problem_id="p-live",
+        current_problem_id=live_problem_id,
     )
     db.add(sess)
     await db.flush()
-    db.add(ProblemAttempt(session_id=sess.id, problem_id="p-live", difficulty="intro"))
+    db.add(
+        ProblemAttempt(
+            session_id=sess.id,
+            problem_id=live_problem_id,
+            difficulty="intro",
+            user_id=sess.user_id,
+            course_id=sess.course_id,
+        )
+    )
     await db.commit()
     await _seed_graded_attempt(
         db, concept_id=c1, problem_id="p-other", score=99, letter="A+", user_id=TEST_USER_ID_2

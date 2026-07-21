@@ -23,6 +23,7 @@ from apollo.persistence.models import ProblemAttempt, SessionStatus, TutoringSes
 from apollo.subjects.curriculum_db import list_course_concepts
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_problem_payloads,
+    problem_database_id,
     seed_course,
 )
 
@@ -108,7 +109,11 @@ async def test_init_session_creates_first_attempt(db_session):
         )
     ).scalar_one()
     assert attempt.difficulty == "intro"
-    assert attempt.problem_id == result["problem"]["id"]
+    assert attempt.problem_id == await problem_database_id(
+        db_session,
+        concept_id=cid,
+        problem_code=result["problem"]["id"],
+    )
 
 
 async def test_init_session_ends_stale_active_session(db_session):

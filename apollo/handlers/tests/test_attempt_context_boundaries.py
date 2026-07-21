@@ -11,11 +11,11 @@ from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.handlers.next import handle_next
 from apollo.handlers.restart_problem import handle_restart_problem
 from apollo.persistence.models import (
-    TutoringSession,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -50,7 +50,7 @@ async def _seed(db: AsyncSession, *, phase: str):
         concept_id=1,
         status=SessionStatus.active.value,
         phase=phase,
-        current_problem_id="p1",
+        current_problem_id=1,
         pending_intent="done",
         history_summary="old summary",
         history_summary_up_to_turn=7,
@@ -59,8 +59,10 @@ async def _seed(db: AsyncSession, *, phase: str):
     await db.flush()
     attempt = ProblemAttempt(
         session_id=session.id,
-        problem_id="p1",
+        problem_id=1,
         difficulty="intro",
+        user_id=session.user_id,
+        course_id=session.course_id,
     )
     db.add(attempt)
     await db.commit()

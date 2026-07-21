@@ -42,16 +42,17 @@ from apollo.overseer.problem_selector import (
     select_problem_personalized,
 )
 from apollo.persistence.models import (
-    TutoringSession,
     EntityPrereq,
     KGEntity,
     LearnerState,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_problem_payloads,
+    problem_database_id,
     seed_course,
 )
 
@@ -171,13 +172,16 @@ async def _seed_session(
     db, *, sid, cid, current_problem_id, phase=SessionPhase.REPORT.value, user_id=TEST_USER_ID
 ):
     """Seed one TutoringSession (WU-5A2 pattern) for the handle_next route tests."""
+    database_id = await problem_database_id(
+        db, concept_id=cid, problem_code=current_problem_id
+    )
     sess = TutoringSession(
         user_id=user_id,
         search_space_id=sid,
         concept_id=cid,
         status=SessionStatus.active.value,
         phase=phase,
-        current_problem_id=current_problem_id,
+        current_problem_id=database_id,
     )
     db.add(sess)
     await db.flush()
@@ -185,8 +189,17 @@ async def _seed_session(
 
 
 async def _seed_attempt(db, *, session_id, problem_id, difficulty="intro", result="graded"):
+    session = await db.get(TutoringSession, session_id)
+    database_id = await problem_database_id(
+        db, concept_id=session.concept_id, problem_code=problem_id
+    )
     attempt = ProblemAttempt(
-        session_id=session_id, problem_id=problem_id, difficulty=difficulty, result=result
+        session_id=session_id,
+        problem_id=database_id,
+        difficulty=difficulty,
+        result=result,
+        user_id=session.user_id,
+        course_id=session.course_id,
     )
     db.add(attempt)
     await db.flush()

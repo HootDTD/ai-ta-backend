@@ -22,12 +22,12 @@ from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.errors import KGUnavailableError
 from apollo.handlers.restart_problem import handle_restart_problem
 from apollo.persistence.models import (
-    TutoringSession,
     KGNegotiation,
-    TutoringMessage,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -62,16 +62,23 @@ async def session_teaching_with_messages(db: AsyncSession):
         concept_id=1,
         status=SessionStatus.active.value,
         phase=SessionPhase.TEACHING.value,
-        current_problem_id="p1",
+        current_problem_id=1,
     )
     db.add(sess)
     await db.flush()
-    attempt = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro")
+    attempt = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
     db.add(attempt)
     await db.flush()
     db.add(
         TutoringMessage(
             session_id=sess.id,
+            course_id=sess.course_id,
             attempt_id=attempt.id,
             role="student",
             content="hi",
@@ -143,11 +150,17 @@ async def test_restart_with_neo_none_raises_before_any_deletion():
             concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.TEACHING.value,
-            current_problem_id="p1",
+            current_problem_id=1,
         )
         db.add(sess)
         await db.flush()
-        attempt = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro")
+        attempt = ProblemAttempt(
+            session_id=sess.id,
+            problem_id=1,
+            difficulty="intro",
+            user_id=sess.user_id,
+            course_id=sess.course_id,
+        )
         db.add(attempt)
         await db.commit()
         await db.refresh(sess)

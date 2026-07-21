@@ -8,10 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.handlers.lifecycle import handle_retry
 from apollo.persistence.models import (
-    TutoringSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -42,7 +42,7 @@ async def _seed(db: AsyncSession, *, result: str | None):
         concept_id=1,
         status=SessionStatus.active.value,
         phase=SessionPhase.REPORT.value,
-        current_problem_id="p1",
+        current_problem_id=1,
         pending_intent="done",
         history_summary="old attempt summary",
         history_summary_up_to_turn=12,
@@ -51,8 +51,10 @@ async def _seed(db: AsyncSession, *, result: str | None):
     await db.flush()
     attempt = ProblemAttempt(
         session_id=session.id,
-        problem_id="p1",
+        problem_id=1,
         difficulty="intro",
+        user_id=session.user_id,
+        course_id=session.course_id,
         result=result,
     )
     db.add(attempt)
