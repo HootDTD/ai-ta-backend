@@ -20,7 +20,7 @@ from sqlalchemy import select
 
 from apollo.persistence.models import (
     GradingArtifact,
-    KGEntity,
+    LearnerEntity,
     LearnerState,
     MasteryEvent,
     ProblemAttempt,
@@ -78,8 +78,11 @@ async def _seed_attempt(db, *, search_space_id: int, concept_id: int | None) -> 
     return int(attempt.id)
 
 
-async def _seed_entity(db, *, concept_id: int, canonical_key: str, kind: str = "equation") -> int:
-    entity = KGEntity(
+async def _seed_entity(
+    db, *, course_id: int, concept_id: int, canonical_key: str, kind: str = "equation"
+) -> int:
+    entity = LearnerEntity(
+        course_id=course_id,
         concept_id=concept_id,
         canonical_key=canonical_key,
         kind=kind,
@@ -135,7 +138,9 @@ def _ledger(*keys_and_status: tuple[str, str]) -> list[dict]:
 
 async def test_cold_start_mastery_equals_composite(db_session):
     sid, cid = await _seed_scope(db_session)
-    entity_id = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.bernoulli")
+    entity_id = await _seed_entity(
+        db_session, course_id=sid, concept_id=cid, canonical_key="eq.bernoulli"
+    )
     attempt_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
     artifact = _artifact_row(
         attempt_id=attempt_id,
@@ -179,7 +184,9 @@ async def test_cold_start_mastery_equals_composite(db_session):
 async def test_second_attempt_moves_mastery_toward_new_composite(db_session, monkeypatch):
     monkeypatch.setenv("APOLLO_MASTERY_EWMA_ALPHA", "0.5")
     sid, cid = await _seed_scope(db_session)
-    entity_id = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.bernoulli")
+    entity_id = await _seed_entity(
+        db_session, course_id=sid, concept_id=cid, canonical_key="eq.bernoulli"
+    )
 
     attempt_id_1 = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
     first = _artifact_row(
@@ -231,7 +238,9 @@ async def test_second_attempt_moves_mastery_toward_new_composite(db_session, mon
 
 async def test_retry_of_same_attempt_is_idempotent(db_session):
     sid, cid = await _seed_scope(db_session)
-    entity_id = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.bernoulli")
+    entity_id = await _seed_entity(
+        db_session, course_id=sid, concept_id=cid, canonical_key="eq.bernoulli"
+    )
     attempt_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
     artifact = _artifact_row(
         attempt_id=attempt_id,
@@ -341,9 +350,16 @@ async def test_no_op_when_ledger_has_no_credited_or_misconception_rows(db_sessio
 
 
 async def test_misconception_key_projects_like_credited(db_session):
+    """The subject under test is the ledger row's ``status="misconception"``
+    (an open JSON value on ``node_ledger``, unrelated to the entity's SQL-CHECK'd
+    ``kind`` column) resolving and projecting like a credited row —
+    ``_entity_id_lookups`` only ever keys on ``canonical_key``. DB-13 dropped
+    ``kind='misconception'`` from ``learner_entities__kind__check``, so the seeded
+    entity here uses a surviving kind ("equation"); the misconception-ness lives
+    entirely in the ledger status, not the entity kind."""
     sid, cid = await _seed_scope(db_session)
     entity_id = await _seed_entity(
-        db_session, concept_id=cid, canonical_key="misc.reversal", kind="misconception"
+        db_session, course_id=sid, concept_id=cid, canonical_key="misc.reversal", kind="equation"
     )
     attempt_id = await _seed_attempt(db_session, search_space_id=sid, concept_id=cid)
     artifact = _artifact_row(

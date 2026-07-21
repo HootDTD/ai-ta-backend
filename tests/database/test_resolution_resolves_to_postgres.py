@@ -22,7 +22,7 @@ from apollo.knowledge_graph.resolution_store import write_resolution
 from apollo.knowledge_graph.store import _NODE_CREATE_CYPHER, _node_to_neo4j_props
 from apollo.ontology import NODE_LABELS, build_node
 from apollo.ontology.graph import KGGraph
-from apollo.persistence.models import Concept, KGEntity
+from apollo.persistence.models import Concept, LearnerEntity
 from apollo.resolution import resolve_attempt
 from apollo.resolution.candidates import Candidate
 from database.models import Course
@@ -47,7 +47,8 @@ async def _seed_entities(db, *, course_slug, entities):
     await db.flush()
     key_by_canonical: dict[str, int] = {}
     for canonical_key, kind, name in entities:
-        ent = KGEntity(
+        ent = LearnerEntity(
+            course_id=space.id,
             concept_id=concept.id,
             canonical_key=canonical_key,
             kind=kind,
@@ -73,12 +74,17 @@ async def _write_node_direct(neo, attempt_id, node):
 @pytest.mark.asyncio
 async def test_resolves_to_targets_projected_canon(db_session, neo4j_client):
     aid = -801
+    # DB-13: the original fixture also seeded a ("misc.density_ignored",
+    # "misconception", ...) entity here for scene-setting realism (a KG has
+    # both conditions and misconceptions) — it was never asserted on. kind=
+    # "misconception" is no longer admitted by learner_entities__kind__check,
+    # so that entity is dropped; the resolver behavior under test only ever
+    # exercised cond.incompressibility.
     concept_id, key_by_canonical = await _seed_entities(
         db_session,
         course_slug="e2e-resolve",
         entities=[
             ("cond.incompressibility", "condition", "Incompressibility"),
-            ("misc.density_ignored", "misconception", "Density ignored"),
         ],
     )
 

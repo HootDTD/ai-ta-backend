@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from apollo.knowledge_graph.canon_projection import load_entity_specs, project_canon
-from apollo.persistence.models import Concept, KGEntity
+from apollo.persistence.models import Concept, LearnerEntity
 from database.models import Course
 
 pytestmark = pytest.mark.integration
@@ -52,12 +52,14 @@ async def _make_concept(
 async def _make_entity(
     db,
     *,
+    course_id: int,
     concept_id: int,
     canonical_key: str,
     kind: str,
     display_name: str,
 ) -> int:
-    ent = KGEntity(
+    ent = LearnerEntity(
+        course_id=course_id,
         concept_id=concept_id,
         canonical_key=canonical_key,
         kind=kind,
@@ -87,6 +89,7 @@ async def _seed_concept_with_entities(
     ids = [
         await _make_entity(
             db,
+            course_id=ss,
             concept_id=concept,
             canonical_key=ck,
             kind=kind,
@@ -165,6 +168,7 @@ async def test_load_entity_specs_scoped_by_search_space(db_session):
     )
     id_b = await _make_entity(
         db_session,
+        course_id=ss1,
         concept_id=c1b,
         canonical_key="eq.b",
         kind="equation",
@@ -190,21 +194,12 @@ async def test_load_entity_specs_refuses_unscoped(db_session):
         await load_entity_specs(db_session)
 
 
-@pytest.mark.asyncio
-async def test_load_entity_specs_includes_misconceptions(db_session):
-    _, concept_id, _ = await _seed_concept_with_entities(
-        db_session,
-        course_slug="cm",
-        subject_slug="sm",
-        concept_slug="km",
-        entities=[
-            ("eq.a", "equation", "A"),
-            ("misc.density_ignored", "misconception", "Density ignored"),
-        ],
-    )
-    specs = await load_entity_specs(db_session, concept_id=concept_id)
-    kinds = {s.canonical_key: s.kind for s in specs}
-    assert kinds["misc.density_ignored"] == "misconception"
+# test_load_entity_specs_includes_misconceptions DELETED (DB-13): it seeded a
+# LearnerEntity with kind="misconception", which learner_entities__kind__check
+# no longer admits on real Postgres (see canon_projection.load_entity_specs's
+# docstring — "kind='misconception' is no longer a row this query can ever
+# return"). The scenario is now impossible; load_entity_specs's no-kind-
+# filtering behavior is still covered by the surviving scope-selector tests.
 
 
 # ---------------------------------------------------------------------------

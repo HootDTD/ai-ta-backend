@@ -30,7 +30,7 @@ from apollo.learner_model.personalization_read import (
 from apollo.persistence.models import (
     Concept,
     EntityPrereq,
-    KGEntity,
+    LearnerEntity,
     LearnerState,
 )
 from database.models import Course
@@ -47,7 +47,7 @@ pytestmark = pytest.mark.integration
 async def _seed_course(db, *, course_slug) -> tuple[int, int]:
     """Insert Course -> Subject -> Concept. Returns (search_space_id, concept_id).
 
-    One concept per course; entities are per-concept via the KGEntity.concept_id FK.
+    One concept per course; entities are per-concept via the LearnerEntity.concept_id FK.
     """
     space = Course(name=course_slug, slug=course_slug, subject_name="Physics")
     db.add(space)
@@ -64,9 +64,10 @@ async def _seed_course(db, *, course_slug) -> tuple[int, int]:
     return space.id, concept.id
 
 
-async def _seed_entity(db, *, concept_id, canonical_key, kind="equation") -> int:
-    """Add one KGEntity under concept_id. Returns its id."""
-    ent = KGEntity(
+async def _seed_entity(db, *, course_id, concept_id, canonical_key, kind="equation") -> int:
+    """Add one LearnerEntity under concept_id. Returns its id."""
+    ent = LearnerEntity(
+        course_id=course_id,
         concept_id=concept_id,
         canonical_key=canonical_key,
         kind=kind,
@@ -79,9 +80,10 @@ async def _seed_entity(db, *, concept_id, canonical_key, kind="equation") -> int
     return ent.id
 
 
-async def _seed_prereq(db, *, from_id, to_id) -> None:
-    """Add one EntityPrereq edge (from depends on to)."""
-    db.add(EntityPrereq(from_entity_id=from_id, to_entity_id=to_id))
+async def _seed_prereq(db, *, course_id, from_id, to_id) -> None:
+    """Add one EntityPrereq edge (from depends on to). DB-13: ``course_id`` is a
+    denormalized NOT NULL column on ``internal.entity_prerequisites``."""
+    db.add(EntityPrereq(course_id=course_id, from_entity_id=from_id, to_entity_id=to_id))
     await db.flush()
 
 
@@ -92,7 +94,6 @@ async def _seed_state(
     entity_id,
     mastery,
     confidence,
-    misconception_code=None,
     belief=None,
     user_id=TEST_USER_ID,
 ) -> None:
@@ -102,6 +103,10 @@ async def _seed_state(
     supplied. The default belief = [1-mastery, 0, mastery] is in-range and
     length-3; tests that must prove "no recompute" pass an explicit ``belief``
     that does NOT recompute to the seeded ``mastery``.
+
+    DB-13: ``misconception_code`` is GONE from the target ``app.learner_state``
+    DDL (misconceptions are tracked via ``MasteryEvent.event_kind`` instead), so
+    this helper no longer accepts it.
     """
     if belief is None:
         belief = [round(1.0 - mastery, 4), 0.0, round(mastery, 4)]
@@ -113,7 +118,6 @@ async def _seed_state(
             belief=belief,
             mastery=mastery,
             confidence=confidence,
-            misconception_code=misconception_code,
             evidence_count=1,
             last_evidence_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
@@ -135,8 +139,12 @@ async def test_course_isolation_mastery_never_crosses_courses(db_session):
     sid_b, cid_b = await _seed_course(db_session, course_slug="courseB")
 
     # Same canonical_key under each concept => one entity row per course.
-    e_a = await _seed_entity(db_session, concept_id=cid_a, canonical_key="eq.continuity")
-    e_b = await _seed_entity(db_session, concept_id=cid_b, canonical_key="eq.continuity")
+    e_a = await _seed_entity(
+        db_session, course_id=sid_a, concept_id=cid_a, canonical_key="eq.continuity"
+    )
+    e_b = await _seed_entity(
+        db_session, course_id=sid_b, concept_id=cid_b, canonical_key="eq.continuity"
+    )
 
     # Same user, distinct sentinel mastery per course.
     await _seed_state(db_session, sid=sid_a, entity_id=e_a, mastery=0.42, confidence=0.6)
@@ -167,7 +175,9 @@ async def test_course_isolation_search_space_predicate_discriminates(db_session)
     discriminating witness for the §1.4 predicate itself."""
     sid_a, cid_a = await _seed_course(db_session, course_slug="iso_a")
     sid_b, _cid_b = await _seed_course(db_session, course_slug="iso_b")
-    e_a = await _seed_entity(db_session, concept_id=cid_a, canonical_key="eq.continuity")
+    e_a = await _seed_entity(
+        db_session, course_id=sid_a, concept_id=cid_a, canonical_key="eq.continuity"
+    )
 
     # Legitimate course-A row + a cross-wired row: SAME user+entity, course B's sid.
     await _seed_state(db_session, sid=sid_a, entity_id=e_a, mastery=0.42, confidence=0.6)
@@ -194,9 +204,11 @@ async def test_cold_start_empty_state_returns_well_formed_empty_profile(db_sessi
     """ZERO learner_state rows => is_empty + empty by_canonical_key, but the
     maps/edges STILL populate from kg_entities/prereqs."""
     sid, cid = await _seed_course(db_session, course_slug="cold")
-    e1 = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.continuity")
-    e2 = await _seed_entity(db_session, concept_id=cid, canonical_key="cond.incompressibility")
-    await _seed_prereq(db_session, from_id=e1, to_id=e2)  # e1 depends on e2
+    e1 = await _seed_entity(db_session, course_id=sid, concept_id=cid, canonical_key="eq.continuity")
+    e2 = await _seed_entity(
+        db_session, course_id=sid, concept_id=cid, canonical_key="cond.incompressibility"
+    )
+    await _seed_prereq(db_session, course_id=sid, from_id=e1, to_id=e2)  # e1 depends on e2
 
     profile = await read_learner_profile(
         db_session, user_id=TEST_USER_ID, search_space_id=sid, concept_id=cid
@@ -224,16 +236,18 @@ async def test_column_read_parity_no_belief_recompute(db_session):
     DIFFERENT mastery (0.5), so returning 0.42 proves the read takes the COLUMN,
     not the belief vector."""
     sid, cid = await _seed_course(db_session, course_slug="parity")
-    e_id = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.bernoulli")
+    e_id = await _seed_entity(db_session, course_id=sid, concept_id=cid, canonical_key="eq.bernoulli")
 
     # belief [0.2, 0.6, 0.2] -> mastery_of = 0.5*0.6 + 0.2 = 0.5 != 0.42.
+    # DB-13: misconception_code is GONE from app.learner_state (tracked via
+    # MasteryEvent.event_kind instead), so it's dropped from this seed; the
+    # verbatim-not-recomputed proof still stands on mastery/confidence alone.
     await _seed_state(
         db_session,
         sid=sid,
         entity_id=e_id,
         mastery=0.42,
         confidence=0.70,
-        misconception_code="misc.something",
         belief=[0.2, 0.6, 0.2],
     )
 
@@ -244,7 +258,6 @@ async def test_column_read_parity_no_belief_recompute(db_session):
     ep = profile.by_canonical_key["eq.bernoulli"]
     assert ep.mastery == pytest.approx(0.42, abs=1e-6)
     assert ep.confidence == pytest.approx(0.70, abs=1e-6)
-    assert ep.misconception_code == "misc.something"
     assert ep.entity_id == e_id
     assert ep.canonical_key == "eq.bernoulli"
     assert profile.is_empty is False
@@ -260,12 +273,14 @@ async def test_prereq_edges_and_id_key_maps_round_trip(db_session):
     """3 entities, two prereq edges (a->b, c->b). Edges come back RAW + sorted;
     the id<->key maps are exact inverses; endpoints resolve through key_by_entity_id."""
     sid, cid = await _seed_course(db_session, course_slug="dag")
-    a = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.continuity")
-    b = await _seed_entity(db_session, concept_id=cid, canonical_key="cond.incompressibility")
-    c = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.bernoulli")
+    a = await _seed_entity(db_session, course_id=sid, concept_id=cid, canonical_key="eq.continuity")
+    b = await _seed_entity(
+        db_session, course_id=sid, concept_id=cid, canonical_key="cond.incompressibility"
+    )
+    c = await _seed_entity(db_session, course_id=sid, concept_id=cid, canonical_key="eq.bernoulli")
 
-    await _seed_prereq(db_session, from_id=a, to_id=b)  # a depends on b
-    await _seed_prereq(db_session, from_id=c, to_id=b)  # c depends on b
+    await _seed_prereq(db_session, course_id=sid, from_id=a, to_id=b)  # a depends on b
+    await _seed_prereq(db_session, course_id=sid, from_id=c, to_id=b)  # c depends on b
 
     profile = await read_learner_profile(
         db_session, user_id=TEST_USER_ID, search_space_id=sid, concept_id=cid
@@ -298,15 +313,23 @@ async def test_cross_concept_prereq_edge_is_excluded(db_session):
     'endpoint in key_by_entity_id' invariant); the within-concept from-AND-to filter
     excludes them. The wedge does not gate on out-of-concept prerequisites."""
     sid, cid = await _seed_course(db_session, course_slug="xconcept")
-    e1 = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.continuity")
-    e2 = await _seed_entity(db_session, concept_id=cid, canonical_key="cond.incompressibility")
+    e1 = await _seed_entity(db_session, course_id=sid, concept_id=cid, canonical_key="eq.continuity")
+    e2 = await _seed_entity(
+        db_session, course_id=sid, concept_id=cid, canonical_key="cond.incompressibility"
+    )
     # A different concept with its own entity (the foreign endpoint).
-    _, other_cid = await _seed_course(db_session, course_slug="xconcept_other")
-    foreign = await _seed_entity(db_session, concept_id=other_cid, canonical_key="eq.foreign")
+    other_sid, other_cid = await _seed_course(db_session, course_slug="xconcept_other")
+    foreign = await _seed_entity(
+        db_session, course_id=other_sid, concept_id=other_cid, canonical_key="eq.foreign"
+    )
 
-    await _seed_prereq(db_session, from_id=e1, to_id=e2)  # within-concept: KEPT
-    await _seed_prereq(db_session, from_id=e1, to_id=foreign)  # cross-concept: DROPPED
-    await _seed_prereq(db_session, from_id=foreign, to_id=e2)  # cross-concept: DROPPED
+    await _seed_prereq(db_session, course_id=sid, from_id=e1, to_id=e2)  # within-concept: KEPT
+    await _seed_prereq(
+        db_session, course_id=sid, from_id=e1, to_id=foreign
+    )  # cross-concept: DROPPED
+    await _seed_prereq(
+        db_session, course_id=sid, from_id=foreign, to_id=e2
+    )  # cross-concept: DROPPED
 
     profile = await read_learner_profile(
         db_session, user_id=TEST_USER_ID, search_space_id=sid, concept_id=cid
@@ -332,8 +355,10 @@ async def test_unknown_concept_returns_empty_without_state_query(db_session):
     sid, cid = await _seed_course(db_session, course_slug="unknown")
 
     # Stray state/entity under a DIFFERENT concept must not leak in.
-    _, other_cid = await _seed_course(db_session, course_slug="other")
-    stray = await _seed_entity(db_session, concept_id=other_cid, canonical_key="eq.stray")
+    other_sid, other_cid = await _seed_course(db_session, course_slug="other")
+    stray = await _seed_entity(
+        db_session, course_id=other_sid, concept_id=other_cid, canonical_key="eq.stray"
+    )
     await _seed_state(db_session, sid=sid, entity_id=stray, mastery=0.99, confidence=0.5)
 
     profile = await read_learner_profile(
@@ -360,9 +385,11 @@ async def test_mixed_present_and_absent_entities(db_session):
     column; the two absent entities are simply ABSENT (not zero-filled), but the
     inventory (entity_id_by_key) is complete."""
     sid, cid = await _seed_course(db_session, course_slug="mixed")
-    e1 = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.continuity")
-    await _seed_entity(db_session, concept_id=cid, canonical_key="cond.incompressibility")
-    await _seed_entity(db_session, concept_id=cid, canonical_key="eq.bernoulli")
+    e1 = await _seed_entity(db_session, course_id=sid, concept_id=cid, canonical_key="eq.continuity")
+    await _seed_entity(
+        db_session, course_id=sid, concept_id=cid, canonical_key="cond.incompressibility"
+    )
+    await _seed_entity(db_session, course_id=sid, concept_id=cid, canonical_key="eq.bernoulli")
 
     await _seed_state(db_session, sid=sid, entity_id=e1, mastery=0.35, confidence=0.5)
 
@@ -389,7 +416,7 @@ async def test_other_user_state_does_not_leak(db_session):
     """A state row owned by TEST_USER_ID_2 must be filtered out when reading for
     TEST_USER_ID (the read is per-student)."""
     sid, cid = await _seed_course(db_session, course_slug="users")
-    e_id = await _seed_entity(db_session, concept_id=cid, canonical_key="eq.continuity")
+    e_id = await _seed_entity(db_session, course_id=sid, concept_id=cid, canonical_key="eq.continuity")
 
     await _seed_state(
         db_session,
@@ -415,7 +442,6 @@ def test_entity_profile_and_learner_profile_are_frozen():
         canonical_key="eq.x",
         mastery=0.5,
         confidence=0.5,
-        misconception_code=None,
     )
     lp = LearnerProfile(
         by_canonical_key={"eq.x": ep},

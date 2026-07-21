@@ -30,7 +30,7 @@ import pytest
 
 from apollo.persistence.models import (
     GradingArtifact,
-    KGEntity,
+    LearnerEntity,
     LearnerState,
     ProblemAttempt,
     SessionPhase,
@@ -54,8 +54,11 @@ async def _seed_two_concepts(db) -> tuple[int, int, int]:
     return sid, cid_1, cid_2
 
 
-async def _seed_entity(db, *, concept_id: int, canonical_key: str, kind: str = "equation") -> int:
-    entity = KGEntity(
+async def _seed_entity(
+    db, *, course_id: int, concept_id: int, canonical_key: str, kind: str = "equation"
+) -> int:
+    entity = LearnerEntity(
+        course_id=course_id,
         concept_id=concept_id,
         canonical_key=canonical_key,
         kind=kind,
@@ -146,8 +149,8 @@ def _artifact(
 
 async def test_heatmap_returns_one_row_per_user_and_concept(db_session):
     sid, cid_1, cid_2 = await _seed_two_concepts(db_session)
-    e1 = await _seed_entity(db_session, concept_id=cid_1, canonical_key="eq.a")
-    e2 = await _seed_entity(db_session, concept_id=cid_2, canonical_key="eq.b")
+    e1 = await _seed_entity(db_session, course_id=sid, concept_id=cid_1, canonical_key="eq.a")
+    e2 = await _seed_entity(db_session, course_id=sid, concept_id=cid_2, canonical_key="eq.b")
     u1, u2 = str(uuid.uuid4()), str(uuid.uuid4())
 
     await _seed_state(
@@ -173,8 +176,8 @@ async def test_heatmap_returns_one_row_per_user_and_concept(db_session):
 
 async def test_heatmap_averages_multiple_entities_under_one_concept(db_session):
     sid, cid_1, _cid_2 = await _seed_two_concepts(db_session)
-    e1 = await _seed_entity(db_session, concept_id=cid_1, canonical_key="eq.a")
-    e2 = await _seed_entity(db_session, concept_id=cid_1, canonical_key="eq.b")
+    e1 = await _seed_entity(db_session, course_id=sid, concept_id=cid_1, canonical_key="eq.a")
+    e2 = await _seed_entity(db_session, course_id=sid, concept_id=cid_1, canonical_key="eq.b")
     u1 = str(uuid.uuid4())
 
     await _seed_state(
@@ -194,8 +197,8 @@ async def test_heatmap_averages_multiple_entities_under_one_concept(db_session):
 async def test_heatmap_scopes_to_search_space(db_session):
     sid_a, cid_a, _ = await _seed_two_concepts(db_session)
     sid_b, cid_b, _ = await _seed_two_concepts(db_session)
-    e_a = await _seed_entity(db_session, concept_id=cid_a, canonical_key="eq.a")
-    e_b = await _seed_entity(db_session, concept_id=cid_b, canonical_key="eq.b")
+    e_a = await _seed_entity(db_session, course_id=sid_a, concept_id=cid_a, canonical_key="eq.a")
+    e_b = await _seed_entity(db_session, course_id=sid_b, concept_id=cid_b, canonical_key="eq.b")
     u1 = str(uuid.uuid4())
 
     await _seed_state(

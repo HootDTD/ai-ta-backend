@@ -43,7 +43,7 @@ from apollo.overseer.problem_selector import (
 )
 from apollo.persistence.models import (
     EntityPrereq,
-    KGEntity,
+    LearnerEntity,
     LearnerState,
     ProblemAttempt,
     SessionPhase,
@@ -97,9 +97,10 @@ async def _seed_pool(db, *, subject_slug, concept_slug="bernoulli_principle"):
     )
 
 
-async def _seed_entity(db, *, concept_id, canonical_key, kind="equation") -> int:
-    """Add one KGEntity under concept_id; return its id (WU-6A1 read-test pattern)."""
-    ent = KGEntity(
+async def _seed_entity(db, *, course_id, concept_id, canonical_key, kind="equation") -> int:
+    """Add one LearnerEntity under concept_id; return its id (WU-6A1 read-test pattern)."""
+    ent = LearnerEntity(
+        course_id=course_id,
         concept_id=concept_id,
         canonical_key=canonical_key,
         kind=kind,
@@ -112,9 +113,11 @@ async def _seed_entity(db, *, concept_id, canonical_key, kind="equation") -> int
     return ent.id
 
 
-async def _seed_prereq(db, *, from_id, to_id) -> None:
-    """Add one EntityPrereq edge (from depends on to) (WU-6A1 pattern)."""
-    db.add(EntityPrereq(from_entity_id=from_id, to_entity_id=to_id))
+async def _seed_prereq(db, *, course_id, from_id, to_id) -> None:
+    """Add one EntityPrereq edge (from depends on to) (WU-6A1 pattern). DB-13:
+    ``course_id`` is a denormalized NOT NULL column on
+    ``internal.entity_prerequisites``."""
+    db.add(EntityPrereq(course_id=course_id, from_entity_id=from_id, to_entity_id=to_id))
     await db.flush()
 
 
@@ -125,11 +128,13 @@ async def _seed_state(
     entity_id,
     mastery,
     confidence,
-    misconception_code=None,
     user_id=TEST_USER_ID,
 ) -> None:
     """Add one apollo_learner_state row (WU-6A1 pattern). ``belief`` is NOT NULL;
-    a faithful length-3 vector is supplied."""
+    a faithful length-3 vector is supplied.
+
+    DB-13: ``misconception_code`` is GONE from the target ``app.learner_state``
+    DDL, so this helper no longer accepts it."""
     belief = [round(1.0 - mastery, 4), 0.0, round(mastery, 4)]
     db.add(
         LearnerState(
@@ -139,7 +144,6 @@ async def _seed_state(
             belief=belief,
             mastery=mastery,
             confidence=confidence,
-            misconception_code=misconception_code,
             evidence_count=1,
             last_evidence_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
@@ -157,11 +161,11 @@ async def _seed_weak_profile(db, *, sid, cid):
     prereq edges => prereqs trivially mastered. Coverage ordering: P1 (all three)
     is max; with P1 attempted, P3 (cont+incomp = 1.25) > P2 (bernoulli = 0.32).
     """
-    e_cont = await _seed_entity(db, concept_id=cid, canonical_key=_CONTINUITY)
+    e_cont = await _seed_entity(db, course_id=sid, concept_id=cid, canonical_key=_CONTINUITY)
     e_incomp = await _seed_entity(
-        db, concept_id=cid, canonical_key=_INCOMPRESSIBILITY, kind="condition"
+        db, course_id=sid, concept_id=cid, canonical_key=_INCOMPRESSIBILITY, kind="condition"
     )
-    e_bern = await _seed_entity(db, concept_id=cid, canonical_key=_BERNOULLI)
+    e_bern = await _seed_entity(db, course_id=sid, concept_id=cid, canonical_key=_BERNOULLI)
     await _seed_state(db, sid=sid, entity_id=e_cont, mastery=0.35, confidence=0.6)
     await _seed_state(db, sid=sid, entity_id=e_incomp, mastery=0.40, confidence=0.6)
     await _seed_state(db, sid=sid, entity_id=e_bern, mastery=0.68, confidence=0.6)
@@ -291,7 +295,7 @@ async def test_flag_on_empty_state_returns_candidates_zero(db_session, monkeypat
     monkeypatch.setenv(_FLAG, "1")
     sid, cid, _codes = await _seed_pool(db_session, subject_slug="s_empty")
     # entities may be seeded; with ZERO state rows is_empty=True either way.
-    await _seed_entity(db_session, concept_id=cid, canonical_key=_CONTINUITY)
+    await _seed_entity(db_session, course_id=sid, concept_id=cid, canonical_key=_CONTINUITY)
 
     baseline = await select_problem(
         db_session,
@@ -413,12 +417,12 @@ async def test_flag_on_prereq_blocked_weak_excluded_falls_back(db_session, monke
     unseen => 0.50 < 0.70) BLOCKING, weak == {} => fallback to candidates[0]."""
     monkeypatch.setenv(_FLAG, "1")
     sid, cid, _codes = await _seed_pool(db_session, subject_slug="s_blocked")
-    e_cont = await _seed_entity(db_session, concept_id=cid, canonical_key=_CONTINUITY)
+    e_cont = await _seed_entity(db_session, course_id=sid, concept_id=cid, canonical_key=_CONTINUITY)
     e_incomp = await _seed_entity(
-        db_session, concept_id=cid, canonical_key=_INCOMPRESSIBILITY, kind="condition"
+        db_session, course_id=sid, concept_id=cid, canonical_key=_INCOMPRESSIBILITY, kind="condition"
     )
     # eq.continuity depends on cond.incompressibility; only continuity has state.
-    await _seed_prereq(db_session, from_id=e_cont, to_id=e_incomp)
+    await _seed_prereq(db_session, course_id=sid, from_id=e_cont, to_id=e_incomp)
     await _seed_state(db_session, sid=sid, entity_id=e_cont, mastery=0.40, confidence=0.6)
 
     baseline = await select_problem(
@@ -514,9 +518,11 @@ async def test_course_isolation_personalized_selection(db_session, monkeypatch, 
     # Course A: weak Example-A profile (would personalize to P1).
     await _seed_weak_profile(db_session, sid=sid_a, cid=cid_a)
     # Course B: same entities but all MASTERED (> 0.7) => no weak-teachable.
-    e_cont_b = await _seed_entity(db_session, concept_id=cid_b, canonical_key=_CONTINUITY)
+    e_cont_b = await _seed_entity(
+        db_session, course_id=sid_b, concept_id=cid_b, canonical_key=_CONTINUITY
+    )
     e_incomp_b = await _seed_entity(
-        db_session, concept_id=cid_b, canonical_key=_INCOMPRESSIBILITY, kind="condition"
+        db_session, course_id=sid_b, concept_id=cid_b, canonical_key=_INCOMPRESSIBILITY, kind="condition"
     )
     await _seed_state(db_session, sid=sid_b, entity_id=e_cont_b, mastery=0.92, confidence=0.9)
     await _seed_state(db_session, sid=sid_b, entity_id=e_incomp_b, mastery=0.88, confidence=0.9)
