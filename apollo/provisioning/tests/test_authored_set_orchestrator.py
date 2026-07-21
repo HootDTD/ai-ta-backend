@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from apollo.persistence.models import Concept, DedupDecision, KGEntity
+from apollo.persistence.models import Concept, DedupDecision, LearnerEntity
 from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.authored_sets.orchestrator import run_authored_set_provisioning
 from apollo.provisioning.authored_sets.structure_pass import (
@@ -1258,13 +1258,13 @@ def _savepoint_draft(*, step_id: str) -> ReferenceSolutionDraft:
 @pytest.mark.asyncio
 async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, monkeypatch):
     """M1: a fail-closed TagMintError raised INSIDE the REAL ``tag_and_mint`` (at
-    step 5a, ``link_opposes``) after concept/KGEntity/dedup-decision rows
+    step 5a, ``link_opposes``) after concept/LearnerEntity/dedup-decision rows
     for THAT candidate have already been flushed must not leave those rows
     orphaned once the caller's (simulated ``_run_set_background``) commit lands.
     The per-candidate ``begin_nested`` savepoint rolls back exactly the failed
     candidate's partial writes; a SIBLING candidate in the same run still mints
     and promotes. DISCRIMINATING: without the savepoint wrap, the failed
-    candidate's ``eq.eq-fail`` KGEntity + its DedupDecision row would survive the
+    candidate's ``eq.eq-fail`` LearnerEntity + its DedupDecision row would survive the
     outer commit even though no ProblemRecord was ever promoted for it."""
     from apollo.provisioning import tag_mint as tm
     from apollo.provisioning.tag_mint_persist import link_opposes as real_link_opposes
@@ -1343,7 +1343,7 @@ async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, mon
     # (orphaned KG rows unreachable by any promoted ProblemRecord, yet a live
     # dedup target for a later mint, is exactly the defect M1 fixes).
     fail_rows = (
-        (await db_session.execute(select(KGEntity).where(KGEntity.canonical_key == "eq.eq-fail")))
+        (await db_session.execute(select(LearnerEntity).where(LearnerEntity.canonical_key == "eq.eq-fail")))
         .scalars()
         .all()
     )
@@ -1351,7 +1351,7 @@ async def test_tag_mint_partial_failure_rolls_back_via_savepoint(db_session, mon
 
     # The sibling candidate's mint DOES survive the commit.
     ok_rows = (
-        (await db_session.execute(select(KGEntity).where(KGEntity.canonical_key == "eq.eq-ok")))
+        (await db_session.execute(select(LearnerEntity).where(LearnerEntity.canonical_key == "eq.eq-ok")))
         .scalars()
         .all()
     )

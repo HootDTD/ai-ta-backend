@@ -27,7 +27,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from apollo.persistence.models import Concept, DedupDecision, IngestRun, KGEntity
+from apollo.persistence.models import Concept, DedupDecision, IngestRun, LearnerEntity
 from apollo.provisioning.dedup import (
     DedupVerdict,
     _cosine,
@@ -118,7 +118,7 @@ class _Candidate:
 
 
 async def _seed_course(db, *, slug, entities):
-    """Seed Course -> Subject -> Concept -> KGEntity rows for one course.
+    """Seed Course -> Subject -> Concept -> LearnerEntity rows for one course.
 
     ``entities`` is an iterable of ``(canonical_key, scope_summary)`` tuples
     (``scope_summary`` may be ``None``). Returns
@@ -133,7 +133,8 @@ async def _seed_course(db, *, slug, entities):
     await db.flush()
     ids: dict[str, int] = {}
     for canonical_key, scope_summary in entities:
-        ent = KGEntity(
+        ent = LearnerEntity(
+            course_id=space.id,
             concept_id=concept.id,
             canonical_key=canonical_key,
             kind="quantity",
@@ -552,7 +553,8 @@ async def _seed_two_concept_course(db, *, slug, a_entities, b_entities):
         await db.flush()
         ids: dict[str, int] = {}
         for canonical_key, scope_summary in entities:
-            ent = KGEntity(
+            ent = LearnerEntity(
+                course_id=space.id,
                 concept_id=concept.id,
                 canonical_key=canonical_key,
                 kind="quantity",

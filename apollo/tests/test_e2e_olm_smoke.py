@@ -34,7 +34,6 @@ from apollo.ontology import NODE_LABELS, KGGraph, build_node
 from apollo.overseer.coverage import compute_coverage
 from apollo.overseer.diagnostic import _append_negotiation_line
 from apollo.persistence.models import (
-    KGNegotiation,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -185,7 +184,6 @@ async def db():
         TutoringSession.__table__,
         ProblemAttempt.__table__,
         TutoringMessage.__table__,
-        KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))

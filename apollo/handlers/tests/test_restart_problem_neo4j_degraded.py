@@ -22,7 +22,6 @@ from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.errors import KGUnavailableError
 from apollo.handlers.restart_problem import handle_restart_problem
 from apollo.persistence.models import (
-    KGNegotiation,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -44,7 +43,6 @@ async def db():
         TutoringSession.__table__,
         ProblemAttempt.__table__,
         TutoringMessage.__table__,
-        KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
@@ -138,7 +136,6 @@ async def test_restart_with_neo_none_raises_before_any_deletion():
         TutoringSession.__table__,
         ProblemAttempt.__table__,
         TutoringMessage.__table__,
-        KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))

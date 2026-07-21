@@ -1,10 +1,12 @@
-"""Fast ORM-shape + insert/read-back tests for the WU-3A learner-model models.
+"""Fast ORM-shape + insert/read-back tests for the WU-3A learner-model models,
+retargeted onto the DB-13 app-schema DDL
+(``supabase/migrations/20260717035041_create_app_schema_v1.sql``).
 
-Mirrors ``test_negotiation_model.py`` / ``test_models_auth_scoping.py``: shape
-assertions via ``__table__`` introspection, plus insert/read-back where SQLite
-can honor it. Postgres-only semantics (the array CHECK, NULLS NOT DISTINCT,
-real FK cascade) are asserted by model inspection here and exercised for real
-in ``tests/database/test_apollo_learner_model_migration.py``.
+Mirrors ``test_models_auth_scoping.py``: shape assertions via ``__table__``
+introspection, plus insert/read-back where SQLite can honor it. Postgres-only
+semantics (the array CHECK, NULLS NOT DISTINCT, real FK cascade) are asserted
+by model inspection here and exercised for real against the new DDL in
+``tests/database/test_app_schema_v1.py``.
 """
 
 from __future__ import annotations
@@ -17,9 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.persistence.models import (
     Concept,
+    EntityPrereq,
     GraphComparisonFinding,
     GraphComparisonRun,
-    KGEntity,
+    LearnerEntity,
     LearnerState,
     MasteryEvent,
     ProblemAttempt,
@@ -33,18 +36,20 @@ from database.models import Base
 
 
 def test_six_models_map_expected_tablenames():
-    assert KGEntity.__tablename__ == "apollo_kg_entities"
-    assert LearnerState.__tablename__ == "apollo_learner_state"
-    assert MasteryEvent.__tablename__ == "apollo_mastery_events"
+    assert LearnerEntity.__tablename__ == "learner_entities"
+    assert LearnerEntity.__table__.schema == "app"
+    assert LearnerState.__tablename__ == "learner_state"
+    assert LearnerState.__table__.schema == "app"
+    assert MasteryEvent.__tablename__ == "mastery_events"
+    assert MasteryEvent.__table__.schema == "app"
     assert GraphComparisonRun.__tablename__ == "apollo_graph_comparison_runs"
     assert GraphComparisonFinding.__tablename__ == "apollo_graph_comparison_findings"
-    from apollo.persistence.models import EntityPrereq
-
-    assert EntityPrereq.__tablename__ == "apollo_entity_prereqs"
+    assert EntityPrereq.__tablename__ == "entity_prerequisites"
+    assert EntityPrereq.__table__.schema == "internal"
 
 
 # ---------------------------------------------------------------------------
-# KGEntity — per-concept uniqueness + concept FK cascade
+# LearnerEntity — per-concept uniqueness + concept/course FK cascade
 # ---------------------------------------------------------------------------
 
 
@@ -54,8 +59,8 @@ def _unique_constraints(model):
     return [c for c in model.__table__.constraints if isinstance(c, UniqueConstraint)]
 
 
-def test_kg_entity_unique_constraint_is_per_concept():
-    ucs = _unique_constraints(KGEntity)
+def test_learner_entity_unique_constraint_is_per_concept():
+    ucs = _unique_constraints(LearnerEntity)
     cols = [tuple(c.name for c in uc.columns) for uc in ucs]
     assert ("concept_id", "canonical_key") in cols, (
         f"expected per-concept UNIQUE(concept_id, canonical_key), got {cols}"
@@ -64,12 +69,57 @@ def test_kg_entity_unique_constraint_is_per_concept():
     assert ("canonical_key",) not in cols
 
 
-def test_kg_entity_concept_fk_cascade():
-    col = KGEntity.__table__.columns["concept_id"]
+def test_learner_entity_concept_fk_cascade():
+    col = LearnerEntity.__table__.columns["concept_id"]
     fk = next(iter(col.foreign_keys))
     assert fk.column.table.name == "concepts"
     assert fk.column.table.schema == "app"
     assert fk.ondelete == "CASCADE"
+
+
+def test_learner_entity_requires_course_id():
+    """DB-13: course_id is a new denormalized column (not in the pre-cleanup
+    LearnerEntity model) — added for initplan-safe RLS, matching the rest of the
+    app schema."""
+    col = LearnerEntity.__table__.columns["course_id"]
+    assert col.nullable is False
+    fk = next(iter(col.foreign_keys))
+    assert fk.column.table.name == "courses"
+    assert fk.column.table.schema == "app"
+    assert fk.ondelete == "CASCADE"
+
+
+def test_learner_entity_aliases_is_array_not_json():
+    """DB-13: aliases becomes TEXT[] (was JSONB pre-cleanup)."""
+    from sqlalchemy.dialects.postgresql import ARRAY
+
+    col = LearnerEntity.__table__.columns["aliases"]
+    assert isinstance(col.type, ARRAY)
+
+
+def test_entity_kinds_excludes_misconception():
+    """DB-13/A6: the target kind CHECK no longer admits 'misconception' —
+    misconceptions live on MasteryEvent.event_kind, not as an entity kind."""
+    from apollo.persistence.models import ENTITY_KINDS
+
+    assert "misconception" not in ENTITY_KINDS
+
+
+# ---------------------------------------------------------------------------
+# EntityPrereq — course_id + FK targets retargeted onto learner_entities
+# ---------------------------------------------------------------------------
+
+
+def test_entity_prereq_course_id_and_fk_targets():
+    table = EntityPrereq.__table__
+    course_fk = next(iter(table.columns["course_id"].foreign_keys))
+    assert course_fk.column.table.name == "courses"
+    assert course_fk.ondelete == "CASCADE"
+    for col_name in ("from_entity_id", "to_entity_id"):
+        fk = next(iter(table.columns[col_name].foreign_keys))
+        assert fk.column.table.name == "learner_entities"
+        assert fk.column.table.schema == "app"
+        assert fk.ondelete == "CASCADE"
 
 
 # ---------------------------------------------------------------------------
@@ -78,19 +128,22 @@ def test_kg_entity_concept_fk_cascade():
 
 
 def test_learner_state_composite_pk():
+    """Physical PK columns — `search_space_id` is the Python attribute name
+    (kept to minimize caller churn); the physical column is `course_id`."""
     pk_cols = [c.name for c in LearnerState.__table__.primary_key.columns]
-    assert pk_cols == ["user_id", "search_space_id", "entity_id"]
+    assert pk_cols == ["user_id", "course_id", "entity_id"]
 
 
 def test_learner_state_fk_targets_and_cascades():
-    """search_space_id and entity_id carry ORM FKs (CASCADE). user_id does NOT
-    carry an ORM FK — auth.users is Supabase-managed and not in Base.metadata, so
-    the FK lives only in the migration SQL (same convention as TutoringSession);
-    the real cascade is exercised by the real-Postgres migration test."""
+    """course_id (Python: search_space_id) and entity_id carry ORM FKs
+    (CASCADE). user_id does NOT carry an ORM FK — auth.users is
+    Supabase-managed and not in Base.metadata, so the FK lives only in the
+    migration SQL (same convention as TutoringSession); the real cascade is
+    exercised by the real-Postgres migration test."""
     table = LearnerState.__table__
     targets = {
-        "search_space_id": "courses",
-        "entity_id": "apollo_kg_entities",
+        "course_id": "courses",
+        "entity_id": "learner_entities",
     }
     for col_name, target_table in targets.items():
         fk = next(iter(table.columns[col_name].foreign_keys))
@@ -98,6 +151,11 @@ def test_learner_state_fk_targets_and_cascades():
         assert fk.ondelete == "CASCADE", f"{col_name} should cascade"
     # user_id is a bare UUID column in the ORM (no FK object).
     assert not table.columns["user_id"].foreign_keys
+
+
+def test_learner_state_has_no_misconception_code():
+    """DB-13: misconception_code is GONE from the target DDL."""
+    assert "misconception_code" not in LearnerState.__table__.columns
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +181,19 @@ def test_mastery_event_unique_nulls_not_distinct_flag():
     )
     pg_opts = target.dialect_options["postgresql"]
     assert pg_opts["nulls_not_distinct"] is True
+
+
+def test_mastery_event_has_no_misconception_code():
+    """DB-13: misconception_code is GONE from the target DDL."""
+    assert "misconception_code" not in MasteryEvent.__table__.columns
+
+
+def test_mastery_event_evidence_node_ids_is_array_not_json():
+    """DB-13: evidence_node_ids becomes TEXT[] (was JSONB pre-cleanup)."""
+    from sqlalchemy.dialects.postgresql import ARRAY
+
+    col = MasteryEvent.__table__.columns["evidence_node_ids"]
+    assert isinstance(col.type, ARRAY)
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +243,7 @@ async def db():
     )
     tables = [
         Concept.__table__,
-        KGEntity.__table__,
+        LearnerEntity.__table__,
         LearnerState.__table__,
         MasteryEvent.__table__,
         TutoringSession.__table__,

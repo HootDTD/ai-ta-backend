@@ -24,7 +24,6 @@ from apollo.handlers.intent import IntentVerdict
 from apollo.knowledge_graph.store import WriteEdgesResult
 from apollo.ontology import KGGraph
 from apollo.persistence.models import (
-    KGNegotiation,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -47,7 +46,6 @@ async def db_session_attempt():
         TutoringSession.__table__,
         ProblemAttempt.__table__,
         TutoringMessage.__table__,
-        KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))

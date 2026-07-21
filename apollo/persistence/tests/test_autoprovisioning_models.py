@@ -2,7 +2,7 @@
 
 These exercise the ORM additions on the ``db_session`` (``create_all``-built)
 schema so the ORM edits in ``apollo/persistence/models.py`` are MEASURED by
-diff-cover (run with ``--cov=.``): the six ``ProblemRecord``/``KGEntity`` column
+diff-cover (run with ``--cov=.``): the six ``ProblemRecord``/``LearnerEntity`` column
 adds and the retained authored-ingest models (``IngestRun``/``DedupDecision``/
 ``IngestError``). The worker-only queue and rejection models were removed.
 
@@ -22,7 +22,7 @@ from apollo.persistence.models import (
     IngestError,
     IngestPageEvidence,
     IngestRun,
-    KGEntity,
+    LearnerEntity,
 )
 from apollo.persistence.models import (
     Problem as ProblemRecord,
@@ -103,8 +103,9 @@ async def test_orm_concept_problem_has_tier_columns(db_session):
 
 async def test_orm_kg_entity_scope_summary_roundtrip(db_session):
     """scope_summary persists when set, NULL when omitted."""
-    _sid, cid = await _space_and_concept(db_session)
-    ent = KGEntity(
+    sid, cid = await _space_and_concept(db_session)
+    ent = LearnerEntity(
+        course_id=sid,
         concept_id=cid,
         canonical_key="k_scope",
         kind="concept",
@@ -115,11 +116,12 @@ async def test_orm_kg_entity_scope_summary_roundtrip(db_session):
     await db_session.flush()
     db_session.expire(ent)
     reloaded = (
-        await db_session.execute(select(KGEntity).where(KGEntity.canonical_key == "k_scope"))
+        await db_session.execute(select(LearnerEntity).where(LearnerEntity.canonical_key == "k_scope"))
     ).scalar_one()
     assert reloaded.scope_summary == "pressure-velocity relation"
 
-    ent2 = KGEntity(
+    ent2 = LearnerEntity(
+        course_id=sid,
         concept_id=cid,
         canonical_key="k_noscope",
         kind="concept",
@@ -129,7 +131,7 @@ async def test_orm_kg_entity_scope_summary_roundtrip(db_session):
     await db_session.flush()
     db_session.expire(ent2)
     reloaded2 = (
-        await db_session.execute(select(KGEntity).where(KGEntity.canonical_key == "k_noscope"))
+        await db_session.execute(select(LearnerEntity).where(LearnerEntity.canonical_key == "k_noscope"))
     ).scalar_one()
     assert reloaded2.scope_summary is None
 

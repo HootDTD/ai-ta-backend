@@ -20,7 +20,7 @@ from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
 from apollo.persistence.models import (
     Concept,
     EntityPrereq,
-    KGEntity,
+    LearnerEntity,
     LearnerState,
     ProblemAttempt,
     StudentProgress,
@@ -45,7 +45,7 @@ TABLES = cast(
         # Personalized selection (APOLLO_SESSION_PERSONALIZATION_ENABLED=1 in this
         # env) reads the learner profile at the selection seam; on the cold-start
         # empty-table path it degrades byte-identically to candidates[0].
-        KGEntity.__table__,
+        LearnerEntity.__table__,
         LearnerState.__table__,
         EntityPrereq.__table__,
     ],

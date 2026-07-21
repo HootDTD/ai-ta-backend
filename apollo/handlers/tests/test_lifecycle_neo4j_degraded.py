@@ -19,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.handlers.lifecycle import handle_get_session
 from apollo.persistence.models import (
-    KGNegotiation,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -41,7 +40,6 @@ async def db():
         TutoringSession.__table__,
         ProblemAttempt.__table__,
         TutoringMessage.__table__,
-        KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))

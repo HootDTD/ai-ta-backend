@@ -4,8 +4,9 @@ P3.1 (pure-function adapters): `_node_to_neo4j_props` and `_record_to_node`
 preserve the new `status` / `student_belief` fields on every node type.
 
 P3.2 (KGStore methods): `mark_node_disputed`, `paraphrase_node`, `skip_node`,
-`get_node_trace` — each move updates Neo4j status and appends an audit row
-in apollo_kg_negotiations.
+`get_node_trace` — each move updates Neo4j status only. DB-13/A6 removed the
+Postgres `apollo_kg_negotiations` audit log; `get_node_trace` always returns
+an empty `moves` list now.
 
 A small in-test fake Neo4j replaces the live driver. It pattern-matches on
 the SET-clause strings the methods emit (DISPUTED / DUAL / DUAL+belief) and
@@ -33,7 +34,6 @@ from apollo.knowledge_graph.store import (
 )
 from apollo.ontology import NODE_LABELS, build_node
 from apollo.persistence.models import (
-    KGNegotiation,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -259,7 +259,6 @@ async def db():
         TutoringSession.__table__,
         ProblemAttempt.__table__,
         TutoringMessage.__table__,
-        KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
@@ -330,7 +329,7 @@ def _seed(neo: _FakeNeo4jClient, *, attempt_id: int):
 
 
 @pytest.mark.asyncio
-async def test_mark_node_disputed_sets_status_and_logs(store, neo, db, attempt):
+async def test_mark_node_disputed_sets_status(store, neo, attempt):
     _seed(neo, attempt_id=attempt.id)
     out = await store.mark_node_disputed(
         attempt_id=attempt.id,
@@ -339,16 +338,6 @@ async def test_mark_node_disputed_sets_status_and_logs(store, neo, db, attempt):
     )
     assert out.status == "DISPUTED"
     assert neo.nodes[(attempt.id, "eq1")]["status"] == "DISPUTED"
-
-    rows = (
-        (await db.execute(select(KGNegotiation).where(KGNegotiation.entry_id == "eq1")))
-        .scalars()
-        .all()
-    )
-    assert len(rows) == 1
-    assert rows[0].move == "challenge"
-    assert rows[0].actor == "student"
-    assert rows[0].payload == {"reason": "you misheard, it's volumetric not mass"}
 
 
 @pytest.mark.asyncio
@@ -367,7 +356,7 @@ async def test_mark_node_disputed_raises_when_node_missing(store, attempt):
 
 
 @pytest.mark.asyncio
-async def test_paraphrase_node_sets_dual_and_belief(store, neo, db, attempt):
+async def test_paraphrase_node_sets_dual_and_belief(store, neo, attempt):
     _seed(neo, attempt_id=attempt.id)
     out = await store.paraphrase_node(
         attempt_id=attempt.id,
@@ -376,17 +365,6 @@ async def test_paraphrase_node_sets_dual_and_belief(store, neo, db, attempt):
     )
     assert out.status == "DUAL"
     assert out.student_belief == "rho * A * v is constant in pipes"
-
-    rows = (
-        (await db.execute(select(KGNegotiation).where(KGNegotiation.entry_id == "eq1")))
-        .scalars()
-        .all()
-    )
-    assert len(rows) == 1
-    assert rows[0].move == "paraphrase"
-    assert rows[0].payload == {
-        "surface_form": "rho * A * v is constant in pipes",
-    }
 
 
 @pytest.mark.asyncio
@@ -408,20 +386,11 @@ async def test_paraphrase_preserves_structural_content(store, neo, attempt):
 
 
 @pytest.mark.asyncio
-async def test_skip_node_sets_dual_no_belief(store, neo, db, attempt):
+async def test_skip_node_sets_dual_no_belief(store, neo, attempt):
     _seed(neo, attempt_id=attempt.id)
     out = await store.skip_node(attempt_id=attempt.id, node_id="d1")
     assert out.status == "DUAL"
     assert out.student_belief is None
-
-    rows = (
-        (await db.execute(select(KGNegotiation).where(KGNegotiation.entry_id == "d1")))
-        .scalars()
-        .all()
-    )
-    assert len(rows) == 1
-    assert rows[0].move == "skip"
-    assert rows[0].payload == {}
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +399,9 @@ async def test_skip_node_sets_dual_no_belief(store, neo, db, attempt):
 
 
 @pytest.mark.asyncio
-async def test_get_node_trace_orders_moves_chronologically(store, neo, db, attempt):
+async def test_get_node_trace_moves_stay_empty_after_negotiate_calls(store, neo, attempt):
+    """DB-13/A6: the Postgres audit log is gone — trace["moves"] is always
+    [], even after a full challenge/paraphrase/skip sequence on the node."""
     _seed(neo, attempt_id=attempt.id)
     await store.mark_node_disputed(
         attempt_id=attempt.id,
@@ -446,13 +417,7 @@ async def test_get_node_trace_orders_moves_chronologically(store, neo, db, attem
 
     trace = await store.get_node_trace(attempt_id=attempt.id, node_id="eq1")
     assert trace["node_id"] == "eq1"
-    assert [m["move"] for m in trace["moves"]] == [
-        "challenge",
-        "paraphrase",
-        "skip",
-    ]
-    assert trace["moves"][0]["payload"]["reason"] == "r1"
-    assert trace["moves"][1]["payload"]["surface_form"] == "s1"
+    assert trace["moves"] == []
 
 
 @pytest.mark.asyncio

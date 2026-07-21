@@ -254,7 +254,6 @@ def test_event_to_row_specs_maps_distinct_fields():
     assert mastery_spec.grader_confidence == 0.83
     assert mastery_spec.dt_days_since_last == 5.0
     assert mastery_spec.misconception_code == "misc.code"
-    assert mastery_spec.negotiation_move is None  # NULL v1
     # LearnerStateRowSpec.
     assert state_spec.belief == (0.11, 0.52, 0.37)
     assert state_spec.mastery == 0.63

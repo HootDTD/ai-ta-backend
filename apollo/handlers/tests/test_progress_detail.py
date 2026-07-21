@@ -11,7 +11,7 @@ from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
 from apollo.handlers.progress import handle_get_progress_detail
 from apollo.persistence.models import (
     Concept,
-    KGEntity,
+    LearnerEntity,
     LearnerState,
     Problem,
     ProblemAttempt,
@@ -24,7 +24,7 @@ TABLES = [
     StudentProgress.__table__,
     Concept.__table__,
     Problem.__table__,
-    KGEntity.__table__,
+    LearnerEntity.__table__,
     LearnerState.__table__,
     TutoringSession.__table__,
     ProblemAttempt.__table__,
@@ -60,7 +60,8 @@ async def _seed_concept(db, *, slug: str, name: str) -> int:
 
 async def _seed_mastery(db, *, concept_id: int, values: list[float]) -> None:
     for i, m in enumerate(values):
-        ent = KGEntity(
+        ent = LearnerEntity(
+            course_id=TEST_SPACE_ID,
             concept_id=concept_id,
             canonical_key=f"k{concept_id}-{i}",
             kind="quantity",

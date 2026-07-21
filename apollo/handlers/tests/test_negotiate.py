@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 import pytest_asyncio
 from pydantic import ValidationError
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
@@ -31,7 +30,6 @@ from apollo.handlers.negotiate import (
 from apollo.knowledge_graph.store import _node_to_neo4j_props
 from apollo.ontology import NODE_LABELS, build_node
 from apollo.persistence.models import (
-    KGNegotiation,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -199,7 +197,6 @@ async def db():
         TutoringSession.__table__,
         ProblemAttempt.__table__,
         TutoringMessage.__table__,
-        KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
@@ -274,15 +271,6 @@ async def test_challenge_returns_updated_entry_and_kg_envelope(db, session, neo)
     # KG envelope re-read from the (fake) graph.
     assert "nodes" in out["kg"]
     assert any(n["node_id"] == "eq1" for n in out["kg"]["nodes"])
-
-    rows = (
-        (await db.execute(select(KGNegotiation).where(KGNegotiation.entry_id == "eq1")))
-        .scalars()
-        .all()
-    )
-    assert len(rows) == 1
-    assert rows[0].move == "challenge"
-    assert rows[0].payload == {"reason": "that's not what I said"}
 
 
 @pytest.mark.asyncio
@@ -386,7 +374,9 @@ async def test_skip_sets_dual_no_belief(db, session, neo):
 
 
 @pytest.mark.asyncio
-async def test_get_trace_returns_chronological_moves(db, session, neo):
+async def test_get_trace_moves_stay_empty_after_negotiate_calls(db, session, neo):
+    """DB-13/A6: the Postgres audit log is gone — trace["moves"] is always
+    [], even after a challenge + skip on the node."""
     _, attempt = session
     _seed(neo, attempt.id)
     await handle_challenge(
@@ -408,7 +398,7 @@ async def test_get_trace_returns_chronological_moves(db, session, neo):
         session_id=attempt.session_id,
         entry_id="eq1",
     )
-    assert [m["move"] for m in trace["moves"]] == ["challenge", "skip"]
+    assert trace["moves"] == []
     assert trace["node_id"] == "eq1"
 
 

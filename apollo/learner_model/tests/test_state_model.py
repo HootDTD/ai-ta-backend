@@ -53,7 +53,6 @@ def test_mastery_event_row_spec_entity_id_defaults_none():
     assert spec.search_space_id is None
     assert spec.entity_id is None
     assert spec.attempt_id is None
-    assert spec.negotiation_move is None  # NULL v1
     assert spec.evidence_node_ids == ()
     with pytest.raises(dataclasses.FrozenInstanceError):
         spec.entity_id = 5  # type: ignore[misc]
@@ -73,7 +72,6 @@ def test_mastery_event_row_spec_full_field_set():
         "misconception_code",
         "parser_confidence",
         "grader_confidence",
-        "negotiation_move",
         "reference_step_id",
         "prior_belief",
         "posterior_belief",

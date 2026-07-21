@@ -69,7 +69,6 @@ def _ep(
     *,
     entity_id: int,
     confidence: float = 0.8,
-    code: str | None = None,
 ) -> EntityProfile:
     """Construct an EntityProfile directly (no DB)."""
     return EntityProfile(
@@ -77,7 +76,6 @@ def _ep(
         canonical_key=key,
         mastery=mastery,
         confidence=confidence,
-        misconception_code=code,
     )
 
 

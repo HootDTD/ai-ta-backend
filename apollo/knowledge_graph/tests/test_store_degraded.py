@@ -31,7 +31,6 @@ from apollo.errors import KGUnavailableError
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import EdgeType, build_node
 from apollo.persistence.models import (
-    KGNegotiation,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -94,7 +93,6 @@ async def db():
         TutoringSession.__table__,
         ProblemAttempt.__table__,
         TutoringMessage.__table__,
-        KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
@@ -281,8 +279,8 @@ async def test_freeze_unfreeze_work_with_neo_none(store, attempt, db):
 
 @pytest.mark.asyncio
 async def test_get_node_trace_works_with_neo_none(store, attempt):
-    """Postgres-only read (KGNegotiation + TutoringMessage); no attempt to touch
-    self.neo at all."""
+    """Postgres-only read (TutoringMessage); no attempt to touch self.neo at
+    all. DB-13/A6: the negotiation audit log is gone, so moves is always []."""
     out = await store.get_node_trace(attempt_id=attempt.id, node_id="eq1")
     assert out["node_id"] == "eq1"
     assert out["moves"] == []

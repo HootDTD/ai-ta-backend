@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
-from apollo.persistence.models import Concept, EntityPrereq, KGEntity
+from apollo.persistence.models import Concept, EntityPrereq, LearnerEntity
 from apollo.provisioning.tag_mint import (
     ApprovedPair,
     ResolvedConcept,
@@ -120,7 +120,7 @@ async def test_resolved_concept_skips_tag_chat_and_uses_given_concept(db_session
     assert len([c for c in n_concepts if int(c.id) == cid]) == 1
     # all three reference nodes minted under the resolved concept
     entities = (
-        (await db_session.execute(select(KGEntity).where(KGEntity.concept_id == cid)))
+        (await db_session.execute(select(LearnerEntity).where(LearnerEntity.concept_id == cid)))
         .scalars()
         .all()
     )
@@ -154,8 +154,8 @@ async def test_resolved_concept_prereqs_mirror_depends_on(db_session):
         (
             await db_session.execute(
                 select(EntityPrereq)
-                .join(KGEntity, EntityPrereq.from_entity_id == KGEntity.id)
-                .where(KGEntity.concept_id == cid)
+                .join(LearnerEntity, EntityPrereq.from_entity_id == LearnerEntity.id)
+                .where(LearnerEntity.concept_id == cid)
             )
         )
         .scalars()

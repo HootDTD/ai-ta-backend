@@ -1453,7 +1453,7 @@ async def _seed_orphanable_concept_kg(db, monkeypatch, *, slug):
     from apollo.persistence.models import (
         DedupDecision,
         EntityPrereq,
-        KGEntity,
+        LearnerEntity,
         ProvisioningRun,
     )
 
@@ -1461,7 +1461,8 @@ async def _seed_orphanable_concept_kg(db, monkeypatch, *, slug):
     monkeypatch.setattr(aapi, "require_course_teacher", _fake_require_member)
     space_id, concept_id = await _seed_course(db, slug=slug)
 
-    e1 = KGEntity(
+    e1 = LearnerEntity(
+        course_id=space_id,
         concept_id=concept_id,
         canonical_key="eq.a",
         kind="equation",
@@ -1469,7 +1470,8 @@ async def _seed_orphanable_concept_kg(db, monkeypatch, *, slug):
         payload={},
         aliases=[],
     )
-    e2 = KGEntity(
+    e2 = LearnerEntity(
+        course_id=space_id,
         concept_id=concept_id,
         canonical_key="proc.b",
         kind="procedure",
@@ -1479,7 +1481,7 @@ async def _seed_orphanable_concept_kg(db, monkeypatch, *, slug):
     )
     db.add_all([e1, e2])
     await db.flush()
-    db.add(EntityPrereq(from_entity_id=e2.id, to_entity_id=e1.id))
+    db.add(EntityPrereq(course_id=space_id, from_entity_id=e2.id, to_entity_id=e1.id))
     db.add(
         DedupDecision(
             search_space_id=space_id,
@@ -1517,9 +1519,9 @@ async def _seed_orphanable_concept_kg(db, monkeypatch, *, slug):
 async def test_delete_authored_set_tears_down_orphaned_concept(db_session, monkeypatch):
     """When the deleted set's problems were the ONLY ones on a concept and there is
     no :Canon student history, the concept's full KG is torn down: apollo_concepts
-    (cascading KGEntity + entity prerequisites) + dedup decisions in
+    (cascading LearnerEntity + entity prerequisites) + dedup decisions in
     Postgres, and its :Canon nodes are DETACH DELETEd (guarded) in Neo4j."""
-    from apollo.persistence.models import Concept, DedupDecision, EntityPrereq, KGEntity
+    from apollo.persistence.models import Concept, DedupDecision, EntityPrereq, LearnerEntity
 
     aapi, _space_id, concept_id, (e1_id, e2_id), set_id = await _seed_orphanable_concept_kg(
         db_session, monkeypatch, slug="aas-orphan"
@@ -1531,8 +1533,8 @@ async def test_delete_authored_set_tears_down_orphaned_concept(db_session, monke
     assert resp["removed_concepts"] == 1
 
     assert await db_session.get(Concept, concept_id) is None
-    assert await db_session.get(KGEntity, e1_id) is None
-    assert await db_session.get(KGEntity, e2_id) is None
+    assert await db_session.get(LearnerEntity, e1_id) is None
+    assert await db_session.get(LearnerEntity, e2_id) is None
     remaining_prereqs = (
         await db_session.execute(
             select(func.count())
@@ -1561,7 +1563,7 @@ async def test_delete_authored_set_spares_concept_with_student_history(db_sessio
     """A concept whose :Canon carries RESOLVES_TO student history is NOT torn down,
     even when the deleted set's problems were its only problems — grading history is
     never destroyed. No PG concept/KG delete, no Neo4j DETACH DELETE."""
-    from apollo.persistence.models import Concept, DedupDecision, KGEntity
+    from apollo.persistence.models import Concept, DedupDecision, LearnerEntity
 
     aapi, _space_id, concept_id, (e1_id, _e2_id), set_id = await _seed_orphanable_concept_kg(
         db_session, monkeypatch, slug="aas-history"
@@ -1573,7 +1575,7 @@ async def test_delete_authored_set_spares_concept_with_student_history(db_sessio
     assert resp["removed_concepts"] == 0
 
     assert await db_session.get(Concept, concept_id) is not None
-    assert await db_session.get(KGEntity, e1_id) is not None
+    assert await db_session.get(LearnerEntity, e1_id) is not None
     remaining_dedup = (
         await db_session.execute(
             select(func.count())
@@ -1679,7 +1681,7 @@ async def test_delete_authored_set_spares_concept_depended_on_by_another(db_sess
     """A concept another concept DEPENDS ON (inbound cross-concept prereq: another
     concept's entity -> this concept's entity) is a prerequisite the curriculum
     still needs — deleting it would corrupt the surviving concept's prereq chain."""
-    from apollo.persistence.models import Concept, EntityPrereq, KGEntity
+    from apollo.persistence.models import Concept, EntityPrereq, LearnerEntity
 
     aapi, space_id, concept_id, (e1_id, _e2_id), set_id = await _seed_orphanable_concept_kg(
         db_session, monkeypatch, slug="aas-depended"
@@ -1699,7 +1701,8 @@ async def test_delete_authored_set_spares_concept_depended_on_by_another(db_sess
     )
     db_session.add(other)
     await db_session.flush()
-    other_entity = KGEntity(
+    other_entity = LearnerEntity(
+        course_id=space_id,
         concept_id=other.id,
         canonical_key="eq.dep",
         kind="equation",
@@ -1709,7 +1712,7 @@ async def test_delete_authored_set_spares_concept_depended_on_by_another(db_sess
     )
     db_session.add(other_entity)
     await db_session.flush()
-    db_session.add(EntityPrereq(from_entity_id=other_entity.id, to_entity_id=e1_id))
+    db_session.add(EntityPrereq(course_id=space_id, from_entity_id=other_entity.id, to_entity_id=e1_id))
     await db_session.flush()
     await _assert_concept_spared(
         db_session, aapi, monkeypatch, concept_id=concept_id, set_id=set_id
@@ -1726,7 +1729,7 @@ async def test_delete_authored_set_tears_down_mutually_linked_orphans(db_session
     from apollo.persistence.models import (
         Concept,
         EntityPrereq,
-        KGEntity,
+        LearnerEntity,
         ProvisioningRun,
     )
     from database.models import Course
@@ -1754,7 +1757,8 @@ async def test_delete_authored_set_tears_down_mutually_linked_orphans(db_session
     )
     db_session.add_all([ca, cb])
     await db_session.flush()
-    ea = KGEntity(
+    ea = LearnerEntity(
+        course_id=space.id,
         concept_id=ca.id,
         canonical_key="eq.a",
         kind="equation",
@@ -1762,7 +1766,8 @@ async def test_delete_authored_set_tears_down_mutually_linked_orphans(db_session
         payload={},
         aliases=[],
     )
-    eb = KGEntity(
+    eb = LearnerEntity(
+        course_id=space.id,
         concept_id=cb.id,
         canonical_key="eq.b",
         kind="equation",
@@ -1773,7 +1778,7 @@ async def test_delete_authored_set_tears_down_mutually_linked_orphans(db_session
     db_session.add_all([ea, eb])
     await db_session.flush()
     # Cross-concept prereq BETWEEN the two set-owned concepts (ca depends on cb).
-    db_session.add(EntityPrereq(from_entity_id=ea.id, to_entity_id=eb.id))
+    db_session.add(EntityPrereq(course_id=space.id, from_entity_id=ea.id, to_entity_id=eb.id))
     cpa = _problem_record(
         concept_id=ca.id,
         problem_code="scrape.a",
@@ -1825,7 +1830,7 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
     from apollo.persistence.models import (
         Concept,
         EntityPrereq,
-        KGEntity,
+        LearnerEntity,
         ProvisioningRun,
         TutoringSession,
     )
@@ -1854,7 +1859,8 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
     )
     db_session.add_all([cc, cd])
     await db_session.flush()
-    ec = KGEntity(
+    ec = LearnerEntity(
+        course_id=space.id,
         concept_id=cc.id,
         canonical_key="eq.c",
         kind="equation",
@@ -1862,7 +1868,8 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
         payload={},
         aliases=[],
     )
-    ed = KGEntity(
+    ed = LearnerEntity(
+        course_id=space.id,
         concept_id=cd.id,
         canonical_key="eq.d",
         kind="equation",
@@ -1873,7 +1880,7 @@ async def test_delete_authored_set_spares_prereq_of_protected_sibling(db_session
     db_session.add_all([ec, ed])
     await db_session.flush()
     # D depends on C (from=D's entity, to=C's entity).
-    db_session.add(EntityPrereq(from_entity_id=ed.id, to_entity_id=ec.id))
+    db_session.add(EntityPrereq(course_id=space.id, from_entity_id=ed.id, to_entity_id=ec.id))
     # D is spared by a student session; C has no signal of its own.
     db_session.add(TutoringSession(user_id=_STUDENT_UUID, search_space_id=space.id, concept_id=cd.id))
     cpc = _problem_record(
@@ -2312,7 +2319,7 @@ async def test_approve_gate_rejection_rolls_back_mint(db_session, monkeypatch):
     from sqlalchemy import func, select
 
     import apollo.provisioning.authored_sets.api as aapi
-    from apollo.persistence.models import KGEntity
+    from apollo.persistence.models import LearnerEntity
     from apollo.provisioning.promote import PromoteResult
 
     monkeypatch.setattr(aapi, "require_user", _fake_require_user)
@@ -2345,7 +2352,7 @@ async def test_approve_gate_rejection_rolls_back_mint(db_session, monkeypatch):
     assert out["promoted"] is False and out["failed_gate"] == 8
     n = (
         await db_session.execute(
-            select(func.count()).select_from(KGEntity).where(KGEntity.concept_id == concept)
+            select(func.count()).select_from(LearnerEntity).where(LearnerEntity.concept_id == concept)
         )
     ).scalar_one()
     assert n == 0  # the real mint's entity was rolled back with the savepoint

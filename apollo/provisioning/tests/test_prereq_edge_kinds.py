@@ -16,7 +16,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from apollo.learner_model.personalization_read import read_learner_profile
-from apollo.persistence.models import Concept, EntityPrereq, KGEntity
+from apollo.persistence.models import Concept, EntityPrereq, LearnerEntity
 from database.models import Course
 
 
@@ -32,7 +32,8 @@ async def test_within_concept_filter_excludes_concept_level_edges(db_session):
     await db_session.flush()
 
     # concept A: two ref-node entities (the AUTO shape) + a concept-kind entity.
-    eq = KGEntity(
+    eq = LearnerEntity(
+        course_id=space.id,
         concept_id=concept_a.id,
         canonical_key="eq.bernoulli",
         kind="equation",
@@ -41,7 +42,8 @@ async def test_within_concept_filter_excludes_concept_level_edges(db_session):
         aliases=[],
         scope_summary="x",
     )
-    proc = KGEntity(
+    proc = LearnerEntity(
+        course_id=space.id,
         concept_id=concept_a.id,
         canonical_key="proc.solve_p2",
         kind="procedure",
@@ -50,7 +52,8 @@ async def test_within_concept_filter_excludes_concept_level_edges(db_session):
         aliases=[],
         scope_summary="x",
     )
-    concept_ent_a = KGEntity(
+    concept_ent_a = LearnerEntity(
+        course_id=space.id,
         concept_id=concept_a.id,
         canonical_key="concept.bernoulli",
         kind="concept",
@@ -60,7 +63,8 @@ async def test_within_concept_filter_excludes_concept_level_edges(db_session):
         scope_summary="x",
     )
     # concept B: a concept-kind entity (the cross-concept SEED edge target).
-    concept_ent_b = KGEntity(
+    concept_ent_b = LearnerEntity(
+        course_id=space.id,
         concept_id=concept_b.id,
         canonical_key="concept.fluids",
         kind="concept",
@@ -74,8 +78,11 @@ async def test_within_concept_filter_excludes_concept_level_edges(db_session):
 
     db_session.add_all(
         [
-            EntityPrereq(from_entity_id=proc.id, to_entity_id=eq.id),  # AUTO, within A
             EntityPrereq(
+                course_id=space.id, from_entity_id=proc.id, to_entity_id=eq.id
+            ),  # AUTO, within A
+            EntityPrereq(
+                course_id=space.id,
                 from_entity_id=concept_ent_a.id,
                 to_entity_id=concept_ent_b.id,
             ),  # SEED, A->B

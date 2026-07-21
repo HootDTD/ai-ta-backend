@@ -89,6 +89,34 @@ and one confirmation reach two asks for that node, after which the existing
 confirm-once policy moves on. Evidence validation and deduplication remain
 unchanged.
 
+## DB-13 learner model
+
+The Layer-1/Layer-3 learner-model ORM is retargeted onto the DB-13 app-schema
+DDL. `LearnerEntity` maps to `app.learner_entities`, `EntityPrereq` to
+`internal.entity_prerequisites`, `LearnerState` to `app.learner_state`, and
+`MasteryEvent` to `app.mastery_events`. `LearnerEntity.course_id` and
+`EntityPrereq.course_id` are denormalized `NOT NULL` columns (initplan-safe
+RLS, matching the rest of the app schema); every mint/seed/upsert call site
+(`apollo/provisioning/tag_mint_persist.py`, `scripts/seed_apollo_learner_model.py`,
+and their test doubles) threads a `course_id` through construction.
+`aliases` (`LearnerEntity`) and `evidence_node_ids` (`MasteryEvent`) are
+`TEXT[]` columns now, not JSONB. `misconception_code` is gone from
+`LearnerState` and `MasteryEvent` — misconceptions are tracked via
+`MasteryEvent.event_kind` and via `LearnerEntity.kind == 'misconception'` at
+mint time, not as a mutable per-entity/per-event field.
+
+A6 (`.planning/cleanup/db-plan-amendments-2026-07-20.md`) removed the
+`apollo_kg_negotiations` Postgres audit table and the `KGNegotiation` model —
+surgically: the three negotiate KG mutations (`mark_node_disputed` /
+`paraphrase_node` / `skip_node`, reached via the challenge/paraphrase/skip
+routes) and their Neo4j status writes keep working unconditionally; only the
+Postgres audit-row write is gone, so `KGStore.get_node_trace` now always
+returns an empty `moves` list. `MasteryEvent.negotiation_move` is a distinct,
+still-live nullable column (unrelated to the deleted audit table) — the
+dormant WU-5A2 in-memory row-spec dataclasses (`apollo/learner_model/state_model.py`)
+dropped their own `negotiation_move` field as unused, but the ORM column and
+the real `MasteryEvent` model both retain it.
+
 ## Done-time grading
 
 The permanent grader of record is the transcript adjudicator plus topic score.

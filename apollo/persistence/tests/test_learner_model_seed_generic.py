@@ -38,7 +38,7 @@ from apollo.persistence.learner_model_seed import (
 from apollo.persistence.models import (
     Concept,
     EntityPrereq,
-    KGEntity,
+    LearnerEntity,
 )
 from apollo.persistence.models import (
     Problem as ProblemRecord,
@@ -62,7 +62,7 @@ _BERNOULLI_DIR = (
 # columns the ProblemRecord ORM maps so ``select(ProblemRecord)`` works.
 _SEED_TABLES: list[Table] = [
     Concept.__table__,  # type: ignore[list-item]
-    KGEntity.__table__,  # type: ignore[list-item]
+    LearnerEntity.__table__,  # type: ignore[list-item]
     EntityPrereq.__table__,  # type: ignore[list-item]
 ]
 
@@ -175,13 +175,13 @@ async def _insert_concept_with_problems(
         await engine.dispose()
 
 
-async def _fetch_entities(url: str, concept_id: int) -> list[KGEntity]:
+async def _fetch_entities(url: str, concept_id: int) -> list[LearnerEntity]:
     engine = _sqlite_engine(url)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
         async with Session() as s:
             return list(
-                (await s.execute(select(KGEntity).where(KGEntity.concept_id == concept_id)))
+                (await s.execute(select(LearnerEntity).where(LearnerEntity.concept_id == concept_id)))
                 .scalars()
                 .all()
             )
@@ -639,8 +639,8 @@ async def test_seed_backward_compat_bernoulli_default_subject(db_url):
                 (
                     await s.execute(
                         select(EntityPrereq)
-                        .join(KGEntity, KGEntity.id == EntityPrereq.from_entity_id)
-                        .where(KGEntity.concept_id == cid)
+                        .join(LearnerEntity, LearnerEntity.id == EntityPrereq.from_entity_id)
+                        .where(LearnerEntity.concept_id == cid)
                     )
                 )
                 .scalars()

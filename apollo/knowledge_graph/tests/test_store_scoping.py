@@ -21,7 +21,6 @@ from apollo.errors import RetentionError
 from apollo.knowledge_graph.store import KGStore, _record_to_node
 from apollo.ontology import build_node
 from apollo.persistence.models import (
-    KGNegotiation,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -139,7 +138,6 @@ async def db():
         TutoringSession.__table__,
         ProblemAttempt.__table__,
         TutoringMessage.__table__,
-        KGNegotiation.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))

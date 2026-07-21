@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import func, select
 
-from apollo.persistence.models import Concept, KGEntity
+from apollo.persistence.models import Concept, LearnerEntity
 from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.authored_sets.graph_derivation import DerivationError, DerivedGraph
 from apollo.provisioning.authored_sets.orchestrator import run_authored_set_provisioning
@@ -386,8 +386,8 @@ async def test_gate_rejection_rolls_back_minted_entities(db_session, monkeypatch
     n = (
         await db_session.execute(
             select(func.count())
-            .select_from(KGEntity)
-            .where(KGEntity.concept_id == ctx["concept_id"])
+            .select_from(LearnerEntity)
+            .where(LearnerEntity.concept_id == ctx["concept_id"])
         )
     ).scalar_one()
     assert n == 0  # no orphaned KG rows survive the gate rejection
