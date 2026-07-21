@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import pytest
 
-from apollo.persistence.models import GradingArtifact, LearnerState, MasteryEvent
+from apollo.persistence.models import LearnerState, MasteryEvent
 from apollo.projections.mastery import (
     EVENT_KIND,
     _belief_for,

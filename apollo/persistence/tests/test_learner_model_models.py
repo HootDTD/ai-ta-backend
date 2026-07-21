@@ -20,14 +20,20 @@ from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.persistence.models import (
     Concept,
     EntityPrereq,
-    GraphComparisonFinding,
-    GraphComparisonRun,
     LearnerEntity,
     LearnerState,
     MasteryEvent,
     ProblemAttempt,
     TutoringSession,
 )
+
+# DB-14/A7 note: GraphComparisonRun/GraphComparisonFinding were deleted from
+# apollo.persistence.models (dead graph-comparison leg, artifacts-only merge
+# onto internal.grading_runs). This is a commit-1 IMPORT-ONLY fix so the
+# module still collects; test_six_models_map_expected_tablenames /
+# test_comparison_run_unique_attempt_version / test_comparison_finding_entity_set_null
+# below still reference the removed names and are LEFT FAILING for the DB-14
+# stage-2 (tests+docs) retarget commit, not fixed here.
 from database.models import Base
 
 # ---------------------------------------------------------------------------

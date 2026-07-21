@@ -825,8 +825,10 @@ class LearnerState(Base):
 
 # Campaign-plan Task B3 / migration 035: the composite PK's leading column is
 # user_id, so a classroom-wide "every learner in this course" scan (the
-# mastery-heatmap query) cannot use it. This mirrors
-# ix_grading_artifacts_space_concept_time's shape for apollo_grading_artifacts.
+# mastery-heatmap query) cannot use it. This mirrors the course-first shape of
+# grading_runs__course_user__idx (course_id, user_id) on internal.grading_runs
+# (DB-14 retarget — the old ix_grading_artifacts_space_concept_time name/shape
+# is gone from the target DDL).
 Index(
     "ix_learner_state_space_entity",
     LearnerState.search_space_id,
@@ -899,94 +901,18 @@ class MasteryEvent(Base):
     )
 
 
-class GraphComparisonRun(Base):
-    """One row per Done-time comparison; makes the grader auditable (spec §2/§6).
-    UNIQUE (attempt_id, comparison_version) lets a re-run at the same version be a
-    supersede (delete-then-reinsert), not a crash."""
-
-    __tablename__ = "apollo_graph_comparison_runs"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    attempt_id = Column(
-        BigInteger,
-        ForeignKey("app.problem_attempts.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    # No ORM FK on user_id (auth.users is Supabase-managed, not in Base.metadata);
-    # the migration SQL declares the FK + ON DELETE CASCADE.
-    user_id = Column(UUID(as_uuid=False), nullable=False)
-    search_space_id = Column(
-        Integer,
-        ForeignKey("app.courses.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    coverage_score = Column(Float, nullable=False)
-    soundness_score = Column(Float, nullable=False)
-    bisimilarity_score = Column(Float, nullable=False)
-    # D5/D6: False iff the misconception bank was empty/absent for this concept.
-    # Then soundness_score / bisimilarity_score hold the COVERAGE-ONLY fallback
-    # (NOT NULL invariant preserved, bisimilarity.py:5-6) and contradiction_score
-    # is NULL. Readers MUST consult this before trusting/averaging soundness.
-    soundness_applicable = Column(
-        Boolean, nullable=False, server_default=text("true"), default=True
-    )
-    node_coverage_score = Column(Float, nullable=True)
-    edge_coverage_score = Column(Float, nullable=True)
-    scoping_score = Column(Float, nullable=True)
-    usage_score = Column(Float, nullable=True)
-    procedure_order_score = Column(Float, nullable=True)
-    dependency_score = Column(Float, nullable=True)
-    contradiction_score = Column(Float, nullable=True)
-    normalization_confidence = Column(Float, nullable=False)
-    abstained = Column(Boolean, nullable=False, server_default=text("false"), default=False)
-    abstention_reasons = Column(_JSONType, nullable=False, default=list)
-    comparison_version = Column(Text, nullable=False)
-    reference_graph_hash = Column(Text, nullable=False)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-    __table_args__ = (
-        UniqueConstraint(
-            "attempt_id",
-            "comparison_version",
-            name="apollo_graph_comparison_runs_attempt_version_uniq",
-        ),
-    )
-
-
-class GraphComparisonFinding(Base):
-    """Structured evidence behind every comparison score; diagnostics read THIS,
-    not the transcript (spec §2/§6). entity_id ON DELETE SET NULL: a pruned entity
-    must not delete the audit finding."""
-
-    __tablename__ = "apollo_graph_comparison_findings"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    run_id = Column(
-        BigInteger,
-        ForeignKey("apollo_graph_comparison_runs.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    entity_id = Column(
-        BigInteger,
-        ForeignKey("app.learner_entities.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    finding_kind = Column(Text, nullable=False)
-    score = Column(Float, nullable=True)
-    confidence = Column(Float, nullable=True)
-    student_node_ids = Column(_JSONType, nullable=False, default=list)
-    reference_node_ids = Column(_JSONType, nullable=False, default=list)
-    student_edge_ids = Column(_JSONType, nullable=False, default=list)
-    reference_edge_ids = Column(_JSONType, nullable=False, default=list)
-    evidence_spans = Column(_JSONType, nullable=False, default=list)
-    message = Column(Text, nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+# NOTE (DB-14/A7): the graph-comparison leg (former ``GraphComparisonRun`` /
+# ``GraphComparisonFinding`` ORM models, ``apollo_graph_comparison_runs`` /
+# ``apollo_graph_comparison_findings``) is DEAD — T-J already deleted the
+# graph-grader shadow chain that wrote them (``apollo/graph_compare/``,
+# ``apollo/grading/persistence.py``, the composite/audited grade path) and A7
+# dropped ``internal.grading_findings`` from the DB-redesign target entirely.
+# Zero runtime importers remained at deletion time (verified via repo-wide
+# grep); ``GradingRun``/``internal.grading_runs`` below is the artifacts-only
+# merge target. ``FINDING_KINDS`` above stays as a documentation-only tuple
+# (no longer tied to a live ORM/SQL CHECK) — it is still asserted against the
+# FROZEN migration 026 chain by
+# apollo/persistence/tests/test_learner_model_allowlists.py.
 
 
 # ===========================================================================
@@ -1178,54 +1104,112 @@ class IngestPageEvidence(Base):
     __table_args__ = ({"schema": "internal"},)
 
 
-class GradingArtifact(Base):
-    """Canonical grading artifact (spec 2026-07-01 §1) — one immutable row per
-    Done-click per grader role. ``role='canonical'`` is the record of the grade
-    the student was served; ``role='pair'`` is the other grader's artifact
-    captured on the same input (paired-artifact contract, spec §5). Append-only:
-    no update path exists in code; retuning weights affects future artifacts
-    only. ``user_id`` declares NO ORM FK (auth.users is Supabase-managed,
-    absent from Base.metadata), mirroring GraphComparisonRun."""
+class GradingRun(Base):
+    """Canonical grading artifact (spec 2026-07-01 §1; DB-14/A7 artifacts-only
+    merge onto ``internal.grading_runs`` — the graph-comparison leg
+    (``internal.grading_findings``, the former ``GraphComparisonRun``/
+    ``GraphComparisonFinding`` models) is DEAD, see the note above this
+    class) — one immutable row per Done-click per grader role.
+    ``role='canonical'`` is the record of the grade the student was served;
+    ``role='pair'`` is the other grader's artifact captured on the same input
+    (paired-artifact contract, spec §5). Append-only: no update path exists in
+    code; retuning weights affects future rows only. ``user_id`` declares NO
+    ORM FK (auth.users is Supabase-managed, absent from Base.metadata).
 
-    __tablename__ = "apollo_grading_artifacts"
+    The LLM-fallback writer's payload dict
+    (``apollo.grading.artifact_build.build_llm_artifact``) maps onto these
+    columns as: ``payload["versions"]`` -> ``version_details`` (whole dict) +
+    ``grader_version``/``reference_graph_hash`` (lifted out, typed);
+    ``payload["scores"]`` -> ``score_details`` (whole dict) +
+    ``composite_score``/``node_coverage_score`` (lifted out, typed);
+    ``payload["abstention"]`` -> ``abstention_details`` (whole dict) +
+    ``abstained`` (lifted out, typed, NOT NULL); ``payload["misconceptions"]``/
+    ``payload["clarification_trace"]`` -> nested under ``grader_payload``
+    (the target DDL has no dedicated columns for either — see
+    ``apollo.handlers.artifact_writer._artifact_row``). The Evidence Graph v2
+    columns below (``transcript_freeze_hash`` through ``band``) are the DDL's
+    own seam comment: nullable until the separately reviewed v2 writer lands;
+    this (LLM-fallback) writer never sets them."""
+
+    __tablename__ = "grading_runs"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
+    # Python attribute name kept as `search_space_id` (repo convention for
+    # internal-schema tables FK'd to app.courses.id — see
+    # LearnerState/MasteryEvent/IngestRun/DedupDecision et al.) mapped onto
+    # the target DDL's `course_id` physical column.
+    search_space_id = Column(
+        "course_id",
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # No ORM FK on user_id (auth.users is Supabase-managed, not in
+    # Base.metadata); the migration SQL declares the FK + ON DELETE CASCADE.
+    user_id = Column(UUID(as_uuid=False), nullable=False)
     attempt_id = Column(
         BigInteger,
         ForeignKey("app.problem_attempts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    role = Column(Text, nullable=False)
-    grader_used = Column(Text, nullable=False)
-    user_id = Column(UUID(as_uuid=False), nullable=False)
-    search_space_id = Column(
-        Integer,
-        ForeignKey("app.courses.id", ondelete="CASCADE"),
-        nullable=False,
-    )
     concept_id = Column(
         BigInteger,
         ForeignKey("app.concepts.id", ondelete="SET NULL"),
         nullable=True,
     )
-    problem_id = Column(Text, nullable=False)
-    versions = Column(_JSONType, nullable=False)
-    node_ledger = Column(_JSONType, nullable=False)
-    edge_ledger = Column(_JSONType, nullable=False)
-    misconceptions = Column(_JSONType, nullable=False, default=list)
-    clarification_trace = Column(_JSONType, nullable=False, default=list)
-    scores = Column(_JSONType, nullable=False)
-    abstention = Column(_JSONType, nullable=True)
+    problem_id = Column(
+        BigInteger,
+        ForeignKey("app.problems.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    role = Column(Text, nullable=False)
+    grader_used = Column(Text, nullable=False)
+    grader_version = Column(Text, nullable=False)
+    reference_graph_hash = Column(Text, nullable=True)
+    weights_version = Column(Text, nullable=True)
+    status = Column(Text, nullable=False, server_default=text("'final'"), default="final")
     grading_latency_ms = Column(Integer, nullable=True)
+    composite_score = Column(Float, nullable=True)  # REAL on Postgres
+    node_coverage_score = Column(Float, nullable=True)  # REAL on Postgres
+    edge_coverage_score = Column(Float, nullable=True)  # REAL on Postgres
+    abstained = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    version_details = Column(
+        _JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+    node_ledger = Column(_JSONType, nullable=False, server_default=text("'[]'::jsonb"), default=list)
+    edge_ledger = Column(_JSONType, nullable=False, server_default=text("'[]'::jsonb"), default=list)
+    score_details = Column(
+        _JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+    abstention_details = Column(_JSONType, nullable=True)
+    grader_payload = Column(
+        _JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+    # Evidence Graph v2 seam (DDL's own comment): nullable until the
+    # separately reviewed v2 writer lands. Untouched by this writer.
+    transcript_freeze_hash = Column(Text, nullable=True)
+    reference_graph_version = Column(Text, nullable=True)
+    evidence_adjudicator_version = Column(Text, nullable=True)
+    verifier_versions = Column(_JSONType, nullable=True)
+    verifier_versions_hash = Column(Text, nullable=True)
+    inference_config_hash = Column(Text, nullable=True)
+    band_policy_version = Column(Text, nullable=True)
+    dimensions = Column(_JSONType, nullable=True)
+    applied_rule_ids = Column(_JSONType, nullable=True)
+    robustness_result = Column(_JSONType, nullable=True)
+    clarification_history_ref = Column(_JSONType, nullable=True)
+    band = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
         UniqueConstraint(
             "attempt_id",
             "role",
-            name="uq_grading_artifact_attempt_role",
+            "grader_version",
+            name="grading_runs_attempt_id_role_grader_version_key",
         ),
+        {"schema": "internal"},
     )

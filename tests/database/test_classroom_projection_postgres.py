@@ -29,7 +29,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from apollo.persistence.models import (
-    GradingArtifact,
     LearnerEntity,
     LearnerState,
     ProblemAttempt,
@@ -39,6 +38,11 @@ from apollo.persistence.models import (
 )
 from apollo.projections.classroom import mastery_heatmap, struggle_signals
 from apollo.subjects.tests._curriculum_fixtures import seed_concept, seed_search_space
+
+# DB-14/A7 note: this module's `_artifact()` helper below still constructs
+# the removed `GradingArtifact` model (renamed `GradingRun`, retargeted onto
+# `internal.grading_runs` with a different column set) -- IMPORT-ONLY fix for
+# commit-1 collectability, left failing for the stage-2 (tests+docs) commit.
 
 pytestmark = pytest.mark.integration
 

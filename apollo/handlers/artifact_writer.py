@@ -8,29 +8,47 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.grading.artifact_build import build_llm_artifact
 from apollo.overseer.topic_score import TopicScoreResult
-from apollo.persistence.models import TutoringSession, GradingArtifact, ProblemAttempt
+from apollo.persistence.models import GradingRun, ProblemAttempt, TutoringSession
 
 _LOG = logging.getLogger(__name__)
 
 
 def _artifact_row(
     *, attempt: ProblemAttempt, sess: TutoringSession, payload: dict
-) -> GradingArtifact:
-    return GradingArtifact(
+) -> GradingRun:
+    """Map the LLM-fallback builder's payload dict
+    (``apollo.grading.artifact_build.build_llm_artifact``) onto
+    ``internal.grading_runs`` columns (DB-14/A7 artifacts-only merge — see
+    ``GradingRun``'s docstring for the full column mapping). ``versions``/
+    ``scores``/``abstention`` are stored whole in their ``*_details`` JSONB
+    columns AND have their query-friendly scalars lifted into typed columns;
+    ``misconceptions``/``clarification_trace`` have no dedicated columns in
+    the target DDL, so they nest under ``grader_payload``."""
+    versions = payload["versions"]
+    scores = payload["scores"]
+    abstention = payload["abstention"]
+    return GradingRun(
         attempt_id=int(attempt.id),
         role="canonical",
         grader_used=payload["grader_used"],
+        grader_version=versions["grader"],
+        reference_graph_hash=versions.get("reference_graph_hash"),
         user_id=str(sess.user_id),
         search_space_id=int(sess.search_space_id),
         concept_id=sess.concept_id,
-        problem_id=str(attempt.problem_id),
-        versions=payload["versions"],
+        problem_id=int(attempt.problem_id),
+        version_details=versions,
         node_ledger=payload["node_ledger"],
         edge_ledger=payload["edge_ledger"],
-        misconceptions=payload["misconceptions"],
-        clarification_trace=payload["clarification_trace"],
-        scores=payload["scores"],
-        abstention=payload["abstention"],
+        score_details=scores,
+        composite_score=scores.get("composite"),
+        node_coverage_score=scores.get("node_coverage"),
+        abstained=bool(abstention.get("abstained") or False),
+        abstention_details=abstention,
+        grader_payload={
+            "misconceptions": payload["misconceptions"],
+            "clarification_trace": payload["clarification_trace"],
+        },
         grading_latency_ms=payload["grading_latency_ms"],
     )
 

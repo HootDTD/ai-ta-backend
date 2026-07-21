@@ -14,7 +14,6 @@ from apollo.conftest import TEST_USER_ID
 from apollo.handlers.done import handle_done
 from apollo.ontology import KGGraph, build_node
 from apollo.persistence.models import (
-    GradingArtifact,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
@@ -26,6 +25,11 @@ from apollo.subjects.tests._curriculum_fixtures import (
     problem_database_id,
     seed_course,
 )
+
+# DB-14/A7 note: this module still selects the removed `GradingArtifact`
+# model (renamed `GradingRun`, retargeted onto `internal.grading_runs` with a
+# different column set) -- IMPORT-ONLY fix for commit-1 collectability, left
+# failing for the stage-2 (tests+docs) commit.
 
 pytestmark = pytest.mark.integration
 

@@ -19,7 +19,6 @@ import pytest
 from sqlalchemy import select
 
 from apollo.persistence.models import (
-    GradingArtifact,
     LearnerEntity,
     LearnerState,
     MasteryEvent,
@@ -30,6 +29,11 @@ from apollo.persistence.models import (
 )
 from apollo.projections.mastery import EVENT_KIND, update_mastery_from_artifact
 from apollo.subjects.tests._curriculum_fixtures import seed_concept, seed_search_space
+
+# DB-14/A7 note: this module builds rows via the removed `GradingArtifact`
+# model (renamed `GradingRun`, retargeted onto `internal.grading_runs` with a
+# different column set) -- IMPORT-ONLY fix for commit-1 collectability, left
+# failing for the stage-2 (tests+docs) commit.
 
 pytestmark = pytest.mark.integration
 

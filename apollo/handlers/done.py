@@ -45,7 +45,7 @@ from apollo.overseer.transcript_coverage import compute_transcript_coverage_with
 from apollo.overseer.xp import compute_progress_envelope, compute_xp_earned
 from apollo.persistence.attempt_history import has_prior_graded_attempt
 from apollo.persistence.models import (
-    GradingArtifact,
+    GradingRun,
     ProblemAttempt,
     SessionPhase,
     TutoringMessage,
@@ -66,7 +66,7 @@ _GRAPH_SIM_LAYER3_FLAG: str = "APOLLO_GRAPH_SIM_LAYER3_ENABLED"
 
 # Campaign-plan Task A3 — the canonical-grading-artifact PERSIST flag (default
 # OFF everywhere). When OFF, `write_artifacts` is never called and `handle_done`
-# writes no `apollo_grading_artifacts` rows (byte-identical to pre-A3). When ON,
+# writes no `internal.grading_runs` rows (byte-identical to pre-A3). When ON,
 # ONE canonical row is written every Done-click (`grader_used="llm_fallback"` —
 # the transcript/topic grade), so campaign runs have a durable grading record.
 _GRAPH_SIM_ARTIFACT_FLAG: str = "APOLLO_GRADING_ARTIFACT_ENABLED"
@@ -99,9 +99,9 @@ async def _project_mastery(db: AsyncSession, *, attempt_id: int) -> None:
     try:
         row = (
             await db.execute(
-                select(GradingArtifact).where(
-                    GradingArtifact.attempt_id == attempt_id,
-                    GradingArtifact.role == "canonical",
+                select(GradingRun).where(
+                    GradingRun.attempt_id == attempt_id,
+                    GradingRun.role == "canonical",
                 )
             )
         ).scalar_one_or_none()

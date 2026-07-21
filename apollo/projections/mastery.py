@@ -19,7 +19,7 @@ both active for the same attempt.
 Granularity: the plan text says "one mastery_event per concept"; the schema's
 ``apollo_mastery_events``/``apollo_learner_state`` are keyed by
 ``entity_id`` (a ``apollo_kg_entities`` row), one level BELOW the top-level
-``app.concepts`` scope the artifact records (``GradingArtifact.concept_id``).
+``app.concepts`` scope the artifact records (``GradingRun.concept_id``).
 Reusing the columns as-is (no new migration), this projection writes one
 event/state row per DISTINCT resolvable entity referenced in the artifact's
 ``node_ledger`` (``credited``/``misconception`` rows only — ``unresolved`` rows
@@ -56,7 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.knowledge_graph.canon_projection import load_entity_specs
 from apollo.persistence.models import (
-    GradingArtifact,
+    GradingRun,
     LearnerState,
     MasteryEvent,
     ProblemAttempt,
@@ -108,7 +108,7 @@ def ewma_mastery(*, composite: float, prior_mastery: float, alpha: float) -> flo
     return max(0.0, min(1.0, raw))
 
 
-def _ledger_entity_keys(artifact_row: GradingArtifact) -> list[str]:
+def _ledger_entity_keys(artifact_row: GradingRun) -> list[str]:
     """Distinct ``canonical_key``s from the artifact's ``node_ledger`` that
     could map to a real entity (credited or misconception rows), in ledger
     order, de-duplicated."""
@@ -161,13 +161,16 @@ def _entity_id_lookups(specs: list[Any]) -> tuple[dict[str, int], dict[str, int]
     return exact, suffix
 
 
-def _normalization_confidence(artifact_row: GradingArtifact) -> float:
-    """The artifact's normalization confidence (``abstention.
+def _normalization_confidence(artifact_row: GradingRun) -> float:
+    """The artifact's normalization confidence (``abstention_details.
     normalization_confidence`` — see ``artifact_build.py``'s ``abstention``
-    block). Defaults to ``1.0`` when absent (the LLM-fallback path records no
-    such signal; treating it as fully confident matches the pre-artifact
-    behavior of trusting the served grade outright)."""
-    abstention: dict[str, Any] = cast("dict[str, Any] | None", artifact_row.abstention) or {}
+    block, persisted whole into ``GradingRun.abstention_details``). Defaults
+    to ``1.0`` when absent (the LLM-fallback path records no such signal;
+    treating it as fully confident matches the pre-artifact behavior of
+    trusting the served grade outright)."""
+    abstention: dict[str, Any] = (
+        cast("dict[str, Any] | None", artifact_row.abstention_details) or {}
+    )
     value = abstention.get("normalization_confidence")
     return float(value) if value is not None else 1.0
 
@@ -206,7 +209,7 @@ def _belief_for(mastery: float) -> list[float]:
     return [max(0.0, min(1.0, 1.0 - mastery)), 0.0, max(0.0, min(1.0, mastery))]
 
 
-async def update_mastery_from_artifact(db: AsyncSession, *, artifact_row: GradingArtifact) -> None:
+async def update_mastery_from_artifact(db: AsyncSession, *, artifact_row: GradingRun) -> None:
     """Append a ``composite`` ``apollo_mastery_events`` row and EWMA-upsert
     ``apollo_learner_state`` for every distinct entity the artifact's ledger
     credits or flags a misconception on. FLUSH-ONLY: mirrors
@@ -226,8 +229,10 @@ async def update_mastery_from_artifact(db: AsyncSession, *, artifact_row: Gradin
     specs = await load_entity_specs(db, concept_id=int(artifact_row.concept_id))
     exact_by_key, suffix_by_key = _entity_id_lookups(specs)
 
-    scores = cast("dict[str, Any]", artifact_row.scores) or {}
-    composite = float(scores.get("composite", 0.0))
+    # DB-14: read the typed `composite_score` column directly rather than
+    # parsing `score_details` — `artifact_writer._artifact_row` lifts
+    # `payload["scores"]["composite"]` into this column verbatim.
+    composite = float(artifact_row.composite_score or 0.0)
     confidence = _normalization_confidence(artifact_row)
     alpha = ewma_alpha()
     attempt_id = int(artifact_row.attempt_id)
