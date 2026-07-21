@@ -32,7 +32,6 @@ from sqlalchemy.orm import aliased
 from apollo.auth_deps import require_course_teacher, require_user
 from apollo.errors import KGUnavailableError
 from apollo.persistence.models import (
-    AuthoredSet,
     Concept,
     DedupDecision,
     EntityPrereq,
@@ -41,6 +40,7 @@ from apollo.persistence.models import (
     KGEntity,
     LearnerState,
     MasteryEvent,
+    ProvisioningRun,
     TutoringSession,
 )
 from apollo.persistence.models import (
@@ -154,12 +154,18 @@ def _require_neo(neo, *, stage: str):
 async def _next_set_index(db: AsyncSession, search_space_id: int) -> int:
     cur = (
         await db.execute(
-            select(func.coalesce(func.max(AuthoredSet.set_index), 0)).where(
-                AuthoredSet.search_space_id == search_space_id
+            select(func.coalesce(func.max(ProvisioningRun.set_index), 0)).where(
+                ProvisioningRun.search_space_id == search_space_id,
+                ProvisioningRun.kind == "authored_set",
             )
         )
     ).scalar_one()
     return int(cur) + 1
+
+
+async def _get_authored_set(db: AsyncSession, set_id: int) -> ProvisioningRun | None:
+    row = await db.get(ProvisioningRun, set_id)
+    return row if row is not None and row.kind == "authored_set" else None
 
 
 @router.post("/authored-sets")
@@ -182,7 +188,9 @@ async def create_authored_set(
     solution_bytes = await solution.read() if solution is not None else None
     set_index = await _next_set_index(db, search_space_id)
 
-    row = AuthoredSet(search_space_id=search_space_id, set_index=set_index, status="pending")
+    row = ProvisioningRun.authored_set(
+        search_space_id=search_space_id, set_index=set_index, status="pending"
+    )
     db.add(row)
     await db.flush()
     set_id = int(row.id)
@@ -216,7 +224,7 @@ async def create_manual_authored_set(
     )
     authored = [_manual_authored_problem(problem) for problem in body.problems]
     set_index = await _next_set_index(db, body.search_space_id)
-    row = AuthoredSet(
+    row = ProvisioningRun.authored_set(
         search_space_id=body.search_space_id,
         set_index=set_index,
         status="pending",
@@ -266,7 +274,7 @@ async def _run_manual_set_background(
     ingest_run_id: int | None = None
     try:
         async with get_async_session() as db:
-            row = await db.get(AuthoredSet, set_id)
+            row = await _get_authored_set(db, set_id)
             if row is None:
                 return
             row.status = "provisioning"
@@ -349,7 +357,7 @@ async def _run_manual_set_background(
                 n_promoted=counts["promoted"],
                 n_rejected=counts["rejected"],
             )
-            row = await db.get(AuthoredSet, set_id)
+            row = await _get_authored_set(db, set_id)
             if row is None:
                 return
             row.result_summary = {
@@ -518,7 +526,7 @@ async def _run_set_background(
             # NOT re-write it — avoids the redundant double-write).
             ingest_run.n_pages = n_pages
 
-            row = await db.get(AuthoredSet, set_id)
+            row = await _get_authored_set(db, set_id)
             if row is None:
                 return
             row.problem_document_id = problem_document_id
@@ -550,7 +558,7 @@ async def _run_set_background(
                 n_promoted=counts.get("promoted", 0),
                 n_rejected=counts.get("rejected", 0),
             )
-            row = await db.get(AuthoredSet, set_id)
+            row = await _get_authored_set(db, set_id)
             if row is None:
                 return
             if report.combined_document:
@@ -637,7 +645,7 @@ async def _run_set_background(
                     )
                 # Explicit commit: the run/error/evidence writes above must persist
                 # independently of _set_status, which early-returns UNCOMMITTED if
-                # the AuthoredSet row has since vanished.
+                # the authored provisioning row has since vanished.
                 await db.commit()
             await _set_status(db, set_id, "failed", diagnostic=str(exc))
 
@@ -684,7 +692,7 @@ async def _set_status(
     *,
     diagnostic: str | None = None,
 ) -> None:
-    row = await db.get(AuthoredSet, set_id)
+    row = await _get_authored_set(db, set_id)
     if row is None:
         return
     row.status = status  # type: ignore[assignment]
@@ -705,9 +713,12 @@ async def list_authored_sets(
     rows = (
         (
             await db.execute(
-                select(AuthoredSet)
-                .where(AuthoredSet.search_space_id == search_space_id)
-                .order_by(AuthoredSet.set_index.asc())
+                select(ProvisioningRun)
+                .where(
+                    ProvisioningRun.search_space_id == search_space_id,
+                    ProvisioningRun.kind == "authored_set",
+                )
+                .order_by(ProvisioningRun.set_index.asc())
             )
         )
         .scalars()
@@ -744,7 +755,7 @@ async def get_authored_set(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
-    row = await db.get(AuthoredSet, set_id)
+    row = await _get_authored_set(db, set_id)
     if row is None:
         raise HTTPException(status_code=404, detail="authored set not found")
     await require_course_teacher(db=db, auth=auth, search_space_id=int(row.search_space_id))
@@ -1268,7 +1279,7 @@ async def delete_authored_set(
         concept_id``). ``removed_problems`` counts both referenced and swept rows;
       * the two hidden reference documents (chunks cascade via the
         ``internal.document_chunks`` ON DELETE CASCADE FK);
-      * the ``apollo_authored_sets`` row itself.
+      * the authored ``app.provisioning_runs`` row itself.
 
     Per-concept KG teardown is STRICTLY scoped to concepts this set fully ORPHANED.
     A concept is torn down ONLY if it has ZERO footprint of any kind beyond this
@@ -1283,7 +1294,7 @@ async def delete_authored_set(
     would 500 (the tutoring-activity RESTRICT FK) or destroy student data.
     """
     auth = await require_user(request)
-    row = await db.get(AuthoredSet, set_id)
+    row = await _get_authored_set(db, set_id)
     if row is None:
         raise HTTPException(status_code=404, detail="authored set not found")
     await require_course_teacher(db=db, auth=auth, search_space_id=int(row.search_space_id))
@@ -1423,7 +1434,7 @@ async def approve_held_problem(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
-    authored_set = await db.get(AuthoredSet, set_id)
+    authored_set = await _get_authored_set(db, set_id)
     if authored_set is None:
         raise HTTPException(status_code=404, detail="authored set not found")
     await require_course_teacher(
@@ -1564,7 +1575,7 @@ async def approve_held_row(
 
 
 def _problem_belongs_to_set(
-    authored_set: AuthoredSet, problem: ProblemRecord, problem_id: int
+    authored_set: ProvisioningRun, problem: ProblemRecord, problem_id: int
 ) -> bool:
     """True iff ``problem`` is one this ``authored_set`` actually minted.
 

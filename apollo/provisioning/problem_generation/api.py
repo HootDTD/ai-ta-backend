@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.auth_deps import require_course_teacher, require_user
 from apollo.persistence.models import (
     Concept,
-    GenerationRun,
     IngestRun,
     Problem,
+    ProvisioningRun,
 )
 from apollo.provisioning.authored_sets.api import ApproveBody, approve_held_row
 from apollo.provisioning.authored_sets.observability import (
@@ -50,6 +50,11 @@ router = APIRouter(tags=["apollo-problem-generation"])
 class GenerateVariantsBody(BaseModel):
     seed_problem_ids: list[int] = Field(min_length=1, max_length=50)
     count: int = Field(ge=1)
+
+
+async def _get_generation_run(db: AsyncSession, run_id: int) -> ProvisioningRun | None:
+    row = await db.get(ProvisioningRun, run_id)
+    return row if row is not None and row.kind == "generation" else None
 
 
 async def _course_concept_or_404(db: AsyncSession, concept_id: int) -> tuple[Concept, int]:
@@ -120,7 +125,7 @@ async def create_generation_run(
     auth = await require_user(request)
     await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
 
-    run = GenerationRun(
+    run = ProvisioningRun.generation(
         search_space_id=search_space_id,
         concept_id=concept_id,
         status="pending",
@@ -164,7 +169,7 @@ async def _run_generation_background(
     ingest_run_id: int | None = None
     try:
         async with get_async_session() as db:
-            run = await db.get(GenerationRun, run_id)
+            run = await _get_generation_run(db, run_id)
             if run is None:
                 return
             run.status = "running"
@@ -197,7 +202,7 @@ async def _run_generation_background(
                 n_promoted=0,
                 n_rejected=sum(result.dropped.values()),
             )
-            run = await db.get(GenerationRun, run_id)
+            run = await _get_generation_run(db, run_id)
             if run is None:
                 return
             run.result_summary = _result_summary(result)
@@ -220,7 +225,7 @@ async def _run_generation_background(
                     exc=exc,
                     context={"generation_run_id": run_id},
                 )
-                run = await db.get(GenerationRun, run_id)
+                run = await _get_generation_run(db, run_id)
                 if run is not None:
                     run.status = "failed"
                     run.result_summary = {**(run.result_summary or {}), "error": str(exc)}
@@ -243,9 +248,12 @@ async def list_generation_runs(
     rows = (
         (
             await db.execute(
-                select(GenerationRun)
-                .where(GenerationRun.search_space_id == search_space_id)
-                .order_by(GenerationRun.created_at.desc(), GenerationRun.id.desc())
+                select(ProvisioningRun)
+                .where(
+                    ProvisioningRun.search_space_id == search_space_id,
+                    ProvisioningRun.kind == "generation",
+                )
+                .order_by(ProvisioningRun.created_at.desc(), ProvisioningRun.id.desc())
             )
         )
         .scalars()
@@ -344,7 +352,7 @@ async def get_generation_run(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
-    run = await db.get(GenerationRun, run_id)
+    run = await _get_generation_run(db, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="generation run not found")
     await require_course_teacher(db=db, auth=auth, search_space_id=int(run.search_space_id))
