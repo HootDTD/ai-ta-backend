@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -152,7 +151,10 @@ def _pg_url() -> str:
         async with engine.begin() as conn:
             await conn.execute(text("CREATE SCHEMA IF NOT EXISTS app"))
             await conn.execute(text("CREATE SCHEMA IF NOT EXISTS internal"))
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS extensions"))
+            await conn.execute(
+                text("CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions")
+            )
             await conn.run_sync(Base.metadata.create_all)
         await engine.dispose()
 
