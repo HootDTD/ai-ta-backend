@@ -7,9 +7,16 @@ adds and the retained authored-ingest models (``IngestRun``/``DedupDecision``/
 ``IngestError``). The worker-only queue and rejection models were removed.
 
 Postgres-only DDL semantics (the CHECK constraints, the partial-unique-index
-collapse, FK cascades, both backfills) are asserted for real in
-``tests/database/test_apollo_autoprovisioning_migration.py``. This file asserts
-the ORM round-trips the typed columns + defaults the ``db_session`` schema gives.
+collapse, FK cascades, both backfills) were asserted for real against the
+frozen legacy migration 030 in
+``tests/database/test_apollo_autoprovisioning_migration.py``. DB-16 deleted
+that file as an obsolete legacy-migration pin once ``apollo_provisioning_jobs``
+/ ``apollo_rejected_problems`` joined the approved no-copy drop list;
+``apollo_kg_entities``'s own migration-026 DDL (unaffected by the drop) is
+still pinned by ``tests/database/test_apollo_learner_model_migration.py``, and
+the ingest/dedup tables' migration-030 DDL still gets exercised as chain setup
+by ``tests/database/test_migration_036.py``. This file asserts the ORM
+round-trips the typed columns + defaults the ``db_session`` schema gives.
 """
 
 from __future__ import annotations
