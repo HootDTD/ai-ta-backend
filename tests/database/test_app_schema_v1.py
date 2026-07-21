@@ -588,6 +588,143 @@ async def test_learning_activity_modality_status_and_active_tutoring_semantics(s
     ) is not None
 
 
+@pytest.mark.asyncio
+async def test_ai_usage_reports_check_constraints(schema_conn):
+    course_id = await schema_conn.fetchval(
+        "SELECT id FROM app.courses WHERE slug = 'course-one'"
+    )
+    chat_id = await schema_conn.fetchval(
+        """
+        INSERT INTO app.learning_activities
+          (modality,external_id,user_id,course_id,status)
+        VALUES ('chat','ai-usage-reports-check-chat',$1,$2,'active')
+        RETURNING external_id
+        """,
+        STUDENT,
+        course_id,
+    )
+
+    ok_id = await schema_conn.fetchval(
+        """
+        INSERT INTO app.ai_usage_reports (id, user_id, course_id, chat_id, jsonld, tool_calls)
+        VALUES (gen_random_uuid(), $1, $2, $3, '{"a":1}'::jsonb, '[]'::jsonb)
+        RETURNING id
+        """,
+        STUDENT,
+        course_id,
+        chat_id,
+    )
+    assert ok_id is not None
+
+    with pytest.raises(asyncpg.CheckViolationError):
+        await schema_conn.execute(
+            """
+            INSERT INTO app.ai_usage_reports (id, user_id, course_id, chat_id, jsonld)
+            VALUES (gen_random_uuid(), $1, $2, $3, '[1,2]'::jsonb)
+            """,
+            STUDENT,
+            course_id,
+            chat_id,
+        )
+
+    with pytest.raises(asyncpg.CheckViolationError):
+        await schema_conn.execute(
+            """
+            INSERT INTO app.ai_usage_reports (id, user_id, course_id, chat_id, tool_calls)
+            VALUES (gen_random_uuid(), $1, $2, $3, '{"not":"array"}'::jsonb)
+            """,
+            STUDENT,
+            course_id,
+            chat_id,
+        )
+
+
+@pytest.mark.asyncio
+async def test_ai_usage_reports_owner_select_and_insert_policies(schema_conn):
+    course_id = await schema_conn.fetchval(
+        "SELECT id FROM app.courses WHERE slug = 'course-one'"
+    )
+    chat_id = await schema_conn.fetchval(
+        """
+        INSERT INTO app.learning_activities
+          (modality,external_id,user_id,course_id,status)
+        VALUES ('chat','ai-usage-reports-rls-chat',$1,$2,'active')
+        RETURNING external_id
+        """,
+        STUDENT,
+        course_id,
+    )
+
+    transaction = schema_conn.transaction()
+    await transaction.start()
+    try:
+        await _set_authenticated(schema_conn, STUDENT)
+        report_id = await schema_conn.fetchval(
+            """
+            INSERT INTO app.ai_usage_reports (id, user_id, course_id, chat_id)
+            VALUES (gen_random_uuid(), $1, $2, $3)
+            RETURNING id
+            """,
+            STUDENT,
+            course_id,
+            chat_id,
+        )
+        assert report_id is not None
+        assert (
+            await schema_conn.fetchval(
+                "SELECT count(*) FROM app.ai_usage_reports WHERE id = $1", report_id
+            )
+            == 1
+        )
+    finally:
+        await transaction.rollback()
+
+    transaction = schema_conn.transaction()
+    await transaction.start()
+    try:
+        await _set_authenticated(schema_conn, STUDENT)
+        # A student cannot attribute a report to a different user -- WITH CHECK fails.
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                """
+                INSERT INTO app.ai_usage_reports (id, user_id, course_id, chat_id)
+                VALUES (gen_random_uuid(), $1, $2, $3)
+                """,
+                OTHER_STUDENT,
+                course_id,
+                chat_id,
+            )
+    finally:
+        await transaction.rollback()
+
+    transaction = schema_conn.transaction()
+    await transaction.start()
+    try:
+        await _set_authenticated(schema_conn, STUDENT)
+        own_report_id = await schema_conn.fetchval(
+            """
+            INSERT INTO app.ai_usage_reports (id, user_id, course_id, chat_id)
+            VALUES (gen_random_uuid(), $1, $2, $3)
+            RETURNING id
+            """,
+            STUDENT,
+            course_id,
+            chat_id,
+        )
+
+        # Teachers do NOT receive report contents by default: no SELECT policy
+        # grants them read, even though they hold a real course role.
+        await _set_authenticated(schema_conn, TEACHER)
+        assert (
+            await schema_conn.fetchval(
+                "SELECT count(*) FROM app.ai_usage_reports WHERE id = $1", own_report_id
+            )
+            == 0
+        )
+    finally:
+        await transaction.rollback()
+
+
 def test_migration_never_mutates_a_legacy_public_table():
     sql = _MIGRATION.read_text(encoding="utf-8").lower()
     legacy_prefixes = (

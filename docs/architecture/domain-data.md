@@ -138,6 +138,26 @@ deleted outright (zero remaining runtime importers verified before deletion).
 See `apollo.md`'s "DB-14 grading merge" section for the full column mapping
 and runtime-caller detail.
 
+DB-15 (2026-07-21) retargets `reports/ai_use/` onto `app.ai_usage_reports`.
+`AIUsageReport` (`reports/ai_use/models.py`) maps the DDL exactly: `user_id`
+FKs `auth.users` (no ORM FK, same convention as every other Supabase-managed
+`auth.users` reference in this codebase), `course_id` FKs `app.courses.id`,
+and `chat_id` FKs `app.learning_activities.external_id` (the chat's *external*
+id, not its internal bigint id). The legacy `TABLE = "ai_use_reports"`
+PostgREST CRUD (`vendors.supabase_client`, the anon API key) is deleted
+outright — no fallback. `create_report`/`get_report_for_user` are a typed
+async repository taking the caller's own request-scoped `AsyncSession`.
+`routes.py`'s `_load_owned_chat_session` is the ONLY place `user_id`/
+`course_id` are resolved for a new report: `user_id` from
+`resolve_auth_context`, `course_id` from the caller's own `ChatSession` row
+for the given `chat_id` — never from the request body. Reads (both the
+report-detail and PDF routes) are owner-scoped at the query level (`WHERE
+id = ? AND user_id = ?`), so a report belonging to another user 404s
+identically to a missing one — no existence leak, matching the DDL's
+`ai_usage_reports__owner_select` policy (which likewise grants no read to
+teachers, only the report's own `user_id`) even though the backend's own
+table-owner connection bypasses RLS enforcement (see the RLS note below).
+
 DB-07 (2026-07-17) switches the first ORM/repository slice to the target
 schemas. `Course` now owns current week, retrieval weights, and typed bounds in
 `app.courses`; memberships/invites use `course_id`. `Document`,
@@ -168,10 +188,10 @@ Cleanup T-E (2026-07-16) removed the `Clarification` SQLAlchemy model and all ru
 | `chats/bundle_cache.py` | Session bundle cache for the retrieval-mode orchestrator: `load_bundle_cache`/`save_bundle_cache` persist `BundleSnippet`s + citation-scoring rows into `chat_session_snippets` (`snippet_payload` JSONB = `{"snippet": asdict, "scoring": row}`), `compute_visible_docs_hash` fingerprints the searchable doc set for staleness (mismatch ⇒ FRESH), LRU eviction at `BUNDLE_CACHE_MAX_CHUNKS` (40). Corrupt payloads degrade to a cache miss, never an error. Consumed by `ai/router/wiring.py` (see `rag-pipeline.md` step 3a) |
 | `knowledge/teacher_weekly.py` | `TeacherWeeklyStorage` — teacher weekly uploads (Supabase Storage + DB job queue with leases), current-week + retrieval-weight controls, week-based document activation. `list_course_by_search_space` returns the per-week notes/slides grid plus a course-level `textbook` section (course-wide material, `_assemble_course_payload`). Storage access goes through ensure-first seams: memoized `_ensure_buckets()` auto-creates the upload/pages buckets (via `SupabaseStorageClient.ensure_bucket`) before `_upload_source_pdf`/`_download_source_pdf`/`_store_page_asset`; page PNGs upload with `upsert=True` so worker retries overwrite instead of collecting duplicate-object warnings. **WU-3B2g §8B enqueue hook:** the `_index_existing_upload_async` finalize block (after `upload.status = UPLOAD_STATUS_READY`, before its `session.commit()`) calls the THIN `enqueue_provisioning_job(session, search_space_id, document_id, content_hash=indexed_doc.content_hash)` (a deferred local import of `apollo.provisioning.enqueue`, keeping `apollo` off the module import path) — riding the SAME commit so a provisioning job is never visible for a doc that did not finish indexing. It is idempotent (content-hash short-circuit on a `status='succeeded'` `apollo_ingest_runs` row + the migration-030 partial-unique-index) and a NO-OP for the upload path: the enqueue runs inside ONE nested SAVEPOINT and swallows ANY error so it can NEVER wedge the upload commit, and with `APOLLO_AUTOPROVISION_ENABLED` OFF nothing DRAINS the job (the `apollo-provision` worker is dormant + scaled to 0), so the upload READY/COMPLETED path is byte-identical to today. At runtime WU-3B2g WRITES `apollo_ingest_runs` / `apollo_provisioning_jobs` (here, at enqueue) and `apollo_rejected_problems` / `apollo_ingest_errors` (in the worker's orchestrator) — the migration-030 tables the §8B narration above declares (see `apollo.md` for the orchestrator/worker/promote interfaces) |
 | `knowledge/teacher_pdf_ingestion.py` | `TeacherPDFIngestor` — PyMuPDF native extraction with per-page heuristic Mathpix OCR fallback, fuzzy trigram dedupe, and page→chunk items. Native heading detection keeps the existing short `>=14pt` rule and also recognizes short body-size bold lines plus conservative numbered-outline headers; numbered questions (long, question-mark terminated, answer-followed, or inside a Sample Questions list) remain body chunks so authored study guides do not gain false sections. |
-| `reports/ai_use/models.py` | Pydantic `AIUseReport` schema + Supabase **REST** CRUD on `ai_use_reports` (via `vendors.supabase_client`, not SQLAlchemy) |
+| `reports/ai_use/models.py` | `AIUsageReport` ORM model (`app.ai_usage_reports`) + typed SQLAlchemy repository (`create_report`/`get_report_for_user`) — no PostgREST, no anon key |
 | `reports/ai_use/service.py` | Evidence pack assembly (redaction, prompt hashing, tool-call dedupe, token budget) + `generate_report()` LLM call |
 | `reports/ai_use/pdf.py` | Markdown → HTML (python-markdown) → PDF (WeasyPrint) with print CSS |
-| `reports/ai_use/routes.py` | `APIRouter` for `/reports/ai-use` create/get/PDF with chat-ownership checks |
+| `reports/ai_use/routes.py` | `APIRouter` for `/reports/ai-use` create/get/PDF; create is chat-ownership-gated (`_load_owned_chat_session`), get/PDF are owner-scoped repository reads (report row's own `user_id`) |
 
 Worker entrypoint: `teacher_upload_worker.py` (repo root) runs `TeacherWeeklyStorage().run_upload_worker_loop()` — the Procfile worker process.
 
@@ -229,7 +249,7 @@ HTTP responses intentionally retain the established `search_space_id`,
 - `TeacherPDFIngestor.ingest(pdf_path, *, doc_id, upload_page_asset) -> TeacherPDFIngestionResult` (items, source_markdown, pages, ocr_summary, artifact_manifest, warnings).
 
 ### Reports (`reports/ai_use/`)
-- `models.create_report(*, chat_id, style, length, markdown, jsonld, model_fingerprint, tool_calls, prompt_hashes)` / `get_report(report_id)` — Supabase PostgREST on `ai_use_reports`.
+- `AIUsageReport` ORM model (`app.ai_usage_reports`) + typed repository `models.create_report(db, *, user_id, course_id, chat_id, style, length, markdown, jsonld, model_fingerprint, tool_calls, prompt_hashes) -> AIUsageReport` / `models.get_report_for_user(db, *, report_id, user_id) -> AIUsageReport | None` — a real SQLAlchemy `AsyncSession`, no PostgREST, no anon key. `user_id`/`course_id` come from the authenticated context + the owning chat session (`routes.py::_load_owned_chat_session`), never client input; `get_report_for_user`'s query is itself scoped by `user_id`, so a cross-user read returns `None` indistinguishable from a 404.
 - `service.build_evidence_pack(chat_id, style, length, *, chat_loader) -> dict` — redacts secrets (sk-/Bearer/api_key regexes), 1000-char excerpts, 16-hex prompt hashes, extracts `[Textbook, p. N]` file refs, dedupes tool calls, drops oldest turns until under `EVIDENCE_TOKEN_BUDGET` (default 8000 tokens).
 - `service.generate_report(evidence_pack, style, length) -> dict` — wraps `vendors.openai_client.generate_ai_use_markdown` (markdown + JSON-LD + model fingerprint).
 - `pdf.render_pdf_from_markdown(markdown, *, css_paths, metadata) -> bytes`.
@@ -240,7 +260,7 @@ Mounted routers (in `server.py` ~line 645–686): `reports.ai_use.routes.router`
 | Route | Handler location | Notes |
 |-------|-----------------|-------|
 | `GET/POST/DELETE /chats`, `GET/POST/DELETE /chats/{chat_id}` | `chats/routes.py` | list (with title preview + turn_count), get transcript, upsert (delete-all + reinsert turns), delete; owner-scoped via `resolve_auth_context` |
-| `POST /reports/ai-use/{chat_id}`, `GET /reports/ai-use/{report_id}`, `GET /reports/ai-use/{report_id}.pdf` | `reports/ai_use/routes.py` | every access path re-verifies the caller owns the underlying chat |
+| `POST /reports/ai-use/{chat_id}`, `GET /reports/ai-use/{report_id}`, `GET /reports/ai-use/{report_id}.pdf` | `reports/ai_use/routes.py` | create is chat-ownership-gated (403 without an owned `ChatSession`); get/PDF are owner-scoped repository reads (404 if the report isn't the caller's) |
 | `GET /teacher/weeks`, `POST /teacher/weeks/current`, `GET/POST /teacher/retrieval-weights`, `POST /teacher/upload` (multipart, 202), `POST /teacher/uploads/{upload_id}/retry` (202) | `server.py` ~773–991 | all gated by `_require_course_membership(role="teacher")`; uses `TeacherWeeklyStorage` |
 | `POST /ask`, `POST /ask/stream` | `server.py` | consume chats service for memory (see flow 1) |
 
@@ -255,11 +275,11 @@ Mounted routers (in `server.py` ~line 645–686): `reports.ai_use.routes.router`
    - **(b) Checkpointed embed + persist** (`indexing/checkpoint_indexer.py:embed_and_persist_chunks`): pages are grouped and packed into chunk-count-bounded batches; already-completed pages (up to the resume pointer) are skipped. Each batch is embedded via `embed_texts` (~256 texts per OpenAI request), then persisted in its own **fresh, short-lived `AsyncSession`** that commits and closes before the next batch begins — the DB connection is never held open while embeddings are in flight. After each commit: the resume pointer (`artifact_manifest.embed_progress.last_completed_page`) is advanced, `teacher_upload_jobs.lease_expires_at` is renewed (keeping the lease alive across a multi-hour job), and `attempt_count` is **reset to 0** (so only jobs that are genuinely stuck — no progress — exhaust the 3-retry limit).
    - **(c) Finalize** (`indexing/checkpoint_indexer.py:finalize_document`): fresh short session persists null-page chunks, doc-level content + embedding, and marks the doc `READY`; prior same-week/kind uploads are marked `superseded` and their docs set `inactive`; upload row set `ready` with `doc_id`.
 4. **Week change** — `POST /teacher/weeks/current` → `set_current_week_by_search_space` → updates `TeacherCourse.current_week` and re-runs `_sync_week_activation` (bulk `UPDATE aita_documents.status` between `{"state":"inactive"}` and ready), which is how retrieval sees only released material.
-5. **AI-use report generation** — `POST /reports/ai-use/{chat_id}`: ownership check → `build_evidence_pack` (loader = `serialize_chat_session` scoped to the user; redact → excerpt → hash prompts → token-budget truncation) → `generate_report` (OpenAI; `TEST_FAKE_OPENAI=1` gives an offline double) → `create_report` persists markdown/JSON-LD to `ai_use_reports` via PostgREST. `GET .../{report_id}.pdf` re-renders markdown with WeasyPrint on each request (PDFs are not stored).
+5. **AI-use report generation** — `POST /reports/ai-use/{chat_id}`: `_load_owned_chat_session` loads the caller's own `ChatSession` row (403 if none — this is also where `course_id` comes from, never the request body) → `build_evidence_pack` (loader = `serialize_chat_session` scoped to the user; redact → excerpt → hash prompts → token-budget truncation) → `generate_report` (OpenAI; `TEST_FAKE_OPENAI=1` gives an offline double) → `create_report` persists markdown/JSON-LD to `app.ai_usage_reports` via the typed repository, attributing the row to the authenticated `user_id` and the loaded session's `course_id`. `GET .../{report_id}` and `GET .../{report_id}.pdf` both re-query the report scoped to the caller's `user_id` (owner-scoped, no anon REST fallback); the PDF route re-renders markdown with WeasyPrint on each request (PDFs are not stored).
 ## Key dependencies
 
 - Inbound: `server.py` (`/ask` memory, teacher endpoints, router mounts), `apollo/` and `retrieval/` read these tables, `teacher_upload_worker.py` (Procfile worker).
-- Outbound: `indexing/` (`AITAIndexingService`, `AITAConnectorDocument`, hashing) for chunk writes; `vendors/supabase_storage.SupabaseStorageClient` (upload buckets); `vendors/supabase_client` (PostgREST for `ai_use_reports`); `vendors/openai_client.generate_ai_use_markdown`; `ocr/mathpix`; `auth.resolve_auth_context`; `config/weights` (`get_env_weights`, `normalize_weights`, `WEIGHT_MIN/MAX`).
+- Outbound: `indexing/` (`AITAIndexingService`, `AITAConnectorDocument`, hashing) for chunk writes; `vendors/supabase_storage.SupabaseStorageClient` (upload buckets); `vendors/openai_client.generate_ai_use_markdown`; `ocr/mathpix`; `auth.resolve_auth_context`; `chats.service.get_chat_session_for_user` (reports' `_load_owned_chat_session`); `config/weights` (`get_env_weights`, `normalize_weights`, `WEIGHT_MIN/MAX`). `vendors/supabase_client` (the anon-key PostgREST client) has zero remaining runtime importers in this domain as of DB-15 — `reports/ai_use/models.py` was its last production caller.
 - Libraries: SQLAlchemy 2 async + asyncpg, `pgvector.sqlalchemy.Vector`, PyMuPDF (`fitz`), `markdown` + `weasyprint` (PDF), pydantic.
 
 ## Non-obvious conventions
@@ -267,9 +287,8 @@ Mounted routers (in `server.py` ~line 645–686): `reports.ai_use.routes.router`
 - **Apollo Layer-1 prerequisite direction is a legacy exception**: `internal.entity_prerequisites.from_entity_id` (DB-13; legacy name `apollo_entity_prereqs`) depends on `to_entity_id` (dependent → prerequisite). This persisted convention was not migrated by DAG-0 and must not be treated as the KG/canonical `DEPENDS_ON` convention, which is prerequisite → dependent. The owning ORM docstring in `apollo/persistence/models.py::EntityPrereq` carries the same warning; `:Canon` projection remains node-only.
 - **Two event loops, sync routes**: most endpoints are `def` (not `async def`) and wrap async DB work with `run_async()`. Never share one engine across loops — `database/session.py` keys engines by `id(loop)` to avoid "Future attached to a different loop".
 - **Supabase CLI owns forward migrations**: CLI 2.109.0 is pinned; active files live under `supabase/migrations/` and use 14-digit timestamp names generated by `supabase migration new`. `database/migrations/` is frozen historical provenance through `047`, including both `023` files, and is protected by a normalized-checksum manifest. `node scripts/db/reset-local.mjs` explicitly targets the local Docker stack and must never be given linked/remote flags.
-- **RLS is enabled but unenforced for the backend** (migration 022): backend connects as table owner (exempt unless FORCE); authorization lives in app code (`_require_course_membership`, chat-ownership checks). `ai_use_reports` ownership is purely app-layer.
+- **RLS is enabled but unenforced for the backend** (migration 022 legacy; every DB-04 target `app.*` table, including `app.ai_usage_reports`, carries real forced-RLS owner policies the same way): backend connects as table owner (exempt unless FORCE); authorization lives in app code (`_require_course_membership`, chat-ownership checks, and — as of DB-15 — the reports repository's owner-scoped queries).
 - **Document status is JSONB**, not an enum column — compare with `DocumentStatus.is_state()`/`status["state"].astext`; teacher_weekly additionally uses an ad-hoc `{"state": "inactive"}` for week gating.
-- `reports/ai_use/models.py` deliberately uses Supabase REST, not the SQLAlchemy session — the only module in this domain doing so.
 - `turn_index` integrity relies on row-level locks in `append_turn`; don't insert `ChatTurn` rows directly.
 - `TeacherCourse.weight_bounds` server_default escapes JSON colons (`\:`) so SQLAlchemy `text()` doesn't treat them as bind params — keep the escaping if touching it.
 - Re-index of a ready upload busts the content hash by appending an HTML comment marker (`<!-- reindex:... -->`) to `source_markdown`.
