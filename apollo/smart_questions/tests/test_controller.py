@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from apollo.persistence.models import QuestionTally, ReferenceQuestionOpportunity
+from apollo.persistence.models import QuestionOpportunity
 from apollo.schemas.problem import Problem
 from apollo.smart_questions import controller
 from apollo.smart_questions.unified import EvidenceQuote, TallyUpdate, UnifiedQuestionResult
@@ -69,7 +69,7 @@ def _ask(*updates):
 
 @pytest.mark.asyncio
 async def test_absent_rows_default_missing_and_ask_persists_tally_and_audit(monkeypatch):
-    db = _DB([], [])
+    db = _DB([])
 
     async def evaluate(**kwargs):
         assert kwargs["tally_state"][0].status == "missing"
@@ -80,54 +80,60 @@ async def test_absent_rows_default_missing_and_ask_persists_tally_and_audit(monk
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     result = await controller.plan_next_question(
         db,
+        course_id=11,
         attempt_id=2,
         session_id=3,
         problem=_problem(),
         transcript=[("student", "x matters")],
         turn_index=0,
     )
-    tally = next(row for row in db.added if isinstance(row, QuestionTally))
-    audit = next(row for row in db.added if isinstance(row, ReferenceQuestionOpportunity))
+    opportunity = next(row for row in db.added if isinstance(row, QuestionOpportunity))
     assert result.question == "That helps. What do you mean by x?"
-    assert tally.status == "tentative"
-    assert tally.evidence == [{"turn_id": 0, "quote": "x matters"}]
-    assert tally.student_declined is False
-    assert tally.times_asked == 1
-    assert tally.last_asked_turn == 1
-    assert audit.question == "What do you mean by x?"
+    assert opportunity.course_id == 11
+    assert opportunity.session_id == 3
+    assert opportunity.state == "tentative"
+    assert opportunity.evidence == [{"turn_id": 0, "quote": "x matters"}]
+    assert opportunity.student_declined is False
+    assert opportunity.times_asked == 1
+    assert opportunity.last_asked_turn == 1
+    assert opportunity.question == "What do you mean by x?"
 
 
 @pytest.mark.asyncio
-async def test_round_trip_budget_and_increment_target_only(monkeypatch):
+async def test_confirm_once_round_trip_increments_target_to_two(monkeypatch):
     target = SimpleNamespace(
         reference_node_id="def_x",
-        status="missing",
+        state="missing",
         evidence=[],
         student_declined=True,
-        times_asked=2,
+        times_asked=1,
         last_asked_turn=3,
+        question="Prior question?",
+        asked_turn=3,
+        answered_turn=4,
     )
-    db = _DB([target], [])
+    db = _DB([target])
 
     async def evaluate(**kwargs):
         state = kwargs["tally_state"][0]
         assert state.student_declined is True
-        assert state.times_asked == 2
-        assert kwargs["budget"].questions_asked == 2
+        assert state.times_asked == 1
+        assert kwargs["budget"].questions_asked == 1
         return _ask(TallyUpdate("def_x", "understood", EvidenceQuote(0, "x matters"), False))
 
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     await controller.plan_next_question(
         db,
+        course_id=11,
         attempt_id=2,
         session_id=3,
         problem=_problem(),
         transcript=[("student", "x matters")],
         turn_index=4,
     )
-    assert target.status == "understood"
+    assert target.state == "understood"
     assert target.student_declined is False
-    assert target.times_asked == 3
+    assert target.times_asked == 2
     assert target.last_asked_turn == 5
 
 
@@ -135,13 +141,16 @@ async def test_round_trip_budget_and_increment_target_only(monkeypatch):
 async def test_invalid_evidence_drops_update_and_preserves_prior(monkeypatch, caplog):
     row = SimpleNamespace(
         reference_node_id="def_x",
-        status="tentative",
+        state="tentative",
         evidence=[{"turn_id": 0, "quote": "old quote"}],
         student_declined=False,
         times_asked=1,
         last_asked_turn=1,
+        question="Prior question?",
+        asked_turn=1,
+        answered_turn=2,
     )
-    db = _DB([row], [])
+    db = _DB([row])
     monkeypatch.setattr(
         controller,
         "evaluate_and_ask",
@@ -158,6 +167,7 @@ async def test_invalid_evidence_drops_update_and_preserves_prior(monkeypatch, ca
     with caplog.at_level("WARNING"):
         result = await controller.plan_next_question(
             db,
+            course_id=11,
             attempt_id=2,
             session_id=3,
             problem=_problem(),
@@ -165,10 +175,10 @@ async def test_invalid_evidence_drops_update_and_preserves_prior(monkeypatch, ca
             turn_index=2,
         )
     assert result.action == "done"
-    assert row.status == "tentative"
+    assert row.state == "tentative"
     assert row.evidence == [{"turn_id": 0, "quote": "old quote"}]
     assert row.student_declined is False
-    assert "apollo_question_tally_invalid_evidence" in caplog.text
+    assert "apollo_question_opportunity_invalid_evidence" in caplog.text
 
 
 async def _async_result(value):
@@ -183,8 +193,12 @@ async def test_reference_opportunity_state_is_not_input_but_still_written(monkey
         question="Old question?",
         asked_turn=1,
         answered_turn=None,
+        evidence=[],
+        student_declined=False,
+        times_asked=1,
+        last_asked_turn=1,
     )
-    db = _DB([], [audit])
+    db = _DB([audit])
 
     async def evaluate(**kwargs):
         assert "question_history" not in kwargs
@@ -193,6 +207,7 @@ async def test_reference_opportunity_state_is_not_input_but_still_written(monkey
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     await controller.plan_next_question(
         db,
+        course_id=11,
         attempt_id=2,
         session_id=3,
         problem=_problem(),
@@ -205,15 +220,19 @@ async def test_reference_opportunity_state_is_not_input_but_still_written(monkey
 
 
 @pytest.mark.asyncio
-async def test_done_closes_legacy_waiting_audit(monkeypatch):
+async def test_done_closes_pending_question_without_overwriting_tally_state(monkeypatch):
     audit = SimpleNamespace(
         reference_node_id="def_x",
         state="asked_waiting",
         question="Old question?",
         asked_turn=1,
         answered_turn=None,
+        evidence=[],
+        student_declined=False,
+        times_asked=1,
+        last_asked_turn=1,
     )
-    db = _DB([], [audit])
+    db = _DB([audit])
 
     async def evaluate(**kwargs):
         return UnifiedQuestionResult((), "done", None, None, None)
@@ -221,6 +240,7 @@ async def test_done_closes_legacy_waiting_audit(monkeypatch):
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     result = await controller.plan_next_question(
         db,
+        course_id=11,
         attempt_id=2,
         session_id=3,
         problem=_problem(),
@@ -228,7 +248,7 @@ async def test_done_closes_legacy_waiting_audit(monkeypatch):
         turn_index=2,
     )
     assert result.action == "done"
-    assert audit.state == "answered"
+    assert audit.state == "asked_waiting"
     assert audit.answered_turn == 2
 
 
@@ -244,11 +264,14 @@ def test_controller_defensive_tally_decoders_and_validation():
     )
     row = SimpleNamespace(
         reference_node_id="fallback",
-        status="invalid",
+        state="invalid",
         evidence=[],
         student_declined=False,
         times_asked=0,
         last_asked_turn=None,
+        question="",
+        asked_turn=None,
+        answered_turn=None,
     )
     assert (
         controller._build_tally_state(SimpleNamespace(nodes=[node]), [row])[0].status == "missing"
@@ -258,15 +281,19 @@ def test_controller_defensive_tally_decoders_and_validation():
 
 
 @pytest.mark.asyncio
-async def test_advancing_target_closes_previous_legacy_audit(monkeypatch):
+async def test_advancing_target_closes_previous_question(monkeypatch):
     previous = SimpleNamespace(
         reference_node_id="old",
         state="asked_waiting",
         question="Old question?",
         asked_turn=1,
         answered_turn=None,
+        evidence=[],
+        student_declined=False,
+        times_asked=1,
+        last_asked_turn=1,
     )
-    db = _DB([], [previous])
+    db = _DB([previous])
 
     async def evaluate(**kwargs):
         return _ask()
@@ -274,13 +301,14 @@ async def test_advancing_target_closes_previous_legacy_audit(monkeypatch):
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     await controller.plan_next_question(
         db,
+        course_id=11,
         attempt_id=2,
         session_id=3,
         problem=_problem(),
         transcript=[("student", "x")],
         turn_index=2,
     )
-    assert previous.state == "answered"
+    assert previous.state == "asked_waiting"
     assert previous.answered_turn == 2
 
 
@@ -291,13 +319,16 @@ async def test_covered_topics_snapshot_includes_node_understood_this_turn(monkey
     celebrates before the report."""
     row = SimpleNamespace(
         reference_node_id="def_x",
-        status="tentative",
+        state="tentative",
         evidence=[],
         student_declined=False,
         times_asked=1,
         last_asked_turn=1,
+        question="Prior question?",
+        asked_turn=1,
+        answered_turn=2,
     )
-    db = _DB([row], [])
+    db = _DB([row])
 
     async def evaluate(**kwargs):
         return UnifiedQuestionResult(
@@ -311,6 +342,7 @@ async def test_covered_topics_snapshot_includes_node_understood_this_turn(monkey
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     result = await controller.plan_next_question(
         db,
+        course_id=11,
         attempt_id=2,
         session_id=3,
         problem=_problem(),
@@ -324,7 +356,7 @@ async def test_covered_topics_snapshot_includes_node_understood_this_turn(monkey
 @pytest.mark.asyncio
 async def test_covered_topics_excludes_non_understood_nodes(monkeypatch):
     """A node that is only ``tentative`` (or ``missing``) is never celebrated."""
-    db = _DB([], [])
+    db = _DB([])
 
     async def evaluate(**kwargs):
         return _ask(TallyUpdate("def_x", "tentative", EvidenceQuote(0, "x matters"), False))
@@ -332,6 +364,7 @@ async def test_covered_topics_excludes_non_understood_nodes(monkeypatch):
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     result = await controller.plan_next_question(
         db,
+        course_id=11,
         attempt_id=2,
         session_id=3,
         problem=_problem(),
@@ -349,13 +382,16 @@ async def test_covered_topics_is_a_cumulative_snapshot_not_just_this_turn(monkey
     the UI diffs it."""
     prior = SimpleNamespace(
         reference_node_id="def_x",
-        status="understood",
+        state="understood",
         evidence=[{"turn_id": 0, "quote": "x matters"}],
         student_declined=False,
         times_asked=1,
         last_asked_turn=1,
+        question="Prior question?",
+        asked_turn=1,
+        answered_turn=2,
     )
-    db = _DB([prior], [])
+    db = _DB([prior])
 
     async def evaluate(**kwargs):
         return _ask()
@@ -363,6 +399,7 @@ async def test_covered_topics_is_a_cumulative_snapshot_not_just_this_turn(monkey
     monkeypatch.setattr(controller, "evaluate_and_ask", evaluate)
     result = await controller.plan_next_question(
         db,
+        course_id=11,
         attempt_id=2,
         session_id=3,
         problem=_problem(),

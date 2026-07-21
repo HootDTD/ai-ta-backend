@@ -412,6 +412,7 @@ async def handle_chat(
     ] + [("student", message)]
     decision = await plan_next_question(
         db,
+        course_id=int(sess.course_id),
         attempt_id=int(current_attempt.id),
         session_id=session_id,
         problem=problem,

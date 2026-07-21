@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import QuestionTally, ReferenceQuestionOpportunity
+from apollo.persistence.models import QuestionOpportunity
 from apollo.schemas.problem import Problem
 from apollo.smart_questions.unified import (
     EvidenceQuote,
@@ -80,7 +80,7 @@ def _build_tally_state(reference_graph: Any, rows: list[Any]) -> tuple[TallyStat
     state: list[TallyState] = []
     for node in reference_graph.nodes:
         row = by_id.get(node.node_id)
-        status = str(row.status) if row is not None else "missing"
+        status = str(row.state) if row is not None else "missing"
         if status not in _VALID_STATES:
             status = "missing"
         state.append(
@@ -110,11 +110,16 @@ def _valid_update_evidence(update: TallyUpdate, transcript: list[tuple[str, str]
     return role == "student" and update.evidence.quote in content
 
 
-def _new_tally_row(*, attempt_id: int, node_id: str) -> QuestionTally:
-    return QuestionTally(
+def _new_opportunity_row(
+    *, course_id: int, session_id: int, attempt_id: int, node_id: str
+) -> QuestionOpportunity:
+    return QuestionOpportunity(
+        course_id=course_id,
+        session_id=session_id,
         attempt_id=attempt_id,
         reference_node_id=node_id,
-        status="missing",
+        state="missing",
+        question="",
         evidence=[],
         student_declined=False,
         times_asked=0,
@@ -124,6 +129,8 @@ def _new_tally_row(*, attempt_id: int, node_id: str) -> QuestionTally:
 def _apply_tally_updates(
     db: AsyncSession,
     *,
+    course_id: int,
+    session_id: int,
     attempt_id: int,
     rows: list[Any],
     updates: tuple[TallyUpdate, ...],
@@ -133,7 +140,7 @@ def _apply_tally_updates(
     for update in updates:
         if not _valid_update_evidence(update, transcript):
             _LOG.warning(
-                "apollo_question_tally_invalid_evidence attempt_id=%s node_id=%s turn_id=%s",
+                "apollo_question_opportunity_invalid_evidence attempt_id=%s node_id=%s turn_id=%s",
                 attempt_id,
                 update.node_id,
                 update.evidence.turn_id if update.evidence is not None else None,
@@ -141,10 +148,15 @@ def _apply_tally_updates(
             continue
         row = by_id.get(update.node_id)
         if row is None:
-            row = _new_tally_row(attempt_id=attempt_id, node_id=update.node_id)
+            row = _new_opportunity_row(
+                course_id=course_id,
+                session_id=session_id,
+                attempt_id=attempt_id,
+                node_id=update.node_id,
+            )
             db.add(row)
             by_id[update.node_id] = row
-        row.status = update.status
+        row.state = update.status
         if update.evidence is not None:
             evidence = list(row.evidence or [])
             serialized = {
@@ -172,65 +184,53 @@ def _covered_topics(
     return tuple(
         CoveredTopic(node_id=node_id, display_name=labels[node_id])
         for node_id, row in tally_by_id.items()
-        if str(row.status) == "understood" and node_id in labels
+        if str(row.state) == "understood" and node_id in labels
     )
 
 
-async def _write_opportunity_audit(
+def _write_opportunity_audit(
     db: AsyncSession,
     *,
+    course_id: int,
     attempt_id: int,
     session_id: int,
+    rows: dict[str, Any],
     result: UnifiedQuestionResult,
     turn_index: int,
-) -> None:
-    rows = cast(
-        list[Any],
-        (
-            await db.execute(
-                select(ReferenceQuestionOpportunity).where(
-                    ReferenceQuestionOpportunity.attempt_id == attempt_id
-                )
-            )
-        )
-        .scalars()
-        .all(),
-    )
+) -> dict[str, Any]:
+    """Record question timing without overwriting the merged tally state."""
+
     if result.action == "done":
-        for row in rows:
-            if row.state == "asked_waiting":
-                row.state = "answered"
+        for row in rows.values():
+            if row.asked_turn is not None and row.answered_turn is None:
                 row.answered_turn = turn_index
-        return
+        return rows
 
     target_id = cast(str, result.target_node_id)
     question = cast(str, result.question)
-    target_row = next((row for row in rows if row.reference_node_id == target_id), None)
-    for row in rows:
-        if row.state == "asked_waiting" and row is not target_row:
-            row.state = "answered"
+    target_row = rows.get(target_id)
+    for row in rows.values():
+        if row.asked_turn is not None and row.answered_turn is None and row is not target_row:
             row.answered_turn = turn_index
     if target_row is None:
-        db.add(
-            ReferenceQuestionOpportunity(
-                attempt_id=attempt_id,
-                session_id=session_id,
-                reference_node_id=target_id,
-                state="asked_waiting",
-                question=question,
-                asked_turn=turn_index + 1,
-            )
+        target_row = _new_opportunity_row(
+            course_id=course_id,
+            session_id=session_id,
+            attempt_id=attempt_id,
+            node_id=target_id,
         )
-    else:
-        target_row.state = "asked_waiting"
-        target_row.question = question
-        target_row.asked_turn = turn_index + 1
-        target_row.answered_turn = None
+        db.add(target_row)
+        rows[target_id] = target_row
+    target_row.question = question
+    target_row.asked_turn = turn_index + 1
+    target_row.answered_turn = None
+    return rows
 
 
 async def plan_next_question(
     db: AsyncSession,
     *,
+    course_id: int,
     attempt_id: int,
     session_id: int,
     problem: Problem,
@@ -238,15 +238,24 @@ async def plan_next_question(
     turn_index: int,
 ) -> QuestionDecision:
     reference_graph = problem.to_kg_graph(attempt_id)
-    tally_rows = cast(
+    opportunity_rows = cast(
         list[Any],
-        (await db.execute(select(QuestionTally).where(QuestionTally.attempt_id == attempt_id)))
+        (
+            await db.execute(
+                select(QuestionOpportunity).where(
+                    QuestionOpportunity.course_id == course_id,
+                    QuestionOpportunity.session_id == session_id,
+                    QuestionOpportunity.attempt_id == attempt_id,
+                )
+            )
+        )
         .scalars()
         .all(),
     )
-    tally_state = _build_tally_state(reference_graph, tally_rows)
+    tally_state = _build_tally_state(reference_graph, opportunity_rows)
     budget = QuestionBudget(
-        questions_asked=sum(int(row.times_asked) for row in tally_rows), cap=question_cap()
+        questions_asked=sum(int(row.times_asked) for row in opportunity_rows),
+        cap=question_cap(),
     )
     result = await evaluate_and_ask(
         transcript=transcript,
@@ -257,8 +266,10 @@ async def plan_next_question(
     )
     tally_by_id = _apply_tally_updates(
         db,
+        course_id=course_id,
+        session_id=session_id,
         attempt_id=attempt_id,
-        rows=tally_rows,
+        rows=opportunity_rows,
         updates=result.tally_updates,
         transcript=transcript,
     )
@@ -267,17 +278,23 @@ async def plan_next_question(
     if result.action == "ask" and result.target_node_id is not None:
         target_row = tally_by_id.get(result.target_node_id)
         if target_row is None:
-            target_row = _new_tally_row(attempt_id=attempt_id, node_id=result.target_node_id)
+            target_row = _new_opportunity_row(
+                course_id=course_id,
+                session_id=session_id,
+                attempt_id=attempt_id,
+                node_id=result.target_node_id,
+            )
             db.add(target_row)
             tally_by_id[result.target_node_id] = target_row
         target_row.times_asked = int(target_row.times_asked) + 1
         target_row.last_asked_turn = turn_index + 1
 
-    # Legacy ledger remains write-only audit continuity; none of its state reaches the decision.
-    await _write_opportunity_audit(
+    _write_opportunity_audit(
         db,
+        course_id=course_id,
         attempt_id=attempt_id,
         session_id=session_id,
+        rows=tally_by_id,
         result=result,
         turn_index=turn_index,
     )
