@@ -251,7 +251,11 @@ async def test_flag_off_byte_identical_to_select_problem(db_session, monkeypatch
     sid, cid, _codes = await _seed_pool(db_session, subject_slug="s_off")
 
     baseline = await select_problem(
-        db_session, concept_id=cid, difficulty="intro", attempted_ids=[]
+        db_session,
+        concept_id=cid,
+        search_space_id=sid,
+        difficulty="intro",
+        attempted_ids=[],
     )
     chosen = await select_problem_personalized(
         db_session,
@@ -290,7 +294,11 @@ async def test_flag_on_empty_state_returns_candidates_zero(db_session, monkeypat
     await _seed_entity(db_session, concept_id=cid, canonical_key=_CONTINUITY)
 
     baseline = await select_problem(
-        db_session, concept_id=cid, difficulty="intro", attempted_ids=[]
+        db_session,
+        concept_id=cid,
+        search_space_id=sid,
+        difficulty="intro",
+        attempted_ids=[],
     )
     chosen = await select_problem_personalized(
         db_session,
@@ -309,7 +317,11 @@ async def test_flag_on_empty_state_log_marks_fallback(db_session, monkeypatch, c
     monkeypatch.setenv(_FLAG, "1")
     sid, cid, _codes = await _seed_pool(db_session, subject_slug="s_empty_log")
     baseline = await select_problem(
-        db_session, concept_id=cid, difficulty="intro", attempted_ids=[]
+        db_session,
+        concept_id=cid,
+        search_space_id=sid,
+        difficulty="intro",
+        attempted_ids=[],
     )
 
     with caplog.at_level(logging.INFO, logger=_LOGGER):
@@ -410,7 +422,11 @@ async def test_flag_on_prereq_blocked_weak_excluded_falls_back(db_session, monke
     await _seed_state(db_session, sid=sid, entity_id=e_cont, mastery=0.40, confidence=0.6)
 
     baseline = await select_problem(
-        db_session, concept_id=cid, difficulty="intro", attempted_ids=[]
+        db_session,
+        concept_id=cid,
+        search_space_id=sid,
+        difficulty="intro",
+        attempted_ids=[],
     )
 
     with caplog.at_level(logging.INFO, logger=_LOGGER):
@@ -461,7 +477,13 @@ async def test_flag_on_pool_exhausted_flag_off_parity(db_session, monkeypatch):
     await _seed_weak_profile(db_session, sid=sid, cid=cid)
 
     with pytest.raises(PoolExhaustedError) as off_exc:
-        await select_problem(db_session, concept_id=cid, difficulty="hard", attempted_ids=[])
+        await select_problem(
+            db_session,
+            concept_id=cid,
+            search_space_id=sid,
+            difficulty="hard",
+            attempted_ids=[],
+        )
     with pytest.raises(PoolExhaustedError) as on_exc:
         await select_problem_personalized(
             db_session,
@@ -500,7 +522,11 @@ async def test_course_isolation_personalized_selection(db_session, monkeypatch, 
     await _seed_state(db_session, sid=sid_b, entity_id=e_incomp_b, mastery=0.88, confidence=0.9)
 
     baseline_b = await select_problem(
-        db_session, concept_id=cid_b, difficulty="intro", attempted_ids=[]
+        db_session,
+        concept_id=cid_b,
+        search_space_id=sid_b,
+        difficulty="intro",
+        attempted_ids=[],
     )
 
     with caplog.at_level(logging.INFO, logger=_LOGGER):
@@ -552,7 +578,11 @@ async def test_handle_next_flag_off_byte_identical(db_session, monkeypatch):
     await db_session.commit()
 
     expected = await select_problem(
-        db_session, concept_id=cid, difficulty="intro", attempted_ids=[_P1]
+        db_session,
+        concept_id=cid,
+        search_space_id=sid,
+        difficulty="intro",
+        attempted_ids=[_P1],
     )
 
     payload = await handle_next(db=db_session, session_id=sess.id, difficulty="intro")
@@ -599,7 +629,11 @@ async def test_handle_next_flag_on_empty_state_matches_flag_off(db_session, monk
     await db_session.commit()
 
     expected = await select_problem(
-        db_session, concept_id=cid, difficulty="intro", attempted_ids=[_P1]
+        db_session,
+        concept_id=cid,
+        search_space_id=sid,
+        difficulty="intro",
+        attempted_ids=[_P1],
     )
 
     payload = await handle_next(db=db_session, session_id=sess.id, difficulty="intro")
@@ -619,7 +653,11 @@ async def test_init_session_flag_off_byte_identical(db_session, monkeypatch):
     sid, cid, _codes = await _seed_pool(db_session, subject_slug="init_off")
 
     expected = await select_problem(
-        db_session, concept_id=cid, difficulty="intro", attempted_ids=[]
+        db_session,
+        concept_id=cid,
+        search_space_id=sid,
+        difficulty="intro",
+        attempted_ids=[],
     )
 
     with patch("apollo.hoot_bridge.session_init.infer_concept_id", return_value=cid):
@@ -674,7 +712,11 @@ async def test_init_session_flag_on_empty_state_matches_flag_off(db_session, mon
     sid, cid, _codes = await _seed_pool(db_session, subject_slug="init_empty")
 
     expected = await select_problem(
-        db_session, concept_id=cid, difficulty="intro", attempted_ids=[]
+        db_session,
+        concept_id=cid,
+        search_space_id=sid,
+        difficulty="intro",
+        attempted_ids=[],
     )
 
     with patch("apollo.hoot_bridge.session_init.infer_concept_id", return_value=cid):

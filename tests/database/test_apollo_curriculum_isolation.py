@@ -78,7 +78,12 @@ async def test_problems_scoped_to_course_concept(db_session):
     problem_codes; none of Y's."""
     (sid_x, cid_x, codes_x), (sid_y, cid_y, codes_y) = await _seed_two_courses(db_session)
 
-    x_problem_codes = {p.id for p in await list_problems_for_concept(db_session, concept_id=cid_x)}
+    x_problem_codes = {
+        p.id
+        for p in await list_problems_for_concept(
+            db_session, concept_id=cid_x, search_space_id=sid_x
+        )
+    }
     assert x_problem_codes == set(codes_x)
     assert x_problem_codes.isdisjoint(set(codes_y))
 
