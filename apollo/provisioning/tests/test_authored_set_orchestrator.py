@@ -76,7 +76,7 @@ async def _seed_concept(db, *, search_space_id: int, slug: str = "authored") -> 
         course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name,
         slug=slug,
         display_name="Authored",
-        canonical_symbols={"symbols": ["M"]},
+        canonical_symbols=["M"],
         normalization_map={},
     )
     db.add(concept)
@@ -622,13 +622,13 @@ async def test_oversized_question_without_answer_unit_is_masked_before_tier1(
 
     assert len(scraped_candidates) == 1
     assert leaked_tail not in scraped_candidates[0].problem_text
-    payload = (
+    problem_text = (
         await db_session.execute(
-            select(ProblemRecord.payload).where(ProblemRecord.concept_id == concept_id)
+            select(ProblemRecord.problem_text).where(ProblemRecord.concept_id == concept_id)
         )
     ).scalar_one()
-    assert leaked_tail not in payload["problem_text"]
-    assert "Explanation:" not in payload["problem_text"]
+    assert leaked_tail not in problem_text
+    assert "Explanation:" not in problem_text
     records = [
         record
         for record in caplog.records
@@ -754,20 +754,20 @@ async def test_problem_only_combined_porter_masks_answers_before_tier1_write(
     assert pass_calls == 1
     assert len(scraped_candidates) == 20
     assert report.counts == {"promoted": 0, "rejected": 0, "held_for_review": 20}
-    payloads = (
+    problem_texts = (
         (
             await db_session.execute(
-                select(ProblemRecord.payload).where(ProblemRecord.concept_id == concept_id)
+                select(ProblemRecord.problem_text).where(ProblemRecord.concept_id == concept_id)
             )
         )
         .scalars()
         .all()
     )
-    assert len(payloads) == 20
+    assert len(problem_texts) == 20
     for candidate in scraped_candidates:
         assert all(answer not in candidate.problem_text for answer in answer_texts)
-    for payload in payloads:
-        assert all(answer not in payload["problem_text"] for answer in answer_texts)
+    for problem_text in problem_texts:
+        assert all(answer not in problem_text for answer in answer_texts)
 
 
 @pytest.mark.asyncio
@@ -998,14 +998,11 @@ async def test_unaugmented_hold_payload_untouched(db_session, monkeypatch):
     assert result.review_required is True
     assert result.reason == "generated_no_match"
     row = await db_session.get(ProblemRecord, result.concept_problem_id)
-    assert row.payload == {
-        "id": f"scrape.{candidate.chunk_content_hash}",
-        "concept_id": candidate.concept_slug,
-        "difficulty": candidate.difficulty,
-        "problem_text": candidate.problem_text,
-        "given_values": candidate.given_values,
-        "target_unknown": candidate.target_unknown,
-    }
+    assert row.problem_code == f"scrape.{candidate.chunk_content_hash}"
+    assert row.difficulty == candidate.difficulty
+    assert row.problem_text == candidate.problem_text
+    assert row.given_values == candidate.given_values
+    assert row.target_unknown == candidate.target_unknown
 
 
 @pytest.mark.asyncio
@@ -1072,11 +1069,11 @@ async def test_hold_arm_applies_augmentation_to_tier1_payload(db_session, monkey
 
     row = await db_session.get(ProblemRecord, result.concept_problem_id)
     authored_review = row.provenance["authored_review"]
-    assert row.payload["problem_text"] == "Define beam moment and explain why it peaks."
-    assert row.payload["target_unknown"] == "why beam moment peaks"
-    assert row.payload["problem_text_original"] == candidate.problem_text
-    assert row.payload["target_unknown_original"] == candidate.target_unknown
-    assert row.payload["augmented"] == "explain_why"
+    assert row.problem_text == "Define beam moment and explain why it peaks."
+    assert row.target_unknown == "why beam moment peaks"
+    assert row.payload_extra["problem_text_original"] == candidate.problem_text
+    assert row.payload_extra["target_unknown_original"] == candidate.target_unknown
+    assert row.payload_extra["augmented"] == "explain_why"
     assert authored_review["required"] is True
     assert authored_review["reason"] == "generated_no_match"
     assert authored_review["augmented"] == "explain_why"
@@ -1099,16 +1096,20 @@ async def test_authored_concept_dup_hashes_skips_invalid_payload(db_session):
     concept_id = await _seed_concept(db_session, search_space_id=space, slug="dup")
     db_session.add(
         ProblemRecord(
+            course_id=space,
             concept_id=concept_id,
             problem_code="bad-payload",
             difficulty="intro",
+            problem_text="",
+            reference_solution={"version": 1, "steps": []},
+            payload_extra={"not": "a valid problem"},
             tier=2,
-            payload={"not": "a valid problem"},
-            search_space_id=space,
         )
     )
     await db_session.flush()
-    hashes = await _authored_concept_dup_hashes(db_session, concept_id=concept_id)
+    hashes = await _authored_concept_dup_hashes(
+        db_session, concept_id=concept_id, course_id=space
+    )
     assert hashes == set()
 
 
@@ -1393,7 +1394,8 @@ async def test_candidate_missing_tier1_row_is_rejected(db_session, monkeypatch):
         spans = await retrieve_fn(question)
         return _draft(source="extracted").model_copy(update={"grounding": spans})
 
-    async def _no_tier1(db, *, concept_id, chunk_content_hash):
+    async def _no_tier1(db, *, concept_id, chunk_content_hash, course_id):
+        assert course_id > 0
         return None
 
     report = await _run_single_candidate(
@@ -1466,7 +1468,7 @@ async def test_candidate_gate9_unresolved_is_held_for_review(db_session, monkeyp
     assert row.provenance["authored_review"]["reason"] == "promotion_lint_unresolved"
 
 
-async def _noop_hashes(db, *, concept_id):
+async def _noop_hashes(db, *, concept_id, course_id):
     return set()
 
 

@@ -146,5 +146,8 @@ async def test_chat_find_problem_raises_when_code_absent(db_session):
     """T5.x — _find_problem raises RuntimeError when the problem_code has no DB
     row for the concept (the NO-FALLBACK not-found branch)."""
     session_id, cid, _code = await _seed_session_with_attempt(db_session)
+    session = await db_session.get(TutoringSession, session_id)
     with pytest.raises(RuntimeError):
-        await _find_problem(db_session, cid, "nonexistent_problem_code")
+        await _find_problem(
+            db_session, cid, "nonexistent_problem_code", course_id=session.course_id
+        )

@@ -220,7 +220,7 @@ async def test_load_concept_definition_builds_from_db_columns(db_session):
         concept_payloads=payloads,
     )
 
-    cd = await load_concept_definition(db_session, concept_id=cid)
+    cd = await load_concept_definition(db_session, concept_id=cid, search_space_id=sid)
     assert isinstance(cd, ConceptDefinition)
     assert cd.canonical_symbols.symbols == payloads["canonical_symbols"]["symbols"]
     assert cd.parser_prompt_template == payloads["parser_prompt_template"]
@@ -233,7 +233,9 @@ async def test_load_concept_definition_builds_from_db_columns(db_session):
 async def test_load_concept_definition_raises_on_missing_concept(db_session):
     """T1.5 — a non-existent concept_id raises ConceptNotFoundError."""
     with pytest.raises(ConceptNotFoundError):
-        await load_concept_definition(db_session, concept_id=999999)
+        await load_concept_definition(
+            db_session, concept_id=999999, search_space_id=999999
+        )
 
 
 async def test_load_concept_definition_problems_dir_is_sentinel_not_globbed(db_session):
@@ -241,7 +243,7 @@ async def test_load_concept_definition_problems_dir_is_sentinel_not_globbed(db_s
     globs the filesystem for problems (criterion #2)."""
     sid = await seed_search_space(db_session)
     cid = await seed_concept(db_session, search_space_id=sid, subject_slug="s1", concept_slug="c1")
-    cd = await load_concept_definition(db_session, concept_id=cid)
+    cd = await load_concept_definition(db_session, concept_id=cid, search_space_id=sid)
     assert cd.problems_dir.exists() is False
 
 

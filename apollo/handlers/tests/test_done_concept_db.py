@@ -118,4 +118,4 @@ async def test_done_find_problem_raises_when_code_absent(db_session):
         problems=_INTRO,
     )
     with pytest.raises(RuntimeError):
-        await _find_problem(db_session, cid, "nonexistent_problem_code")
+        await _find_problem(db_session, cid, "nonexistent_problem_code", course_id=sid)

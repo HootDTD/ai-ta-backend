@@ -232,20 +232,19 @@ async def _seed_concept_with_problem(
         course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name,
         slug=f"concept-{slug}",
         display_name="Concept",
-        canonical_symbols={"symbols": list(syms), "description": {}},
+        canonical_symbols=list(syms),
+        symbol_metadata={"description": {}},
         normalization_map=dict(norm),
     )
     db.add(concept)
     await db.flush()
-    problem = ProblemRecord(
+    problem = ProblemRecord.from_inventory_payload(
+        {"id": "scrape.abc", "difficulty": "intro", "problem_text": ""},
+        course_id=space.id,
         concept_id=concept.id,
-        problem_code="scrape.abc",
-        difficulty="intro",
-        payload={"id": "scrape.abc"},
         tier=1,
         solution_source=None,
         provenance={},
-        search_space_id=space.id,
     )
     db.add(problem)
     await db.flush()
@@ -387,10 +386,9 @@ async def test_promote_pass_flips_tier_and_payload(db_session):
     assert row.tier == 2
     assert row.solution_source is not None
     # The annotated reference solution is stored (entity_key per step + paths).
-    assert "reference_solution" in row.payload
-    first_step = row.payload["reference_solution"][0]
+    first_step = row.reference_solution["steps"][0]
     assert first_step.get("entity_key")
-    assert row.payload.get("declared_paths")
+    assert row.payload_extra.get("declared_paths")
 
 
 # --------------------------------------------------------------------------- #
@@ -441,7 +439,7 @@ async def test_multi_path_flag_off_never_calls_enumerator_and_preserves_legacy_p
     )
     assert result.promoted
     row = await db_session.get(ProblemRecord, problem_id)
-    assert row.payload["declared_paths"] == [
+    assert row.payload_extra["declared_paths"] == [
         [step["id"] for step in original_problem["reference_solution"]]
     ]
 
@@ -467,8 +465,8 @@ async def test_multi_path_enumerator_failure_falls_back_and_promotion_succeeds(
     )
     assert result.promoted
     row = await db_session.get(ProblemRecord, problem_id)
-    assert len(row.payload["declared_paths"]) == 1
-    assert isinstance(row.payload["declared_paths"][0], list)
+    assert len(row.payload_extra["declared_paths"]) == 1
+    assert isinstance(row.payload_extra["declared_paths"][0], list)
 
 
 async def test_multi_path_valid_replacement_writes_only_object_paths(db_session, monkeypatch):
@@ -489,9 +487,11 @@ async def test_multi_path_valid_replacement_writes_only_object_paths(db_session,
 
     assert result.promoted
     row = await db_session.get(ProblemRecord, problem_id)
-    assert row.payload["declared_paths"] == enumerated
-    assert all(isinstance(path, dict) for path in row.payload["declared_paths"])
-    assert promote_mod.validate_reference_graph(row.payload).ok
+    assert row.payload_extra["declared_paths"] == enumerated
+    assert all(isinstance(path, dict) for path in row.payload_extra["declared_paths"])
+    assert promote_mod.validate_reference_graph(
+        row.to_pydantic_payload(concept_slug="concept-x")
+    ).ok
 
 
 async def test_multi_path_joint_cover_failure_falls_back_to_legacy_path(db_session, monkeypatch):
@@ -516,7 +516,7 @@ async def test_multi_path_joint_cover_failure_falls_back_to_legacy_path(db_sessi
 
     assert result.promoted
     row = await db_session.get(ProblemRecord, problem_id)
-    assert row.payload["declared_paths"] == [
+    assert row.payload_extra["declared_paths"] == [
         [step["id"] for step in _bernoulli_problem()["reference_solution"]]
     ]
 
@@ -653,7 +653,7 @@ async def test_promote_table_less_concept_promotes_via_internal_grounding(db_ses
     )
     assert result.promoted is True, result.diagnostic
     row = await db_session.get(ProblemRecord, problem_id)
-    assert row.payload["verification"] == "mechanically_verified"
+    assert row.payload_extra["verification"] == "mechanically_verified"
 
 
 # --------------------------------------------------------------------------- #
@@ -678,7 +678,7 @@ async def test_promote_argument_graph_promotes_with_faithfulness_only_stamp(db_s
     )
     assert result.promoted is True, result.diagnostic
     row = await db_session.get(ProblemRecord, problem_id)
-    assert row.payload["verification"] == "faithfulness_only"
+    assert row.payload_extra["verification"] == "faithfulness_only"
 
 
 async def test_promote_symbolic_graph_stamps_mechanically_verified(db_session):
@@ -697,7 +697,7 @@ async def test_promote_symbolic_graph_stamps_mechanically_verified(db_session):
     )
     assert result.promoted is True
     row = await db_session.get(ProblemRecord, problem_id)
-    assert row.payload["verification"] == "mechanically_verified"
+    assert row.payload_extra["verification"] == "mechanically_verified"
 
 
 async def test_promote_rejects_malformed_problem_cleanly(db_session):
@@ -851,7 +851,7 @@ async def test_promote_rehomes_row_to_tagged_concept(db_session):
         course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name,
         slug="provisional.inventory",
         display_name="Provisional inventory",
-        canonical_symbols={"symbols": []},
+        canonical_symbols=[],
         normalization_map={},
     )
     db_session.add(provisional)
@@ -860,22 +860,21 @@ async def test_promote_rehomes_row_to_tagged_concept(db_session):
         course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name,
         slug="concept-pr7",
         display_name="Concept",
-        canonical_symbols={"symbols": list(_AUTHORED_SYMBOLS), "description": {}},
+        canonical_symbols=list(_AUTHORED_SYMBOLS),
+        symbol_metadata={"description": {}},
         normalization_map=dict(_NORMALIZATION),
     )
     db_session.add(tagged)
     await db_session.flush()
 
     # The Tier-1 row is homed on the PROVISIONAL concept (not the tagged one).
-    row = ProblemRecord(
+    row = ProblemRecord.from_inventory_payload(
+        _bernoulli_problem(),
+        course_id=space.id,
         concept_id=provisional.id,
-        problem_code="scrape.rehome",
-        difficulty="intro",
-        payload=_bernoulli_problem(),
         tier=1,
         solution_source=None,
         provenance={},
-        search_space_id=space.id,
     )
     db_session.add(row)
     await db_session.flush()
@@ -898,8 +897,12 @@ async def test_promote_rehomes_row_to_tagged_concept(db_session):
     assert refreshed.concept_id == tagged.id
 
     # The student selector (tier==2 + concept filter) can now reach it.
-    teachable = await list_problems_for_concept(db_session, concept_id=tagged.id)
+    teachable = await list_problems_for_concept(
+        db_session, concept_id=tagged.id, search_space_id=space.id
+    )
     assert any(p.id == _bernoulli_problem()["id"] for p in teachable)
     # ...and it is NOT reachable under the provisional concept.
-    provisional_pool = await list_problems_for_concept(db_session, concept_id=provisional.id)
+    provisional_pool = await list_problems_for_concept(
+        db_session, concept_id=provisional.id, search_space_id=space.id
+    )
     assert provisional_pool == []

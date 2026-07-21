@@ -170,22 +170,24 @@ async def test_list_excludes_provisional_and_counts_problems(db_session, monkeyp
     # one live teachable problem + one quarantined one
     db_session.add(
         ProblemRecord(
+            course_id=space_id,
             concept_id=created["id"],
             problem_code="P1",
             difficulty="core",
-            payload={},
+            problem_text="",
+            reference_solution={"version": 1, "steps": []},
             tier=2,
-            search_space_id=space_id,
         )
     )
     db_session.add(
         ProblemRecord(
+            course_id=space_id,
             concept_id=created["id"],
             problem_code="P2",
             difficulty="core",
-            payload={},
+            problem_text="",
+            reference_solution={"version": 1, "steps": []},
             tier=1,
-            search_space_id=space_id,
         )
     )
     await db_session.flush()
@@ -273,12 +275,13 @@ async def test_delete_with_problems_409(db_session, monkeypatch):
     )
     db_session.add(
         ProblemRecord(
+            course_id=space_id,
             concept_id=created["id"],
             problem_code="P1",
             difficulty="core",
-            payload={},
+            problem_text="",
+            reference_solution={"version": 1, "steps": []},
             tier=2,
-            search_space_id=space_id,
         )
     )
     await db_session.flush()

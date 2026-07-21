@@ -138,17 +138,22 @@ async def test_promotion_outcomes(monkeypatch, promote_result, expected):
 @pytest.mark.asyncio
 async def test_inventory_lookup_and_duplicate_hash_helpers(monkeypatch):
     db = AsyncMock()
-    db.execute.side_effect = [_ScalarResult(44), _RowsResult([{"ok": True}, {"bad": True}])]
+    good = SimpleNamespace(to_pydantic_payload=lambda **_kwargs: {"ok": True})
+    bad = SimpleNamespace(to_pydantic_payload=lambda **_kwargs: {"bad": True})
+    db.execute.side_effect = [_ScalarResult(44), _RowsResult([(good, "c"), (bad, "c")])]
     assert await subject._find_tier1_row_id(
-        db, concept_id=11, problem_code="authored.hash"
+        db, concept_id=11, problem_code="authored.hash", search_space_id=7
     ) == 44
 
-    model_validate = lambda payload: payload if "ok" in payload else (_ for _ in ()).throw(
-        ValueError("bad")
-    )
+    def model_validate(payload):
+        if "ok" not in payload:
+            raise ValueError("bad")
+        return payload
     monkeypatch.setattr(subject.Problem, "model_validate", model_validate)
     monkeypatch.setattr(subject, "problem_dup_hash", lambda problem: f"hash:{problem['ok']}")
-    assert await subject._concept_dup_hashes(db, concept_id=12) == {"hash:True"}
+    assert await subject._concept_dup_hashes(db, concept_id=12, search_space_id=7) == {
+        "hash:True"
+    }
 
 
 @pytest.mark.asyncio

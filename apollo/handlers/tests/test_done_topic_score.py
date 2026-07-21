@@ -107,7 +107,8 @@ async def _run(
     db, _sess, _attempt, patches = _old_path_patches()
     graph = _reference_graph_with_topics()
 
-    async def _find_problem_with_graph(_db, _cid, _code):
+    async def _find_problem_with_graph(_db, _cid, _code, *, course_id):
+        assert course_id == _sess.course_id
         problem = MagicMock()
         problem.id = "p_code"
         problem.problem_text = "text"

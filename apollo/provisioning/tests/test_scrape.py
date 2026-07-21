@@ -745,7 +745,7 @@ async def test_provisional_concept_resolved_and_notnull(db_session):
     concept = (await db_session.execute(select(Concept).where(Concept.id == cid1))).scalar_one()
     assert concept.slug == "provisional.inventory"
     # provisional concept carries EMPTY canonical symbols (never teachable signal).
-    assert concept.canonical_symbols in (None, {}, {})
+    assert concept.canonical_symbols == []
 
 
 async def test_provisional_concept_folds_subject_when_absent(db_session):
@@ -758,7 +758,7 @@ async def test_provisional_concept_folds_subject_when_absent(db_session):
     assert isinstance(cid, int)
     concept = (await db_session.execute(select(Concept).where(Concept.id == cid))).scalar_one()
     assert concept.course_id == space.id
-    assert concept.subject_slug == "provisional"
+    assert concept.subject_slug == "general"
 
 
 async def test_scrape_writes_tier1_rows_explicit(db_session):
@@ -778,7 +778,7 @@ async def test_scrape_writes_tier1_rows_explicit(db_session):
     assert row.provenance["chunk_content_hash"] == "hash-write-1"
     assert row.provenance["document_id"] == cand.document_id
     assert row.provenance["page"] == cand.page
-    assert row.search_space_id == ss_id
+    assert row.course_id == ss_id
     assert row.problem_code == "scrape.hash-write-1"
 
 
@@ -797,7 +797,7 @@ async def test_tier1_row_excluded_by_selector(db_session):
     assert len(rows) == 1
     row = rows[0]
     # give it a Problem-validatable payload so post-flip selection can parse it.
-    row.payload = {
+    row.apply_pydantic_payload({
         "id": row.problem_code,
         "concept_id": "bernoulli_principle",
         "difficulty": "intro",
@@ -813,16 +813,21 @@ async def test_tier1_row_excluded_by_selector(db_session):
                 "depends_on": [],
             }
         ],
-    }
+    })
     await db_session.flush()
 
     # Tier-1 → excluded.
-    assert await list_problems_for_concept(db_session, concept_id=cid) == []
+    assert (
+        await list_problems_for_concept(db_session, concept_id=cid, search_space_id=ss_id)
+        == []
+    )
 
     # Flip to tier=2 → now returned.
     row.tier = 2
     await db_session.flush()
-    teachable = await list_problems_for_concept(db_session, concept_id=cid)
+    teachable = await list_problems_for_concept(
+        db_session, concept_id=cid, search_space_id=ss_id
+    )
     assert len(teachable) == 1
     assert teachable[0].id == row.problem_code
 
@@ -887,7 +892,7 @@ async def test_rerun_with_different_segmentation_does_not_adopt_stale_rows(db_se
             )
         )
     ).scalar_one()
-    assert row.payload["problem_text"] == run_b.problem_text
+    assert row.problem_text == run_b.problem_text
 
 
 async def test_scrape_rerun_after_reindex_is_noop(db_session):

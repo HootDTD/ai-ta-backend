@@ -119,12 +119,13 @@ async def test_seed_copies_vocab_only_into_empty_rows(db_session, tmp_path):
     row = (
         await db_session.execute(select(Concept).where(Concept.slug == "integration-by-parts"))
     ).scalar_one()
-    assert dict(row.canonical_symbols)["symbols"] == ["x", "u", "v"]
+    assert row.canonical_symbols == ["x", "u", "v"]
+    assert row.symbol_metadata == {"description": {"x": "value"}}
     # u-substitution had no vocab dir -> untouched
     other = (
         await db_session.execute(select(Concept).where(Concept.slug == "u-substitution"))
     ).scalar_one()
-    assert dict(other.canonical_symbols or {}) == {}
+    assert list(other.canonical_symbols or []) == []
 
 
 def test_norm_slug() -> None:

@@ -40,7 +40,7 @@ async def _seed_course(db, *, slug: str) -> tuple[int, int]:
         course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name,
         slug=f"concept-{slug}",
         display_name="Concept",
-        canonical_symbols={},
+        canonical_symbols=[],
         normalization_map={},
     )
     db.add(concept)

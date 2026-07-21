@@ -201,6 +201,9 @@ async def test_init_session_problem_belongs_to_concept(db_session):
         )
 
     concept_problem_ids = {
-        p.id for p in await list_problems_for_concept(db_session, concept_id=cid)
+        p.id
+        for p in await list_problems_for_concept(
+            db_session, concept_id=cid, search_space_id=sid
+        )
     }
     assert result["problem"]["id"] in concept_problem_ids

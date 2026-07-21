@@ -149,7 +149,11 @@ async def test_tier1_write_is_explicit_tier1_and_authored(db_session):
     for row in rows:
         assert row.tier == 1  # NEVER the teachable default
         assert row.solution_source == "authored"
-        assert row.payload["authored"]["completeness"] in {"worked", "answer_only", "none"}
+        assert row.payload_extra["authored"]["completeness"] in {
+            "worked",
+            "answer_only",
+            "none",
+        }
 
 
 async def test_tier1_write_is_idempotent(db_session):

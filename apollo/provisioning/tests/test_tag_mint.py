@@ -299,8 +299,8 @@ async def test_tag_and_mint_authors_canonical_symbols(db_session):
     assert concept.canonical_symbols  # non-empty dict
     # Stored in the CanonicalSymbols shape ({"symbols": [...]}), NOT a flat
     # {symbol: True} map — the runtime reader requires the list form.
-    assert isinstance(concept.canonical_symbols.get("symbols"), list)
-    assert concept.canonical_symbols["symbols"]  # non-empty symbol list
+    assert isinstance(concept.canonical_symbols, list)
+    assert concept.canonical_symbols  # non-empty symbol list
     assert concept.normalization_map  # non-empty (P1/P2 → P)
 
 
@@ -325,7 +325,9 @@ async def test_authored_canonical_symbols_round_trip_through_reader(db_session):
     )
 
     # The real teaching-session reader must accept the authored columns.
-    definition = await load_concept_definition(db_session, concept_id=plan.concept_id)
+    definition = await load_concept_definition(
+        db_session, concept_id=plan.concept_id, search_space_id=ss_id
+    )
     assert definition.canonical_symbols.symbols  # list[str], non-empty
     # the authored symbols survive the round-trip (base symbols P/v/rho present).
     for sym in plan.authored_symbols:
@@ -349,7 +351,7 @@ async def test_author_symbols_first_writer_wins_union(db_session):
     ).scalar_one()
     # canonical_symbols is the CanonicalSymbols shape ({"symbols": [...]}); the
     # union operates over that LIST, not over dict keys.
-    first_symbols = list(concept.canonical_symbols["symbols"])
+    first_symbols = list(concept.canonical_symbols)
 
     # second problem: introduces a NEW symbol Q (different given/target).
     problem2 = _problem_dict(
@@ -366,7 +368,7 @@ async def test_author_symbols_first_writer_wins_union(db_session):
         embed_fn=_embed_distinct,
     )
     await db_session.refresh(concept)
-    union_symbols = list(concept.canonical_symbols["symbols"])
+    union_symbols = list(concept.canonical_symbols)
     # the first writer's symbols all survive (never rewritten)...
     for sym in first_symbols:
         assert sym in union_symbols

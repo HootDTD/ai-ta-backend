@@ -56,7 +56,7 @@ async def _seed_registered_concept(
         slug=slug,
         display_name="Integration by Parts",
         description="u dv = uv - v du",
-        canonical_symbols={"symbols": ["x", "u", "v", "F", "C"]},
+        canonical_symbols=["x", "u", "v", "F", "C"],
         normalization_map={},
     )
     db.add(concept)

@@ -179,8 +179,7 @@ async def test_polisci_authored_problem_promotes_under_qualitative(db_session, m
     ).fetchone()
     assert row.tier == 2
     assert row.concept_id == fed.id
-    assert "reference_solution" in row.payload
-    assert row.payload["reference_solution"][0].get("entity_key")  # annotated
+    assert row.reference_solution["steps"][0].get("entity_key")  # annotated
 
 
 # --------------------------------------------------------------------------- #
@@ -396,10 +395,13 @@ async def test_fluid_authored_problem_promotes_under_quantitative(db_session, mo
     # Pre-seed the REAL tagged concept WITH canonical_symbols so gate 4/7 pass
     # (tag_and_mint reuses a concept by (search_space, slug)).
     bern = Concept(
-        subject_id=subj_id,
+        course_id=space,
+        subject_slug="s-ap-fluid",
+        subject_display_name="Sub",
         slug="bernoulli_principle",
         display_name="Bernoulli",
-        canonical_symbols={"symbols": ["A", "P", "Q", "g", "h", "rho", "v"], "description": {}},
+        canonical_symbols=["A", "P", "Q", "g", "h", "rho", "v"],
+        symbol_metadata={"description": {}},
         normalization_map={
             "pressure": "P",
             "density": "rho",

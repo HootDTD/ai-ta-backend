@@ -57,7 +57,8 @@ def _old_path_patches():
     sess = _Sess()
     attempt = _Attempt()
 
-    async def _find_problem(_db, _cid, _code):
+    async def _find_problem(_db, _cid, _code, *, course_id):
+        assert course_id == sess.course_id
         return _problem()
 
     db = MagicMock()

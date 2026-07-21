@@ -40,7 +40,7 @@ async def _seed_course(db, *, slug: str) -> tuple[int, int]:
         course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name,
         slug=f"concept-{slug}",
         display_name="Concept",
-        canonical_symbols={},
+        canonical_symbols=[],
         normalization_map={},
     )
     db.add(concept)
@@ -76,21 +76,19 @@ async def _seed_problem(
 ):
     from apollo.persistence.models import Problem as ProblemRecord
 
-    row = ProblemRecord(
-        concept_id=concept_id,
-        problem_code=f"problem-{concept_id}-{generated}-{required}-{len(problem_text)}",
-        difficulty="intro",
-        tier=1 if generated else 2,
-        solution_source="generated" if generated else "authored",
-        payload={
-            "id": f"problem-{concept_id}",
+    row = ProblemRecord.from_inventory_payload(
+        {
+            "id": f"problem-{concept_id}-{generated}-{required}-{len(problem_text)}",
             "concept_id": "known_concept_slug",
             "difficulty": "intro",
             "problem_text": problem_text,
             "given_values": {},
             "target_unknown": "M",
         },
-        search_space_id=space_id,
+        course_id=space_id,
+        concept_id=concept_id,
+        tier=1 if generated else 2,
+        solution_source="generated" if generated else "authored",
         provenance=(
             {
                 "source": "generated",

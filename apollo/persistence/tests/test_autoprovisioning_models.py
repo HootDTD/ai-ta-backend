@@ -44,15 +44,13 @@ async def test_orm_concept_problem_has_tier_columns(db_session):
     """Round-trip the new ProblemRecord columns; assert the ORM default tier=2
     and provenance={} when omitted (the seed-helper/ORM reality is teachable)."""
     sid, cid = await _space_and_concept(db_session)
-    explicit = ProblemRecord(
+    explicit = ProblemRecord.from_inventory_payload(
+        {"id": "orm_explicit", "difficulty": "intro", "problem_text": ""},
+        course_id=sid,
         concept_id=cid,
-        problem_code="orm_explicit",
-        difficulty="intro",
-        payload={"id": "orm_explicit", "difficulty": "intro"},
         tier=2,
         solution_source="authored",
         provenance={"document_id": 1},
-        search_space_id=sid,
     )
     db_session.add(explicit)
     await db_session.flush()
@@ -65,15 +63,14 @@ async def test_orm_concept_problem_has_tier_columns(db_session):
     assert reloaded.tier == 2
     assert reloaded.solution_source == "authored"
     assert reloaded.provenance == {"document_id": 1}
-    assert reloaded.search_space_id == sid
+    assert reloaded.course_id == sid
     assert reloaded.quarantined_at is None
 
     # Omitting tier -> ORM default 2; omitting provenance -> {}.
-    defaulted = ProblemRecord(
+    defaulted = ProblemRecord.from_inventory_payload(
+        {"id": "orm_defaulted", "difficulty": "intro", "problem_text": ""},
+        course_id=sid,
         concept_id=cid,
-        problem_code="orm_defaulted",
-        difficulty="intro",
-        payload={"id": "orm_defaulted", "difficulty": "intro"},
     )
     db_session.add(defaulted)
     await db_session.flush()
