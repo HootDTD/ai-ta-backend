@@ -98,7 +98,6 @@ def event_to_row_specs(
         misconception_code=update.misconception_code,
         parser_confidence=update.parser_confidence,
         grader_confidence=update.grader_confidence,
-        negotiation_move=None,  # NULL v1 (multiplier not applied)
         reference_step_id=event.reference_step_id,
         prior_belief=update.prior_belief,
         posterior_belief=update.posterior_belief,

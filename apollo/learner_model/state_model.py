@@ -60,7 +60,6 @@ class MasteryEventRowSpec:
     misconception_code: str | None = None
     parser_confidence: float | None = None
     grader_confidence: float | None = None
-    negotiation_move: str | None = None  # NULL in v1 (multiplier not applied)
     reference_step_id: str | None = None
     prior_belief: tuple[float, float, float] = _DEFAULT_BELIEF
     posterior_belief: tuple[float, float, float] = _DEFAULT_BELIEF

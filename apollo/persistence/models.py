@@ -48,12 +48,14 @@ _JSONType = JSONB().with_variant(JSON(), "sqlite")
 _RealArrayType = ARRAY(REAL).with_variant(JSON(), "sqlite")
 _TextArrayType = ARRAY(Text).with_variant(JSON(), "sqlite")
 
-# App-layer mirrors of migration 026's enum sets (spec §2/§6.3). Following the
-# ATTEMPT_RESULTS precedent: tuples the runtime reasons about, kept in sync with
-# the migration. ENTITY_KINDS is the one tied to a SQL CHECK (on
-# apollo_kg_entities.kind) and is asserted equal to the migration's set by
-# apollo/persistence/tests/test_learner_model_allowlists.py. The other two are
-# OPEN enums (no SQL CHECK) — documentation tuples, NOT asserted against the SQL.
+# App-layer mirror of the app.learner_entities.kind CHECK in
+# supabase/migrations/20260717035041_create_app_schema_v1.sql (the DDL is the
+# schema authority; this tuple is asserted equal to it by
+# apollo/persistence/tests/test_learner_model_allowlists.py). 'misconception' is
+# NOT in the target CHECK (dropped per DB-13/A6 cleanup) — misconceptions are
+# tracked via MasteryEvent.event_kind, not as an entity kind. The other two enum
+# tuples below are OPEN (no SQL CHECK) — documentation tuples, NOT asserted
+# against SQL.
 ENTITY_KINDS = (
     "concept",
     "equation",
@@ -61,7 +63,6 @@ ENTITY_KINDS = (
     "definition",
     "procedure",
     "variable",
-    "misconception",
 )
 # event_kind is an OPEN enum per spec §2 (no SQL CHECK) — documented set only:
 MASTERY_EVENT_KINDS = ("covered", "missing", "partial", "misconception", "corrected")
@@ -685,60 +686,39 @@ class StudentProgress(Base):
     )
 
 
-class KGNegotiation(Base):
-    """Audit log for Negotiable OLM moves on a KG entry. See migration 021.
+# ===========================================================================
+# WU-3A learner model (migration 026 historically; target DDL now
+# supabase/migrations/20260717035041_create_app_schema_v1.sql). Layer-1 skill
+# inventory + Layer-3 learner model. Following the repo convention, these
+# declare NO DB CHECK constraints — the migration SQL is the authority; the
+# ORM is the typed Python access layer.
+#
+# DB-13/A6 (.planning/cleanup/db-plan-amendments-2026-07-20.md): the
+# apollo_kg_negotiations audit table + KGNegotiation model are REMOVED from
+# the target — the three negotiate KG mutations (challenge/paraphrase/skip)
+# keep working via apollo.knowledge_graph.store.KGStore, only the Postgres
+# audit rows are gone.
+# ===========================================================================
 
-    One row per move. The latest row per (attempt_id, entry_id) is the
-    operative move when the Done-gate evaluates whether a flagged entry has
-    been touched. The Neo4j node_id stored as `entry_id` is the cross-store
-    bridge — we deliberately do NOT FK to it because Neo4j is the canonical
-    KG store; orphan rows are cleaned up by the attempt_id ON DELETE CASCADE.
-    """
 
-    __tablename__ = "apollo_kg_negotiations"
+class LearnerEntity(Base):
+    """Layer-1 course-scoped skill inventory (spec §2, retargeted onto
+    app.learner_entities by DB-13). Course ownership was previously inherited
+    via ``concept_id -> app.concepts.course_id`` only; the target DDL adds a
+    denormalized ``course_id`` column directly (initplan-safe RLS, matches the
+    rest of the app schema). ``canonical_key`` is unique per concept, not
+    global (§1.4)."""
+
+    __tablename__ = "learner_entities"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
-    attempt_id = Column(
+    course_id = Column(
         BigInteger,
-        ForeignKey("app.problem_attempts.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-    )
-    entry_id = Column(Text, nullable=False)
-    actor = Column(Text, nullable=False)  # 'student' | 'parser' | 'system'
-    move = Column(Text, nullable=False)  # 'challenge' | 'paraphrase' | 'skip'
-    payload = Column(_JSONType, nullable=False, default=dict)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-
-Index(
-    "apollo_kg_negotiations_attempt_entry_idx",
-    KGNegotiation.attempt_id,
-    KGNegotiation.entry_id,
-)
-
-
-# ===========================================================================
-# WU-3A learner model (migration 026). Layer-1 skill inventory + Layer-3
-# learner model + grading-core audit tables. Following the repo convention,
-# these declare NO DB CHECK constraints — the migration SQL is the authority;
-# the ORM is the typed Python access layer. The schema EXISTS as of WU-3A but
-# nothing reads/writes these tables yet (resolver = WU-3C, seed = WU-3B, §3
-# update math + §6 grading core + §8A cutover = later units).
-# ===========================================================================
-
-
-class KGEntity(Base):
-    """Layer-1 course-scoped skill inventory (spec §2). Course ownership is
-    inherited via ``concept_id -> app.concepts.course_id``. ``canonical_key``
-    is unique per concept, not global (§1.4)."""
-
-    __tablename__ = "apollo_kg_entities"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
     concept_id = Column(
         BigInteger,
@@ -751,7 +731,8 @@ class KGEntity(Base):
     kind = Column(Text, nullable=False)
     display_name = Column(Text, nullable=False)
     payload = Column(_JSONType, nullable=False, default=dict)
-    aliases = Column(_JSONType, nullable=False, default=list)
+    # DB-13: TEXT[] on the target DDL (was JSONB pre-cleanup).
+    aliases = Column(_TextArrayType, nullable=False, default=list)
     # WU-3B2a / migration 030: the dedup ladder's embedding SOURCE (authored at
     # mint from display_name + canonical symbols; embedded ON THE FLY by 3B2c).
     # Nullable; NO persisted vector column (no pgvector-on-entities migration).
@@ -760,63 +741,86 @@ class KGEntity(Base):
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
-        UniqueConstraint("concept_id", "canonical_key", name="apollo_kg_entities_concept_key_uniq"),
+        UniqueConstraint("concept_id", "canonical_key", name="learner_entities_concept_key_uniq"),
+        {"schema": "app"},
     )
 
 
 class EntityPrereq(Base):
-    """Prerequisite DAG edges between Layer-1 entities (spec §2).
+    """Prerequisite DAG edges between Layer-1 entities (spec §2, retargeted
+    onto internal.entity_prerequisites by DB-13).
 
     LEGACY LAYER-1 EXCEPTION: ``from_entity_id`` depends on ``to_entity_id``
     (dependent -> prerequisite). Do not conflate these persistence rows with KG
     or canonical DEPENDS_ON edges, whose direction is prerequisite -> dependent.
     Migrating existing Layer-1 rows is explicitly outside DAG-0 scope.
 
-    Composite PK (from_entity_id, to_entity_id).
+    Composite PK (from_entity_id, to_entity_id). The target DDL adds a
+    denormalized ``course_id`` column (not previously in the ORM).
     """
 
-    __tablename__ = "apollo_entity_prereqs"
+    __tablename__ = "entity_prerequisites"
 
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     from_entity_id = Column(
         BigInteger,
-        ForeignKey("apollo_kg_entities.id", ondelete="CASCADE"),
+        ForeignKey("app.learner_entities.id", ondelete="CASCADE"),
         primary_key=True,
     )
     to_entity_id = Column(
         BigInteger,
-        ForeignKey("apollo_kg_entities.id", ondelete="CASCADE"),
+        ForeignKey("app.learner_entities.id", ondelete="CASCADE"),
         primary_key=True,
     )
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = ({"schema": "internal"},)
 
 
 class LearnerState(Base):
     """Layer-3 current per-(user, course, entity) belief snapshot, updated in
     place at Done (spec §3). Composite PK enforces one row per learner per entity
-    per course. The belief array CHECK (length 3) lives in the migration SQL."""
+    per course. The belief array CHECK (length 3) lives in the migration SQL.
 
-    __tablename__ = "apollo_learner_state"
+    DB-13: retargeted onto app.learner_state; ``misconception_code`` is GONE
+    from the target DDL (misconceptions are tracked via
+    MasteryEvent.event_kind, not a mutable per-entity field)."""
+
+    __tablename__ = "learner_state"
 
     # user_id FKs auth.users(id) ON DELETE CASCADE in the migration SQL. The ORM
     # declares no FK here because auth.users (Supabase-managed) is not in
     # Base.metadata — same convention as TutoringSession.user_id.
     user_id = Column(UUID(as_uuid=False), primary_key=True)
+    # Python attribute name kept as `search_space_id` (pre-DB-13 name) mapped
+    # onto the target DDL's `course_id` physical column — same trick as
+    # DedupDecision/IngestError/IngestPageEvidence, minimizes caller churn
+    # until the DB-13 caller-retarget sub-task lands.
     search_space_id = Column(
-        Integer,
+        "course_id",
+        BigInteger,
         ForeignKey("app.courses.id", ondelete="CASCADE"),
         primary_key=True,
     )
     entity_id = Column(
         BigInteger,
-        ForeignKey("apollo_kg_entities.id", ondelete="CASCADE"),
+        ForeignKey("app.learner_entities.id", ondelete="CASCADE"),
         primary_key=True,
     )
     belief = Column(_RealArrayType, nullable=False)
     mastery = Column(Float, nullable=False)
     confidence = Column(Float, nullable=False)
-    misconception_code = Column(Text, nullable=True)
     evidence_count = Column(Integer, nullable=False, default=0)
     last_evidence_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = ({"schema": "app"},)
 
 
 # Campaign-plan Task B3 / migration 035: the composite PK's leading column is
@@ -824,7 +828,7 @@ class LearnerState(Base):
 # mastery-heatmap query) cannot use it. This mirrors
 # ix_grading_artifacts_space_concept_time's shape for apollo_grading_artifacts.
 Index(
-    "ix_apollo_learner_state_space_entity",
+    "ix_learner_state_space_entity",
     LearnerState.search_space_id,
     LearnerState.entity_id,
 )
@@ -834,9 +838,13 @@ class MasteryEvent(Base):
     """Layer-3 append-only longitudinal evidence log AND refit corpus (spec
     §2/§3). attempt_id is ON DELETE SET NULL: the log outlives a deleted attempt.
     The (attempt_id, entity_id, event_kind) UNIQUE uses NULLS NOT DISTINCT so a
-    retry with a NULL attempt_id cannot double-insert (PG15+)."""
+    retry with a NULL attempt_id cannot double-insert (PG15+).
 
-    __tablename__ = "apollo_mastery_events"
+    DB-13: retargeted onto app.mastery_events; ``misconception_code`` is GONE
+    from the target DDL (tracked via ``event_kind`` instead);
+    ``evidence_node_ids`` is TEXT[] (was JSONB pre-cleanup)."""
+
+    __tablename__ = "mastery_events"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
@@ -844,14 +852,16 @@ class MasteryEvent(Base):
     # No ORM FK on user_id (auth.users is Supabase-managed, not in Base.metadata);
     # the migration SQL declares the FK + ON DELETE CASCADE.
     user_id = Column(UUID(as_uuid=False), nullable=False)
+    # Python attribute name kept as `search_space_id` — see LearnerState.
     search_space_id = Column(
-        Integer,
+        "course_id",
+        BigInteger,
         ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
     )
     entity_id = Column(
         BigInteger,
-        ForeignKey("apollo_kg_entities.id", ondelete="CASCADE"),
+        ForeignKey("app.learner_entities.id", ondelete="CASCADE"),
         nullable=False,
     )
     attempt_id = Column(
@@ -866,7 +876,6 @@ class MasteryEvent(Base):
     )
     event_kind = Column(Text, nullable=False)
     score = Column(Float, nullable=True)
-    misconception_code = Column(Text, nullable=True)
     parser_confidence = Column(Float, nullable=True)
     grader_confidence = Column(Float, nullable=True)
     negotiation_move = Column(Text, nullable=True)
@@ -875,7 +884,7 @@ class MasteryEvent(Base):
     posterior_belief = Column(_RealArrayType, nullable=False)
     mastery_after = Column(Float, nullable=False)
     dt_days_since_last = Column(Float, nullable=True)
-    evidence_node_ids = Column(_JSONType, nullable=False, default=list)
+    evidence_node_ids = Column(_TextArrayType, nullable=False, default=list)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
@@ -883,9 +892,10 @@ class MasteryEvent(Base):
             "attempt_id",
             "entity_id",
             "event_kind",
-            name="apollo_mastery_events_attempt_entity_kind_uniq",
+            name="mastery_events__attempt_entity_kind__uniq",
             postgresql_nulls_not_distinct=True,
         ),
+        {"schema": "app"},
     )
 
 
@@ -964,7 +974,7 @@ class GraphComparisonFinding(Base):
     )
     entity_id = Column(
         BigInteger,
-        ForeignKey("apollo_kg_entities.id", ondelete="SET NULL"),
+        ForeignKey("app.learner_entities.id", ondelete="SET NULL"),
         nullable=True,
     )
     finding_kind = Column(Text, nullable=False)
@@ -1081,7 +1091,7 @@ class DedupDecision(Base):
     verdict = Column(Text, nullable=False)
     matched_entity_id = Column(
         BigInteger,
-        ForeignKey("apollo_kg_entities.id", ondelete="SET NULL"),
+        ForeignKey("app.learner_entities.id", ondelete="SET NULL"),
         nullable=True,
     )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
