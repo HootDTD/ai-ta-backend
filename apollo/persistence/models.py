@@ -46,6 +46,7 @@ _JSONType = JSONB().with_variant(JSON(), "sqlite")
 # NOTE: the SQLite variant is a bare JSON() — _JSONType is itself a variant and
 # SQLAlchemy forbids nesting variants in with_variant().
 _RealArrayType = ARRAY(REAL).with_variant(JSON(), "sqlite")
+_TextArrayType = ARRAY(Text).with_variant(JSON(), "sqlite")
 
 # App-layer mirrors of migration 026's enum sets (spec §2/§6.3). Following the
 # ATTEMPT_RESULTS precedent: tuples the runtime reasons about, kept in sync with
@@ -118,73 +119,75 @@ class SessionStatus(StrEnum):
     ended = "ended"
 
 
-class Subject(Base):
-    """Top-level curriculum domain. See migration 018."""
+class Concept(Base):
+    """Course-scoped curriculum concept with its subject label folded in."""
 
-    __tablename__ = "apollo_subjects"
+    __tablename__ = "concepts"
+    __table_args__ = (
+        UniqueConstraint(
+            "course_id", "subject_slug", "slug", name="concepts_course_subject_slug_key"
+        ),
+        {"schema": "app"},
+    )
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
-    slug = Column(Text, nullable=False, unique=True)
-    display_name = Column(Text, nullable=False)
-    # Course-scoping (migration 026 / isolation invariant §1.4). NOT NULL by
-    # design: every subject belongs to exactly one course, and the whole
-    # curriculum chain inherits course ownership through this column.
-    search_space_id = Column(
-        Integer,
+    course_id = Column(
+        BigInteger,
         ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-
-class Concept(Base):
-    """Per-concept curriculum row. Replaces the apollo/subjects/<s>/concepts/<c>/
-    filesystem registry — runtime loads concept_id, never subject/concept slugs.
-    See migration 018."""
-
-    __tablename__ = "apollo_concepts"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    subject_id = Column(
-        BigInteger, ForeignKey("apollo_subjects.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    subject_slug = Column(Text, nullable=False)
+    subject_display_name = Column(Text, nullable=False)
     slug = Column(Text, nullable=False)
     display_name = Column(Text, nullable=False)
     # Migration 038 (reversed provisioning): the closed-list concept-matcher
     # prompt line is "slug — display_name: description". Empty for legacy rows.
     description = Column(Text, nullable=False, default="")
-    canonical_symbols = Column(_JSONType, nullable=False, default=dict)
+    canonical_symbols = Column(_TextArrayType, nullable=False, default=list)
+    symbol_metadata = Column(_JSONType, nullable=False, default=dict)
     normalization_map = Column(_JSONType, nullable=False, default=dict)
     parser_prompt_template = Column(Text, nullable=False, default="")
-    solver_hints = Column(_JSONType, nullable=False, default=dict)
-    forbidden_named_laws = Column(_JSONType, nullable=False, default=dict)
-    concept_dag = Column(_JSONType, nullable=False, default=dict)
+    solver_config = Column(_JSONType, nullable=False, default=dict)
+    parser_config = Column(_JSONType, nullable=False, default=dict)
+    forbidden_named_laws = Column(_TextArrayType, nullable=False, default=list)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 
-class ConceptProblem(Base):
-    """Per-concept problem bank. See migration 018 (base table) + migration 030
-    (WU-3B2a §8B auto-provisioning columns). Following the repo convention these
-    declare NO DB CHECK constraints — the migration SQL is the authority for
-    tier/solution_source; the ORM is the typed Python access layer."""
+class Problem(Base):
+    """Typed problem-bank row with stable Pydantic fields promoted from JSON."""
 
-    __tablename__ = "apollo_concept_problems"
+    __tablename__ = "problems"
+    __table_args__ = (
+        UniqueConstraint("concept_id", "problem_code", name="problems_concept_code_key"),
+        {"schema": "app"},
+    )
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     concept_id = Column(
-        BigInteger, ForeignKey("apollo_concepts.id", ondelete="CASCADE"), nullable=False, index=True
+        BigInteger,
+        ForeignKey("app.concepts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     problem_code = Column(Text, nullable=False)
     difficulty = Column(Text, nullable=False)
-    payload = Column(_JSONType, nullable=False)
+    problem_text = Column(Text, nullable=False)
+    given_values = Column(_JSONType, nullable=False, default=dict)
+    target_unknown = Column(Text, nullable=False, default="")
+    reference_solution = Column(_JSONType, nullable=False)
+    payload_extra = Column(_JSONType, nullable=False, default=dict)
     # WU-3B2a / migration 030 (§8B auto-provisioning). tier gates selectability:
     # 1 = inventory (auto-scraped, NOT teachable), 2 = teachable. The DB CHECK
     # (tier IN (1,2)) is the authority; the ORM declares none (repo convention).
@@ -197,12 +200,70 @@ class ConceptProblem(Base):
     )
     provenance = Column(_JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
     quarantined_at = Column(TIMESTAMP(timezone=True), nullable=True)  # WU-3B2h filter; NULL = live
-    # Denormalized course scope (migration 030). NULLABLE in v1 (backfilled
-    # in-migration; a later two-step migration tightens it). No ORM FK declared
-    # to keep create_all/SQLite parity simple — the migration SQL is the FK
-    # authority where it exists.
-    search_space_id = Column(Integer, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    @classmethod
+    def from_pydantic_payload(
+        cls,
+        payload: dict,
+        *,
+        course_id: int,
+        concept_id: int,
+        **typed_columns,
+    ) -> Problem:
+        """Validate a public problem payload and split it into target columns."""
+        from apollo.schemas.problem import Problem as ProblemSchema
+
+        validated = ProblemSchema.model_validate(payload)
+        known = set(ProblemSchema.model_fields) | {"database_id"}
+        return cls(
+            course_id=course_id,
+            concept_id=concept_id,
+            problem_code=validated.id,
+            difficulty=validated.difficulty,
+            problem_text=validated.problem_text,
+            given_values=dict(validated.given_values),
+            target_unknown=validated.target_unknown,
+            reference_solution={
+                "version": 1,
+                "steps": [step.model_dump(mode="json") for step in validated.reference_solution],
+            },
+            payload_extra={key: value for key, value in payload.items() if key not in known},
+            **typed_columns,
+        )
+
+    def apply_pydantic_payload(self, payload: dict) -> None:
+        """Validate and replace the public/payload portion of an existing row."""
+        replacement = type(self).from_pydantic_payload(
+            payload,
+            course_id=int(self.course_id),
+            concept_id=int(self.concept_id),
+        )
+        for field in (
+            "problem_code",
+            "difficulty",
+            "problem_text",
+            "given_values",
+            "target_unknown",
+            "reference_solution",
+            "payload_extra",
+        ):
+            setattr(self, field, getattr(replacement, field))
+
+    def to_pydantic_payload(self, *, concept_slug: str) -> dict:
+        """Reassemble the established public Pydantic shape without DB identities."""
+        document = dict(self.reference_solution or {})
+        return {
+            **dict(self.payload_extra or {}),
+            "id": str(self.problem_code),
+            "concept_id": concept_slug,
+            "difficulty": str(self.difficulty),
+            "problem_text": str(self.problem_text),
+            "given_values": dict(self.given_values or {}),
+            "target_unknown": str(self.target_unknown or ""),
+            "reference_solution": list(document.get("steps") or []),
+        }
 
     @staticmethod
     def _validate_solution_provenance(*, provenance: dict | None, solution_source: str | None):
@@ -287,7 +348,7 @@ class GenerationRun(Base):
     )
     concept_id = Column(
         BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="CASCADE"),
+        ForeignKey("app.concepts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -595,8 +656,8 @@ Index(
 
 class KGEntity(Base):
     """Layer-1 course-scoped skill inventory (spec §2). Course ownership is
-    inherited via concept_id -> apollo_concepts -> apollo_subjects.search_space_id.
-    canonical_key is unique PER CONCEPT, not global (§1.4)."""
+    inherited via ``concept_id -> app.concepts.course_id``. ``canonical_key``
+    is unique per concept, not global (§1.4)."""
 
     __tablename__ = "apollo_kg_entities"
 
@@ -605,7 +666,7 @@ class KGEntity(Base):
     )
     concept_id = Column(
         BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="CASCADE"),
+        ForeignKey("app.concepts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -724,7 +785,7 @@ class MasteryEvent(Base):
     )
     concept_problem_id = Column(
         BigInteger,
-        ForeignKey("apollo_concept_problems.id", ondelete="SET NULL"),
+        ForeignKey("app.problems.id", ondelete="SET NULL"),
         nullable=True,
     )
     event_kind = Column(Text, nullable=False)
@@ -929,7 +990,7 @@ class DedupDecision(Base):
     )
     concept_id = Column(
         BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
+        ForeignKey("app.concepts.id", ondelete="SET NULL"),
         nullable=True,
     )
     candidate_key = Column(Text, nullable=False)
@@ -1045,7 +1106,7 @@ class GradingArtifact(Base):
     )
     concept_id = Column(
         BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
+        ForeignKey("app.concepts.id", ondelete="SET NULL"),
         nullable=True,
     )
     problem_id = Column(Text, nullable=False)
