@@ -422,49 +422,38 @@ class GenerationRun(Base):
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 
-class ReferenceQuestionOpportunity(Base):
-    """Latest question state for one authored reference node per attempt."""
+class QuestionOpportunity(Base):
+    """Question and durable tally state for one reference node per attempt."""
 
-    __tablename__ = "apollo_reference_question_opportunities"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    attempt_id = Column(
-        BigInteger,
-        ForeignKey("app.problem_attempts.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    session_id = Column(
-        BigInteger,
-        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    reference_node_id = Column(Text, nullable=False)
-    state = Column(Text, nullable=False, server_default=text("'asked_waiting'"))
-    question = Column(Text, nullable=False)
-    asked_turn = Column(Integer, nullable=False)
-    answered_turn = Column(Integer, nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
+    __tablename__ = "question_opportunities"
     __table_args__ = (
         UniqueConstraint(
             "attempt_id",
             "reference_node_id",
-            name="apollo_reference_question_opportunities_attempt_node_uniq",
+            name="question_opportunities_attempt_id_reference_node_id_key",
         ),
+        Index(
+            "question_opportunities__course_session__idx",
+            "course_id",
+            "learning_activity_id",
+        ),
+        Index("question_opportunities__activity_id__idx", "learning_activity_id"),
+        {"schema": "app"},
     )
-
-
-class QuestionTally(Base):
-    """Durable per-attempt memory for Apollo's own reference-node judgments."""
-
-    __tablename__ = "apollo_question_tally"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    session_id = Column(
+        "learning_activity_id",
+        BigInteger,
+        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
+        nullable=False,
     )
     attempt_id = Column(
         BigInteger,
@@ -472,25 +461,20 @@ class QuestionTally(Base):
         nullable=False,
     )
     reference_node_id = Column(Text, nullable=False)
-    status = Column(Text, nullable=False)
+    state = Column(Text, nullable=False, server_default=text("'asked_waiting'"))
+    question = Column(Text, nullable=False, server_default=text("''"), default="")
+    asked_turn = Column(Integer, nullable=True)
+    answered_turn = Column(Integer, nullable=True)
     evidence = Column(_JSONType, nullable=False, server_default=text("'[]'"), default=list)
     student_declined = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     times_asked = Column(Integer, nullable=False, server_default=text("0"), default=0)
     last_asked_turn = Column(Integer, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "attempt_id",
-            "reference_node_id",
-            name="apollo_question_tally_attempt_node_uniq",
-        ),
-        Index("ix_apollo_question_tally_attempt", "attempt_id"),
     )
 
 
