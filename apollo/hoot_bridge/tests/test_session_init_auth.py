@@ -34,6 +34,7 @@ _STUB_CONCEPT_ID = 7
 
 _STUB_PROBLEM = Problem(
     id="stub_p1",
+    database_id=101,
     concept_id="stub_concept",
     difficulty="intro",
     problem_text="Stub problem text.",
@@ -142,6 +143,7 @@ async def test_init_session_creates_session_and_first_problem(db, monkeypatch):
     assert sess.concept_id == _STUB_CONCEPT_ID
 
     pa = (await db.execute(select(ProblemAttempt))).scalar_one()
+    assert pa.problem_id == _STUB_PROBLEM.database_id
     assert pa.difficulty == "intro"
 
 

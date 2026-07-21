@@ -107,7 +107,7 @@ def test_learner_state_fk_targets_and_cascades():
 def test_mastery_event_attempt_fk_set_null():
     table = MasteryEvent.__table__
     attempt_fk = next(iter(table.columns["attempt_id"].foreign_keys))
-    assert attempt_fk.column.table.name == "apollo_problem_attempts"
+    assert attempt_fk.column.table.name == "problem_attempts"
     assert attempt_fk.ondelete == "SET NULL"
     entity_fk = next(iter(table.columns["entity_id"].foreign_keys))
     assert entity_fk.ondelete == "CASCADE"

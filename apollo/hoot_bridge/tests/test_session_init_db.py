@@ -82,7 +82,7 @@ async def test_init_session_does_not_write_concept_cluster_id(db_session):
     assert "concept_cluster_id" not in TutoringSession.__table__.columns
     concept_val = (
         await db_session.execute(
-            text("SELECT concept_id FROM learning_activities WHERE id = :sid"),
+            text("SELECT concept_id FROM app.learning_activities WHERE id = :sid"),
             {"sid": result["session_id"]},
         )
     ).scalar_one()

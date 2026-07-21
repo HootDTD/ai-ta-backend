@@ -109,7 +109,7 @@ async def test_retry_after_grade_creates_fresh_attempt(graded_session):
     fresh = attempts[-1]
     assert fresh.id != old_attempt.id
     assert result["attempt_id"] == fresh.id
-    assert fresh.problem_id == "p1"
+    assert fresh.problem_id == 1
     assert fresh.difficulty == "intro"
     assert fresh.result is None
     assert fresh.diagnostic_report is None

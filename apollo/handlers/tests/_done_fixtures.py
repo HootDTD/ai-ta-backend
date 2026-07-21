@@ -11,16 +11,17 @@ class _Sess:
     def __init__(self) -> None:
         self.id = 11
         self.user_id = _USER_ID
-        self.search_space_id = 7
+        self.course_id = 7
+        self.search_space_id = self.course_id
         self.concept_id = 3
-        self.current_problem_id = "p_code"
+        self.current_problem_id = 42
         self.phase = "TEACHING"
 
 
 class _Attempt:
     def __init__(self) -> None:
         self.id = 99
-        self.problem_id = "p_code"
+        self.problem_id = 42
         self.difficulty = "intro"
         self.result = None
         self.solver_trace = None
@@ -45,6 +46,7 @@ def _envelope() -> MagicMock:
 def _problem() -> MagicMock:
     problem = MagicMock()
     problem.id = "p_code"
+    problem.database_id = 42
     problem.problem_text = "text"
     problem.reference_solution = []
     problem.to_kg_graph.return_value = KGGraph()

@@ -168,7 +168,7 @@ def test_attempt_fk_declared_with_cascade():
     fks = list(col.foreign_keys)
     assert len(fks) == 1
     fk = fks[0]
-    assert fk.column.table.name == "apollo_problem_attempts"
+    assert fk.column.table.name == "problem_attempts"
     assert fk.ondelete == "CASCADE"
 
 

@@ -5,12 +5,12 @@ from __future__ import annotations
 from apollo.persistence.models import StudentProgress, TutoringSession
 
 
-def test_apollo_session_has_user_and_space_columns():
+def test_apollo_session_has_user_and_course_columns():
     cols = TutoringSession.__table__.columns
     assert "user_id" in cols and not cols["user_id"].nullable
-    assert "search_space_id" in cols and not cols["search_space_id"].nullable
+    assert "course_id" in cols and not cols["course_id"].nullable
     assert "student_id" not in cols
-    fks = {fk.target_fullname for fk in cols["search_space_id"].foreign_keys}
+    fks = {fk.target_fullname for fk in cols["course_id"].foreign_keys}
     assert "app.courses.id" in fks
 
 

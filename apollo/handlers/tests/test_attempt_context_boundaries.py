@@ -80,6 +80,7 @@ async def test_next_problem_clears_session_scoped_attempt_context(db):
     session, _ = await _seed(db, phase=SessionPhase.TEACHING.value)
     problem = SimpleNamespace(
         id="p2",
+        database_id=2,
         concept_id=1,
         difficulty="intro",
         problem_text="new",
