@@ -57,3 +57,9 @@ mainvars.txt
 lsvars.txt
 out*.json
 graphify-out/
+
+# Local Supabase CLI tooling (DB-02's package.json pins the CLI version for
+# local `npm install` fallback; CI installs the CLI system-wide via
+# supabase/setup-cli instead, so this is dev-machine-only output).
+node_modules/
+package-lock.json
