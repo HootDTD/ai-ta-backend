@@ -197,6 +197,49 @@ schemas. `Course` now owns current week, retrieval weights, and typed bounds in
 typed status/reason fields and promoted metadata names. SQLite engines erase
 the `app`/`internal` schema names through `schema_translate_map` for unit tests.
 
+DB-17 (2026-07-21) is index hygiene, in two independent halves. First,
+`scripts/db/drop_duplicate_indexes.sql` -- a human-applied, non-migration
+script (same rationale as `remove_legacy_public_schema.sql`: it targets the
+legacy `public` schema, which no forward migration touches) -- drops the 13
+exact duplicate indexes the DB-01 preflight captured read-only from prod
+(`.planning/cleanup/inputs/db-preflight.md`): every dropped index is the
+`ix_*` SQLAlchemy `index=True` residue duplicating a hand-written `idx_*`
+index or an implicit unique-constraint index, using `DROP INDEX CONCURRENTLY
+IF EXISTS` (never wrapped in a transaction block -- CONCURRENTLY forbids it).
+It is optional prod hygiene, harmless if skipped, since the DB-16 teardown
+removes the whole legacy schema later anyway.
+`tests/database/test_drop_duplicate_indexes.py` rehearses it: because the
+reconstructed `legacy_public_snapshot.sql` is built only from the numbered
+SQL chain and never creates the untracked `ix_*` indexes, the test seeds them
+by hand first to reproduce prod's real duplicate shape, then proves all 13
+drop, every canonical twin survives valid, and a second run is a byte-for-byte
+no-op.
+
+Second, `tests/database/test_db17_index_allowlist.py` pins the complete
+`app`/`internal` index inventory of the already-built
+`create_app_schema_v1.sql` DDL. Plan section 6.2's literal allowlist names
+the pre-MIG-AMEND 33-table shape; MIG-AMEND (A5-A9) restructured the DDL to
+28 tables before this test was written, so the test pins the DDL's real,
+introspected inventory (captured by applying the migration to Testcontainers
+Postgres and reading `pg_index`/`pg_am`, not hand-derived from the plan
+text) rather than re-deriving section 6.2's per-table bullets, and separately
+asserts the two invariants section 6.2 cares about: zero duplicate indexes
+(verified true), and every FK covered by a leftmost-prefix index. That second
+check found a real, documented gap: 15 of the 75 FKs in the built DDL are not
+leftmost-covered -- every one follows the same shape, a composite index
+puts the RLS-scope `course_id` leftmost and leaves the FK's own column
+non-leading (the DDL only reverses this for `mastery_events`/`grading_runs`,
+which have a genuine both-directions read pattern). Plan section 13's
+acceptance criteria gates advisor output on security lints only
+(`mutable-search-path`/`open-anon`/`initplan`), not `unindexed_foreign_keys`,
+so this is pinned as a named `KNOWN_UNCOVERED_FKS` set for a future
+index-hygiene pass rather than silently patched here; any FK added later
+without a conscious coverage decision fails the test loudly. Third,
+`scripts/db/unused_index_review.sql` is a documented, human-run
+`pg_stat_user_indexes` query (plan section 6.3) for the 30-day post-cutover
+review of any surviving low-usage index -- explicitly not an automated drop,
+and explicitly not proof from two days of post-reseed `idx_scan=0`.
+
 ## Module map and file landmarks
 
 Cleanup T-E (2026-07-16) removed the `Clarification` SQLAlchemy model and all runtime reads/writes of `apollo_clarifications`. Migration 033 remains historical schema history; the physical table is dropped first (section 4's stated order) by the DB-16 teardown in `scripts/db/remove_legacy_public_schema.sql`, not yet applied anywhere. DB-14 (2026-07-21) renamed `GradingArtifact` to `GradingRun` and retargeted it onto `internal.grading_runs`; the target DDL has no dedicated `clarification_trace` column, so it (and `misconceptions`) now nest inside the `grader_payload` JSONB catch-all instead of a top-level compatibility field — see `apollo.md`'s "DB-14 grading merge" section for the full column mapping.
