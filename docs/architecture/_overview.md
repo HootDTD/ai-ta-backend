@@ -4,7 +4,6 @@ description: App bootstrap, HTTP surface, auth, config, vendor clients, and ops 
 owns:
   - server.py
   - auth.py
-  - supabase_client.py
   - teacher_upload_worker.py
   - config/**
   - runtime/**
@@ -22,7 +21,7 @@ related:
   - shared/conventions
   - shared/security
   - shared/supabase
-last_verified: 2026-07-20
+last_verified: 2026-07-22
 stub: false
 ---
 
@@ -38,7 +37,6 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` owns the FastAPI ap
 |---|---|
 | `server.py` | FastAPI app, CORS, router mounting, and all `/ask`, `/teacher/*`, `/invite-links*`, `/classes` routes. |
 | `auth.py` | Supabase JWT validation (REST call to `auth/v1/user`), in-memory token cache, course-membership checks, student auto-enroll. |
-| `supabase_client.py` | One-line backward-compat shim: `from vendors.supabase_client import *`. |
 | `teacher_upload_worker.py` | Procfile `worker` entrypoint: `TeacherWeeklyStorage().run_upload_worker_loop()` — drains the queued teacher-upload ingestion jobs. |
 | `Procfile` | `web: uvicorn server:app` + `worker: python -m teacher_upload_worker` (Railway deploys the API and upload-ingestion worker). |
 | `scripts/db/check-migration-drift.mjs` | CI/local guard that verifies the frozen numbered migration checksums and permits only timestamped SQL in the active Supabase chain. |
@@ -57,7 +55,6 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` owns the FastAPI ap
 ### vendors/
 | File | Role |
 |---|---|
-| `vendors/supabase_client.py` | Thin PostgREST helpers (`select`, `select_one`, `insert`, `upsert`, `update`, `delete`, `rpc`) using `SUPABASE_URL` + anon `SUPABASE_API_KEY`; RLS enforces access server-side. |
 | `vendors/supabase_storage.py` | `SupabaseStorageClient.upload_bytes/download_bytes/ensure_bucket` against Storage REST; prefers `SUPABASE_SERVICE_ROLE_KEY`, falls back to API/anon key. `ensure_bucket` POSTs `/storage/v1/bucket` (private by default) and tolerates already-exists (400/409 duplicate) — new environments no longer need manual bucket creation. |
 | `vendors/openai_client.py` | OpenAI Chat Completions wrapper used by AI-use reports: `generate_ai_use_markdown(evidence_pack, style, length)` with token budgeting, retry/backoff, `REPORTS_MODEL` (default `gpt-4o-mini`), and a fake mode when `TEST_FAKE_OPENAI=1` or no API key. |
 
@@ -166,7 +163,6 @@ From `requirements.txt` (unpinned except floors): `fastapi` + `uvicorn[standard]
 - **`search_space_id` is the canonical course key.** The `class` field on `AskRequest` is deprecated/ignored; `doc_sets` overrides are hard-rejected.
 - **Wire logs ride the response.** Pipeline stages `print()` lines prefixed `[Main AI`/`[Indexer AI`; `/ask` captures stdout and returns those lines in `logs`. Gated by `RETRIEVAL_WIRE_LOG`.
 - **Error detail is opt-in.** 500 bodies are generic unless `DEBUG_HTTP_ERRORS=1`.
-- **Root `supabase_client.py` is a shim** — import `vendors.supabase_client` in new code.
 - **`python server.py` is stale**: the `__main__` block runs `uvicorn.run("backend.server:app", ...)`, a leftover module path. Use `uvicorn server:app` (what the Procfile does).
 - **Auto-enroll**: first student access to a course silently creates a membership (`AUTO_ENROLL_STUDENT_MEMBERSHIP=1` default; restrict with `AUTO_ENROLL_SEARCH_SPACE_IDS`).
 - **Pytest** (`pytest.ini`): `asyncio_mode = auto`, `--strict-markers`, markers `unit` / `integration` / `e2e` / `slow` / `llm`.

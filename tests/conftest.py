@@ -71,25 +71,13 @@ sys.modules["openai"] = openai_stub
 
 
 @pytest.fixture(autouse=True)
-def _mock_supabase(monkeypatch):
-    """Route vendors.supabase_client through the shared in-memory mock.
-
-    The PostgREST-style mock now lives in tests/support/supabase_mock.py (shared
-    with tests/functions-tests/conftest.py). The root suite uses the no-auto-id
-    variant to preserve its historical insert/upsert behaviour.
-    """
+def _test_env(monkeypatch):
+    """Baseline env for the suite (fake OpenAI + local Supabase coordinates)."""
     monkeypatch.setenv("TEST_FAKE_OPENAI", "1")
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.setenv("SUPABASE_URL", "http://localhost:54321")
     monkeypatch.setenv("SUPABASE_API_KEY", "test-key")
     monkeypatch.setenv("SUPABASE_DB_URL", "sqlite+aiosqlite:///:memory:")
-
-    from tests.support.supabase_mock import SupabaseMock
-
-    mock = SupabaseMock(auto_id=False)
-    mock.install(monkeypatch)
-    yield
-    mock.reset()
 
 
 

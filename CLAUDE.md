@@ -71,7 +71,7 @@ pytest tests/test_main_ai.py -v     # Run specific test module
 
 ## Coding Standards
 - Keep each retrieval pipeline stage independent and independently testable
-- All new features must include unit tests using Supabase mock fixtures (see conftest.py)
+- All new features must include unit tests using the shared conftest harness (env fixtures + Testcontainers Postgres for DB paths; see tests/conftest.py)
 - Use comprehensive debug logging for any pipeline stage
 - Return structured JSON responses from the LLM layer — never raw text
 
