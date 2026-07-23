@@ -11,7 +11,7 @@ related:
   - shared/supabase
   - shared/security
   - ai-ta-backend/rag-pipeline
-last_verified: 2026-07-21
+last_verified: 2026-07-23
 stub: false
 ---
 
@@ -309,6 +309,124 @@ HTTP responses intentionally retain the established `search_space_id`,
 - `get_async_session()` — async context manager for non-FastAPI callers.
 - `run_async(coro)` — runs a coroutine on a persistent daemon-thread event loop and blocks for the result; this is how **every sync FastAPI endpoint** does DB work.
 - Engines are created lazily **per event loop** (`_engines` dict keyed by `id(loop)`) because asyncpg pools bind to one loop; the process runs two loops (uvicorn main + the `run_async` background loop). Connection: `SUPABASE_DB_URL` env, pool_size=10, max_overflow=20, `pool_pre_ping=True`, `pool_recycle=1800` (backstop; primary protection is the checkpointed indexer's short-session pattern).
+- **DB-08b RLS enforcement — session-creation-path boundary.** `current_request_user_id`
+  is a `contextvars.ContextVar[str | None]` the auth layer sets once a bearer
+  token resolves to a user id (`apollo/auth_deps.py::require_user`, the
+  native-async `/apollo/*` dependency chain). **Only `get_db_session()`
+  (the FastAPI dependency) can ever be RLS-enforced.** When it mints a
+  session, and only on the `postgresql` dialect, it installs a
+  **per-session-instance** SQLAlchemy ORM `"after_begin"` listener
+  (`_install_rls_context_for_session`), unconditionally — i.e. whether or not
+  a request identity has resolved yet. The listener itself reads
+  `current_request_user_id` **lazily, at the moment it fires** (the start of
+  every transaction on that session — SQLAlchemy's `AsyncSession` autobegins
+  on first statement execution, not at session construction), and issues
+  `SET LOCAL ROLE app_runtime` plus a bound
+  `set_config('request.jwt.claims', ..., true)` if (and only if) an identity
+  is readable at that moment; both are transaction-scoped so they revert
+  automatically at COMMIT/ROLLBACK — a pooled connection handed to the next
+  transaction can never inherit the previous one's role or claims, regardless
+  of which function mints the next session on it.
+  **Why lazy, not eager (post-review fix — was CRITICAL-severity broken):**
+  FastAPI resolves a route's `Depends` graph in parameter-declaration order,
+  recursively, with identical-callable caching across the whole request tree
+  — `get_db_session` is frequently declared, and via that cache sometimes
+  *resolved*, before the identity dependency that sets the contextvar. An
+  eager read at session-mint time (the original DB-08b design) therefore
+  observed `None` on effectively every real `/apollo/*` request and
+  enforcement never activated in production, despite exercising correctly
+  under every existing test (which all pre-set the contextvar before minting
+  the session — an ordering the real request path never produces). Reading
+  lazily at first-transaction time instead depends on a single, simple,
+  already-true-almost-everywhere invariant: **every request handler must
+  resolve identity (`require_user`/`require_session_owner`) before issuing
+  its first query on the session** — violate it and that whole transaction
+  silently locks onto the unenforced owner role (`SET LOCAL ROLE` only ever
+  applies once per transaction). One real violation of this invariant was
+  found and fixed alongside this change:
+  `apollo/provisioning/problem_generation/api.py`'s `list_generation_seeds`
+  and `create_generation_run` used to query the concept table before calling
+  `require_user`. `tests/database/test_db08b_rls_enforcement.py`'s
+  route-level integration tests (§4 of that file) drive the real dependency
+  graph via `TestClient` end to end and would catch a regression of either
+  the lazy-read mechanism or this ordering invariant.
+  `get_async_session()` **never** installs this listener — its sessions are
+  unconditionally on the owning (BYPASSRLS) role, **even when
+  `current_request_user_id` is still readable in the calling context**
+  (the exact shape of a FastAPI `BackgroundTasks` callback, which runs as a
+  continuation of the same coroutine/Task the request handler ran in, after
+  the request-scoped session already closed). This is a deliberate
+  session-creation-path gate, not an ambient contextvar check — an
+  engine-level `"begin"` hook (fires for every transaction on every
+  connection checked out from the engine) would have enforced
+  `get_async_session()` sessions too, incorrectly, exactly in that
+  BackgroundTasks shape. `run_async` (the sync-endpoint → background-loop
+  bridge) has no contextvar-handling code of its own; Python's own
+  `asyncio.run_coroutine_threadsafe` → `call_soon_threadsafe` captures the
+  calling thread's context by default, so the contextvar is often still
+  *readable* inside a `run_async`-scheduled coroutine, but that's harmless —
+  every session reachable through `run_async` is a `get_async_session()`
+  session (`server.py`'s sync routes never use `Depends(get_db_session)`),
+  which ignores the contextvar unconditionally.
+  **Enforced route families:** all of `/apollo/*` (`apollo/api.py`, via
+  `Depends(get_db_session)` + `Depends(require_session_owner)` /
+  `require_user`), the `authored-sets` and `problem-generation` provisioning
+  routers (`apollo/provisioning/authored_sets/api.py`,
+  `apollo/provisioning/problem_generation/api.py` — the SYNCHRONOUS part of
+  each request handler only; each router's `BackgroundTasks` callbacks mint
+  their own `get_async_session()` session and are NOT enforced), and any
+  future route wired on `Depends(get_db_session)`. **Every such route must
+  resolve identity before its first query** — see the ordering-invariant
+  note above; this is now the only thing that has to stay true for
+  enforcement to activate (Depends declaration order no longer matters).
+  **Never enforced:** `server.py`'s legacy sync routes (`/ask`,
+  `/teacher/upload`, etc. — the `run_async` bridge), `ai/router/wiring.py`
+  (calls `get_async_session()` directly, reached only from the sync bridge),
+  `teacher_upload_worker.py`, `scripts/`, `campaign/`, and every
+  `BackgroundTasks` callback scheduled by the enforced routers above.
+- **Fixed gap (DB-08c, see also `shared/security.md`):** DB-04's policy set
+  predates DB-08b's enforcement flip and was authored against a BYPASSRLS
+  backend, so several `app` tables — including `app.mastery_events` and
+  `app.learner_state` — only ever got a `*__owner_or_teacher_select` RLS
+  policy, no INSERT/UPDATE/DELETE policy for `authenticated`/`app_runtime`. A
+  post-DB-08b e2e run turned up two live defects from exactly this gap: every
+  student's first graded attempt 500ing on the `app.student_progress` INSERT
+  in `apollo/persistence/progress_repo.py::load_progress`, and brand-new
+  students' auto-enroll `app.course_memberships` INSERT being silently
+  denied. `20260723060000_db08c_rls_write_policy_gaps.sql` adds the 13
+  missing write policies this exposed (`student_progress`,
+  `course_memberships`, `mastery_events`, `learner_state`,
+  `tutoring_messages`, `concepts`, `problems`, `documents`,
+  `learner_entities`) — `apollo/projections/mastery.py::
+  update_mastery_from_artifact`'s writes from
+  `apollo/handlers/done.py::_project_mastery` now succeed under
+  `app_runtime` too. Regression coverage:
+  `tests/database/test_db08b_rls_enforcement.py`'s §1b block (per-policy
+  own/teacher-write, cross-tenant/impersonation-denied, no-claims-denied
+  matrix) plus two CRITICAL end-to-end regressions —
+  `test_critical_full_done_chain_first_attempt_student_write_sequence_succeeds`
+  and `test_critical_auto_enroll_brand_new_student_succeeds` — mirroring the
+  two e2e defects directly.
+- Test coverage: `tests/database/test_db08b_rls_enforcement.py` (real
+  Postgres — all 45 app-schema policies (DB-04's 32 baseline + DB-08c's 13
+  write-policy additions) exercised under `app_runtime`
+  own/cross-tenant/no-claims/owner-bypass; the `get_db_session` vs.
+  `get_async_session` enforcement boundary, including the BackgroundTasks-
+  shaped regression case; pooled-connection leak isolation under concurrent
+  load; every internal-schema grant this migration adds; **§4 — route-level
+  integration through the real FastAPI dependency graph**: `TestClient`
+  requests through both real dependency shapes — body-call
+  (`require_user(request)` called explicitly, mirroring
+  create_session/progress/concepts/problems/classroom_*) and
+  `require_session_owner` (mirroring get_session/chat/done/retry/next/end/
+  kg/*) — asserting `SELECT current_user == 'app_runtime'` and cross-tenant
+  scoping/denial through the unmodified production dependency functions,
+  plus end-to-end coverage of the real
+  `apollo/provisioning/problem_generation/api.py` routes this patch
+  reordered) and `tests/unit/test_db08b_session_context_propagation.py` (no
+  Docker — `run_async`'s default contextvar-capture behavior, sqlite
+  dialect no-op gate, and a regression guard that the postgresql-dialect
+  listener attaches unconditionally regardless of identity state).
 
 ### Chats service (`chats/service.py`)
 - `build_memory_context(summary: str, turns: List[ChatTurn]) -> str` — formats "Conversation summary:" + "Recent conversation turns:" block for prompt injection.
