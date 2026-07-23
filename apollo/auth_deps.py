@@ -20,7 +20,7 @@ from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import ApolloSession
+from apollo.persistence.models import TutoringSession
 from auth import (
     AuthContext,
     auto_enroll_student_membership,
@@ -99,17 +99,28 @@ async def require_session_owner(
 ) -> AuthContext:
     """401/403/404 gate for /apollo/sessions/{session_id}/* endpoints.
 
-    FastAPI resolves session_id from the path. Returns the AuthContext so
-    handlers can use the validated identity.
+    The owner predicate deliberately returns 404 for another user's id. The
+    subsequent membership check rejects access if that owner is no longer a
+    member of the session's course.
     """
     auth = await require_user(request)
     row = (
-        (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id)))
+        (
+            await db.execute(
+                select(TutoringSession).where(
+                    TutoringSession.id == session_id,
+                    TutoringSession.user_id == auth.user_id,
+                )
+            )
+        )
         .scalars()
         .first()
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if str(row.user_id) != str(auth.user_id):
-        raise HTTPException(status_code=403, detail="Not your session")
+    await require_course_member(
+        db=db,
+        auth=auth,
+        search_space_id=int(row.course_id),
+    )
     return auth

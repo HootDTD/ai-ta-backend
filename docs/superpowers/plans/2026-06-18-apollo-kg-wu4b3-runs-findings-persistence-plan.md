@@ -8,7 +8,7 @@
 
 This unit is the PERSISTENCE seam + the §6.11 executable corpus, layered on the
 already-frozen `apollo/grading/` (WU-4B1 audit/abstention, WU-4B2 finding→event)
-and `apollo/graph_compare/` (WU-4A score core). **No new migration** — migration
+and `apollo/retired graph comparator/` (WU-4A score core). **No new migration** — migration
 026 already shipped `apollo_graph_comparison_runs`/`_findings` and the ORM
 (`GraphComparisonRun` ~models.py:479, `GraphComparisonFinding` ~models.py:527).
 `next_free` migration stays 028.
@@ -20,10 +20,10 @@ and `apollo/graph_compare/` (WU-4A score core). **No new migration** — migrati
 | Fact | Source |
 |---|---|
 | ORM `GraphComparisonRun` / `GraphComparisonFinding` already exist | `apollo/persistence/models.py:479-556` |
-| `GradeResult` has the 10 `*_score` fields named 1:1 to runs columns + `comparison_version` | `apollo/graph_compare/core.py:52-76` |
+| `GradeResult` has the 10 `*_score` fields named 1:1 to runs columns + `comparison_version` | `apollo/retired graph comparator/core.py:52-76` |
 | `AuditedGrade` carries `grade`, `findings`, `abstention_reasons`, `abstained`, `suppressed_event_kinds`, `alias_candidates` | `apollo/grading/audited_grade.py:59-74` |
-| `Finding{kind, canonical_key, student_node_ids, reference_node_ids, evidence_spans, score, confidence, message}` (NO edge-id tuples — edges diagnostic, message-only) | `apollo/graph_compare/findings.py:40-58` |
-| `ReferenceGraph{nodes, edges, paths}` of frozen `CanonicalNode`/`CanonicalEdge`/`ReferencePathView` | `apollo/graph_compare/canonical.py:79-93` |
+| `Finding{kind, canonical_key, student_node_ids, reference_node_ids, evidence_spans, score, confidence, message}` (NO edge-id tuples — edges diagnostic, message-only) | `apollo/retired graph comparator/findings.py:40-58` |
+| `ReferenceGraph{nodes, edges, paths}` of frozen `CanonicalNode`/`CanonicalEdge`/`ReferencePathView` | `apollo/retired graph comparator/canonical.py:79-93` |
 | Per-node method-cap confidence on `ResolvedNode.confidence`; caps `METHOD_CONFIDENCE_CAP` (exact 1.0 … llm 0.75 … unresolved 0.0) | `apollo/resolution/result.py:33-39`, `apollo/resolution/candidates.py:35-42` |
 | `db_session` fixture = real pgvector pg16, `Base.metadata.create_all`, per-test rollback; Apollo ORM imports the SAME `Base` from `database.models` so Apollo tables ARE created | `tests/conftest.py:119-192`, `apollo/persistence/models.py:33` |
 | runs.`user_id` has **no ORM FK** (auth.users is Supabase-managed, not in `Base.metadata`) → a free-form UUID persists fine under `db_session`; `attempt_id`/`search_space_id` DO have ORM FKs → need real `ProblemAttempt`/`SearchSpace` rows | `apollo/persistence/models.py:493-500` |
@@ -537,7 +537,7 @@ listing (near lines 79/94, after the `GradeResult`/`Finding` entry) with:
   (the corpus INJECTS `turn_order`; it does not query it).
 - §6.7 shadow / §6.8 diagnostics — **WU-4C**.
 - A new migration (026 already shipped the tables + ORM; `next_free` stays 028).
-- Any change to `apollo/graph_compare/**` (frozen, WU-4A) or the WU-4B1/4B2
+- Any change to `apollo/retired graph comparator/**` (frozen, WU-4A) or the WU-4B1/4B2
   modules `abstention.py`/`audited_grade.py`/`transcript_audit.py`/`events.py`/
   `event_model.py`/`opposes.py` (frozen). `__init__.py` is touched for ADDITIVE
   re-exports only.

@@ -657,7 +657,7 @@ Confidence-rated (HIGH = likely to bite, plan mitigates; LOW = noted, unlikely).
 
 WU-3B is the DATA FIXTURE only. Explicitly NOT in this unit:
 - **NO `:Canon` projection / resolver / `RESOLVES_TO`** (WU-3C). No Neo4j writes at all.
-- **NO grading core** (`apollo/graph_compare/`, coverage/soundness/bisimilarity, transcript
+- **NO grading core** (`apollo/retired graph comparator/`, coverage/soundness/bisimilarity, transcript
   audit, abstention gates, decision table) — WU-4A. WU-3B only ships the
   `validate_reference_graph` contract WU-4A consumes; it does not grade.
 - **NO §8A runtime cutover** (WU-3D): no deleting `_AVAILABLE_CLUSTERS`/`_CLUSTER_TO_CONCEPT`,

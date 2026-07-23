@@ -1,66 +1,72 @@
-"""Fast unit test for the WU-3A seeder edit: _upsert_subject now attributes a
-subject to the bootstrap course (MIN(aita_search_spaces.id)) because
-apollo_subjects.search_space_id is NOT NULL (migration 026, isolation invariant
-§1.4).
-
-The seeder is a script with no DB harness of its own; this exercises the one
-changed function on in-memory SQLite so the changed lines are covered (the real
-end-to-end seeding runs against Postgres at deploy time). Covers both the create
-path (new subject gets the bootstrap space_id) and the update path (existing row
-keeps its id).
-"""
+"""Registry seeder coverage for the subjects-into-concepts fold."""
 
 from __future__ import annotations
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import Column, Integer, MetaData, Table, select
+from sqlalchemy import Column, Integer, MetaData, Table
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from apollo.persistence.models import Subject
+from apollo.persistence.models import Concept
 from database.models import Base
-from scripts.seed_apollo_concept_registry import _upsert_subject
+from scripts.seed_apollo_concept_registry import _upsert_concept
 
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    # Minimal aita_search_spaces stub so MIN(id) resolves; Subject.__table__ for
-    # the upsert target. SQLite does not enforce the FK, matching repo convention.
-    spaces = Table(
-        "aita_search_spaces",
-        MetaData(),
-        Column("id", Integer, primary_key=True),
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
     )
+    courses = Table("courses", MetaData(), Column("id", Integer, primary_key=True))
     async with engine.begin() as conn:
-        await conn.run_sync(lambda sc: spaces.create(sc))
-        await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=[Subject.__table__]))
-        await conn.exec_driver_sql("INSERT INTO aita_search_spaces (id) VALUES (7), (3)")
-    Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-    async with Session() as s:
-        yield s
+        await conn.run_sync(lambda sc: courses.create(sc))
+        await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=[Concept.__table__]))
+        await conn.exec_driver_sql("INSERT INTO courses (id) VALUES (3)")
+    maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as session:
+        yield session
     await engine.dispose()
 
 
+def _payloads() -> dict:
+    return {
+        "canonical_symbols": {"symbols": ["x"], "description": {"x": "value"}},
+        "normalization_map": {"X": "x"},
+        "parser_prompt_template": "Parse",
+        "solver_hints": {"constants": {}},
+        "forbidden_named_laws": {"named_laws": ["shortcut"]},
+        "concept_dag": {"ignored": ["normalized elsewhere"]},
+    }
+
+
 @pytest.mark.asyncio
-async def test_upsert_subject_create_uses_bootstrap_min_space(db: AsyncSession):
-    subject_id = await _upsert_subject(db, "fluid_mechanics")
-    await db.commit()
-
-    row = (await db.execute(select(Subject).where(Subject.id == subject_id))).scalar_one()
-    assert row.slug == "fluid_mechanics"
-    assert row.display_name == "Fluid Mechanics"
-    # MIN(id) over {7, 3} -> 3 (the bootstrap/pilot course).
-    assert row.search_space_id == 3
+async def test_upsert_concept_folds_subject_and_normalizes_fields(db: AsyncSession):
+    concept_id = await _upsert_concept(
+        db,
+        course_id=3,
+        subject_slug="fluid_mechanics",
+        slug="bernoulli",
+        payloads=_payloads(),
+    )
+    row = await db.get(Concept, concept_id)
+    assert row is not None
+    assert row.course_id == 3
+    assert row.subject_slug == "fluid_mechanics"
+    assert row.subject_display_name == "Fluid Mechanics"
+    assert row.canonical_symbols == ["x"]
+    assert row.symbol_metadata == {"description": {"x": "value"}}
+    assert row.solver_config == {"constants": {}}
+    assert row.forbidden_named_laws == ["shortcut"]
+    assert "concept_dag" not in row.__table__.columns
 
 
 @pytest.mark.asyncio
-async def test_upsert_subject_update_path_keeps_id(db: AsyncSession):
-    first_id = await _upsert_subject(db, "thermo")
-    await db.commit()
-    # Re-upsert the same slug hits the update branch and returns the same id.
-    again_id = await _upsert_subject(db, "thermo")
-    await db.commit()
-    assert again_id == first_id
-    rows = (await db.execute(select(Subject).where(Subject.slug == "thermo"))).scalars().all()
-    assert len(rows) == 1
+async def test_upsert_concept_is_idempotent(db: AsyncSession):
+    first = await _upsert_concept(
+        db, course_id=3, subject_slug="thermo", slug="energy", payloads=_payloads()
+    )
+    second = await _upsert_concept(
+        db, course_id=3, subject_slug="thermo", slug="energy", payloads=_payloads()
+    )
+    assert second == first

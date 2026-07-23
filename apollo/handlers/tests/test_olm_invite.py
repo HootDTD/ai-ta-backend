@@ -7,9 +7,10 @@ Tests cover three layers in isolation:
     3. The apollo_llm.py suffix — invite text appears only when fired=True.
 
 `decide_invite` is async + db-driven; we use SQLite-in-memory + the
-ApolloSession / Message tables. Time is injected via `now=` so cooldown
+TutoringSession / TutoringMessage tables. Time is injected via `now=` so cooldown
 tests are deterministic.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -29,11 +30,11 @@ from apollo.handlers.olm_invite import (
 )
 from apollo.ontology import build_node
 from apollo.persistence.models import (
-    ApolloSession,
-    Message,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -41,9 +42,13 @@ from database.models import Base
 # Pure helpers
 # ---------------------------------------------------------------------------
 
+
 def _eq(node_id: str, conf: float):
     return build_node(
-        node_type="equation", node_id=node_id, attempt_id=1, source="parser",
+        node_type="equation",
+        node_id=node_id,
+        attempt_id=1,
+        source="parser",
         content={"symbolic": "x", "label": ""},
         parser_confidence=conf,
     )
@@ -65,9 +70,11 @@ def test_find_low_conf_new_nodes_threshold_is_0_7():
 
 def test_signal_to_metadata_strips_summary():
     """Summary is redundant with the Neo4j node — only the gate fields
-    persist on Message.metadata."""
+    persist on TutoringMessage.metadata."""
     sig = OlmInviteSignal(
-        fired=True, entry_id="eq1", summary="A1*v1 - A2*v2",
+        fired=True,
+        entry_id="eq1",
+        summary="A1*v1 - A2*v2",
         low_conf_pattern_this_turn=True,
     )
     assert signal_to_metadata(sig) == {"fired": True, "entry_id": "eq1"}
@@ -77,13 +84,17 @@ def test_signal_to_metadata_strips_summary():
 # decide_invite — async, DB-backed
 # ---------------------------------------------------------------------------
 
+
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
@@ -95,34 +106,62 @@ async def db():
 
 @pytest_asyncio.fixture
 async def session(db: AsyncSession):
-    s = ApolloSession(
-        user_id=TEST_USER_ID, search_space_id=TEST_SPACE_ID, concept_id=1,
-        status=SessionStatus.active.value, phase=SessionPhase.TEACHING.value,
+    s = TutoringSession(
+        user_id=TEST_USER_ID,
+        search_space_id=TEST_SPACE_ID,
+        concept_id=1,
+        status=SessionStatus.active.value,
+        phase=SessionPhase.TEACHING.value,
     )
     db.add(s)
     await db.flush()
-    a = ProblemAttempt(session_id=s.id, problem_id="p1", difficulty="intro")
+    a = ProblemAttempt(
+        session_id=s.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=s.user_id,
+        course_id=s.course_id,
+    )
     db.add(a)
     await db.commit()
-    await db.refresh(s); await db.refresh(a)
+    await db.refresh(s)
+    await db.refresh(a)
     return s, a
 
 
 async def _add_student_turn(db, session_id, attempt_id, idx, *, low_conf=False):
-    db.add(Message(
-        session_id=session_id, attempt_id=attempt_id, role="student",
-        content="x", turn_index=idx,
-        message_metadata={"low_conf_pattern": True} if low_conf else None,
-    ))
+    attempt = await db.get(ProblemAttempt, attempt_id)
+    db.add(
+        TutoringMessage(
+            session_id=session_id,
+            course_id=attempt.course_id,
+            attempt_id=attempt_id,
+            role="student",
+            content="x",
+            turn_index=idx,
+            message_metadata={"low_conf_pattern": True} if low_conf else None,
+        )
+    )
     await db.commit()
 
 
 async def _add_apollo_turn(
-    db, session_id, attempt_id, idx, *, fired=False, when: datetime | None = None,
+    db,
+    session_id,
+    attempt_id,
+    idx,
+    *,
+    fired=False,
+    when: datetime | None = None,
 ):
-    msg = Message(
-        session_id=session_id, attempt_id=attempt_id, role="apollo",
-        content="x", turn_index=idx,
+    attempt = await db.get(ProblemAttempt, attempt_id)
+    msg = TutoringMessage(
+        session_id=session_id,
+        course_id=attempt.course_id,
+        attempt_id=attempt_id,
+        role="apollo",
+        content="x",
+        turn_index=idx,
         message_metadata={"olm_invite": {"fired": fired, "entry_id": "y"}},
     )
     if when is not None:
@@ -136,7 +175,9 @@ async def test_decide_no_pattern_returns_unfired(monkeypatch, db, session):
     monkeypatch.setenv("APOLLO_OLM_INVITES_ENABLED", "1")
     s, _ = session
     sig = await decide_invite(
-        db=db, session_id=s.id, new_low_conf_nodes=[],
+        db=db,
+        session_id=s.id,
+        new_low_conf_nodes=[],
     )
     assert sig.fired is False
     assert sig.low_conf_pattern_this_turn is False
@@ -153,7 +194,8 @@ async def test_decide_master_flag_off_never_fires(monkeypatch, db, session):
     await _add_student_turn(db, s.id, a.id, 1, low_conf=True)
 
     sig = await decide_invite(
-        db=db, session_id=s.id,
+        db=db,
+        session_id=s.id,
         new_low_conf_nodes=[_eq("eq1", 0.5)],
     )
     assert sig.fired is False
@@ -162,13 +204,16 @@ async def test_decide_master_flag_off_never_fires(monkeypatch, db, session):
 
 @pytest.mark.asyncio
 async def test_decide_first_pattern_below_counter_threshold(
-    monkeypatch, db, session,
+    monkeypatch,
+    db,
+    session,
 ):
     """First low-conf turn ever — counter=1, below threshold → no fire."""
     monkeypatch.setenv("APOLLO_OLM_INVITES_ENABLED", "1")
     s, _ = session
     sig = await decide_invite(
-        db=db, session_id=s.id,
+        db=db,
+        session_id=s.id,
         new_low_conf_nodes=[_eq("eq1", 0.4)],
     )
     assert sig.fired is False
@@ -177,14 +222,17 @@ async def test_decide_first_pattern_below_counter_threshold(
 
 @pytest.mark.asyncio
 async def test_decide_fires_on_second_pattern_no_recent_invite(
-    monkeypatch, db, session,
+    monkeypatch,
+    db,
+    session,
 ):
     """Second low-conf turn (counter=2) with no prior invite → fires."""
     monkeypatch.setenv("APOLLO_OLM_INVITES_ENABLED", "1")
     s, a = session
     await _add_student_turn(db, s.id, a.id, 0, low_conf=True)
     sig = await decide_invite(
-        db=db, session_id=s.id,
+        db=db,
+        session_id=s.id,
         new_low_conf_nodes=[_eq("eq1", 0.4), _eq("eq2", 0.55)],
     )
     assert sig.fired is True
@@ -204,12 +252,17 @@ async def test_decide_respects_cooldown(monkeypatch, db, session):
     # An apollo invite fired 30s ago — well within the 60s cooldown.
     now = datetime.now(UTC)
     await _add_apollo_turn(
-        db, s.id, a.id, 2, fired=True,
+        db,
+        s.id,
+        a.id,
+        2,
+        fired=True,
         when=now - timedelta(seconds=30),
     )
 
     sig = await decide_invite(
-        db=db, session_id=s.id,
+        db=db,
+        session_id=s.id,
         new_low_conf_nodes=[_eq("eq1", 0.4)],
         now=now,
     )
@@ -225,12 +278,17 @@ async def test_decide_fires_after_cooldown_elapsed(monkeypatch, db, session):
     now = datetime.now(UTC)
     # Last invite was COOLDOWN_SECONDS+10s ago.
     await _add_apollo_turn(
-        db, s.id, a.id, 1, fired=True,
+        db,
+        s.id,
+        a.id,
+        1,
+        fired=True,
         when=now - timedelta(seconds=COOLDOWN_SECONDS + 10),
     )
 
     sig = await decide_invite(
-        db=db, session_id=s.id,
+        db=db,
+        session_id=s.id,
         new_low_conf_nodes=[_eq("eq1", 0.4)],
         now=now,
     )
@@ -239,7 +297,9 @@ async def test_decide_fires_after_cooldown_elapsed(monkeypatch, db, session):
 
 @pytest.mark.asyncio
 async def test_decide_unfired_apollo_turns_dont_block_cooldown(
-    monkeypatch, db, session,
+    monkeypatch,
+    db,
+    session,
 ):
     """An apollo turn with olm_invite.fired=False shouldn't count as
     'last invite' — cooldown only triggers off real fires."""
@@ -249,11 +309,17 @@ async def test_decide_unfired_apollo_turns_dont_block_cooldown(
     # An apollo turn that DID NOT fire an invite, recent.
     now = datetime.now(UTC)
     await _add_apollo_turn(
-        db, s.id, a.id, 1, fired=False, when=now - timedelta(seconds=5),
+        db,
+        s.id,
+        a.id,
+        1,
+        fired=False,
+        when=now - timedelta(seconds=5),
     )
 
     sig = await decide_invite(
-        db=db, session_id=s.id,
+        db=db,
+        session_id=s.id,
         new_low_conf_nodes=[_eq("eq1", 0.4)],
         now=now,
     )
@@ -262,13 +328,16 @@ async def test_decide_unfired_apollo_turns_dont_block_cooldown(
 
 @pytest.mark.asyncio
 async def test_decide_picks_lowest_confidence_node_as_entry(
-    monkeypatch, db, session,
+    monkeypatch,
+    db,
+    session,
 ):
     monkeypatch.setenv("APOLLO_OLM_INVITES_ENABLED", "1")
     s, a = session
     await _add_student_turn(db, s.id, a.id, 0, low_conf=True)
     sig = await decide_invite(
-        db=db, session_id=s.id,
+        db=db,
+        session_id=s.id,
         new_low_conf_nodes=[_eq("a", 0.65), _eq("b", 0.30), _eq("c", 0.55)],
     )
     assert sig.fired is True

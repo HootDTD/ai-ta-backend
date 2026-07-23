@@ -1,7 +1,0 @@
-{
-  "search_space_id": 1,
-  "teacher_user_id": "c5e2c048-e6c1-5a28-8ac5-69ba4cfd9246",
-  "teacher_email": "campaign-teacher@example.com",
-  "teacher_password": "CampaignTeacher123!",
-  "teacher_token": "eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJzdWIiOiAiYzVlMmMwNDgtZTZjMS01YTI4LThhYzUtNjliYTRjZmQ5MjQ2IiwgImVtYWlsIjogImNhbXBhaWduLXRlYWNoZXJAZXhhbXBsZS5jb20iLCAicm9sZSI6ICJhdXRoZW50aWNhdGVkIiwgImF1ZCI6ICJhdXRoZW50aWNhdGVkIiwgImlhdCI6IDE3ODMxNDIwOTksICJleHAiOiAxNzgzMjI4NDk5fQ.HPBnmwaUSF4bznnnU6wIp5C87QtidJ7jmVP1DS8tEYs"
-}

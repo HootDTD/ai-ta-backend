@@ -10,6 +10,11 @@ Requirements:
   - pgvector extension already enabled in Supabase (it is by default)
 """
 
+raise SystemExit(
+    "Legacy Python migrations are retired. Use the timestamped Supabase chain via "
+    "`node scripts/db/reset-local.mjs`; never run database/migrations/*.py."
+)  # pragma: no cover - intentional command-line guard
+
 import asyncio
 import os
 import sys

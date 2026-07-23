@@ -7,30 +7,30 @@
 ---
 provides:
   - apollo.grading.compute_calibration_metrics — shadow-vs-old agreement/divergence value object (CalibrationMetrics)
-  - apollo.grading.findings_to_rubric_input — ShadowGradeResult -> compute_rubric coverage/misconception_scores/reference_nodes shape (RubricMappingInput)
+  - apollo.grading.findings_to_rubric_input — retired shadow result -> compute_rubric coverage/misconception_scores/reference_nodes shape (RubricMappingInput)
   - apollo.grading.build_graph_sim_rubric — calls compute_rubric on the mapped input -> the graph-sim candidate rubric dict
   - apollo.grading.generate_constrained_diagnostic — §6.8 findings-only diagnostic (injectable llm callable) + post-check
   - apollo.handlers.done.APOLLO_GRAPH_SIM_LIVE_ENABLED flag accessor (_graph_sim_live_enabled) — dormant, OFF
-  - ShadowGradeResult is EXTENDED on done_grading to additionally surface graph-sim rubric/metrics/diagnostic (calibration fields)
+  - retired shadow result is EXTENDED on done_grading to additionally surface graph-sim rubric/metrics/diagnostic (calibration fields)
 consumes:
-  - apollo.handlers.done_grading.ShadowGradeResult (run_id, grade:GradeResult, audited:AuditedGrade, normalization_confidence, reference_graph_hash, opposes_map, turn_order)
-  - apollo.graph_compare.core.GradeResult (10 *_score fields + findings tuple)
+  - apollo.handlers.done_grading.retired shadow result (run_id, grade:GradeResult, audited:AuditedGrade, normalization_confidence, reference_graph_hash, opposes_map, turn_order)
+  - apollo.retired graph comparator.core.GradeResult (10 *_score fields + findings tuple)
   - apollo.grading.audited_grade.AuditedGrade (findings, abstained, suppressed_event_kinds)
-  - apollo.graph_compare.findings.Finding / FindingKind
-  - apollo.graph_compare.canonical.ReferenceGraph / CanonicalNode (graph-sim reference nodes)
+  - apollo.retired graph comparator.findings.Finding / FindingKind
+  - apollo.retired graph comparator.canonical.ReferenceGraph / CanonicalNode (graph-sim reference nodes)
   - apollo.overseer.rubric.compute_rubric (FROZEN — only CALLED), score_to_letter, LETTER_BANDS
   - the OLD student-facing rubric dict computed in done.py (compute_coverage -> compute_rubric)
 depends_on:
-  - WU-4C1 (feat/apollo-kg-wu4c1-done-shadow-orchestration) — the shadow chain + ShadowGradeResult must land first
+  - WU-4C1 (feat/apollo-kg-wu4c1-done-shadow-orchestration) — the shadow chain + retired shadow result must land first
   - NO db plan — migration 028 is free but UNUSED (no schema change in this unit)
 ---
 
 ## Overview
 
-WU-4C1 (#36, DONE) wired the SHADOW Done chain `run_graph_simulation` that produces the frozen
-`ShadowGradeResult` (run_id + GradeResult + AuditedGrade + normalization_confidence +
+WU-4C1 (#36, DONE) wired the SHADOW Done chain `retired graph simulation` that produces the frozen
+`retired shadow result` (run_id + GradeResult + AuditedGrade + normalization_confidence +
 reference_graph_hash + opposes_map + turn_order). WU-4C2 EXTENDS that chain — entirely INSIDE the
-shadow branch — to compute three NEW pure artifacts from the already-frozen `ShadowGradeResult`:
+shadow branch — to compute three NEW pure artifacts from the already-frozen `retired shadow result`:
 
 1. **Rubric mapping (§6.4 "Rubric mapping" task, lines 752-755).** The old `compute_rubric` consumes
    a `coverage` dict (`per_step` + `procedure_scores`) + `reference_nodes` + `misconception_scores`.
@@ -71,9 +71,9 @@ boundary — asserted empty/uncalled), touch Neo4j, or run a container/DB/migrat
   `_graph_sim_shadow_enabled`) — the LIVE flag mirrors this EXACTLY (constant + accessor + env parse).
   Test pattern: `apollo/handlers/tests/test_done_shadow_flag.py:200-213`
   (`test_shadow_flag_parsing`, `test_flag_constant_name`) — the LIVE flag tests copy this verbatim.
-- **Shadow chain extension point:** `apollo/handlers/done_grading.py:81-93` (`ShadowGradeResult`),
-  `:144-251` (`run_graph_simulation`) — WU-4C2 adds fields to the frozen dataclass + computes them
-  AFTER `persist_comparison_run`/commit (step 11), BEFORE the `return ShadowGradeResult(...)`.
+- **Shadow chain extension point:** `apollo/handlers/done_grading.py:81-93` (`retired shadow result`),
+  `:144-251` (`retired graph simulation`) — WU-4C2 adds fields to the frozen dataclass + computes them
+  AFTER `persist_comparison_run`/commit (step 11), BEFORE the `return retired shadow result(...)`.
   Test pattern: `apollo/handlers/tests/test_done_grading_unit.py` (`_all_callee_patches`,
   per-error pending forks, `test_no_mastery_events_written`).
 - **compute_rubric call shape (the target to mirror):** `apollo/handlers/done.py:267-281`
@@ -103,19 +103,19 @@ Files in the change path, with CBO (import count) / WMC (exported-callable count
 
 | File | Imports | Exported callables | Verdict |
 |---|---|---|---|
-| `apollo/handlers/done_grading.py` (EDIT) | ~22 import lines (grouped) | 5 (1 public `run_graph_simulation`, 4 `_private`) | OK — under thresholds; the EDIT adds ≤3 new imports (the 3 new grading helpers) + ≤2 fields + ≤1 private assembler. Stays < 800 lines (currently 271). |
+| `apollo/handlers/done_grading.py` (EDIT) | ~22 import lines (grouped) | 5 (1 public `retired graph simulation`, 4 `_private`) | OK — under thresholds; the EDIT adds ≤3 new imports (the 3 new grading helpers) + ≤2 fields + ≤1 private assembler. Stays < 800 lines (currently 271). |
 | `apollo/handlers/done.py` (EDIT) | ~20 | `handle_done` + ~10 `_private` | OK — EDIT adds 1 flag constant + 1 accessor + a small LIVE-promote branch (≤15 lines). Stays well < 800 (currently 382). |
 | `apollo/grading/__init__.py` (EDIT) | re-export hub | n/a (export list) | OK — additive exports only. |
 | `apollo/grading/calibration.py` (NEW) | ~3 | 1 public + helpers | NEW small file. |
 | `apollo/grading/rubric_mapping.py` (NEW) | ~5 | 2 public + helpers | NEW small file. |
 | `apollo/grading/diagnostic.py` (NEW) | ~4 | 1 public + helpers | NEW small file. |
 
-**Circular-import check:** `apollo/grading/` already imports `apollo/graph_compare/` and
-`apollo/overseer/`? NO — `grading` imports `graph_compare`, `resolution`, `ontology`, `errors`,
+**Circular-import check:** `apollo/grading/` already imports `apollo/retired graph comparator/` and
+`apollo/overseer/`? NO — `grading` imports `retired graph comparator`, `resolution`, `ontology`, `errors`,
 `persistence`. The NEW `rubric_mapping.py` will import `apollo.overseer.rubric.compute_rubric` and
 `apollo.overseer.rubric` does NOT import `apollo.grading` (it imports only `apollo.ontology` +
 stdlib), so `grading -> overseer.rubric` introduces NO cycle. `diagnostic.py` (new) imports only
-`apollo.graph_compare.findings` + stdlib (`logging`) + an injected callable — no overseer import,
+`apollo.retired graph comparator.findings` + stdlib (`logging`) + an injected callable — no overseer import,
 no OpenAI import at module top is REQUIRED (the live default may lazily import `OpenAI` inside the
 default callable to keep the module import-light and CI-safe). VERIFY before coding with the DI grep
 below; if `overseer.rubric` ever imported `grading` it would be a cycle — it does not today.
@@ -137,7 +137,7 @@ steps.
 ### 1. DB migration — NONE (justified)
 
 No schema change. Calibration metrics are LOGGED + carried in-memory on the extended
-`ShadowGradeResult`; the spec (WU-4C key_decision #6) says reuse JSONB / no dedicated calibration
+`retired shadow result`; the spec (WU-4C key_decision #6) says reuse JSONB / no dedicated calibration
 table in this unit. Migration 028 is free but stays UNUSED. The `verify REAL-INFRA` gate must NOT
 trigger (no changed files under `tests/database/`, `database/migrations/`, `apollo/knowledge_graph/`,
 or `neo4j_client.py`). If a container is ever needed, STOP — the unit is mis-scoped.
@@ -145,7 +145,7 @@ or `neo4j_client.py`). If a container is ever needed, STOP — the unit is mis-s
 ### 2. Repository / data-access — NONE (justified)
 
 No new DB read or write. All inputs are already-materialized in-memory objects: the
-`ShadowGradeResult` (computed by the WU-4C1 chain) and the OLD rubric dict (already computed in
+`retired shadow result` (computed by the WU-4C1 chain) and the OLD rubric dict (already computed in
 `done.py` before the shadow branch). No new query, no repository.
 
 ### 3. DTOs / value objects (the pure shapes)
@@ -181,11 +181,11 @@ class RubricMappingInput:
     misconception_scores: dict[str, float]
 
 def findings_to_rubric_input(
-    shadow_result: ShadowGradeResult, reference_graph: ReferenceGraph
+    shadow_result: retired shadow result, reference_graph: ReferenceGraph
 ) -> RubricMappingInput: ...
 
 def build_graph_sim_rubric(
-    shadow_result: ShadowGradeResult, reference_graph: ReferenceGraph
+    shadow_result: retired shadow result, reference_graph: ReferenceGraph
 ) -> dict: ...   # == compute_rubric(input.coverage, input.reference_nodes, misconception_scores=input.misconception_scores)
 ```
 
@@ -330,15 +330,15 @@ Verify: `.venv/Scripts/python.exe -m pytest apollo/grading/tests/test_diagnostic
 
 ### 7. `apollo/handlers/done_grading.py` (EDIT — extend the shadow chain)
 
-**Change 1 — extend `ShadowGradeResult` (frozen, ADDITIVE fields):** add three fields AFTER the
+**Change 1 — extend `retired shadow result` (frozen, ADDITIVE fields):** add three fields AFTER the
 existing seven (additive keyword fields with no default would break WU-4C1 constructors in tests, so
 the executor must update the WU-4C1 unit-test stubs OR give the new fields safe defaults — choose:
-make them REQUIRED and update the two `ShadowGradeResult(...)` construction sites (`done_grading.py`
+make them REQUIRED and update the two `retired shadow result(...)` construction sites (`done_grading.py`
 return + any test that builds one directly), because a half-populated calibration result is a silent
 bug we do not want):
 ```python
 @dataclass(frozen=True)
-class ShadowGradeResult:
+class retired shadow result:
     run_id: int
     grade: GradeResult
     audited: AuditedGrade
@@ -352,23 +352,23 @@ class ShadowGradeResult:
     diagnostic: ConstrainedDiagnostic
 ```
 
-**Change 2 — `run_graph_simulation` signature gains the OLD rubric for calibration.** The OLD rubric
+**Change 2 — `retired graph simulation` signature gains the OLD rubric for calibration.** The OLD rubric
 is computed in `done.py` BEFORE the shadow branch; thread it in as a new keyword-only arg
 `old_rubric: dict`:
 ```python
-async def run_graph_simulation(
+async def retired graph simulation(
     db, neo, *, attempt, sess, student_graph, problem_payload, old_rubric: dict,
-) -> ShadowGradeResult | None: ...
+) -> retired shadow result | None: ...
 ```
 Computation order — INSIDE the existing `try:` cross-store window, AFTER `db.commit()` of the run-txn
 (current line 234) and AFTER `build_opposes_map`/`build_turn_order` (so the assembled result has
-`opposes_map`/`turn_order`), BEFORE the `return ShadowGradeResult(...)`:
-1. assemble the partial `ShadowGradeResult` data (run_id, grade, audited, norm_conf, ref_hash,
+`opposes_map`/`turn_order`), BEFORE the `return retired shadow result(...)`:
+1. assemble the partial `retired shadow result` data (run_id, grade, audited, norm_conf, ref_hash,
    opposes_map, turn_order) — already present.
 2. `graph_sim_rubric = build_graph_sim_rubric(<the partial result data>, reference_graph)` — note
    `reference_graph` is the local `build_reference_canonical(...)` result already in scope (line 199).
    To avoid a chicken-and-egg with the frozen dataclass, the rubric-mapping fns take the RAW pieces
-   (audited findings + opposes_map + turn_order + reference_graph), NOT a fully-built ShadowGradeResult
+   (audited findings + opposes_map + turn_order + reference_graph), NOT a fully-built retired shadow result
    — REVISE task 4 signatures to accept those pieces (see "Deviations"). Cleanest: pass
    `findings_to_rubric_input(audited=audited, reference_graph=reference_graph, opposes_map=opposes_map,
    turn_order=turn_order)`.
@@ -378,7 +378,7 @@ Computation order — INSIDE the existing `try:` cross-store window, AFTER `db.c
    mirrors how `main_chat_auditor`/`main_chat_adjudicator` are imported at the top of done_grading).
 5. `_LOG.info("graph_sim_calibration", extra={...})` — log letter_agreement + overall_score_delta +
    divergent (the §6.7 tracked metrics). Add a module logger `_LOG = logging.getLogger(__name__)`.
-6. `return ShadowGradeResult(... + graph_sim_rubric=..., calibration=..., diagnostic=...)`.
+6. `return retired shadow result(... + graph_sim_rubric=..., calibration=..., diagnostic=...)`.
 
 These steps run INSIDE the existing `try:` so any failure routes through the EXISTING NO-FALLBACK
 forks (sets `learner_update_pending`, re-raises) — calibration/rubric/diagnostic are pure + the
@@ -411,7 +411,7 @@ promote:
 ```python
 if _graph_sim_shadow_enabled():
     problem_payload = await _find_problem_payload(...)
-    shadow = await run_graph_simulation(
+    shadow = await retired graph simulation(
         db, neo, attempt=attempt, sess=sess,
         student_graph=student_graph, problem_payload=problem_payload,
         old_rubric=rubric,                       # <-- the OLD student-facing rubric
@@ -485,7 +485,7 @@ defaults. The contract table records the build-state behavior + the dormant LIVE
 | `compute_calibration_metrics` | `(*, old_rubric, shadow_rubric) -> CalibrationMetrics` | yes | no |
 | `generate_constrained_diagnostic` | `(audited, *, llm=None) -> ConstrainedDiagnostic` | post-check pure; one injected llm call | yes (injected/mocked) |
 | `_graph_sim_live_enabled` | `() -> bool` | yes | no |
-| `run_graph_simulation` (extended) | `(db, neo, *, attempt, sess, student_graph, problem_payload, old_rubric) -> ShadowGradeResult \| None` | DB/Neo4j (existing) | injected (existing + new diag llm) |
+| `retired graph simulation` (extended) | `(db, neo, *, attempt, sess, student_graph, problem_payload, old_rubric) -> retired shadow result \| None` | DB/Neo4j (existing) | injected (existing + new diag llm) |
 
 ## DI discovery findings
 
@@ -516,7 +516,7 @@ is FROZEN and untouched).
 ## Transaction scope decisions
 
 **No new transaction.** WU-4C2 writes to ZERO tables. The only DB write in the shadow chain is the
-WU-4C1 `persist_comparison_run` + its `db.commit()` (run-txn, owned by `run_graph_simulation`,
+WU-4C1 `persist_comparison_run` + its `db.commit()` (run-txn, owned by `retired graph simulation`,
 unchanged). Calibration/rubric/diagnostic run AFTER that commit, are pure (rubric/calibration) or
 soft-failing-injected (diagnostic), and produce only in-memory + logged output. No external service
 is called alongside a DB write that would need compensation — the diagnostic's injected llm runs
@@ -546,7 +546,7 @@ first, shadow persists second, WU-4C2 computes third on already-durable data.
 
 ## Downstream consumers
 
-- **WU-5A (belief update)** reads `ShadowGradeResult` — the ADDED fields (`graph_sim_rubric`,
+- **WU-5A (belief update)** reads `retired shadow result` — the ADDED fields (`graph_sim_rubric`,
   `calibration`, `diagnostic`) are additive and do not break its consumption of `grade`/`audited`/
   `opposes_map`/`turn_order`. WU-5A still owns `convert_findings_to_events` + the mastery writes;
   WU-4C2 must not pre-empt them (asserted: no events, no mastery rows).
@@ -571,8 +571,8 @@ Reconcile IN THE SAME WORK:
    that `diagnostic.py` is the §6.8 CONSTRAINED findings-only diagnostic with an INJECTED llm +
    post-check + regenerate-once-then-template fallback — DISTINCT from the FROZEN
    `overseer/diagnostic.py` (which stays on the OLD path).
-2. **Module map — `apollo/handlers/` row (line 32):** note that `done_grading.py`'s `ShadowGradeResult`
-   gains `graph_sim_rubric`/`calibration`/`diagnostic`, `run_graph_simulation` gains the `old_rubric`
+2. **Module map — `apollo/handlers/` row (line 32):** note that `done_grading.py`'s `retired shadow result`
+   gains `graph_sim_rubric`/`calibration`/`diagnostic`, `retired graph simulation` gains the `old_rubric`
    kwarg, and `done.py` gains the dormant `APOLLO_GRAPH_SIM_LIVE_ENABLED` promote flag (OFF in this
    build; LIVE-off return is byte-identical to WU-4C1).
 3. **Public interfaces — `POST /done` row (line 60):** append: when SHADOW is on, the chain ALSO
@@ -632,23 +632,23 @@ Mocking: pure — build the two rubric dicts as literals matching the rubric sha
 Mocking: inject deterministic `llm` stub callables (counting / raising / bad-then-bad / clean) modeled on `_builders.py:found_audit_fn` etc. Patch nothing live.
 
 **`apollo/handlers/tests/test_done_grading_unit.py`** (EDIT — extend existing; all callees mocked):
-- `test_shadow_result_carries_calibration_fields` — after a happy-path `run_graph_simulation`, the returned `ShadowGradeResult` has `graph_sim_rubric`/`calibration`/`diagnostic` set (mock `build_graph_sim_rubric`/`compute_calibration_metrics`/`generate_constrained_diagnostic` at the `done_grading` import site, assert each called once with the right kwargs: `old_rubric` forwarded, `audited`/`reference_graph`/`opposes_map`/`turn_order` forwarded).
-- `test_old_rubric_threaded_to_calibration` — assert `compute_calibration_metrics` got `old_rubric=<the dict passed into run_graph_simulation>`.
+- `test_shadow_result_carries_calibration_fields` — after a happy-path `retired graph simulation`, the returned `retired shadow result` has `graph_sim_rubric`/`calibration`/`diagnostic` set (mock `build_graph_sim_rubric`/`compute_calibration_metrics`/`generate_constrained_diagnostic` at the `done_grading` import site, assert each called once with the right kwargs: `old_rubric` forwarded, `audited`/`reference_graph`/`opposes_map`/`turn_order` forwarded).
+- `test_old_rubric_threaded_to_calibration` — assert `compute_calibration_metrics` got `old_rubric=<the dict passed into retired graph simulation>`.
 - `test_diagnostic_llm_injected` — assert `generate_constrained_diagnostic` got `llm=dg.main_chat_diagnostic_llm`.
 - `test_calibration_logged` — patch the module `_LOG`; assert an info log fired with letter_agreement/overall_score_delta/divergent (or assert via caplog).
 - `test_no_mastery_events_written` (KEEP) — still asserts `convert_findings_to_events` never called.
-- UPDATE `_all_callee_patches` to add the three new callees; UPDATE the happy-path assertions; UPDATE any direct `ShadowGradeResult(...)` construction in tests to supply the three new required fields (or use a `_shadow_result()` builder).
+- UPDATE `_all_callee_patches` to add the three new callees; UPDATE the happy-path assertions; UPDATE any direct `retired shadow result(...)` construction in tests to supply the three new required fields (or use a `_shadow_result()` builder).
 Mocking: extend `_all_callee_patches` with `build_graph_sim_rubric`/`compute_calibration_metrics`/`generate_constrained_diagnostic` (+ `main_chat_diagnostic_llm` referenced as `dg.main_chat_diagnostic_llm`).
 
 **`apollo/handlers/tests/test_done_live_flag.py`** (NEW; OLD-path collaborators mocked, no live LLM):
 - `test_live_flag_parsing` — copy `test_shadow_flag_parsing`: truthy `("1","true","TRUE","Yes","yes")` -> True; falsy/`unset` -> False.
 - `test_live_flag_constant_name` — `done_mod._GRAPH_SIM_LIVE_FLAG == "APOLLO_GRAPH_SIM_LIVE_ENABLED"`.
-- `test_live_off_return_byte_identical` — SHADOW on, LIVE off (or unset): `run_graph_simulation` returns a sentinel `ShadowGradeResult` with a distinct `graph_sim_rubric`/`diagnostic`, but `out["rubric"]`/`out["diagnostic_narrative"]` are the OLD-path values (byte-identical guard). Mirrors `test_shadow_flag_off_return_byte_identical`.
+- `test_live_off_return_byte_identical` — SHADOW on, LIVE off (or unset): `retired graph simulation` returns a sentinel `retired shadow result` with a distinct `graph_sim_rubric`/`diagnostic`, but `out["rubric"]`/`out["diagnostic_narrative"]` are the OLD-path values (byte-identical guard). Mirrors `test_shadow_flag_off_return_byte_identical`.
 - `test_live_off_default_when_unset` — neither flag manipulated beyond shadow-on -> LIVE defaults OFF -> OLD-path values.
 - `test_live_on_promotes_graph_sim_rubric_and_diagnostic` — SHADOW on + LIVE on: `out["rubric"] is shadow.graph_sim_rubric` and `out["diagnostic_narrative"] == shadow.diagnostic.narrative`; `out["coverage"]`/`out["progress"]` STAY OLD-path.
-- `test_live_on_but_shadow_returns_none_keeps_old` — LIVE on but `run_graph_simulation` returns `None` -> OLD-path values stand (no AttributeError).
-- `test_old_rubric_forwarded_to_shadow` — assert `run_graph_simulation` got `old_rubric=<the OLD rubric dict>` kwarg.
-Mocking: reuse `_old_path_patches()` from `test_done_shadow_flag.py` (patch `run_graph_simulation` with an `AsyncMock` returning a fabricated `ShadowGradeResult`); `monkeypatch` both flags.
+- `test_live_on_but_shadow_returns_none_keeps_old` — LIVE on but `retired graph simulation` returns `None` -> OLD-path values stand (no AttributeError).
+- `test_old_rubric_forwarded_to_shadow` — assert `retired graph simulation` got `old_rubric=<the OLD rubric dict>` kwarg.
+Mocking: reuse `_old_path_patches()` from `test_done_shadow_flag.py` (patch `retired graph simulation` with an `AsyncMock` returning a fabricated `retired shadow result`); `monkeypatch` both flags.
 
 **`apollo/grading/tests/test_package_seam_wu4c2.py`** (NEW): import every new public name off `apollo.grading`; assert presence in `__all__`.
 
@@ -667,9 +667,9 @@ aiosqlite/TestClient noise — the process survives to 100% and writes coverage.
 |---|---|---|---|
 | 1 | `compute_rubric` reads more than `.node_id`/`.node_type` off reference nodes (would break the `RubricRefNode` duck-type). | LOW — verified rubric.py:112-133 reads ONLY those two attrs. | Pin with `test_reference_nodes_are_rubricrefnodes_keyed_on_canonical_key` (passes RubricRefNodes through the REAL `compute_rubric`); if it ever reads more, switch `RubricRefNode` to construct real `apollo.ontology.build_node(...)` minimal Nodes. |
 | 2 | `opposes_map` empty today (RECON #7) means the `1.0` resolved-misconception branch is never hit by real data -> dead-code coverage gap. | MEDIUM | Test it with a SYNTHETIC `opposes_map` fixture (`test_misconception_resolved_scores_one_with_synthetic_opposes`) so the branch is covered + future-proof; document that real data lands at `0.5`. |
-| 3 | Extending the FROZEN `ShadowGradeResult` with REQUIRED fields breaks any direct constructor in WU-4C1 tests. | MEDIUM | Audit all `ShadowGradeResult(` construction sites (the `done_grading.py` return + any test); add a `_shadow_result()` test builder; update them in the same change. (Grep confirms the only production site is `done_grading.py:243`.) |
+| 3 | Extending the FROZEN `retired shadow result` with REQUIRED fields breaks any direct constructor in WU-4C1 tests. | MEDIUM | Audit all `retired shadow result(` construction sites (the `done_grading.py` return + any test); add a `_shadow_result()` test builder; update them in the same change. (Grep confirms the only production site is `done_grading.py:243`.) |
 | 4 | The constrained diagnostic post-check is a heuristic keyword screen — a false "claimed covered" could force needless regeneration/template. | LOW-MEDIUM | Keep the screen CONSERVATIVE (only flags an explicit covered-verb adjacent to a missing key token); soft-fail to template is harmless (the OLD diagnostic stays student-facing while LIVE is off); tests pin both the catch and the no-false-positive case. |
-| 5 | Threading `old_rubric` changes `run_graph_simulation`'s signature -> the WU-4C1 shadow-flag test (`test_shadow_flag_on_invokes_chain`) asserts the call kwargs. | MEDIUM | Update that test's kwarg assertion (it already inspects `shadow.await_args.kwargs`); add `old_rubric` to the expected set. Listed under task 8 verify. |
+| 5 | Threading `old_rubric` changes `retired graph simulation`'s signature -> the WU-4C1 shadow-flag test (`test_shadow_flag_on_invokes_chain`) asserts the call kwargs. | MEDIUM | Update that test's kwarg assertion (it already inspects `shadow.await_args.kwargs`); add `old_rubric` to the expected set. Listed under task 8 verify. |
 | 6 | Lazy `OpenAI` import inside `main_chat_diagnostic_llm` could still pull a heavy import chain at CALL time in prod. | LOW | The live default is only invoked when SHADOW is on (test config); `_default` mirrors the OLD diagnostic which already imports `OpenAI` lazily-enough. The injected-stub tests never trigger it. |
 | 7 | diff-cover counts the dormant LIVE-on branch + template fallback as changed lines; if untested they fail the 95% gate. | MEDIUM | The test list explicitly covers LIVE-on promotion (`test_live_on_promotes_...`), the template fallback (`test_regenerate_once_then_template_on_repeated_failure`), and the raise path — every new branch has a test. |
 
@@ -696,7 +696,7 @@ aiosqlite/TestClient noise — the process survives to 100% and writes coverage.
 - **Rubric-mapping argument shape:** task 4 first sketched `findings_to_rubric_input(shadow_result,
   reference_graph)`, but task 7 shows the cleaner call site passes the RAW pieces
   (`audited`/`reference_graph`/`opposes_map`/`turn_order`) to avoid a chicken-and-egg with the frozen
-  `ShadowGradeResult`. The executor SHOULD use the raw-pieces keyword signature
+  `retired shadow result`. The executor SHOULD use the raw-pieces keyword signature
   `findings_to_rubric_input(*, audited, reference_graph, opposes_map, turn_order)` and the matching
   `build_graph_sim_rubric(*, audited, reference_graph, opposes_map, turn_order)`. Either consistent
   choice is acceptable as long as it is keyword-only and pure.

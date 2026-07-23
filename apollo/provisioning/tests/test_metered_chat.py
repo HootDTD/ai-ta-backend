@@ -5,7 +5,7 @@ The metered client is the ONLY programmatic token signal in the §8B pipeline
 it). These tests inject a deterministic fake OpenAI client whose
 ``chat.completions.create`` returns a fake response carrying ``usage`` +
 ``choices[0].message.content``, and a plain ``_FakeIngestRun`` standing in for
-the ``apollo_ingest_runs`` ORM row. They pin: content pass-through, cheap/main
+the content-ingest ORM row. They pin: content pass-through, cheap/main
 model routing + explicit override, additive ``+=`` accumulation of
 calls/tokens/cost onto the run row, the ``scrape_chat_fn`` positional adapter,
 the cumulative-ceiling ``CostBudgetExceeded`` raise (counts accrued BEFORE the
@@ -77,7 +77,7 @@ class _FakeClient:
 
 @dataclass
 class _FakeIngestRun:
-    """A plain stand-in for the apollo_ingest_runs ORM row (the five aggregates)."""
+    """A plain stand-in for the content-ingest ORM row (the five aggregates)."""
 
     id: int = 1
     llm_calls: int = 0

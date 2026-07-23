@@ -17,7 +17,7 @@ Land future S1/S2 harness changes HERE and invoke this module for new runs:
 (``authored_set_final*.json``, one per promoted set) if S2 is to run;
 S2 is skipped with a warning if none are found.
 
-Edge-type emission: ``apollo_entity_prereqs`` rows are generic
+Edge-type emission: ``internal.entity_prerequisites`` rows are generic
 concept->concept prerequisite/dependency links, not procedure-step sequence
 steps -- per ``apollo/ontology/edges.py``, PRECEDES is legal ONLY for
 ``(procedure_step, procedure_step)`` pairs. This driver emits DEPENDS_ON for
@@ -62,7 +62,7 @@ async def _fetch_subject_graph(
     problem_texts = []
     for cid in concept_ids:
         rows = await conn.fetch(
-            "SELECT id, canonical_key, kind, display_name, payload FROM apollo_kg_entities WHERE concept_id=$1",
+            "SELECT id, canonical_key, kind, display_name, payload FROM app.learner_entities WHERE concept_id=$1",
             cid,
         )
         id_to_key = {r["id"]: r["canonical_key"] for r in rows}
@@ -79,8 +79,8 @@ async def _fetch_subject_graph(
             )
         prereq_rows = await conn.fetch(
             """
-            SELECT p.from_entity_id, p.to_entity_id FROM apollo_entity_prereqs p
-            JOIN apollo_kg_entities e ON e.id = p.from_entity_id
+            SELECT p.from_entity_id, p.to_entity_id FROM internal.entity_prerequisites p
+            JOIN app.learner_entities e ON e.id = p.from_entity_id
             WHERE e.concept_id = $1
             """,
             cid,
@@ -89,7 +89,7 @@ async def _fetch_subject_graph(
             fk = id_to_key.get(pr["from_entity_id"])
             tk = id_to_key.get(pr["to_entity_id"])
             if fk and tk:
-                # apollo_entity_prereqs rows are generic concept->concept
+                # internal.entity_prerequisites rows are generic concept->concept
                 # prerequisite/dependency links, not procedure-step sequence
                 # steps -- per apollo/ontology/edges.py, PRECEDES is legal
                 # ONLY for (procedure_step, procedure_step) pairs. Emit
@@ -100,10 +100,24 @@ async def _fetch_subject_graph(
                 edges.append({"edge_type": "DEPENDS_ON", "from_node_id": fk, "to_node_id": tk})
 
         prob_rows = await conn.fetch(
-            "SELECT problem_code, payload FROM apollo_concept_problems WHERE concept_id=$1", cid
+            "SELECT problem_code, difficulty, problem_text, given_values, target_unknown, "
+            "reference_solution, payload_extra FROM app.problems WHERE concept_id=$1",
+            cid,
         )
         for pr in prob_rows:
-            payload = json.loads(pr["payload"]) if isinstance(pr["payload"], str) else pr["payload"]
+            extra = pr["payload_extra"]
+            payload = json.loads(extra) if isinstance(extra, str) else dict(extra or {})
+            solution = pr["reference_solution"]
+            solution = json.loads(solution) if isinstance(solution, str) else solution
+            payload.update(
+                id=pr["problem_code"],
+                concept_id=str(cid),
+                difficulty=pr["difficulty"],
+                problem_text=pr["problem_text"],
+                given_values=pr["given_values"],
+                target_unknown=pr["target_unknown"],
+                reference_solution=(solution or {}).get("steps", []),
+            )
             problem_texts.append(payload)
 
     return {
@@ -126,7 +140,7 @@ async def build_s1_raw(pg_dsn: str, subject_concepts: dict[str, list[int]]) -> l
 
 
 async def _fetch_page_evidence(pg_dsn: str) -> dict[str, dict[str, str]]:
-    """Page-level OCR evidence per ingest run (``apollo_ingest_page_evidence``,
+    """Page-level OCR evidence per ingest run (``internal.ingest_page_evidence``,
     migration 036 -- landed on staging AFTER the frozen f1/f1c runs; those
     runs had no page-level raw inputs, which is exactly the diagnosis's G4.4
     'S2 unmeasurable' finding). Returns ``{ingest_run_id: {role: ocr_text}}``.
@@ -137,7 +151,7 @@ async def _fetch_page_evidence(pg_dsn: str) -> dict[str, dict[str, str]]:
         try:
             rows = await conn.fetch(
                 "SELECT ingest_run_id, role, page_number, ocr_text"
-                " FROM apollo_ingest_page_evidence"
+                " FROM internal.ingest_page_evidence"
                 " ORDER BY ingest_run_id, role, page_number"
             )
         except asyncpg.UndefinedTableError:
@@ -153,7 +167,7 @@ async def _fetch_page_evidence(pg_dsn: str) -> dict[str, dict[str, str]]:
 
 
 async def _fetch_run_ids_by_document(pg_dsn: str, document_ids: list[int]) -> dict[int, int]:
-    """Real authored-set <-> ingest-run linkage: the latest ``apollo_ingest_runs``
+    """Real authored-set <-> ingest-run linkage: the latest content-ingest
     row per ``problem_document_id``, mirrored from
     ``apollo/provisioning/authored_sets/api.py::_load_ingest_evidence`` (the
     same lookup the GET ``/authored-sets/{set_id}`` surface uses to expose
@@ -172,7 +186,7 @@ async def _fetch_run_ids_by_document(pg_dsn: str, document_ids: list[int]) -> di
         rows = await conn.fetch(
             """
             SELECT DISTINCT ON (document_id) document_id, id
-            FROM apollo_ingest_runs
+            FROM internal.content_ingest_runs
             WHERE document_id = ANY($1::bigint[])
             ORDER BY document_id, id DESC
             """,
@@ -189,7 +203,7 @@ def _document_ids_from_fixtures(fixture_paths: list[Path]) -> list[int]:
     fixture shape, or a set that never resolved a document)."""
     document_ids: list[int] = []
     for path in fixture_paths:
-        document_id = json.loads(path.read_text()).get("problem_document_id")
+        document_id = json.loads(path.read_text(encoding="utf-8")).get("problem_document_id")
         if document_id is not None and int(document_id) not in document_ids:
             document_ids.append(int(document_id))
     return document_ids
@@ -219,7 +233,7 @@ def build_s2_raw(
     run_id_by_document = run_id_by_document or {}
     for final_path in sorted(out_dir.glob("authored_set_final*.json")):
         set_id = "".join(ch for ch in final_path.stem if ch.isdigit()) or final_path.stem
-        resp = json.loads(final_path.read_text())
+        resp = json.loads(final_path.read_text(encoding="utf-8"))
         document_id = resp.get("problem_document_id")
         run_id = run_id_by_document.get(int(document_id)) if document_id is not None else None
         run_evidence = (page_evidence or {}).get(str(run_id), {}) if run_id is not None else {}
@@ -240,7 +254,7 @@ def build_s2_raw(
                     "paired_solution": paired_solution,
                     "ocr_confidence": prob["ocr_confidence"],
                     # No low_confidence_threshold field exists anywhere in the
-                    # authored-sets result_summary or apollo_ingest_runs --
+                    # authored-sets result_summary or content-ingest rows --
                     # recorded as None so check_verify_path_fired skips these
                     # items rather than fabricating a threshold.
                     "low_confidence_threshold": None,
@@ -260,7 +274,7 @@ def dump(result, path: Path) -> None:
             {"item_id": v.item_id, "ok": v.ok, "reason": v.reason} for v in result.verdicts
         ],
     }
-    path.write_text(json.dumps(payload, indent=2))
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 async def run(pg_dsn: str, out_dir: Path, subject_concepts: dict[str, list[int]]) -> None:

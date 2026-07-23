@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -28,20 +29,18 @@ async def _fake_require_teacher(**_kwargs):
 
 
 async def _seed_course(db, *, slug: str) -> tuple[int, int]:
-    from apollo.persistence.models import Concept, Subject
-    from database.models import SearchSpace
+    from apollo.persistence.models import Concept
+    from database.models import Course
 
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
-    subject = Subject(slug=f"subject-{slug}", display_name="Physics", search_space_id=space.id)
-    db.add(subject)
-    await db.flush()
+    subject = SimpleNamespace(slug=f"subject-{slug}", display_name="Physics", search_space_id=space.id)
     concept = Concept(
-        subject_id=subject.id,
+        course_id=subject.search_space_id, subject_slug=subject.slug, subject_display_name=subject.display_name,
         slug=f"concept-{slug}",
         display_name="Concept",
-        canonical_symbols={},
+        canonical_symbols=[],
         normalization_map={},
     )
     db.add(concept)
@@ -75,23 +74,21 @@ async def _seed_problem(
     required: bool = True,
     problem_text: str = "Find M.",
 ):
-    from apollo.persistence.models import ConceptProblem
+    from apollo.persistence.models import Problem as ProblemRecord
 
-    row = ConceptProblem(
-        concept_id=concept_id,
-        problem_code=f"problem-{concept_id}-{generated}-{required}-{len(problem_text)}",
-        difficulty="intro",
-        tier=1 if generated else 2,
-        solution_source="generated" if generated else "authored",
-        payload={
-            "id": f"problem-{concept_id}",
+    row = ProblemRecord.from_inventory_payload(
+        {
+            "id": f"problem-{concept_id}-{generated}-{required}-{len(problem_text)}",
             "concept_id": "known_concept_slug",
             "difficulty": "intro",
             "problem_text": problem_text,
             "given_values": {},
             "target_unknown": "M",
         },
-        search_space_id=space_id,
+        course_id=space_id,
+        concept_id=concept_id,
+        tier=1 if generated else 2,
+        solution_source="generated" if generated else "authored",
         provenance=(
             {
                 "source": "generated",
@@ -144,7 +141,7 @@ async def test_post_flag_off_403_but_get_list_still_serves(db_session, monkeypat
 @pytest.mark.asyncio
 async def test_post_persists_pending_run_and_schedules_one_task(db_session, monkeypatch):
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import GenerationRun
+    from apollo.persistence.models import ProvisioningRun
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-create")
     monkeypatch.setenv("APOLLO_PROBLEM_GENERATION", "1")
@@ -161,7 +158,7 @@ async def test_post_persists_pending_run_and_schedules_one_task(db_session, monk
     )
 
     assert response == {"run_id": response["run_id"], "status": "pending"}
-    row = await db_session.get(GenerationRun, response["run_id"])
+    row = await db_session.get(ProvisioningRun, response["run_id"])
     assert (row.search_space_id, row.concept_id, row.status) == (
         space_id,
         concept_id,
@@ -211,14 +208,14 @@ async def test_post_bad_concept_404_and_teacher_403_bubbles(db_session, monkeypa
 @pytest.mark.asyncio
 async def test_background_succeeds_serializes_records_and_stamps_ingest(db_session, monkeypatch):
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import GenerationRun, IngestRun
+    from apollo.persistence.models import IngestRun, ProvisioningRun
     from apollo.provisioning.problem_generation.generator import (
         GenerationRecord,
         GenerationRunResult,
     )
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-bg-ok")
-    run = GenerationRun(search_space_id=space_id, concept_id=concept_id)
+    run = ProvisioningRun.generation(search_space_id=space_id, concept_id=concept_id)
     db_session.add(run)
     await db_session.flush()
 
@@ -246,7 +243,7 @@ async def test_background_succeeds_serializes_records_and_stamps_ingest(db_sessi
     monkeypatch.setattr(gapi, "MeteredChat", lambda **kwargs: kwargs)
     await gapi._run_generation_background(int(run.id), concept_id, space_id, [7], 2)
 
-    refreshed = await db_session.get(GenerationRun, int(run.id))
+    refreshed = await db_session.get(ProvisioningRun, int(run.id))
     assert refreshed.status == "succeeded"
     assert refreshed.result_summary == {
         "requested": 2,
@@ -270,10 +267,10 @@ async def test_background_succeeds_serializes_records_and_stamps_ingest(db_sessi
 @pytest.mark.asyncio
 async def test_background_exception_is_swallowed_and_persisted(db_session, monkeypatch):
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import GenerationRun, IngestRun
+    from apollo.persistence.models import IngestRun, ProvisioningRun
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-bg-fail")
-    run = GenerationRun(search_space_id=space_id, concept_id=concept_id)
+    run = ProvisioningRun.generation(search_space_id=space_id, concept_id=concept_id)
     db_session.add(run)
     await db_session.flush()
 
@@ -289,7 +286,7 @@ async def test_background_exception_is_swallowed_and_persisted(db_session, monke
     monkeypatch.setattr(gapi, "MeteredChat", lambda **kwargs: kwargs)
     await gapi._run_generation_background(int(run.id), concept_id, space_id, [7], 1)
 
-    refreshed = await db_session.get(GenerationRun, int(run.id))
+    refreshed = await db_session.get(ProvisioningRun, int(run.id))
     assert refreshed.status == "failed"
     assert refreshed.result_summary["error"] == "generation boom"
     ingest = await db_session.get(IngestRun, int(refreshed.ingest_run_id))
@@ -313,7 +310,7 @@ async def test_background_recovery_failure_is_also_swallowed(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_detail_projects_review_without_provenance_leak(db_session, monkeypatch):
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import GenerationRun, IngestRun
+    from apollo.persistence.models import IngestRun, ProvisioningRun
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-detail")
     problem = await _seed_problem(
@@ -334,7 +331,7 @@ async def test_get_detail_projects_review_without_provenance_leak(db_session, mo
     )
     db_session.add(ingest)
     await db_session.flush()
-    run = GenerationRun(
+    run = ProvisioningRun.generation(
         search_space_id=space_id,
         concept_id=concept_id,
         status="succeeded",
@@ -392,7 +389,7 @@ async def test_get_detail_projects_review_without_provenance_leak(db_session, mo
 @pytest.mark.asyncio
 async def test_get_detail_caps_by_default_and_full_text_skips_cap(db_session, monkeypatch):
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import GenerationRun
+    from apollo.persistence.models import ProvisioningRun
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-detail-full-text")
     long_text = "full question " * (gapi._PROBLEM_TEXT_CAP // 4)
@@ -403,7 +400,7 @@ async def test_get_detail_caps_by_default_and_full_text_skips_cap(db_session, mo
         generated=True,
         problem_text=long_text,
     )
-    run = GenerationRun(
+    run = ProvisioningRun.generation(
         search_space_id=space_id,
         concept_id=concept_id,
         status="succeeded",
@@ -454,7 +451,7 @@ def test_review_projection_omits_optional_rubric_and_trims_invalid_draft():
 async def test_approve_generated_problem_promotes_with_known_concept(db_session, monkeypatch):
     import apollo.provisioning.authored_sets.api as aapi
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import ConceptProblem
+    from apollo.persistence.models import Problem as ProblemRecord
     from apollo.provisioning.promote import PromoteResult
     from apollo.provisioning.tag_mint import MintPlan
 
@@ -479,7 +476,7 @@ async def test_approve_generated_problem_promotes_with_known_concept(db_session,
         )
 
     async def _promote(db, neo, **kwargs):
-        row = await db.get(ConceptProblem, kwargs["concept_problem_id"])
+        row = await db.get(ProblemRecord, kwargs["concept_problem_id"])
         row.tier = 2
         return PromoteResult(promoted=True)
 
@@ -501,9 +498,9 @@ async def test_approve_generated_problem_promotes_with_known_concept(db_session,
 
     assert response["promoted"] is True
     assert captured["resolved"] == aapi.ResolvedConcept(
-        concept_id=concept_id, slug="known_concept_slug"
+        concept_id=concept_id, slug="concept-gen4-approve"
     )
-    refreshed = await db_session.get(ConceptProblem, int(problem.id))
+    refreshed = await db_session.get(ProblemRecord, int(problem.id))
     assert refreshed.tier == 2
     assert refreshed.provenance["authored_review"]["required"] is False
 
@@ -567,10 +564,10 @@ async def test_approve_generated_problem_404_and_conflict_cases(db_session, monk
 
 @pytest.mark.asyncio
 async def test_generation_run_defaults_and_jsonb_round_trip(db_session):
-    from apollo.persistence.models import GenerationRun
+    from apollo.persistence.models import ProvisioningRun
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-model")
-    run = GenerationRun(search_space_id=space_id, concept_id=concept_id)
+    run = ProvisioningRun.generation(search_space_id=space_id, concept_id=concept_id)
     db_session.add(run)
     await db_session.flush()
     await db_session.refresh(run)
@@ -590,7 +587,7 @@ async def test_seeds_lists_teachable_problems_only(db_session, monkeypatch):
     from datetime import UTC, datetime
 
     import apollo.provisioning.problem_generation.api as gapi
-    from apollo.persistence.models import ConceptProblem
+    from apollo.persistence.models import Problem as ProblemRecord
 
     space_id, concept_id = await _seed_course(db_session, slug="gen4-seeds")
     monkeypatch.setattr(gapi, "require_user", _fake_require_user)
@@ -630,7 +627,7 @@ async def test_seeds_lists_teachable_problems_only(db_session, monkeypatch):
     assert len(seeds[1]["problem_text"]) == 2000
 
     # Quarantined row exists but is excluded (guard the fixture, not the dust).
-    assert await db_session.get(ConceptProblem, int(quarantined.id)) is not None
+    assert await db_session.get(ProblemRecord, int(quarantined.id)) is not None
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,7 @@
 **Status:** plan (TDD-ordered, implementation not yet started)
 **Branch:** `feat/apollo-kg-wu4b1-transcript-audit-abstention` (already checked out — do NOT branch/push/PR)
 **Spec:** `docs/superpowers/specs/2026-06-10-apollo-kg-learner-model-architecture-decision.md` §3 (damper/caps), §6.3 (`transcript_audit.py`), §6.4 steps 12 & 14, §6.5 (CONTEXT ONLY — WU-4B2), §6.6 (abstention gates)
-**Owner doc:** `docs/architecture/apollo.md` (owns `apollo/**` + `apollo/graph_compare/**`; this unit registers `apollo/grading/**`)
+**Owner doc:** `docs/architecture/apollo.md` (owns `apollo/**` + `apollo/retired graph comparator/**`; this unit registers `apollo/grading/**`)
 **Patch-coverage gate:** `diff-cover coverage.xml --compare-branch=feat/apollo-kg-wu4a2-simulation-scores --fail-under=95`
 
 ---
@@ -11,19 +11,19 @@
 ## 1. Scope & boundaries
 
 ### 1.1 What this unit IS
-The downstream **grading orchestration layer** that imports the pure, IO-free `apollo/graph_compare/` score core and turns its `GradeResult` into an `AuditedGrade`:
+The downstream **grading orchestration layer** that imports the pure, IO-free `apollo/retired graph comparator/` score core and turns its `GradeResult` into an `AuditedGrade`:
 
 1. **Transcript audit (§6.4 step 12 / §6.3 `transcript_audit.py`):** ONE batched Done-time LLM call over the simulator-flagged `missing_node` reference entities + the raw transcript. Each entity comes back with a supporting span or null. A found span upgrades the `missing_node` finding to a `covered`/`partial`-grade finding at confidence `≤ 0.75` and emits an `AliasCandidate`. A null leaves the `missing_node` finding intact. Any audit-infrastructure failure (timeout / error / JSON-parse failure) raises `TranscriptAuditUnavailableError` — **never** "skip audit and emit the missing finding". A VALID but empty `{"spans": {}}` reply is "the student taught none of them" (all not-found), NOT a failure — it does not raise.
 2. **Abstention gates (§6.6):** compute the abstention reason list + `abstained` flag + a per-event-kind **suppression set** (the kinds WU-4B2 must withhold) from `unresolved_rate`, `min` parser-confidence, misconception resolution confidence, the upstream reference-validation failure, and the transcript-audit failure.
 3. **Handoff assembly:** `build_audited_grade(...)` runs the audit, applies the gates, rewrites the findings tuple with the audit upgrades, and returns one frozen `AuditedGrade`.
 
 ### 1.2 Package placement (RECON-verified)
-**Create a NEW package `apollo/grading/`.** Do **NOT** extend `apollo/graph_compare/` — its `__init__` docstring asserts it is the PURE, IO-free score core (persists nothing; no Neo4j / Postgres / LLM). `grading` is the orchestration layer that *imports* `graph_compare`, exactly mirroring the split already in the codebase:
+**Create a NEW package `apollo/grading/`.** Do **NOT** extend `apollo/retired graph comparator/` — its `__init__` docstring asserts it is the PURE, IO-free score core (persists nothing; no Neo4j / Postgres / LLM). `grading` is the orchestration layer that *imports* `retired graph comparator`, exactly mirroring the split already in the codebase:
 
 | Pure / IO-free core | Downstream orchestration that imports it |
 |---|---|
 | `apollo/resolution/` (matching only) | `apollo/knowledge_graph/resolution_store.py` (Neo4j writes) |
-| `apollo/graph_compare/` (`grade_attempt` → `GradeResult`) | **`apollo/grading/` (this unit — audit + abstention)** |
+| `apollo/retired graph comparator/` (`grade_attempt` → `GradeResult`) | **`apollo/grading/` (this unit — audit + abstention)** |
 
 Many small frozen-dataclass modules; immutable style (return new objects, never mutate the frozen inputs); each file < 800 lines.
 
@@ -43,8 +43,8 @@ Pure unit + LLM-mock ONLY. NO Testcontainers, NO Docker, NO live API. Every audi
 ## 2. RECON facts grounded in real code
 
 - **Inputs (frozen, do not modify):**
-  - `GradeResult` (`apollo/graph_compare/core.py:52`): `findings: tuple[Finding, ...]` + 10 `*_score` fields + `comparison_confidence` (==1.0 v1) + `comparison_version`. No `events` field by design.
-  - `Finding` (`apollo/graph_compare/findings.py:40`): `kind: FindingKind`, `canonical_key`, `student_node_ids`, `reference_node_ids`, `evidence_spans`, `score`, `confidence`, `message` — ALL defaulted; frozen. `FindingKind.MISSING_NODE == "missing_node"`.
+  - `GradeResult` (`apollo/retired graph comparator/core.py:52`): `findings: tuple[Finding, ...]` + 10 `*_score` fields + `comparison_confidence` (==1.0 v1) + `comparison_version`. No `events` field by design.
+  - `Finding` (`apollo/retired graph comparator/findings.py:40`): `kind: FindingKind`, `canonical_key`, `student_node_ids`, `reference_node_ids`, `evidence_spans`, `score`, `confidence`, `message` — ALL defaulted; frozen. `FindingKind.MISSING_NODE == "missing_node"`.
   - `ResolutionResult` (`apollo/resolution/result.py:41`): `resolved: tuple[ResolvedNode, ...]` (each `node_id, resolution, resolved_key, resolved_canon_key, method, confidence`) + `tier_counts: Mapping[str,int]` + `llm_calls`.
   - `Node.parser_confidence` (`apollo/ontology/nodes.py:48`): per-turn `float` in `[0,1]`, default 1.0. The in-memory `Node` has **no** `created_at` (turn order is NOT available here; that is WU-4B2's `created_at` concern).
 - **`main_chat`** (`apollo/agent/_llm.py:76`) is **SYNC** and returns `str`; signature `(*, purpose:str, messages:list[dict], response_format:dict|None=None, temperature:float=0.0, model:str|None=None)`.
@@ -60,12 +60,12 @@ Pure unit + LLM-mock ONLY. NO Testcontainers, NO Docker, NO live API. Every audi
 ### Create
 | File | Role | Approx size |
 |---|---|---|
-| `apollo/grading/__init__.py` | Package docstring (mirrors `apollo/resolution/__init__.py`: "downstream orchestration that imports `graph_compare`; persists nothing here — that is WU-4B3") + the public re-exports (§5). | ~45 |
+| `apollo/grading/__init__.py` | Package docstring (mirrors `apollo/resolution/__init__.py`: "downstream orchestration that imports `retired graph comparator`; persists nothing here — that is WU-4B3") + the public re-exports (§5). | ~45 |
 | `apollo/grading/transcript_audit.py` | `MissingEntity`, `AuditResult`, `AliasCandidate`, `TRANSCRIPT_AUDIT_CONFIDENCE_CAP`, `TRANSCRIPT_AUDIT_METHOD`, the `AuditFn` type alias, `main_chat_auditor` (the real injectable impl mirroring `main_chat_adjudicator`), and `audit_missing(...)`. | ~190 |
 | `apollo/grading/abstention.py` | `ABSTENTION_THRESHOLDS` constant, `Abstention` frozen result, `apply_abstention(...)`. | ~150 |
 | `apollo/grading/audited_grade.py` | `AuditedGrade` frozen handoff + `build_audited_grade(...)` orchestrator (runs audit → rewrites findings → applies gates → assembles). | ~150 |
 | `apollo/grading/tests/__init__.py` | empty package marker | 1 |
-| `apollo/grading/tests/_builders.py` | tiny frozen-fixture helpers (a `missing_finding`, a `ResolutionResult` with chosen tier mix, a deterministic span-or-null `audit_fn`, a raising `audit_fn`) — mirrors `graph_compare/tests/_builders.py`. | ~90 |
+| `apollo/grading/tests/_builders.py` | tiny frozen-fixture helpers (a `missing_finding`, a `ResolutionResult` with chosen tier mix, a deterministic span-or-null `audit_fn`, a raising `audit_fn`) — mirrors `retired graph comparator/tests/_builders.py`. | ~90 |
 | `apollo/grading/tests/test_transcript_audit.py` | audit-path tests (§4.1). | ~220 |
 | `apollo/grading/tests/test_abstention.py` | gate tests (§4.2). | ~190 |
 | `apollo/grading/tests/test_audited_grade.py` | orchestration + handoff-shape tests (§4.3). | ~170 |
@@ -226,7 +226,7 @@ def build_audited_grade(
        min_parser_confidence_of(student_nodes), misconception_confidences from
        the RESOLUTION (per contradiction finding, the MAX ResolvedNode.confidence
        over its student_node_ids — NOT Finding.confidence, which the frozen
-       graph_compare contradiction_finding factory leaves None, so reading it
+       retired graph comparator contradiction_finding factory leaves None, so reading it
        would make the §6.6 misconception gate permanently inert),
        transcript_audit_failed, reference_invalid. apply_abstention(...).
     4. Rewrite findings: for each missing_node whose key is in
@@ -343,8 +343,8 @@ Helpers: `missing_grade(keys, *, contradictions=())` (a `GradeResult` with `miss
 ## 7. Owner-doc updates (`docs/architecture/apollo.md`)
 
 In the **same commit** as the code (drift contract):
-1. **Frontmatter:** add `- apollo/grading/**` to `owns:` (already covered by `apollo/**`, but list it explicitly for discoverability, mirroring how `apollo/graph_compare/**` is listed). Bump `last_verified: 2026-06-17`.
-2. **Module map table:** add a `apollo/grading/` row: "WU-4B1 — the §6 grading **orchestration** layer that IMPORTS `graph_compare`'s pure score core and turns a `GradeResult` into an `AuditedGrade`. `transcript_audit.py` = the §6.4-step-12 batched Done-time missing-node audit (ONE injectable `audit_fn` call, default `main_chat_auditor`; span found → upgrade to a covered-grade finding at `confidence ≤ 0.75` + an `AliasCandidate`; any infra failure → `TranscriptAuditUnavailableError`, NEVER 'emit missing'); `abstention.py` = the §6.6 hard gates (`apply_abstention` → reasons + `abstained` + the per-event-kind suppression set; `parser_confidence` is MIN over turns, never mean; the audit-upgrade cap is `0.75 == llm tier`, a NAMED constant, NOT a key added to the frozen `METHOD_CONFIDENCE_CAP`); `audited_grade.py` = `build_audited_grade` orchestrating step 12 + step 14 into the frozen `AuditedGrade` handoff. Persists NOTHING (runs/findings + `abstention_reasons`/`abstained` writes are WU-4B3); produces NO events (finding→event is WU-4B2); emits `AliasCandidate` value objects only (the §8 teacher-approval queue is WU-3B2)."
+1. **Frontmatter:** add `- apollo/grading/**` to `owns:` (already covered by `apollo/**`, but list it explicitly for discoverability, mirroring how `apollo/retired graph comparator/**` is listed). Bump `last_verified: 2026-06-17`.
+2. **Module map table:** add a `apollo/grading/` row: "WU-4B1 — the §6 grading **orchestration** layer that IMPORTS `retired graph comparator`'s pure score core and turns a `GradeResult` into an `AuditedGrade`. `transcript_audit.py` = the §6.4-step-12 batched Done-time missing-node audit (ONE injectable `audit_fn` call, default `main_chat_auditor`; span found → upgrade to a covered-grade finding at `confidence ≤ 0.75` + an `AliasCandidate`; any infra failure → `TranscriptAuditUnavailableError`, NEVER 'emit missing'); `abstention.py` = the §6.6 hard gates (`apply_abstention` → reasons + `abstained` + the per-event-kind suppression set; `parser_confidence` is MIN over turns, never mean; the audit-upgrade cap is `0.75 == llm tier`, a NAMED constant, NOT a key added to the frozen `METHOD_CONFIDENCE_CAP`); `audited_grade.py` = `build_audited_grade` orchestrating step 12 + step 14 into the frozen `AuditedGrade` handoff. Persists NOTHING (runs/findings + `abstention_reasons`/`abstained` writes are WU-4B3); produces NO events (finding→event is WU-4B2); emits `AliasCandidate` value objects only (the §8 teacher-approval queue is WU-3B2)."
 3. **Public interfaces / key entry points:** add `audit_missing`, `apply_abstention`, `build_audited_grade` with their signatures (§4) and the note that `audit_fn` defaults to the live `main_chat_auditor` but every test injects a stub (CI-safe, no live LLM).
 4. **Core types:** add an **"Audited-grade types (`apollo/grading/`, WU-4B1)"** bullet documenting `AuditResult`, `MissingEntity`, `AliasCandidate`, `Abstention`, `AuditedGrade`, `ABSTENTION_THRESHOLDS`, `TRANSCRIPT_AUDIT_CONFIDENCE_CAP`/`TRANSCRIPT_AUDIT_METHOD`.
 5. **NO FALLBACK conventions:** append `TranscriptAuditUnavailableError(last_error)` to the WU-3C/4A "named-but-not-HTTP-registered" list — raised by the transcript auditor; the orchestrator catches it at the audit boundary and converts it into the suppress-all-`missing` abstention reason (so a missing event can never be emitted from a failed audit), and WU-4C registers the HTTP handler.
@@ -371,7 +371,7 @@ In the **same commit** as the code (drift contract):
 - [ ] NO alias-candidate queue table; emit `AliasCandidate` value objects only (WU-3B2 / §8 follow-up).
 - [ ] NO DB read of the transcript from `apollo_messages` (WU-4C threads it; here it's passed in).
 - [ ] NO migration (026 shipped runs/findings; next free stays 028).
-- [ ] NO score-math changes; do NOT touch `apollo/graph_compare/` or `apollo/resolution/`.
+- [ ] NO score-math changes; do NOT touch `apollo/retired graph comparator/` or `apollo/resolution/`.
 - [ ] Do NOT mutate the frozen `METHOD_CONFIDENCE_CAP`; the audit cap is a NEW named constant in `apollo/grading/`.
 - [ ] Do NOT modify `GradeResult` / `Finding` / `FindingKind` / `ResolutionResult` / `Node` / `Candidate`.
 - [ ] Inject `audit_fn` in every test — no live API, no Docker, no Testcontainers.

@@ -11,9 +11,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
 
-from apollo.persistence.models import Concept, Subject
+from apollo.persistence.models import Concept
 from apollo.subjects import ConceptDefinition
 from apollo.subjects.curriculum_db import (
     ConceptNotFoundError,
@@ -95,7 +94,7 @@ async def test_list_course_concepts_ordered_by_id(db_session):
 # Teachable-pool filter (G6 fix). list_course_concepts must return ONLY concepts
 # that have at least one TEACHABLE problem, using the EXACT predicate the
 # downstream pool query (overseer.problem_selector.list_problems_for_concept)
-# applies: ConceptProblem.tier == 2 AND quarantined_at IS NULL. Otherwise an
+# applies: ProblemRecord.tier == 2 AND quarantined_at IS NULL. Otherwise an
 # autoprovisioned decoy concept with an empty pool can be inferred and then blow
 # up select_problem with PoolExhaustedError (the fluids-grading 409).
 # ---------------------------------------------------------------------------
@@ -221,7 +220,7 @@ async def test_load_concept_definition_builds_from_db_columns(db_session):
         concept_payloads=payloads,
     )
 
-    cd = await load_concept_definition(db_session, concept_id=cid)
+    cd = await load_concept_definition(db_session, concept_id=cid, search_space_id=sid)
     assert isinstance(cd, ConceptDefinition)
     assert cd.canonical_symbols.symbols == payloads["canonical_symbols"]["symbols"]
     assert cd.parser_prompt_template == payloads["parser_prompt_template"]
@@ -234,7 +233,9 @@ async def test_load_concept_definition_builds_from_db_columns(db_session):
 async def test_load_concept_definition_raises_on_missing_concept(db_session):
     """T1.5 — a non-existent concept_id raises ConceptNotFoundError."""
     with pytest.raises(ConceptNotFoundError):
-        await load_concept_definition(db_session, concept_id=999999)
+        await load_concept_definition(
+            db_session, concept_id=999999, search_space_id=999999
+        )
 
 
 async def test_load_concept_definition_problems_dir_is_sentinel_not_globbed(db_session):
@@ -242,7 +243,7 @@ async def test_load_concept_definition_problems_dir_is_sentinel_not_globbed(db_s
     globs the filesystem for problems (criterion #2)."""
     sid = await seed_search_space(db_session)
     cid = await seed_concept(db_session, search_space_id=sid, subject_slug="s1", concept_slug="c1")
-    cd = await load_concept_definition(db_session, concept_id=cid)
+    cd = await load_concept_definition(db_session, concept_id=cid, search_space_id=sid)
     assert cd.problems_dir.exists() is False
 
 
@@ -256,14 +257,11 @@ async def test_list_registered_concepts_includes_problemless_and_description(db_
     )
     await seed_problems(db_session, concept_id=cid_teachable, payloads=[minimal_problem_payload()])
     # a problemless registered concept — must STILL appear (no tier-2 EXISTS)
-    subject_id = (
-        (await db_session.execute(select(Subject.id).where(Subject.search_space_id == sid)))
-        .scalars()
-        .first()
-    )
     db_session.add(
         Concept(
-            subject_id=subject_id,
+            course_id=sid,
+            subject_slug="calc2",
+            subject_display_name="Calculus II",
             slug="integration-by-parts",
             display_name="Integration by Parts",
             description="u dv = uv - v du",
@@ -271,7 +269,9 @@ async def test_list_registered_concepts_includes_problemless_and_description(db_
     )
     db_session.add(
         Concept(
-            subject_id=subject_id,
+            course_id=sid,
+            subject_slug="calc2",
+            subject_display_name="Calculus II",
             slug="provisional.inventory",
             display_name="Provisional Inventory",
         )

@@ -31,12 +31,11 @@ from apollo.errors import KGUnavailableError
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import EdgeType, build_node
 from apollo.persistence.models import (
-    ApolloSession,
-    KGNegotiation,
-    Message,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
@@ -86,12 +85,14 @@ def store_healthy(db, healthy_neo):
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
-        KGNegotiation.__table__,
+        TutoringMessage.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
@@ -103,7 +104,7 @@ async def db():
 
 @pytest_asyncio.fixture
 async def attempt(db: AsyncSession):
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,
@@ -112,7 +113,13 @@ async def attempt(db: AsyncSession):
     )
     db.add(sess)
     await db.flush()
-    a = ProblemAttempt(session_id=sess.id, problem_id="p1", difficulty="intro")
+    a = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=1,
+        difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
     db.add(a)
     await db.commit()
     await db.refresh(a)
@@ -262,18 +269,18 @@ async def test_summarize_for_apollo_raises_on_none(store, attempt):
 @pytest.mark.asyncio
 async def test_freeze_unfreeze_work_with_neo_none(store, attempt, db):
     await store.freeze(attempt.session_id)
-    refreshed = await db.get(ApolloSession, attempt.session_id)
+    refreshed = await db.get(TutoringSession, attempt.session_id)
     assert refreshed.phase == SessionPhase.PROBLEM_REVEAL.value
 
     await store.unfreeze(attempt.session_id)
-    refreshed2 = await db.get(ApolloSession, attempt.session_id)
+    refreshed2 = await db.get(TutoringSession, attempt.session_id)
     assert refreshed2.phase == SessionPhase.TEACHING.value
 
 
 @pytest.mark.asyncio
 async def test_get_node_trace_works_with_neo_none(store, attempt):
-    """Postgres-only read (KGNegotiation + Message); no attempt to touch
-    self.neo at all."""
+    """Postgres-only read (TutoringMessage); no attempt to touch self.neo at
+    all. DB-13/A6: the negotiation audit log is gone, so moves is always []."""
     out = await store.get_node_trace(attempt_id=attempt.id, node_id="eq1")
     assert out["node_id"] == "eq1"
     assert out["moves"] == []

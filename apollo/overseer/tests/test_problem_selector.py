@@ -19,6 +19,7 @@ from apollo.overseer.problem_selector import (
     select_problem,
     select_problem_personalized,
 )
+from apollo.persistence.models import Problem as ProblemRecord
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_problem_payloads,
     seed_concept,
@@ -30,18 +31,32 @@ from apollo.subjects.tests._curriculum_fixtures import (
 pytestmark = pytest.mark.integration
 
 
+async def _seed_malformed_problem(db, *, course_id: int, concept_id: int, payload: dict) -> None:
+    db.add(
+        ProblemRecord.from_inventory_payload(
+            payload,
+            course_id=course_id,
+            concept_id=concept_id,
+            tier=2,
+        )
+    )
+    await db.flush()
+
+
 async def test_list_problems_for_concept_returns_db_problems(db_session):
     """T2.1 — 3 seeded problems come back as Problems with .id == payload['id'],
     sorted ascending."""
     payloads = load_bernoulli_problem_payloads()[:3]
-    _sid, cid, codes = await seed_course(
+    sid, cid, codes = await seed_course(
         db_session,
         subject_slug="fluid_mechanics",
         concept_slug="bernoulli_principle",
         problems=payloads,
     )
 
-    problems = await list_problems_for_concept(db_session, concept_id=cid)
+    problems = await list_problems_for_concept(
+        db_session, concept_id=cid, search_space_id=sid
+    )
     assert len(problems) == 3
     ids = [p.id for p in problems]
     assert ids == sorted(ids)
@@ -62,7 +77,9 @@ async def test_list_problems_for_concept_scoped_to_concept(db_session):
     await seed_problems(db_session, concept_id=cid_a, payloads=[payloads[0]])
     await seed_problems(db_session, concept_id=cid_b, payloads=[payloads[1]])
 
-    a_problems = await list_problems_for_concept(db_session, concept_id=cid_a)
+    a_problems = await list_problems_for_concept(
+        db_session, concept_id=cid_a, search_space_id=sid
+    )
     assert [p.id for p in a_problems] == [payloads[0]["id"]]
     assert payloads[1]["id"] not in {p.id for p in a_problems}
 
@@ -74,16 +91,26 @@ async def test_select_problem_intro_excludes_attempted(db_session):
         p for p in load_bernoulli_problem_payloads() if p["difficulty"] == "intro"
     ]
     assert len(intro_payloads) >= 2
-    _sid, cid, _codes = await seed_course(
+    sid, cid, _codes = await seed_course(
         db_session,
         subject_slug="fluid_mechanics",
         concept_slug="bernoulli_principle",
         problems=intro_payloads,
     )
 
-    first = await select_problem(db_session, concept_id=cid, difficulty="intro", attempted_ids=[])
+    first = await select_problem(
+        db_session,
+        concept_id=cid,
+        search_space_id=sid,
+        difficulty="intro",
+        attempted_ids=[],
+    )
     second = await select_problem(
-        db_session, concept_id=cid, difficulty="intro", attempted_ids=[first.id]
+        db_session,
+        concept_id=cid,
+        search_space_id=sid,
+        difficulty="intro",
+        attempted_ids=[first.id],
     )
     assert second.id != first.id
 
@@ -92,7 +119,7 @@ async def test_select_problem_raises_pool_exhausted(db_session):
     """T2.4 — attempting all intro ids raises PoolExhaustedError carrying
     .difficulty='intro' and .concept_cluster_id == str(concept_id)."""
     intro_payloads = [p for p in load_bernoulli_problem_payloads() if p["difficulty"] == "intro"]
-    _sid, cid, codes = await seed_course(
+    sid, cid, codes = await seed_course(
         db_session,
         subject_slug="fluid_mechanics",
         concept_slug="bernoulli_principle",
@@ -100,7 +127,13 @@ async def test_select_problem_raises_pool_exhausted(db_session):
     )
 
     with pytest.raises(PoolExhaustedError) as exc_info:
-        await select_problem(db_session, concept_id=cid, difficulty="intro", attempted_ids=codes)
+        await select_problem(
+            db_session,
+            concept_id=cid,
+            search_space_id=sid,
+            difficulty="intro",
+            attempted_ids=codes,
+        )
     assert exc_info.value.difficulty == "intro"
     assert exc_info.value.concept_cluster_id == str(cid)
 
@@ -110,14 +143,16 @@ async def test_db_problem_payload_carries_reference_solution(db_session):
     reference_solution AND yields a non-empty reference KG graph (the §6 grading
     core reads this from the DB, not disk)."""
     payloads = load_bernoulli_problem_payloads()[:1]
-    _sid, cid, _codes = await seed_course(
+    sid, cid, _codes = await seed_course(
         db_session,
         subject_slug="fluid_mechanics",
         concept_slug="bernoulli_principle",
         problems=payloads,
     )
 
-    problems = await list_problems_for_concept(db_session, concept_id=cid)
+    problems = await list_problems_for_concept(
+        db_session, concept_id=cid, search_space_id=sid
+    )
     problem = problems[0]
     assert problem.reference_solution  # non-empty
     graph = problem.to_kg_graph(attempt_id=-1)
@@ -146,7 +181,9 @@ async def test_list_problems_excludes_tier1(db_session):
     await seed_problems(db_session, concept_id=cid, payloads=[tier1_payload], tier=1)
     await seed_problems(db_session, concept_id=cid, payloads=[tier2_payload], tier=2)
 
-    problems = await list_problems_for_concept(db_session, concept_id=cid)
+    problems = await list_problems_for_concept(
+        db_session, concept_id=cid, search_space_id=sid
+    )
     returned_ids = {p.id for p in problems}
     assert tier2_payload["id"] in returned_ids
     assert tier1_payload["id"] not in returned_ids, "Tier-1 inventory must NOT leak"
@@ -163,7 +200,9 @@ async def test_list_problems_includes_tier2(db_session):
     )
     await seed_problems(db_session, concept_id=cid, payloads=[payload], tier=2)
 
-    problems = await list_problems_for_concept(db_session, concept_id=cid)
+    problems = await list_problems_for_concept(
+        db_session, concept_id=cid, search_space_id=sid
+    )
     assert [p.id for p in problems] == [payload["id"]]
 
 
@@ -219,10 +258,15 @@ async def test_malformed_problem_is_logged_and_skipped_for_both_selectors(db_ses
         subject_slug="s_skip",
         concept_slug="c_skip",
     )
-    await seed_problems(db_session, concept_id=cid, payloads=[*intro_payloads, malformed])
+    await seed_problems(db_session, concept_id=cid, payloads=intro_payloads)
+    await _seed_malformed_problem(
+        db_session, course_id=sid, concept_id=cid, payload=malformed
+    )
 
     with caplog.at_level(logging.WARNING, logger="apollo.overseer.problem_selector"):
-        problems = await list_problems_for_concept(db_session, concept_id=cid)
+        problems = await list_problems_for_concept(
+            db_session, concept_id=cid, search_space_id=sid
+        )
         chosen = await select_problem_personalized(
             db_session,
             user_id="00000000-0000-4000-8000-000000000001",
@@ -242,7 +286,7 @@ async def test_malformed_problem_is_logged_and_skipped_for_both_selectors(db_ses
     assert len(records) == 2  # direct listing + personalized path share the chokepoint
     assert all(record.concept_id == cid for record in records)
     assert all(record.problem_tier == 2 for record in records)
-    assert all(record.concept_problem_id is not None for record in records)
+    assert all(record.problem_id is not None for record in records)
     assert all("validation error" in record.validation_error for record in records)
 
 
@@ -250,11 +294,14 @@ async def test_all_malformed_problems_yield_pool_exhausted(db_session, caplog):
     """An all-invalid pool degrades to the selector's existing empty-pool error."""
     payload = load_bernoulli_problem_payloads()[0]
     malformed = {**payload, "reference_solution": []}
-    _sid, cid, _codes = await seed_course(
+    sid, cid, _codes = await seed_course(
         db_session,
         subject_slug="s_all_bad",
         concept_slug="c_all_bad",
-        problems=[malformed],
+        problems=[],
+    )
+    await _seed_malformed_problem(
+        db_session, course_id=sid, concept_id=cid, payload=malformed
     )
 
     with caplog.at_level(logging.WARNING, logger="apollo.overseer.problem_selector"):
@@ -262,6 +309,7 @@ async def test_all_malformed_problems_yield_pool_exhausted(db_session, caplog):
             await select_problem(
                 db_session,
                 concept_id=cid,
+                search_space_id=sid,
                 difficulty=payload["difficulty"],
                 attempted_ids=[],
             )

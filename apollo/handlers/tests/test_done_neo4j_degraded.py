@@ -31,7 +31,7 @@ from neo4j.exceptions import ServiceUnavailable
 
 from apollo.errors import CoverageGradingError, RetentionError
 from apollo.handlers.done import handle_done
-from apollo.handlers.tests.test_done_shadow_flag import _old_path_patches
+from apollo.handlers.tests._done_fixtures import _old_path_patches
 
 pytestmark = pytest.mark.unit
 
@@ -39,9 +39,6 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def _clear_flags(monkeypatch):
     for flag in (
-        "APOLLO_GRAPH_SIM_SHADOW_ENABLED",
-        "APOLLO_GRAPH_SIM_LIVE_ENABLED",
-        "APOLLO_GRAPH_GRADER_LIVE",
         "APOLLO_GRADING_ARTIFACT_ENABLED",
         "APOLLO_GRAPH_SIM_LAYER3_ENABLED",
     ):
@@ -57,7 +54,6 @@ def _clear_flags(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_read_graph_degraded_transcript_grader_ok_serves_grade(monkeypatch):
-    monkeypatch.setenv("APOLLO_GRAPH_SIM_SHADOW_ENABLED", "true")
     monkeypatch.setenv("APOLLO_GRADING_ARTIFACT_ENABLED", "true")
 
     db, _sess, attempt, patches = _old_path_patches()
@@ -119,11 +115,7 @@ async def test_read_graph_degraded_transcript_grader_ok_serves_grade(monkeypatch
     assert out["coverage"] == {"ok": True}
     assert "MUST_NOT_RUN" not in str(out["coverage"])
 
-    # write_artifacts received the shadow-failure marker for the skipped chain.
-    assert write_artifacts_mock.await_args.kwargs["graph_failure"] == (
-        "shadow_failure: neo4j_unavailable"
-    )
-    assert write_artifacts_mock.await_args.kwargs["shadow"] is None
+    write_artifacts_mock.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

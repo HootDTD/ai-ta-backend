@@ -42,7 +42,7 @@ divergent branches — resolve it with a **strategy seam**:
 
 - The two behaviors live in **separate modules** behind a runtime switch
   (e.g. `APOLLO_GRADING_MODE=llm|graph`, same pattern as
-  `APOLLO_GRAPH_SIM_SHADOW_ENABLED`). Prod runs `llm`; staging runs `graph`
+  `[retired A7 shadow switch]`). Prod runs `llm`; staging runs `graph`
   (or shadow-mode: run both, grade with `llm`, log the diff).
 - LLM-grader improvements land on staging (they touch only the `llm` module, so
   they never collide with graph work) and promote normally; urgent ones go

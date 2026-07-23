@@ -26,7 +26,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.contracts import BundleSnippet
-from database.models import AITADocument, ChatSession, ChatSessionSnippet
+from database.models import ChatSession, ChatSessionSnippet, Document
 from retrieval.document_visibility import active_document_conditions
 
 log = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ async def compute_visible_docs_hash(db_session: AsyncSession, search_space_id: i
     """Fingerprint the currently searchable document set (same visibility rules
     as hybrid retrieval: ready status + week gating)."""
     result = await db_session.execute(
-        select(AITADocument.id).where(*active_document_conditions(search_space_id))
+        select(Document.id).where(*active_document_conditions(search_space_id))
     )
     return visible_docs_fingerprint(row[0] for row in result)
 
@@ -83,7 +83,10 @@ async def load_bundle_cache(
         (
             await db_session.execute(
                 select(ChatSessionSnippet)
-                .where(ChatSessionSnippet.chat_session_id == chat_session.id)
+                .where(
+                    ChatSessionSnippet.chat_session_id == chat_session.id,
+                    ChatSessionSnippet.course_id == chat_session.course_id,
+                )
                 .order_by(ChatSessionSnippet.original_score.desc())
             )
         )
@@ -119,7 +122,7 @@ async def load_bundle_cache(
     if not snippets:
         return None
 
-    raw_meta = cast(dict[str, Any], chat_session.meta) or {}
+    raw_meta = cast(dict[str, Any], chat_session.metadata_) or {}
     meta = raw_meta.get(_META_KEY) or {}
     return CachedBundle(
         snippets=snippets,
@@ -147,7 +150,10 @@ async def save_bundle_cache(
     """
     if replace:
         await db_session.execute(
-            delete(ChatSessionSnippet).where(ChatSessionSnippet.chat_session_id == chat_session.id)
+            delete(ChatSessionSnippet).where(
+                ChatSessionSnippet.chat_session_id == chat_session.id,
+                ChatSessionSnippet.course_id == chat_session.course_id,
+            )
         )
         existing: dict[int, ChatSessionSnippet] = {}
     else:
@@ -155,7 +161,8 @@ async def save_bundle_cache(
             (
                 await db_session.execute(
                     select(ChatSessionSnippet).where(
-                        ChatSessionSnippet.chat_session_id == chat_session.id
+                        ChatSessionSnippet.chat_session_id == chat_session.id,
+                        ChatSessionSnippet.course_id == chat_session.course_id,
                     )
                 )
             )
@@ -188,6 +195,7 @@ async def save_bundle_cache(
         else:
             new_row = ChatSessionSnippet(
                 chat_session_id=chat_session.id,
+                course_id=chat_session.course_id,
                 chunk_id=chunk_id,
                 original_score=score,
                 first_seen_turn=turn_index,
@@ -211,8 +219,8 @@ async def save_bundle_cache(
             await db_session.delete(row)
 
     # JSONB column: assign a new dict so SQLAlchemy detects the change.
-    chat_session.meta = {  # type: ignore[assignment]
-        **(chat_session.meta or {}),
+    chat_session.metadata_ = {  # type: ignore[assignment]
+        **(chat_session.metadata_ or {}),
         _META_KEY: {
             "visible_docs_hash": visible_docs_hash,
             "turn_index": turn_index,

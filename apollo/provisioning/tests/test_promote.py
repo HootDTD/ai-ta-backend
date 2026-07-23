@@ -6,7 +6,7 @@ concept's AUTHORED ``canonical_symbols``/``normalization_map`` -> on PASS flip t
 ``apollo_concept_problems`` row tier 1->2, store the annotated reference solution
 into ``payload``, set ``solution_source``, then ``project_canon`` (mocked here).
 On FAIL it returns ``PromoteResult(promoted=False, failed_gate, diagnostic)`` so
-the ORCHESTRATOR (not promote) writes the ``apollo_rejected_problems`` row.
+the orchestrator (not promote) records the bounded rejection outcome.
 
 ``neo`` is an ``AsyncMock`` so ``project_canon`` is a no-op observable call; NO
 Neo4j container, NO network, NO LLM. The savepoint ``db_session`` is real
@@ -16,15 +16,17 @@ pgvector. Tests Docker-skip cleanly but the gate requires GREEN-not-skipped.
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from apollo.knowledge_graph.canon_projection import CanonProjectionError
-from apollo.persistence.models import Concept, ConceptProblem, Subject
+from apollo.persistence.models import Concept
+from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.promote import PromoteResult, promote
 from apollo.provisioning.tag_mint import MintPlan
-from database.models import SearchSpace
+from database.models import Course
 
 # The submodule object (the package re-exports the ``promote`` FUNCTION, which
 # shadows the ``promote`` submodule attribute on the package — so resolve the
@@ -218,34 +220,31 @@ async def _seed_concept_with_problem(
     canonical_symbols: list[str] | None = None,
     normalization: dict | None = None,
 ):
-    """Seed SearchSpace -> Subject -> Concept (with authored canonical_symbols) ->
-    a Tier-1 ConceptProblem. Returns (search_space_id, concept_id, problem_id)."""
-    space = SearchSpace(name=f"Course {slug}", slug=slug, subject_name="Physics")
+    """Seed Course -> Subject -> Concept (with authored canonical_symbols) ->
+    a Tier-1 ProblemRecord. Returns (search_space_id, concept_id, problem_id)."""
+    space = Course(name=f"Course {slug}", slug=slug, subject_name="Physics")
     db.add(space)
     await db.flush()
-    subj = Subject(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
-    db.add(subj)
-    await db.flush()
+    subj = SimpleNamespace(slug=f"s-{slug}", display_name="Sub", search_space_id=space.id)
     syms = _AUTHORED_SYMBOLS if canonical_symbols is None else canonical_symbols
     norm = _NORMALIZATION if normalization is None else normalization
     concept = Concept(
-        subject_id=subj.id,
+        course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name,
         slug=f"concept-{slug}",
         display_name="Concept",
-        canonical_symbols={"symbols": list(syms), "description": {}},
+        canonical_symbols=list(syms),
+        symbol_metadata={"description": {}},
         normalization_map=dict(norm),
     )
     db.add(concept)
     await db.flush()
-    problem = ConceptProblem(
+    problem = ProblemRecord.from_inventory_payload(
+        {"id": "scrape.abc", "difficulty": "intro", "problem_text": ""},
+        course_id=space.id,
         concept_id=concept.id,
-        problem_code="scrape.abc",
-        difficulty="intro",
-        payload={"id": "scrape.abc"},
         tier=1,
         solution_source=None,
         provenance={},
-        search_space_id=space.id,
     )
     db.add(problem)
     await db.flush()
@@ -383,14 +382,13 @@ async def test_promote_pass_flips_tier_and_payload(db_session):
     assert result.promoted is True
     assert result.failed_gate is None
 
-    row = await db_session.get(ConceptProblem, problem_id)
+    row = await db_session.get(ProblemRecord, problem_id)
     assert row.tier == 2
     assert row.solution_source is not None
     # The annotated reference solution is stored (entity_key per step + paths).
-    assert "reference_solution" in row.payload
-    first_step = row.payload["reference_solution"][0]
+    first_step = row.reference_solution["steps"][0]
     assert first_step.get("entity_key")
-    assert row.payload.get("declared_paths")
+    assert row.payload_extra.get("declared_paths")
 
 
 # --------------------------------------------------------------------------- #
@@ -440,8 +438,8 @@ async def test_multi_path_flag_off_never_calls_enumerator_and_preserves_legacy_p
         path_enumerator=enumerator,
     )
     assert result.promoted
-    row = await db_session.get(ConceptProblem, problem_id)
-    assert row.payload["declared_paths"] == [
+    row = await db_session.get(ProblemRecord, problem_id)
+    assert row.payload_extra["declared_paths"] == [
         [step["id"] for step in original_problem["reference_solution"]]
     ]
 
@@ -466,9 +464,9 @@ async def test_multi_path_enumerator_failure_falls_back_and_promotion_succeeds(
         path_enumerator=enumerator,
     )
     assert result.promoted
-    row = await db_session.get(ConceptProblem, problem_id)
-    assert len(row.payload["declared_paths"]) == 1
-    assert isinstance(row.payload["declared_paths"][0], list)
+    row = await db_session.get(ProblemRecord, problem_id)
+    assert len(row.payload_extra["declared_paths"]) == 1
+    assert isinstance(row.payload_extra["declared_paths"][0], list)
 
 
 async def test_multi_path_valid_replacement_writes_only_object_paths(db_session, monkeypatch):
@@ -488,10 +486,12 @@ async def test_multi_path_valid_replacement_writes_only_object_paths(db_session,
     )
 
     assert result.promoted
-    row = await db_session.get(ConceptProblem, problem_id)
-    assert row.payload["declared_paths"] == enumerated
-    assert all(isinstance(path, dict) for path in row.payload["declared_paths"])
-    assert promote_mod.validate_reference_graph(row.payload).ok
+    row = await db_session.get(ProblemRecord, problem_id)
+    assert row.payload_extra["declared_paths"] == enumerated
+    assert all(isinstance(path, dict) for path in row.payload_extra["declared_paths"])
+    assert promote_mod.validate_reference_graph(
+        row.to_pydantic_payload(concept_slug="concept-x")
+    ).ok
 
 
 async def test_multi_path_joint_cover_failure_falls_back_to_legacy_path(db_session, monkeypatch):
@@ -515,8 +515,8 @@ async def test_multi_path_joint_cover_failure_falls_back_to_legacy_path(db_sessi
     )
 
     assert result.promoted
-    row = await db_session.get(ConceptProblem, problem_id)
-    assert row.payload["declared_paths"] == [
+    row = await db_session.get(ProblemRecord, problem_id)
+    assert row.payload_extra["declared_paths"] == [
         [step["id"] for step in _bernoulli_problem()["reference_solution"]]
     ]
 
@@ -541,7 +541,7 @@ async def test_promote_persists_threaded_solution_source(db_session):
     )
 
     assert result.promoted is True
-    row = await db_session.get(ConceptProblem, problem_id)
+    row = await db_session.get(ProblemRecord, problem_id)
     assert row.solution_source == "extracted"
 
 
@@ -561,7 +561,7 @@ async def test_promote_defaults_solution_source_when_omitted(db_session):
     )
 
     assert result.promoted is True
-    row = await db_session.get(ConceptProblem, problem_id)
+    row = await db_session.get(ProblemRecord, problem_id)
     assert row.solution_source == "generated"
 
 
@@ -573,7 +573,7 @@ async def test_promote_preserves_prestamped_solution_source(db_session):
     already stamped (e.g. single-authored ingest's ``"authored"``) is NOT
     overwritten by a threaded value on (re-)promote."""
     space, concept_id, problem_id = await _seed_concept_with_problem(db_session, slug="pr1e")
-    row = await db_session.get(ConceptProblem, problem_id)
+    row = await db_session.get(ProblemRecord, problem_id)
     row.solution_source = "authored"
     await db_session.flush()
 
@@ -589,7 +589,7 @@ async def test_promote_preserves_prestamped_solution_source(db_session):
     )
 
     assert result.promoted is True
-    row = await db_session.get(ConceptProblem, problem_id)
+    row = await db_session.get(ProblemRecord, problem_id)
     assert row.solution_source == "authored"
 
 
@@ -625,7 +625,7 @@ async def test_promote_fail_returns_failed_gate_no_flip(db_session, monkeypatch)
     assert result.promoted is False
     assert result.failed_gate == 4
     assert result.diagnostic
-    row = await db_session.get(ConceptProblem, problem_id)
+    row = await db_session.get(ProblemRecord, problem_id)
     assert row.tier == 1  # STAYS Tier-1
     assert not called  # project_canon NOT called on a lint failure
 
@@ -652,8 +652,8 @@ async def test_promote_table_less_concept_promotes_via_internal_grounding(db_ses
         existing_problem_hashes=set(),
     )
     assert result.promoted is True, result.diagnostic
-    row = await db_session.get(ConceptProblem, problem_id)
-    assert row.payload["verification"] == "mechanically_verified"
+    row = await db_session.get(ProblemRecord, problem_id)
+    assert row.payload_extra["verification"] == "mechanically_verified"
 
 
 # --------------------------------------------------------------------------- #
@@ -677,8 +677,8 @@ async def test_promote_argument_graph_promotes_with_faithfulness_only_stamp(db_s
         existing_problem_hashes=set(),
     )
     assert result.promoted is True, result.diagnostic
-    row = await db_session.get(ConceptProblem, problem_id)
-    assert row.payload["verification"] == "faithfulness_only"
+    row = await db_session.get(ProblemRecord, problem_id)
+    assert row.payload_extra["verification"] == "faithfulness_only"
 
 
 async def test_promote_symbolic_graph_stamps_mechanically_verified(db_session):
@@ -696,8 +696,8 @@ async def test_promote_symbolic_graph_stamps_mechanically_verified(db_session):
         existing_problem_hashes=set(),
     )
     assert result.promoted is True
-    row = await db_session.get(ConceptProblem, problem_id)
-    assert row.payload["verification"] == "mechanically_verified"
+    row = await db_session.get(ProblemRecord, problem_id)
+    assert row.payload_extra["verification"] == "mechanically_verified"
 
 
 async def test_promote_rejects_malformed_problem_cleanly(db_session):
@@ -797,7 +797,7 @@ async def test_promote_idempotent_rerun(db_session, monkeypatch):
         existing_problem_hashes=set(),
     )
     assert r1.promoted is True and r2.promoted is True
-    row = await db_session.get(ConceptProblem, problem_id)
+    row = await db_session.get(ProblemRecord, problem_id)
     assert row.tier == 2  # still 2 (no-op flip)
     assert len(n_canon) == 2  # re-MERGEd idempotently both times
 
@@ -825,7 +825,7 @@ async def test_promote_canon_error_propagates(db_session, monkeypatch):
         )
     # The tier flip already flushed is NOT rolled back inside promote (the
     # caller's session owns rollback) — the row is tier=2 in this session.
-    row = await db_session.get(ConceptProblem, problem_id)
+    row = await db_session.get(ProblemRecord, problem_id)
     assert row.tier == 2
 
 
@@ -841,43 +841,40 @@ async def test_promote_rehomes_row_to_tagged_concept(db_session):
     reach it. Dropping the re-home assignment REDs this test."""
     from apollo.overseer.problem_selector import list_problems_for_concept
 
-    space = SearchSpace(name="Course pr7", slug="pr7", subject_name="Physics")
+    space = Course(name="Course pr7", slug="pr7", subject_name="Physics")
     db_session.add(space)
     await db_session.flush()
-    subj = Subject(slug="s-pr7", display_name="Sub", search_space_id=space.id)
-    db_session.add(subj)
-    await db_session.flush()
+    subj = SimpleNamespace(slug="s-pr7", display_name="Sub", search_space_id=space.id)
 
     # The PROVISIONAL inventory concept the scraped row hangs off (never teachable).
     provisional = Concept(
-        subject_id=subj.id,
+        course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name,
         slug="provisional.inventory",
         display_name="Provisional inventory",
-        canonical_symbols={"symbols": []},
+        canonical_symbols=[],
         normalization_map={},
     )
     db_session.add(provisional)
     # The REAL tagged concept (authored canonical_symbols) tag_and_mint resolved.
     tagged = Concept(
-        subject_id=subj.id,
+        course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name,
         slug="concept-pr7",
         display_name="Concept",
-        canonical_symbols={"symbols": list(_AUTHORED_SYMBOLS), "description": {}},
+        canonical_symbols=list(_AUTHORED_SYMBOLS),
+        symbol_metadata={"description": {}},
         normalization_map=dict(_NORMALIZATION),
     )
     db_session.add(tagged)
     await db_session.flush()
 
     # The Tier-1 row is homed on the PROVISIONAL concept (not the tagged one).
-    row = ConceptProblem(
+    row = ProblemRecord.from_inventory_payload(
+        _bernoulli_problem(),
+        course_id=space.id,
         concept_id=provisional.id,
-        problem_code="scrape.rehome",
-        difficulty="intro",
-        payload=_bernoulli_problem(),
         tier=1,
         solution_source=None,
         provenance={},
-        search_space_id=space.id,
     )
     db_session.add(row)
     await db_session.flush()
@@ -894,14 +891,18 @@ async def test_promote_rehomes_row_to_tagged_concept(db_session):
     )
     assert result.promoted is True
 
-    refreshed = await db_session.get(ConceptProblem, row.id)
+    refreshed = await db_session.get(ProblemRecord, row.id)
     assert refreshed.tier == 2
     # RE-HOMED: the promoted row now lives under the tagged concept, NOT provisional.
     assert refreshed.concept_id == tagged.id
 
     # The student selector (tier==2 + concept filter) can now reach it.
-    teachable = await list_problems_for_concept(db_session, concept_id=tagged.id)
+    teachable = await list_problems_for_concept(
+        db_session, concept_id=tagged.id, search_space_id=space.id
+    )
     assert any(p.id == _bernoulli_problem()["id"] for p in teachable)
     # ...and it is NOT reachable under the provisional concept.
-    provisional_pool = await list_problems_for_concept(db_session, concept_id=provisional.id)
+    provisional_pool = await list_problems_for_concept(
+        db_session, concept_id=provisional.id, search_space_id=space.id
+    )
     assert provisional_pool == []

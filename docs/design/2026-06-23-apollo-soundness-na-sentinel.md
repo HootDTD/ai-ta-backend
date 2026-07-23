@@ -6,10 +6,10 @@ owner_doc: docs/architecture/apollo.md
 branch_target: staging (PR into staging; NEVER ApolloV3)
 migration: 031_apollo_soundness_applicable.sql (031 — 027..030 already exist on disk)
 touches:
-  - apollo/graph_compare/soundness.py
-  - apollo/graph_compare/bisimilarity.py
-  - apollo/graph_compare/scores.py
-  - apollo/graph_compare/core.py
+  - apollo/retired graph comparator/soundness.py
+  - apollo/retired graph comparator/bisimilarity.py
+  - apollo/retired graph comparator/scores.py
+  - apollo/retired graph comparator/core.py
   - apollo/grading/persistence.py
   - apollo/grading/abstention.py
   - apollo/grading/audited_grade.py
@@ -34,7 +34,7 @@ the concept's misconception bank is empty/absent. This is a silent fail-open
 docstring documents the vacuous-`1.0` branch — but that branch is keyed on the
 *student graph* being empty, and is **blind to an empty bank**:
 
-`ai-ta-backend/apollo/graph_compare/soundness.py:59-65`
+`ai-ta-backend/apollo/retired graph comparator/soundness.py:59-65`
 
 ```python
 def soundness_score(student: CanonicalGraph) -> float:
@@ -73,7 +73,7 @@ grade_attempt(student_canonical, reference_graph)  (done_grading.py:228)
 1. **`scores.py:67` recomputes the same penalty inline** (it does NOT call
    `soundness_score`):
 
-   `ai-ta-backend/apollo/graph_compare/scores.py:67`
+   `ai-ta-backend/apollo/retired graph comparator/scores.py:67`
 
    ```python
    contradiction = 1.0 - contradiction_penalty(len(contradiction_nodes(student)))
@@ -86,7 +86,7 @@ grade_attempt(student_canonical, reference_graph)  (done_grading.py:228)
 
 2. **`bisimilarity_score` folds the vacuous soundness upward.**
 
-   `ai-ta-backend/apollo/graph_compare/bisimilarity.py:12-22`
+   `ai-ta-backend/apollo/retired graph comparator/bisimilarity.py:12-22`
 
    ```python
    def harmonic_mean(a: float, b: float) -> float:
@@ -183,7 +183,7 @@ bit; and emit a diagnostic so the content-authoring gap is visible to ops.
 | **Pure-A all the way down (nullable `soundness_score`/`bisimilarity_score` columns)** | Those two columns are `REAL NOT NULL` (`models.py:538-540`, `026:189-191`) and the invariant is load-bearing. Relaxing to nullable forces every future aggregate to be NULL-aware and lets a `None` leak into `harmonic_mean` as a `TypeError` (no None-guard today). Strictly riskier than a dedicated flag. |
 | **Naive "N/A → `0.0`" coercion into the harmonic mean** | `harmonic_mean(0.0, coverage)` → product 0 → bisimilarity 0 → a perfect student scored **0**. The `a+b==0 → 0.0` guard does NOT catch this (with coverage>0, `a+b != 0`, it sails through to a real-but-wrong number). This is precisely the poisoning the design must avoid. |
 | **Naive "N/A → `1.0`" (today's silent behavior)** | Inflates a never-checked answer to a fake-perfect harmonic mean. This IS the D5/D6 defect. |
-| **Guard inside `soundness.py` that does IO / logs** | `grade_attempt` and the score-math are PURE/no-IO/frozen (`core.py:6-7`, guarded by `test_grade_attempt_is_pure`, `test_core.py:245`). Detection/logging must live upstream in the orchestrator (`done_grading.run_graph_simulation`), and the fact is **passed into** the pure functions as a bool. |
+| **Guard inside `soundness.py` that does IO / logs** | `grade_attempt` and the score-math are PURE/no-IO/frozen (`core.py:6-7`, guarded by `test_grade_attempt_is_pure`, `test_core.py:245`). Detection/logging must live upstream in the orchestrator (`done_grading.retired graph simulation`), and the fact is **passed into** the pure functions as a bool. |
 | **Compute emptiness inside the math** | The math cannot see the bank — the bank list lives only in `done_grading` (`entries`, line 186). Threading a DB-derived fact in as a plain bool keeps purity; doing the load inside the math would break it. |
 
 ### Why renormalize-to-coverage is the correct N/A bisimilarity
@@ -212,11 +212,11 @@ never-checked one).
 > These are the proposed diffs for the implementation PR. They are reproduced
 > here in the design doc; **the real source is NOT edited by this doc.**
 
-### 3.1 `apollo/graph_compare/soundness.py` — gate on `bank_applicable`, return `None`
+### 3.1 `apollo/retired graph comparator/soundness.py` — gate on `bank_applicable`, return `None`
 
 ```diff
---- a/apollo/graph_compare/soundness.py
-+++ b/apollo/graph_compare/soundness.py
+--- a/apollo/retired graph comparator/soundness.py
++++ b/apollo/retired graph comparator/soundness.py
 @@ -56,9 +56,21 @@ def contradiction_penalty(n: int) -> float:
      return min(1.0, n * CONTRADICTION_UNIT_PENALTY)
 
@@ -250,11 +250,11 @@ never-checked one).
 +    return 1.0 - contradiction_penalty(len(contradiction_nodes(student)))
 ```
 
-### 3.2 `apollo/graph_compare/bisimilarity.py` — `None`-aware, renormalize to coverage
+### 3.2 `apollo/retired graph comparator/bisimilarity.py` — `None`-aware, renormalize to coverage
 
 ```diff
---- a/apollo/graph_compare/bisimilarity.py
-+++ b/apollo/graph_compare/bisimilarity.py
+--- a/apollo/retired graph comparator/bisimilarity.py
++++ b/apollo/retired graph comparator/bisimilarity.py
 @@ -17,6 +17,18 @@ def harmonic_mean(a: float, b: float) -> float:
      return 2 * a * b / total
 
@@ -279,11 +279,11 @@ never-checked one).
 +    return harmonic_mean(soundness, coverage)
 ```
 
-### 3.3 `apollo/graph_compare/scores.py` — second penalty site changes in lockstep
+### 3.3 `apollo/retired graph comparator/scores.py` — second penalty site changes in lockstep
 
 ```diff
---- a/apollo/graph_compare/scores.py
-+++ b/apollo/graph_compare/scores.py
+--- a/apollo/retired graph comparator/scores.py
++++ b/apollo/retired graph comparator/scores.py
 @@ -52,7 +52,7 @@ class SubScores:
      scoping: float
      usage: float
@@ -324,11 +324,11 @@ never-checked one).
      )
 ```
 
-### 3.4 `apollo/graph_compare/core.py` — widen fields, add `soundness_applicable`, thread the fact (stay pure)
+### 3.4 `apollo/retired graph comparator/core.py` — widen fields, add `soundness_applicable`, thread the fact (stay pure)
 
 ```diff
---- a/apollo/graph_compare/core.py
-+++ b/apollo/graph_compare/core.py
+--- a/apollo/retired graph comparator/core.py
++++ b/apollo/retired graph comparator/core.py
 @@ -52,6 +52,7 @@ class GradeResult:
      """The frozen handoff artifact. The 10 ``*_score`` fields are named 1:1 to the
      ``apollo_graph_comparison_runs`` columns so WU-4B persists with no reshaping.
@@ -373,7 +373,7 @@ never-checked one).
      sub-scores, and bisimilarity, plus the in-memory finding set. No external IO.
 +
 +    ``bank_applicable`` is a PLAIN BOOL fact supplied by the caller
-+    (``done_grading.run_graph_simulation``) — never an IO call, so purity (and
++    (``done_grading.retired graph simulation``) — never an IO call, so purity (and
 +    ``test_grade_attempt_is_pure``) is preserved. ``False`` => soundness N/A.
      """
      # Step 10 — coverage (max over declared paths).
@@ -623,7 +623,7 @@ never-checked one).
 ```diff
 --- a/apollo/handlers/done_grading.py
 +++ b/apollo/handlers/done_grading.py
-@@ -184,8 +184,21 @@ async def run_graph_simulation(
+@@ -184,8 +184,21 @@ async def retired graph simulation(
      # ---- Steps 1-4: assemble inputs + the step-4 raw-graph gate (no writes) ----
      entries = await load_for_concept(db, concept_id=sess.concept_id)  # type: ignore[arg-type]
      misconceptions = _misconceptions_dict(entries)
@@ -652,7 +652,7 @@ never-checked one).
          search_space_id=int(sess.search_space_id),
          concept_id=sess.concept_id,  # type: ignore[arg-type]  # nullable col, bound at grade time
      )
-@@ -226,7 +239,7 @@ async def run_graph_simulation(
+@@ -226,7 +239,7 @@ async def retired graph simulation(
 
          # Step 8 — grade (pure).
 -        grade = grade_attempt(student_canonical, reference_graph)
@@ -799,7 +799,7 @@ diff-cover coverage.xml --compare-branch=origin/staging --fail-under=95
 
 ### New / changed test snippets (illustrative, not exhaustive)
 
-`apollo/graph_compare/tests/test_soundness.py` (+ case 1; existing 1.0 cases kept):
+`apollo/retired graph comparator/tests/test_soundness.py` (+ case 1; existing 1.0 cases kept):
 
 ```python
 def test_empty_bank_soundness_is_na_not_one():
@@ -810,7 +810,7 @@ def test_empty_bank_soundness_is_na_not_one():
     assert soundness_score(student, bank_applicable=True) == 1.0
 ```
 
-`apollo/graph_compare/tests/test_bisimilarity.py` (+ case 5):
+`apollo/retired graph comparator/tests/test_bisimilarity.py` (+ case 5):
 
 ```python
 def test_bisimilarity_na_soundness_renormalizes_to_coverage():
@@ -819,7 +819,7 @@ def test_bisimilarity_na_soundness_renormalizes_to_coverage():
     assert r == 0.0 and not math.isnan(r)                # still NaN-free, in-range
 ```
 
-`apollo/graph_compare/tests/test_core.py` (+ case 7):
+`apollo/retired graph comparator/tests/test_core.py` (+ case 7):
 
 ```python
 def test_grade_attempt_empty_bank_is_na_and_flagged():
@@ -928,10 +928,10 @@ it.** All work cuts from **`staging`** and PRs back into **`staging`**.
 
 | File | Change |
 |---|---|
-| `apollo/graph_compare/soundness.py:59-65` | `soundness_score(student, *, bank_applicable=True) -> float \| None`; `None` when not applicable |
-| `apollo/graph_compare/bisimilarity.py:20-22` | `bisimilarity_score(soundness: float \| None, coverage)`; `None → return coverage` |
-| `apollo/graph_compare/scores.py:47-76` | `SubScores.contradiction: float \| None`; `compute_sub_scores(..., *, bank_applicable=True)`; `contradiction → None` when not applicable |
-| `apollo/graph_compare/core.py:52-111` | `GradeResult.soundness_score: float \| None`, `.contradiction_score: float \| None`, new `.soundness_applicable: bool = True`; `grade_attempt(..., *, bank_applicable=True)` threads into both call sites; stays pure |
+| `apollo/retired graph comparator/soundness.py:59-65` | `soundness_score(student, *, bank_applicable=True) -> float \| None`; `None` when not applicable |
+| `apollo/retired graph comparator/bisimilarity.py:20-22` | `bisimilarity_score(soundness: float \| None, coverage)`; `None → return coverage` |
+| `apollo/retired graph comparator/scores.py:47-76` | `SubScores.contradiction: float \| None`; `compute_sub_scores(..., *, bank_applicable=True)`; `contradiction → None` when not applicable |
+| `apollo/retired graph comparator/core.py:52-111` | `GradeResult.soundness_score: float \| None`, `.contradiction_score: float \| None`, new `.soundness_applicable: bool = True`; `grade_attempt(..., *, bank_applicable=True)` threads into both call sites; stays pure |
 | `apollo/grading/persistence.py:50-72, 94-127, 156-178` | `RunRowSpec.soundness_applicable: bool`; `grade_to_run_spec` coerces NOT-NULL `soundness_score` to coverage fallback when `None`, copies the flag; `_run_orm_from_spec` writes the new column |
 | `apollo/grading/abstention.py:39-43, 79-131` | new `REASON_MISCONCEPTION_BANK_EMPTY`; new `misconception_bank_empty: bool=False` reason-only gate (does NOT set `abstained`) |
 | `apollo/grading/audited_grade.py:163-195` | `build_audited_grade(..., misconception_bank_empty=False)` forwards to `apply_abstention` |

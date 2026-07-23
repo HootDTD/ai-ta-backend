@@ -13,7 +13,7 @@ globs in its frontmatter and is the authority on those files:
 
 - `docs/architecture/_overview.md` — bootstrap, HTTP surface, auth, config, vendors, ops entrypoints
 - `docs/architecture/rag-pipeline.md` — `ai/` + `retrieval/` (QA pipeline)
-- `docs/architecture/indexing.md` — `indexing/` + `indexers/` + `ocr/` (ingestion)
+- `docs/architecture/indexing.md` — `indexing/` + `ocr/` (ingestion)
 - `docs/architecture/apollo.md` — `apollo/` (learning-by-teaching subsystem)
 - `docs/architecture/domain-data.md` — `database/` + `chats/` + `knowledge/` + `reports/`
 
@@ -71,7 +71,7 @@ pytest tests/test_main_ai.py -v     # Run specific test module
 
 ## Coding Standards
 - Keep each retrieval pipeline stage independent and independently testable
-- All new features must include unit tests using Supabase mock fixtures (see conftest.py)
+- All new features must include unit tests using the shared conftest harness (env fixtures + Testcontainers Postgres for DB paths; see tests/conftest.py)
 - Use comprehensive debug logging for any pipeline stage
 - Return structured JSON responses from the LLM layer — never raw text
 

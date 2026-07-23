@@ -37,7 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import CanonProjectionError
-from apollo.persistence.models import Concept, KGEntity, Subject
+from apollo.persistence.models import Concept, LearnerEntity
 from apollo.persistence.neo4j_client import Neo4jClient
 
 # ---------------------------------------------------------------------------
@@ -131,8 +131,12 @@ async def load_entity_specs(
       * elif ``search_space_id`` given -> every concept under that course;
       * else -> ``ValueError`` (refuse a global unscoped projection).
 
-    Misconception entities (``kind == "misconception"``) ARE included — no kind
-    filtering. Wraps the read so any DB failure surfaces as
+    No kind filtering is applied — every ``app.learner_entities`` row in scope is
+    projected, whatever kind it carries. DB-13: ``kind='misconception'`` is no
+    longer a row this query can ever return (the DDL's
+    ``learner_entities__kind__check`` excludes it and no writer mints one), so
+    misconceptions are absent from ``:Canon`` — this function needs no
+    special-casing either way. Wraps the read so any DB failure surfaces as
     ``CanonProjectionError(stage="load_entities", ...)`` (NO FALLBACK).
     """
     if concept_id is None and search_space_id is None:
@@ -143,20 +147,19 @@ async def load_entity_specs(
 
     stmt = (
         select(
-            KGEntity.id,
-            KGEntity.concept_id,
-            Subject.search_space_id,
-            KGEntity.canonical_key,
-            KGEntity.kind,
-            KGEntity.display_name,
+            LearnerEntity.id,
+            LearnerEntity.concept_id,
+            Concept.course_id.label("search_space_id"),
+            LearnerEntity.canonical_key,
+            LearnerEntity.kind,
+            LearnerEntity.display_name,
         )
-        .join(Concept, Concept.id == KGEntity.concept_id)
-        .join(Subject, Subject.id == Concept.subject_id)
+        .join(Concept, Concept.id == LearnerEntity.concept_id)
     )
     if concept_id is not None:
-        stmt = stmt.where(KGEntity.concept_id == concept_id)
+        stmt = stmt.where(LearnerEntity.concept_id == concept_id)
     else:
-        stmt = stmt.where(Subject.search_space_id == search_space_id)
+        stmt = stmt.where(Concept.course_id == search_space_id)
 
     try:
         rows = (await db.execute(stmt)).all()

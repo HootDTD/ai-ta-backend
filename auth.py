@@ -127,7 +127,7 @@ async def has_membership(
 ) -> bool:
     stmt = select(CourseMembership).where(
         CourseMembership.user_id == user_id,
-        CourseMembership.search_space_id == search_space_id,
+        CourseMembership.course_id == search_space_id,
     )
     if role:
         stmt = stmt.where(CourseMembership.role == role)
@@ -155,7 +155,7 @@ async def auto_enroll_student_membership(
 
     membership = CourseMembership(
         user_id=user_id,
-        search_space_id=int(search_space_id),
+        course_id=int(search_space_id),
         role="student",
     )
     db_session.add(membership)

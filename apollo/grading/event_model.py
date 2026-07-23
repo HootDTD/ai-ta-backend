@@ -1,8 +1,7 @@
 """WU-4B2 §6.4 step 16 — the frozen learner-model event value object.
 
 Kept separate from ``events.py`` (the §6.5 decision-table LOGIC) so the data
-shape is a tiny, dependency-light module — mirroring ``graph_compare/findings.py``
-(the type) vs ``graph_compare/core.py`` (the logic).
+shape is a tiny, dependency-light module separated from conversion logic.
 
 A :class:`LearnerEvent` maps 1:1 onto the ``apollo_mastery_events`` columns
 (spec §2): ``canonical_key``/``event_kind``/``score``/``confidence``/
@@ -25,6 +24,7 @@ from enum import StrEnum
 # Bumped when the §6.5 mapping changes; WU-5A/persist reads it onto the event row
 # provenance (NOT a DB column in v1 — carried for replay/version parity).
 EVENT_CONVERSION_VERSION: str = "finding-to-event-v1"
+AMBIGUOUS_ORDER_SCORE: float = 0.5
 
 
 class LearnerEventKind(StrEnum):

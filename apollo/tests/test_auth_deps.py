@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import apollo.auth_deps as deps
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID, TEST_USER_ID_2
-from apollo.persistence.models import ApolloSession
+from apollo.persistence.models import TutoringSession
 from auth import AuthContext
 from database.models import Base
 
@@ -25,10 +25,13 @@ def _fake_request() -> Request:
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(
-            lambda sc: Base.metadata.create_all(sc, tables=[ApolloSession.__table__])
+            lambda sc: Base.metadata.create_all(sc, tables=[TutoringSession.__table__])
         )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
@@ -49,7 +52,7 @@ def as_user(monkeypatch):
 
 
 async def _make_session(db: AsyncSession, user_id: str) -> int:
-    row = ApolloSession(
+    row = TutoringSession(
         user_id=user_id,
         search_space_id=TEST_SPACE_ID,
         status="active",
@@ -61,7 +64,11 @@ async def _make_session(db: AsyncSession, user_id: str) -> int:
 
 
 @pytest.mark.asyncio
-async def test_owner_passes(db, as_user):
+async def test_owner_passes(db, as_user, monkeypatch):
+    async def _yes(*args, **kwargs):
+        return True
+
+    monkeypatch.setattr(deps, "has_membership", _yes)
     as_user(TEST_USER_ID)
     sid = await _make_session(db, TEST_USER_ID)
     auth = await deps.require_session_owner(sid, _fake_request(), db)
@@ -69,8 +76,24 @@ async def test_owner_passes(db, as_user):
 
 
 @pytest.mark.asyncio
-async def test_non_owner_gets_403(db, as_user):
+async def test_non_owner_gets_404(db, as_user):
     as_user(TEST_USER_ID_2)
+    sid = await _make_session(db, TEST_USER_ID)
+    with pytest.raises(HTTPException) as exc:
+        await deps.require_session_owner(sid, _fake_request(), db)
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_owner_without_session_course_membership_gets_403(
+    db, as_user, monkeypatch
+):
+    async def _no(*args, **kwargs):
+        return False
+
+    monkeypatch.setattr(deps, "has_membership", _no)
+    monkeypatch.setattr(deps, "auto_enroll_student_membership", _no)
+    as_user(TEST_USER_ID)
     sid = await _make_session(db, TEST_USER_ID)
     with pytest.raises(HTTPException) as exc:
         await deps.require_session_owner(sid, _fake_request(), db)

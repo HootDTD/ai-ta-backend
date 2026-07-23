@@ -2,8 +2,8 @@
 
 Reads a concepts.json of shape ``{"concepts": [{"slug", "name", "desc"}, ...]}``
 (e.g. apollo/provisioning/corpora/calc2/concepts.json) and upserts one
-apollo_subjects row + one apollo_concepts row per entry for the target
-search space. Idempotent: concepts are matched by NORMALIZED slug
+one ``app.concepts`` row per entry for the target course, with the subject
+label folded into each row. Idempotent: concepts are matched by normalized slug
 (hyphen/underscore/case-insensitive, ``concept_match.norm_slug``) so a premade
 list with hyphens updates registry-seeded underscore rows instead of
 duplicating them. Existing rows keep their slug spelling and vocabulary; only
@@ -36,7 +36,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from apollo.persistence.models import Concept, Subject
+from apollo.persistence.models import Concept
 from apollo.provisioning.concept_match import norm_slug
 
 _SUBJECTS_ROOT = Path(__file__).resolve().parent.parent / "apollo" / "subjects"
@@ -47,25 +47,6 @@ class PremadeSeedReport:
     created: int
     updated: int
     vocab_copied: int
-
-
-async def _get_or_create_subject(
-    db: AsyncSession, *, search_space_id: int, subject_slug: str, display_name: str
-) -> Subject:
-    row = (
-        await db.execute(
-            select(Subject).where(
-                Subject.search_space_id == search_space_id,
-                Subject.slug == subject_slug,
-            )
-        )
-    ).scalar_one_or_none()
-    if row is not None:
-        return row
-    row = Subject(slug=subject_slug, display_name=display_name, search_space_id=search_space_id)
-    db.add(row)
-    await db.flush()
-    return row
 
 
 def _vocab_for(vocab_dir: Path | None, slug: str) -> tuple[dict, dict]:
@@ -88,14 +69,17 @@ async def seed_premade_concepts(
     concepts: list[dict],
     vocab_dir: Path | None = None,
 ) -> PremadeSeedReport:
-    subject = await _get_or_create_subject(
-        db,
-        search_space_id=search_space_id,
-        subject_slug=subject_slug,
-        display_name=subject_display_name,
-    )
     existing = (
-        (await db.execute(select(Concept).where(Concept.subject_id == subject.id))).scalars().all()
+        (
+            await db.execute(
+                select(Concept).where(
+                    Concept.course_id == search_space_id,
+                    Concept.subject_slug == subject_slug,
+                )
+            )
+        )
+        .scalars()
+        .all()
     )
     by_norm = {norm_slug(str(c.slug)): c for c in existing}
 
@@ -108,11 +92,14 @@ async def seed_premade_concepts(
         row = by_norm.get(norm_slug(slug))
         if row is None:
             row = Concept(
-                subject_id=subject.id,
+                course_id=search_space_id,
+                subject_slug=subject_slug,
+                subject_display_name=subject_display_name,
                 slug=slug,
                 display_name=name,
                 description=desc,
-                canonical_symbols=symbols,
+                canonical_symbols=list(symbols.get("symbols", [])),
+                symbol_metadata={k: v for k, v in symbols.items() if k != "symbols"},
                 normalization_map=norm_map,
             )
             db.add(row)
@@ -129,8 +116,11 @@ async def seed_premade_concepts(
                 row.display_name = name  # type: ignore[assignment]
                 changed = True
             # first-writer-wins: only fill EMPTY vocab
-            if symbols and not dict(row.canonical_symbols or {}).get("symbols"):
-                row.canonical_symbols = symbols  # type: ignore[assignment]
+            if symbols and not list(row.canonical_symbols or []):
+                row.canonical_symbols = list(symbols.get("symbols", []))  # type: ignore[assignment]
+                row.symbol_metadata = {  # type: ignore[assignment]
+                    k: v for k, v in symbols.items() if k != "symbols"
+                }
                 row.normalization_map = norm_map  # type: ignore[assignment]
                 vocab_copied += 1
                 changed = True

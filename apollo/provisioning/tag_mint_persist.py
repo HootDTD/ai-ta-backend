@@ -7,7 +7,7 @@ an LLM tag (not the hardcoded ``_BERNOULLI_SLUG``) and the data comes from the
 ``ApprovedPair`` (not from disk). The seed script is WRAPPED, not imported — it
 hardcodes bernoulli.
 
-ALL persistence keys on the BIGINT ``apollo_concepts.id`` (resolved from the LLM
+ALL persistence keys on the BIGINT ``app.concepts.id`` (resolved from the LLM
 slug), never the slug (the §6 namespace contract). Idempotent: entity upsert on
 ``(concept_id, canonical_key)``; prereqs ``(from_entity_id, to_entity_id)``
 SELECT-then-skip; concept symbol authoring first-writer-wins UNION.
@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from apollo.persistence.learner_model_seed import EntitySpec
-from apollo.persistence.models import Concept, EntityPrereq, KGEntity, Subject
+from apollo.persistence.models import Concept, EntityPrereq, LearnerEntity
 
 _LOG = logging.getLogger(__name__)
 
@@ -39,43 +39,38 @@ async def resolve_or_create_concept(
     slug: str,
     display_name: str,
 ) -> int:
-    """Resolve the LLM-tagged concept slug to a BIGINT ``apollo_concepts.id`` for
-    this course, CREATING the concept (under the course's first subject) if
+    """Resolve the LLM-tagged concept slug to a BIGINT ``app.concepts.id`` for
+    this course, creating it with the course's existing subject label if
     absent. Idempotent: re-resolves to the SAME id (the §6 namespace contract —
     key on BIGINT, never slug)."""
     concept_id = (
         await db.execute(
             select(Concept.id)
-            .join(Subject, Subject.id == Concept.subject_id)
-            .where(Subject.search_space_id == search_space_id)
+            .where(Concept.course_id == search_space_id)
             .where(Concept.slug == slug)
         )
     ).scalar_one_or_none()
     if concept_id is not None:
         return concept_id
 
-    subject_id = (
+    subject_label = (
         (
             await db.execute(
-                select(Subject.id)
-                .where(Subject.search_space_id == search_space_id)
-                .order_by(Subject.id.asc())
+                select(Concept.subject_slug, Concept.subject_display_name)
+                .where(Concept.course_id == search_space_id)
+                .order_by(Concept.id.asc())
             )
         )
-        .scalars()
         .first()
     )
-    if subject_id is None:
-        subject = Subject(
-            slug=f"auto-{search_space_id}",
-            display_name="Auto-provisioned",
-            search_space_id=search_space_id,
-        )
-        db.add(subject)
-        await db.flush()
-        subject_id = int(subject.id)
-
-    concept = Concept(subject_id=subject_id, slug=slug, display_name=display_name)
+    subject_slug, subject_display_name = subject_label or ("general", "General")
+    concept = Concept(
+        course_id=search_space_id,
+        subject_slug=subject_slug,
+        subject_display_name=subject_display_name,
+        slug=slug,
+        display_name=display_name,
+    )
     db.add(concept)
     await db.flush()
     return int(concept.id)
@@ -93,22 +88,15 @@ async def author_concept_symbols(
     first writer's canonical set). Returns the symbols authored/unioned THIS call
     (the ones not already present).
 
-    ``canonical_symbols`` is stored in the ``CanonicalSymbols``-validatable shape
-    ``{"symbols": [...], "description": {...}, ...}`` — the SAME shape the
-    registry seed writes and the runtime reader
-    (``apollo.subjects.curriculum_db.load_concept_definition`` →
-    ``CanonicalSymbols.model_validate``) reads on every teaching session. The
-    union is over the existing ``"symbols"`` LIST (first-writer-wins; new symbols
-    are appended, existing entries are NEVER removed or reordered-away). Any
-    other ``CanonicalSymbols`` keys already authored (``description``,
-    ``subscript_convention``) are preserved untouched. ``normalization_map`` is a
-    flat ``{alias: canonical}`` dict; existing keys are NEVER overwritten."""
+    ``canonical_symbols`` is the target symbol array; descriptions and other
+    symbol metadata live in the separate ``symbol_metadata`` column. New
+    symbols are appended without removing existing entries. ``normalization_map``
+    is a flat ``{alias: canonical}`` dict whose existing keys are never overwritten.
+    """
     concept = (await db.execute(select(Concept).where(Concept.id == concept_id))).scalar_one()
 
-    existing_canon = dict(concept.canonical_symbols or {})
+    existing_symbols = list(concept.canonical_symbols or [])
     existing_norm = dict(concept.normalization_map or {})
-
-    existing_symbols = list(existing_canon.get("symbols") or [])
     existing_set = set(existing_symbols)
 
     newly_authored: list[str] = []
@@ -119,13 +107,9 @@ async def author_concept_symbols(
     for alias, canonical in normalization.items():
         existing_norm.setdefault(alias, canonical)
 
-    # Immutable assignment of a NEW CanonicalSymbols-validatable dict (no in-place
-    # mutation of the ORM column). Preserve any pre-authored description /
-    # subscript_convention; only the symbol LIST is unioned.
-    new_canon = dict(existing_canon)
-    new_canon["symbols"] = sorted(existing_symbols + newly_authored)
-    new_canon.setdefault("description", {})
-    concept.canonical_symbols = new_canon  # type: ignore[assignment]
+    # Immutable assignment of a new list so the ORM observes the array update.
+    # Descriptions and subscript conventions remain in the separate metadata column.
+    concept.canonical_symbols = sorted(existing_symbols + newly_authored)  # type: ignore[assignment]
     concept.normalization_map = existing_norm  # type: ignore[assignment]
     await db.flush()
     return newly_authored
@@ -134,6 +118,7 @@ async def author_concept_symbols(
 async def upsert_entity(
     db: AsyncSession,
     *,
+    course_id: int,
     concept_id: int,
     spec: EntitySpec,
     scope_summary: str | None,
@@ -141,17 +126,22 @@ async def upsert_entity(
     """Upsert one entity keyed on ``(concept_id, canonical_key)``. Returns
     ``(entity_id, inserted)``. Idempotent — a re-run with the same key updates in
     place (no duplicate row). Mirrors seed ``_upsert_entity`` but also writes the
-    dedup ladder's embedding source ``scope_summary``."""
+    dedup ladder's embedding source ``scope_summary``.
+
+    DB-13: ``course_id`` is a denormalized NOT NULL column on ``app.learner_entities``
+    (initplan-safe RLS); it is required on INSERT and unused on the update branch
+    (immutable once set — a concept never changes course)."""
     row = (
         await db.execute(
-            select(KGEntity)
-            .where(KGEntity.concept_id == concept_id)
-            .where(KGEntity.canonical_key == spec.canonical_key)
+            select(LearnerEntity)
+            .where(LearnerEntity.concept_id == concept_id)
+            .where(LearnerEntity.canonical_key == spec.canonical_key)
         )
     ).scalar_one_or_none()
 
     if row is None:
-        row = KGEntity(
+        row = LearnerEntity(
+            course_id=course_id,
             concept_id=concept_id,
             canonical_key=spec.canonical_key,
             kind=spec.kind,
@@ -190,9 +180,9 @@ async def link_opposes(
     rows = (
         (
             await db.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == concept_id)
-                .where(KGEntity.kind == "misconception")
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == concept_id)
+                .where(LearnerEntity.kind == "misconception")
             )
         )
         .scalars()
@@ -243,9 +233,9 @@ async def drop_unlinkable_minted_misconceptions(
     rows = (
         (
             await db.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == concept_id)
-                .where(KGEntity.kind == "misconception")
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == concept_id)
+                .where(LearnerEntity.kind == "misconception")
             )
         )
         .scalars()
@@ -272,7 +262,7 @@ async def drop_unlinkable_minted_misconceptions(
 
 
 async def _entities_concept_map(db: AsyncSession, entity_ids: Iterable[int]) -> dict[int, int]:
-    """Map each ``KGEntity.id`` to its owning ``concept_id`` in ONE query. A missing
+    """Map each ``LearnerEntity.id`` to its owning ``concept_id`` in ONE query. A missing
     id is simply absent from the map — the caller treats absence as out-of-scope
     (the fail-safe direction)."""
     ids = set(entity_ids)
@@ -281,12 +271,12 @@ async def _entities_concept_map(db: AsyncSession, entity_ids: Iterable[int]) -> 
     return {
         int(eid): int(cid)
         for eid, cid in (
-            await db.execute(select(KGEntity.id, KGEntity.concept_id).where(KGEntity.id.in_(ids)))
+            await db.execute(select(LearnerEntity.id, LearnerEntity.concept_id).where(LearnerEntity.id.in_(ids)))
         ).all()
     }
 
 
-async def load_concept_entities(db: AsyncSession, *, concept_id: int) -> list[KGEntity]:
+async def load_concept_entities(db: AsyncSession, *, concept_id: int) -> list[LearnerEntity]:
     """Load THIS concept's already-PERSISTED ``apollo_kg_entities`` rows (ascending
     ``id`` — first-writer-wins order), for the cross-mint deterministic content-
     equality pre-match (G4.3, cross-UPLOAD half). ``concept_id`` uniquely belongs to
@@ -297,9 +287,9 @@ async def load_concept_entities(db: AsyncSession, *, concept_id: int) -> list[KG
     return list(
         (
             await db.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == concept_id)
-                .order_by(KGEntity.id.asc())
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == concept_id)
+                .order_by(LearnerEntity.id.asc())
             )
         )
         .scalars()
@@ -324,8 +314,8 @@ async def load_concept_prereq_adjacency(
     ids = set(entity_ids)
     if not ids:
         return {}
-    from_entity = aliased(KGEntity)
-    to_entity = aliased(KGEntity)
+    from_entity = aliased(LearnerEntity)
+    to_entity = aliased(LearnerEntity)
     rows = (
         await db.execute(
             select(EntityPrereq.from_entity_id, EntityPrereq.to_entity_id)
@@ -396,6 +386,7 @@ async def partition_prereqs_by_concept_scope(
 async def insert_prereqs(
     db: AsyncSession,
     *,
+    course_id: int,
     concept_id: int,
     key_to_id: dict[str, int],
     pairs: Sequence[tuple[str, str]],
@@ -432,7 +423,10 @@ async def insert_prereqs(
 
     A pair whose key is not in ``key_to_id`` raises KeyError (the caller maps it to
     a TagMintError — an unresolvable key is a caller contract violation, distinct
-    from a resolvable-but-foreign endpoint)."""
+    from a resolvable-but-foreign endpoint).
+
+    DB-13: ``course_id`` is a denormalized NOT NULL column on
+    ``internal.entity_prerequisites``; required on INSERT, unused on skip/drop."""
     kept, dropped = await partition_prereqs_by_concept_scope(
         db, concept_id=concept_id, key_to_id=key_to_id, pairs=pairs
     )
@@ -457,7 +451,7 @@ async def insert_prereqs(
         if from_id == to_id or _reaches(adj, to_id, from_id):
             cyclic.append((from_key, to_key))
             continue
-        db.add(EntityPrereq(from_entity_id=from_id, to_entity_id=to_id))
+        db.add(EntityPrereq(course_id=course_id, from_entity_id=from_id, to_entity_id=to_id))
         adj.setdefault(from_id, set()).add(to_id)
         inserted += 1
     await db.flush()

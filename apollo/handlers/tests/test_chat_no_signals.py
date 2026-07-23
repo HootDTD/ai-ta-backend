@@ -40,5 +40,6 @@ def test_chat_source_has_no_signal_envelopes_or_filter():
     assert '"olm_invite":' not in src
     # The output filter call is gone.
     assert "validate_or_raise(" not in src
-    # The dumb reply is fed the problem statement directly.
-    assert "problem_text=problem.problem_text" in src
+    # The permanent unified planner receives the resolved problem directly.
+    assert "problem=problem" in src
+    assert "plan_next_question(" in src

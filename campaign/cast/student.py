@@ -6,9 +6,10 @@ session end-to-end over the REAL student-facing HTTP routes
 (``apollo/api.py``: ``POST /apollo/sessions/from_hoot``, ``POST
 /apollo/sessions/{id}/chat``, ``POST /apollo/sessions/{id}/done`` — read there
 first, this module's shapes mirror them exactly), then reads back the two
-``GradingArtifact`` rows (canonical + pair) the Done-click persisted and
-returns one :class:`AttemptRecord`. ``run_corpus`` drives many attempts and
-appends one JSONL line per attempt to a :class:`~campaign.runctx.RunContext`'s
+``GradingRun`` rows (canonical + pair, ``internal.grading_runs`` — DB-14/A7
+artifacts-only merge) the Done-click persisted and returns one
+:class:`AttemptRecord`. ``run_corpus`` drives many attempts and
+appends one JSONL line per attempt to the caller-provided campaign output,
 ``attempts.jsonl``.
 
 Every real I/O boundary is an injected seam so the whole flow unit-tests with
@@ -50,7 +51,7 @@ Similarly, Apollo's clarification loop (spec §3 step 2) has no dedicated
 "answer this clarification" endpoint — it is woven into ordinary ``/chat``
 replies (see ``apollo/handlers/chat.py``). This driver has no reliable
 structural signal for "Apollo just asked a clarification probe"; it uses the
-same heuristic :func:`campaign.adapters.extract_apollo_questions` uses for S4
+same question-mark heuristic used by the S4 evaluator
 (a reply containing ``"?"``) to decide whether to spend one of the
 ``clarification_max_turns`` follow-up turns, and always delegates the actual
 wording (including how ``clarification_policy`` should shape the answer) to
@@ -128,7 +129,7 @@ ChatFn = Callable[[PersonaAttempt, Sequence[dict[str, Any]], str | None], Awaita
 
 
 class ArtifactReader(Protocol):
-    """Reads back the two ``GradingArtifact`` rows (canonical + pair) a
+    """Reads back the two ``GradingRun`` rows (canonical + pair) a
     Done-click persisted for one attempt. Either element is ``None`` when
     that role's row doesn't exist (e.g. the shadow flag was off, so no
     ``pair`` row was ever written)."""
@@ -594,30 +595,34 @@ class HttpxApolloClient:
 
 
 class SqlArtifactReader:
-    """Real :class:`ArtifactReader` — reads the two ``GradingArtifact`` rows
+    """Real :class:`ArtifactReader` — reads the two ``GradingRun`` rows
     (``role="canonical"``/``role="pair"``) a Done-click persisted, straight
     off the local campaign Postgres, via the SAME model
-    (``apollo.persistence.models.GradingArtifact``) the writer
+    (``apollo.persistence.models.GradingRun``) the writer
     (``apollo.handlers.artifact_writer``) inserts. Rows are converted back
     into the exact payload-dict shape ``build_graph_artifact``/
-    ``build_llm_artifact`` produced (the JSONB columns already ARE that
-    shape; only the identity columns are dropped since the driver already
-    knows them)."""
+    ``build_llm_artifact`` produced (DB-14/A7 artifacts-only merge:
+    ``internal.grading_runs`` no longer mirrors that dict 1:1 in its raw
+    columns, so ``_row_to_payload`` reassembles it from the typed/``*_details``
+    columns — see ``GradingRun``'s docstring and
+    ``apollo.handlers.artifact_writer._artifact_row`` for the inverse
+    mapping)."""
 
     def __init__(self, session_factory: Callable[[], Any]) -> None:
         self._session_factory = session_factory
 
     @staticmethod
     def _row_to_payload(row: Any) -> dict[str, Any]:
+        grader_payload = row.grader_payload or {}
         return {
             "grader_used": row.grader_used,
-            "versions": row.versions,
+            "versions": row.version_details,
             "node_ledger": row.node_ledger,
             "edge_ledger": row.edge_ledger,
-            "misconceptions": row.misconceptions,
-            "clarification_trace": row.clarification_trace,
-            "scores": row.scores,
-            "abstention": row.abstention,
+            "misconceptions": grader_payload.get("misconceptions", []),
+            "clarification_trace": grader_payload.get("clarification_trace", []),
+            "scores": row.score_details,
+            "abstention": row.abstention_details,
             "grading_latency_ms": row.grading_latency_ms,
         }
 
@@ -626,13 +631,13 @@ class SqlArtifactReader:
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         from sqlalchemy import select
 
-        from apollo.persistence.models import GradingArtifact
+        from apollo.persistence.models import GradingRun
 
         async with self._session_factory() as db:
             rows = (
                 (
                     await db.execute(
-                        select(GradingArtifact).where(GradingArtifact.attempt_id == attempt_id)
+                        select(GradingRun).where(GradingRun.attempt_id == attempt_id)
                     )
                 )
                 .scalars()

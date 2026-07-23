@@ -69,7 +69,6 @@ def _ep(
     *,
     entity_id: int,
     confidence: float = 0.8,
-    code: str | None = None,
 ) -> EntityProfile:
     """Construct an EntityProfile directly (no DB)."""
     return EntityProfile(
@@ -77,7 +76,6 @@ def _ep(
         canonical_key=key,
         mastery=mastery,
         confidence=confidence,
-        misconception_code=code,
     )
 
 
@@ -546,6 +544,33 @@ def test_personalize_selection_respects_attempted_ids_filter():
     chosen = personalize_selection(
         profile, _intro_pool(), concept_id=7, difficulty="intro", attempted_ids=[_P1_ID]
     )
+    assert chosen.id == _P3_ID
+
+
+@pytest.mark.unit
+def test_personalize_selection_respects_attempted_database_ids_filter():
+    """Persisted attempts carry bigint problem ids, not public problem codes."""
+    profile = _profile(
+        [
+            _ep("eq.continuity", 0.35, entity_id=1),
+            _ep("cond.incompressibility", 0.40, entity_id=2),
+            _ep("eq.bernoulli", 0.68, entity_id=3),
+        ]
+    )
+    pool = [
+        problem.model_copy(update={"database_id": database_id})
+        for database_id, problem in enumerate(_intro_pool(), start=101)
+    ]
+    p1_database_id = next(problem.database_id for problem in pool if problem.id == _P1_ID)
+
+    chosen = personalize_selection(
+        profile,
+        pool,
+        concept_id=7,
+        difficulty="intro",
+        attempted_ids=[p1_database_id],
+    )
+
     assert chosen.id == _P3_ID
 
 

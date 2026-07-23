@@ -36,10 +36,11 @@ class _Sess:
     def __init__(self, **kw: Any) -> None:
         self.id = kw.get("id", -1)
         self.user_id = kw.get("user_id", "u-1")
-        self.search_space_id = kw.get("search_space_id", 1)
+        self.course_id = kw.get("course_id", kw.get("search_space_id", 1))
+        self.search_space_id = self.course_id
         self.status = kw.get("status", SessionStatus.active.value)
         self.phase = kw.get("phase", SessionPhase.TEACHING.value)
-        self.current_problem_id = kw.get("current_problem_id", "p1")
+        self.current_problem_id = kw.get("current_problem_id", 1)
         # WU-3D: the concept signal is the int concept_id FK (cluster string gone).
         self.concept_id = kw.get("concept_id", 1)
 
@@ -47,6 +48,7 @@ class _Sess:
 class _Attempt:
     def __init__(self, attempt_id: int) -> None:
         self.id = attempt_id
+        self.problem_id = 1
         self.result = None
         self.difficulty = "intro"
         self.solver_trace = None
@@ -188,6 +190,7 @@ class _FakeGraph:
 
 class _FakeProblem:
     id = "p1"
+    database_id = 1
     problem_text = "x"
     reference_solution: list[Any] = []
 
@@ -224,7 +227,7 @@ async def test_restart_problem_still_deletes_subgraph():
         [
             _ScalarResult(one=sess),  # session (with_for_update)
             _ScalarResult(first=attempt),  # current attempt
-            _ScalarResult(),  # delete(Message)
+            _ScalarResult(),  # delete(TutoringMessage)
         ]
     )
     neo = object()

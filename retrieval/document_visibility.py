@@ -6,37 +6,37 @@ from typing import Any, Dict
 
 from sqlalchemy import exists, func, or_, select
 
-from database.models import AITADocument, TeacherCourse, TeacherUpload
+from database.models import Course, Document, Upload
 
 WEEKLY_UPLOAD_KINDS: tuple[str, ...] = ("notes", "slides")
 
 
 def active_document_conditions(search_space_id: int) -> list[Any]:
     current_week_sq = (
-        select(func.coalesce(func.max(TeacherCourse.current_week), 1))
-        .where(TeacherCourse.search_space_id == AITADocument.search_space_id)
+        select(func.coalesce(Course.current_week, 1))
+        .where(Course.id == Document.course_id)
         .scalar_subquery()
     )
 
     active_weekly_upload_exists = exists(
         select(1)
-        .select_from(TeacherUpload)
+        .select_from(Upload)
         .where(
-            TeacherUpload.doc_id == AITADocument.id,
-            TeacherUpload.search_space_id == AITADocument.search_space_id,
-            TeacherUpload.is_latest.is_(True),
-            TeacherUpload.status == "ready",
-            TeacherUpload.kind.in_(WEEKLY_UPLOAD_KINDS),
-            TeacherUpload.week <= current_week_sq,
+            Upload.document_id == Document.id,
+            Upload.course_id == Document.course_id,
+            Upload.is_latest.is_(True),
+            Upload.status == "ready",
+            Upload.kind.in_(WEEKLY_UPLOAD_KINDS),
+            Upload.week <= current_week_sq,
         )
     )
 
     return [
-        AITADocument.search_space_id == int(search_space_id),
-        AITADocument.status["state"].astext == "ready",
+        Document.course_id == int(search_space_id),
+        Document.status == "ready",
         or_(
-            AITADocument.week.is_(None),
-            ~AITADocument.material_kind.in_(WEEKLY_UPLOAD_KINDS),
+            Document.week.is_(None),
+            ~Document.material_kind.in_(WEEKLY_UPLOAD_KINDS),
             active_weekly_upload_exists,
         ),
     ]

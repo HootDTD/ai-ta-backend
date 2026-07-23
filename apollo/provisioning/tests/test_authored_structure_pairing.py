@@ -66,7 +66,8 @@ class _DB:
     async def get(self, _model, _row_id):
         return SimpleNamespace(
             display_name="Porter's Five Forces",
-            canonical_symbols={},
+            canonical_symbols=[],
+            symbol_metadata={},
             normalization_map={},
         )
 

@@ -9,7 +9,7 @@
 
 ## 0. What WU-4A is (and the sibling boundary it must not cross)
 
-WU-4A is the **graph_compare core**: take a frozen student graph + an authored
+WU-4A is the **retired graph comparator core**: take a frozen student graph + an authored
 reference graph, normalize both into canonical space, and compute the §6.2
 scores deterministically. It is the callable core only — it does NOT
 re-orchestrate `done.py` (that is WU-4C) and does NOT own the audit/abstention/
@@ -139,7 +139,7 @@ These were verified against the real code/migrations, not assumed:
   `rubric.py`; it only provides a new callable the later units wire in.
 
 - **Existing structure to imitate:** the `apollo/resolution/` package is the
-  template for `apollo/graph_compare/` — many small pure modules, one `__init__`
+  template for `apollo/retired graph comparator/` — many small pure modules, one `__init__`
   re-exporting the public seam, frozen dataclasses, pure/DB-free core with a
   separate persistence sibling. This is exactly the §6.3 module list.
 
@@ -191,11 +191,11 @@ artifact is the `CanonicalGraph` dataclass (+ a `ReferenceGraph` carrying the
 declared-path structure). WU-4A2 consumes those and never re-reads Neo4j or the
 raw problem JSON.
 
-**Scope — files to create (`apollo/graph_compare/`):**
+**Scope — files to create (`apollo/retired graph comparator/`):**
 
-- `apollo/graph_compare/__init__.py` — package seam; re-exports the public API
+- `apollo/retired graph comparator/__init__.py` — package seam; re-exports the public API
   as it grows (mirrors `apollo/resolution/__init__.py`).
-- `apollo/graph_compare/validator.py` — the §6.3 `validator.py` row for the
+- `apollo/retired graph comparator/validator.py` — the §6.3 `validator.py` row for the
   **raw student graph only**: node/edge types, endpoint pairs (reuse
   `EDGE_ALLOWED_PAIRS`), scoping consistency (`attempt_id` uniformity), no
   invalid PRECEDES cycles (reuse `KGGraph.topological_order` which already
@@ -204,7 +204,7 @@ raw problem JSON.
   §6.1). Raises a named `ReferenceGraphInvalidError` (reference failure blocks
   grading, §6.6) and a distinct `StudentGraphInvalidError` for raw-student
   grammar violations.
-- `apollo/graph_compare/canonical.py` — `CanonicalNode` / `CanonicalGraph` /
+- `apollo/retired graph comparator/canonical.py` — `CanonicalNode` / `CanonicalGraph` /
   `ReferenceGraph` frozen dataclasses + `build_student_canonical(student_graph,
   resolution) -> CanonicalGraph` and `build_reference_canonical(problem) ->
   ReferenceGraph`. Merges student nodes resolving to the same target
@@ -213,7 +213,7 @@ raw problem JSON.
   unresolved nodes as findings-input** (§6.3 `canonical_graph.py`). R_norm is
   built from `problem["reference_solution"]` + `depends_on` + `declared_paths`
   — **never the deduped entity payload** (the WU-3B heads-up).
-- `apollo/graph_compare/problem_inputs.py` (small) — the `symbolic_mappings`
+- `apollo/retired graph comparator/problem_inputs.py` (small) — the `symbolic_mappings`
   per-problem seam + candidate-set assembly: reads the problem's reference
   solution + course misconceptions and builds the closed candidate set via the
   existing `build_candidate_set` / `candidates_from_reference_solution` /
@@ -224,8 +224,8 @@ raw problem JSON.
 **Public API exposed for WU-4A2 / 4B / 4C:**
 
 ```python
-# apollo/graph_compare (after WU-4A1)
-from apollo.graph_compare import (
+# apollo/retired graph comparator (after WU-4A1)
+from apollo.retired graph comparator import (
     CanonicalGraph, CanonicalNode, ReferenceGraph,
     build_student_canonical, build_reference_canonical,
     validate_student_graph,        # reference validation reuses validate_reference_graph
@@ -293,33 +293,33 @@ findings + the v1 `comparison_confidence = 1.0` + a `comparison_version`
 constant). WU-4B consumes `GradeResult.findings` to run the audit, gate, persist
 the run/findings rows, and produce events.
 
-**Scope — files to create (`apollo/graph_compare/`):**
+**Scope — files to create (`apollo/retired graph comparator/`):**
 
-- `apollo/graph_compare/coverage.py` — `R ⊑ S` per declared path; coverage =
+- `apollo/retired graph comparator/coverage.py` — `R ⊑ S` per declared path; coverage =
   **max over paths** of node-coverage (§6.2 binding). A student on a valid
   alternative path is graded against the path they took, never punished against
   the authored one.
-- `apollo/graph_compare/soundness.py` — `S ⊑ R`, **contradictions only**:
+- `apollo/retired graph comparator/soundness.py` — `S ⊑ R`, **contradictions only**:
   `soundness_score = 1 − penalty(contradictions)`, contradiction = resolution
   to `canon.misc.*` (negative knowledge), detected via the resolver's
   `Candidate.is_misconception`/`opposes_key` and the misconception competition
   already done at resolve-time. **Unsupported extras and unresolved nodes carry
   ZERO soundness penalty** (§6.2).
-- `apollo/graph_compare/scores.py` — the seven sub-scores: `node_coverage`,
+- `apollo/retired graph comparator/scores.py` — the seven sub-scores: `node_coverage`,
   `edge_coverage`, `scoping`, `usage`, `procedure_order` (penalize only
   *inversions* of true reference PRECEDES, never absence — §6.2),
   `dependency` (lowest weight; loose any→any DEPENDS_ON grammar), `contradiction`.
   Edges are **diagnostic-grade in v1** — sub-scores only, never events; `explicit`
   outweighs `inferred` (provenance already on `Edge`).
-- `apollo/graph_compare/bisimilarity.py` — `harmonic_mean(soundness, coverage)`
+- `apollo/retired graph comparator/bisimilarity.py` — `harmonic_mean(soundness, coverage)`
   with the binding degenerate handling (`= 0` when `a+b = 0`, never NaN; empty
   student graph → coverage 0, soundness 1, bisimilarity 0; §6.1).
-- `apollo/graph_compare/findings.py` — the in-memory `Finding` dataclass
+- `apollo/retired graph comparator/findings.py` — the in-memory `Finding` dataclass
   (covered_node / missing_node / matched_edge / missing_edge /
   unsupported_extra / contradiction / unresolved / alternative_path) and the
   reducers that emit them from the simulation passes. **No event conversion
   here** (§6.5 table is WU-4B).
-- `apollo/graph_compare/core.py` — `grade_attempt(student_canonical,
+- `apollo/retired graph comparator/core.py` — `grade_attempt(student_canonical,
   reference_graph) -> GradeResult` (the §6.4 steps 10/11/13 orchestration over
   pure inputs) + `GradeResult` frozen dataclass. This is the single public
   callable WU-4C imports.
@@ -327,7 +327,7 @@ the run/findings rows, and produce events.
 **Public API exposed for WU-4B / 4C:**
 
 ```python
-from apollo.graph_compare import (
+from apollo.retired graph comparator import (
     grade_attempt,                 # CanonicalGraph + ReferenceGraph -> GradeResult
     GradeResult, Finding, FindingKind,
     COMPARISON_VERSION,            # the comparison_version constant for the runs row
@@ -408,10 +408,10 @@ WU-4A2 produces the *findings* those fixtures start from; WU-4B asserts the
 
 3. **`done.py` / `architecture/apollo.md` drift.** WU-4A adds a new package but
    does not yet wire it (WU-4C does). The drift-prevention contract still
-   requires registering `apollo/graph_compare/` in the owner doc
+   requires registering `apollo/retired graph comparator/` in the owner doc
    (`docs/architecture/apollo.md`, `owns:` globs) when the package lands, even
    though `done.py` is untouched. Confirm the doc's `owns:` covers
-   `apollo/graph_compare/**` in WU-4A1.
+   `apollo/retired graph comparator/**` in WU-4A1.
 
 4. **Findings carry Neo4j node-ids the spec calls "best-effort" (§7).** The
    `student_node_ids`/`reference_node_ids` on findings are durable for the
@@ -458,7 +458,7 @@ test files; WU-4A2 ≈ 6 new modules + ~8 test files. Neither is another XL.
 - Patch coverage ≥95% on changed lines (`diff-cover` vs `origin/staging`),
   enforced per sub-unit. Pure modules make this achievable without real-infra.
 - Reconcile `docs/architecture/apollo.md` in the same commit each sub-unit lands
-  (register `apollo/graph_compare/**`, bump `last_verified`).
+  (register `apollo/retired graph comparator/**`, bump `last_verified`).
 - No migration in WU-4A (026 already shipped the tables + ORM). If risk #1
   forces a DB-backed `symbolic_mappings` table, that is migration 028 and a
   documented, local-only, file-then-CI-rehearsed change — but the JSON-key path

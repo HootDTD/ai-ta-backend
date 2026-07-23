@@ -43,7 +43,7 @@ async def retrieve_for_question(
         query: The original (normalized) student question.
         keywords: Top keywords from extract_and_filter_keywords() — appended to query
                   as hints, NOT used as standalone search targets.
-        search_space_id: The SearchSpace.id for this class (from workspace lookup).
+        search_space_id: The Course.id for this class (from workspace lookup).
         db_session: Async SQLAlchemy session.
         weight_overrides: Per-material-kind score biases from workspace config.
         top_k: Number of chunks to return after reranking + bias.

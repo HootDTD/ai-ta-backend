@@ -22,10 +22,10 @@ from apollo.knowledge_graph.resolution_store import write_resolution
 from apollo.knowledge_graph.store import _NODE_CREATE_CYPHER, _node_to_neo4j_props
 from apollo.ontology import NODE_LABELS, build_node
 from apollo.ontology.graph import KGGraph
-from apollo.persistence.models import Concept, KGEntity, Subject
+from apollo.persistence.models import Concept, LearnerEntity
 from apollo.resolution import resolve_attempt
 from apollo.resolution.candidates import Candidate
-from database.models import SearchSpace
+from database.models import Course
 
 pytestmark = pytest.mark.integration
 
@@ -33,18 +33,22 @@ _RESOLVED_AT = "2026-06-16T00:00:00+00:00"
 
 
 async def _seed_entities(db, *, course_slug, entities):
-    space = SearchSpace(name=f"Course {course_slug}", slug=course_slug, subject_name="Physics")
+    space = Course(name=f"Course {course_slug}", slug=course_slug, subject_name="Physics")
     db.add(space)
     await db.flush()
-    subj = Subject(slug=f"s-{course_slug}", display_name="Sub", search_space_id=space.id)
-    db.add(subj)
-    await db.flush()
-    concept = Concept(subject_id=subj.id, slug=f"k-{course_slug}", display_name="Concept")
+    concept = Concept(
+        course_id=space.id,
+        subject_slug=f"s-{course_slug}",
+        subject_display_name="Sub",
+        slug=f"k-{course_slug}",
+        display_name="Concept",
+    )
     db.add(concept)
     await db.flush()
     key_by_canonical: dict[str, int] = {}
     for canonical_key, kind, name in entities:
-        ent = KGEntity(
+        ent = LearnerEntity(
+            course_id=space.id,
             concept_id=concept.id,
             canonical_key=canonical_key,
             kind=kind,
@@ -70,12 +74,17 @@ async def _write_node_direct(neo, attempt_id, node):
 @pytest.mark.asyncio
 async def test_resolves_to_targets_projected_canon(db_session, neo4j_client):
     aid = -801
+    # DB-13: the original fixture also seeded a ("misc.density_ignored",
+    # "misconception", ...) entity here for scene-setting realism (a KG has
+    # both conditions and misconceptions) — it was never asserted on. kind=
+    # "misconception" is no longer admitted by learner_entities__kind__check,
+    # so that entity is dropped; the resolver behavior under test only ever
+    # exercised cond.incompressibility.
     concept_id, key_by_canonical = await _seed_entities(
         db_session,
         course_slug="e2e-resolve",
         entities=[
             ("cond.incompressibility", "condition", "Incompressibility"),
-            ("misc.density_ignored", "misconception", "Density ignored"),
         ],
     )
 

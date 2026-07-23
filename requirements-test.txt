@@ -30,5 +30,5 @@ testcontainers[postgres]>=4.0   # ephemeral pgvector/pgvector:pg16 container per
 
 # --- coverage gating / quality -------------------------------------------
 diff-cover>=9.0          # patch-coverage gate vs origin/staging
-ruff>=0.6                # lint + format
+ruff==0.15.22            # lint + format (pinned: CI format --check must match the version the code was formatted with)
 mypy>=1.10               # static type checking

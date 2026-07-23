@@ -1,6 +1,6 @@
 """NO-BEHAVIOR-CHANGE guarantee for WU-5B4 (unit, LLM/DB mocked).
 
-The ``chat_turns.keywords`` column is WRITE-ONLY: persisting the keywords must
+The ``app.chat_messages.keywords`` column is WRITE-ONLY: persisting the keywords must
 not change any answer, retrieval result, or score. WU-5B4 deliberately makes
 ZERO behavioral edits to the orchestrator (it reuses the existing
 ``found_terms`` carrier). This module locks that invariant two ways:
@@ -9,7 +9,7 @@ ZERO behavioral edits to the orchestrator (it reuses the existing
    byte-identical to a golden snapshot of the unmodified retrieval behavior for
    a fixed mocked input.
 2. ``append_turn`` building a turn WITH keywords vs WITHOUT keywords produces
-   ``ChatTurn`` rows identical in every non-keyword field — the new param has no
+   ``ChatMessage`` rows identical in every non-keyword field — the new param has no
    side effect on existing columns.
 """
 
@@ -84,6 +84,8 @@ def _fake_session():
 async def test_append_turn_keywords_does_not_change_other_columns():
     base_kwargs = dict(
         chat_session_id=3,
+        user_id="00000000-0000-0000-0000-000000000001",
+        course_id=9,
         role="assistant",
         content="same answer",
         model="gpt-5",
@@ -98,7 +100,7 @@ async def test_append_turn_keywords_does_not_change_other_columns():
         "role",
         "content",
         "turn_index",
-        "turn_id",
+        "external_id",
         "model",
         "attachments",
         "citations",

@@ -13,7 +13,7 @@ Flow per /ask turn (flag on):
      AUGMENT → small top-up retrieval merged via ``merge_augment_bundle``;
      FRESH → legacy ``_ask_pgvector``.
   3. ``persist_turn_outcome`` (after the answer): save the bundle + scoring
-     rows back to the session cache and write a ``chat_router_decisions``
+     rows back to the session cache and write a ``chat_routing_decisions``
      telemetry row. Never raises.
 """
 
@@ -36,7 +36,7 @@ from chats.bundle_cache import (
 )
 from chats.service import get_chat_session_for_user, list_recent_turns
 from config.contracts import BundleSnippet, ResearchBundle, ResearchMetadata
-from database.models import ChatRouterDecision, ChatTurn
+from database.models import ChatMessage, ChatRouterDecision, ChatSession
 from database.session import get_async_session
 
 log = logging.getLogger(__name__)
@@ -77,6 +77,7 @@ def _get_llm_router() -> LLMRouter:
 @dataclass
 class RouterTurnContext:
     chat_session_id: int
+    course_id: int
     decision: ModeDecision
     cached: CachedBundle | None
     visible_docs_hash: str
@@ -98,7 +99,12 @@ async def prepare_router_context(
     """
     try:
         async with get_async_session() as db_session:
-            session = await get_chat_session_for_user(db_session, chat_id=chat_id, user_id=user_id)
+            session = await get_chat_session_for_user(
+                db_session,
+                chat_id=chat_id,
+                user_id=user_id,
+                course_id=search_space_id,
+            )
             if session is None:
                 return None
             chat_session_id = int(session.id)
@@ -115,6 +121,8 @@ async def prepare_router_context(
             turns = await list_recent_turns(
                 db_session,
                 chat_session_id=chat_session_id,
+                user_id=user_id,
+                course_id=int(session.course_id),
                 limit=_ROUTER_RECENT_TURNS,
             )
             recent_turns = [
@@ -153,6 +161,7 @@ async def prepare_router_context(
         )
         return RouterTurnContext(
             chat_session_id=chat_session_id,
+            course_id=int(session.course_id),
             decision=decision,
             cached=cached,
             visible_docs_hash=visible_hash,
@@ -294,13 +303,23 @@ async def persist_turn_outcome(
     """
     try:
         async with get_async_session() as db_session:
-            session = await get_chat_session_for_user(db_session, chat_id=chat_id, user_id=user_id)
+            session = await get_chat_session_for_user(
+                db_session,
+                chat_id=chat_id,
+                user_id=user_id,
+                course_id=ctx.course_id,
+            )
             if session is None:
                 return
 
             turn_index_result = await db_session.execute(
-                select(func.coalesce(func.max(ChatTurn.turn_index), 0)).where(
-                    ChatTurn.chat_session_id == session.id
+                select(func.coalesce(func.max(ChatMessage.turn_index), 0))
+                .join(ChatSession, ChatSession.id == ChatMessage.chat_session_id)
+                .where(
+                    ChatMessage.chat_session_id == session.id,
+                    ChatMessage.course_id == ctx.course_id,
+                    ChatSession.user_id == user_id,
+                    ChatSession.course_id == ctx.course_id,
                 )
             )
             turn_index = int(turn_index_result.scalar_one() or 0)
@@ -319,6 +338,7 @@ async def persist_turn_outcome(
             decision = ctx.decision
             db_session.add(
                 ChatRouterDecision(
+                    course_id=ctx.course_id,
                     turn_id=str(turn_index),
                     chat_session_id=session.id,
                     query=(question or "")[:2000],

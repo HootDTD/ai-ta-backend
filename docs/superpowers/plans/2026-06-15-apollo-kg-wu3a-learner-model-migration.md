@@ -863,7 +863,7 @@ Explicitly NOT in this unit (do not build, even partially):
   any data INSERT into the new tables beyond test fixtures, and the real per-course
   `search_space_id` mapping. WU-3A ships only the schema + the bootstrap backfill default.
 - **WU-3C** — the resolver, the `:Canon` Neo4j projection, `RESOLVES_TO` edges, SymPy/
-  alias/fuzzy tiers, misconception competition. No `apollo/graph_compare/` code.
+  alias/fuzzy tiers, misconception competition. No `apollo/retired graph comparator/` code.
 - **WU-3D / §8A** — the runtime cutover: deleting `_AVAILABLE_CLUSTERS`/
   `_CLUSTER_TO_CONCEPT`, populating `apollo_sessions.concept_id`, dropping
   `concept_cluster_id`, making curriculum reads async, `load_concept` DB-backed. None of

@@ -25,7 +25,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from apollo.overseer.misconception_detector.config import topic_score_served_enabled
+from apollo.overseer.grading_flags import topic_score_served_enabled
 from apollo.overseer.topic_narrative import build_topic_narrative_prompt, sanitize_narrative
 from apollo.overseer.topic_score import TopicScoreResult
 

@@ -39,9 +39,8 @@ from apollo.ontology import (
     build_node,
 )
 from apollo.persistence.models import (
-    ApolloSession,
-    KGNegotiation,
-    Message,
+    TutoringSession,
+    TutoringMessage,
     ProblemAttempt,
 )
 from apollo.persistence.neo4j_client import Neo4jClient
@@ -231,8 +230,7 @@ class KGStore:
     method below calls `_require_neo` at entry, which raises
     `KGUnavailableError` when `self.neo is None`. Postgres-only methods
     (freeze/unfreeze/_session_id_for_attempt/_ensure_unfrozen/
-    _log_negotiation/get_node_trace) never touch `self.neo` and keep
-    working unconditionally.
+    get_node_trace) never touch `self.neo` and keep working unconditionally.
     """
 
     def __init__(self, db: AsyncSession, neo: Neo4jClient | None) -> None:
@@ -260,7 +258,7 @@ class KGStore:
 
     async def _ensure_unfrozen(self, session_id: int) -> None:
         result = await self.db.execute(
-            select(ApolloSession.phase).where(ApolloSession.id == session_id)
+            select(TutoringSession.phase).where(TutoringSession.id == session_id)
         )
         phase = result.scalar_one_or_none()
         if phase in ("PROBLEM_REVEAL", "SOLVING", "REPORT"):
@@ -268,7 +266,7 @@ class KGStore:
 
     async def freeze(self, session_id: int) -> None:
         result = await self.db.execute(
-            select(ApolloSession).where(ApolloSession.id == session_id)
+            select(TutoringSession).where(TutoringSession.id == session_id)
         )
         session = result.scalar_one()
         session.phase = "PROBLEM_REVEAL"
@@ -276,7 +274,7 @@ class KGStore:
 
     async def unfreeze(self, session_id: int) -> None:
         result = await self.db.execute(
-            select(ApolloSession).where(ApolloSession.id == session_id)
+            select(TutoringSession).where(TutoringSession.id == session_id)
         )
         session = result.scalar_one()
         session.phase = "TEACHING"
@@ -697,12 +695,11 @@ class KGStore:
     # Each move:
     #   1. Verifies the session is unfrozen (Done freeze blocks late moves).
     #   2. Updates the Neo4j node in place.
-    #   3. Logs an audit-trail row in apollo_kg_negotiations (Postgres).
-    #   4. Returns the updated typed Node.
+    #   3. Returns the updated typed Node.
     #
-    # The Done-gate (P3.6) reads `status` directly from the graph and the
-    # negotiation log to decide whether the student has "touched" each
-    # flagged entry.
+    # DB-13/A6: the apollo_kg_negotiations Postgres audit log is REMOVED — the
+    # Done-gate (P3.6) now reads `status` directly from the graph only; there
+    # is no longer a negotiation log to consult.
 
     async def _set_node_status_neo4j(
         self, *, attempt_id: int, node_id: str, set_clause: str, params: dict[str, Any],
@@ -728,35 +725,18 @@ class KGStore:
             raise KGEntryNotFoundError(attempt_id=attempt_id, node_id=node_id)
         return _record_to_node(dict(rec["props"]), list(rec["labels"]))
 
-    async def _log_negotiation(
-        self, *, attempt_id: int, node_id: str, move: str, payload: dict[str, Any],
-    ) -> None:
-        """Append a row to apollo_kg_negotiations. The audit log is
-        append-only — every move gets its own row even on the same entry."""
-        self.db.add(KGNegotiation(
-            attempt_id=attempt_id,
-            entry_id=node_id,
-            actor="student",
-            move=move,
-            payload=payload,
-        ))
-        await self.db.commit()
-
     async def mark_node_disputed(
         self, *, attempt_id: int, node_id: str, reason: str,
     ) -> Node:
-        """CHALLENGE: status -> DISPUTED. Logs the student's reason. The
-        node's structural content is preserved — only `status` changes."""
+        """CHALLENGE: status -> DISPUTED. The node's structural content is
+        preserved — only `status` changes. `reason` is no longer persisted
+        (DB-13/A6 dropped the Postgres audit log)."""
         session_id = await self._session_id_for_attempt(attempt_id)
         await self._ensure_unfrozen(session_id)
 
         node = await self._set_node_status_neo4j(
             attempt_id=attempt_id, node_id=node_id,
             set_clause="n.status = 'DISPUTED'", params={},
-        )
-        await self._log_negotiation(
-            attempt_id=attempt_id, node_id=node_id,
-            move="challenge", payload={"reason": reason},
         )
         return node
 
@@ -777,10 +757,6 @@ class KGStore:
             set_clause="n.status = 'DUAL', n.student_belief = $belief",
             params={"belief": surface_form},
         )
-        await self._log_negotiation(
-            attempt_id=attempt_id, node_id=node_id,
-            move="paraphrase", payload={"surface_form": surface_form},
-        )
         return node
 
     async def skip_node(
@@ -795,23 +771,18 @@ class KGStore:
             attempt_id=attempt_id, node_id=node_id,
             set_clause="n.status = 'DUAL'", params={},
         )
-        await self._log_negotiation(
-            attempt_id=attempt_id, node_id=node_id,
-            move="skip", payload={},
-        )
         return node
 
     async def get_node_trace(
         self, *, attempt_id: int, node_id: str,
     ) -> dict[str, Any]:
-        """Ordered audit trail for one entry. Returns:
+        """Read-only trace for one entry. Returns:
 
             {
               "node_id": str,
-              "moves": [
-                {"actor": str, "move": str, "payload": dict, "created_at": iso8601},
-                ...
-              ],
+              "moves": [],  # DB-13/A6: the Postgres audit log is removed —
+                            # always empty; kept in the response shape so the
+                            # FE trace card doesn't need a contract change.
               "source_utterance": str | None,  # most recent student message
                                                 # in the attempt — best-effort
             }
@@ -823,29 +794,14 @@ class KGStore:
         because the student typically negotiates immediately after the
         offending turn.
         """
-        # Audit trail — chronological.
-        rows = (await self.db.execute(
-            select(KGNegotiation)
-            .where(KGNegotiation.attempt_id == attempt_id)
-            .where(KGNegotiation.entry_id == node_id)
-            .order_by(KGNegotiation.created_at.asc(), KGNegotiation.id.asc())
-        )).scalars().all()
-
         moves: list[dict[str, Any]] = []
-        for r in rows:
-            moves.append({
-                "actor": r.actor,
-                "move": r.move,
-                "payload": r.payload or {},
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            })
 
         # Source utterance — latest student message in the attempt.
         last_student_msg = (await self.db.execute(
-            select(Message.content)
-            .where(Message.attempt_id == attempt_id)
-            .where(Message.role == "student")
-            .order_by(Message.turn_index.desc())
+            select(TutoringMessage.content)
+            .where(TutoringMessage.attempt_id == attempt_id)
+            .where(TutoringMessage.role == "student")
+            .order_by(TutoringMessage.turn_index.desc())
             .limit(1)
         )).scalar_one_or_none()
 

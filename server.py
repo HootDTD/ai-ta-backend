@@ -24,9 +24,14 @@ from contextlib import contextmanager, redirect_stdout
 from ai.vision import vision_transcribe
 from config.settings import get_runtime_dir, hoot_qa_enabled, set_subject_name, RequestConfig
 from ai.orchestrator import Orchestrator
-from knowledge.manager import KnowledgeManager
 from config.weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
-from ai.main_ai import extract_keywords, parse_question, solve_with_bundle, solve_with_bundle_stream, format_answer
+from ai.main_ai import (
+    extract_keywords,
+    parse_question,
+    solve_with_bundle,
+    solve_with_bundle_stream,
+    format_answer,
+)
 from config.contracts import ParsedTask
 from citations.formatter import format_citations
 from knowledge.teacher_weekly import TeacherWeeklyStorage
@@ -52,7 +57,10 @@ from chats.service import (
     list_recent_turns,
     refresh_memory_summary,
 )
-from apollo.api import router as apollo_router, register_exception_handlers as _register_apollo_exception_handlers
+from apollo.api import (
+    router as apollo_router,
+    register_exception_handlers as _register_apollo_exception_handlers,
+)
 
 try:  # pragma: no cover - optional dependency detection
     importlib.import_module("python_multipart")
@@ -67,6 +75,7 @@ try:  # pragma: no cover - convenience
 
     load_dotenv(override=True)
 except Exception:
+
     def _load_env_fallback() -> None:
         try:
             repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -155,26 +164,7 @@ class AskRequest(BaseModel):
         allow_population_by_field_name = True
 
 
-class KnowledgeMaterialOut(BaseModel):
-    id: str
-    subject: str
-    title: str
-    doc_id: str
-    index_dir: str
-    index_path: str
-    created_at: str
-    model: Optional[str] = None
-    dimensions: Optional[int] = None
-    page_count: Optional[int] = None
-
-
-class KnowledgeSubjectOut(BaseModel):
-    subject: str
-    slug: str
-    materials: List[KnowledgeMaterialOut]
-
-
-class TeacherUploadOut(BaseModel):
+class UploadOut(BaseModel):
     id: str
     week: int
     kind: str
@@ -195,8 +185,8 @@ class TeacherUploadOut(BaseModel):
 
 
 class TeacherSectionOut(BaseModel):
-    latest: Optional[TeacherUploadOut]
-    history: List[TeacherUploadOut]
+    latest: Optional[UploadOut]
+    history: List[UploadOut]
 
 
 class TeacherWeekOut(BaseModel):
@@ -261,17 +251,15 @@ class TeacherCurrentWeekIn(BaseModel):
         allow_population_by_field_name = True
 
 
-
-
 # -------- Utils --------
 DATA_URL_RE = re.compile(r"^data:(?P<mime>[^;]+);base64,(?P<data>.+)$", re.DOTALL)
 
 
-def _serialize_upload(entry: Optional[Dict[str, Any]]) -> Optional[TeacherUploadOut]:
+def _serialize_upload(entry: Optional[Dict[str, Any]]) -> Optional[UploadOut]:
     if not isinstance(entry, dict):
         return None
     try:
-        return TeacherUploadOut(**entry)
+        return UploadOut(**entry)
     except Exception:
         log.warning("Failed to serialize teacher upload entry")
         return None
@@ -280,7 +268,7 @@ def _serialize_upload(entry: Optional[Dict[str, Any]]) -> Optional[TeacherUpload
 def _serialize_section(section: Optional[Dict[str, Any]]) -> TeacherSectionOut:
     latest = _serialize_upload((section or {}).get("latest"))
     history_raw = (section or {}).get("history") or []
-    history: List[TeacherUploadOut] = []
+    history: List[UploadOut] = []
     for item in history_raw:
         serialized = _serialize_upload(item)
         if serialized:
@@ -361,7 +349,9 @@ def _require_course_membership(
     except HTTPException:
         raise
     except Exception as exc:
-        log.error("Membership check failed for user=%s space=%s: %s", auth.user_id, search_space_id, exc)
+        log.error(
+            "Membership check failed for user=%s space=%s: %s", auth.user_id, search_space_id, exc
+        )
         raise HTTPException(status_code=500, detail="Membership validation failed")
 
     if not allowed:
@@ -426,7 +416,7 @@ async def _load_memory_and_append_user_turn_async(
             chat_id=chat_id,
             user_id=auth.user_id,
         )
-        if existing is not None and int(existing.search_space_id) != int(search_space_id):
+        if existing is not None and int(existing.course_id) != int(search_space_id):
             raise HTTPException(status_code=400, detail="search_space_id mismatch for chat_id")
 
         session = existing or await get_or_create_chat_session_for_user(
@@ -440,17 +430,21 @@ async def _load_memory_and_append_user_turn_async(
             # Merge, don't replace: meta also carries orchestrator state
             # (bundle_cache fingerprint) written by persist_turn_outcome —
             # a blind overwrite here invalidated the session cache every turn.
-            session.meta = {**(session.meta or {}), **meta}
+            session.metadata_ = {**(session.metadata_ or {}), **meta}
 
         recent_turns = await list_recent_turns(
             db_session,
             chat_session_id=int(session.id),
+            user_id=auth.user_id,
+            course_id=int(session.course_id),
         )
         memory_context = build_memory_context(session.memory_summary or "", recent_turns)
 
         await append_turn(
             db_session,
             chat_session_id=int(session.id),
+            user_id=auth.user_id,
+            course_id=int(session.course_id),
             role="user",
             content=user_content,
             attachments=_attachments_for_chat_turn(attachments),
@@ -525,19 +519,26 @@ async def _append_assistant_turn_and_refresh_async(
                 search_space_id=int(search_space_id),
                 meta={},
             )
-        elif int(session.search_space_id) != int(search_space_id):
+        elif int(session.course_id) != int(search_space_id):
             raise HTTPException(status_code=400, detail="search_space_id mismatch for chat_id")
 
         await append_turn(
             db_session,
             chat_session_id=int(session.id),
+            user_id=auth.user_id,
+            course_id=int(session.course_id),
             role="assistant",
             content=assistant_content,
             model=os.getenv("SOLVER_MODEL", "gpt-4o"),
             citations=list(citations) if citations else None,
             keywords=list(keywords) if keywords else None,  # None/empty -> [] in append_turn
         )
-        await refresh_memory_summary(db_session, chat_session=session)
+        await refresh_memory_summary(
+            db_session,
+            chat_session=session,
+            user_id=auth.user_id,
+            course_id=int(session.course_id),
+        )
         session.updated_at = datetime.now(UTC)
         await db_session.commit()
 
@@ -678,33 +679,6 @@ def _validate_startup_env() -> None:
     validate_required_env()
 
 
-def _apollo_nli_prewarm_enabled() -> bool:
-    """``APOLLO_NLI_PREWARM=1`` (or true/yes) opts boot into the NLI
-    pre-warm hook (campaign C2). Default OFF — prod boot behavior is
-    unchanged unless a deployment (or the local campaign harness) sets it."""
-    raw = os.environ.get("APOLLO_NLI_PREWARM")
-    return raw is not None and raw.strip().lower() in ("1", "true", "yes")
-
-
-@app.on_event("startup")
-def _prewarm_nli_on_startup() -> None:
-    """When enabled, force the NLI checkpoint to load at boot so the first
-    live grading/chat request never triggers a lazy first-load / Hugging
-    Face download on the request path (spec: "no first-request HF
-    download"). A prewarm failure (missing ``transformers``, no network on
-    a cold cache, OOM, ...) must never block server boot — it only means
-    the FIRST live NLI call pays the lazy-load cost instead."""
-    if not _apollo_nli_prewarm_enabled():
-        return
-    try:
-        from apollo.resolution.nli_adjudicator import prewarm
-
-        t0 = time.monotonic()
-        prewarm()
-        log.info("apollo_nli_prewarm_complete seconds=%.2f", time.monotonic() - t0)
-    except Exception:
-        log.exception("apollo_nli_prewarm_failed")
-
 # CORS
 cors_origins = os.getenv("CORS_ALLOW_ORIGINS", "*")
 allow_origins = [o.strip() for o in cors_origins.split(",")] if cors_origins else ["*"]
@@ -719,11 +693,8 @@ app.add_middleware(
 # Mount AI-use reports router
 try:
     from reports.ai_use.routes import router as reports_router
-except Exception:
-    try:
-        from reports.ai_use.routes import router as reports_router  # type: ignore
-    except Exception:
-        reports_router = None  # type: ignore
+except Exception:  # pragma: no cover - optional router import failure
+    reports_router = None  # type: ignore
 
 if reports_router is not None:
     app.include_router(reports_router)
@@ -731,102 +702,17 @@ if reports_router is not None:
 # Mount chats router (simple transcript storage)
 try:
     from chats.routes import router as chats_router
-except Exception:
-    try:
-        from chats.routes import router as chats_router  # type: ignore
-    except Exception:
-        chats_router = None  # type: ignore
+except Exception:  # pragma: no cover - optional router import failure
+    chats_router = None  # type: ignore
 
 if chats_router is not None:
     app.include_router(chats_router)
 
 
-# -------- Knowledge endpoints --------
-@app.get("/knowledge/subjects", response_model=List[KnowledgeSubjectOut])
-def list_knowledge_subjects() -> List[KnowledgeSubjectOut]:
-    manager = KnowledgeManager()
-    try:
-        subjects = manager.list_subjects()
-    except Exception as exc:
-        log.exception("Failed to list knowledge subjects")
-        raise HTTPException(status_code=500, detail=str(exc))
-    return subjects
-
-
-class KnowledgeStoreIn(BaseModel):
-    subject: str
-    kind: str = Field(..., description="textbook|slides|homework|exams|other")
-    title: str
-    index_path: str = Field(..., description="Filesystem path to existing index directory")
-    priority: Optional[int] = None
-
-
-class KnowledgeStoreOut(BaseModel):
-    id: str
-    subject: str
-    kind: str
-    title: str
-    index_path: str
-    priority: int
-    created_at: str
-
-
-@app.get("/knowledge/stores", response_model=List[KnowledgeStoreOut])
-def list_knowledge_stores(subject: str = "") -> List[KnowledgeStoreOut]:
-    subject_clean = (subject or "").strip()
-    if not subject_clean:
-        raise HTTPException(status_code=400, detail="subject is required")
-    manager = KnowledgeManager()
-    try:
-        stores = manager.list_stores(subject_clean)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    # attach subject to each entry for response consistency
-    out: List[KnowledgeStoreOut] = []
-    for s in stores:
-        out.append(
-            KnowledgeStoreOut(
-                id=str(s.get("id", "")),
-                subject=subject_clean,
-                kind=str(s.get("kind", "")),
-                title=str(s.get("title", "")),
-                index_path=str(s.get("index_path", "")),
-                priority=int(s.get("priority", 0) or 0),
-                created_at=str(s.get("created_at", "")),
-            )
-        )
-    return out
-
-
-@app.post("/knowledge/stores", response_model=KnowledgeStoreOut)
-def register_knowledge_store(payload: KnowledgeStoreIn) -> KnowledgeStoreOut:
-    manager = KnowledgeManager()
-    try:
-        entry = manager.register_store(
-            payload.subject,
-            kind=payload.kind,
-            title=payload.title,
-            index_path=Path(payload.index_path),
-            priority=payload.priority,
-        )
-    except (ValueError, FileNotFoundError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-    return KnowledgeStoreOut(
-        id=str(entry.get("id", "")),
-        subject=str(entry.get("subject", payload.subject)),
-        kind=str(entry.get("kind", payload.kind)),
-        title=str(entry.get("title", payload.title)),
-        index_path=str(entry.get("index_path", payload.index_path)),
-        priority=int(entry.get("priority", payload.priority or 0) or 0),
-        created_at=str(entry.get("created_at", "")),
-    )
-
-
 @app.get("/teacher/weeks", response_model=TeacherCourseOut)
-def get_teacher_weeks(request: Request, search_space_id: int = Query(..., gt=0)) -> TeacherCourseOut:
+def get_teacher_weeks(
+    request: Request, search_space_id: int = Query(..., gt=0)
+) -> TeacherCourseOut:
     _require_course_membership(request, search_space_id=search_space_id, role="teacher")
     manager = _get_teacher_storage()
     try:
@@ -907,8 +793,8 @@ def update_teacher_retrieval_weights(
     )
 
 
-@app.post("/teacher/uploads/{upload_id}/retry", response_model=TeacherUploadOut, status_code=202)
-def retry_teacher_upload(upload_id: int, request: Request) -> TeacherUploadOut:
+@app.post("/teacher/uploads/{upload_id}/retry", response_model=UploadOut, status_code=202)
+def retry_teacher_upload(upload_id: int, request: Request) -> UploadOut:
     manager = _get_teacher_storage()
     try:
         search_space_id = manager.get_upload_search_space_id(int(upload_id))
@@ -927,65 +813,12 @@ def retry_teacher_upload(upload_id: int, request: Request) -> TeacherUploadOut:
         log.exception("Failed to retry teacher upload %s", upload_id)
         raise HTTPException(status_code=500, detail=str(exc) or "Failed to retry upload")
 
-    return TeacherUploadOut(**record.to_dict())
+    return UploadOut(**record.to_dict())
 
 
 if _HAS_MULTIPART:
 
-    @app.post("/knowledge/materials", response_model=KnowledgeMaterialOut)
-    def upload_knowledge_material(
-        subject: str = Form(...),
-        title: str = Form(""),
-        file: UploadFile = File(...),
-    ) -> KnowledgeMaterialOut:
-        subject_clean = (subject or "").strip()
-        if not subject_clean:
-            raise HTTPException(status_code=400, detail="subject is required")
-
-        filename = file.filename or "knowledge-material.pdf"
-        name_path = Path(filename)
-        if name_path.suffix.lower() != ".pdf":
-            raise HTTPException(status_code=400, detail="Only PDF knowledge materials are supported")
-
-        resolved_title = (title or name_path.stem).strip() or name_path.stem
-        tmp_dir = Path(tempfile.mkdtemp(prefix="knowledge_upload_"))
-        tmp_path = tmp_dir / name_path.name
-
-        try:
-            with tmp_path.open("wb") as dest:
-                while True:
-                    chunk = file.file.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    dest.write(chunk)
-            if tmp_path.stat().st_size == 0:
-                raise HTTPException(status_code=400, detail="Uploaded file is empty")
-
-            manager = KnowledgeManager()
-            material = manager.add_pdf_material(
-                subject=subject_clean,
-                pdf_path=tmp_path,
-                title=resolved_title,
-            )
-        except HTTPException:
-            raise
-        except (ValueError, RuntimeError, FileNotFoundError) as exc:
-            log.warning("Embedding knowledge material failed: %s", exc)
-            raise HTTPException(status_code=400, detail=str(exc))
-        except Exception as exc:  # pragma: no cover - defensive
-            log.exception("Failed to process knowledge material upload")
-            raise HTTPException(status_code=500, detail="Failed to embed knowledge material") from exc
-        finally:
-            try:
-                file.file.close()
-            except Exception:
-                pass
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-        return material
-
-
-    @app.post("/teacher/upload", response_model=TeacherUploadOut, status_code=202)
+    @app.post("/teacher/upload", response_model=UploadOut, status_code=202)
     def upload_teacher_material(
         request: Request,
         search_space_id: int = Form(...),
@@ -993,7 +826,7 @@ if _HAS_MULTIPART:
         kind: str = Form(...),
         title: str = Form(""),
         file: UploadFile = File(...),
-    ) -> TeacherUploadOut:
+    ) -> UploadOut:
         auth = _require_course_membership(
             request,
             search_space_id=int(search_space_id),
@@ -1043,16 +876,9 @@ if _HAS_MULTIPART:
                 pass
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-        return TeacherUploadOut(**record.to_dict())
+        return UploadOut(**record.to_dict())
 
 else:  # pragma: no cover - fallback when python-multipart missing
-
-    @app.post("/knowledge/materials")
-    async def upload_knowledge_material_unavailable() -> None:
-        raise HTTPException(
-            status_code=503,
-            detail="File upload support requires the 'python-multipart' package.",
-        )
 
     @app.post("/teacher/upload")
     async def upload_teacher_material_unavailable() -> None:
@@ -1101,6 +927,7 @@ class InviteRedeemOut(BaseModel):
 
 def _generate_invite_code() -> str:
     import secrets
+
     return secrets.token_urlsafe(16)
 
 
@@ -1113,12 +940,13 @@ def create_invite_link(payload: InviteLinkCreateIn, request: Request) -> InviteL
         role="teacher",
     )
 
-    from database.models import CourseInviteLink
+    from database.models import CourseInvite
     from sqlalchemy import select as sa_select, update as sa_update
 
     parsed_expires = None
     if payload.expires_at:
         from datetime import datetime as _dt, timezone as _tz
+
         try:
             parsed_expires = _dt.fromisoformat(payload.expires_at)
         except ValueError:
@@ -1128,18 +956,18 @@ def create_invite_link(payload: InviteLinkCreateIn, request: Request) -> InviteL
         async with get_async_session() as db_session:
             # Deactivate existing active links for this course+role
             await db_session.execute(
-                sa_update(CourseInviteLink)
+                sa_update(CourseInvite)
                 .where(
-                    CourseInviteLink.search_space_id == payload.search_space_id,
-                    CourseInviteLink.role == payload.role,
-                    CourseInviteLink.is_active == True,  # noqa: E712
+                    CourseInvite.course_id == payload.search_space_id,
+                    CourseInvite.role == payload.role,
+                    CourseInvite.is_active == True,  # noqa: E712
                 )
                 .values(is_active=False)
             )
 
-            link = CourseInviteLink(
+            link = CourseInvite(
                 code=_generate_invite_code(),
-                search_space_id=payload.search_space_id,
+                course_id=payload.search_space_id,
                 role=payload.role,
                 created_by=auth.user_id,
                 is_active=True,
@@ -1155,7 +983,7 @@ def create_invite_link(payload: InviteLinkCreateIn, request: Request) -> InviteL
     return InviteLinkOut(
         id=link.id,
         code=link.code,
-        search_space_id=link.search_space_id,
+        search_space_id=link.course_id,
         role=link.role,
         is_active=link.is_active,
         max_uses=link.max_uses,
@@ -1173,15 +1001,15 @@ def list_invite_links(
     """List invite links for a course. Teacher only."""
     _require_course_membership(request, search_space_id=search_space_id, role="teacher")
 
-    from database.models import CourseInviteLink
+    from database.models import CourseInvite
     from sqlalchemy import select as sa_select
 
     async def _run():
         async with get_async_session() as db_session:
             result = await db_session.execute(
-                sa_select(CourseInviteLink)
-                .where(CourseInviteLink.search_space_id == search_space_id)
-                .order_by(CourseInviteLink.created_at.desc())
+                sa_select(CourseInvite)
+                .where(CourseInvite.course_id == search_space_id)
+                .order_by(CourseInvite.created_at.desc())
             )
             return result.scalars().all()
 
@@ -1190,7 +1018,7 @@ def list_invite_links(
         InviteLinkOut(
             id=link.id,
             code=link.code,
-            search_space_id=link.search_space_id,
+            search_space_id=link.course_id,
             role=link.role,
             is_active=link.is_active,
             max_uses=link.max_uses,
@@ -1205,18 +1033,18 @@ def list_invite_links(
 @app.delete("/invite-links/{link_id}", status_code=204)
 def revoke_invite_link(link_id: int, request: Request):
     """Revoke an invite link. Teacher only."""
-    from database.models import CourseInviteLink
+    from database.models import CourseInvite
     from sqlalchemy import select as sa_select
 
     async def _run():
         async with get_async_session() as db_session:
             result = await db_session.execute(
-                sa_select(CourseInviteLink).where(CourseInviteLink.id == link_id)
+                sa_select(CourseInvite).where(CourseInvite.id == link_id)
             )
             link = result.scalars().first()
             if not link:
                 raise HTTPException(status_code=404, detail="Invite link not found")
-            return link.search_space_id, link
+            return link.course_id, link
 
     search_space_id, _ = run_async(_run())
     _require_course_membership(request, search_space_id=search_space_id, role="teacher")
@@ -1224,7 +1052,7 @@ def revoke_invite_link(link_id: int, request: Request):
     async def _revoke():
         async with get_async_session() as db_session:
             result = await db_session.execute(
-                sa_select(CourseInviteLink).where(CourseInviteLink.id == link_id)
+                sa_select(CourseInvite).where(CourseInvite.id == link_id)
             )
             link = result.scalars().first()
             if link:
@@ -1238,16 +1066,16 @@ def revoke_invite_link(link_id: int, request: Request):
 @app.get("/invite-links/resolve/{code}", response_model=InviteResolveOut)
 def resolve_invite_link(code: str) -> InviteResolveOut:
     """Public endpoint: resolve an invite code to course info."""
-    from database.models import CourseInviteLink, SearchSpace
+    from database.models import CourseInvite, Course
     from sqlalchemy import select as sa_select
     from datetime import datetime as _dt, timezone as _tz
 
     async def _run():
         async with get_async_session() as db_session:
             result = await db_session.execute(
-                sa_select(CourseInviteLink).where(
-                    CourseInviteLink.code == code,
-                    CourseInviteLink.is_active == True,  # noqa: E712
+                sa_select(CourseInvite).where(
+                    CourseInvite.code == code,
+                    CourseInvite.is_active == True,  # noqa: E712
                 )
             )
             link = result.scalars().first()
@@ -1264,13 +1092,13 @@ def resolve_invite_link(code: str) -> InviteResolveOut:
 
             # Get course name
             space_result = await db_session.execute(
-                sa_select(SearchSpace).where(SearchSpace.id == link.search_space_id)
+                sa_select(Course).where(Course.id == link.course_id)
             )
             space = space_result.scalars().first()
             course_name = space.name if space else "Unknown Course"
 
             return {
-                "search_space_id": link.search_space_id,
+                "search_space_id": link.course_id,
                 "course_name": course_name,
                 "role": link.role,
             }
@@ -1284,7 +1112,7 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
     """Authenticated endpoint: redeem an invite code to join a course."""
     auth = _resolve_request_auth(request)
 
-    from database.models import CourseInviteLink, CourseMembership, SearchSpace
+    from database.models import CourseInvite, CourseMembership, Course
     from sqlalchemy import select as sa_select
     from sqlalchemy.exc import IntegrityError
     from datetime import datetime as _dt, timezone as _tz
@@ -1293,9 +1121,9 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
         async with get_async_session() as db_session:
             # Look up the invite link
             result = await db_session.execute(
-                sa_select(CourseInviteLink).where(
-                    CourseInviteLink.code == code,
-                    CourseInviteLink.is_active == True,  # noqa: E712
+                sa_select(CourseInvite).where(
+                    CourseInvite.code == code,
+                    CourseInvite.is_active == True,  # noqa: E712
                 )
             )
             link = result.scalars().first()
@@ -1312,13 +1140,15 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
             mem_result = await db_session.execute(
                 sa_select(CourseMembership).where(
                     CourseMembership.user_id == auth.user_id,
-                    CourseMembership.search_space_id == link.search_space_id,
+                    CourseMembership.course_id == link.course_id,
                 )
             )
             existing = mem_result.scalars().first()
 
             if existing:
-                if existing.role == link.role or (existing.role == "teacher" and link.role == "student"):
+                if existing.role == link.role or (
+                    existing.role == "teacher" and link.role == "student"
+                ):
                     # Already enrolled with same or higher role — idempotent
                     link.use_count += 1
                     await db_session.commit()
@@ -1331,7 +1161,7 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
                 # Create new membership
                 membership = CourseMembership(
                     user_id=auth.user_id,
-                    search_space_id=link.search_space_id,
+                    course_id=link.course_id,
                     role=link.role,
                 )
                 db_session.add(membership)
@@ -1343,14 +1173,14 @@ def redeem_invite_link(code: str, request: Request) -> InviteRedeemOut:
 
             # Get course name
             space_result = await db_session.execute(
-                sa_select(SearchSpace).where(SearchSpace.id == link.search_space_id)
+                sa_select(Course).where(Course.id == link.course_id)
             )
             space = space_result.scalars().first()
             course_name = space.name if space else "Unknown Course"
 
             return {
                 "success": True,
-                "search_space_id": link.search_space_id,
+                "search_space_id": link.course_id,
                 "role": link.role,
                 "course_name": course_name,
             }
@@ -1367,21 +1197,19 @@ def healthz():
 @app.get("/classes")
 def list_classes():
     """Return available search spaces for the class dropdown."""
-    from database.models import SearchSpace
+    from database.models import Course
     from database.session import get_async_session, run_async
     from sqlalchemy import select as sa_select
 
     async def _fetch():
         async with get_async_session() as session:
-            result = await session.execute(
-                sa_select(SearchSpace).order_by(SearchSpace.name)
-            )
+            result = await session.execute(sa_select(Course).order_by(Course.name))
             return result.scalars().all()
 
     try:
         spaces = run_async(_fetch())
     except Exception as exc:
-        log.exception("Failed to load classes from aita_search_spaces")
+        log.exception("Failed to load classes from app.courses")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to load classes. Check SUPABASE_DB_URL, DB connectivity, and migrations. Error: {exc}",
@@ -1406,7 +1234,7 @@ class CreateClassIn(BaseModel):
 def create_class(payload: CreateClassIn, request: Request):
     """Create a new class and assign the creator as teacher."""
     auth = _resolve_request_auth(request)
-    from database.models import CourseMembership, SearchSpace
+    from database.models import CourseMembership, Course
     from database.session import get_async_session, run_async
     import re
 
@@ -1416,12 +1244,12 @@ def create_class(payload: CreateClassIn, request: Request):
 
     async def _create():
         async with get_async_session() as session:
-            space = SearchSpace(name=name, slug=slug, subject_name=subject)
+            space = Course(name=name, slug=slug, subject_name=subject)
             session.add(space)
             await session.flush()
             membership = CourseMembership(
                 user_id=auth.user_id,
-                search_space_id=space.id,
+                course_id=space.id,
                 role="teacher",
             )
             session.add(membership)
@@ -1447,20 +1275,20 @@ def create_class(payload: CreateClassIn, request: Request):
 def list_my_classes(request: Request):
     """Return only classes the authenticated user is enrolled in."""
     auth = _resolve_request_auth(request)
-    from database.models import CourseMembership, SearchSpace
+    from database.models import CourseMembership, Course
     from database.session import get_async_session, run_async
     from sqlalchemy import select as sa_select
 
     async def _fetch():
         async with get_async_session() as session:
             result = await session.execute(
-                sa_select(SearchSpace)
+                sa_select(Course)
                 .join(
                     CourseMembership,
-                    CourseMembership.search_space_id == SearchSpace.id,
+                    CourseMembership.course_id == Course.id,
                 )
                 .where(CourseMembership.user_id == auth.user_id)
-                .order_by(SearchSpace.name)
+                .order_by(Course.name)
             )
             return result.scalars().all()
 
@@ -1485,9 +1313,14 @@ def list_my_classes(request: Request):
 # pgvector retrieval helper
 # ---------------------------------------------------------------------------
 
+
 def _ask_pgvector(
-    q_effective: str, workspace, weight_overrides: dict, cfg,
-    top_k: Optional[int] = None, token_budget: Optional[int] = None,
+    q_effective: str,
+    workspace,
+    weight_overrides: dict,
+    cfg,
+    top_k: Optional[int] = None,
+    token_budget: Optional[int] = None,
 ) -> "ResearchBundle":
     """Run the pgvector retrieval pipeline and return a ResearchBundle.
 
@@ -1518,7 +1351,7 @@ def _ask_pgvector(
         _ctx_summary, raw_keywords = extract_and_filter_keywords(q_effective)
         log.info("[timing] keyword_extraction=%.2fs", time.perf_counter() - _t_kw)
         keywords: List[str] = []
-        for entry in (raw_keywords or []):
+        for entry in raw_keywords or []:
             if isinstance(entry, dict):
                 term = entry.get("term") or entry.get("keyword") or entry.get("name")
                 if isinstance(term, str) and term.strip():
@@ -1550,7 +1383,9 @@ def _ask_pgvector(
     allowed_markers = [sn.citation_marker for sn in snippets if sn.citation_marker]
 
     metadata = ResearchMetadata(
-        keyword_iterations=[{"round": 1, "combined_query": diagnostics.get("combined_query", q_effective)}],
+        keyword_iterations=[
+            {"round": 1, "combined_query": diagnostics.get("combined_query", q_effective)}
+        ],
         found_terms=[],
         not_found_terms=[],
         attempted_terms=[q_effective],
@@ -1589,8 +1424,14 @@ def _ask_pgvector(
 # Retrieval-mode orchestrator hooks (ROUTER_ENABLED, default off)
 # ---------------------------------------------------------------------------
 
+
 def _prepare_router_context_sync(
-    *, auth, chat_id: str, search_space_id: int, question: str, has_attachments: bool,
+    *,
+    auth,
+    chat_id: str,
+    search_space_id: int,
+    question: str,
+    has_attachments: bool,
 ):
     """Decide NONE/AUGMENT/FRESH for this turn. Returns None (= legacy FRESH
     path) when the router is disabled or anything fails."""
@@ -1614,7 +1455,12 @@ def _prepare_router_context_sync(
 
 
 def _retrieve_bundle_with_router(
-    *, router_ctx, q_effective: str, workspace, weight_overrides: dict, cfg,
+    *,
+    router_ctx,
+    q_effective: str,
+    workspace,
+    weight_overrides: dict,
+    cfg,
 ) -> Tuple["ResearchBundle", int]:
     """Pick the retrieval path from the router decision.
 
@@ -1664,8 +1510,14 @@ def _retrieve_bundle_with_router(
 
 
 def _persist_router_outcome_sync(
-    *, auth, chat_id: str, router_ctx, bundle, question: str,
-    retrieval_ms: Optional[int], answer_ms: Optional[int],
+    *,
+    auth,
+    chat_id: str,
+    router_ctx,
+    bundle,
+    question: str,
+    retrieval_ms: Optional[int],
+    answer_ms: Optional[int],
 ) -> None:
     """Save the answered bundle into the session cache + telemetry row.
     Never raises."""
@@ -1700,9 +1552,7 @@ def post_ask(payload: AskRequest, request: Request):
     # Apollo-only deployments (HOOT_QA_ENABLED=0) close the Q&A surface at the
     # HTTP boundary — before validation, so the flag wins over any payload.
     if not hoot_qa_enabled():
-        raise HTTPException(
-            status_code=403, detail="Hoot Q&A is disabled on this deployment"
-        )
+        raise HTTPException(status_code=403, detail="Hoot Q&A is disabled on this deployment")
 
     # Validate input: allow (question) OR (attachments)
     q = (payload.question or "").strip()
@@ -1871,10 +1721,14 @@ def post_ask(payload: AskRequest, request: Request):
 
         _t_answer = time.perf_counter()
         solution = solve_with_bundle(
-            parsed_task, bundle, subject=cfg.subject_name,
+            parsed_task,
+            bundle,
+            subject=cfg.subject_name,
         )
         final = format_answer(
-            solution, bundle, include_background=False,
+            solution,
+            bundle,
+            include_background=False,
             subject=cfg.subject_name,
         )
         answer_ms = int((time.perf_counter() - _t_answer) * 1000)
@@ -1891,7 +1745,11 @@ def post_ask(payload: AskRequest, request: Request):
         answer_text = error_text
 
     raw_logs = stdout_buffer.getvalue().splitlines()
-    wire_logs = [line.strip() for line in raw_logs if line.strip().startswith("[Main AI") or line.strip().startswith("[Indexer AI")]
+    wire_logs = [
+        line.strip()
+        for line in raw_logs
+        if line.strip().startswith("[Main AI") or line.strip().startswith("[Indexer AI")
+    ]
 
     payload_out = {
         "answer": answer_text,
@@ -1930,6 +1788,7 @@ def post_ask(payload: AskRequest, request: Request):
 # SSE streaming variant — same pipeline, but streams progress events so the
 # frontend can show real-time status updates instead of a blank wait.
 # ---------------------------------------------------------------------------
+
 
 def _sse_event(event: str, data: dict) -> str:
     """Format a single Server-Sent Event."""
@@ -2023,7 +1882,9 @@ async def post_ask_stream(payload: AskRequest, request: Request):
         q_effective = q
         image_text = ""
         if image_paths:
-            yield _sse_event("status", {"stage": "vision", "message": "Reading image attachments..."})
+            yield _sse_event(
+                "status", {"stage": "vision", "message": "Reading image attachments..."}
+            )
             try:
                 image_text = vision_transcribe(image_paths) or ""
             except Exception:
@@ -2102,16 +1963,19 @@ async def post_ask_stream(payload: AskRequest, request: Request):
             cfg.set_subject(subject_name, "server")
 
             # --- Stage 1: Retrieval + parse (parallel) ---------------------
-            yield _sse_event("status", {"stage": "retrieving", "message": "Searching course materials..."})
+            yield _sse_event(
+                "status", {"stage": "retrieving", "message": "Searching course materials..."}
+            )
 
             bundle_future = stream_loop.run_in_executor(
-                None, lambda: _retrieve_bundle_with_router(
+                None,
+                lambda: _retrieve_bundle_with_router(
                     router_ctx=router_ctx,
                     q_effective=q_effective,
                     workspace=workspace,
                     weight_overrides=weight_overrides,
                     cfg=cfg,
-                )
+                ),
             )
             parse_future = (
                 stream_loop.run_in_executor(
@@ -2139,10 +2003,13 @@ async def post_ask_stream(payload: AskRequest, request: Request):
 
             # --- Stage 2: Scoring + solution ------------------------------
             n_snippets = len(bundle.snippets) if bundle.snippets else 0
-            yield _sse_event("status", {
-                "stage": "analyzing",
-                "message": f"Analyzing {n_snippets} relevant excerpt{'s' if n_snippets != 1 else ''}...",
-            })
+            yield _sse_event(
+                "status",
+                {
+                    "stage": "analyzing",
+                    "message": f"Analyzing {n_snippets} relevant excerpt{'s' if n_snippets != 1 else ''}...",
+                },
+            )
 
             _t_answer = time.perf_counter()
             solution = None
@@ -2166,7 +2033,9 @@ async def post_ask_stream(payload: AskRequest, request: Request):
             yield _sse_event("status", {"stage": "formatting", "message": "Preparing answer..."})
 
             final = format_answer(
-                solution, bundle, include_background=False,
+                solution,
+                bundle,
+                include_background=False,
                 subject=cfg.subject_name,
             )
             answer_ms = int((time.perf_counter() - _t_answer) * 1000)
@@ -2175,11 +2044,14 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                 bundle, getattr(final, "citations", [])
             )
 
-            yield _sse_event("answer", {
-                "answer": answer_text,
-                "citations": structured_citations,
-                "logs": [],
-            })
+            yield _sse_event(
+                "answer",
+                {
+                    "answer": answer_text,
+                    "citations": structured_citations,
+                    "logs": [],
+                },
+            )
 
             try:
                 persist_citations = list(structured_citations)
@@ -2195,7 +2067,9 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                     ),
                 )
             except Exception:
-                log.warning("Failed to persist assistant turn for chat_id=%s", chat_id, exc_info=True)
+                log.warning(
+                    "Failed to persist assistant turn for chat_id=%s", chat_id, exc_info=True
+                )
 
             if router_ctx is not None:
                 await stream_loop.run_in_executor(
@@ -2227,7 +2101,9 @@ async def post_ask_stream(payload: AskRequest, request: Request):
                     ),
                 )
             except Exception:
-                log.warning("Failed to persist assistant error turn for chat_id=%s", chat_id, exc_info=True)
+                log.warning(
+                    "Failed to persist assistant error turn for chat_id=%s", chat_id, exc_info=True
+                )
 
     return StreamingResponse(
         _generate(),

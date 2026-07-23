@@ -17,7 +17,7 @@ learner-model-ready evidence**. It owns §6.4 steps **12 (transcript audit),
 14 (abstention gates), 15 (persist runs+findings), 16 (finding→event conversion)**,
 plus the §6.11 executable fixture corpus.
 
-It is NOT the score-math (WU-4A, DONE — `apollo/graph_compare/`), it does NOT
+It is NOT the score-math (WU-4A, DONE — `apollo/retired graph comparator/`), it does NOT
 re-orchestrate `done.py` (WU-4C), and it does NOT run the Bayesian belief update
 or write `apollo_mastery_events` (WU-5A). It produces **in-memory events** and
 **persisted runs/findings**; WU-5A consumes the events to update Layer 3.
@@ -25,7 +25,7 @@ or write `apollo_mastery_events` (WU-5A). It produces **in-memory events** and
 Phase-4 / Phase-5 boundary (from the roadmap, restated and HELD):
 
 - **WU-4A (DONE, PRs #31/#32)** = the pure score-math core in
-  `apollo/graph_compare/`: `grade_attempt(student_canonical, reference_graph) ->
+  `apollo/retired graph comparator/`: `grade_attempt(student_canonical, reference_graph) ->
   GradeResult` with in-memory `Finding`s (`FindingKind` == the
   `apollo_graph_comparison_findings.finding_kind` set). NO events, NO audit, NO
   abstention, NO persistence, NO IO.
@@ -99,20 +99,20 @@ Verified against the real code/migrations/ORM, not assumed:
 
 - **No comparison-run STORE exists yet.** `grep` for `GraphComparisonRun` /
   `graph_comparison_runs` in non-test, non-models code finds only
-  `graph_compare/core.py` (the `comparison_version` constant). There is no
+  `retired graph comparator/core.py` (the `comparison_version` constant). There is no
   `apollo/.../graph_comparison_store.py`. WU-4B creates the persistence seam.
   The model to imitate is `apollo/knowledge_graph/resolution_store.py`
   (pure pre-DB spec dataclasses + thin async write seam) and
   `scripts/seed_apollo_learner_model.py` (the SQLAlchemy write layer is kept
   out of the pure conversion module). The real-PG round-trip test pattern lives
   in `tests/database/` (e.g. `test_resolution_resolves_to_postgres.py`,
-  `test_graph_compare_symbolic_mappings_roundtrip.py`).
+  `test_retired graph comparator_symbolic_mappings_roundtrip.py`).
 
-- **`GradeResult` (WU-4A2) is the exact input.** `apollo/graph_compare/core.py`:
+- **`GradeResult` (WU-4A2) is the exact input.** `apollo/retired graph comparator/core.py`:
   `GradeResult` carries the 10 `*_score` fields **named 1:1 to the runs columns**,
   `comparison_confidence` (==1.0 v1, carried but NOT a persisted column),
   `findings: tuple[Finding, ...]`, `comparison_version` (`"graph-compare-v1"`).
-  `Finding` (`apollo/graph_compare/findings.py`) carries `kind` (FindingKind),
+  `Finding` (`apollo/retired graph comparator/findings.py`) carries `kind` (FindingKind),
   `canonical_key`, `student_node_ids`, `reference_node_ids`, `evidence_spans`,
   `score`, `confidence`, `message`. **Finding fields map 1:1 onto the findings
   columns** (the module docstring states this); edge ids are carried in
@@ -261,12 +261,12 @@ transcript, resolution result, per-turn parser confidences)* into an
 **Scope — files to create (recommend a NEW package `apollo/grading/`):**
 
 > **Package-home recommendation:** put WU-4B in a new `apollo/grading/` package,
-> NOT inside `apollo/graph_compare/`. `graph_compare/` is the **pure, IO-free**
+> NOT inside `apollo/retired graph comparator/`. `retired graph comparator/` is the **pure, IO-free**
 > score core (its `__init__` docstring asserts "persists NOTHING, runs NO Neo4j /
 > Postgres / LLM"). WU-4B introduces an LLM call, a DB read, and DB writes —
-> mixing those into `graph_compare/` would break that invariant and the clean
+> mixing those into `retired graph comparator/` would break that invariant and the clean
 > "pure core" story. `apollo/grading/` becomes the downstream orchestration
-> layer that *imports* `apollo.graph_compare` (and WU-4C's `done.py` rewiring
+> layer that *imports* `apollo.retired graph comparator` (and WU-4C's `done.py` rewiring
 > imports `apollo.grading`). Mirrors the `resolution/` (pure) vs
 > `knowledge_graph/resolution_store.py` (IO) separation already in the repo.
 
@@ -587,13 +587,13 @@ modules + the corpus + ~4 real-PG test files. None is another XL.
   gate (green-not-skipped, per the workflow hardening).
 - Reconcile `docs/architecture/apollo.md` in the same commit each sub-unit lands
   (register `apollo/grading/**` in the `owns:` globs; bump `last_verified`).
-  `graph_compare/**` stays owned as before; the new package is additive.
+  `retired graph comparator/**` stays owned as before; the new package is additive.
 - No migration in WU-4B (026 shipped the runs/findings tables + ORM). Next free
   number stays 028. If risk #5 (alias-candidate queue) forces a table, that is a
   separate §8/WU-3B2 concern — do not absorb it here.
 - The §3/§6 confidence-cap and gate-threshold constants are calibration knobs:
   declare them as named module constants (like `CONTRADICTION_UNIT_PENALTY` in
-  graph_compare) so WU-4C/calibration can retune without code surgery.
+  retired graph comparator) so WU-4C/calibration can retune without code surgery.
 
 ---
 

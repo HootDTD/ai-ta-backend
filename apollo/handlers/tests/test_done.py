@@ -1,4 +1,5 @@
 import pytest as _pytest_module
+
 _pytest_module.skip(
     "Legacy V2 test — needs rewrite for V3 KGGraph + Neo4j store + new parser/coverage signatures. "
     "Tracked in claude_v3_checklist.md item 1; will be re-enabled in test-rewrite phase.",
@@ -14,61 +15,77 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from apollo.handlers.done import handle_done
 from apollo.persistence.models import (
-    ApolloSession,
     KGEntry,
-    Message,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
     StudentProgress,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
 
 @pytest_asyncio.fixture
 async def db_with_session_and_kg():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     apollo_tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
         StudentProgress.__table__,
     ]
     async with engine.begin() as conn:
-        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables))
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables)
+        )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
-        sess = ApolloSession(
-            student_id="stu-1",
-            concept_cluster_id="fluid_mechanics",
+        sess = TutoringSession(
+            user_id="00000000-0000-0000-0000-000000000001",
+            search_space_id=1,
+            concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.TEACHING.value,
-            current_problem_id="bernoulli_horizontal_pipe_find_p2",
+            current_problem_id=1,
         )
         s.add(sess)
         await s.flush()
         attempt = ProblemAttempt(
             session_id=sess.id,
-            problem_id="bernoulli_horizontal_pipe_find_p2",
+            problem_id=1,
             difficulty="intro",
+            user_id=sess.user_id,
+            course_id=sess.course_id,
         )
         s.add(attempt)
         await s.flush()
         for entry in [
-            {"type": "equation", "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "Continuity"}},
-            {"type": "equation", "content": {
-                "symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
-                "label": "Bernoulli",
-            }},
+            {
+                "type": "equation",
+                "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "Continuity"},
+            },
+            {
+                "type": "equation",
+                "content": {
+                    "symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
+                    "label": "Bernoulli",
+                },
+            },
         ]:
-            s.add(KGEntry(
-                session_id=sess.id,
-                attempt_id=attempt.id,
-                type=entry["type"],
-                content=entry["content"],
-                source="parser",
-            ))
+            s.add(
+                KGEntry(
+                    session_id=sess.id,
+                    attempt_id=attempt.id,
+                    type=entry["type"],
+                    content=entry["content"],
+                    source="parser",
+                )
+            )
         await s.commit()
         await s.refresh(sess)
         yield s, sess.id
@@ -111,10 +128,15 @@ async def test_done_freezes_session_and_persists_attempt(mock_diag, db_with_sess
     await handle_done(db=db, session_id=session_id)
 
     from sqlalchemy import select
-    sess = (await db.execute(select(ApolloSession).where(ApolloSession.id == session_id))).scalar_one()
+
+    sess = (
+        await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))
+    ).scalar_one()
     assert sess.phase == SessionPhase.REPORT.value
 
-    pa = (await db.execute(select(ProblemAttempt).where(ProblemAttempt.session_id == session_id))).scalar_one()
+    pa = (
+        await db.execute(select(ProblemAttempt).where(ProblemAttempt.session_id == session_id))
+    ).scalar_one()
     assert pa.result == "solved"
     assert pa.solver_trace is not None
     # diagnostic_report now stores {narrative, rubric, coverage}
@@ -136,7 +158,10 @@ async def test_handle_done_returns_new_response_shape(mock_diag, db_with_session
 
     # New shape
     assert set(result.keys()) >= {
-        "rubric", "solver_indicator", "diagnostic_narrative", "coverage",
+        "rubric",
+        "solver_indicator",
+        "diagnostic_narrative",
+        "coverage",
     }
     # Old shape keys removed
     assert "result" not in result
@@ -167,49 +192,65 @@ async def test_handle_done_returns_new_response_shape(mock_diag, db_with_session
 @pytest_asyncio.fixture
 async def db_with_session_equations_only():
     """Session with equations only — no procedure_step entries, so Procedure axis = 0."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     apollo_tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
         StudentProgress.__table__,
     ]
     async with engine.begin() as conn:
-        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables))
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables)
+        )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
-        sess = ApolloSession(
-            student_id="stu-2",
-            concept_cluster_id="fluid_mechanics",
+        sess = TutoringSession(
+            user_id="00000000-0000-0000-0000-000000000002",
+            search_space_id=1,
+            concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.TEACHING.value,
-            current_problem_id="bernoulli_horizontal_pipe_find_p2",
+            current_problem_id=1,
         )
         s.add(sess)
         await s.flush()
         attempt = ProblemAttempt(
             session_id=sess.id,
-            problem_id="bernoulli_horizontal_pipe_find_p2",
+            problem_id=1,
             difficulty="intro",
+            user_id=sess.user_id,
+            course_id=sess.course_id,
         )
         s.add(attempt)
         await s.flush()
         # Only equations — no procedure_step entries.
         for entry in [
-            {"type": "equation", "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "Continuity"}},
-            {"type": "equation", "content": {
-                "symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
-                "label": "Bernoulli",
-            }},
+            {
+                "type": "equation",
+                "content": {"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "Continuity"},
+            },
+            {
+                "type": "equation",
+                "content": {
+                    "symbolic": "P1 + Rational(1,2)*rho*v1**2 + rho*g*h1 - (P2 + Rational(1,2)*rho*v2**2 + rho*g*h2)",
+                    "label": "Bernoulli",
+                },
+            },
         ]:
-            s.add(KGEntry(
-                session_id=sess.id,
-                attempt_id=attempt.id,
-                type=entry["type"],
-                content=entry["content"],
-                source="parser",
-            ))
+            s.add(
+                KGEntry(
+                    session_id=sess.id,
+                    attempt_id=attempt.id,
+                    type=entry["type"],
+                    content=entry["content"],
+                    source="parser",
+                )
+            )
         await s.commit()
         await s.refresh(sess)
         yield s, sess.id
@@ -261,7 +302,8 @@ async def test_handle_done_solver_success_does_not_force_an_A(
 @pytest.mark.asyncio
 @patch("apollo.handlers.done.generate_diagnostic")
 async def test_handle_done_returns_xp_and_level_fields_on_first_attempt(
-    mock_diag, db_with_session_and_kg,
+    mock_diag,
+    db_with_session_and_kg,
 ):
     mock_diag.return_value = "ok"
     db, session_id = db_with_session_and_kg
@@ -287,7 +329,8 @@ async def test_handle_done_returns_xp_and_level_fields_on_first_attempt(
 @pytest.mark.asyncio
 @patch("apollo.handlers.done.generate_diagnostic")
 async def test_handle_done_applies_reattempt_discount_within_session(
-    mock_diag, db_with_session_and_kg,
+    mock_diag,
+    db_with_session_and_kg,
 ):
     """Retry-within-session: /retry keeps the same ProblemAttempt row,
     so the second Done sees an attempt whose `result` is already set."""
@@ -311,10 +354,12 @@ async def test_handle_done_applies_reattempt_discount_within_session(
 @patch("apollo.handlers.done.compute_rubric")
 @patch("apollo.handlers.done.generate_diagnostic")
 async def test_handle_done_flags_level_up_when_threshold_crossed(
-    mock_diag, mock_rubric, db_with_session_and_kg,
+    mock_diag,
+    mock_rubric,
+    db_with_session_and_kg,
 ):
     """Seed progress to 290 XP so a standard-difficulty pass crosses 300."""
-    from apollo.persistence.models import ApolloSession, StudentProgress, ProblemAttempt
+    from apollo.persistence.models import ProblemAttempt, StudentProgress, TutoringSession
 
     mock_diag.return_value = "ok"
     # Force a perfect rubric so a standard-difficulty pass earns 100 * 1.5 = 150 XP.
@@ -328,24 +373,32 @@ async def test_handle_done_flags_level_up_when_threshold_crossed(
     db, session_id = db_with_session_and_kg
 
     # Fetch student_id off the session.
-    sess = (await db.execute(
-        select(ApolloSession).where(ApolloSession.id == session_id)
-    )).scalar_one()
+    sess = (
+        await db.execute(select(TutoringSession).where(TutoringSession.id == session_id))
+    ).scalar_one()
 
     # Ensure StudentProgress table exists for this in-memory DB.
     from database.models import Base
-    async with db.bind.begin() as conn:
-        await conn.run_sync(lambda sc: Base.metadata.create_all(
-            sc, tables=[StudentProgress.__table__]
-        ))
 
-    db.add(StudentProgress(student_id=sess.student_id, xp_total=290, level=1))
+    async with db.bind.begin() as conn:
+        await conn.run_sync(
+            lambda sc: Base.metadata.create_all(sc, tables=[StudentProgress.__table__])
+        )
+
+    db.add(
+        StudentProgress(
+            user_id=sess.user_id,
+            course_id=sess.course_id,
+            xp_total=290,
+            level=1,
+        )
+    )
 
     # Bump the attempt difficulty to `standard` so a ~100 overall earns ≥ 10 XP
     # above the 10-needed margin (294/300 boundary wiggle).
-    pa = (await db.execute(
-        select(ProblemAttempt).where(ProblemAttempt.session_id == session_id)
-    )).scalar_one()
+    pa = (
+        await db.execute(select(ProblemAttempt).where(ProblemAttempt.session_id == session_id))
+    ).scalar_one()
     pa.difficulty = "standard"
     await db.commit()
 
@@ -362,24 +415,31 @@ async def test_handle_done_flags_level_up_when_threshold_crossed(
 async def test_done_grades_only_current_attempt_kg(mock_diag, db_with_session_and_kg):
     mock_diag.return_value = "ok"
     s, session_id = db_with_session_and_kg
+    sess = (
+        await s.execute(select(TutoringSession).where(TutoringSession.id == session_id))
+    ).scalar_one()
 
     # Seed a second, abandoned attempt under the same session with a
     # distractor equation that must NOT surface in grading.
     abandoned = ProblemAttempt(
         session_id=session_id,
-        problem_id="bernoulli_horizontal_pipe_find_p2",
+        problem_id=1,
         difficulty="intro",
         result="abandoned",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
     )
     s.add(abandoned)
     await s.flush()
-    s.add(KGEntry(
-        session_id=session_id,
-        attempt_id=abandoned.id,
-        type="equation",
-        content={"symbolic": "nonsense - 0", "label": "distractor"},
-        source="parser",
-    ))
+    s.add(
+        KGEntry(
+            session_id=session_id,
+            attempt_id=abandoned.id,
+            type="equation",
+            content={"symbolic": "nonsense - 0", "label": "distractor"},
+            source="parser",
+        )
+    )
     await s.commit()
 
     result = await handle_done(db=s, session_id=session_id)
@@ -389,14 +449,19 @@ async def test_done_grades_only_current_attempt_kg(mock_diag, db_with_session_an
     # distractor leaked in. The current attempt is the FIRST attempt
     # created by the fixture (pre-dates the abandoned one).
     from apollo.knowledge_graph.store import KGStore
+
     current = (
-        await s.execute(
-            select(ProblemAttempt)
-            .where(ProblemAttempt.session_id == session_id)
-            .where(ProblemAttempt.id != abandoned.id)
-            .order_by(ProblemAttempt.id.asc())
+        (
+            await s.execute(
+                select(ProblemAttempt)
+                .where(ProblemAttempt.session_id == session_id)
+                .where(ProblemAttempt.id != abandoned.id)
+                .order_by(ProblemAttempt.id.asc())
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     assert current is not None
     kg_for_grading = await KGStore(s).read_kg(attempt_id=current.id)
     assert all(e.get("label") != "distractor" for e in kg_for_grading["equation"])

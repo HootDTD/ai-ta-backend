@@ -33,7 +33,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serial
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import Concept, ConceptProblem
+from apollo.persistence.models import Concept
+from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.authored_sets.graph_derivation import (
     DerivationError,
     derive_reference_graph,
@@ -53,14 +54,10 @@ from apollo.provisioning.authored_sets.structure_pass import (
 )
 from apollo.provisioning.authored_sets.verification import verify_against_generated
 from apollo.provisioning.concept_match import ConceptMatch, match_concept
-from apollo.provisioning.cost_constants import structure_pairing_mode
-from apollo.provisioning.orchestrator import (
-    _SCRAPE_SYSTEM_PROMPT,
-    _TAG_MINT_SYSTEM_PROMPT,
-    _TRIAGE_SYSTEM_PROMPT,
+from apollo.provisioning.cost_constants import (
     APOLLO_SCRAPE_MAX_SECTIONS,
     APOLLO_SCRAPE_MIN_CANDIDATES,
-    _load_chunks,
+    structure_pairing_mode,
     structured_scrape_enabled,
 )
 from apollo.provisioning.pairing_gate import rejection_from_verdict, validate_pair
@@ -90,6 +87,96 @@ __all__ = [
     "run_authored_set_provisioning",
 ]
 
+_SCRAPE_SYSTEM_PROMPT = (
+    "You extract EVERY question a student could be asked to answer from one "
+    "SECTION of course material, in ANY subject (textbook prose, worked "
+    "examples, exercise sets, exam study guides, and review outlines all count; "
+    "a section may contain zero, one, or many questions). Numeric solve-for "
+    "exercises, convergence/divergence determinations, show-that/verify tasks, "
+    "true/false items, define/explain/compare prompts, and open-ended "
+    "study-guide or discussion questions ALL count as problems — for a question "
+    'with no numeric answer, "target_unknown" is a short phrase naming what is '
+    'asked (e.g. "convergence verdict", "definition of future shock") and '
+    '"given_values" is {}.\n'
+    "Return ONLY a JSON array - no prose, no explanation, no markdown code fences. "
+    "Each array element is an object with EXACTLY these keys:\n"
+    '  "problem_text": string - the full, self-contained problem statement.\n'
+    '  "given_values": object mapping each stated known quantity\'s short symbol to '
+    "its NUMERIC value (numbers only - no units, no strings); use {} if none.\n"
+    '  "target_unknown": string - the single quantity or idea the problem asks '
+    "to find.\n"
+    '  "difficulty": exactly one of "intro", "standard", "hard".\n'
+    '  "concept_slug": string - a short dotted/kebab concept id, e.g. '
+    '"bernoulli-equation".\n'
+    '  "label": the problem\'s printed number/label exactly as shown, e.g. '
+    '"Problem 3", "Q3", "3.", or null if none.\n'
+    "If the section truly contains no questions, return []."
+)
+
+_TRIAGE_SYSTEM_PROMPT = (
+    "You triage a document's SECTIONS to find which likely contain questions a "
+    "student could be asked to answer — quantitative exercises OR qualitative "
+    "review/discussion questions. You receive a JSON array of sections, each with "
+    'an "index", "title", "chars", and "has_numeric_imperative" flag.\n'
+    "Return ONLY a JSON array - no prose, no markdown fences. Each element is an "
+    "object with EXACTLY these keys:\n"
+    '  "index": integer - echo the section\'s index.\n'
+    '  "is_problem_likely": boolean - true if the section probably contains '
+    "questions, practice problems, or worked examples.\n"
+    '  "priority": integer 0-10 - higher = scrape sooner.\n'
+    '  "concept_slug": string - a short dotted/kebab concept id for the section.\n'
+    '  "concept_display": string - a human-readable concept label.\n'
+    "Include EVERY index from the input exactly once."
+)
+
+_TAG_MINT_SYSTEM_PROMPT = (
+    "You tag an already-approved problem (quantitative OR qualitative) with its "
+    "canonical concept and the prerequisite edges between its solution entities.\n"
+    "Return ONLY a JSON object - no prose, no explanation, no markdown code fences. "
+    "The object has EXACTLY these keys:\n"
+    '  "concept_slug": string - a short dotted/kebab concept id (e.g. '
+    '"bernoulli-equation"). REQUIRED.\n'
+    '  "display_name": string - a human-readable concept label; if unknown, repeat '
+    "the concept_slug.\n"
+    '  "prereqs": array of {"from": <entity-key>, "to": <entity-key>} objects naming '
+    "prerequisite edges between the problem's minted entity keys; use [] if none."
+)
+
+
+class _ChunkView:
+    __slots__ = ("id", "content", "document_id", "page_number", "section_path", "chunk_type")
+
+    def __init__(self, id, content, document_id, page_number, section_path, chunk_type):  # noqa: A002
+        self.id = id
+        self.content = content
+        self.document_id = document_id
+        self.page_number = page_number
+        self.section_path = section_path
+        self.chunk_type = chunk_type
+
+
+async def _load_chunks(db: AsyncSession, *, document_id: int) -> Sequence[_ChunkView]:
+    from database.models import DocumentChunk
+
+    rows = (
+        await db.execute(
+            select(
+                DocumentChunk.id,
+                DocumentChunk.content,
+                DocumentChunk.document_id,
+                DocumentChunk.page_number,
+                DocumentChunk.section_path,
+                DocumentChunk.chunk_type,
+            )
+            .where(DocumentChunk.document_id == document_id)
+            .order_by(DocumentChunk.id.asc())
+        )
+    ).all()
+    return [
+        _ChunkView(r.id, r.content, r.document_id, r.page_number, r.section_path, r.chunk_type)
+        for r in rows
+    ]
+
 _DEFAULT_CONF_THRESHOLD = 0.6
 _LOG = logging.getLogger(__name__)
 _ANSWER_LINE_MARKER = re.compile(
@@ -108,7 +195,7 @@ def reversed_provisioning_enabled() -> bool:
 class MintRejected(Exception):
     """Internal control flow: ``promote`` returned a lint rejection INSIDE the
     mint+promote savepoint — raising unwinds the savepoint so the mint's
-    flushed concept/KGEntity/prereq/dedup rows do NOT survive as orphans (the
+    flushed concept/LearnerEntity/prereq/dedup rows do NOT survive as orphans (the
     verified 17->33 entity-doubling bug), then the except arm reports the
     rejection normally."""
 
@@ -324,33 +411,41 @@ def _solution_chunks_from_problem(
 
 
 async def _find_tier1_row(
-    db: AsyncSession, *, concept_id: int, chunk_content_hash: str
-) -> ConceptProblem | None:
+    db: AsyncSession, *, concept_id: int, course_id: int, chunk_content_hash: str
+) -> ProblemRecord | None:
     return (
         await db.execute(
-            select(ConceptProblem)
-            .where(ConceptProblem.concept_id == concept_id)
-            .where(ConceptProblem.problem_code == f"scrape.{chunk_content_hash}")
+            select(ProblemRecord)
+            .where(ProblemRecord.course_id == course_id)
+            .where(ProblemRecord.concept_id == concept_id)
+            .where(ProblemRecord.problem_code == f"scrape.{chunk_content_hash}")
         )
     ).scalar_one_or_none()
 
 
-async def _authored_concept_dup_hashes(db: AsyncSession, *, concept_id: int) -> set[str]:
+async def _authored_concept_dup_hashes(
+    db: AsyncSession, *, concept_id: int, course_id: int
+) -> set[str]:
     rows = (
         (
             await db.execute(
-                select(ConceptProblem.payload)
-                .where(ConceptProblem.concept_id == concept_id)
-                .where(ConceptProblem.tier == 2)
+                select(ProblemRecord, Concept.slug)
+                .join(Concept, Concept.id == ProblemRecord.concept_id)
+                .where(ProblemRecord.course_id == course_id)
+                .where(ProblemRecord.concept_id == concept_id)
+                .where(ProblemRecord.tier == 2)
             )
         )
-        .scalars()
         .all()
     )
     hashes: set[str] = set()
-    for payload in rows:
+    for row, concept_slug in rows:
         try:
-            hashes.add(problem_dup_hash(Problem.model_validate(payload)))
+            hashes.add(
+                problem_dup_hash(
+                    Problem.model_validate(row.to_pydantic_payload(concept_slug=concept_slug))
+                )
+            )
         except (ValidationError, ValueError):
             continue
     return hashes
@@ -589,7 +684,10 @@ async def _process_authored_candidate(
             # NEVER force-matched: hold for teacher review with the match
             # evidence; no draft, no mint, no KG mutation.
             tier1 = await _find_tier1_row(
-                db, concept_id=concept_id, chunk_content_hash=candidate.chunk_content_hash
+                db,
+                concept_id=concept_id,
+                course_id=search_space_id,
+                chunk_content_hash=candidate.chunk_content_hash,
             )
             if tier1 is not None:
                 tier1.provenance = {  # type: ignore[assignment]
@@ -632,7 +730,12 @@ async def _process_authored_candidate(
                         str(concept_row.display_name) if concept_row is not None else resolved.slug
                     ),
                     canonical_symbols=(
-                        dict(concept_row.canonical_symbols or {}) if concept_row is not None else {}
+                        {
+                            **dict(concept_row.symbol_metadata or {}),
+                            "symbols": list(concept_row.canonical_symbols or []),
+                        }
+                        if concept_row is not None
+                        else {}
                     ),
                     normalization_map=(
                         dict(concept_row.normalization_map or {}) if concept_row is not None else {}
@@ -719,15 +822,20 @@ async def _process_authored_candidate(
         verdict and verdict.review_required
     )
     tier1 = await _find_tier1_row(
-        db, concept_id=concept_id, chunk_content_hash=candidate.chunk_content_hash
+        db,
+        concept_id=concept_id,
+        course_id=search_space_id,
+        chunk_content_hash=candidate.chunk_content_hash,
     )
     if review_required:
         reason = verdict.reason if verdict is not None else "generated_no_match"
         if tier1 is not None:
             if draft.augmented_problem_text:
-                tier1.payload = _augmented_hold_payload(  # type: ignore[assignment]
-                    tier1.payload, draft
+                augmented = _augmented_hold_payload(
+                    tier1.to_pydantic_payload(concept_slug=candidate.concept_slug), draft
                 )
+                if augmented is not None:
+                    tier1.apply_inventory_payload(augmented)
             tier1.provenance = {  # type: ignore[assignment]
                 **(tier1.provenance or {}),
                 "authored_review": {
@@ -776,12 +884,12 @@ async def _process_authored_candidate(
         # Mint AND promote ride ONE nested SAVEPOINT — mint is TRANSACTIONAL
         # with promotion. Two rollback triggers:
         #   * a fail-closed TagMintError (raised AFTER tag_mint has already
-        #     flushed concept / KGEntity / apollo_dedup_decisions rows for this
+        #     flushed concept / LearnerEntity / dedup-decision rows for this
         #     candidate);
         #   * a LINT REJECTION from ``promote`` (e.g. the gate-8 duplicate
         #     check) — previously the mint's flushed rows survived the run's
         #     end-of-run commit as orphaned KG rows (unreachable by any
-        #     promoted ConceptProblem, yet live dedup targets for the NEXT
+        #     promoted problem, yet live dedup targets for the NEXT
         #     candidate; verified as a 17->33 entity doubling). ``MintRejected``
         #     unwinds the savepoint, then the except arm reports the rejection.
         # A ``CanonProjectionError`` from ``promote`` still propagates as a
@@ -799,7 +907,7 @@ async def _process_authored_candidate(
                 **mint_kwargs,
             )
             existing_problem_hashes = await _authored_concept_dup_hashes(
-                db, concept_id=mint_plan.concept_id
+                db, concept_id=mint_plan.concept_id, course_id=search_space_id
             )
             result: PromoteResult = await promote(
                 db,

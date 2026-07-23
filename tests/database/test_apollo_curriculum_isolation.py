@@ -21,7 +21,7 @@ from sqlalchemy import select
 from apollo.conftest import TEST_USER_ID, TEST_USER_ID_2
 from apollo.hoot_bridge.session_init import init_session_from_hoot
 from apollo.overseer.problem_selector import list_problems_for_concept
-from apollo.persistence.models import ApolloSession
+from apollo.persistence.models import TutoringSession
 from apollo.subjects.curriculum_db import list_course_concepts
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_problem_payloads,
@@ -78,7 +78,12 @@ async def test_problems_scoped_to_course_concept(db_session):
     problem_codes; none of Y's."""
     (sid_x, cid_x, codes_x), (sid_y, cid_y, codes_y) = await _seed_two_courses(db_session)
 
-    x_problem_codes = {p.id for p in await list_problems_for_concept(db_session, concept_id=cid_x)}
+    x_problem_codes = {
+        p.id
+        for p in await list_problems_for_concept(
+            db_session, concept_id=cid_x, search_space_id=sid_x
+        )
+    }
     assert x_problem_codes == set(codes_x)
     assert x_problem_codes.isdisjoint(set(codes_y))
 
@@ -99,7 +104,7 @@ async def test_session_init_for_course_x_picks_x_problem(db_session):
 
     sess = (
         await db_session.execute(
-            select(ApolloSession).where(ApolloSession.id == result["session_id"])
+            select(TutoringSession).where(TutoringSession.id == result["session_id"])
         )
     ).scalar_one()
     assert sess.concept_id == cid_x
@@ -128,7 +133,7 @@ async def test_new_course_wired_with_zero_code(db_session):
     assert [c.concept_id for c in spy.call_args.kwargs["candidates"]] == [cid_y]
     sess = (
         await db_session.execute(
-            select(ApolloSession).where(ApolloSession.id == result["session_id"])
+            select(TutoringSession).where(TutoringSession.id == result["session_id"])
         )
     ).scalar_one()
     assert sess.concept_id == cid_y

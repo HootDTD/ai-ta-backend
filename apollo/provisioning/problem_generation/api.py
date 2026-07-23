@@ -14,10 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apollo.auth_deps import require_course_teacher, require_user
 from apollo.persistence.models import (
     Concept,
-    ConceptProblem,
-    GenerationRun,
     IngestRun,
-    Subject,
+    Problem,
+    ProvisioningRun,
 )
 from apollo.provisioning.authored_sets.api import ApproveBody, approve_held_row
 from apollo.provisioning.authored_sets.observability import (
@@ -53,11 +52,15 @@ class GenerateVariantsBody(BaseModel):
     count: int = Field(ge=1)
 
 
+async def _get_generation_run(db: AsyncSession, run_id: int) -> ProvisioningRun | None:
+    row = await db.get(ProvisioningRun, run_id)
+    return row if row is not None and row.kind == "generation" else None
+
+
 async def _course_concept_or_404(db: AsyncSession, concept_id: int) -> tuple[Concept, int]:
     row = (
         await db.execute(
-            select(Concept, Subject.search_space_id)
-            .join(Subject, Subject.id == Concept.subject_id)
+            select(Concept, Concept.course_id)
             .where(Concept.id == concept_id)
         )
     ).first()
@@ -83,13 +86,14 @@ async def list_generation_seeds(
     rows = (
         (
             await db.execute(
-                select(ConceptProblem)
+                select(Problem)
                 .where(
-                    ConceptProblem.concept_id == concept_id,
-                    ConceptProblem.tier == 2,
-                    ConceptProblem.quarantined_at.is_(None),
+                    Problem.course_id == search_space_id,
+                    Problem.concept_id == concept_id,
+                    Problem.tier == 2,
+                    Problem.quarantined_at.is_(None),
                 )
-                .order_by(ConceptProblem.id.asc())
+                .order_by(Problem.id.asc())
             )
         )
         .scalars()
@@ -99,9 +103,7 @@ async def list_generation_seeds(
         "seeds": [
             {
                 "concept_problem_id": int(row.id),
-                "problem_text": str(_json_dict(row.payload).get("problem_text") or "")[
-                    :_PROBLEM_TEXT_CAP
-                ],
+                "problem_text": str(row.problem_text)[:_PROBLEM_TEXT_CAP],
                 "difficulty": row.difficulty,
             }
             for row in rows
@@ -123,7 +125,7 @@ async def create_generation_run(
     auth = await require_user(request)
     await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
 
-    run = GenerationRun(
+    run = ProvisioningRun.generation(
         search_space_id=search_space_id,
         concept_id=concept_id,
         status="pending",
@@ -167,7 +169,7 @@ async def _run_generation_background(
     ingest_run_id: int | None = None
     try:
         async with get_async_session() as db:
-            run = await db.get(GenerationRun, run_id)
+            run = await _get_generation_run(db, run_id)
             if run is None:
                 return
             run.status = "running"
@@ -200,7 +202,7 @@ async def _run_generation_background(
                 n_promoted=0,
                 n_rejected=sum(result.dropped.values()),
             )
-            run = await db.get(GenerationRun, run_id)
+            run = await _get_generation_run(db, run_id)
             if run is None:
                 return
             run.result_summary = _result_summary(result)
@@ -223,7 +225,7 @@ async def _run_generation_background(
                     exc=exc,
                     context={"generation_run_id": run_id},
                 )
-                run = await db.get(GenerationRun, run_id)
+                run = await _get_generation_run(db, run_id)
                 if run is not None:
                     run.status = "failed"
                     run.result_summary = {**(run.result_summary or {}), "error": str(exc)}
@@ -246,9 +248,12 @@ async def list_generation_runs(
     rows = (
         (
             await db.execute(
-                select(GenerationRun)
-                .where(GenerationRun.search_space_id == search_space_id)
-                .order_by(GenerationRun.created_at.desc(), GenerationRun.id.desc())
+                select(ProvisioningRun)
+                .where(
+                    ProvisioningRun.search_space_id == search_space_id,
+                    ProvisioningRun.kind == "generation",
+                )
+                .order_by(ProvisioningRun.created_at.desc(), ProvisioningRun.id.desc())
             )
         )
         .scalars()
@@ -270,7 +275,7 @@ async def list_generation_runs(
     }
 
 
-def _generation_review(row: ConceptProblem) -> dict:
+def _generation_review(row: Problem) -> dict:
     provenance = dict(row.provenance or {})
     authored_review = provenance.get("authored_review")
     review = authored_review if isinstance(authored_review, dict) else {}
@@ -316,7 +321,7 @@ async def _generation_problems(
     rows = {
         int(row.id): row
         for row in (
-            await db.execute(select(ConceptProblem).where(ConceptProblem.id.in_(ids)))
+            await db.execute(select(Problem).where(Problem.id.in_(ids)))
         ).scalars()
     }
     problems = []
@@ -324,7 +329,7 @@ async def _generation_problems(
         row = rows.get(problem_id)
         if row is None:
             continue
-        text = str(_json_dict(row.payload).get("problem_text") or "")
+        text = str(row.problem_text or "")
         truncated = not full_text and len(text) > _PROBLEM_TEXT_CAP
         problems.append(
             {
@@ -347,7 +352,7 @@ async def get_generation_run(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
-    run = await db.get(GenerationRun, run_id)
+    run = await _get_generation_run(db, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="generation run not found")
     await require_course_teacher(db=db, auth=auth, search_space_id=int(run.search_space_id))
@@ -382,26 +387,26 @@ async def approve_generated_problem(
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     auth = await require_user(request)
-    row = await db.get(ConceptProblem, problem_id)
+    row = await db.get(Problem, problem_id)
     provenance = dict(row.provenance or {}) if row is not None else {}
     if row is None or provenance.get("source") != "generated":
         raise HTTPException(status_code=404, detail="generated problem not found")
-    await require_course_teacher(db=db, auth=auth, search_space_id=int(row.search_space_id))
+    await require_course_teacher(db=db, auth=auth, search_space_id=int(row.course_id))
     review = provenance.get("authored_review")
     if not isinstance(review, dict) or review.get("required") is not True:
         raise HTTPException(status_code=409, detail="problem is not held for review")
     if body.reference == "generated" and review.get("generated_alt") is None:
         raise HTTPException(status_code=409, detail="no 'generated' reference stored")
-    payload = dict(row.payload or {})
+    concept_slug = await db.scalar(select(Concept.slug).where(Concept.id == row.concept_id))
     return await approve_held_row(
         db,
         row=row,
         review=review,
         reference=body.reference,
-        search_space_id=int(row.search_space_id),
+        search_space_id=int(row.course_id),
         resolved_concept=ResolvedConcept(
             concept_id=int(row.concept_id),
-            slug=str(payload.get("concept_id") or ""),
+            slug=str(concept_slug or ""),
         ),
         document_id=int(provenance.get("document_id") or 0),
         stage="approve_generated_problem",

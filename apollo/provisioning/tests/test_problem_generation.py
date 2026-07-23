@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import cast
 
 import pytest
 
-from apollo.persistence.models import ConceptProblem
+from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.metered_chat import CostBudgetExceeded
 from apollo.provisioning.problem_generation import (
     VARIATION_OPERATORS,
@@ -49,18 +48,17 @@ def _payload(
     }
 
 
-def _seed(row_id: int, **payload_kwargs) -> ConceptProblem:
-    return ConceptProblem(
-        id=row_id,
+def _seed(row_id: int, **payload_kwargs) -> ProblemRecord:
+    row = ProblemRecord.from_pydantic_payload(
+        _payload(code=f"seed-{row_id}", **payload_kwargs),
+        course_id=7,
         concept_id=41,
-        problem_code=f"seed-{row_id}",
-        difficulty="standard",
-        payload=_payload(code=f"seed-{row_id}", **payload_kwargs),
+        id=row_id,
         tier=2,
         solution_source="authored",
         provenance={},
-        search_space_id=7,
     )
+    return row
 
 
 def _draft(*, provenance: dict | None = None) -> ReferenceSolutionDraft:
@@ -127,11 +125,17 @@ class _Result:
     def scalars(self):
         return _Scalars(self._values)
 
+    def all(self):
+        return list(self._values)
+
 
 class _FakeDB:
-    def __init__(self, seeds: list[ConceptProblem], existing_payloads: list[dict] | None = None):
-        self._results = [seeds, existing_payloads or [cast(dict, seed.payload) for seed in seeds]]
-        self.added: list[ConceptProblem] = []
+    def __init__(self, seeds: list[ProblemRecord], existing_payloads: list[str] | None = None):
+        self._results = [
+            [(seed, "mass_balance") for seed in seeds],
+            existing_payloads or [str(seed.problem_text) for seed in seeds],
+        ]
+        self.added: list[ProblemRecord] = []
         self.flushes = 0
 
     async def execute(self, _statement):
@@ -327,7 +331,7 @@ async def test_prose_seed_skips_parameter_operator_without_forcing_numbers(enabl
         "context_reskin",
         "isomorphic_dag_shape",
     ]
-    assert all(row.payload["given_values"] == {} for row in db.added)
+    assert all(row.given_values == {} for row in db.added)
     assert all(
         "do not force equations or numeric values" in c["messages"][0]["content"]
         for c in chat.main_calls
@@ -599,8 +603,8 @@ async def test_duplicate_against_existing_nonquarantined_problem(enabled, clean_
     db = _FakeDB(
         [_seed(17)],
         existing_payloads=[
-            _seed(17).payload,
-            {"problem_text": "Existing concept statement."},
+            _seed(17).problem_text,
+            "Existing concept statement.",
         ],
     )
     result = await generate_problem_variants(
@@ -619,7 +623,8 @@ async def test_invalid_and_missing_seeds_are_skipped_while_valid_seed_proceeds(
     enabled, clean_pipeline
 ):
     invalid = _seed(18)
-    invalid.payload = {"id": "broken"}
+    invalid.problem_text = ""
+    invalid.reference_solution = {"version": 1, "steps": []}
     valid = _seed(19)
     db = _FakeDB([invalid, valid])
     result = await generate_problem_variants(
@@ -694,11 +699,17 @@ async def test_cost_breach_from_fail_open_leak_judge_is_still_recorded(
 
 
 def test_generated_provenance_stamp_satisfies_orm_invariant():
-    row = ConceptProblem(
+    row = ProblemRecord.from_inventory_payload(
+        {
+            "id": "gen-1-context_reskin-abcdef",
+            "concept_id": "mass_balance",
+            "difficulty": "standard",
+            "problem_text": "x",
+            "given_values": {},
+            "target_unknown": "m",
+        },
+        course_id=7,
         concept_id=41,
-        problem_code="gen-1-context_reskin-abcdef",
-        difficulty="standard",
-        payload={"problem_text": "x"},
         tier=1,
         solution_source="generated",
         provenance={

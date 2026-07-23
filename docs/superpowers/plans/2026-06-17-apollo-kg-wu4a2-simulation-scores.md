@@ -1,7 +1,7 @@
-# Plan: WU-4A2 — graph_compare simulation + scores → grade_attempt() → GradeResult
+# Plan: WU-4A2 — retired graph comparator simulation + scores → grade_attempt() → GradeResult
 
 **Goal:** Add the deterministic score-math half of the §6 grading core — coverage (max-over-paths), soundness (contradictions-only), the 7 sub-scores, bisimilarity, in-memory findings, and the single `grade_attempt(student_canonical, reference_graph) -> GradeResult` callable — over WU-4A1's `CanonicalGraph`/`ReferenceGraph`, with zero DB/Neo4j/LLM in the score-math.
-**Architecture:** New pure modules in `apollo/graph_compare/` (`coverage.py`, `soundness.py`, `scores.py`, `bisimilarity.py`, `findings.py`, `core.py`) + `__init__.py` re-export extension. Consumes WU-4A1 (`canonical.py`) + `apollo/resolution` (`Candidate.is_misconception`/`opposes_key`) + `apollo/ontology/edges.py` (`EdgeProvenance`/`EdgeType`). Mirrors `apollo/resolution/` package style (many small frozen-dataclass pure modules, one `__init__` seam).
+**Architecture:** New pure modules in `apollo/retired graph comparator/` (`coverage.py`, `soundness.py`, `scores.py`, `bisimilarity.py`, `findings.py`, `core.py`) + `__init__.py` re-export extension. Consumes WU-4A1 (`canonical.py`) + `apollo/resolution` (`Candidate.is_misconception`/`opposes_key`) + `apollo/ontology/edges.py` (`EdgeProvenance`/`EdgeType`). Mirrors `apollo/resolution/` package style (many small frozen-dataclass pure modules, one `__init__` seam).
 **Tech stack:** Python 3.12 / FastAPI backend, pytest (no Testcontainers — pure in-memory unit tests), diff-cover patch gate, black/isort/ruff.
 
 ---
@@ -12,7 +12,7 @@ provides:
   - COMPARISON_VERSION (str constant for the runs row comparison_version column)
   - coverage / soundness / scores / bisimilarity pure functions (package-internal, re-tested directly)
 consumes:
-  - apollo.graph_compare.canonical: CanonicalGraph, CanonicalNode, CanonicalEdge, ReferenceGraph, ReferencePathView (WU-4A1)
+  - apollo.retired graph comparator.canonical: CanonicalGraph, CanonicalNode, CanonicalEdge, ReferenceGraph, ReferencePathView (WU-4A1)
   - apollo.resolution.candidates: Candidate (is_misconception / opposes_key) — for contradiction detection metadata
   - apollo.ontology.edges: EdgeType, EdgeProvenance
   - apollo.persistence.models.FINDING_KINDS (the authoritative finding-kind enum string set — aligned, not re-derived)
@@ -36,9 +36,9 @@ The §6.2 binding rules this unit implements:
 ## Prior art (sibling modules)
 
 - **`apollo/resolution/` package layout** — the direct template for this work: many small pure modules each with one frozen-dataclass result + pure functions, one `__init__.py` re-export seam, `from __future__ import annotations`, tuple (immutable) collection fields. Mirror it exactly. (`apollo/resolution/result.py:21-63` frozen `ResolvedNode`/`ResolutionResult`; `apollo/resolution/candidates.py:56-73` frozen `Candidate`.)
-- **WU-4A1 `apollo/graph_compare/canonical.py:43-93`** — the EXACT input shapes: `CanonicalNode{canonical_key, node_type, source_node_ids, evidence_spans, symbolic, method, confidence}`, `CanonicalEdge{edge_type, from_key, to_key, provenance}`, `CanonicalGraph{nodes, edges, unresolved_nodes, dropped_edge_count}`, `ReferencePathView{canonical_keys}`, `ReferenceGraph{nodes, edges, paths}`.
-- **WU-4A1 test patterns `apollo/graph_compare/tests/test_student_canonical.py:24-67`** — the hand-built fixture helpers (`_node`, `_edge`, `_resolved`, `_resolution`). WU-4A2 tests build `CanonicalGraph`/`ReferenceGraph` directly (one ring closer — no resolver, no KGGraph needed for the score tests), so define local `_cnode`/`_cedge`/`_snorm`/`_rgraph`/`_path` builders in a shared test helper.
-- **`apollo/graph_compare/tests/test_package_seam.py:13-57`** — the seam-completeness test pattern (`_EXPECTED` set, `__all__` equality, "same object not a shadow"). Extend it (do NOT rewrite) for the new exports.
+- **WU-4A1 `apollo/retired graph comparator/canonical.py:43-93`** — the EXACT input shapes: `CanonicalNode{canonical_key, node_type, source_node_ids, evidence_spans, symbolic, method, confidence}`, `CanonicalEdge{edge_type, from_key, to_key, provenance}`, `CanonicalGraph{nodes, edges, unresolved_nodes, dropped_edge_count}`, `ReferencePathView{canonical_keys}`, `ReferenceGraph{nodes, edges, paths}`.
+- **WU-4A1 test patterns `apollo/retired graph comparator/tests/test_student_canonical.py:24-67`** — the hand-built fixture helpers (`_node`, `_edge`, `_resolved`, `_resolution`). WU-4A2 tests build `CanonicalGraph`/`ReferenceGraph` directly (one ring closer — no resolver, no KGGraph needed for the score tests), so define local `_cnode`/`_cedge`/`_snorm`/`_rgraph`/`_path` builders in a shared test helper.
+- **`apollo/retired graph comparator/tests/test_package_seam.py:13-57`** — the seam-completeness test pattern (`_EXPECTED` set, `__all__` equality, "same object not a shadow"). Extend it (do NOT rewrite) for the new exports.
 - **`apollo/resolution/candidates.py:35-42` (`METHOD_CONFIDENCE_CAP`)** — the per-method confidence cap convention; `CanonicalNode.confidence` is already capped, so a covered finding's confidence is read straight off the node (no re-capping).
 - **`apollo/persistence/models.py:64-73` (`FINDING_KINDS`)** — the AUTHORITATIVE finding-kind string set (open enum, documentation-only). `FindingKind` enum values MUST equal this set 1:1: `covered_node, missing_node, matched_edge, missing_edge, unsupported_extra, contradiction, unresolved, alternative_path`. A test asserts the enum value-set equals `FINDING_KINDS`.
 - **`apollo/persistence/models.py:479-524` (`GraphComparisonRun`)** — the persisted column names `GradeResult` maps to 1:1. NOTE the schema-real divergence: the persisted confidence column is `normalization_confidence` (NOT NULL), supplied by WU-4B from resolution method-caps; `comparison_confidence` is the score-math's own value (1.0 v1), carried on `GradeResult` but NOT persisted by name here.
@@ -47,8 +47,8 @@ The §6.2 binding rules this unit implements:
 
 Change-path files scanned (the files this unit creates or imports, one ring out):
 
-- `apollo/graph_compare/__init__.py` — 3 import groups, ~13 names today; adding ~5 more keeps it well under any threshold. CLEAN.
-- `apollo/graph_compare/canonical.py` — 7 imports, 5 dataclasses + 3 functions. CLEAN (consumed, not edited).
+- `apollo/retired graph comparator/__init__.py` — 3 import groups, ~13 names today; adding ~5 more keeps it well under any threshold. CLEAN.
+- `apollo/retired graph comparator/canonical.py` — 7 imports, 5 dataclasses + 3 functions. CLEAN (consumed, not edited).
 - `apollo/resolution/candidates.py` — 2 imports, 3 functions + `Candidate`. CLEAN (consumed, not edited — `Candidate` only referenced in test fixtures and docstrings; the score-math reads the `misc.` key prefix off `CanonicalNode.canonical_key`, so `core.py` does NOT import `Candidate` at all).
 - `apollo/ontology/edges.py` — small, stable. CLEAN.
 - All new modules are GREENFIELD (do not exist yet); each is budgeted < 200 lines.
@@ -61,14 +61,14 @@ No coupling-hub risk: nothing imports the new modules yet except the package `__
 
 ## Layered tasks (TDD ORDER — tests RED first, then GREEN)
 
-**Discipline (binding):** for each task, write the REAL test file FIRST and run it to confirm it FAILS for the right reason (RED), then write the minimal module to pass (GREEN), then refactor. No skip/xfail, no assert-nothing tests. All inputs are hand-built frozen dataclasses; there is no LLM/network to mock (the score-math is pure). Verify each task with `pytest apollo/graph_compare/tests/<file> -v` and, after all tasks, the patch gate below.
+**Discipline (binding):** for each task, write the REAL test file FIRST and run it to confirm it FAILS for the right reason (RED), then write the minimal module to pass (GREEN), then refactor. No skip/xfail, no assert-nothing tests. All inputs are hand-built frozen dataclasses; there is no LLM/network to mock (the score-math is pure). Verify each task with `pytest apollo/retired graph comparator/tests/<file> -v` and, after all tasks, the patch gate below.
 
 There is NO repository / DTO / controller / module-wiring layer here — this is a pure Python library unit, not an HTTP feature. The NestJS-style layering maps to: findings vocabulary → score passes → orchestrator → package seam → owner-doc. The "DB migration" layer is explicitly absent (justified in Out-of-scope: migration 026 already shipped the tables + ORM).
 
 ### 1. Findings model (findings.py) — the in-memory vocabulary
 
-- [ ] Test first: `apollo/graph_compare/tests/test_findings.py`
-- [ ] File: `apollo/graph_compare/findings.py` (NEW)
+- [ ] Test first: `apollo/retired graph comparator/tests/test_findings.py`
+- [ ] File: `apollo/retired graph comparator/findings.py` (NEW)
 - Defines `FindingKind` (a `StrEnum`, mirroring `EdgeType`'s `StrEnum` style) with EXACTLY the 8 members of `apollo.persistence.models.FINDING_KINDS`: `COVERED_NODE="covered_node"`, `MISSING_NODE="missing_node"`, `MATCHED_EDGE="matched_edge"`, `MISSING_EDGE="missing_edge"`, `UNSUPPORTED_EXTRA="unsupported_extra"`, `CONTRADICTION="contradiction"`, `UNRESOLVED="unresolved"`, `ALTERNATIVE_PATH="alternative_path"`.
 - Defines `Finding` (`@dataclass(frozen=True)`): `kind: FindingKind`, `canonical_key: str | None` (the entity/concept the finding concerns — None for pure edge findings), `student_node_ids: tuple[str, ...] = ()`, `reference_node_ids: tuple[str, ...] = ()`, `evidence_spans: tuple[str, ...] = ()`, `score: float | None = None`, `confidence: float | None = None`, `message: str | None = None`. (These map onto `GraphComparisonFinding` columns so WU-4B persists them with no reshaping; `student_edge_ids`/`reference_edge_ids` columns exist but edges here are diagnostic-only and keyed by `from_key→to_key` text, carried in `message`, so the edge-id tuples stay `()`.)
 - Pure reducer helpers (each returns a NEW tuple, no mutation), to be CONSUMED by the score passes:
@@ -79,32 +79,32 @@ There is NO repository / DTO / controller / module-wiring layer here — this is
   - `unresolved_finding(node_id: str, surface: str) -> Finding` (kind UNRESOLVED; from `CanonicalGraph.unresolved_nodes`).
   - `matched_edge_finding`/`missing_edge_finding(edge: CanonicalEdge) -> Finding` (diagnostic; `message` carries `"<from_key> -<TYPE>-> <to_key>"` and provenance).
   - `alternative_path_finding(path_index: int, canonical_keys: tuple[str, ...]) -> Finding` (kind ALTERNATIVE_PATH; emitted when the winning coverage path is NOT path 0 — schema supports multi-path from day one).
-- Verify: `pytest apollo/graph_compare/tests/test_findings.py -v`
+- Verify: `pytest apollo/retired graph comparator/tests/test_findings.py -v`
 
 ### 2. Coverage pass (coverage.py) — R ⊑ S, max over paths
 
-- [ ] Test first: `apollo/graph_compare/tests/test_coverage.py`
-- [ ] File: `apollo/graph_compare/coverage.py` (NEW)
+- [ ] Test first: `apollo/retired graph comparator/tests/test_coverage.py`
+- [ ] File: `apollo/retired graph comparator/coverage.py` (NEW)
 - `@dataclass(frozen=True) PathCoverage`: `path_index: int`, `covered_keys: tuple[str, ...]`, `missing_keys: tuple[str, ...]`, `score: float` (covered/total for THAT path; total==0 → score 1.0 vacuously to avoid div-by-zero on a degenerate empty path, but empty path lists never reach here — `ReferenceGraph.paths` is length ≥ 1).
 - `coverage_per_path(student: CanonicalGraph, reference: ReferenceGraph) -> tuple[PathCoverage, ...]`: for each `ReferencePathView`, a reference key is covered iff it is in `{n.canonical_key for n in student.nodes}` (set membership — `R ⊑ S` per path). Returns one `PathCoverage` per path, in path order.
 - `coverage_result(student, reference) -> tuple[float, PathCoverage, tuple[PathCoverage, ...]]`: returns `(max_score, winning_path_coverage, all_path_coverages)`. The winner is the path with the highest `score`; ties broken by lowest `path_index` (deterministic). **Empty student graph → every path scores 0.0 → coverage 0.0** (binding §6.1; never NaN because each path has ≥1 key so the denominator is never 0 in the real case, and the degenerate all-empty-paths case is guarded).
 - This module computes scores ONLY; finding emission for covered/missing nodes happens in `core.py` against the WINNING path (so a node missing on path A but the student took path B is NOT a false missing).
-- Verify: `pytest apollo/graph_compare/tests/test_coverage.py -v`
+- Verify: `pytest apollo/retired graph comparator/tests/test_coverage.py -v`
 
 ### 3. Soundness pass (soundness.py) — S ⊑ R, contradictions only
 
-- [ ] Test first: `apollo/graph_compare/tests/test_soundness.py`
-- [ ] File: `apollo/graph_compare/soundness.py` (NEW)
+- [ ] Test first: `apollo/retired graph comparator/tests/test_soundness.py`
+- [ ] File: `apollo/retired graph comparator/soundness.py` (NEW)
 - `is_misconception_key(key: str) -> bool`: `key.startswith("misc.")` (the minted prefix — confirmed in `misconceptions.json` keys `misc.density_ignored` etc.; the spec's `canon.misc.*` prose maps to the actual `misc.*` mint). Single chokepoint constant `MISCONCEPTION_KEY_PREFIX = "misc."` so the rule is documented once.
 - `contradiction_nodes(student: CanonicalGraph) -> tuple[CanonicalNode, ...]`: the S_norm nodes whose `canonical_key` is a misconception key. (Resolution already competed misconceptions at resolve-time, §5; reaching S_norm as a `misc.*` key IS the resolved contradiction.)
 - `soundness_score(student: CanonicalGraph) -> float`: `1 - penalty(n_contradictions)`. Penalty function (binding, documented): `penalty(k) = min(1.0, k * CONTRADICTION_UNIT_PENALTY)` with `CONTRADICTION_UNIT_PENALTY = 0.5` (each contradiction halves toward 0; 2+ contradictions floor at 0.0). **Unsupported extras (S_norm nodes whose key is NOT in any reference path AND not a misconception) contribute ZERO penalty; unresolved nodes contribute ZERO penalty.** Empty student graph → 0 contradictions → soundness 1.0 (vacuously sound; §6.1 binding).
 - The unit penalty value is a documented v1 constant (NOT "TBD"); flagged in Risks as the one calibration knob, but it is concretely 0.5 here and the executor must use exactly that.
-- Verify: `pytest apollo/graph_compare/tests/test_soundness.py -v`
+- Verify: `pytest apollo/retired graph comparator/tests/test_soundness.py -v`
 
 ### 4. Sub-scores (scores.py) — the 7 rubric sub-scores
 
-- [ ] Test first: `apollo/graph_compare/tests/test_scores.py`
-- [ ] File: `apollo/graph_compare/scores.py` (NEW)
+- [ ] Test first: `apollo/retired graph comparator/tests/test_scores.py`
+- [ ] File: `apollo/retired graph comparator/scores.py` (NEW)
 - `@dataclass(frozen=True) SubScores`: `node_coverage: float`, `edge_coverage: float`, `scoping: float`, `usage: float`, `procedure_order: float`, `dependency: float`, `contradiction: float`. (One field per `apollo_graph_comparison_runs` `*_score` column, minus the names — `core.py` maps these onto the column-named `GradeResult` fields.)
 - `compute_sub_scores(student, reference, winning_path: PathCoverage) -> SubScores`. Each sub-score is a pure ratio in [0,1] over the canonical graphs (NEVER emits an event):
   - `node_coverage` = winning path's covered/total (same numerator as coverage — the node dimension).
@@ -115,20 +115,20 @@ There is NO repository / DTO / controller / module-wiring layer here — this is
   - `dependency` = LOWEST weight; loose any→any DEPENDS_ON: matched DEPENDS_ON edges / reference DEPENDS_ON edges, direction-loose (an edge matches if the unordered key pair matches). Vacuous 1.0 when none. (The lowest-weight nature is a rubric-aggregation concern downstream — WU-4C; here it is just computed.)
   - `contradiction` = the soundness contradiction dimension as a [0,1] sub-score: `1 - penalty(n_contradictions)` (same penalty as soundness — they are the same dimension surfaced both as a top-line and a sub-score per the schema; documented that they are intentionally equal in v1).
 - Documented constants: `INFERRED_EDGE_WEIGHT = 0.5`. All "vacuous → 1.0" cases are explicit, never NaN.
-- Verify: `pytest apollo/graph_compare/tests/test_scores.py -v`
+- Verify: `pytest apollo/retired graph comparator/tests/test_scores.py -v`
 
 ### 5. Bisimilarity (bisimilarity.py) — harmonic mean
 
-- [ ] Test first: `apollo/graph_compare/tests/test_bisimilarity.py`
-- [ ] File: `apollo/graph_compare/bisimilarity.py` (NEW)
+- [ ] Test first: `apollo/retired graph comparator/tests/test_bisimilarity.py`
+- [ ] File: `apollo/retired graph comparator/bisimilarity.py` (NEW)
 - `harmonic_mean(a: float, b: float) -> float`: `0.0 if (a + b) == 0 else 2 * a * b / (a + b)`. **Binding: returns 0.0 when `a + b == 0`, NEVER NaN** (§6.1 — a NaN in a `REAL NOT NULL` column poisons aggregates). No other branch.
 - `bisimilarity_score(soundness: float, coverage: float) -> float` = `harmonic_mean(soundness, coverage)` (thin alias for readable call sites + a named seam).
-- Verify: `pytest apollo/graph_compare/tests/test_bisimilarity.py -v`
+- Verify: `pytest apollo/retired graph comparator/tests/test_bisimilarity.py -v`
 
 ### 6. Orchestration (core.py) — grade_attempt + GradeResult + COMPARISON_VERSION
 
-- [ ] Test first: `apollo/graph_compare/tests/test_core.py`
-- [ ] File: `apollo/graph_compare/core.py` (NEW)
+- [ ] Test first: `apollo/retired graph comparator/tests/test_core.py`
+- [ ] File: `apollo/retired graph comparator/core.py` (NEW)
 - `COMPARISON_VERSION: str = "graph-compare-v1"` — the constant for the `apollo_graph_comparison_runs.comparison_version` column (a re-run at the same version is a supersede per the UNIQUE constraint). Single source of truth; WU-4B reads it off `GradeResult.comparison_version`.
 - `@dataclass(frozen=True) GradeResult` — fields map 1:1 to `apollo_graph_comparison_runs` score columns:
   - `coverage_score: float`, `soundness_score: float`, `bisimilarity_score: float`
@@ -152,20 +152,20 @@ There is NO repository / DTO / controller / module-wiring layer here — this is
   6. `comparison_confidence = 1.0` (v1 binding).
   7. Return the frozen `GradeResult` (findings as a deterministically-ordered tuple: covered → missing → alternative_path → contradiction → unsupported_extra → unresolved → matched_edge → missing_edge, each group sorted by canonical_key/message for reproducibility).
 - **Assert no event kinds leak:** findings only ever carry `FindingKind` values; there is no `events`/`event_kind` field anywhere on `GradeResult` or `Finding`. (A test asserts this structurally.)
-- Verify: `pytest apollo/graph_compare/tests/test_core.py -v`
+- Verify: `pytest apollo/retired graph comparator/tests/test_core.py -v`
 
 ### 7. Package seam (__init__.py) — re-exports
 
-- [ ] Test: extend `apollo/graph_compare/tests/test_package_seam.py` (`_EXPECTED` set + same-object checks) — do NOT rewrite the file.
-- [ ] File: `apollo/graph_compare/__init__.py` (EDIT — add imports + `__all__` entries)
+- [ ] Test: extend `apollo/retired graph comparator/tests/test_package_seam.py` (`_EXPECTED` set + same-object checks) — do NOT rewrite the file.
+- [ ] File: `apollo/retired graph comparator/__init__.py` (EDIT — add imports + `__all__` entries)
 - Add re-exports: `grade_attempt`, `GradeResult`, `Finding`, `FindingKind`, `COMPARISON_VERSION` (from `core` + `findings`). Keep all existing WU-4A1 exports.
-- Verify: `pytest apollo/graph_compare/tests/test_package_seam.py -v`
+- Verify: `pytest apollo/retired graph comparator/tests/test_package_seam.py -v`
 
 ### 8. Owner-doc reconciliation (drift contract)
 
 - [ ] File: `docs/architecture/apollo.md` (EDIT — same commit as the code)
-- Extend the `apollo/graph_compare/` module-map row (line 36) with the WU-4A2 scoring modules + the `grade_attempt`/`GradeResult` API. Add `grade_attempt` to "Key service entry points". Add `GradeResult`/`Finding`/`FindingKind`/`COMPARISON_VERSION` to "Core types". Set `last_verified: 2026-06-17` (already 2026-06-17 in frontmatter — confirm it stays).
-- The `owns:` glob `apollo/graph_compare/**` already exists (line 6) — no glob change needed.
+- Extend the `apollo/retired graph comparator/` module-map row (line 36) with the WU-4A2 scoring modules + the `grade_attempt`/`GradeResult` API. Add `grade_attempt` to "Key service entry points". Add `GradeResult`/`Finding`/`FindingKind`/`COMPARISON_VERSION` to "Core types". Set `last_verified: 2026-06-17` (already 2026-06-17 in frontmatter — confirm it stays).
+- The `owns:` glob `apollo/retired graph comparator/**` already exists (line 6) — no glob change needed.
 - Verify: `grep -n "grade_attempt\|GradeResult" docs/architecture/apollo.md` returns the new lines.
 
 ### 1. Findings model (findings.py) — the in-memory vocabulary
@@ -187,10 +187,10 @@ There is NO repository / DTO / controller / module-wiring layer here — this is
 ## Public signatures (full)
 
 ```python
-# apollo/graph_compare/findings.py
+# apollo/retired graph comparator/findings.py
 from enum import StrEnum
 from dataclasses import dataclass
-from apollo.graph_compare.canonical import CanonicalNode, CanonicalEdge
+from apollo.retired graph comparator.canonical import CanonicalNode, CanonicalEdge
 
 class FindingKind(StrEnum):
     COVERED_NODE = "covered_node"
@@ -222,7 +222,7 @@ def matched_edge_finding(edge: CanonicalEdge) -> Finding: ...
 def missing_edge_finding(edge: CanonicalEdge) -> Finding: ...
 def alternative_path_finding(path_index: int, canonical_keys: tuple[str, ...]) -> Finding: ...
 
-# apollo/graph_compare/coverage.py
+# apollo/retired graph comparator/coverage.py
 @dataclass(frozen=True)
 class PathCoverage:
     path_index: int
@@ -233,7 +233,7 @@ class PathCoverage:
 def coverage_per_path(student: CanonicalGraph, reference: ReferenceGraph) -> tuple[PathCoverage, ...]: ...
 def coverage_result(student: CanonicalGraph, reference: ReferenceGraph) -> tuple[float, PathCoverage, tuple[PathCoverage, ...]]: ...
 
-# apollo/graph_compare/soundness.py
+# apollo/retired graph comparator/soundness.py
 MISCONCEPTION_KEY_PREFIX: str = "misc."
 CONTRADICTION_UNIT_PENALTY: float = 0.5
 def is_misconception_key(key: str) -> bool: ...
@@ -241,7 +241,7 @@ def contradiction_nodes(student: CanonicalGraph) -> tuple[CanonicalNode, ...]: .
 def contradiction_penalty(n: int) -> float: ...   # min(1.0, n * CONTRADICTION_UNIT_PENALTY)
 def soundness_score(student: CanonicalGraph) -> float: ...
 
-# apollo/graph_compare/scores.py
+# apollo/retired graph comparator/scores.py
 INFERRED_EDGE_WEIGHT: float = 0.5
 @dataclass(frozen=True)
 class SubScores:
@@ -255,11 +255,11 @@ class SubScores:
 
 def compute_sub_scores(student: CanonicalGraph, reference: ReferenceGraph, winning_path: PathCoverage) -> SubScores: ...
 
-# apollo/graph_compare/bisimilarity.py
+# apollo/retired graph comparator/bisimilarity.py
 def harmonic_mean(a: float, b: float) -> float: ...          # 0.0 when a+b==0, never NaN
 def bisimilarity_score(soundness: float, coverage: float) -> float: ...
 
-# apollo/graph_compare/core.py
+# apollo/retired graph comparator/core.py
 COMPARISON_VERSION: str = "graph-compare-v1"
 @dataclass(frozen=True)
 class GradeResult:
@@ -284,7 +284,7 @@ Backward-compat: this unit ADDS only. No existing WU-4A1 signature changes; `__i
 
 ## Full test list
 
-All tests are pure in-memory unit tests over hand-built `CanonicalGraph`/`ReferenceGraph` dataclasses. **No LLM, no Neo4j, no Postgres, no resolver run — there is nothing to mock** (the score-math has zero external deps; this is the design property that makes the 95% patch gate achievable without containers). A shared `apollo/graph_compare/tests/_builders.py` provides `_cnode`, `_cedge`, `_snorm`, `_rnode`, `_rgraph`, `_path` factory helpers.
+All tests are pure in-memory unit tests over hand-built `CanonicalGraph`/`ReferenceGraph` dataclasses. **No LLM, no Neo4j, no Postgres, no resolver run — there is nothing to mock** (the score-math has zero external deps; this is the design property that makes the 95% patch gate achievable without containers). A shared `apollo/retired graph comparator/tests/_builders.py` provides `_cnode`, `_cedge`, `_snorm`, `_rnode`, `_rgraph`, `_path` factory helpers.
 
 ### test_findings.py
 - `test_finding_kind_enum_matches_models_finding_kinds` — `{k.value for k in FindingKind} == set(models.FINDING_KINDS)` (the enum is the authoritative set, no drift).
@@ -381,11 +381,11 @@ All tests are pure in-memory unit tests over hand-built `CanonicalGraph`/`Refere
 
 ## Owner-doc updates
 
-File: `docs/architecture/apollo.md` (the `apollo/**` owner; `owns:` already covers `apollo/graph_compare/**`). Same commit as the code (drift contract).
+File: `docs/architecture/apollo.md` (the `apollo/**` owner; `owns:` already covers `apollo/retired graph comparator/**`). Same commit as the code (drift contract).
 
-1. **Module-map row (line 36, `apollo/graph_compare/`)** — append after the WU-4A1 description: list `coverage.py`, `soundness.py`, `scores.py`, `bisimilarity.py`, `findings.py`, `core.py` as the **§6 grading-core COMPARE half (WU-4A2)**; state that it consumes the two WU-4A1 canonical graphs and produces `GradeResult` + in-memory `Finding`s; reiterate the binding rules (coverage max-over-paths; soundness contradictions-only via `misc.` key; 7 sub-scores; procedure_order penalizes only inversions; edges diagnostic-only/explicit>inferred; bisimilarity harmonic-mean with `a+b==0 → 0` no-NaN); and the SEAM vs WU-4B (no audit, no abstention, no finding→event, no persistence).
+1. **Module-map row (line 36, `apollo/retired graph comparator/`)** — append after the WU-4A1 description: list `coverage.py`, `soundness.py`, `scores.py`, `bisimilarity.py`, `findings.py`, `core.py` as the **§6 grading-core COMPARE half (WU-4A2)**; state that it consumes the two WU-4A1 canonical graphs and produces `GradeResult` + in-memory `Finding`s; reiterate the binding rules (coverage max-over-paths; soundness contradictions-only via `misc.` key; 7 sub-scores; procedure_order penalizes only inversions; edges diagnostic-only/explicit>inferred; bisimilarity harmonic-mean with `a+b==0 → 0` no-NaN); and the SEAM vs WU-4B (no audit, no abstention, no finding→event, no persistence).
 2. **Key service entry points (after line 76)** — add:
-   `apollo.graph_compare.grade_attempt(student_canonical: CanonicalGraph, reference_graph: ReferenceGraph) -> GradeResult` (WU-4A2; the §6.4 steps 10/11/13 over PURE inputs — coverage max-over-paths, soundness contradictions-only, 7 sub-scores, bisimilarity; emits in-memory `Finding`s; `comparison_confidence==1.0` v1; NO Neo4j/PG/LLM, NO event conversion — that is WU-4B; the single callable WU-4C wires into `done.py`).
+   `apollo.retired graph comparator.grade_attempt(student_canonical: CanonicalGraph, reference_graph: ReferenceGraph) -> GradeResult` (WU-4A2; the §6.4 steps 10/11/13 over PURE inputs — coverage max-over-paths, soundness contradictions-only, 7 sub-scores, bisimilarity; emits in-memory `Finding`s; `comparison_confidence==1.0` v1; NO Neo4j/PG/LLM, NO event conversion — that is WU-4B; the single callable WU-4C wires into `done.py`).
 3. **Core types (after line 90)** — add `GradeResult` (the 10 score fields named 1:1 to `apollo_graph_comparison_runs` columns + `comparison_confidence` + `findings` + `comparison_version`; `comparison_confidence` is the score-math's own value, the persisted column is `normalization_confidence` supplied by WU-4B), `Finding`/`FindingKind` (the §2 finding-kind set == `models.FINDING_KINDS`), `COMPARISON_VERSION` (`"graph-compare-v1"`).
 4. **`last_verified`** — confirm `2026-06-17` in the frontmatter (already set; if a later edit bumped it, keep 2026-06-17).
 
@@ -393,7 +393,7 @@ File: `docs/architecture/apollo.md` (the `apollo/**` owner; `owns:` already cove
 
 - **WU-4B** (next in the stack): consumes `GradeResult.findings` to run the transcript audit, apply abstention gates, convert findings→events via the §6.5 decision table, and persist the run/findings rows. Reads `COMPARISON_VERSION` for the runs row + supersede semantics. Persists `normalization_confidence` (from resolution method-caps) — NOT a WU-4A2 concern.
 - **WU-4C**: imports `grade_attempt` and wires it into `done.py` (re-orchestration), reading the frozen student graph from Neo4j and calling `resolve_attempt` to build the `CanonicalGraph` first. Also maps `GradeResult` sub-scores/findings into `compute_rubric` input.
-- **No frontend consumer** for this unit. The `apollo/graph_compare` package is not HTTP-mounted (the Done route is WU-4C). A frontend grep for the URL patterns is N/A — `grade_attempt` is an internal Python callable, no new route. (Confirmed: `apollo/api.py` has no `grade`/`graph_compare` route, and the only Done route `POST /apollo/sessions/{id}/done` still calls the legacy `compute_coverage`/`compute_rubric` shadow path until WU-4C rewires it.)
+- **No frontend consumer** for this unit. The `apollo/retired graph comparator` package is not HTTP-mounted (the Done route is WU-4C). A frontend grep for the URL patterns is N/A — `grade_attempt` is an internal Python callable, no new route. (Confirmed: `apollo/api.py` has no `grade`/`retired graph comparator` route, and the only Done route `POST /apollo/sessions/{id}/done` still calls the legacy `compute_coverage`/`compute_rubric` shadow path until WU-4C rewires it.)
 
 ## Risks
 

@@ -27,10 +27,10 @@ from apollo.overseer.problem_selector import (
     select_problem_personalized,
 )
 from apollo.persistence.models import (
-    ApolloSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
 from apollo.schemas.problem import Problem
 from apollo.subjects.curriculum_db import list_course_concepts
@@ -51,29 +51,32 @@ async def _create_session_with_problem(
     TEACHING session + first attempt, commit, return the FE payload.
     Moved verbatim from init_session_from_hoot (WU-3D shape unchanged)."""
     await db.execute(
-        update(ApolloSession)
+        update(TutoringSession)
         .where(
-            ApolloSession.user_id == user_id,
-            ApolloSession.status == SessionStatus.active.value,
+            TutoringSession.user_id == user_id,
+            TutoringSession.search_space_id == search_space_id,
+            TutoringSession.status == SessionStatus.active.value,
         )
         .values(status=SessionStatus.ended.value)
     )
     await db.flush()
 
-    session = ApolloSession(
+    session = TutoringSession(
         user_id=user_id,
         search_space_id=search_space_id,
         concept_id=concept_id,
         status=SessionStatus.active.value,
         phase=SessionPhase.TEACHING.value,
-        current_problem_id=problem.id,
+        current_problem_id=problem.database_id,
     )
     db.add(session)
     await db.flush()
 
     attempt = ProblemAttempt(
         session_id=session.id,
-        problem_id=problem.id,
+        course_id=search_space_id,
+        user_id=user_id,
+        problem_id=problem.database_id,
         difficulty=difficulty,
     )
     db.add(attempt)
@@ -153,7 +156,9 @@ async def init_session_direct(
         )
 
     if problem_id is not None:
-        pool = await list_problems_for_concept(db, concept_id=concept_id)
+        pool = await list_problems_for_concept(
+            db, concept_id=concept_id, search_space_id=search_space_id
+        )
         problem = next((p for p in pool if p.id == problem_id), None)
         if problem is None:
             raise ProblemNotFoundError(problem_id=problem_id, concept_id=concept_id)

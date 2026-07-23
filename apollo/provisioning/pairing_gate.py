@@ -33,7 +33,7 @@ flag-OFF default + the §6.7 calibration gate, with 3B2h quarantine the retroact
 catch.
 
 A FAIL verdict is mapped to a typed ``Rejection`` by ``rejection_from_verdict``
-(the single fail-mapping point; 3B2g writes the ``apollo_rejected_problems`` row).
+(the single fail-mapping point; callers retain the outcome in their result ledger).
 
 NO network: ``judge_fn``/``retrieve_fn`` are injected (mocked in Tier-1). NO DB
 write (pure compute over the injected fns). INPUTS ARE COURSE MATERIAL ONLY — no
@@ -128,7 +128,7 @@ class PairingVerdict(BaseModel):
 
 
 class Rejection(BaseModel):
-    """The FAIL handoff (3B2g writes the ``apollo_rejected_problems`` row). ``reason``
+    """The FAIL handoff retained in the provisioning result ledger. ``reason``
     ∈ {'unparseable_judge', 'not_paired', 'unfaithful_claims'}."""
 
     stage: Literal["pairing_gate"] = "pairing_gate"
@@ -328,8 +328,7 @@ def rejection_from_verdict(verdict: PairingVerdict) -> Rejection | None:
     """Map a ``PairingVerdict`` to a typed ``Rejection`` — the SINGLE fail-mapping
     point. Returns ``None`` when approved (paired AND faithful); else a typed
     ``Rejection`` whose ``reason`` distinguishes an unparseable-judge reject, a
-    mispairing, and an unfaithful-claim reject (3B2g writes the
-    ``apollo_rejected_problems`` row)."""
+    mispairing, and an unfaithful-claim reject."""
     if verdict.approved:
         return None
 

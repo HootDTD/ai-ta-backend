@@ -24,13 +24,13 @@ from apollo.handlers.intent import IntentVerdict
 from apollo.knowledge_graph.store import WriteEdgesResult
 from apollo.ontology import KGGraph
 from apollo.persistence.models import (
-    ApolloSession,
-    KGNegotiation,
-    Message,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
+from apollo.smart_questions import QuestionDecision
 from database.models import Base
 
 pytestmark = pytest.mark.unit
@@ -38,24 +38,26 @@ pytestmark = pytest.mark.unit
 
 @pytest_asyncio.fixture
 async def db_session_attempt():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
-        KGNegotiation.__table__,
+        TutoringMessage.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
-        sess = ApolloSession(
+        sess = TutoringSession(
             user_id=TEST_USER_ID,
             search_space_id=TEST_SPACE_ID,
             concept_id=1,
             status=SessionStatus.active.value,
             phase=SessionPhase.TEACHING.value,
-            current_problem_id="bernoulli_horizontal_pipe_find_p2",
+            current_problem_id=1,
             pending_intent=None,
         )
         s.add(sess)
@@ -63,8 +65,10 @@ async def db_session_attempt():
         await s.refresh(sess)
         attempt = ProblemAttempt(
             session_id=sess.id,
-            problem_id="bernoulli_horizontal_pipe_find_p2",
+            problem_id=1,
             difficulty="intro",
+            user_id=sess.user_id,
+            course_id=sess.course_id,
         )
         s.add(attempt)
         await s.commit()
@@ -86,12 +90,19 @@ def _patches(store):
     return [
         patch("apollo.handlers.chat.KGStore", return_value=store),
         patch("apollo.handlers.chat.parse_utterance"),
-        patch("apollo.handlers.chat.draft_reply", return_value="ok i think i follow"),
+        patch(
+            "apollo.handlers.chat.plan_next_question",
+            new=AsyncMock(
+                return_value=QuestionDecision(
+                    action="ask", question="ok i think i follow", target_node_id="eq.a"
+                )
+            ),
+        ),
         patch(
             "apollo.handlers.chat.classify_intent",
             return_value=IntentVerdict(intent="teaching", confidence=1.0, reason=""),
         ),
-        patch("apollo.handlers.chat.load_windowed_history", new=AsyncMock(return_value=(None, []))),
+        patch("apollo.handlers.chat._unified_questioning_enabled", return_value=True),
         patch(
             "apollo.handlers.chat._find_problem",
             new=AsyncMock(return_value=MagicMock(problem_text="find P2 in a horizontal pipe")),

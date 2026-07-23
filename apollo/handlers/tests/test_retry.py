@@ -18,22 +18,25 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
 from apollo.handlers.lifecycle import handle_retry
 from apollo.persistence.models import (
-    ApolloSession,
-    Message,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringMessage,
+    TutoringSession,
 )
 from database.models import Base
 
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         ProblemAttempt.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sc: Base.metadata.create_all(sc, tables=tables))
@@ -46,28 +49,31 @@ async def db():
 @pytest_asyncio.fixture
 async def graded_session(db: AsyncSession):
     """Session in REPORT phase whose current attempt was graded (post-Done)."""
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,
         status=SessionStatus.active.value,
         phase=SessionPhase.REPORT.value,
-        current_problem_id="p1",
+        current_problem_id=1,
     )
     db.add(sess)
     await db.flush()
     attempt = ProblemAttempt(
         session_id=sess.id,
-        problem_id="p1",
+        problem_id=1,
         difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
         result="graded",
         diagnostic_report={"narrative": "first grade"},
     )
     db.add(attempt)
     await db.flush()
     db.add(
-        Message(
+        TutoringMessage(
             session_id=sess.id,
+            course_id=sess.course_id,
             attempt_id=attempt.id,
             role="student",
             content="first-attempt teaching",
@@ -103,13 +109,13 @@ async def test_retry_after_grade_creates_fresh_attempt(graded_session):
     fresh = attempts[-1]
     assert fresh.id != old_attempt.id
     assert result["attempt_id"] == fresh.id
-    assert fresh.problem_id == "p1"
+    assert fresh.problem_id == 1
     assert fresh.difficulty == "intro"
     assert fresh.result is None
     assert fresh.diagnostic_report is None
 
     sess_after = (
-        await db.execute(select(ApolloSession).where(ApolloSession.id == sess.id))
+        await db.execute(select(TutoringSession).where(TutoringSession.id == sess.id))
     ).scalar_one()
     assert sess_after.phase == SessionPhase.TEACHING.value
 
@@ -127,7 +133,7 @@ async def test_retry_preserves_original_attempt_and_transcript(graded_session):
     assert old_after.diagnostic_report == {"narrative": "first grade"}
 
     old_msgs = (
-        (await db.execute(select(Message).where(Message.attempt_id == old_attempt.id)))
+        (await db.execute(select(TutoringMessage).where(TutoringMessage.attempt_id == old_attempt.id)))
         .scalars()
         .all()
     )
@@ -145,7 +151,7 @@ async def test_retry_preserves_original_attempt_and_transcript(graded_session):
         .first()
     )
     fresh_msgs = (
-        (await db.execute(select(Message).where(Message.attempt_id == fresh_id))).scalars().all()
+        (await db.execute(select(TutoringMessage).where(TutoringMessage.attempt_id == fresh_id))).scalars().all()
     )
     assert fresh_msgs == []
 
@@ -169,14 +175,14 @@ async def test_retry_mid_teaching_keeps_current_attempt(graded_session):
     )
     assert count == 1
     sess_after = (
-        await db.execute(select(ApolloSession).where(ApolloSession.id == sess.id))
+        await db.execute(select(TutoringSession).where(TutoringSession.id == sess.id))
     ).scalar_one()
     assert sess_after.phase == SessionPhase.TEACHING.value
 
 
 @pytest.mark.asyncio
 async def test_retry_without_current_problem_phase_flips_only(db: AsyncSession):
-    sess = ApolloSession(
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=TEST_SPACE_ID,
         concept_id=1,
@@ -198,6 +204,6 @@ async def test_retry_without_current_problem_phase_flips_only(db: AsyncSession):
     )
     assert count == 0
     sess_after = (
-        await db.execute(select(ApolloSession).where(ApolloSession.id == sess.id))
+        await db.execute(select(TutoringSession).where(TutoringSession.id == sess.id))
     ).scalar_one()
     assert sess_after.phase == SessionPhase.TEACHING.value

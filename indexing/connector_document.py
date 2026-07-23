@@ -26,7 +26,7 @@ class AITAConnectorDocument(BaseModel):
     unique_id: str  # SHA-256 of (source_pdf_path + search_space_id) or similar stable ID
     document_type: str = "EDUCATIONAL_FILE"
 
-    # Which class/course this document belongs to (SearchSpace.id)
+    # Which class/course this document belongs to (Course.id)
     search_space_id: int = Field(gt=0)
 
     # Educational material kind — drives retrieval store-bias weights

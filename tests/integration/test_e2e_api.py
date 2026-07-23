@@ -4,7 +4,6 @@ Covers:
 - Health & classes
 - /ask input validation and graduated relevance
 - /ask/stream validation
-- Knowledge endpoints
 - Teacher endpoints (weeks, current week, retrieval weights)
 - Invite links CRUD
 
@@ -94,6 +93,33 @@ def _wire_ask_pipeline(monkeypatch, server: Any, *, answer: str = "Test answer")
         lambda *args, **kwargs: SimpleNamespace(text=answer, citations=[]),
     )
     monkeypatch.setattr(server, "_append_assistant_turn_and_refresh", lambda **kwargs: None)
+
+
+def test_unconsumed_routes_are_unregistered_and_internal_routes_remain(
+    client_with_server: tuple,
+) -> None:
+    _, server = client_with_server
+    registered = {
+        (method, route.path)
+        for route in server.app.routes
+        for method in getattr(route, "methods", set())
+    }
+
+    removed = {
+        ("GET", "/knowledge/subjects"),
+        ("GET", "/knowledge/stores"),
+        ("POST", "/knowledge/stores"),
+        ("POST", "/knowledge/materials"),
+        ("GET", "/reports/ai-use"),
+    }
+    kept_internal = {
+        ("GET", "/healthz"),
+        ("GET", "/apollo/teacher/classroom/{search_space_id}/heatmap"),
+        ("GET", "/apollo/teacher/classroom/{search_space_id}/struggles"),
+    }
+
+    assert removed.isdisjoint(registered)
+    assert kept_internal <= registered
 
 
 # ---------------------------------------------------------------------------
@@ -520,155 +546,6 @@ class TestAskStreamValidation:
 
 
 # ---------------------------------------------------------------------------
-# 5. Knowledge Endpoints
-# ---------------------------------------------------------------------------
-
-class TestKnowledgeEndpoints:
-    def test_list_subjects_returns_empty_list_when_none_registered(
-        self, client_with_server: tuple, monkeypatch
-    ) -> None:
-        client, server = client_with_server
-
-        from knowledge.manager import KnowledgeManager
-
-        monkeypatch.setattr(KnowledgeManager, "list_subjects", lambda self: [])
-
-        resp = client.get("/knowledge/subjects")
-        assert resp.status_code == 200
-        assert resp.json() == []
-
-    def test_list_subjects_returns_registered_subjects(
-        self, client_with_server: tuple, monkeypatch
-    ) -> None:
-        client, server = client_with_server
-
-        from knowledge.manager import KnowledgeManager
-
-        fake_subjects = [
-            {
-                "subject": "Fluid Mechanics",
-                "slug": "fluid-mechanics",
-                "materials": [],
-            }
-        ]
-        monkeypatch.setattr(KnowledgeManager, "list_subjects", lambda self: fake_subjects)
-
-        resp = client.get("/knowledge/subjects")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert len(data) == 1
-        assert data[0]["subject"] == "Fluid Mechanics"
-
-    def test_list_stores_missing_subject_param_returns_400(
-        self, client_with_server: tuple
-    ) -> None:
-        client, _ = client_with_server
-        resp = client.get("/knowledge/stores")
-        assert resp.status_code == 400
-        assert "subject" in resp.json()["detail"].lower()
-
-    def test_list_stores_empty_subject_param_returns_400(
-        self, client_with_server: tuple
-    ) -> None:
-        client, _ = client_with_server
-        resp = client.get("/knowledge/stores", params={"subject": "   "})
-        assert resp.status_code == 400
-
-    def test_list_stores_returns_stores_for_valid_subject(
-        self, client_with_server: tuple, monkeypatch
-    ) -> None:
-        client, server = client_with_server
-
-        from knowledge.manager import KnowledgeManager
-
-        fake_stores = [
-            {
-                "id": "store-1",
-                "kind": "textbook",
-                "title": "Fluid Mechanics Textbook",
-                "index_path": "/tmp/index",
-                "priority": 10,
-                "created_at": "2025-01-01T00:00:00Z",
-            }
-        ]
-        monkeypatch.setattr(KnowledgeManager, "list_stores", lambda self, subject: fake_stores)
-
-        resp = client.get("/knowledge/stores", params={"subject": "Fluid Mechanics"})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert len(data) == 1
-        assert data[0]["kind"] == "textbook"
-        assert data[0]["subject"] == "Fluid Mechanics"
-
-    def test_register_store_invalid_payload_returns_422(
-        self, client_with_server: tuple
-    ) -> None:
-        client, _ = client_with_server
-        # Missing required fields (subject, kind, title, index_path)
-        resp = client.post("/knowledge/stores", json={"subject": "Fluid Mechanics"})
-        assert resp.status_code == 422
-
-    def test_register_store_nonexistent_index_path_returns_400(
-        self, client_with_server: tuple, monkeypatch
-    ) -> None:
-        client, server = client_with_server
-
-        from knowledge.manager import KnowledgeManager
-
-        def _raise(self, subject, *, kind, title, index_path, priority):
-            raise FileNotFoundError("index directory not found")
-
-        monkeypatch.setattr(KnowledgeManager, "register_store", _raise)
-
-        resp = client.post(
-            "/knowledge/stores",
-            json={
-                "subject": "Fluid Mechanics",
-                "kind": "textbook",
-                "title": "FM Textbook",
-                "index_path": "/does/not/exist",
-            },
-        )
-        assert resp.status_code == 400
-
-    def test_register_store_success(
-        self, client_with_server: tuple, monkeypatch
-    ) -> None:
-        client, server = client_with_server
-
-        from knowledge.manager import KnowledgeManager
-
-        fake_entry: Dict[str, Any] = {
-            "id": "store-abc",
-            "subject": "Fluid Mechanics",
-            "kind": "textbook",
-            "title": "FM Textbook",
-            "index_path": "/tmp/index",
-            "priority": 5,
-            "created_at": "2025-01-01T00:00:00Z",
-        }
-        monkeypatch.setattr(
-            KnowledgeManager,
-            "register_store",
-            lambda self, subject, *, kind, title, index_path, priority: fake_entry,
-        )
-
-        resp = client.post(
-            "/knowledge/stores",
-            json={
-                "subject": "Fluid Mechanics",
-                "kind": "textbook",
-                "title": "FM Textbook",
-                "index_path": "/tmp/index",
-            },
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["id"] == "store-abc"
-        assert data["kind"] == "textbook"
-
-
-# ---------------------------------------------------------------------------
 # 6. Teacher Endpoints
 # ---------------------------------------------------------------------------
 
@@ -1003,7 +880,7 @@ def _make_fake_link(
     return SimpleNamespace(
         id=id,
         code=code,
-        search_space_id=search_space_id,
+        course_id=search_space_id,
         role=role,
         is_active=is_active,
         max_uses=max_uses,

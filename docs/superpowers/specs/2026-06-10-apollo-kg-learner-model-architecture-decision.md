@@ -701,7 +701,7 @@ bernoulli problems, or the day-one fixtures fail there.
   constrained task than open coverage judgment), but the claim stays honest
   only if measured.
 
-### 6.3 Components (`apollo/graph_compare/`)
+### 6.3 Components (`apollo/retired graph comparator/`)
 
 | Component | Job |
 |---|---|
@@ -1520,7 +1520,7 @@ grade. (Rev 1's "no grading redesign" was removed by decision §1.6.)
      course-local dedup → automated eight-gate promotion lint → Tier-2
      teachable + `:Canon` rebuild. Fully automatic (no human gate); ships
      behind the §6.7 shadow gate with a per-problem anomaly quarantine.
-4. **Graph-simulation grading core** — `apollo/graph_compare/`: validator,
+4. **Graph-simulation grading core** — `apollo/retired graph comparator/`: validator,
    canonical graph builder, coverage (max over paths) + soundness
    (contradictions-only) simulations, sub-scores, near-bisimilarity,
    transcript auditor, abstention gates, comparison runs + findings tables;

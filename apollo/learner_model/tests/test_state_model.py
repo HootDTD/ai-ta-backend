@@ -3,8 +3,9 @@
 Pure imports — no DB, no LLM, no Neo4j, no network. Mirrors
 ``apollo/grading/tests/test_event_model.py`` (the ``FrozenInstanceError``
 immutability convention) and ``test_persistence_specs.py`` (1:1 column-set
-pins). These specs map onto ``apollo_learner_state`` / ``apollo_mastery_events``
-(``apollo/persistence/models.py:397-476``); WU-5A2 fills the identity columns.
+pins). These specs map onto ``app.learner_state`` / ``app.mastery_events``
+(``apollo/persistence/models.py:785-899``, DB-13); WU-5A2 fills the identity
+columns.
 """
 
 from __future__ import annotations
@@ -53,15 +54,16 @@ def test_mastery_event_row_spec_entity_id_defaults_none():
     assert spec.search_space_id is None
     assert spec.entity_id is None
     assert spec.attempt_id is None
-    assert spec.negotiation_move is None  # NULL v1
     assert spec.evidence_node_ids == ()
     with pytest.raises(dataclasses.FrozenInstanceError):
         spec.entity_id = 5  # type: ignore[misc]
 
 
 def test_mastery_event_row_spec_full_field_set():
-    """1:1 onto ``apollo_mastery_events`` non-id columns (models.py:427-476).
-    A swapped/missing field is caught here."""
+    """1:1 onto ``app.mastery_events`` non-id columns (models.py:837-899,
+    DB-13). A swapped/missing field is caught here. ``negotiation_move`` is
+    present (the table keeps this nullable column post-A6); ``misconception_code``
+    is NOT (DB-13 dropped that column)."""
     field_names = {f.name for f in dataclasses.fields(MasteryEventRowSpec)}
     assert field_names == {
         "user_id",
@@ -70,7 +72,6 @@ def test_mastery_event_row_spec_full_field_set():
         "attempt_id",
         "event_kind",
         "score",
-        "misconception_code",
         "parser_confidence",
         "grader_confidence",
         "negotiation_move",
@@ -84,24 +85,24 @@ def test_mastery_event_row_spec_full_field_set():
 
 
 def test_learner_state_row_spec_fields():
-    """1:1 onto ``apollo_learner_state`` belief columns (models.py:397-424).
-    ``last_evidence_at`` is DELIBERATELY omitted — WU-5A2 sets it to ``done_ts``
-    at persist time. ``evidence_count`` defaults to 1 (this event is evidence #1
-    when the row is first created)."""
+    """1:1 onto ``app.learner_state`` belief columns (models.py:785-823,
+    DB-13). ``last_evidence_at`` is DELIBERATELY omitted — WU-5A2 sets it to
+    ``done_ts`` at persist time. ``misconception_code`` is NOT a field (DB-13
+    dropped that column). ``evidence_count`` defaults to 1 (this event is
+    evidence #1 when the row is first created)."""
     field_names = {f.name for f in dataclasses.fields(LearnerStateRowSpec)}
     assert field_names == {
         "belief",
         "mastery",
         "confidence",
-        "misconception_code",
         "evidence_count",
     }
     assert "last_evidence_at" not in field_names
+    assert "misconception_code" not in field_names
     spec = LearnerStateRowSpec(
         belief=(0.10, 0.50, 0.40),
         mastery=0.65,
         confidence=0.30,
-        misconception_code=None,
     )
     assert spec.evidence_count == 1
     with pytest.raises(dataclasses.FrozenInstanceError):

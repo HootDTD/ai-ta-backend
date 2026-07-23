@@ -1,7 +1,7 @@
 """WU-4C1 — build_turn_order unit tests (the two reads mocked).
 
 ``build_turn_order`` maps each KG node_id -> a monotone turn position sourced
-from the node's Neo4j ``created_at`` (joined to ``apollo_messages.turn_index``
+from the node's Neo4j ``created_at`` (joined to tutoring-message ``turn_index``
 where possible). A node with no ``created_at`` -> absent key (events.py tolerates
 via ``_SENTINEL_TURN``). These tests mock ``KGStore.read_node_created_at`` (the
 Neo4j read) and the Postgres ``Message`` read so the grouping/join logic is

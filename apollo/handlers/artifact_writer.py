@@ -1,115 +1,54 @@
-"""Campaign-plan Task A3 — the paired canonical-artifact writer in the
-Done-click path.
-
-``write_artifacts`` is telemetry, not grading: it runs AFTER the OLD grade
-(and, when the shadow chain ran, the shadow run-txn) are already durable, and
-it owns its own ``try/except Exception`` — an artifact-write failure is
-logged (``artifact_write_failed``) and swallowed, NEVER raised into the Done
-response. This is a SOFTER posture than the shadow chain's NO-FALLBACK
-contract (``run_graph_simulation``): the artifact is a record of the grade,
-not the grade itself.
-
-Row shape: at most two rows per attempt, respecting the
-``uq_grading_artifact_attempt_role`` UNIQUE(attempt_id, role):
-
-- ``role="canonical"``: the grade the student was actually served
-  (``grader_used=served``).
-- ``role="pair"``: the OTHER grader's artifact on the same input, written
-  only when both grades exist (i.e. the shadow chain ran and produced a
-  result). When ``shadow is None`` (shadow flag off, or a shadow abstention
-  routed straight to LLM with no graph result at all) only the canonical row
-  is written.
-"""
+"""Persist the canonical transcript/topic grading artifact for a Done click."""
 
 from __future__ import annotations
 
 import logging
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.clarification.candidate_assembly import misconception_bank_applicable
-from apollo.emergent.config import emergent_misconceptions_enabled
-from apollo.emergent.store import record_observations_from_canonical
-from apollo.grading.artifact_build import (
-    GRADER_USED_GRAPH,
-    GRADER_USED_LLM_FALLBACK,
-    build_graph_artifact,
-    build_llm_artifact,
-)
-from apollo.grading.composite import load_weights
-from apollo.handlers.done_grading import ShadowGradeResult
-from apollo.overseer.misconception_detector.types import MergeOutcome
+from apollo.grading.artifact_build import build_llm_artifact
 from apollo.overseer.topic_score import TopicScoreResult
-from apollo.persistence.models import ApolloSession, Clarification, GradingArtifact, ProblemAttempt
+from apollo.persistence.models import GradingRun, ProblemAttempt, TutoringSession
 
 _LOG = logging.getLogger(__name__)
 
-_ROLE_CANONICAL = "canonical"
-_ROLE_PAIR = "pair"
-
-
-async def _load_clarification_trace(db: AsyncSession, *, attempt_id: int) -> list[dict]:
-    """The spec §1 clarification-trace block: one row per probed idea for this
-    attempt, question + answer + credit outcome. ``credit`` is ``"granted"``
-    only for a ``confirmed`` verdict, ``"denied"`` for ``refuted``/``vague``,
-    and ``None`` while still ``asked_waiting`` (never resolved before Done)."""
-    rows = (
-        (
-            await db.execute(
-                select(Clarification)
-                .where(Clarification.attempt_id == attempt_id)
-                .order_by(Clarification.asked_turn)
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-    trace: list[dict] = []
-    for row in rows:
-        if row.state == "confirmed":
-            credit = "granted"
-        elif row.state in ("refuted", "vague"):
-            credit = "denied"
-        else:
-            credit = None
-        trace.append(
-            {
-                "node_id": row.node_id,
-                "candidate_key": row.candidate_key,
-                "probe_question": row.probe_question,
-                "original_statement": row.original_statement,
-                "clarification_text": row.clarification_text,
-                "state": row.state,
-                "credit": credit,
-            }
-        )
-    return trace
-
 
 def _artifact_row(
-    *,
-    attempt: ProblemAttempt,
-    sess: ApolloSession,
-    role: str,
-    payload: dict,
-) -> GradingArtifact:
-    return GradingArtifact(
+    *, attempt: ProblemAttempt, sess: TutoringSession, payload: dict
+) -> GradingRun:
+    """Map the LLM-fallback builder's payload dict
+    (``apollo.grading.artifact_build.build_llm_artifact``) onto
+    ``internal.grading_runs`` columns (DB-14/A7 artifacts-only merge — see
+    ``GradingRun``'s docstring for the full column mapping). ``versions``/
+    ``scores``/``abstention`` are stored whole in their ``*_details`` JSONB
+    columns AND have their query-friendly scalars lifted into typed columns;
+    ``misconceptions``/``clarification_trace`` have no dedicated columns in
+    the target DDL, so they nest under ``grader_payload``."""
+    versions = payload["versions"]
+    scores = payload["scores"]
+    abstention = payload["abstention"]
+    return GradingRun(
         attempt_id=int(attempt.id),
-        role=role,
+        role="canonical",
         grader_used=payload["grader_used"],
+        grader_version=versions["grader"],
+        reference_graph_hash=versions.get("reference_graph_hash"),
         user_id=str(sess.user_id),
         search_space_id=int(sess.search_space_id),
         concept_id=sess.concept_id,
-        problem_id=str(attempt.problem_id),
-        versions=payload["versions"],
+        problem_id=int(attempt.problem_id),
+        version_details=versions,
         node_ledger=payload["node_ledger"],
         edge_ledger=payload["edge_ledger"],
-        misconceptions=payload["misconceptions"],
-        clarification_trace=payload["clarification_trace"],
-        scores=payload["scores"],
-        abstention=payload["abstention"],
+        score_details=scores,
+        composite_score=scores.get("composite"),
+        node_coverage_score=scores.get("node_coverage"),
+        abstained=bool(abstention.get("abstained") or False),
+        abstention_details=abstention,
+        grader_payload={
+            "misconceptions": payload["misconceptions"],
+            "clarification_trace": payload["clarification_trace"],
+        },
         grading_latency_ms=payload["grading_latency_ms"],
     )
 
@@ -118,160 +57,29 @@ async def write_artifacts(
     db: AsyncSession,
     *,
     attempt: ProblemAttempt,
-    sess: ApolloSession,
-    shadow: ShadowGradeResult | None,
+    sess: TutoringSession,
     coverage: dict,
     rubric: dict,
-    served: str,
-    graph_failure: str | None,
     latency_ms: int | None,
-    detection_outcome: MergeOutcome | None = None,
     topic_score: TopicScoreResult | None = None,
 ) -> dict | None:
-    """Write the canonical (+ paired, when both grades exist) artifact rows for
-    this Done-click. ``served`` is the ``grader_used`` value of the grade
-    actually shown to the student (``"graph"`` or ``"llm_fallback"``) — Task
-    A4 is the only caller that can pass ``"graph"``; this build always passes
-    ``"llm_fallback"``.
-
-    T12 (misconception detector wiring): ``detection_outcome`` is a NEW
-    OPT-IN keyword — ``None`` (the default) leaves every existing caller
-    byte-identical (design invariant #1). When provided it is threaded
-    straight into ``build_llm_artifact`` (§6.3), which is the only builder
-    that currently applies it — ``build_graph_artifact`` keeps its own real
-    graph-derived penalty math untouched (the plan's §6.3 note: accept the
-    param for future parity, do not touch the graph builder's math). Because
-    the emergent-store call below (§6.5) already feeds off whichever payload
-    ends up ``canonical``, a non-empty outcome landing in the LLM payload's
-    ``misconceptions[]`` is picked up by the EXISTING
-    ``record_observations_from_canonical`` call with no further change here.
-
-    Returns the CANONICAL artifact payload dict (the same shape persisted to
-    the ``canonical`` row) on success, so the caller can hand it straight to
-    ``apollo.projections.scorecard.render_scorecard`` (Task B1) without a
-    round-trip read of what was just written. Returns ``None`` when the write
-    failed (own failure domain below) — the caller renders no scorecard in
-    that case rather than templating over a payload that never made it to
-    disk.
-
-    2026-07-10 topic-score spec §2/§3: ``topic_score`` is a NEW OPT-IN
-    keyword, threaded UNCONDITIONALLY (flag-independent — the point is
-    telemetry ahead of any serving flip) into BOTH ``build_graph_artifact``
-    and ``build_llm_artifact``, so whichever payload becomes ``canonical``
-    (or ``pair``) carries the same ``scores.topic_score`` block. ``None``
-    (the default, or whenever ``done.py``'s own soft-fail wrapper returned
-    ``None``) leaves both builders' ``scores`` byte-identical to today.
-
-    Own failure domain: ANY exception (payload build, DB write) is logged and
-    swallowed. The artifact is telemetry — it must never cost a student their
-    already-committed grade."""
+    """Write one canonical artifact without affecting the served grade on failure."""
     try:
-        weights = load_weights()
-        clarification_trace = await _load_clarification_trace(db, attempt_id=int(attempt.id))
-
-        graph_payload: dict | None = None
-        if shadow is not None:
-            graph_payload = build_graph_artifact(
-                shadow=shadow,
-                weights=weights,
-                clarification_trace=clarification_trace,
-                latency_ms=latency_ms,
-                topic_score=topic_score,
-            )
-
-        # Lane B3a/D1 — the empty-bank fact for the LLM artifact's
-        # `misconceptions_status` marker. When the shadow chain ran we already
-        # have it (`shadow.grade.soundness_applicable`), so reuse it — no extra
-        # query. On the shadow-off / LLM-served path (the default build) the
-        # fact was never computed, so read it from the SAME source the grading
-        # path uses (`load_for_concept`, via `misconception_bank_applicable`).
-        if shadow is not None:
-            misconceptions_bank_empty = not shadow.grade.soundness_applicable
-        else:
-            misconceptions_bank_empty = not await misconception_bank_applicable(
-                db, concept_id=sess.concept_id
-            )
-
-        llm_payload = build_llm_artifact(
+        payload = build_llm_artifact(
             coverage=coverage,
             rubric=rubric,
-            weights=weights,
-            graph_failure=graph_failure,
             latency_ms=latency_ms,
-            clarification_trace=clarification_trace,
-            misconceptions_bank_empty=misconceptions_bank_empty,
-            detection_outcome=detection_outcome,
+            clarification_trace=[],
             topic_score=topic_score,
         )
-
-        payloads_by_grader = {
-            GRADER_USED_GRAPH: graph_payload,
-            GRADER_USED_LLM_FALLBACK: llm_payload,
-        }
-
-        canonical_payload = payloads_by_grader.get(served)
-        if canonical_payload is None:
-            # `served` names a grade that was never computed (defensive —
-            # should not happen: A4 only passes "graph" when a shadow result
-            # exists). Fall back to the LLM payload so a row still lands.
-            _LOG.warning(
-                "artifact_writer_served_grade_missing served=%s attempt_id=%s",
-                served,
-                int(attempt.id),
-            )
-            served = GRADER_USED_LLM_FALLBACK
-            canonical_payload = llm_payload
-
-        rows = [
-            _artifact_row(
-                attempt=attempt, sess=sess, role=_ROLE_CANONICAL, payload=canonical_payload
-            )
-        ]
-        pair_grader = GRADER_USED_LLM_FALLBACK if served == GRADER_USED_GRAPH else GRADER_USED_GRAPH
-        pair_payload = payloads_by_grader.get(pair_grader)
-        if pair_payload is not None:
-            rows.append(
-                _artifact_row(attempt=attempt, sess=sess, role=_ROLE_PAIR, payload=pair_payload)
-            )
-
-        db.add_all(rows)
+        db.add(_artifact_row(attempt=attempt, sess=sess, payload=payload))
         await db.flush()
         await db.commit()
-
-        # Emergent misconception store (memo 2026-07-05, increment 1). DORMANT
-        # unless APOLLO_EMERGENT_MISCONCEPTIONS is ON: flag OFF, this branch is
-        # never entered, zero ledger rows are written, and the canonical grade is
-        # byte-identical to the no-store behavior. Only the CANONICAL payload
-        # feeds the store (role=canonical only, OQ4). Own failure domain — a
-        # ledger-write failure is logged and swallowed after its own rollback so
-        # the already-committed artifact is never affected.
-        if emergent_misconceptions_enabled():
-            try:
-                await record_observations_from_canonical(
-                    db,
-                    search_space_id=int(sess.search_space_id),
-                    concept_id=sess.concept_id,
-                    user_id=str(sess.user_id),
-                    attempt_id=int(attempt.id),
-                    canonical_payload=canonical_payload,
-                )
-                await db.commit()
-            except Exception:
-                _LOG.exception("emergent_observation_write_failed attempt_id=%s", int(attempt.id))
-                try:
-                    await db.rollback()
-                except Exception:  # pragma: no cover - defensive
-                    _LOG.exception(
-                        "emergent_observation_rollback_failed attempt_id=%s", int(attempt.id)
-                    )
-        return canonical_payload
+        return payload
     except Exception:
         _LOG.exception("artifact_write_failed attempt_id=%s", int(attempt.id))
-        # Leave the session usable for any caller code that runs after this
-        # (e.g. the WU-5A2 Layer-3 persist, when both flags are on) — a failed
-        # flush/commit here must not poison the shared AsyncSession.
         try:
             await db.rollback()
-        except Exception:  # pragma: no cover - defensive, rollback itself failing
+        except Exception:  # pragma: no cover - defensive
             _LOG.exception("artifact_write_rollback_failed attempt_id=%s", int(attempt.id))
         return None

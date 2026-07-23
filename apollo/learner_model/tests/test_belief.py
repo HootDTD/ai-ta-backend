@@ -17,8 +17,11 @@ import math
 
 import pytest
 
-from apollo.grading.event_model import LearnerEvent, LearnerEventKind
-from apollo.grading.events import AMBIGUOUS_ORDER_SCORE
+from apollo.grading.event_model import (
+    AMBIGUOUS_ORDER_SCORE,
+    LearnerEvent,
+    LearnerEventKind,
+)
 from apollo.learner_model.belief import (
     COLD_START_PRIOR,
     CORRECTED_LIKELIHOOD,

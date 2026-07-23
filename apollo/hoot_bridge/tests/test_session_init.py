@@ -1,4 +1,5 @@
 import pytest as _pytest_module
+
 _pytest_module.skip(
     "Legacy V2 test — needs rewrite for V3 KGGraph + Neo4j store + new parser/coverage signatures. "
     "Tracked in claude_v3_checklist.md item 1; will be re-enabled in test-rewrite phase.",
@@ -13,21 +14,33 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from apollo.errors import NoMatchingConceptError
 from apollo.hoot_bridge.session_init import init_session_from_hoot
-from apollo.persistence.models import ApolloSession, KGEntry, Message, ProblemAttempt, SessionPhase, SessionStatus
+from apollo.persistence.models import (
+    TutoringSession,
+    KGEntry,
+    TutoringMessage,
+    ProblemAttempt,
+    SessionPhase,
+    SessionStatus,
+)
 from database.models import Base
 
 
 @pytest_asyncio.fixture
 async def db_session():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
     apollo_tables = [
-        ApolloSession.__table__,
+        TutoringSession.__table__,
         KGEntry.__table__,
-        Message.__table__,
+        TutoringMessage.__table__,
         ProblemAttempt.__table__,
     ]
     async with engine.begin() as conn:
-        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables))
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=apollo_tables)
+        )
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with Session() as s:
         yield s
@@ -47,11 +60,16 @@ async def test_init_session_creates_session_and_first_problem(mock_infer, db_ses
     )
 
     assert result["session_id"] > 0
-    assert result["problem"]["concept_id"] in ("bernoulli_principle", "continuity_equation", "volumetric_flow_rate")
+    assert result["problem"]["concept_id"] in (
+        "bernoulli_principle",
+        "continuity_equation",
+        "volumetric_flow_rate",
+    )
     assert result["problem"]["target_unknown"]
 
     from sqlalchemy import select
-    sess = (await db_session.execute(select(ApolloSession))).scalar_one()
+
+    sess = (await db_session.execute(select(TutoringSession))).scalar_one()
     assert sess.status == SessionStatus.active.value
     assert sess.phase == SessionPhase.TEACHING.value
     assert sess.concept_cluster_id == "fluid_mechanics"
@@ -82,9 +100,10 @@ async def test_init_session_ends_stale_active_session_for_same_student(mock_infe
     assert second["session_id"] != first["session_id"]
 
     from sqlalchemy import select
+
     sessions = (
-        await db_session.execute(select(ApolloSession).order_by(ApolloSession.id))
-    ).scalars().all()
+        (await db_session.execute(select(TutoringSession).order_by(TutoringSession.id))).scalars().all()
+    )
     assert len(sessions) == 2
     assert sessions[0].id == first["session_id"]
     assert sessions[0].status == SessionStatus.ended.value
@@ -116,6 +135,7 @@ async def test_init_session_honors_passed_difficulty(mock_infer, db_session):
         difficulty="standard",
     )
     from sqlalchemy import select
+
     attempt = (
         await db_session.execute(
             select(ProblemAttempt).where(ProblemAttempt.session_id == result["session_id"])
@@ -149,6 +169,7 @@ async def test_init_session_returns_attempt_id(mock_infer, db_session):
     )
     assert "attempt_id" in result
     from sqlalchemy import select
+
     attempt = (
         await db_session.execute(
             select(ProblemAttempt).where(ProblemAttempt.session_id == result["session_id"])

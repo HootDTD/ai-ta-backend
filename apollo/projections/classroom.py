@@ -2,9 +2,9 @@
 2026-07-01 section 2, "classroom (heatmap + struggle signals)").
 
 Both functions are PURE READ-SIDE aggregation over already-durable rows
-(``apollo_learner_state`` / ``apollo_grading_artifacts``) -- no new grading,
-no new inference, no LLM/Neo4j calls. They back the teacher-facing classroom
-endpoints registered in ``apollo/api.py``.
+(``app.learner_state`` / ``internal.grading_runs``, DB-14/A7 artifacts-only
+merge) -- no new grading, no new inference, no LLM/Neo4j calls. They back the
+teacher-facing classroom endpoints registered in ``apollo/api.py``.
 """
 
 from __future__ import annotations
@@ -62,9 +62,9 @@ async def mastery_heatmap(db: AsyncSession, *, search_space_id: int) -> list[dic
                     e.concept_id AS concept_id,
                     avg(ls.mastery) AS mastery,
                     avg(ls.confidence) AS confidence
-                FROM apollo_learner_state ls
-                JOIN apollo_kg_entities e ON e.id = ls.entity_id
-                WHERE ls.search_space_id = :search_space_id
+                FROM app.learner_state ls
+                JOIN app.learner_entities e ON e.id = ls.entity_id
+                WHERE ls.course_id = :search_space_id
                 GROUP BY ls.user_id, e.concept_id
                 ORDER BY ls.user_id, e.concept_id
                 """
@@ -94,20 +94,22 @@ async def struggle_signals(
     window_days: int = DEFAULT_WINDOW_DAYS,
 ) -> dict[str, Any]:
     """Windowed class-level struggle signals (spec §2) over
-    ``apollo_grading_artifacts`` rows for a course: abstention count,
+    ``internal.grading_runs`` rows for a course: abstention count,
     LLM-fallback count, the reference nodes with the lowest coverage, and the
     most frequently asserted misconceptions. Pure aggregation via
-    ``jsonb_array_elements`` lateral expansion over
-    ``node_ledger``/``misconceptions`` -- no new inference.
+    ``jsonb_array_elements`` lateral expansion over ``node_ledger`` /
+    ``grader_payload -> 'misconceptions'`` -- no new inference.
 
     ``abstention_count`` and ``fallback_count`` read different row shapes
     (see ``apollo.handlers.artifact_writer.write_artifacts`` /
     ``apollo.grading.artifact_build.build_llm_artifact``/``build_graph_artifact``):
 
     - ``build_llm_artifact`` hardcodes ``abstention.abstained = None`` --
-      abstention is a GRAPH-grader-only concept. An abstained shadow grade
-      always falls back to LLM for the served (``role='canonical'``) grade,
-      so ``abstained = true`` only ever lands on the GRAPH artifact row
+      abstention is a GRAPH-grader-only concept -- which
+      ``artifact_writer._artifact_row`` lifts into the typed, NOT NULL
+      ``abstained`` column as ``false``. An abstained shadow grade always
+      falls back to LLM for the served (``role='canonical'``) grade, so
+      ``abstained = true`` only ever lands on the GRAPH artifact row
       (``grader_used = 'graph'``), which is ``role='pair'`` whenever the
       shadow abstained (the canonical row is the LLM fallback in that case).
       ``abstention_count`` therefore counts by ``grader_used = 'graph'``
@@ -125,10 +127,11 @@ async def struggle_signals(
 
     Neither signal is scoped to a single ``role`` value up front; each
     ``FILTER`` clause states its own row shape. Leverages
-    ``ix_grading_artifacts_space_concept_time``
-    ``(search_space_id, concept_id, created_at)`` for the windowed scan
-    (``concept_id`` is left unconstrained -- the index's equality prefix on
-    ``search_space_id`` is still used).
+    ``grading_runs__course_user__idx`` ``(course_id, user_id)`` for the
+    ``course_id`` equality prefix -- the target DDL has no composite
+    ``(course_id, concept_id, created_at)`` index (DB-14 retarget: the old
+    ``ix_grading_artifacts_space_concept_time`` shape is gone), so the
+    ``created_at`` window filter is not itself index-backed.
     """
     window_start = datetime.now(UTC) - timedelta(days=window_days)
     params: dict[str, Any] = {"search_space_id": search_space_id, "window_start": window_start}
@@ -141,21 +144,21 @@ async def struggle_signals(
                 SELECT
                     count(*) FILTER (
                         WHERE a.grader_used = 'graph'
-                          AND (a.abstention ->> 'abstained') = 'true'
+                          AND a.abstained
                     ) AS abstention_count,
                     count(*) FILTER (
                         WHERE a.role = 'canonical'
                           AND a.grader_used = 'llm_fallback'
                           AND EXISTS (
                               SELECT 1
-                              FROM apollo_grading_artifacts p
+                              FROM internal.grading_runs p
                               WHERE p.attempt_id = a.attempt_id
                                 AND p.role = 'pair'
                                 AND p.grader_used = 'graph'
                           )
                     ) AS fallback_count
-                FROM apollo_grading_artifacts a
-                WHERE a.search_space_id = :search_space_id
+                FROM internal.grading_runs a
+                WHERE a.course_id = :search_space_id
                   AND a.created_at >= :window_start
                 """
                 ),
@@ -177,9 +180,9 @@ async def struggle_signals(
                         CASE WHEN node ->> 'status' = 'credited' THEN 1.0 ELSE 0.0 END
                     ) AS mean_coverage,
                     count(*) AS n
-                FROM apollo_grading_artifacts a,
+                FROM internal.grading_runs a,
                      LATERAL jsonb_array_elements(a.node_ledger) AS node
-                WHERE a.search_space_id = :search_space_id
+                WHERE a.course_id = :search_space_id
                   AND a.role = 'canonical'
                   AND a.created_at >= :window_start
                   AND node ->> 'canonical_key' IS NOT NULL
@@ -214,9 +217,9 @@ async def struggle_signals(
                 SELECT
                     misc ->> 'canonical_key' AS key,
                     count(*) AS n
-                FROM apollo_grading_artifacts a,
-                     LATERAL jsonb_array_elements(a.misconceptions) AS misc
-                WHERE a.search_space_id = :search_space_id
+                FROM internal.grading_runs a,
+                     LATERAL jsonb_array_elements(a.grader_payload -> 'misconceptions') AS misc
+                WHERE a.course_id = :search_space_id
                   AND a.role = 'canonical'
                   AND a.created_at >= :window_start
                   AND misc ->> 'canonical_key' IS NOT NULL

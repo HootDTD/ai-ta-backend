@@ -246,20 +246,22 @@ def test_event_to_row_specs_maps_distinct_fields():
     assert mastery_spec.score == 0.8
     assert mastery_spec.reference_step_id == "ref.7"
     assert mastery_spec.evidence_node_ids == ("n1", "n2")
-    # Update-sourced fields (belief / mastery / parser / grader / dt / misc).
+    # Update-sourced fields (belief / mastery / parser / grader / dt).
     assert mastery_spec.prior_belief == (0.20, 0.60, 0.20)
     assert mastery_spec.posterior_belief == (0.11, 0.52, 0.37)
     assert mastery_spec.mastery_after == 0.63
     assert mastery_spec.parser_confidence == 0.91
     assert mastery_spec.grader_confidence == 0.83
     assert mastery_spec.dt_days_since_last == 5.0
-    assert mastery_spec.misconception_code == "misc.code"
-    assert mastery_spec.negotiation_move is None  # NULL v1
+    # DB-13: no misconception_code field on the row specs; negotiation_move is
+    # always None (WU-5A1 never negotiates; the table keeps the column live).
+    assert mastery_spec.negotiation_move is None
+    assert not hasattr(mastery_spec, "misconception_code")
     # LearnerStateRowSpec.
     assert state_spec.belief == (0.11, 0.52, 0.37)
     assert state_spec.mastery == 0.63
     assert state_spec.confidence == 0.41
-    assert state_spec.misconception_code == "misc.code"
+    assert not hasattr(state_spec, "misconception_code")
     assert state_spec.evidence_count == 1
     # Both frozen.
     with pytest.raises(dataclasses.FrozenInstanceError):

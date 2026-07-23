@@ -163,7 +163,7 @@ async def bootstrap_baseline(dsn: str) -> None:
     """Create the pgvector extension + the full current SQLAlchemy schema.
 
     ``database/migrations/`` only covers 004-onward: the base tables
-    (``aita_search_spaces``, ``aita_documents``, ...) have never had a numbered
+    (``app.courses``, ``app.documents``, ...) have never had a numbered
     migration — production/CI bootstrap them via ``Base.metadata.create_all``
     (see ``tests/conftest.py``'s ``_pg_url`` fixture) and every migration from
     004 on assumes that baseline already exists. Every migration file uses

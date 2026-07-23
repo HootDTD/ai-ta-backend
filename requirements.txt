@@ -1,4 +1,5 @@
-fastapi
+fastapi==0.135.3   # pinned pair: fastapi 0.139+/starlette 1.3+ register included routers by reference (_IncludedRouter), changing app.routes enumeration
+starlette==1.0.0   # keep in lockstep with the fastapi pin above
 python-multipart
 pymupdf
 uvicorn[standard]
@@ -20,13 +21,3 @@ aiosqlite
 pytest-asyncio
 neo4j>=5.27,<6
 rapidfuzz>=3.12,<4
-# Apollo NLI resolver tier — now DEFAULT-ON (APOLLO_NLI_ENABLED default true).
-# The CPU-only torch index keeps the image slim: NLI runs on CPU (NLI_DEVICE=cpu),
-# so the ~2.7GB CUDA wheel is unnecessary. pip prefers the "+cpu" local version
-# from this extra index over the plain PyPI wheel. (Windows local dev: if the
-# newest +cpu wheel fails to load — WinError 1114 — pin torch==2.6.0; Linux is
-# unaffected. See requirements-nli.txt for the historical note.)
---extra-index-url https://download.pytorch.org/whl/cpu
-transformers>=4.44,<5
-torch>=2.2
-sentencepiece

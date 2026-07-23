@@ -18,6 +18,7 @@ Adaptation notes vs. the task scaffold:
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -29,7 +30,7 @@ import apollo.auth_deps as deps
 from apollo.api import get_neo4j_client, register_exception_handlers
 from apollo.api import router as apollo_router
 from apollo.conftest import TEST_SPACE_ID, TEST_USER_ID
-from apollo.persistence.models import ApolloSession, StudentProgress
+from apollo.persistence.models import StudentProgress, TutoringSession
 from database.models import Base
 from database.session import get_db_session
 
@@ -40,14 +41,17 @@ from database.session import get_db_session
 
 @pytest.fixture
 def client_factory():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        execution_options={"schema_translate_map": {"app": None, "internal": None}},
+    )
 
     async def _bootstrap():
         async with engine.begin() as conn:
             await conn.run_sync(
                 lambda sc: Base.metadata.create_all(
                     sc,
-                    tables=[ApolloSession.__table__, StudentProgress.__table__],
+                    tables=[TutoringSession.__table__, StudentProgress.__table__],
                 )
             )
 
@@ -78,7 +82,9 @@ def client_factory():
 
 def test_progress_requires_token(client_factory):
     app, _ = client_factory
-    r = TestClient(app).get("/apollo/progress")
+    r = TestClient(app).get(
+        "/apollo/progress", params={"search_space_id": TEST_SPACE_ID}
+    )
     assert r.status_code == 401
 
 
@@ -96,7 +102,17 @@ def test_progress_with_token_returns_defaults(client_factory, monkeypatch):
         "resolve_auth_context",
         lambda _request: AuthContext(user_id=TEST_USER_ID, access_token="tok"),
     )
-    r = TestClient(app).get("/apollo/progress", headers={"Authorization": "Bearer tok"})
+    monkeypatch.setattr(deps, "has_membership", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        apollo_api,
+        "handle_get_progress_detail",
+        AsyncMock(return_value={"user_id": TEST_USER_ID, "concepts": []}),
+    )
+    r = TestClient(app).get(
+        "/apollo/progress",
+        params={"search_space_id": TEST_SPACE_ID},
+        headers={"Authorization": "Bearer tok"},
+    )
     assert r.status_code == 200
     assert r.json()["user_id"] == TEST_USER_ID
 
@@ -106,14 +122,14 @@ def test_progress_with_token_returns_defaults(client_factory, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_session_endpoint_403_for_non_owner(client_factory, monkeypatch):
+def test_session_endpoint_hides_non_owner_with_404(client_factory, monkeypatch):
     from auth import AuthContext
 
     app, Session = client_factory
 
     async def _seed() -> int:
         async with Session() as s:
-            row = ApolloSession(
+            row = TutoringSession(
                 user_id="00000000-0000-4000-8000-0000000000ff",
                 search_space_id=TEST_SPACE_ID,
                 status="active",
@@ -130,7 +146,7 @@ def test_session_endpoint_403_for_non_owner(client_factory, monkeypatch):
         lambda _request: AuthContext(user_id=TEST_USER_ID, access_token="tok"),
     )
     r = TestClient(app).get(f"/apollo/sessions/{sid}", headers={"Authorization": "Bearer tok"})
-    assert r.status_code == 403
+    assert r.status_code == 404
 
 
 # ---------------------------------------------------------------------------

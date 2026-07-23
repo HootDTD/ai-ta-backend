@@ -2,31 +2,30 @@
 
 ``resolve_candidate`` resolves ONE candidate entity against THIS course's
 existing ``apollo_kg_entities`` inventory and returns a frozen ``DedupVerdict``,
-writing exactly ONE ``apollo_dedup_decisions`` audit row per resolution. The
+writing exactly ONE ``internal.dedup_decisions`` audit row per resolution. The
 ladder is:
 
     slug-exact  ->  scope_summary embedding cosine  ->  injected LLM-judge
 
 The candidate POOL is scoped in SQL BEFORE any cosine is ever computed (§1.4 +
 PR2 — the 2026-06-30 false-merge fix) — never a global similarity search filtered
-afterward. ``_in_course_entities`` applies, first: ``Subject.search_space_id``
+afterward. ``_in_course_entities`` applies, first: ``Concept.course_id``
 (two COURSES never merge, even on a byte-identical ``scope_summary``), AND
-``KGEntity.concept_id == :concept_id`` (two CONCEPTS of one course never merge —
+``LearnerEntity.concept_id == :concept_id`` (two CONCEPTS of one course never merge —
 no foreign-set binding / cross-concept fusion); plus ``exclude_entity_ids`` drops
 entities minted earlier in the SAME mint, so two distinct nodes of one problem
 (the ``m≡M`` fusion) cannot fuse against each other.
 
-Embedding source is the on-the-fly-embedded ``KGEntity.scope_summary`` TEXT
+Embedding source is the on-the-fly-embedded ``LearnerEntity.scope_summary`` TEXT
 column (migration 030 / WU-3B2a); there is NO persisted entity vector. The
 embedder (``embed_fn``) and the LLM judge (``judge_fn``) are INJECTED SYNC
 callables so Tier-1 tests are deterministic with zero network calls — production
 wiring (3B2d/3B2f) supplies ``embed_text`` and a ``cheap_chat`` adapter.
 
 Out of scope (downstream units — NOT here): scrape/mint/upsert of entities or
-problems (3B2d), solution pairing (3B2e), metering/queue-drain (3B2f), the
-``apollo_ingest_runs.n_dedup_merged`` aggregate and the worker shell (3B2g),
-quarantine (3B2h). This unit reads the inventory, writes ONE audit row, and
-increments the run's JSON dedup-pressure gauge in the same flow.
+problems, solution pairing, metering, the content-ingest aggregate metrics, and
+quarantine. This unit reads the inventory, writes ONE audit row, and
+increments the run's typed dedup-pressure metrics in the same flow.
 """
 
 from __future__ import annotations
@@ -38,7 +37,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apollo.persistence.models import Concept, DedupDecision, IngestRun, KGEntity, Subject
+from apollo.persistence.models import Concept, DedupDecision, IngestRun, LearnerEntity
 from apollo.provisioning.dedup_constants import (
     EMBED_JUDGE_BAND,
     EMBED_MERGE_THRESHOLD,
@@ -57,7 +56,7 @@ class DedupVerdict:
     * ``similarity``        — the cosine for the embedding/llm_judge tiers;
                               ``None`` for the slug tier and the empty-inventory
                               distinct case
-    * ``matched_entity_id`` — ``KGEntity.id`` merged onto; ``None`` when distinct
+    * ``matched_entity_id`` — ``LearnerEntity.id`` merged onto; ``None`` when distinct
     """
 
     verdict: str
@@ -92,17 +91,17 @@ async def _in_course_entities(
     concept_id: int,
     require_summary: bool,
     exclude_entity_ids: set[int] | None = None,
-) -> list[KGEntity]:
+) -> list[LearnerEntity]:
     """THE load-bearing dedup-pool filter.
 
     Returns the candidate pool for ``resolve_candidate``: the entities of THIS
     ``concept_id`` (within ``search_space_id``), ordered by ascending
-    ``KGEntity.id`` (earliest writer first — the deterministic first-writer-wins
+    ``LearnerEntity.id`` (earliest writer first — the deterministic first-writer-wins
     order). Scoping (PR2 — the 2026-06-30 dedup false-merge fix):
 
-    * ``Subject.search_space_id`` keeps two COURSES apart (the ``test_cross_course_*``
+    * ``Concept.course_id`` keeps two courses apart (the ``test_cross_course_*``
       property); it runs in SQL BEFORE any cosine.
-    * ``KGEntity.concept_id == concept_id`` keeps two CONCEPTS of one course apart,
+    * ``LearnerEntity.concept_id == concept_id`` keeps two CONCEPTS of one course apart,
       so a candidate never slug-/cosine-merges into a sibling or earlier-set
       concept (the audit's foreign-set binding + cross-concept fusions).
     * ``exclude_entity_ids`` drops entities minted earlier in the SAME mint, so two
@@ -114,17 +113,16 @@ async def _in_course_entities(
     because a slug match does not require a summary.
     """
     stmt = (
-        select(KGEntity)
-        .join(Concept, Concept.id == KGEntity.concept_id)
-        .join(Subject, Subject.id == Concept.subject_id)
-        .where(Subject.search_space_id == search_space_id)
-        .where(KGEntity.concept_id == concept_id)
-        .order_by(KGEntity.id.asc())
+        select(LearnerEntity)
+        .join(Concept, Concept.id == LearnerEntity.concept_id)
+        .where(Concept.course_id == search_space_id)
+        .where(LearnerEntity.concept_id == concept_id)
+        .order_by(LearnerEntity.id.asc())
     )
     if require_summary:
-        stmt = stmt.where(KGEntity.scope_summary.is_not(None))
+        stmt = stmt.where(LearnerEntity.scope_summary.is_not(None))
     if exclude_entity_ids:
-        stmt = stmt.where(KGEntity.id.not_in(exclude_entity_ids))
+        stmt = stmt.where(LearnerEntity.id.not_in(exclude_entity_ids))
     return list((await db.execute(stmt)).scalars().all())
 
 
@@ -163,27 +161,28 @@ async def _record_decision(
         if run is None:
             raise RuntimeError(f"dedup ingest_run {ingest_run_id} not found")
 
-        pressure = dict(run.dedup_pressure or {})
-        pressure["total_candidates"] = int(pressure.get("total_candidates", 0)) + 1
+        run.dedup_total_candidates = int(run.dedup_total_candidates or 0) + 1
         if method == "slug" and verdict == "merged":
-            pressure["exact_merges"] = int(pressure.get("exact_merges", 0)) + 1
+            run.dedup_exact_merges = int(run.dedup_exact_merges or 0) + 1
         if method == "embedding":
-            counter = "embedding_merges" if verdict == "merged" else "embedding_distinct"
-            pressure[counter] = int(pressure.get(counter, 0)) + 1
             if verdict == "merged":
-                per_concept = dict(pressure.get("per_concept", {}))
+                run.dedup_embedding_merges = int(run.dedup_embedding_merges or 0) + 1
+            else:
+                run.dedup_embedding_distinct = int(run.dedup_embedding_distinct or 0) + 1
+            if verdict == "merged":
+                details = dict(run.dedup_details or {})
+                per_concept = dict(details.get("per_concept", {}))
                 concept_key = str(concept_id)
                 per_concept[concept_key] = int(per_concept.get(concept_key, 0)) + 1
-                pressure["per_concept"] = per_concept
+                details["per_concept"] = per_concept
+                run.dedup_details = details
 
-        embedding_merges = int(pressure.get("embedding_merges", 0))
-        embedding_distinct = int(pressure.get("embedding_distinct", 0))
+        embedding_merges = int(run.dedup_embedding_merges or 0)
+        embedding_distinct = int(run.dedup_embedding_distinct or 0)
         embedding_decisions = embedding_merges + embedding_distinct
-        pressure["embedding_merge_ratio"] = (
+        run.dedup_embedding_merge_ratio = (
             embedding_merges / embedding_decisions if embedding_decisions else 0.0
         )
-        pressure.setdefault("per_concept", {})
-        run.dedup_pressure = pressure  # type: ignore[assignment]
     await db.flush()
 
 

@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import delete
 
-from database.models import AITAChunk, AITADocument, DocumentStatus
+from database.models import DocumentChunk, Document, DocumentStatus
 
 from .document_embedder import embed_texts
 
@@ -107,15 +107,19 @@ async def embed_and_persist_chunks(
         vectors = embed_fn([text for text, _ in items])
 
         async with session_factory() as session:
+            document = await session.get(Document, document_id)
+            if document is None:
+                raise ValueError(f"Unknown document: {document_id}")
             await session.execute(
-                delete(AITAChunk).where(
-                    AITAChunk.document_id == document_id,
-                    AITAChunk.page_number.in_(page_numbers),
+                delete(DocumentChunk).where(
+                    DocumentChunk.document_id == document_id,
+                    DocumentChunk.page_number.in_(page_numbers),
                 )
             )
             for (text, meta), vector in zip(items, vectors, strict=True):
                 session.add(
-                    AITAChunk(
+                    DocumentChunk(
+                        course_id=document.course_id,
                         content=text,
                         embedding=vector,
                         page_number=meta.get("page_number"),
@@ -165,20 +169,24 @@ async def finalize_document(
     """
     if embed_fn is None:
         embed_fn = embed_texts
+    document = await session.get(Document, document_id)
+    if document is None:
+        raise ValueError(f"Unknown document: {document_id}")
     _page_groups, null_items = group_pages(chunk_pairs)
     if null_items:
         # Embed all null-page texts in ONE batched call before touching the
         # session — never run N serial embeds while a session is open.
         null_vectors = embed_fn([text for text, _ in null_items])
         await session.execute(
-            delete(AITAChunk).where(
-                AITAChunk.document_id == document_id,
-                AITAChunk.page_number.is_(None),
+            delete(DocumentChunk).where(
+                DocumentChunk.document_id == document_id,
+                DocumentChunk.page_number.is_(None),
             )
         )
         for (text, meta), vector in zip(null_items, null_vectors, strict=True):
             session.add(
-                AITAChunk(
+                DocumentChunk(
+                    course_id=document.course_id,
                     content=text,
                     embedding=vector,
                     page_number=None,
@@ -188,10 +196,10 @@ async def finalize_document(
                     document_id=document_id,
                 )
             )
-    document = await session.get(AITADocument, document_id)
     document.content = doc_content
     document.embedding = doc_embedding
     if page_count is not None:
         document.page_count = page_count
     document.updated_at = datetime.now(UTC)
     document.status = DocumentStatus.ready()
+    document.failure_reason = None

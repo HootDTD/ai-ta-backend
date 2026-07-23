@@ -6,11 +6,8 @@ floored §6.5 likelihood table, the §3.1 linear damper, Bayes+renormalize, and 
 mastery/confidence/misconception readouts. The belief vector is
 ``(p_misc, p_shaky, p_mastered)`` throughout.
 
-Mirrors the ``apollo/grading/events.py`` pure-module convention (``import math``,
-named module constants, NO IO). Imports only ``apollo.grading.event_model``
-(``LearnerEvent``/``LearnerEventKind`` — type dispatch) and
-``apollo.grading.events.AMBIGUOUS_ORDER_SCORE`` (the partial->covered@0.5 score —
-never re-literal'd).
+Imports only ``apollo.grading.event_model`` for the frozen event types and the
+partial-to-covered score shared by the learner-model math.
 
 LOCKED — do NOT re-derive, re-improve, or re-parameterize: γ=1.5, the floor 0.02
 (clamp-EACH-component, NOT an s-clamp), the cold-start vector, the fixed
@@ -26,8 +23,11 @@ from __future__ import annotations
 
 import math
 
-from apollo.grading.event_model import LearnerEvent, LearnerEventKind
-from apollo.grading.events import AMBIGUOUS_ORDER_SCORE
+from apollo.grading.event_model import (
+    AMBIGUOUS_ORDER_SCORE,
+    LearnerEvent,
+    LearnerEventKind,
+)
 
 # Cold-start belief (p_misc, p_shaky, p_mastered). mastery_of == 0.50 (the
 # formula); the spec §3 prose "0.40" is an arithmetic error (corrected in the

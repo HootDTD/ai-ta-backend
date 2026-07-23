@@ -1,24 +1,8 @@
-"""Deterministic topic-based grading score (LLM never touches the number).
+"""Pure coverage-based topic scoring for Apollo Done responses.
 
-Frozen contract: ``docs/superpowers/specs/2026-07-10-apollo-topic-score-design.md``
-section 2 (workspace-level spec, outside this repo).
-
-The served grade today is ``compute_rubric()``'s fixed 60/25/15 axis blend
-(``rubric.py``), docked afterwards by ``apply.py::rubric_overall_after_penalty``.
-That axis view is a second-hand summary of per-node data the coverage +
-misconception ledgers already hold, and the misconception dock is invisible in
-the served report. ``compute_topic_score`` replaces the axis view with a
-**per-reference-node topic checklist**: each reference node (equation,
-condition, simplification, procedure_step — the same four types
-``rubric.py::_axis_for`` grades) is one topic, weighted by its structural
-centrality in the reference graph, credited by ``compute_coverage``'s verdict
-for that node, and docked by any misconception finding that localized to it.
-
-Pure module: no IO, no LLM, no DB, no flags. Every input is already-computed
-data (``compute_coverage`` output, reference nodes, ``compute_centrality``
-output, a merged detection outcome); every output is a frozen dataclass.
-Immutable throughout — no argument is ever mutated, only new objects are
-returned.
+The retired misconception detector no longer contributes findings or docks.
+The topic payload shape is retained, with an empty ``misconceptions`` tuple on
+every topic, so existing UI clients continue to deserialize responses safely.
 """
 
 from __future__ import annotations
@@ -27,19 +11,13 @@ import math
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from apollo.ontology import Node
-from apollo.overseer.misconception_detector.config import CENTRALITY_W_MIN, SEVERITY_CLAMP
-from apollo.overseer.misconception_detector.types import ConceptFinding, MergeOutcome
+from apollo.ontology import EdgeType, KGGraph, Node
 from apollo.overseer.rubric import score_to_letter
 
-# The four reference-node types ``compute_coverage`` actually grades (mirrors
-# ``rubric.py::_axis_for`` — ``definition``/``variable_mapping`` feed neither
-# the axis rubric nor the topic score; they aren't in ``per_step`` either).
-_GRADED_NODE_TYPES = frozenset({"equation", "condition", "simplification", "procedure_step"})
-
-# Synthetic bucket for a misconception finding that cannot be localized to any
-# reference node (concept_key not found among the graded topics).
-_GENERAL_KEY = "_general"
+CENTRALITY_W_MIN = 0.30
+_GRADED_NODE_TYPES = frozenset(
+    {"equation", "condition", "simplification", "procedure_step"}
+)
 
 TopicStatus = Literal["covered", "partial", "missing"]
 
@@ -49,23 +27,15 @@ def _clamp01(value: float) -> float:
 
 
 def _finite_score(raw: Any) -> float:
-    """Coerce a score value to a finite float in [0, 1]; NaN/inf/non-numeric
-    become 0.0. Mirrors ``rubric.py::_finite_score`` — Python's ``min``/``max``
-    silently let a NaN through unclamped (``min(1.0, nan) == 1.0``), so an
-    explicit ``math.isfinite`` guard is required, not just ``_clamp01``."""
     try:
-        f = float(raw)
+        value = float(raw)
     except (TypeError, ValueError):
         return 0.0
-    if not math.isfinite(f):
-        return 0.0
-    return _clamp01(f)
+    return _clamp01(value) if math.isfinite(value) else 0.0
 
 
 @dataclass(frozen=True)
 class TopicMisconception:
-    """One misconception finding attached to a topic (or the `_general` bucket)."""
-
     canonical_key: str
     resolved: bool
     dock_points: float
@@ -74,14 +44,6 @@ class TopicMisconception:
 
 @dataclass(frozen=True)
 class TopicCredit:
-    """One reference-node topic's credit, weight, and attached misconceptions.
-
-    ``evidence_span`` is the student's OWN verbatim words (this attempt only)
-    that earned the topic its credit — narrative material sourced from the
-    transcript adjudicator through the ``narrative_evidence_spans`` gate,
-    never a score input and never reference wording. ``None`` when the lane
-    has no per-node student quote (KG coverage lane, gate-dropped span)."""
-
     canonical_key: str
     display_name: str | None
     credit: float
@@ -93,8 +55,6 @@ class TopicCredit:
 
 @dataclass(frozen=True)
 class TopicScoreResult:
-    """The full deterministic topic-score result."""
-
     score: int
     letter: str
     coverage_component: float
@@ -103,11 +63,6 @@ class TopicScoreResult:
 
 
 def _display_name_for(node: Node) -> str | None:
-    """Best-effort human label for a reference node, for report rendering.
-
-    Never raises: ``content`` is a typed pydantic payload per node type, but a
-    future/unknown shape degrades to ``None`` rather than crashing the score.
-    """
     content: Any = node.content
     for field in ("label", "action", "concept", "applies_when"):
         value = getattr(content, field, None)
@@ -116,109 +71,80 @@ def _display_name_for(node: Node) -> str | None:
     return None
 
 
-def _topic_status(credit: float, *, in_per_step: bool) -> TopicStatus:
-    """Status for the not-fully-covered path (the "covered" status is decided
-    inline in ``_credit_for_node`` before this helper is ever reached)."""
-    if in_per_step and credit > 0.0:
-        return "partial"
-    return "missing"
-
-
 def _credit_for_node(node_id: str, coverage: dict) -> tuple[float, TopicStatus]:
-    """Per-topic credit ``c_i`` in [0, 1] + status:
-
-    - credit is the adjudicator's ``procedure_scores[node_id]`` whenever the
-      node is present there — the grader's number IS the grade; "covered"
-      status no longer promotes credit to 1.0.
-    - a node absent from ``procedure_scores`` falls back to the binary
-      ``per_step`` signal: covered -> 1.0, else 0.0.
-    """
     per_step = coverage.get("per_step", {}) or {}
     procedure_scores = coverage.get("procedure_scores", {}) or {}
-
     covered = per_step.get(node_id) == "covered"
     if node_id in procedure_scores:
         credit = _finite_score(procedure_scores[node_id])
         if covered:
             return credit, "covered"
-        return credit, _topic_status(credit, in_per_step=node_id in per_step)
-
+        return credit, "partial" if node_id in per_step and credit > 0.0 else "missing"
     return (1.0, "covered") if covered else (0.0, "missing")
 
 
-def _weights_for(node_ids: list[str], centrality: dict[str, float]) -> dict[str, float]:
-    """Centrality per node, floored at CENTRALITY_W_MIN, normalized to sum 1.
+def _rescale(raw_scores: dict[str, float], node_ids: list[str]) -> dict[str, float]:
+    span = 1.0 - CENTRALITY_W_MIN
+    return {node_id: CENTRALITY_W_MIN + raw_scores.get(node_id, 0.0) * span for node_id in node_ids}
 
-    Empty ``node_ids`` -> ``{}``. A node absent from ``centrality`` floors at
-    CENTRALITY_W_MIN just like the misconception detector's own severity
-    weighting (``merge.py::_severity_for``).
-    """
+
+def compute_centrality(reference_graph: KGGraph) -> dict[str, float]:
+    """Compute cycle-safe structural weights for coverage topic scoring."""
+    node_ids = [node.node_id for node in reference_graph.nodes]
+    if not node_ids:
+        return {}
+    if len(node_ids) == 1:
+        return {node_ids[0]: 1.0}
+
+    out_degree = {node_id: 0 for node_id in node_ids}
+    precedes_edges = []
+    for edge in reference_graph.edges:
+        if edge.edge_type == EdgeType.DEPENDS_ON:
+            if edge.from_node_id in out_degree and edge.to_node_id in out_degree:
+                out_degree[edge.from_node_id] += 1
+        elif edge.edge_type == EdgeType.PRECEDES:
+            precedes_edges.append(edge)
+
+    max_degree = max(out_degree.values(), default=0)
+    depends = {
+        node_id: degree / max_degree if max_degree else 0.0
+        for node_id, degree in out_degree.items()
+    }
+    positions = {node_id: 0.0 for node_id in node_ids}
+    if precedes_edges:
+        try:
+            touched = {edge.from_node_id for edge in precedes_edges} | {
+                edge.to_node_id for edge in precedes_edges
+            }
+            ordered_ids = [
+                node.node_id
+                for node in reference_graph.topological_order(EdgeType.PRECEDES)
+                if node.node_id in touched
+            ]
+            if len(ordered_ids) > 1:
+                last = len(ordered_ids) - 1
+                positions.update(
+                    {node_id: 1.0 - position / last for position, node_id in enumerate(ordered_ids)}
+                )
+        except ValueError:
+            pass
+
+    combined = {
+        node_id: min(1.0, depends[node_id] + positions[node_id])
+        for node_id in node_ids
+    }
+    return _rescale(combined, node_ids)
+
+
+def _weights_for(node_ids: list[str], centrality: dict[str, float]) -> dict[str, float]:
     if not node_ids:
         return {}
     floored = {
-        nid: max(CENTRALITY_W_MIN, centrality.get(nid, CENTRALITY_W_MIN)) for nid in node_ids
+        node_id: max(CENTRALITY_W_MIN, centrality.get(node_id, CENTRALITY_W_MIN))
+        for node_id in node_ids
     }
     total = sum(floored.values())
-    if total <= 0.0:  # pragma: no cover - defensive
-        # CENTRALITY_W_MIN > 0 in every real configuration, so this only
-        # guards a pathological override; distribute uniformly rather than
-        # divide by zero.
-        even = 1.0 / len(node_ids)
-        return {nid: even for nid in node_ids}
-    return {nid: v / total for nid, v in floored.items()}
-
-
-def _dedup_findings_by_canonical_key(
-    findings: tuple[ConceptFinding, ...],
-) -> tuple[ConceptFinding, ...]:
-    """Defensive dedup by ``canonical_key`` (== ``signature``), max confidence.
-
-    ``merge_detections`` is expected to dedup upstream (see the design spec's
-    "dedup is also a live bug fix" section), but this module dedups again on
-    its own inputs so it stays correct even if that upstream fix lands with a
-    different shape, races this change, or is bypassed by a caller that feeds
-    raw ``ledger_findings`` directly. Keeps the max-confidence instance per
-    key; stable order (first-seen position of the kept instance's key).
-    """
-    best_by_key: dict[str, ConceptFinding] = {}
-    order: list[str] = []
-    for finding in findings:
-        key = finding.signature
-        current = best_by_key.get(key)
-        if current is None:
-            best_by_key[key] = finding
-            order.append(key)
-        elif finding.confidence > current.confidence:
-            best_by_key[key] = finding
-    return tuple(best_by_key[key] for key in order)
-
-
-def _finding_resolved(finding: ConceptFinding) -> bool:
-    """Whether a finding carries a resolution signal (docks zero).
-
-    v1: ``ConceptFinding`` has no resolution field yet — detector-only
-    findings are unresolved per the design spec ("no new resolution
-    heuristic is built" in this module). This helper is the single seam a
-    future clarification-loop resolution signal would flow through.
-    """
-    return False
-
-
-def _finding_penalty_share(finding: ConceptFinding, centrality: dict[str, float]) -> float:
-    """Centrality-weighted penalty share for one finding, mirroring
-    ``merge.py::_severity_for`` (``severity = centrality(concept) * confidence``,
-    floored at CENTRALITY_W_MIN for a concept absent from the map)."""
-    weight = centrality.get(finding.concept_key, CENTRALITY_W_MIN)
-    return weight * finding.confidence
-
-
-def _topic_key_for_finding(finding: ConceptFinding, topic_keys: frozenset[str]) -> str:
-    """Map a finding's ``concept_key`` (== the reference node's ``node_id``,
-    per ``detector.py``/``centrality.py``/``gate.py`` convention) to the topic
-    it localized to, or the synthetic ``_general`` bucket when unmappable."""
-    if finding.concept_key in topic_keys:
-        return finding.concept_key
-    return _GENERAL_KEY
+    return {node_id: value / total for node_id, value in floored.items()}
 
 
 def compute_topic_score(
@@ -226,142 +152,46 @@ def compute_topic_score(
     coverage: dict,
     reference_nodes: list[Node],
     centrality: dict[str, float],
-    detection_outcome: MergeOutcome | None,
     evidence_spans: dict[str, str] | None = None,
 ) -> TopicScoreResult:
-    """Deterministic topic-based score: coverage credit minus misconception dock.
-
-    Args:
-        coverage: ``compute_coverage`` output (``per_step``/``procedure_scores``).
-        reference_nodes: the reference graph's nodes (typically
-            ``reference_graph.nodes``); only the four graded types
-            (equation/condition/simplification/procedure_step) become topics.
-        centrality: ``compute_centrality`` output (``node_id -> weight``).
-        detection_outcome: the merged misconception outcome, or ``None`` (no
-            detector run / detector produced nothing) -> zero dock.
-        evidence_spans: optional ``node_id -> the student's verbatim words``
-            map (transcript lane only). Threaded verbatim onto each matching
-            topic's ``evidence_span`` for the narrative; never a score input.
-
-    Returns:
-        A frozen ``TopicScoreResult``. An empty reference graph (no graded
-        topics) returns ``score=0``, ``letter="F"``, both components ``0.0``,
-        and an empty ``topics`` tuple — never raises.
-    """
-    graded_nodes = [n for n in reference_nodes if n.node_type in _GRADED_NODE_TYPES]
-    topic_keys = frozenset(n.node_id for n in graded_nodes)
-
+    """Compute topic credit; the retired detector contributes no dock."""
+    graded_nodes = [node for node in reference_nodes if node.node_type in _GRADED_NODE_TYPES]
     if not graded_nodes:
-        return TopicScoreResult(
-            score=0,
-            letter=score_to_letter(0),
-            coverage_component=0.0,
-            misconception_dock=0.0,
-            topics=(),
-        )
+        return TopicScoreResult(0, score_to_letter(0), 0.0, 0.0, ())
 
-    weights = _weights_for([n.node_id for n in graded_nodes], centrality)
-
-    credits: dict[str, float] = {}
-    statuses: dict[str, TopicStatus] = {}
+    weights = _weights_for([node.node_id for node in graded_nodes], centrality)
+    topics: list[TopicCredit] = []
+    coverage_component = 0.0
     for node in graded_nodes:
         credit, status = _credit_for_node(node.node_id, coverage)
-        credits[node.node_id] = credit
-        statuses[node.node_id] = status
-
-    coverage_component = sum(weights[nid] * credits[nid] for nid in topic_keys)
-
-    # --- Misconception dock -------------------------------------------------
-    findings = tuple(detection_outcome.ledger_findings) if detection_outcome is not None else ()
-    deduped = _dedup_findings_by_canonical_key(findings)
-
-    misconceptions_by_topic: dict[str, list[TopicMisconception]] = {nid: [] for nid in topic_keys}
-    misconceptions_by_topic[_GENERAL_KEY] = []
-
-    resolved_flags = tuple(_finding_resolved(f) for f in deduped)
-    raw_shares = tuple(
-        0.0 if resolved else _finding_penalty_share(finding, centrality)
-        for finding, resolved in zip(deduped, resolved_flags, strict=True)
-    )
-    keyed = tuple(_topic_key_for_finding(finding, topic_keys) for finding in deduped)
-    topic_raw_docks = {
-        nid: sum(share for key, share in zip(keyed, raw_shares, strict=True) if key == nid)
-        for nid in topic_keys
-    }
-    topic_actual_docks = {
-        nid: weights[nid] * min(credits[nid], topic_raw_docks[nid]) for nid in topic_keys
-    }
-    general_raw = sum(
-        share for key, share in zip(keyed, raw_shares, strict=True) if key == _GENERAL_KEY
-    )
-    general_dock = min(SEVERITY_CLAMP, general_raw)
-    misconception_dock = sum(topic_actual_docks.values()) + general_dock
-    # When a bucket's cap binds, scale each finding's displayed dock_points
-    # proportionally so the per-misconception "−N pts" lines shown to the
-    # student sum exactly to the dock actually subtracted from the score —
-    # unscaled shares would over-claim relative to the capped total.
-    for finding, resolved, raw_share, topic_key in zip(
-        deduped, resolved_flags, raw_shares, keyed, strict=True
-    ):
-        bucket_raw = general_raw if topic_key == _GENERAL_KEY else topic_raw_docks[topic_key]
-        bucket_actual = general_dock if topic_key == _GENERAL_KEY else topic_actual_docks[topic_key]
-        scale = bucket_actual / bucket_raw if bucket_raw > 0.0 else 0.0
-        misconceptions_by_topic.setdefault(topic_key, []).append(
-            TopicMisconception(
-                canonical_key=finding.signature,
-                resolved=resolved,
-                dock_points=raw_share * scale,
-                evidence_span=finding.evidence_span or None,
-            )
-        )
-
-    topics: list[TopicCredit] = []
-    for node in graded_nodes:
-        nid = node.node_id
+        coverage_component += weights[node.node_id] * credit
         topics.append(
             TopicCredit(
-                canonical_key=nid,
+                canonical_key=node.node_id,
                 display_name=_display_name_for(node),
-                credit=credits[nid],
-                status=statuses[nid],
-                weight=weights[nid],
-                misconceptions=tuple(misconceptions_by_topic.get(nid, ())),
-                evidence_span=(evidence_spans or {}).get(nid),
+                credit=credit,
+                status=status,
+                weight=weights[node.node_id],
+                misconceptions=(),
+                evidence_span=(evidence_spans or {}).get(node.node_id),
             )
         )
 
-    general_misconceptions = misconceptions_by_topic.get(_GENERAL_KEY, [])
-    if general_misconceptions:
-        topics.append(
-            TopicCredit(
-                canonical_key=_GENERAL_KEY,
-                display_name=None,
-                credit=0.0,
-                status="missing",
-                weight=0.0,
-                misconceptions=tuple(general_misconceptions),
-            )
-        )
-
-    localized_component = sum(
-        weights[nid] * max(0.0, credits[nid] - topic_raw_docks[nid])
-        for nid in topic_keys
-    )
-    score = int(round(_clamp01(localized_component - general_dock) * 100))
-    letter = score_to_letter(score)
-
+    score = int(round(_clamp01(coverage_component) * 100))
     return TopicScoreResult(
         score=score,
-        letter=letter,
+        letter=score_to_letter(score),
         coverage_component=coverage_component,
-        misconception_dock=misconception_dock,
+        misconception_dock=0.0,
         topics=tuple(topics),
     )
 
 
 __all__ = [
+    "CENTRALITY_W_MIN",
     "TopicCredit",
     "TopicMisconception",
     "TopicScoreResult",
+    "compute_centrality",
     "compute_topic_score",
 ]

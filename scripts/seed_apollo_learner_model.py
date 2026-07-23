@@ -1,19 +1,20 @@
 """Seeder: Apollo learner-model Layer-1 rows for one subject's concept(s).
 
 Layers on TOP of ``scripts/seed_apollo_concept_registry.py`` (which must have run
-first to create the ``apollo_concepts`` / ``apollo_concept_problems`` rows this
+first to create the ``app.concepts`` / ``app.problems`` rows this
 reads). Converts the hand-authored concept source files into migration-026
 Layer-1 rows and annotates each concept's problems' reference solutions:
 
   * ``apollo_kg_entities``   — concept + variable + reference-derived
                                (equations/conditions/simplifications/procedures,
                                deduped by canonical_key across a concept's
-                               problems) + ``misc.*`` (with an opposes-link) + any
-                               authored definitions.
+                               problems) + any authored definitions. DB-13:
+                               ``misc.*`` misconception entities are NEVER
+                               written here — the app-schema kind CHECK has no
+                               'misconception' kind; misconceptions.json is not
+                               read by this seeder.
   * ``apollo_entity_prereqs`` — one edge per concept_dag edge.
-  * misconception opposes-link — resolved to ``payload.opposes_entity_id`` in a
-                               second pass once every entity row exists (D3).
-  * ``apollo_concept_problems.payload`` — each reference-solution step gains an
+  * ``app.problems.reference_solution`` — each step gains an
                                ``entity_key``; each problem gains
                                ``declared_paths`` + ``layer1_seeded`` (D2/D6), so
                                the §6.1 validation contract passes (the WU-4A
@@ -31,7 +32,7 @@ and no ``--concept-slug`` the bernoulli behavior is unchanged — bernoulli's
 authored ``def.pressure_velocity_tradeoff`` (not a reference node) is still minted
 from ``_AUTHORED_DEFINITIONS`` so its existing opposes-link resolves.
 
-Course-scoped (resolves the subject via ``apollo_subjects.search_space_id``, D7)
+Course-scoped directly through ``app.concepts.course_id`` (D7)
 and idempotent (entity upsert keyed on ``(concept_id, canonical_key)``; prereqs
 ``ON CONFLICT DO NOTHING``; re-annotation is a no-op). NO LLM, NO embeddings, NO
 new DDL.
@@ -53,7 +54,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # Make the package importable when run as `python -m scripts....`
@@ -67,17 +68,18 @@ from apollo.persistence.learner_model_seed import (  # noqa: E402
     authored_definitions_from_spec,
     concept_dag_to_entities,
     concept_dag_to_prereqs,
-    misconceptions_to_entities,
     reference_solution_to_entities,
     symbols_to_entities,
 )
 from apollo.persistence.models import (  # noqa: E402
     Concept,
-    ConceptProblem,
     EntityPrereq,
-    KGEntity,
-    Subject,
+    LearnerEntity,
 )
+from apollo.persistence.models import (
+    Problem as ProblemRecord,
+)
+from database.models import Course  # noqa: E402
 
 _LOG = logging.getLogger(__name__)
 
@@ -103,6 +105,7 @@ class _ConceptTarget:
     """One concept to seed: its DB row id + slug + on-disk source dir."""
 
     concept_id: int
+    course_id: int
     slug: str
     source_dir: Path
 
@@ -144,7 +147,6 @@ def _collect_entity_specs(
     dag = _read_json(source_dir / "concept_dag.json")
     symbols = _read_json(source_dir / "canonical_symbols.json")
     normalization = _read_json(source_dir / "normalization_map.json")
-    misc = _read_json(source_dir / "misconceptions.json")
 
     specs: list[EntitySpec] = []
     specs.extend(concept_dag_to_entities(dag))
@@ -152,7 +154,6 @@ def _collect_entity_specs(
     for problem in problems:
         specs.extend(reference_solution_to_entities(problem))
     specs.extend(_authored_definitions_for(concept_slug, source_dir))
-    specs.extend(misconceptions_to_entities(misc))
 
     deduped: dict[str, EntitySpec] = {}
     for spec in specs:
@@ -185,14 +186,12 @@ def _node_key_index(problems: list[dict]) -> dict[str, dict[str, str]]:
 async def _resolve_search_space_id(
     session: AsyncSession, search_space_id: int | None
 ) -> int:
-    """Resolve the course id, defaulting to MIN(aita_search_spaces.id) (D7)."""
+    """Resolve the course id, defaulting to the smallest course."""
     if search_space_id is not None:
         return search_space_id
-    resolved = (
-        await session.execute(text("SELECT MIN(id) FROM aita_search_spaces"))
-    ).scalar_one_or_none()
+    resolved = (await session.execute(select(func.min(Course.id)))).scalar_one_or_none()
     if resolved is None:
-        raise SeedError("no aita_search_spaces rows — seed a course before the learner model")
+        raise SeedError("no app.courses rows — seed a course before the learner model")
     return resolved
 
 
@@ -206,8 +205,8 @@ async def _resolve_concepts(
 ) -> list[_ConceptTarget]:
     """Resolve the target concept(s) for one course generically (D7).
 
-    Resolution: ``Subject.search_space_id == <course>`` AND ``Subject.slug ==
-    subject_slug`` -> its ``Concept`` rows. When ``concept_slug`` is given, narrow
+    Resolution: ``Concept.course_id == <course>`` and ``subject_slug`` -> its
+    concept rows. When ``concept_slug`` is given, narrow
     to that one concept; otherwise return every concept the subject teaches
     (slug-sorted for stable iteration). Raises ``SeedError`` if the subject or a
     requested concept row is missing (the registry seeder must run first).
@@ -219,20 +218,10 @@ async def _resolve_concepts(
     """
     space_id = await _resolve_search_space_id(session, search_space_id)
 
-    subject_id = (
-        await session.execute(
-            select(Subject.id)
-            .where(Subject.search_space_id == space_id)
-            .where(Subject.slug == subject_slug)
-        )
-    ).scalar_one_or_none()
-    if subject_id is None:
-        raise SeedError(
-            f"no '{subject_slug}' subject for search_space_id={space_id}; "
-            "run scripts.seed_apollo_concept_registry first"
-        )
-
-    stmt = select(Concept.id, Concept.slug).where(Concept.subject_id == subject_id)
+    stmt = select(Concept.id, Concept.slug).where(
+        Concept.course_id == space_id,
+        Concept.subject_slug == subject_slug,
+    )
     if concept_slug is not None:
         stmt = stmt.where(Concept.slug == concept_slug)
     rows = (await session.execute(stmt.order_by(Concept.slug))).all()
@@ -247,6 +236,7 @@ async def _resolve_concepts(
     return [
         _ConceptTarget(
             concept_id=row_id,
+            course_id=space_id,
             slug=row_slug,
             source_dir=_concept_dir(source_subject_slug, row_slug),
         )
@@ -255,20 +245,22 @@ async def _resolve_concepts(
 
 
 async def _upsert_entity(
-    session: AsyncSession, concept_id: int, spec: EntitySpec
+    session: AsyncSession, concept_id: int, course_id: int, spec: EntitySpec
 ) -> tuple[int, bool]:
     """Upsert one entity keyed on (concept_id, canonical_key). Returns
-    (entity_id, inserted)."""
+    (entity_id, inserted). ``course_id`` is a denormalized NOT NULL column on
+    ``app.learner_entities`` (DB-13); required on INSERT, unused on update."""
     row = (
         await session.execute(
-            select(KGEntity)
-            .where(KGEntity.concept_id == concept_id)
-            .where(KGEntity.canonical_key == spec.canonical_key)
+            select(LearnerEntity)
+            .where(LearnerEntity.concept_id == concept_id)
+            .where(LearnerEntity.canonical_key == spec.canonical_key)
         )
     ).scalar_one_or_none()
 
     if row is None:
-        row = KGEntity(
+        row = LearnerEntity(
+            course_id=course_id,
             concept_id=concept_id,
             canonical_key=spec.canonical_key,
             kind=spec.kind,
@@ -296,9 +288,9 @@ async def _link_opposes(session: AsyncSession, concept_id: int, key_to_id: dict[
     rows = (
         (
             await session.execute(
-                select(KGEntity)
-                .where(KGEntity.concept_id == concept_id)
-                .where(KGEntity.kind == "misconception")
+                select(LearnerEntity)
+                .where(LearnerEntity.concept_id == concept_id)
+                .where(LearnerEntity.kind == "misconception")
             )
         )
         .scalars()
@@ -327,8 +319,11 @@ async def _insert_prereqs(
     session: AsyncSession,
     key_to_id: dict[str, int],
     pairs: list[tuple[str, str]],
+    course_id: int,
 ) -> tuple[int, int]:
-    """Insert prereq edges (ON CONFLICT DO NOTHING). Returns (inserted, skipped)."""
+    """Insert prereq edges (ON CONFLICT DO NOTHING). Returns (inserted, skipped).
+    ``course_id`` is a denormalized NOT NULL column on
+    ``internal.entity_prerequisites`` (DB-13)."""
     inserted = 0
     skipped = 0
     for from_key, to_key in pairs:
@@ -344,7 +339,9 @@ async def _insert_prereqs(
         if existing is not None:
             skipped += 1
             continue
-        session.add(EntityPrereq(from_entity_id=from_id, to_entity_id=to_id))
+        session.add(
+            EntityPrereq(course_id=course_id, from_entity_id=from_id, to_entity_id=to_id)
+        )
         inserted += 1
     await session.flush()
     return inserted, skipped
@@ -363,7 +360,7 @@ async def _annotate_problems(
     rows = (
         (
             await session.execute(
-                select(ConceptProblem).where(ConceptProblem.concept_id == target.concept_id)
+                select(ProblemRecord).where(ProblemRecord.concept_id == target.concept_id)
             )
         )
         .scalars()
@@ -373,14 +370,14 @@ async def _annotate_problems(
     annotated_count = 0
     disk_by_code = _disk_problem_paths(target.source_dir)
     for row in rows:
-        payload = dict(row.payload or {})
+        payload = row.to_pydantic_payload(concept_slug=target.slug)
         mapping = node_key_by_problem.get(str(payload.get("id")))
         if mapping is None:
             # A problem whose reference nodes we have no mapping for is unexpected
             # for a Layer-1 fixture set; skip rather than mislink.
             continue
         annotated = annotate_reference_solution(payload, lambda nid: mapping[nid])  # noqa: B023
-        row.payload = annotated  # type: ignore[assignment]
+        row.apply_pydantic_payload(annotated)
         annotated_count += 1
 
         if write_disk:
@@ -406,8 +403,8 @@ def _disk_problem_paths(source_dir: Path) -> dict[str, Path]:
     return out
 
 
-def _load_problems_from_db_rows(rows) -> list[dict]:
-    return [dict(r.payload) for r in rows]
+def _load_problems_from_db_rows(rows, *, concept_slug: str) -> list[dict]:
+    return [r.to_pydantic_payload(concept_slug=concept_slug) for r in rows]
 
 
 async def _seed_concept(
@@ -430,18 +427,20 @@ async def _seed_concept(
     problem_rows = (
         (
             await session.execute(
-                select(ConceptProblem).where(ConceptProblem.concept_id == target.concept_id)
+                select(ProblemRecord).where(ProblemRecord.concept_id == target.concept_id)
             )
         )
         .scalars()
         .all()
     )
-    problems = _load_problems_from_db_rows(problem_rows)
+    problems = _load_problems_from_db_rows(problem_rows, concept_slug=target.slug)
 
     specs = _collect_entity_specs(target.slug, target.source_dir, problems)
     key_to_id: dict[str, int] = {}
     for spec in specs:
-        entity_id, inserted = await _upsert_entity(session, target.concept_id, spec)
+        entity_id, inserted = await _upsert_entity(
+            session, target.concept_id, target.course_id, spec
+        )
         key_to_id[spec.canonical_key] = entity_id
         if inserted:
             stats["entities_inserted"] += 1
@@ -452,7 +451,7 @@ async def _seed_concept(
 
     dag = _read_json(target.source_dir / "concept_dag.json")
     prereqs_inserted, prereqs_skipped = await _insert_prereqs(
-        session, key_to_id, concept_dag_to_prereqs(dag)
+        session, key_to_id, concept_dag_to_prereqs(dag), target.course_id
     )
     stats["prereqs_inserted"] = prereqs_inserted
     stats["prereqs_skipped"] = prereqs_skipped
@@ -488,7 +487,12 @@ async def seed(
          "prereqs_skipped", "misconceptions_linked", "problems_annotated",
          "concepts_seeded"}
     """
-    engine = create_async_engine(database_url)
+    engine_options = (
+        {"execution_options": {"schema_translate_map": {"app": None, "internal": None}}}
+        if database_url.startswith("sqlite")
+        else {}
+    )
+    engine = create_async_engine(database_url, **engine_options)
     Session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
     stats = {
@@ -550,7 +554,7 @@ def main(argv: list[str] | None = None) -> int:
         "--search-space-id",
         type=int,
         default=None,
-        help="course id (defaults to MIN(aita_search_spaces.id))",
+        help="course id (defaults to MIN(app.courses.id))",
     )
     parser.add_argument("--dry-run", action="store_true", help="seed but rollback the transaction")
     parser.add_argument(

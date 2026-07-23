@@ -1,12 +1,12 @@
-# Plan: WU-4A1 — graph_compare validation + canonical S_norm/R_norm construction
+# Plan: WU-4A1 — retired graph comparator validation + canonical S_norm/R_norm construction
 
 **Goal:** Build the two canonical graphs (`S_norm`, `R_norm`) and validate the raw student + reference graphs — and STOP before any score (scores are WU-4A2).
-**Architecture:** New pure package `apollo/graph_compare/` (mirrors `apollo/resolution/`). Consumes WU-3C2 resolver, WU-3B `validate_reference_graph`, `apollo.ontology`. No DB, no Neo4j, no LLM in the core.
+**Architecture:** New pure package `apollo/retired graph comparator/` (mirrors `apollo/resolution/`). Consumes WU-3C2 resolver, WU-3B `validate_reference_graph`, `apollo.ontology`. No DB, no Neo4j, no LLM in the core.
 **Tech stack:** Python 3.12, FastAPI backend, pytest + pytest-asyncio (`asyncio_mode=auto`), `dataclass(frozen=True)` DTOs, diff-cover patch gate vs `feat/apollo-kg-wu3d-runtime-cutover`.
 
 ---
 provides:
-  - apollo.graph_compare package seam (`__init__.py`)
+  - apollo.retired graph comparator package seam (`__init__.py`)
   - CanonicalNode, CanonicalGraph, ReferenceGraph (frozen dataclasses)
   - build_student_canonical(student_graph, resolution) -> CanonicalGraph
   - build_reference_canonical(problem) -> ReferenceGraph
@@ -26,7 +26,7 @@ depends_on:
 
 WU-4A1 is the build half of the §6 grading core. It turns `(frozen student KGGraph, ResolutionResult, problem dict)` into two immutable canonical graphs plus per-path reference views, and validates both raw graphs first. It computes NO scores, runs NO simulation, persists nothing, and calls neither Neo4j nor any LLM. The handoff artifact to WU-4A2 is the `CanonicalGraph` + `ReferenceGraph` pair.
 
-This is a **NestJS-style layered plan adapted to Python/FastAPI**. There is no controller/HTTP layer in this unit (the Done route that calls graph_compare is WU-4C). The "layers" here are: schema seam (no migration) → DTOs (frozen dataclasses) → pure builders (the "service" layer) → package seam (`__init__`) → owner-doc reconcile. There is no repository or endpoint layer because WU-4A1 is a pure in-memory transform; this is justified explicitly in Risks.
+This is a **NestJS-style layered plan adapted to Python/FastAPI**. There is no controller/HTTP layer in this unit (the Done route that calls retired graph comparator is WU-4C). The "layers" here are: schema seam (no migration) → DTOs (frozen dataclasses) → pure builders (the "service" layer) → package seam (`__init__`) → owner-doc reconcile. There is no repository or endpoint layer because WU-4A1 is a pure in-memory transform; this is justified explicitly in Risks.
 
 Pipeline coverage (§6.4): WU-4A1 owns **step 4** (validate raw student graph), **step 8** (build S_norm), **step 9** (build R_norm per declared path), and the candidate/symbolic-mappings assembly that feeds **step 5** (resolution — itself already built in WU-3C2 and invoked by the caller, not by 4A1's builders). Steps 10–13 (scores) are WU-4A2; steps 12, 14–18 are WU-4B/4C.
 
@@ -34,7 +34,7 @@ Pipeline coverage (§6.4): WU-4A1 owns **step 4** (validate raw student graph), 
 
 The `apollo/resolution/` package is the exact template: many small pure modules, one `__init__` re-exporting the public seam, frozen dataclasses, pure/DB-free core, co-located `tests/` package.
 
-- **Package seam:** `apollo/resolution/__init__.py:14-35` — `from apollo.resolution.<mod> import ...` then a flat `__all__`. Mirror verbatim for `apollo/graph_compare/__init__.py`.
+- **Package seam:** `apollo/resolution/__init__.py:14-35` — `from apollo.resolution.<mod> import ...` then a flat `__all__`. Mirror verbatim for `apollo/retired graph comparator/__init__.py`.
 - **Frozen DTO + immutability:** `apollo/resolution/result.py:21-63` (`ResolvedNode`, `ResolutionResult` — `@dataclass(frozen=True)`, tuple fields, derived helper methods like `resolved_edges()`). `apollo/persistence/learner_model_seed.py:41-65` (`EntitySpec`, `ReferenceGraphValidation` — frozen, `Mapping`/tuple fields).
 - **Named-error convention (NO-FALLBACK):** `apollo/persistence/learner_model_seed.py:67-70` (`SeedError(RuntimeError)`); the resolver's `ResolutionUnavailableError`/`ResolutionInvalidOutputError` (in `apollo/errors.py`, documented `apollo.md:119`). New errors `StudentGraphInvalidError`/`ReferenceGraphInvalidError` follow this — named exceptions carrying structured reason fields, raised loudly, never swallowed.
 - **Test conventions:** `apollo/resolution/tests/test_resolver.py` and `test_candidates.py` — co-located `apollo/<pkg>/tests/test_*.py`, pure helpers `_cand(...)`/`_node(...)` building `Candidate`/`Node`, real bernoulli JSON loaded from disk via `Path(__file__).resolve().parents[2] / "subjects" / ...`, LLM mocked by a deterministic `_stub(request)` callable injected as `llm_adjudicator` (no live OpenAI). pytest config: `testpaths = tests apollo`, `asyncio_mode = auto`, `--strict-markers`, markers `unit`/`integration` (`pytest.ini`).
@@ -49,9 +49,9 @@ Neighborhood scan of the change path (files modified or one ring out):
 - `apollo/ontology/{graph,nodes,edges}.py` — graph.py 4 imports, nodes.py 3, edges.py 3. All well under thresholds. **Not modified** (consumed).
 - `apollo/subjects/.../problems/problem_01.json` — data file, one additive key. No coupling.
 - `scripts/seed_apollo_learner_model.py` — 6 imports of the pure core + 5 ORM models, ~10 functions. Under thresholds. **Verified not modified** — see Decision 4 (round-trips the new key with zero code change).
-- New `apollo/graph_compare/*.py` — created fresh, each file targeted < 200 lines.
+- New `apollo/retired graph comparator/*.py` — created fresh, each file targeted < 200 lines.
 
-No file in the change path exceeds CBO > 8 or WMC > 20. No circular-import risk: `graph_compare` imports `resolution`/`ontology`/`persistence` but none of those import `graph_compare` (grepped — `graph_compare` does not yet exist and nothing references it). **Conclusion: neighborhood is clean. No structural prep required.**
+No file in the change path exceeds CBO > 8 or WMC > 20. No circular-import risk: `retired graph comparator` imports `resolution`/`ontology`/`persistence` but none of those import `retired graph comparator` (grepped — `retired graph comparator` does not yet exist and nothing references it). **Conclusion: neighborhood is clean. No structural prep required.**
 
 ## Decision log (binding, from the split proposal)
 
@@ -75,21 +75,21 @@ No file in the change path exceeds CBO > 8 or WMC > 20. No circular-import risk:
 - [ ] Edit `apollo/subjects/fluid_mechanics/concepts/bernoulli_principle/problems/problem_01.json`: add a top-level key `"symbolic_mappings": {"d": "2*r"}` (additive; place it adjacent to `given_values` for readability). The §6.9 worked example needs `d = 2r` so `A = pi*r**2` resolves to `eq.circular_area`.
 - [ ] Write the DB round-trip test (Task-12 in the test list) FIRST — it is `tests/database/test_*` and fires the DB gate.
 - [ ] Verify the seeder needs no edit (Decision 4). Do NOT touch `scripts/seed_apollo_*.py` or `learner_model_seed.py`.
-- Verify: `pytest tests/database/test_graph_compare_symbolic_mappings_roundtrip.py -m integration` (real-PG container) green.
+- Verify: `pytest tests/database/test_retired graph comparator_symbolic_mappings_roundtrip.py -m integration` (real-PG container) green.
 
-### 3. Frozen DTOs (`apollo/graph_compare/canonical.py` — types only, first pass)
+### 3. Frozen DTOs (`apollo/retired graph comparator/canonical.py` — types only, first pass)
 - [ ] Write `test_canonical_types.py` FIRST (immutability + field shape).
-- [ ] File: `apollo/graph_compare/canonical.py`. Define the three frozen dataclasses ONLY in this task (`CanonicalNode`, `CanonicalGraph`, `ReferenceGraph`). Builders land in tasks 5/6 in the same file.
+- [ ] File: `apollo/retired graph comparator/canonical.py`. Define the three frozen dataclasses ONLY in this task (`CanonicalNode`, `CanonicalGraph`, `ReferenceGraph`). Builders land in tasks 5/6 in the same file.
 - Signatures: see "Public signatures (exact)".
-- Verify: `pytest apollo/graph_compare/tests/test_canonical_types.py`.
+- Verify: `pytest apollo/retired graph comparator/tests/test_canonical_types.py`.
 
-### 4. Validator (`apollo/graph_compare/validator.py`)
+### 4. Validator (`apollo/retired graph comparator/validator.py`)
 - [ ] Write `test_validator.py` FIRST (all rows in the test list).
-- [ ] File: `apollo/graph_compare/validator.py`.
+- [ ] File: `apollo/retired graph comparator/validator.py`.
   - `StudentGraphInvalidError(ValueError)` and `ReferenceGraphInvalidError(ValueError)` — frozen reason fields (`reasons: tuple[str, ...]`).
   - `validate_student_graph(student_graph: KGGraph) -> None` — raises `StudentGraphInvalidError` on any grammar violation, else returns None. Checks: every edge's `(from_node_type, to_node_type)` is in `EDGE_ALLOWED_PAIRS[edge_type]` (look the endpoint node types up from the graph's `node_index()` because parser edges may carry `None` types — re-derive, do not trust the optional field); every edge endpoint exists in the node set; `attempt_id` uniformity (all nodes + edges share ONE `attempt_id`); no PRECEDES cycle (call `student_graph.topological_order(EdgeType.PRECEDES)` inside try/except `ValueError` → re-raise as `StudentGraphInvalidError`); required node fields are guaranteed by Pydantic at construction so we only re-check cross-node invariants.
   - `validate_reference(problem: dict) -> None` — delegates to `validate_reference_graph(problem)` (REUSE, `learner_model_seed.py:307`); if `.ok` is False, raise `ReferenceGraphInvalidError(reasons=result.errors)`. Do NOT reimplement §6.1.
-- Verify: `pytest apollo/graph_compare/tests/test_validator.py`.
+- Verify: `pytest apollo/retired graph comparator/tests/test_validator.py`.
 
 ### 5. Reference canonical builder (`build_reference_canonical` in `canonical.py`)
 - [ ] Write `test_reference_canonical.py` FIRST.
@@ -99,7 +99,7 @@ No file in the change path exceeds CBO > 8 or WMC > 20. No circular-import risk:
   3. Build edges from each step's `depends_on` list: a directed dependency edge `(dependency_step_id → step_id)` mapped to canonical keys. These become the R_norm DAG.
   4. Build the per-path views: for each path in `problem["declared_paths"]`, produce a `ReferencePathView` (ordered tuple of canonical keys, mapped from the path's reference-node ids via the step→entity_key map). v1 authors one path; a synthetic two-path problem in tests covers the multi-path branch.
   5. **NEVER read the deduped entity payload.** Read only `problem["reference_solution"]`, `depends_on`, `declared_paths`.
-- Verify: `pytest apollo/graph_compare/tests/test_reference_canonical.py`.
+- Verify: `pytest apollo/retired graph comparator/tests/test_reference_canonical.py`.
 
 ### 6. Student canonical builder (`build_student_canonical` in `canonical.py`)
 - [ ] Write `test_student_canonical.py` FIRST.
@@ -110,11 +110,11 @@ No file in the change path exceeds CBO > 8 or WMC > 20. No circular-import risk:
   4. **Normalize edges after endpoint resolution:** for each student edge, map both endpoints through the node_id→resolved_key index. If BOTH endpoints resolved, emit a canonical edge `(from_key → to_key)` carrying `edge_type` + `provenance`. If EITHER endpoint is unresolved, **DROP** the edge from comparison (Decision 7) but record it in `dropped_edge_count` (data, not silent).
   5. **Retain unresolved nodes** as `unresolved_nodes`: a tuple of `(node_id, surface_text)` — findings-input for WU-4A2, NOT dropped, NOT scored here.
   6. Return `CanonicalGraph(nodes=..., edges=..., unresolved_nodes=..., dropped_edge_count=...)`. All tuples, frozen.
-- Verify: `pytest apollo/graph_compare/tests/test_student_canonical.py`.
+- Verify: `pytest apollo/retired graph comparator/tests/test_student_canonical.py`.
 
-### 7. Problem-inputs assembly (`apollo/graph_compare/problem_inputs.py`)
+### 7. Problem-inputs assembly (`apollo/retired graph comparator/problem_inputs.py`)
 - [ ] Write `test_problem_inputs.py` FIRST.
-- [ ] File: `apollo/graph_compare/problem_inputs.py`. Define a small frozen `ProblemInputs(candidates: tuple[Candidate, ...], symbolic_mappings: dict[str, str])` and:
+- [ ] File: `apollo/retired graph comparator/problem_inputs.py`. Define a small frozen `ProblemInputs(candidates: tuple[Candidate, ...], symbolic_mappings: dict[str, str])` and:
   - `build_problem_candidates(problem: dict, misconceptions: dict, *, canon_key_by_canonical_key: dict[str, int]) -> ProblemInputs`. Steps:
     1. `refs = candidates_from_reference_solution(problem, canon_key_by_canonical_key=...)` (REUSE).
     2. `miscs = candidates_from_misconceptions(misconceptions, canon_key_by_canonical_key=...)` (REUSE).
@@ -122,23 +122,23 @@ No file in the change path exceeds CBO > 8 or WMC > 20. No circular-import risk:
     4. `symbolic_mappings = dict(problem.get("symbolic_mappings", {}))` (default `{}` when absent — Decision 2; return a NEW dict, never alias the problem's).
     5. Return `ProblemInputs(candidates, symbolic_mappings)`.
   - This is the seam where the per-problem `symbolic_mappings` table is resolved to pass into `resolve_attempt(student_graph, inputs.candidates, symbolic_mappings=inputs.symbolic_mappings)`. WU-4A1 does NOT call `resolve_attempt` itself (the caller / WU-4C does); it only assembles the inputs.
-- Verify: `pytest apollo/graph_compare/tests/test_problem_inputs.py`.
+- Verify: `pytest apollo/retired graph comparator/tests/test_problem_inputs.py`.
 
-### 8. Package `__init__` public API (`apollo/graph_compare/__init__.py`)
-- [ ] Write `test_package_seam.py` FIRST (asserts every public name imports from `apollo.graph_compare`).
-- [ ] File: `apollo/graph_compare/__init__.py`. Re-export the public seam (see "Public signatures"), with a flat `__all__`. Add `apollo/graph_compare/tests/__init__.py` if the resolution tests package carries one (check `apollo/resolution/tests/` for an `__init__.py`; mirror it).
-- Verify: `pytest apollo/graph_compare/tests/test_package_seam.py` and `python -c "import apollo.graph_compare as g; print(g.__all__)"`.
+### 8. Package `__init__` public API (`apollo/retired graph comparator/__init__.py`)
+- [ ] Write `test_package_seam.py` FIRST (asserts every public name imports from `apollo.retired graph comparator`).
+- [ ] File: `apollo/retired graph comparator/__init__.py`. Re-export the public seam (see "Public signatures"), with a flat `__all__`. Add `apollo/retired graph comparator/tests/__init__.py` if the resolution tests package carries one (check `apollo/resolution/tests/` for an `__init__.py`; mirror it).
+- Verify: `pytest apollo/retired graph comparator/tests/test_package_seam.py` and `python -c "import apollo.retired graph comparator as g; print(g.__all__)"`.
 
 ### 9. Owner-doc reconciliation
-- [ ] Edit `docs/architecture/apollo.md` (Decision: drift contract). Add `apollo/graph_compare/**` to the `owns:` glob list (it currently owns `apollo/**` via the wildcard — confirm the wildcard already covers it; if so, add an explicit module-map row instead of a glob change). Add a Module-map table row for `apollo/graph_compare/` describing the WU-4A1 surface. Add a "Key service entry points" bullet for `build_student_canonical`/`build_reference_canonical`/`validate_student_graph`/`build_problem_candidates`. Note that scores/findings are WU-4A2. Bump `last_verified:` to `2026-06-17`.
-- Verify: `grep -n "graph_compare" docs/architecture/apollo.md` shows the new rows; frontmatter `last_verified: 2026-06-17`.
+- [ ] Edit `docs/architecture/apollo.md` (Decision: drift contract). Add `apollo/retired graph comparator/**` to the `owns:` glob list (it currently owns `apollo/**` via the wildcard — confirm the wildcard already covers it; if so, add an explicit module-map row instead of a glob change). Add a Module-map table row for `apollo/retired graph comparator/` describing the WU-4A1 surface. Add a "Key service entry points" bullet for `build_student_canonical`/`build_reference_canonical`/`validate_student_graph`/`build_problem_candidates`. Note that scores/findings are WU-4A2. Bump `last_verified:` to `2026-06-17`.
+- Verify: `grep -n "retired graph comparator" docs/architecture/apollo.md` shows the new rows; frontmatter `last_verified: 2026-06-17`.
 
 ## Public signatures (exact)
 
 All dataclasses are `@dataclass(frozen=True)`. All collection fields are tuples (immutable). These are the EXACT signatures the executor must produce; downstream WU-4A2 consumes them.
 
 ```python
-# apollo/graph_compare/canonical.py
+# apollo/retired graph comparator/canonical.py
 
 from dataclasses import dataclass
 from apollo.ontology.edges import EdgeType, EdgeProvenance
@@ -191,7 +191,7 @@ def build_reference_canonical(problem: dict) -> ReferenceGraph: ...
 ```
 
 ```python
-# apollo/graph_compare/validator.py
+# apollo/retired graph comparator/validator.py
 
 from apollo.ontology.graph import KGGraph
 
@@ -208,7 +208,7 @@ def validate_reference(problem: dict) -> None: ...                # delegates to
 ```
 
 ```python
-# apollo/graph_compare/problem_inputs.py
+# apollo/retired graph comparator/problem_inputs.py
 
 from dataclasses import dataclass, field
 from apollo.resolution import Candidate
@@ -227,16 +227,16 @@ def build_problem_candidates(
 ```
 
 ```python
-# apollo/graph_compare/__init__.py  (public seam; flat __all__)
-from apollo.graph_compare.canonical import (
+# apollo/retired graph comparator/__init__.py  (public seam; flat __all__)
+from apollo.retired graph comparator.canonical import (
     CanonicalNode, CanonicalEdge, CanonicalGraph, ReferencePathView, ReferenceGraph,
     build_student_canonical, build_reference_canonical,
 )
-from apollo.graph_compare.validator import (
+from apollo.retired graph comparator.validator import (
     validate_student_graph, validate_reference,
     StudentGraphInvalidError, ReferenceGraphInvalidError,
 )
-from apollo.graph_compare.problem_inputs import ProblemInputs, build_problem_candidates
+from apollo.retired graph comparator.problem_inputs import ProblemInputs, build_problem_candidates
 __all__ = [...]  # every name above
 ```
 
@@ -244,7 +244,7 @@ __all__ = [...]  # every name above
 
 ## Full test list
 
-All in `apollo/graph_compare/tests/` except the one DB round-trip test (in `tests/database/`). Every test name below is concrete; "asserts" states the behavior pinned; "deps" states how external deps are handled. Helpers `_node(...)`/`_cand(...)` are copied from `apollo/resolution/tests/test_resolver.py:38-55` (build `Node` via `build_node`, `Candidate` directly). A small `_resolved(node_id, key, method, conf)` / `_unresolved(node_id)` factory builds `ResolvedNode`s and a `_resolution(*rns)` builds a `ResolutionResult` (these inputs are hand-built — 4A1 does NOT run `resolve_attempt`, so no LLM is involved at all in the builder tests).
+All in `apollo/retired graph comparator/tests/` except the one DB round-trip test (in `tests/database/`). Every test name below is concrete; "asserts" states the behavior pinned; "deps" states how external deps are handled. Helpers `_node(...)`/`_cand(...)` are copied from `apollo/resolution/tests/test_resolver.py:38-55` (build `Node` via `build_node`, `Candidate` directly). A small `_resolved(node_id, key, method, conf)` / `_unresolved(node_id)` factory builds `ResolvedNode`s and a `_resolution(*rns)` builds a `ResolutionResult` (these inputs are hand-built — 4A1 does NOT run `resolve_attempt`, so no LLM is involved at all in the builder tests).
 
 ### test_canonical_types.py (Task 3)
 1. `test_canonical_node_is_frozen` — mutating `CanonicalNode.canonical_key` raises `dataclasses.FrozenInstanceError`. Deps: none.
@@ -287,10 +287,10 @@ All in `apollo/graph_compare/tests/` except the one DB round-trip test (in `test
 30. `test_problem_inputs_is_frozen` — `ProblemInputs` mutation raises `FrozenInstanceError`. Deps: none.
 
 ### test_package_seam.py (Task 8)
-31. `test_public_api_importable_from_package` — every name in the `__all__` imports directly from `apollo.graph_compare`. Deps: none.
-32. `test_all_matches_exports` — `apollo.graph_compare.__all__` equals the sorted set of public names (no stray export, no missing). Deps: none.
+31. `test_public_api_importable_from_package` — every name in the `__all__` imports directly from `apollo.retired graph comparator`. Deps: none.
+32. `test_all_matches_exports` — `apollo.retired graph comparator.__all__` equals the sorted set of public names (no stray export, no missing). Deps: none.
 
-### tests/database/test_graph_compare_symbolic_mappings_roundtrip.py (Task 2 — DB gate)
+### tests/database/test_retired graph comparator_symbolic_mappings_roundtrip.py (Task 2 — DB gate)
 33. `test_symbolic_mappings_round_trips_into_concept_problem_payload` — **DB integration (`@pytest.mark.integration`).** Reuse the harness from `tests/database/test_seed_apollo_learner_model.py` (fresh pgvector DB, migration chain + 026, `auth.users`/`aita_search_spaces` stubs, real bernoulli rows). Run `seed_apollo_concept_registry.seed(...)` then `seed_apollo_learner_model.seed(..., write_disk=False)`; query `apollo_concept_problems.payload` for the bernoulli problem and assert `payload["symbolic_mappings"] == {"d": "2*r"}` survived BOTH seeders (proves Decision 4 with zero seeder code change). `write_disk=False` so the test never rewrites the on-disk JSON. Deps: real Postgres container (the project DB gate fires here — enumerate it in the PR description as a real-PG test, not a line-coverage exemption).
 
 **Coverage note:** Tests 5–32 are pure in-memory unit tests over `KGGraph` + hand-built `ResolutionResult` + problem dicts — no containers, no LLM, no network. Test 29 uses the real `resolve_attempt` with `llm_adjudicator=None` (CI-safe, resolves on the symbolic tier, makes NO live call). Test 33 is the single real-PG test. Target: 100% patch coverage; the multi-path branch (test 16), the unresolved-edge-drop branch (test 21), and the merge branch (test 19) are the three branches most at risk of being missed — each has a dedicated test.
@@ -306,7 +306,7 @@ All in `apollo/graph_compare/tests/` except the one DB round-trip test (in `test
 ## Owner-doc updates
 
 `docs/architecture/apollo.md` (the `owns: apollo/**` authority for this code):
-- **Module-map table:** add a row for `apollo/graph_compare/` listing `validator.py`, `canonical.py`, `problem_inputs.py`, `__init__.py` and describing the WU-4A1 surface: validate raw student graph (grammar/endpoints/attempt-id uniformity/no-PRECEDES-cycle) + reuse `validate_reference_graph` for the reference side; build `S_norm` (merge student nodes by resolved key, normalize edges, drop unresolved edges, retain unresolved nodes) and `R_norm` (per-problem reference_solution + depends_on + declared_paths, per-path views) — NO scores (WU-4A2). State that the package mirrors `apollo/resolution/` (pure, DB-free, frozen dataclasses) and consumes `apollo.resolution` + `validate_reference_graph`.
+- **Module-map table:** add a row for `apollo/retired graph comparator/` listing `validator.py`, `canonical.py`, `problem_inputs.py`, `__init__.py` and describing the WU-4A1 surface: validate raw student graph (grammar/endpoints/attempt-id uniformity/no-PRECEDES-cycle) + reuse `validate_reference_graph` for the reference side; build `S_norm` (merge student nodes by resolved key, normalize edges, drop unresolved edges, retain unresolved nodes) and `R_norm` (per-problem reference_solution + depends_on + declared_paths, per-path views) — NO scores (WU-4A2). State that the package mirrors `apollo/resolution/` (pure, DB-free, frozen dataclasses) and consumes `apollo.resolution` + `validate_reference_graph`.
 - **Key service entry points:** add bullets for `validate_student_graph`/`validate_reference`, `build_student_canonical(student_graph, resolution) -> CanonicalGraph`, `build_reference_canonical(problem) -> ReferenceGraph`, `build_problem_candidates(problem, misconceptions, *, canon_key_by_canonical_key) -> ProblemInputs` (assembles the closed candidate set + reads the per-problem `symbolic_mappings`).
 - **Core types:** add `CanonicalNode`/`CanonicalEdge`/`CanonicalGraph`/`ReferencePathView`/`ReferenceGraph` to the "Core types" list with their fields.
 - **Conventions/NO-FALLBACK:** add `StudentGraphInvalidError`/`ReferenceGraphInvalidError` to the named-error list (deliberately NOT HTTP-registered in this unit — the Done route is WU-4C). A reference-validation failure blocks grading (§6.6); a raw-student grammar violation is the §6.4 step-4 gate.
@@ -341,7 +341,7 @@ WU-4A1 does NOT (these are WU-4A2 / 4B / 4C):
 - **`_ENTRY_TYPE_TO_NODE_TYPE` sourcing:** import the resolution private name (recommended) OR promote it to public in `candidates.py` (additive). Either is acceptable; do not silently duplicate the table.
 - **File split inside `canonical.py`:** if `canonical.py` approaches 200 lines, the executor may split the student builder and reference builder into `student_canonical.py` / `reference_canonical.py` (mirrors resolution's many-small-files style) — keep the public seam in `__init__` identical.
 - **`validate_reference` naming:** `validate_reference` vs `validate_reference_graph_for_compare` — avoid colliding with the reused `validate_reference_graph`; any non-colliding name is fine. The proposal's published API used `validate_student_graph` as the one student entry point; keep that exact name.
-- **Test helper placement:** shared `_node`/`_cand`/`_resolution` factories may live in a small `apollo/graph_compare/tests/_factories.py` or be copied per-file; either is acceptable.
+- **Test helper placement:** shared `_node`/`_cand`/`_resolution` factories may live in a small `apollo/retired graph comparator/tests/_factories.py` or be copied per-file; either is acceptable.
 - **Extra defensive tests** beyond the 33 listed (e.g. a `definition`/`variable_mapping` node-type round-trip) are welcome if they raise patch coverage; never add skip/xfail to pad coverage.
 
 The executor must NOT deviate on: no migration, no new package, no edit to the forbidden files, no live LLM/network/remote-DB call, the exact public names `build_student_canonical`/`build_reference_canonical`/`validate_student_graph`/`build_problem_candidates`/`StudentGraphInvalidError`/`ReferenceGraphInvalidError`, R_norm reading only the problem's own `reference_solution`, and the 95% patch gate.

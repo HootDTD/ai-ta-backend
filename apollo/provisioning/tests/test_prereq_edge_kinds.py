@@ -13,26 +13,27 @@ and Docker-skips cleanly when the daemon is down.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from apollo.learner_model.personalization_read import read_learner_profile
-from apollo.persistence.models import Concept, EntityPrereq, KGEntity, Subject
-from database.models import SearchSpace
+from apollo.persistence.models import Concept, EntityPrereq, LearnerEntity
+from database.models import Course
 
 
 async def test_within_concept_filter_excludes_concept_level_edges(db_session):
-    space = SearchSpace(name="Course h4", slug="c-h4", subject_name="Physics")
+    space = Course(name="Course h4", slug="c-h4", subject_name="Physics")
     db_session.add(space)
     await db_session.flush()
-    subj = Subject(slug="s-h4", display_name="Sub", search_space_id=space.id)
-    db_session.add(subj)
-    await db_session.flush()
+    subj = SimpleNamespace(slug="s-h4", display_name="Sub", search_space_id=space.id)
 
-    concept_a = Concept(subject_id=subj.id, slug="bernoulli", display_name="Bernoulli")
-    concept_b = Concept(subject_id=subj.id, slug="fluids", display_name="Fluids")
+    concept_a = Concept(course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name, slug="bernoulli", display_name="Bernoulli")
+    concept_b = Concept(course_id=subj.search_space_id, subject_slug=subj.slug, subject_display_name=subj.display_name, slug="fluids", display_name="Fluids")
     db_session.add_all([concept_a, concept_b])
     await db_session.flush()
 
     # concept A: two ref-node entities (the AUTO shape) + a concept-kind entity.
-    eq = KGEntity(
+    eq = LearnerEntity(
+        course_id=space.id,
         concept_id=concept_a.id,
         canonical_key="eq.bernoulli",
         kind="equation",
@@ -41,7 +42,8 @@ async def test_within_concept_filter_excludes_concept_level_edges(db_session):
         aliases=[],
         scope_summary="x",
     )
-    proc = KGEntity(
+    proc = LearnerEntity(
+        course_id=space.id,
         concept_id=concept_a.id,
         canonical_key="proc.solve_p2",
         kind="procedure",
@@ -50,7 +52,8 @@ async def test_within_concept_filter_excludes_concept_level_edges(db_session):
         aliases=[],
         scope_summary="x",
     )
-    concept_ent_a = KGEntity(
+    concept_ent_a = LearnerEntity(
+        course_id=space.id,
         concept_id=concept_a.id,
         canonical_key="concept.bernoulli",
         kind="concept",
@@ -60,7 +63,8 @@ async def test_within_concept_filter_excludes_concept_level_edges(db_session):
         scope_summary="x",
     )
     # concept B: a concept-kind entity (the cross-concept SEED edge target).
-    concept_ent_b = KGEntity(
+    concept_ent_b = LearnerEntity(
+        course_id=space.id,
         concept_id=concept_b.id,
         canonical_key="concept.fluids",
         kind="concept",
@@ -74,8 +78,11 @@ async def test_within_concept_filter_excludes_concept_level_edges(db_session):
 
     db_session.add_all(
         [
-            EntityPrereq(from_entity_id=proc.id, to_entity_id=eq.id),  # AUTO, within A
             EntityPrereq(
+                course_id=space.id, from_entity_id=proc.id, to_entity_id=eq.id
+            ),  # AUTO, within A
+            EntityPrereq(
+                course_id=space.id,
                 from_entity_id=concept_ent_a.id,
                 to_entity_id=concept_ent_b.id,
             ),  # SEED, A->B

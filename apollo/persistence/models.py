@@ -2,7 +2,7 @@
 
 V3: KG entries moved to Neo4j (apollo.persistence.neo4j_client +
 apollo.knowledge_graph.store). Postgres now owns only:
-  apollo_sessions, apollo_messages, apollo_problem_attempts,
+  app.learning_activities, app.tutoring_messages, app.problem_attempts,
   apollo_student_progress.
 
 The legacy `apollo_kg_entries` table is dropped — see migration notes in
@@ -31,9 +31,9 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, REAL, UUID
-from sqlalchemy.orm import relationship, validates
+from sqlalchemy.orm import relationship, synonym, validates
 
-from database.models import Base
+from database.models import Base, LearningActivity
 
 # JSONB on Postgres, fall back to JSON on SQLite (tests use in-memory SQLite).
 _JSONType = JSONB().with_variant(JSON(), "sqlite")
@@ -46,13 +46,16 @@ _JSONType = JSONB().with_variant(JSON(), "sqlite")
 # NOTE: the SQLite variant is a bare JSON() — _JSONType is itself a variant and
 # SQLAlchemy forbids nesting variants in with_variant().
 _RealArrayType = ARRAY(REAL).with_variant(JSON(), "sqlite")
+_TextArrayType = ARRAY(Text).with_variant(JSON(), "sqlite")
 
-# App-layer mirrors of migration 026's enum sets (spec §2/§6.3). Following the
-# ATTEMPT_RESULTS precedent: tuples the runtime reasons about, kept in sync with
-# the migration. ENTITY_KINDS is the one tied to a SQL CHECK (on
-# apollo_kg_entities.kind) and is asserted equal to the migration's set by
-# apollo/persistence/tests/test_learner_model_allowlists.py. The other two are
-# OPEN enums (no SQL CHECK) — documentation tuples, NOT asserted against the SQL.
+# App-layer mirror of the app.learner_entities.kind CHECK in
+# supabase/migrations/20260717035041_create_app_schema_v1.sql (the DDL is the
+# schema authority; this tuple is asserted equal to it by
+# apollo/persistence/tests/test_learner_model_allowlists.py). 'misconception' is
+# NOT in the target CHECK (dropped per DB-13/A6 cleanup) — misconceptions are
+# tracked via MasteryEvent.event_kind, not as an entity kind. The other two enum
+# tuples below are OPEN (no SQL CHECK) — documentation tuples, NOT asserted
+# against SQL.
 ENTITY_KINDS = (
     "concept",
     "equation",
@@ -60,7 +63,6 @@ ENTITY_KINDS = (
     "definition",
     "procedure",
     "variable",
-    "misconception",
 )
 # event_kind is an OPEN enum per spec §2 (no SQL CHECK) — documented set only:
 MASTERY_EVENT_KINDS = ("covered", "missing", "partial", "misconception", "corrected")
@@ -118,73 +120,75 @@ class SessionStatus(StrEnum):
     ended = "ended"
 
 
-class Subject(Base):
-    """Top-level curriculum domain. See migration 018."""
+class Concept(Base):
+    """Course-scoped curriculum concept with its subject label folded in."""
 
-    __tablename__ = "apollo_subjects"
+    __tablename__ = "concepts"
+    __table_args__ = (
+        UniqueConstraint(
+            "course_id", "subject_slug", "slug", name="concepts_course_subject_slug_key"
+        ),
+        {"schema": "app"},
+    )
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
-    slug = Column(Text, nullable=False, unique=True)
-    display_name = Column(Text, nullable=False)
-    # Course-scoping (migration 026 / isolation invariant §1.4). NOT NULL by
-    # design: every subject belongs to exactly one course, and the whole
-    # curriculum chain inherits course ownership through this column.
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-
-class Concept(Base):
-    """Per-concept curriculum row. Replaces the apollo/subjects/<s>/concepts/<c>/
-    filesystem registry — runtime loads concept_id, never subject/concept slugs.
-    See migration 018."""
-
-    __tablename__ = "apollo_concepts"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    subject_id = Column(
-        BigInteger, ForeignKey("apollo_subjects.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    subject_slug = Column(Text, nullable=False)
+    subject_display_name = Column(Text, nullable=False)
     slug = Column(Text, nullable=False)
     display_name = Column(Text, nullable=False)
     # Migration 038 (reversed provisioning): the closed-list concept-matcher
     # prompt line is "slug — display_name: description". Empty for legacy rows.
     description = Column(Text, nullable=False, default="")
-    canonical_symbols = Column(_JSONType, nullable=False, default=dict)
+    canonical_symbols = Column(_TextArrayType, nullable=False, default=list)
+    symbol_metadata = Column(_JSONType, nullable=False, default=dict)
     normalization_map = Column(_JSONType, nullable=False, default=dict)
     parser_prompt_template = Column(Text, nullable=False, default="")
-    solver_hints = Column(_JSONType, nullable=False, default=dict)
-    forbidden_named_laws = Column(_JSONType, nullable=False, default=dict)
-    concept_dag = Column(_JSONType, nullable=False, default=dict)
+    solver_config = Column(_JSONType, nullable=False, default=dict)
+    parser_config = Column(_JSONType, nullable=False, default=dict)
+    forbidden_named_laws = Column(_TextArrayType, nullable=False, default=list)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
 
-class ConceptProblem(Base):
-    """Per-concept problem bank. See migration 018 (base table) + migration 030
-    (WU-3B2a §8B auto-provisioning columns). Following the repo convention these
-    declare NO DB CHECK constraints — the migration SQL is the authority for
-    tier/solution_source; the ORM is the typed Python access layer."""
+class Problem(Base):
+    """Typed problem-bank row with stable Pydantic fields promoted from JSON."""
 
-    __tablename__ = "apollo_concept_problems"
+    __tablename__ = "problems"
+    __table_args__ = (
+        UniqueConstraint("concept_id", "problem_code", name="problems_concept_code_key"),
+        {"schema": "app"},
+    )
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     concept_id = Column(
-        BigInteger, ForeignKey("apollo_concepts.id", ondelete="CASCADE"), nullable=False, index=True
+        BigInteger,
+        ForeignKey("app.concepts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     problem_code = Column(Text, nullable=False)
     difficulty = Column(Text, nullable=False)
-    payload = Column(_JSONType, nullable=False)
+    problem_text = Column(Text, nullable=False)
+    given_values = Column(_JSONType, nullable=False, default=dict)
+    target_unknown = Column(Text, nullable=False, default="")
+    reference_solution = Column(_JSONType, nullable=False)
+    payload_extra = Column(_JSONType, nullable=False, default=dict)
     # WU-3B2a / migration 030 (§8B auto-provisioning). tier gates selectability:
     # 1 = inventory (auto-scraped, NOT teachable), 2 = teachable. The DB CHECK
     # (tier IN (1,2)) is the authority; the ORM declares none (repo convention).
@@ -195,14 +199,127 @@ class ConceptProblem(Base):
     solution_source = Column(  # extracted|generated|authored|llm_paired (CHECK in SQL)
         Text, nullable=True
     )
-    provenance = Column(_JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
+    provenance = Column(_JSONType, nullable=False, server_default=text("'{}'"), default=dict)
     quarantined_at = Column(TIMESTAMP(timezone=True), nullable=True)  # WU-3B2h filter; NULL = live
-    # Denormalized course scope (migration 030). NULLABLE in v1 (backfilled
-    # in-migration; a later two-step migration tightens it). No ORM FK declared
-    # to keep create_all/SQLite parity simple — the migration SQL is the FK
-    # authority where it exists.
-    search_space_id = Column(Integer, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    @classmethod
+    def from_pydantic_payload(
+        cls,
+        payload: dict,
+        *,
+        course_id: int,
+        concept_id: int,
+        **typed_columns,
+    ) -> Problem:
+        """Validate a public problem payload and split it into target columns."""
+        from apollo.schemas.problem import Problem as ProblemSchema
+
+        validated = ProblemSchema.model_validate(payload)
+        known = set(ProblemSchema.model_fields) | {"database_id"}
+        return cls(
+            course_id=course_id,
+            concept_id=concept_id,
+            problem_code=validated.id,
+            difficulty=validated.difficulty,
+            problem_text=validated.problem_text,
+            given_values=dict(validated.given_values),
+            target_unknown=validated.target_unknown,
+            reference_solution={
+                "version": 1,
+                "steps": [step.model_dump(mode="json") for step in validated.reference_solution],
+            },
+            payload_extra={key: value for key, value in payload.items() if key not in known},
+            **typed_columns,
+        )
+
+    @classmethod
+    def from_inventory_payload(
+        cls,
+        payload: dict,
+        *,
+        course_id: int,
+        concept_id: int,
+        **typed_columns,
+    ) -> Problem:
+        """Split a tier-1 draft, which intentionally has no solution steps yet."""
+        known = {
+            "id",
+            "concept_id",
+            "difficulty",
+            "problem_text",
+            "given_values",
+            "target_unknown",
+            "reference_solution",
+        }
+        reference_solution = payload.get("reference_solution") or []
+        if isinstance(reference_solution, dict):
+            document = dict(reference_solution)
+        else:
+            document = {"version": 1, "steps": list(reference_solution)}
+        return cls(
+            course_id=course_id,
+            concept_id=concept_id,
+            problem_code=str(payload["id"]),
+            difficulty=str(payload["difficulty"]),
+            problem_text=str(payload["problem_text"]),
+            given_values=dict(payload.get("given_values") or {}),
+            target_unknown=str(payload.get("target_unknown") or ""),
+            reference_solution=document,
+            payload_extra={key: value for key, value in payload.items() if key not in known},
+            **typed_columns,
+        )
+
+    def apply_pydantic_payload(self, payload: dict) -> None:
+        """Validate and replace the public/payload portion of an existing row."""
+        replacement = type(self).from_pydantic_payload(
+            payload,
+            course_id=int(self.course_id),
+            concept_id=int(self.concept_id),
+        )
+        for field in (
+            "problem_code",
+            "difficulty",
+            "problem_text",
+            "given_values",
+            "target_unknown",
+            "reference_solution",
+            "payload_extra",
+        ):
+            setattr(self, field, getattr(replacement, field))
+
+    def apply_inventory_payload(self, payload: dict) -> None:
+        """Replace draft fields without requiring a solution before promotion."""
+        replacement = type(self).from_inventory_payload(
+            payload,
+            course_id=int(self.course_id),
+            concept_id=int(self.concept_id),
+        )
+        for field in (
+            "problem_code",
+            "difficulty",
+            "problem_text",
+            "given_values",
+            "target_unknown",
+            "reference_solution",
+            "payload_extra",
+        ):
+            setattr(self, field, getattr(replacement, field))
+
+    def to_pydantic_payload(self, *, concept_slug: str) -> dict:
+        """Reassemble the established public Pydantic shape without DB identities."""
+        document = dict(self.reference_solution or {})
+        return {
+            **dict(self.payload_extra or {}),
+            "id": str(self.problem_code),
+            "concept_id": concept_slug,
+            "difficulty": str(self.difficulty),
+            "problem_text": str(self.problem_text),
+            "given_values": dict(self.given_values or {}),
+            "target_unknown": str(self.target_unknown or ""),
+            "reference_solution": list(document.get("steps") or []),
+        }
 
     @staticmethod
     def _validate_solution_provenance(*, provenance: dict | None, solution_source: str | None):
@@ -234,45 +351,14 @@ class ConceptProblem(Base):
         return value
 
 
-class AuthoredSet(Base):
-    """Problem-doc plus solution-doc pairing for authored-set provisioning
-    (WU-AAS). result_summary holds the bounded per-problem outcome list."""
+class ProvisioningRun(Base):
+    """One teacher-gated authored-set or generation provisioning run.
 
-    __tablename__ = "apollo_authored_sets"
+    Callers use the kind-specific factories below instead of assembling a
+    discriminator plus a nullable field bag themselves.
+    """
 
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"),
-        primary_key=True,
-        autoincrement=True,
-    )
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    set_index = Column(Integer, nullable=False)
-    problem_document_id = Column(BigInteger, nullable=True)
-    solution_document_id = Column(BigInteger, nullable=True)
-    status = Column(Text, nullable=False, server_default=text("'pending'"), default="pending")
-    result_summary = Column(
-        _JSONType,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-        default=dict,
-    )
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-    __table_args__ = (
-        UniqueConstraint("search_space_id", "set_index", name="uq_authored_set_per_space"),
-    )
-
-
-class GenerationRun(Base):
-    """Teacher-initiated problem-generation batch and its bounded result ledger."""
-
-    __tablename__ = "apollo_generation_runs"
+    __tablename__ = "provisioning_runs"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"),
@@ -280,175 +366,148 @@ class GenerationRun(Base):
         autoincrement=True,
     )
     search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        "course_id",
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+    kind = Column(Text, nullable=False)
+    set_index = Column(Integer, nullable=True)
+    problem_document_id = Column(
+        BigInteger, ForeignKey("app.documents.id", ondelete="RESTRICT"), nullable=True
+    )
+    solution_document_id = Column(
+        BigInteger, ForeignKey("app.documents.id", ondelete="RESTRICT"), nullable=True
     )
     concept_id = Column(
         BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("app.concepts.id", ondelete="CASCADE"),
+        nullable=True,
         index=True,
-    )
-    status = Column(Text, nullable=False, server_default=text("'pending'"), default="pending")
-    result_summary = Column(
-        _JSONType,
-        nullable=False,
-        server_default=text("'{}'::jsonb"),
-        default=dict,
     )
     ingest_run_id = Column(
         BigInteger,
-        ForeignKey("apollo_ingest_runs.id", ondelete="SET NULL"),
+        ForeignKey("internal.content_ingest_runs.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-
-class Misconception(Base):
-    """Per-concept misconception bank backing the misconception-inference
-    channel. See migration 019. description_embedding (vector(3072) on
-    Postgres) is NOT declared as a Column here — SQLAlchemy has no built-in
-    pgvector adapter, so the seeder + runtime read/write it via raw SQL
-    instead; this model intentionally omits it."""
-
-    __tablename__ = "apollo_misconceptions"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    concept_id = Column(
-        BigInteger, ForeignKey("apollo_concepts.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    code = Column(Text, nullable=False)
-    description = Column(Text, nullable=False)
-    confusion_pair_a = Column(Text, nullable=True)
-    confusion_pair_b = Column(Text, nullable=True)
-    trigger_phrases = Column(_JSONType, nullable=False, default=list)
-    probe_question = Column(Text, nullable=False)
-    rt_steps = Column(_JSONType, nullable=False, default=list)
-    # F-struct (migration 038): canonical entity_key of the reference node this
-    # misconception opposes (e.g. "def.real_basis"), or NULL. Read by the
-    # structural co-key gate path.
-    opposes = Column(Text, nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-
-# Mirrors the SQL CHECK in migration 032. Asserted equal by the allowlist test.
-CLARIFICATION_STATES: tuple[str, ...] = ("asked_waiting", "confirmed", "refuted", "vague")
-
-
-class Clarification(Base):
-    """One probed ambiguous student idea (Apollo clarification loop, migration
-    032). State machine asked_waiting -> {confirmed|refuted|vague}; UNIQUE on
-    (attempt_id, node_id) enforces one follow-up per idea. ``user_id`` declares
-    NO ORM FK (auth.users is Supabase-managed, absent from Base.metadata),
-    mirroring GraphComparisonRun."""
-
-    __tablename__ = "apollo_clarifications"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    attempt_id = Column(
-        BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+    status = Column(Text, nullable=False, server_default=text("'pending'"), default="pending")
+    result_summary = Column(
+        _JSONType,
         nullable=False,
-        index=True,
+        server_default=text("'{}'::jsonb"),
+        default=dict,
     )
-    session_id = Column(
-        BigInteger,
-        ForeignKey("apollo_sessions.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    concept_id = Column(
-        BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    node_id = Column(Text, nullable=False)
-    candidate_key = Column(Text, nullable=False)
-    state = Column(
-        Text, nullable=False, server_default=text("'asked_waiting'"), default="asked_waiting"
-    )
-    probe_question = Column(Text, nullable=False)
-    original_statement = Column(Text, nullable=False)
-    clarification_text = Column(Text, nullable=True)
-    asked_turn = Column(Integer, nullable=False)
-    answered_turn = Column(Integer, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
-        UniqueConstraint("attempt_id", "node_id", name="apollo_clarifications_attempt_node_uniq"),
+        Index(
+            "provisioning_runs__authored_course_set__uidx",
+            "course_id",
+            "set_index",
+            unique=True,
+            postgresql_where=text("kind = 'authored_set'"),
+            sqlite_where=text("kind = 'authored_set'"),
+        ),
+        {"schema": "app"},
     )
 
+    @classmethod
+    def authored_set(
+        cls,
+        *,
+        search_space_id: int,
+        set_index: int,
+        problem_document_id: int | None = None,
+        solution_document_id: int | None = None,
+        status: str = "pending",
+        result_summary: dict | None = None,
+    ) -> ProvisioningRun:
+        if set_index < 0:
+            raise ValueError("authored-set set_index must be non-negative")
+        if status not in {"pending", "indexing", "provisioning", "done", "failed"}:
+            raise ValueError(f"invalid authored-set status: {status}")
+        return cls(
+            kind="authored_set",
+            search_space_id=search_space_id,
+            set_index=set_index,
+            problem_document_id=problem_document_id,
+            solution_document_id=solution_document_id,
+            status=status,
+            result_summary={} if result_summary is None else result_summary,
+        )
 
-class ReferenceQuestionOpportunity(Base):
-    """Latest question state for one authored reference node per attempt."""
+    @classmethod
+    def generation(
+        cls,
+        *,
+        search_space_id: int,
+        concept_id: int,
+        status: str = "pending",
+        result_summary: dict | None = None,
+        ingest_run_id: int | None = None,
+    ) -> ProvisioningRun:
+        if status not in {"pending", "running", "succeeded", "failed"}:
+            raise ValueError(f"invalid generation status: {status}")
+        return cls(
+            kind="generation",
+            search_space_id=search_space_id,
+            concept_id=concept_id,
+            status=status,
+            result_summary={} if result_summary is None else result_summary,
+            ingest_run_id=ingest_run_id,
+        )
 
-    __tablename__ = "apollo_reference_question_opportunities"
 
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    attempt_id = Column(
-        BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    session_id = Column(
-        BigInteger,
-        ForeignKey("apollo_sessions.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    reference_node_id = Column(Text, nullable=False)
-    state = Column(Text, nullable=False, server_default=text("'asked_waiting'"))
-    question = Column(Text, nullable=False)
-    asked_turn = Column(Integer, nullable=False)
-    answered_turn = Column(Integer, nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+class QuestionOpportunity(Base):
+    """Question and durable tally state for one reference node per attempt."""
 
+    __tablename__ = "question_opportunities"
     __table_args__ = (
         UniqueConstraint(
             "attempt_id",
             "reference_node_id",
-            name="apollo_reference_question_opportunities_attempt_node_uniq",
+            name="question_opportunities_attempt_id_reference_node_id_key",
         ),
+        Index(
+            "question_opportunities__course_session__idx",
+            "course_id",
+            "learning_activity_id",
+        ),
+        Index("question_opportunities__activity_id__idx", "learning_activity_id"),
+        {"schema": "app"},
     )
-
-
-class QuestionTally(Base):
-    """Durable per-attempt memory for Apollo's own reference-node judgments."""
-
-    __tablename__ = "apollo_question_tally"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    session_id = Column(
+        "learning_activity_id",
+        BigInteger,
+        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     attempt_id = Column(
         BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        ForeignKey("app.problem_attempts.id", ondelete="CASCADE"),
         nullable=False,
     )
     reference_node_id = Column(Text, nullable=False)
-    status = Column(Text, nullable=False)
+    state = Column(Text, nullable=False, server_default=text("'asked_waiting'"))
+    question = Column(Text, nullable=False, server_default=text("''"), default="")
+    asked_turn = Column(Integer, nullable=True)
+    answered_turn = Column(Integer, nullable=True)
     evidence = Column(_JSONType, nullable=False, server_default=text("'[]'"), default=list)
     student_declined = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     times_asked = Column(Integer, nullable=False, server_default=text("0"), default=0)
     last_asked_turn = Column(Integer, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
@@ -456,102 +515,110 @@ class QuestionTally(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "attempt_id",
-            "reference_node_id",
-            name="apollo_question_tally_attempt_node_uniq",
-        ),
-        Index("ix_apollo_question_tally_attempt", "attempt_id"),
-    )
 
+class TutoringSession(LearningActivity):
+    """Tutoring-modality view of app.learning_activities."""
 
-class ApolloSession(Base):
-    __tablename__ = "apollo_sessions"
+    __mapper_args__ = {"polymorphic_identity": "tutoring"}
 
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    # Phase-1 auth retrofit: real Supabase identity + course scoping (the
-    # classroom-isolation invariant). Mirrors course_memberships' types.
-    user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    # FK into apollo_concepts (migration 018). All code paths read concept_id
-    # from the session row and pass it as the only concept signal — no
-    # subject/concept slug strings appear in handler code. The legacy
-    # concept_cluster_id (TEXT) column was dropped in migration 027 (WU-3D §8A
-    # cutover) once the runtime stopped reading/writing it.
-    concept_id = Column(
-        BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="RESTRICT"),
-        nullable=True,
-        index=True,
-    )
-    status = Column(Text, nullable=False, default=SessionStatus.active.value)
-    phase = Column(Text, nullable=False, default=SessionPhase.INIT.value)
-    current_problem_id = Column(Text, nullable=True)
-    # Item #5: pending intent awaiting student confirmation. One of the
-    # `Intent` values from `apollo.handlers.intent` (e.g. "done"); cleared
-    # on the next turn whether or not the student confirmed.
-    pending_intent = Column(Text, nullable=True)
-    # Item #2: rolling summary of older conversation turns so chat context
-    # stays bounded. Refreshed when the unwindowed-tail count crosses K
-    # turns; null until the session is long enough to warrant one.
-    history_summary = Column(Text, nullable=True)
-    history_summary_up_to_turn = Column(Integer, nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-    last_touched_at = Column(
-        TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
-    )
+    # Preserve the established Apollo Python name while mapping the physical
+    # target column course_id.
+    search_space_id = synonym("course_id")
 
-    messages = relationship("Message", back_populates="session", cascade="all, delete-orphan")
+    messages = relationship(
+        "TutoringMessage", back_populates="session", cascade="all, delete-orphan"
+    )
     problem_attempts = relationship(
         "ProblemAttempt", back_populates="session", cascade="all, delete-orphan"
     )
 
 
-class Message(Base):
-    __tablename__ = "apollo_messages"
+def promote_tutoring_message_metadata(
+    value: dict | None,
+) -> tuple[dict, bool, str | None]:
+    """Split stable legacy metadata signals into target typed columns."""
+    metadata = dict(value or {})
+    low_confidence_pattern = bool(metadata.pop("low_conf_pattern", False))
+    raw_intent = metadata.pop("intent", None)
+    intent = raw_intent if isinstance(raw_intent, str) else None
+    return metadata, low_confidence_pattern, intent
+
+
+class TutoringMessage(Base):
+    __tablename__ = "tutoring_messages"
+    __table_args__ = (
+        UniqueConstraint("learning_activity_id", "turn_index"),
+        {"schema": "app"},
+    )
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     session_id = Column(
-        BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+        "learning_activity_id",
+        BigInteger,
+        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     attempt_id = Column(
         BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        ForeignKey("app.problem_attempts.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
     role = Column(Text, nullable=False)
     content = Column(Text, nullable=False)
     turn_index = Column(Integer, nullable=False)
-    # Migration 020: per-turn signals (misconception, sufficiency snapshot,
-    # intent classification) persisted alongside the message. Readers must
-    # tolerate missing keys — other writers may add fields here over time.
-    message_metadata = Column("metadata", _JSONType, nullable=True)
+    low_confidence_pattern = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    intent = Column(Text, nullable=True)
+    message_metadata = Column(
+        "metadata", _JSONType, nullable=False, default=dict, server_default=text("'{}'")
+    )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
-    session = relationship("ApolloSession", back_populates="messages")
+    session = relationship("TutoringSession", back_populates="messages")
+
+    def __init__(self, **kwargs):
+        metadata, low_confidence_pattern, intent = promote_tutoring_message_metadata(
+            kwargs.pop("message_metadata", None)
+        )
+        kwargs["message_metadata"] = metadata
+        kwargs.setdefault("low_confidence_pattern", low_confidence_pattern)
+        kwargs.setdefault("intent", intent)
+        super().__init__(**kwargs)
 
 
 class ProblemAttempt(Base):
-    __tablename__ = "apollo_problem_attempts"
+    __tablename__ = "problem_attempts"
+    __table_args__ = {"schema": "app"}
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
-    session_id = Column(
-        BigInteger, ForeignKey("apollo_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
-    problem_id = Column(Text, nullable=False)
+    user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
+    session_id = Column(
+        "learning_activity_id",
+        BigInteger,
+        ForeignKey("app.learning_activities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    problem_id = Column(BigInteger, nullable=False)
     difficulty = Column(Text, nullable=False)
     # DB CHECK (migration 009 + 025) restricts this to ATTEMPT_RESULTS or NULL.
     result = Column(Text, nullable=True)
@@ -572,90 +639,90 @@ class ProblemAttempt(Base):
     learner_update_failed_at = Column(TIMESTAMP(timezone=True), nullable=True)
     learner_update_last_error = Column(Text, nullable=True)
     learner_update_next_attempt_at = Column(TIMESTAMP(timezone=True), nullable=True)
-    learner_update_failed_permanently = Column(
-        Boolean, nullable=False, server_default=text("false"), default=False
-    )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
 
-    session = relationship("ApolloSession", back_populates="problem_attempts")
+    session = relationship("TutoringSession", back_populates="problem_attempts")
 
 
 Index(
-    "ix_apollo_sessions_unique_active_per_user",
-    ApolloSession.user_id,
+    "learning_activities__active_tutoring_user_course__uidx",
+    TutoringSession.user_id,
+    TutoringSession.course_id,
     unique=True,
-    postgresql_where=(ApolloSession.status == "active"),
-    sqlite_where=(ApolloSession.status == "active"),
+    postgresql_where=(
+        (TutoringSession.status == "active") & (TutoringSession.modality == "tutoring")
+    ),
+    sqlite_where=(
+        (TutoringSession.status == "active") & (TutoringSession.modality == "tutoring")
+    ),
 )
 
 
 class StudentProgress(Base):
-    __tablename__ = "apollo_student_progress"
+    __tablename__ = "student_progress"
+    __table_args__ = {"schema": "app"}
 
     user_id = Column(UUID(as_uuid=False), primary_key=True)
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
     xp_total = Column(Integer, nullable=False, default=0)
     level = Column(Integer, nullable=False, default=1)
     last_level_up_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
 
 
-class KGNegotiation(Base):
-    """Audit log for Negotiable OLM moves on a KG entry. See migration 021.
+# ===========================================================================
+# WU-3A learner model (migration 026 historically; target DDL now
+# supabase/migrations/20260717035041_create_app_schema_v1.sql). Layer-1 skill
+# inventory + Layer-3 learner model. Following the repo convention, these
+# declare NO DB CHECK constraints — the migration SQL is the authority; the
+# ORM is the typed Python access layer.
+#
+# DB-13/A6 (.planning/cleanup/db-plan-amendments-2026-07-20.md): the
+# apollo_kg_negotiations audit table + KGNegotiation model are REMOVED from
+# the target — the three negotiate KG mutations (challenge/paraphrase/skip)
+# keep working via apollo.knowledge_graph.store.KGStore, only the Postgres
+# audit rows are gone.
+# ===========================================================================
 
-    One row per move. The latest row per (attempt_id, entry_id) is the
-    operative move when the Done-gate evaluates whether a flagged entry has
-    been touched. The Neo4j node_id stored as `entry_id` is the cross-store
-    bridge — we deliberately do NOT FK to it because Neo4j is the canonical
-    KG store; orphan rows are cleaned up by the attempt_id ON DELETE CASCADE.
-    """
 
-    __tablename__ = "apollo_kg_negotiations"
+class LearnerEntity(Base):
+    """Layer-1 course-scoped skill inventory (spec §2, retargeted onto
+    app.learner_entities by DB-13). Course ownership was previously inherited
+    via ``concept_id -> app.concepts.course_id`` only; the target DDL adds a
+    denormalized ``course_id`` column directly (initplan-safe RLS, matches the
+    rest of the app schema). ``canonical_key`` is unique per concept, not
+    global (§1.4)."""
+
+    __tablename__ = "learner_entities"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
-    attempt_id = Column(
+    course_id = Column(
         BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    entry_id = Column(Text, nullable=False)
-    actor = Column(Text, nullable=False)  # 'student' | 'parser' | 'system'
-    move = Column(Text, nullable=False)  # 'challenge' | 'paraphrase' | 'skip'
-    payload = Column(_JSONType, nullable=False, default=dict)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-
-Index(
-    "apollo_kg_negotiations_attempt_entry_idx",
-    KGNegotiation.attempt_id,
-    KGNegotiation.entry_id,
-)
-
-
-# ===========================================================================
-# WU-3A learner model (migration 026). Layer-1 skill inventory + Layer-3
-# learner model + grading-core audit tables. Following the repo convention,
-# these declare NO DB CHECK constraints — the migration SQL is the authority;
-# the ORM is the typed Python access layer. The schema EXISTS as of WU-3A but
-# nothing reads/writes these tables yet (resolver = WU-3C, seed = WU-3B, §3
-# update math + §6 grading core + §8A cutover = later units).
-# ===========================================================================
-
-
-class KGEntity(Base):
-    """Layer-1 course-scoped skill inventory (spec §2). Course ownership is
-    inherited via concept_id -> apollo_concepts -> apollo_subjects.search_space_id.
-    canonical_key is unique PER CONCEPT, not global (§1.4)."""
-
-    __tablename__ = "apollo_kg_entities"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
     concept_id = Column(
         BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="CASCADE"),
+        ForeignKey("app.concepts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -664,7 +731,8 @@ class KGEntity(Base):
     kind = Column(Text, nullable=False)
     display_name = Column(Text, nullable=False)
     payload = Column(_JSONType, nullable=False, default=dict)
-    aliases = Column(_JSONType, nullable=False, default=list)
+    # DB-13: TEXT[] on the target DDL (was JSONB pre-cleanup).
+    aliases = Column(_TextArrayType, nullable=False, default=list)
     # WU-3B2a / migration 030: the dedup ladder's embedding SOURCE (authored at
     # mint from display_name + canonical symbols; embedded ON THE FLY by 3B2c).
     # Nullable; NO persisted vector column (no pgvector-on-entities migration).
@@ -673,71 +741,96 @@ class KGEntity(Base):
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
-        UniqueConstraint("concept_id", "canonical_key", name="apollo_kg_entities_concept_key_uniq"),
+        UniqueConstraint("concept_id", "canonical_key", name="learner_entities_concept_key_uniq"),
+        {"schema": "app"},
     )
 
 
 class EntityPrereq(Base):
-    """Prerequisite DAG edges between Layer-1 entities (spec §2).
+    """Prerequisite DAG edges between Layer-1 entities (spec §2, retargeted
+    onto internal.entity_prerequisites by DB-13).
 
     LEGACY LAYER-1 EXCEPTION: ``from_entity_id`` depends on ``to_entity_id``
     (dependent -> prerequisite). Do not conflate these persistence rows with KG
     or canonical DEPENDS_ON edges, whose direction is prerequisite -> dependent.
     Migrating existing Layer-1 rows is explicitly outside DAG-0 scope.
 
-    Composite PK (from_entity_id, to_entity_id).
+    Composite PK (from_entity_id, to_entity_id). The target DDL adds a
+    denormalized ``course_id`` column (not previously in the ORM).
     """
 
-    __tablename__ = "apollo_entity_prereqs"
+    __tablename__ = "entity_prerequisites"
 
+    course_id = Column(
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     from_entity_id = Column(
         BigInteger,
-        ForeignKey("apollo_kg_entities.id", ondelete="CASCADE"),
+        ForeignKey("app.learner_entities.id", ondelete="CASCADE"),
         primary_key=True,
     )
     to_entity_id = Column(
         BigInteger,
-        ForeignKey("apollo_kg_entities.id", ondelete="CASCADE"),
+        ForeignKey("app.learner_entities.id", ondelete="CASCADE"),
         primary_key=True,
     )
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = ({"schema": "internal"},)
 
 
 class LearnerState(Base):
     """Layer-3 current per-(user, course, entity) belief snapshot, updated in
     place at Done (spec §3). Composite PK enforces one row per learner per entity
-    per course. The belief array CHECK (length 3) lives in the migration SQL."""
+    per course. The belief array CHECK (length 3) lives in the migration SQL.
 
-    __tablename__ = "apollo_learner_state"
+    DB-13: retargeted onto app.learner_state; ``misconception_code`` is GONE
+    from the target DDL (misconceptions are tracked via
+    MasteryEvent.event_kind, not a mutable per-entity field)."""
+
+    __tablename__ = "learner_state"
 
     # user_id FKs auth.users(id) ON DELETE CASCADE in the migration SQL. The ORM
     # declares no FK here because auth.users (Supabase-managed) is not in
-    # Base.metadata — same convention as ApolloSession.user_id.
+    # Base.metadata — same convention as TutoringSession.user_id.
     user_id = Column(UUID(as_uuid=False), primary_key=True)
+    # Python attribute name kept as `search_space_id` (pre-DB-13 name) mapped
+    # onto the target DDL's `course_id` physical column — same trick as
+    # DedupDecision/IngestError/IngestPageEvidence, minimizes caller churn
+    # until the DB-13 caller-retarget sub-task lands.
     search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        "course_id",
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         primary_key=True,
     )
     entity_id = Column(
         BigInteger,
-        ForeignKey("apollo_kg_entities.id", ondelete="CASCADE"),
+        ForeignKey("app.learner_entities.id", ondelete="CASCADE"),
         primary_key=True,
     )
     belief = Column(_RealArrayType, nullable=False)
     mastery = Column(Float, nullable=False)
     confidence = Column(Float, nullable=False)
-    misconception_code = Column(Text, nullable=True)
     evidence_count = Column(Integer, nullable=False, default=0)
     last_evidence_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = ({"schema": "app"},)
 
 
 # Campaign-plan Task B3 / migration 035: the composite PK's leading column is
 # user_id, so a classroom-wide "every learner in this course" scan (the
-# mastery-heatmap query) cannot use it. This mirrors
-# ix_grading_artifacts_space_concept_time's shape for apollo_grading_artifacts.
+# mastery-heatmap query) cannot use it. This mirrors the course-first shape of
+# grading_runs__course_user__idx (course_id, user_id) on internal.grading_runs
+# (DB-14 retarget — the old ix_grading_artifacts_space_concept_time name/shape
+# is gone from the target DDL).
 Index(
-    "ix_apollo_learner_state_space_entity",
+    "ix_learner_state_space_entity",
     LearnerState.search_space_id,
     LearnerState.entity_id,
 )
@@ -747,9 +840,13 @@ class MasteryEvent(Base):
     """Layer-3 append-only longitudinal evidence log AND refit corpus (spec
     §2/§3). attempt_id is ON DELETE SET NULL: the log outlives a deleted attempt.
     The (attempt_id, entity_id, event_kind) UNIQUE uses NULLS NOT DISTINCT so a
-    retry with a NULL attempt_id cannot double-insert (PG15+)."""
+    retry with a NULL attempt_id cannot double-insert (PG15+).
 
-    __tablename__ = "apollo_mastery_events"
+    DB-13: retargeted onto app.mastery_events; ``misconception_code`` is GONE
+    from the target DDL (tracked via ``event_kind`` instead);
+    ``evidence_node_ids`` is TEXT[] (was JSONB pre-cleanup)."""
+
+    __tablename__ = "mastery_events"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
@@ -757,29 +854,30 @@ class MasteryEvent(Base):
     # No ORM FK on user_id (auth.users is Supabase-managed, not in Base.metadata);
     # the migration SQL declares the FK + ON DELETE CASCADE.
     user_id = Column(UUID(as_uuid=False), nullable=False)
+    # Python attribute name kept as `search_space_id` — see LearnerState.
     search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        "course_id",
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
     )
     entity_id = Column(
         BigInteger,
-        ForeignKey("apollo_kg_entities.id", ondelete="CASCADE"),
+        ForeignKey("app.learner_entities.id", ondelete="CASCADE"),
         nullable=False,
     )
     attempt_id = Column(
         BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="SET NULL"),
+        ForeignKey("app.problem_attempts.id", ondelete="SET NULL"),
         nullable=True,
     )
     concept_problem_id = Column(
         BigInteger,
-        ForeignKey("apollo_concept_problems.id", ondelete="SET NULL"),
+        ForeignKey("app.problems.id", ondelete="SET NULL"),
         nullable=True,
     )
     event_kind = Column(Text, nullable=False)
     score = Column(Float, nullable=True)
-    misconception_code = Column(Text, nullable=True)
     parser_confidence = Column(Float, nullable=True)
     grader_confidence = Column(Float, nullable=True)
     negotiation_move = Column(Text, nullable=True)
@@ -788,7 +886,7 @@ class MasteryEvent(Base):
     posterior_belief = Column(_RealArrayType, nullable=False)
     mastery_after = Column(Float, nullable=False)
     dt_days_since_last = Column(Float, nullable=True)
-    evidence_node_ids = Column(_JSONType, nullable=False, default=list)
+    evidence_node_ids = Column(_TextArrayType, nullable=False, default=list)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
@@ -796,111 +894,32 @@ class MasteryEvent(Base):
             "attempt_id",
             "entity_id",
             "event_kind",
-            name="apollo_mastery_events_attempt_entity_kind_uniq",
+            name="mastery_events__attempt_entity_kind__uniq",
             postgresql_nulls_not_distinct=True,
         ),
+        {"schema": "app"},
     )
 
 
-class GraphComparisonRun(Base):
-    """One row per Done-time comparison; makes the grader auditable (spec §2/§6).
-    UNIQUE (attempt_id, comparison_version) lets a re-run at the same version be a
-    supersede (delete-then-reinsert), not a crash."""
-
-    __tablename__ = "apollo_graph_comparison_runs"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    attempt_id = Column(
-        BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    # No ORM FK on user_id (auth.users is Supabase-managed, not in Base.metadata);
-    # the migration SQL declares the FK + ON DELETE CASCADE.
-    user_id = Column(UUID(as_uuid=False), nullable=False)
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    coverage_score = Column(Float, nullable=False)
-    soundness_score = Column(Float, nullable=False)
-    bisimilarity_score = Column(Float, nullable=False)
-    # D5/D6: False iff the misconception bank was empty/absent for this concept.
-    # Then soundness_score / bisimilarity_score hold the COVERAGE-ONLY fallback
-    # (NOT NULL invariant preserved, bisimilarity.py:5-6) and contradiction_score
-    # is NULL. Readers MUST consult this before trusting/averaging soundness.
-    soundness_applicable = Column(
-        Boolean, nullable=False, server_default=text("true"), default=True
-    )
-    node_coverage_score = Column(Float, nullable=True)
-    edge_coverage_score = Column(Float, nullable=True)
-    scoping_score = Column(Float, nullable=True)
-    usage_score = Column(Float, nullable=True)
-    procedure_order_score = Column(Float, nullable=True)
-    dependency_score = Column(Float, nullable=True)
-    contradiction_score = Column(Float, nullable=True)
-    normalization_confidence = Column(Float, nullable=False)
-    abstained = Column(Boolean, nullable=False, server_default=text("false"), default=False)
-    abstention_reasons = Column(_JSONType, nullable=False, default=list)
-    comparison_version = Column(Text, nullable=False)
-    reference_graph_hash = Column(Text, nullable=False)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-    __table_args__ = (
-        UniqueConstraint(
-            "attempt_id",
-            "comparison_version",
-            name="apollo_graph_comparison_runs_attempt_version_uniq",
-        ),
-    )
-
-
-class GraphComparisonFinding(Base):
-    """Structured evidence behind every comparison score; diagnostics read THIS,
-    not the transcript (spec §2/§6). entity_id ON DELETE SET NULL: a pruned entity
-    must not delete the audit finding."""
-
-    __tablename__ = "apollo_graph_comparison_findings"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    run_id = Column(
-        BigInteger,
-        ForeignKey("apollo_graph_comparison_runs.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    entity_id = Column(
-        BigInteger,
-        ForeignKey("apollo_kg_entities.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    finding_kind = Column(Text, nullable=False)
-    score = Column(Float, nullable=True)
-    confidence = Column(Float, nullable=True)
-    student_node_ids = Column(_JSONType, nullable=False, default=list)
-    reference_node_ids = Column(_JSONType, nullable=False, default=list)
-    student_edge_ids = Column(_JSONType, nullable=False, default=list)
-    reference_edge_ids = Column(_JSONType, nullable=False, default=list)
-    evidence_spans = Column(_JSONType, nullable=False, default=list)
-    message = Column(Text, nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+# NOTE (DB-14/A7): the graph-comparison leg (former ``GraphComparisonRun`` /
+# ``GraphComparisonFinding`` ORM models, ``apollo_graph_comparison_runs`` /
+# ``apollo_graph_comparison_findings``) is DEAD — T-J already deleted the
+# graph-grader shadow chain that wrote them (``apollo/graph_compare/``,
+# ``apollo/grading/persistence.py``, the composite/audited grade path) and A7
+# dropped ``internal.grading_findings`` from the DB-redesign target entirely.
+# Zero runtime importers remained at deletion time (verified via repo-wide
+# grep); ``GradingRun``/``internal.grading_runs`` below is the artifacts-only
+# merge target. ``FINDING_KINDS`` above stays as a documentation-only tuple
+# (no longer tied to a live ORM/SQL CHECK) — it is still asserted against the
+# FROZEN migration 026 chain by
+# apollo/persistence/tests/test_learner_model_allowlists.py.
 
 
 # ===========================================================================
-# WU-3B2a auto-provisioning substrate (migration 030). §8B materials->Apollo
-# observability + work-queue tables. Following the repo convention these declare
-# NO DB CHECK constraints — the migration SQL is the authority (status/state/
-# method/verdict CHECKs live in SQL only); the ORM is the typed Python access
-# layer. The schema EXISTS as of WU-3B2a but the pipeline that reads/writes these
-# tables lands in 3B2b-3B2h (jobs drained by 3B2f; runs/rejected/dedup/errors
-# written by 3B2g). The course-isolation invariant (§1.4) is carried by the
-# NOT NULL search_space_id FK on every table (a course delete cascades its rows).
+# Authored-content ingest observability. Migration 030 originally also created
+# an auto-provisioning queue and rejected-problem audit table; cleanup T-F
+# removed their runtime/ORM models while retaining the synchronous authored-set
+# ingest, dedup, and error records below.
 # ===========================================================================
 
 
@@ -912,23 +931,25 @@ class IngestRun(Base):
     queued/running/succeeded/failed — DISTINCT from the job ``state`` vocabulary
     (the CHECK is in SQL only; the ORM declares none, repo convention)."""
 
-    __tablename__ = "apollo_ingest_runs"
+    __tablename__ = "content_ingest_runs"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
     search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        "course_id",
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     # Nullable since WU-AAS observability (migration 036): the authored-set path
     # opens the run BEFORE indexing so an OCR/indexing failure (bad PDF, no chunks
     # produced) still leaves a run row — at that point no document has been minted
-    # yet, so document_id is stamped only once problem indexing succeeds. The queue
-    # worker path always sets it.
-    document_id = Column(BigInteger, nullable=True)
+    # yet, so document_id is stamped only once problem indexing succeeds.
+    document_id = Column(
+        BigInteger, ForeignKey("app.documents.id", ondelete="SET NULL"), nullable=True
+    )
     content_hash = Column(Text, nullable=True)
     status = Column(Text, nullable=False, server_default=text("'queued'"), default="queued")
     n_pages = Column(Integer, nullable=False, server_default=text("0"), default=0)
@@ -936,21 +957,21 @@ class IngestRun(Base):
     n_promoted = Column(Integer, nullable=False, server_default=text("0"), default=0)
     n_rejected = Column(Integer, nullable=False, server_default=text("0"), default=0)
     n_dedup_merged = Column(Integer, nullable=False, server_default=text("0"), default=0)
-    dedup_pressure = Column(
+    dedup_total_candidates = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    dedup_exact_merges = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    dedup_embedding_merges = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    dedup_embedding_distinct = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    dedup_embedding_merge_ratio = Column(
+        Float, nullable=False, server_default=text("0"), default=0.0
+    )
+    dedup_details = Column(
         _JSONType,
         nullable=False,
         # server_default stays '{}' — a richer JSON literal here would need its
         # colons escaped for text() (":0" parses as a bind param and renders
         # DEFAULT '..."total_candidates"NULL...'); readers .get() every key.
         server_default=text("'{}'::jsonb"),
-        default=lambda: {
-            "total_candidates": 0,
-            "exact_merges": 0,
-            "embedding_merges": 0,
-            "embedding_distinct": 0,
-            "embedding_merge_ratio": 0.0,
-            "per_concept": {},
-        },
+        default=dict,
     )
     llm_calls = Column(Integer, nullable=False, server_default=text("0"), default=0)
     llm_tokens_in = Column(BigInteger, nullable=False, server_default=text("0"), default=0)
@@ -960,72 +981,7 @@ class IngestRun(Base):
     finished_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
-
-class ProvisioningJob(Base):
-    """The SKIP-LOCKED auto-provisioning work queue (migration 030, §8B), mirroring
-    the TeacherUploadJob lease shape. ``state`` vocabulary is
-    pending/running/completed/failed — DISTINCT from the run ``status`` (CHECK in
-    SQL only). The partial-unique-index that collapses two OPEN jobs per document
-    is migration-only (NOT declared in the ORM, same as 028's partial index)."""
-
-    __tablename__ = "apollo_provisioning_jobs"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    document_id = Column(BigInteger, nullable=False)
-    state = Column(Text, nullable=False, server_default=text("'pending'"), default="pending")
-    ingest_run_id = Column(
-        BigInteger,
-        ForeignKey("apollo_ingest_runs.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    lease_owner = Column(Text, nullable=True)
-    lease_expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
-    attempt_count = Column(Integer, nullable=False, server_default=text("0"), default=0)
-    last_error = Column(Text, nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-
-class RejectedProblem(Base):
-    """A gate failure + diagnostic + the rejected payload (migration 030, §8B).
-    ``concept_id`` ON DELETE SET NULL: a pruned concept must not delete the audit
-    row. ``rejected_stage`` / ``failed_gate`` vocabularies are open (no SQL CHECK);
-    the ORM declares no DB CHECK (repo convention)."""
-
-    __tablename__ = "apollo_rejected_problems"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    ingest_run_id = Column(
-        BigInteger,
-        ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
-        nullable=True,
-    )
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    concept_id = Column(
-        BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    failed_gate = Column(SmallInteger, nullable=True)
-    rejected_stage = Column(Text, nullable=False)
-    diagnostic = Column(Text, nullable=False)
-    payload = Column(_JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    __table_args__ = ({"schema": "internal"},)
 
 
 class DedupDecision(Base):
@@ -1033,25 +989,26 @@ class DedupDecision(Base):
     §8B). ``similarity`` is NULL for the slug exact-match tier. ``method`` /
     ``verdict`` CHECKs live in SQL only; the ORM declares none (repo convention)."""
 
-    __tablename__ = "apollo_dedup_decisions"
+    __tablename__ = "dedup_decisions"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
     ingest_run_id = Column(
         BigInteger,
-        ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
+        ForeignKey("internal.content_ingest_runs.id", ondelete="CASCADE"),
         nullable=True,
     )
     search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        "course_id",
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     concept_id = Column(
         BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
+        ForeignKey("app.concepts.id", ondelete="SET NULL"),
         nullable=True,
     )
     candidate_key = Column(Text, nullable=False)
@@ -1060,10 +1017,12 @@ class DedupDecision(Base):
     verdict = Column(Text, nullable=False)
     matched_entity_id = Column(
         BigInteger,
-        ForeignKey("apollo_kg_entities.id", ondelete="SET NULL"),
+        ForeignKey("app.learner_entities.id", ondelete="SET NULL"),
         nullable=True,
     )
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = ({"schema": "internal"},)
 
 
 class IngestError(Base):
@@ -1071,19 +1030,20 @@ class IngestError(Base):
     §8B). ``stage`` / ``error_class`` vocabularies are open (no SQL CHECK); the ORM
     declares no DB CHECK (repo convention)."""
 
-    __tablename__ = "apollo_ingest_errors"
+    __tablename__ = "content_ingest_errors"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
     ingest_run_id = Column(
         BigInteger,
-        ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
+        ForeignKey("internal.content_ingest_runs.id", ondelete="CASCADE"),
         nullable=True,
     )
     search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        "course_id",
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -1091,6 +1051,8 @@ class IngestError(Base):
     error_class = Column(Text, nullable=False)
     context = Column(_JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+
+    __table_args__ = ({"schema": "internal"},)
 
 
 class IngestPageEvidence(Base):
@@ -1103,31 +1065,34 @@ class IngestPageEvidence(Base):
     that this page tripped the low-confidence threshold — the signal the S2
     contract reads to know an OCR-suspect page WOULD route through the extra
     generated-vs-extracted verification. Append-only; rows CASCADE from the run.
-    ``document_id`` declares no ORM FK (aita_documents is owned by database.models
-    and the ON DELETE CASCADE on aita_chunks/document teardown is handled at the
+    ``document_id`` declares no ORM FK (app.documents is owned by database.models
+    and the ON DELETE CASCADE on internal.document_chunks/document teardown is handled at the
     authored-set delete path)."""
 
-    __tablename__ = "apollo_ingest_page_evidence"
+    __tablename__ = "ingest_page_evidence"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
     ingest_run_id = Column(
         BigInteger,
-        ForeignKey("apollo_ingest_runs.id", ondelete="CASCADE"),
+        ForeignKey("internal.content_ingest_runs.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
+        "course_id",
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     # Nullable: a page captured before the failure path minted a document (e.g. a
     # page-bearing-but-chunkless PDF that raised "no chunks produced") still gets
     # its OCR evidence persisted, with no document id to attribute it to.
-    document_id = Column(BigInteger, nullable=True)
+    document_id = Column(
+        BigInteger, ForeignKey("app.documents.id", ondelete="SET NULL"), nullable=True
+    )
     role = Column(Text, nullable=False)  # 'problem' | 'solution' (open enum, no SQL CHECK)
     page_number = Column(Integer, nullable=True)
     ocr_text = Column(Text, nullable=False, server_default=text("''"), default="")
@@ -1136,127 +1101,115 @@ class IngestPageEvidence(Base):
     verify_path_fired = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
+    __table_args__ = ({"schema": "internal"},)
 
-class GradingArtifact(Base):
-    """Canonical grading artifact (spec 2026-07-01 §1) — one immutable row per
-    Done-click per grader role. ``role='canonical'`` is the record of the grade
-    the student was served; ``role='pair'`` is the other grader's artifact
-    captured on the same input (paired-artifact contract, spec §5). Append-only:
-    no update path exists in code; retuning weights affects future artifacts
-    only. ``user_id`` declares NO ORM FK (auth.users is Supabase-managed,
-    absent from Base.metadata), mirroring Clarification/GraphComparisonRun."""
 
-    __tablename__ = "apollo_grading_artifacts"
+class GradingRun(Base):
+    """Canonical grading artifact (spec 2026-07-01 §1; DB-14/A7 artifacts-only
+    merge onto ``internal.grading_runs`` — the graph-comparison leg
+    (``internal.grading_findings``, the former ``GraphComparisonRun``/
+    ``GraphComparisonFinding`` models) is DEAD, see the note above this
+    class) — one immutable row per Done-click per grader role.
+    ``role='canonical'`` is the record of the grade the student was served;
+    ``role='pair'`` is the other grader's artifact captured on the same input
+    (paired-artifact contract, spec §5). Append-only: no update path exists in
+    code; retuning weights affects future rows only. ``user_id`` declares NO
+    ORM FK (auth.users is Supabase-managed, absent from Base.metadata).
+
+    The LLM-fallback writer's payload dict
+    (``apollo.grading.artifact_build.build_llm_artifact``) maps onto these
+    columns as: ``payload["versions"]`` -> ``version_details`` (whole dict) +
+    ``grader_version``/``reference_graph_hash`` (lifted out, typed);
+    ``payload["scores"]`` -> ``score_details`` (whole dict) +
+    ``composite_score``/``node_coverage_score`` (lifted out, typed);
+    ``payload["abstention"]`` -> ``abstention_details`` (whole dict) +
+    ``abstained`` (lifted out, typed, NOT NULL); ``payload["misconceptions"]``/
+    ``payload["clarification_trace"]`` -> nested under ``grader_payload``
+    (the target DDL has no dedicated columns for either — see
+    ``apollo.handlers.artifact_writer._artifact_row``). The Evidence Graph v2
+    columns below (``transcript_freeze_hash`` through ``band``) are the DDL's
+    own seam comment: nullable until the separately reviewed v2 writer lands;
+    this (LLM-fallback) writer never sets them."""
+
+    __tablename__ = "grading_runs"
 
     id = Column(
         BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
+    # Python attribute name kept as `search_space_id` (repo convention for
+    # internal-schema tables FK'd to app.courses.id — see
+    # LearnerState/MasteryEvent/IngestRun/DedupDecision et al.) mapped onto
+    # the target DDL's `course_id` physical column.
+    search_space_id = Column(
+        "course_id",
+        BigInteger,
+        ForeignKey("app.courses.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # No ORM FK on user_id (auth.users is Supabase-managed, not in
+    # Base.metadata); the migration SQL declares the FK + ON DELETE CASCADE.
+    user_id = Column(UUID(as_uuid=False), nullable=False)
     attempt_id = Column(
         BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="CASCADE"),
+        ForeignKey("app.problem_attempts.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    role = Column(Text, nullable=False)
-    grader_used = Column(Text, nullable=False)
-    user_id = Column(UUID(as_uuid=False), nullable=False)
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
-        nullable=False,
-    )
     concept_id = Column(
         BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
+        ForeignKey("app.concepts.id", ondelete="SET NULL"),
         nullable=True,
     )
-    problem_id = Column(Text, nullable=False)
-    versions = Column(_JSONType, nullable=False)
-    node_ledger = Column(_JSONType, nullable=False)
-    edge_ledger = Column(_JSONType, nullable=False)
-    misconceptions = Column(_JSONType, nullable=False, default=list)
-    clarification_trace = Column(_JSONType, nullable=False, default=list)
-    scores = Column(_JSONType, nullable=False)
-    abstention = Column(_JSONType, nullable=True)
+    problem_id = Column(
+        BigInteger,
+        ForeignKey("app.problems.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    role = Column(Text, nullable=False)
+    grader_used = Column(Text, nullable=False)
+    grader_version = Column(Text, nullable=False)
+    reference_graph_hash = Column(Text, nullable=True)
+    weights_version = Column(Text, nullable=True)
+    status = Column(Text, nullable=False, server_default=text("'final'"), default="final")
     grading_latency_ms = Column(Integer, nullable=True)
+    composite_score = Column(Float, nullable=True)  # REAL on Postgres
+    node_coverage_score = Column(Float, nullable=True)  # REAL on Postgres
+    edge_coverage_score = Column(Float, nullable=True)  # REAL on Postgres
+    abstained = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    version_details = Column(
+        _JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+    node_ledger = Column(_JSONType, nullable=False, server_default=text("'[]'::jsonb"), default=list)
+    edge_ledger = Column(_JSONType, nullable=False, server_default=text("'[]'::jsonb"), default=list)
+    score_details = Column(
+        _JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+    abstention_details = Column(_JSONType, nullable=True)
+    grader_payload = Column(
+        _JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+    # Evidence Graph v2 seam (DDL's own comment): nullable until the
+    # separately reviewed v2 writer lands. Untouched by this writer.
+    transcript_freeze_hash = Column(Text, nullable=True)
+    reference_graph_version = Column(Text, nullable=True)
+    evidence_adjudicator_version = Column(Text, nullable=True)
+    verifier_versions = Column(_JSONType, nullable=True)
+    verifier_versions_hash = Column(Text, nullable=True)
+    inference_config_hash = Column(Text, nullable=True)
+    band_policy_version = Column(Text, nullable=True)
+    dimensions = Column(_JSONType, nullable=True)
+    applied_rule_ids = Column(_JSONType, nullable=True)
+    robustness_result = Column(_JSONType, nullable=True)
+    clarification_history_ref = Column(_JSONType, nullable=True)
+    band = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
         UniqueConstraint(
             "attempt_id",
             "role",
-            name="uq_grading_artifact_attempt_role",
+            "grader_version",
+            name="grading_runs_attempt_id_role_grader_version_key",
         ),
+        {"schema": "internal"},
     )
-
-
-class MisconceptionObservation(Base):
-    """Emergent misconception store — append-only observation ledger (design
-    memo 2026-07-05, increment 1; migration 037). ONE row per
-    ``(attempt_id, signature)`` derived from a ``role='canonical'`` grading
-    artifact's asserted misconceptions when the ``APOLLO_EMERGENT_MISCONCEPTIONS``
-    flag is ON. The ledger is the source of truth; trust is derived on read
-    (``apollo.emergent.store``), never stored.
-
-    ``signature`` is the artifact misconception's ``canonical_key`` (the strong,
-    promotable case), or the per-concept ``unkeyed:<concept_id>`` bucket for a
-    free-form (``opposes=None``, no key) misconception, which accumulates but
-    NEVER promotes (memo §4 / OQ1). ``UNIQUE(attempt_id, signature)`` mirrors
-    ``MasteryEvent``'s idempotency: a re-grade / retry of the same attempt cannot
-    double-count. ``user_id`` declares NO ORM FK (auth.users is Supabase-managed,
-    absent from Base.metadata), mirroring GradingArtifact/GraphComparisonRun."""
-
-    __tablename__ = "apollo_misconception_observations"
-
-    id = Column(
-        BigInteger().with_variant(Integer(), "sqlite"), primary_key=True, autoincrement=True
-    )
-    search_space_id = Column(
-        Integer,
-        ForeignKey("aita_search_spaces.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    concept_id = Column(
-        BigInteger,
-        ForeignKey("apollo_concepts.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    signature = Column(Text, nullable=False)
-    user_id = Column(UUID(as_uuid=False), nullable=False)
-    attempt_id = Column(
-        BigInteger,
-        ForeignKey("apollo_problem_attempts.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    confidence = Column(Float, nullable=True)
-    opposes = Column(Text, nullable=True)
-    evidence_span = Column(Text, nullable=True)
-    # 'grading_artifact' (role=canonical Done-grade ledger feed, unchanged) |
-    # 'detector_unkeyed' (emergent-map birth signal — judge confidently wrong
-    # at a keyed reference node it cannot name) | 'clarification_refuted'
-    # (emergent-map upgrade signal — a clarification rescore confirms the
-    # misconception). Domain enforced by ck_misconception_obs_source
-    # (migration 040; emergent-map design 2026-07-10 §5.3/§5.4).
-    source = Column(
-        Text, nullable=False, server_default=text("'grading_artifact'"), default="grading_artifact"
-    )
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
-
-    __table_args__ = (
-        UniqueConstraint(
-            "attempt_id",
-            "signature",
-            name="uq_misconception_observation_attempt_signature",
-        ),
-    )
-
-
-# Read path (apollo.emergent.store) scans the ledger for one class+concept and
-# groups by signature. The PK leads with id, so a (search_space_id, concept_id)
-# scan cannot use it — this index supports it, mirroring
-# ix_grading_artifacts_space_concept_time's shape.
-Index(
-    "ix_apollo_misconception_obs_space_concept",
-    MisconceptionObservation.search_space_id,
-    MisconceptionObservation.concept_id,
-)

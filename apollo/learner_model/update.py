@@ -85,9 +85,13 @@ def event_to_row_specs(
 ) -> tuple[MasteryEventRowSpec, LearnerStateRowSpec]:
     """Map ``event`` + ``update`` onto the two frozen row specs (the WU-5A2 seam).
 
-    Belief/mastery/confidence/misconception/parser/grader come from ``update``;
+    Belief/mastery/confidence/parser/grader come from ``update``;
     event_kind/score/reference_step_id/evidence_node_ids from ``event``; the
-    identity ids pass through (default ``None`` — WU-5A1 does not resolve them)."""
+    identity ids pass through (default ``None`` — WU-5A1 does not resolve them).
+    ``negotiation_move`` is always ``None`` (WU-5A1 never negotiates; DB-13 kept
+    the column live, writers just don't set it — mirrors
+    ``apollo/projections/mastery.py``). Neither row spec carries
+    ``misconception_code`` (DB-13 dropped that column from both tables)."""
     mastery_spec = MasteryEventRowSpec(
         user_id=user_id,
         search_space_id=search_space_id,
@@ -95,10 +99,9 @@ def event_to_row_specs(
         attempt_id=attempt_id,
         event_kind=event.event_kind.value,
         score=event.score,
-        misconception_code=update.misconception_code,
         parser_confidence=update.parser_confidence,
         grader_confidence=update.grader_confidence,
-        negotiation_move=None,  # NULL v1 (multiplier not applied)
+        negotiation_move=None,
         reference_step_id=event.reference_step_id,
         prior_belief=update.prior_belief,
         posterior_belief=update.posterior_belief,
@@ -110,6 +113,5 @@ def event_to_row_specs(
         belief=update.posterior_belief,
         mastery=update.mastery_after,
         confidence=update.confidence_after,
-        misconception_code=update.misconception_code,
     )
     return mastery_spec, state_spec

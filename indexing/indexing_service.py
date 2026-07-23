@@ -17,7 +17,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import AITAChunk, AITADocument, DocumentStatus
+from database.models import DocumentChunk, Document, DocumentStatus
 from .connector_document import AITAConnectorDocument
 from .document_chunker import items_to_chunk_texts
 from .document_embedder import embed_text
@@ -43,14 +43,14 @@ class AITAIndexingService:
     async def prepare_for_indexing(
         self,
         connector_docs: list[AITAConnectorDocument],
-    ) -> list[AITADocument]:
+    ) -> list[Document]:
         """Persist new document records and detect changes.
 
         Returns only those documents that need (re-)indexing.
         Skips duplicates (same unique_identifier_hash + same content).
         Ported from SurfSense's prepare_for_indexing with race-condition handling.
         """
-        documents: list[AITADocument] = []
+        documents: list[Document] = []
         seen_hashes: set[str] = set()
 
         for connector_doc in connector_docs:
@@ -64,8 +64,8 @@ class AITAIndexingService:
 
                 # Check if document already exists by unique identity
                 result = await self.session.execute(
-                    select(AITADocument).filter(
-                        AITADocument.unique_identifier_hash == unique_id_hash
+                    select(Document).filter(
+                        Document.unique_identifier_hash == unique_id_hash
                     )
                 )
                 existing = result.scalars().first()
@@ -75,6 +75,7 @@ class AITAIndexingService:
                         # Content unchanged — just ensure it's in ready state
                         if not DocumentStatus.is_state(existing.status, DocumentStatus.READY):
                             existing.status = DocumentStatus.pending()
+                            existing.failure_reason = None
                             existing.updated_at = datetime.now(UTC)
                             documents.append(existing)
                         continue
@@ -83,19 +84,20 @@ class AITAIndexingService:
                     existing.title = connector_doc.title
                     existing.content_hash = content_hash
                     existing.source_markdown = connector_doc.source_markdown
-                    existing.document_metadata = connector_doc.metadata
+                    existing.metadata_ = connector_doc.metadata
                     existing.material_kind = connector_doc.material_kind
                     existing.week = connector_doc.week
                     existing.updated_at = datetime.now(UTC)
                     existing.status = DocumentStatus.pending()
+                    existing.failure_reason = None
                     documents.append(existing)
                     log.info("Document '%s' content changed, re-queued.", connector_doc.title)
                     continue
 
                 # Check for content duplicate in this search space (different source, same content)
                 dup = await self.session.execute(
-                    select(AITADocument).filter(
-                        AITADocument.content_hash == content_hash
+                    select(Document).filter(
+                        Document.content_hash == content_hash
                     )
                 )
                 if dup.scalars().first() is not None:
@@ -103,7 +105,7 @@ class AITAIndexingService:
                     continue
 
                 # New document
-                document = AITADocument(
+                document = Document(
                     title=connector_doc.title,
                     document_type=connector_doc.document_type,
                     material_kind=connector_doc.material_kind,
@@ -111,10 +113,10 @@ class AITAIndexingService:
                     source_markdown=connector_doc.source_markdown,
                     content_hash=content_hash,
                     unique_identifier_hash=unique_id_hash,
-                    document_metadata=connector_doc.metadata,
+                    metadata_=connector_doc.metadata,
                     page_count=connector_doc.page_count,
                     week=connector_doc.week,
-                    search_space_id=connector_doc.search_space_id,
+                    course_id=connector_doc.search_space_id,
                     updated_at=datetime.now(UTC),
                     status=DocumentStatus.pending(),
                 )
@@ -140,22 +142,23 @@ class AITAIndexingService:
 
     async def index_from_items(
         self,
-        document: AITADocument,
+        document: Document,
         connector_doc: AITAConnectorDocument,
         items: list,
-    ) -> AITADocument:
+    ) -> Document:
         """Index pre-extracted Item objects from layout_multimodal_embedder.py.
 
-        Each Item becomes one AITAChunk preserving page_number, section_path,
+        Each Item becomes one DocumentChunk preserving page_number, section_path,
         and chunk_type for accurate citation markers.
 
         Args:
-            document: The AITADocument record (status will be updated)
+            document: The Document record (status will be updated)
             connector_doc: The source DTO (for metadata)
             items: List of Item objects from layout_multimodal_embedder.py
         """
         try:
             document.status = DocumentStatus.processing()
+            document.failure_reason = None
             await self.session.commit()
 
             chunk_pairs = items_to_chunk_texts(items)
@@ -174,14 +177,15 @@ class AITAIndexingService:
 
             # Delete any stale chunks from a previous indexing pass
             await self.session.execute(
-                delete(AITAChunk).where(AITAChunk.document_id == document.id)
+                delete(DocumentChunk).where(DocumentChunk.document_id == document.id)
             )
 
             # Create chunk objects
             chunks = []
             for text, meta in chunk_pairs:
                 chunk_embedding = embed_text(text)
-                chunks.append(AITAChunk(
+                chunks.append(DocumentChunk(
+                    course_id=document.course_id,
                     content=text,
                     embedding=chunk_embedding,
                     page_number=meta.get("page_number"),
@@ -198,6 +202,7 @@ class AITAIndexingService:
             attach_chunks_to_document(document, chunks)
             document.updated_at = datetime.now(UTC)
             document.status = DocumentStatus.ready()
+            document.failure_reason = None
             await self.session.commit()
             log.info(
                 "Indexed document '%s': %d chunks.", document.title, len(chunks)

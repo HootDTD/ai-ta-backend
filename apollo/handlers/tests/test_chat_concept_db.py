@@ -19,14 +19,16 @@ from apollo.handlers.intent import IntentVerdict
 from apollo.knowledge_graph.store import WriteEdgesResult
 from apollo.ontology import KGGraph
 from apollo.persistence.models import (
-    ApolloSession,
     ProblemAttempt,
     SessionPhase,
     SessionStatus,
+    TutoringSession,
 )
+from apollo.smart_questions import QuestionDecision
 from apollo.subjects.tests._curriculum_fixtures import (
     load_bernoulli_concept_payloads,
     load_bernoulli_problem_payloads,
+    problem_database_id,
     seed_course,
 )
 
@@ -44,17 +46,24 @@ async def _seed_session_with_attempt(db, *, concept_payloads=None):
         concept_payloads=concept_payloads,
     )
     current_code = codes[0]
-    sess = ApolloSession(
+    current_problem_id = await problem_database_id(db, concept_id=cid, problem_code=current_code)
+    sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=sid,
         concept_id=cid,
         status=SessionStatus.active.value,
         phase=SessionPhase.TEACHING.value,
-        current_problem_id=current_code,
+        current_problem_id=current_problem_id,
     )
     db.add(sess)
     await db.flush()
-    attempt = ProblemAttempt(session_id=sess.id, problem_id=current_code, difficulty="intro")
+    attempt = ProblemAttempt(
+        session_id=sess.id,
+        problem_id=current_problem_id,
+        difficulty="intro",
+        user_id=sess.user_id,
+        course_id=sess.course_id,
+    )
     db.add(attempt)
     await db.flush()
     return sess.id, cid, current_code
@@ -81,14 +90,19 @@ async def test_chat_loads_concept_definition_from_db(db_session):
     with (
         patch("apollo.handlers.chat.KGStore", return_value=store),
         patch("apollo.handlers.chat.parse_utterance", return_value=([], [])) as parse,
-        patch("apollo.handlers.chat.draft_reply", return_value="ok"),
+        patch(
+            "apollo.handlers.chat.plan_next_question",
+            new=AsyncMock(
+                return_value=QuestionDecision(action="ask", question="ok", target_node_id="eq.a")
+            ),
+        ),
         patch(
             "apollo.handlers.chat.classify_intent",
             return_value=IntentVerdict(intent="teaching", confidence=1.0, reason=""),
         ),
         patch(
-            "apollo.handlers.chat.load_windowed_history",
-            new=AsyncMock(return_value=(None, [])),
+            "apollo.handlers.chat._unified_questioning_enabled",
+            return_value=True,
         ),
     ):
         await handle_chat(db=db_session, neo=MagicMock(), session_id=session_id, message="hi")
@@ -99,7 +113,7 @@ async def test_chat_loads_concept_definition_from_db(db_session):
 
 
 async def test_chat_find_problem_matches_problem_code(db_session):
-    """T5.4 — draft_reply is given the DB problem's text (proves _find_problem
+    """T5.4 — the unified planner is given the DB problem (proves _find_problem
     reads the DB by concept_id + problem_code)."""
     session_id, _cid, current_code = await _seed_session_with_attempt(db_session)
     expected_text = next(p for p in _INTRO if p["id"] == current_code)["problem_text"]
@@ -108,24 +122,32 @@ async def test_chat_find_problem_matches_problem_code(db_session):
     with (
         patch("apollo.handlers.chat.KGStore", return_value=store),
         patch("apollo.handlers.chat.parse_utterance", return_value=([], [])),
-        patch("apollo.handlers.chat.draft_reply", return_value="ok") as reply,
+        patch(
+            "apollo.handlers.chat.plan_next_question",
+            new=AsyncMock(
+                return_value=QuestionDecision(action="ask", question="ok", target_node_id="eq.a")
+            ),
+        ) as planner,
         patch(
             "apollo.handlers.chat.classify_intent",
             return_value=IntentVerdict(intent="teaching", confidence=1.0, reason=""),
         ),
         patch(
-            "apollo.handlers.chat.load_windowed_history",
-            new=AsyncMock(return_value=(None, [])),
+            "apollo.handlers.chat._unified_questioning_enabled",
+            return_value=True,
         ),
     ):
         await handle_chat(db=db_session, neo=MagicMock(), session_id=session_id, message="hi")
 
-    assert reply.call_args.kwargs["problem_text"] == expected_text
+    assert planner.await_args.kwargs["problem"].problem_text == expected_text
 
 
 async def test_chat_find_problem_raises_when_code_absent(db_session):
     """T5.x — _find_problem raises RuntimeError when the problem_code has no DB
     row for the concept (the NO-FALLBACK not-found branch)."""
     session_id, cid, _code = await _seed_session_with_attempt(db_session)
+    session = await db_session.get(TutoringSession, session_id)
     with pytest.raises(RuntimeError):
-        await _find_problem(db_session, cid, "nonexistent_problem_code")
+        await _find_problem(
+            db_session, cid, "nonexistent_problem_code", course_id=session.course_id
+        )
