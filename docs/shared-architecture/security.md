@@ -131,11 +131,25 @@ step. Recommended staging sequence:
 
 ## RLS posture (DB layer) — target schema
 
-- **`app` schema (18 tables)**: RLS ENABLEd + FORCEd on every table, with 32
+- **`app` schema (18 tables)**: RLS ENABLEd + FORCEd on every table, with 45
   `auth.uid()`-scoped policies (`TO authenticated`) covering member/owner SELECT,
   owner INSERT/UPDATE, and teacher-of-course access patterns via
   `internal.has_course_role()`. `authenticated` holds DML grants; **`anon` and `PUBLIC`
-  are fully revoked** on the schema.
+  are fully revoked** on the schema. Of those 45, 32 are the original DB-04 baseline
+  and 13 are DB-08c's (`20260723060000_db08c_rls_write_policy_gaps`) write-policy
+  additions (`student_progress`, `course_memberships`, `mastery_events`,
+  `learner_state`, `tutoring_messages`, `concepts`, `problems`, `documents`,
+  `learner_entities`): DB-04's policy set predates DB-08b's enforcement flip and was
+  authored against a BYPASSRLS backend, so several `app` tables only ever got a
+  SELECT policy. A post-DB-08b e2e run turned up two live defects from that gap —
+  every student's first graded attempt 500ing on the `student_progress` INSERT in
+  `apollo/persistence/progress_repo.py::load_progress`, and brand-new students'
+  auto-enroll `course_memberships` INSERT being silently denied — before this fix.
+  **These write policies are authored for the backend running as `app_runtime`
+  (DB-08b's enforced request-path role), not for PostgREST/anon access** — neither UI
+  ever talks to `app` tables directly (see "Tenant isolation model" above and
+  "Enforced route families" for which request paths this write coverage actually
+  protects).
 - **`internal` schema (10 tables)**: service-only. All privileges revoked from `PUBLIC`,
   `anon`, and `authenticated` (including default privileges for future objects);
   `authenticated`/`app_runtime` get schema USAGE and EXECUTE on
@@ -143,7 +157,7 @@ step. Recommended staging sequence:
 - **`app_runtime`** is created `NOLOGIN NOBYPASSRLS` with DML grants mirroring
   `authenticated` — it is the enforcement role DB-08b switches request transactions to.
   `db08b_rls_enforcement_grants` additionally does `GRANT authenticated TO
-  app_runtime` (every one of the 32 policies is scoped `TO authenticated`, and
+  app_runtime` (every one of the 45 policies is scoped `TO authenticated`, and
   Postgres RLS `TO <role>` only binds to that literal role or a role that is a
   *member* of it — the per-table DML grants from DB-04 are necessary but not
   sufficient without this membership). **This is a wider blast radius than the

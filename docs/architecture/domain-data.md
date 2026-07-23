@@ -384,22 +384,32 @@ HTTP responses intentionally retain the established `search_space_id`,
   (calls `get_async_session()` directly, reached only from the sync bridge),
   `teacher_upload_worker.py`, `scripts/`, `campaign/`, and every
   `BackgroundTasks` callback scheduled by the enforced routers above.
-- **Known gap (see also `shared/security.md`):** `app.mastery_events` and
-  `app.learner_state` carry only a `*__owner_or_teacher_select` RLS policy —
-  no INSERT/UPDATE policy exists for `authenticated`/`app_runtime` on either
-  table. `apollo/projections/mastery.py::update_mastery_from_artifact`
-  writes both from `apollo/handlers/done.py::_project_mastery`, on the
-  enforced Done-handler session. Once `APOLLO_GRADING_ARTIFACT_ENABLED` is
-  on for a course, DB-08b enforcement would make every such write fail
-  (INSERT: `InsufficientPrivilegeError`; UPDATE: silently 0 rows affected) —
-  `_project_mastery` catches, logs, and swallows any exception by design, so
-  this would fail *silently*. Confirmed with a real-Postgres regression in
-  `tests/database/test_db08b_rls_enforcement.py::test_mastery_event_insert_denied_under_app_runtime_no_write_policy`.
-  Fixing this requires a new migration adding write policies to these two
-  tables — explicitly out of scope for DB-08b (grants-only, "does not add or
-  change a single policy") and left as an open follow-up.
+- **Fixed gap (DB-08c, see also `shared/security.md`):** DB-04's policy set
+  predates DB-08b's enforcement flip and was authored against a BYPASSRLS
+  backend, so several `app` tables — including `app.mastery_events` and
+  `app.learner_state` — only ever got a `*__owner_or_teacher_select` RLS
+  policy, no INSERT/UPDATE/DELETE policy for `authenticated`/`app_runtime`. A
+  post-DB-08b e2e run turned up two live defects from exactly this gap: every
+  student's first graded attempt 500ing on the `app.student_progress` INSERT
+  in `apollo/persistence/progress_repo.py::load_progress`, and brand-new
+  students' auto-enroll `app.course_memberships` INSERT being silently
+  denied. `20260723060000_db08c_rls_write_policy_gaps.sql` adds the 13
+  missing write policies this exposed (`student_progress`,
+  `course_memberships`, `mastery_events`, `learner_state`,
+  `tutoring_messages`, `concepts`, `problems`, `documents`,
+  `learner_entities`) — `apollo/projections/mastery.py::
+  update_mastery_from_artifact`'s writes from
+  `apollo/handlers/done.py::_project_mastery` now succeed under
+  `app_runtime` too. Regression coverage:
+  `tests/database/test_db08b_rls_enforcement.py`'s §1b block (per-policy
+  own/teacher-write, cross-tenant/impersonation-denied, no-claims-denied
+  matrix) plus two CRITICAL end-to-end regressions —
+  `test_critical_full_done_chain_first_attempt_student_write_sequence_succeeds`
+  and `test_critical_auto_enroll_brand_new_student_succeeds` — mirroring the
+  two e2e defects directly.
 - Test coverage: `tests/database/test_db08b_rls_enforcement.py` (real
-  Postgres — all 32 app-schema policies exercised under `app_runtime`
+  Postgres — all 45 app-schema policies (DB-04's 32 baseline + DB-08c's 13
+  write-policy additions) exercised under `app_runtime`
   own/cross-tenant/no-claims/owner-bypass; the `get_db_session` vs.
   `get_async_session` enforcement boundary, including the BackgroundTasks-
   shaped regression case; pooled-connection leak isolation under concurrent

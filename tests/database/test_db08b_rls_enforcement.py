@@ -10,11 +10,11 @@ structurally incapable of exercising this code.
 This module builds a FRESH database on that same Docker Postgres server,
 applies the real migration chain (auth shim -> legacy snapshot -> DB-04
 create_app_schema_v1 -> DB-06 retrieval_functions_v1 -> DB-08b's own grants
-migration), seeds two tenants (course A / course B) across every app table
-the 32 policies cover, and proves, end to end, against real asyncpg/asyncpg-
-via-SQLAlchemy connections:
+migration -> DB-08c's write-policy-gaps migration), seeds two tenants
+(course A / course B) across every app table the 45 policies cover, and
+proves, end to end, against real asyncpg/asyncpg-via-SQLAlchemy connections:
 
-1. ``app_runtime`` binds to all 32 app-schema policies exactly like
+1. ``app_runtime`` binds to all 45 app-schema policies exactly like
    ``authenticated`` does (the DB-08b membership grant), with an
    own/cross-tenant/no-claims/owner-bypass matrix.
 2. The session-creation-path enforcement boundary: ``get_db_session``
@@ -26,6 +26,13 @@ via-SQLAlchemy connections:
 4. The internal-schema grants this migration adds are exactly sufficient
    for the real request-path callsites (the three retrieval RPCs, plus one
    representative probe per granted internal table).
+5. DB-08c's 13 write policies (student_progress, course_memberships,
+   mastery_events, learner_state, tutoring_messages, concepts, problems,
+   documents, learner_entities): own/teacher-can-write, cross-tenant/
+   impersonation-denied, no-claims-denied per policy, plus two CRITICAL
+   regressions mirroring the e2e defects DB-08c fixes -- the full Done-chain
+   write sequence for a first-graded-attempt student, and a brand-new
+   student's auto-enroll membership insert.
 """
 
 from __future__ import annotations
@@ -46,7 +53,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 import apollo.auth_deps as auth_deps_module
 import database.session as session_module
 from apollo.auth_deps import require_session_owner, require_user
-from auth import AuthContext
+from auth import AuthContext, auto_enroll_student_membership, has_membership
 from database.models import Course
 from database.session import current_request_user_id, get_async_session, get_db_session
 
@@ -58,12 +65,17 @@ _SNAPSHOT = _MIGRATIONS / "20260717032246_legacy_public_snapshot.sql"
 _CREATE = _MIGRATIONS / "20260717035041_create_app_schema_v1.sql"
 _RETRIEVAL = _MIGRATIONS / "20260717050000_retrieval_functions_v1.sql"
 _GRANTS = _MIGRATIONS / "20260722120000_db08b_rls_enforcement_grants.sql"
+_POLICY_GAPS = _MIGRATIONS / "20260723060000_db08c_rls_write_policy_gaps.sql"
 _DB_NAME = "db08b_rls_enforcement"
 
 STUDENT_A = "50000000-0000-4000-8000-00000000000a"
 STUDENT_B = "60000000-0000-4000-8000-00000000000b"
 TEACHER_A = "70000000-0000-4000-8000-00000000000c"
 NO_MEMBERSHIP = "80000000-0000-4000-8000-00000000000d"
+# Course-A student with a membership row but NO student_progress/
+# mastery_events/learner_state rows -- the "first graded attempt" fixture for
+# the DB-08c done-chain regression test (Defect 1).
+STUDENT_C = "90000000-0000-4000-8000-00000000000e"
 
 # Same Supabase Auth role/function shim used by the DB-04/DB-06 real-Postgres
 # tests (tests/database/test_app_schema_v1.py, test_retrieval_functions_v1.py).
@@ -84,9 +96,22 @@ END
 $roles$;
 CREATE SCHEMA auth;
 CREATE TABLE auth.users (id uuid PRIMARY KEY);
+-- Mirrors the REAL Supabase auth.uid() definition's nullif-before-cast order
+-- (nullif on the raw text, THEN cast to json) -- not
+-- nullif(current_setting(...)::json->>'sub', ''). This matters once a test
+-- function sets request.jwt.claims via set_config(..., true) inside one
+-- transaction and later, in a LATER transaction on the SAME connection,
+-- probes the no-claims case: Postgres reverts a just-instantiated custom
+-- GUC to '' (empty string) on ROLLBACK, not back to a true NULL/unset state
+-- (confirmed directly against this repo's local Postgres 17.6.1.140 image --
+-- a fresh, never-touched connection reads current_setting(...) as NULL, but
+-- one that has EVER had the GUC set, even transactionally, reads '' after
+-- rollback). Casting that '' straight to ::json (the cast-first order) raises
+-- "invalid input syntax for type json", not a graceful NULL -- nullif-first
+-- avoids ever casting an empty string.
 CREATE FUNCTION auth.uid() RETURNS uuid
 LANGUAGE sql STABLE SET search_path = '' AS $$
-  SELECT nullif(current_setting('request.jwt.claims', true)::json->>'sub', '')::uuid
+  SELECT (nullif(current_setting('request.jwt.claims', true), '')::json->>'sub')::uuid
 $$;
 GRANT USAGE ON SCHEMA auth TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
@@ -113,7 +138,7 @@ async def _seed(conn: asyncpg.Connection) -> None:
     never interferes with seeding."""
     await conn.executemany(
         "INSERT INTO auth.users (id) VALUES ($1)",
-        [(STUDENT_A,), (STUDENT_B,), (TEACHER_A,), (NO_MEMBERSHIP,)],
+        [(STUDENT_A,), (STUDENT_B,), (TEACHER_A,), (NO_MEMBERSHIP,), (STUDENT_C,)],
     )
 
     course_a = await conn.fetchval(
@@ -130,6 +155,7 @@ async def _seed(conn: asyncpg.Connection) -> None:
             (STUDENT_A, course_a, "student"),
             (TEACHER_A, course_a, "teacher"),
             (STUDENT_B, course_b, "student"),
+            (STUDENT_C, course_a, "student"),
         ],
     )
 
@@ -314,6 +340,27 @@ async def _seed(conn: asyncpg.Connection) -> None:
     )
     ids["a"]["entity2"] = entity_a2
 
+    # Orphan problem/document rows in course A -- referenced by nothing (no
+    # problem_attempts, no provisioning_runs), matching the real DELETE
+    # callsite in authored_sets/api.py::delete_authored_set (minted/orphaned
+    # tier-1 leftovers, hidden problem/solution docs). Deleting the SEEDED
+    # problem-a/doc-a rows instead would trip FK RESTRICT (problem_attempts
+    # -> problems) / cascade into other seed rows -- these dedicated orphans
+    # isolate the DB-08c DELETE-policy tests from that.
+    orphan_problem = await conn.fetchval(
+        "INSERT INTO app.problems "
+        "(course_id, concept_id, problem_code, difficulty, problem_text, reference_solution) "
+        "VALUES ($1, $2, 'problem-a-orphan', 'standard', 'orphan', '{}'::jsonb) RETURNING id",
+        course_a,
+        ids["a"]["concept"],
+    )
+    orphan_document = await conn.fetchval(
+        "INSERT INTO app.documents (course_id, title, content, content_hash) "
+        "VALUES ($1, 'doc-a-orphan', 'body', 'hash-a-orphan') RETURNING id",
+        course_a,
+    )
+    ids["a"].update(orphan_problem=orphan_problem, orphan_document=orphan_document)
+
 
 @pytest.fixture(scope="session")
 def db08b_dsns(request: pytest.FixtureRequest) -> tuple[str, str]:
@@ -342,6 +389,7 @@ def db08b_dsns(request: pytest.FixtureRequest) -> tuple[str, str]:
             await conn.execute(_CREATE.read_text(encoding="utf-8"))
             await conn.execute(_RETRIEVAL.read_text(encoding="utf-8"))
             await conn.execute(_GRANTS.read_text(encoding="utf-8"))
+            await conn.execute(_POLICY_GAPS.read_text(encoding="utf-8"))
             await _seed(conn)
         finally:
             await conn.close()
@@ -403,6 +451,18 @@ async def _lookup_ids(conn: asyncpg.Connection) -> dict[str, object]:
         "attempt_a": await conn.fetchval(
             "SELECT id FROM app.problem_attempts WHERE user_id = $1", STUDENT_A
         ),
+        "entity_a": await conn.fetchval(
+            "SELECT id FROM app.learner_entities WHERE canonical_key = 'entity-a'"
+        ),
+        "entity_a2": await conn.fetchval(
+            "SELECT id FROM app.learner_entities WHERE canonical_key = 'entity-a2'"
+        ),
+        "orphan_problem": await conn.fetchval(
+            "SELECT id FROM app.problems WHERE problem_code = 'problem-a-orphan'"
+        ),
+        "orphan_document": await conn.fetchval(
+            "SELECT id FROM app.documents WHERE title = 'doc-a-orphan'"
+        ),
     }
 
 
@@ -413,10 +473,11 @@ async def _lookup_ids(conn: asyncpg.Connection) -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_app_runtime_bound_to_all_32_app_policies(schema_conn):
+async def test_app_runtime_bound_to_all_45_app_policies(schema_conn):
     """Precondition sanity check: the grants migration's own postcondition
     plus a direct count -- app_runtime is a member of authenticated, and the
-    policy surface is still exactly 32 (DB-08b adds zero policies)."""
+    policy surface is exactly 45 (DB-04's 32 baseline + DB-08c's 13 new write
+    policies; DB-08b itself still adds zero policies, only role grants)."""
     is_member = await schema_conn.fetchval(
         "SELECT pg_has_role('app_runtime', 'authenticated', 'MEMBER')"
     )
@@ -424,7 +485,7 @@ async def test_app_runtime_bound_to_all_32_app_policies(schema_conn):
     policy_count = await schema_conn.fetchval(
         "SELECT count(*) FROM pg_policies WHERE schemaname = 'app'"
     )
-    assert policy_count == 32
+    assert policy_count == 45
 
 
 # (table, own_sql, cross_sql, write_sql_or_None) -- own_sql/cross_sql return a
@@ -821,10 +882,13 @@ _OWNER_OR_TEACHER_SELECT_ONLY = [
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("policy", "table", "col"), _OWNER_OR_TEACHER_SELECT_ONLY)
 async def test_owner_or_teacher_select_only_policies(schema_conn, policy, table, col):
-    """These three tables have a SELECT policy only -- no INSERT/UPDATE
-    policy exists for authenticated/app_runtime, so writes from an enforced
-    session are unconditionally denied (see the DB-08b report's "open
-    concerns" for why this matters for apollo/projections/mastery.py)."""
+    """These three tables' SELECT visibility is still gated by exactly the
+    same ``*__owner_or_teacher_select`` policy DB-04 shipped -- own row,
+    course teacher, cross-tenant denied. (DB-08c added INSERT/UPDATE
+    policies alongside this SELECT policy on all three tables -- see
+    ``test_student_progress_owner_write_policies`` /
+    ``test_mastery_events_owner_insert_policy`` /
+    ``test_learner_state_owner_write_policies`` below for the write side.)"""
     for user_id, expected in ((STUDENT_A, 1), (TEACHER_A, 1), (STUDENT_B, 0)):
         tx = schema_conn.transaction()
         await tx.start()
@@ -836,58 +900,768 @@ async def test_owner_or_teacher_select_only_policies(schema_conn, policy, table,
             await tx.rollback()
 
 
+# ===========================================================================
+# 1b. DB-08c: the 13 write-policy gaps closed (student_progress,
+#     course_memberships, mastery_events, learner_state, tutoring_messages,
+#     concepts, problems, documents, learner_entities). Each block proves:
+#     own/teacher CAN write; cross-tenant and self-row-impersonation CANNOT;
+#     no-claims CANNOT. Two CRITICAL regressions close the section, mirroring
+#     the e2e defects this migration fixes.
+# ===========================================================================
+
+
 @pytest.mark.asyncio
-async def test_mastery_event_insert_denied_under_app_runtime_no_write_policy(schema_conn):
-    """CONCRETE regression evidence for the mastery-projection gap (see the
-    DB-08b report's "open concerns"): even the OWNING student cannot INSERT
-    into app.mastery_events or app.learner_state as app_runtime, because no
-    INSERT/UPDATE policy exists on either FORCE-RLS table -- only
-    ``*__owner_or_teacher_select``. This is the exact statement
-    apollo/projections/mastery.py::update_mastery_from_artifact issues on the
-    enforced Done-handler session (apollo/handlers/done.py::_project_mastery),
-    which today would start failing (caught, logged, and swallowed -- see
-    that function's own docstring) the moment DB-08b enforcement is live for
-    a course with APOLLO_GRADING_ARTIFACT_ENABLED on.
-    """
+async def test_student_progress_owner_write_policies(schema_conn):
+    """student_progress__owner_insert / __owner_update (Defect 1)."""
+    course_a = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
+
+    # INSERT: TEACHER_A (a real course-A member with no existing progress
+    # row) can insert their own row.
     tx = schema_conn.transaction()
     await tx.start()
     try:
-        await _set_app_runtime(schema_conn, STUDENT_A)
-        course_id = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
-        entity_id = await schema_conn.fetchval(
-            "SELECT id FROM app.learner_entities WHERE canonical_key = 'entity-a'"
+        await _set_app_runtime(schema_conn, TEACHER_A)
+        new_row = await schema_conn.fetchval(
+            "INSERT INTO app.student_progress (user_id, course_id) VALUES ($1, $2) RETURNING user_id",
+            TEACHER_A,
+            course_a,
         )
+        assert str(new_row) == TEACHER_A
+    finally:
+        await tx.rollback()
+
+    # INSERT denied: STUDENT_B is not a course-A member (own row, wrong course).
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_B)
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await schema_conn.execute(
-                "INSERT INTO app.mastery_events "
-                "(user_id, course_id, entity_id, event_kind, prior_belief, posterior_belief, mastery_after) "
-                "VALUES ($1, $2, $3, 'graded', ARRAY[0.34,0.33,0.33]::real[], "
-                "ARRAY[0.5,0.3,0.2]::real[], 0.5)",
-                STUDENT_A,
-                course_id,
-                entity_id,
+                "INSERT INTO app.student_progress (user_id, course_id) VALUES ($1, $2)",
+                STUDENT_B,
+                course_a,
             )
     finally:
         await tx.rollback()
 
-    # learner_state has the same SELECT-only policy shape, but Postgres RLS
-    # expresses "no UPDATE policy" differently from "no INSERT policy": with
-    # no policy for a command, the command's row-visibility (USING) defaults
-    # to false, which for UPDATE just filters the WHERE-matched candidate
-    # rows down to zero -- a silent 0-row update, NOT a raised privilege
-    # error (INSERT's WITH CHECK(false) default DOES raise, per the block
-    # above, because WITH CHECK failures always raise regardless of how many
-    # rows matched). Both are denials; only the shape of the denial differs.
+    # INSERT denied: STUDENT_A cannot insert a row impersonating TEACHER_A.
     tx = schema_conn.transaction()
     await tx.start()
     try:
         await _set_app_runtime(schema_conn, STUDENT_A)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.student_progress (user_id, course_id) VALUES ($1, $2)",
+                TEACHER_A,
+                course_a,
+            )
+    finally:
+        await tx.rollback()
+
+    # UPDATE: STUDENT_A can update their own seeded row.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_A)
+        updated = await schema_conn.fetchval(
+            "UPDATE app.student_progress SET xp_total = 50 WHERE user_id = $1 RETURNING user_id",
+            STUDENT_A,
+        )
+        assert str(updated) == STUDENT_A
+    finally:
+        await tx.rollback()
+
+    # UPDATE denied: STUDENT_B cannot update STUDENT_A's row (silent 0-row).
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_B)
         result = await schema_conn.execute(
-            "UPDATE app.learner_state SET mastery = 0.9 WHERE user_id = $1", STUDENT_A
+            "UPDATE app.student_progress SET xp_total = 999 WHERE user_id = $1", STUDENT_A
         )
         assert result == "UPDATE 0"
     finally:
         await tx.rollback()
+
+    # No claims: both INSERT and UPDATE denied.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime_no_claims(schema_conn)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.student_progress (user_id, course_id) VALUES ($1, $2)",
+                STUDENT_A,
+                course_a,
+            )
+    finally:
+        await tx.rollback()
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime_no_claims(schema_conn)
+        result = await schema_conn.execute(
+            "UPDATE app.student_progress SET xp_total = 999 WHERE user_id = $1", STUDENT_A
+        )
+        assert result == "UPDATE 0"
+    finally:
+        await tx.rollback()
+
+
+@pytest.mark.asyncio
+async def test_course_memberships_self_insert_policy(schema_conn):
+    """course_memberships__self_insert (Defect 2): auto-enroll's exact
+    shape -- self row, role hardcoded 'student'."""
+    course_a = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
+
+    # Success: NO_MEMBERSHIP (a brand-new user with zero memberships anywhere)
+    # inserts their own student membership.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, NO_MEMBERSHIP)
+        new_user = await schema_conn.fetchval(
+            "INSERT INTO app.course_memberships (user_id, course_id, role) "
+            "VALUES ($1, $2, 'student') RETURNING user_id",
+            NO_MEMBERSHIP,
+            course_a,
+        )
+        assert str(new_user) == NO_MEMBERSHIP
+    finally:
+        await tx.rollback()
+
+    # Denied: self-insert with role='teacher' (WITH CHECK pins role='student').
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, NO_MEMBERSHIP)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.course_memberships (user_id, course_id, role) "
+                "VALUES ($1, $2, 'teacher')",
+                NO_MEMBERSHIP,
+                course_a,
+            )
+    finally:
+        await tx.rollback()
+
+    # Denied: STUDENT_A cannot insert a membership row for NO_MEMBERSHIP
+    # (impersonation -- user_id must match auth.uid()).
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_A)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.course_memberships (user_id, course_id, role) "
+                "VALUES ($1, $2, 'student')",
+                NO_MEMBERSHIP,
+                course_a,
+            )
+    finally:
+        await tx.rollback()
+
+    # No claims denied.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime_no_claims(schema_conn)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.course_memberships (user_id, course_id, role) "
+                "VALUES ($1, $2, 'student')",
+                NO_MEMBERSHIP,
+                course_a,
+            )
+    finally:
+        await tx.rollback()
+
+
+@pytest.mark.asyncio
+async def test_mastery_events_owner_insert_policy(schema_conn):
+    """mastery_events__owner_insert."""
+    ids = await _lookup_ids(schema_conn)
+    course_a, entity_a2 = ids["course_a"], ids["entity_a2"]
+
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_A)
+        new_id = await schema_conn.fetchval(
+            "INSERT INTO app.mastery_events "
+            "(user_id, course_id, entity_id, event_kind, prior_belief, posterior_belief, mastery_after) "
+            "VALUES ($1, $2, $3, 'composite', ARRAY[0.34,0.33,0.33]::real[], "
+            "ARRAY[0.5,0.3,0.2]::real[], 0.5) RETURNING id",
+            STUDENT_A,
+            course_a,
+            entity_a2,
+        )
+        assert new_id is not None
+    finally:
+        await tx.rollback()
+
+    # Denied: STUDENT_B has no course-A membership.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_B)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.mastery_events "
+                "(user_id, course_id, entity_id, event_kind, prior_belief, posterior_belief, mastery_after) "
+                "VALUES ($1, $2, $3, 'composite', ARRAY[0.34,0.33,0.33]::real[], "
+                "ARRAY[0.5,0.3,0.2]::real[], 0.5)",
+                STUDENT_B,
+                course_a,
+                entity_a2,
+            )
+    finally:
+        await tx.rollback()
+
+    # Denied: STUDENT_A cannot insert a row impersonating TEACHER_A.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_A)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.mastery_events "
+                "(user_id, course_id, entity_id, event_kind, prior_belief, posterior_belief, mastery_after) "
+                "VALUES ($1, $2, $3, 'composite', ARRAY[0.34,0.33,0.33]::real[], "
+                "ARRAY[0.5,0.3,0.2]::real[], 0.5)",
+                TEACHER_A,
+                course_a,
+                entity_a2,
+            )
+    finally:
+        await tx.rollback()
+
+    # No claims denied.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime_no_claims(schema_conn)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.mastery_events "
+                "(user_id, course_id, entity_id, event_kind, prior_belief, posterior_belief, mastery_after) "
+                "VALUES ($1, $2, $3, 'composite', ARRAY[0.34,0.33,0.33]::real[], "
+                "ARRAY[0.5,0.3,0.2]::real[], 0.5)",
+                STUDENT_A,
+                course_a,
+                entity_a2,
+            )
+    finally:
+        await tx.rollback()
+
+
+@pytest.mark.asyncio
+async def test_learner_state_owner_write_policies(schema_conn):
+    """learner_state__owner_insert / __owner_update."""
+    ids = await _lookup_ids(schema_conn)
+    course_a, entity_a, entity_a2 = ids["course_a"], ids["entity_a"], ids["entity_a2"]
+
+    # INSERT: STUDENT_A's first-evidence row for entity_a2 (no seeded row yet).
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_A)
+        inserted = await schema_conn.fetchval(
+            "INSERT INTO app.learner_state "
+            "(user_id, course_id, entity_id, belief, mastery, confidence) "
+            "VALUES ($1, $2, $3, ARRAY[0.34,0.33,0.33]::real[], 0.5, 0.5) RETURNING user_id",
+            STUDENT_A,
+            course_a,
+            entity_a2,
+        )
+        assert str(inserted) == STUDENT_A
+    finally:
+        await tx.rollback()
+
+    # INSERT denied: STUDENT_B has no course-A membership.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_B)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.learner_state "
+                "(user_id, course_id, entity_id, belief, mastery, confidence) "
+                "VALUES ($1, $2, $3, ARRAY[0.34,0.33,0.33]::real[], 0.5, 0.5)",
+                STUDENT_B,
+                course_a,
+                entity_a2,
+            )
+    finally:
+        await tx.rollback()
+
+    # UPDATE: STUDENT_A updates their own seeded row (entity_a).
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_A)
+        updated = await schema_conn.fetchval(
+            "UPDATE app.learner_state SET mastery = 0.9 WHERE user_id = $1 AND entity_id = $2 "
+            "RETURNING user_id",
+            STUDENT_A,
+            entity_a,
+        )
+        assert str(updated) == STUDENT_A
+    finally:
+        await tx.rollback()
+
+    # UPDATE denied: STUDENT_B cannot touch STUDENT_A's row (silent 0-row).
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_B)
+        result = await schema_conn.execute(
+            "UPDATE app.learner_state SET mastery = 0.9 WHERE user_id = $1 AND entity_id = $2",
+            STUDENT_A,
+            entity_a,
+        )
+        assert result == "UPDATE 0"
+    finally:
+        await tx.rollback()
+
+    # No claims denied (INSERT raises; UPDATE silently affects 0 rows).
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime_no_claims(schema_conn)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.learner_state "
+                "(user_id, course_id, entity_id, belief, mastery, confidence) "
+                "VALUES ($1, $2, $3, ARRAY[0.34,0.33,0.33]::real[], 0.5, 0.5)",
+                STUDENT_A,
+                course_a,
+                entity_a2,
+            )
+    finally:
+        await tx.rollback()
+
+
+@pytest.mark.asyncio
+async def test_tutoring_messages_owner_delete_policy(schema_conn):
+    """tutoring_messages__owner_delete."""
+    ids = await _lookup_ids(schema_conn)
+    course_a, tutoring_a = ids["course_a"], ids["tutoring_a"]
+
+    # STUDENT_A inserts then deletes their own message.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_A)
+        new_id = await schema_conn.fetchval(
+            "INSERT INTO app.tutoring_messages "
+            "(course_id, learning_activity_id, role, content, turn_index) "
+            "VALUES ($1, $2, 'student', 'to be deleted', 5) RETURNING id",
+            course_a,
+            tutoring_a,
+        )
+        deleted = await schema_conn.fetchval(
+            "DELETE FROM app.tutoring_messages WHERE id = $1 RETURNING id", new_id
+        )
+        assert deleted == new_id
+    finally:
+        await tx.rollback()
+
+    # STUDENT_B cannot delete STUDENT_A's seeded tutoring message.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_B)
+        result = await schema_conn.execute(
+            "DELETE FROM app.tutoring_messages WHERE learning_activity_id = $1", tutoring_a
+        )
+        assert result == "DELETE 0"
+    finally:
+        await tx.rollback()
+
+    # No claims denied.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime_no_claims(schema_conn)
+        result = await schema_conn.execute(
+            "DELETE FROM app.tutoring_messages WHERE learning_activity_id = $1", tutoring_a
+        )
+        assert result == "DELETE 0"
+    finally:
+        await tx.rollback()
+
+
+@pytest.mark.asyncio
+async def test_concepts_teacher_write_policies(schema_conn):
+    """concepts__teacher_insert / __teacher_delete."""
+    course_a = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
+
+    # TEACHER_A inserts then deletes their own new concept.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, TEACHER_A)
+        new_id = await schema_conn.fetchval(
+            "INSERT INTO app.concepts "
+            "(course_id, subject_slug, subject_display_name, slug, display_name) "
+            "VALUES ($1, 'physics', 'Physics', 'concept-new', 'concept-new') RETURNING id",
+            course_a,
+        )
+        assert new_id is not None
+        deleted = await schema_conn.fetchval(
+            "DELETE FROM app.concepts WHERE id = $1 RETURNING id", new_id
+        )
+        assert deleted == new_id
+    finally:
+        await tx.rollback()
+
+    # Denied: STUDENT_A (course-A member, not a teacher) cannot insert.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_A)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.concepts "
+                "(course_id, subject_slug, subject_display_name, slug, display_name) "
+                "VALUES ($1, 'physics', 'Physics', 'concept-denied', 'concept-denied')",
+                course_a,
+            )
+    finally:
+        await tx.rollback()
+
+    # Denied: STUDENT_B (cross-tenant) cannot insert.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_B)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.concepts "
+                "(course_id, subject_slug, subject_display_name, slug, display_name) "
+                "VALUES ($1, 'physics', 'Physics', 'concept-denied-2', 'concept-denied-2')",
+                course_a,
+            )
+    finally:
+        await tx.rollback()
+
+    # Denied: STUDENT_A/STUDENT_B cannot delete the seeded concept-a
+    # (silent 0-row, DELETE's USING-filtered-out shape).
+    concept_a = await schema_conn.fetchval("SELECT id FROM app.concepts WHERE slug = 'concept-a'")
+    for user_id in (STUDENT_A, STUDENT_B):
+        tx = schema_conn.transaction()
+        await tx.start()
+        try:
+            await _set_app_runtime(schema_conn, user_id)
+            result = await schema_conn.execute("DELETE FROM app.concepts WHERE id = $1", concept_a)
+            assert result == "DELETE 0", f"user={user_id}"
+        finally:
+            await tx.rollback()
+
+    # No claims denied.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime_no_claims(schema_conn)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.concepts "
+                "(course_id, subject_slug, subject_display_name, slug, display_name) "
+                "VALUES ($1, 'physics', 'Physics', 'concept-no-claims', 'concept-no-claims')",
+                course_a,
+            )
+    finally:
+        await tx.rollback()
+
+
+@pytest.mark.asyncio
+async def test_problems_teacher_delete_policy(schema_conn):
+    """problems__teacher_delete, against the seeded orphan (no
+    problem_attempts FK reference, matching the real teardown callsite)."""
+    ids = await _lookup_ids(schema_conn)
+    orphan_problem = ids["orphan_problem"]
+
+    for user_id in (STUDENT_A, STUDENT_B):
+        tx = schema_conn.transaction()
+        await tx.start()
+        try:
+            await _set_app_runtime(schema_conn, user_id)
+            result = await schema_conn.execute(
+                "DELETE FROM app.problems WHERE id = $1", orphan_problem
+            )
+            assert result == "DELETE 0", f"user={user_id}"
+        finally:
+            await tx.rollback()
+
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime_no_claims(schema_conn)
+        result = await schema_conn.execute("DELETE FROM app.problems WHERE id = $1", orphan_problem)
+        assert result == "DELETE 0"
+    finally:
+        await tx.rollback()
+
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, TEACHER_A)
+        deleted = await schema_conn.fetchval(
+            "DELETE FROM app.problems WHERE id = $1 RETURNING id", orphan_problem
+        )
+        assert deleted == orphan_problem
+    finally:
+        await tx.rollback()
+
+
+@pytest.mark.asyncio
+async def test_documents_teacher_delete_policy(schema_conn):
+    """documents__teacher_delete, against the seeded orphan document."""
+    ids = await _lookup_ids(schema_conn)
+    orphan_document = ids["orphan_document"]
+
+    for user_id in (STUDENT_A, STUDENT_B):
+        tx = schema_conn.transaction()
+        await tx.start()
+        try:
+            await _set_app_runtime(schema_conn, user_id)
+            result = await schema_conn.execute(
+                "DELETE FROM app.documents WHERE id = $1", orphan_document
+            )
+            assert result == "DELETE 0", f"user={user_id}"
+        finally:
+            await tx.rollback()
+
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, TEACHER_A)
+        deleted = await schema_conn.fetchval(
+            "DELETE FROM app.documents WHERE id = $1 RETURNING id", orphan_document
+        )
+        assert deleted == orphan_document
+    finally:
+        await tx.rollback()
+
+
+@pytest.mark.asyncio
+async def test_learner_entities_teacher_write_policies(schema_conn):
+    """learner_entities__teacher_insert / __teacher_delete."""
+    ids = await _lookup_ids(schema_conn)
+    course_a = ids["course_a"]
+    concept_a = await schema_conn.fetchval("SELECT id FROM app.concepts WHERE slug = 'concept-a'")
+
+    # TEACHER_A inserts then deletes their own new entity.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, TEACHER_A)
+        new_id = await schema_conn.fetchval(
+            "INSERT INTO app.learner_entities (course_id, concept_id, canonical_key, kind, display_name) "
+            "VALUES ($1, $2, 'entity-new', 'variable', 'entity-new') RETURNING id",
+            course_a,
+            concept_a,
+        )
+        assert new_id is not None
+        deleted = await schema_conn.fetchval(
+            "DELETE FROM app.learner_entities WHERE id = $1 RETURNING id", new_id
+        )
+        assert deleted == new_id
+    finally:
+        await tx.rollback()
+
+    # Denied: STUDENT_A cannot insert.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_A)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.learner_entities "
+                "(course_id, concept_id, canonical_key, kind, display_name) "
+                "VALUES ($1, $2, 'entity-denied', 'variable', 'entity-denied')",
+                course_a,
+                concept_a,
+            )
+    finally:
+        await tx.rollback()
+
+    # Denied: STUDENT_A/STUDENT_B cannot delete the seeded entity-a.
+    entity_a = await schema_conn.fetchval(
+        "SELECT id FROM app.learner_entities WHERE canonical_key = 'entity-a'"
+    )
+    for user_id in (STUDENT_A, STUDENT_B):
+        tx = schema_conn.transaction()
+        await tx.start()
+        try:
+            await _set_app_runtime(schema_conn, user_id)
+            result = await schema_conn.execute(
+                "DELETE FROM app.learner_entities WHERE id = $1", entity_a
+            )
+            assert result == "DELETE 0", f"user={user_id}"
+        finally:
+            await tx.rollback()
+
+    # No claims denied.
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime_no_claims(schema_conn)
+        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+            await schema_conn.execute(
+                "INSERT INTO app.learner_entities "
+                "(course_id, concept_id, canonical_key, kind, display_name) "
+                "VALUES ($1, $2, 'entity-no-claims', 'variable', 'entity-no-claims')",
+                course_a,
+                concept_a,
+            )
+    finally:
+        await tx.rollback()
+
+
+@pytest.mark.asyncio
+async def test_critical_full_done_chain_first_attempt_student_write_sequence_succeeds(schema_conn):
+    """CRITICAL regression for Defect 1 (e2e report): the exact ordered write
+    sequence handle_done issues on a student's FIRST graded attempt --
+    problem_attempts already exists (owner_insert, pre-DB-08c), then
+    internal.grading_runs INSERT (DB-08b grant), then
+    app.student_progress INSERT via apply_xp (DB-08c), then
+    app.mastery_events + app.learner_state INSERT via
+    update_mastery_from_artifact (DB-08c) -- all in ONE enforced app_runtime
+    transaction for STUDENT_C, a course-A member who (unlike STUDENT_A) has
+    NO pre-seeded student_progress/mastery_events/learner_state rows, i.e.
+    the exact "first attempt" shape. Before DB-08c, the student_progress
+    INSERT step alone raised InsufficientPrivilegeError and the whole chain
+    never completed."""
+    tx = schema_conn.transaction()
+    await tx.start()
+    try:
+        await _set_app_runtime(schema_conn, STUDENT_C)
+        course_a = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
+        problem_a = await schema_conn.fetchval("SELECT id FROM app.problems WHERE problem_code = 'problem-a'")
+        entity_a = await schema_conn.fetchval(
+            "SELECT id FROM app.learner_entities WHERE canonical_key = 'entity-a'"
+        )
+
+        # 1. STUDENT_C's own tutoring learning_activity (learning_activities__owner_all, pre-DB-08c).
+        activity_id = await schema_conn.fetchval(
+            "INSERT INTO app.learning_activities "
+            "(modality, user_id, course_id, status, phase) "
+            "VALUES ('tutoring', $1, $2, 'active', 'TEACHING') RETURNING id",
+            STUDENT_C,
+            course_a,
+        )
+
+        # 2. STUDENT_C's own problem attempt (problem_attempts__owner_insert, pre-DB-08c).
+        attempt_id = await schema_conn.fetchval(
+            "INSERT INTO app.problem_attempts "
+            "(course_id, user_id, learning_activity_id, problem_id, difficulty) "
+            "VALUES ($1, $2, $3, $4, 'standard') RETURNING id",
+            course_a,
+            STUDENT_C,
+            activity_id,
+            problem_a,
+        )
+
+        # 3. internal.grading_runs (DB-08b grant, internal schema is grant-only, no RLS).
+        grading_run_id = await schema_conn.fetchval(
+            "INSERT INTO internal.grading_runs "
+            "(course_id, user_id, attempt_id, problem_id, role, grader_used, grader_version) "
+            "VALUES ($1, $2, $3, $4, 'canonical', 'llm_fallback', 'v1') RETURNING id",
+            course_a,
+            STUDENT_C,
+            attempt_id,
+            problem_a,
+        )
+        assert grading_run_id is not None
+
+        # 4. app.student_progress (DB-08c student_progress__owner_insert) --
+        #    THE defect: this INSERT alone used to raise before DB-08c.
+        progress_user = await schema_conn.fetchval(
+            "INSERT INTO app.student_progress (user_id, course_id, xp_total, level) "
+            "VALUES ($1, $2, 10, 1) RETURNING user_id",
+            STUDENT_C,
+            course_a,
+        )
+        assert str(progress_user) == STUDENT_C
+
+        # 5. app.mastery_events (DB-08c mastery_events__owner_insert).
+        mastery_event_id = await schema_conn.fetchval(
+            "INSERT INTO app.mastery_events "
+            "(user_id, course_id, entity_id, attempt_id, event_kind, "
+            " prior_belief, posterior_belief, mastery_after) "
+            "VALUES ($1, $2, $3, $4, 'composite', "
+            " ARRAY[0.5,0.0,0.5]::real[], ARRAY[0.35,0.0,0.65]::real[], 0.65) RETURNING id",
+            STUDENT_C,
+            course_a,
+            entity_a,
+            attempt_id,
+        )
+        assert mastery_event_id is not None
+
+        # 6. app.learner_state, first-evidence INSERT branch (DB-08c learner_state__owner_insert).
+        state_user = await schema_conn.fetchval(
+            "INSERT INTO app.learner_state "
+            "(user_id, course_id, entity_id, belief, mastery, confidence, evidence_count) "
+            "VALUES ($1, $2, $3, ARRAY[0.35,0.0,0.65]::real[], 0.65, 0.8, 1) RETURNING user_id",
+            STUDENT_C,
+            course_a,
+            entity_a,
+        )
+        assert str(state_user) == STUDENT_C
+    finally:
+        await tx.rollback()
+
+
+@pytest.mark.asyncio
+async def test_critical_auto_enroll_brand_new_student_succeeds(_fresh_engine_registry, schema_conn):
+    """CRITICAL regression for Defect 2 (e2e report): the REAL
+    auto_enroll_student_membership() function, called on a get_db_session-
+    minted enforced session for a brand-new user (NO_MEMBERSHIP -- zero
+    memberships anywhere), succeeds end to end and the membership is durably
+    visible afterward. Before DB-08c, the INSERT this function issues raised
+    InsufficientPrivilegeError, auto_enroll_student_membership's own
+    broad-except handler swallowed it and returned False, and
+    require_course_member then 403'd every first-time student's very first
+    request.
+
+    auto_enroll_student_membership commits internally (real production
+    behavior, unlike every other probe in this module which rolls back on a
+    schema_conn transaction) -- the row is deleted via the admin connection
+    at the end so this test leaves NO_MEMBERSHIP's zero-membership fixture
+    state unchanged for any other test.
+
+    course_a's id is looked up via ``schema_conn`` (the admin/BYPASSRLS
+    connection) BEFORE entering the enforced session -- mirroring the real
+    route, which already has ``search_space_id`` as a plain int path
+    parameter and never SELECTs app.courses to discover it. Looking it up
+    on the enforced NO_MEMBERSHIP session itself would 0-row on
+    ``courses__member_select`` (correctly -- a non-member can't see the
+    course row yet, the exact chicken-and-egg auto-enroll exists to solve)
+    and is not what any real callsite does.
+    """
+    course_a = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
+    token = current_request_user_id.set(NO_MEMBERSHIP)
+    try:
+        agen = get_db_session()
+        session = await agen.__anext__()
+        try:
+            enrolled = await auto_enroll_student_membership(
+                session, user_id=NO_MEMBERSHIP, search_space_id=course_a
+            )
+            assert enrolled is True
+            is_member = await has_membership(
+                session, user_id=NO_MEMBERSHIP, search_space_id=course_a
+            )
+            assert is_member is True
+        finally:
+            await _drain(agen)
+    finally:
+        current_request_user_id.reset(token)
+        await schema_conn.execute(
+            "DELETE FROM app.course_memberships WHERE user_id = $1", NO_MEMBERSHIP
+        )
 
 
 @pytest.mark.asyncio
