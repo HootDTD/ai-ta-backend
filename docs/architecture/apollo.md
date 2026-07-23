@@ -7,7 +7,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-07-21
+last_verified: 2026-07-22
 stub: false
 ---
 
@@ -142,6 +142,19 @@ not erase the underlying transcript grade. If transcript adjudication fails and
 Neo4j is available, the pre-existing semantic coverage fallback remains. If both
 sources are unavailable, the route raises `CoverageGradingError` instead of
 fabricating an empty-graph grade.
+
+**Narrative attribution gating.** The transcript adjudicator's per-node
+evidence spans are re-validated against the attempt's own transcript
+(`transcript_coverage.narrative_evidence_spans`, verbatim-single-message +
+positive-credit only) before reaching `compute_topic_score(evidence_spans=...)`
+and `TopicCredit.evidence_span` — narrative material, never a score input. The
+topic and axis narrative system prompts (`topic_narrative.py`, `diagnostic.py`)
+speak to the student as "you"/"your" and hard-rule that a reference entry's
+wording (names, dates, equations) is the REFERENCE solution's own words, never
+something the student said, unless it appears verbatim in a quoted `You said:`
+line. This closes a defect where the narrative credited a student who wrote
+only a short answer with a fully elaborated reference-sourced claim, which
+read like the narrator remembering an earlier session.
 
 `APOLLO_GRADING_ARTIFACT_ENABLED` optionally writes one canonical `GradingRun`
 row (`internal.grading_runs`) for the transcript/topic result. Artifact
