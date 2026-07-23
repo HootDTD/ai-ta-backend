@@ -1,23 +1,18 @@
 """2026-07-10 topic-score design spec — wiring ``compute_topic_score`` end to
 end in ``handle_done``.
 
-Mirrors the established flag-golden / done-route harness patterns:
-``test_misconception_flag_off_golden.py`` (byte-identical flag-off goldens)
-and ``test_done_misconception.py`` (the ``_old_path_patches``-based route
-harness, real reference-graph nodes threaded through the REAL detector/gate/
-merge chain so the wiring is exercised for real, not mocked away).
+Post flag-reset the topic score is served UNCONDITIONALLY whenever it computes
+(the topic-score serving flag was deleted): ``rubric.overall`` becomes the topic
+score, ``topics[]`` ships, and XP derives from the replaced overall. The only
+surviving branch is the soft-fail: ``compute_topic_score`` raising ->
+``topic_score`` is ``None`` -> the legacy rubric is served (no ``topics`` key).
 
 Covers:
-  * Compute-always (flag-independent): ``write_artifacts`` always receives a
-    ``topic_score`` kwarg once ``APOLLO_GRADING_ARTIFACT_ENABLED`` is on,
-    regardless of ``APOLLO_TOPIC_SCORE_SERVED``.
-  * Flag-off golden: served payload byte-identical (no ``topics`` key, no
-    ``rubric`` change) with ``APOLLO_TOPIC_SCORE_SERVED`` unset.
-  * Flag-on route test: ``topics[]`` present, legacy axes still present,
-    ``rubric.overall`` == topic score, XP derived from the REPLACED overall.
-  * Soft-fail: ``compute_topic_score`` raising -> Done still returns normally,
-    no ``topics`` key, no artifact ``topic_score`` kwarg reaching a non-None
-    value.
+  * ``write_artifacts`` always receives a ``topic_score`` kwarg (compute-always);
+  * ``topics[]`` present with the expected shape, legacy axes still present,
+    ``rubric.overall`` == topic score, XP derived from the REPLACED overall;
+  * soft-fail: ``compute_topic_score`` raising -> Done still returns normally,
+    no ``topics`` key, legacy rubric served, artifact ``topic_score`` is None.
 """
 
 from __future__ import annotations
@@ -33,8 +28,6 @@ from apollo.overseer.rubric import score_to_letter
 from apollo.overseer.xp import compute_xp_earned
 
 pytestmark = pytest.mark.unit
-
-_SERVED_FLAG = "APOLLO_TOPIC_SCORE_SERVED"
 
 _OLD_RUBRIC = {
     "overall": {"score": 90, "letter": "A"},
@@ -63,13 +56,6 @@ def _patches_with_real_xp(patches):
     ]
 
 
-@pytest.fixture(autouse=True)
-def _clear_flags(monkeypatch):
-    monkeypatch.delenv(_SERVED_FLAG, raising=False)
-    monkeypatch.delenv("APOLLO_GRADING_ARTIFACT_ENABLED", raising=False)
-    yield
-
-
 def _reference_graph_with_topics() -> KGGraph:
     """One fully-covered equation node + one missing condition node, so the
     topic score is non-trivial (not the empty-graph 0/F default)."""
@@ -93,17 +79,10 @@ def _reference_graph_with_topics() -> KGGraph:
 async def _run(
     monkeypatch,
     *,
-    served_flag,
-    artifact_flag=None,
     topic_score_side_effect=None,
     write_mock=None,
     use_real_xp=False,
 ):
-    if served_flag is not None:
-        monkeypatch.setenv(_SERVED_FLAG, served_flag)
-    if artifact_flag is not None:
-        monkeypatch.setenv("APOLLO_GRADING_ARTIFACT_ENABLED", artifact_flag)
-
     db, _sess, _attempt, patches = _old_path_patches()
     graph = _reference_graph_with_topics()
 
@@ -116,7 +95,11 @@ async def _run(
         problem.to_kg_graph.return_value = graph
         return problem
 
-    patches = [p for p in patches if getattr(p, "attribute", None) != "_find_problem"]
+    # Drop the base golden stubs this test overrides: _find_problem (real
+    # graph), the transcript coverage (a real coverage dict), and the
+    # topic-score neutralizer (this test exercises REAL topic scoring).
+    drop = {"_find_problem", "compute_transcript_coverage_with_spans", "compute_topic_score"}
+    patches = [p for p in patches if getattr(p, "attribute", None) not in drop]
     patches = _patches_with_rubric(patches, _OLD_RUBRIC)
     if use_real_xp:
         patches = _patches_with_real_xp(patches)
@@ -126,13 +109,16 @@ async def _run(
             new=AsyncMock(side_effect=_find_problem_with_graph),
         ),
         patch(
-            "apollo.handlers.done.compute_coverage",
+            "apollo.handlers.done.compute_transcript_coverage_with_spans",
             new=AsyncMock(
-                return_value={
-                    "per_step": {"eq1": "covered", "c1": "missing"},
-                    "procedure_scores": {},
-                    "confidences": {"eq1": 0.9},
-                }
+                return_value=(
+                    {
+                        "per_step": {"eq1": "covered", "c1": "missing"},
+                        "procedure_scores": {},
+                        "confidences": {"eq1": 0.9},
+                    },
+                    {},
+                )
             ),
         ),
     ]
@@ -159,57 +145,27 @@ async def _run(
 
 
 # --------------------------------------------------------------------------- #
-# Flag OFF: byte-identical golden (topics absent, rubric untouched)
+# Compute-always: write_artifacts receives topic_score; serving is unconditional
 # --------------------------------------------------------------------------- #
-async def test_flag_off_golden_no_topics_key_rubric_unchanged(monkeypatch):
-    out = await _run(monkeypatch, served_flag=None)
-
-    assert "topics" not in out
-    assert out["rubric"] == _OLD_RUBRIC
-    assert out["rubric"]["overall"]["score"] == 90
-
-
-async def test_flag_explicit_false_is_also_byte_identical(monkeypatch):
-    out = await _run(monkeypatch, served_flag="false")
-
-    assert "topics" not in out
-    assert out["rubric"] == _OLD_RUBRIC
-
-
-async def test_flag_off_xp_derives_from_old_rubric(monkeypatch):
-    out = await _run(monkeypatch, served_flag=None, use_real_xp=True)
-
-    expected_xp = compute_xp_earned(overall_score=90, difficulty="intro", is_reattempt=False)
-    assert out["xp_earned"] == expected_xp
-
-
-# --------------------------------------------------------------------------- #
-# Compute-always: write_artifacts receives topic_score regardless of serving
-# --------------------------------------------------------------------------- #
-async def test_topic_score_computed_and_threaded_to_artifact_even_when_flag_off(monkeypatch):
+async def test_topic_score_computed_and_threaded_to_artifact(monkeypatch):
     write_mock = AsyncMock(return_value=None)
-    out = await _run(
-        monkeypatch,
-        served_flag=None,
-        artifact_flag="true",
-        write_mock=write_mock,
-    )
+    out = await _run(monkeypatch, write_mock=write_mock)
 
     write_mock.assert_awaited_once()
     topic_score = write_mock.await_args.kwargs["topic_score"]
     assert topic_score is not None
     assert len(topic_score.topics) == 2
-    # Serving stayed off — the student payload is unaffected.
-    assert "topics" not in out
-    assert out["rubric"] == _OLD_RUBRIC
+    # Serving is unconditional — topics ship and the overall is the topic score.
+    assert "topics" in out
+    assert out["rubric"]["overall"]["score"] == 50
 
 
 # --------------------------------------------------------------------------- #
-# Flag ON: topics[] served, legacy axes present, overall == topic score, XP
+# Served: topics[] present, legacy axes present, overall == topic score, XP
 # derives from the REPLACED overall
 # --------------------------------------------------------------------------- #
-async def test_flag_on_topics_served_with_expected_shape(monkeypatch):
-    out = await _run(monkeypatch, served_flag="true")
+async def test_topics_served_with_expected_shape(monkeypatch):
+    out = await _run(monkeypatch)
 
     assert "topics" in out
     topics = out["topics"]
@@ -230,8 +186,8 @@ async def test_flag_on_topics_served_with_expected_shape(monkeypatch):
         }
 
 
-async def test_flag_on_legacy_axes_still_present(monkeypatch):
-    out = await _run(monkeypatch, served_flag="true")
+async def test_legacy_axes_still_present(monkeypatch):
+    out = await _run(monkeypatch)
 
     rubric = out["rubric"]
     assert rubric["procedure"] == _OLD_RUBRIC["procedure"]
@@ -239,8 +195,8 @@ async def test_flag_on_legacy_axes_still_present(monkeypatch):
     assert rubric["simplification"] == _OLD_RUBRIC["simplification"]
 
 
-async def test_flag_on_overall_equals_topic_score(monkeypatch):
-    out = await _run(monkeypatch, served_flag="true")
+async def test_overall_equals_topic_score(monkeypatch):
+    out = await _run(monkeypatch)
 
     # eq1 covered (credit 1.0), c1 missing (credit 0.0) — with equal
     # centrality (no DEPENDS_ON/PRECEDES edges -> both floor identically),
@@ -249,11 +205,11 @@ async def test_flag_on_overall_equals_topic_score(monkeypatch):
     assert out["rubric"]["overall"]["letter"] == score_to_letter(50)
 
 
-async def test_flag_on_xp_derives_from_replaced_overall(monkeypatch):
+async def test_xp_derives_from_replaced_overall(monkeypatch):
     """THE ordering proof: served_rubric (topic score) must be built BEFORE
     xp_earned is computed, so XP follows the topic score, not the axis
     blend (90)."""
-    out = await _run(monkeypatch, served_flag="true", use_real_xp=True)
+    out = await _run(monkeypatch, use_real_xp=True)
 
     expected_xp = compute_xp_earned(
         overall_score=out["rubric"]["overall"]["score"],
@@ -266,14 +222,9 @@ async def test_flag_on_xp_derives_from_replaced_overall(monkeypatch):
     assert out["xp_earned"] != axis_xp
 
 
-async def test_flag_on_artifact_receives_same_topic_score_as_served(monkeypatch):
+async def test_artifact_receives_same_topic_score_as_served(monkeypatch):
     write_mock = AsyncMock(return_value=None)
-    out = await _run(
-        monkeypatch,
-        served_flag="true",
-        artifact_flag="true",
-        write_mock=write_mock,
-    )
+    out = await _run(monkeypatch, write_mock=write_mock)
 
     write_mock.assert_awaited_once()
     artifact_topic_score = write_mock.await_args.kwargs["topic_score"]
@@ -282,18 +233,14 @@ async def test_flag_on_artifact_receives_same_topic_score_as_served(monkeypatch)
 
 
 # --------------------------------------------------------------------------- #
-# Soft-fail: compute_topic_score raising must never break Done
+# Soft-fail: compute_topic_score raising must never break Done (legacy rubric)
 # --------------------------------------------------------------------------- #
-async def test_topic_score_raising_soft_fails_no_topics_key_http_200_shape(monkeypatch):
-    out = await _run(
-        monkeypatch,
-        served_flag="true",
-        topic_score_side_effect=RuntimeError("boom"),
-    )
+async def test_topic_score_raising_soft_fails_legacy_rubric_served(monkeypatch):
+    out = await _run(monkeypatch, topic_score_side_effect=RuntimeError("boom"))
 
     assert "topics" not in out
-    # Serving flag was ON but topic_score computation failed -> falls back to
-    # the OLD rubric (served_rubric is rubric itself).
+    # topic_score computation failed -> falls back to the OLD rubric
+    # (served_rubric is rubric itself).
     assert out["rubric"] == _OLD_RUBRIC
     assert "rubric" in out  # HTTP 200 shape, no exception escaped
 
@@ -302,8 +249,6 @@ async def test_topic_score_raising_artifact_receives_none(monkeypatch):
     write_mock = AsyncMock(return_value=None)
     out = await _run(
         monkeypatch,
-        served_flag="true",
-        artifact_flag="true",
         topic_score_side_effect=RuntimeError("boom"),
         write_mock=write_mock,
     )
@@ -311,15 +256,3 @@ async def test_topic_score_raising_artifact_receives_none(monkeypatch):
     write_mock.assert_awaited_once()
     assert write_mock.await_args.kwargs["topic_score"] is None
     assert "topics" not in out
-
-
-async def test_topic_score_raising_flag_off_also_soft_fails(monkeypatch):
-    """Compute-always means the soft-fail matters even when serving is off."""
-    out = await _run(
-        monkeypatch,
-        served_flag=None,
-        topic_score_side_effect=RuntimeError("boom"),
-    )
-
-    assert "topics" not in out
-    assert out["rubric"] == _OLD_RUBRIC

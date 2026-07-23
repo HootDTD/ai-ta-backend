@@ -22,9 +22,9 @@ Applies to all three repos (`ai-ta-backend`, `ai-ta-student-ui`, `ai-ta-teacher-
      re-break prod. `.github/workflows/backmerge.yml` opens that PR automatically.
 
 2. **Promote whole branches; gate behavior with env flags.** Unfinished or risky work
-   ships behind env vars that are OFF on prod (the existing `ROUTER_ENABLED` /
-   `APOLLO_*_ENABLED` pattern). Code promotes freely; prod's Railway env decides what
-   runs. Promote small and often (roughly weekly) — divergence is what makes
+   ships behind env vars that are OFF on prod (the existing `APOLLO_*` env-flag
+   pattern — e.g. `APOLLO_MULTI_PATH`, `APOLLO_PROBLEM_GENERATION`). Code promotes
+   freely; prod's Railway env decides what runs. Promote small and often (roughly weekly) — divergence is what makes
    promotions scary.
 
 3. **Prod schema changes only at promotion time.** Every schema change lands as a

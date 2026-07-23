@@ -41,7 +41,7 @@ editing code, update the owner doc in the same commit and bump
 1. Student submits question + optional images
 2. Vision module transcribes images; keywords extracted
 3. Semantic filter removes out-of-scope questions
-4. Retrieval-mode orchestrator (`ROUTER_ENABLED`, default off): classifies each turn
+4. Retrieval-mode orchestrator (always on): classifies each turn
    NONE / AUGMENT / FRESH against the session's cached bundle — NONE answers from
    cache (skips steps 5–7 and snippet scoring), AUGMENT runs a reduced top-up merged
    with the cache, FRESH is the full pipeline. Fails open to FRESH.
@@ -54,9 +54,9 @@ editing code, update the owner doc in the same commit and bump
 
 ## Key Tech Decisions
 - Vector search: pgvector (PostgreSQL) + FAISS. Do not introduce other vector stores.
-- LLM: GPT-4o via MAIN_MODEL env var. Vision fallback: Tesseract if GPT-4V unavailable.
+- LLM: the solver model is pinned in `config/models.py` (`MAIN_MODEL = gpt-5.1`, `MAIN_REASONING_EFFORT = low`) — changing it is a code change + deploy, not an env var. Vision fallback: Tesseract if GPT-4V unavailable.
 - Database: Supabase PostgreSQL + pgvector, async via SQLAlchemy + asyncpg
-- Deployment: Railway (GitHub integration, deploys `ApolloV3`; Procfile defines web + worker processes). Heroku is abandoned — do not re-wire it.
+- Deployment: Railway (GitHub integration; prod deploys `main`, staging deploys `staging`; Procfile defines web + worker processes). Heroku is abandoned — do not re-wire it.
 
 ## Environment
 Config via `config/settings.py`. Copy `.env.example` to `.env` for required variables.

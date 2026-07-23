@@ -28,5 +28,5 @@ def test_done_source_drops_solver_indicator_and_awaits_coverage():
     assert "solver_indicator" not in src
     assert "solve_kg_against_problem" not in src
     assert "solver_result" not in src
-    # compute_coverage is now the async/parallel version and must be awaited.
-    assert "await compute_coverage(" in src
+    # The transcript grader is the sole grading lane and must be awaited.
+    assert "await compute_transcript_coverage_with_spans(" in src

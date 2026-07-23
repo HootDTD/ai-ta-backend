@@ -113,7 +113,6 @@ def _patches(store):
             "apollo.handlers.chat.classify_intent",
             return_value=IntentVerdict(intent="teaching", confidence=1.0, reason=""),
         ),
-        patch("apollo.handlers.chat._unified_questioning_enabled", return_value=True),
         patch(
             "apollo.handlers.chat._find_problem",
             new=AsyncMock(return_value=MagicMock(problem_text="find P2 in a horizontal pipe")),
@@ -126,7 +125,7 @@ def _patches(store):
 
 async def _run(store, db, session_id, *, parse_return=([], [])):
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
         mock_parse.return_value = parse_return
         from apollo.handlers.chat import handle_chat
 
@@ -160,7 +159,7 @@ async def test_unified_chat_does_not_read_legacy_kg_summary(db_session_attempt):
     store = _degraded_store(error=KGUnavailableError(stage="read_graph", last_error="down"))
 
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2] as planner, ps[3], ps[4], ps[5], ps[6]:
+    with ps[0], ps[1] as mock_parse, ps[2] as planner, ps[3], ps[4], ps[5]:
         mock_parse.return_value = ([], [])
         from apollo.handlers.chat import handle_chat
 
@@ -262,7 +261,6 @@ async def test_pending_done_confirmation_degrades_kg_read(db_session_attempt):
         ps[3],
         ps[4],
         ps[5],
-        ps[6],
         patch("apollo.handlers.done.handle_done", new=AsyncMock(side_effect=_fake_handle_done)),
     ):
         from apollo.handlers.chat import handle_chat
@@ -287,7 +285,7 @@ async def test_intent_confirmation_degrades_kg_read(db_session_attempt):
         return_value=IntentVerdict(intent="restart", confidence=0.95, reason=""),
     )
 
-    with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5], ps[6]:
+    with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5]:
         from apollo.handlers.chat import handle_chat
 
         resp = await handle_chat(

@@ -251,29 +251,6 @@ def neo4j_configured() -> bool:
     ])
 
 
-# ---------------------------------------------------------------------------
-# Hoot Q&A surface (Apollo-only deployments)
-# ---------------------------------------------------------------------------
-
-
-def hoot_qa_enabled() -> bool:
-    """DEFAULT-ON kill switch ``HOOT_QA_ENABLED`` for the Hoot Q&A surface.
-
-    ``HOOT_QA_ENABLED=0`` turns the retrieval Q&A pipeline off at the HTTP
-    boundary (``POST /ask`` 403s) for Apollo-only deployments — the MGMT 38200
-    pilot runs prod with Hoot off while staging keeps it on. Everything else
-    (teacher uploads, indexing, Apollo) stays live: course materials still
-    feed Apollo provisioning. Read per-request so tests and Railway env
-    changes take effect without module reloads.
-    """
-    return (os.getenv("HOOT_QA_ENABLED", "1") or "1").strip().lower() not in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }
-
-
 def rerankers_enabled() -> bool:
     """Return True when the optional reranking step is active."""
     return os.getenv("RERANKERS_ENABLED", "false").lower() not in {
@@ -300,8 +277,6 @@ __all__ = [
     "get_supabase_db_url",
     "rerankers_enabled",
     "get_reranker_model",
-    # Hoot Q&A surface (Apollo-only deployments)
-    "hoot_qa_enabled",
     # Neo4j (ApolloV3)
     "get_neo4j_uri",
     "get_neo4j_username",

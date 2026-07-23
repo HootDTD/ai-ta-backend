@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 
 from openai import OpenAI
 
+from config import models
 from config.settings import get_subject_name, get_citation_label, get_runtime_dir
 from config.contracts import ParsedTask, ProposedSolution, FinalAnswer, ResearchBundle
 from .solver import run_python
@@ -1243,7 +1244,7 @@ def _prepare_solve_prompt(
     user_base = "\n".join(payload_lines)
     if hint:
         user_base += f"\nHint: {hint}"
-    model = os.getenv("MAIN_MODEL", "gpt-5")
+    model = models.MAIN_MODEL
 
     def _maybe_debug_dump(
         system_prompt: str,
@@ -1366,7 +1367,7 @@ def solve_with_bundle(
             "response_format": {"type": "json_object"},
         }
         if _is_reasoning_model(model):
-            kwargs["reasoning_effort"] = os.getenv("MAIN_REASONING_EFFORT", "high")
+            kwargs["reasoning_effort"] = models.MAIN_REASONING_EFFORT
         else:
             kwargs["temperature"] = 0
         kwargs["prompt_cache_key"] = os.getenv(
@@ -1414,7 +1415,7 @@ def solve_with_bundle_stream(
     }
     if _is_reasoning_model(model):
         kwargs["reasoning"] = {
-            "effort": os.getenv("MAIN_REASONING_EFFORT", "high"),
+            "effort": models.MAIN_REASONING_EFFORT,
             "summary": "auto",
         }
     else:

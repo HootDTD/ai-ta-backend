@@ -4,8 +4,8 @@
 The axis-based narrative (``diagnostic.py``) narrates the fixed 60/25/15 rubric
 and can hallucinate claims beyond the coverage map (staging session 43: the
 narrative invented "expression involving ∫sin x dx", never taught). This
-module builds the REPLACEMENT prompt when ``APOLLO_TOPIC_SCORE_SERVED`` is on:
-it is built entirely from an already-computed ``TopicScoreResult`` — every
+module builds the REPLACEMENT prompt whenever a ``TopicScoreResult`` is
+available: it is built entirely from an already-computed result — every
 topic's status and whole-number percentage and every misconception's evidence
 span + correction state are named explicitly in the prompt. Internal scoring
 details never reach the narrator.
@@ -92,7 +92,7 @@ def _humanize_key(key: str) -> str:
     tail = key.rsplit(".", 1)[-1]
     for prefix in ("def_", "proc_", "eq_", "cond_"):
         if tail.startswith(prefix):
-            tail = tail[len(prefix):]
+            tail = tail[len(prefix) :]
             break
     return tail.replace("_", " ").strip() or "this topic"
 
@@ -151,10 +151,7 @@ def build_topic_narrative_prompt(
     spoken = [u.strip() for u in student_utterances if u and u.strip()]
     if spoken:
         transcript_lines = "\n".join(f'{i}. "{u}"' for i, u in enumerate(spoken, start=1))
-        user += (
-            "\nWhat the student actually said (verbatim, in turn order):\n"
-            f"{transcript_lines}\n"
-        )
+        user += f"\nWhat the student actually said (verbatim, in turn order):\n{transcript_lines}\n"
     return _TOPIC_SYSTEM_PROMPT, user
 
 
@@ -163,9 +160,7 @@ def build_topic_narrative_prompt(
 # "weight 1.5" or "$0.5 \rho v^2$" intact while still catching every
 # ledger-shaped leak.
 _SCORING_NUM = r"-?(?:0?\.\d+|1\.0+)"
-_SCORING_TERM = (
-    rf"\b(?:credit|weight|dock(?:ed)?|misconception[ _]dock)\b\s*[:=]?\s*{_SCORING_NUM}"
-)
+_SCORING_TERM = rf"\b(?:credit|weight|dock(?:ed)?|misconception[ _]dock)\b\s*[:=]?\s*{_SCORING_NUM}"
 _SCORING_PAREN_RE = re.compile(rf"\(\s*[^()]*?{_SCORING_TERM}[^()]*?\)", re.IGNORECASE)
 _SCORING_INLINE_RE = re.compile(_SCORING_TERM, re.IGNORECASE)
 _EMPTY_PAREN_RE = re.compile(r"\(\s*[,;\s]*\)")

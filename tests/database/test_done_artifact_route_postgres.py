@@ -1,5 +1,11 @@
 """Real-PG gate for canonical transcript/topic artifact capture on Done.
 
+Artifact capture is UNCONDITIONAL post flag-reset (the artifact-capture flag
+was deleted): every Done click writes exactly one canonical
+``internal.grading_runs`` row and attaches the student scorecard. The
+transcript grader is patched to a
+deterministic coverage dict so no live LLM / network call runs.
+
 These MUST RUN GREEN (not skip) with Docker up — a skip is a FAIL of the gate.
 """
 
@@ -31,6 +37,15 @@ pytestmark = pytest.mark.integration
 
 _INTRO = [p for p in load_bernoulli_problem_payloads() if p["difficulty"] == "intro"]
 
+# Deterministic transcript-grader coverage (2 covered, 1 missing) so the
+# canonical node ledger is genuinely non-empty and no live LLM runs.
+_COVERAGE = {
+    "per_step": {"a": "covered", "b": "covered", "c": "missing"},
+    "procedure_scores": {},
+    "confidences": {"a": 0.9, "b": 0.8, "c": 0.2},
+    "negotiation_counts": {"dual": 0, "disputed": 0, "paraphrased": 0, "skipped": 0},
+}
+
 
 def _student_graph(attempt_id: int) -> KGGraph:
     node = build_node(
@@ -45,9 +60,7 @@ def _student_graph(attempt_id: int) -> KGGraph:
 
 
 async def _seed_session(db, *, current_code: str, sid: int, cid: int):
-    current_problem_id = await problem_database_id(
-        db, concept_id=cid, problem_code=current_code
-    )
+    current_problem_id = await problem_database_id(db, concept_id=cid, problem_code=current_code)
     sess = TutoringSession(
         user_id=TEST_USER_ID,
         search_space_id=sid,
@@ -92,6 +105,18 @@ def _neo_stubs(attempt_id: int):
     ]
 
 
+def _grading_stubs(extra=None):
+    """Patch the transcript grader to a deterministic coverage dict (no live
+    LLM). ``extra`` appends further patches (e.g. a fixed ``compute_rubric``)."""
+    stubs = [
+        patch(
+            "apollo.handlers.done.compute_transcript_coverage_with_spans",
+            new=AsyncMock(return_value=(dict(_COVERAGE), {})),
+        ),
+    ]
+    return stubs + list(extra or [])
+
+
 def _start(patches):
     for p in patches:
         p.start()
@@ -102,16 +127,6 @@ def _stop(patches):
         p.stop()
 
 
-async def _run_done(db, sess_id, monkeypatch, *, neo_patches, artifact_on: bool):
-    if artifact_on:
-        monkeypatch.setenv("APOLLO_GRADING_ARTIFACT_ENABLED", "true")
-    _start(neo_patches)
-    try:
-        return await handle_done(db=db, neo=object(), session_id=sess_id)
-    finally:
-        _stop(neo_patches)
-
-
 async def _artifact_rows(db, attempt_id: int):
     return (
         (await db.execute(select(GradingRun).where(GradingRun.attempt_id == attempt_id)))
@@ -120,8 +135,9 @@ async def _artifact_rows(db, attempt_id: int):
     )
 
 
-async def test_both_flags_off_writes_zero_rows_response_unchanged(db_session, monkeypatch):
-    """With artifact flags off, only unconditional response fields are added."""
+async def test_done_writes_one_canonical_artifact_and_scorecard(db_session):
+    """Every Done writes exactly one canonical row and attaches the scorecard —
+    artifact capture is unconditional now."""
     sid, cid, codes = await seed_course(
         db_session,
         subject_slug="fluid_mechanics",
@@ -130,60 +146,19 @@ async def test_both_flags_off_writes_zero_rows_response_unchanged(db_session, mo
     )
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
 
-    out = await _run_done(
-        db_session,
-        sess.id,
-        monkeypatch,
-        neo_patches=_neo_stubs(attempt.id),
-        artifact_on=False,
-    )
-
-    assert set(out) == {
-        "rubric",
-        "diagnostic_narrative",
-        "coverage",
-        "progress",
-        "xp_earned",
-        "xp_before",
-        "xp_after",
-        "level_before",
-        "level_after",
-        "level_up",
-        # Feedback transcript: unconditional presentation data; [] on
-        # retrieval soft-fail and independent of artifact/shadow flags.
-        "transcript",
-        # Part 1 transcript grader: provenance ships in BOTH flag states
-        # (spec §3.7.3) — present even with every apollo flag off.
-        "grading_provenance",
-    }
-    rows = await _artifact_rows(db_session, attempt.id)
-    assert rows == []
-
-
-async def test_artifact_on_shadow_off_writes_one_llm_canonical_row(db_session, monkeypatch):
-    sid, cid, codes = await seed_course(
-        db_session,
-        subject_slug="fluid_mechanics",
-        concept_slug="bernoulli_principle",
-        problems=_INTRO,
-    )
-    sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
-
-    out = await _run_done(
-        db_session,
-        sess.id,
-        monkeypatch,
-        neo_patches=_neo_stubs(attempt.id),
-        artifact_on=True,
-    )
+    patches = _neo_stubs(attempt.id) + _grading_stubs()
+    _start(patches)
+    try:
+        out = await handle_done(db=db_session, neo=object(), session_id=sess.id)
+    finally:
+        _stop(patches)
 
     rows = await _artifact_rows(db_session, attempt.id)
     assert len(rows) == 1
     assert rows[0].role == "canonical"
     assert rows[0].grader_used == "llm_fallback"
 
-    # Task B1 — artifact capture on ⇒ handle_done renders + attaches the
-    # student scorecard from the persisted canonical row's payload.
+    # Scorecard is projected from the persisted canonical payload.
     assert "scorecard" in out
     assert set(out["scorecard"]) == {
         "score_0_100",
@@ -196,59 +171,17 @@ async def test_artifact_on_shadow_off_writes_one_llm_canonical_row(db_session, m
         "watch_out_note",
         "clarifications",
     }
+    # Provenance ships on every Done and reports the transcript lane.
+    assert out["grading_provenance"]["grader_used"] == "llm_transcript"
+    assert out["grading_provenance"]["evidence_source"] == "transcript"
 
 
-def _student_graph_with_condition_credit(attempt_id: int) -> KGGraph:
-    """Same continuity-equation node as ``_student_graph``, PLUS a condition
-    node so the "justification" rubric axis (bernoulli_principle problem_01's
-    ``cond.incompressibility``) has real student evidence to match against —
-    the bare-equation-only ``_student_graph`` fixture legitimately grades 0
-    across every rubric axis (no procedure/condition/simplification content
-    at all), which would make a composite-matches-rubric regression test
-    vacuous."""
-    eq_node = build_node(
-        node_type="equation",
-        node_id="stu_continuity",
-        attempt_id=attempt_id,
-        source="parser",
-        content={"symbolic": "rho*A1*v1 - rho*A2*v2", "label": "continuity", "variables": []},
-        parser_confidence=0.95,
-    )
-    cond_node = build_node(
-        node_type="condition",
-        node_id="stu_incompressible",
-        attempt_id=attempt_id,
-        source="parser",
-        content={"applies_when": "the density stays constant", "label": "incompressible"},
-        parser_confidence=0.95,
-    )
-    return KGGraph(nodes=[eq_node, cond_node], edges=[])
-
-
-def _binary_match_credit_condition(*, entry_type, reference_nodes, student_nodes, model=None):
-    """Deterministic stand-in for the real (LLM-backed) ``_batch_binary_match``:
-    credits every reference "condition" entry whenever the student graph has
-    at least one condition node, leaves every other binary type at "missing".
-    Avoids a real OpenAI call in this DB-integration test while still
-    producing a genuinely non-zero, non-fabricated rubric grade."""
-    if not reference_nodes:
-        return {}
-    if entry_type == "condition" and student_nodes:
-        return {n.node_id: {"covered": True, "confidence": 0.9} for n in reference_nodes}
-    return {n.node_id: {"covered": False, "confidence": 1.0} for n in reference_nodes}
-
-
-async def test_llm_canonical_composite_and_band_match_served_rubric(db_session, monkeypatch):
+async def test_canonical_composite_matches_axis_rubric_and_band(db_session):
     """T1 regression (defect: canonical artifact built from an EMPTY coverage
-    dict). ``build_llm_artifact`` was reading ``coverage["covered"]``/
-    ``coverage["missing"]`` — keys the real ``compute_coverage`` return never
-    has (it returns ``per_step``/``procedure_scores``/``confidences``/
-    ``negotiation_counts``) — so every canonical LLM row silently graded
-    ``node_coverage=0.0``/``composite=0.0``/``band="Beginning"`` no matter what
-    the student actually said, while the served rubric showed a real,
-    non-trivial grade. This test drives the real Done route and asserts the
-    persisted canonical artifact's composite/band reflect the SAME grade the
-    student was actually served, not a silently-zeroed one."""
+    dict silently graded composite=0.0). Drives the real Done route and asserts
+    the persisted canonical artifact's composite reflects the axis rubric
+    overall (what ``build_llm_artifact`` reads) with a real, non-empty node
+    ledger, and the scorecard band is consistent with it."""
     from apollo.projections.scorecard import _band_for, load_bands
 
     sid, cid, codes = await seed_course(
@@ -259,41 +192,34 @@ async def test_llm_canonical_composite_and_band_match_served_rubric(db_session, 
     )
     sess, attempt = await _seed_session(db_session, current_code=codes[0], sid=sid, cid=cid)
 
-    neo_patches = [
-        patch(
-            "apollo.handlers.done.KGStore.read_graph",
-            new=AsyncMock(return_value=_student_graph_with_condition_credit(attempt.id)),
-        ),
-        patch("apollo.handlers.done.KGStore.freeze", new=AsyncMock()),
-        patch("apollo.handlers.done.KGStore.stamp_graded_at", new=AsyncMock()),
-        patch("apollo.overseer.coverage._batch_binary_match", new=_binary_match_credit_condition),
-    ]
-    out = await _run_done(
-        db_session,
-        sess.id,
-        monkeypatch,
-        neo_patches=neo_patches,
-        artifact_on=True,
+    fixed_rubric = {
+        "overall": {"score": 70, "letter": "B-"},
+        "procedure": {"score": 70, "letter": "B-", "present": True},
+        "justification": {"score": 70, "letter": "B-", "present": True},
+        "simplification": {"score": 70, "letter": "B-", "present": True},
+    }
+    patches = _neo_stubs(attempt.id) + _grading_stubs(
+        extra=[patch("apollo.handlers.done.compute_rubric", return_value=dict(fixed_rubric))]
     )
-
-    served_rubric_score = out["rubric"]["overall"]["score"]
-    # Sanity: the fixture's seeded turn actually earns partial credit — a
-    # zero-everywhere grade would make this regression test vacuous.
-    assert served_rubric_score > 0
+    _start(patches)
+    try:
+        out = await handle_done(db=db_session, neo=object(), session_id=sess.id)
+    finally:
+        _stop(patches)
 
     rows = await _artifact_rows(db_session, attempt.id)
     canonical = next(r for r in rows if r.role == "canonical")
     assert canonical.grader_used == "llm_fallback"
 
-    expected_composite = round(served_rubric_score / 100.0, 6)
+    # Composite is the axis rubric overall / 100 — build_llm_artifact reads the
+    # raw `rubric`, not the served topic overall.
+    expected_composite = round(70 / 100.0, 6)
     assert canonical.composite_score == pytest.approx(expected_composite)
     assert canonical.composite_score > 0.0
-    # The node ledger must carry real entries (not the empty list a
-    # covered/missing-key mismatch silently produced).
+    # The node ledger carries real entries (not the empty list a covered/missing
+    # key mismatch silently produced).
     assert canonical.node_ledger != []
 
     expected_band = _band_for(expected_composite, load_bands())
     assert out["scorecard"]["band"] == expected_band
-    assert canonical.composite_score * 100 == pytest.approx(
-        out["scorecard"]["score_0_100"], abs=1
-    )
+    assert canonical.composite_score * 100 == pytest.approx(out["scorecard"]["score_0_100"], abs=1)

@@ -86,7 +86,17 @@ def _old_path_patches():
         patch("apollo.handlers.done.KGStore.read_graph", new=AsyncMock(return_value=KGGraph())),
         patch("apollo.handlers.done.KGStore.freeze", new=AsyncMock()),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=AsyncMock()),
-        patch("apollo.handlers.done.compute_coverage", new=AsyncMock(return_value={})),
+        # Transcript grader is the sole (unconditional) grading lane.
+        patch("apollo.handlers.done._full_transcript", new=AsyncMock(return_value=())),
+        patch(
+            "apollo.handlers.done.compute_transcript_coverage_with_spans",
+            new=AsyncMock(return_value=({}, {})),
+        ),
+        # Topic scoring now serves unconditionally when it computes; the base
+        # golden neutralizes it (returns None) so `served_rubric is rubric`
+        # (the mocked {"overall": {"score": 0.5}}). Tests that exercise real
+        # topic scoring drop this patch by attribute (see test_done_topic_score).
+        patch("apollo.handlers.done.compute_topic_score", new=MagicMock(return_value=None)),
         patch("apollo.handlers.done._attempt_misconception_scores", new=AsyncMock(return_value={})),
         patch("apollo.handlers.done.compute_rubric", return_value={"overall": {"score": 0.5}}),
         patch("apollo.handlers.done.generate_diagnostic", return_value="narrative"),
@@ -98,5 +108,8 @@ def _old_path_patches():
         ),
         patch("apollo.handlers.done.compute_progress_envelope", return_value=_envelope()),
         patch("apollo.handlers.done._fetch_attempt_transcript", new=AsyncMock(return_value=[])),
+        # Artifact write is unconditional now; return None so the base golden
+        # attaches no scorecard / mastery projection.
+        patch("apollo.handlers.done.write_artifacts", new=AsyncMock(return_value=None)),
     ]
     return db, sess, attempt, patches

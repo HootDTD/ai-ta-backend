@@ -100,10 +100,6 @@ async def test_chat_loads_concept_definition_from_db(db_session):
             "apollo.handlers.chat.classify_intent",
             return_value=IntentVerdict(intent="teaching", confidence=1.0, reason=""),
         ),
-        patch(
-            "apollo.handlers.chat._unified_questioning_enabled",
-            return_value=True,
-        ),
     ):
         await handle_chat(db=db_session, neo=MagicMock(), session_id=session_id, message="hi")
 
@@ -131,10 +127,6 @@ async def test_chat_find_problem_matches_problem_code(db_session):
         patch(
             "apollo.handlers.chat.classify_intent",
             return_value=IntentVerdict(intent="teaching", confidence=1.0, reason=""),
-        ),
-        patch(
-            "apollo.handlers.chat._unified_questioning_enabled",
-            return_value=True,
         ),
     ):
         await handle_chat(db=db_session, neo=MagicMock(), session_id=session_id, message="hi")

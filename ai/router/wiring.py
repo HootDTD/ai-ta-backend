@@ -1,11 +1,10 @@
 """Server-side wiring for the retrieval-mode orchestrator.
 
 Glue between the chat layer (session bundle cache), the mode router, and the
-QA pipeline in server.py. Everything is gated behind ROUTER_ENABLED and every
-failure degrades to the legacy FRESH path — with the flag off (default), the
-request path is byte-identical to pre-router behavior.
+QA pipeline in server.py. The router is always on; every failure degrades to
+the legacy FRESH path, so a router fault never breaks a request.
 
-Flow per /ask turn (flag on):
+Flow per /ask turn:
   1. ``prepare_router_context`` (after the user turn is persisted): load the
      session's cached bundle, check the visible-docs fingerprint, and run the
      mode decision. Attachments force FRESH without an LLM call.
@@ -47,10 +46,6 @@ _ROUTER_RECENT_TURNS = int(os.getenv("ROUTER_RECENT_TURNS", "6"))
 _ROUTER_TURN_CONTENT_CHARS = 300
 
 _llm_router: LLMRouter | None = None
-
-
-def router_enabled() -> bool:
-    return (os.getenv("ROUTER_ENABLED", "") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def augment_top_k() -> int:

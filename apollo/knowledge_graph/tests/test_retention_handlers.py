@@ -152,7 +152,11 @@ async def test_done_stamps_graded_at():
         patch("apollo.handlers.done.KGStore.read_graph", new_callable=AsyncMock) as read_graph,
         patch("apollo.handlers.done.KGStore.freeze", new_callable=AsyncMock),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", stamp_spy),
-        patch("apollo.handlers.done.compute_coverage", new_callable=AsyncMock) as cov,
+        patch(
+            "apollo.handlers.done.compute_transcript_coverage_with_spans",
+            new_callable=AsyncMock,
+        ) as cov,
+        patch("apollo.handlers.done.write_artifacts", new=AsyncMock(return_value=None)),
         patch("apollo.handlers.done._attempt_misconception_scores", new_callable=AsyncMock) as misc,
         patch("apollo.handlers.done.compute_rubric") as rubric,
         patch("apollo.handlers.done.generate_diagnostic", return_value="narrative"),
@@ -162,7 +166,7 @@ async def test_done_stamps_graded_at():
         patch("apollo.handlers.done.compute_progress_envelope") as envelope,
     ):
         read_graph.return_value = _FakeGraph()
-        cov.return_value = {}
+        cov.return_value = ({}, {})
         misc.return_value = {}
         rubric.return_value = {"overall": {"score": 0.5}}
         prior.return_value = False

@@ -153,7 +153,6 @@ def test_draft_reply_uses_apollo_model_env_when_set(mock_client_cls, monkeypatch
     mock_client_cls.return_value = client
 
     monkeypatch.setenv("APOLLO_MODEL", "gpt-4o-mini")
-    monkeypatch.setenv("MAIN_MODEL", "gpt-4o")
 
     draft_reply(history=[], kg_summary="kg")
     used_model = client.chat.completions.create.call_args.kwargs["model"]
@@ -162,12 +161,13 @@ def test_draft_reply_uses_apollo_model_env_when_set(mock_client_cls, monkeypatch
 
 @patch("apollo.agent.apollo_llm.OpenAI")
 def test_draft_reply_falls_back_to_main_model(mock_client_cls, monkeypatch):
+    """With no APOLLO_MODEL override, drafts use the pinned config.models.MAIN_MODEL."""
     client = MagicMock()
     client.chat.completions.create.return_value = _mock_reply("ok")
     mock_client_cls.return_value = client
 
     monkeypatch.delenv("APOLLO_MODEL", raising=False)
-    monkeypatch.setenv("MAIN_MODEL", "gpt-4o-2024-11-20")
+    monkeypatch.setattr("config.models.MAIN_MODEL", "gpt-4o-2024-11-20")
 
     draft_reply(history=[], kg_summary="kg")
     used_model = client.chat.completions.create.call_args.kwargs["model"]
