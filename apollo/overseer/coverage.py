@@ -26,6 +26,7 @@ Return shape:
     "confidences":       {ref_node.node_id: float in [0, 1]},
   }
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -51,6 +52,7 @@ from apollo.resolution.tiers import (
     _zero_form,
     student_surface_text,
 )
+from config.models import MAIN_MODEL
 
 # Same transformation set the single mint/resolution parser uses so ``^`` and
 # chained equalities are handled identically here.
@@ -86,7 +88,10 @@ def _with_retry(
             last_exc = exc
             _LOG.warning(
                 "coverage stage %r retry %d/%d failed: %s",
-                stage, i + 1, _RETRY_ATTEMPTS, exc,
+                stage,
+                i + 1,
+                _RETRY_ATTEMPTS,
+                exc,
             )
             if i < _RETRY_ATTEMPTS - 1:
                 time.sleep(_RETRY_BACKOFF_S[i])
@@ -157,19 +162,14 @@ def _batch_binary_match(
     if not reference_nodes:
         return {}
     if not student_nodes:
-        return {
-            n.node_id: {"covered": False, "confidence": 1.0}
-            for n in reference_nodes
-        }
+        return {n.node_id: {"covered": False, "confidence": 1.0} for n in reference_nodes}
 
-    import os
-    used_model = model or os.getenv("MAIN_MODEL", "gpt-4o")
+    used_model = model or MAIN_MODEL
 
     payload = {
         "entry_type": entry_type,
         "reference_entries": [
-            {"ref_id": n.node_id, "content": n.content.model_dump()}
-            for n in reference_nodes
+            {"ref_id": n.node_id, "content": n.content.model_dump()} for n in reference_nodes
         ],
         # P3.4: DUAL entries with a student_belief carry that wording into
         # the LLM payload via _student_payload.
@@ -210,7 +210,8 @@ def _batch_binary_match(
         # for every reference entry.
         for n in reference_nodes:
             out.setdefault(
-                n.node_id, {"covered": False, "confidence": 0.0},
+                n.node_id,
+                {"covered": False, "confidence": 0.0},
             )
         # T-W5a (P3) — grader positive-focus. Default OFF: the sign pre-gate
         # runs exactly as before (byte-identical). When ON, skip it — the
@@ -242,10 +243,14 @@ def _sign_reversed_zero_form(symbolic: str, local_dict: dict):
         lhs, rhs = parts[0], parts[1]
         try:
             l_expr = parse_expr(
-                lhs.strip(), local_dict=local_dict, transformations=_SIGN_TRANSFORMATIONS,
+                lhs.strip(),
+                local_dict=local_dict,
+                transformations=_SIGN_TRANSFORMATIONS,
             )
             r_expr = parse_expr(
-                rhs.strip(), local_dict=local_dict, transformations=_SIGN_TRANSFORMATIONS,
+                rhs.strip(),
+                local_dict=local_dict,
+                transformations=_SIGN_TRANSFORMATIONS,
             )
         except Exception:  # noqa: BLE001 - a non-parse is a non-match, never a crash
             return None
@@ -278,9 +283,7 @@ def _sign_gate_equation_verdicts(
     ``verdicts`` mapping is never mutated in place.
     """
     ref_by_id = {n.node_id: n for n in reference_nodes}
-    student_texts = [
-        text for text in (student_surface_text(n) for n in student_nodes) if text
-    ]
+    student_texts = [text for text in (student_surface_text(n) for n in student_nodes) if text]
     if not student_texts:
         return verdicts
 
@@ -369,8 +372,7 @@ def _procedure_match_score(
     """
     if not student_pool:
         return 0.0, 1.0
-    import os
-    used_model = model or os.getenv("MAIN_MODEL", "gpt-4o")
+    used_model = model or MAIN_MODEL
 
     equation_summaries: dict[str, str] = {}
     for eq in ref_uses:
@@ -393,9 +395,7 @@ def _procedure_match_score(
                 # the substitution rule — see its docstring.
                 "action": _student_payload(s).get("action"),
                 "purpose": s.content.model_dump().get("purpose"),
-                "uses_equations": [
-                    n.node_id for n in student_uses_per_node.get(s.node_id, [])
-                ],
+                "uses_equations": [n.node_id for n in student_uses_per_node.get(s.node_id, [])],
                 **(
                     {"student_belief": s.student_belief}
                     if s.status == "DUAL" and s.student_belief
@@ -477,13 +477,13 @@ async def compute_coverage(
 
     student_proc = student_graph.by_type("procedure_step")
     student_uses_per_node: dict[str, list[Node]] = {
-        s.node_id: student_graph.neighbors(s.node_id, EdgeType.USES)
-        for s in student_proc
+        s.node_id: student_graph.neighbors(s.node_id, EdgeType.USES) for s in student_proc
     }
 
     try:
         proc_order = reference_graph.topological_order(
-            EdgeType.PRECEDES, node_type="procedure_step",
+            EdgeType.PRECEDES,
+            node_type="procedure_step",
         )
     except ValueError:
         proc_order = reference_graph.by_type("procedure_step")
@@ -555,8 +555,7 @@ async def compute_coverage(
     dual_count = sum(1 for n in student_graph.nodes if n.status == "DUAL")
     disputed_count = sum(1 for n in student_graph.nodes if n.status == "DISPUTED")
     paraphrased_count = sum(
-        1 for n in student_graph.nodes
-        if n.status == "DUAL" and n.student_belief
+        1 for n in student_graph.nodes if n.status == "DUAL" and n.student_belief
     )
     skipped_count = dual_count - paraphrased_count
 

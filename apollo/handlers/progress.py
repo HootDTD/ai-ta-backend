@@ -7,11 +7,11 @@ two enrolled courses.
 Detail block (search_space_id given): per-concept mastery averaged over
 apollo_learner_state (entity → concept via apollo_kg_entities.concept_id) and
 the 10 most recent GRADED attempts read from ProblemAttempt.diagnostic_report
-(always written on grade — no dependency on APOLLO_GRADING_ARTIFACT_ENABLED)."""
+(always written on grade)."""
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,10 +35,8 @@ async def handle_get_progress(
     db: AsyncSession,
     user_id: str,
     search_space_id: int,
-) -> Dict[str, Any]:
-    row = await load_progress(
-        db=db, user_id=user_id, course_id=search_space_id
-    )
+) -> dict[str, Any]:
+    row = await load_progress(db=db, user_id=user_id, course_id=search_space_id)
     return {
         "user_id": row.user_id,
         "search_space_id": row.course_id,
@@ -54,10 +52,8 @@ async def handle_get_progress_detail(
     db: AsyncSession,
     user_id: str,
     search_space_id: int,
-) -> Dict[str, Any]:
-    base = await handle_get_progress(
-        db=db, user_id=user_id, search_space_id=search_space_id
-    )
+) -> dict[str, Any]:
+    base = await handle_get_progress(db=db, user_id=user_id, search_space_id=search_space_id)
 
     mastery_rows = (
         await db.execute(
@@ -90,8 +86,7 @@ async def handle_get_progress_detail(
             .outerjoin(Concept, TutoringSession.concept_id == Concept.id)
             .outerjoin(
                 Problem,
-                (ProblemAttempt.problem_id == Problem.id)
-                & (Problem.course_id == search_space_id),
+                (ProblemAttempt.problem_id == Problem.id) & (Problem.course_id == search_space_id),
             )
             .where(
                 TutoringSession.user_id == user_id,

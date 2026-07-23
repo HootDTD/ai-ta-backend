@@ -1,25 +1,20 @@
 """Apollo Neo4j degraded mode — `handle_done` (apollo/handlers/done.py).
 
-Test matrix (plan §10):
-1. `read_graph` raises + transcript grader stubbed OK -> grade served, gate
-   skipped, stamp skipped (log-and-continue), shadow-flag ON but the chain
-   is skipped, `write_artifacts` receives
-   `graph_failure="shadow_failure: neo4j_unavailable"`.
-2. Degraded + transcript grader OFF -> `CoverageGradingError` propagates
-   with `stage="kg_unavailable_fallback"` (assert `compute_coverage` is
-   NEVER called — the empty-graph false-F silent downgrade the plan
-   forbids).
+The transcript grader is the sole (unconditional) grading lane, so a degraded
+Neo4j never blocks grading: the grader reads the transcript, not the frozen
+graph.
+
+Test matrix (post flag-reset):
+1. Degraded pre-freeze `read_graph` + transcript grader OK -> grade served and
+   the canonical artifact is written (no false F from an empty graph).
+2. Degraded pre-freeze read + a transcript-grader `CoverageGradingError` ->
+   the error PROPAGATES (no legacy fallback / fabricated zero), so the
+   CoverageGradingError -> 503 retryable handler fires.
 3. `stamp_graded_at` raising `RetentionError` with a HEALTHY graph -> the
    response is still served (log-and-continue, UNCONDITIONAL per design
-   contract 4c — not gated on `kg_degraded`).
-4. Healthy path: the existing `test_done_shadow_flag.py` /
-   `test_done_shadow_isolation.py` suites are the byte-identical regression
-   gate (unchanged, run as part of the full apollo suite).
+   contract 4c — not gated on a degraded read).
 
-Reuses `_old_path_patches` from `test_done_shadow_flag.py` per the repo's
-own convention (`test_done_shadow_isolation.py` does the same); the shadow
-chain never runs far enough in these tests to need `_rerun_inputs` — it is
-skipped entirely by the degraded early-branch under test.
+Reuses `_old_path_patches` per the repo's own convention.
 """
 
 from __future__ import annotations
@@ -38,27 +33,19 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def _clear_flags(monkeypatch):
-    for flag in (
-        "APOLLO_GRADING_ARTIFACT_ENABLED",
-        "APOLLO_GRAPH_SIM_LAYER3_ENABLED",
-    ):
-        monkeypatch.delenv(flag, raising=False)
+    monkeypatch.delenv("APOLLO_GRAPH_SIM_LAYER3_ENABLED", raising=False)
     yield
 
 
 # ---------------------------------------------------------------------------
-# (1) read_graph degraded + transcript grader OK -> grade served, stamp
-#     skipped, shadow chain skipped with the marker.
+# (1) Degraded read + transcript grader OK -> grade served, artifact written.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_read_graph_degraded_transcript_grader_ok_serves_grade(monkeypatch):
-    monkeypatch.setenv("APOLLO_GRADING_ARTIFACT_ENABLED", "true")
+async def test_read_graph_degraded_still_grades_via_transcript(monkeypatch):
+    db, _sess, _attempt, patches = _old_path_patches()
 
-    db, _sess, attempt, patches = _old_path_patches()
-
-    # Override the read_graph patch from _old_path_patches with a degraded one.
     degraded_read = patch(
         "apollo.handlers.done.KGStore.read_graph",
         new=AsyncMock(side_effect=ServiceUnavailable("aura down")),
@@ -67,40 +54,12 @@ async def test_read_graph_degraded_transcript_grader_ok_serves_grade(monkeypatch
         "apollo.handlers.done.compute_transcript_coverage_with_spans",
         new=AsyncMock(return_value=({"ok": True}, {})),
     )
-    transcript_flag = patch(
-        "apollo.handlers.done.transcript_grader_enabled",
-        return_value=True,
-    )
-    full_transcript = patch(
-        "apollo.handlers.done._full_transcript",
-        new=AsyncMock(return_value=()),
-    )
-    compute_coverage_spy = patch(
-        "apollo.handlers.done.compute_coverage",
-        new=AsyncMock(return_value={"MUST_NOT_RUN": True}),
-    )
     write_artifacts_mock = AsyncMock(return_value=None)
     write_artifacts = patch("apollo.handlers.done.write_artifacts", new=write_artifacts_mock)
-    project_mastery = patch(
-        "apollo.handlers.done._project_mastery",
-        new=AsyncMock(return_value=None),
-    )
 
-    # Start ALL of _old_path_patches, then start `degraded_read` AFTER it —
-    # both patch the same `KGStore.read_graph` attribute, and the LAST patch
-    # started wins (mock.patch restores in reverse-start order on stop, so
-    # stopping `degraded_read` first correctly un-shadows the base patch).
     for p in patches:
         p.start()
-    extra = [
-        degraded_read,
-        transcript_coverage,
-        transcript_flag,
-        full_transcript,
-        compute_coverage_spy,
-        write_artifacts,
-        project_mastery,
-    ]
+    extra = [degraded_read, transcript_coverage, write_artifacts]
     for p in extra:
         p.start()
     try:
@@ -111,39 +70,35 @@ async def test_read_graph_degraded_transcript_grader_ok_serves_grade(monkeypatch
         for p in reversed(patches):
             p.stop()
 
-    # Grade served (byte-identical shape to the OLD path).
+    # Grade served from the transcript lane despite the degraded read.
     assert out["coverage"] == {"ok": True}
-    assert "MUST_NOT_RUN" not in str(out["coverage"])
-
+    # Artifact capture is unconditional.
     write_artifacts_mock.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
-# (2) Degraded + transcript grader OFF -> CoverageGradingError propagates.
+# (2) Degraded read + transcript-grader CoverageGradingError -> propagates.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_degraded_no_transcript_grader_raises_coverage_grading_error(monkeypatch):
-    db, _sess, attempt, patches = _old_path_patches()
+async def test_degraded_read_then_transcript_error_propagates(monkeypatch):
+    db, _sess, _attempt, patches = _old_path_patches()
 
     degraded_read = patch(
         "apollo.handlers.done.KGStore.read_graph",
         new=AsyncMock(side_effect=ServiceUnavailable("aura down")),
     )
-    transcript_flag = patch(
-        "apollo.handlers.done.transcript_grader_enabled",
-        return_value=False,
-    )
-    compute_coverage_spy = AsyncMock(return_value={"MUST_NOT_RUN": True})
-    compute_coverage_patch = patch(
-        "apollo.handlers.done.compute_coverage",
-        new=compute_coverage_spy,
+    transcript_error = patch(
+        "apollo.handlers.done.compute_transcript_coverage_with_spans",
+        new=AsyncMock(
+            side_effect=CoverageGradingError(stage="transcript_adjudication", last_error="down")
+        ),
     )
 
     for p in patches:
         p.start()
-    extra = [degraded_read, transcript_flag, compute_coverage_patch]
+    extra = [degraded_read, transcript_error]
     for p in extra:
         p.start()
     try:
@@ -155,8 +110,7 @@ async def test_degraded_no_transcript_grader_raises_coverage_grading_error(monke
         for p in reversed(patches):
             p.stop()
 
-    assert exc_info.value.stage == "kg_unavailable_fallback"
-    compute_coverage_spy.assert_not_called()
+    assert exc_info.value.stage == "transcript_adjudication"
 
 
 # ---------------------------------------------------------------------------
@@ -167,9 +121,9 @@ async def test_degraded_no_transcript_grader_raises_coverage_grading_error(monke
 @pytest.mark.asyncio
 async def test_stamp_graded_at_retention_error_healthy_graph_still_serves(monkeypatch):
     """UNCONDITIONAL catch (design contract 4c): even with a HEALTHY
-    pre-freeze read (kg_degraded=False), a stamp-time RetentionError must
-    log-and-continue rather than 500 an already-committed grade."""
-    db, _sess, attempt, patches = _old_path_patches()
+    pre-freeze read, a stamp-time RetentionError must log-and-continue rather
+    than 500 an already-committed grade."""
+    db, _sess, _attempt, patches = _old_path_patches()
 
     failing_stamp = patch(
         "apollo.handlers.done.KGStore.stamp_graded_at",
@@ -186,6 +140,7 @@ async def test_stamp_graded_at_retention_error_healthy_graph_still_serves(monkey
         for p in reversed(patches):
             p.stop()
 
-    # Grade served byte-identically to the golden OLD-path payload.
+    # Grade served byte-identically to the golden OLD-path payload (topic
+    # scoring is neutralized in the base golden, so served_rubric is rubric).
     assert out["rubric"] == {"overall": {"score": 0.5}}
     assert out["xp_earned"] == 10

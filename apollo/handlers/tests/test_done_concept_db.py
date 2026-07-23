@@ -81,15 +81,22 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
 
     captured = {}
 
-    async def _coverage(student, reference):
-        captured["reference_nodes"] = list(reference.nodes)
-        return {}
+    async def _coverage(*, transcript, reference_graph, problem):
+        captured["reference_nodes"] = list(reference_graph.nodes)
+        return {}, {}
 
     with (
         patch("apollo.handlers.done.KGStore.read_graph", new=AsyncMock(return_value=KGGraph())),
         patch("apollo.handlers.done.KGStore.freeze", new=AsyncMock()),
         patch("apollo.handlers.done.KGStore.stamp_graded_at", new=AsyncMock()),
-        patch("apollo.handlers.done.compute_coverage", new=AsyncMock(side_effect=_coverage)),
+        patch(
+            "apollo.handlers.done.compute_transcript_coverage_with_spans",
+            new=AsyncMock(side_effect=_coverage),
+        ),
+        patch("apollo.handlers.done.write_artifacts", new=AsyncMock(return_value=None)),
+        # Neutralize topic serving so the mocked legacy rubric is what's served
+        # (this test isolates the DB problem -> reference-graph resolution).
+        patch("apollo.handlers.done.compute_topic_score", new=MagicMock(return_value=None)),
         patch("apollo.handlers.done._attempt_misconception_scores", new=AsyncMock(return_value={})),
         patch("apollo.handlers.done.compute_rubric", return_value={"overall": {"score": 0.5}}),
         patch("apollo.handlers.done.generate_diagnostic", return_value="narrative"),
@@ -104,7 +111,7 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
         out = await handle_done(db=db_session, neo=MagicMock(), session_id=sess.id)
 
     assert out["rubric"] == {"overall": {"score": 0.5}}
-    # The reference graph passed to coverage came from the DB problem payload.
+    # The reference graph passed to the grader came from the DB problem payload.
     assert captured["reference_nodes"]
 
 

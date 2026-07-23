@@ -1,23 +1,18 @@
-"""2026-07-10 topic-score design spec §3/§4 — ``generate_diagnostic``'s
-flag-gated switch to the ledger-grounded prompt.
+"""2026-07-10 topic-score design spec §4 — ``generate_diagnostic``'s prompt
+selection.
 
-Flag OFF (default) -> byte-identical to pre-topic-score behavior, even when a
-``topic_score`` is passed in (the caller in ``done.py`` always computes it
-flag-independently, so this module must ignore it while the serving flag is
-off). Flag ON + a topic_score -> the ledger-grounded prompt REPLACES the
-axis-based one.
+Post flag-reset the ledger-grounded prompt is used UNCONDITIONALLY whenever a
+``TopicScoreResult`` is supplied (the topic-score serving flag was deleted). No
+``topic_score`` (or a soft-failed ``None``) -> the axis-based prompt, unchanged
+from pre-topic-score behavior.
 """
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from apollo.overseer.diagnostic import generate_diagnostic
 from apollo.overseer.topic_score import TopicCredit, TopicScoreResult
-
-_FLAG = "APOLLO_TOPIC_SCORE_SERVED"
 
 _COVERAGE = {"per_step": {"p1": "missing"}, "procedure_scores": {}}
 _RUBRIC = {
@@ -55,49 +50,8 @@ def _mock_client_returning(text: str) -> MagicMock:
     return client
 
 
-@pytest.fixture(autouse=True)
-def _clear_flag(monkeypatch):
-    monkeypatch.delenv(_FLAG, raising=False)
-    yield
-
-
 @patch("apollo.overseer.diagnostic.OpenAI")
-def test_flag_off_topic_score_argument_is_ignored_axis_prompt_used(mock_client_cls, monkeypatch):
-    """Even when a topic_score is passed (done.py always computes one), the
-    flag being OFF means the axis-based prompt is used byte-identically —
-    the caller is NEVER required to omit the argument for safety."""
-    monkeypatch.delenv(_FLAG, raising=False)
-    client = _mock_client_returning("axis narrative")
-    mock_client_cls.return_value = client
-
-    out_with_topic_score = generate_diagnostic(
-        coverage=_COVERAGE,
-        reference_steps=[],
-        problem_text="Demo problem.",
-        rubric=_RUBRIC,
-        topic_score=_topic_score(),
-    )
-    called_with = client.chat.completions.create.call_args
-
-    client2 = _mock_client_returning("axis narrative")
-    mock_client_cls.return_value = client2
-    out_without_topic_score = generate_diagnostic(
-        coverage=_COVERAGE,
-        reference_steps=[],
-        problem_text="Demo problem.",
-        rubric=_RUBRIC,
-    )
-    called_without = client2.chat.completions.create.call_args
-
-    assert called_with.kwargs["messages"] == called_without.kwargs["messages"]
-    assert out_with_topic_score == out_without_topic_score
-
-
-@patch("apollo.overseer.diagnostic.OpenAI")
-def test_flag_off_no_topic_score_argument_byte_identical_to_pre_topic_score(
-    mock_client_cls, monkeypatch
-):
-    monkeypatch.delenv(_FLAG, raising=False)
+def test_no_topic_score_uses_axis_prompt(mock_client_cls):
     client = _mock_client_returning("axis narrative")
     mock_client_cls.return_value = client
 
@@ -114,10 +68,9 @@ def test_flag_off_no_topic_score_argument_byte_identical_to_pre_topic_score(
 
 
 @patch("apollo.overseer.diagnostic.OpenAI")
-def test_flag_on_no_topic_score_falls_back_to_axis_prompt(mock_client_cls, monkeypatch):
-    """Flag ON but topic_score is None (compute_topic_score soft-failed) ->
-    the axis-based prompt is used (never crash on a missing ledger)."""
-    monkeypatch.setenv(_FLAG, "true")
+def test_none_topic_score_falls_back_to_axis_prompt(mock_client_cls):
+    """``topic_score=None`` (compute_topic_score soft-failed) -> the axis-based
+    prompt is used (never crash on a missing ledger)."""
     client = _mock_client_returning("axis narrative")
     mock_client_cls.return_value = client
 
@@ -134,8 +87,7 @@ def test_flag_on_no_topic_score_falls_back_to_axis_prompt(mock_client_cls, monke
 
 
 @patch("apollo.overseer.diagnostic.OpenAI")
-def test_flag_on_with_topic_score_uses_ledger_grounded_prompt(mock_client_cls, monkeypatch):
-    monkeypatch.setenv(_FLAG, "true")
+def test_topic_score_uses_ledger_grounded_prompt(mock_client_cls):
     client = _mock_client_returning("ledger narrative")
     mock_client_cls.return_value = client
 
@@ -161,13 +113,9 @@ def test_flag_on_with_topic_score_uses_ledger_grounded_prompt(mock_client_cls, m
 
 
 @patch("apollo.overseer.diagnostic.OpenAI")
-def test_flag_on_with_topic_score_still_appends_misconception_and_negotiation_lines(
-    mock_client_cls,
-    monkeypatch,
-):
+def test_topic_score_still_appends_misconception_and_negotiation_lines(mock_client_cls):
     """The recap lines appended after the LLM call read rubric/coverage
     directly and are unaffected by which prompt generated the narrative."""
-    monkeypatch.setenv(_FLAG, "true")
     client = _mock_client_returning("ledger narrative")
     mock_client_cls.return_value = client
 

@@ -16,7 +16,6 @@ explicit handlers for restart/next/return-to-hoot.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from sqlalchemy import select
@@ -42,12 +41,6 @@ from apollo.subjects.curriculum_db import load_concept_definition
 
 _LOG = logging.getLogger(__name__)
 
-_UNIFIED_QUESTIONING_FLAG: str = "APOLLO_UNIFIED_QUESTIONING_ENABLED"
-
-
-def _unified_questioning_enabled() -> bool:
-    return os.environ.get(_UNIFIED_QUESTIONING_FLAG, "").lower() in ("1", "true", "yes")
-
 
 async def _find_problem(
     db: AsyncSession, concept_id: int, problem_id: int, *, course_id: int
@@ -55,9 +48,7 @@ async def _find_problem(
     """Locate a problem in the DB bank by concept_id + target surrogate id. Mirrors
     done.py's helper. Kept inline rather than hoisted into problem_selector to
     keep that module's contract (problem listing) narrow."""
-    for p in await list_problems_for_concept(
-        db, concept_id=concept_id, search_space_id=course_id
-    ):
+    for p in await list_problems_for_concept(db, concept_id=concept_id, search_space_id=course_id):
         if p.database_id == problem_id:
             return p
     raise RuntimeError(f"problem {problem_id!r} not in bank for cluster {concept_id!r}")
@@ -75,7 +66,9 @@ async def _next_turn_index(db: AsyncSession, session_id: int) -> int:
 
 
 async def _load_history(
-    db: AsyncSession, session_id: int, attempt_id: int,
+    db: AsyncSession,
+    session_id: int,
+    attempt_id: int,
 ) -> list[dict[str, str]]:
     result = await db.execute(
         select(TutoringMessage)
@@ -136,7 +129,9 @@ async def _read_graph_or_empty(store: KGStore, *, attempt_id: int, stage: str):
     except KG_DEGRADED_ERRORS as exc:
         _LOG.warning(
             "apollo_neo4j_degraded stage=%s attempt_id=%s error=%s",
-            stage, attempt_id, exc,
+            stage,
+            attempt_id,
+            exc,
         )
         return KGGraph()
 
@@ -156,12 +151,15 @@ async def _write_kg_or_skip(
     endpoints to exist)."""
     try:
         nodes_added = await store.write_nodes(
-            attempt_id=attempt_id, nodes=nodes, source=source,
+            attempt_id=attempt_id,
+            nodes=nodes,
+            source=source,
         )
     except KG_DEGRADED_ERRORS as exc:
         _LOG.warning(
             "apollo_neo4j_degraded stage=write_nodes attempt_id=%s error=%s",
-            attempt_id, exc,
+            attempt_id,
+            exc,
         )
         return 0
     try:
@@ -169,7 +167,8 @@ async def _write_kg_or_skip(
     except KG_DEGRADED_ERRORS as exc:
         _LOG.warning(
             "apollo_neo4j_degraded stage=write_edges attempt_id=%s error=%s",
-            attempt_id, exc,
+            attempt_id,
+            exc,
         )
     return nodes_added
 
@@ -215,7 +214,9 @@ async def _handle_pending_done(
     )
 
     graph = await _read_graph_or_empty(
-        store, attempt_id=attempt_id, stage="handle_pending_done",
+        store,
+        attempt_id=attempt_id,
+        stage="handle_pending_done",
     )
     return {
         "apollo_reply": apollo_reply,
@@ -272,7 +273,9 @@ async def _maybe_intent_confirmation(
         apollo_msg=prompt,
     )
     graph = await _read_graph_or_empty(
-        store, attempt_id=attempt_id, stage="maybe_intent_confirmation",
+        store,
+        attempt_id=attempt_id,
+        stage="maybe_intent_confirmation",
     )
     return {
         "apollo_reply": prompt,
@@ -356,7 +359,9 @@ async def handle_chat(
     # parsing) and project it into a GraphContext the parser threads in so it
     # can emit edges referencing prior-turn node ids.
     prior_graph = await _read_graph_or_empty(
-        store, attempt_id=current_attempt.id, stage="prior_graph",
+        store,
+        attempt_id=current_attempt.id,
+        stage="prior_graph",
     )
     graph_context = build_graph_context(prior_graph)
     try:
@@ -390,7 +395,9 @@ async def handle_chat(
     )
 
     student_graph = await _read_graph_or_empty(
-        store, attempt_id=current_attempt.id, stage="student_graph",
+        store,
+        attempt_id=current_attempt.id,
+        stage="student_graph",
     )
     problem = await _find_problem(
         db, sess.concept_id, sess.current_problem_id, course_id=sess.course_id
@@ -401,14 +408,8 @@ async def handle_chat(
     # the full student transcript and writes Apollo's answer-safe next reply.
     # The opportunity ledger still caps each reference node at one question;
     # when no eligible target remains, grade automatically.
-    if not _unified_questioning_enabled():
-        _LOG.warning(
-            "apollo_unified_questioning_flag_off_ignored session_id=%s",
-            session_id,
-        )
     full_transcript = [
-        ("student" if item["role"] == "user" else "apollo", item["content"])
-        for item in history_pre
+        ("student" if item["role"] == "user" else "apollo", item["content"]) for item in history_pre
     ] + [("student", message)]
     decision = await plan_next_question(
         db,

@@ -19,20 +19,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import (
-    CoverageGradingError,
     KGUnavailableError,
     RetentionError,
 )
-from apollo.grading.artifact_build import GRADER_USED_LLM_FALLBACK
 from apollo.handlers.artifact_writer import write_artifacts
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
-from apollo.overseer.coverage import compute_coverage
 from apollo.overseer.diagnostic import generate_diagnostic
-from apollo.overseer.grading_flags import (
-    topic_score_served_enabled,
-    transcript_grader_enabled,
-)
 from apollo.overseer.misconception import (
     MisconceptionSignal,
     summarize_for_rubric,
@@ -64,25 +57,15 @@ _LOG = logging.getLogger(__name__)
 # for compatibility with the artifact-derived mastery interlock.
 _GRAPH_SIM_LAYER3_FLAG: str = "APOLLO_GRAPH_SIM_LAYER3_ENABLED"
 
-# Campaign-plan Task A3 — the canonical-grading-artifact PERSIST flag (default
-# OFF everywhere). When OFF, `write_artifacts` is never called and `handle_done`
-# writes no `internal.grading_runs` rows (byte-identical to pre-A3). When ON,
-# ONE canonical row is written every Done-click (`grader_used="llm_fallback"` —
-# the transcript/topic grade), so campaign runs have a durable grading record.
-_GRAPH_SIM_ARTIFACT_FLAG: str = "APOLLO_GRADING_ARTIFACT_ENABLED"
-
 # T13 — the raw student-turn role for `_student_utterances` (R6, RESOLVED): live
 # transcript roles are exactly {"apollo", "student"}; the Apollo learner turns
 # (read by `_attempt_misconception_scores`) are "apollo", the student's raw
 # teaching utterances (which feed the bank_pattern tier) are "student".
 _STUDENT_ROLE: str = "student"
 
+
 def _graph_sim_layer3_enabled() -> bool:
     return os.environ.get(_GRAPH_SIM_LAYER3_FLAG, "").lower() in ("1", "true", "yes")
-
-
-def _grading_artifact_enabled() -> bool:
-    return os.environ.get(_GRAPH_SIM_ARTIFACT_FLAG, "").lower() in ("1", "true", "yes")
 
 
 async def _project_mastery(db: AsyncSession, *, attempt_id: int) -> None:
@@ -239,17 +222,13 @@ def _compute_topic_score_safe(
 async def _find_problem(
     db: AsyncSession, concept_id: int, problem_id: int, *, course_id: int
 ) -> Problem:
-    for p in await list_problems_for_concept(
-        db, concept_id=concept_id, search_space_id=course_id
-    ):
+    for p in await list_problems_for_concept(db, concept_id=concept_id, search_space_id=course_id):
         if p.database_id == problem_id:
             return p
     raise RuntimeError(f"problem {problem_id!r} not in bank for cluster {concept_id!r}")
 
 
-async def _fetch_attempt_transcript(
-    db: AsyncSession, attempt_id: int
-) -> list[dict[str, Any]]:
+async def _fetch_attempt_transcript(db: AsyncSession, attempt_id: int) -> list[dict[str, Any]]:
     """Return the graded attempt's ordered chat turns for report display."""
     try:
         messages = (
@@ -312,69 +291,47 @@ async def handle_done(
     if attempt is None:
         raise RuntimeError(f"no ProblemAttempt for session {session_id} / problem {problem.id}")
 
-    # Read the student graph before freezing. Degraded mode falls back to an
-    # empty graph; downstream transcript-grader branches check `kg_degraded`
-    # so an unavailable KG is never silently graded as a false F.
-    kg_degraded = False
+    # Read the student graph before freezing so the frozen subgraph is still
+    # persisted; a degraded KG is tolerated (log-and-continue) rather than
+    # 500-ing. The result is not used for grading — the transcript grader
+    # (below) grades from the transcript, so an unavailable KG never yields a
+    # false F.
     try:
-        pre_freeze_graph = await store.read_graph(attempt_id=attempt.id)
+        await store.read_graph(attempt_id=attempt.id)
     except KG_DEGRADED_ERRORS as exc:
-        kg_degraded = True
-        pre_freeze_graph = KGGraph()
         _LOG.warning(
             "apollo_neo4j_degraded stage=pre_freeze_graph attempt_id=%s error=%s",
-            attempt.id, exc,
+            attempt.id,
+            exc,
         )
     await store.freeze(session_id)
 
-    student_graph = pre_freeze_graph
     reference_graph = problem.to_kg_graph(attempt_id=attempt.id)
 
     sess.phase = SessionPhase.SOLVING.value
     await db.commit()
 
-    # Task A3 — grading-latency clock. Captured here (before the OLD grader
-    # runs) so a persisted artifact's `grading_latency_ms` covers the WHOLE
-    # grading pipeline for this Done-click (OLD coverage/rubric + the shadow
-    # chain, when it runs) — not just one half of it.
+    # Task A3 — grading-latency clock. Captured before grading runs so the
+    # persisted artifact's `grading_latency_ms` covers the WHOLE grading
+    # pipeline for this Done-click, not just one half of it.
     _artifact_t0 = time.monotonic()
 
-    use_transcript_grader = transcript_grader_enabled()
-    transcript_grader_failure: str | None = None
-    # Per-attempt student quotes for the diagnostic narrative (transcript lane
-    # only — the KG lane has no per-node quotes, so this stays empty there).
-    # Verbatim-gated in `narrative_evidence_spans`, so the narrative can only
-    # ever attribute to the student words they typed THIS attempt.
-    narrative_spans: dict[str, str] = {}
-    if use_transcript_grader:
-        try:
-            transcript = await _full_transcript(db, attempt_id=int(attempt.id))
-            coverage, narrative_spans = await compute_transcript_coverage_with_spans(
-                transcript=transcript,
-                reference_graph=reference_graph,
-                problem=problem,
-            )
-        except CoverageGradingError as exc:
-            # A transcript-grader failure must never cost the student their
-            # Done: fall back to the legacy lane and say so in provenance.
-            transcript_grader_failure = str(exc)
-            use_transcript_grader = False
-            _LOG.exception(
-                "apollo_transcript_grader_fallback attempt_id=%s", int(attempt.id)
-            )
-    if not use_transcript_grader:
-        if kg_degraded:
-            # Neo4j is down AND the transcript grader is off/failed: grading
-            # `compute_coverage` against the empty `student_graph` above would
-            # silently produce a false F (every reference node reads as
-            # "missing"). Raise a NAMED, retryable error instead — the
-            # existing CoverageGradingError -> 503 handler tells the student
-            # "try again" rather than serving a fabricated zero grade.
-            raise CoverageGradingError(
-                stage="kg_unavailable_fallback",
-                last_error="Neo4j unavailable and no transcript grader result",
-            )
-        coverage = await compute_coverage(student_graph, reference_graph)
+    # The transcript grader is the sole grading lane. A CoverageGradingError
+    # here is NOT caught: it propagates to the CoverageGradingError -> 503
+    # retryable handler (apollo/api.py) so the student is told "try again"
+    # rather than served a fabricated grade. This also covers Neo4j-degraded
+    # Done clicks — grading reads the transcript, never the (possibly empty)
+    # frozen graph, so a degraded KG never yields a false F.
+    #
+    # `narrative_spans` are the per-attempt student quotes for the diagnostic
+    # narrative, verbatim-gated so the narrative can only ever attribute to the
+    # student words they typed THIS attempt.
+    transcript = await _full_transcript(db, attempt_id=int(attempt.id))
+    coverage, narrative_spans = await compute_transcript_coverage_with_spans(
+        transcript=transcript,
+        reference_graph=reference_graph,
+        problem=problem,
+    )
 
     # Class 2 Phase 2 (P2.8): pull per-attempt misconception signals from
     # tutoring-message metadata and reduce them to the per-bank-code score
@@ -391,11 +348,9 @@ async def handle_done(
         misconception_scores=misconception_scores,
     )
 
-    # Topic-score (2026-07-10 spec §2/§3) — COMPUTED ALWAYS, flag-independent:
-    # the canonical artifact (below) gets `scores.topic_score` telemetry
-    # before `APOLLO_TOPIC_SCORE_SERVED` is ever flipped. Soft-fail contract:
-    # `_compute_topic_score_safe` never raises — `topic_score` is `None` on
-    # any failure, and every downstream use below is guarded on that.
+    # Topic-score (2026-07-10 spec §2/§3) — COMPUTED ALWAYS. Soft-fail
+    # contract: `_compute_topic_score_safe` never raises — `topic_score` is
+    # `None` on any failure, and every downstream use below is guarded on that.
     topic_score: TopicScoreResult | None = _compute_topic_score_safe(
         coverage=coverage,
         reference_graph=reference_graph,
@@ -403,14 +358,14 @@ async def handle_done(
         evidence_spans=narrative_spans,
     )
 
-    # Serving (spec §3): under the flag, `served_rubric` REPLACES `overall`
-    # with the topic score/letter while every legacy axis block is carried
-    # over UNCHANGED (mid-deploy safety for older UI clients). This builds a
-    # NEW dict — `rubric` itself (the object `attempt.diagnostic_report` and
-    # `write_artifacts` below both still receive) is never mutated. Flag off,
-    # or a soft-failed `topic_score`, leaves `served_rubric is rubric`
+    # Serving (spec §3): `served_rubric` REPLACES `overall` with the topic
+    # score/letter while every legacy axis block is carried over UNCHANGED
+    # (mid-deploy safety for older UI clients). This builds a NEW dict —
+    # `rubric` itself (the object `attempt.diagnostic_report` and
+    # `write_artifacts` below both still receive) is never mutated. A
+    # soft-failed `topic_score` (None) leaves `served_rubric is rubric`
     # (byte-identical downstream).
-    serve_topic_score = topic_score is not None and topic_score_served_enabled()
+    serve_topic_score = topic_score is not None
     if serve_topic_score:
         served_rubric = {
             **rubric,
@@ -425,13 +380,9 @@ async def handle_done(
     # a fetch failure logs and degrades to the ungrounded prompt — it must
     # never block grading.
     try:
-        narrative_utterances: tuple[str, ...] = await _student_utterances(
-            db, attempt_id=attempt.id
-        )
+        narrative_utterances: tuple[str, ...] = await _student_utterances(db, attempt_id=attempt.id)
     except Exception:  # noqa: BLE001
-        _LOG.warning(
-            "apollo_narrative_utterances_fetch_failed attempt_id=%s", attempt.id
-        )
+        _LOG.warning("apollo_narrative_utterances_fetch_failed attempt_id=%s", attempt.id)
         narrative_utterances = ()
 
     diagnostic_narrative = generate_diagnostic(
@@ -456,9 +407,9 @@ async def handle_done(
 
     # XP ordering (spec §3: "XP continues to derive from rubric.overall (now
     # the topic score)"): `served_rubric` is already the REPLACED overall by
-    # this point, so under the flag XP is earned against the topic score, not
-    # the axis blend — this line MUST stay after the `served_rubric`
-    # assignment above and before any use of `xp_earned`.
+    # this point, so XP is earned against the topic score, not the axis blend
+    # — this line MUST stay after the `served_rubric` assignment above and
+    # before any use of `xp_earned`.
     xp_earned = compute_xp_earned(
         overall_score=served_rubric["overall"]["score"],
         difficulty=attempt.difficulty,
@@ -501,8 +452,8 @@ async def handle_done(
     #
     # Degraded-mode relaxation (NEO4J-DEGRADED, deliberate NO-FALLBACK carve-
     # out — documented in the owner doc): catch (KGUnavailableError,
-    # RetentionError) UNCONDITIONALLY, not just when kg_degraded — the real
-    # failure mode is a connection dying DURING the ~4-minute grading
+    # RetentionError) UNCONDITIONALLY, not just on a degraded pre-freeze read —
+    # the real failure mode is a connection dying DURING the ~4-minute grading
     # pipeline, so a HEALTHY read at the top of this function does not
     # guarantee a healthy stamp at the end. RetentionError has no registered
     # HTTP handler today, so letting it propagate 500s a fully successful,
@@ -513,16 +464,15 @@ async def handle_done(
     except (KGUnavailableError, RetentionError) as exc:
         _LOG.warning(
             "apollo_neo4j_degraded stage=stamp_graded_at attempt_id=%s error=%s",
-            attempt.id, exc,
+            attempt.id,
+            exc,
         )
 
     # The student-facing payload is constructed from OLD-path values ONLY,
     # EXCEPT for `rubric`, which is `served_rubric` — byte-identical to
-    # `rubric` (same object) unless `APOLLO_TOPIC_SCORE_SERVED` is on AND
-    # `topic_score` computed successfully (spec §3). It is otherwise
-    # byte-identical whether the shadow flag is on or off and whether the
-    # shadow chain succeeds — the shadow result is NEVER merged into it
-    # (WU-4C1).
+    # `rubric` (same object) unless `topic_score` computed successfully, in
+    # which case `overall` is the topic score/letter (spec §3). The shadow
+    # result is NEVER merged into it (WU-4C1).
     student_response = {
         "rubric": served_rubric,
         "diagnostic_narrative": diagnostic_narrative,
@@ -548,8 +498,8 @@ async def handle_done(
         "level_after": envelope.level_after,
         "level_up": envelope.level_up,
     }
-    # Spec §3: `student_response["topics"]` is served ONLY under the flag +
-    # a successfully-computed topic_score — same shape as the artifact's
+    # Spec §3: `student_response["topics"]` is served whenever the topic score
+    # computed successfully — same shape as the artifact's
     # `scores.topic_score.topics` (serialize_topics is the single shared
     # serializer, `topic_score_serialize.py`). Absent (not null) otherwise.
     if serve_topic_score:
@@ -557,57 +507,45 @@ async def handle_done(
 
     student_response["transcript"] = await _fetch_attempt_transcript(db, int(attempt.id))
 
-    # Canonical transcript/topic artifact capture (default OFF). Task B1 —
-    # student scorecard projection (spec §2). Additive
-    # `student_response["scorecard"]` key, attached only when artifact capture
-    # is on (there is nothing to template over otherwise): `write_artifacts`
-    # returns the CANONICAL payload it just persisted — the exact grade the
-    # student was served, graph or LLM — and `render_scorecard` is a pure
-    # template over it (no recomputation; same shape either way, spec §3
-    # step 3). A failed artifact write returns `None`, so no scorecard is
-    # attached rather than templating over a payload that was never durable.
-    if _grading_artifact_enabled():
-        artifact_latency_ms = int((time.monotonic() - _artifact_t0) * 1000)
-        canonical_payload = await write_artifacts(
-            db,
-            attempt=attempt,
-            sess=sess,
-            coverage=coverage,
-            rubric=rubric,
-            latency_ms=artifact_latency_ms,
-            topic_score=topic_score,
-        )
-        if canonical_payload is not None:
-            student_response["scorecard"] = render_scorecard(canonical_payload)
-            # Task B2 — mastery ledger projection (spec section 2/3). Guarded off
-            # whenever the dormant WU-5A2 Bayesian path is live (see
-            # `_project_mastery`'s docstring): the two write paths must never
-            # both fire for the same attempt.
-            if _graph_sim_layer3_enabled():
-                _LOG.info(
-                    "mastery_projection_skipped_layer3_active attempt_id=%s",
-                    int(attempt.id),
-                )
-            else:
-                await _project_mastery(db, attempt_id=int(attempt.id))
-
-    # The topic/dock payload (which quotes the student) may only ship when
-    # APOLLO_TOPIC_SCORE_SERVED allows topics into the response at all.
-    transcript_served = use_transcript_grader
-    serialized_topics = (
-        serialize_topics(topic_score)
-        if topic_score is not None and serve_topic_score
-        else []
+    # Canonical transcript/topic artifact capture — written on every Done.
+    # Task B1 — student scorecard projection (spec §2). Additive
+    # `student_response["scorecard"]` key: `write_artifacts` returns the
+    # CANONICAL payload it just persisted — the exact grade the student was
+    # served — and `render_scorecard` is a pure template over it (no
+    # recomputation; spec §3 step 3). A failed artifact write returns `None`,
+    # so no scorecard is attached rather than templating over a payload that
+    # was never durable.
+    artifact_latency_ms = int((time.monotonic() - _artifact_t0) * 1000)
+    canonical_payload = await write_artifacts(
+        db,
+        attempt=attempt,
+        sess=sess,
+        coverage=coverage,
+        rubric=rubric,
+        latency_ms=artifact_latency_ms,
+        topic_score=topic_score,
     )
+    if canonical_payload is not None:
+        student_response["scorecard"] = render_scorecard(canonical_payload)
+        # Task B2 — mastery ledger projection (spec section 2/3). Guarded off
+        # whenever the dormant WU-5A2 Bayesian path is live (see
+        # `_project_mastery`'s docstring): the two write paths must never
+        # both fire for the same attempt.
+        if _graph_sim_layer3_enabled():
+            _LOG.info(
+                "mastery_projection_skipped_layer3_active attempt_id=%s",
+                int(attempt.id),
+            )
+        else:
+            await _project_mastery(db, attempt_id=int(attempt.id))
+
+    # The topic/dock payload (which quotes the student) ships whenever the
+    # topic score computed successfully.
+    serialized_topics = serialize_topics(topic_score) if serve_topic_score else []
     student_response["grading_provenance"] = {
-        "grader_used": (
-            "llm_transcript" if transcript_served else GRADER_USED_LLM_FALLBACK
-        ),
-        "evidence_source": "transcript" if transcript_served else "graph_nodes",
-        "transcript_grader_failure": transcript_grader_failure,
-        "score_before_dock": (
-            topic_score.coverage_component if topic_score is not None else None
-        ),
+        "grader_used": "llm_transcript",
+        "evidence_source": "transcript",
+        "score_before_dock": (topic_score.coverage_component if topic_score is not None else None),
         "topics": serialized_topics,
         "docks": [
             {

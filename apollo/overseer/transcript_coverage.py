@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import math
-import os
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -18,6 +17,7 @@ from apollo.errors import CoverageGradingError
 from apollo.ontology import KGGraph
 from apollo.overseer.coverage_contract import CoverageVerdict, validate_coverage_verdict
 from apollo.overseer.topic_score import _GRADED_NODE_TYPES, _display_name_for
+from config.models import MAIN_MODEL
 
 _ADJUDICATION_ATTEMPTS = 2
 _LOG = logging.getLogger(__name__)
@@ -215,7 +215,7 @@ async def _adjudicate_verdicts(
     system_prompt = build_system_prompt(problem)
     user_message = build_user_message(problem, rubric_items, transcript)
     student_messages = [content for role, content in transcript if role == "student"]
-    model = os.getenv("MAIN_MODEL", "gpt-4o")
+    model = MAIN_MODEL
     raw: str | None = None
     provider_error = ""
     for _ in range(_ADJUDICATION_ATTEMPTS):

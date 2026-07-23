@@ -7,27 +7,27 @@ lowest-scoring axis, calling out what broke, and ending with a concrete
 next step.
 
 2026-07-10 (topic-score design spec section 4): when a ``TopicScoreResult``
-is passed in AND ``APOLLO_TOPIC_SCORE_SERVED`` is on, ``generate_diagnostic``
-replaces the axis-based prompt above with the ledger-grounded prompt built by
+is passed in, ``generate_diagnostic`` replaces the axis-based prompt above with
+the ledger-grounded prompt built by
 ``apollo.overseer.topic_narrative.build_topic_narrative_prompt`` — every claim
 in the narrative is traceable to a topic/misconception the deterministic
-ledger actually holds (kills the axis path's hallucination class). Flag OFF
-(or no ``topic_score`` argument) leaves this function's prompt/output unchanged
-apart from the final internals sanitizer, which is a no-op on clean prose."""
+ledger actually holds (kills the axis path's hallucination class). No
+``topic_score`` argument (or a soft-failed ``None``) leaves this function's
+prompt/output unchanged apart from the final internals sanitizer, which is a
+no-op on clean prose."""
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 from collections.abc import Sequence
 from typing import Any
 
 from openai import OpenAI
 
-from apollo.overseer.grading_flags import topic_score_served_enabled
 from apollo.overseer.topic_narrative import build_topic_narrative_prompt, sanitize_narrative
 from apollo.overseer.topic_score import TopicScoreResult
+from config.models import MAIN_MODEL
 
 _LOG = logging.getLogger(__name__)
 
@@ -77,19 +77,19 @@ def generate_diagnostic(
     """Generate the student-facing diagnostic narrative.
 
     ``topic_score`` (2026-07-10 spec §4) is an OPT-IN keyword: when it is
-    provided AND ``APOLLO_TOPIC_SCORE_SERVED`` is on, the ledger-grounded
-    prompt (``topic_narrative.build_topic_narrative_prompt``) REPLACES the
-    axis-based ``_SYSTEM_PROMPT``/``user_payload`` below — no other branch of
-    this function changes. When the flag is off (or ``topic_score`` is
-    ``None``, the default), this function's prompt assembly and output are
-    unchanged from pre-topic-score behavior, including the misconception/
-    negotiation recap lines appended below (those read ``rubric``/``coverage``
-    directly and are unaffected by which prompt generated ``narrative``),
-    modulo the final internals sanitizer, which is a no-op on clean prose."""
-    model = model or os.getenv("MAIN_MODEL", "gpt-4o")
+    provided, the ledger-grounded prompt
+    (``topic_narrative.build_topic_narrative_prompt``) REPLACES the axis-based
+    ``_SYSTEM_PROMPT``/``user_payload`` below — no other branch of this function
+    changes. When ``topic_score`` is ``None`` (the default, or a soft-failed
+    computation), this function's prompt assembly and output are unchanged from
+    pre-topic-score behavior, including the misconception/negotiation recap
+    lines appended below (those read ``rubric``/``coverage`` directly and are
+    unaffected by which prompt generated ``narrative``), modulo the final
+    internals sanitizer, which is a no-op on clean prose."""
+    model = model or MAIN_MODEL
     client = OpenAI()
 
-    use_topic_prompt = topic_score is not None and topic_score_served_enabled()
+    use_topic_prompt = topic_score is not None
     if use_topic_prompt:
         system_prompt, user_content = build_topic_narrative_prompt(
             topic_score,

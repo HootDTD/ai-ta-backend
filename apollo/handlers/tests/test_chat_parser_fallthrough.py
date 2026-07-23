@@ -102,7 +102,6 @@ def _patches(store):
             "apollo.handlers.chat.classify_intent",
             return_value=IntentVerdict(intent="teaching", confidence=1.0, reason=""),
         ),
-        patch("apollo.handlers.chat._unified_questioning_enabled", return_value=True),
         patch(
             "apollo.handlers.chat._find_problem",
             new=AsyncMock(return_value=MagicMock(problem_text="find P2 in a horizontal pipe")),
@@ -118,7 +117,7 @@ async def test_parser_could_not_extract_falls_through_to_normal_reply(db_session
     db, session_id, attempt_id = db_session_attempt
     store = _healthy_store()
     ps = _patches(store)
-    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5], ps[6]:
+    with ps[0], ps[1] as mock_parse, ps[2], ps[3], ps[4], ps[5]:
         mock_parse.side_effect = ParserCouldNotExtractError(utterance="huh what")
         from apollo.handlers.chat import handle_chat
 
