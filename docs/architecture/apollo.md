@@ -7,7 +7,7 @@ related:
   - ai-ta-backend/domain-data
   - shared/supabase
   - shared/product-context
-last_verified: 2026-07-22
+last_verified: 2026-07-23
 stub: false
 ---
 
@@ -136,12 +136,13 @@ computes per-reference-item credit with validated student evidence spans, maps
 that coverage into the existing rubric, computes the topic score, generates the
 grounded diagnostic narrative, awards XP, and returns grading provenance.
 
-The topic-score serve flag controls whether the topic score replaces the rubric
-overall and adds `topics[]`; computing it remains best-effort and a failure does
-not erase the underlying transcript grade. If transcript adjudication fails and
-Neo4j is available, the pre-existing semantic coverage fallback remains. If both
-sources are unavailable, the route raises `CoverageGradingError` instead of
-fabricating an empty-graph grade.
+The topic score always replaces the rubric overall and adds `topics[]` when it
+computes; computing it remains best-effort, and when `topic_score` is `None` the
+served grade falls back to the legacy rubric object. That soft-fail never erases
+the underlying transcript grade. The transcript adjudicator is THE grading lane:
+if it fails, the Done click returns a retryable 503 — there is no legacy
+KG-coverage / semantic-coverage fallback, and the route never fabricates an
+empty-graph grade.
 
 **Narrative attribution gating.** The transcript adjudicator's per-node
 evidence spans are re-validated against the attempt's own transcript
@@ -156,12 +157,12 @@ line. This closes a defect where the narrative credited a student who wrote
 only a short answer with a fully elaborated reference-sourced claim, which
 read like the narrator remembering an earlier session.
 
-`APOLLO_GRADING_ARTIFACT_ENABLED` optionally writes one canonical `GradingRun`
-row (`internal.grading_runs`) for the transcript/topic result. Artifact
-persistence and artifact-derived mastery projection are soft-failing
-telemetry: neither can change or void the served grade. The response
-continues to expose the historical `graph_lane: null` field for API
-compatibility.
+The Done handler always writes one canonical `GradingRun` row
+(`internal.grading_runs`) for the transcript/topic result and always projects
+mastery from it (`apollo/projections/mastery.py`). Artifact persistence and
+artifact-derived mastery projection are soft-failing telemetry: neither can
+change or void the served grade. The response continues to expose the historical
+`graph_lane: null` field for API compatibility.
 
 ## A7 ruling
 

@@ -5,7 +5,7 @@ owns: []
 related:
   - ai-ta-backend/_overview
   - shared/security
-last_verified: 2026-06-10
+last_verified: 2026-07-23
 stub: false
 ---
 
@@ -68,7 +68,7 @@ A nightly workflow (`ai-ta-backend/.github/workflows/nightly.yml`) exists for of
 
 - Python: snake_case modules organized by domain (`retrieval/`, `indexing/`, `knowledge/`, `chats/`, `apollo/`, `citations/`); handler functions `handle_*` (e.g. `apollo/handlers/done.py:handle_done`); domain-specific exception classes per module (`apollo/errors.py`: `FilterRejectedError`, `SessionFrozenError`, ...).
 - Database: legacy tables carry the `aita_` prefix (`aita_search_spaces`, `aita_documents`, `aita_chunks`) with matching `AITA*` SQLAlchemy models; newer tables are plain snake_case (`chat_sessions`, `chat_turns`, `teacher_uploads`, `teacher_upload_jobs`, `course_memberships`, `course_invite_links`).
-- Config: all runtime configuration via env vars surfaced through `config/settings.py` (e.g. `MAIN_MODEL`, `EMBEDDING_DIM`, `CHAT_MEMORY_WINDOW_TURNS`). Copy `.env.example` to `.env`; never modify `.env` files or commit secrets.
+- Config: most runtime configuration via env vars surfaced through `config/settings.py` (e.g. `PARSER_MODEL`, `EMBEDDING_DIM`, `CHAT_MEMORY_WINDOW_TURNS`); the served solver model is the exception — pinned as code constants in `config/models.py` (`MAIN_MODEL`/`MAIN_REASONING_EFFORT`) since the 2026-07 flag reset. Copy `.env.example` to `.env`; never modify `.env` files or commit secrets.
 
 ## Non-negotiable product rules (from ai-ta-backend/CLAUDE.md)
 

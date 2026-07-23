@@ -21,7 +21,7 @@ related:
   - shared/conventions
   - shared/security
   - shared/supabase
-last_verified: 2026-07-22
+last_verified: 2026-07-23
 stub: false
 ---
 
@@ -51,6 +51,7 @@ Hoot is a Python/FastAPI RAG teaching assistant. `server.py` owns the FastAPI ap
 | `config/settings.py` | `RequestConfig` (per-request subject/citation-label/runtime-dir, replaces legacy module globals), subject-name precedence (`default < meta < env < cli/server`), `get_runtime_dir()`, pgvector flags (`use_pgvector_retrieval()`, `get_embedding_dim()` default 3072, `get_embedding_model()` default `text-embedding-3-large`), `get_supabase_db_url()`, Neo4j env getters + `neo4j_configured()`, reranker flags. |
 | `config/weights.py` | Retrieval store-kind bias weights. `WEIGHT_KINDS = (textbook, slides, notes, homework, exams, other)`, env prefix `RETRIEVAL_STORE_WEIGHT_*`, defaults (textbook 0.12 … other 0.03), clamp to [0.0, 1.0], `get_env_weights()` / `normalize_weights()`. |
 | `config/contracts.py` | Dataclass contracts for the QA pipeline: `ParsedTask`, `BundleSnippet`, `ResearchBundle`, `ResearchMetadata`. |
+| `config/models.py` | Pinned platform model config: `MAIN_MODEL` (`gpt-5.1`) + `MAIN_REASONING_EFFORT` (`low`) module constants. The 2026-07 flag reset removed the former `MAIN_MODEL`/`MAIN_REASONING_EFFORT` env vars — the solver model is fixed in code, so a model change is a code change + deploy. Per-surface overrides layered on top (`APOLLO_MODEL`, `APOLLO_CHEAP_MODEL`, `VISION_ANSWER_MODEL`, `APOLLO_UNIFIED_QUESTION_MODEL`, `REPORTS_MODEL`) still resolve from the environment. |
 
 ### vendors/
 | File | Role |
@@ -127,13 +128,12 @@ uploads, and FastAPI `BackgroundTasks`.
 6. `TeacherWeeklyStorage` and the `WorkspaceManager` are lazy module-level singletons created on first use, not at boot.
 
 ### /ask request lifecycle
-0. Kill switch: `HOOT_QA_ENABLED=0` (`config/settings.py::hoot_qa_enabled`, default ON, read per-request) 403s before validation — Apollo-only deployments (the MGMT pilot's prod) close the Q&A surface at the HTTP boundary while teacher uploads/indexing/Apollo stay live. Tests: `tests/integration/test_hoot_qa_flag.py`.
-1. Validate: non-empty `question` OR attachments; `chat_id` required; `doc_sets` overrides are rejected with 400 (deprecated).
+1. Validate: non-empty `question` OR attachments; `chat_id` required; `doc_sets` overrides are rejected with 400 (deprecated). (The Q&A surface is always on — the former "Apollo-only deployment" kill switch was removed in the 2026-07 flag reset.)
 2. `_require_course_membership()` → `resolve_auth_context()` (Bearer token → Supabase) then membership check on `search_space_id`; for student-level access, missing membership triggers auto-enroll. 403 otherwise.
 3. Workspace resolution: `WorkspaceManager.get(str(search_space_id))` → `DBWorkspaceRepository` (404 `WorkspaceNotFound`, 500 on config errors). The workspace supplies `class_name`, `subject_name`, materials, and weight overrides.
 4. Attachments (base64 data URLs) are decoded to `runtime/uploads/`; images go through `vision_transcribe()` + `extract_keywords()` and the result is appended to the effective question.
 5. Chat memory: load/create `app.chat_sessions`, build memory context from `memory_summary` + recent `app.chat_messages`, and persist the user message (all via `run_async` onto the shared background event loop). Every repository query includes the owning `user_id` and course-scoped paths also include `course_id`, even while the backend uses its service-role engine. Memory context is prepended to the question. The per-turn workspace refresh MERGES into `session.metadata_` — never replaces it — because metadata also carries the orchestrator's `bundle_cache` fingerprint.
-5a. Retrieval-mode decision (`ROUTER_ENABLED=true` only): `_prepare_router_context_sync` classifies the raw question NONE/AUGMENT/FRESH using the session bundle cache + a gpt-4o-mini call (see `rag-pipeline.md` step 3a). `None`/FRESH = legacy path.
+5a. Retrieval-mode decision (always on): `_prepare_router_context_sync` classifies the raw question NONE/AUGMENT/FRESH using the session bundle cache + a gpt-4o-mini call (see `rag-pipeline.md` step 3a). `None`/FRESH = legacy path.
 6. Weight overrides merge, lowest to highest precedence: env defaults → workspace overrides → per-material overrides → teacher-set weights from `TeacherWeeklyStorage`.
 7. Retrieval (`_retrieve_bundle_with_router` → cache reuse, top-up merge, or legacy `_ask_pgvector` → `retrieval.pipeline.retrieve_for_question`, building a `ResearchBundle`) and `parse_question` run in parallel on a 2-worker `ThreadPoolExecutor`; retrieval stdout is captured via `redirect_stdout`.
 8. `solve_with_bundle()` → `format_answer()` → `_structured_citations_from_bundle()` (only markers the LLM actually used).
@@ -173,4 +173,4 @@ From `requirements.txt` (unpinned except floors): `fastapi` + `uvicorn[standard]
 
 ## Product context
 
-Hoot serves two roles per course ("search space"): **teachers** upload weekly notes/slides, tune retrieval weights per material kind, and manage invite links; **students** join via invite codes (or auto-enroll) and ask questions in chat sessions whose answers are grounded in course materials with mandatory citations. The web process answers questions; the worker process ingests teacher uploads asynchronously so uploads never block the UI. Deployment target is Railway (ApolloV3 branch), Procfile-driven.
+Hoot serves two roles per course ("search space"): **teachers** upload weekly notes/slides, tune retrieval weights per material kind, and manage invite links; **students** join via invite codes (or auto-enroll) and ask questions in chat sessions whose answers are grounded in course materials with mandatory citations. The web process answers questions; the worker process ingests teacher uploads asynchronously so uploads never block the UI. Deployment target is Railway (prod deploys `main`, staging deploys `staging`), Procfile-driven.
