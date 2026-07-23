@@ -38,7 +38,6 @@ proves, end to end, against real asyncpg/asyncpg-via-SQLAlchemy connections:
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 
 import asyncpg
@@ -119,16 +118,20 @@ GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
 
 
 def _admin_dsn(url: str, database: str) -> str:
-    return make_url(url).set(drivername="postgresql", database=database).render_as_string(
-        hide_password=False
+    return (
+        make_url(url)
+        .set(drivername="postgresql", database=database)
+        .render_as_string(hide_password=False)
     )
 
 
 def _sqlalchemy_dsn(url: str, database: str) -> str:
     """asyncpg-driver SQLAlchemy URL -- what SUPABASE_DB_URL looks like in prod."""
-    return make_url(url).set(
-        drivername="postgresql+asyncpg", database=database
-    ).render_as_string(hide_password=False)
+    return (
+        make_url(url)
+        .set(drivername="postgresql+asyncpg", database=database)
+        .render_as_string(hide_password=False)
+    )
 
 
 async def _seed(conn: asyncpg.Connection) -> None:
@@ -443,7 +446,9 @@ async def _lookup_ids(conn: asyncpg.Connection) -> dict[str, object]:
     return {
         "course_a": await conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'"),
         "course_b": await conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-two'"),
-        "chat_a": await conn.fetchval("SELECT id FROM app.learning_activities WHERE external_id = 'chat-a'"),
+        "chat_a": await conn.fetchval(
+            "SELECT id FROM app.learning_activities WHERE external_id = 'chat-a'"
+        ),
         "tutoring_a": await conn.fetchval(
             "SELECT id FROM app.learning_activities WHERE user_id = $1 AND modality = 'tutoring'",
             STUDENT_A,
@@ -539,7 +544,9 @@ _TEACHER_UPDATE_POLICIES = [
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("policy", "table", "set_col", "where_col", "value"), _TEACHER_UPDATE_POLICIES)
+@pytest.mark.parametrize(
+    ("policy", "table", "set_col", "where_col", "value"), _TEACHER_UPDATE_POLICIES
+)
 async def test_teacher_update_policies_bind_under_app_runtime(
     schema_conn, policy, table, set_col, where_col, value
 ):
@@ -611,7 +618,9 @@ async def test_teacher_all_policies_bind_under_app_runtime(schema_conn, policy, 
         await tx.start()
         try:
             await _set_app_runtime(schema_conn, user_id)
-            count = await schema_conn.fetchval(f"SELECT count(*) FROM {table} WHERE {col} = $1", value)
+            count = await schema_conn.fetchval(
+                f"SELECT count(*) FROM {table} WHERE {col} = $1", value
+            )
             assert count == expected, f"{policy} user={user_id}"
         finally:
             await tx.rollback()
@@ -894,7 +903,9 @@ async def test_owner_or_teacher_select_only_policies(schema_conn, policy, table,
         await tx.start()
         try:
             await _set_app_runtime(schema_conn, user_id)
-            count = await schema_conn.fetchval(f"SELECT count(*) FROM {table} WHERE {col} = $1", STUDENT_A)
+            count = await schema_conn.fetchval(
+                f"SELECT count(*) FROM {table} WHERE {col} = $1", STUDENT_A
+            )
             assert count == expected, f"{policy} user={user_id}"
         finally:
             await tx.rollback()
@@ -1538,8 +1549,12 @@ async def test_critical_full_done_chain_first_attempt_student_write_sequence_suc
     await tx.start()
     try:
         await _set_app_runtime(schema_conn, STUDENT_C)
-        course_a = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
-        problem_a = await schema_conn.fetchval("SELECT id FROM app.problems WHERE problem_code = 'problem-a'")
+        course_a = await schema_conn.fetchval(
+            "SELECT id FROM app.courses WHERE slug = 'course-one'"
+        )
+        problem_a = await schema_conn.fetchval(
+            "SELECT id FROM app.problems WHERE problem_code = 'problem-a'"
+        )
         entity_a = await schema_conn.fetchval(
             "SELECT id FROM app.learner_entities WHERE canonical_key = 'entity-a'"
         )
@@ -1951,7 +1966,9 @@ async def test_grading_runs_select_and_insert_under_app_runtime(schema_conn):
             "SELECT count(*) FROM internal.grading_runs WHERE user_id = $1", STUDENT_A
         )
         assert count == 1
-        course_id = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
+        course_id = await schema_conn.fetchval(
+            "SELECT id FROM app.courses WHERE slug = 'course-one'"
+        )
         attempt_id = await schema_conn.fetchval(
             "SELECT id FROM app.problem_attempts WHERE user_id = $1", STUDENT_A
         )
@@ -1983,8 +2000,12 @@ async def test_entity_prerequisites_select_and_insert_under_app_runtime(schema_c
     try:
         await _set_app_runtime(schema_conn, STUDENT_A)
         count = await schema_conn.fetchval("SELECT count(*) FROM internal.entity_prerequisites")
-        assert count == 0  # none seeded yet -- proves SELECT works (not an error), not that rows exist
-        course_id = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
+        assert (
+            count == 0
+        )  # none seeded yet -- proves SELECT works (not an error), not that rows exist
+        course_id = await schema_conn.fetchval(
+            "SELECT id FROM app.courses WHERE slug = 'course-one'"
+        )
         e1 = await schema_conn.fetchval(
             "SELECT id FROM app.learner_entities WHERE canonical_key = 'entity-a'"
         )
@@ -1998,7 +2019,9 @@ async def test_entity_prerequisites_select_and_insert_under_app_runtime(schema_c
             e1,
             e2,
         )
-        count_after = await schema_conn.fetchval("SELECT count(*) FROM internal.entity_prerequisites")
+        count_after = await schema_conn.fetchval(
+            "SELECT count(*) FROM internal.entity_prerequisites"
+        )
         assert count_after == 1
     finally:
         await tx.rollback()
@@ -2012,7 +2035,9 @@ async def test_content_ingest_runs_select_only_under_app_runtime(schema_conn):
         await _set_app_runtime(schema_conn, STUDENT_A)
         count = await schema_conn.fetchval("SELECT count(*) FROM internal.content_ingest_runs")
         assert count == 2  # one per seeded tenant
-        course_id = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
+        course_id = await schema_conn.fetchval(
+            "SELECT id FROM app.courses WHERE slug = 'course-one'"
+        )
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await schema_conn.execute(
                 "INSERT INTO internal.content_ingest_runs (course_id) VALUES ($1)", course_id
@@ -2033,7 +2058,9 @@ async def test_dedup_decisions_insert_and_delete_under_app_runtime(schema_conn):
     await tx.start()
     try:
         await _set_app_runtime(schema_conn, STUDENT_A)
-        course_id = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
+        course_id = await schema_conn.fetchval(
+            "SELECT id FROM app.courses WHERE slug = 'course-one'"
+        )
         new_id = await schema_conn.fetchval(
             "INSERT INTO internal.dedup_decisions (course_id, candidate_key, method, verdict) "
             "VALUES ($1, 'k', 'slug', 'distinct') RETURNING id",
@@ -2108,7 +2135,9 @@ async def test_document_chunks_select_only_no_write_under_app_runtime(schema_con
         count = await schema_conn.fetchval("SELECT count(*) FROM internal.document_chunks")
         assert count == 2
         doc_id = await schema_conn.fetchval("SELECT id FROM app.documents WHERE title = 'doc-a'")
-        course_id = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
+        course_id = await schema_conn.fetchval(
+            "SELECT id FROM app.courses WHERE slug = 'course-one'"
+        )
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
             await schema_conn.execute(
                 "INSERT INTO internal.document_chunks (course_id, document_id, content) "
@@ -2272,7 +2301,9 @@ def test_route_level_body_call_shape_no_identity_401s_before_any_query(_diagnost
 
 
 @pytest.mark.asyncio
-async def test_route_level_session_owner_shape_enforces_app_runtime(_diagnostic_client, schema_conn):
+async def test_route_level_session_owner_shape_enforces_app_runtime(
+    _diagnostic_client, schema_conn
+):
     """THE CRITICAL-finding regression test for the require_session_owner
     shape (get_session/chat/done/retry/next/end/kg/*): `session_owner_probe`
     declares `db: Depends(get_db_session)` BEFORE
