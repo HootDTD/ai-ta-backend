@@ -315,3 +315,56 @@ integration`) are the closest thing to an e2e proof this branch has, and they
 were run as part of this rehearsal. Full HTTP-level / browser-level e2e
 against a running FastAPI + both Next.js UIs was NOT exercised — that
 requires the test-project deployment in section 2, which is human-gated.
+
+## 7. DB-08b RLS enforcement — staging sequencing note (added 2026-07-23)
+
+`feat/db08b-rls-enforcement` (migration `20260722120000_db08b_rls_enforcement_grants`,
+`database/session.py`'s session-creation-path enforcement gate) is a SEPARATE change from
+the schema cutover this runbook otherwise covers, and should be merged and applied as its
+own step, strictly AFTER the cutover above has landed and been verified healthy — never
+combined into the same deploy/maintenance window as the cutover:
+
+1. **Merge the cutover PR** (sections 2–3 above) and confirm staging is healthy on the
+   new `app`/`internal` schema — error rate, latency, retrieval, and grading smoke tests
+   passing with no RLS involvement yet (the `postgres` connection still runs BYPASSRLS
+   for all traffic at this point).
+2. **Merge the DB-08b PR** as its own change, apply `20260722120000_db08b_rls_enforcement_grants`
+   to staging, and deploy the paired `database/session.py`/`apollo/auth_deps.py` runtime.
+   No feature flag gates this — once the migration and the code are both live, every
+   `Depends(get_db_session)` route (all of `/apollo/*`, the synchronous part of the
+   authored-sets/problem-generation provisioning routers) starts running as `app_runtime`
+   under RLS for any request with a resolved user. Everything else (server.py's legacy
+   sync routes, `BackgroundTasks` callbacks, the upload worker, scripts, campaign) stays
+   on the owner role, unaffected — see `docs/shared-architecture/security.md` "Tenant
+   isolation model" for the exact enforced/not-enforced route list.
+3. **Re-verify staging** specifically for DB-08b's effect: smoke every enforced route as
+   two tenants (cross-tenant denial), confirm the retrieval RPCs and each internal-table
+   grant this migration adds still work end-to-end, and specifically watch for silent
+   mastery-projection failures (`apollo/handlers/done.py::_project_mastery` — see the
+   known RLS-policy gap on `app.mastery_events`/`app.learner_state` in
+   `docs/shared-architecture/security.md` "Known gaps": these writes will start failing,
+   silently, once DB-08b enforcement is live for a course with
+   `APOLLO_GRADING_ARTIFACT_ENABLED` on, until a follow-up migration adds write policies
+   to those two tables).
+
+Keeping these two merges/applies separate (rather than bundling DB-08b into the cutover
+window) is what makes a post-deploy regression attributable: a schema/data bug surfaces
+between steps 1 and 2 (cutover-only), an RLS/policy-binding bug surfaces between steps 2
+and 3 (DB-08b-only). Bundling them would make it much harder to tell which change is at
+fault when staging smoke tests fail.
+
+**Pre-review-fix note:** a pre-merge security review found the branch's original
+enforcement mechanism was silently inert on every real request (an eager, session-mint-time
+contextvar read that FastAPI's `Depends` resolution order almost always observed as unset —
+see `docs/shared-architecture/security.md`'s "Post-review correction" under "Tenant
+isolation model"). This was fixed before merge (lazy, first-transaction-time read, plus a
+route-level `TestClient` regression test in `tests/database/test_db08b_rls_enforcement.py`
+§4). Step 3's cross-tenant smoke pass above is exactly the kind of check that would have
+caught the original defect had it been done through real `/apollo/*` HTTP requests rather
+than direct-DB-role probes — do not skip it.
+
+**Sequencing addendum:** confirm DB-16 (legacy `public`-schema teardown) has already landed
+on the target environment before applying step 2's migration there — `GRANT authenticated
+TO app_runtime` (required for the 32 policies' `TO authenticated` grant to bind) means an
+`app_runtime` transaction inherits every grant `authenticated` holds, including any the
+legacy `public` tables still carry if DB-16 hasn't run yet on that environment.

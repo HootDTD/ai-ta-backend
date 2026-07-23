@@ -27,23 +27,43 @@ from auth import (
     has_membership,
     resolve_auth_context,
 )
-from database.session import get_db_session
+from database.session import current_request_user_id, get_db_session
 
 
 async def require_user(request: Request) -> AuthContext:
     """Resolve the bearer token to an AuthContext (401 on failure).
 
     resolve_auth_context uses the blocking `requests` client (with its own
-    TTL cache), so it runs off the event loop.
+    TTL cache), so it runs off the event loop via asyncio.to_thread -- which
+    copies the *current* context into the worker thread but does not
+    propagate any contextvar writes made there back out (CPython docs for
+    asyncio.to_thread). current_request_user_id is therefore set here, back
+    on this coroutine's own context, once resolution succeeds.
+
+    DB-08b: every caller of this function (directly, or transitively via
+    require_session_owner) MUST call it before issuing its first query on a
+    ``get_db_session``-minted ``db`` session. This is NOT guaranteed by
+    FastAPI's Depends-resolution order -- get_db_session is frequently
+    resolved (and, via its identical-callable dependency cache, sometimes the
+    FIRST thing resolved in the whole request) before this dependency runs.
+    Correctness instead relies on database/session.py's RLS-enforcement
+    listener reading current_request_user_id LAZILY, at the moment a
+    transaction actually begins (first statement on the session) rather than
+    at session-construction time -- see that module's docstring for the full
+    mechanism. A handler that queries `db` before calling this function
+    permanently locks that request's whole transaction onto the unenforced
+    owner role (SET LOCAL ROLE only ever runs once per transaction).
     """
     try:
-        return await asyncio.to_thread(resolve_auth_context, request)
+        auth = await asyncio.to_thread(resolve_auth_context, request)
     except HTTPException:
         raise
     except RuntimeError as exc:  # missing SUPABASE_* config
         raise HTTPException(status_code=500, detail="Server auth configuration error") from exc
     except requests.exceptions.RequestException as exc:  # GoTrue unreachable
         raise HTTPException(status_code=503, detail="Auth service unavailable") from exc
+    current_request_user_id.set(auth.user_id)
+    return auth
 
 
 async def require_course_member(
@@ -102,6 +122,10 @@ async def require_session_owner(
     The owner predicate deliberately returns 404 for another user's id. The
     subsequent membership check rejects access if that owner is no longer a
     member of the session's course.
+
+    DB-08b: require_user() MUST run before this function's first query on
+    ``db`` (below) -- see require_user's own docstring and
+    database/session.py's module docstring for why.
     """
     auth = await require_user(request)
     row = (

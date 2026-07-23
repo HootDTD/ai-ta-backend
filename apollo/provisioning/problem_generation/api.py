@@ -79,9 +79,16 @@ async def list_generation_seeds(
 
     Deliberately NOT flag-gated (read-only, mirrors the runs GETs) — the UI
     seed picker must work even while generation itself is toggled off.
+
+    DB-08b: identity must resolve (``require_user``) before the FIRST query
+    this handler issues on ``db`` — ``database/session.py``'s RLS-enforcement
+    listener reads the request identity lazily, at first-transaction time;
+    a query issued before ``require_user`` permanently locks that whole
+    transaction onto the unenforced owner role. This handler used to query
+    the concept first; see ``database/session.py``'s module docstring.
     """
-    _concept, search_space_id = await _course_concept_or_404(db, concept_id)
     auth = await require_user(request)
+    _concept, search_space_id = await _course_concept_or_404(db, concept_id)
     await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
     rows = (
         (
@@ -121,8 +128,11 @@ async def create_generation_run(
 ) -> dict:
     if not problem_generation_enabled():
         raise HTTPException(status_code=403, detail="problem generation is disabled")
-    _concept, search_space_id = await _course_concept_or_404(db, concept_id)
+    # DB-08b: identity must resolve before the first query on `db` -- see
+    # list_generation_seeds' docstring above and database/session.py's
+    # module docstring for why.
     auth = await require_user(request)
+    _concept, search_space_id = await _course_concept_or_404(db, concept_id)
     await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
 
     run = ProvisioningRun.generation(
