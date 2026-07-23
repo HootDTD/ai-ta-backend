@@ -12,8 +12,8 @@ System prompt explicitly:
 
 Item #2 — model selection + bounded context:
 - `APOLLO_MODEL` env overrides which model serves Apollo's drafts. Default
-  is `MAIN_MODEL` (so behavior is unchanged out of the box). Operators can
-  flip to a cheaper model after re-running the leakage corpus.
+  is the pinned `config.models.MAIN_MODEL`. Operators can flip to a cheaper
+  model after re-running the leakage corpus.
 - The caller is responsible for passing a bounded history (see
   `apollo.handlers.history.load_windowed_history`). This module does a
   best-effort token-count sanity check and raises `ContextOverflowError`
@@ -26,6 +26,8 @@ import os
 from typing import Any, Dict, List
 
 from openai import OpenAI
+
+from config import models
 
 _LOG = logging.getLogger(__name__)
 
@@ -111,15 +113,9 @@ def draft_reply(
     taught — this replaces the deleted output filter with structural
     isolation. No sufficiency / misconception / OLM signals.
 
-    `model` precedence: explicit arg > APOLLO_MODEL env > MAIN_MODEL env >
-    "gpt-4o".
+    `model` precedence: explicit arg > APOLLO_MODEL env > config.models.MAIN_MODEL.
     """
-    used_model = (
-        model
-        or os.getenv("APOLLO_MODEL")
-        or os.getenv("MAIN_MODEL")
-        or "gpt-4o"
-    )
+    used_model = model or os.getenv("APOLLO_MODEL") or models.MAIN_MODEL
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": APOLLO_SYSTEM_PROMPT},
     ]

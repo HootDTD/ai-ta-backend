@@ -18,7 +18,7 @@ from sqlalchemy import select
 from apollo.persistence.models import Concept
 from apollo.persistence.models import Problem as ProblemRecord
 from apollo.provisioning.authored_sets.verification import _empty_retrieve
-from apollo.provisioning.metered_chat import CostBudgetExceeded, _resolve_model
+from apollo.provisioning.metered_chat import CostBudgetExceeded
 from apollo.provisioning.problem_generation.operators import (
     VARIATION_OPERATORS,
     VariationOperator,
@@ -30,6 +30,7 @@ from apollo.provisioning.problem_generation.verifiers import (
 from apollo.provisioning.problem_leak_guard import check_problem_leak
 from apollo.provisioning.solution import SolutionDraftError, find_or_generate
 from apollo.schemas.problem import Difficulty, Problem
+from config import models
 
 _LOG = logging.getLogger(__name__)
 
@@ -38,7 +39,6 @@ _TOKEN_CEILING_ENV = "APOLLO_PROBLEM_GENERATION_TOKEN_CEILING"
 _MAX_VARIANTS_ENV = "APOLLO_PROBLEM_GENERATION_MAX_VARIANTS"
 _DEFAULT_TOKEN_CEILING = 200_000
 _DEFAULT_MAX_VARIANTS = 10
-_MAIN_MODEL_DEFAULT = "gpt-4o"
 _DROP_REASONS = (
     "leaked",
     "duplicate",
@@ -235,7 +235,7 @@ async def generate_problem_variants(
     seen_hashes.update(_normalized_hash(seed.problem_text) for _, seed in valid_seeds)
 
     pending: list[tuple[ProblemRecord, GenerationRecord]] = []
-    model = _resolve_model("MAIN_MODEL", _MAIN_MODEL_DEFAULT)
+    model = models.MAIN_MODEL
     for seed_row, seed, operator in _assignments(valid_seeds, requested):
         try:
             raw = metered_chat.main(

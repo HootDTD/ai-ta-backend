@@ -9,6 +9,8 @@ import mimetypes
 import os
 from typing import List, Sequence
 
+from config import models
+
 
 def _file_to_data_url(path: str) -> str:
     """Read a file and return a data URL string (best-effort mime guess)."""
@@ -90,7 +92,7 @@ def vision_direct_answer(image_paths: Sequence[str], question_hint: str = "") ->
         if not os.getenv("OPENAI_API_KEY"):
             return ""
         client = OpenAI()
-        model = os.getenv("VISION_ANSWER_MODEL", os.getenv("MAIN_MODEL", "gpt-4o"))
+        model = os.getenv("VISION_ANSWER_MODEL") or models.MAIN_MODEL
         content: List[dict] = []
         opener = (
             "Solve the problem shown in the images. "

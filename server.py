@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, redirect_stdout
 
 from ai.vision import vision_transcribe
-from config.settings import get_runtime_dir, hoot_qa_enabled, set_subject_name, RequestConfig
+from config.settings import get_runtime_dir, set_subject_name, RequestConfig
 from ai.orchestrator import Orchestrator
 from config.weights import WEIGHT_MIN, WEIGHT_MAX, get_env_weights
 from ai.main_ai import (
@@ -1421,7 +1421,7 @@ def _ask_pgvector(
 
 
 # ---------------------------------------------------------------------------
-# Retrieval-mode orchestrator hooks (ROUTER_ENABLED, default off)
+# Retrieval-mode orchestrator hooks (always on; fail open to FRESH)
 # ---------------------------------------------------------------------------
 
 
@@ -1434,11 +1434,9 @@ def _prepare_router_context_sync(
     has_attachments: bool,
 ):
     """Decide NONE/AUGMENT/FRESH for this turn. Returns None (= legacy FRESH
-    path) when the router is disabled or anything fails."""
+    path) when anything fails."""
     from ai.router import wiring as router_wiring
 
-    if not router_wiring.router_enabled():
-        return None
     try:
         return run_async(
             router_wiring.prepare_router_context(
@@ -1549,11 +1547,6 @@ def post_ask(payload: AskRequest, request: Request):
     one attachment must be provided. Image attachments are decoded and saved to
     `runtime/uploads/` and their file paths are passed along to the core.
     """
-    # Apollo-only deployments (HOOT_QA_ENABLED=0) close the Q&A surface at the
-    # HTTP boundary — before validation, so the flag wins over any payload.
-    if not hoot_qa_enabled():
-        raise HTTPException(status_code=403, detail="Hoot Q&A is disabled on this deployment")
-
     # Validate input: allow (question) OR (attachments)
     q = (payload.question or "").strip()
     atts = payload.attachments or []

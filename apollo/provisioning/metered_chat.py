@@ -18,8 +18,8 @@ row is the durable per-document aggregate, so this is the INTENDED ORM write
 The pure value object here (``CostBudgetExceeded``) carries only counts/ids.
 
 Model routing mirrors ``_llm`` EXACTLY (``APOLLO_CHEAP_MODEL`` default
-``gpt-4o-mini`` / ``MAIN_MODEL`` default ``gpt-4o``; an explicit ``model=`` arg
-overrides). ``cheap`` / ``main`` accept the SAME keyword shape as
+``gpt-4o-mini`` / main tier pinned to ``config.models.MAIN_MODEL``; an explicit
+``model=`` arg overrides). ``cheap`` / ``main`` accept the SAME keyword shape as
 ``_llm.cheap_chat`` / ``main_chat`` so a stage written against the injected
 ``chat_fn`` can be handed ``metered.cheap`` / ``metered.main`` unchanged;
 ``scrape_chat_fn`` covers the one positional-string seam (``scrape.py:141``).
@@ -41,11 +41,11 @@ from apollo.provisioning.cost_constants import (
     PER_DOCUMENT_TOKEN_CEILING,
     cost_usd_for,
 )
+from config import models
 
 _LOG = logging.getLogger(__name__)
 
 _CHEAP_MODEL_DEFAULT = "gpt-4o-mini"
-_MAIN_MODEL_DEFAULT = "gpt-4o"
 
 
 class CostBudgetExceeded(Exception):
@@ -127,8 +127,8 @@ class MeteredChat:
         model: str | None = None,
         reasoning_effort: str | None = None,
     ) -> str:
-        """Main-tier (gpt-4o default) metered call. main_chat-shaped."""
-        used_model = model or _resolve_model("MAIN_MODEL", _MAIN_MODEL_DEFAULT)
+        """Main-tier (config.models.MAIN_MODEL) metered call. main_chat-shaped."""
+        used_model = model or models.MAIN_MODEL
         return self._call(
             purpose=purpose,
             model=used_model,

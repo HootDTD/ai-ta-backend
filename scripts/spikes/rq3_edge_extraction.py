@@ -23,7 +23,6 @@ documented real utterance style ("Use bernulis equation ... use continuity",
 from __future__ import annotations
 
 import json
-import os
 import statistics
 import sys
 import time
@@ -35,10 +34,11 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from apollo.ontology.edges import EDGE_ALLOWED_PAIRS, EdgeType
+from config import models
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
-MODEL = os.getenv("MAIN_MODEL", "gpt-4o")
+MODEL = models.MAIN_MODEL
 
 # ---------------------------------------------------------------- prompt ----
 

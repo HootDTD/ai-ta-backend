@@ -658,13 +658,13 @@ async def default_chat_fn(  # pragma: no cover - real LLM call
     persona's ``system_prompt`` + (during the teaching phase) the current
     scripted beat, or (during the bounded clarification phase) the persona's
     ``clarification_policy``."""
-    import os
-
     from openai import OpenAI
     from openai.types.chat import ChatCompletionMessageParam
 
+    from config import models
+
     client = OpenAI()
-    model = os.getenv("MAIN_MODEL", "gpt-4o")
+    model = models.MAIN_MODEL
     if beat is not None:
         instruction = f"Teach this next, in your own words: {beat}"
     else:

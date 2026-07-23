@@ -173,7 +173,6 @@ class _Chat:
 def enabled(monkeypatch):
     monkeypatch.setenv("APOLLO_PROBLEM_GENERATION", "1")
     monkeypatch.delenv("APOLLO_PROBLEM_GENERATION_MAX_VARIANTS", raising=False)
-    monkeypatch.delenv("MAIN_MODEL", raising=False)
 
 
 @pytest.fixture
@@ -248,7 +247,7 @@ def test_operator_contract_and_structure_only_dag_prompt():
 async def test_happy_path_writes_held_tier1_rows_with_exact_provenance(
     enabled, clean_pipeline, monkeypatch
 ):
-    monkeypatch.setenv("MAIN_MODEL", "test-main-model")
+    monkeypatch.setattr("config.models.MAIN_MODEL", "test-main-model")
     seed = _seed(11)
     db = _FakeDB([seed])
     chat = _Chat([_candidate(f"Variant statement {n}") for n in range(3)])
