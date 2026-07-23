@@ -1,4 +1,5 @@
-fastapi
+fastapi==0.135.3   # pinned pair: fastapi 0.139+/starlette 1.3+ register included routers by reference (_IncludedRouter), changing app.routes enumeration
+starlette==1.0.0   # keep in lockstep with the fastapi pin above
 python-multipart
 pymupdf
 uvicorn[standard]

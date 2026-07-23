@@ -118,15 +118,18 @@ def test_workspace_repository_resolves_course_and_builds_sorted_materials():
         retrieval_weights={"textbook": 0.7},
     )
     doc_hi = SimpleNamespace(
-        id=2, material_kind="textbook", title="Zebra",
+        id=2,
+        material_kind="textbook",
+        title="Zebra",
         metadata_={"priority": 5, "index_path": "", "week": 3},
     )
     doc_lo = SimpleNamespace(
-        id=1, material_kind=None, title="Alpha", metadata_={"priority": 5},
+        id=1,
+        material_kind=None,
+        title="Alpha",
+        metadata_={"priority": 5},
     )
-    session = FakeSession(
-        execute_results=[FakeResult([course]), FakeResult([doc_hi, doc_lo])]
-    )
+    session = FakeSession(execute_results=[FakeResult([course]), FakeResult([doc_hi, doc_lo])])
     with patch.object(wdb, "get_async_session", acm(session)):
         ws = wdb.DBWorkspaceRepository().load_workspace("aae-33300")
 
@@ -322,10 +325,12 @@ def test_create_ai_use_report_evidence_value_error_maps_to_400():
 
     session_row = SimpleNamespace(course_id=5)
     session = FakeSession()
-    with patch.object(r, "resolve_auth_context", lambda req: AUTH), \
-        patch.object(r, "get_async_session", acm(session)), \
-        patch.object(r, "get_chat_session_for_user", _acoro(session_row)), \
-        patch.object(r, "build_evidence_pack", side_effect=ValueError("bad style")):
+    with (
+        patch.object(r, "resolve_auth_context", lambda req: AUTH),
+        patch.object(r, "get_async_session", acm(session)),
+        patch.object(r, "get_chat_session_for_user", _acoro(session_row)),
+        patch.object(r, "build_evidence_pack", side_effect=ValueError("bad style")),
+    ):
         body = r.CreateReportBody(style="APA", length="brief")
         with pytest.raises(HTTPException) as exc:
             r.create_ai_use_report("chat-1", body, fake_request())
@@ -339,11 +344,13 @@ def test_create_ai_use_report_generation_error_maps_to_500():
 
     session_row = SimpleNamespace(course_id=5)
     session = FakeSession()
-    with patch.object(r, "resolve_auth_context", lambda req: AUTH), \
-        patch.object(r, "get_async_session", acm(session)), \
-        patch.object(r, "get_chat_session_for_user", _acoro(session_row)), \
-        patch.object(r, "build_evidence_pack", lambda *a, **k: {"turns": [1]}), \
-        patch.object(r, "gen_report", side_effect=RuntimeError("llm down")):
+    with (
+        patch.object(r, "resolve_auth_context", lambda req: AUTH),
+        patch.object(r, "get_async_session", acm(session)),
+        patch.object(r, "get_chat_session_for_user", _acoro(session_row)),
+        patch.object(r, "build_evidence_pack", lambda *a, **k: {"turns": [1]}),
+        patch.object(r, "gen_report", side_effect=RuntimeError("llm down")),
+    ):
         body = r.CreateReportBody()
         with pytest.raises(HTTPException) as exc:
             r.create_ai_use_report("chat-1", body, fake_request())
@@ -359,8 +366,15 @@ def test_get_ai_use_report_pdf_render_failure_maps_to_500():
     import reports.ai_use.routes as r
 
     row = SimpleNamespace(
-        id="rep-1", chat_id="c1", created_at=None, style="none", length="brief",
-        markdown="# hi", jsonld={}, model_fingerprint="fp", tool_calls=[],
+        id="rep-1",
+        chat_id="c1",
+        created_at=None,
+        style="none",
+        length="brief",
+        markdown="# hi",
+        jsonld={},
+        model_fingerprint="fp",
+        tool_calls=[],
         prompt_hashes=[],
     )
     session = FakeSession()
@@ -373,10 +387,12 @@ def test_get_ai_use_report_pdf_render_failure_maps_to_500():
     # platform (the real module imports WeasyPrint, unavailable on Windows).
     fake_pdf = types.ModuleType("reports.ai_use.pdf")
     fake_pdf.render_pdf_from_markdown = _boom
-    with patch.dict(sys.modules, {"reports.ai_use.pdf": fake_pdf}), \
-        patch.object(r, "resolve_auth_context", lambda req: AUTH), \
-        patch.object(r, "get_async_session", acm(session)), \
-        patch.object(r, "get_report_for_user", _acoro(row)):
+    with (
+        patch.dict(sys.modules, {"reports.ai_use.pdf": fake_pdf}),
+        patch.object(r, "resolve_auth_context", lambda req: AUTH),
+        patch.object(r, "get_async_session", acm(session)),
+        patch.object(r, "get_report_for_user", _acoro(row)),
+    ):
         with pytest.raises(HTTPException) as exc:
             r.get_ai_use_report_pdf("rep-1", fake_request())
     assert exc.value.status_code == 500
@@ -394,13 +410,15 @@ def test_list_chats_filters_by_space_and_builds_preview():
     first_turn = SimpleNamespace(content="  What is entropy?  ")
     session = FakeSession(
         execute_results=[
-            FakeResult([session_row]),   # sessions
-            FakeResult([first_turn]),    # first user turn
-            FakeResult([3]),             # count
+            FakeResult([session_row]),  # sessions
+            FakeResult([first_turn]),  # first user turn
+            FakeResult([3]),  # count
         ]
     )
-    with patch.object(cr, "resolve_auth_context", lambda req: AUTH), \
-        patch.object(cr, "get_async_session", acm(session)):
+    with (
+        patch.object(cr, "resolve_auth_context", lambda req: AUTH),
+        patch.object(cr, "get_async_session", acm(session)),
+    ):
         out = cr.list_chats(fake_request({"search_space_id": "5"}))
     assert out == [
         {
@@ -420,8 +438,10 @@ def test_list_chats_db_error_maps_to_500():
     import chats.routes as cr
 
     session = FakeSession(execute_raises=RuntimeError("db down"))
-    with patch.object(cr, "resolve_auth_context", lambda req: AUTH), \
-        patch.object(cr, "get_async_session", acm(session)):
+    with (
+        patch.object(cr, "resolve_auth_context", lambda req: AUTH),
+        patch.object(cr, "get_async_session", acm(session)),
+    ):
         with pytest.raises(HTTPException) as exc:
             cr.list_chats(fake_request())
     assert exc.value.status_code == 500
@@ -433,9 +453,11 @@ def test_save_chat_new_without_space_returns_400():
     import chats.routes as cr
 
     session = FakeSession()
-    with patch.object(cr, "resolve_auth_context", lambda req: AUTH), \
-        patch.object(cr, "get_async_session", acm(session)), \
-        patch.object(cr, "get_chat_session_for_user", _acoro(None)):
+    with (
+        patch.object(cr, "resolve_auth_context", lambda req: AUTH),
+        patch.object(cr, "get_async_session", acm(session)),
+        patch.object(cr, "get_chat_session_for_user", _acoro(None)),
+    ):
         with pytest.raises(HTTPException) as exc:
             cr.save_chat("chat-1", {"turns": []}, fake_request())
     assert exc.value.status_code == 400
@@ -448,9 +470,11 @@ def test_save_chat_space_mismatch_returns_400():
 
     existing = SimpleNamespace(id=1, course_id=9, metadata_=None, updated_at=None)
     session = FakeSession()
-    with patch.object(cr, "resolve_auth_context", lambda req: AUTH), \
-        patch.object(cr, "get_async_session", acm(session)), \
-        patch.object(cr, "get_chat_session_for_user", _acoro(existing)):
+    with (
+        patch.object(cr, "resolve_auth_context", lambda req: AUTH),
+        patch.object(cr, "get_async_session", acm(session)),
+        patch.object(cr, "get_chat_session_for_user", _acoro(existing)),
+    ):
         with pytest.raises(HTTPException) as exc:
             cr.save_chat("chat-1", {"search_space_id": 5, "turns": []}, fake_request())
     assert exc.value.status_code == 400
@@ -466,11 +490,13 @@ def test_save_chat_happy_path_persists_turns_and_summary():
         "meta": {"topic": "thermo"},
         "turns": [{"role": "user", "content": "hi"}],
     }
-    with patch.object(cr, "resolve_auth_context", lambda req: AUTH), \
-        patch.object(cr, "get_async_session", acm(session)), \
-        patch.object(cr, "get_chat_session_for_user", _acoro(existing)), \
-        patch.object(cr, "append_turn", _acoro(None)), \
-        patch.object(cr, "refresh_memory_summary", _acoro(None)):
+    with (
+        patch.object(cr, "resolve_auth_context", lambda req: AUTH),
+        patch.object(cr, "get_async_session", acm(session)),
+        patch.object(cr, "get_chat_session_for_user", _acoro(existing)),
+        patch.object(cr, "append_turn", _acoro(None)),
+        patch.object(cr, "refresh_memory_summary", _acoro(None)),
+    ):
         out = cr.save_chat("chat-1", payload, fake_request())
     assert out == {"ok": True, "chat_id": "chat-1"}
     assert existing.metadata_ == {"topic": "thermo"}
@@ -482,9 +508,11 @@ def test_save_chat_unexpected_error_maps_to_500():
     import chats.routes as cr
 
     session = FakeSession()
-    with patch.object(cr, "resolve_auth_context", lambda req: AUTH), \
-        patch.object(cr, "get_async_session", acm(session)), \
-        patch.object(cr, "get_chat_session_for_user", side_effect=RuntimeError("boom")):
+    with (
+        patch.object(cr, "resolve_auth_context", lambda req: AUTH),
+        patch.object(cr, "get_async_session", acm(session)),
+        patch.object(cr, "get_chat_session_for_user", side_effect=RuntimeError("boom")),
+    ):
         with pytest.raises(HTTPException) as exc:
             cr.save_chat("chat-1", {"search_space_id": 5, "turns": []}, fake_request())
     assert exc.value.status_code == 500
@@ -494,9 +522,11 @@ def test_delete_chat_happy_path_commits():
     import chats.routes as cr
 
     session = FakeSession()
-    with patch.object(cr, "resolve_auth_context", lambda req: AUTH), \
-        patch.object(cr, "get_async_session", acm(session)), \
-        patch.object(cr, "delete_chat_session_for_user", _acoro(True)):
+    with (
+        patch.object(cr, "resolve_auth_context", lambda req: AUTH),
+        patch.object(cr, "get_async_session", acm(session)),
+        patch.object(cr, "delete_chat_session_for_user", _acoro(True)),
+    ):
         assert cr.delete_chat("chat-1", fake_request()) is None
     assert session.committed is True
 
@@ -507,9 +537,11 @@ def test_delete_chat_error_maps_to_500():
     import chats.routes as cr
 
     session = FakeSession()
-    with patch.object(cr, "resolve_auth_context", lambda req: AUTH), \
-        patch.object(cr, "get_async_session", acm(session)), \
-        patch.object(cr, "delete_chat_session_for_user", side_effect=RuntimeError("x")):
+    with (
+        patch.object(cr, "resolve_auth_context", lambda req: AUTH),
+        patch.object(cr, "get_async_session", acm(session)),
+        patch.object(cr, "delete_chat_session_for_user", side_effect=RuntimeError("x")),
+    ):
         with pytest.raises(HTTPException) as exc:
             cr.delete_chat("chat-1", fake_request())
     assert exc.value.status_code == 500
@@ -521,9 +553,11 @@ def test_get_chat_not_found_maps_to_404():
     import chats.routes as cr
 
     session = FakeSession()
-    with patch.object(cr, "resolve_auth_context", lambda req: AUTH), \
-        patch.object(cr, "get_async_session", acm(session)), \
-        patch.object(cr, "serialize_chat_session", side_effect=ValueError("missing")):
+    with (
+        patch.object(cr, "resolve_auth_context", lambda req: AUTH),
+        patch.object(cr, "get_async_session", acm(session)),
+        patch.object(cr, "serialize_chat_session", side_effect=ValueError("missing")),
+    ):
         with pytest.raises(HTTPException) as exc:
             cr.get_chat("chat-1", fake_request())
     assert exc.value.status_code == 404
@@ -535,9 +569,11 @@ def test_get_chat_unexpected_error_maps_to_500():
     import chats.routes as cr
 
     session = FakeSession()
-    with patch.object(cr, "resolve_auth_context", lambda req: AUTH), \
-        patch.object(cr, "get_async_session", acm(session)), \
-        patch.object(cr, "serialize_chat_session", side_effect=RuntimeError("boom")):
+    with (
+        patch.object(cr, "resolve_auth_context", lambda req: AUTH),
+        patch.object(cr, "get_async_session", acm(session)),
+        patch.object(cr, "serialize_chat_session", side_effect=RuntimeError("boom")),
+    ):
         with pytest.raises(HTTPException) as exc:
             cr.get_chat("chat-1", fake_request())
     assert exc.value.status_code == 500
@@ -545,6 +581,7 @@ def test_get_chat_unexpected_error_maps_to_500():
 
 def _acoro(value):
     """Return an async function that ignores its args and returns ``value``."""
+
     async def _fn(*a, **k):
         return value
 
@@ -590,9 +627,17 @@ def test_retry_failed_upload_requeues_and_creates_job():
     import knowledge.teacher_weekly as tw
 
     upload = SimpleNamespace(
-        status=tw.UPLOAD_STATUS_FAILED, storage_key="k", id=1, course_id=5,
-        error_message="e", warning_count=3, started_at="x", completed_at="y",
-        ocr_provider="p", ocr_details={"a": 1}, updated_at=None,
+        status=tw.UPLOAD_STATUS_FAILED,
+        storage_key="k",
+        id=1,
+        course_id=5,
+        error_message="e",
+        warning_count=3,
+        started_at="x",
+        completed_at="y",
+        ocr_provider="p",
+        ocr_details={"a": 1},
+        updated_at=None,
     )
     session = FakeSession(get_results=[upload], execute_results=[FakeResult([])])
     inst = _tws()
@@ -618,9 +663,18 @@ def test_reindex_ready_upload_requeues_and_creates_job():
     import knowledge.teacher_weekly as tw
 
     upload = SimpleNamespace(
-        status=tw.UPLOAD_STATUS_READY, storage_key="k", id=1, course_id=5,
-        error_message=None, warning_count=0, started_at=None, completed_at=None,
-        ocr_provider=None, ocr_details={}, metadata_={"ocr_degraded": True}, updated_at=None,
+        status=tw.UPLOAD_STATUS_READY,
+        storage_key="k",
+        id=1,
+        course_id=5,
+        error_message=None,
+        warning_count=0,
+        started_at=None,
+        completed_at=None,
+        ocr_provider=None,
+        ocr_details={},
+        metadata_={"ocr_degraded": True},
+        updated_at=None,
     )
     session = FakeSession(get_results=[upload], execute_results=[FakeResult([])])
     inst = _tws()
@@ -667,8 +721,13 @@ def test_update_retrieval_weights_persists_normalized_values():
     import knowledge.teacher_weekly as tw
 
     space = SimpleNamespace(
-        id=5, name="X", slug="x", retrieval_weights={},
-        retrieval_weight_min=None, retrieval_weight_max=None, updated_at=None,
+        id=5,
+        name="X",
+        slug="x",
+        retrieval_weights={},
+        retrieval_weight_min=None,
+        retrieval_weight_max=None,
+        updated_at=None,
     )
     session = FakeSession(execute_results=[FakeResult([space])])
     with patch.object(tw, "get_async_session", acm(session)):
@@ -687,13 +746,17 @@ def test_prepare_for_indexing_unchanged_content_requeues_non_ready():
     from database.models import DocumentStatus
 
     existing = SimpleNamespace(
-        content_hash="H", status=DocumentStatus.PROCESSING,
-        failure_reason="old", updated_at=None,
+        content_hash="H",
+        status=DocumentStatus.PROCESSING,
+        failure_reason="old",
+        updated_at=None,
     )
     session = FakeSession(execute_results=[FakeResult([existing])])
     connector = SimpleNamespace(title="Doc")
-    with patch.object(isvc, "compute_unique_identifier_hash", lambda d: "U"), \
-        patch.object(isvc, "compute_content_hash", lambda d: "H"):
+    with (
+        patch.object(isvc, "compute_unique_identifier_hash", lambda d: "U"),
+        patch.object(isvc, "compute_content_hash", lambda d: "H"),
+    ):
         docs = run_async(isvc.AITAIndexingService(session).prepare_for_indexing([connector]))
     assert docs == [existing]
     assert existing.failure_reason is None
@@ -705,15 +768,28 @@ def test_prepare_for_indexing_changed_content_updates_and_requeues():
     from database.models import DocumentStatus
 
     existing = SimpleNamespace(
-        content_hash="OLD", status=DocumentStatus.READY, title="", source_markdown="",
-        metadata_=None, material_kind=None, week=None, updated_at=None, failure_reason="x",
+        content_hash="OLD",
+        status=DocumentStatus.READY,
+        title="",
+        source_markdown="",
+        metadata_=None,
+        material_kind=None,
+        week=None,
+        updated_at=None,
+        failure_reason="x",
     )
     session = FakeSession(execute_results=[FakeResult([existing])])
     connector = SimpleNamespace(
-        title="Doc", source_markdown="md", metadata={"k": 1}, material_kind="textbook", week=3,
+        title="Doc",
+        source_markdown="md",
+        metadata={"k": 1},
+        material_kind="textbook",
+        week=3,
     )
-    with patch.object(isvc, "compute_unique_identifier_hash", lambda d: "U"), \
-        patch.object(isvc, "compute_content_hash", lambda d: "NEW"):
+    with (
+        patch.object(isvc, "compute_unique_identifier_hash", lambda d: "U"),
+        patch.object(isvc, "compute_content_hash", lambda d: "NEW"),
+    ):
         docs = run_async(isvc.AITAIndexingService(session).prepare_for_indexing([connector]))
     assert docs == [existing]
     assert existing.metadata_ == {"k": 1}
@@ -728,9 +804,12 @@ def test_index_from_items_happy_path_marks_ready():
     document = Document(course_id=1, title="Doc")
     connector = SimpleNamespace(title="Doc", page_count=1)
     session = FakeSession()
-    with patch.object(
-        isvc, "items_to_chunk_texts", lambda items: [("body text", {"page_number": 1})]
-    ), patch.object(isvc, "embed_text", lambda text: [0.0, 0.1]):
+    with (
+        patch.object(
+            isvc, "items_to_chunk_texts", lambda items: [("body text", {"page_number": 1})]
+        ),
+        patch.object(isvc, "embed_text", lambda text: [0.0, 0.1]),
+    ):
         out = run_async(
             isvc.AITAIndexingService(session).index_from_items(document, connector, ["item"])
         )
@@ -767,8 +846,12 @@ def test_upsert_problem_inserts_when_absent():
     with patch.object(seed.Problem, "from_pydantic_payload", return_value=sentinel):
         run_async(
             seed._upsert_problem(
-                session, concept_id=1, course_id=2, problem_code="P1",
-                difficulty="easy", payload={"id": "P1"},
+                session,
+                concept_id=1,
+                course_id=2,
+                problem_code="P1",
+                difficulty="easy",
+                payload={"id": "P1"},
             )
         )
     assert sentinel in session.added
@@ -783,8 +866,12 @@ def test_upsert_problem_updates_when_present():
     session = FakeSession(execute_results=[FakeResult([existing])])
     run_async(
         seed._upsert_problem(
-            session, concept_id=1, course_id=2, problem_code="P1",
-            difficulty="easy", payload={"id": "P1"},
+            session,
+            concept_id=1,
+            course_id=2,
+            problem_code="P1",
+            difficulty="easy",
+            payload={"id": "P1"},
         )
     )
     existing.apply_pydantic_payload.assert_called_once_with({"id": "P1"})

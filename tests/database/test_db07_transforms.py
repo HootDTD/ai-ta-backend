@@ -106,10 +106,7 @@ def test_merge_course_settings_out_of_range_week_clamps_to_one():
 def test_document_status_failed_and_failure_reason_helpers():
     # database/models.py:81-82 (failed factory) + 94 (reason only when FAILED).
     assert DocumentStatus.failed("ocr blew up") == DocumentStatus.FAILED
-    assert (
-        DocumentStatus.get_failure_reason(DocumentStatus.FAILED, "ocr blew up")
-        == "ocr blew up"
-    )
+    assert DocumentStatus.get_failure_reason(DocumentStatus.FAILED, "ocr blew up") == "ocr blew up"
     assert DocumentStatus.get_failure_reason(DocumentStatus.READY, "ocr blew up") is None
 
 

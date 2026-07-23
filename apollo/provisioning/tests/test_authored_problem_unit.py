@@ -115,8 +115,10 @@ async def test_missing_inventory_row_raises(monkeypatch):
     ("promote_result", "expected"),
     [
         (PromoteResult(promoted=True), ("promoted", "ok", None)),
-        (PromoteResult(promoted=False, failed_gate=4, diagnostic="lint"),
-         ("rejected", "promotion_lint", 4)),
+        (
+            PromoteResult(promoted=False, failed_gate=4, diagnostic="lint"),
+            ("rejected", "promotion_lint", 4),
+        ),
     ],
 )
 async def test_promotion_outcomes(monkeypatch, promote_result, expected):
@@ -141,19 +143,21 @@ async def test_inventory_lookup_and_duplicate_hash_helpers(monkeypatch):
     good = SimpleNamespace(to_pydantic_payload=lambda **_kwargs: {"ok": True})
     bad = SimpleNamespace(to_pydantic_payload=lambda **_kwargs: {"bad": True})
     db.execute.side_effect = [_ScalarResult(44), _RowsResult([(good, "c"), (bad, "c")])]
-    assert await subject._find_tier1_row_id(
-        db, concept_id=11, problem_code="authored.hash", search_space_id=7
-    ) == 44
+    assert (
+        await subject._find_tier1_row_id(
+            db, concept_id=11, problem_code="authored.hash", search_space_id=7
+        )
+        == 44
+    )
 
     def model_validate(payload):
         if "ok" not in payload:
             raise ValueError("bad")
         return payload
+
     monkeypatch.setattr(subject.Problem, "model_validate", model_validate)
     monkeypatch.setattr(subject, "problem_dup_hash", lambda problem: f"hash:{problem['ok']}")
-    assert await subject._concept_dup_hashes(db, concept_id=12, search_space_id=7) == {
-        "hash:True"
-    }
+    assert await subject._concept_dup_hashes(db, concept_id=12, search_space_id=7) == {"hash:True"}
 
 
 @pytest.mark.asyncio
@@ -181,6 +185,4 @@ async def test_authored_chunk_loader_and_empty_enrichment():
         chunks[0].chunk_type,
     ] == [1, "question", 9, 2, "Exercises", "text"]
 
-    assert await authored_api._enrich_problem_reviews(
-        db, [None], ingest_run_id=123
-    ) == [None]
+    assert await authored_api._enrich_problem_reviews(db, [None], ingest_run_id=123) == [None]

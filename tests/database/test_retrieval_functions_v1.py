@@ -400,9 +400,12 @@ async def test_service_role_is_only_rpc_grantee(
     await transaction.start()
     try:
         await retrieval_conn.execute("SET LOCAL ROLE service_role")
-        assert await retrieval_conn.fetchval(
-            "SELECT internal.fts_count('pressure', ARRAY[10]::integer[])"
-        ) == 4
+        assert (
+            await retrieval_conn.fetchval(
+                "SELECT internal.fts_count('pressure', ARRAY[10]::integer[])"
+            )
+            == 4
+        )
     finally:
         await transaction.rollback()
 

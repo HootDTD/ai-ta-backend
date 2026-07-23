@@ -284,4 +284,6 @@ def test_script_documents_the_surviving_twin_for_every_drop():
         idx = sql.index(marker)
         following = sql[idx : idx + 400]
         assert "surviving twin" in following, f"missing surviving-twin comment for {ix_name}"
-        assert twin_name in following, f"surviving-twin comment for {ix_name} doesn't name {twin_name}"
+        assert twin_name in following, (
+            f"surviving-twin comment for {ix_name} doesn't name {twin_name}"
+        )

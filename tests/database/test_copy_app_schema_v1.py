@@ -180,30 +180,37 @@ async def test_forward_copy_reconcile_idempotency_and_reverse_delta(copied_conn)
     )
     assert problem["problem_text"] == "Find the pressure"
     assert json.loads(problem["payload_extra"]) == {"future_key": "kept"}
-    assert await copied_conn.fetchval(
-        "SELECT count(*) FROM app.question_opportunities"
-    ) == 2
-    assert await copied_conn.fetchval(
-        "SELECT count(*) FROM internal.grading_runs"
-    ) == 1
-    assert await copied_conn.fetchval(
-        "SELECT count(*) FROM app.learning_activities"
-    ) == 2
-    assert await copied_conn.fetchval(
-        "SELECT id FROM app.learning_activities WHERE modality='chat'"
-    ) == 20
-    assert await copied_conn.fetchval(
-        "SELECT id FROM app.learning_activities WHERE modality='tutoring'"
-    ) == 1_000_040
-    assert await copied_conn.fetchval(
-        "SELECT learning_activity_id FROM app.tutoring_messages WHERE id=42"
-    ) == 1_000_040
-    assert await copied_conn.fetchval(
-        "SELECT learning_activity_id FROM app.problem_attempts WHERE id=41"
-    ) == 1_000_040
-    assert await copied_conn.fetchval(
-        "SELECT bool_and(learning_activity_id=1000040) FROM app.question_opportunities"
-    ) is True
+    assert await copied_conn.fetchval("SELECT count(*) FROM app.question_opportunities") == 2
+    assert await copied_conn.fetchval("SELECT count(*) FROM internal.grading_runs") == 1
+    assert await copied_conn.fetchval("SELECT count(*) FROM app.learning_activities") == 2
+    assert (
+        await copied_conn.fetchval("SELECT id FROM app.learning_activities WHERE modality='chat'")
+        == 20
+    )
+    assert (
+        await copied_conn.fetchval(
+            "SELECT id FROM app.learning_activities WHERE modality='tutoring'"
+        )
+        == 1_000_040
+    )
+    assert (
+        await copied_conn.fetchval(
+            "SELECT learning_activity_id FROM app.tutoring_messages WHERE id=42"
+        )
+        == 1_000_040
+    )
+    assert (
+        await copied_conn.fetchval(
+            "SELECT learning_activity_id FROM app.problem_attempts WHERE id=41"
+        )
+        == 1_000_040
+    )
+    assert (
+        await copied_conn.fetchval(
+            "SELECT bool_and(learning_activity_id=1000040) FROM app.question_opportunities"
+        )
+        is True
+    )
     provisioning = await copied_conn.fetch(
         "SELECT id,kind FROM app.provisioning_runs ORDER BY kind"
     )
@@ -211,9 +218,7 @@ async def test_forward_copy_reconcile_idempotency_and_reverse_delta(copied_conn)
         (75, "authored_set"),
         (1_000_074, "generation"),
     ]
-    assert await copied_conn.fetchval(
-        "SELECT count(*) FROM pg_temp.db05_copy_quarantine"
-    ) == 0
+    assert await copied_conn.fetchval("SELECT count(*) FROM pg_temp.db05_copy_quarantine") == 0
 
     before = await _target_fingerprint(copied_conn)
     await copied_conn.execute(_COPY.read_text(encoding="utf-8"))
@@ -271,9 +276,7 @@ async def test_forward_copy_reconcile_idempotency_and_reverse_delta(copied_conn)
     transaction = copied_conn.transaction()
     await transaction.start()
     try:
-        await copied_conn.execute(
-            "SET LOCAL db05.rollback_watermark = '2029-12-31T00:00:00Z'"
-        )
+        await copied_conn.execute("SET LOCAL db05.rollback_watermark = '2029-12-31T00:00:00Z'")
         await copied_conn.execute(_REVERSE.read_text(encoding="utf-8"))
     except BaseException:
         await transaction.rollback()
@@ -281,36 +284,50 @@ async def test_forward_copy_reconcile_idempotency_and_reverse_delta(copied_conn)
     else:
         await transaction.commit()
 
-    assert await copied_conn.fetchval(
-        "SELECT count(*) FROM aita_search_spaces WHERE slug='reverse-course'"
-    ) == 1
-    assert await copied_conn.fetchval(
-        "SELECT count(*) FROM aita_documents WHERE content_hash='reverse-doc-hash'"
-    ) == 1
-    assert await copied_conn.fetchval(
-        "SELECT count(*) FROM chat_sessions WHERE chat_id='reverse-chat'"
-    ) == 1
-    assert await copied_conn.fetchval(
-        "SELECT count(*) FROM apollo_sessions WHERE id=$1",
-        tutoring_activity_id - 1_000_000,
-    ) == 1
-    assert await copied_conn.fetchval(
-        "SELECT count(*) FROM apollo_authored_sets WHERE id=$1 AND set_index=99",
-        authored_run_id,
-    ) == 1
-    assert await copied_conn.fetchval(
-        "SELECT count(*) FROM apollo_generation_runs WHERE id=$1",
-        generation_run_id - 1_000_000,
-    ) == 1
+    assert (
+        await copied_conn.fetchval(
+            "SELECT count(*) FROM aita_search_spaces WHERE slug='reverse-course'"
+        )
+        == 1
+    )
+    assert (
+        await copied_conn.fetchval(
+            "SELECT count(*) FROM aita_documents WHERE content_hash='reverse-doc-hash'"
+        )
+        == 1
+    )
+    assert (
+        await copied_conn.fetchval(
+            "SELECT count(*) FROM chat_sessions WHERE chat_id='reverse-chat'"
+        )
+        == 1
+    )
+    assert (
+        await copied_conn.fetchval(
+            "SELECT count(*) FROM apollo_sessions WHERE id=$1",
+            tutoring_activity_id - 1_000_000,
+        )
+        == 1
+    )
+    assert (
+        await copied_conn.fetchval(
+            "SELECT count(*) FROM apollo_authored_sets WHERE id=$1 AND set_index=99",
+            authored_run_id,
+        )
+        == 1
+    )
+    assert (
+        await copied_conn.fetchval(
+            "SELECT count(*) FROM apollo_generation_runs WHERE id=$1",
+            generation_run_id - 1_000_000,
+        )
+        == 1
+    )
 
     # Reconciliation repairs explicit-ID sequence drift before reopening writes.
-    await copied_conn.execute(
-        "SELECT setval(pg_get_serial_sequence('app.courses','id'),1,true)"
-    )
+    await copied_conn.execute("SELECT setval(pg_get_serial_sequence('app.courses','id'),1,true)")
     await copied_conn.execute(_RECONCILE.read_text(encoding="utf-8"))
-    sequence = await copied_conn.fetchrow(
-        "SELECT last_value,is_called FROM app.courses_id_seq"
-    )
+    sequence = await copied_conn.fetchrow("SELECT last_value,is_called FROM app.courses_id_seq")
     maximum_id = await copied_conn.fetchval("SELECT max(id) FROM app.courses")
     next_id = sequence["last_value"] + 1 if sequence["is_called"] else sequence["last_value"]
     assert next_id > maximum_id
@@ -318,13 +335,10 @@ async def test_forward_copy_reconcile_idempotency_and_reverse_delta(copied_conn)
 
 def test_copy_migration_is_non_destructive_and_names_exactly_seven_drops():
     sql = _COPY.read_text(encoding="utf-8").lower()
-    executable = "\n".join(
-        line for line in sql.splitlines() if not line.lstrip().startswith("--")
-    )
+    executable = "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--"))
     executable = executable.replace("truncate pg_temp.db05_copy_quarantine;", "")
     assert not any(
-        token in executable
-        for token in ("delete from", "truncate", "drop table", "alter table")
+        token in executable for token in ("delete from", "truncate", "drop table", "alter table")
     )
     approved_drops = {
         "apollo_kg_entries",

@@ -291,9 +291,7 @@ def test_teardown_script_drop_order_is_full_child_first_and_never_cascades():
     so an accidental reordering fails fast without Docker.
     """
     sql = _TEARDOWN.read_text(encoding="utf-8")
-    executable = "\n".join(
-        line for line in sql.splitlines() if not line.lstrip().startswith("--")
-    )
+    executable = "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--"))
 
     assert "CASCADE" not in executable.upper()
 

@@ -60,17 +60,14 @@ async def _concept_dup_hashes(
     db: AsyncSession, *, concept_id: int, search_space_id: int
 ) -> set[str]:
     rows = (
-        (
-            await db.execute(
-                select(ProblemRecord, Concept.slug)
-                .join(Concept, Concept.id == ProblemRecord.concept_id)
-                .where(ProblemRecord.course_id == search_space_id)
-                .where(ProblemRecord.concept_id == concept_id)
-                .where(ProblemRecord.tier == 2)
-            )
+        await db.execute(
+            select(ProblemRecord, Concept.slug)
+            .join(Concept, Concept.id == ProblemRecord.concept_id)
+            .where(ProblemRecord.course_id == search_space_id)
+            .where(ProblemRecord.concept_id == concept_id)
+            .where(ProblemRecord.tier == 2)
         )
-        .all()
-    )
+    ).all()
     hashes: set[str] = set()
     for row, concept_slug in rows:
         try:

@@ -529,9 +529,7 @@ async def test_internal_schema_is_service_only(schema_conn):
 
 @pytest.mark.asyncio
 async def test_learning_activity_modality_status_and_active_tutoring_semantics(schema_conn):
-    course_id = await schema_conn.fetchval(
-        "SELECT id FROM app.courses WHERE slug = 'course-one'"
-    )
+    course_id = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
     chat_id = await schema_conn.fetchval(
         """
         INSERT INTO app.learning_activities
@@ -576,23 +574,24 @@ async def test_learning_activity_modality_status_and_active_tutoring_semantics(s
             STUDENT,
             course_id,
         )
-    assert await schema_conn.fetchval(
-        """
+    assert (
+        await schema_conn.fetchval(
+            """
         INSERT INTO app.learning_activities
           (modality,user_id,course_id,status,phase)
         VALUES ('tutoring',$1,$2,'paused','TEACHING')
         RETURNING id
         """,
-        STUDENT,
-        course_id,
-    ) is not None
+            STUDENT,
+            course_id,
+        )
+        is not None
+    )
 
 
 @pytest.mark.asyncio
 async def test_ai_usage_reports_check_constraints(schema_conn):
-    course_id = await schema_conn.fetchval(
-        "SELECT id FROM app.courses WHERE slug = 'course-one'"
-    )
+    course_id = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
     chat_id = await schema_conn.fetchval(
         """
         INSERT INTO app.learning_activities
@@ -641,9 +640,7 @@ async def test_ai_usage_reports_check_constraints(schema_conn):
 
 @pytest.mark.asyncio
 async def test_ai_usage_reports_owner_select_and_insert_policies(schema_conn):
-    course_id = await schema_conn.fetchval(
-        "SELECT id FROM app.courses WHERE slug = 'course-one'"
-    )
+    course_id = await schema_conn.fetchval("SELECT id FROM app.courses WHERE slug = 'course-one'")
     chat_id = await schema_conn.fetchval(
         """
         INSERT INTO app.learning_activities
