@@ -209,10 +209,30 @@ jobs:
       - name: Reset local database from active migrations
         run: node scripts/db/reset-local.mjs
 
+  docs:
+    name: docs (architecture ownership lint)
+    runs-on: ubuntu-latest
+    # ADVISORY during the docs/granular-restructure split (PLAN §6.3): the lint is
+    # NOT in ci-passed and continue-on-error so a mid-flight bijection storm never
+    # red-fails an unrelated PR. W5 flips it to required (add to ci-passed.needs,
+    # drop continue-on-error, and enable the --check-last-verified PR-path gate).
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0 # base history for the (advisory) last_verified PR-path check
+      - uses: ./.github/actions/setup
+      - name: Ownership bijection + related + index-freshness + size lint
+        run: python scripts/docs/check_owns_coverage.py --check-size
+
   ci-passed:
     name: ci-passed
     # The SINGLE required status check for branch protection. Runs even if a
     # dependency failed so the gate reports a definitive pass/fail.
+    # NOTE: `docs` is deliberately NOT in needs while the split is in flight
+    # (advisory). W5 adds it here and to the assertion below.
     if: always()
     needs: [quality, typecheck, unit, integration, database]
     runs-on: ubuntu-latest
