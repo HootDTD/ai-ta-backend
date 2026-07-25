@@ -1,4 +1,21 @@
+---
+doc: shared/admin-setup
+description: Repo-admin + Railway-dashboard runbook for the pilot deploy/CI-CD setup (branch protection, rulesets, status checks)
+owns: []
+related:
+  - shared/branching
+  - shared/supabase
+last_verified: 2026-06-09
+stub: false
+---
+
 # Phase 2 — Admin setup (your action required)
+
+> **Stale-fact note (2026-07-25):** this runbook was authored in the ApolloV3 era.
+> The prod/release branch is now **`main`** (ApolloV3 is retired — never target it);
+> read the deploy/branch model in `branching.md`. The admin steps below (rulesets,
+> status-check wiring) still apply; substitute `main` wherever the body says
+> `ApolloV3`.
 
 > The CI/CD **code** (workflows, composite action, coverage gate, ruff/mypy
 > config, pre-commit, dependabot, `.gitattributes`) is in PR — see

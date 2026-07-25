@@ -1,3 +1,13 @@
+---
+doc: shared/branching
+description: Authoritative pilot-era branching model (staging=trunk, main=pilot release) for all three Hoot repos
+owns: []
+related:
+  - shared/conventions
+last_verified: 2026-07-25
+stub: false
+---
+
 # Branching model — pilot era (2026-07)
 
 Applies to all three repos (`ai-ta-backend`, `ai-ta-student-ui`, `ai-ta-teacher-ui`).

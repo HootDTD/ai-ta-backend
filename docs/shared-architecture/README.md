@@ -41,12 +41,16 @@ make the change.
 - `ai-ta-backend/docs/shared-architecture/supabase.md` — Supabase projects, schema map, pgvector/halfvec HNSW setup, migration workflow
 - `ai-ta-backend/docs/shared-architecture/product-context.md` — what Hoot is, user roles, Apollo pedagogy, domain glossary, product invariants
 
-## Active working docs (not architecture, but load-bearing)
+## Transient docs — parked in `_archive/`, skipped by navigation
 
-- `ai-ta-backend/docs/apollo-redesign.md` — Apollo V3 gap analysis × academic literature map; source of the Class 1/2/3 fix taxonomy
-- `ai-ta-backend/docs/claude_v3_checklist.md` — Apollo V3 flaws checklist; skip-marked tests reference its item numbers
-- `ai-ta-backend/docs/DATA-FLOW.md` — end-to-end system data flow reference
-- `ai-ta-backend/docs/TESTING-CI-PLAN.md` — testing/CI strategy and phase plan
+Handoffs, implementation plans, design specs, run logs, experiment writeups,
+research memos, design notes, and audits live in `ai-ta-backend/docs/_archive/`
+(bucketed: `handoffs/ plans/ specs/ runs/ experiments/ research/ design/ audits/`).
+They are **committed but transient — do not load them unless you are resuming the
+specific task whose record lives there.** See `../_archive/README.md` for the
+lifecycle rule and the dated index of what is parked. (The former "Active working
+docs" links — `apollo-redesign.md`, `claude_v3_checklist.md`, `DATA-FLOW.md`,
+`TESTING-CI-PLAN.md` — were demoted there or replaced by `data-flow.md`.)
 
 ## Doc format contract
 
