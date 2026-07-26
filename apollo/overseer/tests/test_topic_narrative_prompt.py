@@ -1,8 +1,7 @@
-"""2026-07-11 feedback spec §2 — the prompt itself must not contain internals.
+"""The structured topic-feedback prompt contains only required internals.
 
-Root-cause fix: the LLM can't leak canonical keys / credit / weight / dock if
-they never reach the prompt. Display names + statuses + whole-number
-percentages are the only per-topic data the narrator sees.
+Canonical keys are supplied for the response mapping and may appear only in
+``canonical_key`` fields. Decimal credit / weight / dock values remain absent.
 """
 
 from __future__ import annotations
@@ -43,11 +42,11 @@ def _result(
     )
 
 
-def test_user_prompt_has_no_canonical_keys_or_decimals():
+def test_user_prompt_has_topic_canonical_key_but_no_scoring_decimals():
     _system, user = build_topic_narrative_prompt(
         _result(), problem_text="Explain upstream vs downstream."
     )
-    assert "proc_explain_causality" not in user
+    assert 'canonical_key="proc_explain_causality"' in user
     assert "misc.wrong_direction" not in user
     assert "credit=" not in user and "weight=" not in user
     assert "0.23" not in user and "0.6359" not in user
@@ -72,14 +71,24 @@ def test_misconception_line_keeps_span_and_resolution_only():
 
 def test_missing_display_name_falls_back_to_humanized_key():
     _system, user = build_topic_narrative_prompt(_result(display_name=None), problem_text="P?")
-    assert "proc_explain_causality" not in user
+    assert 'canonical_key="proc_explain_causality"' in user
     assert "explain causality" in user
 
 
 def test_system_prompt_forbids_internals_and_allows_percentages():
     system, _user = build_topic_narrative_prompt(_result(), problem_text="P?")
     assert "internal identifiers" in system
+    assert "outside the canonical_key JSON fields" in system
     assert "percentage" in system.lower()
+
+
+def test_system_prompt_requires_exact_json_shape_and_gated_quotes():
+    system, _user = build_topic_narrative_prompt(_result(), problem_text="P?")
+    assert '"headline"' in system
+    assert '"topic_feedback"' in system
+    assert '"next_step"' in system
+    assert "entire span exactly, character for character" in system
+    assert "quote must be null" in system
 
 
 def test_system_prompt_forbids_third_person_audit_feedback():
@@ -114,7 +123,7 @@ def test_blank_utterances_are_dropped_and_all_blank_omits_block():
         _result(), problem_text="P?", student_utterances=("", "  ", "real words")
     )
     assert '1. "real words"' in user
-    assert '2.' not in user
+    assert "2." not in user
     _system, user2 = build_topic_narrative_prompt(
         _result(), problem_text="P?", student_utterances=("", "   ")
     )
@@ -160,9 +169,7 @@ def test_user_prompt_marks_topic_text_as_reference_wording():
     """The narrator must be able to tell reference wording apart from student
     speech — the evidence header says the topic descriptions are the
     reference solution's own words."""
-    _system, user = build_topic_narrative_prompt(
-        _result_with_evidence(None), problem_text="P?"
-    )
+    _system, user = build_topic_narrative_prompt(_result_with_evidence(None), problem_text="P?")
     assert "reference solution's own wording" in user
 
 
@@ -174,9 +181,7 @@ def test_user_prompt_quotes_student_evidence_when_present():
 
 
 def test_user_prompt_has_no_you_said_line_without_evidence():
-    _system, user = build_topic_narrative_prompt(
-        _result_with_evidence(None), problem_text="P?"
-    )
+    _system, user = build_topic_narrative_prompt(_result_with_evidence(None), problem_text="P?")
     assert "You said:" not in user
 
 
@@ -185,9 +190,7 @@ def test_system_prompt_forbids_attributing_reference_content_to_student():
     only '1970' that they 'referenced Alvin Toffler's 1970 book and the
     post-World-War-II era' — reference wording presented as the student's own
     statement."""
-    system, _user = build_topic_narrative_prompt(
-        _result_with_evidence(None), problem_text="P?"
-    )
+    system, _user = build_topic_narrative_prompt(_result_with_evidence(None), problem_text="P?")
     lowered = " ".join(system.lower().split())
     assert "not what the student said" in lowered
     assert 'quoted "you said"' in lowered

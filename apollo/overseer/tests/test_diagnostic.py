@@ -36,13 +36,16 @@ def test_generate_diagnostic_narrates_without_solver(monkeypatch):
 
     monkeypatch.setattr(diagnostic, "OpenAI", _Client)
 
-    out = diagnostic.generate_diagnostic(
+    out, feedback = diagnostic.generate_diagnostic(
         coverage={"per_step": {"bernoulli": "missing"}, "procedure_scores": {}, "confidences": {}},
-        reference_steps=[{"id": "bernoulli", "entry_type": "equation", "content": {"label": "Bernoulli"}}],
+        reference_steps=[
+            {"id": "bernoulli", "entry_type": "equation", "content": {"label": "Bernoulli"}}
+        ],
         problem_text="Water flows through a horizontal pipe...",
         rubric={"overall": {"score": 0.5, "letter": "C"}},
     )
     assert "continuity" in out
+    assert feedback is None
     # The solver framing must be gone from the system prompt.
     system = captured["messages"][0]["content"]
     assert "solver" not in system.lower()
@@ -57,11 +60,20 @@ def _mock_reply(text: str) -> MagicMock:
 @patch("apollo.overseer.diagnostic.OpenAI")
 def test_diagnostic_returns_string(mock_client_cls):
     client = MagicMock()
-    client.chat.completions.create.return_value = _mock_reply("You taught Bernoulli well but missed continuity.")
+    client.chat.completions.create.return_value = _mock_reply(
+        "You taught Bernoulli well but missed continuity."
+    )
     mock_client_cls.return_value = client
 
-    text = generate_diagnostic(
-        coverage={"per_step": {"continuity": "missing", "bernoulli": "covered", "incompressibility": "covered"}, "procedure_scores": {}},
+    text, feedback = generate_diagnostic(
+        coverage={
+            "per_step": {
+                "continuity": "missing",
+                "bernoulli": "covered",
+                "incompressibility": "covered",
+            },
+            "procedure_scores": {},
+        },
         reference_steps=[],
         problem_text="water in a horizontal pipe…",
         rubric={
@@ -73,6 +85,7 @@ def test_diagnostic_returns_string(mock_client_cls):
     )
     assert isinstance(text, str)
     assert len(text) > 0
+    assert feedback is None
 
 
 @patch("apollo.overseer.diagnostic.OpenAI")
@@ -114,7 +127,9 @@ def test_generate_diagnostic_passes_rubric_into_llm(mock_client_cls):
     }
     generate_diagnostic(
         coverage={"per_step": {"p1": "missing"}, "procedure_scores": {"p1": 0.3}},
-        reference_steps=[{"id": "p1", "entry_type": "procedure_step", "content": {"action": "x", "order": 1}}],
+        reference_steps=[
+            {"id": "p1", "entry_type": "procedure_step", "content": {"action": "x", "order": 1}}
+        ],
         problem_text="Demo problem.",
         rubric=rubric,
     )
@@ -163,7 +178,7 @@ def test_generate_diagnostic_softfails_to_placeholder_on_llm_exception(mock_clie
     client.chat.completions.create.side_effect = RuntimeError("network down")
     mock_client_cls.return_value = client
 
-    result = generate_diagnostic(
+    result, feedback = generate_diagnostic(
         coverage={"per_step": {}, "procedure_scores": {}},
         reference_steps=[],
         problem_text="Demo.",
@@ -175,6 +190,7 @@ def test_generate_diagnostic_softfails_to_placeholder_on_llm_exception(mock_clie
         },
     )
     assert "unavailable" in result.lower()
+    assert feedback is None
     # The rubric is still accurate even if narrative fails.
     assert "grade" in result.lower() or "still accurate" in result.lower()
 

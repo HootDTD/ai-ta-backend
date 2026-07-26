@@ -6,11 +6,10 @@ attempt. Wording is deterministic; it never names the misconception.
 Tests cover the post-LLM append step in isolation — the LLM call is
 mocked to return a known narrative.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from apollo.overseer.diagnostic import (
     _append_misconception_line,
@@ -34,6 +33,7 @@ def _rubric(detected: int, resolved: int):
 # ---------------------------------------------------------------------------
 # Pure helper
 # ---------------------------------------------------------------------------
+
 
 def test_no_line_when_zero_detected():
     narrative = "Solid teaching overall."
@@ -72,6 +72,7 @@ def test_handles_missing_misconception_block_gracefully():
 # Through generate_diagnostic with a stubbed LLM
 # ---------------------------------------------------------------------------
 
+
 def _mock_reply(text: str):
     fake = MagicMock()
     fake.choices = [MagicMock(message=MagicMock(content=text))]
@@ -86,7 +87,7 @@ def test_generate_diagnostic_appends_line_when_detected(mock_client_cls):
     )
     mock_client_cls.return_value = client
 
-    out = generate_diagnostic(
+    out, feedback = generate_diagnostic(
         coverage={"per_step": {}, "procedure_scores": {}, "confidences": {}},
         reference_steps=[],
         problem_text="x",
@@ -95,6 +96,7 @@ def test_generate_diagnostic_appends_line_when_detected(mock_client_cls):
     assert out.startswith("Your teaching covered the procedure well.")
     assert "2 suspected misconceptions" in out
     assert "you resolved 1 of them" in out
+    assert feedback is None
 
 
 @patch("apollo.overseer.diagnostic.OpenAI")
@@ -103,7 +105,7 @@ def test_generate_diagnostic_omits_line_when_no_detection(mock_client_cls):
     client.chat.completions.create.return_value = _mock_reply("Looks good.")
     mock_client_cls.return_value = client
 
-    out = generate_diagnostic(
+    out, feedback = generate_diagnostic(
         coverage={"per_step": {}, "procedure_scores": {}, "confidences": {}},
         reference_steps=[],
         problem_text="x",
@@ -111,3 +113,4 @@ def test_generate_diagnostic_omits_line_when_no_detection(mock_client_cls):
     )
     assert out == "Looks good."
     assert "misconception" not in out
+    assert feedback is None
