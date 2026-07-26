@@ -10,6 +10,7 @@ sourced from `coverage["negotiation_counts"]` (P3.4). It must:
 Tests cover the appender directly + an integration through
 `generate_diagnostic` with a stubbed LLM.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -87,6 +88,7 @@ def test_line_does_not_name_entries():
 # Integration with generate_diagnostic (LLM stubbed)
 # ---------------------------------------------------------------------------
 
+
 def _mock_reply(text: str):
     return MagicMock(choices=[MagicMock(message=MagicMock(content=text))])
 
@@ -97,7 +99,7 @@ def test_generate_diagnostic_appends_negotiation_line_when_present(mock_cls):
     client.chat.completions.create.return_value = _mock_reply("Solid teach.")
     mock_cls.return_value = client
 
-    out = generate_diagnostic(
+    out, feedback = generate_diagnostic(
         coverage=_coverage(paraphrased=2, disputed=1),
         reference_steps=[],
         problem_text="x",
@@ -107,6 +109,7 @@ def test_generate_diagnostic_appends_negotiation_line_when_present(mock_cls):
     assert "3 entries with Apollo:" in out
     assert "2 paraphrased" in out
     assert "1 disputed" in out
+    assert feedback is None
 
 
 @patch("apollo.overseer.diagnostic.OpenAI")
@@ -115,7 +118,7 @@ def test_generate_diagnostic_omits_negotiation_line_when_zero(mock_cls):
     client.chat.completions.create.return_value = _mock_reply("Looks good.")
     mock_cls.return_value = client
 
-    out = generate_diagnostic(
+    out, feedback = generate_diagnostic(
         coverage=_coverage(),
         reference_steps=[],
         problem_text="x",
@@ -123,3 +126,4 @@ def test_generate_diagnostic_omits_negotiation_line_when_zero(mock_cls):
     )
     assert out == "Looks good."
     assert "negotiated" not in out
+    assert feedback is None

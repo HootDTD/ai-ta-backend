@@ -10,7 +10,7 @@ related:
   - apollo/overseer/topic-narrative
   - apollo/grading/artifact-build
   - apollo/conversation/handlers/done
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -44,7 +44,8 @@ procedure_step) nodes score; each node's credit comes from `coverage`
 `CENTRALITY_W_MIN`, then normalized). The result's score reuses
 `rubric.score_to_letter`. `serialize_topic_score` shapes the artifact's
 `scores.topic_score` block; `serialize_topics` shapes the served
-`student_response["topics"]`.
+`student_response["topics"]`. Both topic surfaces include the topic's gated
+per-attempt `evidence_span` (string or null).
 
 ## Invariants & gotchas
 
@@ -53,8 +54,10 @@ procedure_step) nodes score; each node's credit comes from `coverage`
   retained column (see [_index](_index.md) / [scorecard](scorecard.md)).
 - **One serializer, two surfaces.** Both the persisted artifact and the served
   `topics` payload derive from `topic_score_serialize.py`, pinned to the design
-  spec's field shape so they cannot drift; keep it separate from the pure
-  `topic_score.py` computation module.
+  spec's field shape so they cannot drift. Each topic is
+  `{canonical_key, display_name, credit, status, weight, evidence_span,
+  misconceptions}`; keep serialization separate from the pure `topic_score.py`
+  computation module.
 - **Empty misconceptions.** `TopicCredit.misconceptions` is always `()` and
   `TopicScoreResult.misconception_dock` is always `0.0`.
 - **No graded nodes → 0.** An all-ungraded reference returns a zero result.

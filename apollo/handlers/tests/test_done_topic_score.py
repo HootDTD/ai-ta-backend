@@ -82,6 +82,7 @@ async def _run(
     topic_score_side_effect=None,
     write_mock=None,
     use_real_xp=False,
+    diagnostic_result=None,
 ):
     db, _sess, _attempt, patches = _old_path_patches()
     graph = _reference_graph_with_topics()
@@ -133,6 +134,11 @@ async def _run(
 
     if write_mock is not None:
         patches.append(patch("apollo.handlers.done.write_artifacts", new=write_mock))
+    if diagnostic_result is not None:
+        patches = [p for p in patches if getattr(p, "attribute", None) != "generate_diagnostic"]
+        patches.append(
+            patch("apollo.handlers.done.generate_diagnostic", return_value=diagnostic_result)
+        )
 
     for p in patches:
         p.start()
@@ -182,8 +188,64 @@ async def test_topics_served_with_expected_shape(monkeypatch):
             "credit",
             "status",
             "weight",
+            "evidence_span",
             "misconceptions",
         }
+        assert t["evidence_span"] is None
+
+
+async def test_feedback_served_with_topic_score_and_flattened_narrative(monkeypatch):
+    feedback = {
+        "headline": "You built a useful foundation.",
+        "topic_feedback": [
+            {"canonical_key": "eq1", "note": "Your equation was clear.", "quote": None},
+            {"canonical_key": "c1", "note": "Add the condition.", "quote": None},
+        ],
+        "recap": [],
+        "next_step": "State when the equation applies.",
+    }
+    flattened = (
+        "You built a useful foundation.\n\n"
+        "Your equation was clear.\n\n"
+        "Add the condition.\n\n"
+        "Next step: State when the equation applies."
+    )
+
+    out = await _run(
+        monkeypatch,
+        diagnostic_result=(flattened, feedback),
+    )
+
+    assert out["feedback"] == feedback
+    assert out["diagnostic_narrative"] == flattened
+
+
+async def test_feedback_absent_without_topic_score_even_if_diagnostic_returns_one(monkeypatch):
+    feedback = {
+        "headline": "Headline",
+        "topic_feedback": [],
+        "recap": [],
+        "next_step": "Try again.",
+    }
+    out = await _run(
+        monkeypatch,
+        topic_score_side_effect=RuntimeError("boom"),
+        diagnostic_result=("legacy", feedback),
+    )
+
+    assert out["diagnostic_narrative"] == "legacy"
+    assert "feedback" not in out
+
+
+async def test_feedback_absent_on_diagnostic_json_soft_fail(monkeypatch):
+    out = await _run(
+        monkeypatch,
+        diagnostic_result=("legacy ledger narrative", None),
+    )
+
+    assert "topics" in out
+    assert out["diagnostic_narrative"] == "legacy ledger narrative"
+    assert "feedback" not in out
 
 
 async def test_legacy_axes_still_present(monkeypatch):

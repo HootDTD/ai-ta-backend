@@ -16,7 +16,7 @@ related:
   - apollo/persistence/done-write-linkage
   - apollo/persistence/progress-repo
   - apollo/schemas/problem
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -50,8 +50,9 @@ Ordered grade assembly (each step delegates to the owner doc):
    `compute_centrality`, `overseer/topic-score`): best-effort, computed always.
    On success `served_rubric` REPLACES `overall` with the topic score/letter
    (new dict; `rubric` itself is never mutated).
-6. `generate_diagnostic` (`overseer/diagnostic`) — grounded narrative from the
-   student's verbatim utterances.
+6. `generate_diagnostic` (`overseer/diagnostic`) — grounded narrative plus, on
+   topic-score JSON success, structured per-topic feedback from the student's
+   verbatim utterances.
 7. XP: `compute_xp_earned`/`compute_progress_envelope`/`apply_xp`
    (`overseer/xp` + `persistence/progress-repo`); reattempt detection via
    `has_prior_graded_attempt` (`persistence/done-write-linkage`).
@@ -67,6 +68,11 @@ Ordered grade assembly (each step delegates to the owner doc):
   false F (grading reads the transcript, not the frozen graph).
 - **`_compute_topic_score_safe` is soft-fail**: any exception → `topic_score=None`,
   `served_rubric is rubric` (byte-identical), and `topics` is absent (not null).
+- **Structured feedback is additive and topic-only:** successful topic JSON is
+  served as `student_response["feedback"]`; parse/LLM failure or no topic score
+  leaves that key absent. `diagnostic_narrative` always remains the string
+  back-compat surface (flattened structured output on success, legacy output on
+  soft-fail).
 - **Artifact write + artifact-derived mastery are own-failure-domain telemetry** —
   each owns its commit and swallows exceptions; neither can void the served grade.
   `_project_mastery` is skipped when `APOLLO_GRAPH_SIM_LAYER3_ENABLED` is on (the
