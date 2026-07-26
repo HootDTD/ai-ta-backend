@@ -199,11 +199,15 @@ class RequestConfig:
 # pgvector / SurfSense integration settings
 # ---------------------------------------------------------------------------
 
+
 def use_pgvector_retrieval() -> bool:
     """Return True when the new pgvector retrieval path is enabled."""
-    return os.getenv("USE_PGVECTOR_RETRIEVAL", "false").lower() not in {
-        "0", "false", "off", "no"
-    }
+    return os.getenv("USE_PGVECTOR_RETRIEVAL", "false").lower() not in {"0", "false", "off", "no"}
+
+
+def interaction1_enabled() -> bool:
+    """Return True when session-scoped Apollo grounding is enabled."""
+    return os.getenv("INTERACTION1", "false").lower() not in {"0", "false", "off", "no"}
 
 
 def get_embedding_dim() -> int:
@@ -225,6 +229,7 @@ def get_supabase_db_url() -> str:
 # Neo4j (ApolloV3 KG layer)
 # ---------------------------------------------------------------------------
 
+
 def get_neo4j_uri() -> str:
     return os.getenv("NEO4J_URI", "")
 
@@ -243,19 +248,19 @@ def get_neo4j_database() -> str:
 
 def neo4j_configured() -> bool:
     """True when all four NEO4J_* vars are present (used by health checks/tests)."""
-    return all([
-        get_neo4j_uri(),
-        get_neo4j_username(),
-        get_neo4j_password(),
-        get_neo4j_database(),
-    ])
+    return all(
+        [
+            get_neo4j_uri(),
+            get_neo4j_username(),
+            get_neo4j_password(),
+            get_neo4j_database(),
+        ]
+    )
 
 
 def rerankers_enabled() -> bool:
     """Return True when the optional reranking step is active."""
-    return os.getenv("RERANKERS_ENABLED", "false").lower() not in {
-        "0", "false", "off", "no"
-    }
+    return os.getenv("RERANKERS_ENABLED", "false").lower() not in {"0", "false", "off", "no"}
 
 
 def get_reranker_model() -> str:
@@ -272,6 +277,7 @@ __all__ = [
     "RequestConfig",
     # pgvector settings
     "use_pgvector_retrieval",
+    "interaction1_enabled",
     "get_embedding_dim",
     "get_embedding_model",
     "get_supabase_db_url",

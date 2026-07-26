@@ -15,7 +15,7 @@ related:
   - apollo/overseer/_index
   - database/models
   - database/supabase-migrations
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -50,7 +50,7 @@ deliberately absent**, DB-13); `ATTEMPT_RESULTS` + `GRADED_ATTEMPT_RESULTS`
 | `IngestError` | `internal.content_ingest_errors` | stage + class + context per non-terminal error |
 | `IngestPageEvidence` | `internal.ingest_page_evidence` | Per-page OCR evidence the S2 ingestion audit reads |
 | `QuestionOpportunity` | `app.question_opportunities` | One tally/question row per reference node per attempt; unique `(attempt_id, reference_node_id)`; `state` (server_default `asked_waiting`) + `evidence`/`student_declined`/`times_asked` |
-| `TutoringSession` | `app.learning_activities` | Polymorphic `LearningActivity` (`modality='tutoring'`); `search_space_id` synonym→`course_id`; partial-unique active-session index; `messages`/`problem_attempts` relationships |
+| `TutoringSession` | `app.learning_activities` | Polymorphic `LearningActivity` (`modality='tutoring'`); `search_space_id` synonym→`course_id`; nullable `grounding_bundle` JSONB; partial-unique active-session index; `messages`/`problem_attempts` relationships |
 | `TutoringMessage` | `app.tutoring_messages` | Turn log; unique `(learning_activity_id, turn_index)`; `__init__` promotes legacy `metadata` into typed cols |
 | `ProblemAttempt` | `app.problem_attempts` | Per-attempt row; `result` (CHECK); `learner_update_pending` + janitor backoff cols (`learner_update_attempts`/`_failed_at`/`_last_error`/`_next_attempt_at`) |
 | `StudentProgress` | `app.student_progress` | Composite PK `(user_id, course_id)`; `xp_total`/`level`/`last_level_up_at` |
@@ -81,6 +81,9 @@ are consumed cross-domain by overseer, provisioning, and questioning.
   physical `course_id` column (`LearnerState`, `MasteryEvent`, `IngestRun`,
   `DedupDecision`, `GradingRun`, …); the tutoring child tables keep Python
   `session_id` mapped onto the physical `learning_activity_id` column.
+- **`grounding_bundle` is optional and student-safe.** NULL means the pre-feature
+  path; when present it holds packed snippets, diagnostics, build time, and
+  retrieval version for the tutoring session.
 - **`GradingRun` is append-only** (no update path in code). `composite_score`
   and `node_coverage_score` are **RETIRED** legacy columns — always written
   `None`; the live grade of record is `topic_score` (Appendix A #26; the
@@ -91,10 +94,9 @@ are consumed cross-domain by overseer, provisioning, and questioning.
   shadow chain, A7) and `KGNegotiation` (audit table, DB-13/A6) are gone;
   `FINDING_KINDS` survives only as a documentation tuple.
 - **Add a column + migration (recipe, §4.0.14).** A new column on any
-  tutoring/learner table needs a migration in the **active** supabase chain
-  (`database/supabase-migrations`), **never** the frozen legacy chain
-  (`database/legacy-migrations`); add the column here and bump `last_verified` in
-  the same commit.
+  tutoring/learner table normally needs a migration in the active supabase chain.
+  Interaction-1 is the explicit sequential-number exception at frozen `048`;
+  add the ORM column here and bump `last_verified` in the same commit.
 - **DRIFT:** the module docstring (lines 1-10) is STALE — it claims Postgres owns
   only 4 tables and that `apollo_kg_entries` was dropped. That predates DB-07..15;
   the real inventory is the ~17 models above. Ignore the docstring's 4-table claim.

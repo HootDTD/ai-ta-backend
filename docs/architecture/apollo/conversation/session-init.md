@@ -1,6 +1,6 @@
 ---
 doc: apollo/conversation/session-init
-description: hoot_bridge session creation — the two Apollo entry paths (Hoot handoff + standalone) that mint a TEACHING session and first attempt.
+description: hoot_bridge session creation — both Apollo entry paths, first attempt, and optional session grounding.
 owns:
   - apollo/hoot_bridge/session_init.py
   - apollo/hoot_bridge/__init__.py
@@ -12,7 +12,7 @@ related:
   - apollo/overseer/problem-selector
   - apollo/persistence/models
   - apollo/schemas/problem
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -47,7 +47,11 @@ lookup `list_problems_for_concept` in the direct path), then call the shared tai
 The tail flips any active session to `ended`, `flush`es, adds the new
 `TutoringSession` (`phase=TEACHING`, `current_problem_id=problem.database_id`) and
 the first `ProblemAttempt`, `flush`es, captures `attempt.id`, and `commit`s before
-building the FE payload. The Hoot path's only transcript use is concept inference.
+building the FE payload. With `INTERACTION1` enabled, the durable session then
+makes one `retrieve_for_question` call anchored by concept display name +
+student-visible problem text (`top_k=8`, `token_budget=2500`). A separate
+best-effort commit stores packed snippet dicts + diagnostics in
+`grounding_bundle`. The Hoot path's only transcript use is concept inference.
 
 ## Invariants & gotchas
 
@@ -60,8 +64,17 @@ building the FE payload. The Hoot path's only transcript use is concept inferenc
   (`NoMatchingConceptError`, 409) and a supplied `problem_id` against the pool
   (`ProblemNotFoundError`, 404); the Hoot path can raise
   `NoMatchingConceptError`/`PoolExhaustedError` from inference + selection.
-- `_create_session_with_problem` owns the single `commit`; callers must not wrap it
-  in an outer transaction.
+- `_create_session_with_problem` owns the creation `commit`; callers must not wrap
+  it in an outer transaction. Grounding never widens that transaction: its
+  optional persistence commit starts only after the session is durable.
+- Grounding is student-safe: authored solution-role / solution-kind snippets are
+  dropped before persistence. Retrieval, filtering, or persistence failure is
+  logged, rolled back, and leaves `grounding_bundle` NULL without failing creation.
+
+## Env flags
+
+`INTERACTION1` (default off) gates the entire retrieval path; flag-off makes no
+retrieval call and preserves the prior session payload/behavior.
 
 ## Related
 

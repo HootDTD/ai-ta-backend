@@ -521,6 +521,8 @@ class TutoringSession(LearningActivity):
 
     __mapper_args__ = {"polymorphic_identity": "tutoring"}
 
+    grounding_bundle = Column(_JSONType, nullable=True)
+
     # Preserve the established Apollo Python name while mapping the physical
     # target column course_id.
     search_space_id = synonym("course_id")
@@ -658,9 +660,7 @@ Index(
     postgresql_where=(
         (TutoringSession.status == "active") & (TutoringSession.modality == "tutoring")
     ),
-    sqlite_where=(
-        (TutoringSession.status == "active") & (TutoringSession.modality == "tutoring")
-    ),
+    sqlite_where=((TutoringSession.status == "active") & (TutoringSession.modality == "tutoring")),
 )
 
 
@@ -1179,8 +1179,12 @@ class GradingRun(Base):
     version_details = Column(
         _JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict
     )
-    node_ledger = Column(_JSONType, nullable=False, server_default=text("'[]'::jsonb"), default=list)
-    edge_ledger = Column(_JSONType, nullable=False, server_default=text("'[]'::jsonb"), default=list)
+    node_ledger = Column(
+        _JSONType, nullable=False, server_default=text("'[]'::jsonb"), default=list
+    )
+    edge_ledger = Column(
+        _JSONType, nullable=False, server_default=text("'[]'::jsonb"), default=list
+    )
     score_details = Column(
         _JSONType, nullable=False, server_default=text("'{}'::jsonb"), default=dict
     )
