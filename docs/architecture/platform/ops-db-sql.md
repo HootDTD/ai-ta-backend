@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/platform/ops-db-sql
+doc: platform/ops-db-sql
 description: The five one-off SQL operational scripts from the #194 Supabase schema redesign — forward copy, rollback, legacy teardown, duplicate-index drop, and unused-index review (manual DBA, never auto-applied)
 owns:
   - scripts/db/drop_duplicate_indexes.sql
@@ -8,8 +8,8 @@ owns:
   - scripts/db/rollback_reverse_copy.sql
   - scripts/db/unused_index_review.sql
 related:
-  - ai-ta-backend/database/supabase-migrations
-  - ai-ta-backend/platform/ops-db-tooling
+  - database/supabase-migrations
+  - platform/ops-db-tooling
 last_verified: 2026-07-25
 stub: false
 ---

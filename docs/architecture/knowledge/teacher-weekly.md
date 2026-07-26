@@ -1,16 +1,16 @@
 ---
-doc: ai-ta-backend/knowledge/teacher-weekly
+doc: knowledge/teacher-weekly
 description: TeacherWeeklyStorage — teacher uploads over Supabase Storage + a durable leased job queue + the worker loop.
 owns:
   - knowledge/teacher_weekly.py
   - knowledge/__init__.py
 related:
-  - ai-ta-backend/knowledge/teacher-pdf-ingestion
+  - knowledge/teacher-pdf-ingestion
   - indexing/checkpoint-indexer
   - indexing/indexing-service
-  - ai-ta-backend/rag-pipeline/document-visibility
-  - ai-ta-backend/platform/config-weights
-  - ai-ta-backend/platform/vendor-supabase-storage
+  - rag-pipeline/document-visibility
+  - platform/config-weights
+  - platform/vendor-supabase-storage
   - database/models
 last_verified: 2026-07-25
 stub: false

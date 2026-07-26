@@ -1,12 +1,12 @@
 ---
-doc: ai-ta-backend/apollo/conversation/handlers/lifecycle
+doc: apollo/conversation/handlers/lifecycle
 description: apollo/handlers/lifecycle.py — retry / end / get-session snapshot handlers
 owns:
   - apollo/handlers/lifecycle.py
 related:
-  - ai-ta-backend/apollo/conversation/routing/router
-  - ai-ta-backend/apollo/knowledge-graph/store
-  - ai-ta-backend/apollo/overseer/problem-selector
+  - apollo/conversation/routing/router
+  - apollo/knowledge-graph/store
+  - apollo/overseer/problem-selector
 last_verified: 2026-07-25
 stub: false
 ---

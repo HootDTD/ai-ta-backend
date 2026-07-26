@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/apollo/conversation/_index
+doc: apollo/conversation/_index
 description: Router + Apollo teaching-turn end-to-end authority — routing, handlers, agent, parser, questioning, curriculum, session entry
 owns: []
 related: []

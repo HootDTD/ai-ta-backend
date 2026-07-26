@@ -1,12 +1,12 @@
 ---
-doc: ai-ta-backend/rag-pipeline/prompts-answer
+doc: rag-pipeline/prompts-answer
 description: The two answer-generation prompts — the product's never-hallucinate / always-cite contract.
 owns:
   - ai/prompts/tutor.py
   - ai/prompts/score_and_answer_snippet.py
 related:
-  - ai-ta-backend/rag-pipeline/main-ai
-  - ai-ta-backend/rag-pipeline/context-packer
+  - rag-pipeline/main-ai
+  - rag-pipeline/context-packer
 last_verified: 2026-07-25
 stub: false
 ---

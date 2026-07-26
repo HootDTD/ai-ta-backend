@@ -1,11 +1,11 @@
 ---
-doc: ai-ta-backend/reports/ai-use-service
+doc: reports/ai-use-service
 description: reports/ai_use/service.py — the evidence-pack build, PII redaction/excerpting, usage classification, and report generation (pure logic, no persistence)
 owns:
   - reports/ai_use/service.py
 related:
-  - ai-ta-backend/platform/vendor-openai-client
-  - ai-ta-backend/reports/ai-use-routes
+  - platform/vendor-openai-client
+  - reports/ai-use-routes
 last_verified: 2026-07-25
 stub: false
 ---

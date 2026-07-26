@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/platform/ops-eval-scripts
+doc: platform/ops-eval-scripts
 description: The manual eval/smoke/spike scripts (live-LLM, cost money, never on the CI path) — DAG-4 granularity, iterative-scan recall, pgvector smoke, wave-1 live smoke, and the RQ3 edge-extraction spike
 owns:
   - scripts/dag4_granularity_eval.py
@@ -9,8 +9,8 @@ owns:
   - scripts/spikes/rq3_edge_extraction.py
   - scripts/spikes/rq3_results.json
 related:
-  - ai-ta-backend/rag-pipeline/hybrid-search
-  - ai-ta-backend/apollo/provisioning/authored-sets/graph-derivation
+  - rag-pipeline/hybrid-search
+  - apollo/provisioning/authored-sets/graph-derivation
 last_verified: 2026-07-25
 stub: false
 ---

@@ -1,12 +1,12 @@
 ---
-doc: ai-ta-backend/apollo/conversation/handlers/progress
+doc: apollo/conversation/handlers/progress
 description: apollo/handlers/progress.py — the course-scoped XP/level read surface
 owns:
   - apollo/handlers/progress.py
 related:
-  - ai-ta-backend/apollo/conversation/routing/router
-  - ai-ta-backend/apollo/persistence/progress-repo
-  - ai-ta-backend/apollo/overseer/xp
+  - apollo/conversation/routing/router
+  - apollo/persistence/progress-repo
+  - apollo/overseer/xp
 last_verified: 2026-07-25
 stub: false
 ---

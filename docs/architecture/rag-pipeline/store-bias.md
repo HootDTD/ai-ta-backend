@@ -1,14 +1,14 @@
 ---
-doc: ai-ta-backend/rag-pipeline/store-bias
+doc: rag-pipeline/store-bias
 description: Post-fusion additive per-material-kind score bias, applied after reranking.
 owns:
   - retrieval/store_bias.py
 related:
-  - ai-ta-backend/rag-pipeline/retrieve-pipeline
-  - ai-ta-backend/rag-pipeline/hybrid-search
-  - ai-ta-backend/platform/config-weights
-  - ai-ta-backend/platform/http-server
-  - ai-ta-backend/knowledge/teacher-weekly
+  - rag-pipeline/retrieve-pipeline
+  - rag-pipeline/hybrid-search
+  - platform/config-weights
+  - platform/http-server
+  - knowledge/teacher-weekly
 last_verified: 2026-07-25
 stub: false
 ---

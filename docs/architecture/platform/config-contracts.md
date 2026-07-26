@@ -1,13 +1,13 @@
 ---
-doc: ai-ta-backend/platform/config-contracts
+doc: platform/config-contracts
 description: config/contracts.py — the shared QA/solver dataclass contracts (ResearchBundle et al.) that flow through the whole /ask pipeline
 owns:
   - config/contracts.py
 related:
-  - ai-ta-backend/platform/http-server
-  - ai-ta-backend/rag-pipeline/retrieve-pipeline
-  - ai-ta-backend/rag-pipeline/context-packer
-  - ai-ta-backend/rag-pipeline/main-ai
+  - platform/http-server
+  - rag-pipeline/retrieve-pipeline
+  - rag-pipeline/context-packer
+  - rag-pipeline/main-ai
 last_verified: 2026-07-25
 stub: false
 ---

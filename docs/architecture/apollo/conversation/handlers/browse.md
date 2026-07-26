@@ -1,12 +1,12 @@
 ---
-doc: ai-ta-backend/apollo/conversation/handlers/browse
+doc: apollo/conversation/handlers/browse
 description: apollo/handlers/browse.py — handle_list_problems, the read-only student browse surface for one concept
 owns:
   - apollo/handlers/browse.py
 related:
-  - ai-ta-backend/apollo/conversation/routing/router
-  - ai-ta-backend/apollo/overseer/problem-selector
-  - ai-ta-backend/apollo/conversation/curriculum/db
+  - apollo/conversation/routing/router
+  - apollo/overseer/problem-selector
+  - apollo/conversation/curriculum/db
 last_verified: 2026-07-25
 stub: false
 ---

@@ -1,10 +1,10 @@
 ---
-doc: ai-ta-backend/rag-pipeline/streaming
+doc: rag-pipeline/streaming
 description: JsonStringFieldStreamer — incremental extraction of one top-level JSON string field for SSE.
 owns:
   - ai/streaming.py
 related:
-  - ai-ta-backend/rag-pipeline/main-ai
+  - rag-pipeline/main-ai
 last_verified: 2026-07-25
 stub: false
 ---

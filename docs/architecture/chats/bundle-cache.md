@@ -1,14 +1,14 @@
 ---
-doc: ai-ta-backend/chats/bundle-cache
+doc: chats/bundle-cache
 description: Session-scoped retrieval bundle cache backing the NONE/AUGMENT retrieval-mode router.
 owns:
   - chats/bundle_cache.py
 related:
-  - ai-ta-backend/rag-pipeline/router-wiring
-  - ai-ta-backend/rag-pipeline/router-mode
-  - ai-ta-backend/rag-pipeline/document-visibility
-  - ai-ta-backend/chats/service
-  - ai-ta-backend/platform/config-contracts
+  - rag-pipeline/router-wiring
+  - rag-pipeline/router-mode
+  - rag-pipeline/document-visibility
+  - chats/service
+  - platform/config-contracts
   - database/models
 last_verified: 2026-07-25
 stub: false

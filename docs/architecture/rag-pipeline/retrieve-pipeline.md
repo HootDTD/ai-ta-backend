@@ -1,15 +1,15 @@
 ---
-doc: ai-ta-backend/rag-pipeline/retrieve-pipeline
+doc: rag-pipeline/retrieve-pipeline
 description: retrieve_for_question — the single pgvector retrieval entry point (hybrid → rerank → bias → pack).
 owns:
   - retrieval/pipeline.py
   - retrieval/__init__.py
 related:
-  - ai-ta-backend/rag-pipeline/hybrid-search
-  - ai-ta-backend/rag-pipeline/reranker
-  - ai-ta-backend/rag-pipeline/store-bias
-  - ai-ta-backend/rag-pipeline/context-packer
-  - ai-ta-backend/platform/config-contracts
+  - rag-pipeline/hybrid-search
+  - rag-pipeline/reranker
+  - rag-pipeline/store-bias
+  - rag-pipeline/context-packer
+  - platform/config-contracts
 last_verified: 2026-07-25
 stub: false
 ---

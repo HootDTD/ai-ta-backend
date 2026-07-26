@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/rag-pipeline/prompts-keyword
+doc: rag-pipeline/prompts-keyword
 description: The keyword-stage prompt catalog plus the prompts package barrel.
 owns:
   - ai/prompts/concept_extraction.py
@@ -10,9 +10,9 @@ owns:
   - ai/prompts/synonyms.py
   - ai/prompts/__init__.py
 related:
-  - ai-ta-backend/rag-pipeline/main-ai
-  - ai-ta-backend/rag-pipeline/prompts-parse-relevance
-  - ai-ta-backend/rag-pipeline/prompts-answer
+  - rag-pipeline/main-ai
+  - rag-pipeline/prompts-parse-relevance
+  - rag-pipeline/prompts-answer
 last_verified: 2026-07-25
 stub: false
 ---

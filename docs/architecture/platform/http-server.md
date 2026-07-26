@@ -1,21 +1,21 @@
 ---
-doc: ai-ta-backend/platform/http-server
+doc: platform/http-server
 description: server.py — the FastAPI composition root and Hoot QA HTTP surface (/ask, teacher, invite-links), plus the teacher retrieval-weights tuning seam
 owns:
   - server.py
 related:
-  - ai-ta-backend/platform/auth
-  - ai-ta-backend/platform/config-contracts
-  - ai-ta-backend/platform/config-weights
-  - ai-ta-backend/platform/workspaces
-  - ai-ta-backend/rag-pipeline/retrieve-pipeline
-  - ai-ta-backend/rag-pipeline/main-ai
-  - ai-ta-backend/rag-pipeline/store-bias
-  - ai-ta-backend/rag-pipeline/citations-formatter
-  - ai-ta-backend/apollo/conversation/routing/router
-  - ai-ta-backend/reports/ai-use-routes
-  - ai-ta-backend/chats/routes
-  - ai-ta-backend/knowledge/teacher-weekly
+  - platform/auth
+  - platform/config-contracts
+  - platform/config-weights
+  - platform/workspaces
+  - rag-pipeline/retrieve-pipeline
+  - rag-pipeline/main-ai
+  - rag-pipeline/store-bias
+  - rag-pipeline/citations-formatter
+  - apollo/conversation/routing/router
+  - reports/ai-use-routes
+  - chats/routes
+  - knowledge/teacher-weekly
 last_verified: 2026-07-25
 stub: false
 ---

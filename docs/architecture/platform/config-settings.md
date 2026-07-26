@@ -1,12 +1,12 @@
 ---
-doc: ai-ta-backend/platform/config-settings
+doc: platform/config-settings
 description: config/settings.py — per-request runtime configuration (RequestConfig) plus the env-flag getters (embedding, Neo4j, reranker, subject) used across the backend
 owns:
   - config/settings.py
   - config/__init__.py
 related:
-  - ai-ta-backend/platform/http-server
-  - ai-ta-backend/rag-pipeline/hybrid-search
+  - platform/http-server
+  - rag-pipeline/hybrid-search
 last_verified: 2026-07-25
 stub: false
 ---

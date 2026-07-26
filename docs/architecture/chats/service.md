@@ -1,14 +1,14 @@
 ---
-doc: ai-ta-backend/chats/service
+doc: chats/service
 description: Chat session/turn CRUD primitives + rolling memory summarization (async).
 owns:
   - chats/service.py
   - chats/__init__.py
 related:
-  - ai-ta-backend/chats/routes
-  - ai-ta-backend/chats/bundle-cache
-  - ai-ta-backend/rag-pipeline/router-wiring
-  - ai-ta-backend/reports/ai-use-routes
+  - chats/routes
+  - chats/bundle-cache
+  - rag-pipeline/router-wiring
+  - reports/ai-use-routes
   - database/models
 last_verified: 2026-07-25
 stub: false

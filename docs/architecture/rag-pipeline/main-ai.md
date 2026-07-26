@@ -1,20 +1,20 @@
 ---
-doc: ai-ta-backend/rag-pipeline/main-ai
+doc: rag-pipeline/main-ai
 description: The OpenAI chat-completion brain of /ask — parse, keyword, per-snippet scoring, answer, citation formatting.
 owns:
   - ai/main_ai.py
   - ai/__init__.py
 related:
-  - ai-ta-backend/rag-pipeline/prompts-keyword
-  - ai-ta-backend/rag-pipeline/prompts-parse-relevance
-  - ai-ta-backend/rag-pipeline/prompts-answer
-  - ai-ta-backend/rag-pipeline/context-packer
-  - ai-ta-backend/rag-pipeline/citations-formatter
-  - ai-ta-backend/rag-pipeline/streaming
-  - ai-ta-backend/rag-pipeline/solver
-  - ai-ta-backend/rag-pipeline/orchestrator
-  - ai-ta-backend/platform/config-model-pins
-  - ai-ta-backend/platform/config-contracts
+  - rag-pipeline/prompts-keyword
+  - rag-pipeline/prompts-parse-relevance
+  - rag-pipeline/prompts-answer
+  - rag-pipeline/context-packer
+  - rag-pipeline/citations-formatter
+  - rag-pipeline/streaming
+  - rag-pipeline/solver
+  - rag-pipeline/orchestrator
+  - platform/config-model-pins
+  - platform/config-contracts
 last_verified: 2026-07-25
 stub: false
 ---

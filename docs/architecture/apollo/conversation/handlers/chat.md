@@ -1,19 +1,19 @@
 ---
-doc: ai-ta-backend/apollo/conversation/handlers/chat
+doc: apollo/conversation/handlers/chat
 description: apollo/handlers/chat.py — handle_chat, the full V3 teaching turn (intent gate, parse, KG write, questioning)
 owns:
   - apollo/handlers/chat.py
   - apollo/handlers/__init__.py
 related:
-  - ai-ta-backend/apollo/conversation/handlers/intent
-  - ai-ta-backend/apollo/conversation/handlers/done
-  - ai-ta-backend/apollo/conversation/parser/parser-llm
-  - ai-ta-backend/apollo/conversation/parser/graph-context
-  - ai-ta-backend/apollo/conversation/questioning/controller
-  - ai-ta-backend/apollo/conversation/curriculum/db
-  - ai-ta-backend/apollo/knowledge-graph/store
-  - ai-ta-backend/apollo/overseer/problem-selector
-  - ai-ta-backend/apollo/persistence/neo4j-client
+  - apollo/conversation/handlers/intent
+  - apollo/conversation/handlers/done
+  - apollo/conversation/parser/parser-llm
+  - apollo/conversation/parser/graph-context
+  - apollo/conversation/questioning/controller
+  - apollo/conversation/curriculum/db
+  - apollo/knowledge-graph/store
+  - apollo/overseer/problem-selector
+  - apollo/persistence/neo4j-client
 last_verified: 2026-07-25
 stub: false
 ---

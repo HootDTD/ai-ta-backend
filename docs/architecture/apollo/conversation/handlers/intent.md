@@ -1,11 +1,11 @@
 ---
-doc: ai-ta-backend/apollo/conversation/handlers/intent
+doc: apollo/conversation/handlers/intent
 description: apollo/handlers/intent.py — the chat intent classifier + confirmation gate that routes "I'm done" to grading
 owns:
   - apollo/handlers/intent.py
 related:
-  - ai-ta-backend/apollo/conversation/handlers/chat
-  - ai-ta-backend/apollo/conversation/agent/llm-client
+  - apollo/conversation/handlers/chat
+  - apollo/conversation/agent/llm-client
 last_verified: 2026-07-25
 stub: false
 ---

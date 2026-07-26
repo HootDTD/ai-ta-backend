@@ -1,11 +1,11 @@
 ---
-doc: ai-ta-backend/rag-pipeline/orchestrator
+doc: rag-pipeline/orchestrator
 description: Legacy/eval sequential state machine — imported by server.py but never instantiated on the live path.
 owns:
   - ai/orchestrator.py
 related:
-  - ai-ta-backend/rag-pipeline/main-ai
-  - ai-ta-backend/rag-pipeline/prompts-parse-relevance
+  - rag-pipeline/main-ai
+  - rag-pipeline/prompts-parse-relevance
 last_verified: 2026-07-25
 stub: false
 ---

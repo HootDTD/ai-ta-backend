@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/apollo/provisioning/problem-generation/_index
+doc: apollo/provisioning/problem-generation/_index
 description: Router for the problem_generation subpackage — default-OFF, teacher-initiated generation of held tier-1 problem variants
 owns:
   - apollo/provisioning/problem_generation/__init__.py

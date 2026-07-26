@@ -1,16 +1,16 @@
 ---
-doc: ai-ta-backend/rag-pipeline/router-wiring
+doc: rag-pipeline/router-wiring
 description: Server glue binding the retrieval-mode router to the /ask pipeline and the session bundle cache.
 owns:
   - ai/router/wiring.py
   - ai/router/__init__.py
 related:
-  - ai-ta-backend/rag-pipeline/router-mode
-  - ai-ta-backend/rag-pipeline/router-llm
-  - ai-ta-backend/rag-pipeline/retrieve-pipeline
-  - ai-ta-backend/chats/bundle-cache
-  - ai-ta-backend/chats/service
-  - ai-ta-backend/platform/config-contracts
+  - rag-pipeline/router-mode
+  - rag-pipeline/router-llm
+  - rag-pipeline/retrieve-pipeline
+  - chats/bundle-cache
+  - chats/service
+  - platform/config-contracts
   - database/models
 last_verified: 2026-07-25
 stub: false

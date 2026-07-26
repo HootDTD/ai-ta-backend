@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/platform/ops-seed-scripts
+doc: platform/ops-seed-scripts
 description: The four one-shot Apollo/data seeder CLIs (concept registry, learner-model Layer-1, :Canon projection, premade concepts) run manually via python -m scripts.<name>
 owns:
   - scripts/seed_apollo_concept_registry.py
@@ -7,10 +7,10 @@ owns:
   - scripts/seed_canon_projection.py
   - scripts/seed_premade_concepts.py
 related:
-  - ai-ta-backend/apollo/persistence/models
-  - ai-ta-backend/apollo/knowledge-graph/canon-projection
-  - ai-ta-backend/apollo/provisioning/concept-match
-  - ai-ta-backend/database/models
+  - apollo/persistence/models
+  - apollo/knowledge-graph/canon-projection
+  - apollo/provisioning/concept-match
+  - database/models
 last_verified: 2026-07-25
 stub: false
 ---

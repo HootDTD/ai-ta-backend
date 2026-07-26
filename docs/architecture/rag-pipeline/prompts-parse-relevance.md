@@ -1,13 +1,13 @@
 ---
-doc: ai-ta-backend/rag-pipeline/prompts-parse-relevance
+doc: rag-pipeline/prompts-parse-relevance
 description: The two query-understanding classification prompts (parse + relevance guard).
 owns:
   - ai/prompts/parse_question.py
   - ai/prompts/relevance_guard.py
 related:
-  - ai-ta-backend/rag-pipeline/main-ai
-  - ai-ta-backend/rag-pipeline/orchestrator
-  - ai-ta-backend/rag-pipeline/prompts-answer
+  - rag-pipeline/main-ai
+  - rag-pipeline/orchestrator
+  - rag-pipeline/prompts-answer
 last_verified: 2026-07-25
 stub: false
 ---

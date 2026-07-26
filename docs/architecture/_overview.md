@@ -1,176 +1,31 @@
 ---
 doc: ai-ta-backend/_overview
-description: App bootstrap, HTTP surface, auth, config, vendor clients, and ops entrypoints for the Hoot FastAPI backend
-owns:
-  - server.py
-  - auth.py
-  - teacher_upload_worker.py
-  - config/**
-  - runtime/**
-  - vendors/**
-  - scripts/**
-  - citations/**
-  - workspaces/**
-  - Procfile
-  - pytest.ini
-  - .coveragerc
-  - requirements.txt
-  - .pre-commit-config.yaml
-  - .github/**
-related:
-  - shared/conventions
-  - shared/security
-  - shared/supabase
-last_verified: 2026-07-23
+description: Thin root router for the ai-ta-backend architecture tree — routes to the nine domain indexes.
+owns: []
+related: []
+last_verified: 2026-07-25
 stub: false
 ---
 
-# ai-ta-backend overview
+# ai-ta-backend architecture — root router
 
-Hoot is a Python/FastAPI RAG teaching assistant. `server.py` owns the FastAPI app, top-level routes, and the QA request pipeline glue. Everything else in this doc's scope is supporting infrastructure: auth, per-request config, course-workspace resolution, vendor REST clients, citation formatting, and ops scripts.
+This is the top of the backend durable-doc tree. It only routes. Reading protocol:
+`shared-architecture/README.md` → this file → a domain `_index.md` → 1-3 leaves
+(≤4 hops, ≤~500 doc-lines). Resolve any source file to its owning leaf via
+`docs/index.json`. Never read source to understand the system — only to change it.
 
-**Doc tree:** sibling docs own the deep subsystems — `rag-pipeline.md` (ai/, retrieval/), `indexing.md` (indexing/, ocr/), `apollo.md` (apollo/), `domain-data.md` (database/, chats/, knowledge/, reports/). Do not look here for those.
+| Domain | Index | Covers |
+|---|---|---|
+| apollo | [apollo/_index](apollo/_index.md) | teach-a-confused-AI mode: teaching loop, KG, grading, provisioning, persistence (365 files, two-tier index) |
+| rag-pipeline | [rag-pipeline/_index](rag-pipeline/_index.md) | the /ask QA pipeline — `ai/` + `retrieval/` + `citations/` |
+| chats | [chats/_index](chats/_index.md) | chat session/turn persistence, rolling memory, bundle cache |
+| knowledge | [knowledge/_index](knowledge/_index.md) | teacher weekly upload + PDF ingestion |
+| platform | [platform/_index](platform/_index.md) | server, auth, config, vendors, workspaces, ops scripts, CI |
+| reports | [reports/_index](reports/_index.md) | the AI-use report feature |
+| indexing | [indexing/_index](indexing/_index.md) | the PDF→pgvector embedding pipeline + OCR layer |
+| database | [database/_index](database/_index.md) | core ORM, RLS, migrations (legacy frozen chain + active supabase chain) |
+| campaign | [campaign/_index](campaign/_index.md) | the offline Apollo grading-campaign harness |
 
-## Module map and file landmarks
-
-| Path | Role |
-|---|---|
-| `server.py` | FastAPI app, CORS, router mounting, and all `/ask`, `/teacher/*`, `/invite-links*`, `/classes` routes. |
-| `auth.py` | Supabase JWT validation (REST call to `auth/v1/user`), in-memory token cache, course-membership checks, student auto-enroll. |
-| `teacher_upload_worker.py` | Procfile `worker` entrypoint: `TeacherWeeklyStorage().run_upload_worker_loop()` — drains the queued teacher-upload ingestion jobs. |
-| `Procfile` | `web: uvicorn server:app` + `worker: python -m teacher_upload_worker` (Railway deploys the API and upload-ingestion worker). |
-| `scripts/db/check-migration-drift.mjs` | CI/local guard that verifies the frozen numbered migration checksums and permits only timestamped SQL in the active Supabase chain. |
-| `scripts/db/reset-local.mjs` | Cross-platform harness that requires Supabase CLI 2.109.0, starts the local Docker stack when needed, and runs `supabase db reset --local`; it has no remote mode. |
-| `scripts/db/build-legacy-snapshot-draft.mjs` | Deterministically reconstructs DB-03's non-authoritative `legacy_public_snapshot` draft from migration 001 DDL plus frozen SQL 004-047; excludes the data-only Python jobs. |
-| `scripts/db/compare-schema-dump.mjs` | Normalizes two schema-only SQL dumps by removing comments/session settings, canonicalizing whitespace, sorting statements, and reporting statement-level differences. |
-| `.github/workflows/ci.yml` database job | Blocking clean-reset gate for the active Supabase migration chain; `ci-passed` includes its result. |
-
-### config/
-| File | Role |
-|---|---|
-| `config/settings.py` | `RequestConfig` (per-request subject/citation-label/runtime-dir, replaces legacy module globals), subject-name precedence (`default < meta < env < cli/server`), `get_runtime_dir()`, pgvector flags (`use_pgvector_retrieval()`, `get_embedding_dim()` default 3072, `get_embedding_model()` default `text-embedding-3-large`), `get_supabase_db_url()`, Neo4j env getters + `neo4j_configured()`, reranker flags. |
-| `config/weights.py` | Retrieval store-kind bias weights. `WEIGHT_KINDS = (textbook, slides, notes, homework, exams, other)`, env prefix `RETRIEVAL_STORE_WEIGHT_*`, defaults (textbook 0.12 … other 0.03), clamp to [0.0, 1.0], `get_env_weights()` / `normalize_weights()`. |
-| `config/contracts.py` | Dataclass contracts for the QA pipeline: `ParsedTask`, `BundleSnippet`, `ResearchBundle`, `ResearchMetadata`. |
-| `config/models.py` | Pinned platform model config: `MAIN_MODEL` (`gpt-5.1`) + `MAIN_REASONING_EFFORT` (`low`) module constants. The 2026-07 flag reset removed the former `MAIN_MODEL`/`MAIN_REASONING_EFFORT` env vars — the solver model is fixed in code, so a model change is a code change + deploy. Per-surface overrides layered on top (`APOLLO_MODEL`, `APOLLO_CHEAP_MODEL`, `VISION_ANSWER_MODEL`, `APOLLO_UNIFIED_QUESTION_MODEL`, `REPORTS_MODEL`) still resolve from the environment. |
-
-### vendors/
-| File | Role |
-|---|---|
-| `vendors/supabase_storage.py` | `SupabaseStorageClient.upload_bytes/download_bytes/ensure_bucket` against Storage REST; prefers `SUPABASE_SERVICE_ROLE_KEY`, falls back to API/anon key. `ensure_bucket` POSTs `/storage/v1/bucket` (private by default) and tolerates already-exists (400/409 duplicate) — new environments no longer need manual bucket creation. |
-| `vendors/openai_client.py` | OpenAI Chat Completions wrapper used by AI-use reports: `generate_ai_use_markdown(evidence_pack, style, length)` with token budgeting, retry/backoff, `REPORTS_MODEL` (default `gpt-4o-mini`), and a fake mode when `TEST_FAKE_OPENAI=1` or no API key. |
-
-### OCR/env surface
-
-- `APOLLO_UNIFIED_QUESTION_DEBUG_LOG` enables a default-off staging diagnostic containing bounded
-  rejected/redrafted Apollo question text; production must keep it off because drafts can contain
-  private rubric vocabulary. The behavior and logging boundary are documented in `apollo.md`.
-- `OCR_PROVIDER=openai` selects the OpenAI vision OCR provider via `ocr/factory.py` for authored-set indexing paths that pass a provider into `TeacherPDFIngestor`; `OCR_PROVIDER=mathpix` keeps the existing Mathpix factory option.
-- `APOLLO_OCR_MODEL` optionally overrides the OpenAI vision OCR model used by `OpenAIVisionOCRProvider.from_env()`; the code default is `gpt-4o`.
-- `APOLLO_AUTHORED_OCR_CONF_THRESHOLD` is the authored-set low-confidence OCR threshold used by `run_authored_set_provisioning` when deciding whether an extracted reference needs generated-reference comparison; the code default is `0.6`.
-
-### Other scoped dirs
-| Path | Role |
-|---|---|
-| `workspaces/manager.py` | `ClassWorkspace` / `WorkspaceMaterial` dataclasses, `WorkspaceManager` (TTL cache, `CLASS_WORKSPACE_CACHE_TTL` default 300s), `StaticWorkspaceRepository` legacy fallback, `build_workspace_manager()` factory. |
-| `workspaces/db.py` | `DBWorkspaceRepository` resolves course identifiers against `app.courses` and loads ready `app.documents`; current week and retrieval weights come directly from the merged course row. |
-| `citations/formatter.py` | `build_citation_info()` + `format_citations()`: maps snippets to labels like `[Notes, Week 3, p. 12]`, dedupes by `(doc_type, file, page)`, marks `verified=True` only for Textbook sources. |
-| `scripts/` | One-shot tools: `migrate_indexes_to_supabase.py` (legacy FAISS/SQLite → pgvector), `seed_apollo_concept_registry.py` (filesystem concept registry → `apollo_*` tables, idempotent), `seed_apollo_learner_model.py` (course-scoped, idempotent Apollo Layer-1 seeder — writes migration-026 `apollo_kg_entities`/`apollo_entity_prereqs` rows + annotates `apollo_concept_problems.payload` with reference-node entity links + declared solution paths; its optional default scope still resolves from legacy `aita_search_spaces`, which owns the Apollo foreign keys), `test_search.py` (pgvector hybrid-search smoke test). Not imported by the app. |
-| `runtime/` | Runtime artifact dir (location overridable via `RUNTIME_DIR`). Holds `uploads/` (written per request by `/ask` attachments), `debug/`, `teacher_weekly/` worker scratch. Not code. |
-
-## Public interfaces
-
-### Routes defined in server.py
-Auth legend: **T** = teacher membership required, **M** = any course membership (auto-enrolls students), **A** = authenticated only, **P** = public.
-
-| Method | Path | Auth | Notes |
-|---|---|---|---|
-| GET | `/healthz` | P | `{"status": "ok"}` |
-| POST | `/ask` | M | Full QA pipeline, sync `def`, returns `{answer, logs, citations}` |
-| POST | `/ask/stream` | M | Same pipeline as SSE: `status` / `answer` / `error` events |
-| GET / POST | `/classes` | P / A | List all search spaces / create class (creator becomes teacher) |
-| GET | `/my-classes` | A | Classes the caller is enrolled in |
-| GET | `/teacher/weeks` | T | Weekly notes/slides upload state per course |
-| POST | `/teacher/weeks/current` | T | Set current week (1..`TEACHER_TOTAL_WEEKS`, default 16) |
-| GET / POST | `/teacher/retrieval-weights` | T | Per-course store-kind weight overrides (bounds 0..1) |
-| POST | `/teacher/upload` | T | Multipart PDF, 202 — enqueues for the worker process |
-| POST | `/teacher/uploads/{upload_id}/retry` | T | 202, re-enqueue a failed upload |
-| POST / GET | `/invite-links` | T | Create (deactivates prior link for course+role) / list |
-| DELETE | `/invite-links/{link_id}` | T | Revoke (sets `is_active=False`) |
-| GET | `/invite-links/resolve/{code}` | P | Code → `{search_space_id, course_name, role}` |
-| POST | `/invite-links/redeem/{code}` | A | Join course; student→teacher upgrade supported; idempotent |
-
-Mounted routers (owned by sibling docs): `apollo.api.router` (prefix `/apollo`), `reports.ai_use.routes.router` and `chats.routes.router` (both unprefixed, mounted defensively inside try/except so a broken import doesn't kill boot).
-
-Apollo's mounted router now also includes the teacher-gated WU-AAS authored-set
-sub-router: `POST /apollo/authored-sets`, `GET /apollo/authored-sets`,
-`GET /apollo/authored-sets/{set_id}`, and
-`POST /apollo/authored-sets/{set_id}/problems/{problem_id}/approve`. These routes
-live in `apollo/provisioning/authored_sets/api.py` and are documented in
-`apollo.md`; they use `require_user`/`require_course_member`, multipart PDF
-uploads, and FastAPI `BackgroundTasks`.
-
-### auth.py exports
-- `AuthContext` — frozen dataclass `(user_id: str, access_token: str)`.
-- `resolve_auth_context(request: Request) -> AuthContext` — extracts the Bearer token, checks an in-memory SHA-256-keyed cache (TTL `AUTH_TOKEN_CACHE_TTL_SECONDS`, default 60s), otherwise validates via `GET {SUPABASE_URL}/auth/v1/user`. Raises 401.
-- `has_membership(db_session, *, user_id, search_space_id, role=None) -> bool` — row check against `CourseMembership`.
-- `auto_enroll_student_membership(db_session, *, user_id, search_space_id) -> bool` — inserts a student row when enabled; `IntegrityError` (already enrolled) counts as success.
-- `can_auto_enroll_student(search_space_id) -> bool` — gated by `AUTO_ENROLL_STUDENT_MEMBERSHIP` (default on) and optional `AUTO_ENROLL_SEARCH_SPACE_IDS` allowlist.
-- `validate_required_env() -> None` — raises `RuntimeError` if `SUPABASE_URL`, `SUPABASE_API_KEY`/`SUPABASE_ANON_KEY`, `SUPABASE_DB_URL`, or `OPENAI_API_KEY` is missing. Called from the FastAPI startup event.
-
-## Main data flows
-
-### Boot sequence (web process)
-1. Railway/Procfile runs `uvicorn server:app`. Importing `server.py` loads `.env` (python-dotenv, with a hand-rolled fallback parser) and configures root logging.
-2. `app = FastAPI(...)` is created at module import; the Apollo router and its exception handlers are registered immediately.
-3. The `startup` event runs `validate_required_env()` — the process fails fast on missing Supabase/OpenAI env.
-4. `CORSMiddleware` is added with origins from `CORS_ALLOW_ORIGINS` (comma-separated, default `*`). This is the only middleware; auth is per-endpoint, not middleware.
-5. Reports and chats routers are mounted inside try/except (optional at boot).
-6. `TeacherWeeklyStorage` and the `WorkspaceManager` are lazy module-level singletons created on first use, not at boot.
-
-### /ask request lifecycle
-1. Validate: non-empty `question` OR attachments; `chat_id` required; `doc_sets` overrides are rejected with 400 (deprecated). (The Q&A surface is always on — the former "Apollo-only deployment" kill switch was removed in the 2026-07 flag reset.)
-2. `_require_course_membership()` → `resolve_auth_context()` (Bearer token → Supabase) then membership check on `search_space_id`; for student-level access, missing membership triggers auto-enroll. 403 otherwise.
-3. Workspace resolution: `WorkspaceManager.get(str(search_space_id))` → `DBWorkspaceRepository` (404 `WorkspaceNotFound`, 500 on config errors). The workspace supplies `class_name`, `subject_name`, materials, and weight overrides.
-4. Attachments (base64 data URLs) are decoded to `runtime/uploads/`; images go through `vision_transcribe()` + `extract_keywords()` and the result is appended to the effective question.
-5. Chat memory: load/create `app.chat_sessions`, build memory context from `memory_summary` + recent `app.chat_messages`, and persist the user message (all via `run_async` onto the shared background event loop). Every repository query includes the owning `user_id` and course-scoped paths also include `course_id`, even while the backend uses its service-role engine. Memory context is prepended to the question. The per-turn workspace refresh MERGES into `session.metadata_` — never replaces it — because metadata also carries the orchestrator's `bundle_cache` fingerprint.
-5a. Retrieval-mode decision (always on): `_prepare_router_context_sync` classifies the raw question NONE/AUGMENT/FRESH using the session bundle cache + a gpt-4o-mini call (see `rag-pipeline.md` step 3a). `None`/FRESH = legacy path.
-6. Weight overrides merge, lowest to highest precedence: env defaults → workspace overrides → per-material overrides → teacher-set weights from `TeacherWeeklyStorage`.
-7. Retrieval (`_retrieve_bundle_with_router` → cache reuse, top-up merge, or legacy `_ask_pgvector` → `retrieval.pipeline.retrieve_for_question`, building a `ResearchBundle`) and `parse_question` run in parallel on a 2-worker `ThreadPoolExecutor`; retrieval stdout is captured via `redirect_stdout`.
-8. `solve_with_bundle()` → `format_answer()` → `_structured_citations_from_bundle()` (only markers the LLM actually used).
-9. Assistant message + citations persisted (the assistant message also writes write-only chat keywords — `bundle.found_terms` via `_keywords_from_bundle` — to `app.chat_messages.keywords text[]` on both happy paths; the streaming error path and the user message write `[]`. See `rag-pipeline.md` step 14 + `domain-data.md`); memory summary refreshed. When routed, `_persist_router_outcome_sync` saves snippets to `internal.chat_session_snippets` and writes an `internal.chat_routing_decisions` telemetry row (non-fatal on failure). Response: `{answer, logs, citations}` where `logs` is the captured `[Main AI`/`[Indexer AI` wire-log lines.
-
-`/ask/stream` is the same pipeline as an `async def` SSE generator: blocking stages are pushed to `run_in_executor`, with `status` events (`vision`, `retrieving`, `analyzing`, `formatting`) before a final `answer` or `error` event.
-
-### Teacher upload flow (web + worker)
-1. `POST /teacher/upload` (teacher-gated, PDF-only) streams the file to a temp dir and calls `TeacherWeeklyStorage.enqueue_upload_by_search_space(...)` — returns 202 immediately.
-2. The separate `worker` dyno (`teacher_upload_worker.py`) runs `run_upload_worker_loop()`, which performs OCR/indexing for queued uploads (details in `indexing.md` / `domain-data.md`).
-3. `POST /teacher/uploads/{id}/retry` re-enqueues individual failed uploads (the former `reset_pending.py` bulk-reset script — an unimported one-off — was removed as junk; 2026-07-16 cleanup).
-
-### Teacher-authored provisioning
-The dormant upload-triggered Apollo worker was removed in cleanup T-F. Teacher
-uploads now finish after indexing without creating an undrained queue row. The
-teacher UI's authored-set and problem-generation APIs remain synchronous and
-continue to write their `apollo_ingest_runs` observability records.
-
-## Key dependencies
-
-From `requirements.txt` (unpinned except floors): `fastapi` + `uvicorn[standard]` + `gunicorn` (serving), `pydantic>=2`, `SQLAlchemy[asyncio]>=2` + `asyncpg` + `pgvector` (Supabase Postgres), `openai` + `tiktoken` (LLM/embeddings), `pymupdf` (PDF extraction), `weasyprint`/`Markdown`/`pygments` (PDF report rendering — weasyprint needs native pango/cairo, see CI setup action), `neo4j>=5.27,<6` (Apollo KG), `sympy`, `numpy`, `aiosqlite`, `python-multipart` (optional at runtime — upload routes degrade to 503 without it), `requests`, `python-dotenv`. Test-only deps live in `requirements-test.txt`.
-
-## Non-obvious conventions
-
-- **Sync endpoints by design.** `/ask` is deliberately a sync `def` (FastAPI auto-threads it); a code comment forbids converting to `async def` unless the whole pipeline goes async. Sync code reaches async SQLAlchemy via `database.session.run_async()`, which runs coroutines on a shared background event loop so asyncpg connections stay alive across requests.
-- **Auth is per-endpoint, not middleware.** Every protected route explicitly calls `_resolve_request_auth` / `_require_course_membership`. There is no auth middleware to hook.
-- **`search_space_id` is the canonical course key.** The `class` field on `AskRequest` is deprecated/ignored; `doc_sets` overrides are hard-rejected.
-- **Wire logs ride the response.** Pipeline stages `print()` lines prefixed `[Main AI`/`[Indexer AI`; `/ask` captures stdout and returns those lines in `logs`. Gated by `RETRIEVAL_WIRE_LOG`.
-- **Error detail is opt-in.** 500 bodies are generic unless `DEBUG_HTTP_ERRORS=1`.
-- **`python server.py` is stale**: the `__main__` block runs `uvicorn.run("backend.server:app", ...)`, a leftover module path. Use `uvicorn server:app` (what the Procfile does).
-- **Auto-enroll**: first student access to a course silently creates a membership (`AUTO_ENROLL_STUDENT_MEMBERSHIP=1` default; restrict with `AUTO_ENROLL_SEARCH_SPACE_IDS`).
-- **Pytest** (`pytest.ini`): `asyncio_mode = auto`, `--strict-markers`, markers `unit` / `integration` / `e2e` / `slow` / `llm`.
-- **Coverage** (`.coveragerc`): `concurrency = thread, greenlet` is load-bearing — SQLAlchemy's asyncio bridge runs DB work through greenlets, and without greenlet tracing coverage silently drops every line after the first `await db.execute(...)` in a coroutine (which starved the diff-cover patch gate). `thread` must stay listed alongside it or TestClient's portal thread goes untraced.
-
-### CI shape (one paragraph)
-`.github/workflows/ci.yml` runs on PRs/pushes to `main`, `staging`, `ApolloV3` with five jobs: `quality` (ruff on changed files only — blocking for *added* files, advisory for *modified*, because the legacy tree has ~360 ruff errors), `typecheck` (mypy, advisory until Phase 3), `unit` (fast `-m "not integration"`, no Docker), `integration` (full suite on pgvector + Neo4j Testcontainers, plus a diff-cover ≥80% patch-coverage gate that is skipped on promotion PRs into ApolloV3), and `ci-passed` — the single required branch-protection status that asserts quality+unit+integration all passed. `nightly.yml` runs the full suite (incl. e2e/slow) on a 3.11/3.12 matrix with a ratcheted project coverage floor (currently 20%) and an advisory `pip-audit`. Both reuse the composite `.github/actions/setup` action (SHA-pinned actions, pip cache, weasyprint native libs). `.pre-commit-config.yaml` mirrors the CI ruff config (ruff + ruff-format on staged files) plus hygiene hooks (trailing whitespace, large files, private-key detection). `dependabot.yml` is also present.
-
-## Product context
-
-Hoot serves two roles per course ("search space"): **teachers** upload weekly notes/slides, tune retrieval weights per material kind, and manage invite links; **students** join via invite codes (or auto-enroll) and ask questions in chat sessions whose answers are grounded in course materials with mandatory citations. The web process answers questions; the worker process ingests teacher uploads asynchronously so uploads never block the UI. Deployment target is Railway (prod deploys `main`, staging deploys `staging`), Procfile-driven.
+Cross-repo durable docs (conventions, security, supabase, data-flow, branching,
+admin-setup, product-context) live one level up in
+[`shared-architecture/`](../shared-architecture/README.md).

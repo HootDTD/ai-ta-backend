@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/knowledge/_index
+doc: knowledge/_index
 description: Router for teacher course-material ingestion — the pipeline that produces the documents retrieval reads.
 owns: []
 related: []

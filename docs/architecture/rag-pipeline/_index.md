@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/rag-pipeline/_index
+doc: rag-pipeline/_index
 description: Router for the Hoot /ask QA answer pipeline — retrieval, answer generation, prompts, retrieval-mode router.
 owns: []
 related: []

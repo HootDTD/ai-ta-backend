@@ -1,12 +1,12 @@
 ---
-doc: ai-ta-backend/reports/ai-use-models
+doc: reports/ai-use-models
 description: reports/ai_use/models.py — the AIUsageReport SQLAlchemy ORM model (app.ai_usage_reports) plus its typed async, owner-scoped repository
 owns:
   - reports/ai_use/models.py
 related:
-  - ai-ta-backend/database/models
-  - ai-ta-backend/database/supabase-migrations
-  - ai-ta-backend/reports/ai-use-routes
+  - database/models
+  - database/supabase-migrations
+  - reports/ai-use-routes
 last_verified: 2026-07-25
 stub: false
 ---

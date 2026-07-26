@@ -1,12 +1,12 @@
 ---
-doc: ai-ta-backend/rag-pipeline/router-mode
+doc: rag-pipeline/router-mode
 description: decide_retrieval_mode — the always-on retrieval-mode classifier (NONE/AUGMENT/FRESH).
 owns:
   - ai/router/mode.py
 related:
-  - ai-ta-backend/rag-pipeline/router-wiring
-  - ai-ta-backend/rag-pipeline/router-llm
-  - ai-ta-backend/chats/bundle-cache
+  - rag-pipeline/router-wiring
+  - rag-pipeline/router-llm
+  - chats/bundle-cache
 last_verified: 2026-07-25
 stub: false
 ---

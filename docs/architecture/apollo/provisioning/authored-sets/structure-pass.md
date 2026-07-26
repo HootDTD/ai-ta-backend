@@ -1,13 +1,13 @@
 ---
-doc: ai-ta-backend/apollo/provisioning/authored-sets/structure-pass
+doc: apollo/provisioning/authored-sets/structure-pass
 description: One structured-output pass that segments a document into question/answer/other units and deterministically pairs labels
 owns:
   - apollo/provisioning/authored_sets/structure_pass.py
 related:
-  - ai-ta-backend/apollo/provisioning/authored-sets/_index
-  - ai-ta-backend/apollo/provisioning/authored-sets/orchestrator
-  - ai-ta-backend/apollo/provisioning/authored-sets/paired-retrieval
-  - ai-ta-backend/apollo/provisioning/metered-chat
+  - apollo/provisioning/authored-sets/_index
+  - apollo/provisioning/authored-sets/orchestrator
+  - apollo/provisioning/authored-sets/paired-retrieval
+  - apollo/provisioning/metered-chat
 last_verified: 2026-07-25
 stub: false
 ---

@@ -1,10 +1,10 @@
 ---
-doc: ai-ta-backend/rag-pipeline/solver
+doc: rag-pipeline/solver
 description: Sandboxed run_python utility — DORMANT in production (conceptual-only mode disables it).
 owns:
   - ai/solver.py
 related:
-  - ai-ta-backend/rag-pipeline/main-ai
+  - rag-pipeline/main-ai
 last_verified: 2026-07-25
 stub: false
 ---

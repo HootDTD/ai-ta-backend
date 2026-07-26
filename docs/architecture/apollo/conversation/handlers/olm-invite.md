@@ -1,11 +1,11 @@
 ---
-doc: ai-ta-backend/apollo/conversation/handlers/olm-invite
+doc: apollo/conversation/handlers/olm-invite
 description: apollo/handlers/olm_invite.py — VESTIGIAL P3.5 clarification-invite logic, never wired (deletion candidate)
 owns:
   - apollo/handlers/olm_invite.py
 related:
-  - ai-ta-backend/apollo/conversation/handlers/chat
-  - ai-ta-backend/apollo/conversation/parser/parser-llm
+  - apollo/conversation/handlers/chat
+  - apollo/conversation/parser/parser-llm
 last_verified: 2026-07-25
 stub: false
 ---

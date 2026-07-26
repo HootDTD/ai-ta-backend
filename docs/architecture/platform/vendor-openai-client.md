@@ -1,11 +1,11 @@
 ---
-doc: ai-ta-backend/platform/vendor-openai-client
+doc: platform/vendor-openai-client
 description: vendors/openai_client.py — the reports-only OpenAI Chat Completions wrapper (token budgeting, retry/backoff, deterministic fake mode)
 owns:
   - vendors/openai_client.py
   - vendors/__init__.py
 related:
-  - ai-ta-backend/reports/ai-use-service
+  - reports/ai-use-service
 last_verified: 2026-07-25
 stub: false
 ---

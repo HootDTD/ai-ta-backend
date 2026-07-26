@@ -1,12 +1,12 @@
 ---
-doc: ai-ta-backend/apollo/conversation/handlers/negotiate
+doc: apollo/conversation/handlers/negotiate
 description: apollo/handlers/negotiate.py — the P3 Negotiable-OLM challenge/paraphrase/skip/trace endpoints on a KG entry
 owns:
   - apollo/handlers/negotiate.py
 related:
-  - ai-ta-backend/apollo/conversation/routing/router
-  - ai-ta-backend/apollo/conversation/routing/errors
-  - ai-ta-backend/apollo/knowledge-graph/store
+  - apollo/conversation/routing/router
+  - apollo/conversation/routing/errors
+  - apollo/knowledge-graph/store
 last_verified: 2026-07-25
 stub: false
 ---

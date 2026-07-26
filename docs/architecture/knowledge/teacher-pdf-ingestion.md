@@ -1,10 +1,10 @@
 ---
-doc: ai-ta-backend/knowledge/teacher-pdf-ingestion
+doc: knowledge/teacher-pdf-ingestion
 description: TeacherPDFIngestor — native-first PDF extraction with selective Mathpix OCR fallback and fuzzy dedupe.
 owns:
   - knowledge/teacher_pdf_ingestion.py
 related:
-  - ai-ta-backend/knowledge/teacher-weekly
+  - knowledge/teacher-weekly
   - indexing/ocr-providers
   - indexing/ocr-core
   - apollo/provisioning/_index

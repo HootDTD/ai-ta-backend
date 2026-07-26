@@ -1,18 +1,18 @@
 ---
-doc: ai-ta-backend/apollo/provisioning/authored-sets/indexing
+doc: apollo/provisioning/authored-sets/indexing
 description: Index authored problem/solution PDFs into HIDDEN (PENDING-status) AITA documents so they never reach student retrieval
 owns:
   - apollo/provisioning/authored_sets/indexing.py
 related:
-  - ai-ta-backend/apollo/provisioning/authored-sets/_index
-  - ai-ta-backend/apollo/provisioning/authored-sets/api
-  - ai-ta-backend/indexing/checkpoint-indexer
-  - ai-ta-backend/indexing/connector-document
-  - ai-ta-backend/indexing/indexing-service
-  - ai-ta-backend/indexing/chunking-embedding
-  - ai-ta-backend/indexing/persistence-hashing
-  - ai-ta-backend/database/models
-  - ai-ta-backend/database/session
+  - apollo/provisioning/authored-sets/_index
+  - apollo/provisioning/authored-sets/api
+  - indexing/checkpoint-indexer
+  - indexing/connector-document
+  - indexing/indexing-service
+  - indexing/chunking-embedding
+  - indexing/persistence-hashing
+  - database/models
+  - database/session
 last_verified: 2026-07-25
 stub: false
 ---

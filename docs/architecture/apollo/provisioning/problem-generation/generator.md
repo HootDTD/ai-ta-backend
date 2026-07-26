@@ -1,18 +1,18 @@
 ---
-doc: ai-ta-backend/apollo/provisioning/problem-generation/generator
+doc: apollo/provisioning/problem-generation/generator
 description: Core variant generator — apply operators to an approved seed, solution-check, leak-guard, and persist held tier-1 variants
 owns:
   - apollo/provisioning/problem_generation/generator.py
 related:
-  - ai-ta-backend/apollo/provisioning/problem-generation/_index
-  - ai-ta-backend/apollo/provisioning/problem-generation/support
-  - ai-ta-backend/apollo/provisioning/problem-generation/api
-  - ai-ta-backend/apollo/provisioning/solution
-  - ai-ta-backend/apollo/provisioning/problem-leak-guard
-  - ai-ta-backend/apollo/provisioning/authored-sets/verification
-  - ai-ta-backend/apollo/provisioning/metered-chat
-  - ai-ta-backend/apollo/schemas/problem
-  - ai-ta-backend/platform/config-model-pins
+  - apollo/provisioning/problem-generation/_index
+  - apollo/provisioning/problem-generation/support
+  - apollo/provisioning/problem-generation/api
+  - apollo/provisioning/solution
+  - apollo/provisioning/problem-leak-guard
+  - apollo/provisioning/authored-sets/verification
+  - apollo/provisioning/metered-chat
+  - apollo/schemas/problem
+  - platform/config-model-pins
 last_verified: 2026-07-25
 stub: false
 ---

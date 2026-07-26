@@ -1,13 +1,13 @@
 ---
-doc: ai-ta-backend/rag-pipeline/document-visibility
+doc: rag-pipeline/document-visibility
 description: active_document_conditions — the single source of truth for week-gated student-visible documents.
 owns:
   - retrieval/document_visibility.py
 related:
-  - ai-ta-backend/rag-pipeline/hybrid-search
-  - ai-ta-backend/chats/bundle-cache
-  - ai-ta-backend/platform/workspaces
-  - ai-ta-backend/knowledge/teacher-weekly
+  - rag-pipeline/hybrid-search
+  - chats/bundle-cache
+  - platform/workspaces
+  - knowledge/teacher-weekly
   - database/models
 last_verified: 2026-07-25
 stub: false

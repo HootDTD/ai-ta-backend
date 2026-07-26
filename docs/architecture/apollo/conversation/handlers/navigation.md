@@ -1,14 +1,14 @@
 ---
-doc: ai-ta-backend/apollo/conversation/handlers/navigation
+doc: apollo/conversation/handlers/navigation
 description: apollo/handlers/next.py + restart_problem.py — the two phase-transition problem-navigation handlers
 owns:
   - apollo/handlers/next.py
   - apollo/handlers/restart_problem.py
 related:
-  - ai-ta-backend/apollo/conversation/routing/router
-  - ai-ta-backend/apollo/conversation/routing/errors
-  - ai-ta-backend/apollo/overseer/problem-selector
-  - ai-ta-backend/apollo/knowledge-graph/store
+  - apollo/conversation/routing/router
+  - apollo/conversation/routing/errors
+  - apollo/overseer/problem-selector
+  - apollo/knowledge-graph/store
 last_verified: 2026-07-25
 stub: false
 ---

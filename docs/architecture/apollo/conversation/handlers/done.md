@@ -1,21 +1,21 @@
 ---
-doc: ai-ta-backend/apollo/conversation/handlers/done
+doc: apollo/conversation/handlers/done
 description: apollo/handlers/done.py — handle_done, the grade-of-record orchestrator that assembles the whole Apollo grading path
 owns:
   - apollo/handlers/done.py
 related:
-  - ai-ta-backend/apollo/overseer/_index
-  - ai-ta-backend/apollo/overseer/transcript-coverage
-  - ai-ta-backend/apollo/overseer/rubric
-  - ai-ta-backend/apollo/overseer/topic-score
-  - ai-ta-backend/apollo/overseer/diagnostic
-  - ai-ta-backend/apollo/overseer/xp
-  - ai-ta-backend/apollo/conversation/handlers/grading-artifact-writer
-  - ai-ta-backend/apollo/projections/scorecard
-  - ai-ta-backend/apollo/projections/mastery
-  - ai-ta-backend/apollo/persistence/done-write-linkage
-  - ai-ta-backend/apollo/persistence/progress-repo
-  - ai-ta-backend/apollo/schemas/problem
+  - apollo/overseer/_index
+  - apollo/overseer/transcript-coverage
+  - apollo/overseer/rubric
+  - apollo/overseer/topic-score
+  - apollo/overseer/diagnostic
+  - apollo/overseer/xp
+  - apollo/conversation/handlers/grading-artifact-writer
+  - apollo/projections/scorecard
+  - apollo/projections/mastery
+  - apollo/persistence/done-write-linkage
+  - apollo/persistence/progress-repo
+  - apollo/schemas/problem
 last_verified: 2026-07-25
 stub: false
 ---

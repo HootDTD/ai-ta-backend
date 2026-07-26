@@ -1,13 +1,13 @@
 ---
-doc: ai-ta-backend/apollo/provisioning/authored-sets/observability
+doc: apollo/provisioning/authored-sets/observability
 description: Ingest-audit writes for the authored-set path — content-ingest run, per-page OCR evidence, terminal counts, stage errors
 owns:
   - apollo/provisioning/authored_sets/observability.py
 related:
-  - ai-ta-backend/apollo/provisioning/authored-sets/_index
-  - ai-ta-backend/apollo/provisioning/authored-sets/api
-  - ai-ta-backend/apollo/provisioning/metered-chat
-  - ai-ta-backend/apollo/persistence/models
+  - apollo/provisioning/authored-sets/_index
+  - apollo/provisioning/authored-sets/api
+  - apollo/provisioning/metered-chat
+  - apollo/persistence/models
 last_verified: 2026-07-25
 stub: false
 ---

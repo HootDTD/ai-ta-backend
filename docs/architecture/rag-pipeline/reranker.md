@@ -1,12 +1,12 @@
 ---
-doc: ai-ta-backend/rag-pipeline/reranker
+doc: rag-pipeline/reranker
 description: Optional cross-encoder rerank; no-op/fail-open unless RERANKERS_ENABLED.
 owns:
   - retrieval/reranker.py
 related:
-  - ai-ta-backend/rag-pipeline/retrieve-pipeline
-  - ai-ta-backend/rag-pipeline/hybrid-search
-  - ai-ta-backend/platform/config-settings
+  - rag-pipeline/retrieve-pipeline
+  - rag-pipeline/hybrid-search
+  - platform/config-settings
 last_verified: 2026-07-25
 stub: false
 ---

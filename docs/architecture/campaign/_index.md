@@ -17,7 +17,7 @@ score it with the permanent transcript grader + the S1–S5 judge pipeline.
 
 | Leaf | One-liner | Owns |
 |---|---|---|
-| [transcript-replay](transcript-replay.md) | Deterministic transcript-grader fixture replay | `transcript_replay.py`, `__init__.py`, `README.md` |
+| [transcript-replay](transcript-replay.md) | Deterministic transcript-grader fixture replay | `transcript_replay.py`, `__init__.py` + README.md |
 | [cast-student](cast-student.md) | AI-student session driver + JSONL ledger | `cast/student.py`, `cast/__init__.py` |
 | [cast-teacher](cast-teacher.md) | Teacher provisioning driver (seeded + authored) | `cast/teacher.py` |
 | [cast-subjects-materials](cast-subjects-materials.md) | Subject registry + PDF fixture generator | `cast/subjects.py`, `cast/materials/generate_fixtures.py` |

@@ -1,23 +1,23 @@
 ---
-doc: ai-ta-backend/apollo/provisioning/authored-sets/api
+doc: apollo/provisioning/authored-sets/api
 description: Teacher-gated HTTP surface for authored problem/solution sets — upload, index-hidden, background-provision, review, approve, delete
 owns:
   - apollo/provisioning/authored_sets/api.py
 related:
-  - ai-ta-backend/apollo/provisioning/authored-sets/_index
-  - ai-ta-backend/apollo/provisioning/authored-sets/orchestrator
-  - ai-ta-backend/apollo/provisioning/authored-sets/indexing
-  - ai-ta-backend/apollo/provisioning/authored-sets/observability
-  - ai-ta-backend/apollo/provisioning/authored-problem
-  - ai-ta-backend/apollo/provisioning/ingest
-  - ai-ta-backend/apollo/provisioning/tag-mint
-  - ai-ta-backend/apollo/provisioning/promote
-  - ai-ta-backend/apollo/provisioning/solution
-  - ai-ta-backend/apollo/provisioning/metered-chat
-  - ai-ta-backend/apollo/conversation/routing/auth-deps
-  - ai-ta-backend/apollo/conversation/routing/errors
-  - ai-ta-backend/apollo/persistence/models
-  - ai-ta-backend/database/models
+  - apollo/provisioning/authored-sets/_index
+  - apollo/provisioning/authored-sets/orchestrator
+  - apollo/provisioning/authored-sets/indexing
+  - apollo/provisioning/authored-sets/observability
+  - apollo/provisioning/authored-problem
+  - apollo/provisioning/ingest
+  - apollo/provisioning/tag-mint
+  - apollo/provisioning/promote
+  - apollo/provisioning/solution
+  - apollo/provisioning/metered-chat
+  - apollo/conversation/routing/auth-deps
+  - apollo/conversation/routing/errors
+  - apollo/persistence/models
+  - database/models
 last_verified: 2026-07-25
 stub: false
 ---

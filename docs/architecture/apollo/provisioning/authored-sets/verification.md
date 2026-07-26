@@ -1,12 +1,12 @@
 ---
-doc: ai-ta-backend/apollo/provisioning/authored-sets/verification
+doc: apollo/provisioning/authored-sets/verification
 description: Low-OCR-confidence cross-check — independently generate and LLM-compare so a bad OCR'd reference is flagged for teacher review
 owns:
   - apollo/provisioning/authored_sets/verification.py
 related:
-  - ai-ta-backend/apollo/provisioning/authored-sets/_index
-  - ai-ta-backend/apollo/provisioning/authored-sets/orchestrator
-  - ai-ta-backend/apollo/provisioning/solution
+  - apollo/provisioning/authored-sets/_index
+  - apollo/provisioning/authored-sets/orchestrator
+  - apollo/provisioning/solution
 last_verified: 2026-07-25
 stub: false
 ---

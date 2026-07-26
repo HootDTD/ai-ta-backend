@@ -1,11 +1,11 @@
 ---
-doc: ai-ta-backend/reports/ai-use-pdf
+doc: reports/ai-use-pdf
 description: reports/ai_use/pdf.py — markdown→PDF rendering via WeasyPrint for the AI-use report GET .pdf route
 owns:
   - reports/ai_use/pdf.py
 related:
-  - ai-ta-backend/reports/ai-use-routes
-  - ai-ta-backend/platform/ci-workflows
+  - reports/ai-use-routes
+  - platform/ci-workflows
 last_verified: 2026-07-25
 stub: false
 ---

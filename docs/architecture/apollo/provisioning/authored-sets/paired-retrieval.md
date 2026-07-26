@@ -1,17 +1,17 @@
 ---
-doc: ai-ta-backend/apollo/provisioning/authored-sets/paired-retrieval
+doc: apollo/provisioning/authored-sets/paired-retrieval
 description: Doc-scoped grounding against ONLY the paired solution document — structure-pair, deterministic label match, then semantic top-k
 owns:
   - apollo/provisioning/authored_sets/paired_retrieval.py
   - apollo/provisioning/authored_sets/label_match.py
 related:
-  - ai-ta-backend/apollo/provisioning/authored-sets/_index
-  - ai-ta-backend/apollo/provisioning/authored-sets/orchestrator
-  - ai-ta-backend/apollo/provisioning/authored-sets/structure-pass
-  - ai-ta-backend/apollo/provisioning/scrape
-  - ai-ta-backend/apollo/provisioning/solution
-  - ai-ta-backend/apollo/rag-pipeline/hybrid-search
-  - ai-ta-backend/database/models
+  - apollo/provisioning/authored-sets/_index
+  - apollo/provisioning/authored-sets/orchestrator
+  - apollo/provisioning/authored-sets/structure-pass
+  - apollo/provisioning/scrape
+  - apollo/provisioning/solution
+  - rag-pipeline/hybrid-search
+  - database/models
 last_verified: 2026-07-25
 stub: false
 ---

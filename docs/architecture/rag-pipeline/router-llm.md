@@ -1,11 +1,11 @@
 ---
-doc: ai-ta-backend/rag-pipeline/router-llm
+doc: rag-pipeline/router-llm
 description: LLMRouter — the strict-JSON stage-2 route classifier (gpt-4o-mini).
 owns:
   - ai/router/llm_router.py
 related:
-  - ai-ta-backend/rag-pipeline/router-mode
-  - ai-ta-backend/rag-pipeline/router-wiring
+  - rag-pipeline/router-mode
+  - rag-pipeline/router-wiring
 last_verified: 2026-07-25
 stub: false
 ---

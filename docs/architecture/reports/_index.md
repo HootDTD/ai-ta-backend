@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/reports/_index
+doc: reports/_index
 description: Router for the AI-use report feature — generate a PDF summarizing a chat's AI usage (routes, service, ORM, PDF rendering)
 owns: []
 related: []

@@ -1,18 +1,18 @@
 ---
-doc: ai-ta-backend/apollo/provisioning/problem-generation/api
+doc: apollo/provisioning/problem-generation/api
 description: Teacher-gated batch API for generated problem variants — start a run, poll status, review, and approve into tier-2
 owns:
   - apollo/provisioning/problem_generation/api.py
 related:
-  - ai-ta-backend/apollo/provisioning/problem-generation/_index
-  - ai-ta-backend/apollo/provisioning/problem-generation/generator
-  - ai-ta-backend/apollo/provisioning/authored-sets/api
-  - ai-ta-backend/apollo/provisioning/authored-sets/observability
-  - ai-ta-backend/apollo/provisioning/metered-chat
-  - ai-ta-backend/apollo/provisioning/scrape
-  - ai-ta-backend/apollo/provisioning/tag-mint
-  - ai-ta-backend/apollo/conversation/routing/auth-deps
-  - ai-ta-backend/apollo/persistence/models
+  - apollo/provisioning/problem-generation/_index
+  - apollo/provisioning/problem-generation/generator
+  - apollo/provisioning/authored-sets/api
+  - apollo/provisioning/authored-sets/observability
+  - apollo/provisioning/metered-chat
+  - apollo/provisioning/scrape
+  - apollo/provisioning/tag-mint
+  - apollo/conversation/routing/auth-deps
+  - apollo/persistence/models
 last_verified: 2026-07-25
 stub: false
 ---

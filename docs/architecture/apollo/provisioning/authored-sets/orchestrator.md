@@ -1,22 +1,22 @@
 ---
-doc: ai-ta-backend/apollo/provisioning/authored-sets/orchestrator
+doc: apollo/provisioning/authored-sets/orchestrator
 description: Drives one authored problem-set through scrape → ground → derive/pair → mint+promote, returning a bounded per-candidate report
 owns:
   - apollo/provisioning/authored_sets/orchestrator.py
 related:
-  - ai-ta-backend/apollo/provisioning/authored-sets/_index
-  - ai-ta-backend/apollo/provisioning/authored-sets/structure-pass
-  - ai-ta-backend/apollo/provisioning/authored-sets/paired-retrieval
-  - ai-ta-backend/apollo/provisioning/authored-sets/graph-derivation
-  - ai-ta-backend/apollo/provisioning/authored-sets/verification
-  - ai-ta-backend/apollo/provisioning/scrape
-  - ai-ta-backend/apollo/provisioning/solution
-  - ai-ta-backend/apollo/provisioning/pairing-gate
-  - ai-ta-backend/apollo/provisioning/tag-mint
-  - ai-ta-backend/apollo/provisioning/promote
-  - ai-ta-backend/apollo/provisioning/dedup
-  - ai-ta-backend/apollo/provisioning/concept-match
-  - ai-ta-backend/apollo/conversation/curriculum/db
+  - apollo/provisioning/authored-sets/_index
+  - apollo/provisioning/authored-sets/structure-pass
+  - apollo/provisioning/authored-sets/paired-retrieval
+  - apollo/provisioning/authored-sets/graph-derivation
+  - apollo/provisioning/authored-sets/verification
+  - apollo/provisioning/scrape
+  - apollo/provisioning/solution
+  - apollo/provisioning/pairing-gate
+  - apollo/provisioning/tag-mint
+  - apollo/provisioning/promote
+  - apollo/provisioning/dedup
+  - apollo/provisioning/concept-match
+  - apollo/conversation/curriculum/db
 last_verified: 2026-07-25
 stub: false
 ---

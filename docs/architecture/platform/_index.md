@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/platform/_index
+doc: platform/_index
 description: Router for the HTTP composition root, auth, request config, vendor clients, course workspaces, CI/CD, and one-shot ops scripts
 owns: []
 related: []

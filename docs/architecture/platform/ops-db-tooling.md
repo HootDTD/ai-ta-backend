@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/platform/ops-db-tooling
+doc: platform/ops-db-tooling
 description: The four Node (.mjs) DB dev/CI tooling scripts — migration-drift guard, local reset, legacy-snapshot draft builder, and schema-dump comparator
 owns:
   - scripts/db/build-legacy-snapshot-draft.mjs
@@ -7,9 +7,9 @@ owns:
   - scripts/db/compare-schema-dump.mjs
   - scripts/db/reset-local.mjs
 related:
-  - ai-ta-backend/database/legacy-migrations
-  - ai-ta-backend/database/supabase-migrations
-  - ai-ta-backend/platform/ci-workflows
+  - database/legacy-migrations
+  - database/supabase-migrations
+  - platform/ci-workflows
 last_verified: 2026-07-25
 stub: false
 ---

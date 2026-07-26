@@ -1,10 +1,10 @@
 ---
-doc: ai-ta-backend/apollo/conversation/routing/errors
+doc: apollo/conversation/routing/errors
 description: apollo/errors.py — the apollo-wide NO-FALLBACK named-exception taxonomy, grouped by HTTP status
 owns:
   - apollo/errors.py
 related:
-  - ai-ta-backend/apollo/conversation/routing/router
+  - apollo/conversation/routing/router
 last_verified: 2026-07-25
 stub: false
 ---

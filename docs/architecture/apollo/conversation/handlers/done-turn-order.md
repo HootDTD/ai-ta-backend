@@ -1,11 +1,11 @@
 ---
-doc: ai-ta-backend/apollo/conversation/handlers/done-turn-order
+doc: apollo/conversation/handlers/done-turn-order
 description: apollo/handlers/done_turn_order.py — VESTIGIAL WU-4C1 shadow-chain turn order, orphaned by the A7 ruling (deletion candidate)
 owns:
   - apollo/handlers/done_turn_order.py
 related:
-  - ai-ta-backend/apollo/conversation/handlers/done
-  - ai-ta-backend/apollo/knowledge-graph/store
+  - apollo/conversation/handlers/done
+  - apollo/knowledge-graph/store
 last_verified: 2026-07-25
 stub: false
 ---

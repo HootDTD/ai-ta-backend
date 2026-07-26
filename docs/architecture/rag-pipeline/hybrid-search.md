@@ -1,13 +1,13 @@
 ---
-doc: ai-ta-backend/rag-pipeline/hybrid-search
+doc: rag-pipeline/hybrid-search
 description: pgvector cosine + Postgres FTS fused with RRF; carries the HNSW halfvec performance contract.
 owns:
   - retrieval/hybrid_search.py
 related:
-  - ai-ta-backend/rag-pipeline/document-visibility
-  - ai-ta-backend/rag-pipeline/store-bias
-  - ai-ta-backend/platform/config-weights
-  - ai-ta-backend/platform/http-server
+  - rag-pipeline/document-visibility
+  - rag-pipeline/store-bias
+  - platform/config-weights
+  - platform/http-server
   - indexing/chunking-embedding
   - database/models
 last_verified: 2026-07-25

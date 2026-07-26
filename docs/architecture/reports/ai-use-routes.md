@@ -1,17 +1,17 @@
 ---
-doc: ai-ta-backend/reports/ai-use-routes
+doc: reports/ai-use-routes
 description: reports/ai_use/routes.py — the AI-use report HTTP endpoints (create, PDF, detail) with owner-scoped, IDOR-safe guards
 owns:
   - reports/ai_use/routes.py
   - reports/__init__.py
   - reports/ai_use/__init__.py
 related:
-  - ai-ta-backend/platform/auth
-  - ai-ta-backend/reports/ai-use-service
-  - ai-ta-backend/reports/ai-use-models
-  - ai-ta-backend/reports/ai-use-pdf
-  - ai-ta-backend/chats/service
-  - ai-ta-backend/database/session
+  - platform/auth
+  - reports/ai-use-service
+  - reports/ai-use-models
+  - reports/ai-use-pdf
+  - chats/service
+  - database/session
 last_verified: 2026-07-25
 stub: false
 ---

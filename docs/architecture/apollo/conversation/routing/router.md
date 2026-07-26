@@ -1,15 +1,15 @@
 ---
-doc: ai-ta-backend/apollo/conversation/routing/router
+doc: apollo/conversation/routing/router
 description: apollo/api.py FastAPI /apollo router, the process-singleton Neo4j client, and apollo-wide exception-handler registration
 owns:
   - apollo/api.py
   - apollo/__init__.py
 related:
-  - ai-ta-backend/apollo/conversation/routing/errors
-  - ai-ta-backend/apollo/conversation/routing/auth-deps
-  - ai-ta-backend/apollo/conversation/agent/persona-reply
-  - ai-ta-backend/apollo/persistence/neo4j-client
-  - ai-ta-backend/apollo/provisioning/_index
+  - apollo/conversation/routing/errors
+  - apollo/conversation/routing/auth-deps
+  - apollo/conversation/agent/persona-reply
+  - apollo/persistence/neo4j-client
+  - apollo/provisioning/_index
 last_verified: 2026-07-25
 stub: false
 ---

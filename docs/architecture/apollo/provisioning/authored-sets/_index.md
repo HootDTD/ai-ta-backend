@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/apollo/provisioning/authored-sets/_index
+doc: apollo/provisioning/authored-sets/_index
 description: Router for the authored_sets subpackage — the teacher-gated authored problem/solution-set provisioning pipeline
 owns:
   - apollo/provisioning/authored_sets/__init__.py

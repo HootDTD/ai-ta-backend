@@ -1,13 +1,13 @@
 ---
-doc: ai-ta-backend/rag-pipeline/citations-formatter
+doc: rag-pipeline/citations-formatter
 description: Source-labeling and structured-citation builder for the answer response (+ DOC_TYPE_LABELS).
 owns:
   - citations/formatter.py
   - citations/__init__.py
 related:
-  - ai-ta-backend/rag-pipeline/context-packer
-  - ai-ta-backend/rag-pipeline/main-ai
-  - ai-ta-backend/platform/http-server
+  - rag-pipeline/context-packer
+  - rag-pipeline/main-ai
+  - platform/http-server
 last_verified: 2026-07-25
 stub: false
 ---

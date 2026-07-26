@@ -1,15 +1,15 @@
 ---
-doc: ai-ta-backend/apollo/conversation/handlers/grading-artifact-writer
+doc: apollo/conversation/handlers/grading-artifact-writer
 description: apollo/handlers/artifact_writer.py — write_artifacts, the one canonical GradingRun row per Done click (DB-14)
 owns:
   - apollo/handlers/artifact_writer.py
 related:
-  - ai-ta-backend/apollo/conversation/handlers/done
-  - ai-ta-backend/apollo/overseer/topic-score
-  - ai-ta-backend/apollo/grading/artifact-build
-  - ai-ta-backend/apollo/persistence/models
-  - ai-ta-backend/apollo/projections/mastery
-  - ai-ta-backend/apollo/projections/scorecard
+  - apollo/conversation/handlers/done
+  - apollo/overseer/topic-score
+  - apollo/grading/artifact-build
+  - apollo/persistence/models
+  - apollo/projections/mastery
+  - apollo/projections/scorecard
 last_verified: 2026-07-25
 stub: false
 ---

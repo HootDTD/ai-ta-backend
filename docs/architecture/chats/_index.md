@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/chats/_index
+doc: chats/_index
 description: Router for chat-session persistence, rolling memory, and the retrieval bundle cache.
 owns: []
 related: []

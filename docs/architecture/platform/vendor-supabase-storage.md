@@ -1,10 +1,10 @@
 ---
-doc: ai-ta-backend/platform/vendor-supabase-storage
+doc: platform/vendor-supabase-storage
 description: vendors/supabase_storage.py — a thin REST client for Supabase Storage (ensure/upload/download objects) used by the teacher-upload path
 owns:
   - vendors/supabase_storage.py
 related:
-  - ai-ta-backend/knowledge/teacher-weekly
+  - knowledge/teacher-weekly
 last_verified: 2026-07-25
 stub: false
 ---

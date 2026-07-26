@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/platform/ci-workflows
+doc: platform/ci-workflows
 description: The GitHub Actions CI/CD surface plus repo build-meta (pytest/ruff/mypy/coverage/requirements/pre-commit/package.json) — how the backend builds, tests, and gates PRs
 owns:
   - .github/workflows/ci.yml
@@ -16,10 +16,10 @@ owns:
   - ruff.toml
   - package.json
 related:
-  - ai-ta-backend/database/legacy-migrations
-  - ai-ta-backend/database/supabase-migrations
-  - ai-ta-backend/reports/ai-use-pdf
-  - ai-ta-backend/platform/ops-db-tooling
+  - database/legacy-migrations
+  - database/supabase-migrations
+  - reports/ai-use-pdf
+  - platform/ops-db-tooling
 last_verified: 2026-07-25
 stub: false
 ---

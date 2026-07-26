@@ -1,5 +1,5 @@
 ---
-doc: ai-ta-backend/rag-pipeline/router-deferred
+doc: rag-pipeline/router-deferred
 description: The DEFERRED / not-wired legacy two-stage embedding router (dormant cohesive group).
 owns:
   - ai/router/embedding_router.py
@@ -7,7 +7,7 @@ owns:
   - ai/router/routes.py
   - ai/router/seeds.json
 related:
-  - ai-ta-backend/rag-pipeline/router-mode
+  - rag-pipeline/router-mode
 last_verified: 2026-07-25
 stub: false
 ---

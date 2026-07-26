@@ -1,13 +1,13 @@
 ---
-doc: ai-ta-backend/platform/config-weights
+doc: platform/config-weights
 description: config/weights.py — the store-kind retrieval bias weights (defaults, env parsing, clamp/normalize) consumed by the post-fusion store-bias step
 owns:
   - config/weights.py
 related:
-  - ai-ta-backend/rag-pipeline/store-bias
-  - ai-ta-backend/rag-pipeline/hybrid-search
-  - ai-ta-backend/platform/http-server
-  - ai-ta-backend/platform/workspaces
+  - rag-pipeline/store-bias
+  - rag-pipeline/hybrid-search
+  - platform/http-server
+  - platform/workspaces
 last_verified: 2026-07-25
 stub: false
 ---

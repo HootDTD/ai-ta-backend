@@ -1,10 +1,10 @@
 ---
-doc: ai-ta-backend/platform/config-model-pins
+doc: platform/config-model-pins
 description: config/models.py — the hardcoded served solver-model constants (MAIN_MODEL, MAIN_REASONING_EFFORT) introduced by the 2026-07 flag reset
 owns:
   - config/models.py
 related:
-  - ai-ta-backend/rag-pipeline/main-ai
+  - rag-pipeline/main-ai
 last_verified: 2026-07-25
 stub: false
 ---

@@ -1,11 +1,11 @@
 ---
-doc: ai-ta-backend/apollo/conversation/handlers/history
+doc: apollo/conversation/handlers/history
 description: apollo/handlers/history.py — VESTIGIAL windowed-history loader with zero live importers (deletion candidate)
 owns:
   - apollo/handlers/history.py
 related:
-  - ai-ta-backend/apollo/conversation/handlers/chat
-  - ai-ta-backend/apollo/conversation/agent/persona-reply
+  - apollo/conversation/handlers/chat
+  - apollo/conversation/agent/persona-reply
 last_verified: 2026-07-25
 stub: false
 ---

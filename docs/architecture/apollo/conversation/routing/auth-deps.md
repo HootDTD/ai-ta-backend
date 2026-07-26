@@ -1,12 +1,11 @@
 ---
-doc: ai-ta-backend/apollo/conversation/routing/auth-deps
+doc: apollo/conversation/routing/auth-deps
 description: apollo/auth_deps.py — the four async FastAPI auth dependencies for /apollo and the DB-08b RLS ordering invariant
 owns:
   - apollo/auth_deps.py
 related:
-  - ai-ta-backend/apollo/conversation/routing/router
-  - ai-ta-backend/database/session
-  - shared/security
+  - apollo/conversation/routing/router
+  - database/session
 last_verified: 2026-07-25
 stub: false
 ---

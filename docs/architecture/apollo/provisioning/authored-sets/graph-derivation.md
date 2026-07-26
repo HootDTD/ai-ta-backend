@@ -1,15 +1,15 @@
 ---
-doc: ai-ta-backend/apollo/provisioning/authored-sets/graph-derivation
+doc: apollo/provisioning/authored-sets/graph-derivation
 description: Derives a gold-format reference graph FROM a paired worked solution (reversed provisioning), guarded by a pure defect validator
 owns:
   - apollo/provisioning/authored_sets/graph_derivation.py
 related:
-  - ai-ta-backend/apollo/provisioning/authored-sets/_index
-  - ai-ta-backend/apollo/provisioning/authored-sets/orchestrator
-  - ai-ta-backend/apollo/provisioning/solution
-  - ai-ta-backend/apollo/provisioning/provisioning-schema
-  - ai-ta-backend/apollo/schemas/problem
-  - ai-ta-backend/apollo/solver/sympy-exec
+  - apollo/provisioning/authored-sets/_index
+  - apollo/provisioning/authored-sets/orchestrator
+  - apollo/provisioning/solution
+  - apollo/provisioning/provisioning-schema
+  - apollo/schemas/problem
+  - apollo/solver/sympy-exec
 last_verified: 2026-07-25
 stub: false
 ---

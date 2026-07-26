@@ -1,12 +1,12 @@
 ---
-doc: ai-ta-backend/platform/auth
+doc: platform/auth
 description: auth.py — Supabase JWT validation with an in-memory token cache, course-membership checks, and student auto-enroll
 owns:
   - auth.py
 related:
-  - ai-ta-backend/platform/http-server
-  - ai-ta-backend/database/models
-  - ai-ta-backend/reports/ai-use-routes
+  - platform/http-server
+  - database/models
+  - reports/ai-use-routes
 last_verified: 2026-07-25
 stub: false
 ---

@@ -1,12 +1,12 @@
 ---
-doc: ai-ta-backend/platform/worker-and-procfile
+doc: platform/worker-and-procfile
 description: Procfile + teacher_upload_worker.py — the Railway two-process split (web API vs background upload-ingestion worker)
 owns:
   - teacher_upload_worker.py
   - Procfile
 related:
-  - ai-ta-backend/platform/http-server
-  - ai-ta-backend/knowledge/teacher-weekly
+  - platform/http-server
+  - knowledge/teacher-weekly
 last_verified: 2026-07-25
 stub: false
 ---

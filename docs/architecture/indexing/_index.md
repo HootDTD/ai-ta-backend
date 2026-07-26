@@ -23,7 +23,7 @@ legacy names survive anywhere in this code — the ORM is `Document`/
 | [connector-document](connector-document.md) | Input DTO + NUL sanitization at the boundary | `indexing/connector_document.py`, `text_sanitization.py` |
 | [chunking-embedding](chunking-embedding.md) | Items→chunks + single/batched embedders | `indexing/document_chunker.py`, `document_embedder.py` |
 | [persistence-hashing](persistence-hashing.md) | Dedup hashes + failure/attach write helpers | `indexing/document_hashing.py`, `document_persistence.py` |
-| [ocr-core](ocr-core.md) | OCR provider contract + env-gated factory | `ocr/provider.py`, `factory.py`, `__init__.py`, `README.md` |
+| [ocr-core](ocr-core.md) | OCR provider contract + env-gated factory | `ocr/provider.py`, `factory.py`, `__init__.py` + README.md |
 | [ocr-providers](ocr-providers.md) | Mathpix + OpenAI-vision concrete providers | `ocr/mathpix.py`, `openai_vision.py` |
 
 ## Cross-cutting invariants

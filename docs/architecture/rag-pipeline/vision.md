@@ -1,11 +1,11 @@
 ---
-doc: ai-ta-backend/rag-pipeline/vision
+doc: rag-pipeline/vision
 description: Image transcription for photo-of-problem attachments on /ask (fail-open OCR fallback).
 owns:
   - ai/vision.py
 related:
-  - ai-ta-backend/rag-pipeline/main-ai
-  - ai-ta-backend/platform/config-model-pins
+  - rag-pipeline/main-ai
+  - platform/config-model-pins
 last_verified: 2026-07-25
 stub: false
 ---

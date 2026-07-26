@@ -9,7 +9,7 @@ stub: false
 
 # database/ — core persistence & migrations
 
-The `database/` + `supabase/` slice carved out of the old `domain-data.md`
+The `database/` + `supabase/` slice carved out of the old `domain-data`
 monolith (`chats/`, `knowledge/`, `reports/` moved to their own domains).
 
 | Leaf | One-liner | Owns |

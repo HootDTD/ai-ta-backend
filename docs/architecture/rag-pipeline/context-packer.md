@@ -1,13 +1,13 @@
 ---
-doc: ai-ta-backend/rag-pipeline/context-packer
+doc: rag-pipeline/context-packer
 description: Greedy token-budget packing of ranked chunks into BundleSnippets with citation markers.
 owns:
   - retrieval/context_packer.py
 related:
-  - ai-ta-backend/rag-pipeline/citations-formatter
-  - ai-ta-backend/rag-pipeline/main-ai
-  - ai-ta-backend/platform/config-contracts
-  - ai-ta-backend/platform/config-settings
+  - rag-pipeline/citations-formatter
+  - rag-pipeline/main-ai
+  - platform/config-contracts
+  - platform/config-settings
 last_verified: 2026-07-25
 stub: false
 ---

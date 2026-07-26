@@ -1,15 +1,15 @@
 ---
-doc: ai-ta-backend/apollo/provisioning/problem-generation/support
+doc: apollo/provisioning/problem-generation/support
 description: The two generator support modules — the variation-operator catalog and the post-generation round-trip/qualitative verifiers
 owns:
   - apollo/provisioning/problem_generation/operators.py
   - apollo/provisioning/problem_generation/verifiers.py
 related:
-  - ai-ta-backend/apollo/provisioning/problem-generation/_index
-  - ai-ta-backend/apollo/provisioning/problem-generation/generator
-  - ai-ta-backend/apollo/provisioning/promotion-lint
-  - ai-ta-backend/apollo/provisioning/metered-chat
-  - ai-ta-backend/apollo/schemas/problem
+  - apollo/provisioning/problem-generation/_index
+  - apollo/provisioning/problem-generation/generator
+  - apollo/provisioning/promotion-lint
+  - apollo/provisioning/metered-chat
+  - apollo/schemas/problem
 last_verified: 2026-07-25
 stub: false
 ---

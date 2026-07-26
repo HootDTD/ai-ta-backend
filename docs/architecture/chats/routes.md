@@ -1,12 +1,12 @@
 ---
-doc: ai-ta-backend/chats/routes
+doc: chats/routes
 description: The /chats HTTP router — owner-scoped sync endpoints bridging to async CRUD.
 owns:
   - chats/routes.py
 related:
-  - ai-ta-backend/chats/service
-  - ai-ta-backend/platform/http-server
-  - ai-ta-backend/platform/auth
+  - chats/service
+  - platform/http-server
+  - platform/auth
   - database/models
 last_verified: 2026-07-25
 stub: false

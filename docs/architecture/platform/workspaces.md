@@ -1,15 +1,15 @@
 ---
-doc: ai-ta-backend/platform/workspaces
+doc: platform/workspaces
 description: workspaces/manager.py + db.py — course-workspace resolution (identifier → scoped materials + bias) with a TTL cache over the app.courses/app.documents tables
 owns:
   - workspaces/manager.py
   - workspaces/db.py
   - workspaces/__init__.py
 related:
-  - ai-ta-backend/platform/http-server
-  - ai-ta-backend/platform/config-weights
-  - ai-ta-backend/database/models
-  - ai-ta-backend/rag-pipeline/document-visibility
+  - platform/http-server
+  - platform/config-weights
+  - database/models
+  - rag-pipeline/document-visibility
 last_verified: 2026-07-25
 stub: false
 ---
