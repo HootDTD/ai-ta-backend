@@ -590,7 +590,7 @@ async def handle_done(
         # count lands in grading_provenance"). 0 whenever the flag is off or
         # unused this session — never affects the score itself.
         "reference_question_asides_used": int(
-            (sess.metadata_ or {}).get(ASIDE_COUNT_SESSION_METADATA_KEY, 0)
+            (getattr(sess, "metadata_", None) or {}).get(ASIDE_COUNT_SESSION_METADATA_KEY, 0)
         ),
     }
 
