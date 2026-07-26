@@ -15,6 +15,9 @@ owns:
   - mypy.ini
   - ruff.toml
   - package.json
+  - scripts/docs/check_owns_coverage.py
+  - scripts/docs/owns_exclude.txt
+  - .claude/hooks/guard_docs_placement.py
 related:
   - database/legacy-migrations
   - database/supabase-migrations
@@ -41,8 +44,9 @@ One coherent topic: how the repo builds, tests, and gates. Config files (not
   patch-coverage gate** `diff-cover coverage.xml --compare-branch=origin/$base
   --fail-under=95` (**95%** — matching the CLAUDE.md contract, not 80%).
 - `database` — pinned Supabase CLI (2.109.0) drift check + clean local reset.
-- `docs` — the architecture ownership lint (advisory during the restructure;
-  W5 flips it required).
+- `docs` — the architecture ownership lint. Runs `scripts/docs/check_owns_coverage.py`
+  (owned here, with its `owns_exclude.txt`); flipped from advisory to **required** at
+  W5 (in `ci-passed.needs`, `--last-verified-required` on the PR path).
 - `ci-passed` — the aggregation status; **the single required branch-protection
   check** (`docs` deliberately not in its `needs` yet).
 
@@ -66,6 +70,8 @@ asyncio auto), `.coveragerc` (`concurrency = thread, greenlet`; excludes live-LL
 smoke harnesses), `ruff.toml`, `mypy.ini`, `requirements*.txt`,
 `.pre-commit-config.yaml` (same ruff as CI + the advisory docs lint),
 `package.json` (the `db:drift`/`db:reset` Node scripts → `ops-db-tooling`).
+**Docs-enforcement tooling** also lives here: `.claude/hooks/guard_docs_placement.py`
+(the PreToolUse guard blocking new markdown outside `architecture/`/`_archive/`).
 
 ## Invariants & gotchas
 

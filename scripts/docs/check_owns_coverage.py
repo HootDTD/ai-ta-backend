@@ -201,6 +201,8 @@ def git_tracked_files(repo_root: str) -> list:
             ["git", "-C", repo_root, "ls-files"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         ).stdout
     except Exception as exc:  # pragma: no cover - environment guard
@@ -563,6 +565,8 @@ def check_last_verified(repo_root, base, docs, owners, report, required=False):
             ["git", "-C", repo_root, "diff", "--name-only", f"{base}...HEAD"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         ).stdout
     except Exception as exc:
@@ -590,6 +594,8 @@ def check_last_verified(repo_root, base, docs, owners, report, required=False):
                     ["git", "-C", repo_root, "diff", f"{base}...HEAD", "--", doc.relpath],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     check=True,
                 ).stdout
             except Exception:

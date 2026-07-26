@@ -212,29 +212,36 @@ jobs:
   docs:
     name: docs (architecture ownership lint)
     runs-on: ubuntu-latest
-    # ADVISORY during the docs/granular-restructure split (PLAN §6.3): the lint is
-    # NOT in ci-passed and continue-on-error so a mid-flight bijection storm never
-    # red-fails an unrelated PR. W5 flips it to required (add to ci-passed.needs,
-    # drop continue-on-error, and enable the --check-last-verified PR-path gate).
-    continue-on-error: true
+    # REQUIRED (W5 flip, PLAN §6.3/§7): the docs/granular-restructure split is green,
+    # so the lint is now in ci-passed.needs, continue-on-error is dropped, and the
+    # --check-last-verified PR-path gate is enabled as required. The last_verified
+    # gate is skipped on promotion PRs (base=main) — the ratchet is enforced on the
+    # way INTO staging, not re-litigated on promotion (same policy as ruff/mypy).
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          fetch-depth: 0 # base history for the (advisory) last_verified PR-path check
+          fetch-depth: 0 # base history for the last_verified PR-path check
       - uses: ./.github/actions/setup
       - name: Ownership bijection + related + index-freshness + size lint
         run: python scripts/docs/check_owns_coverage.py --check-size
+      - name: last_verified PR-path gate (changed owned file must bump its leaf)
+        if: github.event_name == 'pull_request' && github.base_ref != 'main'
+        shell: bash
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          python scripts/docs/check_owns_coverage.py \
+            --check-last-verified --last-verified-required \
+            --base "origin/${{ github.base_ref }}"
 
   ci-passed:
     name: ci-passed
     # The SINGLE required status check for branch protection. Runs even if a
     # dependency failed so the gate reports a definitive pass/fail.
-    # NOTE: `docs` is deliberately NOT in needs while the split is in flight
-    # (advisory). W5 adds it here and to the assertion below.
+    # `docs` is REQUIRED as of the W5 flip (PLAN §7) — in needs and the assertion.
     if: always()
-    needs: [quality, typecheck, unit, integration, database]
+    needs: [quality, typecheck, unit, integration, database, docs]
     runs-on: ubuntu-latest
     steps:
       - name: Assert all required jobs passed
@@ -245,11 +252,13 @@ jobs:
           echo "unit=${{ needs.unit.result }}"
           echo "integration=${{ needs.integration.result }}"
           echo "database=${{ needs.database.result }}"
+          echo "docs=${{ needs.docs.result }}"
           if [ "${{ needs.quality.result }}" = "success" ] \
             && [ "${{ needs.typecheck.result }}" = "success" ] \
             && [ "${{ needs.unit.result }}" = "success" ] \
             && [ "${{ needs.integration.result }}" = "success" ] \
-            && [ "${{ needs.database.result }}" = "success" ]; then
+            && [ "${{ needs.database.result }}" = "success" ] \
+            && [ "${{ needs.docs.result }}" = "success" ]; then
             echo "All required jobs passed."
           else
             echo "::error::One or more required jobs failed."
