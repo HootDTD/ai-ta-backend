@@ -1,22 +1,20 @@
-from __future__ import annotations
-
 """Lightweight runtime configuration helpers."""
+
+from __future__ import annotations
 
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-
 
 _WIRE = os.getenv("RETRIEVAL_WIRE_LOG", "off").lower() not in {"0", "off", "false", "no"}
 _PRIORITY = {"default": 0, "meta": 1, "env": 2, "cli": 3}
 
-_SUBJECT_NAME: Optional[str] = None
+_SUBJECT_NAME: str | None = None
 _SUBJECT_SOURCE: str = "default"
 _SUBJECT_PRIORITY: int = -1
 _SUBJECT_LOGGED = False
-_CITATION_LABEL: Optional[str] = None
-_RUNTIME_DIR: Optional[Path] = None
+_CITATION_LABEL: str | None = None
+_RUNTIME_DIR: Path | None = None
 
 
 def _sanitize_subject(name: str | None) -> str:
@@ -153,10 +151,10 @@ class RequestConfig:
     subject_source: str = "default"
     subject_priority: int = -1
     citation_label: str = "Textbook"
-    runtime_dir: Optional[Path] = None
+    runtime_dir: Path | None = None
 
     @classmethod
-    def from_env(cls) -> "RequestConfig":
+    def from_env(cls) -> RequestConfig:
         """Create a config seeded from environment variables."""
         cfg = cls()
 
@@ -208,6 +206,11 @@ def use_pgvector_retrieval() -> bool:
 def interaction1_enabled() -> bool:
     """Return True when session-scoped Apollo grounding is enabled."""
     return os.getenv("INTERACTION1", "false").lower() not in {"0", "false", "off", "no"}
+
+
+def interaction3_enabled() -> bool:
+    """Return True when Apollo Done remediation citations are enabled."""
+    return os.getenv("INTERACTION3", "false").lower() not in {"0", "false", "off", "no"}
 
 
 def get_embedding_dim() -> int:
@@ -278,6 +281,7 @@ __all__ = [
     # pgvector settings
     "use_pgvector_retrieval",
     "interaction1_enabled",
+    "interaction3_enabled",
     "get_embedding_dim",
     "get_embedding_model",
     "get_supabase_db_url",

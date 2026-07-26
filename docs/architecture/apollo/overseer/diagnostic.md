@@ -3,6 +3,7 @@ doc: apollo/overseer/diagnostic
 description: Generates the student-facing narrative that explains — never decides — the grade.
 owns:
   - apollo/overseer/diagnostic.py
+  - apollo/overseer/remediation.py
 related:
   - apollo/overseer/topic-narrative
   - apollo/overseer/topic-score
@@ -25,6 +26,9 @@ the grade. It never decides the grade — the [rubric](rubric.md) /
   feedback_or_none)` — imported by `handlers/done.py`. Topic feedback is
   `{headline, topic_feedback: [{canonical_key, note, quote}], recap,
   next_step}`.
+- `add_remediation_reviews(*, db, search_space_id, topic_score, feedback,
+  grounding_bundle) -> decorated_feedback_or_none` — copy-on-success citation
+  decoration for at most three `partial`/`missing` topics.
 
 ## Data flow
 
@@ -36,6 +40,11 @@ sanitizes every prose field, appends deterministic misconception + negotiation
 entries in `recap[]`, then flattens headline → topic notes → recap → prefixed
 next step for back compatibility. Otherwise it uses the unchanged axis prompt
 and returns the legacy sanitized narrative plus null feedback.
+
+With `INTERACTION3` enabled, `done.py` passes successful structured feedback to
+`remediation.py`. A non-null session grounding bundle is reused exclusively;
+only a null bundle triggers fresh per-topic retrieval (`top_k=3`, 800 tokens).
+The helper returns citation-only `{doc_id, label, page}` pointers.
 
 ## Invariants & gotchas
 
@@ -52,6 +61,13 @@ and returns the legacy sanitized narrative plus null feedback.
   legacy string exactly as before.
 - `sanitize_narrative` runs per structured prose field and at the legacy return
   boundary.
+- **Remediation is copy-on-success and all-or-nothing:** empty/unsafe results or
+  any failure publish no `review` key. Solution-bearing snippets use the same
+  metadata filter as Interaction 1; snippet quotes never enter the payload.
+
+## Env flags
+
+- `INTERACTION3` — remediation citations, default OFF.
 
 ## Related
 

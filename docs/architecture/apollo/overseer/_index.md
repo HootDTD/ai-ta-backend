@@ -3,7 +3,7 @@ doc: apollo/overseer/_index
 description: Router for Apollo's grading, scoring, narrative, XP, and selection brains — home of the grading-path invariants.
 owns: []
 related: []
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -22,7 +22,7 @@ recipe below.
 | [topic-score](topic-score.md) | LIVE grade of record: coverage-weighted topic score + the one serializer | `apollo/overseer/topic_score.py`, `apollo/overseer/topic_score_serialize.py` |
 | [rubric](rubric.md) | Axis-weighted grade + `score_to_letter` + misconception value objects | `apollo/overseer/rubric.py`, `apollo/overseer/misconception.py` |
 | [topic-narrative](topic-narrative.md) | Ledger-grounded narrative prompt + output sanitizer | `apollo/overseer/topic_narrative.py` |
-| [diagnostic](diagnostic.md) | Explains (never decides) the grade; delegates to the topic narrative | `apollo/overseer/diagnostic.py` |
+| [diagnostic](diagnostic.md) | Explains the grade + optional remediation pointers | `apollo/overseer/diagnostic.py`, `apollo/overseer/remediation.py` |
 | [xp](xp.md) | XP formula + 5-tier level table + progress envelope | `apollo/overseer/xp.py` |
 | [concept-inference](concept-inference.md) | Transcript → one course `concept_id` (selection only) | `apollo/overseer/concept_inference.py` |
 | [problem-selector](problem-selector.md) | Tier-2 bank selection (+ personalization flag) | `apollo/overseer/problem_selector.py`, `apollo/overseer/personalization_flag.py` |
@@ -40,7 +40,10 @@ recipe below.
 - **Misconceptions retired.** Every topic carries an empty `misconceptions`
   tuple; the detector is gone, the shape kept for UI back-compat.
 - **Flow:** transcript coverage → rubric + topic score → diagnostic/topic
-  narrative → XP.
+  narrative → optional remediation decoration → XP.
+- **Remediation never grades.** `INTERACTION3` only decorates successful
+  structured feedback in one swallowed failure domain; it cannot change score,
+  letter, narrative, XP, or grade persistence.
 
 ## Grading-path recipe (to change the grade, also touch)
 

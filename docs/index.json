@@ -90,6 +90,7 @@
     "apollo/overseer/misconception.py": "apollo/overseer/rubric",
     "apollo/overseer/personalization_flag.py": "apollo/overseer/problem-selector",
     "apollo/overseer/problem_selector.py": "apollo/overseer/problem-selector",
+    "apollo/overseer/remediation.py": "apollo/overseer/diagnostic",
     "apollo/overseer/rubric.py": "apollo/overseer/rubric",
     "apollo/overseer/topic_narrative.py": "apollo/overseer/topic-narrative",
     "apollo/overseer/topic_score.py": "apollo/overseer/topic-score",
@@ -743,7 +744,8 @@
       "kind": "leaf",
       "description": "Generates the student-facing narrative that explains \u2014 never decides \u2014 the grade.",
       "owns": [
-        "apollo/overseer/diagnostic.py"
+        "apollo/overseer/diagnostic.py",
+        "apollo/overseer/remediation.py"
       ]
     },
     "apollo/overseer/problem-selector": {
