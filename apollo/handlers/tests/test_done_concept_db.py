@@ -81,7 +81,7 @@ async def test_done_resolves_problem_from_db_concept_id(db_session):
 
     captured = {}
 
-    async def _coverage(*, transcript, reference_graph, problem):
+    async def _coverage(*, transcript, reference_graph, problem, course_evidence=None):
         captured["reference_nodes"] = list(reference_graph.nodes)
         return {}, {}
 

@@ -15,6 +15,9 @@ init_session_direct additionally raises ProblemNotFoundError (404).
 
 from __future__ import annotations
 
+import logging
+from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import update
@@ -33,9 +36,106 @@ from apollo.persistence.models import (
     TutoringSession,
 )
 from apollo.schemas.problem import Problem
-from apollo.subjects.curriculum_db import list_course_concepts
+from apollo.subjects.curriculum_db import ConceptRow, list_course_concepts
+from config.contracts import BundleSnippet
+from config.settings import get_citation_label, interaction1_enabled
+from retrieval import retrieve_for_question
 
 _ALLOWED_DIFFICULTIES = {"intro", "standard", "hard"}
+_GROUNDING_TOP_K = 8
+_GROUNDING_TOKEN_BUDGET = 2500
+_GROUNDING_RETRIEVAL_VERSION = "retrieve_for_question:v1"
+_SOLUTION_DOC_KINDS = frozenset(
+    {
+        "answer_key",
+        "authored_solution",
+        "solution",
+        "solution_manual",
+        "solutions",
+    }
+)
+_LOG = logging.getLogger(__name__)
+
+
+def _concept_grounding_terms(
+    candidates: list[ConceptRow],
+    concept_id: int,
+    problem: Problem,
+) -> tuple[str, list[str]]:
+    concept = next((item for item in candidates if item.concept_id == concept_id), None)
+    if concept is None:
+        return problem.concept_id, []
+
+    title = concept.display_name.strip() or concept.slug
+    aliases = [
+        alias for alias in (concept.slug.strip(),) if alias and alias.casefold() != title.casefold()
+    ]
+    return title, aliases
+
+
+def _is_solution_bearing(snippet: BundleSnippet) -> bool:
+    metadata = snippet.metadata or {}
+    authored_role = str(metadata.get("authored_role") or "").strip().casefold()
+    if authored_role == "solution":
+        return True
+
+    return any(
+        str(metadata.get(key) or "").strip().casefold() in _SOLUTION_DOC_KINDS
+        for key in ("doc_kind", "document_kind", "document_role", "kind", "material_kind")
+    )
+
+
+async def _build_grounding_bundle(
+    db: AsyncSession,
+    *,
+    session: TutoringSession,
+    search_space_id: int,
+    concept_title: str,
+    concept_aliases: list[str],
+    problem: Problem,
+) -> None:
+    """Best-effort retrieval and persistence after the session transaction."""
+    try:
+        snippets, diag = await retrieve_for_question(
+            query=f"{concept_title}. {problem.problem_text}",
+            keywords=[concept_title, *concept_aliases],
+            search_space_id=search_space_id,
+            db_session=db,
+            top_k=_GROUNDING_TOP_K,
+            token_budget=_GROUNDING_TOKEN_BUDGET,
+            citation_label=get_citation_label(),
+        )
+        student_safe = [snippet for snippet in snippets if not _is_solution_bearing(snippet)]
+        dropped = len(snippets) - len(student_safe)
+        if dropped:
+            _LOG.warning(
+                "Dropped %d solution-bearing snippets from Apollo session %s grounding",
+                dropped,
+                session.id,
+            )
+        if not student_safe:
+            return
+
+        session.grounding_bundle = {
+            "snippets": [asdict(snippet) for snippet in student_safe],
+            "diag": {
+                **diag,
+                "solution_snippets_dropped": dropped,
+                "student_safe_snippets": len(student_safe),
+            },
+            "built_at": datetime.now(UTC).isoformat(),
+            "retrieval_version": _GROUNDING_RETRIEVAL_VERSION,
+        }
+        await db.commit()
+    except Exception:
+        _LOG.exception(
+            "Apollo grounding retrieval failed for session %s; continuing without bundle",
+            session.id,
+        )
+        try:
+            await db.rollback()
+        except Exception:  # pragma: no cover - defensive cleanup must not break session creation
+            _LOG.exception("Failed to roll back Apollo grounding transaction")
 
 
 async def _create_session_with_problem(
@@ -46,6 +146,8 @@ async def _create_session_with_problem(
     concept_id: int,
     difficulty: str,
     problem: Problem,
+    concept_title: str,
+    concept_aliases: list[str],
 ) -> dict[str, Any]:
     """Shared tail of both entries: end any active session, create the
     TEACHING session + first attempt, commit, return the FE payload.
@@ -83,6 +185,16 @@ async def _create_session_with_problem(
     await db.flush()
     attempt_id = attempt.id
     await db.commit()
+
+    if interaction1_enabled():
+        await _build_grounding_bundle(
+            db,
+            session=session,
+            search_space_id=search_space_id,
+            concept_title=concept_title,
+            concept_aliases=concept_aliases,
+            problem=problem,
+        )
 
     return {
         "session_id": session.id,
@@ -125,6 +237,7 @@ async def init_session_from_hoot(
         difficulty=difficulty,
         attempted_ids=[],
     )
+    concept_title, concept_aliases = _concept_grounding_terms(candidates, concept_id, problem)
     return await _create_session_with_problem(
         db,
         user_id=user_id,
@@ -132,6 +245,8 @@ async def init_session_from_hoot(
         concept_id=concept_id,
         difficulty=difficulty,
         problem=problem,
+        concept_title=concept_title,
+        concept_aliases=concept_aliases,
     )
 
 
@@ -172,6 +287,7 @@ async def init_session_direct(
             attempted_ids=[],
         )
 
+    concept_title, concept_aliases = _concept_grounding_terms(candidates, concept_id, problem)
     return await _create_session_with_problem(
         db,
         user_id=user_id,
@@ -179,4 +295,6 @@ async def init_session_direct(
         concept_id=concept_id,
         difficulty=difficulty,
         problem=problem,
+        concept_title=concept_title,
+        concept_aliases=concept_aliases,
     )

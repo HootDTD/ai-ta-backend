@@ -205,6 +205,11 @@ def use_pgvector_retrieval() -> bool:
     return os.getenv("USE_PGVECTOR_RETRIEVAL", "false").lower() not in {"0", "false", "off", "no"}
 
 
+def interaction1_enabled() -> bool:
+    """Return True when session-scoped Apollo grounding is enabled."""
+    return os.getenv("INTERACTION1", "false").lower() not in {"0", "false", "off", "no"}
+
+
 def interaction2_enabled() -> bool:
     """Return True when the Apollo grading path may consume course grounding.
 
@@ -284,6 +289,7 @@ __all__ = [
     "RequestConfig",
     # pgvector settings
     "use_pgvector_retrieval",
+    "interaction1_enabled",
     "interaction2_enabled",
     "get_embedding_dim",
     "get_embedding_model",

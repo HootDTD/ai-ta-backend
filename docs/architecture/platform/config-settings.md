@@ -1,6 +1,6 @@
 ---
 doc: platform/config-settings
-description: config/settings.py — per-request runtime configuration (RequestConfig) plus the env-flag getters (embedding, Neo4j, reranker, subject) used across the backend
+description: config/settings.py — per-request runtime configuration plus backend env-flag getters.
 owns:
   - config/settings.py
   - config/__init__.py
@@ -33,6 +33,9 @@ The single authority on these env-flag getters; `retrieval/`, `apollo/`, and
 - Neo4j: `get_neo4j_uri/username/password/database()` + `neo4j_configured()`
   (True only when all four vars are set).
 - Reranker: `rerankers_enabled()`, `get_reranker_model()`.
+- Apollo grounding: `interaction1_enabled()` reads `INTERACTION1`, default off;
+  gates whether a session's grounding bundle is BUILT
+  (`apollo/conversation/session-init`).
 - Grounding: `interaction2_enabled()` — default OFF; gates whether the Apollo
   grading path consumes a session's course-grounding bundle
   (`apollo/conversation/handlers/done`). Independent of `INTERACTION1`, which
@@ -56,7 +59,7 @@ gates a one-time subject log line.
 `RETRIEVAL_WIRE_LOG`, `RUNTIME_DIR`, `TEXTBOOK_SUBJECT`, `CITATION_LABEL`,
 `USE_PGVECTOR_RETRIEVAL`, `EMBEDDING_DIM`, `OPENAI_EMBEDDING_MODEL`,
 `SUPABASE_DB_URL`, `NEO4J_URI`/`NEO4J_USERNAME`/`NEO4J_PASSWORD`/`NEO4J_DATABASE`,
-`RERANKERS_ENABLED`, `RERANKER_MODEL`, `INTERACTION2`.
+`RERANKERS_ENABLED`, `RERANKER_MODEL`, `INTERACTION1`, `INTERACTION2`.
 
 ## Related
 

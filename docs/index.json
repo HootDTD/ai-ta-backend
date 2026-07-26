@@ -268,6 +268,7 @@
     "database/migrations/045_apollo_mastery_event_problem_link.sql": "database/legacy-migrations",
     "database/migrations/046_apollo_solution_source_llm_paired.sql": "database/legacy-migrations",
     "database/migrations/047_apollo_question_tally.sql": "database/legacy-migrations",
+    "database/migrations/048_apollo_session_grounding_bundle.sql": "database/legacy-migrations",
     "database/migrations/README.md": "database/legacy-migrations",
     "database/migrations/__init__.py": "database/legacy-migrations",
     "database/migrations/legacy-manifest.sha256": "database/legacy-migrations",
@@ -591,7 +592,7 @@
     "apollo/conversation/session-init": {
       "path": "docs/architecture/apollo/conversation/session-init.md",
       "kind": "leaf",
-      "description": "hoot_bridge session creation \u2014 the two Apollo entry paths (Hoot handoff + standalone) that mint a TEACHING session and first attempt.",
+      "description": "hoot_bridge session creation \u2014 both Apollo entry paths, first attempt, and optional session grounding.",
       "owns": [
         "apollo/hoot_bridge/session_init.py",
         "apollo/hoot_bridge/__init__.py"
@@ -1420,7 +1421,7 @@
     "database/legacy-migrations": {
       "path": "docs/architecture/database/legacy-migrations.md",
       "kind": "leaf",
-      "description": "The FROZEN numbered legacy migration archive (001\u2013047) \u2014 checksum-locked provenance, not the live schema.",
+      "description": "The FROZEN numbered migration archive (001\u2013048), including the explicit Interaction-1 exception.",
       "owns": [
         "database/migrations/__init__.py",
         "database/migrations/001_create_schema.py",
@@ -1621,7 +1622,7 @@
     "platform/config-settings": {
       "path": "docs/architecture/platform/config-settings.md",
       "kind": "leaf",
-      "description": "config/settings.py \u2014 per-request runtime configuration (RequestConfig) plus the env-flag getters (embedding, Neo4j, reranker, subject) used across the backend",
+      "description": "config/settings.py \u2014 per-request runtime configuration plus backend env-flag getters.",
       "owns": [
         "config/settings.py",
         "config/__init__.py"
