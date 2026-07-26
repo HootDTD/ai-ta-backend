@@ -7,7 +7,7 @@ related:
   - apollo/conversation/routing/router
   - apollo/persistence/progress-repo
   - apollo/overseer/xp
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -30,7 +30,10 @@ progress within one course.
 
 `handle_get_progress_detail` composes the base helper, then reads mastery rows
 (`LearnerState`→`LearnerEntity`→`Concept`) and recent graded attempts
-(`ProblemAttempt.diagnostic_report`, filtered to `result == "graded"`). Level
+(`ProblemAttempt.diagnostic_report`, filtered to `result == "graded"`). Each
+attempt's score/letter prefers the report's `served_overall` snapshot (the
+grade the student was shown — see `handlers/done`) and falls back to the raw
+`rubric.overall` for rows graded before the snapshot existed. Level
 title/threshold come from `overseer/xp` (`title_for_level`, `next_tier_threshold`).
 
 ## Invariants & gotchas

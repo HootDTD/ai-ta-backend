@@ -16,7 +16,7 @@ related:
   - apollo/persistence/done-write-linkage
   - apollo/persistence/progress-repo
   - apollo/schemas/problem
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -71,6 +71,13 @@ Ordered grade assembly (each step delegates to the owner doc):
   each owns its commit and swallows exceptions; neither can void the served grade.
   `_project_mastery` is skipped when `APOLLO_GRAPH_SIM_LAYER3_ENABLED` is on (the
   dormant Bayesian path would double-apply evidence).
+- The persisted `attempt.diagnostic_report` stores `{narrative, rubric (RAW),
+  coverage, served_overall}`. `served_overall` (2026-07-26) is a snapshot of
+  `served_rubric["overall"]` — the grade the student was actually shown (topic
+  score when it computed). Re-serving surfaces (`handlers/browse` grade cards,
+  `handlers/progress` recents) read the snapshot first and fall back to
+  `rubric.overall` for pre-snapshot rows; `rubric` itself deliberately stays
+  the RAW axis rubric for rerun/janitor consumers.
 - The response keeps historical `graph_lane: null` for API compatibility.
 - **Does NOT import `done_turn_order`** (the WU-4C1 shadow chain — A7 removed it).
 

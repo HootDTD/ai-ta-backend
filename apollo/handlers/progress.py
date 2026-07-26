@@ -108,7 +108,10 @@ async def handle_get_progress_detail(
     recent = []
     for attempt, concept_id, display_name, problem_code in attempt_rows:
         report = attempt.diagnostic_report or {}
-        overall = (report.get("rubric") or {}).get("overall") or {}
+        # Prefer the Done path's `served_overall` snapshot (the grade the
+        # student actually SAW — topic score included); legacy rows predating
+        # the snapshot fall back to the raw rubric overall.
+        overall = report.get("served_overall") or (report.get("rubric") or {}).get("overall") or {}
         recent.append(
             {
                 "attempt_id": attempt.id,
