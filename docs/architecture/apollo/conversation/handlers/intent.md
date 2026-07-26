@@ -6,7 +6,8 @@ owns:
 related:
   - apollo/conversation/handlers/chat
   - apollo/conversation/agent/llm-client
-last_verified: 2026-07-25
+  - apollo/conversation/hoot-bridge-reference-answer
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -33,7 +34,17 @@ restart/next/return-to-Hoot/help intents behind a confirmation gate.
 `handlers/chat` calls `detect_confirmation` when a `pending_intent` is set, and
 `classify_intent` + `confirmation_prompt_for` otherwise. Above-threshold
 non-teaching intents arm `pending_intent`; only `done` currently has a wired
-executor — other intents log and fall through to teaching.
+executor — `reference_question` is direct-executed (no confirmation gate, see
+below); other intents log and fall through to teaching.
+
+`reference_question` (INTERACTION4, default OFF — `hoot-bridge-reference-
+answer.is_enabled()`): a 7th label for "the student is asking Apollo to look
+something up" rather than teaching. `_classifier_prompt()` appends
+`_REFERENCE_QUESTION_BLOCK` to `_CLASSIFIER_PROMPT` ONLY when the flag is on;
+with the flag off, the prompt sent to `cheap_chat` is byte-identical to
+`_CLASSIFIER_PROMPT` and `classify_intent` additionally coerces a stray
+`reference_question` verdict back to `teaching` (defense in depth — flag-off
+classifier behavior is unaffected regardless of what the model returns).
 
 ## Invariants & gotchas
 
@@ -44,6 +55,9 @@ executor — other intents log and fall through to teaching.
   misclassification is preferred over hijacking a teaching turn.
 - `off_topic` deliberately falls through (never gated) so on-topic teaching is
   never blocked.
+- `reference_question` is never confirmation-gated — `handlers/chat` executes
+  it directly (the brief: a wrong hint costs one extra message, unlike `done`
+  which ends the session).
 
 ## Env flags
 
@@ -52,4 +66,5 @@ executor — other intents log and fall through to teaching.
 
 ## Related
 
-Consumed by `handlers/chat`; LLM call via `agent/llm-client` (`cheap_chat`).
+Consumed by `handlers/chat`; LLM call via `agent/llm-client` (`cheap_chat`);
+`reference_question` gating reads `hoot-bridge-reference-answer.is_enabled()`.
