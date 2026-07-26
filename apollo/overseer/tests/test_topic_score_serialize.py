@@ -21,6 +21,7 @@ def _result() -> TopicScoreResult:
                 credit=1.0,
                 status="covered",
                 weight=0.7,
+                evidence_span="student said Bernoulli",
                 misconceptions=(
                     TopicMisconception(
                         canonical_key="misc.x",
@@ -36,6 +37,7 @@ def _result() -> TopicScoreResult:
                 credit=0.0,
                 status="missing",
                 weight=0.0,
+                evidence_span=None,
                 misconceptions=(
                     TopicMisconception(
                         canonical_key="misc.stray",
@@ -73,6 +75,7 @@ def test_serialize_topic_field_names():
         "credit",
         "status",
         "weight",
+        "evidence_span",
         "misconceptions",
     }
     assert topic["canonical_key"] == "eq1"
@@ -80,6 +83,7 @@ def test_serialize_topic_field_names():
     assert topic["credit"] == 1.0
     assert topic["status"] == "covered"
     assert topic["weight"] == 0.7
+    assert topic["evidence_span"] == "student said Bernoulli"
 
 
 def test_serialize_misconception_field_names():
@@ -97,6 +101,7 @@ def test_serialize_misconception_none_evidence_span_preserved():
     general = block["topics"][1]
     assert general["canonical_key"] == "_general"
     assert general["display_name"] is None
+    assert general["evidence_span"] is None
     misc = general["misconceptions"][0]
     assert misc["evidence_span"] is None
 

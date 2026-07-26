@@ -4,11 +4,10 @@ prompt that names every topic + misconception in the ledger, with the exact
 evidence spans, `$...$`-only math delimiters, and nothing else score-related
 invented.
 
-2026-07-11 feedback spec §2 updated the contract: canonical keys and decimal
-credit/weight/dock values are internals and must NOT reach the prompt (see
-``test_topic_narrative_prompt.py` for the dedicated internals-leak suite).
-This file keeps the broader structural/shape assertions (problem text,
-score/letter, math delimiters, next-step line, degrade-gracefully paths)."""
+The feedback scorecard contract permits canonical keys only as structured
+response identifiers; decimal credit/weight/dock values remain private. This
+file keeps the broader structural/shape assertions (problem text, score/letter,
+math delimiters, JSON output, and degrade-gracefully paths)."""
 
 from __future__ import annotations
 
@@ -62,20 +61,15 @@ def _result(**overrides: object) -> TopicScoreResult:
 
 
 def test_prompt_contains_every_topic_display_name_or_humanized_fallback():
-    # 2026-07-11 feedback spec §2: canonical keys never reach the prompt as
-    # ledger internals — display name (or its humanized fallback) is the
-    # topic's identity. `_humanize_key` degrades snake_case/prefixed keys to
-    # readable phrases; a bare short key like "c1" has no prefix/underscore
-    # to strip and so round-trips unchanged, which is fine since it no
-    # longer reads as an internal identifier in that form.
+    # Canonical keys are supplied solely so the model can copy them into the
+    # structured response. Display names remain the prose identity.
     result = _result()
     _system, user = build_topic_narrative_prompt(result, problem_text="Water flows...")
 
     assert "Bernoulli equation" in user
     assert "apply continuity" in user
-    # The prefixed/underscored keys must never appear verbatim.
-    assert "eq1" not in user
-    assert "p1" not in user
+    assert 'canonical_key="eq1"' in user
+    assert 'canonical_key="p1"' in user
 
 
 def test_prompt_contains_display_name_when_present():
@@ -156,10 +150,12 @@ def test_system_prompt_forbids_claims_beyond_ledger():
     assert "not" in sys_lower and "claim" in sys_lower
 
 
-def test_system_prompt_instructs_next_step_line():
+def test_system_prompt_instructs_structured_next_step():
     result = _result()
     system, _user = build_topic_narrative_prompt(result, problem_text="p")
-    assert "Next step:" in system
+    normalized = " ".join(system.split())
+    assert '"next_step"' in normalized
+    assert 'without a "Next step:" prefix' in normalized
 
 
 def test_system_prompt_requires_direct_second_person_feedback():
@@ -180,10 +176,10 @@ def test_system_prompt_suppresses_empty_misconception_commentary():
 
 def test_system_prompt_prioritizes_instead_of_inventorying_gaps():
     system, _user = build_topic_narrative_prompt(_result(), problem_text="p")
-    lowered = system.lower()
+    lowered = " ".join(system.lower().split())
     assert "mention at most two" in lowered
     assert "synthesize; do not inventory" in lowered
-    assert 'not "focus on understanding"' in lowered
+    assert 'never use the vague instruction "focus on understanding"' in lowered
 
 
 def test_user_payload_calls_input_assessment_evidence_not_ledger():

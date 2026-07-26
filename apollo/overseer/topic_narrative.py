@@ -12,7 +12,7 @@ details never reach the narrator.
 
 Pure module: no IO, no LLM call. ``build_topic_narrative_prompt`` returns the
 ``(system, user)`` message pair; the caller (``diagnostic.py``) is responsible
-for the actual completion call, exactly like the existing axis-based path.
+for the actual structured-JSON completion call.
 """
 
 from __future__ import annotations
@@ -58,23 +58,26 @@ EVIDENCE AND ACCURACY:
 - Discuss a misconception only when one is supplied. Quote or closely paraphrase its evidence,
   state plainly why it needs attention, and acknowledge it if marked corrected. If none are
   supplied, say nothing at all about misconceptions, correctness, or the absence of errors.
-- NEVER expose internal identifiers, scoring machinery, decimal credit/weight/dock values, or
-  the words "ledger" and "rubric." Percentages are available for prioritization but should be
-  omitted unless one is genuinely useful to the student.
+- NEVER expose internal identifiers outside the canonical_key JSON fields. Never expose scoring
+  machinery, decimal credit/weight/dock values, or the words "ledger" and "rubric" in prose.
+  Percentages are available for prioritization but should be omitted unless one is genuinely
+  useful to the student.
 - Use inline math delimited ONLY as `$...$` — never `\\( \\)`, never `\\[ \\]`, and never a
   bare LaTeX command outside a `$...$` span.
 
 RESPONSE SHAPE:
-- Write 90–160 words in two short paragraphs, then one final line. Do not use headings or bullets.
-- Paragraph 1: lead with the strongest specific thing the student explained and why it helped
-  Apollo understand. If nothing was covered, begin neutrally and encouragingly without inventing
-  praise.
-- Paragraph 2: explain the one or two highest-value improvements. Make the contrast actionable:
-  what the student communicated, when partial evidence exists, and what to add or connect next.
-- Finish with exactly one line beginning "Next step:" Give one concrete revision or re-teaching
-  move tied to the most important gap. Phrase it as something the student can say, show, connect,
-  compare, or illustrate — not "focus on understanding" or "study more."
-- Do not repeat the score or letter grade. Do not add a generic conclusion."""
+- Return valid JSON only, with exactly these fields:
+  {"headline": "...", "topic_feedback": [
+    {"canonical_key": "...", "note": "...", "quote": "..." or null}
+  ], "next_step": "..."}
+- Copy each supplied canonical key exactly once into topic_feedback, in the supplied topic order.
+- headline is one concise overall takeaway. Each note is one or two concise sentences specific to
+  that topic. next_step is one concrete revision or re-teaching move without a "Next step:"
+  prefix. Never use the vague instruction "focus on understanding"; avoid "study more" too.
+- A quote may be non-null ONLY when that topic supplies a "You said" span, and it must copy that
+  entire span exactly, character for character. Otherwise quote must be null. Never quote from
+  the transcript or invent, shorten, normalize, or combine a quote.
+- Do not include recap text, headings, bullets, the score, or the letter grade."""
 
 
 def _status_label(status: str) -> str:
@@ -100,7 +103,10 @@ def _humanize_key(key: str) -> str:
 def _format_topic_line(topic) -> str:  # noqa: ANN001 - TopicCredit, avoid import cycle noise
     name = topic.display_name or _humanize_key(topic.canonical_key)
     pct = round(topic.credit * 100)
-    line = f'- Topic "{name}": {_status_label(topic.status)} — {pct}%'
+    line = (
+        f'- Topic canonical_key="{topic.canonical_key}", name="{name}": '
+        f"{_status_label(topic.status)} — {pct}%"
+    )
     if getattr(topic, "evidence_span", None):
         line += f'\n  * You said: "{topic.evidence_span}"'
     if topic.misconceptions:
@@ -122,13 +128,14 @@ def build_topic_narrative_prompt(
     Pure: no IO. ``user`` enumerates every topic (in ``result.topics`` order,
     including the synthetic ``_general`` bucket last, matching
     ``compute_topic_score``'s own ordering) with its status, whole-number
-    percentage, and — when the topic carries a gated per-attempt
+    percentage, canonical key (needed only for the structured response), and —
+    when the topic carries a gated per-attempt
     ``evidence_span`` — a quoted ``You said:`` line of the student's own
-    words (display names + those quotes only — internals never reach the
-    prompt; see ``sanitize_narrative`` for the output-side gate) and any
-    attached misconceptions (evidence span + resolved flag). The evidence
-    header marks topic descriptions as the REFERENCE solution's wording so
-    the narrator never attributes them to the student.
+    words, plus any attached misconceptions (evidence span + resolved flag).
+    The evidence header marks topic descriptions as the REFERENCE solution's
+    wording so the narrator never attributes them to the student. Canonical
+    keys may appear only in the structured ``canonical_key`` fields; see
+    ``sanitize_narrative`` for the prose output-side gate.
 
     ``student_utterances`` (2026-07-14 narrative-grounding fix) is the verbatim
     student transcript in turn order. When non-empty it is appended so the
