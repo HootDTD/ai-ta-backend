@@ -22,3 +22,17 @@ repos:
       - id: check-added-large-files
         args: [--maxkb=1024]
       - id: detect-private-key # cheap secret tripwire
+
+  # Architecture-doc ownership lint — keeps local == CI (PLAN §6.4). Fires when a
+  # commit touches Python or the durable architecture tree. ADVISORY during the
+  # docs/granular-restructure split (--exit-zero mirrors CI's continue-on-error so
+  # a mid-flight bijection storm never blocks a commit). W5 removes --exit-zero to
+  # make it blocking, in lockstep with flipping the CI `docs` job to required.
+  - repo: local
+    hooks:
+      - id: docs-owns-coverage
+        name: architecture-doc ownership bijection lint (advisory)
+        entry: python scripts/docs/check_owns_coverage.py --check-size --exit-zero
+        language: system
+        pass_filenames: false
+        files: '(\.py$|^docs/architecture/.*\.md$)'
