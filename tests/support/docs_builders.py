@@ -113,12 +113,12 @@ class DocRepo:
             fh.write(content)
         return p
 
-    def write_many(self, files: dict) -> "DocRepo":
+    def write_many(self, files: dict) -> DocRepo:
         for rel, content in files.items():
             self.write(rel, content)
         return self
 
-    def add_all(self) -> "DocRepo":
+    def add_all(self) -> DocRepo:
         git(self.root, "add", "-A")
         return self
 
@@ -134,9 +134,7 @@ def baseline_files() -> dict:
         "pytest.ini": "[pytest]\n",
         "apollo/grader.py": "grade = 1\n",
         "rag/pipeline.py": "run = 2\n",
-        "docs/architecture/_overview.md": router(
-            "overview", body="# Overview\n\nRoot router.\n"
-        ),
+        "docs/architecture/_overview.md": router("overview", body="# Overview\n\nRoot router.\n"),
         "docs/architecture/apollo/_index.md": router(
             "apollo-index",
             body="# Apollo\n\n- [grader](grader.md)\n",
@@ -148,7 +146,5 @@ def baseline_files() -> dict:
             "rag-index",
             body="# RAG\n\n- [pipeline](pipeline.md)\n",
         ),
-        "docs/architecture/rag/pipeline.md": leaf(
-            "rag-pipeline", owns=["rag/pipeline.py"]
-        ),
+        "docs/architecture/rag/pipeline.md": leaf("rag-pipeline", owns=["rag/pipeline.py"]),
     }

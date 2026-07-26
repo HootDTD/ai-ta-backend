@@ -17,7 +17,6 @@ import os
 import pytest
 
 import scripts.docs.check_owns_coverage as cov
-
 from tests.support.docs_builders import baseline_files, leaf, router
 
 pytestmark = pytest.mark.unit
@@ -87,7 +86,7 @@ def test_fallback_parse_covers_all_branches():
         "flag: no\n"
         "yesish: yes\n"
         "falsish: false\n"
-        "quoted: \"hi there\"\n"
+        'quoted: "hi there"\n'
         "plain prose line without colon\n"
         "badblock:\n"
         "- notindented\n"
@@ -306,10 +305,10 @@ def _body(n_lines: int) -> str:
 def test_check_size_leaf_boundaries():
     r = cov.Report()
     docs = [
-        cov.Doc("docs/architecture/x/ok.md", "ok", {}, _body(80)),      # ok
+        cov.Doc("docs/architecture/x/ok.md", "ok", {}, _body(80)),  # ok
         cov.Doc("docs/architecture/x/warn.md", "warn", {}, _body(81)),  # soft warn
-        cov.Doc("docs/architecture/x/cap.md", "cap", {}, _body(150)),   # still ok
-        cov.Doc("docs/architecture/x/hard.md", "hard", {}, _body(151)), # hard error
+        cov.Doc("docs/architecture/x/cap.md", "cap", {}, _body(150)),  # still ok
+        cov.Doc("docs/architecture/x/hard.md", "hard", {}, _body(151)),  # hard error
     ]
     cov.check_size(docs, r)
     size_errs = r.errors.get("size", [])
@@ -323,7 +322,7 @@ def test_check_size_leaf_boundaries():
 def test_check_size_router_boundary():
     r = cov.Report()
     docs = [
-        cov.Doc("docs/architecture/_index.md", "idx-ok", {}, _body(60)),   # ok
+        cov.Doc("docs/architecture/_index.md", "idx-ok", {}, _body(60)),  # ok
         cov.Doc("docs/architecture/y/_index.md", "idx-big", {}, _body(61)),  # error
     ]
     cov.check_size(docs, r)
@@ -481,9 +480,7 @@ def test_dangling_glob(new_repo, capsys):
 def test_glob_owns_matches_tracked_file(new_repo, capsys):
     files = baseline_files()
     files["rag/extra.py"] = "extra = 3\n"
-    files["docs/architecture/rag/pipeline.md"] = leaf(
-        "rag-pipeline", owns=["rag/*.py"]
-    )
+    files["docs/architecture/rag/pipeline.md"] = leaf("rag-pipeline", owns=["rag/*.py"])
     repo = new_repo(files)
     rc = cov.main(["--repo-root", str(repo.root)])
     out = capsys.readouterr().out
@@ -524,9 +521,7 @@ def test_missing_doc_id(new_repo, capsys):
 def test_duplicate_doc_id(new_repo, capsys):
     files = baseline_files()
     # Give the rag pipeline leaf the same id as the apollo grader leaf.
-    files["docs/architecture/rag/pipeline.md"] = leaf(
-        "apollo-grader", owns=["rag/pipeline.py"]
-    )
+    files["docs/architecture/rag/pipeline.md"] = leaf("apollo-grader", owns=["rag/pipeline.py"])
     repo = new_repo(files)
     rc = cov.main(["--repo-root", str(repo.root)])
     out = capsys.readouterr().out
@@ -650,7 +645,6 @@ def test_index_reference_by_basename_code_span(new_repo, capsys):
     )
     repo = new_repo(files)
     rc = cov.main(["--repo-root", str(repo.root)])
-    out = capsys.readouterr().out
     assert rc == 0
 
 
@@ -794,9 +788,7 @@ def test_exit_zero_clean_repo(baseline_repo, capsys):
 def test_main_required_ext_override(baseline_repo, capsys):
     # Force the required universe to .ts,.tsx: no tracked .ts exist, so the .py
     # files are no longer in the required universe and nothing is uncovered.
-    rc = cov.main(
-        ["--repo-root", str(baseline_repo.root), "--required-ext", "ts,tsx"]
-    )
+    rc = cov.main(["--repo-root", str(baseline_repo.root), "--required-ext", "ts,tsx"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "required-universe=['.ts', '.tsx']" in out
@@ -813,9 +805,7 @@ def _lv_repo(new_repo):
 
 
 def test_main_check_last_verified_without_base_warns(baseline_repo, capsys):
-    rc = cov.main(
-        ["--repo-root", str(baseline_repo.root), "--check-last-verified"]
-    )
+    rc = cov.main(["--repo-root", str(baseline_repo.root), "--check-last-verified"])
     out = capsys.readouterr().out
     assert rc == 0  # advisory warning only
     assert "skipped: no --base diff ref" in out
@@ -824,9 +814,7 @@ def test_main_check_last_verified_without_base_warns(baseline_repo, capsys):
 def test_check_last_verified_no_changes_is_silent(new_repo):
     repo, base = _lv_repo(new_repo)
     required = cov.detect_required_exts(str(repo.root), None)
-    report, docs, doc_ids, owners = cov.analyze(
-        str(repo.root), "docs/architecture", required
-    )
+    report, docs, doc_ids, owners = cov.analyze(str(repo.root), "docs/architecture", required)
     # base == HEAD -> empty diff -> nothing reported.
     cov.check_last_verified(str(repo.root), "HEAD", docs, owners, report)
     assert not report.warnings.get("last_verified")
@@ -836,9 +824,7 @@ def test_check_last_verified_no_changes_is_silent(new_repo):
 def test_check_last_verified_bad_base_ref_warns(new_repo):
     repo, base = _lv_repo(new_repo)
     required = cov.detect_required_exts(str(repo.root), None)
-    report, docs, doc_ids, owners = cov.analyze(
-        str(repo.root), "docs/architecture", required
-    )
+    report, docs, doc_ids, owners = cov.analyze(str(repo.root), "docs/architecture", required)
     cov.check_last_verified(str(repo.root), "no-such-ref", docs, owners, report)
     assert report.warnings.get("last_verified")
     assert "could not compute diff" in report.warnings["last_verified"][0]
@@ -850,9 +836,7 @@ def test_check_last_verified_source_changed_doc_untouched(new_repo):
     repo.write("apollo/grader.py", "grade = 999\n")
     repo.commit("touch source only")
     required = cov.detect_required_exts(str(repo.root), None)
-    report, docs, doc_ids, owners = cov.analyze(
-        str(repo.root), "docs/architecture", required
-    )
+    report, docs, doc_ids, owners = cov.analyze(str(repo.root), "docs/architecture", required)
     # Advisory (default) -> warning.
     cov.check_last_verified(str(repo.root), base, docs, owners, report)
     msgs = report.warnings.get("last_verified", [])
@@ -878,9 +862,7 @@ def test_check_last_verified_doc_changed_but_not_bumped(new_repo):
     )
     repo.commit("edit source + doc body, no lv bump")
     required = cov.detect_required_exts(str(repo.root), None)
-    report, docs, doc_ids, owners = cov.analyze(
-        str(repo.root), "docs/architecture", required
-    )
+    report, docs, doc_ids, owners = cov.analyze(str(repo.root), "docs/architecture", required)
     cov.check_last_verified(str(repo.root), base, docs, owners, report)
     msgs = report.warnings.get("last_verified", [])
     assert any("last_verified not bumped" in m for m in msgs)
@@ -900,9 +882,7 @@ def test_check_last_verified_bumped_is_clean(new_repo):
     )
     repo.commit("edit source + bump lv")
     required = cov.detect_required_exts(str(repo.root), None)
-    report, docs, doc_ids, owners = cov.analyze(
-        str(repo.root), "docs/architecture", required
-    )
+    report, docs, doc_ids, owners = cov.analyze(str(repo.root), "docs/architecture", required)
     cov.check_last_verified(str(repo.root), base, docs, owners, report)
     assert not report.warnings.get("last_verified")
     assert not report.errors.get("last_verified")
@@ -924,9 +904,7 @@ def test_check_last_verified_dedup_two_sources_one_doc(new_repo):
     repo.write("apollo/extra.py", "extra = 2\n")
     repo.commit("touch both sources")
     required = cov.detect_required_exts(str(repo.root), None)
-    report, docs, doc_ids, owners = cov.analyze(
-        str(repo.root), "docs/architecture", required
-    )
+    report, docs, doc_ids, owners = cov.analyze(str(repo.root), "docs/architecture", required)
     cov.check_last_verified(str(repo.root), base, docs, owners, report)
     msgs = report.warnings.get("last_verified", [])
     # Deduplicated: the owning doc is flagged exactly once despite two sources.
@@ -958,9 +936,7 @@ def test_main_last_verified_advisory_does_not_fail(new_repo, capsys):
     base = repo.commit("base")
     repo.write("apollo/grader.py", "grade = 43\n")
     repo.commit("touch source only")
-    rc = cov.main(
-        ["--repo-root", str(repo.root), "--check-last-verified", "--base", base]
-    )
+    rc = cov.main(["--repo-root", str(repo.root), "--check-last-verified", "--base", base])
     out = capsys.readouterr().out
     assert rc == 0  # advisory: warning, not failure
     assert "[warn] last_verified" in out
@@ -993,9 +969,7 @@ def test_last_verified_handles_utf8_arrow_in_doc(new_repo, capsys):
         files["docs/architecture/apollo/grader.md"],
     )
     repo.commit("edit arrow doc + source")
-    rc = cov.main(
-        ["--repo-root", str(repo.root), "--check-last-verified", "--base", base]
-    )
+    rc = cov.main(["--repo-root", str(repo.root), "--check-last-verified", "--base", base])
     out = capsys.readouterr().out
     # The point is: no UnicodeDecodeError; the run completes and warns.
     assert rc == 0
@@ -1053,9 +1027,7 @@ def test_last_verified_inner_diff_exception(new_repo, monkeypatch):
 
     repo, base = _lv_repo(new_repo)
     required = cov.detect_required_exts(str(repo.root), None)
-    report, docs, doc_ids, owners = cov.analyze(
-        str(repo.root), "docs/architecture", required
-    )
+    report, docs, doc_ids, owners = cov.analyze(str(repo.root), "docs/architecture", required)
 
     calls = {"n": 0}
     first_out = "apollo/grader.py\ndocs/architecture/apollo/grader.md\n"

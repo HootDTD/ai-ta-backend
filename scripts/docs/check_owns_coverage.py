@@ -229,7 +229,7 @@ def load_excludes(repo_root: str) -> list:
     path = os.path.join(repo_root, "scripts", "docs", "owns_exclude.txt")
     patterns = []
     if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             for ln in fh:
                 ln = ln.strip()
                 if not ln or ln.startswith("#"):
@@ -267,7 +267,7 @@ def load_docs(repo_root: str, docs_root: str):
                 continue
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, repo_root).replace("\\", "/")
-            with open(full, "r", encoding="utf-8") as fh:
+            with open(full, encoding="utf-8") as fh:
                 text = fh.read()
             fm, body = parse_frontmatter(text)
             doc_id = ""
@@ -283,13 +283,13 @@ def load_docs(repo_root: str, docs_root: str):
 # ---------------------------------------------------------------------------
 
 
-def load_manifest(repo_root: str) -> dict:
+def load_manifest(repo_root: str) -> dict[str, str]:
     """basename -> expected sha256 hex, parsed from legacy-manifest.sha256."""
     path = os.path.join(repo_root, LEGACY_MANIFEST)
-    manifest = {}
+    manifest: dict[str, str] = {}
     if not os.path.exists(path):
         return manifest
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         for ln in fh:
             ln = ln.strip()
             if not ln or ln.startswith("#"):
@@ -317,7 +317,7 @@ def lf_sha256(path: str) -> str:
 
 class Report:
     def __init__(self):
-        self.errors = {}   # category -> list[str]
+        self.errors = {}  # category -> list[str]
         self.warnings = {}  # category -> list[str]
 
     def err(self, cat, msg):
@@ -364,8 +364,8 @@ def analyze(repo_root, docs_root, required_exts, cap=200):
             report.err("frontmatter", f"{d.relpath}: stub:false leaf has no `## Interface` section")
 
     # --- ownership map (file -> [doc_id, ...]) ---
-    owners = {}       # rel path -> list of doc ids
-    owned_via = {}    # rel path -> owning doc id -> "exact"|"glob"|"sentinel"
+    owners = {}  # rel path -> list of doc ids
+    owned_via = {}  # rel path -> owning doc id -> "exact"|"glob"|"sentinel"
     manifest = load_manifest(repo_root)
 
     def add_owner(rel, doc_id, how):
@@ -390,12 +390,18 @@ def analyze(repo_root, docs_root, required_exts, cap=200):
             if is_glob(entry):
                 matched = [rel for rel in tracked if glob_match(rel, entry)]
                 if not matched:
-                    report.err("dangling", f"{d.doc_id or d.relpath}: owns glob '{entry}' matches no tracked file")
+                    report.err(
+                        "dangling",
+                        f"{d.doc_id or d.relpath}: owns glob '{entry}' matches no tracked file",
+                    )
                 for rel in matched:
                     add_owner(rel, d.doc_id, "glob")
             else:
                 if not exists(entry):
-                    report.err("dangling", f"{d.doc_id or d.relpath}: owns path '{entry}' matches no existing file")
+                    report.err(
+                        "dangling",
+                        f"{d.doc_id or d.relpath}: owns path '{entry}' matches no existing file",
+                    )
                 else:
                     add_owner(entry, d.doc_id, "exact")
 
@@ -441,7 +447,10 @@ def analyze(repo_root, docs_root, required_exts, cap=200):
     for d in docs:
         for rid in d.related:
             if rid not in all_ids:
-                report.err("related-unresolved", f"{d.doc_id or d.relpath}: related id '{rid}' does not resolve")
+                report.err(
+                    "related-unresolved",
+                    f"{d.doc_id or d.relpath}: related id '{rid}' does not resolve",
+                )
 
     # --- check 7: _index freshness ---
     _index_freshness(repo_root, docs_root, docs, doc_ids, report)
@@ -585,7 +594,9 @@ def check_last_verified(repo_root, base, docs, owners, report, required=False):
             if not doc or doc_id in flagged:
                 continue
             if doc.relpath not in changed:
-                _emit_lv(report, required, f"{rel} changed but owning leaf {doc.relpath} not updated")
+                _emit_lv(
+                    report, required, f"{rel} changed but owning leaf {doc.relpath} not updated"
+                )
                 flagged.add(doc_id)
                 continue
             # Owning doc changed — verify last_verified actually moved.
@@ -718,13 +729,25 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Architecture-doc ownership bijection lint.")
     ap.add_argument("--repo-root", default=".")
     ap.add_argument("--docs-root", default="docs/architecture")
-    ap.add_argument("--required-ext", default=None, help="override required universe, e.g. 'py' or 'ts,tsx'")
-    ap.add_argument("--repo-name", default=None, help="name recorded in index.json (default: repo dir basename)")
+    ap.add_argument(
+        "--required-ext", default=None, help="override required universe, e.g. 'py' or 'ts,tsx'"
+    )
+    ap.add_argument(
+        "--repo-name", default=None, help="name recorded in index.json (default: repo dir basename)"
+    )
     ap.add_argument("--check-size", action="store_true")
-    ap.add_argument("--check-last-verified", action="store_true", help="PR-path last_verified check (advisory)")
-    ap.add_argument("--last-verified-required", action="store_true", help="make the last_verified check fail the run")
+    ap.add_argument(
+        "--check-last-verified", action="store_true", help="PR-path last_verified check (advisory)"
+    )
+    ap.add_argument(
+        "--last-verified-required",
+        action="store_true",
+        help="make the last_verified check fail the run",
+    )
     ap.add_argument("--base", default=None, help="diff base ref for the PR-path check")
-    ap.add_argument("--emit-index", action="store_true", help="regenerate docs/index.json from frontmatter")
+    ap.add_argument(
+        "--emit-index", action="store_true", help="regenerate docs/index.json from frontmatter"
+    )
     ap.add_argument("--json", action="store_true", help="alias for --emit-index")
     ap.add_argument("--index-out", default="docs/index.json")
     ap.add_argument("--cap", type=int, default=200, help="max findings printed per category")
