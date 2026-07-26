@@ -36,6 +36,11 @@ Gated end-to-end by `INTERACTION4` (default OFF; brief:
   `MAX_ASIDES_PER_SESSION` — the response-envelope tag, the
   `TutoringMessage.intent` tag `handlers/done._full_transcript` excludes on,
   and the per-session aside cap (3), respectively.
+- `ASIDE_COUNT_SESSION_METADATA_KEY` — the `TutoringSession.metadata_` key the
+  running aside count is stored under. `handlers/chat` increments it (and
+  reads it for the cap check); `handlers/done` reads it, unmodified, into
+  `grading_provenance.reference_question_asides_used`. Defined here (not in
+  either handler) so the two can't drift on the key name.
 
 ## Data flow
 

@@ -40,6 +40,12 @@ ASIDE_MESSAGE_INTENT_TAG = "reference_question_aside"
 # lookup (brief: "Rate cap per session (e.g., 3 asides)").
 MAX_ASIDES_PER_SESSION = 3
 
+# TutoringSession.metadata_ key the aside count is persisted under. Shared
+# between apollo/handlers/chat.py (increments it) and apollo/handlers/done.py
+# (reads it into grading_provenance, additive per the brief) so the two
+# handlers can't drift on the key name.
+ASIDE_COUNT_SESSION_METADATA_KEY = "reference_question_aside_count"
+
 _OUT_OF_SCOPE_TEXT = "That's outside what's covered in this course's materials."
 _NOT_FOUND_TEXT = "Not found in the approved materials."
 
@@ -67,7 +73,7 @@ class ReferenceAsideResult:
     citations: list[dict[str, Any]]
 
 
-def _document_id_of(snippet: "BundleSnippet") -> int | None:
+def _document_id_of(snippet: BundleSnippet) -> int | None:
     raw = (snippet.metadata or {}).get("document_id")
     try:
         return int(raw) if raw is not None else None
@@ -76,8 +82,8 @@ def _document_id_of(snippet: "BundleSnippet") -> int | None:
 
 
 def _filter_leaked_snippets(
-    snippets: list["BundleSnippet"], excluded_document_ids: set[int]
-) -> list["BundleSnippet"]:
+    snippets: list[BundleSnippet], excluded_document_ids: set[int]
+) -> list[BundleSnippet]:
     """Drop any snippet sourced from an excluded (solution-bearing) document.
 
     Pure post-retrieval filter — no DB access — so it's unit-testable in
@@ -88,9 +94,7 @@ def _filter_leaked_snippets(
     return [sn for sn in snippets if _document_id_of(sn) not in excluded_document_ids]
 
 
-async def _excluded_document_ids(
-    db: "AsyncSession", *, course_id: int, problem: "Problem"
-) -> set[int]:
+async def _excluded_document_ids(db: AsyncSession, *, course_id: int, problem: Problem) -> set[int]:
     """Resolve the set of document ids the hint lane must never ground on.
 
     Two sources, both keyed off `ProvisioningRun` — the authoritative
@@ -204,10 +208,10 @@ def _structured_citations(bundle: Any, used_markers: list[str]) -> list[dict[str
 
 async def answer_reference_question(
     *,
-    db: "AsyncSession",
+    db: AsyncSession,
     course_id: int,
     question: str,
-    problem: "Problem",
+    problem: Problem,
 ) -> ReferenceAsideResult:
     """Answer one student aside through Hoot's scoped, citation-backed QA lane.
 
@@ -298,6 +302,7 @@ async def answer_reference_question(
 
 
 __all__ = [
+    "ASIDE_COUNT_SESSION_METADATA_KEY",
     "ASIDE_MESSAGE_INTENT_TAG",
     "MAX_ASIDES_PER_SESSION",
     "MESSAGE_KIND_REFERENCE_ASIDE",

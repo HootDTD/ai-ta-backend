@@ -15,7 +15,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apollo.errors import (
@@ -23,6 +23,10 @@ from apollo.errors import (
     RetentionError,
 )
 from apollo.handlers.artifact_writer import write_artifacts
+from apollo.hoot_bridge.reference_answer import (
+    ASIDE_COUNT_SESSION_METADATA_KEY,
+    ASIDE_MESSAGE_INTENT_TAG,
+)
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
 from apollo.overseer.diagnostic import generate_diagnostic
@@ -183,11 +187,25 @@ async def _full_transcript(
     *,
     attempt_id: int,
 ) -> tuple[tuple[str, str], ...]:
-    """Return both-role attempt messages in canonical turn order."""
+    """Return both-role attempt messages in canonical turn order.
+
+    Excludes INTERACTION4 hint-lane aside text (`intent ==
+    ASIDE_MESSAGE_INTENT_TAG`) from grading — the adjudicator must not credit
+    the student with Hoot's explanation (brief: "Transcript & grading
+    interaction"). The student's triggering question is untagged and stays
+    in — asking a question is real signal about gaps. `or_(... is_(None),
+    ...)` because SQL `!=` never matches NULL, and most rows have no intent.
+    """
     rows = (
         await db.execute(
             select(TutoringMessage.role, TutoringMessage.content)
             .where(TutoringMessage.attempt_id == attempt_id)
+            .where(
+                or_(
+                    TutoringMessage.intent.is_(None),
+                    TutoringMessage.intent != ASIDE_MESSAGE_INTENT_TAG,
+                )
+            )
             .order_by(TutoringMessage.turn_index)
         )
     ).all()
@@ -568,6 +586,12 @@ async def handle_done(
             for misconception in topic["misconceptions"]
         ],
         "graph_lane": None,
+        # INTERACTION4 hint-lane provenance (additive; brief: "Hint usage
+        # count lands in grading_provenance"). 0 whenever the flag is off or
+        # unused this session — never affects the score itself.
+        "reference_question_asides_used": int(
+            (sess.metadata_ or {}).get(ASIDE_COUNT_SESSION_METADATA_KEY, 0)
+        ),
     }
 
     return student_response
