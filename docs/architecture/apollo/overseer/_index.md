@@ -23,6 +23,7 @@ recipe below.
 | [rubric](rubric.md) | Axis-weighted grade + `score_to_letter` + misconception value objects | `apollo/overseer/rubric.py`, `apollo/overseer/misconception.py` |
 | [topic-narrative](topic-narrative.md) | Ledger-grounded narrative prompt + output sanitizer | `apollo/overseer/topic_narrative.py` |
 | [diagnostic](diagnostic.md) | Explains (never decides) the grade; delegates to the topic narrative | `apollo/overseer/diagnostic.py` |
+| [grounding](grounding.md) | INTERACTION2: session bundle → one capped, student-safe course-evidence block | `apollo/overseer/grounding.py` |
 | [xp](xp.md) | XP formula + 5-tier level table + progress envelope | `apollo/overseer/xp.py` |
 | [concept-inference](concept-inference.md) | Transcript → one course `concept_id` (selection only) | `apollo/overseer/concept_inference.py` |
 | [problem-selector](problem-selector.md) | Tier-2 bank selection (+ personalization flag) | `apollo/overseer/problem_selector.py`, `apollo/overseer/personalization_flag.py` |
@@ -41,6 +42,15 @@ recipe below.
   tuple; the detector is gone, the shape kept for UI back-compat.
 - **Flow:** transcript coverage → rubric + topic score → diagnostic/topic
   narrative → XP.
+- **Course grounding is strictly additive (INTERACTION2, default OFF).**
+  [grounding](grounding.md) renders the session bundle into ONE capped block
+  that reframes the adjudication and narrative prompts; `None` — flag off, NULL
+  bundle, corrupt bundle, or nothing student-safe — reproduces both prompts BYTE
+  FOR BYTE, so an off flag cannot move a grade. Evidence is always the only
+  thing truncated (it arrives pre-capped; the transcript is never trimmed for
+  it), it never widens the span gate (spans stay transcript-only — a span must
+  prove the STUDENT said it), and it never introduces a hard failure ahead of
+  the `CoverageGradingError` -> 503 contract.
 
 ## Grading-path recipe (to change the grade, also touch)
 

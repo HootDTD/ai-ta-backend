@@ -26,6 +26,12 @@ from apollo.handlers.artifact_writer import write_artifacts
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
 from apollo.overseer.diagnostic import generate_diagnostic
+from apollo.overseer.grounding import (
+    CourseEvidence,
+    build_course_evidence,
+    evidence_block,
+    grounding_provenance,
+)
 from apollo.overseer.misconception import (
     MisconceptionSignal,
     summarize_for_rubric,
@@ -49,6 +55,7 @@ from apollo.persistence.progress_repo import apply_xp
 from apollo.projections.mastery import update_mastery_from_artifact
 from apollo.projections.scorecard import render_scorecard
 from apollo.schemas.problem import Problem
+from config.settings import interaction2_enabled
 
 _LOG = logging.getLogger(__name__)
 
@@ -219,6 +226,26 @@ def _compute_topic_score_safe(
         return None
 
 
+def _course_evidence_safe(sess: TutoringSession) -> CourseEvidence | None:
+    """INTERACTION2 — the session's course-grounding block, or ``None``.
+
+    Soft-failing by construction and deliberately so: this runs AHEAD of the
+    sole grading lane, whose `CoverageGradingError` -> 503 contract is the only
+    hard failure allowed on this path. A flag that is off, a NULL/corrupt
+    `grounding_bundle`, or a bundle with nothing student-safe left in it all
+    yield `None`, which builds the adjudication and narrative prompts BYTE-
+    IDENTICALLY to the pre-feature code. Any unexpected exception is logged and
+    swallowed to the same `None`.
+    """
+    if not interaction2_enabled():
+        return None
+    try:
+        return build_course_evidence(sess.grounding_bundle)
+    except Exception:
+        _LOG.exception("apollo_grounding_build_failed session_id=%s", sess.id)
+        return None
+
+
 async def _find_problem(
     db: AsyncSession, concept_id: int, problem_id: int, *, course_id: int
 ) -> Problem:
@@ -326,11 +353,20 @@ async def handle_done(
     # `narrative_spans` are the per-attempt student quotes for the diagnostic
     # narrative, verbatim-gated so the narrative can only ever attribute to the
     # student words they typed THIS attempt.
+    #
+    # INTERACTION2 (default OFF) additionally hands the adjudicator a capped,
+    # student-safe block of THIS course's own material so coverage judgments use
+    # the professor's definitions and notation. Strictly additive: `None`
+    # reproduces today's prompt and today's grade, and the evidence is
+    # pre-truncated by `build_course_evidence`, so the transcript below is never
+    # the thing that gets cut.
+    course_evidence = _course_evidence_safe(sess)
     transcript = await _full_transcript(db, attempt_id=int(attempt.id))
     coverage, narrative_spans = await compute_transcript_coverage_with_spans(
         transcript=transcript,
         reference_graph=reference_graph,
         problem=problem,
+        course_evidence=evidence_block(course_evidence),
     )
 
     # Class 2 Phase 2 (P2.8): pull per-attempt misconception signals from
@@ -392,6 +428,7 @@ async def handle_done(
         rubric=rubric,
         topic_score=topic_score,
         student_utterances=narrative_utterances,
+        course_evidence=evidence_block(course_evidence),
     )
     # ``generate_diagnostic`` now returns the flattened back-compat narrative
     # plus optional structured topic feedback. Accept string-only test doubles
@@ -567,6 +604,11 @@ async def handle_done(
             for topic in serialized_topics
             for misconception in topic["misconceptions"]
         ],
+        # INTERACTION2 eval hook — additive key, invisible to the UI until it
+        # opts in. Always present (`used: false` when the flag is off, the
+        # bundle is NULL, or nothing survived the student-safe filter) so a
+        # replay can diff grounded vs ungrounded grades from the payload alone.
+        "grounding": grounding_provenance(course_evidence),
         "graph_lane": None,
     }
 

@@ -5,6 +5,7 @@ owns:
   - apollo/overseer/diagnostic.py
 related:
   - apollo/overseer/topic-narrative
+  - apollo/overseer/grounding
   - apollo/overseer/topic-score
   - apollo/overseer/rubric
   - apollo/conversation/handlers/done
@@ -21,9 +22,9 @@ the grade. It never decides the grade — the [rubric](rubric.md) /
 ## Interface
 
 - `generate_diagnostic(*, coverage, reference_steps, problem_text, rubric,
-  model=None, topic_score=None, student_utterances=()) -> (narrative,
-  feedback_or_none)` — imported by `handlers/done.py`. Topic feedback is
-  `{headline, topic_feedback: [{canonical_key, note, quote}], recap,
+  model=None, topic_score=None, student_utterances=(), course_evidence=None)
+  -> (narrative, feedback_or_none)` — imported by `handlers/done.py`. Topic
+  feedback is `{headline, topic_feedback: [{canonical_key, note, quote}], recap,
   next_step}`.
 
 ## Data flow
@@ -36,6 +37,11 @@ sanitizes every prose field, appends deterministic misconception + negotiation
 entries in `recap[]`, then flattens headline → topic notes → recap → prefixed
 next step for back compatibility. Otherwise it uses the unchanged axis prompt
 and returns the legacy sanitized narrative plus null feedback.
+
+`course_evidence` (INTERACTION2, supplied by `handlers/done.py` from
+[grounding](grounding.md)) is forwarded to the topic-narrative builder ONLY.
+The axis prompt is the soft-fail fallback and stays frozen — grounding must not
+change the shape of a degraded narrative.
 
 ## Invariants & gotchas
 
@@ -51,7 +57,11 @@ and returns the legacy sanitized narrative plus null feedback.
   outputs in code-owned `recap[]`; the axis/soft-fail path appends them to the
   legacy string exactly as before.
 - `sanitize_narrative` runs per structured prose field and at the legacy return
-  boundary.
+  boundary. It leaves `[Marker, p. N]` citations intact, so a grounded note can
+  carry a real citation through to the served payload.
+- **`course_evidence=None` (the default, and what an OFF flag or NULL bundle
+  produces) keeps both prompt paths byte-identical to the pre-INTERACTION2
+  build**, so grounding can never silently move a grade.
 
 ## Related
 

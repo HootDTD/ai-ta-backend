@@ -199,11 +199,22 @@ class RequestConfig:
 # pgvector / SurfSense integration settings
 # ---------------------------------------------------------------------------
 
+
 def use_pgvector_retrieval() -> bool:
     """Return True when the new pgvector retrieval path is enabled."""
-    return os.getenv("USE_PGVECTOR_RETRIEVAL", "false").lower() not in {
-        "0", "false", "off", "no"
-    }
+    return os.getenv("USE_PGVECTOR_RETRIEVAL", "false").lower() not in {"0", "false", "off", "no"}
+
+
+def interaction2_enabled() -> bool:
+    """Return True when the Apollo grading path may consume course grounding.
+
+    Independent of ``INTERACTION1`` (which only decides whether a session's
+    grounding bundle is BUILT): a bundle may exist and go unused, and this flag
+    may be on while every session's bundle is NULL. Default OFF — with it off
+    the adjudication and narrative prompts are byte-identical to the pre-feature
+    build.
+    """
+    return os.getenv("INTERACTION2", "false").lower() not in {"0", "false", "off", "no"}
 
 
 def get_embedding_dim() -> int:
@@ -225,6 +236,7 @@ def get_supabase_db_url() -> str:
 # Neo4j (ApolloV3 KG layer)
 # ---------------------------------------------------------------------------
 
+
 def get_neo4j_uri() -> str:
     return os.getenv("NEO4J_URI", "")
 
@@ -243,19 +255,19 @@ def get_neo4j_database() -> str:
 
 def neo4j_configured() -> bool:
     """True when all four NEO4J_* vars are present (used by health checks/tests)."""
-    return all([
-        get_neo4j_uri(),
-        get_neo4j_username(),
-        get_neo4j_password(),
-        get_neo4j_database(),
-    ])
+    return all(
+        [
+            get_neo4j_uri(),
+            get_neo4j_username(),
+            get_neo4j_password(),
+            get_neo4j_database(),
+        ]
+    )
 
 
 def rerankers_enabled() -> bool:
     """Return True when the optional reranking step is active."""
-    return os.getenv("RERANKERS_ENABLED", "false").lower() not in {
-        "0", "false", "off", "no"
-    }
+    return os.getenv("RERANKERS_ENABLED", "false").lower() not in {"0", "false", "off", "no"}
 
 
 def get_reranker_model() -> str:
@@ -272,6 +284,7 @@ __all__ = [
     "RequestConfig",
     # pgvector settings
     "use_pgvector_retrieval",
+    "interaction2_enabled",
     "get_embedding_dim",
     "get_embedding_model",
     "get_supabase_db_url",

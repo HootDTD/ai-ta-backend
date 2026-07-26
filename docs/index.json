@@ -1,7 +1,7 @@
 {
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
-  "generated_at": "2026-07-25",
+  "generated_at": "2026-07-26",
   "repo": "backend",
   "docs_root": "docs/architecture",
   "source_to_doc": {
@@ -87,6 +87,7 @@
     "apollo/overseer/coverage.py": "apollo/overseer/coverage",
     "apollo/overseer/coverage_contract.py": "apollo/overseer/transcript-coverage",
     "apollo/overseer/diagnostic.py": "apollo/overseer/diagnostic",
+    "apollo/overseer/grounding.py": "apollo/overseer/grounding",
     "apollo/overseer/misconception.py": "apollo/overseer/rubric",
     "apollo/overseer/personalization_flag.py": "apollo/overseer/problem-selector",
     "apollo/overseer/problem_selector.py": "apollo/overseer/problem-selector",
@@ -743,6 +744,14 @@
       "description": "Generates the student-facing narrative that explains \u2014 never decides \u2014 the grade.",
       "owns": [
         "apollo/overseer/diagnostic.py"
+      ]
+    },
+    "apollo/overseer/grounding": {
+      "path": "docs/architecture/apollo/overseer/grounding.md",
+      "kind": "leaf",
+      "description": "INTERACTION2 \u2014 turns a session's cached retrieval bundle into one capped, student-safe evidence block for the grading prompts.",
+      "owns": [
+        "apollo/overseer/grounding.py"
       ]
     },
     "apollo/overseer/problem-selector": {
@@ -2018,6 +2027,7 @@
         "apollo/overseer/concept-inference",
         "apollo/overseer/coverage",
         "apollo/overseer/diagnostic",
+        "apollo/overseer/grounding",
         "apollo/overseer/problem-selector",
         "apollo/overseer/rubric",
         "apollo/overseer/topic-narrative",

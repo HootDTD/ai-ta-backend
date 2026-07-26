@@ -9,6 +9,7 @@ related:
   - apollo/overseer/rubric
   - apollo/overseer/topic-score
   - apollo/overseer/diagnostic
+  - apollo/overseer/grounding
   - apollo/overseer/xp
   - apollo/conversation/handlers/grading-artifact-writer
   - apollo/projections/scorecard
@@ -44,7 +45,8 @@ Ordered grade assembly (each step delegates to the owner doc):
 2. Derive the reference graph via `Problem.to_kg_graph` (`schemas/problem`).
 3. **Transcript coverage** (the sole grader): `compute_transcript_coverage_with_spans`
    (`overseer/transcript-coverage`) over `_full_transcript` → coverage + validated
-   evidence spans.
+   evidence spans. Just before it, `_course_evidence_safe` renders the session's
+   `grounding_bundle` into the optional `course_evidence` block (also step 6).
 4. `compute_rubric` (`overseer/rubric`) maps coverage into the axis rubric.
 5. **Topic score** (`_compute_topic_score_safe` wrapping `compute_topic_score` /
    `compute_centrality`, `overseer/topic-score`): best-effort, computed always.
@@ -52,7 +54,7 @@ Ordered grade assembly (each step delegates to the owner doc):
    (new dict; `rubric` itself is never mutated).
 6. `generate_diagnostic` (`overseer/diagnostic`) — grounded narrative plus, on
    topic-score JSON success, structured per-topic feedback from the student's
-   verbatim utterances.
+   verbatim utterances; the same `course_evidence` lets feedback cite the course.
 7. XP: `compute_xp_earned`/`compute_progress_envelope`/`apply_xp`
    (`overseer/xp` + `persistence/progress-repo`); reattempt detection via
    `has_prior_graded_attempt` (`persistence/done-write-linkage`).
@@ -77,6 +79,11 @@ Ordered grade assembly (each step delegates to the owner doc):
   each owns its commit and swallows exceptions; neither can void the served grade.
   `_project_mastery` is skipped when `APOLLO_GRAPH_SIM_LAYER3_ENABLED` is on (the
   dormant Bayesian path would double-apply evidence).
+- **Course grounding never adds a failure mode** (`overseer/grounding`):
+  `_course_evidence_safe` runs AHEAD of the sole grading lane and is soft-fail
+  by construction — flag off, NULL/corrupt bundle, nothing student-safe, or ANY
+  exception → `None` ⇒ both prompts byte-identical to pre-feature. Additive,
+  always-present `grading_provenance["grounding"]` is the replay-diff hook.
 - The response keeps historical `graph_lane: null` for API compatibility.
 - **Does NOT import `done_turn_order`** (the WU-4C1 shadow chain — A7 removed it).
 
@@ -84,6 +91,9 @@ Ordered grade assembly (each step delegates to the owner doc):
 
 - `APOLLO_GRAPH_SIM_LAYER3_ENABLED` (`_graph_sim_layer3_enabled`) — gates the
   mastery-projection interlock; default OFF everywhere.
+- `INTERACTION2` (`config.settings.interaction2_enabled`) — gates course
+  grounding of both prompts; default OFF, independent of `INTERACTION1` (which
+  gates only whether the bundle is BUILT). Read ONLY here.
 
 ## Related
 

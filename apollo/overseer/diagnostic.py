@@ -12,7 +12,13 @@ axis-based prompt with the ledger-grounded prompt built by
 structured per-topic JSON. It returns both the back-compatible flattened
 narrative and the structured feedback block. No ``topic_score`` argument (or a
 soft-failed ``None``) leaves the axis prompt behavior unchanged and returns no
-structured feedback."""
+structured feedback.
+
+``course_evidence`` (INTERACTION2, default OFF) threads a capped, student-safe
+block of the course's own material into the ledger-grounded prompt so feedback
+can cite where to read next. ``None`` — flag off, NULL session bundle, or
+nothing student-safe — leaves both prompts byte-identical to the pre-feature
+build."""
 
 from __future__ import annotations
 
@@ -103,6 +109,7 @@ def generate_diagnostic(
     model: str | None = None,
     topic_score: TopicScoreResult | None = None,
     student_utterances: Sequence[str] = (),
+    course_evidence: str | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
     """Generate the narrative and optional feedback without raising into grading."""
     try:
@@ -114,6 +121,7 @@ def generate_diagnostic(
             model=model,
             topic_score=topic_score,
             student_utterances=student_utterances,
+            course_evidence=course_evidence,
         )
     except Exception as exc:  # noqa: BLE001
         _LOG.warning("diagnostic unexpected soft-fail: %s", exc)
@@ -129,6 +137,7 @@ def _generate_diagnostic(
     model: str | None = None,
     topic_score: TopicScoreResult | None = None,
     student_utterances: Sequence[str] = (),
+    course_evidence: str | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
     """Build one completion and convert it to the diagnostic return pair.
 
@@ -138,6 +147,10 @@ def _generate_diagnostic(
     parse failure returns the legacy narrative (raw completion text, or the
     fixed unavailable string) and ``None`` feedback. No topic score keeps the
     existing axis prompt and always returns ``None`` feedback.
+
+    ``course_evidence`` (INTERACTION2) reaches the LEDGER-GROUNDED path only.
+    The axis prompt is the soft-fail fallback and stays frozen: grounding must
+    not alter the shape of a degraded narrative.
     """
     model = model or MAIN_MODEL
 
@@ -147,6 +160,7 @@ def _generate_diagnostic(
             topic_score,
             problem_text=problem_text,
             student_utterances=student_utterances,
+            course_evidence=course_evidence,
         )
     else:
         system_prompt = _SYSTEM_PROMPT
