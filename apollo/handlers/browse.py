@@ -6,8 +6,9 @@ the same candidate set session entry uses (list_course_concepts), so a
 concept_id from another course 409s instead of leaking cross-course problems.
 
 Student-safety invariant: the response carries ONLY {id, difficulty,
-problem_text, attempted} — never reference_solution / given_values /
-target_unknown."""
+problem_text, attempted, grade} — never reference_solution / given_values /
+target_unknown. `grade` is the student's OWN best served overall
+({score, letter}) across their graded attempts on that problem, or null."""
 
 from __future__ import annotations
 
@@ -20,6 +21,27 @@ from apollo.errors import NoMatchingConceptError
 from apollo.overseer.problem_selector import list_problems_for_concept
 from apollo.persistence.models import ProblemAttempt
 from apollo.subjects.curriculum_db import list_course_concepts
+
+
+def served_overall_from_report(report: Any) -> dict[str, Any] | None:
+    """Extract the student-facing overall grade from a diagnostic_report.
+
+    Prefers the `served_overall` snapshot the Done path persists (exactly what
+    the report panel showed — topic score when it computed); falls back to the
+    legacy `rubric.overall` for attempts graded before the snapshot existed.
+    Returns None when neither yields a usable score+letter, so a malformed
+    legacy row degrades to the plain "Tried" state instead of failing browse.
+    """
+    if not isinstance(report, dict):
+        return None
+    overall = report.get("served_overall") or (report.get("rubric") or {}).get("overall")
+    if not isinstance(overall, dict):
+        return None
+    score = overall.get("score")
+    letter = overall.get("letter")
+    if isinstance(score, bool) or not isinstance(score, (int, float)) or not isinstance(letter, str):
+        return None
+    return {"score": score, "letter": letter}
 
 
 async def handle_list_problems(
@@ -42,20 +64,38 @@ async def handle_list_problems(
     if difficulty is not None:
         pool = [p for p in pool if p.difficulty == difficulty]
 
-    attempted_ids = set(
-        (
-            await db.execute(
-                select(ProblemAttempt.problem_id)
-                .where(
-                    ProblemAttempt.user_id == user_id,
-                    ProblemAttempt.course_id == search_space_id,
-                )
-                .distinct()
+    attempt_rows = (
+        await db.execute(
+            select(
+                ProblemAttempt.problem_id,
+                ProblemAttempt.result,
+                ProblemAttempt.diagnostic_report,
             )
+            .where(
+                ProblemAttempt.user_id == user_id,
+                ProblemAttempt.course_id == search_space_id,
+            )
+            # Ascending so the >= keep-rule below prefers the LATEST attempt
+            # among equal best scores (freshest letter wins ties).
+            .order_by(ProblemAttempt.created_at.asc(), ProblemAttempt.id.asc())
         )
-        .scalars()
-        .all()
-    )
+    ).all()
+
+    attempted_ids = {row.problem_id for row in attempt_rows}
+
+    best_grades: dict[int, dict[str, Any]] = {}
+    for row in attempt_rows:
+        # Narrow "graded" literal on purpose (same contract as the progress
+        # dashboard): only the Done path writes both result="graded" AND a
+        # rubric-shaped diagnostic_report.
+        if row.result != "graded":
+            continue
+        grade = served_overall_from_report(row.diagnostic_report)
+        if grade is None:
+            continue
+        best = best_grades.get(row.problem_id)
+        if best is None or grade["score"] >= best["score"]:
+            best_grades[row.problem_id] = grade
 
     return {
         "problems": [
@@ -64,6 +104,7 @@ async def handle_list_problems(
                 "difficulty": p.difficulty,
                 "problem_text": p.problem_text,
                 "attempted": p.database_id in attempted_ids,
+                "grade": best_grades.get(p.database_id),
             }
             for p in pool
         ]
