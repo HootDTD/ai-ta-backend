@@ -17,7 +17,7 @@ related:
   - database/session
   - platform/ops-db-sql
   - platform/ops-db-tooling
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -68,8 +68,10 @@ disabled (a Windows/Docker-Desktop `vector` log-forwarder limitation).
   (`scripts/db/remove_legacy_public_schema.sql`,
   [platform/ops-db-sql](../platform/ops-db-sql.md)) — deliberately **NOT** under
   `supabase/migrations/` so `reset` never runs it.
-- A new column on a tutoring/learner table needs a migration in THIS active
-  chain, never the frozen legacy chain (add-a-column recipe, `database/_index`).
+- A new column on a tutoring/learner table normally needs a migration in THIS
+  active chain. Interaction-1 is the explicit sequential-number exception at
+  frozen `database/migrations/048`; see the add-a-column recipe in
+  `database/_index`.
 
 ## Related
 
