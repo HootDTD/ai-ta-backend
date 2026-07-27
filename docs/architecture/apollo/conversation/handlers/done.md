@@ -45,8 +45,10 @@ Ordered grade assembly (each step delegates to the owner doc):
 2. Derive the reference graph via `Problem.to_kg_graph` (`schemas/problem`).
 3. **Transcript coverage** (the sole grader): `compute_transcript_coverage_with_spans`
    (`overseer/transcript-coverage`) over `_full_transcript` → coverage + validated
-   evidence spans. Just before it, `_course_evidence_safe` renders the session's
-   `grounding_bundle` into the optional `course_evidence` block (also step 6).
+   evidence spans. Just before it, `_course_evidence_safe` checks both
+   `INTERACTION2` and the problem concept against `INTERACTION_CONCEPTS`, then
+   renders the session's `grounding_bundle` into the optional `course_evidence`
+   block (also step 6).
 4. `compute_rubric` (`overseer/rubric`) maps coverage into the axis rubric.
 5. **Topic score** (`_compute_topic_score_safe` wrapping `compute_topic_score` /
    `compute_centrality`, `overseer/topic-score`): best-effort, computed always.
@@ -81,9 +83,10 @@ Ordered grade assembly (each step delegates to the owner doc):
   dormant Bayesian path would double-apply evidence).
 - **Course grounding never adds a failure mode** (`overseer/grounding`):
   `_course_evidence_safe` runs AHEAD of the sole grading lane and is soft-fail
-  by construction — flag off, NULL/corrupt bundle, nothing student-safe, or ANY
-  exception → `None` ⇒ both prompts byte-identical to pre-feature. Additive,
-  always-present `grading_provenance["grounding"]` is the replay-diff hook.
+  by construction — flag off, concept not allowed, NULL/corrupt bundle, nothing
+  student-safe, or ANY exception → `None` ⇒ both prompts byte-identical to
+  pre-feature. Additive, always-present `grading_provenance["grounding"]` is the
+  replay-diff hook.
 - The response keeps historical `graph_lane: null` for API compatibility.
 - **Does NOT import `done_turn_order`** (the WU-4C1 shadow chain — A7 removed it).
 
@@ -94,6 +97,9 @@ Ordered grade assembly (each step delegates to the owner doc):
 - `INTERACTION2` (`config.settings.interaction2_enabled`) — gates course
   grounding of both prompts; default OFF, independent of `INTERACTION1` (which
   gates only whether the bundle is BUILT). Read ONLY here.
+- `INTERACTION_CONCEPTS` (`config.settings.interaction_allowed_for_concept`) —
+  optional comma-separated concept-slug scope for consuming course grounding;
+  unset/empty means unrestricted.
 
 ## Related
 

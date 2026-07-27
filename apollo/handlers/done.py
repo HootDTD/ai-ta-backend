@@ -55,7 +55,7 @@ from apollo.persistence.progress_repo import apply_xp
 from apollo.projections.mastery import update_mastery_from_artifact
 from apollo.projections.scorecard import render_scorecard
 from apollo.schemas.problem import Problem
-from config.settings import interaction2_enabled
+from config.settings import interaction2_enabled, interaction_allowed_for_concept
 
 _LOG = logging.getLogger(__name__)
 
@@ -226,18 +226,22 @@ def _compute_topic_score_safe(
         return None
 
 
-def _course_evidence_safe(sess: TutoringSession) -> CourseEvidence | None:
+def _course_evidence_safe(
+    sess: TutoringSession,
+    *,
+    concept_slug: str | None,
+) -> CourseEvidence | None:
     """INTERACTION2 — the session's course-grounding block, or ``None``.
 
     Soft-failing by construction and deliberately so: this runs AHEAD of the
     sole grading lane, whose `CoverageGradingError` -> 503 contract is the only
-    hard failure allowed on this path. A flag that is off, a NULL/corrupt
-    `grounding_bundle`, or a bundle with nothing student-safe left in it all
-    yield `None`, which builds the adjudication and narrative prompts BYTE-
-    IDENTICALLY to the pre-feature code. Any unexpected exception is logged and
-    swallowed to the same `None`.
+    hard failure allowed on this path. A flag that is off, a concept outside
+    the allowlist, a NULL/corrupt `grounding_bundle`, or a bundle with nothing
+    student-safe left in it all yield `None`, which builds the adjudication and
+    narrative prompts BYTE-IDENTICALLY to the pre-feature code. Any unexpected
+    exception is logged and swallowed to the same `None`.
     """
-    if not interaction2_enabled():
+    if not interaction2_enabled() or not interaction_allowed_for_concept(concept_slug):
         return None
     try:
         return build_course_evidence(sess.grounding_bundle)
@@ -360,7 +364,7 @@ async def handle_done(
     # reproduces today's prompt and today's grade, and the evidence is
     # pre-truncated by `build_course_evidence`, so the transcript below is never
     # the thing that gets cut.
-    course_evidence = _course_evidence_safe(sess)
+    course_evidence = _course_evidence_safe(sess, concept_slug=problem.concept_id)
     transcript = await _full_transcript(db, attempt_id=int(attempt.id))
     coverage, narrative_spans = await compute_transcript_coverage_with_spans(
         transcript=transcript,

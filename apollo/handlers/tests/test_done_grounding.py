@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from apollo.errors import CoverageGradingError
-from apollo.handlers.tests._done_fixtures import _old_path_patches
+from apollo.handlers.tests._done_fixtures import _old_path_patches, _problem
 
 pytestmark = pytest.mark.unit
 
@@ -60,17 +60,42 @@ def _drop(patches, *attributes):
     return [p for p in patches if getattr(p, "attribute", None) not in attributes]
 
 
-async def _run(*, flag_on: bool, bundle, coverage_mock=None, diagnostic_mock=None):
+@pytest.fixture(autouse=True)
+def _interaction_concepts_unset_by_default(monkeypatch):
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
+
+
+async def _run(
+    *,
+    flag_on: bool,
+    bundle,
+    concept_slug: str = "bernoulli_principle",
+    coverage_mock=None,
+    diagnostic_mock=None,
+):
     """Drive ``handle_done`` with the grounding flag and session bundle set."""
     db, sess, _attempt, patches = _old_path_patches()
     sess.grounding_bundle = bundle
+    problem = _problem()
+    problem.concept_id = concept_slug
     coverage_mock = coverage_mock or AsyncMock(return_value=(_VALID_VERDICT, {}))
     diagnostic_mock = diagnostic_mock or MagicMock(return_value=("narrative", None))
-    patches = _drop(patches, "compute_transcript_coverage_with_spans", "generate_diagnostic")
+    patches = _drop(
+        patches,
+        "_find_problem",
+        "compute_transcript_coverage_with_spans",
+        "generate_diagnostic",
+    )
 
     from apollo.handlers.done import handle_done
 
     with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "apollo.handlers.done._find_problem",
+                new=AsyncMock(return_value=problem),
+            )
+        )
         stack.enter_context(
             patch(
                 "apollo.handlers.done.interaction2_enabled",
@@ -142,7 +167,7 @@ async def test_builder_exception_degrades_instead_of_failing_the_done():
 # --------------------------------------------------------------------------
 
 
-async def test_bundle_present_grounds_both_prompts_and_provenance():
+async def test_allowlist_unset_preserves_current_grounding_behavior():
     out, coverage_mock, diagnostic_mock = await _run(
         flag_on=True, bundle=_bundle(_snippet(_SAFE_TEXT))
     )
@@ -159,6 +184,41 @@ async def test_bundle_present_grounds_both_prompts_and_provenance():
         "snippet_count": 1,
         "doc_ids": ["docs/lecture4.pdf"],
     }
+
+
+async def test_nonmatching_allowlist_keeps_both_prompts_ungrounded(monkeypatch):
+    monkeypatch.setenv("INTERACTION_CONCEPTS", "ethics")
+
+    out, coverage_mock, diagnostic_mock = await _run(
+        flag_on=True,
+        bundle=_bundle(_snippet(_SAFE_TEXT)),
+        concept_slug="bernoulli_principle",
+    )
+
+    # ``None`` selects the existing prompt templates byte-for-byte.
+    assert coverage_mock.await_args.kwargs["course_evidence"] is None
+    assert diagnostic_mock.call_args.kwargs["course_evidence"] is None
+    assert out["grading_provenance"]["grounding"] == {
+        "used": False,
+        "snippet_count": 0,
+        "doc_ids": [],
+    }
+
+
+async def test_matching_allowlist_grounds_both_prompts(monkeypatch):
+    monkeypatch.setenv("INTERACTION_CONCEPTS", " Ethics, BERNOULLI_PRINCIPLE ")
+
+    out, coverage_mock, diagnostic_mock = await _run(
+        flag_on=True,
+        bundle=_bundle(_snippet(_SAFE_TEXT)),
+        concept_slug="bernoulli_principle",
+    )
+
+    block = coverage_mock.await_args.kwargs["course_evidence"]
+    assert block is not None
+    assert _SAFE_TEXT in block
+    assert diagnostic_mock.call_args.kwargs["course_evidence"] == block
+    assert out["grading_provenance"]["grounding"]["used"] is True
 
 
 async def test_solution_snippets_never_reach_the_served_payload():
