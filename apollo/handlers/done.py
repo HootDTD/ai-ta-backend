@@ -50,7 +50,7 @@ from apollo.persistence.progress_repo import apply_xp
 from apollo.projections.mastery import update_mastery_from_artifact
 from apollo.projections.scorecard import render_scorecard
 from apollo.schemas.problem import Problem
-from config.settings import interaction3_enabled
+from config.settings import interaction3_enabled, interaction_allowed_for_concept
 
 _LOG = logging.getLogger(__name__)
 
@@ -408,7 +408,12 @@ async def handle_done(
     # This entire optional pass is one failure domain: build a decorated copy
     # and publish it only after every selected topic succeeds. Any exception
     # leaves the diagnostic feedback and every grade-bearing value untouched.
-    if interaction3_enabled() and topic_score is not None and feedback is not None:
+    if (
+        interaction3_enabled()
+        and interaction_allowed_for_concept(problem.concept_id)
+        and topic_score is not None
+        and feedback is not None
+    ):
         try:
             remediated_feedback = await add_remediation_reviews(
                 db=db,

@@ -41,7 +41,8 @@ entries in `recap[]`, then flattens headline → topic notes → recap → prefi
 next step for back compatibility. Otherwise it uses the unchanged axis prompt
 and returns the legacy sanitized narrative plus null feedback.
 
-With `INTERACTION3` enabled, `done.py` passes successful structured feedback to
+With `INTERACTION3` enabled and the problem concept allowed by
+`INTERACTION_CONCEPTS`, `done.py` passes successful structured feedback to
 `remediation.py`. A non-null session grounding bundle is reused exclusively;
 only a null bundle triggers fresh per-topic retrieval (`top_k=3`, 800 tokens).
 The helper returns citation-only `{doc_id, label, page}` pointers.
@@ -68,6 +69,8 @@ The helper returns citation-only `{doc_id, label, page}` pointers.
 ## Env flags
 
 - `INTERACTION3` — remediation citations, default OFF.
+- `INTERACTION_CONCEPTS` — optional normalized concept-slug allowlist; unset or
+  empty preserves unrestricted flag-on behavior.
 
 ## Related
 

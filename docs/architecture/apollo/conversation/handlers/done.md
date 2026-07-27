@@ -52,8 +52,9 @@ Ordered grade assembly (each step delegates to the owner doc):
    (new dict; `rubric` itself is never mutated).
 6. `generate_diagnostic` (`overseer/diagnostic`) — grounded narrative plus, on
    topic-score JSON success, structured per-topic feedback from the student's
-   verbatim utterances. With `INTERACTION3` enabled, one best-effort remediation
-   pass decorates at most three weak topics with citation-only review pointers.
+   verbatim utterances. With `INTERACTION3` enabled and the problem concept
+   allowed by `INTERACTION_CONCEPTS`, one best-effort remediation pass decorates
+   at most three weak topics with citation-only review pointers.
 7. XP: `compute_xp_earned`/`compute_progress_envelope`/`apply_xp`
    (`overseer/xp` + `persistence/progress-repo`); reattempt detection via
    `has_prior_graded_attempt` (`persistence/done-write-linkage`).
@@ -77,7 +78,8 @@ Ordered grade assembly (each step delegates to the owner doc):
 - **Remediation cannot affect grading:** one `try/except` encloses the complete
   copy-on-success pass. Any retrieval/shape failure leaves feedback byte-
   identical with no `review` keys; score, letter, narrative, XP, and persistence
-  remain unchanged. A non-null Interaction-1 bundle prevents fresh retrieval.
+  remain unchanged. A non-matching concept skips the pass with the same untouched
+  payload. A non-null Interaction-1 bundle prevents fresh retrieval.
 - **Artifact write + artifact-derived mastery are own-failure-domain telemetry** —
   each owns its commit and swallows exceptions; neither can void the served grade.
   `_project_mastery` is skipped when `APOLLO_GRAPH_SIM_LAYER3_ENABLED` is on (the
@@ -90,6 +92,8 @@ Ordered grade assembly (each step delegates to the owner doc):
 - `APOLLO_GRAPH_SIM_LAYER3_ENABLED` (`_graph_sim_layer3_enabled`) — gates the
   mastery-projection interlock; default OFF everywhere.
 - `INTERACTION3` — weak-topic remediation citations; default OFF.
+- `INTERACTION_CONCEPTS` — optional normalized concept-slug allowlist; unset or
+  empty preserves unrestricted flag-on behavior.
 
 ## Related
 
