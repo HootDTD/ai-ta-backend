@@ -11,6 +11,7 @@ from apollo.hoot_bridge.session_init import _create_session_with_problem
 from apollo.persistence.models import ProblemAttempt, TutoringSession
 from apollo.schemas.problem import Problem, ReferenceStep
 from config.contracts import BundleSnippet
+from config.settings import interaction_allowed_for_concept, interaction_concepts
 from database.models import Base
 
 _USER_ID = "11111111-1111-1111-1111-111111111111"
@@ -52,6 +53,29 @@ def _snippet(snippet_id: str, *, metadata: dict | None = None) -> BundleSnippet:
         final_score={"final": 0.9},
         metadata=metadata or {},
     )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("", frozenset()),
+        ("ethics", frozenset({"ethics"})),
+        ("ethics,bernoulli_principle", frozenset({"ethics", "bernoulli_principle"})),
+        ("  ethics , bernoulli_principle  ", frozenset({"ethics", "bernoulli_principle"})),
+        ("Ethics,BERNOULLI_Principle", frozenset({"ethics", "bernoulli_principle"})),
+    ],
+)
+def test_interaction_concepts_parses_allowlist(monkeypatch, raw, expected):
+    monkeypatch.setenv("INTERACTION_CONCEPTS", raw)
+
+    assert interaction_concepts() == expected
+
+
+def test_interaction_concepts_unset_is_unrestricted(monkeypatch):
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
+
+    assert interaction_concepts() == frozenset()
+    assert interaction_allowed_for_concept("any_concept")
 
 
 @pytest_asyncio.fixture
@@ -99,6 +123,7 @@ async def _load_bundle(db: AsyncSession, session_id: int) -> dict | None:
 @pytest.mark.asyncio
 async def test_grounding_bundle_persisted_after_session_creation(db, monkeypatch):
     monkeypatch.setenv("INTERACTION1", "true")
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
     retrieve = AsyncMock(return_value=([_snippet("safe")], {"hit_count_raw": 1}))
     monkeypatch.setattr("apollo.hoot_bridge.session_init.retrieve_for_question", retrieve)
 
@@ -119,6 +144,35 @@ async def test_grounding_bundle_persisted_after_session_creation(db, monkeypatch
         token_budget=2500,
         citation_label="Textbook",
     )
+
+
+@pytest.mark.asyncio
+async def test_allowlist_non_matching_concept_does_not_call_retrieval(db, monkeypatch):
+    monkeypatch.setenv("INTERACTION1", "true")
+    monkeypatch.setenv("INTERACTION_CONCEPTS", "ethics")
+    retrieve = AsyncMock()
+    monkeypatch.setattr("apollo.hoot_bridge.session_init.retrieve_for_question", retrieve)
+
+    result = await _create(db)
+
+    bundle = await _load_bundle(db, result["session_id"])
+    assert bundle is None
+    retrieve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_allowlist_matching_concept_builds_bundle(db, monkeypatch):
+    monkeypatch.setenv("INTERACTION1", "true")
+    monkeypatch.setenv("INTERACTION_CONCEPTS", "BERNOULLI_PRINCIPLE")
+    retrieve = AsyncMock(return_value=([_snippet("safe")], {"hit_count_raw": 1}))
+    monkeypatch.setattr("apollo.hoot_bridge.session_init.retrieve_for_question", retrieve)
+
+    result = await _create(db)
+
+    bundle = await _load_bundle(db, result["session_id"])
+    assert bundle is not None
+    assert bundle["snippets"][0]["id"] == "safe"
+    retrieve.assert_awaited_once()
 
 
 @pytest.mark.asyncio

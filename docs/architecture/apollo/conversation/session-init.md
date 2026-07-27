@@ -47,11 +47,12 @@ lookup `list_problems_for_concept` in the direct path), then call the shared tai
 The tail flips any active session to `ended`, `flush`es, adds the new
 `TutoringSession` (`phase=TEACHING`, `current_problem_id=problem.database_id`) and
 the first `ProblemAttempt`, `flush`es, captures `attempt.id`, and `commit`s before
-building the FE payload. With `INTERACTION1` enabled, the durable session then
-makes one `retrieve_for_question` call anchored by concept display name +
-student-visible problem text (`top_k=8`, `token_budget=2500`). A separate
-best-effort commit stores packed snippet dicts + diagnostics in
-`grounding_bundle`. The Hoot path's only transcript use is concept inference.
+building the FE payload. With `INTERACTION1` enabled and the problem concept
+allowed by `INTERACTION_CONCEPTS`, the durable session then makes one
+`retrieve_for_question` call anchored by concept display name + student-visible
+problem text (`top_k=8`, `token_budget=2500`). A separate best-effort commit
+stores packed snippet dicts + diagnostics in `grounding_bundle`. The Hoot path's
+only transcript use is concept inference.
 
 ## Invariants & gotchas
 
@@ -75,6 +76,9 @@ best-effort commit stores packed snippet dicts + diagnostics in
 
 `INTERACTION1` (default off) gates the entire retrieval path; flag-off makes no
 retrieval call and preserves the prior session payload/behavior.
+`INTERACTION_CONCEPTS` optionally restricts grounding to comma-separated concept
+slugs. Slugs are stripped and casefolded; unset/empty means unrestricted, so
+existing deployments retain their current behavior.
 
 ## Related
 
