@@ -8,7 +8,9 @@ concept_id from another course 409s instead of leaking cross-course problems.
 Student-safety invariant: the response carries ONLY {id, difficulty,
 problem_text, attempted, grade} — never reference_solution / given_values /
 target_unknown. `grade` is the student's OWN best served overall
-({score, letter}) across their graded attempts on that problem, or null."""
+({score, letter, feedback}) across their graded attempts on that problem, or
+null. `feedback` is the narrative that attempt already served to this student
+at Done-time — never rubric/coverage internals."""
 
 from __future__ import annotations
 
@@ -42,6 +44,22 @@ def served_overall_from_report(report: Any) -> dict[str, Any] | None:
     if isinstance(score, bool) or not isinstance(score, (int, float)) or not isinstance(letter, str):
         return None
     return {"score": score, "letter": letter}
+
+
+def feedback_from_report(report: Any) -> str | None:
+    """Extract the student-facing feedback text from a diagnostic_report.
+
+    `narrative` is exactly what the Done report panel served this student (for
+    topic-score attempts, the flattened structured feedback). Anything but a
+    non-empty string degrades to None — the grade chip then renders without a
+    feedback panel instead of failing browse or showing an empty box.
+    """
+    if not isinstance(report, dict):
+        return None
+    narrative = report.get("narrative")
+    if not isinstance(narrative, str) or not narrative.strip():
+        return None
+    return narrative
 
 
 async def handle_list_problems(
@@ -95,7 +113,12 @@ async def handle_list_problems(
             continue
         best = best_grades.get(row.problem_id)
         if best is None or grade["score"] >= best["score"]:
-            best_grades[row.problem_id] = grade
+            # Feedback rides with the SAME attempt whose grade is displayed —
+            # never a different attempt's text.
+            best_grades[row.problem_id] = {
+                **grade,
+                "feedback": feedback_from_report(row.diagnostic_report),
+            }
 
     return {
         "problems": [
