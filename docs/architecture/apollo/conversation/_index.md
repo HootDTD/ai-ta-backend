@@ -3,7 +3,7 @@ doc: apollo/conversation/_index
 description: Router + Apollo teaching-turn end-to-end authority — routing, handlers, agent, parser, questioning, curriculum, session entry
 owns: []
 related: []
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -64,3 +64,4 @@ Grading-path recipe (D21): to change grading, start at handlers/done (the orches
 | [registry](curriculum/registry.md) | filesystem authoring registry · apollo/subjects/__init__.py |
 | [db](curriculum/db.md) | live DB-backed concept loader · apollo/subjects/curriculum_db.py |
 | [session-init](session-init.md) | hoot_bridge session creation (both entry paths) · hoot_bridge/session_init.py |
+| [hoot-bridge-reference-answer](hoot-bridge-reference-answer.md) | INTERACTION4 "ask Hoot" hint-lane bridge · hoot_bridge/reference_answer.py |

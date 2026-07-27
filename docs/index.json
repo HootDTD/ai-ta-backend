@@ -2,7 +2,7 @@
   "$schema_version": 1,
   "generated_by": "check_owns_coverage.py --emit-index",
   "generated_at": "2026-07-26",
-  "repo": "backend",
+  "repo": "interaction4",
   "docs_root": "docs/architecture",
   "source_to_doc": {
     ".claude/hooks/guard_docs_placement.py": "platform/ci-workflows",
@@ -66,6 +66,7 @@
     "apollo/handlers/progress.py": "apollo/conversation/handlers/progress",
     "apollo/handlers/restart_problem.py": "apollo/conversation/handlers/navigation",
     "apollo/hoot_bridge/__init__.py": "apollo/conversation/session-init",
+    "apollo/hoot_bridge/reference_answer.py": "apollo/conversation/hoot-bridge-reference-answer",
     "apollo/hoot_bridge/session_init.py": "apollo/conversation/session-init",
     "apollo/knowledge_graph/__init__.py": "apollo/knowledge-graph/store",
     "apollo/knowledge_graph/canon_projection.py": "apollo/knowledge-graph/canon-projection",
@@ -512,6 +513,14 @@
       "description": "apollo/handlers/progress.py \u2014 the course-scoped XP/level read surface",
       "owns": [
         "apollo/handlers/progress.py"
+      ]
+    },
+    "apollo/conversation/hoot-bridge-reference-answer": {
+      "path": "docs/architecture/apollo/conversation/hoot-bridge-reference-answer.md",
+      "kind": "leaf",
+      "description": "INTERACTION4 \"ask Hoot\" hint lane \u2014 stateless bridge from an Apollo chat turn into Hoot's scoped QA pipeline for one reference-question aside.",
+      "owns": [
+        "apollo/hoot_bridge/reference_answer.py"
       ]
     },
     "apollo/conversation/parser/edge-resolver": {
@@ -1981,6 +1990,7 @@
         "apollo/conversation/handlers/negotiate",
         "apollo/conversation/handlers/olm-invite",
         "apollo/conversation/handlers/progress",
+        "apollo/conversation/hoot-bridge-reference-answer",
         "apollo/conversation/parser/edge-resolver",
         "apollo/conversation/parser/extraction-schema",
         "apollo/conversation/parser/graph-context",

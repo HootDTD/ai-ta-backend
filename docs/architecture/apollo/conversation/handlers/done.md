@@ -12,6 +12,7 @@ related:
   - apollo/overseer/grounding
   - apollo/overseer/xp
   - apollo/conversation/handlers/grading-artifact-writer
+  - apollo/conversation/hoot-bridge-reference-answer
   - apollo/projections/scorecard
   - apollo/projections/mastery
   - apollo/persistence/done-write-linkage
@@ -49,6 +50,10 @@ Ordered grade assembly (each step delegates to the owner doc):
    `INTERACTION2` and the problem concept against `INTERACTION_CONCEPTS`, then
    renders the session's `grounding_bundle` into the optional `course_evidence`
    block (also step 6).
+   `_full_transcript` excludes any `TutoringMessage` tagged
+   `intent == ASIDE_MESSAGE_INTENT_TAG` (`hoot-bridge-reference-answer`) — the
+   INTERACTION4 hint-lane aside text never enters grading, but the student's
+   untagged triggering question does (it's real signal about a gap).
 4. `compute_rubric` (`overseer/rubric`) maps coverage into the axis rubric.
 5. **Topic score** (`_compute_topic_score_safe` wrapping `compute_topic_score` /
    `compute_centrality`, `overseer/topic-score`): best-effort, computed always.
@@ -97,6 +102,10 @@ Ordered grade assembly (each step delegates to the owner doc):
   replay-diff hook.
 - The response keeps historical `graph_lane: null` for API compatibility.
 - **Does NOT import `done_turn_order`** (the WU-4C1 shadow chain — A7 removed it).
+- **`grading_provenance.reference_question_asides_used`** (additive; brief:
+  "Hint usage count lands in grading_provenance") reads
+  `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]`, defaulting to 0 — never
+  affects the score itself, just teacher-facing provenance.
 
 ## Env flags
 
@@ -114,4 +123,5 @@ Ordered grade assembly (each step delegates to the owner doc):
 
 See `overseer/_index` for the grading-path cross-cutting invariants and the full
 directional chain: `transcript-coverage ↔ rubric ↔ topic-score ↔ done ↔
-grading-artifact-writer ↔ scorecard ↔ mastery`.
+grading-artifact-writer ↔ scorecard ↔ mastery`. Hint-lane aside tagging/cap:
+`hoot-bridge-reference-answer`.
