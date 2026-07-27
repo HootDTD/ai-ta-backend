@@ -23,6 +23,7 @@ def _count_tokens(text: str) -> int:
     """Fast approximate token count (4 chars ≈ 1 token)."""
     try:
         import tiktoken
+
         enc = tiktoken.get_encoding("cl100k_base")
         return len(enc.encode(text))
     except Exception:
@@ -64,7 +65,10 @@ def pack_context(
             break
 
         material_kind = str(chunk.get("material_kind") or "").strip().lower()
-        marker_label = _citation_label_for_kind(material_kind, label)
+        doc_title = chunk.get("doc_title") or ""
+        marker_label = (
+            doc_title[:30] if doc_title else _citation_label_for_kind(material_kind, label)
+        )
         week = chunk.get("week")
 
         # Build citation marker: "[Label, p. N]" or "[Label]" for chunks without page
@@ -75,28 +79,27 @@ def pack_context(
             else:
                 marker = f"[{marker_label}, p. {page}]"
         else:
-            doc_title = chunk.get("doc_title") or marker_label
-            short = doc_title[:30] if len(doc_title) > 30 else doc_title
-            marker = f"[{short}]"
+            marker = f"[{marker_label[:30]}]"
 
-        doc_title = chunk.get("doc_title") or ""
         doc_short = doc_title[:40] if doc_title else marker_label
 
-        snippets.append(BundleSnippet(
-            id=str(chunk_id) if chunk_id is not None else "",
-            type=chunk.get("chunk_type") or "body",
-            page=page or 0,
-            section_path=chunk.get("section_path") or "",
-            text=text,
-            figure_id=chunk.get("figure_id"),
-            why="hit",
-            source_path=chunk.get("source_path") or "",
-            doc_title=doc_title or None,
-            doc_short=doc_short,
-            citation_marker=marker,
-            final_score={"final": chunk.get("final_score", 0.0)},
-            metadata=dict(chunk.get("metadata") or {}),
-        ))
+        snippets.append(
+            BundleSnippet(
+                id=str(chunk_id) if chunk_id is not None else "",
+                type=chunk.get("chunk_type") or "body",
+                page=page or 0,
+                section_path=chunk.get("section_path") or "",
+                text=text,
+                figure_id=chunk.get("figure_id"),
+                why="hit",
+                source_path=chunk.get("source_path") or "",
+                doc_title=doc_title or None,
+                doc_short=doc_short,
+                citation_marker=marker,
+                final_score={"final": chunk.get("final_score", 0.0)},
+                metadata=dict(chunk.get("metadata") or {}),
+            )
+        )
 
         if chunk_id is not None:
             seen_chunk_ids.add(chunk_id)

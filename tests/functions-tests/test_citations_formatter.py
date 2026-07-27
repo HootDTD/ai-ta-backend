@@ -6,13 +6,19 @@ from typing import Any
 from citations.formatter import format_citations
 
 
-def _snippet(sn_id: str, page: int, doc_short: str, source_path: str = "file.pdf") -> Any:
+def _snippet(
+    sn_id: str,
+    page: int,
+    doc_short: str,
+    source_path: str = "file.pdf",
+    doc_title: str | None = None,
+) -> Any:
     return types.SimpleNamespace(
         id=sn_id,
         page=page,
         doc_short=doc_short,
         source_path=source_path,
-        doc_title=None,
+        doc_title=doc_title,
     )
 
 
@@ -90,3 +96,53 @@ def test_format_citations_includes_weekly_teacher_metadata():
     assert structured[0]["teacher_upload_id"] == "42"
     assert structured[0]["page_asset"] == {"storage_key": "teacher-uploads/42/page-0007.png"}
     assert structured[0]["raw_latex"] == r"\int_0^1 x^2 \, dx"
+
+
+def test_format_citations_prefers_truncated_document_title_and_keeps_dedupe():
+    title = "An especially descriptive document title that exceeds the limit"
+    slide_row = {
+        "store_kind": "slides",
+        "store_key": "upload-42",
+        "page": 7,
+        "bbox": None,
+    }
+    store_meta = {"upload-42": {"kind": "slides", "week": 4}}
+    citations = [
+        {
+            "id": "s1",
+            "snippet": _snippet("s1", 7, "Stable file label", doc_title=title),
+        },
+        {
+            "id": "s1_dup",
+            "snippet": _snippet("s1", 7, "Stable file label", doc_title=title),
+        },
+    ]
+    id_to_row = {"s1": slide_row, "s1_dup": slide_row}
+
+    labels, structured = format_citations(citations, id_to_row, store_meta)
+
+    assert labels == [f"[{title[:30]}, Week 4, p. 7]"]
+    assert len(structured) == 1
+    assert structured[0]["file"] == "Stable file label"
+    assert structured[0]["verified"] is False
+
+
+def test_format_citations_uses_title_only_when_page_is_missing():
+    citations = [
+        {
+            "id": "r1",
+            "snippet": _snippet(
+                "r1",
+                0,
+                "Reference file",
+                doc_title="Course Reference",
+            ),
+        }
+    ]
+    id_to_row = {"r1": {"store_kind": "other", "store_key": "reference"}}
+    store_meta = {"reference": {"kind": "other"}}
+
+    labels, structured = format_citations(citations, id_to_row, store_meta)
+
+    assert labels == ["[Course Reference]"]
+    assert structured[0]["page"] is None

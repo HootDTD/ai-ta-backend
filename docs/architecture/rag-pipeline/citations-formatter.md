@@ -8,7 +8,7 @@ related:
   - rag-pipeline/context-packer
   - rag-pipeline/main-ai
   - platform/http-server
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -30,10 +30,11 @@ Ownership moved here from the old `_overview.md` (`citations/**` is no longer
 
 ## Data flow
 
-`doc_type` from `meta_entry.kind` or `store_kind` via `_doc_type_label`;
-label `[Notes, Week N, p. X]` for notes/slides with `week>0`, else `[Type, p. X]`;
-`_normalize_page`/`_normalize_bbox` coerce, with NaN guards on
-`store_key`/`store_kind`.
+`doc_type` from `meta_entry.kind` or `store_kind` via `_doc_type_label`. A present
+`snippet.doc_title` (first 30 characters) replaces the type in label shapes,
+including `[Title]` without a page; untitled labels remain `[Notes, Week N, p. X]`
+for notes/slides with `week>0`, else `[Type, p. X]`. `_normalize_page` and
+`_normalize_bbox` coerce, with NaN guards on `store_key`/`store_kind`.
 
 ## Invariants & gotchas
 

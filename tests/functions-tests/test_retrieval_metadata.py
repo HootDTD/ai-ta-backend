@@ -62,7 +62,79 @@ def test_pack_context_marks_weekly_slides_and_preserves_metadata():
 
     assert len(snippets) == 1
     snippet = snippets[0]
-    assert snippet.citation_marker == "[Slides, Week 3, p. 8]"
+    assert snippet.citation_marker == "[Week 3 Slides, Week 3, p. 8]"
     assert snippet.source_path == "week3-slides.pdf"
     assert snippet.metadata["teacher_upload_id"] == "17"
     assert snippet.metadata["page_asset"] == {"storage_key": "teacher-uploads/17/page-0008.png"}
+
+
+def test_pack_context_keeps_kind_label_for_untitled_document():
+    snippets = pack_context(
+        [
+            {
+                "chunk_id": 102,
+                "content": "Untitled lecture note.",
+                "page_number": 9,
+                "material_kind": "slides",
+                "week": 3,
+            }
+        ],
+        token_budget=400,
+        citation_label="Textbook",
+    )
+
+    assert snippets[0].citation_marker == "[Slides, Week 3, p. 9]"
+
+
+def test_pack_context_keeps_truncated_fallback_for_untitled_chunk_without_page():
+    fallback = "A custom textbook label longer than thirty characters"
+    snippets = pack_context(
+        [
+            {
+                "chunk_id": 105,
+                "content": "An untitled, page-free textbook passage.",
+                "material_kind": "textbook",
+            }
+        ],
+        token_budget=400,
+        citation_label=fallback,
+    )
+
+    assert snippets[0].citation_marker == f"[{fallback[:30]}]"
+
+
+def test_pack_context_truncates_titled_marker_to_30_characters():
+    title = "A document title that is longer than thirty characters"
+    snippets = pack_context(
+        [
+            {
+                "chunk_id": 103,
+                "content": "A titled textbook passage.",
+                "page_number": 10,
+                "doc_title": title,
+                "material_kind": "textbook",
+            }
+        ],
+        token_budget=400,
+        citation_label="Textbook",
+    )
+
+    assert len(title[:30]) == 30
+    assert snippets[0].citation_marker == f"[{title[:30]}, p. 10]"
+
+
+def test_pack_context_uses_title_only_for_chunk_without_page():
+    snippets = pack_context(
+        [
+            {
+                "chunk_id": 104,
+                "content": "A page-free titled reference.",
+                "doc_title": "Course Reference",
+                "material_kind": "other",
+            }
+        ],
+        token_budget=400,
+        citation_label="Textbook",
+    )
+
+    assert snippets[0].citation_marker == "[Course Reference]"
