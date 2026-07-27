@@ -218,6 +218,8 @@ def interaction2_enabled() -> bool:
     build.
     """
     return os.getenv("INTERACTION2", "false").lower() not in {"0", "false", "off", "no"}
+
+
 def interaction3_enabled() -> bool:
     """Return True when Apollo Done remediation citations are enabled."""
     return os.getenv("INTERACTION3", "false").lower() not in {"0", "false", "off", "no"}
