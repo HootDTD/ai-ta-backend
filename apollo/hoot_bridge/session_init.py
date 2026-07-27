@@ -38,7 +38,11 @@ from apollo.persistence.models import (
 from apollo.schemas.problem import Problem
 from apollo.subjects.curriculum_db import ConceptRow, list_course_concepts
 from config.contracts import BundleSnippet
-from config.settings import get_citation_label, interaction1_enabled
+from config.settings import (
+    get_citation_label,
+    interaction1_enabled,
+    interaction_allowed_for_concept,
+)
 from retrieval import retrieve_for_question
 
 _ALLOWED_DIFFICULTIES = {"intro", "standard", "hard"}
@@ -186,7 +190,7 @@ async def _create_session_with_problem(
     attempt_id = attempt.id
     await db.commit()
 
-    if interaction1_enabled():
+    if interaction1_enabled() and interaction_allowed_for_concept(problem.concept_id):
         await _build_grounding_bundle(
             db,
             session=session,
