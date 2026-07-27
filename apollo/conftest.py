@@ -44,6 +44,24 @@ except Exception:  # noqa: BLE001 - dotenv is optional in CI envs
     pass
 
 
+# The .env load above leaks developer INTERACTION* settings into tests, which
+# gate feature behavior tests assume is opt-in. Reset them per test: any test
+# exercising an interaction feature sets its own flags via monkeypatch.
+_INTERACTION_ENV_VARS = (
+    "INTERACTION1",
+    "INTERACTION2",
+    "INTERACTION3",
+    "INTERACTION4",
+    "INTERACTION_CONCEPTS",
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_interaction_env(monkeypatch):
+    for _var in _INTERACTION_ENV_VARS:
+        monkeypatch.delenv(_var, raising=False)
+
+
 def _neo4j_configured() -> bool:
     return all(
         os.environ.get(k)
