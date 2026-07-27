@@ -9,9 +9,8 @@ whenever the topic score computed successfully) — so the two surfaces can neve
 drift in field names. Field names are pinned exactly to the spec's §2 shape:
 
     {score, letter, coverage_component, misconception_dock, topics: [
-        {canonical_key, display_name, credit, status, weight, misconceptions: [
-            {canonical_key, resolved, dock_points, evidence_span}
-        ]}
+        {canonical_key, display_name, credit, status, weight, evidence_span,
+         misconceptions: [{canonical_key, resolved, dock_points, evidence_span}]}
     ]}
 
 Pure module: no IO. Kept separate from ``topic_score.py`` (the already-landed,
@@ -40,6 +39,7 @@ def _serialize_topic(topic: TopicCredit) -> dict:
         "credit": topic.credit,
         "status": topic.status,
         "weight": topic.weight,
+        "evidence_span": topic.evidence_span,
         "misconceptions": [_serialize_misconception(m) for m in topic.misconceptions],
     }
 

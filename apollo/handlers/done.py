@@ -385,7 +385,7 @@ async def handle_done(
         _LOG.warning("apollo_narrative_utterances_fetch_failed attempt_id=%s", attempt.id)
         narrative_utterances = ()
 
-    diagnostic_narrative = generate_diagnostic(
+    diagnostic_result = generate_diagnostic(
         coverage=coverage,
         reference_steps=[s.model_dump() for s in problem.reference_solution],
         problem_text=problem.problem_text,
@@ -393,6 +393,14 @@ async def handle_done(
         topic_score=topic_score,
         student_utterances=narrative_utterances,
     )
+    # ``generate_diagnostic`` now returns the flattened back-compat narrative
+    # plus optional structured topic feedback. Accept string-only test doubles
+    # and rolling-deploy shims as legacy narrative results.
+    if isinstance(diagnostic_result, tuple):
+        diagnostic_narrative, feedback = diagnostic_result
+    else:
+        diagnostic_narrative = diagnostic_result
+        feedback = None
 
     # Re-attempt detection (unchanged from V2).
     is_reattempt_in_session = attempt.result is not None
@@ -510,6 +518,8 @@ async def handle_done(
     # serializer, `topic_score_serialize.py`). Absent (not null) otherwise.
     if serve_topic_score:
         student_response["topics"] = serialize_topics(topic_score)
+        if feedback is not None:
+            student_response["feedback"] = feedback
 
     student_response["transcript"] = await _fetch_attempt_transcript(db, int(attempt.id))
 
