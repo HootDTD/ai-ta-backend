@@ -368,6 +368,36 @@ async def _execute_reference_question(
     }
 
 
+async def _maybe_execute_reference_aside(
+    *,
+    db: AsyncSession,
+    sess: TutoringSession,
+    attempt_id: int,
+    message: str,
+    store: KGStore,
+    problem: Problem,
+    ask_hoot: bool,
+) -> dict[str, Any] | None:
+    """Execute the hint lane only for an explicit Ask Hoot request.
+
+    Requests rejected by either rollout gate fall through to the ordinary
+    teaching turn. The utterance is still classified for the other existing
+    intents, but normal typed turns can never enter the aside executor.
+    """
+    if not ask_hoot:
+        return None
+    if not (_interaction4_enabled() and interaction_allowed_for_concept(problem.concept_id)):
+        return None
+    return await _execute_reference_question(
+        db=db,
+        sess=sess,
+        attempt_id=attempt_id,
+        message=message,
+        store=store,
+        problem=problem,
+    )
+
+
 async def _maybe_intent_confirmation(
     *,
     db: AsyncSession,
@@ -377,7 +407,6 @@ async def _maybe_intent_confirmation(
     history: list[dict[str, str]],
     concept,
     store: KGStore,
-    problem: Problem,
 ) -> dict[str, Any] | None:
     """If the new utterance classifies as a non-teaching intent above the
     confidence threshold, persist a confirmation turn and return a
@@ -399,22 +428,6 @@ async def _maybe_intent_confirmation(
         return None
     if verdict.confidence < INTENT_CONFIDENCE_THRESHOLD:
         return None
-
-    if verdict.intent == "reference_question":
-        # Direct execution — no confirmation gate (unlike `done`/`restart`/
-        # etc.): a wrong hint costs one extra message, not a hijacked
-        # session. Recheck both gates here so a stale or synthetic classifier
-        # verdict cannot execute an aside for a disabled concept.
-        if not (_interaction4_enabled() and interaction_allowed_for_concept(problem.concept_id)):
-            return None
-        return await _execute_reference_question(
-            db=db,
-            sess=sess,
-            attempt_id=attempt_id,
-            message=message,
-            store=store,
-            problem=problem,
-        )
 
     prompt = confirmation_prompt_for(verdict.intent)
     if not prompt:
@@ -453,6 +466,7 @@ async def handle_chat(
     neo: Neo4jClient | None,
     session_id: int,
     message: str,
+    ask_hoot: bool = False,
 ) -> dict[str, Any]:
     store = KGStore(db, neo)
 
@@ -477,11 +491,23 @@ async def handle_chat(
     concept = await load_concept_definition(
         db, concept_id=sess.concept_id, search_space_id=sess.course_id
     )
-    # Resolved up front (rather than later, in the teaching path only) so the
-    # reference_question executor has it for the leakage-exclusion lookup.
+    # Resolved up front so an explicit Ask Hoot request can use it for the
+    # leakage-exclusion lookup before the normal teaching path.
     problem = await _find_problem(
         db, sess.concept_id, sess.current_problem_id, course_id=sess.course_id
     )
+
+    aside_response = await _maybe_execute_reference_aside(
+        db=db,
+        sess=sess,
+        attempt_id=current_attempt.id,
+        message=message,
+        store=store,
+        problem=problem,
+        ask_hoot=ask_hoot,
+    )
+    if aside_response is not None:
+        return aside_response
 
     # ---- Intent state machine (item #5) -------------------------------
     # Step 1: if a pending intent exists, see if this turn confirms it.
@@ -513,7 +539,6 @@ async def handle_chat(
         history=history_pre,
         concept=concept,
         store=store,
-        problem=problem,
     )
     if intent_response is not None:
         return intent_response
