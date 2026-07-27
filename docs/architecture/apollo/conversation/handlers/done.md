@@ -16,7 +16,7 @@ related:
   - apollo/persistence/done-write-linkage
   - apollo/persistence/progress-repo
   - apollo/schemas/problem
-last_verified: 2026-07-26
+last_verified: 2026-07-27
 stub: false
 ---
 
