@@ -40,6 +40,9 @@ The single authority on these env-flag getters; `retrieval/`, `apollo/`, and
   grading path consumes a session's course-grounding bundle
   (`apollo/conversation/handlers/done`). Independent of `INTERACTION1`, which
   only gates whether that bundle is BUILT.
+- Apollo concept scope: `interaction_concepts()` parses `INTERACTION_CONCEPTS`
+  into a normalized concept-slug allowlist, and
+  `interaction_allowed_for_concept(slug)` applies it to interaction features.
 
 ## Data flow
 
@@ -53,13 +56,17 @@ gates a one-time subject log line.
   request-scoped — the globals are process-wide and not concurrency-safe.
 - `get_embedding_dim()` must match the model used at index time (halfvec HNSW
   index dimensionality); mismatches break retrieval.
+- `INTERACTION_CONCEPTS` is comma-separated, with each slug stripped and
+  casefolded. Unset, empty, and whitespace-only values produce an empty
+  allowlist, which means no concept restriction and preserves existing behavior.
 
 ## Env flags
 
 `RETRIEVAL_WIRE_LOG`, `RUNTIME_DIR`, `TEXTBOOK_SUBJECT`, `CITATION_LABEL`,
 `USE_PGVECTOR_RETRIEVAL`, `EMBEDDING_DIM`, `OPENAI_EMBEDDING_MODEL`,
 `SUPABASE_DB_URL`, `NEO4J_URI`/`NEO4J_USERNAME`/`NEO4J_PASSWORD`/`NEO4J_DATABASE`,
-`RERANKERS_ENABLED`, `RERANKER_MODEL`, `INTERACTION1`, `INTERACTION2`.
+`RERANKERS_ENABLED`, `RERANKER_MODEL`, `INTERACTION1`, `INTERACTION2`,
+`INTERACTION_CONCEPTS`.
 
 ## Related
 

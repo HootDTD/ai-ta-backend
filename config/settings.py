@@ -222,6 +222,18 @@ def interaction2_enabled() -> bool:
     return os.getenv("INTERACTION2", "false").lower() not in {"0", "false", "off", "no"}
 
 
+def interaction_concepts() -> frozenset[str]:
+    """Return the normalized concept slugs allowed to use interaction features."""
+    raw = os.getenv("INTERACTION_CONCEPTS", "")
+    return frozenset(slug for item in raw.split(",") if (slug := item.strip().casefold()))
+
+
+def interaction_allowed_for_concept(slug: str | None) -> bool:
+    """Return True when interaction features are unrestricted or allow this concept."""
+    allowlist = interaction_concepts()
+    return not allowlist or (slug or "").casefold() in allowlist
+
+
 def get_embedding_dim() -> int:
     """Vector dimension for embeddings (must match the model used at index time)."""
     return int(os.getenv("EMBEDDING_DIM", "3072"))
@@ -291,6 +303,8 @@ __all__ = [
     "use_pgvector_retrieval",
     "interaction1_enabled",
     "interaction2_enabled",
+    "interaction_concepts",
+    "interaction_allowed_for_concept",
     "get_embedding_dim",
     "get_embedding_model",
     "get_supabase_db_url",
