@@ -43,6 +43,7 @@ The single authority on these env-flag getters; `retrieval/`, `apollo/`, and
 - Apollo concept scope: `interaction_concepts()` parses `INTERACTION_CONCEPTS`
   into a normalized concept-slug allowlist, and
   `interaction_allowed_for_concept(slug)` applies it to interaction features.
+- Apollo remediation: `interaction3_enabled()` reads `INTERACTION3`, default off.
 
 ## Data flow
 
@@ -65,7 +66,7 @@ gates a one-time subject log line.
 `RETRIEVAL_WIRE_LOG`, `RUNTIME_DIR`, `TEXTBOOK_SUBJECT`, `CITATION_LABEL`,
 `USE_PGVECTOR_RETRIEVAL`, `EMBEDDING_DIM`, `OPENAI_EMBEDDING_MODEL`,
 `SUPABASE_DB_URL`, `NEO4J_URI`/`NEO4J_USERNAME`/`NEO4J_PASSWORD`/`NEO4J_DATABASE`,
-`RERANKERS_ENABLED`, `RERANKER_MODEL`, `INTERACTION1`, `INTERACTION2`,
+`RERANKERS_ENABLED`, `RERANKER_MODEL`, `INTERACTION1`, `INTERACTION2`, `INTERACTION3`,
 `INTERACTION_CONCEPTS`.
 
 ## Related

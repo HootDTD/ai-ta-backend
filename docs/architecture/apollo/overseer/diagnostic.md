@@ -3,6 +3,7 @@ doc: apollo/overseer/diagnostic
 description: Generates the student-facing narrative that explains — never decides — the grade.
 owns:
   - apollo/overseer/diagnostic.py
+  - apollo/overseer/remediation.py
 related:
   - apollo/overseer/topic-narrative
   - apollo/overseer/grounding
@@ -26,6 +27,9 @@ the grade. It never decides the grade — the [rubric](rubric.md) /
   -> (narrative, feedback_or_none)` — imported by `handlers/done.py`. Topic
   feedback is `{headline, topic_feedback: [{canonical_key, note, quote}], recap,
   next_step}`.
+- `add_remediation_reviews(*, db, search_space_id, topic_score, feedback,
+  grounding_bundle) -> decorated_feedback_or_none` — copy-on-success citation
+  decoration for at most three `partial`/`missing` topics.
 
 ## Data flow
 
@@ -42,6 +46,11 @@ and returns the legacy sanitized narrative plus null feedback.
 [grounding](grounding.md)) is forwarded to the topic-narrative builder ONLY.
 The axis prompt is the soft-fail fallback and stays frozen — grounding must not
 change the shape of a degraded narrative.
+With `INTERACTION3` enabled and the problem concept allowed by
+`INTERACTION_CONCEPTS`, `done.py` passes successful structured feedback to
+`remediation.py`. A non-null session grounding bundle is reused exclusively;
+only a null bundle triggers fresh per-topic retrieval (`top_k=3`, 800 tokens).
+The helper returns citation-only `{doc_id, label, page}` pointers.
 
 ## Invariants & gotchas
 
@@ -62,6 +71,16 @@ change the shape of a degraded narrative.
 - **`course_evidence=None` (the default, and what an OFF flag or NULL bundle
   produces) keeps both prompt paths byte-identical to the pre-INTERACTION2
   build**, so grounding can never silently move a grade.
+  boundary.
+- **Remediation is copy-on-success and all-or-nothing:** empty/unsafe results or
+  any failure publish no `review` key. Solution-bearing snippets use the same
+  metadata filter as Interaction 1; snippet quotes never enter the payload.
+
+## Env flags
+
+- `INTERACTION3` — remediation citations, default OFF.
+- `INTERACTION_CONCEPTS` — optional normalized concept-slug allowlist; unset or
+  empty preserves unrestricted flag-on behavior.
 
 ## Related
 

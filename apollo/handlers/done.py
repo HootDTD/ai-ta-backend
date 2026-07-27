@@ -37,6 +37,7 @@ from apollo.overseer.misconception import (
     summarize_for_rubric,
 )
 from apollo.overseer.problem_selector import list_problems_for_concept
+from apollo.overseer.remediation import add_remediation_reviews
 from apollo.overseer.rubric import compute_rubric
 from apollo.overseer.topic_score import TopicScoreResult, compute_centrality, compute_topic_score
 from apollo.overseer.topic_score_serialize import serialize_topics
@@ -55,7 +56,11 @@ from apollo.persistence.progress_repo import apply_xp
 from apollo.projections.mastery import update_mastery_from_artifact
 from apollo.projections.scorecard import render_scorecard
 from apollo.schemas.problem import Problem
-from config.settings import interaction2_enabled, interaction_allowed_for_concept
+from config.settings import (
+    interaction2_enabled,
+    interaction3_enabled,
+    interaction_allowed_for_concept,
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -442,6 +447,29 @@ async def handle_done(
     else:
         diagnostic_narrative = diagnostic_result
         feedback = None
+
+    # Interaction 3 — citation-only review pointers for weak topic feedback.
+    # This entire optional pass is one failure domain: build a decorated copy
+    # and publish it only after every selected topic succeeds. Any exception
+    # leaves the diagnostic feedback and every grade-bearing value untouched.
+    if (
+        interaction3_enabled()
+        and interaction_allowed_for_concept(problem.concept_id)
+        and topic_score is not None
+        and feedback is not None
+    ):
+        try:
+            remediated_feedback = await add_remediation_reviews(
+                db=db,
+                search_space_id=sess.search_space_id,
+                topic_score=topic_score,
+                feedback=feedback,
+                grounding_bundle=getattr(sess, "grounding_bundle", None),
+            )
+            if remediated_feedback is not None:
+                feedback = remediated_feedback
+        except Exception:
+            _LOG.exception("remediation_review_failed attempt_id=%s", attempt.id)
 
     # Re-attempt detection (unchanged from V2).
     is_reattempt_in_session = attempt.result is not None
