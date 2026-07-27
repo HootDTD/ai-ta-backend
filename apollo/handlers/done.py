@@ -364,7 +364,9 @@ async def handle_done(
     # reproduces today's prompt and today's grade, and the evidence is
     # pre-truncated by `build_course_evidence`, so the transcript below is never
     # the thing that gets cut.
-    course_evidence = _course_evidence_safe(sess, concept_slug=problem.concept_id)
+    course_evidence = _course_evidence_safe(
+        sess, concept_slug=getattr(problem, "concept_id", None)
+    )
     transcript = await _full_transcript(db, attempt_id=int(attempt.id))
     coverage, narrative_spans = await compute_transcript_coverage_with_spans(
         transcript=transcript,
