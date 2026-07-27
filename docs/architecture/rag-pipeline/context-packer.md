@@ -8,7 +8,7 @@ related:
   - rag-pipeline/main-ai
   - platform/config-contracts
   - platform/config-settings
-last_verified: 2026-07-25
+last_verified: 2026-07-26
 stub: false
 ---
 
@@ -25,11 +25,12 @@ stub: false
 
 Iterate ranked chunks, accumulate until 85% of budget
 (`_TOKEN_BUDGET_FRACTION`; `_count_tokens` uses tiktoken `cl100k_base`, falling
-back to `len/4`), dedupe by `chunk_id`. Build a marker per chunk:
-`[Label, p. N]`, or `[Label, Week W, p. N]` when the chunk is notes/slides with a
-week, or `[<doc title ≤30 chars>]` when there is no page. `_citation_label_for_kind`
-maps `material_kind` through `citations.formatter.DOC_TYPE_LABELS`; the textbook
-label falls back to `get_citation_label()` (`platform/config-settings`).
+back to `len/4`), dedupe by `chunk_id`. When `doc_title` is present, its first 30
+characters are the label in every marker shape (`[Title, p. N]`,
+`[Title, Week W, p. N]`, or `[Title]` without a page). Untitled chunks retain the
+kind label: `_citation_label_for_kind` maps `material_kind` through
+`citations.formatter.DOC_TYPE_LABELS`; the textbook label falls back to
+`get_citation_label()` (`platform/config-settings`).
 
 ## Invariants & gotchas
 
