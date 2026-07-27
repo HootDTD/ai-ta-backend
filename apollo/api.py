@@ -142,6 +142,7 @@ class SessionCreateRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    ask_hoot: bool = False
 
 
 class NextRequest(BaseModel):
@@ -206,7 +207,13 @@ async def chat(
     neo: Neo4jClient | None = Depends(get_neo4j_client),
     auth: AuthContext = Depends(require_session_owner),
 ) -> dict:
-    return await handle_chat(db=db, neo=neo, session_id=session_id, message=body.message)
+    return await handle_chat(
+        db=db,
+        neo=neo,
+        session_id=session_id,
+        message=body.message,
+        ask_hoot=body.ask_hoot,
+    )
 
 
 @router.post("/sessions/{session_id}/done")
@@ -416,7 +423,9 @@ async def classroom_struggles(
     auth = await require_user(request)
     await require_course_teacher(db=db, auth=auth, search_space_id=search_space_id)
     return await struggle_signals(
-        db, search_space_id=search_space_id, window_days=window_days,
+        db,
+        search_space_id=search_space_id,
+        window_days=window_days,
     )
 
 

@@ -10,7 +10,7 @@ related:
   - apollo/conversation/agent/persona-reply
   - apollo/persistence/neo4j-client
   - apollo/provisioning/_index
-last_verified: 2026-07-25
+last_verified: 2026-07-27
 stub: false
 ---
 
@@ -26,7 +26,9 @@ stub: false
 - `require_neo4j_client(...) -> Neo4jClient` — dep for KG-native routes; raises `KGUnavailableError` when the client is None.
 - `close_neo4j_client()` — closes + clears the singleton (shutdown hook).
 - `register_exception_handlers(app)` — installs every `apollo.errors` → JSON handler.
-- Request models: `FromHootRequest`, `SessionCreateRequest`, `ChatRequest`, `NextRequest`.
+- Request models: `FromHootRequest`, `SessionCreateRequest`, `ChatRequest`,
+  `NextRequest`. `ChatRequest` is `{message: str, ask_hoot: bool = false}`;
+  omitting `ask_hoot` preserves the ordinary teaching-turn contract.
 
 ## Data flow
 
@@ -37,7 +39,7 @@ Route → handler → auth dep (owned by `routing/auth-deps`):
 | POST `/sessions/from_hoot` | `init_session_from_hoot` | user + course_member |
 | POST `/sessions` | `init_session_direct` | user + course_member |
 | GET `/sessions/{id}` | `handle_get_session` | session_owner |
-| POST `/sessions/{id}/chat` | `handle_chat` | session_owner |
+| POST `/sessions/{id}/chat` | `handle_chat` (`message` + optional `ask_hoot`) | session_owner |
 | POST `/sessions/{id}/done` | `handle_done` | session_owner |
 | POST `/sessions/{id}/retry` | `handle_retry` | session_owner |
 | POST `/sessions/{id}/next` | `handle_next` (lazy import) | session_owner |

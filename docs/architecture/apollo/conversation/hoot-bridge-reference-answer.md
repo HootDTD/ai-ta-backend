@@ -8,7 +8,7 @@ related:
   - apollo/conversation/handlers/chat
   - apollo/conversation/handlers/done
   - apollo/conversation/session-init
-last_verified: 2026-07-26
+last_verified: 2026-07-27
 stub: false
 ---
 
@@ -23,11 +23,11 @@ Gated end-to-end by `INTERACTION4` (default OFF) plus the optional
 
 ## Interface
 
-- `is_enabled() -> bool` — reads `INTERACTION4` (truthy env var). `handlers/
-  intent` and `handlers/chat` combine it with
-  `config.settings.interaction_allowed_for_concept(current_slug)` to gate the
-  classifier label and direct-execution wiring. Cheap: no heavy imports at
-  module load, so checking the flag never pulls in retrieval/ai/DB machinery.
+- `is_enabled() -> bool` — reads `INTERACTION4` (truthy env var).
+  `handlers/chat` combines it with
+  `config.settings.interaction_allowed_for_concept(current_slug)` to gate an
+  explicit `ask_hoot=true` request. Cheap: no heavy imports at module load, so
+  checking the flag never pulls in retrieval/ai/DB machinery.
 - `answer_reference_question(*, db, course_id, question, problem) ->
   ReferenceAsideResult` — the stateless compose. Raises on genuine failure
   (network/DB/LLM); never swallows an error into a fake "not found" result,
@@ -79,15 +79,18 @@ only persistence, written by the caller):
   module only returns gracefully for a **successful** out-of-scope or
   not-found outcome (still an aside, per the brief: "Out-of-scope ⇒ the
   aside says so, teaching resumes").
-- `is_enabled()` must stay free of module-level heavy imports — `handlers/
-  intent` and `handlers/chat` import it as one half of the flag-plus-concept
-  gate; the retrieval/ai/DB imports live inside `answer_reference_question`.
+- `is_enabled()` must stay free of module-level heavy imports —
+  `handlers/chat` imports it as one half of the flag-plus-concept gate; the
+  retrieval/ai/DB imports live inside `answer_reference_question`.
+- The bridge has no classifier entry. A normal typed turn never calls it;
+  only the chat request's explicit `ask_hoot=true` flag can reach the caller's
+  execution seam.
 - Never routes through `server.py` (`/ask`, `_structured_citations_from_bundle`,
   `_prepare_router_context*`) or `ai/router` wiring — those are welded to
   Hoot chat sessions/bundle cache Apollo does not have.
 
 ## Related
 
-Gated by and gates `handlers/intent`; executed from and persisted by
-`handlers/chat`; excluded from `handlers/done`'s adjudicator transcript;
-sibling entry point in `session-init`.
+Executed from and persisted by `handlers/chat`; excluded from
+`handlers/done`'s adjudicator transcript; sibling entry point in
+`session-init`.

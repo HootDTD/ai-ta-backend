@@ -14,7 +14,6 @@ import pytest
 from apollo.handlers.intent import (
     _CLASSIFIER_PROMPT,
     INTENT_CONFIDENCE_THRESHOLD,
-    _classifier_prompt,
     classify_intent,
     confirmation_prompt_for,
     detect_confirmation,
@@ -250,97 +249,56 @@ def test_confirmation_prompt_is_empty_for_fallthrough_intents(intent):
     assert confirmation_prompt_for(intent) == ""
 
 
-def test_confirmation_prompt_empty_for_reference_question():
-    """reference_question direct-executes (handlers/chat.py) rather than
-    confirmation-gating, so it must never carry a confirmation prompt."""
-    assert confirmation_prompt_for("reference_question") == ""
+# ---- INTERACTION4 classifier dormancy -----------------------------------
 
 
-# ---- INTERACTION4 flag gating (brief: "the reference_question label enters
-# the intent-classifier prompt ONLY when INTERACTION4 is on") -------------
-
-
-def test_classifier_prompt_byte_identical_when_flag_off(monkeypatch):
-    """HARD REQUIREMENT: flag off => classifier prompt is exactly today's
-    prompt, not just "doesn't mention reference_question"."""
-    monkeypatch.delenv("INTERACTION4", raising=False)
-    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
-    assert _classifier_prompt("bernoulli_principle") == _CLASSIFIER_PROMPT
-
-
-def test_classifier_prompt_gains_reference_question_when_flag_on_allowlist_unset(monkeypatch):
-    monkeypatch.setenv("INTERACTION4", "1")
-    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
-    prompt = _classifier_prompt("bernoulli_principle")
-    assert "reference_question" in prompt
-    assert prompt != _CLASSIFIER_PROMPT
-
-
-def test_classifier_prompt_gains_reference_question_for_matching_concept(monkeypatch):
-    monkeypatch.setenv("INTERACTION4", "1")
-    monkeypatch.setenv("INTERACTION_CONCEPTS", "network_effects, BERNOULLI_PRINCIPLE")
-    prompt = _classifier_prompt("bernoulli_principle")
-    assert "reference_question" in prompt
-    assert prompt != _CLASSIFIER_PROMPT
-
-
-def test_classifier_prompt_omits_reference_question_for_nonmatching_concept(monkeypatch):
-    monkeypatch.setenv("INTERACTION4", "1")
-    monkeypatch.setenv("INTERACTION_CONCEPTS", "network_effects")
-    assert _classifier_prompt("bernoulli_principle") == _CLASSIFIER_PROMPT
-
-
-def test_classify_intent_reference_question_when_flag_on(monkeypatch, concept):
-    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
-    with (
-        patch("apollo.handlers.intent._interaction4_enabled", return_value=True),
-        _patch_classifier(intent="reference_question", confidence=0.9),
-    ):
-        v = classify_intent(
-            utterance="wait, what IS a network effect?",
-            history=[],
-            concept=concept,
-        )
-    assert v.intent == "reference_question"
-
-
-def test_classify_intent_reference_question_downgraded_when_flag_off(concept):
-    """Defense in depth: even if the model somehow emits reference_question
-    with the flag off (it shouldn't see the label at all), the verdict is
-    forced back to teaching so flag-off behavior never surfaces the intent."""
-    with (
-        patch("apollo.handlers.intent._interaction4_enabled", return_value=False),
-        _patch_classifier(intent="reference_question", confidence=0.95),
-    ):
-        v = classify_intent(
-            utterance="wait, what IS a network effect?",
-            history=[],
-            concept=concept,
-        )
-    assert v.intent == "teaching"
-
-
-def test_classify_intent_reference_question_downgraded_for_nonmatching_concept(
-    monkeypatch, concept
+@pytest.mark.parametrize(
+    ("interaction4", "allowlist"),
+    [
+        (None, None),
+        ("1", None),
+        ("1", "network_effects, BERNOULLI_PRINCIPLE"),
+        ("1", "network_effects"),
+    ],
+)
+def test_classifier_prompt_never_contains_reference_question(
+    monkeypatch, concept, interaction4, allowlist
 ):
-    monkeypatch.setenv("INTERACTION4", "1")
-    monkeypatch.setenv("INTERACTION_CONCEPTS", "network_effects")
-    with _patch_classifier(intent="reference_question", confidence=0.95):
-        v = classify_intent(
+    if interaction4 is None:
+        monkeypatch.delenv("INTERACTION4", raising=False)
+    else:
+        monkeypatch.setenv("INTERACTION4", interaction4)
+    if allowlist is None:
+        monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
+    else:
+        monkeypatch.setenv("INTERACTION_CONCEPTS", allowlist)
+
+    with _patch_classifier(intent="teaching", confidence=0.9) as mock_chat:
+        classify_intent(
             utterance="wait, what IS Bernoulli's principle?",
             history=[],
             concept=concept,
         )
-    assert v.intent == "teaching"
+
+    prompt = mock_chat.call_args.kwargs["messages"][0]["content"]
+    assert prompt == _CLASSIFIER_PROMPT
+    assert "reference_question" not in prompt
 
 
-def test_classify_intent_ambiguous_defaults_to_teaching_with_flag_on(concept):
-    """Conservative-bias invariant regression: adding the new label must not
-    weaken the ambiguous-case fallback to teaching, flag on or off."""
-    with (
-        patch("apollo.handlers.intent._interaction4_enabled", return_value=True),
-        _patch_classifier(intent="teaching", confidence=0.3),
-    ):
+def test_classify_intent_reference_question_is_unknown_label(concept):
+    with _patch_classifier(intent="reference_question", confidence=0.95):
+        verdict = classify_intent(
+            utterance="wait, what IS Bernoulli's principle?",
+            history=[],
+            concept=concept,
+        )
+    assert verdict.intent == "teaching"
+
+
+def test_classify_intent_ambiguous_defaults_to_teaching_with_flag_on(monkeypatch, concept):
+    """INTERACTION4 does not alter the ambiguous-case fallback."""
+    monkeypatch.setenv("INTERACTION4", "1")
+    with _patch_classifier(intent="teaching", confidence=0.3):
         v = classify_intent(
             utterance="hmm, not sure what to say",
             history=[],
