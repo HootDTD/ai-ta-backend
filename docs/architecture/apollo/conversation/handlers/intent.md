@@ -39,12 +39,14 @@ below); other intents log and fall through to teaching.
 
 `reference_question` (INTERACTION4, default OFF — `hoot-bridge-reference-
 answer.is_enabled()`): a 7th label for "the student is asking Apollo to look
-something up" rather than teaching. `_classifier_prompt()` appends
-`_REFERENCE_QUESTION_BLOCK` to `_CLASSIFIER_PROMPT` ONLY when the flag is on;
-with the flag off, the prompt sent to `cheap_chat` is byte-identical to
-`_CLASSIFIER_PROMPT` and `classify_intent` additionally coerces a stray
-`reference_question` verdict back to `teaching` (defense in depth — flag-off
-classifier behavior is unaffected regardless of what the model returns).
+something up" rather than teaching. `_classifier_prompt(concept_slug)` appends
+`_REFERENCE_QUESTION_BLOCK` to `_CLASSIFIER_PROMPT` only when the flag is on
+and `config.settings.interaction_allowed_for_concept(concept_slug)` permits the
+current concept. With either gate closed, the prompt sent to `cheap_chat` is
+byte-identical to `_CLASSIFIER_PROMPT` and `classify_intent` additionally
+coerces a stray `reference_question` verdict back to `teaching` (defense in
+depth). An unset/empty `INTERACTION_CONCEPTS` keeps the prior flag-only
+behavior.
 
 ## Invariants & gotchas
 
@@ -63,8 +65,12 @@ classifier behavior is unaffected regardless of what the model returns).
 
 - `APOLLO_CHEAP_MODEL` — the model behind `cheap_chat` (resolved in
   `agent/llm-client`; named here, not valued).
+- `INTERACTION4` — enables the hint-lane label.
+- `INTERACTION_CONCEPTS` — optional comma-separated concept-slug allowlist;
+  unset/empty means unrestricted.
 
 ## Related
 
 Consumed by `handlers/chat`; LLM call via `agent/llm-client` (`cheap_chat`);
-`reference_question` gating reads `hoot-bridge-reference-answer.is_enabled()`.
+`reference_question` gating combines `hoot-bridge-reference-answer.is_enabled()`
+with `config.settings.interaction_allowed_for_concept()`.

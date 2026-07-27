@@ -29,6 +29,7 @@ from typing import Final, Literal
 from apollo.agent._llm import cheap_chat
 from apollo.hoot_bridge.reference_answer import is_enabled as _interaction4_enabled
 from apollo.subjects import ConceptDefinition
+from config.settings import interaction_allowed_for_concept
 
 _LOG = logging.getLogger(__name__)
 
@@ -115,9 +116,10 @@ Conservative bias: when in doubt, return "teaching".
 """
 
 # INTERACTION4 (default OFF): "ask Hoot" hint lane. This label is appended to
-# the classifier prompt ONLY when the flag is on — with the flag off,
-# `_CLASSIFIER_PROMPT` above is unchanged and classifier behavior for
-# existing labels must be byte-identical to today (see test_intent.py).
+# the classifier prompt only when the flag is on and the current concept passes
+# the shared allowlist — with either gate closed, `_CLASSIFIER_PROMPT` above is
+# unchanged and classifier behavior for existing labels must be byte-identical
+# to today (see test_intent.py).
 _REFERENCE_QUESTION_BLOCK = """- reference_question: the student is asking Apollo to define, explain, or
   look up a concept directly — asking FOR information rather than teaching
   it. E.g. "wait, what IS a network effect?", "can you just tell me the
@@ -132,8 +134,16 @@ _CLASSIFIER_PROMPT_WITH_REFERENCE = _CLASSIFIER_PROMPT.replace(
 )
 
 
-def _classifier_prompt() -> str:
-    return _CLASSIFIER_PROMPT_WITH_REFERENCE if _interaction4_enabled() else _CLASSIFIER_PROMPT
+def _reference_question_enabled(concept_slug: str | None) -> bool:
+    return _interaction4_enabled() and interaction_allowed_for_concept(concept_slug)
+
+
+def _classifier_prompt(concept_slug: str | None = None) -> str:
+    return (
+        _CLASSIFIER_PROMPT_WITH_REFERENCE
+        if _reference_question_enabled(concept_slug)
+        else _CLASSIFIER_PROMPT
+    )
 
 
 def _safe_intent(value: object) -> Intent:
@@ -165,12 +175,12 @@ def classify_intent(
         ],
         "utterance": utterance,
     }
-    interaction4_on = _interaction4_enabled()
+    interaction4_on = _reference_question_enabled(concept.concept_id)
     try:
         raw = cheap_chat(
             purpose="intent_classifier",
             messages=[
-                {"role": "system", "content": _classifier_prompt()},
+                {"role": "system", "content": _classifier_prompt(concept.concept_id)},
                 {"role": "user", "content": json.dumps(payload)},
             ],
             response_format={"type": "json_object"},
@@ -183,9 +193,9 @@ def classify_intent(
 
     intent = _safe_intent(parsed.get("intent"))
     if intent == "reference_question" and not interaction4_on:
-        # Defense in depth: the label isn't in the flag-off prompt, so the
-        # model shouldn't emit it — but flag-off behavior must be
-        # byte-identical to today regardless of what the model returns.
+        # Defense in depth: the label isn't in the disabled prompt, so the
+        # model shouldn't emit it — but disabled behavior must remain
+        # byte-identical regardless of what the model returns.
         intent = "teaching"
 
     return IntentVerdict(

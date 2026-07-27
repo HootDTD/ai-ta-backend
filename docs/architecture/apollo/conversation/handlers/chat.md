@@ -45,8 +45,9 @@ Ordered turn:
    pending intent is just cleared. Otherwise `_maybe_intent_confirmation`
    classifies the utterance and, above threshold, persists a confirmation prompt
    and returns — **except `reference_question`, which direct-executes** (see
-   below) instead of confirmation-gating (only `classify_intent` returns this
-   label, and only when `INTERACTION4` is on — see `handlers/intent`).
+   below) instead of confirmation-gating. Both the classifier and this execution
+   seam require `INTERACTION4` plus the current `Problem.concept_id` slug to pass
+   `interaction_allowed_for_concept` (see `handlers/intent`).
 3. **Teaching path**: read the current subgraph (`_read_graph_or_empty`), project
    it via `build_graph_context` (`parser/graph-context`), then `parse_utterance`
    (`parser/parser-llm`) → nodes/edges.
@@ -63,15 +64,19 @@ Ordered turn:
 `_execute_reference_question` (direct-executed from `_maybe_intent_confirmation`,
 never confirmation-gated) is the `reference_question` intent's handler:
 
-1. Per-session cap: `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]` (default
+1. `_maybe_intent_confirmation` rechecks `INTERACTION4` and
+   `interaction_allowed_for_concept(problem.concept_id)` before entering the
+   executor, so a stale/synthetic classifier verdict cannot bypass rollout
+   scoping. An unset/empty `INTERACTION_CONCEPTS` preserves flag-only behavior.
+2. Per-session cap: `sess.metadata_[ASIDE_COUNT_SESSION_METADATA_KEY]` (default
    0) at or above `MAX_ASIDES_PER_SESSION` (3) → a persona redirect turn, no
    bridge call.
-2. Otherwise calls `hoot_bridge.reference_answer.answer_reference_question`.
+3. Otherwise calls `hoot_bridge.reference_answer.answer_reference_question`.
    Any exception → logged, persona apology turn persisted, **never a 5xx** —
    the brief's "failure ⇒ persona apology + fall through as a teaching turn"
    contract lives here, not in the bridge (the bridge raises on genuine
    failure by design).
-3. On success: persists the student question (untagged — the adjudicator
+4. On success: persists the student question (untagged — the adjudicator
    keeps it), the aside text tagged `intent=ASIDE_MESSAGE_INTENT_TAG`
    (`handlers/done._full_transcript` excludes this row from grading), and the
    persona resume line (untagged), then increments the session's aside

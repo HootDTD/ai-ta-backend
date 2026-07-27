@@ -1,7 +1,8 @@
 """Stateless bridge from an Apollo teaching turn to Hoot's QA pipeline.
 
 Brief: styx/plans/hoot-apollo-04-ask-hoot-hint-lane.md ("ask Hoot" hint lane).
-Gated by the `INTERACTION4` flag (default OFF; see `is_enabled` below).
+Gated by the `INTERACTION4` flag (default OFF; see `is_enabled` below) plus
+the call-site `INTERACTION_CONCEPTS` allowlist in handlers/intent and chat.
 
 This module composes retrieve_for_question() -> the tutor answer prompt
 (ai/prompts/tutor.py, via ai.main_ai.solve_with_bundle) -> citation

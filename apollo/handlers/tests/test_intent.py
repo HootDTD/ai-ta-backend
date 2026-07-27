@@ -260,21 +260,38 @@ def test_confirmation_prompt_empty_for_reference_question():
 # the intent-classifier prompt ONLY when INTERACTION4 is on") -------------
 
 
-def test_classifier_prompt_byte_identical_when_flag_off():
+def test_classifier_prompt_byte_identical_when_flag_off(monkeypatch):
     """HARD REQUIREMENT: flag off => classifier prompt is exactly today's
     prompt, not just "doesn't mention reference_question"."""
-    with patch("apollo.handlers.intent._interaction4_enabled", return_value=False):
-        assert _classifier_prompt() == _CLASSIFIER_PROMPT
+    monkeypatch.delenv("INTERACTION4", raising=False)
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
+    assert _classifier_prompt("bernoulli_principle") == _CLASSIFIER_PROMPT
 
 
-def test_classifier_prompt_gains_reference_question_when_flag_on():
-    with patch("apollo.handlers.intent._interaction4_enabled", return_value=True):
-        prompt = _classifier_prompt()
+def test_classifier_prompt_gains_reference_question_when_flag_on_allowlist_unset(monkeypatch):
+    monkeypatch.setenv("INTERACTION4", "1")
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
+    prompt = _classifier_prompt("bernoulli_principle")
     assert "reference_question" in prompt
     assert prompt != _CLASSIFIER_PROMPT
 
 
-def test_classify_intent_reference_question_when_flag_on(concept):
+def test_classifier_prompt_gains_reference_question_for_matching_concept(monkeypatch):
+    monkeypatch.setenv("INTERACTION4", "1")
+    monkeypatch.setenv("INTERACTION_CONCEPTS", "network_effects, BERNOULLI_PRINCIPLE")
+    prompt = _classifier_prompt("bernoulli_principle")
+    assert "reference_question" in prompt
+    assert prompt != _CLASSIFIER_PROMPT
+
+
+def test_classifier_prompt_omits_reference_question_for_nonmatching_concept(monkeypatch):
+    monkeypatch.setenv("INTERACTION4", "1")
+    monkeypatch.setenv("INTERACTION_CONCEPTS", "network_effects")
+    assert _classifier_prompt("bernoulli_principle") == _CLASSIFIER_PROMPT
+
+
+def test_classify_intent_reference_question_when_flag_on(monkeypatch, concept):
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
     with (
         patch("apollo.handlers.intent._interaction4_enabled", return_value=True),
         _patch_classifier(intent="reference_question", confidence=0.9),
@@ -297,6 +314,20 @@ def test_classify_intent_reference_question_downgraded_when_flag_off(concept):
     ):
         v = classify_intent(
             utterance="wait, what IS a network effect?",
+            history=[],
+            concept=concept,
+        )
+    assert v.intent == "teaching"
+
+
+def test_classify_intent_reference_question_downgraded_for_nonmatching_concept(
+    monkeypatch, concept
+):
+    monkeypatch.setenv("INTERACTION4", "1")
+    monkeypatch.setenv("INTERACTION_CONCEPTS", "network_effects")
+    with _patch_classifier(intent="reference_question", confidence=0.95):
+        v = classify_intent(
+            utterance="wait, what IS Bernoulli's principle?",
             history=[],
             concept=concept,
         )

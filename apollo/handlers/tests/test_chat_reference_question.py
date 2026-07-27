@@ -38,7 +38,7 @@ def _chat_context(*, aside_count: int = 0):
     store = MagicMock()
     store.read_graph = AsyncMock(return_value=KGGraph())
     concept = SimpleNamespace(concept_id="network_effects", subject_id="business")
-    problem = MagicMock(database_id=42)
+    problem = MagicMock(database_id=42, concept_id="network_effects")
     return db, sess, store, concept, problem
 
 
@@ -68,8 +68,13 @@ async def _run_reference_intent(*, db, sess, store, concept, problem):
     )
 
 
-async def test_reference_question_flag_on_returns_aside_and_persona_resume(monkeypatch):
+@pytest.mark.parametrize("allowlist", [None, "other_concept, NETWORK_EFFECTS"])
+async def test_reference_question_allowed_returns_aside_and_persona_resume(monkeypatch, allowlist):
     monkeypatch.setenv("INTERACTION4", "1")
+    if allowlist is None:
+        monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
+    else:
+        monkeypatch.setenv("INTERACTION_CONCEPTS", allowlist)
     db, sess, store, concept, problem = _chat_context()
     bridge = AsyncMock(
         return_value=ReferenceAsideResult(
@@ -131,8 +136,36 @@ async def test_reference_question_flag_on_returns_aside_and_persona_resume(monke
     assert persisted[2].intent is None
 
 
+async def test_reference_question_nonmatching_concept_never_executes_aside(monkeypatch):
+    monkeypatch.setenv("INTERACTION4", "1")
+    monkeypatch.setenv("INTERACTION_CONCEPTS", "bernoulli_principle")
+    db, sess, store, concept, problem = _chat_context()
+    bridge = AsyncMock()
+
+    with (
+        patch(
+            "apollo.handlers.chat.classify_intent",
+            return_value=SimpleNamespace(intent="reference_question", confidence=0.96),
+        ),
+        patch("apollo.handlers.chat.answer_reference_question", new=bridge),
+    ):
+        response = await _run_reference_intent(
+            db=db,
+            sess=sess,
+            store=store,
+            concept=concept,
+            problem=problem,
+        )
+
+    assert response is None
+    bridge.assert_not_awaited()
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
 async def test_reference_question_cap_redirects_without_bridge_call(monkeypatch):
     monkeypatch.setenv("INTERACTION4", "1")
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
     db, sess, store, concept, problem = _chat_context(aside_count=MAX_ASIDES_PER_SESSION)
     bridge = AsyncMock()
 
@@ -164,6 +197,7 @@ async def test_reference_question_cap_redirects_without_bridge_call(monkeypatch)
 
 async def test_reference_question_bridge_failure_apologizes_as_teaching_turn(monkeypatch):
     monkeypatch.setenv("INTERACTION4", "1")
+    monkeypatch.delenv("INTERACTION_CONCEPTS", raising=False)
     db, sess, store, concept, problem = _chat_context()
     bridge = AsyncMock(side_effect=RuntimeError("retrieval unavailable"))
 

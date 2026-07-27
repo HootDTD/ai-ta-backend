@@ -35,6 +35,9 @@ from apollo.hoot_bridge.reference_answer import (
     MESSAGE_KIND_REFERENCE_ASIDE,
     answer_reference_question,
 )
+from apollo.hoot_bridge.reference_answer import (
+    is_enabled as _interaction4_enabled,
+)
 from apollo.knowledge_graph.store import KGStore
 from apollo.ontology import KGGraph
 from apollo.overseer.problem_selector import list_problems_for_concept
@@ -45,6 +48,7 @@ from apollo.persistence.neo4j_client import KG_DEGRADED_ERRORS, Neo4jClient
 from apollo.schemas.problem import Problem
 from apollo.smart_questions import plan_next_question
 from apollo.subjects.curriculum_db import load_concept_definition
+from config.settings import interaction_allowed_for_concept
 
 _LOG = logging.getLogger(__name__)
 
@@ -399,8 +403,10 @@ async def _maybe_intent_confirmation(
     if verdict.intent == "reference_question":
         # Direct execution — no confirmation gate (unlike `done`/`restart`/
         # etc.): a wrong hint costs one extra message, not a hijacked
-        # session. classify_intent only ever returns this label when
-        # INTERACTION4 is on, so this branch is dead code with the flag off.
+        # session. Recheck both gates here so a stale or synthetic classifier
+        # verdict cannot execute an aside for a disabled concept.
+        if not (_interaction4_enabled() and interaction_allowed_for_concept(problem.concept_id)):
+            return None
         return await _execute_reference_question(
             db=db,
             sess=sess,
